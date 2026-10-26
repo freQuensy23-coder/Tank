@@ -14,6 +14,7 @@ from tank.event_tools import EventToolService
 from tank.scheduler import Scheduler
 from tank.settings import Settings
 from tank.storage import MemoryRepository
+from tank.time_precision import propagate_timestamp
 from tank.util import iso, utcnow
 
 
@@ -82,7 +83,9 @@ async def test_scoped_global_and_resolved_fatal_condition_to_actual_decision(
         return {"relative": {"close_1h_price": "10"}}
 
     scheduler = Scheduler(repo, settings, None, SimpleNamespace(assess=assess), versions=fixture_versions())
-    await scheduler.eval_conditions({"cutoff": iso(now + timedelta(minutes=1))})
+    await scheduler.eval_conditions(
+        propagate_timestamp({"cutoff": iso(now + timedelta(minutes=1))}, "cutoff")
+    )
     for token, expected in zip(("A", "B"), actions, strict=True):
         conditions = await repo.list("ana.watch_conditions", filters={"event_id": "e", "token_id": token})
         fatal_watch = next(c for c in conditions if c["expr"].get("metric") == "event.contradiction_fatal")

@@ -324,7 +324,9 @@ def test_oi_wire_preserves_zero_native_end_unknown_usd_and_actual_precision() ->
     assert wire["oi_native_start"] == "10" and wire["oi_native_end"] == "0"
     assert wire["oi_native_chg_pct"] == -1.0
     assert wire["oi_usd_start"] == "0" and wire["oi_usd_chg_pct"] is None
-    assert wire["oi_usd_reason"] == "INCOMPLETE"
+    assert wire["oi_usd_reason"] is None
+    assert wire["oi_usd_detail"] is None
+    assert wire["oi_usd_chg_pct_reason"] == "ZERO_BASELINE"
     assert wire["precision"] is None and wire["classification_ready"] is False
     assert wire["start_observed_at"] == "2026-10-17T11:00:00Z"
     assert wire["end_observed_at_prec_reason"] == "PRECISION_NOT_CAPTURED"

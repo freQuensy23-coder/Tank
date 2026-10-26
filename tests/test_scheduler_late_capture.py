@@ -8,10 +8,10 @@ from pathlib import Path
 
 import httpx
 import pytest
+from runtime_public_fixtures import public_runtime
 from source_support import fixture_http_admission, fixture_versions
 
 from tank.market.service import MarketService
-from tank.runtime import Runtime
 from tank.scheduler import Scheduler
 from tank.settings import Settings
 from tank.storage import MemoryRepository
@@ -309,20 +309,18 @@ async def test_backfill_changes_append_reaction_revision_once_and_preserve_origi
             if job["job_id"] not in previous_ids
         ]
         assert len(live_jobs) == 1 and "CAP-LIVE-" in live_jobs[0]["payload"]["change_id"]
-        runtime = object.__new__(Runtime)
-        runtime.repo = repo
-        runtime.handlers = {"REACTION_CAPTURE": scheduler.reaction_capture}
-        runtime.active_jobs = set()
-        stop = asyncio.Event()
-        worker = asyncio.create_task(runtime.worker(stop))
-        try:
-            async with asyncio.timeout(5):
-                while (await repo.get("ops.jobs", live_jobs[0]["job_id"]))["status"] != "DONE":
-                    await asyncio.sleep(0.005)
-            live = (await repo.get("ops.jobs", live_jobs[0]["job_id"]))["result"]
-        finally:
-            stop.set()
-            await worker
+        async with public_runtime(repo, tmp_path / "runtime", monkeypatch) as (runtime, _):
+            runtime.handlers = {"REACTION_CAPTURE": scheduler.reaction_capture}
+            stop = asyncio.Event()
+            worker = asyncio.create_task(runtime.worker(stop))
+            try:
+                async with asyncio.timeout(5):
+                    while (await repo.get("ops.jobs", live_jobs[0]["job_id"]))["status"] != "DONE":
+                        await asyncio.sleep(0.005)
+                live = (await repo.get("ops.jobs", live_jobs[0]["job_id"]))["result"]
+            finally:
+                stop.set()
+                await worker
         assert live["revision"] == 3 and live["data_fingerprint"] != revised["data_fingerprint"]
         assert live["r_raw"] == pytest.approx(0.2)
         assert live["rwp_id"] == original["rwp_id"]

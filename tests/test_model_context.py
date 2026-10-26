@@ -14,6 +14,7 @@ from session_followup_fixtures import UnexpectedFollowupRefusals
 from source_support import fixture_http_admission
 
 from tank.agents.context import CONTEXT_VERSION, ID_FIELDS, ModelContext, identifier_field
+from tank.agents.message_dispatch import MessageDispatchRequest
 from tank.agents.sessions import SessionService
 from tank.analysis.page_access import LivePageAccess
 from tank.event_tools import EventToolService, validate_schema
@@ -143,7 +144,9 @@ async def test_initial_message_is_text_and_the_incoming_item_stays_implicit(cont
     repo, settings, session, item = context
     original = copy.deepcopy(item)
     boundary = ModelContext(repo, settings, session)
-    message = await boundary.message(session["last_payload"], item)
+    payload = session["last_payload"]
+    assert isinstance(payload, dict)
+    message = await boundary.message(MessageDispatchRequest.from_wire(payload), item)
     assert_public(message)
     assert message["item"]["text"] == item["text"]
     assert message["item"]["observed_at"] == item["observed_at"]
@@ -562,7 +565,9 @@ async def test_scout_review_binds_its_proposal_and_names_the_duplicate_by_id(con
         await repo.put("scout.expansion_proposals", row["prp_id"], row)
     session.update(proposal_id=proposal["prp_id"], event_id=None)
     boundary = ModelContext(repo, settings, session)
-    message = await boundary.message({"kind": "SCOUT_REVIEW", "proposal_id": proposal["prp_id"]}, None)
+    message = await boundary.message(
+        MessageDispatchRequest.from_wire({"kind": "SCOUT_REVIEW", "proposal_id": proposal["prp_id"]}), None
+    )
     assert_public(message)
     review = {
         "verdict": "Duplicate",

@@ -14,7 +14,7 @@ import json
 import logging
 import re
 import time
-from collections.abc import Mapping
+from collections.abc import AsyncIterator, Mapping, Sequence
 from datetime import UTC, datetime, timedelta
 from difflib import SequenceMatcher
 from typing import Literal
@@ -24,6 +24,7 @@ from pydantic import JsonValue
 
 from tank import ops_cards
 from tank.analysis.cards import telegram_card_html
+from tank.contracts.native_files import NativeFileNotRequested, NativeFileSourceScope
 from tank.contracts.native_readback import NativeSessionMissing
 from tank.contracts.session_followups import (
     FollowupCandidate,
@@ -36,11 +37,37 @@ from tank.contracts.session_followups import (
     followup_eligibility,
 )
 from tank.contracts.telegram_state import (
+    ChatReference,
+    KnownTelegramFileDelivery,
+    MessageReference,
     TelegramAnsweredQuestion,
+    TelegramAttachmentAttempt,
+    TelegramFailedAttachment,
+    TelegramFileAlreadySent,
+    TelegramFileDeliveryContext,
+    TelegramFileDeliveryOutcome,
+    TelegramFileSent,
+    TelegramFileUncertain,
+    TelegramGeneralNoticeRequest,
+    TelegramGeneratedAttachment,
     TelegramInboxSettings,
     TelegramInboxStore,
+    TelegramInputDisposition,
+    TelegramInputPatch,
+    TelegramInputStatus,
+    TelegramInputTarget,
+    TelegramItemNoticeRequest,
+    TelegramNoticeRequest,
+    TelegramNoticeStatus,
+    TelegramNoticeSubject,
+    TelegramOpsItemTarget,
+    TelegramQuestionRecipient,
+    TelegramSentAttachment,
     TelegramSentChunk,
+    TelegramSentNotice,
     answer_chunk,
+    attachment_delivery,
+    notice_attempt,
     settled_question,
 )
 from tank.contracts.telegram_wire import (
@@ -66,6 +93,8 @@ from tank.question_answers import (
 from tank.question_answers import (
     validate_question_identity,
 )
+from tank.question_prompts import REFERENCE_LIMIT
+from tank.question_prompts import question_message as question_message
 from tank.runtime_contracts import TelegramAnswerJob
 from tank.telegram_api import FileTooLarge as FileTooLarge
 from tank.telegram_api import (
@@ -102,7 +131,7 @@ PAIR_WINDOW_S = 10
 FORWARD_MATCH_S = 30
 MEMBER_CACHE_S = 600
 MESSAGE_LIMIT = 4000
-ANSWER_CHANNEL = "telegram:answer"
+ANSWER_CHANNEL: Literal["telegram:answer"] = "telegram:answer"
 CARD_CHANNEL = "telegram:alerts"
 
 NO_SESSION_TEXT = "Не нашёл сессию агента для этого сообщения. Ответьте на карточку Tank или перешлите её боту вместе с вопросом."
@@ -214,32 +243,10 @@ def chunks(text, limit=MESSAGE_LIMIT):
     return parts or [EMPTY_TEXT]
 
 
-REFERENCE_LIMIT = 1024
 DOCUMENT_LIMIT = 45 * 1024 * 1024
 UPLOAD_LIMIT = 20 * 1024 * 1024
 TOO_LARGE_TEXT = "Файл больше 20 МБ, Telegram не даёт боту его скачать. Пришлите файл поменьше."
 NOT_SENT = (TelegramResponseError, TelegramConfigurationError, httpx.ConnectError, httpx.ConnectTimeout)
-
-
-def question_message(question):
-    """The follow-up as the agent reads it: the referenced Telegram text, the reader's words and files."""
-    target = question.get("reference") or {}
-    reference = (target.get("text") or "")[:REFERENCE_LIMIT]
-    lines = [f"Пришёл фоллоуап через Telegram на сообщение с текстом:\n{reference}"]
-    if target.get("kind") == OPS_KIND:
-        lines.append(
-            f"Вопрос задан в чате Tank Ops о материале {target.get('item_id')}; ответ уйдёт туда же."
-        )
-    lines.append(question.get("text") or "(без текста)")
-    for item in question.get("attachments") or []:
-        lines.append(
-            f"Пользователь приложил файл {item['filename']} ({item['size']} байт): {item.get('path', 'файл недоступен')}."
-        )
-    lines.append(
-        "Твоё последнее сообщение в этом ходе уйдёт пользователю ответом в Telegram; "
-        "файл можно отправить тулом send_telegram_file."
-    )
-    return "\n\n".join(lines)
 
 
 def media(message: Mapping[str, JsonValue]) -> TelegramMediaSelection | None:
@@ -247,8 +254,9 @@ def media(message: Mapping[str, JsonValue]) -> TelegramMediaSelection | None:
     return media_selection(message)
 
 
-def question_id_for(chat_id, message_id):
-    return "q_" + sha256({"chat_id": str(chat_id), "message_id": int(message_id)})[:32]
+def question_id_for(chat_id: ChatReference, message_id: MessageReference) -> str:
+    target = TelegramInputTarget(chat_id=chat_id, message_id=message_id)
+    return "q_" + sha256({"chat_id": str(target.chat_id), "message_id": int(target.message_id)})[:32]
 
 
 class RepositoryFollowupRefusals:
@@ -425,11 +433,18 @@ class TelegramInbox:
             },
         )
 
-    async def mark(self, row, status, **extra):
-        key = f"{row['chat_id']}:{row['message_id']}"
-        current = await self.repo.get("ops.telegram_messages", key)
-        current.update(status=status, **extra, **collection_clock(utcnow()).fields("handled_at"))
-        await self.repo.put("ops.telegram_messages", key, current)
+    async def mark(
+        self, row: Mapping[str, JsonValue], status: TelegramInputStatus, **extra: JsonValue
+    ) -> None:
+        target = TelegramInputTarget.from_record(row)
+        patch = TelegramInputPatch.model_validate(extra)
+        disposition = TelegramInputDisposition(status=status)
+        current = await self.repo.get("ops.telegram_messages", target.storage_key)
+        if current is None or not TelegramInputTarget.from_record(current).same_message(target):
+            raise ValueError("Telegram input settlement conflicts with its stored identity")
+        current.update(status=disposition.status, **patch.model_dump(mode="json", exclude_unset=True))
+        current.update(collection_clock(utcnow()).fields("handled_at"))
+        await self.repo.put("ops.telegram_messages", target.storage_key, current)
 
     async def sweep(self, now=None):
         now = now if now is not None else time.time()
@@ -784,13 +799,14 @@ class TelegramInbox:
             events.add(item["route_event_id"])
         return item, events
 
-    async def ops_question(self, row, target):
+    async def ops_question(self, row: Mapping[str, JsonValue], target: Mapping[str, JsonValue]) -> None:
         """A reply in Tank Ops continues the agent session that handled the material, answered in Ops.
 
         Published or not, the material's own session takes the question. When no session took the
         material, the reader gets only the reason.
         """
-        item_id = target["item_id"]
+        incoming = TelegramOpsItemTarget.model_validate(target)
+        item_id = incoming.item_id
         item, events = await self.item_events(item_id)
         if item is None:
             await self.notice(row, OPS_UNMATCHED_TEXT, "UNMATCHED", item_id=item_id)
@@ -804,7 +820,7 @@ class TelegramInbox:
                     "session_id": session["session_id"],
                     "event_id": session.get("event_id"),
                     "item_id": item_id,
-                    "text": target.get("text"),
+                    "text": incoming.text,
                 },
             )
             return
@@ -912,127 +928,188 @@ class TelegramInbox:
         result = response_result(response.content, method="sendDocument", status=response.status_code)
         return sent_message_receipt(result)
 
-    async def send_session_file(self, question_id, call_id, filename, content, caption=None):
-        """Deliver an agent file as a reply in the follow-up thread, once per tool call."""
-        question = await self.repo.get("out.user_questions", question_id)
-        if question is None:
-            raise ValueError("Follow-up question does not exist")
-        ledger = [
-            row
-            async for row in self.repo.iter_all(
-                "out.deliveries",
-                filters={"question_id": question_id, "channel": ANSWER_CHANNEL, "call_id": call_id},
+    @contextlib.asynccontextmanager
+    async def _locked_session_file(
+        self,
+        target: FollowupRefusalTarget,
+        call_id: str,
+        filename: str,
+    ) -> AsyncIterator[TelegramFileDeliveryContext]:
+        target = FollowupRefusalTarget.model_validate(target)
+        async with self.repo.lock("question:" + target.question_id):
+            question = await self.repo.get("out.user_questions", target.question_id)
+            if question is None:
+                raise ValueError("Follow-up question does not exist")
+            recipient = TelegramQuestionRecipient.from_record(question, target)
+            scope = TelegramAttachmentAttempt(
+                question_id=recipient.question_id,
+                session_id=recipient.session_id,
+                channel=ANSWER_CHANNEL,
+                purpose="ATTACHMENT",
+                chat_id=recipient.chat_id,
+                call_id=call_id,
+                filename=filename,
             )
-        ]
-        for row in ledger:
-            if row["status"] == "SENT":
-                return {"sent": True, "message_id": row["message_ref"], "duplicate": True}
-        if sum(row["status"] == "GENERATED" for row in ledger) > sum(
-            row["status"] == "FAILED" for row in ledger
-        ):
-            return {
-                "sent": "UNKNOWN",
-                "reason": "An earlier attempt of this call was interrupted after sending started; it may already have arrived. Call again to resend.",
-            }
-        self.active_token()
-        await self.repo.put(
-            "out.deliveries",
-            new_id("delivery"),
-            {
-                "channel": ANSWER_CHANNEL,
-                "question_id": question_id,
-                "session_id": question["session_id"],
-                "purpose": "ATTACHMENT",
-                "call_id": call_id,
-                "chat_id": question["chat_id"],
-                "status": "GENERATED",
-                "attempt": 1,
-                "filename": filename,
-                **collection_clock(utcnow()).fields("at"),
-            },
-            immutable=True,
-        )
-        try:
-            result = await self.send_document(
-                question["chat_id"],
-                filename,
-                content,
-                caption=caption,
-                reply_to=question.get("reply_to_message_id"),
-            )
-        except NOT_SENT:
+            ledger = [
+                attachment_delivery(row, recipient, call_id=scope.call_id, filename=scope.filename)
+                async for row in self.repo.iter_all(
+                    "out.deliveries",
+                    filters={
+                        "question_id": target.question_id,
+                        "channel": ANSWER_CHANNEL,
+                        "call_id": scope.call_id,
+                    },
+                )
+            ]
+            known: KnownTelegramFileDelivery | None = None
+            for row in ledger:
+                if isinstance(row, TelegramSentAttachment):
+                    known = TelegramFileAlreadySent(
+                        sent=True, message_id=str(row.message_ref), duplicate=True
+                    )
+                    break
+            if known is None and sum(isinstance(row, TelegramGeneratedAttachment) for row in ledger) > sum(
+                isinstance(row, TelegramFailedAttachment) for row in ledger
+            ):
+                known = TelegramFileUncertain(
+                    sent="UNKNOWN",
+                    reason="An earlier attempt of this call was interrupted after sending started; it may already have arrived. Call again to resend.",
+                )
+            yield TelegramFileDeliveryContext(recipient=recipient, attempt=scope, known=known)
+
+    async def lookup_session_file(
+        self,
+        target: FollowupRefusalTarget,
+        call_id: str,
+        filename: str,
+    ) -> KnownTelegramFileDelivery | None:
+        async with self._locked_session_file(target, call_id, filename) as context:
+            if context.known is None:
+                self.active_token()
+            return context.known
+
+    async def send_session_file(
+        self,
+        target: FollowupRefusalTarget,
+        call_id: str,
+        filename: str,
+        content: bytes,
+        caption: str | None = None,
+    ) -> TelegramFileDeliveryOutcome:
+        """Deliver to the locked authoritative question/session pair, once per tool call."""
+        async with self._locked_session_file(target, call_id, filename) as context:
+            if context.known is not None:
+                return context.known
+            recipient, scope = context.recipient, context.attempt
+            self.active_token()
             await self.repo.put(
                 "out.deliveries",
                 new_id("delivery"),
-                {
-                    "channel": ANSWER_CHANNEL,
-                    "question_id": question_id,
-                    "session_id": question["session_id"],
-                    "purpose": "ATTACHMENT",
-                    "call_id": call_id,
-                    "chat_id": question["chat_id"],
-                    "status": "FAILED",
-                    "attempt": 1,
-                    "filename": filename,
-                    **collection_clock(utcnow()).fields("at"),
-                },
+                scope.model_dump(mode="json")
+                | {"status": "GENERATED", "attempt": 1}
+                | collection_clock(utcnow()).fields("at"),
                 immutable=True,
             )
-            raise
-        await self.repo.put(
-            "out.deliveries",
-            new_id("delivery"),
-            {
-                "channel": ANSWER_CHANNEL,
-                "question_id": question_id,
-                "session_id": question["session_id"],
-                "purpose": "ATTACHMENT",
-                "call_id": call_id,
-                "chat_id": question["chat_id"],
-                "status": "SENT",
-                "attempt": 1,
-                "message_ref": str(result.message_id),
-                "telegram_date": result.date,
-                "text": caption or filename,
-                "filename": filename,
-                "bytes": len(content),
-                **collection_clock(utcnow()).fields("at"),
-            },
-            immutable=True,
-        )
-        return {
-            "sent": True,
-            "message_id": str(result.message_id),
-            "filename": filename,
-            "bytes": len(content),
-        }
-
-    async def notice(self, row, text, status, *, also=(), subject=None, **extra):
-        """Reply with a notice at most once, then settle the input (and any paired rows) together.
-
-        A rejected send leaves every row retryable.
-        """
-        key = question_id_for(row["chat_id"], row["message_id"])
-        ledger = [
-            delivery
-            async for delivery in self.repo.iter_all(
-                "out.deliveries", filters={"question_id": key, "channel": ANSWER_CHANNEL, "purpose": "NOTICE"}
+            try:
+                result = await self.send_document(
+                    recipient.chat_id,
+                    scope.filename,
+                    content,
+                    caption=caption,
+                    reply_to=recipient.reply_to_message_id,
+                )
+            except NOT_SENT:
+                await self.repo.put(
+                    "out.deliveries",
+                    new_id("delivery"),
+                    scope.model_dump(mode="json")
+                    | {"status": "FAILED", "attempt": 1}
+                    | collection_clock(utcnow()).fields("at"),
+                    immutable=True,
+                )
+                raise
+            await self.repo.put(
+                "out.deliveries",
+                new_id("delivery"),
+                scope.model_dump(mode="json")
+                | {
+                    "status": "SENT",
+                    "attempt": 1,
+                    "message_ref": str(result.message_id),
+                    "telegram_date": result.date,
+                    "text": scope.filename if caption is None else caption,
+                    "bytes": len(content),
+                }
+                | collection_clock(utcnow()).fields("at"),
+                immutable=True,
             )
+            return TelegramFileSent(
+                sent=True,
+                message_id=str(result.message_id),
+                filename=scope.filename,
+                bytes=len(content),
+            )
+
+    async def notice(
+        self,
+        row: Mapping[str, JsonValue],
+        text: str,
+        status: TelegramNoticeStatus,
+        *,
+        also: Sequence[tuple[Mapping[str, JsonValue], Mapping[str, JsonValue]]] = (),
+        subject: Mapping[str, JsonValue] | None = None,
+        reason: str | None = None,
+        item_id: str | None = None,
+    ) -> None:
+        """Admit retained notice authority before sending or settling paired inputs."""
+        target = TelegramInputTarget.from_record(row)
+        key = question_id_for(target.chat_id, target.message_id)
+        subject_view = None if subject is None else TelegramNoticeSubject.model_validate(subject)
+        request: TelegramNoticeRequest
+        if status == "NO_SESSION":
+            if subject_view is None:
+                raise ValueError("A no-session material notice requires its actual subject")
+            request = TelegramItemNoticeRequest(text=text, status=status, subject=subject_view)
+        else:
+            request = TelegramGeneralNoticeRequest(text=text, status=status, subject=subject_view)
+        patch_fields: dict[str, JsonValue] = {}
+        if reason is not None:
+            patch_fields["reason"] = reason
+        if item_id is not None:
+            patch_fields["item_id"] = item_id
+        patch = TelegramInputPatch.model_validate(patch_fields)
+        companions = [
+            (TelegramInputTarget.from_record(other), TelegramInputPatch.model_validate(other_patch))
+            for other, other_patch in also
         ]
-        settled = any(delivery["status"] == "SENT" for delivery in ledger) or sum(
-            delivery["status"] == "GENERATED" for delivery in ledger
-        ) > sum(delivery["status"] == "FAILED" for delivery in ledger)
+        for input_target in (target, *(companion for companion, _patch in companions)):
+            stored = await self.repo.get("ops.telegram_messages", input_target.storage_key)
+            if stored is None or not TelegramInputTarget.from_record(stored).same_message(input_target):
+                raise ValueError("Telegram notice conflicts with its stored input")
+        if subject_view is not None and patch.item_id is not None and subject_view.item_id != patch.item_id:
+            raise ValueError("Telegram notice subject conflicts with its input disposition")
+        ledger = [
+            notice_attempt(delivery, target, key, subject=request.subject)
+            async for delivery in self.repo.iter_all(
+                "out.deliveries", filters={"question_id": key, "channel": ANSWER_CHANNEL}
+            )
+            if delivery.get("purpose") not in ("ANSWER", "ATTACHMENT", "PROMPT")
+        ]
+        settled = any(isinstance(delivery, TelegramSentNotice) for delivery in ledger) or sum(
+            delivery.status == "GENERATED" for delivery in ledger
+        ) > sum(delivery.status == "FAILED" for delivery in ledger)
         if not settled:
             self.active_token()
-            base = {
+            base: dict[str, JsonValue] = {
                 "channel": ANSWER_CHANNEL,
                 "question_id": key,
                 "purpose": "NOTICE",
-                "chat_id": row["chat_id"],
+                "chat_id": target.chat_id,
                 "attempt": 1,
-                "text": text,
-                **(subject or {}),
+                "text": request.text,
             }
+            if subject_view is not None:
+                base.update(subject_view.model_dump(mode="json"))
             await self.repo.put(
                 "out.deliveries",
                 new_id("delivery"),
@@ -1040,7 +1117,7 @@ class TelegramInbox:
                 immutable=True,
             )
             try:
-                result = await self.send(row["chat_id"], text, row["message_id"])
+                result = await self.send(target.chat_id, request.text, target.message_id)
             except NOT_SENT:
                 await self.repo.put(
                     "out.deliveries",
@@ -1062,9 +1139,13 @@ class TelegramInbox:
                 immutable=True,
             )
         async with self.repo.transaction():
-            await self.mark(row, status, **extra)
-            for other, other_extra in also:
-                await self.mark(other, status, **other_extra)
+            await self.mark(row, request.status, **patch.model_dump(mode="json", exclude_unset=True))
+            for companion, companion_patch in companions:
+                await self.mark(
+                    companion.model_dump(mode="json"),
+                    request.status,
+                    **companion_patch.model_dump(mode="json", exclude_unset=True),
+                )
 
     async def prompt(self, row, target):
         """Ask for the question; a reply to this prompt continues the referenced session."""
@@ -1228,6 +1309,20 @@ class TelegramInbox:
                         file_key=key, content_base64=base64.b64encode(content).decode()
                     )
                     async with self.repo.transaction():
+                        stored_at = collection_clock(utcnow())
+                        native_preparation = NativeFileNotRequested(
+                            phase="NOT_REQUESTED",
+                            recorded_at=stored_at,
+                            scope=NativeFileSourceScope(
+                                file_key=cached.file_key,
+                                question_id=cached.question_id,
+                                session_id=cached.session_id,
+                                cached_sha256=cached.sha256,
+                                filename=cached.filename,
+                                mime=cached.mime,
+                                size=cached.size,
+                            ),
+                        )
                         await self.repo.put(
                             "ops.telegram_file_payloads", key, payload.model_dump(mode="json")
                         )
@@ -1236,7 +1331,8 @@ class TelegramInbox:
                             key,
                             {
                                 **cached.model_dump(mode="json"),
-                                **collection_clock(utcnow()).fields("stored_at"),
+                                **stored_at.fields("stored_at"),
+                                "native_preparation": native_preparation.model_dump(mode="json"),
                             },
                         )
                 stored.append(

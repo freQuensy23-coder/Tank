@@ -1281,6 +1281,286 @@ presentation coupling and the assigned vendor implementation backlog remain
 open. Earlier 19e0dc59 was an inactive contract checkpoint, not qualified
 caller activation; the final source and real caller proofs supersede it.
 
+
+Held terminal-failure adapter qualification (6c2d1e5c descendant)
+
+The terminal-failure command validates original queue payloads through the
+wire-only delivery/answer decoders before constructing internal typed
+notifications. Internal container revalidation uses Pydantic by_name=True
+so the already typed JobPayload.depends_on field is revalidated under its
+Python field name. This does not enable field-name admission at the public
+wire decoder: a raw depends_on key still rejects, while _depends_on remains
+the actual queue alias. Constructed version=True still rejects. The exact
+regression is test_terminal_failure_keeps_wire_alias_admission_and_revalidates_typed_payload.
+
+The test-only runtime_failure_fixture.http_routes callback is genuinely
+optional HTTP expectation setup: absence permits no HTTP route. It never
+replaces a required Runtime service. The native-missing reconciliation case
+registers and counts its actual GET through this strict router.
+
+On the unchanged owned source after the canonical guard join, the focused
+alias/original delivery cases pass 2/2 in 2.81 seconds; the two new retirement
+files pass all 19 units in 3.78 seconds and all four actual PostgreSQL
+POST-inflight/committed-ACK-loss/refusal-write/restart cases in 6.10 seconds,
+zero skips. The local wrappers verify source identity and exit zero.
+Independent strict four contracts/adapter/helper targets and scoped Ruff
+pass. Evidence prefixes retirement-6c2-alias-focused,
+retirement-6c2-final-phase-unit and retirement-6c2-phase-pg are external.
+The earlier broad diagnostic remains 944 passed/two failed; one delivery
+failure is fixed by the tested alias correction, while the remaining
+Telegram terminal-answer legacy Runtime fixture still needed migration at
+that snapshot. Commit 4a362a56 later migrated that fixture with its original
+assertions intact and a passing focused control.
+This is a held checkpoint, not full Runtime/caller qualification or whole
+SessionService completion.
+
+Inactive worker command admission checkpoint
+
+runtime_dispatch_contracts defines the eleven actual durable command variants,
+ClaimedWork (RUNNING with an observed positive claimed attempt and matching
+kind), and DependencyState (only actual job identity/status). This is an
+application contract, not the persistence JobEnvelope renamed as a domain
+aggregate. RepositoryWorkerQueue uses the canonical JobRepository claim and
+invalid-revision quarantine. Original payload facts remain at that queue
+boundary; a concrete command refusal records only static validation codes
+and the payload field name. The initial normalized-envelope digest was later found insufficient for
+omitted nested clock facets; the adapter now consumes the unprojected raw
+revision from canonical ClaimedJob (see the correction/proof below). Quarantine still compares
+the actual complete stored revision under the canonical job lock before any
+terminal change. The dependency adapter refuses mismatched storage identity;
+a truly missing dependency remains None for explicit worker policy.
+
+Seven command/real Memory queue cases pass in 1.73 seconds, and the real
+PostgreSQL command-quarantine case passes in 2.47 seconds, zero skips, under
+the unchanged local wrappers. Independent strict contracts/adapter/test three
+targets and scoped Ruff pass. Evidence worker-0441-queue-unit-3 and
+worker-0441-queue-pg is external. Earlier two setup diagnostics remain recorded:
+the malformed synthetic dependency omitted required storage fields, then
+reused an actual idempotency key; authored complete setup now preserves the
+intended wrong-identity refusal oracle. These contracts/adapter are inactive.
+The worker, Session send producer/result phases and scheduler side-effect
+result ports still need their coordinated migration and caller proof; this
+checkpoint does not close the remaining Runtime method or whole Session.
+
+Inactive session-message result phases
+
+message_dispatch distinguishes an actually recorded pending initial intent,
+an observed native acceptance (including explicit UNREPORTED/EMPTY receipts),
+a historical accepted-message index with no retained receipt, and a declined
+question target. INDEXED_UNREPORTED does not claim a newly dispatched native
+input. The observer reads only the requested journal owner and actual stored
+index, rejects duplicate/contradictory owner evidence, and does not require an
+unused body/retry budget to describe already observed acceptance. A pending
+intent still requires its real declared zero attempt and native input body.
+Actual no-session refusal remains a separate typed target phase.
+
+Twenty result/outbound cases pass in 2.14 seconds, zero skips, including the
+real mocked-HTTP initial accepted/unreported/empty post and idempotency cases
+with their existing original oracles. Independent result source/test strict
+two targets and Ruff pass. This is an inactive result observer, not an untyped
+send_message wrapper presented as a complete port. The actual send producer,
+attachment preparation and coordinated scheduler results remain under
+migration. Evidence worker-573-message-phase-unit-2 is external; the prior
+single test expectation diagnostic used ValidationError where an actually
+missing required retry_count correctly raises KeyError, with no source
+fallback introduced.
+
+Correction to inactive worker claim-revision rationale: foundation identified
+that nested Timestamp serializers can add omitted nullable facets even under
+exclude_unset. Therefore normalized envelope serialization is not a reliable
+original raw revision in every valid ledger case. At checkpoint 57377441 the adapter therefore required a raw claim-revision
+API and an omitted-nested-facet regression before activation; that boundary
+is corrected in the qualified raw-revision checkpoint below. The limited passing cases
+above did not contain such a ledger and do not establish full parity.
+
+Send admission prerequisite in the inactive worker stream
+
+send_message now admits the actual closed AgentMessage before using its
+routing facts. NativeSessionResolution.mapping_identity selects the declared
+existing-session/event/proposal/item namespace in the existing order and
+refuses missing routing facts instead of str(None). ContextBinding provides
+the actual session ID; LegacyToolContext.needs_migration distinguishes an
+unreported context version from a declared version, without inventing zero.
+An actual missing session after tool synchronization raises instead of being
+passed onward as a usable session. USER_QUESTION scope uses its typed target.
+All 197 affected Agent/workflow/model-context/Telegram unit callers pass in
+17.54 seconds, zero skips (worker-e587-send-admission-unit). Default Session
+source mypy, independent native session-contract strict and Ruff pass.
+Independent whole Session strict remains incomplete: actual untyped
+reopening/follower/attachment/presentation dependencies and constructor
+repository inference are open; this does not claim the send result port is
+complete or activate the new worker dispatcher.
+
+Typed question reopening dependency
+
+SessionService.reopen_for_question now consumes UserQuestionMessage and a
+real owner key, using the strict session_reopening policy/adapter. The
+actual session ID must match the question target; duplicate journal owners,
+reported-null retired indexes and a failed-session reopening without an
+observed controller clock refuse before mutation. Only actual unfinished
+owners are retired, completed/current owners survive, and only their
+USER_QUESTION rows receive the existing local FAILED turn status. This is
+local controller lifecycle, not a fabricated native termination. The raw
+session/history dictionaries remain at the explicit sparse persistence
+mutation boundary and preserve unrelated bytes. ReopenState.retired=None
+means no retired index was recorded; creating the first index adds only
+actual observed owners. session.get("reopened", []) initializes the existing
+lazy append-only controller history on the first real reopening; reported
+null/non-array history rejects and old entries are not reconstructed.
+Missing historical turn_status/payload-kind remain explicit and do not gain
+invented native facts or unused retry/body requirements.
+
+All 105 connected reopening/Telegram/outbound units pass in 8.82 seconds,
+zero skips, with independent source/test strict two targets and Ruff clean
+(worker-0dd-reopening-unit). The one direct authored Telegram helper test now
+declares its actual synthetic session ID and typed question request while
+retaining its old/current/retired/status assertions. This closes that helper
+dependency, not the still-untyped follower/attachment/presentation portions
+of SessionService or the inactive worker activation.
+
+Inactive dependency policy
+
+RepositoryWorkerQueue.dependencies returns named READY/WAITING states from
+actual dependency identity/status projections; a missing or FAILED/EXPIRED
+prerequisite raises a typed DependencyFailure carrying that exact observed
+reason/identity. No dependency reads change the worker attempt/status or
+pretend missing state is complete. Dynamic job_ids are actual queue IDs;
+WaitingDependencies requires at least one ID. All nine command/Memory queue
+cases pass in 1.89 seconds, zero skips, independent strict three targets
+(worker-e587-dependencies-unit). The raw revision correction remains pending
+foundation's additive API; this is still inactive worker work.
+
+Typed follower dependency on coherent parent 59b963cf
+
+start_stream/follow now declare their actual string/task lifecycle. The new
+FollowedSession projection distinguishes an unreported runtime state from
+known status; NativeSessionReader provides actual identity-bound lifecycle
+facts. Missing or archived resources are recorded as typed UNAVAILABLE
+observations with actual checked_at, without RUNNING/ENDED or termination
+receipt invention. NativeFollowerUnavailable retains the existing bounded
+follower backoff while the current stream task is cancelled/awaited. A later
+changed local state wins an in-flight readback. Only an actual matching
+record_event false result sets no_event; absent/null result remains unknown
+and does not become false or true. The protocol translation is an exhaustive
+closed map with no default.
+
+Seventy-six connected follower/session-audit/retention/REST/transport units
+pass in 3.02 seconds and the actual PostgreSQL missing-observation case passes
+in 3.05 seconds, zero skips (worker-491-follower-final-unit and
+worker-491-follower-pg-2). The first PG setup omitted required captured-session
+metadata and failed before the workflow; its corrected freshly authored
+scout declares actual synthetic identity/opening clock, explicit unavailable
+native-version/source reasons, and initial zero cursor (not a rewritten
+historical row). The initial connected test's unsupported CONDITION_FIRED
+marker was replaced by a real third source message: that test concerns new
+input not resetting original retry, and all original post-count/body/retry/
+event-state assertions remain. No unused financial condition was fabricated.
+Independent follower projection strict and scoped Ruff pass; default Session
+source passes. Whole Session strict still exposes the remaining real
+execution/attachment/presentation/constructor dependencies and is not claimed.
+AST inventory now has twenty Session functions lacking complete signatures;
+Runtime's worker signature is present but its implementation remains open,
+so a zero annotation-gap count is not a Runtime migration claim. Exact
+retained sites/reasons and behavior controls are appended to the exception
+ledger. Retirement 4a362a56 remains immutable and separate.
+
+
+Original claim revision correction
+
+The worker stream normally joins foundation 641ac01c. RepositoryWorkerQueue
+now calls claim_with_revision and carries the actual raw claimed-document
+revision into InvalidJobClaim; it never recomputes a digest from a normalized
+Pydantic envelope. The actual command refusal with a valid nested historical
+receipt omitting precision_reason/bucket_anchor quarantines exactly once on
+Memory and PostgreSQL, preserves the ledger's original serialized omissions,
+and retains the canonical changed-revision refusal. All fourteen connected
+unit cases pass in 1.86 seconds and all six actual PostgreSQL cases pass in
+4.26 seconds, zero skips, wrapper/source guards exit zero. Independent strict
+contracts/adapter/test three targets and Ruff pass. Evidence
+worker-641-raw-revision-final-unit and worker-641-raw-revision-pg is external.
+This resolves the inactive adapter digest defect; worker dispatch/result
+activation and the remaining Session producer dependencies remain open.
+
+Phase-specific native deployment configuration
+
+SessionService.config now returns NativeSessionDeployment for the explicitly
+requested ANALYST/SCOUT and live/replay phase, rather than a raw configuration
+map with agent/environment truthiness fallbacks. resolve consumes that typed
+deployment directly; Runtime.validate supplies its actual replay mode. The
+existing required prompt/effort/selected agent/environment contract validates
+before creation effects. Unused role identities and admission capacity are
+not required merely to decode a selected native deployment; running-session
+capacity remains its separately validated composition/admission policy.
+All 96 native/config/runtime/composition/version unit callers pass in 5.92
+seconds, zero skips (worker-6f646-native-config-unit), scoped Ruff clean.
+This closes that configuration accessor, not the still-open whole Session
+constructor or worker body. No permissive settings default was introduced.
+
+Inactive typed queue lifecycle and actual admission-clock parity
+
+RunningJobClaim carries only actual job/kind/RUNNING/positive attempt and the
+original payload digest. RequeueRequest uses that narrow phase scope rather
+than revalidating unused full commands (the initial two failing cases exposed
+that overvalidation). RepositoryWorkerQueue rechecks current scope under the
+canonical job lock, patches only the owned schedule/completion fields and
+validates before writing original raw JSON. It does not reserialize unrelated
+historical receipts. Waits refund exactly the observed claimed attempt;
+changed scopes and repeated transitions produce no effects. Expiry requires
+an actual supplied observation boundary and actual current due expiry; an
+unbounded job does not invent one. Counter zero under an unproved recovery
+flag becomes a once-only invalid claim, not attempt one or a running effect.
+This preserves the existing single-controller scope, not a new distributed
+execution lease or cross-controller POST safety claim.
+
+Root authorized the narrow JobMetadata admission-clock companion after the
+real writer audit: slot_waiting_since_prec/prec_reason/bucket_anchor are now
+closed optional fields. Any reported non-null metadata validates coherently
+with Timestamp; scalar-only/all-null-facet retained rows keep strict aware
+parsing and no invented precision/reason. Foundation reviewed the exact
+frozen diff at HEAD597dea63+WIP and found no source issue. Actual defer then
+next typed claim passes on Memory/PostgreSQL; malformed copied models reject
+before a repository write. The generic extra-field policy remains closed.
+
+All 31 connected queue/envelope/revision units pass in 1.76 seconds and all
+18 actual PostgreSQL cases pass in 3.81 seconds, zero skips, unchanged local
+wrappers/source guards exit zero. Independent jobs/dispatch/adapter/test four
+targets and Ruff pass. Evidence worker-597-lifecycle-final-unit and
+worker-597-lifecycle-final-pg is external. Earlier intermediate 30/17 proof
+is retained; the final extra case specifically proves zero-attempt quarantine.
+These are inactive queue transitions; concrete worker dispatch/results and
+remaining send/follower/attachment dependencies still require activation and
+whole caller proof. Retirement 4a remains separate and immutable.
+
+Held question-scope preflight candidate
+
+Immutable negative checkpoint fbc2e5d1 reproduces a real boundary breach: an
+actual UserQuestionMessage aimed at live session s reads a stored question
+bound to foreign and posts its synthetic private text after native GET.
+The matching-session control is idempotent. The negative gate is one fail/
+one pass in 1.60 seconds (worker-8840-question-binding-before), not a product
+qualification. The candidate now checks both actual question/session IDs under
+the question lock before native reads for a fresh input, and rechecks before
+fresh text/attachment effects. Existing retained acceptance/indexed inputs and
+known-zero pending bodies do not reconstruct an unused deleted question or
+retry budget; pending ownership still requires its actual original payload/
+idempotency key. The lock order remains controller send lock, session lock,
+then question lock for the actual body phase; the early read does not hold a
+question lock while waiting for a session lock.
+
+The branch normally joins prompt370. Session imports the typed pure prompt
+formatter inward and pre-admits required prompt facts before attachment
+work; prepare_attachments returns QuestionPrompt. This return is only an
+intermediate caller alignment: its input/body and native file lifecycle are
+explicitly still open and are not signed as a complete typed port. The
+unsupported generic data-wrapped upload response fallback was removed after
+reading the pinned direct file route. Twenty-five connected question/output/
+initial-post cases pass in 1.87 seconds, zero skips, including exact original
+pending idempotency key, accepted opaque historical body/no budget, and a
+binding-change race refusing a native POST. Default Session mypy passes;
+whole independent strict remains incomplete. Evidence
+worker-fbc-question-phase-unit is external. This candidate remains held with
+the worker/native producer cohort; it is not a parent-ready activation.
+
 Standalone public queue repair on clean main49 parent
 
 This companion starts from canonical 5b77f741 (normal 8f/main49 ancestry),
@@ -1331,3 +1611,364 @@ These owner gates ran on the frozen owned work-in-progress source above
 047e21df before the report/commit; product source did not change after the
 passing checks. The immutable wrapper fingerprints remain the exact proof
 identity; parent final-head integration qualification is still required.
+
+Qualified joint question-retirement and Runtime failure cohort
+
+Canonical product source 75e3bd1c normally joins the preserved 4a retirement,
+analysis fd35085e real worker fragments, quality 280fbc07 actual E2E adapter,
+public 494 retry/slot fixes and current parent 253f50da. The Runtime conflict
+kept both the required typed failure repository and explicit retry policy;
+append-only reports retain both complete histories. No inactive worker/native
+producer branch is ancestry. The only subsequent addition is the supported
+unknown-versus-occurred marker regression and final inventory/evidence text;
+product source did not change after the broad passing gates.
+
+SessionService.abandon_question/reconcile_answers and Runtime terminal failure/
+restart reconciliation now consume phase-specific strict records. Actual
+initial ACCEPTED/UNREPORTED/EMPTY receipts or sent_at are preserved without
+requiring an unused old body/budget. Unknown initial acceptance/journal state
+refuses explicitly before answer/native effects; no missing native ID becomes
+an unsent assertion. The existing controller send lock then repository session
+lock serializes retirement with actual initial/recovery POSTs and acceptance
+commit. Both-ID authoritative answer state is rechecked under the question
+lock, preserving the first answer and idempotent delivery. No distributed
+POST guarantee is claimed beyond these actual participating locks.
+
+Runtime requires a concrete RepositoryRuntimeFailures port in production
+composition. Its narrow store port owns actual queue locks, checks current
+job/type/status/target and phase-consumed facts, and performs exact sparse
+writes. Host refusals contain actual captured controller identity, actual
+recording clock and request-digest scope, remain distinct from native receipts,
+and are persisted before any handled marker. The closed JobEnvelope map and
+pre-serialization entity validation preserve absent-versus-explicit-null facts.
+Transient write/broken-ACK outcomes are sanitized named availability failures;
+permanent driver rejection and malformed global data do not become handled.
+Actual unrelated worker work still completes and restart preserves original
+receipt identity. Changed native 404 facts can close the question through the
+real refusal writer without rewriting past refusal or fabricating termination.
+
+All 966 broad affected units pass in 24.30 seconds, zero skips, p90 .321 seconds
+and maximum 5.632 seconds. The entire 140-case affected Linux integration
+collection passes in 65.66 seconds, zero skips, covering real PostgreSQL,
+replay/reference/market-refresh/four E2Es and public queue controls. Evidence
+retirement-75e3-joint-{unit,integration} is external; wrappers verify unchanged
+source/service identity. Independent strict contracts/runtime contracts/
+adapter/helper four targets pass. The two peer caller omissions from the
+previous 129/7 diagnostic are closed without weaker assertions/deadlines.
+
+Final audit correction: the suspected unknown-marker skip was disproved.
+Consumers already inspect marker.value, so an explicit unavailable timestamp
+remains eligible and never masquerades as handled. No product behavior was
+changed. The failed policy diagnostic is preserved externally as
+retirement-75e3-marker-policy-diagnostic.py and marker-before reports. The
+accurate current regression adds four passing units in 1.32 seconds and one
+actual PostgreSQL case in 2.13 seconds, zero skips, and independent test strict
+passes. It preserves explicit unknown reason versus all-null absence and
+proves the actual pending adapter does not invent a handled marker.
+
+The refreshed inventory includes the new inward retirement contracts, sparse
+failure adapter and public retry policy. Twenty-four SessionService/free-helper
+functions and the Runtime worker still lack complete signatures in this
+cohort; annotation status is not whole-body strict proof. Required send/file/
+usage/tool/event/execution-barrier migrations, remaining presentation coupling,
+and the assigned vendor programs remain open on their separate workstreams.
+Exact retained map/default/None classes and behavior controls are recorded by
+symbol/site in agents-exceptions.json. This bounded cohort does not waive any
+of the remaining global work.
+
+### Inactive native file preparation phases
+
+The preserved worker/native branch now defines inward native_files records for
+fresh NOT_REQUESTED cache state, durable UPLOAD_UNCONFIRMED intent, an actual
+FILE_ID_OBSERVED receipt, durable MOUNT_UNCONFIRMED intent and MOUNT_CONFIRMED
+resource receipt. Source scope carries the actual question/session/cache key,
+cached digest, filename, MIME and byte count. Controller occurrence and resolved
+versions are separate from native IDs; fresh cache state does not invent a
+controller version or native ID. Missing legacy preparation remains unreported.
+No parser or writer initializes missing state on reads.
+
+Ten pure phase controls pass in 1.33 seconds with zero skips, including known
+zero-byte cache, unknown occurrence refusal, nested constructed owner mutation
+refusal and canonical workspace target refusal. Independent source/test strict
+checks pass. This is an inactive contract checkpoint, not native upload or
+mount recovery proof. SessionService.prepare_attachments still has its old
+untyped upload/mount implementation. Required route beta selection, durable
+phase persistence, scoped resource reconciliation, historical pointer handling,
+pre-upload ownership admission and paired fresh-cache writer remain open.
+Pinned file/resource routes provide no upload/mount Idempotency-Key guarantee;
+an unconfirmed upload without an observed ID cannot authorize a blind repost.
+
+### Native preparation adapter candidate — paired writer still held
+
+The actual Session producer now accepts the authoritative question/session target
+and re-reads it under the question lock. It admits the prompt, all file references
+and cache ownership before effects. The native adapter records a committed upload
+intent, retains the actually observed file ID, records mount intent, and confirms
+only an actual scoped file resource. Upload uses files-api-2025-04-14; resource
+routes use managed-agents-2026-04-01. Neither route is credited with honoring an
+Idempotency-Key. Unknown upload acceptance refuses automatic repost. Lost mount
+acknowledgment is recovered by actual complete resource pages; foreign occupied
+paths and disappearance of confirmed resources refuse. Legacy pointers require
+matching scoped resource evidence and retain their original cache fields.
+
+PostgreSQL advisory locks hold transactions. Therefore the adapter owns and drains
+an awaited preparation task, using the repository's actual task-owned transaction
+contract to commit each short file CAS independently of the parent session/question
+transaction. HTTP runs outside file transactions. The child never requests session
+or question locks; no file-first path acquires a parent lock. Foundation reviewed
+that boundary. Actual PostgreSQL tests observe committed intent from an independent
+task during HTTP while the parent owns its session transaction. Concurrent callers
+cannot authorize a second upload; cancellation drains the owned preparation task.
+
+Observed effect receipts are retained in the cache row's typed digest-keyed
+native_effect_receipts map before the current-phase CAS. This preserves an actual
+upload identity even when cache ownership changes; it does not rewrite the new
+owner or continue mounting. A durable observed receipt can recover a failed hot
+phase update, while absent acceptance remains unknown. The earlier draft's proposed
+unregistered collection failed its diagnostic and was removed before this candidate.
+No schema or storage implementation was changed.
+
+The final transport source passes independent strict checks with contracts and
+three test modules. Twenty-six units pass in 1.80 seconds; six actual PostgreSQL
+cases pass in 3.10 seconds, zero skips, including the changed-owner receipt control.
+This remains an inactive paired candidate: ingestion's fresh-cache initialization
+and the existing Session caller/attachment fixture cohort must normally join and
+qualify before activation. Whole worker and remaining Session typing stay open.
+
+### Required condition evaluation caller
+
+Clean parent 956666e1 normally joins producer 7c0e8b27, without held worker or
+native-file ancestry. Runtime.eval_conditions_wire admits the queued payload
+through EvalConditionsJob and passes its actual cutoff facets as Timestamp.
+The checked runtime_evaluation protocol consumes ConditionEvaluationResult;
+that result is revalidated before the durable ops.jobs.result JSON boundary.
+Neither missing cutoff nor unknown occurrence becomes a processing clock.
+
+Negative workflow evidence at e869 records four failures from the old direct
+dictionary dispatch. Final source passed 80 connected units in 16.26 seconds
+and all five collected actual PostgreSQL cases in 5.31 seconds, zero skips,
+with unchanged source fingerprints. Actual Scheduler.tick, queue claim, Runtime
+worker and evaluator produce DONE with the real serialized receipt; missing,
+naive and unknown cutoffs fail before evaluation. A constructed invalid typed
+receipt also refuses before serialization. Independent strict checks pass for
+runtime_evaluation, scheduler_results, runtime_public_fixtures and the result
+boundary test. Whole Runtime.worker body typing remains open.
+
+The unchanged native adapter candidate has additional source-backed boundary
+controls: verified retained mount pointers preserve unrelated session history,
+duplicate raw upload identity facts refuse with static private-value-free errors,
+nonprogressing resource cursors cannot authorize mounting, and a confirmed
+resource ID cannot be replaced merely because path/file ID match. The full
+31-case native unit selection passes in 1.63 seconds with zero skips; independent
+five-target strict checks pass. These do not replace the pending real fresh-cache
+writer and complete Session caller proof.
+
+Known-ID recovery now consumes the exact NativeFileSourceScope projection rather
+than re-admitting unused original Telegram sender MIME/unique-ID provenance. Live
+cache admission remains strict at its producer. A real lost-mount-response control
+removes the already-consumed original bytes and sender metadata, recovers the
+observed resource without another upload/mount, and proves those absent fields
+are not reconstructed. Thirty-two units pass in 1.55 seconds; the same six actual
+PostgreSQL cases pass in 3.33 seconds, zero skips. Independent adapter/test strict
+checks pass. The actual pre-writer attachment fixture currently refuses missing
+native preparation, as expected; its negative one-case evidence is preserved and
+must turn green only through the paired fresh writer, not fixture initialization.
+
+The refreshed held-branch signature inventory includes native preparation,
+closed worker commands/queue adapter and the qualified eval boundary. Eighteen
+SessionService methods still have incomplete signatures in this branch. Runtime
+worker now has an annotation, but its raw mapping/handler implementation has not
+been migrated or independently strict-qualified; this is still an open worker
+body, not a completed function. The inventory deliberately does not equate an
+annotation with precise body typing or waive remaining aggregate/transport/vendor
+work. Final current-main caller qualification remains required for this branch.
+
+### Native metadata confirmation before mount
+
+An observed upload ID is now distinct from FILE_METADATA_VERIFIED. Before a new
+mount, files/{id} readback must report the same ID and the actual requested name,
+byte count and MIME (case normalization follows File.type), plus a matching
+session if native scope is reported. An unreported native scope remains None;
+it is not relabelled as a reported owner. Cached SHA remains a host-side byte
+receipt, never a claimed remote checksum. Missing or contradictory metadata
+preserves FILE_ID_OBSERVED, refuses mounting, and retries only readback. Existing
+confirmed mounts and verified historical pointers do not re-fetch unused bytes.
+Ambiguous native URL dot segments refuse before upload, and generated flat mount
+filenames escape path syntax without replacing the original declared filename.
+
+Thirty-nine native units pass in 2.24 seconds, and all six actual PostgreSQL
+cases pass in 3.91 seconds with zero skips/source guards. Independent strict five
+targets pass. Contradictory name/size/MIME/session scope and bool-as-size controls
+prove the ID survives while mount count stays zero; corrected readback finishes
+with one original upload. The fresh-cache writer/connected caller cohort remains
+held until its normal join and whole selection proof.
+
+### Paired writer and current-parent caller qualification
+
+The candidate normally joins ingestion's fresh writer f2552fa0 and current parent
+855a0c7a. The first full affected selection passed 1,201 cases and found seven
+old authored callback fixtures in test_model_context_migration that omitted their
+actual variant's required facts. Those controls now send the canonical source,
+milestone, fired timed-review, expired-call or proposal message. Their existing
+migration, untouched prior history, ID refusal, exact POST counts and failed-update
+no-delivery assertions are unchanged. The timed review adds no financial fields;
+the expired-call control explicitly declares its synthetic call snapshot instead
+of pretending an incomplete callback is a valid historical row.
+
+All 1,208 affected units now pass in 18.37 seconds, zero skips, p90 .148 seconds
+and maximum 2.992 seconds including fixtures. The callback factory independently
+passes strict typing; the older migration test module's whole typing remains open.
+The actual fresh Inbox-to-Session attachment ready/again control is green using
+real writer state and scoped metadata/resource readbacks. Full collected actual
+integration proof is still pending; no parent activation is claimed here.
+
+### Replay annotations and raw phase revision correction — qualification pending
+
+The wider direct-consumer integration selection passed 36 cases and exposed 22
+real replay/reference admission failures: production replay emits replay_at and
+its canonical clock facets, and authored references declare the exact origin plus
+historical=False. Analysis confirmed that catalog. ReplayBinding now models the
+actual clock fields; scalar-only aware clocks preserve unknown precision, while
+reported facets validate coherently. SourceMessage alone supports the closed
+nonhistorical reference pair, requires its actual run/time binding, and refuses
+captured-source relabelling. Actual replay continuation session selectors are
+represented on milestone/expired-call messages. Native live composition refuses
+these replay annotations. No retained payload or replay producer was edited.
+Independent strict checks and 109 focused unit cases passed in 4.44 seconds.
+
+A separate negative race control confirmed that Python dictionary equality masked
+a stored phase's integer-to-float change and allowed the old CAS to proceed. The
+phase guard now compares canonical raw JSON, preserving numeric kinds and field
+presence rather than overwriting changed/malformed state. An actual storage race
+control is added for Memory/PostgreSQL. The combined follow-up gate passed static
+strict eight-target and Ruff checks but stopped in wrapper database preparation:
+the owned PostgreSQL service reported recovery mode, before any tests collected.
+Positive CAS and wider replay integration qualification therefore remain pending;
+no parent activation or complete native/worker migration is claimed.
+
+### Qualified paired native file/source caller checkpoint
+
+The final native cohort joins current parent 855a0c7a and fresh-cache writer f2552fa0
+normally. Its actual Source/Runtime/Session/Telegram/native/replay/reference/E2E
+and Scheduler selection passes 1,605 units in 51.47 seconds, zero skips, p90 .284
+seconds and maximum 3.372 seconds including fixtures. The complete 167-case actual
+Linux integration selection passes in 65.28 seconds with zero skips and unchanged
+production source. Ten independently strict source/test targets pass; scoped Ruff,
+formatting, source comments and diff checks pass. The final complete-event version
+of the new dedicated expiry fixture also passes its Memory control separately.
+
+The enlarged consumer proof exposed one additional actual producer defect:
+Scheduler.expire_calls persisted CLOSED/EXPIRED but queued its earlier OPEN row.
+Ingestion delegated exactly that close/queue block; it now emits the actual returned
+persisted row. The dedicated real-runtime expiry/queue/consumer test compares the
+canonical stored snapshot and validates actual CallExpiredMessage admission on
+Memory/PostgreSQL; the original real replay expiry/divergence oracles remain intact.
+No schema guard, actual timing or frozen fixture was relaxed. The first new PG
+control failed because its authored event was incomplete; the existing complete
+synthetic event factory corrected only that fixture before the whole 167 passed.
+
+The earlier setup refusal during autonomous PG recovery, preceding negative CAS
+race, 22 replay annotation refusals and 7 old authored migration-shape failures
+remain separately retained evidence. No service, deadline, worker limit or guard
+was changed for this cohort. A raw canonical phase revision now prevents equal
+Python numeric values of different JSON kinds from masking concurrent mutation.
+
+This qualifies native input file preparation and its actual callers; it does not
+complete whole SessionService or Runtime. Eighteen Session signature
+gaps, untyped aggregate/body/tool/usage/event/barrier flows, required output-file
+sender migration, whole worker dispatch/body typing and assigned vendor programs
+remain active. The worker annotation is not an independently strict body claim.
+New independent reaction/milestone adapters and narrowed queue dependencies will
+join only after this preserved checkpoint, through their canonical peer commits.
+
+### Clean current-parent output-file caller companion
+
+This separate cohort starts at parent f24bd4a9 and normally joins ingestion's
+9b4443dd bound sender, without inactive native-input/worker/reaction APIs. The
+Session native-tool boundary admits filename/caption/call identity and resolves
+its actual owned journal message into the required question/session target before
+native GET. It never recovers a target from last_payload or a list position.
+Question identity is checked before reading the scoped output. The sender then
+rechecks the authoritative question and every matching delivery row under its
+question lock before a Telegram POST.
+
+The delegated sender lookup and send share one locked context producer. Known
+SENT/UNKNOWN outcomes return before native GET and need no active credential or
+unused bytes. Fresh lookup validates availability without returning credentials;
+actual send rechecks state. The use case keeps downloaded content opaque bytes,
+preserves the existing read attempts/delay/REST deadline and document limit, and
+validates the returned closed outcome before native-tool JSON serialization.
+Malformed cached model instances refuse. Binding changes during the native read
+cannot produce a Telegram POST or a GENERATED record for a foreign question.
+
+All 357 affected Telegram/ownership/migration/E2E units pass in 14.28 seconds,
+zero skips, p90 .144 seconds and maximum .993 seconds. The complete 45-case actual
+Linux integration selection passes in 20.96 seconds with zero skips/source guards,
+including actual PG binding/race/receipt cases and four E2Es. Independent strict
+helper/contracts/new-test three targets passes, as do scoped Ruff/format/comments/diff checks.
+The selected default Inbox/composition check reports only the imported baseline
+truth.py _condition_cache annotation at 6031; no suppression or unrelated edit was
+added. The first new PG controls omitted required at clocks; only their authored
+fixture receipts were completed before the whole actual selection passed.
+
+This does not close all SessionService typing. Constructor/aggregate/tool/event/
+usage/barrier flows, its existing unconfigured sender state, presentation-limit
+coupling and whole worker migration remain open. The separately qualified native
+input checkpoint db160129 stays immutable and is not an ancestor of this clean
+output companion. Exact retained maps/None sites are recorded in the machine
+exception ledger rather than a blanket legacy exemption.
+Worker queue completion/failure checkpoint (inactive dispatch branch)
+
+RepositoryWorkerQueue now guards completion and failure writes with actual job
+identity, kind, RUNNING status, claimed attempt and payload digest. Results remain
+JSON only at the actual ops.jobs.result persistence boundary; closed application
+result consumption is still pending in the whole worker migration. Sparse updates
+preserve retained receipt bytes and replace only owned lifecycle clock families.
+A missing completion clock is the pending phase, not an occurred timestamp.
+ApplicationBackoff must match the claimed attempt; a declared delivery delay of
+zero remains zero. Unknown/mutated ownership cannot acknowledge or fail another
+claim, and a second completion cannot overwrite the first result.
+
+Independent strict source/test three-target checking and Ruff pass. The first
+27-case unit run exposed an invalid attempt to use an occurrence-only helper for
+the pending completion clock (26 passed/one failed); after phase-correct sparse
+replacement all 27 units passed in 4.92 seconds and all 14 actual PostgreSQL cases
+passed in 8.53 seconds, zero skips with wrapper source guards. Evidence is external
+worker-completion-fixed-unit and worker-completion-actual. This qualifies only the
+queue lifecycle adapter; Runtime.worker activation, send_message orchestration,
+remaining Session body typing and assigned vendor work remain open.
+
+Typed actual message producer checkpoint (worker activation still held)
+
+SessionService.dispatch_message consumes MessageDispatchRequest with a closed
+AgentMessage, verified original payload digest and original queue wire evidence.
+Business routing reads the typed variant through NativeSessionResolution.from_message;
+ModelContext.message consumes the admitted request. Only context rendering and
+journal persistence use its original wire, preserving omitted versus explicitly
+null metadata rather than reconstructing evidence from normalized DTOs. Scout
+consumes the closed outcome and reads its actual authoritative session reference.
+The existing send_message caller admission/session-read boundary remains until
+the two reserved replay callers migrate. Native accepted, pending intent and
+historical indexed/unreported acceptance stay separate outcomes; refusal keeps
+its actual both-ID question target. No new native acceptance is inferred from an
+existing session row.
+
+ClaimedWork now retains its actual JobEnvelope and verifies both the original
+payload digest and re-admitted concrete command before dispatch. Constructed
+command substitution and wrong digests refuse. Independent strict seven targets
+pass (message dispatch, context, native session projections, worker contracts,
+worker repository and their two focused tests); scoped Ruff/format pass. Whole
+SessionService independent strict remains explicitly open, with its diagnostic
+retained externally; this checkpoint does not claim the aggregate is complete.
+
+Final source passed 128 connected units in 14.96 seconds (p90 .265 seconds,
+maximum .592 seconds) and all 29 collected actual PostgreSQL cases in 8.60 seconds,
+zero skips with unchanged wrapper fingerprints. Actual acknowledgment controls
+cover ACCEPTED/EMPTY/UNREPORTED, replay clock precision omitted versus explicit
+null, request JSON roundtrip, unchanged original native idempotency key and one
+POST on retry, plus original journal payload presence. Earlier alias-revalidation
+failures and new synthetic PG fixture admission failures remain diagnostic
+evidence; only authored fixture provenance/cursor/publication declarations were
+completed, with no historical evidence padding or production/schema relaxation.
+External proof prefix is worker-message-final3. Whole worker command dispatch,
+remaining Session body/tool/usage/event responsibilities and vendor work stay open.

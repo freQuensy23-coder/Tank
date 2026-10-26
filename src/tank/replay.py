@@ -15,13 +15,18 @@ from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from itertools import pairwise
 from pathlib import Path
-from typing import Self
+from typing import Protocol, Self
 
 from pydantic import JsonValue
 
 from tank.analysis.page_access import RecordedPageAccess, RecordedResultsOnlyPageReader
 from tank.contracts import DomainModel
 from tank.contracts.configuration import Thresholds
+from tank.contracts.milestone_checks import (
+    MilestoneCheckCommand,
+    MilestoneExpiryCommand,
+    MissedMilestoneIdentity,
+)
 from tank.contracts.provenance import ResolvedVersionIdentity
 from tank.contracts.source_items import SourceRelevance
 from tank.fixture_reference_code import CURRENT_PROJECTION_CODE, ProjectionCodeEvidence
@@ -30,6 +35,32 @@ from tank.market_schema import MARKET_COLUMNS
 from tank.telegram_inbox import RepositoryFollowupRefusals
 from tank.time_precision import Timestamp, interval_bounds, propagate_timestamp
 from tank.util import canonical_json, iso, parse_time
+
+
+class MilestoneTimerScheduler(Protocol):
+    async def milestone_check(self, command: MilestoneCheckCommand) -> None: ...
+    async def expire_milestone(self, command: MilestoneExpiryCommand, now: datetime) -> None: ...
+
+
+async def replay_milestone_timer(
+    scheduler: MilestoneTimerScheduler,
+    message: Mapping[str, JsonValue],
+    trigger: Timestamp,
+) -> None:
+    trigger = Timestamp.model_validate(trigger)
+    if trigger.value is None:
+        raise ValueError("Milestone timer replay requires its actual trigger")
+    milestone = message["milestone"]
+    if isinstance(milestone, dict):
+        missed = MissedMilestoneIdentity.from_notification(milestone)
+        if "due_at" in message and message["due_at"] != missed.due_at:
+            raise ValueError("Milestone timer deadline declarations conflict")
+        command = MilestoneExpiryCommand.from_notification(
+            dict(message, milestone=missed.kind, due_at=missed.due_at)
+        )
+        await scheduler.expire_milestone(command, parse_time(trigger.value))
+    else:
+        await scheduler.milestone_check(MilestoneCheckCommand.from_notification(message))
 
 
 class ReplaySourcePolicy(DomainModel):
@@ -1919,12 +1950,13 @@ async def replay_agent_session(
                     raise ReplayDivergence(
                         "Original condition trigger predates the fresh available-state clock"
                     )
-                await scheduler.eval_conditions(trigger.fields("cutoff"))
+                await scheduler.eval_conditions(trigger)
                 identity = (message.get("condition") or {}).get("cond_id")
                 canonical_kind = "CONDITION_FIRED"
             else:
-                await scheduler.milestone_check(message)
-                identity, canonical_kind = message.get("milestone"), kind
+                milestone = message["milestone"]
+                await replay_milestone_timer(scheduler, message, trigger)
+                identity, canonical_kind = milestone, kind
         finally:
             selected_timer_timestamp = None
         generated = [

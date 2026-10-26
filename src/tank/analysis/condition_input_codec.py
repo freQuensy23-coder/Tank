@@ -1,21 +1,20 @@
 """Storage-read projection for spot calculations and separately retained source evidence."""
 
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
 from datetime import datetime, timedelta
 from decimal import Decimal, InvalidOperation
-from types import MappingProxyType
-from typing import Literal
+from typing import Literal, Self
 
-from pydantic import JsonValue, ValidationError
+from pydantic import JsonValue, ValidationError, model_validator
 
-from tank.analysis.condition_graph_codec import flow_aggregate_projection_sha256
+from tank.analysis.condition_graph_codec import encode_scoped_condition_spot, flow_aggregate_projection_sha256
 from tank.analysis.condition_graph_contracts import (
-    BasicConditionSpot,
     ConditionFlowAggregateProjection,
     ConditionInterval,
+    ConditionSpotWindowGraph,
     ConditionWindow,
     ConditionWireClocks,
+    DirectWindowConditionSpot,
     FlowAggregateEvidenceRef,
 )
 from tank.analysis.condition_inputs import (
@@ -23,6 +22,7 @@ from tank.analysis.condition_inputs import (
     FlowSourceDescriptor,
     SpotCalculationInputs,
     SpotCalculationPolicy,
+    SpotCalculationSource,
     SpotFlowObservation,
     SpotFlowParent,
     SpotInstrument,
@@ -30,14 +30,14 @@ from tank.analysis.condition_inputs import (
     SpotWindowCalculationInputs,
 )
 from tank.analysis.spot import aggregate_projection
+from tank.contracts import DomainModel
 from tank.contracts.json import decode_json
 from tank.market.trade_contracts import EmptyBoundarySegment
 from tank.time_precision import Timestamp, offset_schedule, propagate_timestamp
 from tank.util import JsonInput, canonical_json, parse_iso_time, sha256
 
 
-@dataclass(frozen=True, slots=True)
-class FlowSourceProjection:
+class FlowSourceProjection(DomainModel):
     original: bytes
     effective: bytes
     scope_original: bytes
@@ -49,16 +49,32 @@ def source_descriptor_digest(descriptor: FlowSourceDescriptor) -> str:
     return sha256(decode_json(validated.model_dump_json()))
 
 
-class SpotSourceEvidence:
-    """Own canonical storage-read projections; these are not original HTTP bodies."""
+class FlowEvidenceEntry(DomainModel):
+    reference: FlowInputEvidenceRef
+    projection: FlowSourceProjection
 
-    __slots__ = ("_rows", "_by_digest")
 
-    def __init__(self, rows: Mapping[FlowInputEvidenceRef, FlowSourceProjection]) -> None:
+class SpotSourceEvidence(DomainModel):
+    """Immutable canonical storage-read snapshots, never claimed as provider bytes."""
+
+    entries: tuple[FlowEvidenceEntry, ...]
+
+    @classmethod
+    def from_rows(cls, rows: Mapping[FlowInputEvidenceRef, FlowSourceProjection]) -> Self:
+        return cls(
+            entries=tuple(
+                FlowEvidenceEntry(reference=reference, projection=projection)
+                for reference, projection in rows.items()
+            )
+        )
+
+    @model_validator(mode="after")
+    def actual_evidence(self) -> Self:
         checked: dict[FlowInputEvidenceRef, FlowSourceProjection] = {}
         digests: dict[str, FlowInputEvidenceRef] = {}
         slots: set[tuple[str, int, int | None]] = set()
-        for reference, projection in rows.items():
+        for entry in self.entries:
+            reference, projection = entry.reference, entry.projection
             descriptor = projection.descriptor
             slot = (reference.collection, reference.row_index, reference.parent_index)
             if slot in slots:
@@ -92,11 +108,16 @@ class SpotSourceEvidence:
                     or parent_descriptor.scope != projection.descriptor.scope
                 ):
                     raise ValueError("Embedded spot lineage must bind its actual parent row and scope")
-        self._rows = MappingProxyType(checked)
-        self._by_digest = MappingProxyType(digests)
+        return self
+
+    def projection(self, reference: FlowInputEvidenceRef) -> FlowSourceProjection:
+        for entry in self.entries:
+            if entry.reference == reference:
+                return entry.projection
+        raise ValueError("Spot source evidence reference is not captured")
 
     def original(self, reference: FlowInputEvidenceRef) -> dict[str, JsonValue]:
-        payload = self._rows[reference].original
+        payload = self.projection(reference).original
         if sha256(payload) != reference.source_projection_sha256:
             raise ValueError("Spot source projection evidence changed")
         value = decode_json(payload)
@@ -106,16 +127,22 @@ class SpotSourceEvidence:
 
     def effective(self, reference: FlowInputEvidenceRef) -> dict[str, JsonValue]:
         self.original(reference)
-        value = decode_json(self._rows[reference].effective)
+        projection = self.projection(reference)
+        if sha256(projection.effective) != projection.descriptor.effective_projection_sha256:
+            raise ValueError("Effective spot source evidence changed")
+        value = decode_json(projection.effective)
         if not isinstance(value, dict):
             raise ValueError("Effective spot scope projection must remain an object")
         return value
 
     def source_reference(self, source_evidence_sha256: str) -> FlowInputEvidenceRef:
-        return self._by_digest[source_evidence_sha256]
+        for entry in self.entries:
+            if entry.reference.source_evidence_sha256 == source_evidence_sha256:
+                return entry.reference
+        raise ValueError("Spot source evidence identity is not captured")
 
     def descriptor(self, reference: FlowInputEvidenceRef) -> FlowSourceDescriptor:
-        return self._rows[reference].descriptor
+        return self.projection(reference).descriptor
 
     def resolve_flow_aggregate(
         self, reference: FlowAggregateEvidenceRef, *, expected: ConditionFlowAggregateProjection
@@ -138,19 +165,42 @@ class SpotSourceEvidence:
         return effective
 
     def references(self) -> tuple[FlowInputEvidenceRef, ...]:
-        return tuple(self._rows)
+        return tuple(entry.reference for entry in self.entries)
 
 
-@dataclass(frozen=True, slots=True)
-class DecodedSpotInputs:
+class DecodedSpotInputs(DomainModel):
     inputs: SpotCalculationInputs
     source_evidence: SpotSourceEvidence
 
 
-@dataclass(frozen=True, slots=True)
-class SpotConditionEvaluation:
-    result: BasicConditionSpot
+class SpotConditionEvaluation(DomainModel):
+    result: DirectWindowConditionSpot
     source_evidence: SpotSourceEvidence
+
+
+class SpotWindowEvaluation(DomainModel):
+    graph: ConditionSpotWindowGraph
+    source: SpotCalculationSource
+    source_evidence: SpotSourceEvidence
+    clocks: ConditionWireClocks
+
+    @model_validator(mode="after")
+    def actual_source_scope(self) -> Self:
+        self.clocks.bounds(self.graph.spots["EVENT"].interval)
+        if self.clocks.token_id != self.source.token_id or any(
+            value.token_id != self.source.token_id
+            or value.interval.cutoff != self.source.cutoff
+            or value.interval.start < self.source.start
+            for value in self.graph.spots.values()
+        ):
+            raise ValueError("Spot evaluation must bind its actual source subject and interval")
+        return self
+
+    def wire_spots(self) -> dict[ConditionWindow, dict[str, JsonValue]]:
+        return {
+            name: encode_scoped_condition_spot(value, self.source_evidence, clocks=self.clocks)
+            for name, value in self.graph.spots.items()
+        }
 
 
 def _wire(row: Mapping[str, JsonInput]) -> tuple[dict[str, JsonValue], bytes]:
@@ -521,12 +571,11 @@ def decode_spot_inputs(
             tickers=tuple(ticker_values),
             policy=policy,
         ),
-        source_evidence=SpotSourceEvidence(originals),
+        source_evidence=SpotSourceEvidence.from_rows(originals),
     )
 
 
-@dataclass(frozen=True, slots=True)
-class DecodedSpotWindows:
+class DecodedSpotWindows(DomainModel):
     inputs: SpotWindowCalculationInputs
     source_evidence: SpotSourceEvidence
     clocks: ConditionWireClocks

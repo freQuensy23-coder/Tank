@@ -19,17 +19,17 @@ import (
 )
 
 type memStore struct {
-	mu       sync.Mutex
-	queued   []points.Row
-	rows     map[string]map[string]map[string]any
-	writes   map[string]int
-	hot      []hotstate.Record
-	runs     []map[string]any
-	requests []requeststate.Record
+	mu                sync.Mutex
+	queued            []points.Row
+	rows              map[string]map[string]map[string]any
+	writes            map[string]int
+	hot               []hotstate.Record
+	backfillRevisions map[string]uint64
+	requests          []requeststate.Record
 }
 
 func newMemStore() *memStore {
-	return &memStore{rows: map[string]map[string]map[string]any{}, writes: map[string]int{}}
+	return &memStore{rows: map[string]map[string]map[string]any{}, writes: map[string]int{}, backfillRevisions: map[string]uint64{}}
 }
 
 func (m *memStore) Sink(r points.Row) {
@@ -57,19 +57,7 @@ func (m *memStore) Flush(context.Context) error {
 			continue
 		}
 		table[r.Key] = row
-		if r.Collection == "mkt.backfill_runs" {
-			found := false
-			for index, original := range m.runs {
-				if original["backfill_id"] == row["backfill_id"] {
-					m.runs[index] = copyRow(row)
-					found = true
-					break
-				}
-			}
-			if !found {
-				m.runs = append(m.runs, copyRow(row))
-			}
-		}
+
 		m.writes[r.Collection]++
 	}
 	m.queued = nil
@@ -199,20 +187,6 @@ func (m *memStore) BackfillAnchors(_ context.Context, scopes []hotstate.Scope) (
 		}
 	}
 	return result, nil
-}
-
-func (m *memStore) BackfillRuns(_ context.Context, statuses []string) ([]map[string]any, error) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	var out []map[string]any
-	for _, r := range m.runs {
-		for _, st := range statuses {
-			if r["status"] == st {
-				out = append(out, copyRow(r))
-			}
-		}
-	}
-	return out, nil
 }
 
 func requestText(value string) *string { return &value }

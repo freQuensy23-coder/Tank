@@ -26,7 +26,6 @@ from tank.contracts.progress import PublicationReceipt
 from tank.delivery import DeliveryError, DeliveryService
 from tank.event_tools import EventToolService
 from tank.ops_progress import RepositorySourceProgress, item_progress, session_progress
-from tank.runtime import Runtime
 from tank.runtime_contracts import ItemJob
 from tank.settings import Settings
 from tank.sources import SourceService
@@ -350,16 +349,23 @@ async def test_agent_acceptance_completion_and_failure_are_not_confused_with_app
 
 @pytest.mark.parametrize("kind", ["FILTER_ITEM", "ROUTE_ITEM", "AGENT_MESSAGE"])
 @pytest.mark.parametrize("status", ["FAILED", "EXPIRED"])
-async def test_terminal_jobs_and_restart_reconciliation_report_where_processing_stopped(kind, status) -> None:
+async def test_terminal_jobs_and_restart_reconciliation_report_where_processing_stopped(
+    kind: str, status: str, tmp_path: Path
+) -> None:
+    from runtime_failure_fixtures import runtime_failure_fixture
+
+    from tank.runtime_contracts import SuppliedFailureReason
+
     repo = MemoryRepository()
-    runtime = object.__new__(Runtime)
-    runtime.repo, runtime.settings = repo, delivery_settings()
     await repo.put("ingest.source_items", "i", {"source_id": "S30", "item_id": "i"})
     job = await repo.enqueue(kind, {"item_id": "i", "kind": "NEW_ITEM"}, "failed")
     job.update(status=status, last_error="TimeoutError")
     await repo.put("ops.jobs", job["job_id"], job)
-    await runtime.reconcile_delivery_failures()
-    await runtime.terminal_delivery_failure(job, "TimeoutError")
+    async with runtime_failure_fixture(repo, tmp_path, ops_progress_enabled=True) as runtime:
+        await runtime.reconcile_delivery_failures()
+        await runtime.terminal_delivery_failure_wire(
+            job, SuppliedFailureReason(kind="SUPPLIED", value="TimeoutError")
+        )
     rows = await notices(repo)
     assert len(rows) == 1
     assert rows[0]["stage"] == ("PROCESSING_EXPIRED" if status == "EXPIRED" else "PROCESSING_FAILED")
