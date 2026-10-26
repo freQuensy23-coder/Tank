@@ -2986,6 +2986,33 @@
         "test_unknown_earlier_delivery_returns_without_native_get_or_telegram_post",
         "test_rebound_question_after_native_get_is_rechecked_before_telegram_post"
       ]
+    },
+    {
+      "sites": [
+        {
+          "path": "src/tank/agents/message_dispatch.py",
+          "symbol": "MessageDispatchRequest.original_wire"
+        },
+        {
+          "path": "src/tank/agents/context.py",
+          "symbol": "ModelContext.message"
+        },
+        {
+          "path": "src/tank/agents/sessions.py",
+          "symbol": "SessionService.send_message"
+        },
+        {
+          "path": "src/tank/runtime_dispatch_contracts.py",
+          "symbol": "ClaimedWork.job"
+        }
+      ],
+      "kind": "original queue wire evidence and transitional session read boundary",
+      "reason": "Closed AgentMessage and RuntimeCommand fields supply business facts. The actual original wire dictionary and its verified digest preserve input field presence, context evidence, persisted journal identity and original idempotency key; normalized DTO serialization is not asserted to be original evidence. ClaimedWork retains the authoritative JobEnvelope for actual job ownership and claim-aware reaction coordination. Existing send_message remains caller wire admission followed by authoritative session lookup while reserved replay callers migrate; it does not infer native acceptance from row existence. Whole Session aggregate/body and whole Runtime worker typing remain open.",
+      "validation": [
+        "test_actual_message_dispatch_preserves_wire_key_and_confirmed_phase_on_retry",
+        "test_mutated_admitted_message_cannot_change_original_owner_or_identity",
+        "test_constructed_work_cannot_replace_command_behind_original_claim"
+      ]
     }
   ]
 }

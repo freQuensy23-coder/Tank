@@ -15,6 +15,35 @@ from tank.agents.outbound_inputs import (
 )
 from tank.contracts import DomainModel
 from tank.contracts.session_followups import FollowupRefusalTarget
+from tank.runtime_contracts import AgentMessage, parse_agent_message
+from tank.util import sha256
+
+
+class MessageDispatchRequest(DomainModel):
+    """Admitted command plus its original queue wire evidence and stable identity."""
+
+    message: AgentMessage
+    original_wire: dict[str, JsonValue]
+    message_id: str = Field(pattern=r"^[0-9a-f]{64}$")
+
+    @classmethod
+    def from_wire(cls, payload: dict[str, JsonValue]) -> Self:
+        return cls.model_validate(
+            {
+                "message": parse_agent_message(payload),
+                "original_wire": payload,
+                "message_id": sha256(payload),
+            },
+            by_name=True,
+        )
+
+    @model_validator(mode="after")
+    def original_identity(self) -> Self:
+        if sha256(self.original_wire) != self.message_id:
+            raise ValueError("Message dispatch identity differs from its original wire evidence")
+        if parse_agent_message(self.original_wire) != self.message:
+            raise ValueError("Message dispatch command differs from its original wire evidence")
+        return self
 
 
 class MessageDispatchIdentity(DomainModel):

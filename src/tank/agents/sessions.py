@@ -45,7 +45,14 @@ from tank.agents.input_ownership import (
     ToolInputLineage,
     UnprovedInputOwnership,
 )
-from tank.agents.message_dispatch import PendingMessageDispatch, find_message_dispatch
+from tank.agents.message_dispatch import (
+    DeclinedQuestionDispatch,
+    MessageDispatchOutcome,
+    MessageDispatchRequest,
+    PendingMessageDispatch,
+    find_message_dispatch,
+    observe_message_dispatch,
+)
 from tank.agents.native_file_preparation import NativeFilePreparationService, NativeFileTransport
 from tank.agents.native_inputs import (
     AcceptedNativeInput,
@@ -78,7 +85,6 @@ from tank.agents.native_sessions import (
     NativeSessionIdentityMetadata,
     NativeSessionResolution,
     NativeStoredSessionBinding,
-    native_role_for_message,
 )
 from tank.agents.native_transport import (
     ManagedEventCursor,
@@ -183,7 +189,6 @@ from tank.runtime_contracts import (
     ScoutReviewJob,
     SourceMessage,
     UserQuestionMessage,
-    parse_agent_message,
 )
 from tank.telegram_inbox import DOCUMENT_LIMIT
 from tank.time_precision import Timestamp, collection_clock, offset_schedule, propagate_timestamp
@@ -663,25 +668,40 @@ class SessionService:
                 question_prompt(question)
 
     async def send_message(self, payload: dict[str, JsonValue]) -> dict[str, JsonValue] | None:
-        message = parse_agent_message(payload)
+        """Admit original caller wire and return the authoritative persisted session."""
+        outcome = await self.dispatch_message(MessageDispatchRequest.from_wire(payload))
+        if isinstance(outcome, DeclinedQuestionDispatch):
+            return None
+        session: dict[str, JsonValue] | None = await self.repo.get("ops.agent_sessions", outcome.session_id)
+        if session is None:
+            raise KeyError(outcome.session_id)
+        require_owned_session_identity(outcome.session_id, session)
+        return session
+
+    async def dispatch_message(self, request: MessageDispatchRequest) -> MessageDispatchOutcome:
+        request = MessageDispatchRequest.model_validate(request, by_name=True)
+        message = request.message
+        payload = request.original_wire
+        key = request.message_id
         if isinstance(message, UserQuestionMessage):
-            await self.validate_new_question_input(message, sha256(payload))
+            await self.validate_new_question_input(message, key)
             if not await self.continuable(message):
-                return None
+                return DeclinedQuestionDispatch(
+                    phase="NOT_CONTINUABLE",
+                    target=FollowupRefusalTarget(
+                        question_id=message.question_id, session_id=message.session_id
+                    ),
+                )
         item = (
             await self.repo.get("ingest.source_items", message.item_id)
             if isinstance(message, SourceMessage)
             else None
         )
-        request = NativeSessionResolution.from_wire(
-            payload,
-            role=native_role_for_message(message.kind),
-            replay=self.settings.replay,
-        )
-        async with self.repo.lock("session-mapping:" + request.mapping_identity()):
-            session = await self.resolve(request)
+        resolution = NativeSessionResolution.from_message(message, replay=self.settings.replay)
+        async with self.repo.lock("session-mapping:" + resolution.mapping_identity()):
+            session = await self.resolve(resolution)
             binding = ContextBinding.from_session(session)
-        sid, key = binding.session_id, sha256(payload)
+        sid = binding.session_id
         migrating = LegacyToolContext.from_record(session).needs_migration(CONTEXT_VERSION)
         if migrating or isinstance(message, UserQuestionMessage):
             if (await self.sync_tools(sid)).status == "BUSY":
@@ -689,7 +709,7 @@ class SessionService:
             session = await self.repo.get("ops.agent_sessions", sid)
             if session is None:
                 raise KeyError(sid)
-        content = await ModelContext(self.repo, self.settings, session).message(payload, item)
+        content = await ModelContext(self.repo, self.settings, session).message(request, item)
         note = CONTEXT_TRANSITION[bool(session.get("proposal_id"))]
         if migrating:
             content["context_update"] = note
@@ -707,11 +727,17 @@ class SessionService:
                             FollowupRefusalTarget(question_id=message.question_id, session_id=sid),
                             eligibility,
                         )
-                        return None
+                        return DeclinedQuestionDispatch(
+                            phase="NOT_CONTINUABLE",
+                            target=FollowupRefusalTarget(question_id=message.question_id, session_id=sid),
+                        )
                     self.reopen_for_question(session, message, key)
-                if key in session.get("messages", []):
+                if session is None:
+                    raise KeyError(sid)
+                retained = find_message_dispatch(session, key)
+                if retained is not None and not isinstance(retained, PendingMessageDispatch):
                     self.start_stream(sid)
-                    return session
+                    return retained
                 intent = next(
                     (row for row in session.get("message_log", []) if row["message_id"] == key), None
                 )
@@ -757,7 +783,7 @@ class SessionService:
 
             session = await self.post_message_intent(sid, key)
         self.start_stream(sid)
-        return session
+        return observe_message_dispatch(session, key)
 
     async def post_message_intent(self, sid: str, key: str) -> dict[str, JsonValue]:
         session = await self.repo.get("ops.agent_sessions", sid)
@@ -2547,9 +2573,17 @@ class SessionService:
         if identity.prp_id != payload.proposal_id:
             raise ValueError("Scout proposal identity conflicts with its storage key")
         message = ScoutMessage(kind="SCOUT_REVIEW", proposal_id=payload.proposal_id)
-        session = await self.send_message(message.model_dump(mode="json", exclude_unset=True, by_alias=True))
-        if not isinstance(session, dict):
-            raise TypeError("Scout message did not produce a persisted native session")
+        outcome = await self.dispatch_message(
+            MessageDispatchRequest.from_wire(
+                message.model_dump(mode="json", exclude_unset=True, by_alias=True)
+            )
+        )
+        if isinstance(outcome, DeclinedQuestionDispatch):
+            raise ValueError("Scout dispatch cannot be a question refusal")
+        session: dict[str, JsonValue] | None = await self.repo.get("ops.agent_sessions", outcome.session_id)
+        if session is None:
+            raise KeyError(outcome.session_id)
+        require_owned_session_identity(outcome.session_id, session)
         reference = ScoutSessionReference.model_validate(
             {field: session[field] for field in ("session_id", "proposal_id") if field in session}
         )
