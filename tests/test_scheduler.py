@@ -10,6 +10,7 @@ from source_support import fixture_request_budgets, fixture_versions
 
 from tank.analysis.page_access import LivePageAccess
 from tank.analysis.watch_contracts import WatchCondition, WatchLeaf
+from tank.contracts.milestone_checks import MilestoneCheckCommand
 from tank.models import Record
 from tank.runtime_contracts import ConditionFiredMessage, parse_agent_message
 from tank.scheduler import Scheduler
@@ -279,8 +280,8 @@ async def test_planned_backup_copies_bundles_and_dumps_only(
     ).maintenance(utcnow(), force=True, prune=False)
     final = Path(result["path"])
     manifest = verify_backup(final)
-    assert set(manifest["roots"]) == {"bundles"}
-    assert set(manifest["files"]) == {"tank.dump", "oma.dump", "bundles/hash.json.zst"}
+    assert set(manifest.roots) == {"bundles"}
+    assert set(manifest.files) == {"tank.dump", "oma.dump", "bundles/hash.json.zst"}
     assert not (final / "data").exists() and not (final / "config").exists()
     assert (data / "market-cache").exists()
 
@@ -965,8 +966,8 @@ async def test_backup_excludes_fake_auth_secrets_and_browser_state_in_every_evid
     assert b"PRIVATE_" not in all_bytes and b"FAKE_STALE" not in all_bytes
     assert not (backup / "data").exists()
     assert not (backup / "config").exists() and not (backup / "logs").exists()
-    assert manifest["roots"] == {"bundles": str((data / "bundles").resolve())}
-    assert "subscription sign-in directory" in manifest["excluded"]
+    assert manifest.roots == {"bundles": str((data / "bundles").resolve())}
+    assert "subscription sign-in directory" in manifest.excluded
     assert all(path.exists() for path in (auth, secrets / "gateway_key"))
 
 
@@ -991,7 +992,20 @@ def test_existing_backup_with_newly_protected_credential_is_rejected_before_read
         (backup / name).write_bytes(b"dump")
         files[name] = hashlib.sha256(b"dump").hexdigest()
     files["data/auth-volume/auth.json"] = hashlib.sha256(b"FAKE_PRIVATE_CREDENTIAL").hexdigest()
-    (backup / "manifest.json").write_text(json.dumps({"files": files, "roots": {"data": str(data)}}))
+    (backup / "manifest.json").write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "created_at": clock_iso(),
+                "reference_base": str(tmp_path),
+                "files": files,
+                "roots": {"data": str(data)},
+                "database_dumps": ["tank.dump", "oma.dump"],
+                "excluded": [],
+                "restore": "Synthetic protected-path refusal fixture",
+            }
+        )
+    )
     (backup / "COMPLETE").write_text("complete")
     original = Path.read_bytes
 
@@ -1063,7 +1077,9 @@ async def test_milestone_payload_contains_only_verified_outcome_and_quotes() -> 
         ],
     }
     await repo.put("evt.events", "e", event)
-    await scheduler.milestone_check({"event_id": "e", "milestone": "VOTE", "due_at": "2026-01-01T00:00:00Z"})
+    await scheduler.milestone_check(
+        MilestoneCheckCommand(event_id="e", milestone="VOTE", due_at="2026-01-01T00:00:00Z")
+    )
     jobs = await repo.list("ops.jobs")
     payload = jobs[0]["payload"]
     assert (
@@ -1071,7 +1087,9 @@ async def test_milestone_payload_contains_only_verified_outcome_and_quotes() -> 
         and payload["quotes"] == ["Official vote passed"]
         and not payload["verification_required"]
     )
-    await scheduler.milestone_check({"event_id": "e", "milestone": "VOTE", "due_at": "2026-02-01T00:00:00Z"})
+    await scheduler.milestone_check(
+        MilestoneCheckCommand(event_id="e", milestone="VOTE", due_at="2026-02-01T00:00:00Z")
+    )
     jobs = await repo.list("ops.jobs")
     pending = next(j["payload"] for j in jobs if j["payload"]["verification_required"])
     assert pending["outcome"] is None and pending["quotes"] == []
@@ -1249,7 +1267,18 @@ def legacy_full_backup_fixture(settings, now):
         path.relative_to(final).as_posix(): file_digest(path) for path in final.rglob("*") if path.is_file()
     }
     (final / "manifest.json").write_text(
-        json.dumps({"files": files, "roots": {label: str(root.resolve()) for label, root in roots.items()}})
+        json.dumps(
+            {
+                "version": 1,
+                "created_at": iso(now),
+                "reference_base": str(Path.cwd()),
+                "files": files,
+                "roots": {label: str(root.resolve()) for label, root in roots.items()},
+                "database_dumps": ["tank.dump", "oma.dump"],
+                "excluded": sorted(protected),
+                "restore": "Synthetic historical recovery fixture",
+            }
+        )
     )
     (final / "COMPLETE").write_text(iso(now))
     return final

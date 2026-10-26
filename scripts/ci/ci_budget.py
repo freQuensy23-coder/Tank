@@ -21,6 +21,7 @@ REQUIRED_JOBS = {
     "test / Python unit complete",
     "test / Python integration complete",
     "test / Node local units and contracts",
+    "test / Node persistence contracts",
     "capture / go",
     "capture / parity",
 }

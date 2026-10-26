@@ -3,6 +3,7 @@ package capture
 import (
 	"context"
 	"errors"
+	"github.com/freQuensy23-coder/Tank/capture/internal/backfillstate"
 	"github.com/freQuensy23-coder/Tank/capture/internal/hotstate"
 	"github.com/freQuensy23-coder/Tank/capture/internal/requeststate"
 	"log/slog"
@@ -23,7 +24,9 @@ type Store interface {
 	LatestRecords(ctx context.Context, collection string, groupBy []string, timeField string, ids []string) ([]map[string]any, error)
 	HotTokens(ctx context.Context) ([]hotstate.Record, error)
 	BackfillAnchors(ctx context.Context, scopes []hotstate.Scope) ([]hotstate.AnchorRecord, error)
-	BackfillRuns(ctx context.Context, statuses []string) ([]map[string]any, error)
+	BackfillObligations(ctx context.Context) ([]backfillstate.Observation, error)
+	StartBackfill(ctx context.Context, start backfillstate.Start) (backfillstate.Acknowledgement, error)
+	FinishBackfill(ctx context.Context, completion backfillstate.Completion) (backfillstate.Acknowledgement, error)
 	ClaimRequest(ctx context.Context, writer string, now time.Time) (*requeststate.Claimed, error)
 	PruneFetches(ctx context.Context, before time.Time) (int64, error)
 	FinishRequest(ctx context.Context, completion requeststate.Completion) error

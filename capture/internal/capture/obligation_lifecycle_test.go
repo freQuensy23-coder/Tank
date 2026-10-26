@@ -24,7 +24,7 @@ func TestFailedObligationCanRetrySameIdentityWithoutConcurrentDuplicate(t *testi
 		"finished_at": nil, "finished_at_prec": nil, "finished_at_prec_reason": "PENDING",
 		"status": "PENDING", "reason": "PRE_EVENT_CAPTURE_PENDING",
 	}
-	r.mem.runs = []map[string]any{copyRow(original)}
+	r.mem.seedBackfill("BF-retry", original)
 	r.s.obligations(ctx)
 	r.s.wg.Wait()
 	r.mem.mu.Lock()
@@ -35,9 +35,8 @@ func TestFailedObligationCanRetrySameIdentityWithoutConcurrentDuplicate(t *testi
 	}
 	pending := copyRow(original)
 	pending["anchor"], pending["anchor_prec"], pending["anchor_prec_reason"] = pytime.ISO(anchor), "EXACT", nil
+	r.mem.seedBackfill("BF-retry", pending)
 	r.mem.mu.Lock()
-	r.mem.runs[0] = copyRow(pending)
-	r.mem.rows["mkt.backfill_runs"]["BF-retry"] = copyRow(pending)
 	before := r.mem.writes["mkt.backfill_runs"]
 	r.mem.mu.Unlock()
 	for range cap(r.s.slots) {
