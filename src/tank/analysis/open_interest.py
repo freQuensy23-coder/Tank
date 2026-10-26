@@ -38,10 +38,10 @@ from tank.analysis.oi_synchronization import (
 from tank.analysis.statistics_contracts import FloatBounds, FloatRange
 from tank.contracts import DomainModel
 from tank.time_precision import Timestamp
-from tank.util import parse_iso_time
+from tank.util import JsonInput, parse_iso_time, sha256
 
 if TYPE_CHECKING:
-    from tank.analysis.oi_composite_history import ObservedOICompositeWindow
+    from tank.analysis.oi_composite_history import ObservedOICompositeWindow, OICompositeHistoryBaseline
 
 
 type OIObservationExclusionReason = Literal[
@@ -428,11 +428,12 @@ def _history[Result: _OIHistoryBaseline](
 class OpenInterestCalculator:
     """Own immutable admitted reads once; keep actual assembly in each request."""
 
-    __slots__ = ("_source", "_policy")
+    __slots__ = ("_source", "_policy", "_by_reference")
 
     def __init__(self, source: OIReadSnapshot, policy: OISelectionPolicy) -> None:
         self._source = OIReadSnapshot.model_validate(source)
         self._policy = OISelectionPolicy.model_validate(policy)
+        self._by_reference = {point.evidence: point for point in self._source.observations}
 
     @property
     def token_id(self) -> str:
@@ -440,10 +441,73 @@ class OpenInterestCalculator:
 
     def observation(self, reference: OIInputEvidenceRef) -> OIObservation:
         actual = OIInputEvidenceRef.model_validate(reference)
-        for point in self._source.observations:
-            if point.evidence == actual:
-                return point
-        raise ValueError("OI observation reference is not owned by this admitted read")
+        if actual not in self._by_reference:
+            raise ValueError("OI observation reference is not owned by this admitted read")
+        return self._by_reference[actual]
+
+    @property
+    def instruments(self) -> tuple[DerivativeInstrument, ...]:
+        return self._source.instruments
+
+    def history_identity(self, request: OIWindowRequest, *, instrument_ids: tuple[str, ...]) -> str:
+        actual = OIWindowRequest.model_validate(request)
+        if actual.start.value is None:
+            raise ValueError("OI history identity requires its actual start")
+        known = {point.instrument_id for point in self._source.instruments}
+        if len(instrument_ids) != len(set(instrument_ids)) or not set(instrument_ids) <= known:
+            raise ValueError("OI history identity cannot borrow an unrelated instrument cohort")
+        start = parse_iso_time(actual.start.value)
+        horizon = start - timedelta(days=self._policy.lookback_days)
+        witnesses = tuple(
+            (point.evidence, point.visible_at(actual.assembled_at))
+            for point in self._source.observations
+            if point.instrument.instrument_id in instrument_ids
+            and (at := point.reported_time()) is not None
+            and horizon <= at < start
+        )
+        identity: JsonInput = {
+            "token_id": self._source.token_id,
+            "instruments": tuple(
+                point for point in self._source.instruments if point.instrument_id in instrument_ids
+            ),
+            "start": actual.start,
+            "cutoff": actual.cutoff,
+            "policy": self._policy,
+            "history": witnesses,
+        }
+        return sha256(identity)
+
+    def history_for_selection(
+        self,
+        request: OIWindowRequest,
+        *,
+        selection: ObservedOISynchronizedSelection,
+        rules: CapturedOISynchronizationRules,
+    ) -> "OICompositeHistoryBaseline":
+        from tank.analysis.oi_composite_history import _composite_history
+        from tank.analysis.oi_synchronization import _qualified_rule
+
+        actual = OIWindowRequest.model_validate(request)
+        selection = ObservedOISynchronizedSelection.model_validate(selection)
+        rules = CapturedOISynchronizationRules.model_validate(rules)
+        if actual.start.value is None or actual.cutoff.value is None:
+            raise ValueError("OI history requires its actual logical interval")
+        if (selection.token_id, selection.interval.start, selection.interval.cutoff) != (
+            self._source.token_id,
+            parse_iso_time(actual.start.value),
+            parse_iso_time(actual.cutoff.value),
+        ):
+            raise ValueError("OI history selection must preserve its actual subject and interval")
+        if rules.scope != OIRuleReadScope.from_snapshot(self._source):
+            raise ValueError("OI history rules must preserve their actual source scope")
+        for contribution in selection.sources:
+            for point, rule in (
+                (contribution.start, contribution.start_rule),
+                (contribution.end, contribution.end_rule),
+            ):
+                if self.observation(point.evidence) != point or _qualified_rule(point, rules) != rule:
+                    raise ValueError("OI history cannot borrow a foreign source or rule witness")
+        return _composite_history(self._source, self._policy, actual, selection=selection, rules=rules)
 
     def synchronize(
         self,
@@ -483,7 +547,7 @@ class OpenInterestCalculator:
         window: ConditionWindow,
     ) -> "ObservedOICompositeWindow | UnavailableOISynchronizedSelection":
         """Preserve actual same-measure pair cohorts before computing composite ranges."""
-        from tank.analysis.oi_composite_history import ObservedOICompositeWindow, _composite_history
+        from tank.analysis.oi_composite_history import ObservedOICompositeWindow
 
         actual = OIWindowRequest.model_validate(request)
         selection = self.synchronize(actual, rules=rules, policy=policy, window=window)
@@ -494,7 +558,7 @@ class OpenInterestCalculator:
         return ObservedOICompositeWindow(
             status="OBSERVED",
             selection=selection,
-            history=_composite_history(self._source, self._policy, actual, selection=selection, rules=rules),
+            history=self.history_for_selection(actual, selection=selection, rules=rules),
         )
 
     def native_baseline(

@@ -19,8 +19,8 @@ from tank.analysis.condition_graph_contracts import (
     UnrequestedConditionIncrementalVolumes,
     UnrequestedConditionLiquidations,
 )
-from tank.analysis.oi_composite_history import ObservedOICompositeWindow
-from tank.analysis.oi_synchronization import OISynchronizationPolicy
+from tank.analysis.oi_history_cache import OIHistoryCache
+from tank.analysis.oi_synchronization import ObservedOISynchronizedSelection, OISynchronizationPolicy
 from tank.analysis.oi_usd import RecordedOIUsd, recorded_oi_synchronization, recorded_oi_usd
 from tank.analysis.oi_window_statistics import OIStatisticsFacts, observed_oi_statistics, oi_window_statistics
 from tank.analysis.open_interest import OIInstrumentWindow, OIWindowRequest, OpenInterestCalculator
@@ -65,6 +65,7 @@ def calculate_oi_family(
     *,
     rules: CapturedOISynchronizationRules | UncapturedOISynchronizationRules,
     synchronization_policy: OISynchronizationPolicy,
+    history_cache: OIHistoryCache,
     window: ConditionWindow,
 ) -> BasicConditionDerivatives:
     """Compute observed endpoints and like-for-like composite history from owned reads."""
@@ -74,13 +75,9 @@ def calculate_oi_family(
     interval = ConditionInterval(
         window=window, start=parse_iso_time(request.start.value), cutoff=parse_iso_time(request.cutoff.value)
     )
-    native = {
-        point.instrument.instrument_id: point for point in calculator.native_baseline(request, window=window)
-    }
-    usd = {
-        point.instrument.instrument_id: point
-        for point in calculator.recorded_usd_baseline(request, window=window)
-    }
+    population = history_cache.individual(calculator, request, window=window)
+    native = {point.instrument.instrument_id: point for point in population.native}
+    usd = {point.instrument.instrument_id: point for point in population.recorded_usd}
     venues = tuple(
         ConditionDerivativeVenue(
             venue=point.instrument.venue,
@@ -97,20 +94,21 @@ def calculate_oi_family(
         )
         for point in calculator.select(request)
     )
-    composite = calculator.composite_window(
-        request, rules=rules, policy=synchronization_policy, window=window
-    )
+    selection = calculator.synchronize(request, rules=rules, policy=synchronization_policy, window=window)
     synchronized: ConditionSynchronizedOpenInterest | UnavailableConditionSynchronizedOpenInterest
-    if isinstance(composite, ObservedOICompositeWindow):
-        witness = recorded_oi_synchronization(composite.selection)
+    if isinstance(selection, ObservedOISynchronizedSelection):
+        if not isinstance(rules, CapturedOISynchronizationRules):
+            raise ValueError("Observed OI requires its actual captured synchronization rules")
+        history = history_cache.composite_baseline(
+            calculator, request, selection=selection, rules=rules, window=window
+        )
+        witness = recorded_oi_synchronization(selection)
         initial, final = witness.start, witness.end
         start_usd, end_usd = initial.usd_total(), final.usd_total()
         detail: MissingOIUsdDetail | None = None
         if start_usd is None or end_usd is None:
             components = tuple(
-                recorded_oi_usd(point)
-                for source in composite.selection.sources
-                for point in (source.start, source.end)
+                recorded_oi_usd(point) for source in selection.sources for point in (source.start, source.end)
             )
             detail = (
                 "REPORTED_USD_INVALID"
@@ -122,7 +120,7 @@ def calculate_oi_family(
             )
         synchronized = ConditionSynchronizedOpenInterest(
             status="OBSERVED",
-            venues=tuple(dict.fromkeys(source.instrument.venue for source in composite.selection.sources)),
+            venues=tuple(dict.fromkeys(source.instrument.venue for source in selection.sources)),
             values=observed_oi_statistics(
                 OIStatisticsFacts(
                     interval=interval,
@@ -131,8 +129,8 @@ def calculate_oi_family(
                     usd_start=start_usd,
                     usd_end=end_usd,
                     usd_detail=detail,
-                    native_normal_range=composite.history.native_normal_range,
-                    usd_normal_range=composite.history.usd_normal_range,
+                    native_normal_range=history.native_normal_range,
+                    usd_normal_range=history.usd_normal_range,
                     start_observed_at=initial.at,
                     end_observed_at=final.at,
                 )

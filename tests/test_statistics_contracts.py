@@ -4,9 +4,9 @@ from decimal import Decimal
 import pytest
 from pydantic import ValidationError
 
+from tank.analysis.baseline_cache import BaselineCaches
 from tank.analysis.statistics_contracts import (
     BaselineCache,
-    BaselineCaches,
     BaselineRetention,
     BitcoinContextHistory,
     DecimalBounds,

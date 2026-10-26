@@ -15,9 +15,10 @@ from tank.analysis.condition_graph_contracts import (
 )
 from tank.analysis.oi_composite_history import ObservedOICompositeWindow
 from tank.analysis.oi_family import calculate_oi_family
+from tank.analysis.oi_history_cache import OIHistoryCache
 from tank.analysis.oi_synchronization import OISynchronizationPolicy
 from tank.analysis.open_interest import OIWindowRequest, OpenInterestCalculator
-from tank.analysis.statistics_contracts import FloatBounds, FloatRange
+from tank.analysis.statistics_contracts import BaselineRetention, FloatBounds, FloatRange
 from tank.time_precision import chosen_boundary, collection_clock
 from tank.util import JsonInput, iso, parse_iso_time
 
@@ -156,6 +157,7 @@ def test_actual_oi_only_family_preserves_native_and_unrequested_other_facts() ->
         request,
         rules=rules,
         synchronization_policy=OISynchronizationPolicy(eligible_venues=("binance",)),
+        history_cache=OIHistoryCache(BaselineRetention(128)),
         window="W1H",
     )
     assert isinstance(result.synchronized, ConditionSynchronizedOpenInterest)

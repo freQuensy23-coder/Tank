@@ -259,6 +259,8 @@ class DepthBaseline(DomainModel):
 
 type BaselineFamily = Literal[
     "open_interest",
+    "oi_individual_history",
+    "oi_composite_history",
     "funding",
     "hourly_returns",
     "beta",
@@ -312,29 +314,3 @@ class BaselineCache[T]:
         if key not in self._entries:
             self.put(key, build())
         return self._entries[key]
-
-
-@dataclass(frozen=True, slots=True)
-class BaselineCaches:
-    open_interest: BaselineCache[OpenInterestBaseline]
-    funding: BaselineCache[FundingBaseline]
-    hourly_returns: BaselineCache[HourlyReturns]
-    beta: BaselineCache[BetaEstimate]
-    relative_history: BaselineCache[RelativeHistory]
-    bitcoin_context: BaselineCache[BitcoinContextHistory]
-    native_volume: BaselineCache[NativeVolumeIndex]
-    depth: BaselineCache[DepthBaseline]
-
-    @classmethod
-    def with_capacity(cls, capacity: int) -> Self:
-        retention = BaselineRetention(capacity)
-        return cls(
-            open_interest=BaselineCache("open_interest", retention),
-            funding=BaselineCache("funding", retention),
-            hourly_returns=BaselineCache("hourly_returns", retention),
-            beta=BaselineCache("beta", retention),
-            relative_history=BaselineCache("relative_history", retention),
-            bitcoin_context=BaselineCache("bitcoin_context", retention),
-            native_volume=BaselineCache("native_volume", retention),
-            depth=BaselineCache("depth", retention),
-        )
