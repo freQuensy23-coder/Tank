@@ -24,7 +24,7 @@ from tank.agents.pipeline_contracts import (
 )
 from tank.agents.routing import RoutingItem, RoutingSelector, item_state, item_view
 from tank.contracts.configuration import Thresholds
-from tank.contracts.job_repository import JobRepository, QueueStore
+from tank.contracts.job_repository import QueueStore
 from tank.contracts.progress import SourceProgressSink
 from tank.contracts.provenance import ResolvedVersionIdentity
 from tank.contracts.repository import Collection, DocumentStore, Repository
@@ -40,6 +40,7 @@ from tank.contracts.source_items import (
     SourceRoutingMessage,
     WebEvidenceItem,
 )
+from tank.job_repository import JobRepository
 from tank.runtime_contracts import ItemJob
 from tank.time_precision import collection_clock, offset_schedule
 from tank.util import TimeInput, iso, utcnow

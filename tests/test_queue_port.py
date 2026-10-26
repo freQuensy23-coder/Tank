@@ -7,8 +7,9 @@ from typing import Self
 import pytest
 from pydantic import JsonValue
 
-from tank.contracts.job_repository import JobRepository, QueueStore
+from tank.contracts.job_repository import QueueStore
 from tank.contracts.jobs import InvalidJobClaim, JobClaimMutation, JobClaimScope, JobEnvelope
+from tank.job_repository import JobRepository
 from tank.storage import MemoryRepository
 from tank.time_precision import Timestamp
 from tank.util import JsonInput, TimeInput

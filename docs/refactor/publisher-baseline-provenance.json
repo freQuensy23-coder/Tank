@@ -1,0 +1,57 @@
+{
+  "schema": "tank.publisher.legacy-baseline-availability.v1",
+  "status": "AUTHENTIC_PAYLOAD_UNAVAILABLE",
+  "actor_id": "rbf5CQKQgKNVl4SfO",
+  "build_id": "c99YRMlKXube5V0gV",
+  "build_status": "SUCCEEDED",
+  "build_number": "0.2.2",
+  "actor_version": "0.2",
+  "actor_version_source_type": "SOURCE_FILES",
+  "actor_version_build_tag": "direct",
+  "source_digest": "a9a53d45f1cdc30634da29a71ae9d6a0a4a5b57e1f60eaf8a443c7cb7568e310",
+  "digest_algorithm": "For every nonfolder source entry, decode original TEXT UTF-8 or BASE64 bytes; map each exact filename to its lowercase SHA256 hex digest; SHA256 the Python json.dumps(mapping, sort_keys=True, separators=(',', ':')).encode() bytes, retaining the original default ensure_ascii=True.",
+  "authoritative_artifact": "Original GET https://api.apify.com/v2/actor-builds/c99YRMlKXube5V0gV response with complete actVersion.sourceFiles, bound to the actor/build/status/version fields above",
+  "legacy_source_git_revision": null,
+  "legacy_source_git_revision_reason": "No verified Git revision for the legacy provider source has been retained; API version0.2/build0.2.2 are not Git revisions.",
+  "publisher_build_id_introduction": "f3905d0d2a9c0d31d92b0d35b0667f997059c508",
+  "publisher_build_id_introduction_at": "2026-10-24T18:47:13Z",
+  "digest_pin_introduction": "e1408097a7823c231adebb4661bf9ac4af37dde3",
+  "digest_pin_introduction_at": "2026-10-24T19:16:16Z",
+  "pin_introduction_artifact_limit": "That commit added code/docs/tests, not the authentic baseline source payload. Its tests substituted a synthetic single-file main.py payload ending in a newline and changed BASELINE_DIGEST to match. Those positives do not prove the pinned baseline.",
+  "read_only_searches": [
+    "Exact build ID and digest in owned retained JSON/JSONL evidence",
+    "Current tracked source, tests and documentation",
+    "All reachable Git history for introduction of the exact pin",
+    "Transferred server-snapshot and owner-snapshot JSON, JSONL and Markdown evidence",
+    "Parent-reported review of25 retained market/capture acceptance packets; these are not an actor baseline source artifact"
+  ],
+  "retained_unavailable_note": "server-snapshot/NEXT_COHORTS-history-20261025T204921Z.md explicitly records no exact baseline actor payload in owned evidence",
+  "search_limit": "These bounded Git/artifact searches do not prove the pinned digest is false or identify the original provider source revision. No authentic provider response or matching source table has been established, and no credentialed provider retrieval has been performed.",
+  "positive_legacy_bootstrap_proven": false,
+  "positive_legacy_activation_proven": false,
+  "positive_legacy_rollback_proven": false,
+  "compatibility_disposition": "HELD_FOR_PARENT_REVIEW; preserve exact identity/digest/allowlist and authentic refusal semantics, never fabricate a matching positive payload",
+  "parent_additional_read_only_searches": {
+    "historical_actor_revisions": 14,
+    "file_tables_compared": 28,
+    "table_variants": [
+      "Full tracked apify/x-reader table",
+      "Same table without .actor entries"
+    ],
+    "matching_pinned_digest": false,
+    "f390_workflow_artifacts": "No artifacts available",
+    "e140_unit_artifact": "Contemporary X worker/package and baseline constants only; not an original provider source response",
+    "old_code_executed": false,
+    "provider_calls": false,
+    "evidence": [
+      {
+        "file": "publisher-legacy-git-manifest-search.json",
+        "sha256": "97e8b863eac883f7e06a5a132a794f33f8d1e91f700a283835987b5d6f4729bb"
+      },
+      {
+        "file": "publisher-legacy-e140-artifact-inspection.json",
+        "sha256": "7f3fec0054fee051fb6fa7d2136334b403ba89cc6673a8ff9ed7cc8705343168"
+      }
+    ]
+  }
+}

@@ -47,6 +47,7 @@ from tank.analysis.condition_graph_contracts import (
     ObservedConditionClose,
     ObservedConditionOpenInterest,
     SelectiveConditionValues,
+    UnavailableConditionBasis,
     UnavailableConditionClose,
     UnavailableConditionFunding,
     WindowedConditionSpot,
@@ -1019,8 +1020,7 @@ def test_derivative_window_refuses_invented_funding_dispersion_and_absent_sync_v
         funding=funding,
         liquidations=UnrequestedConditionLiquidations(status="NOT_REQUESTED"),
         oi_temporal_exclusions=None,
-        basis_bps=None,
-        basis_reason="INCOMPLETE",
+        basis=UnavailableConditionBasis(status="UNAVAILABLE", reason="INCOMPLETE"),
     )
     graph = BasicConditionDerivatives(
         token_id="T",
@@ -4397,3 +4397,31 @@ def synchronized_oi_fixture(
             ),
         ),
     )
+
+
+def test_unestimable_float_baseline_does_not_make_observed_volatility_normal() -> None:
+    from tank.analysis.condition_graph_contracts import (
+        ConditionVolatilityCompression,
+        ObservedConditionVolatility,
+    )
+
+    graph = ConditionVolatilityCompression(
+        token_id="T",
+        reference_venue="venue",
+        cutoff=AT,
+        window="W24H",
+        realized=ObservedConditionVolatility(
+            status="OBSERVED",
+            value=0.0,
+            completed_hour=Timestamp(
+                value="2026-10-17T12:00:00Z", precision=None, precision_reason="NOT_CAPTURED"
+            ),
+            return_count=24,
+            resolution_s=3600,
+        ),
+        normal_range=FloatRange(bounds=None, reason="NOT_ESTIMABLE"),
+    )
+    assert graph.realized.value == 0.0
+    state = graph.classification()
+    assert state.status == "UNAVAILABLE" and state.value is None
+    assert state.reason == "NOT_ESTIMABLE"

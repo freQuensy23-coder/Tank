@@ -11,8 +11,16 @@ from pydantic import BeforeValidator, Field, field_validator, model_validator
 
 from tank.analysis.execution import BookWalkRequest, BookWalkResult, execute_book_walk
 from tank.analysis.oi_ratio import NativeOiChangeFailure, UsdOiChangeFailure, native_oi_change, usd_oi_change
-from tank.analysis.positioning import MissingOIDecomposition, OIDecomposition, oi_class_from_comparisons
+from tank.analysis.positioning import (
+    MissingOIUsdDetail,
+    OiDecompositionResult,
+    oi_class_from_comparisons,
+)
 from tank.analysis.price_reference import ReferencePriceReturn
+from tank.analysis.recorded_oi_decomposition import (
+    DefinedRecordedOiDecomposition,
+    UndefinedRecordedOiDecomposition,
+)
 from tank.analysis.statistics_contracts import (
     BetaEstimate,
     DecimalRange,
@@ -1396,9 +1404,9 @@ class ObservedConditionOpenInterest(DomainModel):
     oi_usd_end: Decimal | None = Field(ge=0)
     oi_usd_chg_pct: float | None = Field(ge=-1)
     oi_usd_chg_pct_reason: UsdOiChangeFailure | None
-    oi_usd_reason: Literal["INCOMPLETE"] | None
-    oi_usd_detail: Literal["SYNCHRONIZED_MARK_OR_QUOTE_RATE_UNAVAILABLE"] | None
-    decomposition: OIDecomposition | MissingOIDecomposition
+    oi_usd_reason: Literal["INCOMPLETE", "NOT_ESTIMABLE"] | None
+    oi_usd_detail: MissingOIUsdDetail | None
+    decomposition: OiDecompositionResult
     native_normal_range: FloatRange
     usd_normal_range: FloatRange
     native_oi_vs_normal: Literal["BELOW", "WITHIN", "ABOVE"] | None
@@ -1428,9 +1436,20 @@ class ObservedConditionOpenInterest(DomainModel):
         if (self.oi_usd_chg_pct, self.oi_usd_chg_pct_reason) != (usd.value, usd.reason):
             raise ValueError("USD OI change requires its actual endpoints and derived absence reason")
         missing_usd = self.oi_usd_start is None or self.oi_usd_end is None
+        if isinstance(self.decomposition, (DefinedRecordedOiDecomposition, UndefinedRecordedOiDecomposition)):
+            points = self.decomposition.endpoints
+            if (points.native_start, points.native_end, points.usd_start, points.usd_end) != (
+                self.oi_native_start,
+                self.oi_native_end,
+                self.oi_usd_start,
+                self.oi_usd_end,
+            ):
+                raise ValueError("Recorded OI decomposition must bind the actual native and USD endpoints")
         if missing_usd:
             if self.oi_usd_reason is None or self.oi_usd_detail is None:
                 raise ValueError("Missing USD endpoints require their actual source gap")
+            if (self.oi_usd_reason == "NOT_ESTIMABLE") != (self.oi_usd_detail == "REPORTED_USD_INVALID"):
+                raise ValueError("Invalid reported USD requires its explicit qualification cause")
         elif self.oi_usd_reason is not None or self.oi_usd_detail is not None:
             raise ValueError("Known USD endpoints cannot claim a missing-conversion gap")
         if (self.native_oi_vs_normal, self.native_beyond) != (native.position, native.beyond):
@@ -1665,6 +1684,23 @@ class ConditionOITemporalExclusions(DomainModel):
     latest_observation: ConditionSupplementalOIObservation
 
 
+class ObservedConditionBasis(DomainModel):
+    status: Literal["OBSERVED"]
+    value_bps: Decimal
+
+
+class UnavailableConditionBasis(DomainModel):
+    status: Literal["UNAVAILABLE"]
+    reason: Literal["INCOMPLETE"]
+
+
+class UnrequestedConditionBasis(DomainModel):
+    status: Literal["NOT_REQUESTED"]
+
+
+type ConditionBasis = ObservedConditionBasis | UnavailableConditionBasis | UnrequestedConditionBasis
+
+
 class ConditionDerivativeVenue(DomainModel):
     venue: str = Field(min_length=1, pattern=r"\S")
     instrument_id: str = Field(min_length=1, pattern=r"\S")
@@ -1672,14 +1708,7 @@ class ConditionDerivativeVenue(DomainModel):
     funding: ConditionFunding
     liquidations: ConditionLiquidations | UnrequestedConditionLiquidations
     oi_temporal_exclusions: ConditionOITemporalExclusions | None
-    basis_bps: Decimal | None
-    basis_reason: Literal["INCOMPLETE"] | None
-
-    @model_validator(mode="after")
-    def actual_basis_availability(self) -> Self:
-        if (self.basis_bps is None) != (self.basis_reason is not None):
-            raise ValueError("Missing derivative basis requires the actual mark/index evidence gap")
-        return self
+    basis: ConditionBasis
 
 
 class ConditionOISynchronizationContribution(DomainModel):
@@ -2207,7 +2236,9 @@ class EnrichedConditionDerivativeVenue(ConditionDerivativeVenue):
     @model_validator(mode="after")
     def actual_basis_comparison(self) -> Self:
         bounds = self.support.basis_normal_range.bounds
-        value = self.basis_bps
+        if isinstance(self.basis, UnrequestedConditionBasis):
+            raise ValueError("Full derivative enrichment requires its actual basis evaluation")
+        value = self.basis.value_bps if isinstance(self.basis, ObservedConditionBasis) else None
         expected = (
             None
             if bounds is None or value is None
@@ -4477,7 +4508,7 @@ class ObservedConditionVolatilityState(DomainModel):
 class UnavailableConditionVolatilityState(DomainModel):
     status: Literal["UNAVAILABLE"]
     value: None
-    reason: Literal["INCOMPLETE", "INSUFFICIENT_HISTORY", "DEGENERATE_HISTORY"]
+    reason: Literal["INCOMPLETE", "INSUFFICIENT_HISTORY", "DEGENERATE_HISTORY", "NOT_ESTIMABLE"]
 
 
 class ConditionVolatilityCompression(DomainModel):

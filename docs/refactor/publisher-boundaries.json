@@ -1,0 +1,374 @@
+{
+  "status": "HELD_NOT_ACTIVATED",
+  "implementation_revision": "87dc6a7c",
+  "not_a_lint_exclusion": true,
+  "entries": [
+    {
+      "file": "src/tank/deployment/runtime.py",
+      "symbol": "verify_runtime",
+      "site": "os.environ.get(TANK_BUILD_SHA)",
+      "reason": "An absent image identity is intake evidence; it fails the exact orchestrator comparison. No development identity, selected-release identity or clock is substituted.",
+      "evidence": [
+        "quality-publisher-runtime-probe-2.log"
+      ]
+    },
+    {
+      "file": "src/tank/deployment/contracts.py",
+      "symbol": "DeploymentTransaction.previous_active",
+      "site": "required nullable field",
+      "reason": "Bootstrap has no prior active journal. The key remains required; only the pinned baseline may be an untracked previous build.",
+      "evidence": [
+        "quality-publisher-journal.log"
+      ]
+    },
+    {
+      "file": "src/tank/deployment/contracts.py",
+      "symbol": "DeploymentTransaction.previous_release_sha",
+      "site": "CommitSHA or exact empty historical sentinel",
+      "reason": "An absent prior Tank marker is serialized as the existing empty-string wire representation. It is not inferred from malformed or mismatched metadata.",
+      "evidence": [
+        "quality-publisher-journal.log"
+      ]
+    },
+    {
+      "file": "src/tank/deployment/contracts.py",
+      "symbol": "RolledBackTransaction.rolled_back",
+      "site": "strict true flag versus absent in-flight variant",
+      "reason": "The original in-flight record omits this field; a present rollback confirmation must be actual true. No false default is added.",
+      "evidence": [
+        "quality-publisher-unique-unit.log"
+      ]
+    },
+    {
+      "file": "src/tank/deployment/apify_api.py",
+      "symbol": "ApiEnvelope.data",
+      "site": "dict[str, JsonValue]",
+      "reason": "This is the actual foreign HTTP object envelope. Private projection immediately validates consumed records; mutation acknowledgments are discarded and require later authoritative readback.",
+      "evidence": [
+        "quality-publisher-unique-http.log"
+      ]
+    },
+    {
+      "file": "src/tank/deployment/api_contracts.py",
+      "symbol": "SourceFolder",
+      "site": "foreign extra fields ignored",
+      "reason": "Only name and strict true folder marker determine this non-file entry. Unconsumed provider metadata cannot become file bytes.",
+      "evidence": [
+        "quality-publisher-unique-http.log"
+      ]
+    },
+    {
+      "file": "src/tank/deployment/api_contracts.py",
+      "symbol": "FileSourceProjection.validate_file_marker",
+      "site": "raw JSON object membership",
+      "reason": "A present folder marker must be actual false for a file; omission is classified through required TEXT/BASE64 format and content without inventing stored folder=false metadata.",
+      "evidence": [
+        "quality-publisher-api-file-boundary.log"
+      ]
+    },
+    {
+      "file": "src/tank/deployment/api_contracts.py",
+      "symbol": "TextSourceFile, Base64SourceFile",
+      "site": "foreign extra fields ignored",
+      "reason": "The consumed name/format/content and any present folder marker are validated. Unrelated provider file metadata is neither forwarded nor used as application facts.",
+      "evidence": [
+        "quality-publisher-api-file-boundary.log"
+      ]
+    },
+    {
+      "file": "src/tank/deployment/api_contracts.py",
+      "symbol": "SourceEntries.decoded",
+      "site": "dict[str, bytes]",
+      "reason": "Keys are variable source filenames and values are opaque file bytes. Duplicate filenames, malformed markers, paths, encoding and formats refuse; embedded JSON text stays opaque.",
+      "evidence": [
+        "quality-publisher-unique-http.log"
+      ]
+    },
+    {
+      "file": "src/tank/deployment/api_contracts.py",
+      "symbol": "SourceSnapshot, HistoricalSourceSnapshot",
+      "site": "foreign extra fields ignored",
+      "reason": "Source type/files and historical version/tag are mandatory consumed facts. Other actual provider snapshot metadata is outside the source-byte provenance contract.",
+      "evidence": [
+        "quality-publisher-unique-http.log"
+      ]
+    },
+    {
+      "file": "src/tank/deployment/api_contracts.py",
+      "symbol": "DirectTag, ActorTags, ActorSnapshot, VersionSummary",
+      "site": "foreign extra fields ignored",
+      "reason": "The direct build identity and actual version list are required. Unknown provider fields or other tags cannot supply missing direct/version facts.",
+      "evidence": [
+        "quality-publisher-unique-http.log"
+      ]
+    },
+    {
+      "file": "src/tank/deployment/api_contracts.py",
+      "symbol": "BuildObservation.status",
+      "site": "nonempty foreign status text",
+      "reason": "Observed provider status is not guessed success. Publisher._source_candidate explicitly accepts READY/RUNNING while waiting and SUCCEEDED only for completion; all other observed states refuse.",
+      "evidence": [
+        "quality-publisher-unique-http.log",
+        "quality-publisher-state-machine-unit.log"
+      ]
+    },
+    {
+      "file": "src/tank/deployment/api_contracts.py",
+      "symbol": "CompletedBuildSnapshot, HistoricalBuildSnapshot, UploadedVersion",
+      "site": "foreign extra fields ignored",
+      "reason": "Every consumed identity/status/source or no-tag/no-env claim is required. Extra provider statistics are not application records and cannot replace a missing claim.",
+      "evidence": [
+        "quality-publisher-unique-http.log"
+      ]
+    },
+    {
+      "file": "src/tank/deployment/api_contracts.py",
+      "symbol": "ProviderErrorDetail.type, ProviderErrorDetail.message, ProviderErrorEnvelope.error",
+      "site": "nullable diagnostic absence",
+      "reason": "HTTP failure exists independently of optional provider diagnostics. Missing/malformed details yield a named UNREPORTED reason while preserving the actual HTTP status; no message or success is guessed.",
+      "evidence": [
+        "quality-publisher-unique-http.log"
+      ]
+    },
+    {
+      "file": "src/tank/deployment/api_contracts.py",
+      "symbol": "VersionUpload.buildTag, UploadedVersion.buildTag",
+      "site": "required null",
+      "reason": "The publisher must not activate a tag while preparing source. Explicit null is a required upload/readback claim, not an omitted-value default.",
+      "evidence": [
+        "quality-publisher-api-main165.log"
+      ]
+    },
+    {
+      "file": "src/tank/deployment/artifacts.py",
+      "symbol": "source_files.files, package_release.files, package_release.inputs",
+      "site": "filename-to-opaque-bytes collections",
+      "reason": "Actual resource filenames vary. Structured release metadata remains strict models; only source resources use maps. Legacy inputs retain the exact original two filenames and immutable allowlist.",
+      "evidence": [
+        "quality-publisher-actor-closure.log"
+      ]
+    },
+    {
+      "file": "src/tank/deployment/artifact_contracts.py",
+      "symbol": "SourceBundle.digest.hashes",
+      "site": "transient filename-to-hash map",
+      "reason": "This is the specified canonical resource digest protocol, not an application domain record. It preserves path/byte binding and ignores unrelated repository commits.",
+      "evidence": [
+        "quality-publisher-actor-closure.log",
+        "quality-actor-package-unit.log"
+      ]
+    },
+    {
+      "file": "src/tank/deployment/artifact_contracts.py",
+      "symbol": "ActorDefinition",
+      "site": "foreign actor-definition projection",
+      "reason": "The actual .actor/actor.json control document requires integer1/name and forbids any buildTag key. Unrelated actor-definition fields are retained only as opaque source bytes; duplicate keys refuse before projection.",
+      "evidence": [
+        "quality-publisher-unique-unit.log"
+      ]
+    },
+    {
+      "file": "src/tank/deployment/artifacts.py",
+      "symbol": "package_release.bundle",
+      "site": "local None for exact historical variant",
+      "reason": "A verified historical release has no selected actor source directory. This branch is authorized only by the immutable compatibility digests, never an unknown-source fallback.",
+      "evidence": [
+        "quality-publisher-artifacts.log"
+      ]
+    },
+    {
+      "file": "src/tank/deployment/journal.py",
+      "symbol": "PublisherJournal._read",
+      "site": "bytes or None",
+      "reason": "Only physical FileNotFound means absent. JSON null, missing required fields and duplicate keys remain errors; raw files are not rewritten.",
+      "evidence": [
+        "quality-publisher-unique-unit.log"
+      ]
+    },
+    {
+      "file": "src/tank/deployment/journal.py",
+      "symbol": "PublisherJournal._write.remaining",
+      "site": "stat_result or None during owned-stage cleanup",
+      "reason": "A successfully replaced stage is absent. Only the exact owned inode may be removed, and other I/O failures propagate.",
+      "evidence": [
+        "quality-publisher-journal.log"
+      ]
+    },
+    {
+      "file": "src/tank/deployment/journal.py",
+      "symbol": "PublisherJournal._remove",
+      "site": "FileNotFound idempotence",
+      "reason": "Removing an already absent named journal is an explicit idempotent effect. Other path/type/permission failures refuse.",
+      "evidence": [
+        "quality-publisher-journal.log"
+      ]
+    },
+    {
+      "file": "tests/test_publisher_api.py",
+      "symbol": "RequestObservation.authorization, api_peer.location",
+      "site": "nullable physical HTTP facts",
+      "reason": "A request can lack Authorization and an HTTP response can lack Location. The tests record actual observations; each fixture explicitly chooses the response status/location.",
+      "evidence": [
+        "quality-publisher-unique-http.log"
+      ]
+    },
+    {
+      "file": "tests/test_publisher_api.py",
+      "symbol": "ApiPeer.received",
+      "site": "fresh list factory",
+      "reason": "This is a per-fixture request counter with no application or admission meaning. Actual transport effects populate it.",
+      "evidence": [
+        "quality-publisher-unique-http.log"
+      ]
+    },
+    {
+      "file": "src/tank/deployment/artifact_contracts.py",
+      "symbol": "SourceBundle.files",
+      "site": "dict[SourcePath, bytes]",
+      "reason": "This is the actual variable filename-to-opaque-byte resource collection. SourceArtifact binds its digest and required control files before provider effects; it is not a domain record facade.",
+      "evidence": [
+        "quality-publisher-command-unit.log"
+      ]
+    },
+    {
+      "file": "src/tank/deployment/publisher.py",
+      "symbol": "Publisher.provenance.expected_digest",
+      "site": "required nullable argument",
+      "reason": "None explicitly requests identity/marker/source self-consistency without an independently supplied expected digest. Every source build still validates its marker against actual resource bytes; a present expected digest adds a comparison.",
+      "evidence": [
+        "quality-publisher-state-machine-unit.log"
+      ]
+    },
+    {
+      "file": "src/tank/deployment/publisher.py",
+      "symbol": "Publisher._source_candidate.cached, active",
+      "site": "explicit absent observation branches",
+      "reason": "Missing cache is physical absence, not build success. Cached reuse and active-source reuse independently revalidate provider provenance; otherwise source upload/readback/build are performed.",
+      "evidence": [
+        "quality-publisher-state-machine-unit.log"
+      ]
+    },
+    {
+      "file": "src/tank/deployment/publisher.py",
+      "symbol": "Publisher.prepare.previous_release, previous_active",
+      "site": "required physical absence distinctions",
+      "reason": "Only absent Tank marker serializes the preserved empty historical sentinel. Missing active journal is allowed solely for the verified pinned baseline, not an arbitrary observed tag.",
+      "evidence": [
+        "quality-publisher-state-machine-unit.log"
+      ]
+    },
+    {
+      "file": "src/tank/deployment/publisher.py",
+      "symbol": "Publisher.rollback, Publisher.rollback_finish",
+      "site": "no-pending idempotence",
+      "reason": "An absent transaction is an explicit named no-pending result or already-finished cleanup. Present transactions retain full provenance, readback and rollback-marker checks.",
+      "evidence": [
+        "quality-publisher-command-unit.log"
+      ]
+    },
+    {
+      "file": "src/tank/deployment/markers.py",
+      "symbol": "FilesystemTankReleaseState.deployed",
+      "site": "CommitSHA or None",
+      "reason": "Only FileNotFound means absent. Present empty, malformed, symbolic or nonregular files refuse and never become bootstrap absence.",
+      "evidence": [
+        "quality-publisher-state-machine-unit.log"
+      ]
+    },
+    {
+      "file": "src/tank/deployment/commands.py",
+      "symbol": "execute_command.previous_release",
+      "site": "None to exact empty output line",
+      "reason": "This retains the existing shell-facing representation of a genuinely absent prior Tank marker. It does not fabricate an identity or reinterpret malformed stored evidence.",
+      "evidence": [
+        "quality-publisher-command-unit.log"
+      ]
+    },
+    {
+      "file": "src/tank/deployment/cli.py",
+      "symbol": "run.PublisherCommand.model_validate",
+      "site": "raw argparse action/release mapping",
+      "reason": "This exact two-field mapping is a command-line intake projection, immediately validated into the closed action/commit contract before composition. Application state is not carried in generic mappings.",
+      "evidence": [
+        "quality-publisher-cli-unit-2.log"
+      ]
+    },
+    {
+      "file": "src/tank/deployment/apify_api.py",
+      "symbol": "ApifyAPI._request.body, NoRedirect.redirect_request",
+      "site": "required nullable HTTP body and redirect refusal",
+      "reason": "GET/build POST operations explicitly choose no body; upload/tag requests use named variants. Returning None from the urllib redirect hook refuses forwarding publisher credentials to redirected destinations.",
+      "evidence": [
+        "quality-publisher-unique-http.log"
+      ]
+    },
+    {
+      "file": "src/tank/deployment/credentials.py",
+      "symbol": "host_token.match",
+      "site": "regex no-match",
+      "reason": "Unrelated host dotenv lines are intentionally ignored. Exactly one supported APIFY_API_TOKEN assignment is required; environment values cannot supply a missing assignment.",
+      "evidence": [
+        "quality-publisher-credential-unit.log"
+      ]
+    },
+    {
+      "file": "src/tank/deployment/source_runtime.py",
+      "symbol": "archive_sources, verify_source_archive",
+      "site": "actual Git-tree records and exact source-path membership sets",
+      "reason": "The variable Git filename set is foreign repository evidence, decoded into named GitSource records. Required runtime files, every source blob, regular-entry constraints, all expected archive paths and absence of extra or symbolic entries are checked. No missing metadata or selected-release source substitutes for the orchestrator archive.",
+      "evidence": [
+        "quality-publisher-source-runtime-unit.log"
+      ]
+    },
+    {
+      "file": "src/tank/deployment/runtime_contracts.py",
+      "symbol": "RuntimeDescriptor, RuntimeEvidence, SourceArchiveEvidence",
+      "site": "separate declaration and named observation origins",
+      "reason": "Package declarations identify required image/metadata coordinates. IMAGE_RUNTIME verifies the declared image identity before runtime probes; SOURCE_ARCHIVE proves explicit orchestrator Git bytes without borrowing TANK_BUILD_SHA or claiming an executed image.",
+      "evidence": [
+        "quality-publisher-source-runtime-unit.log"
+      ]
+    },
+    {
+      "file": "scripts/deploy/publisher_worker.bash",
+      "symbol": "lease decoding and check_container",
+      "site": "exact four-line host bootstrap wire and label projection",
+      "reason": "Host bootstrap runs before the qualified Python image is available. It accepts only a fixed version, full CID, owned nonce and production image reference in a private owned regular lease, and verifies role/nonce/image/root labels before removal. It never sources/evaluates the file or stops an unverified object. This is a bounded shell/Docker interface, not a waiver for application records.",
+      "evidence": [
+        "quality-publisher-launch-unit-4.log"
+      ]
+    },
+    {
+      "file": "tests/publisher_docker_stand.py",
+      "symbol": "DockerState.containers, create.labels, DockerCall.arguments",
+      "site": "typed container-identity collection and raw foreign CLI arguments",
+      "reason": "Container identities are variable keys whose values are strict named mutable stand records; raw command argv/label pairs are the actual Docker boundary observation, immediately projected into required named fields. Unknown flags and missing consumed facts refuse. The stand is not presented as real Docker behavior qualification.",
+      "evidence": [
+        "quality-publisher-launch-unit-4.log"
+      ]
+    },
+    {
+      "file": "tests/publisher_docker_stand.py",
+      "symbol": "ContainerState.process_id, create.cid_file",
+      "site": "required nullable physical child observation; transient absent required argv option",
+      "reason": "Created/completed stand containers may have no child. A running blocked case records its real spawned PID; missing cidfile refuses rather than inventing identity.",
+      "evidence": [
+        "quality-publisher-launch-unit-4.log"
+      ]
+    },
+    {
+      "file": "tests/test_publisher_worker.py",
+      "symbol": "finish_owned_stand_processes",
+      "site": "narrow ProcessLookupError cleanup idempotence",
+      "reason": "Cleanup acts only on the test's actual recorded spawned child, with PID equality against its own marker and running state. An already exited child needs no second signal; permission and other errors are not swallowed.",
+      "evidence": [
+        "quality-publisher-launch-unit-4.log"
+      ]
+    }
+  ],
+  "remaining": [
+    "Typed publisher orchestration/CLI is implemented but held. Existing script/workflow activation, selected-source versus orchestrator runtime packaging, interruption/drain ownership and migration of the original publisher tests remain open.",
+    "No genuine positive original baseline source payload is retained; no pinned digest is changed or synthetic positive substituted.",
+    "Global Python, Go, JavaScript, vendor and meaningful-test audits remain open. This explicit ledger is not a lint exclusion or exhaustive global completion claim."
+  ]
+}

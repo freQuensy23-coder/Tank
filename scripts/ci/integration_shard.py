@@ -18,9 +18,14 @@ def parse_shard(value: str) -> tuple[int, int]:
 def shard_for(path: str, count: int) -> int:
     if count == 3:
         match path:
-            case "tests/test_fixture_reference.py" | "tests/test_replay.py":
+            case (
+                "tests/test_fixture_reference.py"
+                | "tests/test_replay.py"
+                | "tests/test_milestone_checks.py"
+                | "tests/test_storage.py"
+            ):
                 return 1
-            case "tests/test_agents_workflow.py":
+            case "tests/test_agents_workflow.py" | "tests/test_apify_deploy.py":
                 return 2
     return int.from_bytes(hashlib.sha256(path.encode()).digest()[:8]) % count
 

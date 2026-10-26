@@ -12,7 +12,7 @@ import { PostgresSqlClient } from '../../vendor/openma/packages/sql-client/src/a
 import { createBetterSqlite3SqlClient } from '../../vendor/openma/packages/sql-client/src/index.ts';
 import { ensureSessionExecutionCoordinatorSchema, SqlSessionExecutionCoordinator } from '../../vendor/openma/packages/session-runtime-sql/src/coordination.ts';
 import { loadSessionContinuationSnapshot } from '../../vendor/openma/packages/session-runtime-sql/src/continuation.ts';
-import { planSessionContinuation } from '../../vendor/openma/packages/session-runtime-contract/src/continuation.ts';
+import { planSessionContinuation, encodeTankContinuationProjectionDocument } from '../../vendor/openma/packages/session-runtime-contract/src/continuation.ts';
 import { SqlSessionEventStore } from '../../vendor/openma/packages/session-event-store-sql/src/index.ts';
 import { SqlSessionRuntimeProjectionPersistence } from '../../vendor/openma/packages/managed-agents-adapters-sql/src/session-runtime-projection-sql-persistence.ts';
 
@@ -62,7 +62,7 @@ async function fixture(t) {
   const store = coordinator(sql);
   const owned = await claim(store, 'first', 2);
   assert.equal(owned.type, 'claimed');
-  return { sql, open, store, events, owned, writer: new SqlSessionRuntimeProjectionPersistence(sql, { now: () => new Date(at(3)) }) };
+  return { sql, open, store, events, owned, writer: new SqlSessionRuntimeProjectionPersistence(sql, { now: () => new Date(at(3)) }, encodeTankContinuationProjectionDocument) };
 }
 async function failBeforeEffects(f, message = 'retained_configuration_changed', extraEvents = []) {
   const failureEvents = [
@@ -94,7 +94,7 @@ test('actual SQL coordinator recovers once, fences a concurrent owner and preser
   assert.deepEqual(snapshot.orderedEvents.map(row => row.event.id), ['original', 'failed-error', 'failed-idle', 'later']);
   assert.equal((await store.settle({ fence: f.owned.fence, settledAt: at(6), outcome: 'completed' })).type, 'lost');
   const output = { id: 'completed-original', type: 'session.status_idle', stopReason: { type: 'end_turn' }, processedAt: at(6) };
-  const writer = new SqlSessionRuntimeProjectionPersistence(reopened, { now: () => new Date(at(6)) });
+  const writer = new SqlSessionRuntimeProjectionPersistence(reopened, { now: () => new Date(at(6)) }, encodeTankContinuationProjectionDocument);
   const command = { ...scope, expectedRevision: 4, executionFence: recovered.fence, events: [output], next: session };
   assert.equal((await writer.project(command)).type, 'projected');
   assert.equal((await writer.project(command)).type, 'projected');
@@ -131,7 +131,7 @@ async function append(f, events) {
   assert.equal((await f.events.append({ ...scope, expectedRevision: await revision(f), events, nextSession: session })).type, 'appended');
 }
 async function project(f, owned, events, seconds) {
-  const writer = new SqlSessionRuntimeProjectionPersistence(f.sql, { now: () => new Date(at(seconds)) });
+  const writer = new SqlSessionRuntimeProjectionPersistence(f.sql, { now: () => new Date(at(seconds)) }, encodeTankContinuationProjectionDocument);
   assert.equal((await writer.project({ ...scope, expectedRevision: await revision(f), executionFence: owned.fence, events, next: session })).type, 'projected');
 }
 const idle = (id, seconds, stopReason = { type: 'end_turn' }) => ({ id, type: 'session.status_idle', stopReason, processedAt: at(seconds) });
@@ -301,7 +301,7 @@ test('actual SQL expired-owner sweep preserves 105 recoverable sessions beyond o
     await f.sql.prepare('UPDATE managed_session_executions SET max_attempts = 2 WHERE id = ?').bind(inputId).run();
     const recovery = await f.store.claim({ ...ownScope, ownerId: inputId + '-died', attemptId: inputId + '-died', claimedAt: at(5), leaseTtlMs: 10000 });
     assert.equal(recovery.type, 'claimed');
-    const writer = new SqlSessionRuntimeProjectionPersistence(f.sql, { now: () => new Date(at(6)) });
+    const writer = new SqlSessionRuntimeProjectionPersistence(f.sql, { now: () => new Date(at(6)) }, encodeTankContinuationProjectionDocument);
     const effect = kind === 'effects' ? { id: inputId + '-effect', type: 'agent.message', content: [{ type: 'text', text: 'committed effect' }], processedAt: at(6) } : running(inputId + '-running', 6);
     assert.equal((await writer.project({ ...ownScope, expectedRevision: 3, executionFence: recovery.fence, events: [effect], next: document })).type, 'projected');
     if (kind === 'interrupt') assert.equal((await f.store.requestInterrupt({ ...ownScope, requestedAt: at(7) })).type, 'requested');

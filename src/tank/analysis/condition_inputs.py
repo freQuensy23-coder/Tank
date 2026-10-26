@@ -259,16 +259,16 @@ class SpotCalculationInputs(SpotCalculationFacts):
 class SpotCalculationSource(SpotCalculationFacts):
     @classmethod
     def from_inputs(cls, inputs: SpotCalculationInputs) -> Self:
-        validated = SpotCalculationInputs.model_validate(inputs)
+        """Validate copied calculation facts without admitting unused request assembly."""
         return cls(
-            token_id=validated.token_id,
-            start=validated.start,
-            cutoff=validated.cutoff,
-            instruments=validated.instruments,
-            minutes=validated.minutes,
-            boundaries=validated.boundaries,
-            tickers=validated.tickers,
-            policy=validated.policy,
+            token_id=inputs.token_id,
+            start=inputs.start,
+            cutoff=inputs.cutoff,
+            instruments=inputs.instruments,
+            minutes=inputs.minutes,
+            boundaries=inputs.boundaries,
+            tickers=inputs.tickers,
+            policy=inputs.policy,
         )
 
     def at(self, assembled_at: Timestamp) -> SpotCalculationInputs:
@@ -285,21 +285,32 @@ class SpotCalculationSource(SpotCalculationFacts):
         )
 
 
-class SpotWindowCalculationInputs(DomainModel):
-    source: SpotCalculationInputs
+class SpotWindowPlan(DomainModel):
+    token_id: str = Field(min_length=1, pattern=r"\S")
+    source_start: datetime
+    cutoff: datetime
     current: dict[ConditionWindow, ConditionInterval]
     previous: dict[ConditionWindow, ConditionInterval]
     event_anchor: Timestamp
     primary: Literal["EVENT", "W4H"]
 
+    @field_validator("source_start", "cutoff")
+    @classmethod
+    def aware_scope(cls, value: datetime) -> datetime:
+        if value.tzinfo is None or value.utcoffset() is None:
+            raise ValueError("Spot window plan requires aware logical bounds")
+        return value
+
     @model_validator(mode="after")
     def actual_window_plan(self) -> Self:
+        if self.source_start >= self.cutoff:
+            raise ValueError("Spot window plan requires a forward source scope")
         fixed = {"W15M": 900, "W1H": 3600, "W4H": 14400, "W24H": 86400}
         names = {*fixed, "EVENT"}
         if set(self.current) != names or set(self.previous) != names:
             raise ValueError("Spot graph requires the actual current and prior five windows")
         if len({row.cutoff for row in self.current.values()}) != 1 or any(
-            row.cutoff != self.source.cutoff for row in self.current.values()
+            row.cutoff != self.cutoff for row in self.current.values()
         ):
             raise ValueError("Spot graph current windows require one actual cutoff")
         for name, current in self.current.items():
@@ -309,7 +320,7 @@ class SpotWindowCalculationInputs(DomainModel):
             if name in fixed and duration != timedelta(seconds=fixed[name]):
                 raise ValueError("Named spot window must preserve its declared duration")
             prior = self.previous[name]
-            if prior.start < self.source.start:
+            if prior.start < self.source_start:
                 raise ValueError("Prior spot interval must remain inside its actual source read scope")
             if prior.cutoff != current.start or prior.cutoff - prior.start != duration:
                 raise ValueError("Prior spot window must immediately precede the current interval")
@@ -326,4 +337,25 @@ class SpotWindowCalculationInputs(DomainModel):
         )
         if self.primary != primary:
             raise ValueError("Primary spot window must follow the actual event-anchor policy")
+        return self
+
+
+class SpotWindowCalculationInputs(DomainModel):
+    source: SpotCalculationInputs
+    current: dict[ConditionWindow, ConditionInterval]
+    previous: dict[ConditionWindow, ConditionInterval]
+    event_anchor: Timestamp
+    primary: Literal["EVENT", "W4H"]
+
+    @model_validator(mode="after")
+    def actual_window_plan(self) -> Self:
+        SpotWindowPlan(
+            token_id=self.source.token_id,
+            source_start=self.source.start,
+            cutoff=self.source.cutoff,
+            current=self.current,
+            previous=self.previous,
+            event_anchor=self.event_anchor,
+            primary=self.primary,
+        )
         return self

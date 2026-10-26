@@ -2394,3 +2394,29 @@ and full completion/E2E cohort closure remain pending.
 The reserved replay consumer now uses the barrier's typed complete fact and explicit storage_record at singular/plural report and checkpoint boundaries, enforcing actual session identity. Its synthetic completed-turn boundary uses actual accepted-input and terminal state/cache facts rather than an empty successful mock. The delegated two Telegram callers admit CompletionSessionSnapshot and consume accepted_input_ids directly, retaining all answer, retired-message, POST count and idempotence assertions. The abort fixture now reports the required nullable settled_outcome field for RUNNING, matching the pinned three-field status endpoint; no production relaxation or retained payload change was made.
 
 Frozen combined de47267b passed all 361 selected units in 19.19 seconds, with zero skips/source guards. Its connected actual set passed 81 of 82 cases in 28.97 seconds: the sole failure was the previously qualified autonomous E2E CapturedMarket fixture's missing instruments forwarding, because this separate completion branch had not yet joined the current parent/worker peer. Status correlation/64+1, stale/ABA/input-change PostgreSQL races, completion/retry/retention/binding, replay/reference/abort and Telegram cases passed. That diagnostic remains in external completion-callers-de472 receipts; no product attribution or whole-cohort green claim is made. Current-parent normal integration and affected caller proof remain required. Independent strict checking of the four precise completion contract/test targets passes.
+### Concrete queue adapter moved outward
+
+From caller-qualified worker 0d5bc86e, the concrete JobRepository now lives in
+src/tank/job_repository.py. contracts/job_repository.py retains only the precise
+ten-method QueueStore Protocol; required envelope/claim/mutation records remain
+in contracts/jobs.py. The concrete class AST is identical before and after the
+move/formatting (SHA256 4704fe313cd6cfa9e04beff8e93202d8a453d85ba8499b2ed7d82897189db6a8).
+External job-repository-relocation-ast.json records both hashes and all 24 actual
+caller paths. Pipeline and worker imports split port versus adapter; 22 test
+imports use the new outward path. No compatibility re-export, forwarding class,
+annotation suppression, storage algorithm or callback policy changed.
+
+All 58 selected existing queue/claim/quarantine/raw-revision/clock/controlled/atomic
+units pass in 7.93 s; all 37 actual PostgreSQL cases pass in 10.97 s, zero skips/source guards.
+These retain real minimal-store transaction/rollback, malformed original revision,
+raw payload/omitted clock metadata, fresh-token refund/recovery ABA and concurrent
+row-lock controls. Independent strict 8 targets including both modules and actual
+consumers pass; scoped Ruff/format and import search pass. Configured mypy across 202 sources has only the separately owned truth _condition_cache error. The proposed
+layout-only assertion was removed before qualification per lead review; no new
+mechanical-layout test remains. Quality will add the independently signed new
+adapter to explicit strict CI/inventory while keeping the inward port target.
+
+This closes this concrete inward-I/O violation, not the broader generic Repository,
+source-adapter or whole-application architecture/typing scope. Historical recovery,
+pending-demand and the separate completion-observation behavior correction remain
+held and are not implied by this worker candidate. No parent worktree was edited.

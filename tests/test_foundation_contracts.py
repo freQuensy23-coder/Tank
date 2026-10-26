@@ -8,11 +8,11 @@ from pydantic import BaseModel, ValidationError
 
 from tank.clickhouse_market import ClickHouse, _record, _response_timestamp
 from tank.contracts import DomainModel
-from tank.contracts.job_repository import JobRepository
 from tank.contracts.jobs import InvalidJobClaim, JobEnvelope
 from tank.contracts.registry import RegistryEntity
 from tank.contracts.repository import Collection, Repository
 from tank.contracts.score import ScoreAssessment, ScoreAssessmentView, ScoreDimension, ScoreDimensions
+from tank.job_repository import JobRepository
 from tank.market.trade_contracts import FlowInstrument, QuoteUsdValuation
 from tank.market_codec import _prepare_records, encode, merge_point
 from tank.market_schema import MARKET_COLUMNS

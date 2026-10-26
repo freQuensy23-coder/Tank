@@ -379,30 +379,35 @@ def test_cached_source_facts_bind_fresh_assembly_without_relabeling_source_clock
 
 
 def test_window_evaluation_keeps_closed_native_facts_until_wire_serialization() -> None:
-    from tank.analysis.condition_input_codec import SpotWindowEvaluation
-    from tank.analysis.condition_inputs import SpotCalculationSource
+    from tank.analysis.condition_input_codec import SpotWindowEvidenceLookup, SpotWindowFacts
 
     instrument, rows = source_rows()
     decoded = decode_windows([instrument], rows, chosen_boundary(END - timedelta(hours=1), precision="EXACT"))
     graph = calculate_spot_window_graph(decoded.inputs)
-    evaluation = SpotWindowEvaluation(
-        graph=graph,
-        source=SpotCalculationSource.from_inputs(decoded.inputs.source),
-        source_evidence=decoded.source_evidence,
-        clocks=decoded.clocks,
+    evaluation = SpotWindowEvidenceLookup(
+        token_id="T",
+        cutoff=decoded.clocks.cutoff,
+        event_anchor=decoded.clocks.event_anchor,
+        assembled_at=decoded.inputs.source.assembled_at,
+        instruments=[instrument],
+        flow_bars=rows,
+        flow_parent_bars=[],
+        flow_segments=[],
+        tickers=[],
+        policy=decoded.inputs.source.policy,
+        native_ticker_volume_field="volume_native",
     )
-    wire = evaluation.wire_spots()
+    wire = evaluation.wire_spots(assembled_at=decoded.inputs.source.assembled_at)
     assert wire["EVENT"] == encode_scoped_condition_spot(
         graph.spots["EVENT"], decoded.source_evidence, clocks=decoded.clocks
     )
     wire["EVENT"]["direction"] = "SELL"
     assert evaluation.graph.spots["EVENT"].direction == "BUY"
     with pytest.raises(ValueError, match="actual source subject"):
-        SpotWindowEvaluation(
-            graph=graph,
-            source=evaluation.source,
-            source_evidence=decoded.source_evidence,
-            clocks=decoded.clocks.model_copy(update={"token_id": "OTHER"}),
+        SpotWindowFacts.model_validate(
+            evaluation.facts.model_copy(
+                update={"clocks": decoded.clocks.model_copy(update={"token_id": "OTHER"})}
+            )
         )
 
 

@@ -10,10 +10,10 @@ from pydantic import JsonValue
 from runtime_public_fixtures import public_runtime
 from test_storage import repo as repo
 
-from tank.contracts.job_repository import JobRepository
 from tank.contracts.jobs import JobEnvelope
 from tank.contracts.scheduler_commands import InitialReactionCommand
 from tank.delivery import DeliveryDeferred
+from tank.job_repository import JobRepository
 from tank.runtime_dispatch_contracts import ClaimedWork
 from tank.runtime_reaction import ReactionCoalescingDeferred, ReactionJobInvocation
 from tank.scheduler import CAPTURE_EXPIRY_S, REACTION_RETRY_S

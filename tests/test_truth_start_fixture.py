@@ -17,6 +17,7 @@ SYNTHETIC_END = parse_time("2026-10-16T12:00:00Z")
 
 
 def synthetic_start_snapshot(*, end: datetime = SYNTHETIC_END, event_window_h: int = 4):
+    """Author a synthetic batch collected at end; source clocks remain independent."""
     if event_window_h <= 0:
         raise ValueError("An authored event window must be positive")
     event_minutes = event_window_h * 60
@@ -192,6 +193,8 @@ def synthetic_start_snapshot(*, end: datetime = SYNTHETIC_END, event_window_h: i
                 "ts": iso(t),
                 "oi_native": 1000,
                 "oi_usd": 100000,
+                "received_ts": iso(end),
+                "received_ts_prec": "COLLECTION_ONLY",
                 "metric_key": "binance.perp.oi",
             }
         )
