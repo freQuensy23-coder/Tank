@@ -281,3 +281,28 @@ async def test_only_the_actual_event_lifecycle_can_authorize_native_archive(
     assert bool(posts) is lifecycle_reported
     assert session["status"] == ("ENDED" if lifecycle_reported else "OPEN")
     assert "archived_at" in session if lifecycle_reported else "archived_at" not in session
+
+
+@pytest.mark.parametrize("precision", [None, "BUCKET(1s)"])
+async def test_retention_preserves_selected_activity_clock_without_relabeling_collection(
+    precision: str | None,
+) -> None:
+    repo = MemoryRepository()
+    await seed(repo, age_days=0, no_event=True)
+    record = await repo.get("ops.agent_sessions", "ses_1")
+    assert record is not None
+    if precision is not None:
+        record["last_event_at_prec"] = precision
+        record["last_event_at_bucket_anchor"] = "END"
+    await repo.put("ops.agent_sessions", "ses_1", record)
+    posts, session = await finish(repo)
+    assert posts == []
+    assert session["last_message_at"] == record["last_event_at"]
+    assert session["last_message_at_prec"] == session["archive_after_prec"] == precision
+    assert (
+        session["last_message_at_prec_reason"]
+        == session["archive_after_prec_reason"]
+        == ("INCOMPLETE" if precision is None else None)
+    )
+    if precision is not None:
+        assert session["last_message_at_bucket_anchor"] == session["archive_after_bucket_anchor"] == "END"
