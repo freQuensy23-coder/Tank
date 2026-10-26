@@ -25,7 +25,7 @@ REQUIRED = ["Summary", "Cut corners"]
 
 
 def headings(body):
-    text = re.sub(r"<!--.*?-->", "", body, flags=re.S)
+    text = re.sub(r"<!--.*?-->", "", body.replace("\r\n", "\n"), flags=re.S)
     return [match.group(1) for match in re.finditer(r"^#{2,3} +(.+?) *$", text, flags=re.M)]
 
 
