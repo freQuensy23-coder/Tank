@@ -15,6 +15,7 @@ from tank.agents import SessionService
 from tank.agents.context import CONTEXT_VERSION
 from tank.agents.input_ownership import NativeOwnershipSnapshot
 from tank.contracts.openma import NativeSessionToolUpdate
+from tank.contracts.session_followups import FollowupRefusalTarget
 from tank.settings import Settings
 from tank.storage import MemoryRepository
 from tank.telegram_inbox import (
@@ -1392,6 +1393,10 @@ async def test_interrupted_file_send_is_not_repeated_blindly() -> None:
             "channel": "telegram:answer",
             "question_id": question_id,
             "call_id": "call_x",
+            "session_id": "ses_1",
+            "chat_id": str(USER),
+            "purpose": "ATTACHMENT",
+            "filename": "a.pdf",
             "status": "GENERATED",
             "attempt": 1,
             "at": "2027-01-15T08:00:00Z",
@@ -1401,8 +1406,10 @@ async def test_interrupted_file_send_is_not_repeated_blindly() -> None:
     telegram = FakeTelegram()
     async with httpx.AsyncClient(transport=httpx.MockTransport(telegram)) as http:
         inbox = TelegramInbox(repo, inbox_settings(), http=http)
-        result = await inbox.send_session_file(question_id, "call_x", "a.pdf", b"x")
-    assert result["sent"] == "UNKNOWN" and telegram.sent == []
+        result = await inbox.send_session_file(
+            FollowupRefusalTarget(question_id=question_id, session_id="ses_1"), "call_x", "a.pdf", b"x"
+        )
+    assert result.sent == "UNKNOWN" and telegram.sent == []
 
 
 @pytest.mark.asyncio
