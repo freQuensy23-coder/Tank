@@ -15,8 +15,8 @@ from runtime_public_fixtures import public_runtime
 from test_runtime_condition_evaluation import finished_attempt
 from test_storage import repo as repo
 
-from tank.contracts.job_repository import JobRepository
 from tank.contracts.milestone_checks import MilestoneCheckCommand, MilestoneKind, MilestoneResolutionHistory
+from tank.job_repository import JobRepository
 from tank.replay import replay_milestone_timer
 from tank.runtime import Runtime
 from tank.sources.raw_store import write_raw_item

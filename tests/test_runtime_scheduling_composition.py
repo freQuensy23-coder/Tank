@@ -10,6 +10,7 @@ from tank import runtime_composition
 from tank.analysis.page_access import LivePageAccess
 from tank.event_tools import EventToolService
 from tank.http_admission import ConfiguredHttpAdmission
+from tank.market.service import MarketService
 from tank.request_budget import MemoryBudgetBackend, RequestLedger, build_budget_backend
 from tank.runtime_failure_repository import RepositoryRuntimeFailures
 from tank.settings import Settings, resolve_versions
@@ -51,6 +52,7 @@ async def test_production_composition_binds_the_real_scheduler_and_owns_shutdown
         assert isinstance(runtime.budget_backend, MemoryBudgetBackend)
         assert isinstance(runtime.sources, SourceService)
         assert runtime.sources.budgets is runtime.budget_scope
+        assert isinstance(runtime.market, MarketService)
         assert isinstance(runtime.market.admission, ConfiguredHttpAdmission)
         assert runtime.market.admission.budgets is runtime.budget_scope
         assert runtime.market.admission.versions == settings.require_versions()

@@ -1,14 +1,15 @@
 """The queue adapter requires only its actual persistence capabilities."""
 
-from collections.abc import AsyncIterator, Mapping
+from collections.abc import AsyncIterator, Callable, Mapping
 from contextlib import asynccontextmanager
 from typing import Self
 
 import pytest
 from pydantic import JsonValue
 
-from tank.contracts.job_repository import JobRepository, QueueStore
-from tank.contracts.jobs import JobEnvelope
+from tank.contracts.job_repository import QueueStore
+from tank.contracts.jobs import InvalidJobClaim, JobClaimMutation, JobClaimScope, JobEnvelope
+from tank.job_repository import JobRepository
 from tank.storage import MemoryRepository
 from tank.time_precision import Timestamp
 from tank.util import JsonInput, TimeInput
@@ -64,6 +65,14 @@ class QueueOnlyMemory:
 
     async def claim_job(self) -> dict[str, JsonValue] | None:
         return await self.source.claim_job()
+
+    async def transition_claimed_job(
+        self, scope: JobClaimScope, transform: Callable[[JobEnvelope], JobClaimMutation]
+    ) -> JobEnvelope | None:
+        return await self.source.transition_claimed_job(scope, transform)
+
+    async def quarantine_job_claim(self, invalid: InvalidJobClaim) -> bool:
+        return await self.source.quarantine_job_claim(invalid)
 
     async def finish_job(self, job_id: str) -> None:
         await self.source.finish_job(job_id)

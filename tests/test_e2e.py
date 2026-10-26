@@ -1445,6 +1445,7 @@ async def test_runtime_autonomous_source_to_telegram(
             self.actual_capture_reader = MarketService(
                 repo, settings, versions=versions, admission=admission, http=http
             )
+            self.instruments = self.actual_capture_reader.instruments
 
         async def run(self, event) -> None:
             await event.wait()

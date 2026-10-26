@@ -10,8 +10,8 @@ from runtime_public_fixtures import public_runtime
 from test_runtime_condition_evaluation import finished_attempt
 from test_storage import repo as repo
 
-from tank.contracts.job_repository import JobRepository
 from tank.contracts.scheduler_results import ConditionEvaluationResult, DeferredCondition
+from tank.job_repository import JobRepository
 from tank.storage import StorageBackend
 from tank.time_precision import Timestamp, collection_clock
 

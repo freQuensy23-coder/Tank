@@ -5,7 +5,6 @@ from agent_source_fixtures import declared_versions_fixture
 from pydantic import ValidationError
 from test_storage import repo as repo
 
-from tank.contracts.job_repository import JobRepository
 from tank.contracts.jobs import JobEnvelope
 from tank.contracts.question_retirement import (
     QuestionFailureRefusalReceipt,
@@ -13,6 +12,7 @@ from tank.contracts.question_retirement import (
     UnretainedQuestionJournal,
 )
 from tank.contracts.session_followups import FollowupRefusalTarget
+from tank.job_repository import JobRepository
 from tank.storage import StorageBackend
 from tank.time_precision import collection_clock
 

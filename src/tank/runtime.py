@@ -4,25 +4,33 @@ import asyncio
 import contextlib
 import logging
 import traceback
-from collections.abc import AsyncIterator, Awaitable, Callable
+from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
 from datetime import datetime, timedelta
 from typing import TYPE_CHECKING, Protocol
 
 from pydantic import JsonValue
 
+from tank.agents.message_dispatch import (
+    DeclinedQuestionDispatch,
+    MessageDispatchOutcomeRecord,
+    MessageDispatchRequest,
+)
+from tank.agents.session_contracts import ScoutSessionReference
 from tank.analysis.truth_contracts import MarketTruthAssessmentRef
-from tank.contracts.jobs import JobRetryState
+from tank.contracts.jobs import InvalidJobClaim, JobRetryState
 from tank.contracts.progress import JobFailureProgressView
 from tank.contracts.question_retirement import (
     QuestionFailureRefusalRequest,
     QuestionFailureRefusalSink,
     UnprovedQuestionRetirement,
 )
-from tank.contracts.session_admission import ADMITTED_JOB_TYPES, AdmissionDeferred
+from tank.contracts.scheduler_results import ConditionEvaluationResult
+from tank.contracts.session_admission import AdmissionDeferred
 from tank.delivery import DeliveryDeferred, DeliveryService
 from tank.ops_progress import record_job_failure_progress
 from tank.question_answers import record_answer
 from tank.request_budget import BudgetBackend, RequestBudgetScope, SharedRequestBudgets
+from tank.runtime_admission import worker_admission
 from tank.runtime_contracts import (
     EscalateTokensJob,
     FailedAnswerNotification,
@@ -39,22 +47,43 @@ from tank.runtime_contracts import (
     TerminalFailureOutcome,
     TerminalFailureRefused,
     TerminalJobFailure,
+    UserQuestionMessage,
     failure_reason_text,
-    replace_job_clock,
+)
+from tank.runtime_dispatch_contracts import (
+    AgentMessageCommand,
+    ClaimedWork,
+    DeliverCommand,
+    EscalateTokensCommand,
+    EvalConditionsCommand,
+    FilterItemCommand,
+    MarketTruthCommand,
+    MilestoneCheckCommand,
+    ReactionCaptureCommand,
+    RequeueRequest,
+    RouteItemCommand,
+    RunningJobClaim,
+    ScoutReviewCommand,
+    TelegramAnswerCommand,
+    WaitingDependencies,
+    WorkerFailureRequest,
 )
 from tank.runtime_evaluation import evaluate_condition_job
+from tank.runtime_failure_commands import terminal_work_failure
+from tank.runtime_market import RuntimeMarketPort
 from tank.runtime_milestone import check_milestone_job
+from tank.runtime_reaction import ReactionJobInvocation, capture_reaction_job
 from tank.runtime_retry import worker_retry_schedule
-from tank.scheduler import Scheduler
+from tank.runtime_worker_repository import RepositoryWorkerQueue
+from tank.scheduler import REACTION_RETRY_S, Scheduler
 from tank.settings import Settings
 from tank.storage import Repository
-from tank.time_precision import Timestamp, collection_clock, offset_schedule, propagate_timestamp
+from tank.time_precision import Timestamp, collection_clock, offset_schedule
 from tank.util import parse_time, utcnow
 
 if TYPE_CHECKING:
     from tank.agents.pipeline import Pipeline
     from tank.agents.sessions import SessionService
-    from tank.market.service import MarketService
     from tank.telegram_inbox import TelegramInbox
 
 
@@ -119,7 +148,7 @@ class Runtime:
         settings: Settings,
         *,
         sources: RuntimeService,
-        market: "MarketService",
+        market: RuntimeMarketPort,
         truth: "MarketTruthPort",
         pipeline: "Pipeline",
         sessions: "SessionService",
@@ -134,7 +163,8 @@ class Runtime:
         failures: RuntimeFailureRepository,
     ) -> None:
         self.repo, self.settings = repo, settings
-        self.sources, self.market, self.truth = sources, market, truth
+        self.sources, self.truth = sources, truth
+        self.market: RuntimeMarketPort = market
         self.pipeline, self.sessions = pipeline, sessions
         self.delivery, self.scheduler, self.gateway, self.inbox = delivery, scheduler, gateway, inbox
         self._bootstrap, self._validate = bootstrap, validate
@@ -142,20 +172,31 @@ class Runtime:
         self._failure_reconcile_attempted_at: datetime | None = None
         self.budget_scope, self.budget_backend = budget_scope, budget_backend
         self.budget_binding: SharedRequestBudgets | None = None
-        self.active_jobs: set[str] = set()
-        self.handlers = {
-            "FILTER_ITEM": pipeline.filter_item_wire,
-            "ROUTE_ITEM": pipeline.route_item_wire,
-            "AGENT_MESSAGE": sessions.send_message,
-            "ESCALATE_TOKENS": self.escalate_wire,
-            "RUN_MARKET_TRUTH": self.assess_wire,
-            "DELIVER": self.delivery.deliver,
-            "EVAL_CONDITIONS": self.eval_conditions_wire,
-            "MILESTONE_CHECK": self.milestone_check_wire,
-            "REACTION_CAPTURE": self.scheduler.reaction_capture,
-            "SCOUT_REVIEW": self.scout_review,
-            "TELEGRAM_ANSWER": self.inbox.answer,
-        }
+        self.active_claims: dict[tuple[str, str], ClaimedWork] = {}
+
+    @property
+    def active_jobs(self) -> frozenset[str]:
+        return frozenset(work.job.job_id for work in self.active_claims.values())
+
+    def snapshot_active_claims(self) -> tuple[RunningJobClaim, ...]:
+        return tuple(work.scope() for work in self.active_claims.values())
+
+    async def interrupt_claims(
+        self, claims: Sequence[RunningJobClaim], observed_at: Timestamp
+    ) -> tuple[RunningJobClaim, ...]:
+        observed_at = Timestamp.model_validate(observed_at)
+        if observed_at.value is None:
+            raise ValueError("Controlled stop requires its actual observation clock")
+        scopes = tuple(RunningJobClaim.model_validate(claim) for claim in claims)
+        queue = RepositoryWorkerQueue(self.repo)
+        acknowledged: list[RunningJobClaim] = []
+        for claim in scopes:
+            try:
+                if await queue.interrupt(claim, observed_at):
+                    acknowledged.append(claim)
+            except Exception:
+                log.exception("Interruption acknowledgment unavailable for job %s", claim.job_id)
+        return tuple(acknowledged)
 
     def validate(self) -> None:
         self._validate()
@@ -207,6 +248,15 @@ class Runtime:
     async def eval_conditions_wire(self, payload: dict[str, JsonValue]) -> dict[str, JsonValue]:
         return await evaluate_condition_job(self.scheduler, payload)
 
+    async def reaction_capture_wire(self, invocation: ReactionJobInvocation) -> dict[str, JsonValue]:
+        return await capture_reaction_job(
+            self.scheduler,
+            self.repo,
+            invocation,
+            clock=collection_clock,
+            retry_delay=timedelta(seconds=REACTION_RETRY_S),
+        )
+
     async def milestone_check_wire(self, payload: dict[str, JsonValue]) -> None:
         await check_milestone_job(self.scheduler, payload)
 
@@ -214,102 +264,176 @@ class Runtime:
         reference = await self.sessions.scout_review(ScoutReviewJob.model_validate(payload))
         return reference.model_dump(mode="json")
 
+    async def execute_work_wire(self, work: ClaimedWork) -> JsonValue:
+        """Execute closed application commands and serialize only the durable result boundary."""
+        work = ClaimedWork.model_validate(work, by_name=True)
+        command = work.command
+        match command:
+            case FilterItemCommand():
+                item = await self.pipeline.filter_item(command.payload)
+                item = type(item).model_validate(item, by_name=True)
+                if item.item_id != command.payload.item_id:
+                    raise ValueError("Filter result differs from its actual requested source")
+                return item.storage_record()
+            case RouteItemCommand():
+                routed = await self.pipeline.route_item(command.payload)
+                routed = type(routed).model_validate(routed, by_name=True)
+                if routed.item_id != command.payload.item_id:
+                    raise ValueError("Routing result differs from its actual requested source")
+                return routed.storage_record()
+            case AgentMessageCommand():
+                request = MessageDispatchRequest.from_wire(work.job.payload)
+                outcome = MessageDispatchOutcomeRecord.model_validate(
+                    await self.sessions.dispatch_message(request), by_name=True
+                ).root
+                if isinstance(outcome, DeclinedQuestionDispatch):
+                    message = command.payload
+                    if not isinstance(message, UserQuestionMessage) or (
+                        outcome.target.question_id != message.question_id
+                        or outcome.target.session_id != message.session_id
+                    ):
+                        raise ValueError("Question refusal differs from its actual requested target")
+                elif outcome.message_id != work.payload_revision or (
+                    command.payload.session_id is not None
+                    and outcome.session_id != command.payload.session_id
+                ):
+                    raise ValueError("Message result differs from its actual requested input")
+                return outcome.model_dump(mode="json")
+            case EscalateTokensCommand():
+                await self.escalate(command.payload)
+                return None
+            case MarketTruthCommand():
+                assessment = MarketTruthAssessmentRef.model_validate(await self.assess(command.payload))
+                if (
+                    assessment.event_id != command.payload.event_id
+                    or assessment.token_id != command.payload.token_id
+                ):
+                    raise ValueError("Market truth result differs from its actual requested subject")
+                if command.payload.cutoff is not None and parse_time(assessment.cutoff) != parse_time(
+                    command.payload.cutoff
+                ):
+                    raise ValueError("Market truth result differs from its actual requested cutoff")
+                return assessment.model_dump(mode="json")
+            case DeliverCommand():
+                await self.delivery.deliver(command.payload)
+                return None
+            case EvalConditionsCommand():
+                payload = command.payload
+                cutoff = Timestamp(
+                    payload.cutoff,
+                    payload.cutoff_prec,
+                    payload.cutoff_prec_reason,
+                    payload.cutoff_bucket_anchor,
+                )
+                result = ConditionEvaluationResult.model_validate(
+                    await self.scheduler.eval_conditions(cutoff)
+                )
+                return result.model_dump(mode="json")
+            case MilestoneCheckCommand():
+                await self.scheduler.milestone_check(command.payload.command())
+                return None
+            case ReactionCaptureCommand():
+                return await self.reaction_capture_wire(ReactionJobInvocation.from_envelope(work.job))
+            case ScoutReviewCommand():
+                scout = ScoutSessionReference.model_validate(
+                    await self.sessions.scout_review(command.payload)
+                )
+                if scout.proposal_id != command.payload.proposal_id:
+                    raise ValueError("Scout result differs from its actual requested proposal")
+                return scout.model_dump(mode="json")
+            case TelegramAnswerCommand():
+                await self.inbox.answer(command.payload)
+                return None
+        raise AssertionError("Closed durable command has no executor")
+
     async def worker(self, stop: asyncio.Event, number: int = 0) -> None:
-        if not hasattr(self, "active_jobs"):
-            self.active_jobs = set()
+        queue = RepositoryWorkerQueue(self.repo)
         while not stop.is_set():
             try:
-                job = await self.repo.claim_job()
+                work = await queue.claim()
             except Exception:
                 log.exception("Worker %s failed to claim a job", number)
                 await self.pause(stop, 1)
                 continue
-            if job is None:
+            if isinstance(work, InvalidJobClaim):
+                try:
+                    await queue.reject_invalid(work)
+                except Exception:
+                    log.exception("Worker %s could not persist invalid queue quarantine", number)
+                    await self.pause(stop, 1)
+                continue
+            if work is None:
                 await self.reconcile_delivery_failures()
                 await self.pause(stop, 0.25)
                 continue
-            self.active_jobs.add(job["job_id"])
+            claim = work.scope()
+            owner = (claim.job_id, claim.claim_token)
+            self.active_claims[owner] = work
             try:
-                if job.get("expires_at") and parse_time(job["expires_at"]) <= utcnow():
-                    expired = await self.repo.put(
-                        "ops.jobs",
-                        job["job_id"],
-                        {
-                            **replace_job_clock(job, "finished_at", collection_clock(utcnow())),
-                            "status": "EXPIRED",
-                        },
-                    )
-                    await self.terminal_delivery_failure_wire(
-                        expired, JobStateFailureReason(kind="STATE", status="EXPIRED")
+                observed = collection_clock()
+                if (
+                    work.job.expires_at is not None
+                    and observed.value is not None
+                    and parse_time(work.job.expires_at) <= parse_time(observed.value)
+                ):
+                    if await queue.expire(claim, observed):
+                        terminal = await queue.terminal(claim)
+                        if terminal is not None:
+                            await self.terminal_delivery_failure(
+                                terminal_work_failure(
+                                    work,
+                                    terminal,
+                                    JobStateFailureReason(kind="STATE", status="EXPIRED"),
+                                    progress_requested=self.settings.ops_progress_enabled
+                                    and not self.settings.replay,
+                                    notifications_requested=True,
+                                )
+                            )
+                    continue
+                if not await queue.current(claim):
+                    continue
+                dependencies = await queue.dependencies(work)
+                if isinstance(dependencies, WaitingDependencies):
+                    await queue.requeue(
+                        RequeueRequest(
+                            claim=claim,
+                            reason="DEPENDENCY_WAIT",
+                            not_before=offset_schedule(collection_clock(), timedelta(seconds=0.25)),
+                        )
                     )
                     continue
-                dependencies = [
-                    await self.repo.get("ops.jobs", dep) for dep in job["payload"].get("_depends_on", [])
-                ]
-                if any(dep is None or dep["status"] in ("FAILED", "EXPIRED") for dep in dependencies):
-                    raise RuntimeError("Durable job dependency failed or is missing")
-                if any(dep["status"] != "DONE" for dep in dependencies):
-                    await self.repo.put(
-                        "ops.jobs",
-                        job["job_id"],
-                        {
-                            **replace_job_clock(
-                                job,
-                                "run_after",
-                                offset_schedule(collection_clock(utcnow()), timedelta(seconds=0.25)),
-                            ),
-                            "status": "QUEUED",
-                            "attempts": max(0, job["attempts"] - 1),
-                        },
-                    )
-                    continue
-                kind = job["type"]
-                if kind not in self.handlers:
-                    raise ValueError(f"Unregistered durable job kind: {kind}")
-                if kind in ADMITTED_JOB_TYPES:
+                candidate = worker_admission(work)
+                if candidate is not None:
                     try:
                         async with asyncio.timeout(ADMISSION_TIMEOUT_S):
-                            await self.sessions.admit(job)
+                            await self.sessions.admit_candidate(candidate)
                     except TimeoutError as slow:
                         raise AdmissionDeferred(
-                            offset_schedule(collection_clock(utcnow()), timedelta(seconds=5))
+                            offset_schedule(collection_clock(), timedelta(seconds=5))
                         ) from slow
-                async with asyncio.timeout(TIMEOUTS[kind]):
-                    result = await self.handlers[kind](job["payload"])
-                async with self.repo.transaction():
-                    await self.repo.put("ops.jobs", job["job_id"], {**job, "result": result})
-                    await self.repo.finish_job(job["job_id"])
+                if not await queue.current(claim):
+                    continue
+                async with asyncio.timeout(TIMEOUTS[work.command.type]):
+                    result_wire = await self.execute_work_wire(work)
+                await queue.complete(claim, result_wire, collection_clock())
             except DeliveryDeferred as deferred:
-                async with self.repo.transaction():
-                    current = await self.repo.get("ops.jobs", job["job_id"])
-                    if current and current["status"] == "RUNNING":
-                        await self.repo.put(
-                            "ops.jobs",
-                            job["job_id"],
-                            {
-                                **replace_job_clock(current, "run_after", deferred.not_before),
-                                "status": "QUEUED",
-                                "attempts": max(0, current["attempts"] - 1),
-                            },
-                        )
+                try:
+                    await queue.requeue(
+                        RequeueRequest(claim=claim, not_before=deferred.not_before, reason="DELIVERY_WAIT")
+                    )
+                except Exception:
+                    log.exception("Could not persist deferred job %s", claim.job_id)
+                    await self.pause(stop, 1)
             except AdmissionDeferred as deferred:
-                async with self.repo.transaction():
-                    current = await self.repo.get("ops.jobs", job["job_id"])
-                    if current and current["status"] == "RUNNING":
-                        requeued = replace_job_clock(current, "run_after", deferred.not_before)
-                        if current.get("slot_waiting_since") is None:
-                            requeued = replace_job_clock(
-                                requeued, "slot_waiting_since", propagate_timestamp(current, "created_at")
-                            )
-                        await self.repo.put(
-                            "ops.jobs",
-                            job["job_id"],
-                            {
-                                **requeued,
-                                "status": "QUEUED",
-                                "attempts": max(0, current["attempts"] - 1),
-                            },
+                try:
+                    await queue.requeue(
+                        RequeueRequest(
+                            claim=claim, not_before=deferred.not_before, reason="SESSION_ADMISSION"
                         )
+                    )
+                except Exception:
+                    log.exception("Could not persist admission wait for job %s", claim.job_id)
+                    await self.pause(stop, 1)
             except asyncio.CancelledError:
                 raise
             except Exception as exc:
@@ -318,28 +442,32 @@ class Runtime:
                     f"{frame.filename.rsplit('/', 1)[-1]}:{frame.lineno}:{frame.name}"
                     for frame in traceback.extract_tb(failure.__traceback__)
                 )
-
-                log.error(
-                    "Job %s (%s) failed: %s [%s]", job["job_id"], job["type"], type(exc).__name__, frames
-                )
+                log.error("Job %s (%s) failed: %s [%s]", claim.job_id, claim.kind, type(exc).__name__, frames)
                 try:
-                    await self.repo.fail_job(
-                        job["job_id"],
-                        type(exc).__name__,
-                        retry_after=worker_retry_schedule(
-                            exc, JobRetryState.from_document(job).attempts
-                        ).seconds,
+                    terminal = await queue.fail(
+                        WorkerFailureRequest(
+                            claim=claim,
+                            error_class=type(exc).__name__,
+                            schedule=worker_retry_schedule(exc, claim.attempts),
+                            observed_at=collection_clock(),
+                        )
                     )
-                    current = await self.repo.get("ops.jobs", job["job_id"])
-                    if current and current["status"] in {"FAILED", "EXPIRED"}:
-                        await self.terminal_delivery_failure_wire(
-                            current, SuppliedFailureReason(kind="SUPPLIED", value=type(exc).__name__)
+                    if terminal is not None and terminal.status in {"FAILED", "EXPIRED"}:
+                        await self.terminal_delivery_failure(
+                            terminal_work_failure(
+                                work,
+                                terminal,
+                                SuppliedFailureReason(kind="SUPPLIED", value=type(exc).__name__),
+                                progress_requested=self.settings.ops_progress_enabled
+                                and not self.settings.replay,
+                                notifications_requested=True,
+                            )
                         )
                 except Exception:
-                    log.exception("Could not persist job failure: %s", job["job_id"])
+                    log.exception("Could not persist job failure: %s", claim.job_id)
                     await self.pause(stop, 1)
             finally:
-                self.active_jobs.discard(job["job_id"])
+                self.active_claims.pop(owner, None)
 
     async def terminal_delivery_failure_wire(
         self, job: dict[str, JsonValue], reason: FailureReason
@@ -506,46 +634,12 @@ class Runtime:
                 sessions_stop.set()
                 remaining = max(0, deadline - asyncio.get_running_loop().time())
                 _, pending = await asyncio.wait(tasks, timeout=remaining)
-                interrupted = set(self.active_jobs)
+                interrupted = self.snapshot_active_claims()
                 for task in pending:
                     task.cancel()
                 await asyncio.gather(*tasks, return_exceptions=True)
 
-                for job_id in interrupted:
-                    try:
-                        async with self.repo.lock("job:" + job_id):
-                            interrupted_job = await self.repo.get("ops.jobs", job_id)
-                            state = (
-                                JobRetryState.from_document(interrupted_job)
-                                if interrupted_job is not None
-                                else None
-                            )
-                            if (
-                                interrupted_job is not None
-                                and state is not None
-                                and state.status == "RUNNING"
-                            ):
-                                if state.attempts == 0:
-                                    raise RuntimeError("Running job has no consumed attempt to refund")
-                                interrupted_at = collection_clock(utcnow())
-                                await self.repo.put(
-                                    "ops.jobs",
-                                    job_id,
-                                    {
-                                        **replace_job_clock(
-                                            replace_job_clock(interrupted_job, "run_after", interrupted_at),
-                                            "interrupted_at",
-                                            interrupted_at,
-                                        ),
-                                        "status": "QUEUED",
-                                        "attempts": state.attempts - 1,
-                                        "interruption_reason": "CONTROLLED_GENERATION_STOP",
-                                    },
-                                )
-                    except Exception:
-                        log.exception(
-                            "Could not requeue interrupted job %s; startup recovery is required", job_id
-                        )
+                await self.interrupt_claims(interrupted, collection_clock())
                 await self.close()
 
     async def close(self) -> None:

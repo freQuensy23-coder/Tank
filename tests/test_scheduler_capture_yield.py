@@ -7,6 +7,7 @@ import pytest
 from source_support import fixture_versions
 
 import tank.scheduler as scheduler_module
+from tank.contracts.scheduler_commands import ReactionTarget
 from tank.scheduler import Scheduler
 from tank.settings import Settings
 from tank.storage import MemoryRepository
@@ -21,10 +22,10 @@ async def test_capture_waits_while_market_truth_runs_and_logs_it(
     repo = MemoryRepository()
     truth = await repo.enqueue("RUN_MARKET_TRUTH", {}, "mt", priority=1)
     await repo.claim_job()
-    polls = []
+    polls: list[float] = []
     real_sleep = asyncio.sleep
 
-    async def fast_sleep(seconds) -> None:
+    async def fast_sleep(seconds: float) -> None:
         polls.append(seconds)
         if len(polls) == 3:
             await repo.finish_job(truth["job_id"])
@@ -41,7 +42,7 @@ async def test_capture_waits_while_market_truth_runs_and_logs_it(
     )
     payload = {"event_id": "EVT-1", "token_id": "bitcoin:BTC", "checkpoint": "POST_1H"}
     with caplog.at_level(logging.INFO, logger="tank.scheduler"):
-        await scheduler._yield_to_market_truth(payload, utcnow())
+        await scheduler._yield_to_market_truth(ReactionTarget.model_validate(payload), utcnow())
     assert len(polls) == 3
     assert "yielded 6 s to RUN_MARKET_TRUTH" in caplog.text
 
@@ -51,7 +52,7 @@ async def test_capture_near_expiry_does_not_yield(monkeypatch: pytest.MonkeyPatc
     await repo.enqueue("RUN_MARKET_TRUTH", {}, "mt", priority=1)
     await repo.claim_job()
 
-    async def no_sleep(seconds) -> None:
+    async def no_sleep(seconds: float) -> None:
         raise AssertionError("a capture near its expiry must not wait")
 
     monkeypatch.setattr(scheduler_module.asyncio, "sleep", no_sleep)
@@ -64,4 +65,6 @@ async def test_capture_near_expiry_does_not_yield(monkeypatch: pytest.MonkeyPatc
         versions=fixture_versions(),
     )
     checkpoint = utcnow() - timedelta(hours=5, minutes=45)
-    await scheduler._yield_to_market_truth({"event_id": "EVT-1"}, checkpoint)
+    await scheduler._yield_to_market_truth(
+        ReactionTarget(event_id="EVT-1", token_id="bitcoin:BTC", checkpoint="POST_1H"), checkpoint
+    )

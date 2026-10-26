@@ -8,8 +8,8 @@ from pydantic import JsonValue
 from runtime_public_fixtures import public_runtime
 from test_storage import repo as repo
 
-from tank.contracts.job_repository import JobRepository
 from tank.contracts.scheduler_results import ConditionEvaluationResult
+from tank.job_repository import JobRepository
 from tank.storage import StorageBackend
 from tank.time_precision import Timestamp
 from tank.util import iso, utcnow
@@ -94,7 +94,8 @@ async def test_worker_refuses_missing_or_invalid_cutoff_without_calling_evaluato
         finally:
             stop.set()
             await asyncio.wait_for(worker, 2)
-    assert result["status"] == "FAILED" and result["last_error"] == "ValidationError"
+    assert result["status"] == "FAILED" and result["last_error"] == "INVALID_QUEUE_ENVELOPE"
+    assert result["attempts"] == 1
     assert result["payload"] == payload and "result" not in result
     assert calls == []
     assert await repo.list("ana.watch_conditions") == []

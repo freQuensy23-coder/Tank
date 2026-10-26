@@ -3,9 +3,9 @@
 import pytest
 from pydantic import JsonValue, ValidationError
 
-from tank.contracts.job_repository import JobRepository
 from tank.contracts.jobs import JobEnvelope
 from tank.contracts.json import decode_json
+from tank.job_repository import JobRepository
 from tank.storage import MemoryRepository
 from tank.util import canonical_json
 
