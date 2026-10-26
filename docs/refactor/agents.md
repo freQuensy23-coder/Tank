@@ -2001,3 +2001,12 @@ job-claim-mutations-roundtrip; backend Memory/PostgreSQL fencing and three stale
 controller races remain held for the paired cohort. These claims concern atomic
 queue acknowledgment/failure/requeue, not a distributed external-effect lease;
 network calls must not run inside this callback/row lock.
+
+The mutation's last_error field retains the existing storage str-or-None contract:
+RepositoryQueries.fail_job writes str(error), and str(Exception()) is genuinely
+empty. It must remain distinct from unreported None rather than become UNKNOWN.
+The current worker separately records the actual exception class name through
+WorkerFailureRequest.error_class. A direct empty-versus-None control extends the
+pure family to 22 cases, all passing in 6.34 seconds, zero skips/source guards;
+strict source/test and Ruff/format pass. No terminal-reconciliation policy is
+changed by this lower-level field correction.

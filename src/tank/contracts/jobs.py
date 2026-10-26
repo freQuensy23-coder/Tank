@@ -325,7 +325,7 @@ class JobClaimMutation(DomainModel):
 
     status: Literal["QUEUED", "DONE", "FAILED", "EXPIRED"]
     attempts: int | None = Field(default=None, ge=0)
-    last_error: str | None = Field(default=None, min_length=1, pattern=r"\S")
+    last_error: str | None = None
     result: JsonValue = None
     run_after: Timestamp | None = None
     finished_at: Timestamp | None = None
