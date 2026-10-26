@@ -5,6 +5,7 @@ from typing import Protocol
 from tank.deployment.api_contracts import (
     ActorSnapshot,
     ActorTagUpdate,
+    ActorVersionsSnapshot,
     BuildObservation,
     CompletedBuildSnapshot,
     HistoricalBuildSnapshot,
@@ -19,6 +20,8 @@ from tank.deployment.submissions import BuildSubmission
 
 class PublisherAPI(Protocol):
     def actor(self) -> ActorSnapshot: ...
+
+    def actor_versions(self) -> ActorVersionsSnapshot: ...
 
     def completed_build(self, build_id: BuildID) -> CompletedBuildSnapshot: ...
 

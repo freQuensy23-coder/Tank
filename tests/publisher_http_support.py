@@ -11,11 +11,10 @@ from pathlib import Path
 from typing import Literal
 from urllib.parse import parse_qs, urlsplit
 
-from publisher_state_support import ProviderState
+from publisher_state_support import ProviderActorSnapshot, ProviderState
 
 from tank.contracts import DomainModel
 from tank.deployment.api_contracts import (
-    ActorSnapshot,
     ActorTagUpdate,
     BuildObservation,
     CompletedBuildSnapshot,
@@ -31,7 +30,11 @@ from tank.deployment.identities import CommitSHA
 from tank.deployment.journal import PublisherJournal
 
 type Reply = (
-    ActorSnapshot | BuildObservation | CompletedBuildSnapshot | UploadedVersion | HistoricalBuildSnapshot
+    ProviderActorSnapshot
+    | BuildObservation
+    | CompletedBuildSnapshot
+    | UploadedVersion
+    | HistoricalBuildSnapshot
 )
 type LegacyFault = Literal["source", "version", "build_number", "status", "actor"]
 type WireFault = Literal["ACTOR_IDENTITY", "UPLOAD_FAILURE", "BUILD_TAG_LENGTH"] | LegacyFault

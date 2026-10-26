@@ -10,6 +10,7 @@ from pydantic import SecretStr, ValidationError
 
 from tank.deployment.api_contracts import ReportedAPIReason, UnreportedAPIReason
 from tank.deployment.apify_api import ApifyAPI, ApifyAPIError, ApifyEndpoint, ApifyHTTPFailure
+from tank.deployment.artifact_contracts import SourceBundle
 
 pytestmark = pytest.mark.integration
 
@@ -85,7 +86,6 @@ def test_actual_actor_read_projects_required_facts_and_keeps_token_out_of_url() 
     with api_peer(document, status=200, location=None) as peer:
         actor = client(peer).actor()
         assert actor.taggedBuilds.direct.buildId == "A" * 17
-        assert [version.versionNumber for version in actor.versions] == ["0.3"]
         assert len(peer.received) == 1
         request = peer.received[0]
         assert request.path == "/v2/actors/rbf5CQKQgKNVl4SfO"
@@ -101,7 +101,6 @@ def test_actual_actor_read_projects_required_facts_and_keeps_token_out_of_url() 
         b'{"data":[]}',
         b'{"data":{"id":"rbf5CQKQgKNVl4SfO","versions":[]}}',
         b'{"data":{"id":"wrong-actor","taggedBuilds":{"direct":{"buildId":"AAAAAAAAAAAAAAAAA"}},"versions":[]}}',
-        b'{"data":{"id":"rbf5CQKQgKNVl4SfO","taggedBuilds":{"direct":{"buildId":"AAAAAAAAAAAAAAAAA"}}}}',
     ],
 )
 def test_actual_actor_read_refuses_missing_or_wrong_consumed_facts(document: bytes) -> None:
@@ -197,6 +196,11 @@ def test_provider_reason_is_redacted_before_its_display_bound() -> None:
     [
         b'[{"name":"main.py","folder":0,"format":"TEXT","content":"x"}]',
         b'[{"name":"main.py","folder":1,"format":"TEXT","content":"x"}]',
+        b'[{"name":"main.py","folder":null,"format":"TEXT","content":"x"}]',
+        b'[{"name":"main.py","folder":"","format":"TEXT","content":"x"}]',
+        b'[{"name":"main.py","folder":[],"format":"TEXT","content":"x"}]',
+        b'[{"name":"main.py","folder":{},"format":"TEXT","content":"x"}]',
+        b'[{"name":"","format":"TEXT","content":"x"}]',
         b'[{"name":"../main.py","format":"TEXT","content":"x"}]',
         b'[{"name":"main.py","format":"BASE64","content":"%%%"}]',
         b'[{"name":"main.py","format":"UNKNOWN","content":"x"}]',
@@ -252,3 +256,41 @@ def test_opaque_source_file_json_is_not_recursively_decoded() -> None:
     )
     with api_peer(document, status=200, location=None) as peer:
         assert client(peer).completed_build("A" * 17).actVersion.decoded()["opaque.json"] == opaque
+
+
+def test_tag_only_read_does_not_require_unconsumed_versions() -> None:
+    document = (
+        b'{"data":{"id":"rbf5CQKQgKNVl4SfO","taggedBuilds":{"direct":{"buildId":"AAAAAAAAAAAAAAAAA"}}}}'
+    )
+    with api_peer(document, status=200, location=None) as peer:
+        assert client(peer).actor().taggedBuilds.direct.buildId == "A" * 17
+        with pytest.raises(ValidationError):
+            client(peer).actor_versions()
+        assert len(peer.received) == 2
+
+
+def test_version_read_does_not_require_unconsumed_tags() -> None:
+    document = b'{"data":{"id":"rbf5CQKQgKNVl4SfO","versions":[{"versionNumber":"0.3"}]}}'
+    with api_peer(document, status=200, location=None) as peer:
+        assert [entry.versionNumber for entry in client(peer).actor_versions().versions] == ["0.3"]
+        with pytest.raises(ValidationError):
+            client(peer).actor()
+        assert len(peer.received) == 2
+
+
+@pytest.mark.parametrize("folder", [b'{"folder":true}', b'{"folder":true,"name":null,"content":{}}'])
+def test_ignored_folder_metadata_does_not_change_genuine_byte_digest(folder: bytes) -> None:
+    document = (
+        b'{"data":{"id":"AAAAAAAAAAAAAAAAA","actId":"rbf5CQKQgKNVl4SfO","status":"SUCCEEDED",'
+        b'"actVersion":{"sourceType":"SOURCE_FILES","sourceFiles":['
+        + folder
+        + b',{"name":"main.py","format":"TEXT","content":"print(1)\\n"},'
+        b'{"name":"binary.dat","folder":false,"format":"BASE64","content":"AP8="}]}}}'
+    )
+    with api_peer(document, status=200, location=None) as peer:
+        files = client(peer).completed_build("A" * 17).actVersion.decoded()
+        assert files == {"main.py": b"print(1)\n", "binary.dat": b"\x00\xff"}
+        assert (
+            SourceBundle(files=files).digest()
+            == "ac2f29f060946e9c04b93fc7458baab72b9896d7ab243b3a5761859c3d2f8ede"
+        )

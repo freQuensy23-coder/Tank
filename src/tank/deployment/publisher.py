@@ -129,7 +129,7 @@ class Publisher:
                 for name, body in sorted(uploaded.files.items())
             ],
         )
-        exists = any(entry.versionNumber == "0.3" for entry in self.api.actor().versions)
+        exists = any(entry.versionNumber == "0.3" for entry in self.api.actor_versions().versions)
         self.api.upload_version(version, replace=exists)
         actual = self.api.uploaded_version()
         if actual.decoded() != uploaded.files:

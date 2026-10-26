@@ -33,7 +33,6 @@ class ApifyProjection(BaseModel):
 
 
 class SourceFolder(ApifyProjection):
-    name: SourcePath
     folder: TrueFlag
 
 
@@ -114,6 +113,10 @@ class VersionSummary(ApifyProjection):
 class ActorSnapshot(ApifyProjection):
     id: ActorID
     taggedBuilds: ActorTags
+
+
+class ActorVersionsSnapshot(ApifyProjection):
+    id: ActorID
     versions: list[VersionSummary]
 
 

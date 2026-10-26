@@ -11,13 +11,13 @@ from tank.deployment.api_contracts import (
     ActorSnapshot,
     ActorTags,
     ActorTagUpdate,
+    ActorVersionsSnapshot,
     Base64SourceFile,
     BuildObservation,
     CompletedBuildSnapshot,
     DirectTag,
     HistoricalBuildSnapshot,
     HistoricalSourceSnapshot,
-    SourceEntry,
     SourceSnapshot,
     TextSourceFile,
     UploadedVersion,
@@ -93,6 +93,10 @@ class FixedArtifacts:
         return self.selected
 
 
+class ProviderActorSnapshot(ActorSnapshot):
+    versions: list[VersionSummary]
+
+
 class ProviderState:
     def __init__(self, initial: SourceArtifact, *, fault: Fault) -> None:
         self.direct = "A" * 17
@@ -108,15 +112,19 @@ class ProviderState:
         self.started: list[CommitSHA] = []
         self.lookups: list[str] = []
 
-    def actor(self) -> ActorSnapshot:
+    def actor(self) -> ProviderActorSnapshot:
         self.lookups.append("actor")
-        return ActorSnapshot(
+        return ProviderActorSnapshot(
             id="rbf5CQKQgKNVl4SfO",
             taggedBuilds=ActorTags(direct=DirectTag(buildId=self.direct)),
             versions=[]
             if self.version is None
             else [VersionSummary(versionNumber=self.version.versionNumber)],
         )
+
+    def actor_versions(self) -> ActorVersionsSnapshot:
+        observed = self.actor()
+        return ActorVersionsSnapshot(id=observed.id, versions=observed.versions)
 
     def completed_build(self, build_id: BuildID) -> CompletedBuildSnapshot:
         self.lookups.append(build_id)
@@ -152,7 +160,7 @@ class ProviderState:
     def uploaded_version(self) -> UploadedVersion:
         if self.version is None:
             raise AssertionError("Version requested before upload")
-        files: list[SourceEntry] = [
+        files: list[Base64SourceFile] = [
             Base64SourceFile(name=entry.name, format=entry.format, content=entry.content)
             for entry in self.version.sourceFiles
         ]
@@ -163,7 +171,7 @@ class ProviderState:
             buildTag=None,
             envVars=[],
             applyEnvVarsToBuild=False,
-            sourceFiles=files,
+            sourceFiles=list(files),
         )
 
     def start_build(self, release_sha: CommitSHA) -> BuildObservation:

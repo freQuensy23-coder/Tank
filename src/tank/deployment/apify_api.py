@@ -14,6 +14,7 @@ from tank.contracts.json import decode_unique_json
 from tank.deployment.api_contracts import (
     ActorSnapshot,
     ActorTagUpdate,
+    ActorVersionsSnapshot,
     APIFailureReason,
     BuildObservation,
     CompletedBuildSnapshot,
@@ -153,6 +154,9 @@ class ApifyAPI:
 
     def actor(self) -> ActorSnapshot:
         return self._project("GET", "/actors/rbf5CQKQgKNVl4SfO", None, ActorSnapshot)
+
+    def actor_versions(self) -> ActorVersionsSnapshot:
+        return self._project("GET", "/actors/rbf5CQKQgKNVl4SfO", None, ActorVersionsSnapshot)
 
     def completed_build(self, build_id: BuildID) -> CompletedBuildSnapshot:
         record = self._project("GET", "/actor-builds/" + build_id, None, CompletedBuildSnapshot)
