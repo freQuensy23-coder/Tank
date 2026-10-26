@@ -1665,6 +1665,23 @@ class ConditionOITemporalExclusions(DomainModel):
     latest_observation: ConditionSupplementalOIObservation
 
 
+class ObservedConditionBasis(DomainModel):
+    status: Literal["OBSERVED"]
+    value_bps: Decimal
+
+
+class UnavailableConditionBasis(DomainModel):
+    status: Literal["UNAVAILABLE"]
+    reason: Literal["INCOMPLETE"]
+
+
+class UnrequestedConditionBasis(DomainModel):
+    status: Literal["NOT_REQUESTED"]
+
+
+type ConditionBasis = ObservedConditionBasis | UnavailableConditionBasis | UnrequestedConditionBasis
+
+
 class ConditionDerivativeVenue(DomainModel):
     venue: str = Field(min_length=1, pattern=r"\S")
     instrument_id: str = Field(min_length=1, pattern=r"\S")
@@ -1672,14 +1689,7 @@ class ConditionDerivativeVenue(DomainModel):
     funding: ConditionFunding
     liquidations: ConditionLiquidations | UnrequestedConditionLiquidations
     oi_temporal_exclusions: ConditionOITemporalExclusions | None
-    basis_bps: Decimal | None
-    basis_reason: Literal["INCOMPLETE"] | None
-
-    @model_validator(mode="after")
-    def actual_basis_availability(self) -> Self:
-        if (self.basis_bps is None) != (self.basis_reason is not None):
-            raise ValueError("Missing derivative basis requires the actual mark/index evidence gap")
-        return self
+    basis: ConditionBasis
 
 
 class ConditionOISynchronizationContribution(DomainModel):
@@ -2207,7 +2217,9 @@ class EnrichedConditionDerivativeVenue(ConditionDerivativeVenue):
     @model_validator(mode="after")
     def actual_basis_comparison(self) -> Self:
         bounds = self.support.basis_normal_range.bounds
-        value = self.basis_bps
+        if isinstance(self.basis, UnrequestedConditionBasis):
+            raise ValueError("Full derivative enrichment requires its actual basis evaluation")
+        value = self.basis.value_bps if isinstance(self.basis, ObservedConditionBasis) else None
         expected = (
             None
             if bounds is None or value is None
