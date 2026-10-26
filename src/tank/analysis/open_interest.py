@@ -18,7 +18,13 @@ from tank.analysis.condition_derivative_inputs import (
     OISelectionPolicy,
 )
 from tank.analysis.condition_graph_contracts import ConditionInterval, ConditionWindow
-from tank.analysis.oi_ratio import NativeOiChange, native_oi_change
+from tank.analysis.oi_ratio import (
+    NativeOiChange,
+    OiEndpoints,
+    OiFractionNotEstimable,
+    exact_oi_endpoint_fraction,
+    native_oi_change,
+)
 from tank.analysis.statistics_contracts import FloatBounds, FloatRange
 from tank.contracts import DomainModel
 from tank.time_precision import Timestamp
@@ -189,6 +195,7 @@ class OINativeHistoryBaseline(DomainModel):
     source_observation_count: int = Field(ge=0)
     distinct_source_time_count: int = Field(ge=0)
     pair_count: int = Field(ge=0)
+    unestimable_pair_count: int = Field(ge=0)
     rejected_pair_count: int = Field(ge=0)
     pair_tolerance_s: float = Field(ge=0)
     minimum_history_days: int = Field(gt=0)
@@ -201,6 +208,10 @@ class OINativeHistoryBaseline(DomainModel):
 
     @model_validator(mode="after")
     def actual_population(self) -> Self:
+        if self.unestimable_pair_count > self.pair_count:
+            raise ValueError("Unestimable OI pairs must remain inside the actual observed pair count")
+        if self.unestimable_pair_count and self.normal_range.bounds is not None:
+            raise ValueError("An unestimable observed OI pair cannot be dropped from a known baseline")
         if self.distinct_source_time_count > self.source_observation_count:
             raise ValueError("OI history cannot invent more distinct clocks than source observations")
         if self.pair_count + self.rejected_pair_count != self.distinct_source_time_count:
@@ -245,13 +256,18 @@ class OINativeHistoryBaseline(DomainModel):
         return self
 
 
-def _quantile(values: Sequence[Fraction], probability: float) -> Fraction:
+def _quantile(values: Sequence[Fraction], probability: float) -> float | None:
     if not values:
         raise ValueError("OI quantiles require an actual nonempty observed population")
-    position = (len(values) - 1) * Fraction(str(probability))
-    index = position.numerator // position.denominator
+    position = (len(values) - 1) * probability
+    index = int(position)
     low, high = values[index], values[min(index + 1, len(values) - 1)]
-    return low + (high - low) * (position - index)
+    weight = position - index
+    exact = low + (high - low) * Fraction.from_float(weight)
+    displayed = float(low) + (float(high) - float(low)) * weight
+    if not isfinite(displayed) or displayed == 0 and exact != 0:
+        return None
+    return displayed
 
 
 def _display_bound(value: Fraction) -> float | None:
@@ -300,6 +316,7 @@ def _native_history(
         changes: list[Fraction] = []
         ends: list[datetime] = []
         rejected = 0
+        unestimable = 0
         if not ambiguous and request.assembled_at.value is not None:
             for at in times:
                 target = at - duration
@@ -317,7 +334,15 @@ def _native_history(
                 if initial is None or initial <= 0 or final is None or final < 0:
                     rejected += 1
                     continue
-                changes.append((Fraction(final) - Fraction(initial)) / Fraction(initial))
+                try:
+                    change = exact_oi_endpoint_fraction(OiEndpoints(start=initial, end=final))
+                except OiFractionNotEstimable:
+                    unestimable += 1
+                else:
+                    if _display_bound(change) is None:
+                        unestimable += 1
+                    else:
+                        changes.append(change)
                 ends.append(at)
         else:
             rejected = len(times)
@@ -329,10 +354,12 @@ def _native_history(
             not times or times[-1] - times[0] < minimum or not ends or ends[-1] - ends[0] + duration < minimum
         ):
             reason = "INSUFFICIENT_HISTORY"
+        elif unestimable:
+            reason = "NOT_ESTIMABLE"
         else:
             ordered = sorted(changes)
-            lower = _display_bound(_quantile(ordered, policy.quantiles[0]))
-            upper = _display_bound(_quantile(ordered, policy.quantiles[1]))
+            lower = _quantile(ordered, policy.quantiles[0])
+            upper = _quantile(ordered, policy.quantiles[1])
             if lower is None or upper is None:
                 reason = "NOT_ESTIMABLE"
             else:
@@ -345,7 +372,8 @@ def _native_history(
                 population_basis="OBSERVED_NATIVE_ENDPOINT_PAIRS",
                 source_observation_count=observation_count,
                 distinct_source_time_count=len(times),
-                pair_count=len(changes),
+                pair_count=len(ends),
+                unestimable_pair_count=unestimable,
                 rejected_pair_count=rejected,
                 pair_tolerance_s=tolerance,
                 minimum_history_days=policy.minimum_history_days,

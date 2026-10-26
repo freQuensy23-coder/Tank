@@ -362,3 +362,21 @@ def test_observed_native_baseline_cannot_claim_a_longer_unobserved_history_polic
     baseline = calculator.native_baseline(request, window="W1H")[0]
     with pytest.raises(ValidationError, match="minimum history"):
         OINativeHistoryBaseline.model_validate(baseline.model_copy(update={"minimum_history_days": 20}))
+
+
+def test_shared_huge_native_scale_does_not_expand_into_exponent_sized_integers() -> None:
+    calculator, request = historical_case(spacing_h=1, quantities=("2E1000000000", "1E1000000000"))
+    baseline = calculator.native_baseline(request, window="W1H")[0]
+    assert baseline.pair_count == 239 and baseline.unestimable_pair_count == 0
+    assert baseline.normal_range.bounds is not None
+    assert baseline.normal_range.bounds.lower == -0.5 and baseline.normal_range.bounds.upper == 1.0
+
+
+def test_extreme_magnitude_gap_keeps_every_actual_pair_without_integer_expansion() -> None:
+    calculator, request = historical_case(spacing_h=1, quantities=("1E1000000000", "1"))
+    baseline = calculator.native_baseline(request, window="W1H")[0]
+    assert baseline.pair_count == baseline.unestimable_pair_count == 239
+    assert baseline.rejected_pair_count == 1
+    assert baseline.normal_range.bounds is None and baseline.normal_range.reason == "NOT_ESTIMABLE"
+    current = calculator.select(request)[0].native_change(normal_range=baseline.normal_range)
+    assert current is not None and current.value == 0.2
