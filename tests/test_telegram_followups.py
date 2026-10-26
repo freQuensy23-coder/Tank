@@ -28,7 +28,7 @@ from tank.telegram_inbox import (
     chunks,
     question_id_for,
 )
-from tank.time_precision import propagate_timestamp
+from tank.time_precision import collection_clock, propagate_timestamp
 from tank.util import iso
 
 BOT = 777
@@ -569,16 +569,26 @@ async def test_answered_question_requeues_its_lost_delivery_job() -> None:
 
 
 @pytest.mark.asyncio
-async def test_terminal_question_job_records_a_failure_answer() -> None:
-    from tank.runtime import Runtime
+async def test_terminal_question_job_records_a_failure_answer(tmp_path: Path) -> None:
+    from runtime_failure_fixtures import runtime_failure_fixture
+
+    from tank.runtime_contracts import JobStateFailureReason
 
     repo = MemoryRepository()
     question_id = await ask(repo)
-    runtime = object.__new__(Runtime)
-    runtime.settings = SimpleNamespace(ops_progress_enabled=False, replay=False)
-    runtime.repo = repo
-    job = {"type": "AGENT_MESSAGE", "payload": {"kind": "USER_QUESTION", "question_id": question_id}}
-    await runtime.terminal_delivery_failure(job, "EXPIRED")
+    question = await repo.get("out.user_questions", question_id)
+    assert question is not None
+    job = await repo.enqueue(
+        "AGENT_MESSAGE",
+        {"kind": "USER_QUESTION", "question_id": question_id, "session_id": question["session_id"]},
+        "expired-question",
+    )
+    job.update(status="EXPIRED", **collection_clock().fields("finished_at"))
+    await repo.put("ops.jobs", job["job_id"], job)
+    async with runtime_failure_fixture(repo, tmp_path, ops_progress_enabled=False) as runtime:
+        await runtime.terminal_delivery_failure_wire(
+            job, JobStateFailureReason(kind="STATE", status="EXPIRED")
+        )
     assert (await repo.get("out.user_questions", question_id))["answer_status"] == "FAILED"
     assert len(await repo.list("ops.jobs", filters={"type": "TELEGRAM_ANSWER"})) == 1
 
@@ -722,21 +732,18 @@ async def test_failed_session_without_answer_is_reconciled_after_restart() -> No
 
 
 @pytest.mark.asyncio
-async def test_terminal_answer_job_is_recorded_once_and_marked_reconciled() -> None:
-    from tank.runtime import Runtime
+async def test_terminal_answer_job_is_recorded_once_and_marked_reconciled(tmp_path: Path) -> None:
+    from runtime_failure_fixtures import runtime_failure_fixture
 
     repo = MemoryRepository()
     question_id = await ask(repo)
-    runtime = object.__new__(Runtime)
-    runtime.settings = SimpleNamespace(ops_progress_enabled=False, replay=False)
-    runtime.repo = repo
-    runtime.delivery = None
-    runtime.inbox = TelegramInbox(repo, inbox_settings(), http=httpx.AsyncClient())
     job = await repo.enqueue("TELEGRAM_ANSWER", {"question_id": question_id}, question_id)
-    await repo.put("ops.jobs", job["job_id"], {**job, "status": "FAILED"})
-    await runtime.reconcile_delivery_failures()
-    runtime._delivery_reconciled_at = None
-    await runtime.reconcile_delivery_failures()
+    job.update(status="FAILED", **collection_clock().fields("finished_at"))
+    await repo.put("ops.jobs", job["job_id"], job)
+    async with runtime_failure_fixture(repo, tmp_path, ops_progress_enabled=False) as runtime:
+        await runtime.reconcile_delivery_failures()
+        runtime._failure_reconcile_attempted_at = None
+        await runtime.reconcile_delivery_failures()
     assert (await repo.get("out.user_questions", question_id))["status"] == "DELIVERY_FAILED"
     failures = await repo.list("out.deliveries", filters={"question_id": question_id, "status": "FAILED"})
     assert len(failures) == 1

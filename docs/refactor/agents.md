@@ -1281,6 +1281,39 @@ presentation coupling and the assigned vendor implementation backlog remain
 open. Earlier 19e0dc59 was an inactive contract checkpoint, not qualified
 caller activation; the final source and real caller proofs supersede it.
 
+
+Held terminal-failure adapter qualification (6c2d1e5c descendant)
+
+The terminal-failure command validates original queue payloads through the
+wire-only delivery/answer decoders before constructing internal typed
+notifications. Internal container revalidation uses Pydantic by_name=True
+so the already typed JobPayload.depends_on field is revalidated under its
+Python field name. This does not enable field-name admission at the public
+wire decoder: a raw depends_on key still rejects, while _depends_on remains
+the actual queue alias. Constructed version=True still rejects. The exact
+regression is test_terminal_failure_keeps_wire_alias_admission_and_revalidates_typed_payload.
+
+The test-only runtime_failure_fixture.http_routes callback is genuinely
+optional HTTP expectation setup: absence permits no HTTP route. It never
+replaces a required Runtime service. The native-missing reconciliation case
+registers and counts its actual GET through this strict router.
+
+On the unchanged owned source after the canonical guard join, the focused
+alias/original delivery cases pass 2/2 in 2.81 seconds; the two new retirement
+files pass all 19 units in 3.78 seconds and all four actual PostgreSQL
+POST-inflight/committed-ACK-loss/refusal-write/restart cases in 6.10 seconds,
+zero skips. The local wrappers verify source identity and exit zero.
+Independent strict four contracts/adapter/helper targets and scoped Ruff
+pass. Evidence prefixes retirement-6c2-alias-focused,
+retirement-6c2-final-phase-unit and retirement-6c2-phase-pg are external.
+The earlier broad diagnostic remains 944 passed/two failed; one delivery
+failure is fixed by the tested alias correction, while the remaining
+Telegram terminal-answer legacy Runtime fixture still needed migration at
+that snapshot. Commit 4a362a56 later migrated that fixture with its original
+assertions intact and a passing focused control.
+This is a held checkpoint, not full Runtime/caller qualification or whole
+SessionService completion.
+
 Standalone public queue repair on clean main49 parent
 
 This companion starts from canonical 5b77f741 (normal 8f/main49 ancestry),
@@ -1331,3 +1364,87 @@ These owner gates ran on the frozen owned work-in-progress source above
 047e21df before the report/commit; product source did not change after the
 passing checks. The immutable wrapper fingerprints remain the exact proof
 identity; parent final-head integration qualification is still required.
+
+Qualified joint question-retirement and Runtime failure cohort
+
+Canonical product source 75e3bd1c normally joins the preserved 4a retirement,
+analysis fd35085e real worker fragments, quality 280fbc07 actual E2E adapter,
+public 494 retry/slot fixes and current parent 253f50da. The Runtime conflict
+kept both the required typed failure repository and explicit retry policy;
+append-only reports retain both complete histories. No inactive worker/native
+producer branch is ancestry. The only subsequent addition is the supported
+unknown-versus-occurred marker regression and final inventory/evidence text;
+product source did not change after the broad passing gates.
+
+SessionService.abandon_question/reconcile_answers and Runtime terminal failure/
+restart reconciliation now consume phase-specific strict records. Actual
+initial ACCEPTED/UNREPORTED/EMPTY receipts or sent_at are preserved without
+requiring an unused old body/budget. Unknown initial acceptance/journal state
+refuses explicitly before answer/native effects; no missing native ID becomes
+an unsent assertion. The existing controller send lock then repository session
+lock serializes retirement with actual initial/recovery POSTs and acceptance
+commit. Both-ID authoritative answer state is rechecked under the question
+lock, preserving the first answer and idempotent delivery. No distributed
+POST guarantee is claimed beyond these actual participating locks.
+
+Runtime requires a concrete RepositoryRuntimeFailures port in production
+composition. Its narrow store port owns actual queue locks, checks current
+job/type/status/target and phase-consumed facts, and performs exact sparse
+writes. Host refusals contain actual captured controller identity, actual
+recording clock and request-digest scope, remain distinct from native receipts,
+and are persisted before any handled marker. The closed JobEnvelope map and
+pre-serialization entity validation preserve absent-versus-explicit-null facts.
+Transient write/broken-ACK outcomes are sanitized named availability failures;
+permanent driver rejection and malformed global data do not become handled.
+Actual unrelated worker work still completes and restart preserves original
+receipt identity. Changed native 404 facts can close the question through the
+real refusal writer without rewriting past refusal or fabricating termination.
+
+All 966 broad affected units pass in 24.30 seconds, zero skips, p90 .321 seconds
+and maximum 5.632 seconds. The entire 140-case affected Linux integration
+collection passes in 65.66 seconds, zero skips, covering real PostgreSQL,
+replay/reference/market-refresh/four E2Es and public queue controls. Evidence
+retirement-75e3-joint-{unit,integration} is external; wrappers verify unchanged
+source/service identity. Independent strict contracts/runtime contracts/
+adapter/helper four targets pass. The two peer caller omissions from the
+previous 129/7 diagnostic are closed without weaker assertions/deadlines.
+
+Final audit correction: the suspected unknown-marker skip was disproved.
+Consumers already inspect marker.value, so an explicit unavailable timestamp
+remains eligible and never masquerades as handled. No product behavior was
+changed. The failed policy diagnostic is preserved externally as
+retirement-75e3-marker-policy-diagnostic.py and marker-before reports. The
+accurate current regression adds four passing units in 1.32 seconds and one
+actual PostgreSQL case in 2.13 seconds, zero skips, and independent test strict
+passes. It preserves explicit unknown reason versus all-null absence and
+proves the actual pending adapter does not invent a handled marker.
+
+The refreshed inventory includes the new inward retirement contracts, sparse
+failure adapter and public retry policy. Twenty-four SessionService/free-helper
+functions and the Runtime worker still lack complete signatures in this
+cohort; annotation status is not whole-body strict proof. Required send/file/
+usage/tool/event/execution-barrier migrations, remaining presentation coupling,
+and the assigned vendor programs remain open on their separate workstreams.
+Exact retained map/default/None classes and behavior controls are recorded by
+symbol/site in agents-exceptions.json. This bounded cohort does not waive any
+of the remaining global work.
+
+
+### Required condition evaluation caller
+
+Clean parent 956666e1 normally joins producer 7c0e8b27, without held worker or
+native-file ancestry. Runtime.eval_conditions_wire admits the queued payload
+through EvalConditionsJob and passes its actual cutoff facets as Timestamp.
+The checked runtime_evaluation protocol consumes ConditionEvaluationResult;
+that result is revalidated before the durable ops.jobs.result JSON boundary.
+Neither missing cutoff nor unknown occurrence becomes a processing clock.
+
+Negative workflow evidence at e869 records four failures from the old direct
+dictionary dispatch. Final source passed 80 connected units in 16.26 seconds
+and all five collected actual PostgreSQL cases in 5.31 seconds, zero skips,
+with unchanged source fingerprints. Actual Scheduler.tick, queue claim, Runtime
+worker and evaluator produce DONE with the real serialized receipt; missing,
+naive and unknown cutoffs fail before evaluation. A constructed invalid typed
+receipt also refuses before serialization. Independent strict checks pass for
+runtime_evaluation, scheduler_results, runtime_public_fixtures and the result
+boundary test. Whole Runtime.worker body typing remains open.

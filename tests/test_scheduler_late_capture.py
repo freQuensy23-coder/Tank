@@ -8,14 +8,13 @@ from pathlib import Path
 
 import httpx
 import pytest
-from pydantic_settings import SettingsConfigDict
+from runtime_public_fixtures import public_runtime
 from source_support import fixture_http_admission, fixture_versions
 
 from tank.contracts.scheduler_results import CapturedReaction, UnchangedReaction
 from tank.market.service import MarketService
-from tank.runtime_composition import build_runtime
 from tank.scheduler import Scheduler
-from tank.settings import Settings, resolve_versions
+from tank.settings import Settings
 from tank.storage import MemoryRepository
 from tank.time_precision import chosen_boundary, collection_clock
 from tank.util import iso, parse_time, utcnow
@@ -315,35 +314,18 @@ async def test_backfill_changes_append_reaction_revision_once_and_preserve_origi
         ]
         assert len(live_jobs) == 1 and "CAP-LIVE-" in live_jobs[0]["payload"]["change_id"]
 
-        class RuntimeFixtureSettings(Settings):
-            model_config = SettingsConfigDict(env_file=None)
-
-        runtime_settings = resolve_versions(
-            RuntimeFixtureSettings(
-                data_dir=tmp_path / "runtime",
-                backup_dir=tmp_path / "runtime-backup",
-                telegram_token="synthetic-telegram-token",
-                telegram_alerts_chat="synthetic-alerts",
-                telegram_ops_chat="synthetic-ops",
-                openma_api_key="synthetic-openma-key",
-                codex_gateway_key="synthetic-gateway-key",
-            )
-        )
-        runtime = build_runtime(repo, runtime_settings)
-        await runtime.scheduler.close()
-        runtime.scheduler = scheduler
-        runtime.handlers = {"REACTION_CAPTURE": scheduler.reaction_capture}
-        stop = asyncio.Event()
-        worker = asyncio.create_task(runtime.worker(stop))
-        try:
-            async with asyncio.timeout(5):
-                while (await repo.get("ops.jobs", live_jobs[0]["job_id"]))["status"] != "DONE":
-                    await asyncio.sleep(0.005)
-            live = (await repo.get("ops.jobs", live_jobs[0]["job_id"]))["result"]
-        finally:
-            stop.set()
-            await worker
-            await runtime.close()
+        async with public_runtime(repo, tmp_path / "runtime", monkeypatch) as (runtime, _):
+            runtime.handlers = {"REACTION_CAPTURE": scheduler.reaction_capture}
+            stop = asyncio.Event()
+            worker = asyncio.create_task(runtime.worker(stop))
+            try:
+                async with asyncio.timeout(5):
+                    while (await repo.get("ops.jobs", live_jobs[0]["job_id"]))["status"] != "DONE":
+                        await asyncio.sleep(0.005)
+                live = (await repo.get("ops.jobs", live_jobs[0]["job_id"]))["result"]
+            finally:
+                stop.set()
+                await worker
         live_receipt = CapturedReaction.model_validate(live)
         assert live_receipt.revision == 3 and live_receipt.data_fingerprint != revised["data_fingerprint"]
         live_record = await repo.get("out.reaction_checkpoints", live_receipt.checkpoint_key)

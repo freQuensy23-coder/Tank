@@ -4,9 +4,12 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 import pytest
+from agent_source_fixtures import declared_versions_fixture
+from runtime_failure_fixtures import bind_worker_fragment_failure_store
 from session_followup_fixtures import UnexpectedFollowupRefusals
 
 from tank.analysis.truth_contracts import MarketTruthAssessmentRef
+from tank.contracts.progress import ProgressPreferences
 from tank.market.capture_contracts import CaptureReadiness
 from tank.runtime import Runtime
 from tank.runtime_contracts import MarketTruthJob
@@ -36,6 +39,8 @@ async def test_job_expiring_after_real_claim_records_actual_finish_precision(
     monkeypatch.setattr(repo, "claim_job", claim_then_advance_runtime_clock)
     runtime = object.__new__(Runtime)
     runtime.repo = repo
+    bind_worker_fragment_failure_store(runtime, repo, declared_versions_fixture())
+    runtime.settings = ProgressPreferences(ops_progress_enabled=False, replay=False)
     runtime.handlers = {"ROUTE_ITEM": AsyncMock()}
     await runtime.worker(stop)
     row = await repo.get("ops.jobs", queued["job_id"])
@@ -90,7 +95,6 @@ async def test_real_admission_deferral_replaces_clock_facets_and_copies_creation
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     import httpx
-    from agent_source_fixtures import declared_versions_fixture
     from pydantic import JsonValue
     from test_session_admission import settings
 
@@ -150,6 +154,7 @@ async def test_real_admission_deferral_replaces_clock_facets_and_copies_creation
         monkeypatch.setattr(sessions, "admit", admit_then_stop)
         runtime = object.__new__(Runtime)
         runtime.repo = repo
+        bind_worker_fragment_failure_store(runtime, repo, declared_versions_fixture())
         runtime.settings = opts
         runtime.sessions = sessions
         runtime.handlers = {"AGENT_MESSAGE": no_dispatch}
@@ -166,7 +171,6 @@ async def test_real_admission_deferral_replaces_clock_facets_and_copies_creation
 @pytest.mark.asyncio
 async def test_runtime_prepare_refuses_missing_admission_capacity_before_gateway_effects() -> None:
     import httpx
-    from agent_source_fixtures import declared_versions_fixture
     from pydantic import JsonValue, ValidationError
     from test_session_admission import AdmissionSettings
 

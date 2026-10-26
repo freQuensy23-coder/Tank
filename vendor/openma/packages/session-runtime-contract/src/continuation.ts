@@ -1,4 +1,4 @@
-import type { SentSessionEvent, SessionEventView, SessionStopReason } from '@open-managed-agents/domain/sessions';
+import type { SentSessionEvent, SessionEventView, SessionStopReason, UserMessageContentBlock, ToolResultContentBlock, ImageSource, DocumentSource, TextContentBlock, OutcomeRubric } from '@open-managed-agents/domain/sessions';
 import type { OrderedSessionEvent, ExecutionProgressReceipt } from './history';
 import type { SessionExecutionState } from './coordination';
 export interface ContinuationExecution {
@@ -492,4 +492,228 @@ export function projectConsumedHistory(snapshot: ContinuationSnapshot, currentId
   }
   tail.forEach(addInput);
   return out;
+}
+
+
+function continuationDocumentError(): never {
+  throw new ContinuationProtocolError('Invalid persisted continuation input');
+}
+function isContinuationObject(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === 'object' && !Array.isArray(value);
+}
+function continuationObject(value: unknown, fields: readonly string[]): Record<string, unknown> {
+  if (!isContinuationObject(value)) return continuationDocumentError();
+  if (Object.keys(value).some(key => !fields.includes(key))) return continuationDocumentError();
+  return value;
+}
+function continuationString(value: unknown, nonblank: boolean): string {
+  if (typeof value !== 'string' || (nonblank && value.trim().length === 0)) return continuationDocumentError();
+  return value;
+}
+function continuationOptionalString(value: unknown): string | null | undefined {
+  if (value === undefined || value === null) return value;
+  return continuationString(value, false);
+}
+function continuationArray(value: unknown): unknown[] {
+  if (!Array.isArray(value)) return continuationDocumentError();
+  return value;
+}
+function continuationText(value: unknown): TextContentBlock {
+  const row = continuationObject(value, ['type', 'text']);
+  if (row.type !== 'text') return continuationDocumentError();
+  return { type: 'text', text: continuationString(row.text, false) };
+}
+function continuationImageSource(value: unknown): ImageSource {
+  const row = continuationObject(value, ['type', 'data', 'mediaType', 'url', 'fileId']);
+  switch (row.type) {
+    case 'base64':
+      continuationObject(value, ['type', 'data', 'mediaType']);
+      return { type: 'base64', data: continuationString(row.data, false), mediaType: continuationString(row.mediaType, true) };
+    case 'url':
+      continuationObject(value, ['type', 'url']);
+      return { type: 'url', url: continuationString(row.url, true) };
+    case 'file':
+      continuationObject(value, ['type', 'fileId']);
+      return { type: 'file', fileId: continuationString(row.fileId, true) };
+    default: return continuationDocumentError();
+  }
+}
+function continuationDocumentSource(value: unknown): DocumentSource {
+  const row = continuationObject(value, ['type', 'data', 'mediaType', 'url', 'fileId']);
+  if (row.type !== 'text') return continuationImageSource(value);
+  continuationObject(value, ['type', 'data', 'mediaType']);
+  if (row.mediaType !== 'text/plain') return continuationDocumentError();
+  return { type: 'text', data: continuationString(row.data, false), mediaType: 'text/plain' };
+}
+function continuationMessageBlock(value: unknown): UserMessageContentBlock {
+  const row = continuationObject(value, ['type', 'text', 'source', 'context', 'title']);
+  switch (row.type) {
+    case 'text': return continuationText(value);
+    case 'redacted':
+      continuationObject(value, ['type']);
+      return { type: 'redacted' };
+    case 'image':
+      continuationObject(value, ['type', 'source']);
+      return { type: 'image', source: continuationImageSource(row.source) };
+    case 'document': {
+      continuationObject(value, ['type', 'source', 'context', 'title']);
+      const context = continuationOptionalString(row.context), title = continuationOptionalString(row.title);
+      return { type: 'document', source: continuationDocumentSource(row.source),
+        ...(context === undefined ? {} : { context }), ...(title === undefined ? {} : { title }) };
+    }
+    default: return continuationDocumentError();
+  }
+}
+function continuationToolBlock(value: unknown): ToolResultContentBlock {
+  const row = continuationObject(value, ['type', 'text', 'source', 'context', 'title', 'citations', 'content']);
+  if (row.type !== 'search_result') {
+    const block = continuationMessageBlock(value);
+    if (block.type === 'redacted') return continuationDocumentError();
+    return block;
+  }
+  continuationObject(value, ['type', 'source', 'title', 'citations', 'content']);
+  const citations = continuationObject(row.citations, ['enabled']);
+  if (typeof citations.enabled !== 'boolean') return continuationDocumentError();
+  return { type: 'search_result', source: continuationString(row.source, false), title: continuationString(row.title, false),
+    citations: { enabled: citations.enabled }, content: continuationArray(row.content).map(continuationText) };
+}
+function continuationRubric(value: unknown): OutcomeRubric {
+  const row = continuationObject(value, ['type', 'content', 'fileId']);
+  if (row.type === 'text') {
+    continuationObject(value, ['type', 'content']);
+    return { type: 'text', content: continuationString(row.content, false) };
+  }
+  if (row.type === 'file') {
+    continuationObject(value, ['type', 'fileId']);
+    return { type: 'file', fileId: continuationString(row.fileId, true) };
+  }
+  return continuationDocumentError();
+}
+function continuationSentEvent(value: unknown): SentSessionEvent {
+  const row = continuationObject(value, ['id', 'type', 'processedAt', 'sessionThreadId', 'content', 'result', 'toolUseId', 'denyMessage', 'customToolUseId', 'isError', 'description', 'rubric', 'maxIterations', 'outcomeId']);
+  const id = continuationString(row.id, true), processedAt = continuationOptionalString(row.processedAt);
+  const clock = processedAt === undefined ? {} : { processedAt };
+  const sessionThreadId = continuationOptionalString(row.sessionThreadId);
+  const lane = sessionThreadId === undefined ? {} : { sessionThreadId };
+  switch (row.type) {
+    case 'user.message':
+      continuationObject(value, ['id', 'type', 'processedAt', 'sessionThreadId', 'content']);
+      return { id, type: 'user.message', ...clock, ...lane, content: continuationArray(row.content).map(continuationMessageBlock) };
+    case 'system.message':
+      continuationObject(value, ['id', 'type', 'processedAt', 'content']);
+      return { id, type: 'system.message', ...clock, content: continuationArray(row.content).map(continuationText) };
+    case 'user.interrupt':
+      continuationObject(value, ['id', 'type', 'processedAt', 'sessionThreadId']);
+      return { id, type: 'user.interrupt', ...clock, ...lane };
+    case 'user.tool_confirmation': {
+      continuationObject(value, ['id', 'type', 'processedAt', 'sessionThreadId', 'result', 'toolUseId', 'denyMessage']);
+      if (row.result !== 'allow' && row.result !== 'deny') return continuationDocumentError();
+      const denyMessage = continuationOptionalString(row.denyMessage);
+      return { id, type: 'user.tool_confirmation', ...clock, ...lane, result: row.result,
+        toolUseId: continuationString(row.toolUseId, true), ...(denyMessage === undefined ? {} : { denyMessage }) };
+    }
+    case 'user.custom_tool_result':
+    case 'user.tool_result': {
+      const content = row.content === undefined ? undefined : continuationArray(row.content).map(continuationToolBlock);
+      const isError = row.isError;
+      if (isError !== undefined && isError !== null && typeof isError !== 'boolean') return continuationDocumentError();
+      const optional = { ...(content === undefined ? {} : { content }), ...(isError === undefined ? {} : { isError }) };
+      if (row.type === 'user.custom_tool_result') {
+        continuationObject(value, ['id', 'type', 'processedAt', 'sessionThreadId', 'content', 'customToolUseId', 'isError']);
+        return { id, type: 'user.custom_tool_result', ...clock, ...lane, ...optional, customToolUseId: continuationString(row.customToolUseId, true) };
+      }
+      continuationObject(value, ['id', 'type', 'processedAt', 'sessionThreadId', 'content', 'toolUseId', 'isError']);
+      return { id, type: 'user.tool_result', ...clock, ...lane, ...optional, toolUseId: continuationString(row.toolUseId, true) };
+    }
+    case 'user.define_outcome': {
+      continuationObject(value, ['id', 'type', 'processedAt', 'description', 'rubric', 'maxIterations', 'outcomeId']);
+      const maxIterations = row.maxIterations;
+      if (maxIterations !== null && (typeof maxIterations !== 'number' || !Number.isSafeInteger(maxIterations))) return continuationDocumentError();
+      return { id, type: 'user.define_outcome', processedAt: continuationString(row.processedAt, true),
+        description: continuationString(row.description, false), rubric: continuationRubric(row.rubric),
+        maxIterations, outcomeId: continuationString(row.outcomeId, true) };
+    }
+    default: return continuationDocumentError();
+  }
+}
+function continuationJson(document: string): unknown {
+  let value: unknown;
+  try { value = JSON.parse(document); }
+  catch { return continuationDocumentError(); }
+  function whitespace(start: number): number {
+    let index = start;
+    while (index < document.length && /\s/.test(document[index])) index++;
+    return index;
+  }
+  function stringEnd(start: number): number {
+    let index = start + 1;
+    while (index < document.length) {
+      if (document[index] === '"') return index + 1;
+      if (document[index] === '\\') index++;
+      index++;
+    }
+    return continuationDocumentError();
+  }
+  function visit(start: number): number {
+    let index = whitespace(start);
+    const kind = document[index];
+    if (kind === '"') return stringEnd(index);
+    if (kind === '{') {
+      index = whitespace(index + 1);
+      const keys = new Set<string>();
+      if (document[index] === '}') return index + 1;
+      while (index < document.length) {
+        const end = stringEnd(index);
+        const key: unknown = JSON.parse(document.slice(index, end));
+        if (typeof key !== 'string' || keys.has(key)) return continuationDocumentError();
+        keys.add(key);
+        index = whitespace(end);
+        index = whitespace(visit(index + 1));
+        if (document[index] === '}') return index + 1;
+        index = whitespace(index + 1);
+      }
+      return continuationDocumentError();
+    }
+    if (kind === '[') {
+      index = whitespace(index + 1);
+      if (document[index] === ']') return index + 1;
+      while (index < document.length) {
+        index = whitespace(visit(index));
+        if (document[index] === ']') return index + 1;
+        index = whitespace(index + 1);
+      }
+      return continuationDocumentError();
+    }
+    while (index < document.length && !/[\s,}\]]/.test(document[index])) index++;
+    return index;
+  }
+  if (whitespace(visit(0)) !== document.length) return continuationDocumentError();
+  return value;
+}
+export function validateContinuationExecutionEvents(value: unknown): SentSessionEvent[] {
+  const events = continuationArray(value).map(continuationSentEvent);
+  const ids = events.map(event => event.id);
+  if (ids.length !== new Set(ids).size) return continuationDocumentError();
+  return events;
+}
+export function decodeContinuationExecutionEvents(document: string): SentSessionEvent[] {
+  const events = validateContinuationExecutionEvents(continuationJson(document));
+  if (events.length === 0) return continuationDocumentError();
+  return events;
+}
+
+export interface ContinuationImageRecovery {
+  afterEventId: string;
+  interruptRequestedAt: string | null;
+  retryAfterEventId?: string;
+}
+export function decodeContinuationImageRecovery(document: string): ContinuationImageRecovery {
+  const source = continuationString(document, true);
+  if (!source.startsWith('{')) return { afterEventId: source, interruptRequestedAt: null };
+  const row = continuationObject(continuationJson(source), ['afterEventId', 'interruptRequestedAt', 'retryAfterEventId']);
+  const interruptRequestedAt = row.interruptRequestedAt;
+  if (interruptRequestedAt !== null && typeof interruptRequestedAt !== 'string') return continuationDocumentError();
+  const retryAfterEventId = row.retryAfterEventId === undefined ? undefined : continuationString(row.retryAfterEventId, true);
+  return { afterEventId: continuationString(row.afterEventId, true), interruptRequestedAt,
+    ...(retryAfterEventId === undefined ? {} : { retryAfterEventId }) };
 }

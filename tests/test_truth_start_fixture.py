@@ -441,7 +441,7 @@ def test_insufficient_beta_history_preserves_raw_move_without_adjusted_conclusio
     snapshot["klines"] = [
         row for row in snapshot["klines"] if parse_time(row["open_time"]) >= anchor - timedelta(days=6)
     ]
-    result = compute_market_truth(snapshot)
+    result = compute_market_truth(snapshot, config=SPOT_POLICY)
     relative = result["relative"]
     assert relative["beta_btc"] is None
     assert relative["beta_flags"]["btc"] == "INSUFFICIENT_HISTORY"
@@ -481,3 +481,16 @@ def test_sparse_benchmark_gap_does_not_authorize_adjusted_move() -> None:
     assert freshness["reason"] == "STALE"
     assert freshness["age_s"] == 1800.0
     assert freshness["cadence"] == {"seconds": 60.0, "source": "BAR_INTERVAL"}
+
+
+def test_full_truth_reuses_typed_native_flow_for_quarter_hour_sign_history() -> None:
+    from decimal import Decimal
+    from unittest.mock import patch
+
+    from tank.analysis.truth import spot_truth
+
+    with patch("tank.analysis.truth.spot_truth", wraps=spot_truth) as remaining_legacy_reads:
+        result = compute_market_truth(compact_start_snapshot(), config=SPOT_POLICY)
+    assert result["move_class"] == "SPOT_LED_ACCUMULATION"
+    assert Decimal(result["spot"]["EVENT"]["composite_max"]["volume"]) > 0
+    assert remaining_legacy_reads.call_count <= 7

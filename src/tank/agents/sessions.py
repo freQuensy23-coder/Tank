@@ -90,10 +90,12 @@ from tank.agents.native_transport import (
 )
 from tank.agents.outbound_inputs import (
     AcceptedOutboundInput,
+    MessageIdentity,
     initial_input_definition,
     outbound_message_record,
     parse_outbound_input,
     recoverable_outbound_inputs,
+    retained_outbound_acceptance,
 )
 from tank.agents.pipeline import ConfigurationError
 from tank.agents.provenance import resolve_agent_provenance
@@ -132,6 +134,14 @@ from tank.contracts.openma import (
     openma_tools_match,
 )
 from tank.contracts.provenance import AgentProvenance, ResolvedVersionIdentity
+from tank.contracts.question_retirement import (
+    ActiveQuestionIntent,
+    QueuedQuestionSession,
+    RetiredQuestionMessages,
+    UnknownQuestionAcceptance,
+    UnprovedQuestionRetirement,
+    UnretainedQuestionJournal,
+)
 from tank.contracts.session_followups import (
     FollowupCandidate,
     FollowupEligibility,
@@ -148,7 +158,7 @@ from tank.contracts.source_items import (
 from tank.contracts.source_repository import SourceExtractionRepository
 from tank.delivery import DeliveryDeferred
 from tank.ops_progress import session_progress
-from tank.question_answers import record_answer
+from tank.question_answers import record_answer, validate_question_identity
 from tank.runtime_contracts import ScoutMessage, ScoutReviewJob, UserQuestionMessage
 from tank.telegram_inbox import DOCUMENT_LIMIT, question_message
 from tank.time_precision import Timestamp, collection_clock, offset_schedule, propagate_timestamp
@@ -1179,40 +1189,92 @@ class SessionService:
                         row["answer_recorded"] = True
                 await put_owned_session(self.repo, sid, current)
 
-    async def abandon_question(self, session_id, question_id):
-        """A question job gave up: retire its unsent intent so recovery never posts it later.
-
-        Returns False when the question already reached OpenMA; its answer will still arrive.
-        """
-        async with self.repo.lock("session:" + str(session_id)):
-            session = await self.repo.get("ops.agent_sessions", str(session_id))
+    async def abandon_question(self, session_id: str, question_id: str) -> bool:
+        """Authorize host failure only for a missing or actually cancellable local intent."""
+        target = FollowupRefusalTarget(question_id=question_id, session_id=session_id)
+        async with (
+            self.send_locks.setdefault(target.session_id, asyncio.Lock()),
+            self.repo.lock("session:" + target.session_id),
+        ):
+            session: dict[str, JsonValue] | None = await self.repo.get(
+                "ops.agent_sessions", target.session_id
+            )
             if session is None:
                 return True
-            rows = [
-                row
-                for row in session.get("message_log", [])
-                if (row.get("payload") or {}).get("question_id") == question_id
+            require_owned_session_identity(target.session_id, session)
+            async with self.repo.lock("question:" + target.question_id):
+                answered: dict[str, JsonValue] | None = await self.repo.get(
+                    "out.user_questions", target.question_id
+                )
+                if (
+                    answered is not None
+                    and validate_question_identity(answered, target).answer_status is not None
+                ):
+                    await record_answer(self.repo, target, None, status="FAILED")
+                    return False
+            snapshot = QuestionSettlementSession.from_record(session)
+            if snapshot.questions is None:
+                raise UnprovedQuestionRetirement(
+                    UnretainedQuestionJournal(target=target, reason="INPUT_JOURNAL_NOT_RETAINED")
+                )
+            questions = [
+                question for question in snapshot.questions if question.question_id == target.question_id
             ]
-            if any(row.get("remote_event_id") for row in rows):
-                return False
-            for row in rows:
+            records: list[dict[str, JsonValue]] = []
+            for question in questions:
+                if question.answer_recorded is True or question.turn_status == "DONE":
+                    return False
+                row = outbound_message_record(session, question.message_id)
+                if question.turn_status == "FAILED":
+                    records.append(row)
+                    continue
+                if retained_outbound_acceptance(row) is not None:
+                    return False
+                records.append(row)
+            for question in questions:
+                if question.turn_status not in {"ACCEPTING", "FAILED"}:
+                    raise UnprovedQuestionRetirement(
+                        UnknownQuestionAcceptance.model_validate(
+                            {
+                                "target": target,
+                                "message_id": question.message_id,
+                                "turn_status": question.turn_status,
+                                "reason": "INITIAL_ACCEPTANCE_NOT_RETAINED",
+                            }
+                        )
+                    )
+            if not records:
+                return True
+            retired = set(
+                RetiredQuestionMessages.model_validate(
+                    {"known_ids": session.get("retired_message_ids", [])}
+                ).known_ids
+            )
+            for row in records:
                 row["turn_status"] = "FAILED"
                 row["answer_recorded"] = True
-            if rows:
-                retired = set(session.get("retired_message_ids", []))
-                retired.update(row["message_id"] for row in rows)
-                session["retired_message_ids"] = sorted(retired)
-                if session.get("active_message_id") in retired:
-                    session["active_message_id"] = None
-                await put_owned_session(self.repo, session["session_id"], session)
+                identity = MessageIdentity.model_validate({"message_id": row["message_id"]}).message_id
+                retired.add(identity)
+            retired_wire: list[JsonValue] = [identity for identity in sorted(retired)]
+            session["retired_message_ids"] = retired_wire
+            active = ActiveQuestionIntent.model_validate({"message_id": session.get("active_message_id")})
+            if active.message_id in retired:
+                session["active_message_id"] = None
+            await put_owned_session(self.repo, target.session_id, session)
             return True
 
-    async def reconcile_answers(self):
-        """Questions still waiting after a restart or a lost terminal hand-off get their answer."""
-        sessions = set()
-        async for question in self.repo.iter_all("out.user_questions", filters={"status": "QUEUED"}):
-            sid = question.get("session_id")
-            if sid and not (sid in self.tasks and not self.tasks[sid].done()):
+    async def reconcile_answers(self) -> None:
+        """Reconcile queued questions only through their actual stored session binding."""
+        sessions: set[str] = set()
+        async for record in self.repo.iter_all("out.user_questions", filters={"status": "QUEUED"}):
+            question = QueuedQuestionSession.model_validate(
+                {
+                    "session_id": record.get("session_id"),
+                    "status": record["status"],
+                }
+            )
+            sid = question.session_id
+            if sid is not None and not (sid in self.tasks and not self.tasks[sid].done()):
                 sessions.add(sid)
         for sid in sorted(sessions):
             try:

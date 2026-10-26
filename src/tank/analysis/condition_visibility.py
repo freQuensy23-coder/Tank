@@ -1,7 +1,6 @@
 """Explicit assembly-comparison inputs for pure condition cache identity."""
 
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
 from typing import Literal
 
 from pydantic import Field
@@ -47,8 +46,7 @@ class ConditionVisibilityProjection(DomainModel):
         return sha256(self)
 
 
-@dataclass(frozen=True, slots=True)
-class ConditionVisibilityEvaluation:
+class ConditionVisibilityEvaluation(DomainModel):
     assembled_at: Timestamp
     projection: ConditionVisibilityProjection
 

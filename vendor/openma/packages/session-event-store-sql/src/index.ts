@@ -1,3 +1,4 @@
+import { validateContinuationExecutionEvents } from '@open-managed-agents/session-runtime-contract/continuation';
 import { decodePublicSessionEventDocument, encodeSessionEventDocument } from '@open-managed-agents/session-runtime-contract/history';
 import type { SqlClient } from "@open-managed-agents/sql-client";
 import type {
@@ -81,6 +82,7 @@ export class SqlSessionEventStore
     if (input.nextSession.id !== input.sessionId) {
       throw new Error("Next Session ID does not match the event target");
     }
+    input = { ...input, events: validateContinuationExecutionEvents(input.events) };
     const executionOutbox = typeof this.options.executionOutbox === "function"
       ? await this.options.executionOutbox({ workspaceId: input.workspaceId, environmentId: input.nextSession.environmentId })
       : this.options.executionOutbox;
