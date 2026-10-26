@@ -28,6 +28,7 @@ from typing import overload
 from pydantic import JsonValue
 
 from tank.analysis.condition_graph_codec import encode_basic_condition_spot, encode_scoped_condition_spot
+from tank.analysis.condition_graph_contracts import ConditionStateNodeKey, ConditionTopCacheKey
 from tank.analysis.condition_input_codec import (
     SpotConditionEvaluation,
     decode_spot_inputs,
@@ -5494,14 +5495,15 @@ def condition_market_state(snapshot, end, cache):
             head = fingerprint({field: snapshot.get(field) for field in fields})
         elif not isinstance(head, str):
             head = fingerprint(head)
-        key = (
-            "condition-state-node",
-            name,
-            iso(start),
-            iso(end),
-            head,
-            fingerprint(_PARAMETERS.get()),
-            fingerprint(snapshot.get("expected_direction")),
+        key = ConditionStateNodeKey(
+            node=name,
+            token_id=snapshot["token_id"],
+            start=start,
+            cutoff=end,
+            assembled_at=propagate_timestamp(snapshot, "assembled_at"),
+            dependency_identity=head,
+            config_sha256=fingerprint(_PARAMETERS.get()),
+            expected_direction_sha256=fingerprint(snapshot.get("expected_direction")),
         )
 
         return deepcopy(remember(cache, key, build))
@@ -5671,14 +5673,16 @@ def compute_condition_values(snapshot, requirements, *, config=None, cache=None,
                 dependency = fingerprint({field: snapshot.get(field) for field in fields})
             elif not isinstance(dependency, str):
                 dependency = fingerprint(dependency)
-            key = (
-                domain,
-                window,
-                seconds,
-                iso(end),
-                dependency,
-                fingerprint(config),
-                fingerprint(snapshot.get("expected_direction")),
+            key = ConditionTopCacheKey(
+                domain=domain,
+                token_id=snapshot["token_id"],
+                window=window,
+                requested_duration_s=seconds,
+                cutoff=end,
+                assembled_at=propagate_timestamp(snapshot, "assembled_at"),
+                dependency_identity=dependency,
+                config_sha256=fingerprint(config),
+                expected_direction_sha256=fingerprint(snapshot.get("expected_direction")),
             )
             hit = key in cache
             if not hit:
@@ -5689,6 +5693,7 @@ def compute_condition_values(snapshot, requirements, *, config=None, cache=None,
                     assembled_at=snapshot.get("assembled_at"),
                     domain_dependency_fingerprints=snapshot.get("domain_dependency_fingerprints", {}),
                 )
+                selected.update(propagate_timestamp(snapshot, "assembled_at").fields("assembled_at"))
                 start = end - timedelta(seconds=seconds)
                 if domain == "spot":
                     policy = SpotPolicyConfiguration.model_validate(
@@ -5902,6 +5907,7 @@ def compute_condition_values(snapshot, requirements, *, config=None, cache=None,
                         "dependency_fingerprint", [p["dependency_fingerprint"] for p in proofs]
                     ),
                     anchor=snapshot.get("anchor"),
+                    assembled_at=propagate_timestamp(snapshot, "assembled_at").fields("assembled_at"),
                     config=config,
                 )
             ),

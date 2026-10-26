@@ -1,6 +1,7 @@
 """Selective condition inputs agree with full truth without unrelated work or MTA writes."""
 
 from copy import deepcopy
+from datetime import timedelta
 from decimal import Decimal
 from pathlib import Path
 
@@ -12,6 +13,7 @@ from truth_support import fixture_truth_config
 import tank.analysis.truth as module
 from tank.scheduler import metric_value
 from tank.settings import Settings
+from tank.util import iso, parse_time
 
 
 def snapshot():
@@ -344,8 +346,6 @@ def test_selective_confidence_matches_full_rules_without_relative_liquidity_or_s
     case, monkeypatch: pytest.MonkeyPatch, baseline_truth
 ) -> None:
     from datetime import timedelta
-
-    from tank.util import iso, parse_time
 
     packet = snapshot()
     if case == "UNVERIFIED":
@@ -764,3 +764,34 @@ def test_compact_native_prefix_extends_only_with_proven_append_and_rebuilds_corr
         assert len(converted) == len(corrected["times_us"])
     finally:
         module._BASELINE_CACHE.reset(token)
+
+
+@pytest.mark.parametrize("state_graph", [False, True])
+def test_spot_cache_recomputes_when_same_source_head_has_later_eligible_receipts(state_graph: bool) -> None:
+    packet = snapshot()
+    cutoff = parse_time(packet["cutoff"])
+    received_at = cutoff + timedelta(seconds=1)
+    packet["assembled_at"] = iso(cutoff)
+    packet["assembled_at_prec"] = "COLLECTION_ONLY"
+    packet["domain_dependency_fingerprints"] = {
+        "spot": "captured-unchanged-source-head",
+        "state": "captured-unchanged-state-head",
+    }
+    for row in packet["flow_bars"]:
+        row["received_ts"] = iso(received_at)
+        row["received_ts_prec"] = "COLLECTION_ONLY"
+    cache = {}
+    requirements = [dict(metric="mt.move_class", window="W1H")] if state_graph else REQUIREMENTS[:2]
+    first = module.compute_condition_values(packet, requirements, cache=cache, config=fixture_truth_config())
+    later = deepcopy(packet)
+    later["assembled_at"] = iso(received_at)
+    second = module.compute_condition_values(later, requirements, cache=cache, config=fixture_truth_config())
+    window = "EVENT" if state_graph else "W1H"
+    assert first["spot"][window]["coverage"]["n_complete"] == 0
+    assert second["spot"][window]["coverage"]["n_complete"] == 2
+    assert all(isinstance(key, (module.ConditionTopCacheKey, module.ConditionStateNodeKey)) for key in cache)
+    assert {key.assembled_at.value for key in cache} == {iso(cutoff), iso(received_at)}
+    if state_graph:
+        assert any(isinstance(key, module.ConditionStateNodeKey) for key in cache)
+    assert all(not proof["reused"] for proof in second["_condition_evaluation"]["proofs"][:1])
+    assert first["_condition_evaluation"]["request_key"] != second["_condition_evaluation"]["request_key"]
