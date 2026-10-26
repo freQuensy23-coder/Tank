@@ -12,12 +12,18 @@ from tank.analysis.condition_graph_contracts import (
     BasicConditionSpot,
     ConditionAggregateLiquidations,
     ConditionBoundaryGroup,
+    ConditionCadence,
     ConditionClose,
     ConditionComputedOutcomeRanges,
+    ConditionConfidence,
+    ConditionConfidenceFailure,
+    ConditionCoverageFailure,
     ConditionDeclaredEventAnchor,
+    ConditionDepthNode,
     ConditionDerivatives,
     ConditionDerivativeSupportFeatures,
     ConditionDerivativeVenue,
+    ConditionFieldObservation,
     ConditionFlowAggregate,
     ConditionFlowAggregateProjection,
     ConditionFlowCaptureProjection,
@@ -29,6 +35,7 @@ from tank.analysis.condition_graph_contracts import (
     ConditionIncrementalVolumes,
     ConditionLiquidations,
     ConditionNativeVolumeSupport,
+    ConditionObservedFieldFailure,
     ConditionObservedFundingDispersion,
     ConditionObservedIncrementalVolume,
     ConditionObservedPredicate,
@@ -42,6 +49,7 @@ from tank.analysis.condition_graph_contracts import (
     ConditionSpotValues,
     ConditionSynchronizedOpenInterest,
     ConditionWireClocks,
+    DeclaredConditionCadence,
     DeclaredConditionDirection,
     EnrichedConditionDerivatives,
     EnrichedConditionDerivativeVenue,
@@ -49,11 +57,13 @@ from tank.analysis.condition_graph_contracts import (
     FlowAggregateEvidenceRef,
     FlowCaptureEvidenceRef,
     KnownConditionTradeCount,
+    MetricSemanticsCadenceOrigin,
     ObservedConditionCohort,
     ObservedConditionCohortComparison,
     ObservedConditionMarketContext,
     ObservedConditionReferencePrice,
     ObservedConditionSizeProfile,
+    SelectiveConditionConfidence,
     UnavailableConditionLeadLag,
     UnavailableConditionOpenInterest,
     UnavailableConditionSizeProfile,
@@ -71,7 +81,7 @@ from tank.analysis.statistics_contracts import (
 from tank.contracts import DomainModel
 from tank.contracts.json import JsonDocument
 from tank.time_precision import Timestamp, offset_schedule
-from tank.util import iso, sha256
+from tank.util import iso, parse_iso_time, sha256
 
 
 def _checked_projection(value: ConditionFlowAggregateProjection) -> ConditionFlowAggregateProjection:
@@ -1014,3 +1024,122 @@ def validate_generated_empty_flow_evidence(value: ConditionGeneratedEmptyFlowVis
     validated = ConditionGeneratedEmptyFlowVisibility.model_validate(value)
     if validated.evidence.projection_sha256 != generated_empty_flow_projection_sha256(validated):
         raise ValueError("Generated empty flow evidence does not match its declared projection")
+
+
+def _cadence_wire(value: ConditionCadence) -> dict[str, JsonValue]:
+    cadence = type(value).model_validate(value)
+    known_label = isinstance(cadence.origin, MetricSemanticsCadenceOrigin)
+    return {
+        "cadence_s": cadence.seconds,
+        "cadence_source": "SCOPED_METRIC_SEMANTICS" if known_label else None,
+        "cadence_source_reason": None if known_label else "RULE_LABEL_NOT_CAPTURED",
+        "cadence_origin": None if cadence.origin is None else _model_wire(cadence.origin),
+        "cadence_scope": _model_wire(cadence.scope),
+        "cadence_reason": None if isinstance(cadence, DeclaredConditionCadence) else cadence.reason,
+    }
+
+
+def _field_observation_wire(value: ConditionFieldObservation) -> dict[str, JsonValue]:
+    observation = ConditionFieldObservation.model_validate(value)
+    result: dict[str, JsonValue] = {
+        "collection": observation.collection,
+        "token_id": observation.token_id,
+        "instrument_id": observation.instrument_id,
+        "metric_key": observation.metric_key,
+        "observation_kind": observation.observation_kind,
+        "chain": observation.chain,
+        "age_s": observation.age_s,
+        "fresh": observation.fresh,
+        "reason": observation.reason,
+    }
+    result.update(_clock_wire(observation.observed_at, "observed_at"))
+    result.update(_cadence_wire(observation.cadence))
+    if observation.stream is not None:
+        result["basis"] = observation.stream.basis
+        result["coverage_status"] = observation.stream.coverage_status
+        result["detail"] = observation.stream.detail
+    return result
+
+
+def _confidence_failure_wire(value: ConditionConfidenceFailure) -> dict[str, JsonValue]:
+    failure = type(value).model_validate(value)
+    if isinstance(failure, ConditionCoverageFailure):
+        return {"condition": failure.condition, "reason": failure.reason}
+    if isinstance(failure, ConditionObservedFieldFailure):
+        observed = _field_observation_wire(failure.observation)
+        del observed["fresh"]
+        observed["condition"] = failure.condition
+        return observed
+    result: dict[str, JsonValue] = {
+        "condition": failure.condition,
+        "reason": failure.reason,
+        "token_id": failure.token_id,
+        "collection": failure.collection,
+        "instrument_id": failure.instrument_id,
+        "metric_key": failure.metric_key,
+        "metric_family": failure.metric_family,
+    }
+    result.update(_cadence_wire(failure.cadence))
+    return result
+
+
+def encode_condition_confidence(
+    value: ConditionConfidence, *, clocks: ConditionWireClocks
+) -> dict[str, JsonValue]:
+    confidence = type(value).model_validate(value)
+    context = ConditionWireClocks.model_validate(clocks)
+    if confidence.subjects() - {context.token_id}:
+        raise ValueError("Confidence serialization cannot borrow another subject's observations or failures")
+    if context.cutoff.value is None:
+        raise ValueError("Confidence serialization requires its actual cutoff")
+    cutoff = parse_iso_time(context.cutoff.value)
+    for observation in confidence.freshness:
+        stamp = observation.observed_at.value
+        if stamp is None or observation.age_s != (cutoff - parse_iso_time(stamp)).total_seconds():
+            raise ValueError("Confidence serialization must preserve its actual observation age and cutoff")
+    result: dict[str, JsonValue] = {
+        "class": confidence.classification,
+        "failed": [_confidence_failure_wire(failure) for failure in confidence.failed],
+        "limiting": None if confidence.limiting is None else _confidence_failure_wire(confidence.limiting),
+        "derivatives_native_coverage_ready": confidence.derivatives_native_coverage_ready,
+        "derivatives_classification_ready": confidence.derivatives_classification_ready,
+        "freshness": [_field_observation_wire(observation) for observation in confidence.freshness],
+    }
+    if isinstance(confidence, SelectiveConditionConfidence):
+        bounds = context.bounds(confidence.analysis_window)
+        window: dict[str, JsonValue] = {
+            "window": confidence.analysis_window.window,
+            "start_origin": bounds.start_origin,
+        }
+        window.update(_clock_wire(bounds.start, "start"))
+        window.update(_clock_wire(bounds.cutoff, "cutoff"))
+        result["analysis_window"] = window
+        result["derivatives_classification_ready_reason"] = confidence.derivatives_classification_ready_reason
+    return result
+
+
+def encode_condition_depth(value: ConditionDepthNode, *, clocks: ConditionWireClocks) -> dict[str, JsonValue]:
+    depth = ConditionDepthNode.model_validate(value)
+    context = ConditionWireClocks.model_validate(clocks)
+    if context.cutoff.value is None or depth.cutoff != parse_iso_time(context.cutoff.value):
+        raise ValueError("Depth serialization requires its actual selected cutoff")
+    observations: list[JsonValue] = []
+    for observation in depth.observations:
+        if observation.token_id != context.token_id:
+            raise ValueError("Depth serialization cannot borrow another subject's selected book")
+        item: dict[str, JsonValue] = {
+            "token_id": observation.token_id,
+            "venue": observation.venue,
+            "instrument_id": observation.instrument_id,
+            "metric_key": observation.metric_key,
+            "fresh": observation.fresh,
+        }
+        item.update(_clock_wire(observation.observed_at, "observed_at"))
+        item.update(_cadence_wire(observation.cadence))
+        observations.append(item)
+    return {
+        "aggregate_depth_p1_usd": _decimal_wire(depth.aggregate_depth_p1_usd),
+        "pre_event_depth_p1_usd": _decimal_wire(depth.pre_event_depth_p1_usd),
+        "spread_ratio": depth.spread_ratio,
+        "observations": observations,
+    }

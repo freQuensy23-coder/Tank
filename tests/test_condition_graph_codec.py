@@ -1150,3 +1150,118 @@ def test_generated_visibility_cannot_authorize_an_incomplete_or_different_captur
     ):
         with pytest.raises(ValidationError, match="exact complete scoped source piece"):
             ConditionFlowCapturePiece(basis="BOUNDARY", aggregate=witness, visibility=invalid)
+
+
+def test_confidence_wire_preserves_required_failure_and_qualified_cadence_without_rule_guess() -> None:
+    from test_condition_graph_contracts import selective_confidence_graph
+
+    from tank.analysis.condition_graph_codec import encode_condition_confidence
+    from tank.analysis.condition_graph_contracts import SelectiveConditionConfidence
+
+    graph = selective_confidence_graph("T")
+    confidence = graph.confidence
+    assert isinstance(confidence, SelectiveConditionConfidence)
+    wire = encode_condition_confidence(confidence, clocks=condition_wire_clocks())
+    assert wire["class"] == "MEDIUM"
+    assert wire["derivatives_classification_ready"] is None
+    assert wire["derivatives_classification_ready_reason"] == "NOT_ESTIMABLE"
+    failures = wire["failed"]
+    assert isinstance(failures, list) and len(failures) == 1
+    failure = failures[0]
+    assert isinstance(failure, dict)
+    assert failure["instrument_id"] == "venue:spot:T" and failure["metric_family"] == "depth"
+    assert failure["cadence_s"] == 10.0 and failure["cadence_source"] is None
+    assert failure["cadence_source_reason"] == "RULE_LABEL_NOT_CAPTURED"
+    origin = failure["cadence_origin"]
+    assert isinstance(origin, dict)
+    assert origin["kind"] == "DECLARED_METADATA"
+    assert origin["declaration_identity"] == {
+        "status": "UNRECORDED",
+        "reason": "DECLARATION_IDENTITY_NOT_CAPTURED",
+    }
+    assert wire["limiting"] == failure
+    window = wire["analysis_window"]
+    assert isinstance(window, dict)
+    assert window["start"] == "2026-10-17T08:00:00Z" and window["start_prec"] == "COLLECTION_ONLY"
+    with pytest.raises(ValueError, match="another subject"):
+        encode_condition_confidence(
+            confidence, clocks=condition_wire_clocks().model_copy(update={"token_id": "OTHER"})
+        )
+
+
+def test_confidence_wire_refuses_an_age_borrowed_from_another_cutoff() -> None:
+    from test_condition_graph_contracts import scoped_field_observation
+
+    from tank.analysis.condition_graph_codec import encode_condition_confidence
+    from tank.analysis.condition_graph_contracts import FullConditionConfidence
+    from tank.time_precision import Timestamp
+
+    confidence = FullConditionConfidence(
+        kind="FULL",
+        classification="HIGH",
+        failed=(),
+        limiting=None,
+        derivatives_native_coverage_ready=True,
+        derivatives_classification_ready=True,
+        freshness=(scoped_field_observation("INSTRUMENT"),),
+    )
+    wire = encode_condition_confidence(confidence, clocks=condition_wire_clocks())
+    assert wire["limiting"] is None and wire["failed"] == []
+    observations = wire["freshness"]
+    assert isinstance(observations, list) and len(observations) == 1
+    observation = observations[0]
+    assert isinstance(observation, dict)
+    assert observation["age_s"] == 5.0 and observation["observed_at_prec"] == "EXACT"
+    with pytest.raises(ValueError, match="observation age and cutoff"):
+        encode_condition_confidence(
+            confidence,
+            clocks=condition_wire_clocks().model_copy(
+                update={"cutoff": Timestamp(value="2026-10-17T12:01:00Z", precision="COLLECTION_ONLY")}
+            ),
+        )
+
+
+def test_depth_wire_preserves_source_precision_and_exact_usd_amounts() -> None:
+    from test_condition_graph_contracts import AT, declared_book_cadence
+
+    from tank.analysis.condition_graph_codec import encode_condition_depth
+    from tank.analysis.condition_graph_contracts import ConditionDepthNode, ConditionDepthObservation
+    from tank.time_precision import Timestamp
+
+    depth = ConditionDepthNode(
+        aggregate_depth_p1_usd=Decimal("10000000000000000000000000000000001"),
+        pre_event_depth_p1_usd=Decimal(0),
+        spread_ratio=None,
+        cutoff=AT,
+        observations=(
+            ConditionDepthObservation(
+                token_id="T",
+                instrument_id="venue:spot:T",
+                metric_key=None,
+                venue="venue",
+                observed_at=Timestamp(
+                    value="2026-10-17T11:59:55Z", precision=None, precision_reason="PRECISION_NOT_CAPTURED"
+                ),
+                cadence=declared_book_cadence(),
+                fresh=True,
+            ),
+        ),
+    )
+    wire = encode_condition_depth(depth, clocks=condition_wire_clocks())
+    assert wire["aggregate_depth_p1_usd"] == "10000000000000000000000000000000001"
+    assert wire["pre_event_depth_p1_usd"] == "0" and wire["spread_ratio"] is None
+    observations = wire["observations"]
+    assert isinstance(observations, list) and len(observations) == 1
+    observation = observations[0]
+    assert isinstance(observation, dict)
+    assert observation["observed_at_prec"] is None
+    assert observation["observed_at_prec_reason"] == "PRECISION_NOT_CAPTURED"
+    with pytest.raises(ValueError, match="another subject"):
+        encode_condition_depth(depth, clocks=condition_wire_clocks().model_copy(update={"token_id": "OTHER"}))
+    with pytest.raises(ValueError, match="selected cutoff"):
+        encode_condition_depth(
+            depth,
+            clocks=condition_wire_clocks().model_copy(
+                update={"cutoff": Timestamp(value="2026-10-17T12:01:00Z", precision="COLLECTION_ONLY")}
+            ),
+        )
