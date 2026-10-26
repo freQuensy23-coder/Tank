@@ -84,7 +84,7 @@ async def test_actual_worker_rejects_missing_capture_fact_without_effects(
         finally:
             stop.set()
             await asyncio.wait_for(worker, 2)
-        assert final["status"] == "FAILED" and final["last_error"] == "ValidationError"
+        assert final["status"] == "FAILED" and final["last_error"] == "INVALID_QUEUE_ENVELOPE"
         assert final["attempts"] == 1 and "result" not in final
         assert final["payload"] == payload and not router.calls
     assert await repo.list("out.reaction_checkpoints") == []
@@ -176,5 +176,7 @@ def test_manual_queued_revision_retains_the_declared_schedule_contract() -> None
     for field in ("anchor", "cutoff", "retro"):
         incomplete = dict(payload)
         del incomplete[field]
-        with pytest.raises(ValidationError):
-            reaction_job_command(incomplete)
+        projected = reaction_job_command(incomplete)
+        assert isinstance(projected, ManualReactionRevisionCommand)
+        assert field not in projected.model_fields_set
+        assert projected.storage_fields() == incomplete

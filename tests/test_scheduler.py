@@ -13,13 +13,14 @@ from tank.analysis.page_access import LivePageAccess
 from tank.analysis.watch_contracts import WatchCondition, WatchLeaf
 from tank.contracts.milestone_checks import MilestoneCheckCommand
 from tank.contracts.scheduler_commands import ReactionTarget, reaction_command_from_wire
-from tank.contracts.scheduler_results import CapturedReaction, CoalescedReaction
+from tank.contracts.scheduler_results import CapturedReaction
 from tank.models import Record
 from tank.runtime_contracts import ConditionFiredMessage, parse_agent_message
-from tank.scheduler import Scheduler
+from tank.runtime_reaction import ReactionCoalescingDeferred, ReactionJobInvocation, capture_reaction_job
+from tank.scheduler import REACTION_RETRY_S, Scheduler
 from tank.settings import Settings
 from tank.storage import MemoryRepository
-from tank.time_precision import Timestamp, propagate_timestamp
+from tank.time_precision import Timestamp, collection_clock, propagate_timestamp
 from tank.util import clock_iso, iso, sha256, utcnow
 
 
@@ -283,8 +284,8 @@ async def test_planned_backup_copies_bundles_and_dumps_only(
     ).maintenance(utcnow(), force=True, prune=False)
     final = Path(result["path"])
     manifest = verify_backup(final)
-    assert set(manifest["roots"]) == {"bundles"}
-    assert set(manifest["files"]) == {"tank.dump", "oma.dump", "bundles/hash.json.zst"}
+    assert set(manifest.roots) == {"bundles"}
+    assert set(manifest.files) == {"tank.dump", "oma.dump", "bundles/hash.json.zst"}
     assert not (final / "data").exists() and not (final / "config").exists()
     assert (data / "market-cache").exists()
 
@@ -975,8 +976,8 @@ async def test_backup_excludes_fake_auth_secrets_and_browser_state_in_every_evid
     assert b"PRIVATE_" not in all_bytes and b"FAKE_STALE" not in all_bytes
     assert not (backup / "data").exists()
     assert not (backup / "config").exists() and not (backup / "logs").exists()
-    assert manifest["roots"] == {"bundles": str((data / "bundles").resolve())}
-    assert "subscription sign-in directory" in manifest["excluded"]
+    assert manifest.roots == {"bundles": str((data / "bundles").resolve())}
+    assert "subscription sign-in directory" in manifest.excluded
     assert all(path.exists() for path in (auth, secrets / "gateway_key"))
 
 
@@ -1001,7 +1002,20 @@ def test_existing_backup_with_newly_protected_credential_is_rejected_before_read
         (backup / name).write_bytes(b"dump")
         files[name] = hashlib.sha256(b"dump").hexdigest()
     files["data/auth-volume/auth.json"] = hashlib.sha256(b"FAKE_PRIVATE_CREDENTIAL").hexdigest()
-    (backup / "manifest.json").write_text(json.dumps({"files": files, "roots": {"data": str(data)}}))
+    (backup / "manifest.json").write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "created_at": clock_iso(),
+                "reference_base": str(tmp_path),
+                "files": files,
+                "roots": {"data": str(data)},
+                "database_dumps": ["tank.dump", "oma.dump"],
+                "excluded": [],
+                "restore": "Synthetic protected-path refusal fixture",
+            }
+        )
+    )
     (backup / "COMPLETE").write_text("complete")
     original = Path.read_bytes
 
@@ -1263,7 +1277,18 @@ def legacy_full_backup_fixture(settings, now):
         path.relative_to(final).as_posix(): file_digest(path) for path in final.rglob("*") if path.is_file()
     }
     (final / "manifest.json").write_text(
-        json.dumps({"files": files, "roots": {label: str(root.resolve()) for label, root in roots.items()}})
+        json.dumps(
+            {
+                "version": 1,
+                "created_at": iso(now),
+                "reference_base": str(Path.cwd()),
+                "files": files,
+                "roots": {label: str(root.resolve()) for label, root in roots.items()},
+                "database_dumps": ["tank.dump", "oma.dump"],
+                "excluded": sorted(protected),
+                "restore": "Synthetic historical recovery fixture",
+            }
+        )
     )
     (final / "COMPLETE").write_text(iso(now))
     return final
@@ -1802,8 +1827,7 @@ async def test_late_revision_is_deferred_so_following_late_completions_fold_into
 
 @pytest.mark.asyncio
 async def test_queued_duplicate_late_revision_is_skipped_at_run_time() -> None:
-    """03 §8.6: with another automatic revision of the same checkpoint still
-    queued, a running one returns at once; the queued one measures all data."""
+    """A pending EDF peer defers an actual claim without declaring capture success."""
     repo = MemoryRepository()
     payload = {
         "event_id": "e",
@@ -1812,8 +1836,13 @@ async def test_queued_duplicate_late_revision_is_skipped_at_run_time() -> None:
         "automatic_revision": True,
         "reason": "Observed capture completion",
     }
+    older = await repo.enqueue(
+        "REACTION_CAPTURE", dict(payload, change_id="older"), "reaction-late:older:PRE_4H", priority=2
+    )
+    claimed = await repo.claim_job()
+    assert claimed is not None and claimed["job_id"] == older["job_id"]
     queued = await repo.enqueue(
-        "REACTION_CAPTURE", dict(payload, change_id="newer"), "reaction-late:x:PRE_4H", priority=2
+        "REACTION_CAPTURE", dict(payload, change_id="newer"), "reaction-late:x:PRE_4H", priority=1
     )
     market = SimpleNamespace(snapshot=AsyncMock(side_effect=AssertionError("must not measure")))
     scheduler = Scheduler(
@@ -1824,8 +1853,17 @@ async def test_queued_duplicate_late_revision_is_skipped_at_run_time() -> None:
         thresholds=Settings(_env_file=None).thresholds(),
         versions=fixture_versions(),
     )
-    result = await scheduler.reaction_capture(reaction_command_from_wire(dict(payload, change_id="older")))
-    assert isinstance(result, CoalescedReaction) and result.coalesced_into == queued["job_id"]
+    with pytest.raises(ReactionCoalescingDeferred) as pending:
+        await capture_reaction_job(
+            scheduler,
+            repo,
+            ReactionJobInvocation.from_record(claimed),
+            clock=collection_clock,
+            retry_delay=timedelta(seconds=REACTION_RETRY_S),
+        )
+    assert pending.value.pending.coalesced_into == queued["job_id"]
+    unchanged = await repo.get("ops.jobs", older["job_id"])
+    assert unchanged is not None and unchanged["status"] == "RUNNING" and "result" not in unchanged
     market.snapshot.assert_not_called()
 
 

@@ -18,6 +18,7 @@ from tank.contracts.scheduler_results import (
     AppliedReactionChange,
     CapturedReaction,
     HistoricalCapturedReaction,
+    ReactionCaptureResultDocument,
     ReactionChangeOwnership,
     UnchangedReaction,
 )
@@ -365,3 +366,19 @@ async def test_retained_capture_without_fingerprint_is_explicit_and_never_rewrit
     assert market.snapshot.await_count == 1
     await historical.close()
     await scheduler.close()
+
+
+@pytest.mark.parametrize(
+    "wire",
+    [{"coalesced_into": "pending-peer"}, {"kind": "COALESCED", "coalesced_into": "pending-peer"}, None, {}],
+)
+def test_durable_completion_reader_refuses_pending_or_unreported_outcomes(wire: JsonValue) -> None:
+    with pytest.raises(ValueError):
+        ReactionCaptureResultDocument.model_validate(wire)
+
+
+def test_completion_reader_hides_invalid_raw_result_values() -> None:
+    marker = "synthetic-private-response-value"
+    with pytest.raises(ValueError) as error:
+        ReactionCaptureResultDocument.model_validate({"kind": marker, "unexpected": marker})
+    assert marker not in str(error.value)

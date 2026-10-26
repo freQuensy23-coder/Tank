@@ -47,8 +47,29 @@ class ReactionSubject(DomainModel):
     token_id: ReactionIdentity
 
 
+class ReactionListingQuery(DomainModel):
+    event_id: ReactionIdentity
+    token_id: ReactionIdentity | None = None
+
+
 class ReactionTarget(ReactionSubject):
     checkpoint: ReactionCheckpoint
+
+
+class ReactionRevisionInventory(ReactionTarget):
+    revision: ReactionRevision
+
+    @classmethod
+    def from_record(cls, record: Mapping[str, JsonValue], target: ReactionTarget) -> Self:
+        target = ReactionTarget.model_validate(target)
+        result = cls.model_validate({field: record[field] for field in cls.model_fields if field in record})
+        if (result.event_id, result.token_id, result.checkpoint) != (
+            target.event_id,
+            target.token_id,
+            target.checkpoint,
+        ):
+            raise ValueError("Reaction revision inventory conflicts with its requested subject")
+        return result
 
 
 class ReactionLookupCommand(ReactionTarget):
