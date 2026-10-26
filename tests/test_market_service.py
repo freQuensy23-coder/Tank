@@ -6,6 +6,7 @@ import httpx
 import pytest
 import yaml
 from source_support import fixture_http_admission, fixture_versions
+from truth_support import fixture_truth_config
 
 from tank.market.service import MarketService
 from tank.settings import Settings
@@ -322,7 +323,9 @@ async def test_capture_tier_uses_durable_activation_and_demotion_history_not_fut
         )
         from tank.analysis.truth import compute_market_truth
 
-        unknown_truth = compute_market_truth(await service.snapshot(token, clock))
+        unknown_truth = compute_market_truth(
+            await service.snapshot(token, clock), config=fixture_truth_config()
+        )
         check = next(
             row for row in unknown_truth["data_confidence"]["freshness"] if row["collection"] == "oi"
         )
@@ -402,7 +405,7 @@ async def test_actual_producer_tier_metadata_controls_90second_oi_and_funding_fr
     await service._record_capture_tier(spot["token_id"], "HOT", "TEST_ACTUAL_POLICY_ACTIVATED")
     hot_snapshot = await service.snapshot(spot["token_id"], cutoff)
     assert hot_snapshot["capture_tier"] == hot_snapshot["capture_metadata"]["tier"] == "HOT"
-    hot = compute_market_truth(hot_snapshot)
+    hot = compute_market_truth(hot_snapshot, config=fixture_truth_config())
     checks = [
         c
         for c in hot["data_confidence"]["freshness"]
@@ -426,7 +429,7 @@ async def test_actual_producer_tier_metadata_controls_90second_oi_and_funding_fr
     )["capture_tier"] == "HOT"
     base_snapshot = await service.snapshot(spot["token_id"], clock)
     assert base_snapshot["capture_tier"] == "BASE"
-    base = compute_market_truth(base_snapshot)
+    base = compute_market_truth(base_snapshot, config=fixture_truth_config())
     checks = [
         c
         for c in base["data_confidence"]["freshness"]

@@ -27,8 +27,12 @@ from typing import overload
 
 from pydantic import JsonValue
 
-from tank.analysis.condition_graph_codec import encode_scoped_condition_spot
-from tank.analysis.condition_input_codec import decode_spot_windows
+from tank.analysis.condition_graph_codec import encode_basic_condition_spot, encode_scoped_condition_spot
+from tank.analysis.condition_input_codec import (
+    SpotConditionEvaluation,
+    decode_spot_inputs,
+    decode_spot_windows,
+)
 from tank.analysis.condition_inputs import SpotPolicyConfiguration
 from tank.analysis.execution import ExecutionLevelWire, ExecutionSide, execute_book_walk, execution_request
 from tank.analysis.positioning import (
@@ -47,7 +51,7 @@ from tank.analysis.price_reference import (
     ReferencePriceSeries,
     decode_price_cadence,
 )
-from tank.analysis.spot import calculate_spot_window_graph
+from tank.analysis.spot import calculate_spot, calculate_spot_window_graph, spot_native_measurements
 from tank.analysis.statistics_contracts import (
     BaselineCaches,
     BetaEstimate,
@@ -4618,7 +4622,7 @@ def canonical_fact_text(fact):
     return f"{fact['text']} [{fact['window']}; {fact['unit']}; {label}]"
 
 
-def measurement_metadata(result):
+def measurement_metadata(result, *, spot_measurements=()):
     """Companion metadata preserves the literal §2 bare-field shapes.
 
     Every quantitative or null derived leaf inherits its nearest explicit window and analysis cutoff;
@@ -4807,6 +4811,25 @@ def measurement_metadata(result):
                     )
 
     walk(result, "", result["primary_window"], {})
+    for measurement in spot_measurements:
+        missing_fields[measurement.path] = dict(
+            value=measurement.value,
+            unit=measurement.unit,
+            window=measurement.window,
+            cutoff=result["cutoff"],
+            observed_at=measurement.observed_at.value,
+            observation_reason=measurement.observed_at.precision_reason
+            if measurement.observed_at.value is None
+            else None,
+            precision=measurement.observed_at.precision,
+            precision_reason=measurement.observed_at.precision_reason,
+            context_precision=measurement.observed_at.precision,
+            coverage=result["spot"][measurement.window]["coverage"],
+            coverage_reason=None,
+            reason=None,
+            representation="DECIMAL_STRING",
+            evidence_scope={"venue": measurement.venue} if measurement.venue is not None else {},
+        )
     return missing_fields
 
 
@@ -5044,11 +5067,11 @@ def spot_window_graph(snapshot, start, end, av):
         cutoff=propagate_timestamp(snapshot, "cutoff"),
         event_anchor=propagate_timestamp(snapshot, "anchor", missing_reason="NO_EVENT_ANCHOR"),
         assembled_at=propagate_timestamp(snapshot, "assembled_at"),
-        instruments=snapshot["instruments"],
-        flow_bars=snapshot["flow_bars"],
+        instruments=snapshot.get("instruments", []),
+        flow_bars=snapshot.get("flow_bars", []),
         flow_parent_bars=snapshot.get("flow_parent_bars", []),
         flow_segments=flow_segments(snapshot),
-        tickers=snapshot["tickers"],
+        tickers=snapshot.get("tickers", []),
         policy=policy,
         native_ticker_volume_field="volume_native",
     )
@@ -5059,9 +5082,11 @@ def spot_window_graph(snapshot, start, end, av):
         for name, value in graph.spots.items()
     }
     instruments = [
-        instrument for instrument in snapshot["instruments"] if instrument["token_id"] == snapshot["token_id"]
+        instrument
+        for instrument in snapshot.get("instruments", [])
+        if instrument["token_id"] == snapshot["token_id"]
     ]
-    return spots, graph.durations_s, graph.primary, instruments
+    return spots, graph.durations_s, graph.primary, instruments, graph
 
 
 @precise
@@ -5087,7 +5112,7 @@ def _compute_market_truth(snapshot, *, config=None):
             [point[0] for point in points],
             [point[1] for point in points],
         )
-    spots, windows, primary, instruments = spot_window_graph(snapshot, start, end, av)
+    spots, windows, primary, instruments, spot_graph = spot_window_graph(snapshot, start, end, av)
     snapshot["_has_event"] = bool(av)
     snapshot["_lead_start"] = start
     snapshot["_event_anchor"] = start if av else None
@@ -5206,7 +5231,9 @@ def _compute_market_truth(snapshot, *, config=None):
         "numeric_policy": "Native quantities, USD amounts and funding rates use adaptive Decimal arithmetic (128-digit minimum), serialized as decimal strings; dimensionless returns, beta, percentiles and ratios use FLOAT64 statistics; significance compares CVD squared against four times sum of squares exactly",
     }
     result = timestamp_companions(result, snapshot)
-    result["measurement_metadata"] = measurement_metadata(result)
+    result["measurement_metadata"] = measurement_metadata(
+        result, spot_measurements=spot_native_measurements(spot_graph)
+    )
     return jsonable(result)
 
 
@@ -5479,9 +5506,9 @@ def condition_market_state(snapshot, end, cache):
 
         return deepcopy(remember(cache, key, build))
 
-    spots, windows, primary, instruments = node(
+    spots, windows, primary, instruments, _spot_graph = node(
         "spot",
-        ("flow_bars", "flow_segments", "tickers", "instruments", "anchor"),
+        ("flow_bars", "flow_segments", "flow_parent_bars", "tickers", "instruments", "anchor"),
         lambda: spot_window_graph(snapshot, start, end, av),
     )
     scoped = dict(
@@ -5498,6 +5525,7 @@ def condition_market_state(snapshot, end, cache):
             "stat_price_series",
             "flow_bars",
             "flow_segments",
+            "flow_parent_bars",
             "reference_points",
             "tokens",
             "sector_baskets",
@@ -5560,18 +5588,19 @@ def compute_condition_values(snapshot, requirements, *, config=None, cache=None,
                 continue
             if metric in SPOT_CONDITION_METRICS:
                 domain = "spot"
-                fields = ("flow_bars", "flow_segments", "tickers", "instruments")
+                fields = ("flow_bars", "flow_segments", "flow_parent_bars", "tickers", "instruments")
             elif metric in DERIVATIVE_CONDITION_METRICS:
                 domain = "funding" if metric == "deriv.funding_vs_normal" else "oi"
                 fields = (domain, "instruments", "semantics", "capture_metadata")
             elif metric == "price.close_vs_level":
                 domain = "close"
-                fields = ("flow_bars", "flow_segments", "klines", "instruments")
+                fields = ("flow_bars", "flow_segments", "flow_parent_bars", "klines", "instruments")
             elif metric == "dc.class":
                 domain = "dc"
                 fields = (
                     "flow_bars",
                     "flow_segments",
+                    "flow_parent_bars",
                     "tickers",
                     "instruments",
                     "semantics",
@@ -5593,6 +5622,7 @@ def compute_condition_values(snapshot, requirements, *, config=None, cache=None,
                 fields = (
                     "flow_bars",
                     "flow_segments",
+                    "flow_parent_bars",
                     "reference_points",
                     "tickers",
                     "instruments",
@@ -5620,6 +5650,7 @@ def compute_condition_values(snapshot, requirements, *, config=None, cache=None,
                 fields = (
                     "flow_bars",
                     "flow_segments",
+                    "flow_parent_bars",
                     "reference_points",
                     "instruments",
                     "tokens",
@@ -5660,15 +5691,27 @@ def compute_condition_values(snapshot, requirements, *, config=None, cache=None,
                 )
                 start = end - timedelta(seconds=seconds)
                 if domain == "spot":
-                    value = spot_truth(
-                        selected.get("flow_bars", []),
-                        selected.get("tickers", []),
-                        selected.get("instruments", []),
-                        start,
-                        end,
+                    policy = SpotPolicyConfiguration.model_validate(
+                        {
+                            name: config[name]
+                            for name in ("significant_flow_sigma", "min_spot_venues")
+                            if name in config
+                        }
+                    ).calculation_policy()
+                    decoded = decode_spot_inputs(
+                        token_id=selected["token_id"],
+                        start=start,
+                        cutoff=end,
+                        assembled_at=propagate_timestamp(snapshot, "assembled_at"),
+                        instruments=selected.get("instruments", []),
+                        flow_bars=selected.get("flow_bars", []),
+                        flow_parent_bars=selected.get("flow_parent_bars", []),
                         flow_segments=flow_segments(selected),
-                        assembled_at=selected.get("assembled_at"),
+                        tickers=selected.get("tickers", []),
+                        policy=policy,
+                        native_ticker_volume_field="volume_native",
                     )
+                    value = SpotConditionEvaluation(calculate_spot(decoded.inputs), decoded.source_evidence)
                 elif domain == "close":
                     value = condition_reference_close(selected, end)
                 elif domain == "dc":
@@ -5701,7 +5744,13 @@ def compute_condition_values(snapshot, requirements, *, config=None, cache=None,
                 cache[key] = value
                 if len(cache) > 128:
                     cache.pop(next(iter(cache)))
-            value = deepcopy(cache[key])
+            cached = cache[key]
+            if domain == "spot":
+                if not isinstance(cached, SpotConditionEvaluation):
+                    raise TypeError("Spot condition cache requires its typed evaluation and bound evidence")
+                value = encode_basic_condition_spot(cached.result, cached.source_evidence)
+            else:
+                value = deepcopy(cached)
             fresh = True
             observations = []
             if domain in ("oi", "funding"):

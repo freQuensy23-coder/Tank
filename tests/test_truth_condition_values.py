@@ -3,14 +3,15 @@
 from copy import deepcopy
 from decimal import Decimal
 from pathlib import Path
-from types import SimpleNamespace
 
 import pytest
 from source_support import fixture_http_admission, fixture_versions
 from test_truth_start_fixture import compact_start_snapshot
+from truth_support import fixture_truth_config
 
 import tank.analysis.truth as module
 from tank.scheduler import metric_value
+from tank.settings import Settings
 
 
 def snapshot():
@@ -20,7 +21,7 @@ def snapshot():
 @pytest.fixture(scope="module")
 def baseline_truth():
 
-    result = module.compute_market_truth(snapshot())
+    result = module.compute_market_truth(snapshot(), config=fixture_truth_config())
 
     def fresh():
         return deepcopy(result)
@@ -58,7 +59,7 @@ def test_selective_same_input_parity_and_no_unrequested_domains(
         "select_move",
     ):
         monkeypatch.setattr(module, name, forbidden)
-    selected = module.compute_condition_values(packet, REQUIREMENTS)
+    selected = module.compute_condition_values(packet, REQUIREMENTS, config=fixture_truth_config())
     for requirement in REQUIREMENTS:
         metric, window = requirement["metric"], requirement["window"]
         assert metric_value(selected, {}, metric, window) == metric_value(full, {}, metric, window)
@@ -71,21 +72,23 @@ def test_identical_closed_window_inputs_reused_but_corrected_row_invalidates(
     packet = snapshot()
     cache = {}
     calls = []
-    original = module.spot_truth
+    original = module.calculate_spot
 
     def counted(*args, **kwargs):
         calls.append(1)
         return original(*args, **kwargs)
 
-    monkeypatch.setattr(module, "spot_truth", counted)
+    monkeypatch.setattr(module, "calculate_spot", counted)
     requirements = REQUIREMENTS[:2]
-    first = module.compute_condition_values(packet, requirements, cache=cache)
-    second = module.compute_condition_values(packet, requirements, cache=cache)
+    first = module.compute_condition_values(packet, requirements, cache=cache, config=fixture_truth_config())
+    second = module.compute_condition_values(packet, requirements, cache=cache, config=fixture_truth_config())
     assert len(calls) == 1
+    assert all(isinstance(value, module.SpotConditionEvaluation) for value in cache.values())
+    assert first["spot"] == second["spot"]
     assert all(p["reused"] for p in second["_condition_evaluation"]["proofs"])
     changed = deepcopy(packet)
     changed["flow_bars"][-1]["buy_qty"] = "101"
-    third = module.compute_condition_values(changed, requirements, cache=cache)
+    third = module.compute_condition_values(changed, requirements, cache=cache, config=fixture_truth_config())
     assert len(calls) == 2
     assert third["_condition_evaluation"]["request_key"] != first["_condition_evaluation"]["request_key"]
 
@@ -104,10 +107,12 @@ def test_native_baseline_reused_when_only_current_observation_changes(
 
     monkeypatch.setattr(module, "normal", counted)
     req = [dict(metric="deriv.native_oi_vs_normal", window="W1H")]
-    module.compute_condition_values(packet, req, baseline_cache=baseline)
+    module.compute_condition_values(packet, req, baseline_cache=baseline, config=fixture_truth_config())
     count = len(calls)
     packet["oi"][-1]["oi_native"] = "1001"
-    value = module.compute_condition_values(packet, req, baseline_cache=baseline)
+    value = module.compute_condition_values(
+        packet, req, baseline_cache=baseline, config=fixture_truth_config()
+    )
     assert len(calls) == count
     assert Decimal(value["derivatives"]["windows"]["W1H"]["synchronized"]["oi_native_end"]) == 1001
 
@@ -137,7 +142,7 @@ async def test_service_uses_only_light_loader_and_never_writes_assessments() -> 
             raise AssertionError("No full market snapshot")
 
     service = module.MarketTruthService(
-        Repo(), SimpleNamespace(config_version="t", code_version="t"), Market(), versions=fixture_versions()
+        Repo(), Settings(_env_file=None), Market(), versions=fixture_versions()
     )
     result = await service.condition_values("E", "T", packet["cutoff"], REQUIREMENTS[:2])
     assert reads == ["evt.events"] and "mta_id" not in result
@@ -148,7 +153,9 @@ def test_composite_requests_do_not_execute_full_assessment(monkeypatch: pytest.M
     monkeypatch.setattr(
         module, "compute_market_truth", lambda *args, **kwargs: pytest.fail("Full inline recomputation")
     )
-    result = module.compute_condition_values(snapshot(), [dict(metric="mt.move_class", window="W1H")])
+    result = module.compute_condition_values(
+        snapshot(), [dict(metric="mt.move_class", window="W1H")], config=fixture_truth_config()
+    )
     evaluation = result["_condition_evaluation"]
     assert evaluation["requires_market_truth"] == []
     assert result["move_class"] == "SPOT_LED_ACCUMULATION"
@@ -167,7 +174,7 @@ def test_unchanged_cached_funding_never_overrides_its_actual_capture_cadence() -
     req = [dict(metric="deriv.funding_vs_normal", window="W1H")]
     cache = {}
     for _ in range(2):
-        result = module.compute_condition_values(packet, req, cache=cache)
+        result = module.compute_condition_values(packet, req, cache=cache, config=fixture_truth_config())
         assert metric_value(result, {}, "deriv.funding_vs_normal", "W1H") is None
         proof = result["_condition_evaluation"]["proofs"][0]
         assert proof["reason"] == "INCOMPLETE"
@@ -182,8 +189,10 @@ def test_completed_close_uses_actual_largest_complete_reference_venue() -> None:
     for row in packet["klines"]:
         if row["instrument_id"] == "B:spot:T":
             row["c"] = "202.2"
-    full = module.compute_market_truth(packet)
-    selected = module.compute_condition_values(packet, [dict(metric="price.close_vs_level", window="W1H")])
+    full = module.compute_market_truth(packet, config=fixture_truth_config())
+    selected = module.compute_condition_values(
+        packet, [dict(metric="price.close_vs_level", window="W1H")], config=fixture_truth_config()
+    )
     assert full["relative"]["ref_venue"] == selected["relative"]["ref_venue"] == "B:spot:T"
     assert Decimal(selected["relative"]["close_1h_price"]) == Decimal("202.2")
     assert selected["relative"]["close_1h_price"] == full["relative"]["close_1h_price"]
@@ -201,7 +210,7 @@ def test_funding_baseline_reused_when_only_current_estimate_changes(monkeypatch:
 
     monkeypatch.setattr(module, "normal", counted)
     req = [dict(metric="deriv.funding_vs_normal", window="W1H")]
-    module.compute_condition_values(packet, req, baseline_cache=baseline)
+    module.compute_condition_values(packet, req, baseline_cache=baseline, config=fixture_truth_config())
     count = len(calls)
     packet["funding"].append(
         dict(
@@ -212,7 +221,9 @@ def test_funding_baseline_reused_when_only_current_estimate_changes(monkeypatch:
             interval_h=8,
         )
     )
-    value = module.compute_condition_values(packet, req, baseline_cache=baseline)
+    value = module.compute_condition_values(
+        packet, req, baseline_cache=baseline, config=fixture_truth_config()
+    )
     assert len(calls) == count
     assert metric_value(value, {}, "deriv.funding_vs_normal", "W1H") == "ABOVE"
 
@@ -229,7 +240,9 @@ def test_missing_completed_hour_close_is_not_replaced_by_an_older_hour() -> None
         for row in packet["klines"]
         if module._time(row) + timedelta(seconds=row.get("interval_s", 60)) != end
     ]
-    result = module.compute_condition_values(packet, [dict(metric="price.close_vs_level", window="W1H")])
+    result = module.compute_condition_values(
+        packet, [dict(metric="price.close_vs_level", window="W1H")], config=fixture_truth_config()
+    )
     assert result["relative"]["close_1h_price"] is None
     assert result["_condition_evaluation"]["unavailable_metrics"][0]["reason"] == "INCOMPLETE"
 
@@ -250,7 +263,9 @@ def test_proven_source_heads_avoid_serializing_full_history_for_cache_identity(
         return original(value)
 
     monkeypatch.setattr(module, "fingerprint", no_full_history)
-    result = module.compute_condition_values(packet, [dict(metric="deriv.native_oi_vs_normal", window="W1H")])
+    result = module.compute_condition_values(
+        packet, [dict(metric="deriv.native_oi_vs_normal", window="W1H")], config=fixture_truth_config()
+    )
     assert metric_value(result, {}, "deriv.native_oi_vs_normal", "W1H") == "WITHIN"
 
 
@@ -350,7 +365,11 @@ def test_selective_confidence_matches_full_rules_without_relative_liquidity_or_s
                 kind="FUNDAMENTALS", ts=iso(parse_time(packet["cutoff"]) - timedelta(days=1)), available=True
             )
         ]
-    full = baseline_truth() if case == "HIGH" else module.compute_market_truth(packet)
+    full = (
+        baseline_truth()
+        if case == "HIGH"
+        else module.compute_market_truth(packet, config=fixture_truth_config())
+    )
 
     def forbidden(*args, **kwargs) -> None:
         raise AssertionError("DC must not compute statistical repricing/liquidity/support/class")
@@ -365,7 +384,9 @@ def test_selective_confidence_matches_full_rules_without_relative_liquidity_or_s
         "select_move",
     ):
         monkeypatch.setattr(module, name, forbidden)
-    selected = module.compute_condition_values(packet, [dict(metric="dc.class", window="W1H")])
+    selected = module.compute_condition_values(
+        packet, [dict(metric="dc.class", window="W1H")], config=fixture_truth_config()
+    )
     assert selected["data_confidence"]["class"] == full["data_confidence"]["class"]
     assert selected["data_confidence"]["limiting"] == full["data_confidence"]["limiting"]
     assert not selected["_condition_evaluation"]["requires_market_truth"]
@@ -382,7 +403,7 @@ def test_depth_ratio_uses_only_actual_books_and_reuses_pre_event_baseline(
         lambda *args, **kwargs: pytest.fail("No slippage/refill/flow/statistics for depth ratio"),
     )
     req = [dict(metric="liq.depth_p1_vs_pre", window="W1H")]
-    selected = module.compute_condition_values(packet, req)
+    selected = module.compute_condition_values(packet, req, config=fixture_truth_config())
     assert (
         metric_value(selected, {}, "liq.depth_p1_vs_pre", "W1H")
         == metric_value(full, {}, "liq.depth_p1_vs_pre", "W1H")
@@ -401,6 +422,7 @@ def test_compact_statistical_projections_preserve_full_catalog_and_exact_prices(
             {"metric": m, "window": "EVENT"}
             for m in ("mt.move_class", "mt.divergence_state", "price.repricing_band", "price.vs_anchor_pct")
         ],
+        config=fixture_truth_config(),
     )
     compact = deepcopy(raw)
     compact["stat_price_series"] = {}
@@ -452,6 +474,7 @@ def test_compact_statistical_projections_preserve_full_catalog_and_exact_prices(
             {"metric": m, "window": "EVENT"}
             for m in ("mt.move_class", "mt.divergence_state", "price.repricing_band", "price.vs_anchor_pct")
         ],
+        config=fixture_truth_config(),
     )
     for metric in ("mt.move_class", "mt.divergence_state", "price.repricing_band", "price.vs_anchor_pct"):
         assert metric_value(actual, {}, metric, "EVENT") == metric_value(expected, {}, metric, "EVENT")
@@ -531,6 +554,7 @@ def test_composite_primary_graph_reused_across_requested_windows(
             ],
             cache=cache,
             baseline_cache=baselines,
+            config=fixture_truth_config(),
         )
         for metric in ("mt.move_class", "mt.divergence_state"):
             assert metric_value(result, {}, metric, window) == metric_value(full, {}, metric, window)
@@ -545,8 +569,12 @@ def test_composite_conditions_change_from_unknown_when_actual_evidence_arrives()
     missing["flow_segments"] = []
     requirements = [dict(metric="mt.move_class", window="W1H")]
     cache = {}
-    before = module.compute_condition_values(missing, requirements, cache=cache)
-    after = module.compute_condition_values(complete, requirements, cache=cache)
+    before = module.compute_condition_values(
+        missing, requirements, cache=cache, config=fixture_truth_config()
+    )
+    after = module.compute_condition_values(
+        complete, requirements, cache=cache, config=fixture_truth_config()
+    )
     assert metric_value(before, {}, "mt.move_class", "W1H") == "UNKNOWN"
     assert metric_value(after, {}, "mt.move_class", "W1H") == "SPOT_LED_ACCUMULATION"
     assert after["_condition_evaluation"]["requires_market_truth"] == []
@@ -576,13 +604,15 @@ async def test_selective_relative_uses_canonical_latest_beneficiary_direction() 
             return deepcopy(packet)
 
     service = module.MarketTruthService(
-        Repo(), SimpleNamespace(config_version="t", code_version="t"), Market(), versions=fixture_versions()
+        Repo(), Settings(_env_file=None), Market(), versions=fixture_versions()
     )
     actual = await service.condition_values(
         "E", "T", packet["cutoff"], [{"metric": "price.repricing_band", "window": "EVENT"}]
     )
     expected = module.compute_condition_values(
-        dict(packet, expected_direction="LOSER"), [{"metric": "price.repricing_band", "window": "EVENT"}]
+        dict(packet, expected_direction="LOSER"),
+        [{"metric": "price.repricing_band", "window": "EVENT"}],
+        config=fixture_truth_config(),
     )
     assert actual["relative"]["expected_direction"] == "LOSER"
     assert actual["relative"]["repricing_band"] == expected["relative"]["repricing_band"]
@@ -594,10 +624,10 @@ def test_beneficiary_direction_invalidates_market_head_cache() -> None:
     cache = {}
     requirements = [dict(metric="price.repricing_band", window="EVENT")]
     first = module.compute_condition_values(
-        dict(packet, expected_direction="BULLISH"), requirements, cache=cache
+        dict(packet, expected_direction="BULLISH"), requirements, cache=cache, config=fixture_truth_config()
     )
     second = module.compute_condition_values(
-        dict(packet, expected_direction="LOSER"), requirements, cache=cache
+        dict(packet, expected_direction="LOSER"), requirements, cache=cache, config=fixture_truth_config()
     )
     assert first["relative"]["expected_direction"] == "BULLISH"
     assert second["relative"]["expected_direction"] == "LOSER"
@@ -615,7 +645,7 @@ def test_complete_market_condition_catalog_matches_same_input_full_truth(baselin
     )
     requirements = [dict(metric=metric, window="W1H") for metric in catalog]
     full = baseline_truth()
-    result = module.compute_condition_values(packet, requirements)
+    result = module.compute_condition_values(packet, requirements, config=fixture_truth_config())
     for metric in catalog:
         assert metric_value(result, {}, metric, "W1H") == metric_value(full, {}, metric, "W1H"), metric
     assert result["_condition_evaluation"]["requires_market_truth"] == []

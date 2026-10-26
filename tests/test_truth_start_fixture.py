@@ -88,6 +88,7 @@ def synthetic_start_snapshot(*, end: datetime = SYNTHETIC_END, event_window_h: i
                     "instrument_id": iid,
                     "token_id": "T",
                     "minute_start": iso(t),
+                    "minute_start_prec": "BUCKET(60s)",
                     "venue": venue,
                     "market_type": "SPOT",
                     "received_ts": iso(end),

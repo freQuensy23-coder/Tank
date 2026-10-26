@@ -7,6 +7,7 @@ from pathlib import Path
 import pytest
 from card_wire_support import wire_card_inputs
 from score_fixtures import unassessed_score_dimensions
+from truth_support import fixture_truth_config
 
 from tank.analysis import cards as CARDS
 from tank.analysis import truth as TRUTH
@@ -100,7 +101,8 @@ def render(truths, tokens=None, *, limit=20000, narrative=None, event_statement=
 def test_actual_value_zero_and_exact_precision_freeze_then_card(value) -> None:
     row = captured({"adapter": {"total24h": value}})
     result = TRUTH.compute_market_truth(
-        {"token_id": "T", "cutoff": iso(END), "instruments": [], "supply": [row]}
+        {"token_id": "T", "cutoff": iso(END), "instruments": [], "supply": [row]},
+        config=fixture_truth_config(),
     )
     frozen = json.loads(json.dumps(result, default=str))
     row["protocols"]["adapter"]["dailyHoldersRevenue"]["total24h"] = "999999999"
@@ -211,7 +213,7 @@ async def test_real_supply_producer_to_computed_frozen_analysis(tmp_path: Path) 
     row = await capture.fundamentals(token)
     cutoff = row["ts"]
     truth = TRUTH.compute_market_truth(
-        {"token_id": "T", "cutoff": cutoff, "instruments": [], "supply": [row]}
+        {"token_id": "T", "cutoff": cutoff, "instruments": [], "supply": [row]}, config=fixture_truth_config()
     )
     await repo.put("ana.market_truth", "frozen", json.loads(json.dumps(truth, default=str)), immutable=True)
     frozen = await repo.get("ana.market_truth", "frozen")

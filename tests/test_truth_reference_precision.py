@@ -4,6 +4,8 @@ from decimal import Decimal
 from pathlib import Path
 from runpy import run_path
 
+from truth_support import fixture_truth_config
+
 from tank.analysis.truth import compute_market_truth
 
 synthetic_start_snapshot = run_path(str(Path(__file__).with_name("test_truth_start_fixture.py")))[
@@ -18,7 +20,7 @@ def test_raw_trade_references_survive_truth_json_and_call_freeze_boundary() -> N
     for bar in packet["flow_bars"]:
         for point in bar.get("reference_points", []):
             point["last_trade"]["price"] = anchor if point["boundary"] == packet["anchor"]["ts"] else entry
-    result = compute_market_truth(packet)
+    result = compute_market_truth(packet, config=fixture_truth_config())
     relative = result["relative"]
     assert Decimal(relative["anchor"]["ref_price"]) == Decimal(anchor)
     assert Decimal(relative["entry_ref_price"]) == Decimal(entry)
@@ -34,7 +36,7 @@ def test_kline_fallback_saved_entry_and_hourly_close_remain_exact() -> None:
         if any(point["boundary"] == packet["cutoff"] for point in bar.get("reference_points", [])):
             bar.pop("last_trade", None)
             bar["reference_points"] = []
-    result = compute_market_truth(packet)
+    result = compute_market_truth(packet, config=fixture_truth_config())
     relative = result["relative"]
     assert Decimal(relative["entry_ref_price"]) == Decimal(exact)
     assert Decimal(relative["close_1h_price"]) == Decimal(exact)

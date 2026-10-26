@@ -10,6 +10,7 @@ from pydantic import JsonValue
 from scheduling_support import RecordingReactionScheduling
 from score_fixtures import unassessed_score_dimensions
 from source_support import fixture_http_admission, fixture_request_budgets, fixture_versions
+from truth_support import fixture_truth_config
 
 from tank.agents.context import CONTEXT_VERSION
 from tank.analysis.page_access import LivePageAccess
@@ -1510,7 +1511,8 @@ async def test_market_truth_domain_result_and_evidence_bundle_keep_full_metadata
         "complete": True,
     }
     expected = compute_market_truth(
-        {"token_id": "T", "event_id": eid, "cutoff": cutoff, "flow_bars": [future]}
+        {"token_id": "T", "event_id": eid, "cutoff": cutoff, "flow_bars": [future]},
+        config=fixture_truth_config(),
     )
     expected["mta_id"] = "metadata-mta"
     task = asyncio.create_task(
@@ -2171,7 +2173,9 @@ def complete_assessment_fixture(ems_id, event_id, **changes):
 def complete_truth_fixture(mta_id, event_id, token_id, cutoff, **changes):
     from tank.analysis.truth import compute_market_truth
 
-    row = compute_market_truth({"token_id": token_id, "event_id": event_id, "cutoff": cutoff})
+    row = compute_market_truth(
+        {"token_id": token_id, "event_id": event_id, "cutoff": cutoff}, config=fixture_truth_config()
+    )
     row.pop("measurement_metadata", None)
     row.update(mta_id=mta_id, config_version="fixture", code_version="fixture")
     return dict(row, **changes)
@@ -2208,7 +2212,7 @@ def positive_truth_fixture(mta_id, event_id, token_id, cutoff, *, event_window_h
         for observation in snapshot[family]:
             if "token_id" in observation and observation["token_id"] == "T":
                 observation["token_id"] = token_id
-    row = compute_market_truth(snapshot)
+    row = compute_market_truth(snapshot, config=fixture_truth_config())
     assert row["move_class"] == "SPOT_LED_ACCUMULATION"
     assert row["relative"]["ref_venue"] is not None
     row.update(mta_id=mta_id, config_version="fixture", code_version="fixture")
@@ -2414,7 +2418,9 @@ async def test_real_event_tool_producers_satisfy_postgres_typed_contract(
         )
         mappings = await repo.list("evt.beneficiary_maps", filters={"event_id": eid})
         assert len(mappings) == 1 and "least_repriced_edge" not in mappings[0]
-        truth = compute_market_truth({"event_id": eid, "token_id": "world:WLD", "cutoff": clock_iso()})
+        truth = compute_market_truth(
+            {"event_id": eid, "token_id": "world:WLD", "cutoff": clock_iso()}, config=fixture_truth_config()
+        )
         truth["mta_id"] = new_id("mta")
         await repo.put("ana.market_truth", truth["mta_id"], truth)
         decision = await service.dispatch("get_decision", {"event_id": eid, "token_id": "world:WLD"}, context)
@@ -4173,7 +4179,8 @@ async def test_actual_fetch_http_error_returns_durably_then_card_or_native_faile
                                 "event_id": eid,
                                 "token_id": "world:WLD",
                                 "cutoff": job["payload"]["cutoff"],
-                            }
+                            },
+                            config=fixture_truth_config(),
                         )
                         truth["mta_id"] = new_id("mta")
                         await service.repo.put("ana.market_truth", truth["mta_id"], truth)

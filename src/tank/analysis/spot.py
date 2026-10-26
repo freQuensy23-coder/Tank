@@ -863,3 +863,53 @@ def calculate_spot_window_graph(inputs: SpotWindowCalculationInputs) -> Conditio
                 cohort_consistent={other: consistent for other in plan.current if other != name},
             )
         return ConditionSpotWindowGraph(spots=spots, durations_s=durations, primary=plan.primary)
+
+
+@dataclass(frozen=True, slots=True)
+class SpotNativeMeasurement:
+    path: str
+    value: Decimal
+    window: ConditionWindow
+    unit: Literal["NATIVE_TOKEN", "NATIVE_TOKEN_SQUARED"]
+    observed_at: Timestamp
+    venue: str | None
+
+
+def spot_native_measurements(graph: ConditionSpotWindowGraph) -> tuple[SpotNativeMeasurement, ...]:
+    measurements: list[SpotNativeMeasurement] = []
+    for window, value in graph.spots.items():
+        for name, composite in (
+            ("composite_max", value.composite_max),
+            ("composite_cohort", value.composite_cohort),
+        ):
+            if isinstance(composite, ObservedConditionComposite):
+                for field, quantity in (("cvd", composite.cvd), ("volume", composite.volume)):
+                    measurements.append(
+                        SpotNativeMeasurement(
+                            f"spot.{window}.{name}.{field}",
+                            quantity,
+                            window,
+                            "NATIVE_TOKEN",
+                            value.coverage_through,
+                            None,
+                        )
+                    )
+        for index, venue in enumerate(value.venues):
+            for field, quantity in (
+                ("buy_qty", venue.buy_qty),
+                ("sell_qty", venue.sell_qty),
+                ("volume_native", venue.volume_native),
+                ("cvd", venue.cvd),
+                ("sum_sq_qty", venue.sum_sq_qty),
+            ):
+                measurements.append(
+                    SpotNativeMeasurement(
+                        f"spot.{window}.venues[{index}].{field}",
+                        quantity,
+                        window,
+                        "NATIVE_TOKEN_SQUARED" if field == "sum_sq_qty" else "NATIVE_TOKEN",
+                        value.coverage_through,
+                        venue.venue,
+                    )
+                )
+    return tuple(measurements)
