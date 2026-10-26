@@ -2,13 +2,12 @@
 
 from collections.abc import Iterator, Sequence
 from contextlib import contextmanager
-from dataclasses import dataclass
 from datetime import datetime, timedelta
 from decimal import Decimal, localcontext
 from math import isfinite
-from typing import Literal, Self
+from typing import Annotated, Literal, Self
 
-from pydantic import Field, model_validator
+from pydantic import BeforeValidator, Field, model_validator
 
 from tank.analysis.condition_graph_codec import bind_flow_aggregate_evidence, flow_aggregate_projection_sha256
 from tank.analysis.condition_graph_contracts import (
@@ -50,13 +49,16 @@ from tank.analysis.condition_graph_contracts import (
     WindowedConditionSpot,
 )
 from tank.analysis.condition_inputs import (
+    SpotCalculationFacts,
     SpotCalculationInputs,
     SpotCalculationPolicy,
     SpotFlowObservation,
     SpotWindowCalculationInputs,
+    SpotWindowPlan,
 )
 from tank.analysis.spot_enrichment import CohortEnrichedConditionSpot, ConditionSpotCohortGraph
 from tank.contracts import DomainModel
+from tank.contracts.scalars import require_integer
 from tank.time_precision import Timestamp
 from tank.util import parse_iso_time
 
@@ -202,12 +204,11 @@ def bound_aggregate(row: SpotFlowObservation) -> ConditionFlowAggregate:
     )
 
 
-@dataclass(frozen=True, slots=True)
-class _Venue:
-    name: str
+class _Venue(DomainModel):
+    name: str = Field(min_length=1, pattern=r"\S")
     totals: NativeFlowTotals
     boundaries: tuple[ConditionBoundaryGroup, ...]
-    sign: FlowSign
+    sign: Annotated[FlowSign, BeforeValidator(require_integer)]
     coverage_endpoints: tuple[Timestamp, ...]
 
 
@@ -223,7 +224,12 @@ def _partial_intervals(start: datetime, cutoff: datetime) -> tuple[tuple[datetim
 
 
 def _boundary_cover(
-    inputs: SpotCalculationInputs, instrument_id: str, start: datetime, cutoff: datetime
+    inputs: SpotCalculationFacts,
+    instrument_id: str,
+    start: datetime,
+    cutoff: datetime,
+    *,
+    assembled_at: Timestamp,
 ) -> tuple[SpotFlowObservation, ...] | MissingSpotFlowMetrics | None:
     available = [
         row
@@ -231,7 +237,7 @@ def _boundary_cover(
         if row.instrument.instrument_id == instrument_id
         and row.complete is True
         and start <= row.start < row.end <= cutoff
-        and row.visible_at(inputs.assembled_at) is True
+        and row.visible_at(assembled_at) is True
     ]
     cursor = start
     selected = []
@@ -267,7 +273,12 @@ def _boundary_cover(
 
 
 def _selected_venue(
-    inputs: SpotCalculationInputs, venue: str, *, start: datetime, cutoff: datetime
+    inputs: SpotCalculationFacts,
+    venue: str,
+    *,
+    start: datetime,
+    cutoff: datetime,
+    assembled_at: Timestamp,
 ) -> _Venue | ConditionSpotExclusion:
     instruments = tuple(item.instrument_id for item in inputs.instruments if item.venue == venue)
     rows = [
@@ -292,7 +303,7 @@ def _selected_venue(
             if (
                 observation is None
                 or observation.complete is not True
-                or observation.visible_at(inputs.assembled_at) is not True
+                or observation.visible_at(assembled_at) is not True
             ):
                 return ConditionIncompleteMinuteCoverage(
                     venue=venue,
@@ -305,7 +316,7 @@ def _selected_venue(
     for left, right in _partial_intervals(start, cutoff):
         pieces: list[SpotFlowObservation] = []
         for instrument_id in instruments:
-            covered = _boundary_cover(inputs, instrument_id, left, right)
+            covered = _boundary_cover(inputs, instrument_id, left, right, assembled_at=assembled_at)
             if covered is None:
                 return ConditionUnavailableBoundaryCoverage(
                     venue=venue,
@@ -349,7 +360,13 @@ def _selected_venue(
     endpoints = tuple(row.end_clock for row in rows if row.end == cutoff)
     if len(endpoints) != len(instruments):
         raise ValueError("Complete spot coverage requires the actual endpoint of every instrument")
-    return _Venue(venue, totals, tuple(boundaries), significant_flow(totals, inputs.policy), endpoints)
+    return _Venue(
+        name=venue,
+        totals=totals,
+        boundaries=tuple(boundaries),
+        sign=significant_flow(totals, inputs.policy),
+        coverage_endpoints=endpoints,
+    )
 
 
 def combine_native_flow(token_id: str, rows: Sequence[NativeFlowTotals]) -> NativeFlowTotals:
@@ -459,7 +476,11 @@ def _venue_output(row: _Venue, total: Decimal) -> ConditionSpotVenue:
 
 
 def _excluded_daily_volume(
-    inputs: SpotCalculationInputs, excluded: Sequence[ConditionSpotExclusion], *, cutoff: datetime
+    inputs: SpotCalculationFacts,
+    excluded: Sequence[ConditionSpotExclusion],
+    *,
+    cutoff: datetime,
+    assembled_at: Timestamp,
 ) -> Decimal | None:
     daily: list[Decimal] = []
     excluded_venues = {row.venue for row in excluded}
@@ -470,7 +491,7 @@ def _excluded_daily_volume(
             ticker
             for ticker in inputs.tickers
             if ticker.instrument == instrument
-            and ticker.visible_at(inputs.assembled_at) is True
+            and ticker.visible_at(assembled_at) is True
             and ticker.observed_at.value is not None
             and parse_iso_time(ticker.observed_at.value) <= cutoff
         ]
@@ -500,33 +521,39 @@ def _strict_majority(numerator: Decimal, denominator: Decimal) -> bool | None:
     return None if denominator == 0 else 2 * numerator > denominator
 
 
-@dataclass(frozen=True, slots=True)
-class _SpotQualification:
+class _SpotQualification(DomainModel):
     observed: tuple[_Venue, ...]
     excluded: tuple[ConditionSpotExclusion, ...]
 
 
-def _qualify_spot(inputs: SpotCalculationInputs, *, start: datetime, cutoff: datetime) -> _SpotQualification:
+def _qualify_spot(
+    inputs: SpotCalculationFacts, *, start: datetime, cutoff: datetime, assembled_at: Timestamp
+) -> _SpotQualification:
     observed: list[_Venue] = []
     excluded: list[ConditionSpotExclusion] = []
     for name in sorted({instrument.venue for instrument in inputs.instruments}):
-        selected = _selected_venue(inputs, name, start=start, cutoff=cutoff)
+        selected = _selected_venue(inputs, name, start=start, cutoff=cutoff, assembled_at=assembled_at)
         if isinstance(selected, _Venue):
             observed.append(selected)
         else:
             excluded.append(selected)
-    return _SpotQualification(tuple(observed), tuple(excluded))
+    return _SpotQualification(observed=tuple(observed), excluded=tuple(excluded))
 
 
 def _calculate_spot(
-    inputs: SpotCalculationInputs, qualification: _SpotQualification, *, start: datetime, cutoff: datetime
+    inputs: SpotCalculationFacts,
+    qualification: _SpotQualification,
+    *,
+    start: datetime,
+    cutoff: datetime,
+    assembled_at: Timestamp,
 ) -> BasicConditionSpot:
     observed, excluded = qualification.observed, qualification.excluded
     totals = _combined(inputs.token_id, observed) if observed else None
     composite = compose_native_flow(totals, tuple(row.name for row in observed), inputs.policy)
     volume = Decimal(0) if totals is None else totals.volume_native
     sign = 0 if totals is None else significant_flow(totals, inputs.policy)
-    ticker_daily = _excluded_daily_volume(inputs, excluded, cutoff=cutoff)
+    ticker_daily = _excluded_daily_volume(inputs, excluded, cutoff=cutoff, assembled_at=assembled_at)
     duration = cutoff - start
     seconds = Decimal(duration.days * 86400 + duration.seconds) + Decimal(duration.microseconds) / 1000000
     scaled_covered = volume * 86400
@@ -762,14 +789,24 @@ def calculate_spot(inputs: SpotCalculationInputs) -> BasicConditionSpot:
         row.trailing_day_native_volume for row in inputs.tickers if row.trailing_day_native_volume is not None
     )
     with _native_arithmetic((*values, *ticker_values, inputs.policy.significant_flow_sigma)):
-        qualified = _qualify_spot(inputs, start=inputs.start, cutoff=inputs.cutoff)
-        return _calculate_spot(inputs, qualified, start=inputs.start, cutoff=inputs.cutoff)
+        qualified = _qualify_spot(
+            inputs, start=inputs.start, cutoff=inputs.cutoff, assembled_at=inputs.assembled_at
+        )
+        return _calculate_spot(
+            inputs, qualified, start=inputs.start, cutoff=inputs.cutoff, assembled_at=inputs.assembled_at
+        )
 
 
 def calculate_direct_spot(
     inputs: SpotCalculationInputs, *, window: ConditionWindow
 ) -> DirectWindowConditionSpot:
     source = SpotCalculationInputs.model_validate(inputs)
+    return _calculate_direct_spot(source, window=window, assembled_at=source.assembled_at)
+
+
+def _calculate_direct_spot(
+    source: SpotCalculationFacts, *, window: ConditionWindow, assembled_at: Timestamp
+) -> DirectWindowConditionSpot:
     values = tuple(
         value
         for row in (*source.minutes, *source.boundaries)
@@ -780,8 +817,10 @@ def calculate_direct_spot(
         row.trailing_day_native_volume for row in source.tickers if row.trailing_day_native_volume is not None
     )
     with _native_arithmetic((*values, *ticker_values, source.policy.significant_flow_sigma)):
-        qualified = _qualify_spot(source, start=source.start, cutoff=source.cutoff)
-        basic = _calculate_spot(source, qualified, start=source.start, cutoff=source.cutoff)
+        qualified = _qualify_spot(source, start=source.start, cutoff=source.cutoff, assembled_at=assembled_at)
+        basic = _calculate_spot(
+            source, qualified, start=source.start, cutoff=source.cutoff, assembled_at=assembled_at
+        )
         return DirectWindowConditionSpot.from_basic(
             basic,
             interval=ConditionInterval(window=window, start=source.start, cutoff=source.cutoff),
@@ -790,7 +829,11 @@ def calculate_direct_spot(
 
 
 def _calculate_spot_sign_history(
-    source: SpotCalculationInputs, *, interval: ConditionInterval, selected_venues: tuple[str, ...]
+    source: SpotCalculationFacts,
+    *,
+    interval: ConditionInterval,
+    selected_venues: tuple[str, ...],
+    assembled_at: Timestamp,
 ) -> ConditionTopVenueSignHistory:
     interval = ConditionInterval.model_validate(interval)
     if interval.start < source.start or interval.cutoff > source.cutoff:
@@ -811,7 +854,9 @@ def _calculate_spot_sign_history(
             cutoff = cursor + timedelta(minutes=15)
             observations: list[ConditionVenueSignObservation] = []
             for venue in selected_venues:
-                qualified = _selected_venue(source, venue, start=cursor, cutoff=cutoff)
+                qualified = _selected_venue(
+                    source, venue, start=cursor, cutoff=cutoff, assembled_at=assembled_at
+                )
                 observations.append(
                     ConditionVenueSignObservation(
                         venue=venue,
@@ -845,7 +890,12 @@ class SpotCalculator:
     def sign_history(
         self, *, interval: ConditionInterval, selected_venues: tuple[str, ...]
     ) -> ConditionTopVenueSignHistory:
-        return _calculate_spot_sign_history(self._source, interval=interval, selected_venues=selected_venues)
+        return _calculate_spot_sign_history(
+            self._source,
+            interval=interval,
+            selected_venues=selected_venues,
+            assembled_at=self._source.assembled_at,
+        )
 
 
 def calculate_spot_sign_history(
@@ -867,7 +917,7 @@ def _coverage_through(venues: Sequence[_Venue]) -> Timestamp:
 
 
 def _cohort_composite(
-    inputs: SpotCalculationInputs,
+    inputs: SpotCalculationFacts,
     current: Sequence[_Venue],
     prior: Sequence[_Venue],
     maximum: BasicConditionSpot,
@@ -913,8 +963,24 @@ def _cohort_composite(
 
 
 def calculate_spot_window_graph(inputs: SpotWindowCalculationInputs) -> ConditionSpotWindowGraph:
-    plan = SpotWindowCalculationInputs.model_validate(inputs)
-    source = plan.source
+    admitted = SpotWindowCalculationInputs.model_validate(inputs)
+    plan = SpotWindowPlan(
+        token_id=admitted.source.token_id,
+        source_start=admitted.source.start,
+        cutoff=admitted.source.cutoff,
+        current=admitted.current,
+        previous=admitted.previous,
+        event_anchor=admitted.event_anchor,
+        primary=admitted.primary,
+    )
+    return _calculate_spot_window_graph(admitted.source, plan=plan, assembled_at=admitted.source.assembled_at)
+
+
+def _calculate_spot_window_graph(
+    source: SpotCalculationFacts, *, plan: SpotWindowPlan, assembled_at: Timestamp
+) -> ConditionSpotWindowGraph:
+    if (source.token_id, source.start, source.cutoff) != (plan.token_id, plan.source_start, plan.cutoff):
+        raise ValueError("Spot window plan must bind its actual admitted source scope")
     amounts = tuple(
         amount
         for row in (*source.minutes, *source.boundaries)
@@ -926,15 +992,25 @@ def calculate_spot_window_graph(inputs: SpotWindowCalculationInputs) -> Conditio
     )
     with _native_arithmetic((*amounts, *ticker_amounts, source.policy.significant_flow_sigma)):
         qualified = {
-            name: _qualify_spot(source, start=interval.start, cutoff=interval.cutoff)
+            name: _qualify_spot(
+                source, start=interval.start, cutoff=interval.cutoff, assembled_at=assembled_at
+            )
             for name, interval in plan.current.items()
         }
         prior = {
-            name: _qualify_spot(source, start=interval.start, cutoff=interval.cutoff)
+            name: _qualify_spot(
+                source, start=interval.start, cutoff=interval.cutoff, assembled_at=assembled_at
+            )
             for name, interval in plan.previous.items()
         }
         current = {
-            name: _calculate_spot(source, qualified[name], start=interval.start, cutoff=interval.cutoff)
+            name: _calculate_spot(
+                source,
+                qualified[name],
+                start=interval.start,
+                cutoff=interval.cutoff,
+                assembled_at=assembled_at,
+            )
             for name, interval in plan.current.items()
         }
         cohort = frozenset.intersection(

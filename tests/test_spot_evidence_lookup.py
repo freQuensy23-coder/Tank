@@ -6,9 +6,9 @@ from pydantic import ValidationError
 
 from tank.analysis.condition_graph_codec import flow_aggregate_evidence_wire
 from tank.analysis.condition_graph_contracts import FlowAggregateEvidenceRef
+from tank.analysis.condition_input_codec import SpotEvidenceLookup
 from tank.analysis.condition_inputs import SpotCalculationPolicy
 from tank.analysis.spot import aggregate_projection, bound_aggregate
-from tank.analysis.spot_evidence_lookup import SpotEvidenceLookup
 from tank.time_precision import collection_clock
 from tank.util import JsonInput
 
@@ -20,7 +20,6 @@ def reader(row: dict[str, JsonInput], policy: SpotCalculationPolicy) -> SpotEvid
         token_id="T",
         start=AT,
         cutoff=AT + timedelta(minutes=1),
-        assembled_at=collection_clock(AT + timedelta(minutes=2)),
         instruments=[{"instrument_id": "A", "token_id": "T", "venue": "V", "market_type": "SPOT"}],
         flow_bars=[row],
         flow_parent_bars=[],

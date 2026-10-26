@@ -11,10 +11,12 @@ from test_truth_start_fixture import compact_start_snapshot
 from truth_support import fixture_truth_config
 
 import tank.analysis.truth as module
+from tank.analysis import condition_input_codec as read_codec
 from tank.analysis.condition_graph_contracts import ConditionWindow, DirectWindowConditionSpot
-from tank.analysis.condition_inputs import SpotCalculationInputs
+from tank.analysis.condition_inputs import SpotCalculationFacts
 from tank.scheduler import metric_value
 from tank.settings import Settings
+from tank.time_precision import Timestamp
 from tank.util import iso, parse_time
 
 
@@ -80,18 +82,20 @@ def test_identical_closed_window_inputs_reused_but_corrected_row_invalidates(
         packet["domain_dependency_fingerprints"] = {"spot": "same-captured-source-head"}
     cache = {}
     calls = []
-    original = module.calculate_direct_spot
+    original = read_codec._calculate_direct_spot
 
-    def counted(inputs: SpotCalculationInputs, *, window: ConditionWindow) -> DirectWindowConditionSpot:
+    def counted(
+        inputs: SpotCalculationFacts, *, window: ConditionWindow, assembled_at: Timestamp
+    ) -> DirectWindowConditionSpot:
         calls.append(1)
-        return original(inputs, window=window)
+        return original(inputs, window=window, assembled_at=assembled_at)
 
-    monkeypatch.setattr(module, "calculate_direct_spot", counted)
+    monkeypatch.setattr(read_codec, "_calculate_direct_spot", counted)
     requirements = REQUIREMENTS[:2]
     first = module.compute_condition_values(packet, requirements, cache=cache, config=fixture_truth_config())
     second = module.compute_condition_values(packet, requirements, cache=cache, config=fixture_truth_config())
     assert len(calls) == 1
-    assert all(isinstance(value, module.SpotConditionEvaluation) for value in cache.values())
+    assert all(isinstance(value, module.SpotDirectEvidenceLookup) for value in cache.values())
     assert first["spot"] == second["spot"]
     assert all(p["reused"] for p in second["_condition_evaluation"]["proofs"])
     changed = deepcopy(packet)
@@ -567,12 +571,12 @@ def test_composite_primary_graph_reused_across_requested_windows(
         assert result["_condition_evaluation"]["requires_market_truth"] == []
     assert len(calls) == 1
     from tank.analysis.condition_graph_contracts import ConditionStateNodeKey
-    from tank.analysis.condition_input_codec import SpotWindowEvaluation
+    from tank.analysis.condition_input_codec import SpotWindowEvidenceLookup
 
     spot_nodes = [
         value for key, value in cache.items() if isinstance(key, ConditionStateNodeKey) and key.node == "spot"
     ]
-    assert len(spot_nodes) == 1 and isinstance(spot_nodes[0], SpotWindowEvaluation)
+    assert len(spot_nodes) == 1 and isinstance(spot_nodes[0], SpotWindowEvidenceLookup)
 
 
 def test_composite_conditions_change_from_unknown_when_actual_evidence_arrives() -> None:
