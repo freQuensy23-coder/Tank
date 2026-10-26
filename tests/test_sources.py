@@ -642,7 +642,7 @@ async def test_source_ingest_postgres_projection_and_durable_queue(tmp_path: Pat
                     ).fetchone()
                     jobs = await (
                         await repo._conn().execute(
-                            "SELECT count(*) AS n FROM ops.jobs WHERE payload->>'item_id'=%s AND type=%s",
+                            "SELECT count(*) AS n FROM ops.jobs WHERE document->'payload'->>'item_id'=%s AND type=%s",
                             (record["item_id"], job_kind),
                         )
                     ).fetchone()

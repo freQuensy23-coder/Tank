@@ -143,7 +143,7 @@ class FailingHeadStore(MemoryRepository):
         return await super().put(collection, key, record, immutable=immutable)
 
 
-async def test_failed_final_head_advancement_rolls_back_effects_outlook_and_financial_row() -> None:
+async def test_failed_final_head_advancement_rolls_back_effects_and_embedded_financial_row() -> None:
     store = FailingHeadStore()
     record = frozen_decision_fixture()
 
@@ -160,7 +160,6 @@ async def test_failed_final_head_advancement_rolls_back_effects_outlook_and_fina
         )
     assert await store.get("ana.watch_conditions", "effect") is None
     assert await store.get("ana.decisions", record.metadata.identity.decision_id) is None
-    assert await store.get("ana.outlooks", record.outlook_id) is None
     assert await DecisionStateRepository(store).current(scope(record)) is None
 
 
@@ -295,7 +294,7 @@ async def test_unrelated_legacy_equal_clock_siblings_remain_ambiguous() -> None:
 async def persisted_financial_state(store: MemoryRepository) -> dict[str, list[dict[str, JsonValue]]]:
     return {
         table: await store.list(table)
-        for table in ("ana.watch_conditions", "ana.outlooks", "ana.decisions", "ana.decision_state_heads")
+        for table in ("ana.watch_conditions", "ana.decisions", "ana.decision_state_heads")
     }
 
 

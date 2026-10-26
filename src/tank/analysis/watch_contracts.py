@@ -198,7 +198,7 @@ class TimedReviewCondition(WatchLifecycle):
 
     @model_validator(mode="after")
     def actual_review_schedule(self) -> Self:
-        clocks = (
+        required_clocks = (
             (
                 self.created_at,
                 self.created_at_prec,
@@ -211,6 +211,10 @@ class TimedReviewCondition(WatchLifecycle):
                 self.expires_at_prec_reason,
                 self.expires_at_bucket_anchor,
             ),
+        )
+        for value, precision, reason, anchor in required_clocks:
+            Timestamp(value=value, precision=precision, precision_reason=reason, bucket_anchor=anchor)
+        lifecycle_clocks = (
             (
                 self.last_evaluated_at,
                 self.last_evaluated_at_prec,
@@ -225,7 +229,9 @@ class TimedReviewCondition(WatchLifecycle):
                 self.cancelled_at_bucket_anchor,
             ),
         )
-        for value, precision, reason, anchor in clocks:
+        for value, precision, reason, anchor in lifecycle_clocks:
+            if value is None and precision is None and reason is None and anchor is None:
+                continue
             Timestamp(value=value, precision=precision, precision_reason=reason, bucket_anchor=anchor)
         created = parse_iso_time(self.created_at)
         due = parse_iso_time(self.expr.review_at)

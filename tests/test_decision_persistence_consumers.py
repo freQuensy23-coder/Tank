@@ -1,4 +1,4 @@
-"""Actual narrow call facts and reconciled outlook persistence boundaries."""
+"""Actual narrow call facts and canonical embedded outlook persistence boundaries."""
 
 from decimal import Decimal
 
@@ -10,9 +10,7 @@ from test_decision_contracts import frozen_decision_fixture
 from tank.analysis.decision_codec import (
     decision_call_from_record,
     decode_decision,
-    decode_outlook,
     encode_decision,
-    encode_outlook,
 )
 from tank.analysis.decision_contracts import (
     DecisionCore,
@@ -59,23 +57,21 @@ def test_call_projection_refuses_missing_consumed_facts(field: str, value: JsonV
         decision_call_from_record(record)
 
 
-def test_outlook_row_and_embedded_refs_derive_from_actual_reconciled_watches() -> None:
+def test_canonical_embedded_outlook_refs_derive_from_actual_reconciled_watches() -> None:
     record = frozen_decision_fixture()
     expected = OutlookConditionRefs.from_conditions(record.conditions)
     decision_wire = encode_decision(record)
     refs = object_field(object_field(decision_wire, "outlook"), "conditions")
     assert refs == {"upgrade": list(expected.upgrade), "downgrade": list(expected.downgrade)}
     assert decode_decision(decision_wire) == record
-    row = encode_outlook(record)
-    actual = decode_outlook(row)
-    assert actual.conditions == expected
-    assert actual.calculation == record.calculation.outlook
-    assert actual.cutoff == record.metadata.identity.cutoff
-    assert actual.generation == record.metadata.identity.generation
-    assert actual.versions == record.metadata.identity.versions
+    actual = decode_decision(decision_wire)
+    assert actual.calculation.outlook == record.calculation.outlook
+    assert actual.metadata.identity.cutoff == record.metadata.identity.cutoff
+    assert actual.metadata.identity.generation == record.metadata.identity.generation
+    assert actual.metadata.identity.versions == record.metadata.identity.versions
     assert actual.outlook_id == record.outlook_id
-    assert row["event_id"] == record.metadata.identity.event_id
-    assert row["token_id"] == record.metadata.identity.token_id
+    assert decision_wire["event_id"] == record.metadata.identity.event_id
+    assert decision_wire["token_id"] == record.metadata.identity.token_id
 
 
 def test_embedded_outlook_cannot_claim_an_unreconciled_watch() -> None:
@@ -85,7 +81,7 @@ def test_embedded_outlook_cannot_claim_an_unreconciled_watch() -> None:
         decode_decision(wire)
 
 
-def test_ended_tracking_cannot_replace_the_historical_outlook_row() -> None:
+def test_ended_tracking_preserves_the_canonical_frozen_outlook_without_rewriting_its_source() -> None:
     frozen = frozen_decision_fixture()
     ended = end_decision_tracking(
         frozen,
@@ -97,11 +93,11 @@ def test_ended_tracking_cannot_replace_the_historical_outlook_row() -> None:
             generation=frozen.metadata.identity.generation,
         ),
     )
+    original = encode_decision(frozen)
     assert ended.outlook_id == frozen.outlook_id
-    with pytest.raises(ValueError, match="historical outlook"):
-        encode_outlook(ended)
+    assert ended.calculation.outlook == frozen.calculation.outlook
     assert decode_decision(encode_decision(ended)) == ended
-    assert encode_outlook(frozen)["out_id"] == frozen.outlook_id
+    assert encode_decision(frozen) == original
 
 
 def test_available_scenarios_keep_the_sparse_reason_wire_contract() -> None:
@@ -119,6 +115,6 @@ def test_available_scenarios_keep_the_sparse_reason_wire_contract() -> None:
     )
     calculation = DecisionCore.model_validate(record.calculation.model_copy(update={"outlook": outlook}))
     declared = DecisionRecord.model_validate(record.model_copy(update={"calculation": calculation}))
-    row = encode_outlook(declared)
-    assert row["scenario_reasons"] == {}
-    assert decode_outlook(row).calculation.scenario_reasons == reasons
+    row = encode_decision(declared)
+    assert object_field(row, "outlook")["scenario_reasons"] == {}
+    assert decode_decision(row).calculation.outlook.scenario_reasons == reasons

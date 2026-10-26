@@ -8,7 +8,7 @@ from typing import Literal, Protocol, Self
 
 from pydantic import Field, JsonValue, model_validator
 
-from tank.analysis.decision_codec import decode_decision, encode_decision, encode_outlook
+from tank.analysis.decision_codec import decode_decision, encode_decision
 from tank.analysis.decision_contracts import DecisionRecord, DecisionStatusWriter, EndedDecisionTracking
 from tank.contracts import DomainModel
 from tank.contracts.json import decode_json
@@ -322,10 +322,6 @@ class DecisionStateRepository:
                 writer=_writer(candidate),
             )
             await effects()
-            if not isinstance(candidate.metadata.tracking, EndedDecisionTracking):
-                await self._store.put(
-                    "ana.outlooks", candidate.outlook_id, encode_outlook(candidate), immutable=True
-                )
             await self._store.put("ana.decisions", identity, encoded, immutable=True)
             persisted = await self._store.get("ana.decisions", identity)
             if persisted is None or not _equivalent(persisted, encoded):

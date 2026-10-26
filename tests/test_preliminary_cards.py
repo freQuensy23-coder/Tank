@@ -9,6 +9,7 @@ import httpx
 import pytest
 from configuration_support import captured_fixture_settings
 from delivery_support import delivery_job
+from foundation_helpers import text_field
 from postgres_helpers import PostgresTemplate
 from pydantic import JsonValue
 from scheduler_support import operational_reaction_services
@@ -20,6 +21,7 @@ from tank.analysis.card_codec import preliminary_gate_inputs_from_records
 from tank.analysis.card_policy import preliminary_gate
 from tank.analysis.decisions import DecisionEngine
 from tank.analysis.page_access import LivePageAccess
+from tank.contracts.json import JsonDocument
 from tank.delivery import DeliveryService
 from tank.event_tools import EventToolService
 from tank.models import Record
@@ -53,6 +55,18 @@ async def preliminary_services(repo: Repository, directory: Path) -> AsyncIterat
 def scheduler_for(service: EventToolService) -> Scheduler:
     assert isinstance(service.scheduler, Scheduler)
     return service.scheduler
+
+
+async def publication_event(service: EventToolService, event_id: str) -> Record:
+    document = JsonDocument.model_validate(
+        await service.dispatch("get_event", {"event_id": event_id}, {})
+    ).root
+    event, claims = document["event"], document["claims"]
+    assert isinstance(event, dict) and isinstance(claims, list)
+    contradictions = [
+        row async for row in service.repo.iter_all("ana.contradictions", filters={"event_id": event_id})
+    ]
+    return JsonDocument.model_validate({**event, "claims": claims, "contradictions": contradictions}).root
 
 
 @pytest.fixture
@@ -177,7 +191,7 @@ async def test_preliminary_requires_material_and_source_evidence(
     service: EventToolService, event: Record, assessment: Record, reason: str
 ) -> None:
     request = await lead(service)
-    actual = await service.repo.get("evt.events", request["event_id"])
+    actual = await publication_event(service, text_field(request, "event_id"))
     assert actual is not None
     current = await service.repo.get("evt.ems_assessments", "ems")
     assert current is not None
@@ -213,7 +227,7 @@ async def test_preliminary_then_full_uses_ordinary_requirements_and_same_thread(
     service: EventToolService,
 ) -> None:
     args = await lead(service)
-    eid = args["event_id"]
+    eid = text_field(args, "event_id")
     preliminary = await service.dispatch("publish_card", args, {})
     requests = []
 
@@ -247,9 +261,13 @@ async def test_preliminary_then_full_uses_ordinary_requirements_and_same_thread(
         incomplete = await service.dispatch("publish_card", {**args, "kind": "FULL"}, {})
         assert incomplete["missing_market_truth"] == ["world:WLD"]
         assert incomplete["missing_decisions"] == ["world:WLD"]
-        event = await service.repo.get("evt.events", eid)
-        assert event is not None
-        proof = event["claims"][0]["claim_id"]
+        event = await publication_event(service, eid)
+        claims = event["claims"]
+        assert isinstance(claims, list) and claims
+        first_claim = claims[0]
+        assert isinstance(first_claim, dict)
+        proof = first_claim["claim_id"]
+        assert isinstance(proof, str)
         from tank.event_tools import LAYERS
 
         await service.dispatch(
@@ -407,7 +425,7 @@ async def test_timed_review_cancellation_and_expiry(service: EventToolService, o
 
 async def test_pending_review_preserves_tracked_event_until_disarmed(service: EventToolService) -> None:
     args = await lead(service)
-    eid = args["event_id"]
+    eid = text_field(args, "event_id")
     now = utcnow()
     result = await arm(service, eid, now + timedelta(hours=1))
     event = await service.repo.get("evt.events", eid)
@@ -434,7 +452,7 @@ async def test_pending_review_preserves_tracked_event_until_disarmed(service: Ev
 
 async def test_superseded_evidence_cannot_authorize_preliminary(service: EventToolService) -> None:
     request = await lead(service)
-    actual = await service.repo.get("evt.events", request["event_id"])
+    actual = await publication_event(service, text_field(request, "event_id"))
     assert actual is not None
     event = {
         "claims": [
@@ -487,7 +505,7 @@ async def test_fired_review_keeps_old_event_open_for_queued_analysis(
     service: EventToolService, state: str
 ) -> None:
     args = await lead(service)
-    eid = args["event_id"]
+    eid = text_field(args, "event_id")
     now = utcnow()
     due = now + timedelta(hours=1)
     event = await service.repo.get("evt.events", eid)
@@ -550,7 +568,7 @@ async def test_denied_preliminary_gets_one_immediate_correction_in_its_thread(
     from tank.agents.sessions import SessionService
 
     args = await lead(service)
-    eid = args["event_id"]
+    eid = text_field(args, "event_id")
     first = await service.dispatch("publish_card", args, {})
     requests = []
 
@@ -799,7 +817,7 @@ async def test_disarm_wins_while_timed_review_waits_for_event_lock(
     from contextlib import asynccontextmanager
 
     args = await lead(service)
-    eid = args["event_id"]
+    eid = text_field(args, "event_id")
     now = utcnow()
     result = await arm(service, eid, now + timedelta(hours=1), expires_in_hours=2)
     cid = result["condition"]["cond_id"]
@@ -842,7 +860,7 @@ async def test_metric_and_timed_watches_share_deduplication_and_capacity(service
     from tank.event_tools import MAX_AGENT_WATCHES
 
     args = await lead(service)
-    eid = args["event_id"]
+    eid = text_field(args, "event_id")
     metric = {
         "event_id": eid,
         "action": "ARM",

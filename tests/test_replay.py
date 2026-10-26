@@ -1828,7 +1828,6 @@ async def test_native_replay_captured_delivery_creates_fresh_call_and_reruns_exp
         primary_only_map_fixture,
     )
 
-    from tank.analysis.decision_codec import decode_decision, encode_outlook
     from tank.analysis.decisions import DecisionEngine
     from tank.analysis.truth import MarketTruthService
     from tank.event_tools import EventToolService
@@ -1957,7 +1956,6 @@ async def test_native_replay_captured_delivery_creates_fresh_call_and_reruns_exp
         [
             ("evt.ems_assessments", "fixture-ems", canonical_ems, initial_at),
             ("ana.market_truth", "fixture-truth", canonical_truth, initial_at),
-            ("ana.outlooks", decision["outlook_id"], encode_outlook(decode_decision(decision)), initial_at),
             (
                 "evt.beneficiary_maps",
                 "event:1",

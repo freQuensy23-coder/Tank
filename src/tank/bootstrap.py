@@ -12,17 +12,9 @@ from tank.contracts import DomainModel
 from tank.contracts.json import decode_json
 from tank.contracts.provenance import ResolvedVersionIdentity
 from tank.contracts.registry import (
-    AggressorSemantics,
     DependencyConfiguration,
-    DepthSemantics,
     ExchangeAddressesConfiguration,
-    FundingSemantics,
-    LiquidationSemantics,
-    OpenInterestSemantics,
-    PriceSemantics,
-    RegisteredMetric,
     RegistryConfiguration,
-    RegistryDependency,
     RegistryEntity,
     RegistryInstrument,
     RegistrySectorBasket,
@@ -42,8 +34,6 @@ type RegistryTable = Literal[
     "reg.entities",
     "reg.entity_aliases",
     "reg.sector_baskets",
-    "reg.dependency_map",
-    "reg.metric_semantics",
     "reg.exchange_addresses",
 ]
 type RegistryFile = Literal[
@@ -101,10 +91,6 @@ class SectorBasketRecord(RegistrySectorBasket):
     basket_id: str
 
 
-class DependencyRecord(RegistryDependency):
-    edge_id: str
-
-
 class ExchangeAddressRecord(DomainModel):
     venue: RegistryVenue
     repository: str
@@ -145,8 +131,6 @@ class PreparedRegistry(DomainModel):
     entities: list[PreparedRow[RegistryEntity]]
     entity_aliases: list[PreparedRow[EntityAliasRecord]]
     sector_baskets: list[PreparedRow[SectorBasketRecord]]
-    dependency_map: list[PreparedRow[DependencyRecord]]
-    metric_semantics: list[PreparedRow[RegisteredMetric]]
     exchange_addresses: list[PreparedRow[ExchangeAddressRecord]]
 
     @model_validator(mode="after")
@@ -157,8 +141,6 @@ class PreparedRegistry(DomainModel):
         _unique_rows(self.entities, "reg.entities")
         _unique_rows(self.entity_aliases, "reg.entity_aliases")
         _unique_rows(self.sector_baskets, "reg.sector_baskets")
-        _unique_rows(self.dependency_map, "reg.dependency_map")
-        _unique_rows(self.metric_semantics, "reg.metric_semantics")
         _unique_rows(self.exchange_addresses, "reg.exchange_addresses")
         return self
 
@@ -170,8 +152,6 @@ class RegistrySyncResult(DomainModel):
     entities: int
     entity_aliases: int
     sector_baskets: int
-    dependency_map: int
-    metric_semantics: int
     exchange_addresses: int
 
     def to_wire(self) -> dict[str, int]:
@@ -182,8 +162,6 @@ class RegistrySyncResult(DomainModel):
             "reg.entities": self.entities,
             "reg.entity_aliases": self.entity_aliases,
             "reg.sector_baskets": self.sector_baskets,
-            "reg.dependency_map": self.dependency_map,
-            "reg.metric_semantics": self.metric_semantics,
             "reg.exchange_addresses": self.exchange_addresses,
         }
 
@@ -279,13 +257,11 @@ def validate_registry(settings: RegistrySettings, versions: ResolvedVersionIdent
     versions = ResolvedVersionIdentity.model_validate(versions)
     sources = settings.load_config_as("sources", SourceConfiguration)
     registry = settings.registry()
-    dependencies = settings.dependencies()
-    semantics = settings.semantics()
+    dependencies = DependencyConfiguration.model_validate(settings.dependencies())
+    semantics = SemanticsConfiguration.model_validate(settings.semantics())
     addresses = settings.exchange_addresses()
     sources_artifact = _artifact(settings, "sources.yaml", sources.version, versions)
     registry_artifact = _artifact(settings, "registry.yaml", registry.version, versions)
-    dependency_artifact = _artifact(settings, "dependency_map.yaml", dependencies.version, versions)
-    semantics_artifact = _artifact(settings, "semantics.yaml", semantics.version, versions)
     addresses_artifact = _artifact(settings, "exchange_addresses.yaml", addresses.version, versions)
     aliases = [alias for entity in registry.entities for alias in _routing_aliases(entity)]
     baskets = [
@@ -298,16 +274,14 @@ def validate_registry(settings: RegistrySettings, versions: ResolvedVersionIdent
         )
         for basket in registry.sector_baskets
     ]
-    edges = [
-        DependencyRecord.model_validate(
-            edge.model_copy(
-                update={
-                    "edge_id": _key(edge.entity_id, edge.token_id) if edge.edge_id is None else edge.edge_id,
-                }
-            ).model_dump(mode="python")
-        )
+    edge_keys = [
+        _key(edge.entity_id, edge.token_id) if edge.edge_id is None else edge.edge_id
         for edge in dependencies.edges
     ]
+    if len(set(edge_keys)) != len(edge_keys):
+        raise ValueError("Duplicate configured dependency key: dependency_map.yaml")
+    _config_timestamp_metadata(decode_json(dependencies.model_dump_json(exclude_unset=True)))
+    _config_timestamp_metadata(decode_json(semantics.model_dump_json(exclude_unset=True)))
     wallets = [
         ExchangeAddressRecord.from_wallet(wallet, address)
         for wallet in addresses.wallet_lists
@@ -363,24 +337,6 @@ def validate_registry(settings: RegistrySettings, versions: ResolvedVersionIdent
             )
             for basket in baskets
         ],
-        dependency_map=[
-            _row(
-                PreparedRow[DependencyRecord],
-                edge,
-                edge.edge_id,
-                dependency_artifact,
-            )
-            for edge in edges
-        ],
-        metric_semantics=[
-            _row(
-                PreparedRow[RegisteredMetric],
-                metric,
-                metric.metric_key,
-                semantics_artifact,
-            )
-            for metric in semantics.metrics
-        ],
         exchange_addresses=[
             _row(
                 PreparedRow[ExchangeAddressRecord],
@@ -407,8 +363,6 @@ def _preflight(prepared: PreparedRegistry) -> None:
     _validate_documents(prepared.entities)
     _validate_documents(prepared.entity_aliases)
     _validate_documents(prepared.sector_baskets)
-    _validate_documents(prepared.dependency_map)
-    _validate_documents(prepared.metric_semantics)
     _validate_documents(prepared.exchange_addresses)
 
 
@@ -440,17 +394,6 @@ def _owned_fields(table: RegistryTable) -> frozenset[str]:
             return provenance | _schema_fields(EntityAliasRecord)
         case "reg.sector_baskets":
             return provenance | _schema_fields(SectorBasketRecord)
-        case "reg.dependency_map":
-            return provenance | _schema_fields(DependencyRecord)
-        case "reg.metric_semantics":
-            return provenance | _schema_fields(
-                AggressorSemantics,
-                DepthSemantics,
-                FundingSemantics,
-                LiquidationSemantics,
-                OpenInterestSemantics,
-                PriceSemantics,
-            )
         case "reg.exchange_addresses":
             return provenance | _schema_fields(ExchangeAddressRecord)
         case _:
@@ -499,7 +442,5 @@ async def sync_registry(
             entities=await _sync_rows(repo, "reg.entities", prepared.entities),
             entity_aliases=await _sync_rows(repo, "reg.entity_aliases", prepared.entity_aliases),
             sector_baskets=await _sync_rows(repo, "reg.sector_baskets", prepared.sector_baskets),
-            dependency_map=await _sync_rows(repo, "reg.dependency_map", prepared.dependency_map),
-            metric_semantics=await _sync_rows(repo, "reg.metric_semantics", prepared.metric_semantics),
             exchange_addresses=await _sync_rows(repo, "reg.exchange_addresses", prepared.exchange_addresses),
         )

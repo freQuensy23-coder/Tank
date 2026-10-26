@@ -340,9 +340,83 @@ func (s *Store) chSelect(ctx context.Context, collection, where string, params m
 	return out, keys, nil
 }
 
+type chStorageKeyBounds struct {
+	instrumentID string
+	low          time.Time
+	high         time.Time
+}
+
+func chStorageKeyText(row map[string]any, field string) (string, error) {
+	value, ok := row[field].(string)
+	if !ok || strings.TrimSpace(value) == "" {
+		return "", fmt.Errorf("invalid ClickHouse storage-key metadata: %s", field)
+	}
+	return value, nil
+}
+
+func chStorageKeyTime(row map[string]any, field string) (time.Time, error) {
+	value, err := chStorageKeyText(row, field)
+	if err != nil {
+		return time.Time{}, err
+	}
+	if dot := strings.LastIndexByte(value, '.'); dot >= 0 && len(value)-dot-1 > 6 {
+		return time.Time{}, fmt.Errorf("invalid ClickHouse storage-key metadata: %s date", field)
+	}
+	parsed, err := time.ParseInLocation("2006-01-02 15:04:05.999999", value, time.UTC)
+	if err != nil {
+		return time.Time{}, fmt.Errorf("invalid ClickHouse storage-key metadata: %s date", field)
+	}
+	return parsed, nil
+}
+
+func decodeCHStorageKeyBounds(row map[string]any) (chStorageKeyBounds, error) {
+	bounds := chStorageKeyBounds{}
+	var err error
+	if bounds.instrumentID, err = chStorageKeyText(row, "instrument_id"); err != nil {
+		return chStorageKeyBounds{}, err
+	}
+	if bounds.low, err = chStorageKeyTime(row, "lo"); err != nil {
+		return chStorageKeyBounds{}, err
+	}
+	if bounds.high, err = chStorageKeyTime(row, "hi"); err != nil {
+		return chStorageKeyBounds{}, err
+	}
+	if bounds.low.After(bounds.high) {
+		return chStorageKeyBounds{}, fmt.Errorf("invalid ClickHouse storage-key metadata: reversed bounds")
+	}
+	return bounds, nil
+}
+
 func (s *Store) chGet(ctx context.Context, collection, key string) (map[string]any, error) {
 	q := newCHQuery()
 	q.where("storage_key = " + q.param(key, "String"))
+	day := chColumn(chDay[collection])
+	found, err := s.CH.rows(ctx, "SELECT instrument_id, toString(min("+day+")) AS lo, toString(max("+day+")) AS hi FROM "+
+		collection+" WHERE "+q.predicate()+" GROUP BY instrument_id", q.params)
+	if err != nil {
+		return nil, fmt.Errorf("%s: %w", collection, err)
+	}
+	if len(found) == 0 {
+		return nil, nil
+	}
+	ids := make([]string, 0, len(found))
+	low, high := "", ""
+	for _, r := range found {
+		bounds, err := decodeCHStorageKeyBounds(r)
+		if err != nil {
+			return nil, fmt.Errorf("%s: %w", collection, err)
+		}
+		ids = append(ids, bounds.instrumentID)
+		if low == "" || chTimeText(bounds.low) < low {
+			low = chTimeText(bounds.low)
+		}
+		if chTimeText(bounds.high) > high {
+			high = chTimeText(bounds.high)
+		}
+	}
+	q.where("instrument_id IN " + q.param(chArray(ids), "Array(String)"))
+	q.where(day + " >= " + q.param(low, chTime))
+	q.where(day + " <= " + q.param(high, chTime))
 	out, _, err := s.chSelect(ctx, collection, q.predicate(), q.params, "LIMIT 1")
 	if err != nil || len(out) == 0 {
 		return nil, err
