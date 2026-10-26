@@ -6,6 +6,7 @@ import { dirname, isAbsolute, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { decodeRuntimeJson } from '../../vendor/openma/packages/session-runtime-contract/src/json.ts';
 import { DEFAULT_LOCK_PATHS, verifyPersistenceLocks } from './verify-lock.mts';
+import { WorkspaceExports } from './workspace-exports.mts';
 
 const repository = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
 export const HISTORY_MODULE = 'vendor/openma/packages/managed-agents-adapters-sql/test/session-event-source-position.test.ts';
@@ -86,7 +87,7 @@ export function runHistoryModule(): void {
       'vendor/openma/packages/managed-agents-adapters-sql/src/session-runtime-projection-sql-persistence.ts',
     ];
     const config = resolve(temporary, 'strict.json');
-    writeFileSync(config, JSON.stringify({extends: resolve(repository, 'scripts/openma-persistence/tsconfig.json'), files: files.map(file => resolve(repository, file)), include: []}));
+    writeFileSync(config, JSON.stringify({extends: resolve(repository, 'scripts/openma-persistence/tsconfig.json'), compilerOptions: {paths: new WorkspaceExports(repository).typeScriptPaths()}, files: files.map(file => resolve(repository, file)), include: []}));
     const typecheck = spawnSync(process.execPath, [resolve(repository, 'scripts/typescript/node_modules/typescript/bin/tsc'), '--project', config], {cwd: repository, stdio: 'inherit', timeout: 60000});
     if (typecheck.error !== undefined || typecheck.status !== 0) throw new Error('History module strict qualification failed');
     const report = resolve(temporary, 'vitest-report.json');

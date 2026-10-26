@@ -48,3 +48,12 @@ test('workspace resolver uses actual public barrel and wildcard exports without 
   assert.throws(() => exports.resolve('@open-managed-agents/managed-agents-application/ports/../index'), /public export/);
   assert.throws(() => exports.resolve('@open-managed-agents/managed-agents-application/ports/%2e%2e/index'), /public export/);
 });
+test('strict compiler paths preserve declared public barrels and wildcard targets', () => {
+  const paths = new WorkspaceExports(repository).typeScriptPaths();
+  assert.deepEqual(paths['@open-managed-agents/managed-agents-application'], [resolve(repository, 'vendor/openma/packages/managed-agents-application/src/index.ts')]);
+  assert.deepEqual(paths['@open-managed-agents/session-store'], [resolve(repository, 'vendor/openma/packages/session-store/src/index.ts')]);
+  assert.deepEqual(paths['@open-managed-agents/sql-client'], [resolve(repository, 'vendor/openma/packages/sql-client/src/index.ts')]);
+  assert.deepEqual(paths['@open-managed-agents/managed-agents-application/ports/*'], [resolve(repository, 'vendor/openma/packages/managed-agents-application/src/ports/*.ts')]);
+  assert.equal(paths['@open-managed-agents/sql-client/not-declared'], undefined);
+  assert.equal(paths['@earendil-works/pi-ai'], undefined);
+});

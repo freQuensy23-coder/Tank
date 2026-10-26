@@ -10,13 +10,16 @@ function invalidExport(): never { throw new Error('Workspace public export is mi
 function object(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === 'object' && !Array.isArray(value);
 }
-function runtimeTarget(value: unknown): string {
+function conditionalTarget(value: unknown, conditions: readonly string[]): string {
   if (typeof value === 'string') return value;
   if (!object(value)) return invalidExport();
   for (const [condition, target] of Object.entries(value)) {
-    if (condition === 'import' || condition === 'node' || condition === 'default') return runtimeTarget(target);
+    if (conditions.includes(condition)) return conditionalTarget(target, conditions);
   }
   return invalidExport();
+}
+function runtimeTarget(value: unknown): string {
+  return conditionalTarget(value, ['import', 'node', 'default']);
 }
 function declaredTarget(exports: unknown, subpath: string): string {
   if (typeof exports === 'string' || object(exports) && !Object.keys(exports).some(key => key.startsWith('.'))) {
@@ -50,6 +53,26 @@ export class WorkspaceExports {
       if (!object(value) || typeof value.name !== 'string' || value.name.length === 0 || this.#packages.has(value.name)) return invalidExport();
       this.#packages.set(value.name, {root: realpathSync(dirname(path)), exports: value.exports});
     }
+  }
+
+  typeScriptPaths(): Record<string, string[]> {
+    const paths: Record<string, string[]> = {};
+    for (const [name, entry] of this.#packages) {
+      if (entry.exports === undefined) continue;
+      const declarations = typeof entry.exports === 'string' || object(entry.exports) && !Object.keys(entry.exports).some(key => key.startsWith('.'))
+        ? {'.': entry.exports} : entry.exports;
+      if (!object(declarations)) return invalidExport();
+      for (const [subpath, declaration] of Object.entries(declarations)) {
+        if (subpath !== '.' && !subpath.startsWith('./')) return invalidExport();
+        const target = conditionalTarget(declaration, ['types', 'import', 'node', 'default']);
+        if (!target.startsWith('./') || (subpath.match(/\*/g)?.length ?? 0) > 1 || (target.match(/\*/g)?.length ?? 0) > 1) return invalidExport();
+        const candidate = resolve(entry.root, target);
+        const within = relative(entry.root, candidate);
+        if (within === '..' || within.startsWith('../') || isAbsolute(within)) return invalidExport();
+        paths[name + (subpath === '.' ? '' : subpath.slice(1))] = [candidate];
+      }
+    }
+    return paths;
   }
 
   resolve(specifier: string): string | null {
