@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import postgres from 'postgres';
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -82,4 +83,21 @@ test('registered container addresses remain explicit and cannot be inferred from
   for (const expected of [undefined, '172.19.0.5', '8.8.8.8']) {
     assert.throws((): void => { requireDisposablePostgresDsn(value, expected); });
   }
+});
+
+
+test('canonical guarded authority matches the actual postgres driver without a connection', async (): Promise<void> => {
+  const input = 'postgresql://tank_ci:synthetic@unregistered.example,ignored@127.0.0.1/tank_test_guard';
+  const canonical = requireDisposablePostgresDsn(input, '127.0.0.1');
+  assert.notEqual(canonical, input);
+  const driver = postgres(canonical);
+  try {
+    assert.deepEqual(driver.options.host, ['127.0.0.1']);
+    assert.equal(driver.options.user, 'tank_ci');
+    assert.equal(driver.options.database, 'tank_test_guard');
+    assert.equal(driver.options.pass, 'synthetic@unregistered.example,ignored');
+  } finally { await driver.end(); }
+  assert.throws((): void => {
+    requireDisposablePostgresDsn('postgresql://tank_ci:synthetic@127.0.0.1,unregistered.example/tank_test_guard', '127.0.0.1');
+  });
 });
