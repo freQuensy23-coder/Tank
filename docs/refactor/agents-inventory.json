@@ -3525,7 +3525,7 @@
     },
     {
       "path": "src/tank/contracts/session_followups.py",
-      "lines": 167,
+      "lines": 166,
       "functions": [
         {
           "symbol": "LegacyNativeObservation.observed_archive_clock",
@@ -3545,7 +3545,7 @@
         },
         {
           "symbol": "FollowupSession.consistent_observed_identity",
-          "line": 71,
+          "line": 70,
           "missing_parameters": [],
           "missing_return": false,
           "dict_nodes": 0,
@@ -3553,7 +3553,7 @@
         },
         {
           "symbol": "_remote_observation",
-          "line": 85,
+          "line": 84,
           "missing_parameters": [],
           "missing_return": false,
           "dict_nodes": 2,
@@ -3561,7 +3561,7 @@
         },
         {
           "symbol": "FollowupRefusalSink.record",
-          "line": 141,
+          "line": 140,
           "missing_parameters": [],
           "missing_return": false,
           "dict_nodes": 0,
@@ -3569,7 +3569,7 @@
         },
         {
           "symbol": "followup_eligibility",
-          "line": 144,
+          "line": 143,
           "missing_parameters": [],
           "missing_return": false,
           "dict_nodes": 0,

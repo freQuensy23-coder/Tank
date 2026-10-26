@@ -1176,3 +1176,32 @@ Final source-prefix qualification: all 59 collected affected units pass in
 cleanup. External evidence prefixes are owner-chronology-qualified-unit and
 owner-chronology-pg. The final source adds only that negative control beyond
 the twelve-case PG-qualified prefix; no receipt persistence code changed.
+## Required termination identity correction beyond qualified fa1ca989
+
+The producer/caller audit does not justify the earlier empty-receipt allowance.
+The sole active termination writer is SessionService.process_event for an actual
+session.status_terminated event; it always writes event_id, event_type and the
+collection clock. No active writer emits termination_receipt={}. Old reader
+truthiness is not producer evidence. A present receipt now requires its actual
+nonblank event_id; empty/unidentified/malformed identity is rejected before
+native GET/POST, refusal reporting or delivery enqueue. True absence/None remains
+unknown and still uses actual native preflight. The earlier synthetic empty
+receipt positive fixture was corrected rather than used as compatibility proof;
+its historical qualified checkpoint is preserved unchanged.
+
+ANSWERED with text=None has an actual producer path: turn_answers only saves
+stripped nonblank agent text, and an observed end_turn can complete without a
+final textual message. deliver_answers records that completion with None.
+File delivery is separately owned/idempotent and need not create fake answer
+text. Telegram's existing EMPTY_TEXT honestly reports completion without text.
+The existing failed-attempt text test proves that its stale text is not reused
+when the accepted retry ends without text; the actual file-reply test covers
+separate delivery. No active producer requires blank whitespace. Existing old
+empty-string normalization is not a claim that a new required text field may
+be silently defaulted, and the ingestion-owned writer was not broadened.
+
+Focused policy/retention/refusal/binding proof: 68 units pass in 2.60 seconds,
+zero skips; independent strict three targets and Ruff pass. Evidence is
+termination-receipt-correction-unit.{log,xml} under external agents evidence.
+This is a separate bounded correction from the still-unfixed chronology
+reproduction; it does not alter the qualified fa1ca989 checkpoint.

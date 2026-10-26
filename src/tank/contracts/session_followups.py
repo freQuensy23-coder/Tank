@@ -12,7 +12,7 @@ from tank.util import parse_time
 
 
 class TerminationEvidence(DomainModel):
-    event_id: str = Field(min_length=1)
+    event_id: str = Field(min_length=1, pattern=r"\S")
 
 
 class LegacyNativeObservation(DomainModel):
@@ -51,8 +51,7 @@ class FollowupSession(DomainModel):
         if termination is not None:
             if not isinstance(termination, dict):
                 raise ValueError("Termination evidence must be an object")
-            if termination:
-                terminal = {"event_id": termination["event_id"]}
+            terminal = {"event_id": termination["event_id"]}
         remote = _remote_observation(record.get("remote_state"))
         result = cls.model_validate(
             {
