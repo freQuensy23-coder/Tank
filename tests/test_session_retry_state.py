@@ -5,6 +5,7 @@ import pytest
 from agent_source_fixtures import declared_versions_fixture
 from native_input_fixtures import acknowledge_native_input
 from pydantic import JsonValue
+from session_followup_fixtures import UnexpectedFollowupRefusals
 from test_session_outbound_intents import pending_record
 
 from tank.agents.native_retry import UnknownNativeRetryState
@@ -56,6 +57,7 @@ async def test_unknown_historical_retry_state_refuses_before_posting_and_preserv
             None,
             http=http,
             versions=declared_versions_fixture(),
+            refusals=UnexpectedFollowupRefusals(),
         )
         with pytest.raises(UnknownNativeRetryState) as refused:
             await service.process_event("session", {"id": "failure", "type": "agent.refusal"})
@@ -97,6 +99,7 @@ async def test_new_declared_input_budget_is_not_blocked_by_unknown_origin_histor
             None,
             http=http,
             versions=declared_versions_fixture(),
+            refusals=UnexpectedFollowupRefusals(),
         )
         with pytest.raises(UnknownNativeRetryState):
             await service.process_event("session", {"id": "old-refusal", "type": "agent.refusal"})
@@ -163,6 +166,7 @@ async def test_exhausted_retry_records_terminal_failure_without_consuming_histor
             None,
             http=http,
             versions=declared_versions_fixture(),
+            refusals=UnexpectedFollowupRefusals(),
         )
         await service.process_event("session", {"id": "final-failure", "type": "session.error"})
     stored = await repo.get("ops.agent_sessions", "session")

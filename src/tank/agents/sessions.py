@@ -30,7 +30,12 @@ from tank.agents.archive_contracts import (
 )
 from tank.agents.context import CONTEXT_TRANSITION, CONTEXT_VERSION, ModelContext
 from tank.agents.context_binding import ContextBinding
-from tank.agents.input_ownership import JournalInputLineage, NativeInputOwner, ToolInputLineage
+from tank.agents.input_ownership import (
+    JournalInputLineage,
+    NativeInputOwner,
+    ToolInputLineage,
+    UnprovedInputOwnership,
+)
 from tank.agents.native_inputs import (
     AcceptedNativeInput,
     NativeInput,
@@ -117,6 +122,15 @@ from tank.contracts.openma import (
     openma_tools_match,
 )
 from tank.contracts.provenance import AgentProvenance, ResolvedVersionIdentity
+from tank.contracts.session_followups import (
+    FollowupCandidate,
+    FollowupEligibility,
+    FollowupRefusalSink,
+    FollowupRefusalTarget,
+    FollowupSession,
+    NoSession,
+    followup_eligibility,
+)
 from tank.contracts.source_items import (
     FailedExtraction,
     SkippedExtraction,
@@ -124,8 +138,9 @@ from tank.contracts.source_items import (
 from tank.contracts.source_repository import SourceExtractionRepository
 from tank.delivery import DeliveryDeferred
 from tank.ops_progress import session_progress
+from tank.question_answers import record_answer
 from tank.runtime_contracts import ScoutMessage, ScoutReviewJob, UserQuestionMessage
-from tank.telegram_inbox import DOCUMENT_LIMIT, GONE_TEXT, closed_reason, question_message, record_answer
+from tank.telegram_inbox import DOCUMENT_LIMIT, question_message
 from tank.time_precision import Timestamp, collection_clock, offset_schedule, propagate_timestamp
 from tank.util import canonical_json, jsonable, parse_time, sha256, utcnow
 
@@ -195,10 +210,19 @@ class SessionFileSender(Protocol):
 
 class SessionService:
     def __init__(
-        self, repo, settings, tool_dispatch, *, versions: ResolvedVersionIdentity, http=None, stream_http=None
+        self,
+        repo,
+        settings,
+        tool_dispatch,
+        *,
+        versions: ResolvedVersionIdentity,
+        refusals: FollowupRefusalSink,
+        http=None,
+        stream_http=None,
     ):
         self.versions = ResolvedVersionIdentity.model_validate(versions)
         self.repo, self.settings, self.tool_dispatch = repo, settings, tool_dispatch
+        self.refusals = refusals
         self.source_extraction = SourceExtractionRepository(repo)
         self.retry_refusals = NativeRetryRefusalJournal(repo, self.versions, self.clock_timestamp)
         self.http = httpx.AsyncClient(timeout=REST_TIMEOUT_S) if http is None else http
@@ -413,12 +437,19 @@ class SessionService:
         return session
 
     async def continuable(self, request: UserQuestionMessage) -> bool:
+        target = FollowupRefusalTarget(question_id=request.question_id, session_id=request.session_id)
         session = await self.repo.get("ops.agent_sessions", request.session_id)
+        if session is not None:
+            require_owned_session_identity(request.session_id, session)
+        eligibility: FollowupEligibility
         if self.settings.replay:
-            session = None
-        closed = closed_reason(session)
-        if closed is not None:
-            await record_answer(self.repo, request.question_id, closed[1], status=closed[0])
+            eligibility = NoSession(status="NO_SESSION", reason="REPLAY")
+        else:
+            eligibility = followup_eligibility(
+                FollowupSession.from_record(session) if session is not None else None
+            )
+        if not isinstance(eligibility, FollowupCandidate):
+            await self.refusals.record(target, eligibility)
             return False
         observed = await NativeSessionReader(self).state(request.session_id)
         if isinstance(observed, NativeSessionMissing) or (
@@ -432,17 +463,12 @@ class SessionService:
                         **self.clock_timestamp().fields("checked_at"),
                     }
                     await put_owned_session(self.repo, request.session_id, current)
-            if current is None:
-                await record_answer(self.repo, request.question_id, GONE_TEXT, status="NO_SESSION")
-                return False
-            if isinstance(observed, NativeSessionMissing):
-                status, text = "NO_SESSION", GONE_TEXT
-            else:
-                closure = closed_reason(current)
-                if closure is None:
-                    raise ValueError("Observed closed native session has no follow-up closure")
-                status, text = closure
-            await record_answer(self.repo, request.question_id, text, status=status)
+            eligibility = followup_eligibility(
+                FollowupSession.from_record(current) if current is not None else None
+            )
+            if isinstance(eligibility, FollowupCandidate):
+                raise ValueError("Observed closed native session has no follow-up closure")
+            await self.refusals.record(target, eligibility)
             return False
         return True
 
@@ -666,9 +692,16 @@ class SessionService:
             async with self.repo.lock("session:" + sid):
                 session = await self.repo.get("ops.agent_sessions", sid)
                 if payload.get("kind") == "USER_QUESTION":
-                    closed = closed_reason(session)
-                    if closed is not None:
-                        await record_answer(self.repo, payload["question_id"], closed[1], status=closed[0])
+                    if session is not None:
+                        require_owned_session_identity(sid, session)
+                    eligibility = followup_eligibility(
+                        FollowupSession.from_record(session) if session is not None else None
+                    )
+                    if not isinstance(eligibility, FollowupCandidate):
+                        await self.refusals.record(
+                            FollowupRefusalTarget(question_id=payload["question_id"], session_id=sid),
+                            eligibility,
+                        )
                         return None
                     self.reopen_for_question(session, payload, key)
                 if key in session.get("messages", []):
@@ -1246,7 +1279,7 @@ class SessionService:
         if not self.closed and (sid not in self.tasks or self.tasks[sid].done()):
             self.tasks[sid] = asyncio.create_task(self.follow(sid), name="openma:" + sid)
 
-    async def stop_followers(self):
+    async def stop_followers(self) -> None:
         """Retire this controller's followers before finalizing owned local state."""
         tasks = list(self.tasks.values())
         for task in tasks:
@@ -2109,10 +2142,10 @@ class SessionService:
             return NativeEventRetryRefused(status="RETRY_REFUSED", receipt=recorded)
         try:
             await self.process_event(sid, event, sequence)
-        except UnknownNativeRetryState as refused:
+        except (UnknownNativeRetryState, UnprovedInputOwnership) as refused:
             receipt = await self.retry_refusals.record(sid, frame, refused.reason, sequence)
             self.seen_events.setdefault(sid, set()).add(seen_key(event))
-            log.warning("Native host retry refused: %s", receipt.reason)
+            log.warning("Native host input effect refused: %s", receipt.reason)
             return NativeEventRetryRefused(status="RETRY_REFUSED", receipt=receipt)
         return NativeEventObserved(status="OBSERVED")
 
@@ -2444,7 +2477,7 @@ class SessionService:
             with suppress(TimeoutError):
                 await asyncio.wait_for(stop.wait(), timeout=5)
 
-    async def close(self):
+    async def close(self) -> None:
         self.closed = True
         await self.stop_followers()
         if self.owns_stream_http:

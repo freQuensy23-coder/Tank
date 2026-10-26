@@ -11,6 +11,7 @@ from urllib.parse import parse_qsl, unquote, urlparse
 
 import httpx
 import zstandard
+from pydantic import JsonValue
 
 from tank.analysis.decision_codec import (
     decision_call_from_record,
@@ -58,6 +59,7 @@ from tank.analysis.page_access import (
     RecordedPageAccess,
     read_live_page,
 )
+from tank.analysis.publication_history_repository import PublicationHistoryRepository
 from tank.analysis.publication_ordering import exposure_priority_from_record
 from tank.analysis.reaction_scheduling import AssessmentFreeDiagnosticScheduling, ReactionScheduling
 from tank.analysis.truth_contracts import MarketTruthAssessmentRef
@@ -649,13 +651,11 @@ class EventToolService:
             filters={"event_id": event_id, "token_id": token_id},
         )
 
-    async def first_alert(self, event_id, kind=None):
-        filters = {"event_id": event_id}
-        if kind:
-            filters["kind"] = kind
-        async for row in self.repo.iter_range("out.alerts", "generated_at", filters=filters, batch_size=1):
-            return row
-        return None
+    async def first_full_alert(self, event_id: str) -> dict[str, JsonValue] | None:
+        history_reader = PublicationHistoryRepository(self.repo)
+        history = await history_reader.history(event_id)
+        reference = history.first_full()
+        return await history_reader.read_record(reference) if reference is not None else None
 
     async def require(self, table, key):
         row = await self.repo.get(table, key)
@@ -2201,7 +2201,7 @@ class EventToolService:
         event = await self.repo.get("evt.events", event_id) or {}
         pending = set(event.get("call_expired_ids", []))
         active.update(row["token_id"] for row in calls if row["call_id"] in pending)
-        first_full = await self.first_alert(event_id, "FULL")
+        first_full = await self.first_full_alert(event_id)
         shown = set(first_full.get("shown_tokens", []) if first_full else [])
         return active | shown
 
@@ -2803,21 +2803,27 @@ class EventToolService:
         event["thresholds"] = self.settings.load_config("thresholds")
         kind = a["kind"]
         preliminary = kind == "PRELIMINARY"
-        newest = await self.repo.list_latest("out.alerts", "generated_at", filters={"event_id": eid}, limit=1)
-        newest_generated = newest[0] if newest else None
-        ordinary_heads = [
-            row
-            for ordinary_kind in ("PARTIAL", "FULL", "UPDATE")
-            for row in await self.repo.list_latest(
-                "out.alerts", "generated_at", filters={"event_id": eid, "kind": ordinary_kind}, limit=1
-            )
-        ]
-        previous = (
-            (newest_generated if newest_generated and newest_generated["kind"] == "PRELIMINARY" else None)
-            if preliminary
-            else max(ordinary_heads, key=lambda row: int(row["version"]), default=None)
+        history_reader = PublicationHistoryRepository(self.repo)
+        history = await history_reader.history(eid)
+        newest_reference = history.latest_revision()
+        newest_generated = (
+            await history_reader.read_record(newest_reference) if newest_reference is not None else None
         )
-        if preliminary and ordinary_heads:
+        ordinary_reference = history.latest_ordinary()
+        previous = (
+            (
+                newest_generated
+                if newest_reference is not None and newest_reference.kind == "PRELIMINARY"
+                else None
+            )
+            if preliminary
+            else (
+                await history_reader.read_record(ordinary_reference)
+                if ordinary_reference is not None
+                else None
+            )
+        )
+        if preliminary and ordinary_reference is not None:
             return publication_outcome({"published": False, "reason": "ORDINARY_CARD_EXISTS"})
         if preliminary and (
             not str(a.get("what") or "").strip()
@@ -2825,7 +2831,7 @@ class EventToolService:
             or not any(str(line).strip() for line in a.get("why", []))
         ):
             raise ValueError("PRELIMINARY requires what, why and unconfirmed")
-        initial_full = await self.first_alert(eid, "FULL")
+        initial_full = await self.first_full_alert(eid)
         active_maps = await self.rows("evt.beneficiary_maps", eid)
         if active_maps:
             active_map = max(active_maps, key=lambda row: int(row["map_version"]))
@@ -3300,8 +3306,8 @@ class EventToolService:
             {"bundle_id": "EVB-" + digest, "sha256": digest, "path": str(bundle_path), "payload": bundle},
             immutable=True,
         )
-        aid = newest_generated["alert_id"] if newest_generated else new_id("alert")
-        version = newest_generated["version"] + 1 if newest_generated else 1
+        aid = newest_reference.alert_id if newest_reference is not None else new_id("alert")
+        version = newest_reference.version + 1 if newest_reference is not None else 1
 
         generated = collection_clock()
         if not rate_limited:

@@ -17,6 +17,7 @@ import time
 from collections.abc import Mapping
 from datetime import UTC, datetime, timedelta
 from difflib import SequenceMatcher
+from typing import Literal
 
 import httpx
 from pydantic import JsonValue
@@ -24,8 +25,29 @@ from pydantic import JsonValue
 from tank import ops_cards
 from tank.analysis.cards import telegram_card_html
 from tank.contracts.native_readback import NativeSessionMissing
+from tank.contracts.session_followups import (
+    FollowupCandidate,
+    FollowupClosure,
+    FollowupRefusalTarget,
+    FollowupSession,
+    NoSession,
+    RetentionArchived,
+    Terminated,
+    followup_eligibility,
+)
+from tank.contracts.telegram_wire import TelegramMessageReceipt, TelegramUpdateCursor, TelegramUpdateReceipt
 from tank.ops_progress import STAGES
+from tank.question_answers import (
+    QuestionAnswerRepository as QuestionAnswerRepository,
+)
+from tank.question_answers import (
+    record_answer as record_answer,
+)
+from tank.question_answers import (
+    validate_question_identity,
+)
 from tank.runtime_contracts import TelegramAnswerJob
+from tank.telegram_api import message_receipt, pairing_sender_id, response_result, update_receipts
 from tank.telegram_rich import message_text, rich_message_text
 from tank.time_precision import collection_clock, offset_schedule
 from tank.util import new_id, parse_time, sha256, utcnow
@@ -75,56 +97,36 @@ WAITING_STAGES = {"RECEIVED", "JEV_PASSED", "JEV_BYPASSED", "AGENT_QUEUED"}
 STOPPING_STAGES = {"PROCESSING_FAILED", "PROCESSING_EXPIRED"}
 
 
-def days_text(days):
-    """A day count with its Russian plural form."""
-    days = int(days)
+def days_text(days: int) -> str:
+    """A validated day count with its Russian plural form."""
     return f"{days} {'дня' if days % 10 == 1 and days % 100 != 11 else 'дней'}"
 
 
+def format_followup_closure(closure: FollowupClosure) -> str:
+    closure = type(closure).model_validate(closure)
+    if isinstance(closure, NoSession):
+        return GONE_TEXT
+    if isinstance(closure, Terminated):
+        return TERMINATED_TEXT
+    if isinstance(closure, RetentionArchived):
+        return KEPT_ARCHIVED_TEXT.format(days=days_text(closure.keep_days))
+    if closure.reason == "EARLY_CLOSURE":
+        return EARLY_ARCHIVED_TEXT
+    return ARCHIVED_TEXT
+
+
 def remote_session_missing(session: Mapping[str, JsonValue]) -> bool:
-    """Validate a retained missing-resource observation without inventing lifecycle facts."""
-    remote = session.get("remote_state")
-    if remote is None:
-        return False
-    if not isinstance(remote, dict):
-        raise ValueError("Native remote observation must be an object")
-    if remote.get("kind") != "MISSING" and "missing" not in remote:
-        return False
-    observation = NativeSessionMissing.model_validate(
-        {
-            field: value
-            for field, value in remote.items()
-            if field
-            not in {
-                "checked_at",
-                "checked_at_prec",
-                "checked_at_prec_reason",
-                "checked_at_bucket_anchor",
-            }
-        }
-    )
-    if observation.session_id != session["session_id"]:
-        raise ValueError("Native missing-resource observation belongs to another session")
-    return True
+    return isinstance(FollowupSession.from_record(session).remote, NativeSessionMissing)
 
 
-def closed_reason(session):
-    """Why a follow-up cannot continue this session, or None while it is live: (status, reason text)."""
-    if session is None or session.get("replay_run_id"):
-        return "NO_SESSION", GONE_TEXT
-    missing = remote_session_missing(session)
-    remote = session.get("remote_state") or {}
-    if session.get("termination_receipt") or remote.get("status") == "terminated":
-        return "TERMINATED", TERMINATED_TEXT
-    if missing:
-        return "NO_SESSION", GONE_TEXT
-    if session.get("status") != "ENDED" and not remote.get("archived_at"):
+def closed_reason(
+    session: Mapping[str, JsonValue] | None,
+) -> tuple[Literal["NO_SESSION", "TERMINATED", "ARCHIVED"], str] | None:
+    """Format the inward lifecycle decision without introducing eligibility policy."""
+    eligibility = followup_eligibility(None if session is None else FollowupSession.from_record(session))
+    if isinstance(eligibility, FollowupCandidate):
         return None
-    if session.get("archive_reason") == "RETENTION" and session.get("archive_keep_days"):
-        return "ARCHIVED", KEPT_ARCHIVED_TEXT.format(days=days_text(session["archive_keep_days"]))
-    if session.get("status") == "ENDED" and not session.get("archive_reason"):
-        return "ARCHIVED", EARLY_ARCHIVED_TEXT
-    return "ARCHIVED", ARCHIVED_TEXT
+    return eligibility.status, format_followup_closure(eligibility)
 
 
 def not_received_reason(item, history):
@@ -242,34 +244,13 @@ def question_id_for(chat_id, message_id):
     return "q_" + sha256({"chat_id": str(chat_id), "message_id": int(message_id)})[:32]
 
 
-async def record_answer(repo, question_id, text, *, status):
-    """Store the agent's answer (or failure) once, together with its Telegram delivery job.
+class RepositoryFollowupRefusals:
+    def __init__(self, repo: QuestionAnswerRepository) -> None:
+        self.repo = repo
 
-    An already answered question re-queues its idempotent delivery job, so a lost enqueue is
-    reconciled by any later call.
-    """
-    async with repo.lock("question:" + question_id), repo.transaction():
-        question = await repo.get("out.user_questions", question_id)
-        if question is None:
-            return None
-        if not question.get("answer_status"):
-            question.update(
-                status=status,
-                answer_status=status,
-                answer_text=text if status == "ANSWERED" and text else None,
-                reason_text=text if status != "ANSWERED" and text else None,
-                **collection_clock(utcnow()).fields("answered_at"),
-            )
-            await repo.put("out.user_questions", question_id, question)
-        await repo.enqueue(
-            "TELEGRAM_ANSWER",
-            {"question_id": question_id},
-            question_id,
-            priority=0,
-            max_attempts=5,
-            expires_at=offset_schedule(collection_clock(utcnow()), timedelta(days=1)),
-        )
-    return question
+    async def record(self, target: FollowupRefusalTarget, closure: FollowupClosure) -> None:
+        closure = type(closure).model_validate(closure)
+        await record_answer(self.repo, target, format_followup_closure(closure), status=closure.status)
 
 
 class TelegramInbox:
@@ -292,16 +273,9 @@ class TelegramInbox:
     def url(self, method):
         return f"https://api.telegram.org/bot{self.settings.telegram_token}/{method}"
 
-    async def call(self, method, body):
+    async def call(self, method: str, body: dict[str, JsonValue]) -> JsonValue:
         response = await self.http.post(self.url(method), json=body)
-        data = response.json()
-        if response.status_code != 200 or not data.get("ok"):
-            retry = (data.get("parameters") or {}).get("retry_after", 1)
-            error = RuntimeError(f"Telegram {method} rejected (HTTP {response.status_code})")
-            error.retry_after = retry
-            error.status = response.status_code
-            raise error
-        return data["result"]
+        return response_result(response.content, method=method, status=response.status_code)
 
     async def download(self, file_id):
         try:
@@ -391,18 +365,24 @@ class TelegramInbox:
             self.bot_id = (await self.call("getMe", {}))["id"]
         return self.bot_id
 
-    async def poll(self, timeout=POLL_TIMEOUT_S):
-        state = await self.repo.get("ops.source_checkpoints", CURSOR_KEY) or {}
-        offset = int(state.get("cursor") or 0)
+    async def poll(self, timeout: int = POLL_TIMEOUT_S) -> int:
+        state = await self.repo.get("ops.source_checkpoints", CURSOR_KEY)
+        if state is None:
+            offset = 0
+        else:
+            cursor = TelegramUpdateCursor.model_validate(
+                {"source_id": state["source_id"], "cursor": state["cursor"]}
+            )
+            offset = int(cursor.cursor)
         updates = await self.call(
             "getUpdates", {"offset": offset, "timeout": timeout, "allowed_updates": ["message"]}
         )
-        for update in updates:
-            message = update.get("message")
-            if message and message.get("chat") and message.get("message_id") is not None:
-                await self.store(message, update["update_id"])
-            offset = max(offset, int(update["update_id"]) + 1)
-        if updates:
+        receipts = update_receipts(updates)
+        for update in receipts:
+            if isinstance(update.payload, TelegramMessageReceipt) and update.payload.identity.message_id != 0:
+                await self.store_receipt(update.payload, update.update_id)
+            offset = max(offset, update.update_id + 1)
+        if receipts:
             await self.repo.put(
                 "ops.source_checkpoints",
                 CURSOR_KEY,
@@ -412,24 +392,32 @@ class TelegramInbox:
                     **collection_clock(utcnow()).fields("updated_at"),
                 },
             )
-        return len(updates)
+        return len(receipts)
 
-    async def store(self, message, update_id):
-        key = f"{message['chat']['id']}:{message['message_id']}"
+    async def store(self, message: dict[str, JsonValue], update_id: int) -> None:
+        receipt = message_receipt(message)
+        update = TelegramUpdateReceipt.model_validate({"update_id": update_id, "payload": receipt})
+        return await self.store_receipt(receipt, update.update_id)
+
+    async def store_receipt(self, receipt: TelegramMessageReceipt, update_id: int) -> None:
+        identity = receipt.identity
+        if identity.message_id == 0:
+            raise ValueError("Telegram message is not yet usable")
+        key = f"{identity.chat.id}:{identity.message_id}"
         if await self.repo.get("ops.telegram_messages", key):
             return
         await self.repo.put(
             "ops.telegram_messages",
             key,
             {
-                "chat_id": str(message["chat"]["id"]),
-                "message_id": int(message["message_id"]),
-                "user_id": str((message.get("from") or {}).get("id", "")),
-                "update_id": int(update_id),
-                "date": int(message.get("date") or 0),
-                "pair_bucket": int(message.get("date") or 0) // PAIR_WINDOW_S,
+                "chat_id": str(identity.chat.id),
+                "message_id": identity.message_id,
+                "user_id": str(identity.sender.id) if identity.sender is not None else None,
+                "update_id": update_id,
+                "date": identity.date,
+                "pair_bucket": identity.date // PAIR_WINDOW_S,
                 "status": "RECEIVED",
-                "message": message,
+                "message": receipt.source_message,
                 **collection_clock(utcnow()).fields("received_at"),
             },
         )
@@ -606,7 +594,10 @@ class TelegramInbox:
 
     async def companion(self, row, *, forwarded):
         """The comment sent with a forward (or the forward sent with a comment) by the same user."""
-        date = row["message"].get("date", 0)
+        user_id = pairing_sender_id(row)
+        if user_id is None:
+            return None
+        date = row["message"]["date"]
         candidates = []
         bucket = date // PAIR_WINDOW_S
         nearby = []
@@ -615,12 +606,14 @@ class TelegramInbox:
                 other
                 async for other in self.repo.iter_all(
                     "ops.telegram_messages",
-                    filters={"chat_id": row["chat_id"], "user_id": row["user_id"], "pair_bucket": near},
+                    filters={"chat_id": row["chat_id"], "user_id": user_id, "pair_bucket": near},
                 )
             ]
         for other in nearby:
             body = other["message"]
             if other["message_id"] == row["message_id"] or other["status"] != "RECEIVED":
+                continue
+            if pairing_sender_id(other) != user_id:
                 continue
             if bool(body.get("forward_origin")) == forwarded or body.get("reply_to_message"):
                 continue
@@ -1058,20 +1051,28 @@ class TelegramInbox:
     async def prompt(self, row, target):
         """Ask for the question; a reply to this prompt continues the referenced session."""
         question_id = question_id_for(row["chat_id"], row["message_id"])
-        await self.repo.put(
-            "out.user_questions",
-            question_id,
-            {
-                "question_id": question_id,
-                "session_id": target["session_id"],
-                "event_id": target.get("event_id"),
-                "status": "PROMPTED",
-                "chat_id": row["chat_id"],
-                "user_id": row["user_id"],
-                "reference": target,
-                **collection_clock(utcnow()).fields("asked_at"),
-            },
-        )
+        binding = FollowupRefusalTarget(question_id=question_id, session_id=target["session_id"])
+        async with self.repo.lock("question:" + question_id), self.repo.transaction():
+            existing = await self.repo.get("out.user_questions", question_id)
+            if existing is not None:
+                state = validate_question_identity(existing, binding)
+                if state.answer_status is not None:
+                    return
+            else:
+                await self.repo.put(
+                    "out.user_questions",
+                    question_id,
+                    {
+                        "question_id": question_id,
+                        "session_id": target["session_id"],
+                        "event_id": target.get("event_id"),
+                        "status": "PROMPTED",
+                        "chat_id": row["chat_id"],
+                        "user_id": row["user_id"],
+                        "reference": target,
+                        **collection_clock(utcnow()).fields("asked_at"),
+                    },
+                )
         prior = [
             delivery
             async for delivery in self.repo.iter_all(
@@ -1171,36 +1172,41 @@ class TelegramInbox:
     async def question(self, row, target, *, forwarded=None):
         message = row["message"]
         question_id = question_id_for(row["chat_id"], row["message_id"])
-        files = await self.attachments(
-            row, question_id, target["session_id"], message, forwarded["message"] if forwarded else None
-        )
-        if not await self.repo.get("out.user_questions", question_id):
-            await self.repo.put(
-                "out.user_questions",
-                question_id,
-                {
-                    "question_id": question_id,
-                    "session_id": target["session_id"],
-                    "event_id": target.get("event_id"),
-                    "status": "QUEUED",
-                    "text": message_text(message),
-                    "chat_id": row["chat_id"],
-                    "user_id": row["user_id"],
-                    "reply_to_message_id": row["message_id"],
-                    "forwarded_message_id": forwarded["message_id"] if forwarded else None,
-                    "reference": target,
-                    "attachments": files,
-                    "telegram_date": message.get("date"),
-                    **collection_clock(utcnow()).fields("asked_at"),
-                },
+        binding = FollowupRefusalTarget(question_id=question_id, session_id=target["session_id"])
+        async with self.repo.lock("question:" + question_id), self.repo.transaction():
+            existing = await self.repo.get("out.user_questions", question_id)
+            if existing is not None:
+                validate_question_identity(existing, binding)
+            files = await self.attachments(
+                row, question_id, target["session_id"], message, forwarded["message"] if forwarded else None
             )
-        await self.repo.enqueue(
-            "AGENT_MESSAGE",
-            {"kind": "USER_QUESTION", "session_id": target["session_id"], "question_id": question_id},
-            question_id,
-            priority=0,
-            expires_at=offset_schedule(collection_clock(utcnow()), timedelta(days=1)),
-        )
+            if existing is None:
+                await self.repo.put(
+                    "out.user_questions",
+                    question_id,
+                    {
+                        "question_id": question_id,
+                        "session_id": target["session_id"],
+                        "event_id": target.get("event_id"),
+                        "status": "QUEUED",
+                        "text": message_text(message),
+                        "chat_id": row["chat_id"],
+                        "user_id": row["user_id"],
+                        "reply_to_message_id": row["message_id"],
+                        "forwarded_message_id": forwarded["message_id"] if forwarded else None,
+                        "reference": target,
+                        "attachments": files,
+                        "telegram_date": message.get("date"),
+                        **collection_clock(utcnow()).fields("asked_at"),
+                    },
+                )
+            await self.repo.enqueue(
+                "AGENT_MESSAGE",
+                {"kind": "USER_QUESTION", "session_id": target["session_id"], "question_id": question_id},
+                question_id,
+                priority=0,
+                expires_at=offset_schedule(collection_clock(utcnow()), timedelta(days=1)),
+            )
         await self.mark(
             row,
             "QUESTION",
@@ -1217,6 +1223,8 @@ class TelegramInbox:
         question = await self.repo.get("out.user_questions", job.question_id)
         if question is None:
             raise ValueError("Answer subject does not exist")
+        binding = FollowupRefusalTarget(question_id=job.question_id, session_id=question["session_id"])
+        validate_question_identity(question, binding)
         status = question.get("answer_status")
         if status == "ANSWERED":
             text = question.get("answer_text") or EMPTY_TEXT
@@ -1286,7 +1294,10 @@ class TelegramInbox:
                 immutable=True,
             )
         async with self.repo.lock("question:" + question["question_id"]):
-            question = await self.repo.get("out.user_questions", question["question_id"])
+            question = await self.repo.get("out.user_questions", binding.question_id)
+            if question is None:
+                raise ValueError("Answer subject disappeared before receipt recording")
+            validate_question_identity(question, binding)
             question.update(status="DELIVERED", **collection_clock(utcnow()).fields("delivered_at"))
             await self.repo.put("out.user_questions", question["question_id"], question)
 
@@ -1296,7 +1307,12 @@ class TelegramInbox:
         question_id = job.question_id
         async with self.repo.lock("question:" + question_id):
             question = await self.repo.get("out.user_questions", question_id)
-            if question is None or question.get("status") in ("DELIVERED", "DELIVERY_FAILED"):
+            if question is None:
+                return
+            validate_question_identity(
+                question, FollowupRefusalTarget(question_id=question_id, session_id=question["session_id"])
+            )
+            if question.get("status") in ("DELIVERED", "DELIVERY_FAILED"):
                 return
             question.update(
                 status="DELIVERY_FAILED",

@@ -7,6 +7,7 @@ import pytest
 from agent_source_fixtures import declared_versions_fixture
 from pydantic import JsonValue
 from pydantic_settings import SettingsConfigDict
+from session_followup_fixtures import UnexpectedFollowupRefusals
 
 from tank.agents.context import CONTEXT_VERSION
 from tank.agents.sessions import SessionService
@@ -71,7 +72,14 @@ async def test_required_tool_schema_failure_refuses_dispatch_without_payload_lea
 
     settings = SchemaSettings(failure=failure, openma_url="http://native", ops_progress_enabled=False)
     async with httpx.AsyncClient(transport=httpx.MockTransport(native)) as http:
-        service = SessionService(repo, settings, dispatch, versions=declared_versions_fixture(), http=http)
+        service = SessionService(
+            repo,
+            settings,
+            dispatch,
+            versions=declared_versions_fixture(),
+            http=http,
+            refusals=UnexpectedFollowupRefusals(),
+        )
         await service.process_event(
             "session",
             {
