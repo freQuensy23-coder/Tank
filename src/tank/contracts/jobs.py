@@ -6,6 +6,11 @@ from typing import Literal, Self
 from pydantic import Field, JsonValue, model_validator
 
 from tank.contracts import DomainModel
+from tank.contracts.question_retirement import (
+    QuestionFailureRefusalLedger,
+    QuestionFailureRefusalReceipt,
+    QuestionRefusalDigest,
+)
 from tank.time_precision import Timestamp
 from tank.util import parse_time
 
@@ -145,11 +150,29 @@ class JobMetadata(DomainModel):
         return self
 
 
+type HostQuestionRefusals = dict[QuestionRefusalDigest, QuestionFailureRefusalReceipt]
+
+
+def _unreported_question_refusals(value: HostQuestionRefusals | None) -> bool:
+    return value is None
+
+
 class JobEnvelope(JobMetadata):
     """Persisted queue wire envelope; dispatchers decode concrete command payloads."""
 
     payload: dict[str, JsonValue]
     result: JsonValue = None
+    host_question_failure_refusals: HostQuestionRefusals | None = Field(
+        default=None, exclude_if=_unreported_question_refusals
+    )
+
+    @model_validator(mode="after")
+    def actual_host_refusal_ledger(self) -> Self:
+        if "host_question_failure_refusals" in self.model_fields_set:
+            if self.host_question_failure_refusals is None:
+                raise ValueError("A reported host question refusal ledger cannot be null")
+            QuestionFailureRefusalLedger(job_id=self.job_id, entries=self.host_question_failure_refusals)
+        return self
 
 
 class JobRetryState(DomainModel):

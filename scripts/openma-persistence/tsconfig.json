@@ -1,0 +1,51 @@
+{
+  "compilerOptions": {
+    "strict": true,
+    "noEmit": true,
+    "allowImportingTsExtensions": true,
+    "erasableSyntaxOnly": false,
+    "skipLibCheck": false,
+    "target": "ES2024",
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "types": [
+      "node"
+    ],
+    "typeRoots": [
+      "../typescript/node_modules/@types"
+    ],
+    "paths": {
+      "@open-managed-agents/domain/*": [
+        "../../vendor/openma/packages/managed-agents-domain/src/*"
+      ],
+      "@open-managed-agents/session-runtime-contract/*": [
+        "../../vendor/openma/packages/session-runtime-contract/src/*"
+      ],
+      "@open-managed-agents/sql-client": [
+        "../../vendor/openma/packages/sql-client/src/ports.ts"
+      ],
+      "@open-managed-agents/sql-client/*": [
+        "../../vendor/openma/packages/sql-client/src/*"
+      ],
+      "@open-managed-agents/session-event-store": [
+        "../../vendor/openma/packages/session-event-store/src/index.ts"
+      ],
+      "postgres": [
+        "./node_modules/postgres/types/index.d.ts"
+      ],
+      "effect": [
+        "./node_modules/effect/dist/dts/index.d.ts"
+      ]
+    }
+  },
+  "include": [
+    "*.mts",
+    "../../tests/openma/persistence/*.mts"
+  ],
+  "files": [
+    "../../vendor/openma/packages/session-runtime-contract/src/continuation.ts",
+    "../../vendor/openma/packages/session-runtime-sql/src/continuation.ts",
+    "../../vendor/openma/packages/session-runtime-sql/src/coordination.ts",
+    "../../vendor/openma/packages/session-event-store-sql/src/index.ts"
+  ]
+}

@@ -4,19 +4,45 @@ import asyncio
 import contextlib
 import logging
 import traceback
-from collections.abc import Awaitable, Callable
-from datetime import timedelta
+from collections.abc import AsyncIterator, Awaitable, Callable
+from datetime import datetime, timedelta
 from typing import TYPE_CHECKING, Protocol
 
 from pydantic import JsonValue
 
 from tank.analysis.truth_contracts import MarketTruthAssessmentRef
 from tank.contracts.jobs import JobRetryState
+from tank.contracts.progress import JobFailureProgressView
+from tank.contracts.question_retirement import (
+    QuestionFailureRefusalRequest,
+    QuestionFailureRefusalSink,
+    UnprovedQuestionRetirement,
+)
 from tank.contracts.session_admission import ADMITTED_JOB_TYPES, AdmissionDeferred
 from tank.delivery import DeliveryDeferred, DeliveryService
-from tank.ops_progress import job_failure_progress
+from tank.ops_progress import record_job_failure_progress
+from tank.question_answers import record_answer
 from tank.request_budget import BudgetBackend, RequestBudgetScope, SharedRequestBudgets
-from tank.runtime_contracts import EscalateTokensJob, MarketTruthJob, ScoutReviewJob, replace_job_clock
+from tank.runtime_contracts import (
+    EscalateTokensJob,
+    FailedAnswerNotification,
+    FailedDeliveryNotification,
+    FailedQuestionNotification,
+    FailureJournalUnavailable,
+    FailureReason,
+    FailureReconciliationItem,
+    JobStateFailureReason,
+    MarketTruthJob,
+    ScoutReviewJob,
+    SuppliedFailureReason,
+    TerminalFailureHandled,
+    TerminalFailureOutcome,
+    TerminalFailureRefused,
+    TerminalJobFailure,
+    failure_reason_text,
+    replace_job_clock,
+)
+from tank.runtime_evaluation import evaluate_condition_job
 from tank.runtime_retry import worker_retry_schedule
 from tank.scheduler import Scheduler
 from tank.settings import Settings
@@ -29,6 +55,16 @@ if TYPE_CHECKING:
     from tank.agents.sessions import SessionService
     from tank.market.service import MarketService
     from tank.telegram_inbox import TelegramInbox
+
+
+class RuntimeFailureRepository(QuestionFailureRefusalSink, Protocol):
+    async def execute(
+        self, failure: TerminalJobFailure, operation: Callable[[], Awaitable[TerminalFailureOutcome]]
+    ) -> TerminalFailureOutcome: ...
+
+    async def mark(self, item: FailureReconciliationItem) -> bool: ...
+
+    def pending(self, *, progress_requested: bool) -> AsyncIterator[FailureReconciliationItem]: ...
 
 
 class RuntimeService(Protocol):
@@ -94,12 +130,15 @@ class Runtime:
         budget_backend: BudgetBackend,
         bootstrap: Callable[[], Awaitable[None]],
         validate: Callable[[], None],
+        failures: RuntimeFailureRepository,
     ) -> None:
         self.repo, self.settings = repo, settings
         self.sources, self.market, self.truth = sources, market, truth
         self.pipeline, self.sessions = pipeline, sessions
         self.delivery, self.scheduler, self.gateway, self.inbox = delivery, scheduler, gateway, inbox
         self._bootstrap, self._validate = bootstrap, validate
+        self.failures = failures
+        self._failure_reconcile_attempted_at: datetime | None = None
         self.budget_scope, self.budget_backend = budget_scope, budget_backend
         self.budget_binding: SharedRequestBudgets | None = None
         self.active_jobs: set[str] = set()
@@ -110,7 +149,7 @@ class Runtime:
             "ESCALATE_TOKENS": self.escalate_wire,
             "RUN_MARKET_TRUTH": self.assess_wire,
             "DELIVER": self.delivery.deliver,
-            "EVAL_CONDITIONS": self.scheduler.eval_conditions,
+            "EVAL_CONDITIONS": self.eval_conditions_wire,
             "MILESTONE_CHECK": self.scheduler.milestone_check,
             "REACTION_CAPTURE": self.scheduler.reaction_capture,
             "SCOUT_REVIEW": self.scout_review,
@@ -164,6 +203,9 @@ class Runtime:
         )
         return await self.truth.assess_for_job(payload.event_id, payload.token_id, cutoff)
 
+    async def eval_conditions_wire(self, payload: dict[str, JsonValue]) -> dict[str, JsonValue]:
+        return await evaluate_condition_job(self.scheduler, payload)
+
     async def scout_review(self, payload: dict[str, JsonValue]) -> dict[str, JsonValue]:
         reference = await self.sessions.scout_review(ScoutReviewJob.model_validate(payload))
         return reference.model_dump(mode="json")
@@ -185,7 +227,7 @@ class Runtime:
             self.active_jobs.add(job["job_id"])
             try:
                 if job.get("expires_at") and parse_time(job["expires_at"]) <= utcnow():
-                    await self.repo.put(
+                    expired = await self.repo.put(
                         "ops.jobs",
                         job["job_id"],
                         {
@@ -193,7 +235,9 @@ class Runtime:
                             "status": "EXPIRED",
                         },
                     )
-                    await self.terminal_delivery_failure(job, "EXPIRED")
+                    await self.terminal_delivery_failure_wire(
+                        expired, JobStateFailureReason(kind="STATE", status="EXPIRED")
+                    )
                     continue
                 dependencies = [
                     await self.repo.get("ops.jobs", dep) for dep in job["payload"].get("_depends_on", [])
@@ -284,70 +328,85 @@ class Runtime:
                     )
                     current = await self.repo.get("ops.jobs", job["job_id"])
                     if current and current["status"] in {"FAILED", "EXPIRED"}:
-                        await self.terminal_delivery_failure(current, type(exc).__name__)
+                        await self.terminal_delivery_failure_wire(
+                            current, SuppliedFailureReason(kind="SUPPLIED", value=type(exc).__name__)
+                        )
                 except Exception:
                     log.exception("Could not persist job failure: %s", job["job_id"])
                     await self.pause(stop, 1)
             finally:
                 self.active_jobs.discard(job["job_id"])
 
-    async def terminal_delivery_failure(self, job, reason):
-        await job_failure_progress(self.repo, self.settings, job, reason)
-        if job["type"] == "DELIVER":
-            await self.delivery.terminal_failure(job["payload"], reason, job.get("attempts"))
-        if job["type"] == "AGENT_MESSAGE" and job["payload"].get("kind") == "USER_QUESTION":
-            from tank.telegram_inbox import record_answer
+    async def terminal_delivery_failure_wire(
+        self, job: dict[str, JsonValue], reason: FailureReason
+    ) -> TerminalFailureOutcome:
+        failure = TerminalJobFailure.from_record(
+            job,
+            reason=reason,
+            progress_requested=self.settings.ops_progress_enabled and not self.settings.replay,
+            notifications_requested=True,
+        )
+        return await self.terminal_delivery_failure(failure)
 
-            abandon = getattr(getattr(self, "sessions", None), "abandon_question", None)
-            if abandon is None or await abandon(
-                job["payload"].get("session_id"), job["payload"]["question_id"]
-            ):
-                await record_answer(self.repo, job["payload"]["question_id"], None, status="FAILED")
-        if job["type"] == "TELEGRAM_ANSWER" and getattr(self, "inbox", None):
-            await self.inbox.answer_failed(job["payload"], reason)
+    async def terminal_delivery_failure(self, failure: TerminalJobFailure) -> TerminalFailureOutcome:
+        """Apply only actual terminal queue scope and phase-specific notification commands."""
+        failure = TerminalJobFailure.model_validate(failure, by_name=True)
 
-    async def reconcile_delivery_failures(self):
-        now = utcnow()
-        if getattr(self, "_delivery_reconciled_at", None) and now - self._delivery_reconciled_at < timedelta(
-            seconds=30
-        ):
-            return
-        self._delivery_reconciled_at = now
-
-        for status in ("FAILED", "EXPIRED"):
-            for kind in ("FILTER_ITEM", "ROUTE_ITEM", "AGENT_MESSAGE", "RUN_MARKET_TRUTH", "ESCALATE_TOKENS"):
-                async for job in self.repo.iter_all("ops.jobs", filters={"type": kind, "status": status}):
-                    if not job.get("ops_progress_recorded_at"):
-                        await job_failure_progress(
-                            self.repo, self.settings, job, job.get("last_error") or status
-                        )
-                        await self.repo.put(
-                            "ops.jobs",
-                            job["job_id"],
-                            {**job, **collection_clock(utcnow()).fields("ops_progress_recorded_at")},
-                        )
-            async for job in self.repo.iter_all("ops.jobs", filters={"type": "DELIVER", "status": status}):
-                if not job.get("delivery_failure_recorded_at"):
-                    await self.terminal_delivery_failure(job, status)
-                    await self.repo.put(
-                        "ops.jobs",
-                        job["job_id"],
-                        {**job, **collection_clock(utcnow()).fields("delivery_failure_recorded_at")},
+        async def apply() -> TerminalFailureOutcome:
+            reason = failure_reason_text(failure.reason)
+            if isinstance(failure.progress, JobFailureProgressView):
+                await record_job_failure_progress(self.repo, self.settings, failure.progress, reason)
+            notification = failure.notification
+            if isinstance(notification, FailedDeliveryNotification):
+                await self.delivery.terminal_failure(notification.payload, reason, notification.attempt)
+            elif isinstance(notification, FailedQuestionNotification):
+                try:
+                    abandoned = await self.sessions.abandon_question(
+                        notification.target.session_id, notification.target.question_id
                     )
-            for kind in ("AGENT_MESSAGE", "TELEGRAM_ANSWER"):
-                async for job in self.repo.iter_all("ops.jobs", filters={"type": kind, "status": status}):
-                    if job.get("followup_failure_recorded_at"):
-                        continue
-                    if kind == "TELEGRAM_ANSWER" or job["payload"].get("kind") == "USER_QUESTION":
-                        await self.terminal_delivery_failure(job, status)
-                        await self.repo.put(
-                            "ops.jobs",
-                            job["job_id"],
-                            {**job, **collection_clock(utcnow()).fields("followup_failure_recorded_at")},
-                        )
+                except UnprovedQuestionRetirement as unknown:
+                    if unknown.witness.target != notification.target:
+                        raise ValueError(
+                            "Host refusal differs from its actual queued question target"
+                        ) from None
+                    request = QuestionFailureRefusalRequest(
+                        job_id=failure.header.job_id,
+                        job_status=failure.header.status,
+                        witness=unknown.witness,
+                    )
+                    receipt = await self.failures.record(request)
+                    if receipt.request != request:
+                        raise ValueError("Host refusal journal returned a different question scope") from None
+                    return TerminalFailureRefused(status="REFUSED", receipt=receipt)
+                if abandoned:
+                    await record_answer(self.repo, notification.target, None, status="FAILED")
+            elif isinstance(notification, FailedAnswerNotification):
+                await self.inbox.answer_failed(notification.payload, reason)
+            return TerminalFailureHandled(status="HANDLED")
+
+        return await self.failures.execute(failure, apply)
+
+    async def reconcile_delivery_failures(self) -> None:
+        now = utcnow()
+        attempted = self._failure_reconcile_attempted_at
+        if attempted is not None and now - attempted < timedelta(seconds=30):
+            return
+        self._failure_reconcile_attempted_at = now
+        try:
+            async for item in self.failures.pending(
+                progress_requested=self.settings.ops_progress_enabled and not self.settings.replay
+            ):
+                try:
+                    outcome = await self.terminal_delivery_failure(item.failure)
+                    if isinstance(outcome, TerminalFailureHandled):
+                        await self.failures.mark(item)
+                except FailureJournalUnavailable:
+                    log.warning("Terminal failure reconciliation deferred: persistence unavailable")
+        except FailureJournalUnavailable:
+            log.warning("Terminal failure scan deferred: persistence unavailable")
 
     @staticmethod
-    async def pause(stop, seconds):
+    async def pause(stop: asyncio.Event, seconds: float) -> None:
         with contextlib.suppress(TimeoutError):
             await asyncio.wait_for(stop.wait(), seconds)
 
