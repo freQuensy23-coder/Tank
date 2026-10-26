@@ -6,8 +6,11 @@
 # tank-capture is replaced make-before-break so no minute of prints is lost.
 set -euo pipefail
 cd "$(dirname "$(readlink -f "$0")")"
-SHA=${1:?usage: deploy.sh <git sha>}
+SHA=${1:?usage: deploy.sh <selected sha> <orchestrator sha>}
+ORCHESTRATOR_SHA=${2:?usage: deploy.sh <selected sha> <orchestrator sha>}
 [[ "$SHA" =~ ^[0-9a-f]{40}$ ]] || { echo "invalid release SHA"; exit 1; }
+[[ "$ORCHESTRATOR_SHA" =~ ^[0-9a-f]{40}$ ]] || { echo "invalid orchestrator SHA"; exit 1; }
+PUBLISHER_IMAGE="ghcr.io/frequensy23-coder/tank/tank:$ORCHESTRATOR_SHA"
 LIMIT=${LIMIT:-480}
 exec 9>.deploy.lock
 flock -n 9 || { echo "another deploy is running"; exit 1; }
@@ -88,18 +91,26 @@ verify() {
   return $fail
 }
 
-previous=$(cat deployed 2>/dev/null || true)
-[[ -z "$previous" || "$previous" =~ ^[0-9a-f]{40}$ ]] || { echo "invalid previous release SHA"; exit 1; }
-release="releases/$SHA"
-worker() { python3 "$release/apify_deploy.py" "$1" "${2:-$SHA}" "$release"; }
+if [ -e deployed ] || [ -L deployed ]; then
+  [ -f deployed ] && [ ! -L deployed ] || { echo "invalid previous release marker type"; exit 1; }
+  previous=$(cat -- deployed)
+  [[ "$previous" =~ ^[0-9a-f]{40}$ ]] || { echo "invalid previous release SHA"; exit 1; }
+else
+  previous=""
+fi
+docker pull "$PUBLISHER_IMAGE"
+worker() {
+  [ "$#" -eq 2 ] || { echo "publisher action and transaction identity are required" >&2; return 1; }
+  /bin/sh "$PWD/publisher_worker.sh" "$PUBLISHER_IMAGE" "$ORCHESTRATOR_SHA" "$SHA" "$2" "$1" "$PWD"
+}
 tank_started=no
 [ ! -f apify-state/pending.json ] || tank_started=yes
 recover() {
   local status=$? recovery_sha=$SHA
-  trap - EXIT INT TERM
+  trap - EXIT INT TERM HUP
   if [ "$status" -ne 0 ]; then
     if [ -f apify-state/pending.json ]; then
-      recovery_sha=$(worker recovery_release) || { echo "cannot resolve interrupted worker release"; exit 1; }
+      recovery_sha=$(worker recovery_release "$SHA") || { echo "cannot resolve interrupted worker release"; exit 1; }
       previous=$(worker previous_release "$recovery_sha") || { echo "cannot resolve rollback release"; exit 1; }
     fi
     worker rollback "$recovery_sha" || { echo "worker rollback failed; Tank rollback refused"; exit 1; }
@@ -120,8 +131,9 @@ recover() {
 trap recover EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM
-worker prepare
-worker activate
+trap 'exit 129' HUP
+worker prepare "$SHA"
+worker activate "$SHA"
 start=$(date +%s)
 since=$(date -u +%FT%TZ)
 echo "deploy $SHA at $since; previous ${previous:-none}"
@@ -130,13 +142,13 @@ tank_started=yes
 if roll "$SHA"; then
   while [ $(( $(date +%s) - start )) -lt "$LIMIT" ]; do
     if out=$(verify "$since" 2>&1); then
-      worker commit
+      worker commit "$SHA"
       printf '%s\n' "$SHA" > deployed.next
       mv deployed.next deployed
-      worker finish
+      worker finish "$SHA"
       echo "VERIFIED $SHA after $(( $(date +%s) - start ))s"
       docker image ls --format '{{.Repository}}:{{.Tag}}' | grep '^ghcr.io/frequensy23-coder/tank/' \
-        | grep -v -E ":(${SHA}|${previous:-none})\$" | xargs -r docker rmi >/dev/null 2>&1 || true
+        | grep -v -E ":(${SHA}|${previous:-none}|${ORCHESTRATOR_SHA})\$" | xargs -r docker rmi >/dev/null 2>&1 || true
       exit 0
     fi
     sleep 15

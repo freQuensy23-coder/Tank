@@ -47,6 +47,7 @@ def test_shards_preserve_every_file_and_are_stable(integration_checks: tuple[Mod
         ("tests/test_fixture_reference.py", 1),
         ("tests/test_replay.py", 1),
         ("tests/test_agents_workflow.py", 2),
+        ("tests/test_apify_deploy.py", 2),
         ("tests/test_fetch_page_deadline.py", 0),
     ],
 )

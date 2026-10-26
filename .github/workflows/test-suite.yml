@@ -41,7 +41,16 @@ jobs:
         run: uv run --frozen --extra dev --group x-reader pytest -p scripts.ci.unit_shard --ci-unit-shard "${{ matrix.shard }}/2" -q -n auto --dist loadfile -m 'not integration' --junitxml=.test-results/unit.xml
       - name: Package the exact selected X worker source
         if: matrix.shard == 0
-        run: python3 scripts/deploy/apify_deploy.py package "$(git rev-parse HEAD)" .test-results/x-worker-release
+        run: |
+          sha=$(git rev-parse HEAD)
+          archive="$RUNNER_TEMP/ci-publisher-archive"
+          mkdir "$archive"
+          git archive "$sha" src scripts/deploy pyproject.toml uv.lock > "$RUNNER_TEMP/ci-publisher-archive.tar"
+          tar -xf "$RUNNER_TEMP/ci-publisher-archive.tar" -C "$archive"
+          PYTHONDONTWRITEBYTECODE=1 PYTHONPATH="$archive/src" uv run --frozen --extra dev --group x-reader python -m tank.deployment.cli package \
+            --orchestrator-sha "$sha" --selected-release-sha "$sha" --runtime-root "$archive" \
+            --repository "$PWD" --destination "$PWD/.test-results/x-worker-release" \
+            --image-repository "ghcr.io/${GITHUB_REPOSITORY,,}/tank"
       - name: Require complete unit partition, timing and zero skips
         run: >-
           uv run --frozen --extra dev python -m scripts.ci.check_unit_results

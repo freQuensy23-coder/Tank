@@ -244,8 +244,16 @@ jobs:
           apify/x-reader/actor_contracts.py apify/x-reader/direct_fetch.py
           apify/x-reader/public_profile.py apify/x-reader/main.py
           tests/test_x_reader_contracts.py
-      - name: Typecheck the versioned worker and publisher
-        run: uv run --frozen --extra dev --group x-reader mypy apify/x-reader scripts/deploy/apify_deploy.py
+      - name: Typecheck the versioned worker
+        run: uv run --frozen --extra dev --group x-reader mypy apify/x-reader
+      - name: Check the complete typed publisher and owned caller contracts strictly
+        env:
+          MYPYPATH: src:tests
+        run: >-
+          uv run --frozen --extra dev --group x-reader mypy
+          --config-file scripts/ci/mypy-foundation-tests.ini
+          src/tank/deployment tests/test_publisher_*.py tests/publisher_*.py
+          tests/test_apify_deploy.py tests/test_actor_package_closure.py
 
   test:
     uses: ./.github/workflows/test-suite.yml
