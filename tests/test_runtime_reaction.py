@@ -176,5 +176,7 @@ def test_manual_queued_revision_retains_the_declared_schedule_contract() -> None
     for field in ("anchor", "cutoff", "retro"):
         incomplete = dict(payload)
         del incomplete[field]
-        with pytest.raises(ValidationError):
-            reaction_job_command(incomplete)
+        projected = reaction_job_command(incomplete)
+        assert isinstance(projected, ManualReactionRevisionCommand)
+        assert field not in projected.model_fields_set
+        assert projected.storage_fields() == incomplete

@@ -15,7 +15,6 @@ from tank.contracts.json import decode_json
 from tank.contracts.scheduler_commands import (
     InitialReactionCommand,
     ManualReactionRevisionCommand,
-    ReactionAnchorFacts,
     ReactionCaptureCommand,
     ReactionTarget,
     RevisedReactionCommand,
@@ -50,9 +49,7 @@ class InitialReactionJob(InitialReactionCommand, ReactionPayload):
 
 
 class ManualReactionJob(ManualReactionRevisionCommand, ReactionPayload):
-    anchor: ReactionAnchorFacts = Field(...)
-    cutoff: str = Field(...)
-    retro: bool = Field(...)
+    pass
 
 
 class ChangedReactionJob(RevisedReactionCommand, ReactionPayload):
