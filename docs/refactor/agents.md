@@ -2069,3 +2069,33 @@ fields remain untouched when unrequested; no old clock/reason is reconstructed.
 The pure family now passes all 23 pinned native cases in 5.94 seconds, zero skips
 with source guards; strict source/test and Ruff/format pass. Actual controlled-stop
 claim snapshot/cancellation/refund and stale-token consumer proof remain pending.
+
+Atomic worker consumer checkpoint (whole dispatcher still held)
+
+RunningJobClaim now carries the required actual token and observed nullable
+recovery count through canonical JobClaimScope. RepositoryWorkerQueue delegates
+completion/failure/requeue/expiry to transition_claimed_job with synchronous
+named mutations. The original result is validated/cloned before the first await;
+expiry's fresh not-due condition uses a named no-write exception, not a generic
+malformed-state catch. A current-scope read can refuse already-stale dispatch, but
+that observation is not an external network lease. Terminal effect commands use
+closed actual commands and the matching terminal token/subject; no normalized
+DTO is passed back as an anonymous service input.
+
+The earlier actual PostgreSQL evidence worker-claim-fencing-before contains both
+stale completion after recover/reclaim and read/recover/reclaim/write failures.
+The paired consumer now refuses old tokens after recovery and refunded-attempt
+ABA. Its concurrent control pauses the real put while the actual row lock is held,
+observes the recovery UPDATE waiting for a PostgreSQL lock, then verifies valid
+completion linearizes first and recovery changes zero rows. This replaces the old
+get hook because the real atomic storage read is now SELECT FOR UPDATE; no stale
+new claim is overwritten and every owned test task is drained on failure/cancel.
+
+On the exact paired source, all 35 focused units pass in 17.62 seconds (p90 .044,
+maximum .241 seconds), and all 21 collected actual PostgreSQL cases pass in 22.88
+seconds, zero skips with wrapper fingerprints. Independent strict five targets
+and Ruff/format pass. Proof prefixes worker-atomic-consumer-unit/actual; the
+foundation backend's 49-case physical proof remains attributed to its582 prefix.
+The complete Runtime worker, controlled-stop consumer, real producer/caller
+migration and remaining Session/vendor responsibilities remain open. This
+checkpoint is not whole-application activation or a cross-controller network lease.

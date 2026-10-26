@@ -1,12 +1,12 @@
 """Queue wire admission for concrete worker execution and sparse dependency facts."""
 
 from datetime import timedelta
+from typing import Literal
 
 from pydantic import JsonValue, ValidationError
 
 from tank.contracts.job_repository import JobRepository, QueueStore
-from tank.contracts.jobs import ClaimedJob, InvalidJobClaim, JobEnvelope
-from tank.runtime_contracts import replace_job_clock
+from tank.contracts.jobs import ClaimedJob, InvalidJobClaim, JobClaimMutation, JobEnvelope
 from tank.runtime_dispatch_contracts import (
     ClaimedWork,
     DependencyFailure,
@@ -21,7 +21,7 @@ from tank.runtime_dispatch_contracts import (
     WaitingDependencies,
     WorkerFailureRequest,
 )
-from tank.time_precision import Timestamp, offset_schedule, timestamp_owned_fields
+from tank.time_precision import Timestamp, offset_schedule
 from tank.util import parse_time, sha256
 
 
@@ -58,6 +58,7 @@ class RepositoryWorkerQueue:
         claimed: ClaimedJob, error: ValidationError, fields: tuple[str, ...]
     ) -> InvalidJobClaim:
         return InvalidJobClaim(
+            claim_token=claimed.claim_token,
             job_id=claimed.envelope.job_id,
             kind=claimed.envelope.type,
             attempts=claimed.envelope.attempts,
@@ -79,6 +80,12 @@ class RepositoryWorkerQueue:
 
     async def reject_invalid(self, invalid: InvalidJobClaim) -> bool:
         return await self.jobs.reject_invalid(invalid)
+
+    async def current(self, claim: RunningJobClaim) -> bool:
+        """Observe current claim scope before dispatch; this read grants no network lease."""
+        claim = RunningJobClaim.model_validate(claim)
+        document = await self.store.get("ops.jobs", claim.job_id)
+        return document is not None and claim.matches(document)
 
     async def dependency(self, job_id: str) -> DependencyState | None:
         record = await self.store.get("ops.jobs", job_id)
@@ -114,117 +121,88 @@ class RepositoryWorkerQueue:
             else ReadyDependencies(status="READY")
         )
 
-    @staticmethod
-    def owns_running_claim(claim: RunningJobClaim, current: JobEnvelope) -> bool:
-        return (
-            current.job_id == claim.job_id
-            and current.type == claim.type
-            and current.status == "RUNNING"
-            and current.attempts == claim.attempts
-            and sha256(current.payload) == claim.payload_revision
-        )
-
     async def requeue(self, request: RequeueRequest) -> bool:
         request = RequeueRequest.model_validate(request, by_name=True)
-        claim = request.claim
-        async with self.store.lock("job:" + claim.job_id):
-            document = await self.store.get("ops.jobs", claim.job_id)
-            if document is None:
-                return False
-            current = JobEnvelope.model_validate(document)
-            if not self.owns_running_claim(claim, current):
-                return False
-            updated = replace_job_clock(document, "run_after", request.not_before)
-            updated.update(status="QUEUED", attempts=current.attempts - 1)
+
+        def defer(current: JobEnvelope) -> JobClaimMutation:
+            pending = Timestamp(None, None, "PENDING")
             if request.reason == "SESSION_ADMISSION" and current.slot_waiting_since is None:
-                created = Timestamp(
-                    current.created_at,
-                    current.created_at_prec,
-                    current.created_at_prec_reason,
-                    current.created_at_bucket_anchor,
+                return JobClaimMutation(
+                    status="QUEUED",
+                    attempts=current.attempts - 1,
+                    run_after=request.not_before,
+                    finished_at=pending,
+                    slot_waiting_since=Timestamp(
+                        current.created_at,
+                        current.created_at_prec,
+                        current.created_at_prec_reason,
+                        current.created_at_bucket_anchor,
+                    ),
                 )
-                updated = replace_job_clock(updated, "slot_waiting_since", created)
-            JobEnvelope.model_validate(updated)
-            await self.store.put("ops.jobs", current.job_id, updated)
-            return True
+            return JobClaimMutation(
+                status="QUEUED",
+                attempts=current.attempts - 1,
+                run_after=request.not_before,
+                finished_at=pending,
+            )
+
+        return await self.store.transition_claimed_job(request.claim, defer) is not None
 
     async def expire(self, claim: RunningJobClaim, observed_at: Timestamp) -> bool:
         claim = RunningJobClaim.model_validate(claim)
-        if observed_at.value is None:
+        observed_at = Timestamp.model_validate(observed_at)
+        observed_value = observed_at.value
+        if observed_value is None:
             raise ValueError("Worker expiry requires an actual controller observation clock")
-        async with self.store.lock("job:" + claim.job_id):
-            document = await self.store.get("ops.jobs", claim.job_id)
-            if document is None:
-                return False
-            current = JobEnvelope.model_validate(document)
-            if not self.owns_running_claim(claim, current):
-                return False
-            if current.expires_at is None or parse_time(current.expires_at) > parse_time(observed_at.value):
-                return False
-            updated = replace_job_clock(document, "finished_at", observed_at)
-            updated["status"] = "EXPIRED"
-            JobEnvelope.model_validate(updated)
-            await self.store.put("ops.jobs", current.job_id, updated)
-            return True
+
+        def expire_due(current: JobEnvelope) -> JobClaimMutation:
+            if current.expires_at is None or parse_time(current.expires_at) > parse_time(observed_value):
+                raise _ExpiryNotDue
+            return JobClaimMutation(status="EXPIRED", finished_at=observed_at)
+
+        try:
+            return await self.store.transition_claimed_job(claim, expire_due) is not None
+        except _ExpiryNotDue:
+            return False
 
     async def complete(
-        self,
-        claim: RunningJobClaim,
-        result_wire: JsonValue,
-        observed_at: Timestamp,
+        self, claim: RunningJobClaim, result_wire: JsonValue, observed_at: Timestamp
     ) -> JobEnvelope | None:
         """Persist only the serialized result of an acknowledged, still-owned command."""
         claim = RunningJobClaim.model_validate(claim)
         observed_at = Timestamp.model_validate(observed_at)
         if observed_at.value is None:
             raise ValueError("Worker completion requires an actual controller observation")
-        async with self.store.lock("job:" + claim.job_id):
-            document = await self.store.get("ops.jobs", claim.job_id)
-            if document is None:
-                return None
-            current = JobEnvelope.model_validate(document)
-            if not self.owns_running_claim(claim, current):
-                return None
-            updated = replace_job_clock(document, "finished_at", observed_at)
-            updated.update(status="DONE", result=result_wire)
-            completed = JobEnvelope.model_validate(updated)
-            await self.store.put("ops.jobs", claim.job_id, updated)
-            return completed
+
+        mutation = JobClaimMutation(status="DONE", result=result_wire, finished_at=observed_at)
+
+        def complete_current(_current: JobEnvelope) -> JobClaimMutation:
+            return mutation
+
+        return await self.store.transition_claimed_job(claim, complete_current)
 
     async def fail(self, request: WorkerFailureRequest) -> JobEnvelope | None:
         request = WorkerFailureRequest.model_validate(request)
-        claim = request.claim
         observed_value = request.observed_at.value
         if observed_value is None:
             raise ValueError("Worker failure requires an actual controller observation")
-        async with self.store.lock("job:" + claim.job_id):
-            document = await self.store.get("ops.jobs", claim.job_id)
-            if document is None:
-                return None
-            current = JobEnvelope.model_validate(document)
-            if not self.owns_running_claim(claim, current):
-                return None
+
+        def fail_current(current: JobEnvelope) -> JobClaimMutation:
             expired = current.expires_at is not None and parse_time(current.expires_at) <= parse_time(
                 observed_value
             )
-            status = (
+            status: Literal["EXPIRED", "FAILED", "QUEUED"] = (
                 "EXPIRED" if expired else "FAILED" if current.attempts >= current.max_attempts else "QUEUED"
             )
-            updated = replace_job_clock(
-                document,
-                "run_after",
-                offset_schedule(request.observed_at, timedelta(seconds=request.schedule.seconds)),
+            return JobClaimMutation(
+                status=status,
+                last_error=request.error_class,
+                run_after=offset_schedule(request.observed_at, timedelta(seconds=request.schedule.seconds)),
+                finished_at=(request.observed_at if status != "QUEUED" else Timestamp(None, None, "PENDING")),
             )
-            finished = (
-                request.observed_at if status in {"FAILED", "EXPIRED"} else Timestamp(None, None, "PENDING")
-            )
-            if finished.value is None:
-                owned = timestamp_owned_fields("finished_at")
-                updated = {key: value for key, value in updated.items() if key not in owned}
-                updated.update(finished.fields("finished_at"))
-            else:
-                updated = replace_job_clock(updated, "finished_at", finished)
-            updated.update(status=status, last_error=request.error_class)
-            failed = JobEnvelope.model_validate(updated)
-            await self.store.put("ops.jobs", claim.job_id, updated)
-            return failed
+
+        return await self.store.transition_claimed_job(request.claim, fail_current)
+
+
+class _ExpiryNotDue(Exception):
+    """The freshly locked job has not reached its declared expiry."""
