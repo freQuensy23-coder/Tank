@@ -159,3 +159,31 @@ def test_empty_observed_error_text_is_distinct_from_unreported_error() -> None:
     assert JobEnvelope.model_validate(updated).last_error == ""
     unreported = JobClaimMutation(status="FAILED", last_error=None, finished_at=stamp)
     assert unreported.apply_to(job_document())["last_error"] is None
+
+
+def test_controlled_stop_records_only_actual_paired_interruption_facts() -> None:
+    stamp = Timestamp("2026-10-26T00:01:00Z", "COLLECTION_ONLY")
+    mutation = JobClaimMutation(
+        status="QUEUED",
+        attempts=0,
+        run_after=stamp,
+        interrupted_at=stamp,
+        interruption_reason="CONTROLLED_GENERATION_STOP",
+    )
+    original = job_document()
+    updated = mutation.apply_to(original)
+    assert updated["attempts"] == 0 and updated["interrupted_at"] == stamp.value
+    assert updated["interrupted_at_prec"] == "COLLECTION_ONLY"
+    assert updated["interruption_reason"] == "CONTROLLED_GENERATION_STOP"
+    assert updated["payload"] == original["payload"] and updated["result"] == original["result"]
+    with pytest.raises(ValidationError, match="clock and reason together"):
+        JobClaimMutation(status="QUEUED", interrupted_at=stamp)
+    with pytest.raises(ValidationError, match="clock and reason together"):
+        JobClaimMutation(status="QUEUED", interruption_reason="CONTROLLED_GENERATION_STOP")
+    with pytest.raises(ValidationError, match="unfinished attempt"):
+        JobClaimMutation(
+            status="FAILED",
+            interrupted_at=stamp,
+            interruption_reason="CONTROLLED_GENERATION_STOP",
+            finished_at=stamp,
+        )
