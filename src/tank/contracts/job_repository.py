@@ -7,12 +7,23 @@ from typing import Protocol, Self
 from pydantic import JsonValue, ValidationError
 
 from tank.contracts.jobs import InvalidJobClaim, JobClaimRevision, JobEnvelope
-from tank.contracts.repository import Collection, DocumentStore
+from tank.contracts.repository import Collection
 from tank.time_precision import Timestamp
 from tank.util import JsonInput, TimeInput, sha256
 
 
-class QueueStore(DocumentStore, Protocol):
+class QueueStore(Protocol):
+    async def get(self, collection: str, key: str) -> dict[str, JsonValue] | None: ...
+
+    async def put(
+        self,
+        collection: str,
+        key: str,
+        record: dict[str, JsonValue],
+        *,
+        immutable: bool = False,
+    ) -> dict[str, JsonValue]: ...
+
     def transaction(self) -> AbstractAsyncContextManager[Self]: ...
 
     def lock(self, key: str) -> AbstractAsyncContextManager[Self]: ...
