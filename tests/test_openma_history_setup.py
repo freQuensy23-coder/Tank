@@ -7,10 +7,11 @@ import json
 import os
 import tarfile
 from pathlib import Path
+from typing import Literal
 
 import pytest
 import yaml
-from pydantic import ValidationError
+from pydantic import Field, ValidationError
 
 from scripts.openma_history.manifest import ROOT, Package, Resolution, compatible
 from scripts.openma_history.models import Archive, Ownership
@@ -183,6 +184,8 @@ def test_active_history_job_preserves_existing_lane_and_actual_runner_contract()
     class Job(BaseModel):
         model_config = ConfigDict(extra="ignore", strict=True, populate_by_name=True)
         steps: list[Step]
+        runs_on: Literal["ubuntu-24.04"] = Field(alias="runs-on")
+        timeout_minutes: int = Field(alias="timeout-minutes", strict=True)
 
     class Workflow(BaseModel):
         model_config = ConfigDict(extra="ignore", strict=True)
@@ -191,6 +194,7 @@ def test_active_history_job_preserves_existing_lane_and_actual_runner_contract()
     document = Workflow.model_validate(
         yaml.safe_load((ROOT / ".github/workflows/test-suite.yml").read_bytes())
     )
+    assert document.jobs["node-public-history"].timeout_minutes == 4
     existing = "\n".join(step.run for step in document.jobs["node-persistence"].steps if step.run is not None)
     history = "\n".join(
         step.run for step in document.jobs["node-public-history"].steps if step.run is not None
@@ -201,3 +205,20 @@ def test_active_history_job_preserves_existing_lane_and_actual_runner_contract()
     assert "env -i HOME=" in history
     assert "--ignore-scripts" in history
     assert "scripts.openma_history.manifest --check" in history
+
+
+def test_declared_owner_cannot_substitute_an_unobserved_uid(tmp_path: Path) -> None:
+    folder = tmp_path / "cache"
+    wrong = owner(purpose="ARCHIVE_CACHE").model_copy(update={"uid": os.geteuid() + 1})
+    with pytest.raises(ValueError, match="effective UID"):
+        own_directory(folder, wrong, cache=True)
+    assert not folder.exists()
+
+
+def test_writable_by_other_users_directory_is_not_owned_setup(tmp_path: Path) -> None:
+    folder = tmp_path / "cache"
+    folder.mkdir(mode=0o777)
+    folder.chmod(0o777)
+    with pytest.raises(ValueError, match="ownership"):
+        own_directory(folder, owner(purpose="ARCHIVE_CACHE"), cache=True)
+    assert not (folder / ".tank-owned-setup.json").exists()

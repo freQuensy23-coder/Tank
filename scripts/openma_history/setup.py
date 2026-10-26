@@ -73,16 +73,18 @@ def select_plan(manifest: Manifest, selected: Platform) -> Plan:
 
 
 def own_directory(path: Path, ownership: Ownership, *, cache: bool) -> None:
+    if ownership.uid != os.geteuid():
+        raise ValueError("Declared setup owner is not the actual effective UID")
     if path.is_symlink():
         raise ValueError("Setup directory must not be symbolic")
     if not path.exists():
         path.mkdir(parents=True, mode=0o700)
     info = path.stat()
-    if not stat.S_ISDIR(info.st_mode) or info.st_uid != os.geteuid():
+    if not stat.S_ISDIR(info.st_mode) or info.st_uid != os.geteuid() or stat.S_IMODE(info.st_mode) & 0o022:
         raise ValueError("Setup directory ownership mismatch")
     marker = path / MARKER
     if marker.exists() or marker.is_symlink():
-        if marker.is_symlink() or not marker.is_file():
+        if marker.is_symlink() or not marker.is_file() or marker.stat().st_uid != os.geteuid():
             raise ValueError("Setup ownership marker must be regular")
         document = marker.read_bytes()
         decode_unique_json(document)
