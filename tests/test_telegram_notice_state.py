@@ -5,12 +5,18 @@ from pathlib import Path
 import httpx
 import pytest
 from pydantic import JsonValue
+from source_support import fixture_versions, source_definition
 from test_storage import repo as repo
 from test_telegram_preflight import PreflightSettings
 
+from tank.contracts.source_items import ArticleDiscovery, CapturedItem, CaptureEvidence, SourceItem
+from tank.ops_progress import DisabledSourceProgress
+from tank.sources.ingestion import SourceIngestion
+from tank.sources.raw_store import RawItemStorage, write_raw_item
 from tank.storage import MemoryRepository, StorageBackend
 from tank.telegram_inbox import ANSWER_CHANNEL, TelegramInbox, question_id_for
 from tank.time_precision import collection_clock
+from tank.util import clock_iso
 
 
 async def invalid_notice_receipt(repo: StorageBackend, tmp_path: Path, fault: str) -> None:
@@ -123,13 +129,49 @@ async def test_actual_notice_phase_reconciles_without_new_token_or_post(
         assert {receipt["status"] for receipt in before} == {"GENERATED", "SENT"}
 
 
+async def ingest_notice_material(repo: StorageBackend, tmp_path: Path) -> SourceItem:
+    discovery = ArticleDiscovery(
+        source_id="S01",
+        external_id="actual-item",
+        url="https://example.test/notice-material",
+        title="Synthetic notice material",
+        text="An authored source item for the notice subject boundary",
+        published_at="2026-10-01T12:00:00Z",
+        published_prec="EXACT",
+    )
+    observed = clock_iso()
+    raw_ref, raw_sha256 = write_raw_item(
+        tmp_path, "S01", "actual-item", observed, discovery.model_dump_json(exclude_unset=True).encode()
+    )
+    versions = fixture_versions()
+    captured = CapturedItem(
+        discovery=discovery,
+        capture=CaptureEvidence(
+            item_id="actual-item",
+            feed="https://example.test/feed",
+            observed_at=observed,
+            raw_ref=raw_ref,
+            raw_sha256=raw_sha256,
+            discovery_config_version=versions.config_version,
+            discovery_code_version=versions.code_version,
+        ),
+    )
+    ingestion = SourceIngestion(repo, versions, {}, RawItemStorage(tmp_path), DisabledSourceProgress())
+    source = source_definition(
+        {
+            "source_id": "S01",
+            "name": "Synthetic notice source",
+            "feeds": [{"url": "https://example.test/feed", "kind": "rss"}],
+        }
+    )
+    return await ingestion.ingest(source, captured)
+
+
 @pytest.mark.parametrize("subject", ["foreign", "absent", "null"])
 async def test_real_ops_no_session_cannot_settle_from_another_material_receipt(
     repo: StorageBackend, tmp_path: Path, subject: str
 ) -> None:
-    from agent_source_fixtures import source_item_fixture
-
-    await repo.put("ingest.source_items", "actual-item", source_item_fixture("actual-item").storage_record())
+    await ingest_notice_material(repo, tmp_path)
 
     def refuse(request: httpx.Request) -> httpx.Response:
         raise AssertionError("Foreign material receipt cannot authorize HTTP")
@@ -173,10 +215,7 @@ async def test_real_ops_no_session_cannot_settle_from_another_material_receipt(
 async def test_real_ops_no_session_reuses_its_matching_material_receipt_without_new_http(
     repo: StorageBackend, tmp_path: Path
 ) -> None:
-    from agent_source_fixtures import source_item_fixture
-
-    source = source_item_fixture("actual-item").storage_record()
-    await repo.put("ingest.source_items", "actual-item", source)
+    source = (await ingest_notice_material(repo, tmp_path)).storage_record()
     calls = 0
 
     def respond(request: httpx.Request) -> httpx.Response:
