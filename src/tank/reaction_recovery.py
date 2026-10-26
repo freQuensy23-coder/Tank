@@ -182,6 +182,7 @@ class RecoveryBackfillProjection(DomainModel):
     anchor: str | None
     anchor_prec: str | None = None
     anchor_prec_reason: str | None = None
+    anchor_bucket_anchor: Literal["START", "END", "UNSPECIFIED"] | None = None
     finished_at: RecoveryStorageKey
     finished_at_prec: str | None = None
     finished_at_prec_reason: str | None = None
@@ -237,6 +238,8 @@ def recovery_eligibility(evidence: ReactionRecoveryEvidence) -> ReactionRecovery
         or source.finished_at.precision != "COLLECTION_ONLY"
         or source.anchor.value is None
         or source.anchor.precision is None
+        or source.anchor.precision.startswith("BUCKET(")
+        and source.anchor.bucket_anchor not in {"START", "END"}
     ):
         return ReactionRecoveryUnresolved(kind="UNRESOLVED", reason="SOURCE_CLOCK_UNREPORTED")
     if (source.event_id, source.token_id) != target[
@@ -257,11 +260,14 @@ def recovery_eligibility(evidence: ReactionRecoveryEvidence) -> ReactionRecovery
         or checkpoint.captured_at.precision != "COLLECTION_ONLY"
         or anchor.value is None
         or anchor.precision is None
+        or anchor.precision.startswith("BUCKET(")
+        and anchor.bucket_anchor not in {"START", "END"}
     ):
         return ReactionRecoveryUnresolved(kind="UNRESOLVED", reason="CHECKPOINT_CLOCK_UNREPORTED")
     if (
         parse_time(anchor.value) != parse_time(source.anchor.value)
         or anchor.precision != source.anchor.precision
+        or anchor.bucket_anchor != source.anchor.bucket_anchor
     ):
         return ReactionRecoveryUnresolved(kind="UNRESOLVED", reason="CHECKPOINT_SCOPE_MISMATCH")
     if parse_time(checkpoint.captured_at.value) >= parse_time(source.finished_at.value):

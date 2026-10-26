@@ -411,3 +411,41 @@ async def test_native_backfill_cannot_borrow_document_immutability_metadata() ->
     result = admit_recovery_witnesses(request, rows)
     assert isinstance(result, ReactionRecoveryUnresolved)
     assert result.reason == "WITNESS_UNADMITTED"
+
+
+@pytest.mark.parametrize("orientation", [None, "UNSPECIFIED", "END"])
+def test_unknown_or_different_bucket_orientation_cannot_establish_source_scope(
+    orientation: str | None,
+) -> None:
+    fields = recovery_evidence_fields()
+    source = fields["source"]
+    checkpoint = fields["checkpoint"]
+    assert isinstance(source, dict) and isinstance(checkpoint, dict)
+    source["anchor"] = Timestamp("2026-10-19T00:00:00Z", "BUCKET(1h)", bucket_anchor=orientation).model_dump(
+        mode="json"
+    )
+    checkpoint["anchor"] = {
+        "type": "T0",
+        **Timestamp("2026-10-19T00:00:00Z", "BUCKET(1h)", bucket_anchor="START").fields("ts"),
+    }
+    result = recovery_eligibility(ReactionRecoveryEvidence.model_validate(fields))
+    assert result.kind == "UNRESOLVED"
+    assert result.reason == (
+        "CHECKPOINT_SCOPE_MISMATCH" if orientation == "END" else "SOURCE_CLOCK_UNREPORTED"
+    )
+
+
+def test_source_projection_preserves_reported_bucket_orientation() -> None:
+    source = recovery_backfill_from_record(
+        {
+            "event_id": "event",
+            "token_id": "token",
+            "backfill_id": "source",
+            "status": "FAILED",
+            "anchor": "2026-10-19T00:00:00Z",
+            "anchor_prec": "BUCKET(1h)",
+            "anchor_bucket_anchor": "END",
+            **collection_clock("2026-10-20T12:00:00Z").fields("finished_at"),
+        }
+    )
+    assert source.anchor.bucket_anchor == "END"
