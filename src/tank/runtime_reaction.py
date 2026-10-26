@@ -10,7 +10,7 @@ from typing import Protocol, Self
 from pydantic import Field, JsonValue, model_validator
 
 from tank.contracts import DomainModel
-from tank.contracts.jobs import JobClaimRevision, JobClaimScope, JobClaimState, JobEnvelope
+from tank.contracts.jobs import DependencyState, JobClaimScope, JobClaimState, JobEnvelope
 from tank.contracts.json import decode_json
 from tank.contracts.scheduler_commands import (
     InitialReactionCommand,
@@ -265,7 +265,9 @@ async def _dependencies_ready(queue: ReactionQueue, dependencies: list[str]) -> 
         if record is None:
             return False
         try:
-            state = JobClaimRevision.from_document(record)
+            state = DependencyState.model_validate(
+                {field: record[field] for field in DependencyState.model_fields if field in record}
+            )
         except (KeyError, TypeError, ValueError):
             return False
         if state.job_id != identity or state.status != "DONE":
@@ -368,6 +370,10 @@ def validate_reaction_receipt(
     return receipt
 
 
+def reaction_coordination_key(target: ReactionTarget) -> str:
+    return "reaction-queue:" + sha256(target.model_dump(mode="json"))
+
+
 async def capture_reaction_job(
     scheduler: ReactionCapturePort,
     queue: ReactionQueue,
@@ -381,7 +387,7 @@ async def capture_reaction_job(
     target = ReactionTarget(
         event_id=command.event_id, token_id=command.token_id, checkpoint=command.checkpoint
     )
-    async with queue.lock("reaction-queue:" + sha256(target.model_dump(mode="json"))):
+    async with queue.lock(reaction_coordination_key(target)):
         record = await queue.get("ops.jobs", invocation.context.claim.job_id)
         if record is None:
             raise ReactionClaimLost("Reaction queue claim is no longer available")
