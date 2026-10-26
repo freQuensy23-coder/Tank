@@ -4489,7 +4489,7 @@ class ObservedConditionVolatilityState(DomainModel):
 class UnavailableConditionVolatilityState(DomainModel):
     status: Literal["UNAVAILABLE"]
     value: None
-    reason: Literal["INCOMPLETE", "INSUFFICIENT_HISTORY", "DEGENERATE_HISTORY"]
+    reason: Literal["INCOMPLETE", "INSUFFICIENT_HISTORY", "DEGENERATE_HISTORY", "NOT_ESTIMABLE"]
 
 
 class ConditionVolatilityCompression(DomainModel):

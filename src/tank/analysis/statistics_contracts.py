@@ -94,7 +94,7 @@ class DecimalBounds(DomainModel):
         return self
 
 
-RangeUnavailableReason = Literal["INCOMPLETE", "INSUFFICIENT_HISTORY", "DEGENERATE_HISTORY"]
+RangeUnavailableReason = Literal["INCOMPLETE", "INSUFFICIENT_HISTORY", "DEGENERATE_HISTORY", "NOT_ESTIMABLE"]
 
 
 class FloatRange(DomainModel):
