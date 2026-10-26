@@ -230,8 +230,11 @@ def test_actual_derivative_producer_and_typed_selection_preserve_native_endpoint
     )["derivatives"]["windows"]["W1H"]["synchronized"]
     assert isinstance(selected.start, SelectedOIEndpoint)
     assert isinstance(selected.end, SelectedOIEndpoint)
-    assert selected.start.observation.native_quantity.value == actual["oi_native_start"] == Decimal(10)
-    assert selected.end.observation.native_quantity.value == actual["oi_native_end"] == Decimal(12)
+    assert actual["oi_native_start"] == "10" and actual["oi_native_end"] == "12"
+    assert (
+        selected.start.observation.native_quantity.value == Decimal(actual["oi_native_start"]) == Decimal(10)
+    )
+    assert selected.end.observation.native_quantity.value == Decimal(actual["oi_native_end"]) == Decimal(12)
     assert actual["oi_usd_start"] is None and actual["oi_usd_end"] is None
 
 
