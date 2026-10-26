@@ -402,3 +402,103 @@ async def test_unproved_zero_claim_attempt_is_quarantined_without_inventing_one(
     terminal = await repo.get("ops.jobs", job.job_id)
     assert terminal is not None and terminal["status"] == "FAILED" and terminal["attempts"] == 0
     assert await queue.claim() is None
+
+
+async def test_worker_completion_preserves_receipts_and_refuses_second_ack(repo: StorageBackend) -> None:
+    from test_job_claim_revision import requeued_job_with_partial_receipt_clock
+
+    from tank.runtime_dispatch_contracts import ClaimedWork
+    from tank.runtime_worker_repository import RepositoryWorkerQueue
+    from tank.time_precision import collection_clock
+    from tank.util import canonical_json
+
+    _, job_id = await requeued_job_with_partial_receipt_clock(repo)
+    original = await repo.get("ops.jobs", job_id)
+    assert original is not None
+    original["payload"] = {"item_id": "item"}
+    await repo.put("ops.jobs", job_id, original)
+    queue = RepositoryWorkerQueue(repo)
+    work = await queue.claim()
+    assert isinstance(work, ClaimedWork)
+    observed = collection_clock()
+    completed = await queue.complete(work.scope(), {"accepted": True}, observed)
+    assert completed is not None and completed.status == "DONE"
+    stored = await repo.get("ops.jobs", job_id)
+    assert stored is not None and stored["result"] == {"accepted": True}
+    assert stored["finished_at"] == observed.value
+    assert canonical_json(stored["host_question_failure_refusals"]) == canonical_json(
+        original["host_question_failure_refusals"]
+    )
+    assert await queue.complete(work.scope(), {"accepted": False}, collection_clock()) is None
+    assert await repo.get("ops.jobs", job_id) == stored
+
+
+@pytest.mark.parametrize("changed_field", ["attempts", "payload", "status"])
+async def test_stale_worker_cannot_complete_or_fail_changed_claim(
+    repo: StorageBackend, changed_field: str
+) -> None:
+    from tank.runtime_dispatch_contracts import ClaimedWork, WorkerFailureRequest
+    from tank.runtime_retry import ApplicationBackoff
+    from tank.runtime_worker_repository import RepositoryWorkerQueue
+    from tank.time_precision import collection_clock
+
+    job = await JobRepository(repo).enqueue("TELEGRAM_ANSWER", {"question_id": "question"}, "stale")
+    queue = RepositoryWorkerQueue(repo)
+    work = await queue.claim()
+    assert isinstance(work, ClaimedWork)
+    changed = await repo.get("ops.jobs", job.job_id)
+    assert changed is not None
+    if changed_field == "attempts":
+        changed["attempts"] = 2
+    elif changed_field == "payload":
+        changed["payload"] = {"question_id": "other"}
+    else:
+        changed["status"] = "QUEUED"
+    await repo.put("ops.jobs", job.job_id, changed)
+    assert await queue.complete(work.scope(), None, collection_clock()) is None
+    assert (
+        await queue.fail(
+            WorkerFailureRequest(
+                claim=work.scope(),
+                error_class="RuntimeError",
+                schedule=ApplicationBackoff(basis="APPLICATION_BACKOFF", attempts=work.job.attempts),
+                observed_at=collection_clock(),
+            )
+        )
+        is None
+    )
+    assert await repo.get("ops.jobs", job.job_id) == changed
+
+
+@pytest.mark.parametrize("terminal", [False, True])
+async def test_worker_failure_uses_actual_attempt_and_declared_zero_delay(
+    repo: StorageBackend, terminal: bool
+) -> None:
+    from tank.runtime_dispatch_contracts import ClaimedWork, WorkerFailureRequest
+    from tank.runtime_retry import DeliveryRetryDelay
+    from tank.runtime_worker_repository import RepositoryWorkerQueue
+    from tank.time_precision import collection_clock
+
+    job = await JobRepository(repo).enqueue(
+        "TELEGRAM_ANSWER", {"question_id": "question"}, "failure", max_attempts=1 if terminal else 2
+    )
+    queue = RepositoryWorkerQueue(repo)
+    work = await queue.claim()
+    assert isinstance(work, ClaimedWork)
+    observed = collection_clock()
+    result = await queue.fail(
+        WorkerFailureRequest(
+            claim=work.scope(),
+            error_class="DeliveryError",
+            schedule=DeliveryRetryDelay(basis="DELIVERY_DIRECTIVE", seconds=0),
+            observed_at=observed,
+        )
+    )
+    assert result is not None and result.status == ("FAILED" if terminal else "QUEUED")
+    assert result.attempts == 1 and result.run_after == observed.value
+    assert result.finished_at == (observed.value if terminal else None)
+    stored = await repo.get("ops.jobs", job.job_id)
+    assert stored is not None and stored["last_error"] == "DeliveryError"
+    if not terminal:
+        reclaimed = await queue.claim()
+        assert isinstance(reclaimed, ClaimedWork) and reclaimed.job.attempts == 2

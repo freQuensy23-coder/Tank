@@ -1,6 +1,8 @@
 """Queue wire admission for concrete worker execution and sparse dependency facts."""
 
-from pydantic import ValidationError
+from datetime import timedelta
+
+from pydantic import JsonValue, ValidationError
 
 from tank.contracts.job_repository import JobRepository, QueueStore
 from tank.contracts.jobs import ClaimedJob, InvalidJobClaim, JobEnvelope, JobMetadata
@@ -17,8 +19,9 @@ from tank.runtime_dispatch_contracts import (
     RunningJobClaim,
     RuntimeCommandRecord,
     WaitingDependencies,
+    WorkerFailureRequest,
 )
-from tank.time_precision import Timestamp
+from tank.time_precision import Timestamp, offset_schedule, timestamp_owned_fields
 from tank.util import parse_time, sha256
 
 
@@ -170,3 +173,65 @@ class RepositoryWorkerQueue:
             JobEnvelope.model_validate(updated)
             await self.store.put("ops.jobs", current.job_id, updated)
             return True
+
+    async def complete(
+        self,
+        claim: RunningJobClaim,
+        result_wire: JsonValue,
+        observed_at: Timestamp,
+    ) -> JobEnvelope | None:
+        """Persist only the serialized result of an acknowledged, still-owned command."""
+        claim = RunningJobClaim.model_validate(claim)
+        observed_at = Timestamp.model_validate(observed_at)
+        if observed_at.value is None:
+            raise ValueError("Worker completion requires an actual controller observation")
+        async with self.store.lock("job:" + claim.job_id):
+            document = await self.store.get("ops.jobs", claim.job_id)
+            if document is None:
+                return None
+            current = JobEnvelope.model_validate(document)
+            if not self.owns_running_claim(claim, current):
+                return None
+            updated = replace_job_clock(document, "finished_at", observed_at)
+            updated.update(status="DONE", result=result_wire)
+            completed = JobEnvelope.model_validate(updated)
+            await self.store.put("ops.jobs", claim.job_id, updated)
+            return completed
+
+    async def fail(self, request: WorkerFailureRequest) -> JobEnvelope | None:
+        request = WorkerFailureRequest.model_validate(request)
+        claim = request.claim
+        observed_value = request.observed_at.value
+        if observed_value is None:
+            raise ValueError("Worker failure requires an actual controller observation")
+        async with self.store.lock("job:" + claim.job_id):
+            document = await self.store.get("ops.jobs", claim.job_id)
+            if document is None:
+                return None
+            current = JobEnvelope.model_validate(document)
+            if not self.owns_running_claim(claim, current):
+                return None
+            expired = current.expires_at is not None and parse_time(current.expires_at) <= parse_time(
+                observed_value
+            )
+            status = (
+                "EXPIRED" if expired else "FAILED" if current.attempts >= current.max_attempts else "QUEUED"
+            )
+            updated = replace_job_clock(
+                document,
+                "run_after",
+                offset_schedule(request.observed_at, timedelta(seconds=request.schedule.seconds)),
+            )
+            finished = (
+                request.observed_at if status in {"FAILED", "EXPIRED"} else Timestamp(None, None, "PENDING")
+            )
+            if finished.value is None:
+                owned = timestamp_owned_fields("finished_at")
+                updated = {key: value for key, value in updated.items() if key not in owned}
+                updated.update(finished.fields("finished_at"))
+            else:
+                updated = replace_job_clock(updated, "finished_at", finished)
+            updated.update(status=status, last_error=request.error_class)
+            failed = JobEnvelope.model_validate(updated)
+            await self.store.put("ops.jobs", claim.job_id, updated)
+            return failed

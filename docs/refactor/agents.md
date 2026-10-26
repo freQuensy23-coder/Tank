@@ -1880,3 +1880,24 @@ sender migration, whole worker dispatch/body typing and assigned vendor programs
 remain active. The worker annotation is not an independently strict body claim.
 New independent reaction/milestone adapters and narrowed queue dependencies will
 join only after this preserved checkpoint, through their canonical peer commits.
+
+Worker queue completion/failure checkpoint (inactive dispatch branch)
+
+RepositoryWorkerQueue now guards completion and failure writes with actual job
+identity, kind, RUNNING status, claimed attempt and payload digest. Results remain
+JSON only at the actual ops.jobs.result persistence boundary; closed application
+result consumption is still pending in the whole worker migration. Sparse updates
+preserve retained receipt bytes and replace only owned lifecycle clock families.
+A missing completion clock is the pending phase, not an occurred timestamp.
+ApplicationBackoff must match the claimed attempt; a declared delivery delay of
+zero remains zero. Unknown/mutated ownership cannot acknowledge or fail another
+claim, and a second completion cannot overwrite the first result.
+
+Independent strict source/test three-target checking and Ruff pass. The first
+27-case unit run exposed an invalid attempt to use an occurrence-only helper for
+the pending completion clock (26 passed/one failed); after phase-correct sparse
+replacement all 27 units passed in 4.92 seconds and all 14 actual PostgreSQL cases
+passed in 8.53 seconds, zero skips with wrapper source guards. Evidence is external
+worker-completion-fixed-unit and worker-completion-actual. This qualifies only the
+queue lifecycle adapter; Runtime.worker activation, send_message orchestration,
+remaining Session body typing and assigned vendor work remain open.

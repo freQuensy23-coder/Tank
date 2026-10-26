@@ -19,6 +19,7 @@ from tank.runtime_contracts import (
     ScoutReviewJob,
     TelegramAnswerJob,
 )
+from tank.runtime_retry import ApplicationBackoff, WorkerRetrySchedule
 from tank.time_precision import Timestamp
 
 type RuntimeJobKind = Literal[
@@ -186,4 +187,19 @@ class RequeueRequest(DomainModel):
     def actual_schedule(self) -> Self:
         if self.not_before.value is None:
             raise ValueError("Worker requeue requires an actual schedule boundary")
+        return self
+
+
+class WorkerFailureRequest(DomainModel):
+    claim: RunningJobClaim
+    error_class: str = Field(min_length=1, pattern=r"\S")
+    schedule: WorkerRetrySchedule
+    observed_at: Timestamp
+
+    @model_validator(mode="after")
+    def actual_failure_scope(self) -> Self:
+        if self.observed_at.value is None:
+            raise ValueError("Worker failure requires an actual controller observation")
+        if isinstance(self.schedule, ApplicationBackoff) and self.schedule.attempts != self.claim.attempts:
+            raise ValueError("Application backoff differs from its actual claimed attempt")
         return self
