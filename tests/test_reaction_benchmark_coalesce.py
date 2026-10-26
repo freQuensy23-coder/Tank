@@ -6,11 +6,11 @@ from pathlib import Path
 import pytest
 from source_support import fixture_versions
 
-import tank.analysis.truth as truth_module
+from tank.contracts.scheduler_commands import InitialReactionCommand, reaction_command_from_wire
 from tank.scheduler import Scheduler
 from tank.settings import Settings
 from tank.storage import MemoryRepository
-from tank.util import iso, utcnow
+from tank.util import iso, parse_time, utcnow
 
 
 def klines(token, iid, end, minutes=180):
@@ -46,6 +46,11 @@ class KlineMarket:
 
     async def capture_changes(self, since=None, end=None):
         for change in self.changes:
+            observed = parse_time(change["observed_at"])
+            if since is not None and observed < parse_time(since):
+                continue
+            if end is not None and observed >= parse_time(end):
+                continue
             yield change
 
 
@@ -66,7 +71,6 @@ async def test_benchmark_checkpoint_uses_base_klines_only_outside_analysis_set(
     anchor = end - timedelta(hours=2)
     repo = MemoryRepository()
     await seed(repo, anchor, ["test:T", "bitcoin:BTC"] if in_analysis_set else ["test:T"])
-    monkeypatch.setattr(truth_module, "compute_market_truth", lambda snapshot, config=None: {})
     market = KlineMarket(end)
     for row in klines("bitcoin:BTC", "binance:spot:BTCUSDT", end):
         row = {k: v for k, v in row.items() if k != "token_id"}
@@ -80,7 +84,9 @@ async def test_benchmark_checkpoint_uses_base_klines_only_outside_analysis_set(
         "checkpoint": "POST_1H",
         "anchor": {"type": "T1", "ts": iso(anchor), "ts_prec": "EXACT"},
     }
-    data = (await scheduler._measure_reaction(payload))["checkpoint_data"]
+    command = reaction_command_from_wire(payload)
+    assert isinstance(command, InitialReactionCommand)
+    data = (await scheduler._measure_reaction(command))["checkpoint_data"]
     assert {"oi_native_start", "oi_native_end", "oi_venues"} <= set(data)
     if in_analysis_set:
         assert "benchmark" not in data and data["spot_method"] == "NONE"
@@ -96,7 +102,9 @@ async def test_benchmark_checkpoint_uses_base_klines_only_outside_analysis_set(
     }
 
 
-async def test_late_changes_keep_one_queued_revision_per_checkpoint(tmp_path: Path) -> None:
+async def test_late_changes_keep_one_queued_revision_per_checkpoint(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     end = utcnow().replace(second=0, microsecond=0)
     anchor = end - timedelta(hours=2)
     repo = MemoryRepository()
@@ -124,7 +132,7 @@ async def test_late_changes_keep_one_queued_revision_per_checkpoint(tmp_path: Pa
                 "event_id": "e",
                 "token_id": "test:T",
                 "anchor": iso(anchor),
-                "observed_at": iso(end - timedelta(minutes=10 - n)),
+                "observed_at": iso(end + timedelta(minutes=n)),
                 "change_id": f"CAP-LIVE-{n}",
                 "status": "AVAILABLE",
             }
@@ -133,10 +141,16 @@ async def test_late_changes_keep_one_queued_revision_per_checkpoint(tmp_path: Pa
     jobs = [j async for j in repo.iter_all("ops.jobs", filters={"type": "REACTION_CAPTURE"})]
     assert sorted(j["payload"]["checkpoint"] for j in jobs) == ["POST_1H", "PRE_1H"]
 
+    import tank.storage as storage_module
+
+    advanced = end + timedelta(hours=7)
+    monkeypatch.setattr(storage_module, "utcnow", lambda: advanced)
+    assert await repo.claim_job() is None
     for job in jobs:
-        await repo.put("ops.jobs", job["job_id"], {**job, "status": "DONE"})
-    market.changes = [dict(market.changes[0], change_id="CAP-LIVE-9", observed_at=iso(end))]
-    await scheduler.detect_late_data(end + timedelta(minutes=9))
+        terminal = await repo.get("ops.jobs", job["job_id"])
+        assert terminal is not None and terminal["status"] == "EXPIRED"
+    market.changes = [dict(market.changes[0], change_id="CAP-LIVE-9", observed_at=iso(advanced))]
+    await scheduler.detect_late_data(advanced)
     jobs = [
         j async for j in repo.iter_all("ops.jobs", filters={"type": "REACTION_CAPTURE", "status": "QUEUED"})
     ]

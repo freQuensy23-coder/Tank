@@ -13,13 +13,14 @@ from tank.analysis.page_access import LivePageAccess
 from tank.analysis.watch_contracts import WatchCondition, WatchLeaf
 from tank.contracts.milestone_checks import MilestoneCheckCommand
 from tank.contracts.scheduler_commands import ReactionTarget, reaction_command_from_wire
-from tank.contracts.scheduler_results import CapturedReaction, CoalescedReaction
+from tank.contracts.scheduler_results import CapturedReaction
 from tank.models import Record
 from tank.runtime_contracts import ConditionFiredMessage, parse_agent_message
-from tank.scheduler import Scheduler
+from tank.runtime_reaction import ReactionCoalescingDeferred, ReactionJobInvocation, capture_reaction_job
+from tank.scheduler import REACTION_RETRY_S, Scheduler
 from tank.settings import Settings
 from tank.storage import MemoryRepository
-from tank.time_precision import Timestamp, propagate_timestamp
+from tank.time_precision import Timestamp, collection_clock, propagate_timestamp
 from tank.util import clock_iso, iso, sha256, utcnow
 
 
@@ -1826,8 +1827,7 @@ async def test_late_revision_is_deferred_so_following_late_completions_fold_into
 
 @pytest.mark.asyncio
 async def test_queued_duplicate_late_revision_is_skipped_at_run_time() -> None:
-    """03 §8.6: with another automatic revision of the same checkpoint still
-    queued, a running one returns at once; the queued one measures all data."""
+    """A pending EDF peer defers an actual claim without declaring capture success."""
     repo = MemoryRepository()
     payload = {
         "event_id": "e",
@@ -1836,8 +1836,13 @@ async def test_queued_duplicate_late_revision_is_skipped_at_run_time() -> None:
         "automatic_revision": True,
         "reason": "Observed capture completion",
     }
+    older = await repo.enqueue(
+        "REACTION_CAPTURE", dict(payload, change_id="older"), "reaction-late:older:PRE_4H", priority=2
+    )
+    claimed = await repo.claim_job()
+    assert claimed is not None and claimed["job_id"] == older["job_id"]
     queued = await repo.enqueue(
-        "REACTION_CAPTURE", dict(payload, change_id="newer"), "reaction-late:x:PRE_4H", priority=2
+        "REACTION_CAPTURE", dict(payload, change_id="newer"), "reaction-late:x:PRE_4H", priority=1
     )
     market = SimpleNamespace(snapshot=AsyncMock(side_effect=AssertionError("must not measure")))
     scheduler = Scheduler(
@@ -1848,8 +1853,17 @@ async def test_queued_duplicate_late_revision_is_skipped_at_run_time() -> None:
         thresholds=Settings(_env_file=None).thresholds(),
         versions=fixture_versions(),
     )
-    result = await scheduler.reaction_capture(reaction_command_from_wire(dict(payload, change_id="older")))
-    assert isinstance(result, CoalescedReaction) and result.coalesced_into == queued["job_id"]
+    with pytest.raises(ReactionCoalescingDeferred) as pending:
+        await capture_reaction_job(
+            scheduler,
+            repo,
+            ReactionJobInvocation.from_record(claimed),
+            clock=collection_clock,
+            retry_delay=timedelta(seconds=REACTION_RETRY_S),
+        )
+    assert pending.value.pending.coalesced_into == queued["job_id"]
+    unchanged = await repo.get("ops.jobs", older["job_id"])
+    assert unchanged is not None and unchanged["status"] == "RUNNING" and "result" not in unchanged
     market.snapshot.assert_not_called()
 
 
