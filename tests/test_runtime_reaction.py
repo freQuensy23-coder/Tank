@@ -12,6 +12,7 @@ from test_storage import repo as repo
 from tank.contracts.job_repository import JobRepository
 from tank.contracts.scheduler_commands import (
     InitialReactionCommand,
+    ManualReactionRevisionCommand,
     ReactionCaptureCommand,
     RevisedReactionCommand,
 )
@@ -26,6 +27,8 @@ def initial_payload() -> dict[str, JsonValue]:
         "token_id": "token",
         "checkpoint": "PRE_1H",
         "anchor": {"type": "T1", "ts": "2026-10-26T12:00:00Z"},
+        "cutoff": "2026-10-26T11:00:00Z",
+        "retro": True,
     }
 
 
@@ -33,12 +36,17 @@ def test_queue_projection_preserves_unreported_scheduling_and_anchor_precision()
     payload = initial_payload() | {"_depends_on": ["actual-job"]}
     command = reaction_job_command(payload)
     assert isinstance(command, InitialReactionCommand)
-    assert command.model_fields_set == {"event_id", "token_id", "checkpoint", "anchor"}
+    assert command.model_fields_set == {"event_id", "token_id", "checkpoint", "anchor", "cutoff", "retro"}
     assert command.anchor.model_fields_set == {"type", "ts"}
     assert command.anchor.timestamp.precision is None
     assert command.anchor.timestamp.precision_reason == "INCOMPLETE"
-    explicit = reaction_job_command(initial_payload() | {"retro": False, "cutoff": None})
-    assert explicit.model_fields_set == command.model_fields_set | {"retro", "cutoff"}
+    explicit = reaction_job_command(
+        initial_payload() | {"retro": False, "cutoff_prec": None, "cutoff_prec_reason": "INCOMPLETE"}
+    )
+    assert isinstance(explicit, InitialReactionCommand)
+    assert explicit.model_fields_set == command.model_fields_set | {"cutoff_prec", "cutoff_prec_reason"}
+    assert explicit.retro is False
+    assert "cutoff_prec" not in command.model_fields_set
 
 
 def test_changed_job_projects_actual_identity_without_synthesizing_anchor() -> None:
@@ -58,7 +66,7 @@ def test_changed_job_projects_actual_identity_without_synthesizing_anchor() -> N
     assert "anchor" not in type(command).model_fields
 
 
-@pytest.mark.parametrize("field", ["event_id", "token_id", "checkpoint", "anchor"])
+@pytest.mark.parametrize("field", ["event_id", "token_id", "checkpoint", "anchor", "cutoff", "retro"])
 async def test_actual_worker_rejects_missing_capture_fact_without_effects(
     repo: StorageBackend,
     tmp_path: Path,
@@ -152,3 +160,21 @@ async def test_actual_worker_revalidates_real_checkpoint_receipt_before_storage(
         assert not router.calls
     assert await repo.get("out.reaction_checkpoints", "event:token:PRE_1H:1") == stored
     assert len(await repo.list("out.reaction_checkpoints")) == 1
+
+
+@pytest.mark.parametrize("field", ["cutoff", "retro"])
+def test_initial_queue_schedule_facts_cannot_be_reported_null(field: str) -> None:
+    with pytest.raises(ValidationError):
+        reaction_job_command(initial_payload() | {field: None})
+
+
+def test_manual_queued_revision_retains_the_declared_schedule_contract() -> None:
+    payload = initial_payload() | {"revision": 2, "reason": "Operator correction"}
+    command = reaction_job_command(payload)
+    assert isinstance(command, ManualReactionRevisionCommand)
+    assert command.revision == 2 and command.anchor is not None
+    for field in ("anchor", "cutoff", "retro"):
+        incomplete = dict(payload)
+        del incomplete[field]
+        with pytest.raises(ValidationError):
+            reaction_job_command(incomplete)

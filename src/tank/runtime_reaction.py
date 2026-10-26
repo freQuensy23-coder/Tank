@@ -2,12 +2,13 @@
 
 from typing import Protocol
 
-from pydantic import JsonValue
+from pydantic import Field, JsonValue
 
 from tank.contracts.json import decode_json
 from tank.contracts.scheduler_commands import (
     InitialReactionCommand,
     ManualReactionRevisionCommand,
+    ReactionAnchorFacts,
     ReactionCaptureCommand,
     RevisedReactionCommand,
     reaction_command_from_wire,
@@ -25,11 +26,14 @@ from tank.runtime_contracts import JobPayload
 
 
 class InitialReactionJob(InitialReactionCommand, JobPayload):
-    pass
+    cutoff: str = Field(...)
+    retro: bool = Field(...)
 
 
 class ManualReactionJob(ManualReactionRevisionCommand, JobPayload):
-    pass
+    anchor: ReactionAnchorFacts = Field(...)
+    cutoff: str = Field(...)
+    retro: bool = Field(...)
 
 
 class ChangedReactionJob(RevisedReactionCommand, JobPayload):
