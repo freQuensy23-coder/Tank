@@ -2,9 +2,13 @@
 
 import stat
 import subprocess
-from dataclasses import dataclass
 from pathlib import Path
+from typing import Annotated
 
+from pydantic import Field
+
+from tank.contracts import DomainModel
+from tank.deployment.api_contracts import SourcePath
 from tank.deployment.package_runtime import read_control_file
 from tank.deployment.runtime import PublisherRuntimeError, observe_runtime
 from tank.deployment.runtime_contracts import RuntimeInvocation, SourceArchiveEvidence
@@ -12,10 +16,12 @@ from tank.deployment.runtime_contracts import RuntimeInvocation, SourceArchiveEv
 SOURCE_ROOTS = ("src", "scripts/deploy", "pyproject.toml", "uv.lock")
 
 
-@dataclass(frozen=True)
-class GitSource:
-    path: str
-    object_id: str
+type GitObjectID = Annotated[str, Field(pattern=r"^[0-9a-f]{40}$")]
+
+
+class GitSource(DomainModel):
+    path: SourcePath
+    object_id: GitObjectID
 
 
 def git_output(repository: Path, *arguments: str) -> bytes:

@@ -35,28 +35,52 @@ jobs:
         run: |
           sha=$(git rev-parse --verify "${INPUT_SHA:-HEAD}^{commit}")
           git merge-base --is-ancestor "$sha" origin/main || { echo "$sha is not a commit of main"; exit 1; }
-          cp -R scripts/deploy "$RUNNER_TEMP/tank-orchestrator"
+          orchestrator=$(git rev-parse HEAD)
+          mkdir "$RUNNER_TEMP/tank-orchestrator"
+          git archive "$orchestrator" src scripts/deploy pyproject.toml uv.lock > "$RUNNER_TEMP/tank-orchestrator.tar"
+          tar -xf "$RUNNER_TEMP/tank-orchestrator.tar" -C "$RUNNER_TEMP/tank-orchestrator"
           git checkout -q "$sha"
           echo "sha=$sha" >> "$GITHUB_OUTPUT"
+          echo "orchestrator_sha=$orchestrator" >> "$GITHUB_OUTPUT"
       - name: Wait for the CI images of the commit
         env:
           GH_TOKEN: ${{ github.token }}
           SHA: ${{ steps.target.outputs.sha }}
+          ORCHESTRATOR_SHA: ${{ steps.target.outputs.orchestrator_sha }}
         run: |
+          for sha in $(printf '%s\n' "$SHA" "$ORCHESTRATOR_SHA" | sort -u); do
           for _ in $(seq 1 90); do
-            state=$(gh api "repos/${GITHUB_REPOSITORY}/actions/workflows/ci.yml/runs?head_sha=${SHA}&event=push" \
+            state=$(gh api "repos/${GITHUB_REPOSITORY}/actions/workflows/ci.yml/runs?head_sha=${sha}&event=push" \
               -q '[.workflow_runs[] | .status + "/" + (.conclusion // "")][0] // "missing"')
             case "$state" in
-              completed/success) exit 0 ;;
+              completed/success) break ;;
               completed/*) echo "CI of ${SHA} finished: ${state}"; exit 1 ;;
             esac
             sleep 20
           done
-          echo "CI of ${SHA} did not finish"; exit 1
+          [ "$state" = completed/success ] || { echo "CI of ${sha} did not finish"; exit 1; }
+          done
+      - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884
+        with:
+          version: "0.11.7"
+          python-version: "3.13.13"
+          enable-cache: true
+      - name: Install the frozen orchestrator runtime
+        env:
+          UV_PROJECT_ENVIRONMENT: ${{ runner.temp }}/tank-publisher-env
+        run: uv sync --project "$RUNNER_TEMP/tank-orchestrator" --python 3.13.13 --frozen --no-install-project
       - name: Package the selected X worker with the main orchestrator
         env:
           SHA: ${{ steps.target.outputs.sha }}
-        run: python3 "$RUNNER_TEMP/tank-orchestrator/apify_deploy.py" package "$SHA" "$RUNNER_TEMP/$SHA"
+          ORCHESTRATOR_SHA: ${{ steps.target.outputs.orchestrator_sha }}
+          UV_PROJECT_ENVIRONMENT: ${{ runner.temp }}/tank-publisher-env
+          PYTHONPATH: ${{ runner.temp }}/tank-orchestrator/src
+          PYTHONDONTWRITEBYTECODE: "1"
+        run: >-
+          uv run --project "$RUNNER_TEMP/tank-orchestrator" --frozen --no-sync python -m tank.deployment.cli package
+          --orchestrator-sha "$ORCHESTRATOR_SHA" --selected-release-sha "$SHA"
+          --runtime-root "$RUNNER_TEMP/tank-orchestrator" --repository "$GITHUB_WORKSPACE"
+          --destination "$RUNNER_TEMP/$SHA" --image-repository "ghcr.io/${GITHUB_REPOSITORY,,}/tank"
       - name: Deploy on the production host
         env:
           SSH_KEY: ${{ secrets.PROD_SSH_KEY }}
@@ -64,6 +88,7 @@ jobs:
           SSH_HOST: ${{ secrets.PROD_SSH_HOST }}
           SSH_KNOWN_HOSTS: ${{ secrets.PROD_SSH_KNOWN_HOSTS }}
           SHA: ${{ steps.target.outputs.sha }}
+          ORCHESTRATOR_SHA: ${{ steps.target.outputs.orchestrator_sha }}
         run: |
           install -m 700 -d ~/.ssh
           printf '%s\n' "$SSH_KEY" > ~/.ssh/id_deploy && chmod 600 ~/.ssh/id_deploy
@@ -71,5 +96,5 @@ jobs:
           ssh_opts=(-i ~/.ssh/id_deploy -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes)
           ssh "${ssh_opts[@]}" "$SSH_USER@$SSH_HOST" "install -d -m 700 /srv/tank-deploy/releases"
           scp -r "${ssh_opts[@]}" "$RUNNER_TEMP/$SHA" "$SSH_USER@$SSH_HOST:/srv/tank-deploy/releases/"
-          scp "${ssh_opts[@]}" compose.yaml "$RUNNER_TEMP/tank-orchestrator/deploy.sh" "$SSH_USER@$SSH_HOST:/srv/tank-deploy/"
-          ssh "${ssh_opts[@]}" "$SSH_USER@$SSH_HOST" "/srv/tank-deploy/deploy.sh $SHA"
+          scp "${ssh_opts[@]}" compose.yaml "$RUNNER_TEMP/tank-orchestrator/scripts/deploy/deploy.sh" "$RUNNER_TEMP/tank-orchestrator/scripts/deploy/publisher_worker.sh" "$RUNNER_TEMP/tank-orchestrator/scripts/deploy/publisher_worker.bash" "$SSH_USER@$SSH_HOST:/srv/tank-deploy/"
+          ssh "${ssh_opts[@]}" "$SSH_USER@$SSH_HOST" "/srv/tank-deploy/deploy.sh $SHA $ORCHESTRATOR_SHA"
