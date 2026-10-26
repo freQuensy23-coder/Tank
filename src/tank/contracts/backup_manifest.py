@@ -43,7 +43,8 @@ class BackupManifest(DomainModel):
 
     @model_validator(mode="after")
     def inventory(self) -> Self:
-        Timestamp(self.created_at, self.created_at_prec, self.created_at_prec_reason)
+        if {"created_at_prec", "created_at_prec_reason"} & self.model_fields_set:
+            Timestamp(self.created_at, self.created_at_prec, self.created_at_prec_reason)
         if "scope" in self.model_fields_set and self.scope is None:
             raise ValueError("A declared backup scope requires text")
         if len(self.database_dumps) != 2 or set(self.database_dumps) != {"tank.dump", "oma.dump"}:
