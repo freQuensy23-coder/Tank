@@ -2,12 +2,15 @@
 
 from typing import Annotated, Literal, Self
 
-from pydantic import AliasChoices, ConfigDict, Field, JsonValue, TypeAdapter, model_validator
+from pydantic import AliasChoices, ConfigDict, Field, JsonValue, RootModel, model_validator
 
 from tank.analysis.watch_contracts import MilestoneSnapshot, TimedReviewCondition, WatchCall, WatchCondition
 from tank.contracts import DomainModel
+from tank.contracts.progress import JobFailureProgressView
+from tank.contracts.question_retirement import QuestionFailureRefusalReceipt
 from tank.contracts.scalars import TrueFlag
-from tank.time_precision import Timestamp, timestamp_owned_fields
+from tank.contracts.session_followups import FollowupRefusalTarget
+from tank.time_precision import Timestamp, propagate_timestamp, timestamp_owned_fields
 
 type BucketAnchor = Literal["START", "END", "UNSPECIFIED"]
 
@@ -209,10 +212,9 @@ class TimedReviewFiredMessage(JobPayload, ReplayBinding):
 
 type FiredConditionMessage = ConditionFiredMessage | TimedReviewFiredMessage
 
-_FIRED_CONDITIONS: TypeAdapter[FiredConditionMessage] = TypeAdapter(
-    ConditionFiredMessage | TimedReviewFiredMessage,
-    config=ConfigDict(hide_input_in_errors=True),
-)
+
+class _FiredConditionRecord(RootModel[FiredConditionMessage]):
+    model_config = ConfigDict(strict=True, hide_input_in_errors=True, revalidate_instances="always")
 
 
 class CallExpiredMessage(JobPayload, ReplayBinding):
@@ -254,7 +256,7 @@ type AgentMessage = (
 def parse_agent_message(payload: dict[str, JsonValue]) -> AgentMessage:
     match payload["kind"]:
         case "CONDITION_FIRED":
-            return _FIRED_CONDITIONS.validate_python(payload, strict=True)
+            return _FiredConditionRecord.model_validate(payload).root
         case "CALL_EXPIRED":
             return CallExpiredMessage.model_validate(payload)
         case "MILESTONE":
@@ -263,7 +265,15 @@ def parse_agent_message(payload: dict[str, JsonValue]) -> AgentMessage:
             return parse_direct_agent_message(payload)
 
 
-type JobClockField = Literal["run_after", "slot_waiting_since", "interrupted_at", "finished_at"]
+type JobClockField = Literal[
+    "run_after",
+    "slot_waiting_since",
+    "interrupted_at",
+    "finished_at",
+    "ops_progress_recorded_at",
+    "delivery_failure_recorded_at",
+    "followup_failure_recorded_at",
+]
 
 
 def replace_job_clock(
@@ -275,3 +285,306 @@ def replace_job_clock(
     result = {key: value for key, value in record.items() if key not in owned}
     result.update(timestamp.fields(field))
     return result
+
+
+class NoFailureProgress(DomainModel):
+    reason: Literal["DISABLED", "NOT_APPLICABLE"]
+
+
+class NoTerminalDelivery(DomainModel):
+    kind: Literal["NONE"]
+    reason: Literal["NOT_REQUESTED", "NOT_APPLICABLE"]
+
+
+class FailedDeliveryNotification(DomainModel):
+    kind: Literal["DELIVERY"]
+    payload: DeliveryJob
+    attempt: int = Field(ge=0)
+
+
+class FailedQuestionNotification(DomainModel):
+    kind: Literal["QUESTION"]
+    target: FollowupRefusalTarget
+
+
+class FailedAnswerNotification(DomainModel):
+    kind: Literal["ANSWER"]
+    payload: TelegramAnswerJob
+
+    @model_validator(mode="after")
+    def actual_question_identity(self) -> Self:
+        if not self.payload.question_id.strip():
+            raise ValueError("Terminal answer notification requires its actual question identity")
+        return self
+
+
+type TerminalDeliveryNotification = Annotated[
+    NoTerminalDelivery | FailedDeliveryNotification | FailedQuestionNotification | FailedAnswerNotification,
+    Field(discriminator="kind"),
+]
+
+
+class FailureRecordIdentity(DomainModel):
+    job_id: str = Field(min_length=1, pattern=r"\S")
+    job_type: str = Field(min_length=1, pattern=r"\S")
+    status: Literal["QUEUED", "RUNNING", "DONE", "FAILED", "EXPIRED"]
+
+    @classmethod
+    def from_record(cls, record: dict[str, JsonValue]) -> Self:
+        return cls.model_validate(
+            {"job_id": record["job_id"], "job_type": record["type"], "status": record["status"]}
+        )
+
+
+class FailureJobHeader(FailureRecordIdentity):
+    status: Literal["FAILED", "EXPIRED"]
+
+
+type FailureMarkerField = Literal[
+    "ops_progress_recorded_at", "delivery_failure_recorded_at", "followup_failure_recorded_at"
+]
+
+
+def read_failure_marker(record: dict[str, JsonValue], field: FailureMarkerField) -> Timestamp | None:
+    declared = timestamp_owned_fields(field).intersection(record)
+    if not declared or all(record[name] is None for name in declared):
+        return None
+    return propagate_timestamp(record, field)
+
+
+def failure_payload(record: dict[str, JsonValue]) -> dict[str, JsonValue]:
+    payload = record["payload"]
+    if not isinstance(payload, dict):
+        raise ValueError("Terminal queue failure requires its structured action payload")
+    return payload
+
+
+def failure_agent_kind(payload: dict[str, JsonValue]) -> str:
+    kind = payload["kind"]
+    if not isinstance(kind, str) or not kind.strip():
+        raise ValueError("Terminal agent message requires its declared string kind")
+    return kind
+
+
+def terminal_notification(
+    header: FailureJobHeader, record: dict[str, JsonValue], *, requested: bool
+) -> TerminalDeliveryNotification:
+    if not requested:
+        return NoTerminalDelivery(kind="NONE", reason="NOT_REQUESTED")
+    if header.job_type == "DELIVER":
+        return FailedDeliveryNotification.model_validate(
+            {
+                "kind": "DELIVERY",
+                "payload": parse_delivery_job(failure_payload(record)),
+                "attempt": record["attempts"],
+            },
+            by_name=True,
+        )
+    if header.job_type == "AGENT_MESSAGE":
+        payload = failure_payload(record)
+        if failure_agent_kind(payload) == "USER_QUESTION":
+            message = UserQuestionMessage.model_validate(payload)
+            return FailedQuestionNotification(
+                kind="QUESTION",
+                target=FollowupRefusalTarget(question_id=message.question_id, session_id=message.session_id),
+            )
+    if header.job_type == "TELEGRAM_ANSWER":
+        return FailedAnswerNotification.model_validate(
+            {"kind": "ANSWER", "payload": TelegramAnswerJob.model_validate(failure_payload(record))},
+            by_name=True,
+        )
+    return NoTerminalDelivery(kind="NONE", reason="NOT_APPLICABLE")
+
+
+def terminal_progress(
+    header: FailureJobHeader, record: dict[str, JsonValue], *, requested: bool
+) -> JobFailureProgressView | NoFailureProgress:
+    if not requested:
+        return NoFailureProgress(reason="DISABLED")
+    if header.job_type not in {
+        "FILTER_ITEM",
+        "ROUTE_ITEM",
+        "AGENT_MESSAGE",
+        "RUN_MARKET_TRUTH",
+        "ESCALATE_TOKENS",
+    }:
+        return NoFailureProgress(reason="NOT_APPLICABLE")
+    payload = failure_payload(record)
+    if header.job_type == "AGENT_MESSAGE" and failure_agent_kind(payload) in {
+        "USER_QUESTION",
+        "SCOUT_REVIEW",
+    }:
+        return NoFailureProgress(reason="NOT_APPLICABLE")
+    return JobFailureProgressView.model_validate(
+        {
+            "job_id": header.job_id,
+            "type": header.job_type,
+            "status": header.status,
+            "target": {name: payload[name] for name in ("item_id", "event_id") if name in payload},
+        }
+    )
+
+
+class SuppliedFailureReason(DomainModel):
+    kind: Literal["SUPPLIED"]
+    value: str = Field(min_length=1, pattern=r"\S")
+
+
+class RecordedJobErrorReason(DomainModel):
+    kind: Literal["RECORDED"]
+    value: str = Field(min_length=1, pattern=r"\S")
+
+
+class JobStateFailureReason(DomainModel):
+    kind: Literal["STATE"]
+    status: Literal["FAILED", "EXPIRED"]
+
+
+type FailureReason = Annotated[
+    SuppliedFailureReason | RecordedJobErrorReason | JobStateFailureReason, Field(discriminator="kind")
+]
+
+
+def failure_reason_text(reason: FailureReason) -> str:
+    return reason.status if isinstance(reason, JobStateFailureReason) else reason.value
+
+
+class RecordedFailureReason(DomainModel):
+    last_error: str | None = Field(min_length=1, pattern=r"\S")
+
+
+def recorded_failure_reason(header: FailureJobHeader, record: dict[str, JsonValue]) -> FailureReason:
+    recorded = RecordedFailureReason.model_validate({"last_error": record.get("last_error")})
+    return (
+        RecordedJobErrorReason(kind="RECORDED", value=recorded.last_error)
+        if recorded.last_error is not None
+        else JobStateFailureReason(kind="STATE", status=header.status)
+    )
+
+
+class TerminalJobFailure(DomainModel):
+    header: FailureJobHeader
+    reason: FailureReason
+    notify_delivery: bool
+    report_progress: bool
+    notification: TerminalDeliveryNotification
+    progress: JobFailureProgressView | NoFailureProgress
+
+    @model_validator(mode="after")
+    def declared_failure_scope(self) -> Self:
+        if isinstance(self.reason, JobStateFailureReason) and self.reason.status != self.header.status:
+            raise ValueError("Terminal failure reason differs from its actual job state")
+        if isinstance(self.progress, JobFailureProgressView) and (
+            self.progress.job_id != self.header.job_id
+            or self.progress.type != self.header.job_type
+            or self.progress.status != self.header.status
+            or not self.report_progress
+        ):
+            raise ValueError("Terminal progress differs from its actual queue failure")
+        if isinstance(self.progress, NoFailureProgress):
+            if (self.progress.reason == "DISABLED") == self.report_progress:
+                raise ValueError("Terminal progress differs from its requested reporting scope")
+            if self.report_progress and self.header.job_type in {
+                "FILTER_ITEM",
+                "ROUTE_ITEM",
+                "RUN_MARKET_TRUTH",
+                "ESCALATE_TOKENS",
+            }:
+                raise ValueError("Requested terminal source progress requires its actual subject")
+        expected = {"DELIVERY": "DELIVER", "QUESTION": "AGENT_MESSAGE", "ANSWER": "TELEGRAM_ANSWER"}
+        if isinstance(self.notification, NoTerminalDelivery):
+            if (self.notification.reason == "NOT_REQUESTED") == self.notify_delivery:
+                raise ValueError("Terminal notification differs from its requested delivery scope")
+            if self.notify_delivery and self.header.job_type in {"DELIVER", "TELEGRAM_ANSWER"}:
+                raise ValueError("Requested terminal delivery requires its actual subject")
+        elif not self.notify_delivery or expected[self.notification.kind] != self.header.job_type:
+            raise ValueError("Terminal notification differs from its actual queue failure")
+        return self
+
+    @classmethod
+    def from_record(
+        cls,
+        record: dict[str, JsonValue],
+        *,
+        reason: FailureReason,
+        progress_requested: bool,
+        notifications_requested: bool,
+    ) -> Self:
+        header = FailureJobHeader.from_record(record)
+        return cls.model_validate(
+            {
+                "header": header,
+                "reason": reason,
+                "notify_delivery": notifications_requested,
+                "report_progress": progress_requested,
+                "notification": terminal_notification(header, record, requested=notifications_requested),
+                "progress": terminal_progress(header, record, requested=progress_requested),
+            },
+            by_name=True,
+        )
+
+
+class FailureReconciliationItem(DomainModel):
+    failure: TerminalJobFailure
+    marker_name: FailureMarkerField
+    marker: Timestamp | None
+
+    @classmethod
+    def from_record(
+        cls,
+        record: dict[str, JsonValue],
+        *,
+        marker_name: FailureMarkerField,
+        progress_requested: bool,
+        notifications_requested: bool,
+    ) -> Self:
+        header = FailureJobHeader.from_record(record)
+        return cls.model_validate(
+            {
+                "failure": TerminalJobFailure.from_record(
+                    record,
+                    reason=recorded_failure_reason(header, record),
+                    progress_requested=progress_requested,
+                    notifications_requested=notifications_requested,
+                ),
+                "marker_name": marker_name,
+                "marker": read_failure_marker(record, marker_name),
+            },
+            by_name=True,
+        )
+
+
+class TerminalFailureHandled(DomainModel):
+    status: Literal["HANDLED"]
+
+
+class TerminalFailureSkipped(DomainModel):
+    status: Literal["SKIPPED"]
+    reason: Literal["JOB_CHANGED", "JOB_MISSING"]
+
+
+class TerminalFailureRefused(DomainModel):
+    status: Literal["REFUSED"]
+    receipt: QuestionFailureRefusalReceipt
+
+
+type TerminalFailureOutcome = TerminalFailureHandled | TerminalFailureSkipped | TerminalFailureRefused
+
+
+class FailureJournalUnavailable(RuntimeError):
+    def __init__(self) -> None:
+        super().__init__("Terminal failure journal persistence is unavailable")
+
+
+class FailureJournalRejected(ValueError):
+    def __init__(self) -> None:
+        super().__init__("Terminal failure journal rejected its persistence request")
+
+
+class FailureJournalScopeChanged(ValueError):
+    def __init__(self) -> None:
+        super().__init__("Terminal failure journal scope differs from its queue record")
+
+
+class TerminalFailureOutcomeRecord(RootModel[TerminalFailureOutcome]):
+    model_config = ConfigDict(strict=True, hide_input_in_errors=True, revalidate_instances="always")

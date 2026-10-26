@@ -22,7 +22,8 @@ class Collection[T: BaseModel]:
     def encode(self, entity: T, *, exclude_unset: bool = False) -> dict[str, JsonValue]:
         if not isinstance(entity, self.schema):
             raise TypeError(f"{self.name} requires {self.schema.__name__}")
-        payload = entity.model_dump(mode="json", warnings="error", exclude_unset=exclude_unset)
+        validated = self.schema.model_validate(entity, strict=True)
+        payload = validated.model_dump(mode="json", warnings="error", exclude_unset=exclude_unset)
         self.decode(payload)
         return payload
 
