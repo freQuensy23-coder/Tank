@@ -357,8 +357,6 @@ def test_native_sign_history_preserves_a_missing_piece_without_a_neutral_vote() 
 
 
 def test_cached_source_facts_bind_fresh_assembly_without_relabeling_source_clocks() -> None:
-    from dataclasses import fields
-
     from tank.analysis.condition_inputs import SpotCalculationSource
     from tank.analysis.spot import calculate_spot
 
@@ -366,7 +364,7 @@ def test_cached_source_facts_bind_fresh_assembly_without_relabeling_source_clock
     decoded = decode_windows([instrument], rows, chosen_boundary(END - timedelta(hours=1), precision="EXACT"))
     facts = SpotCalculationSource.from_inputs(decoded.inputs.source)
     original_receipt = facts.minutes[-1].received_at
-    assert "assembled_at" not in {field.name for field in fields(facts)}
+    assert "assembled_at" not in type(facts).model_fields
     early = facts.at(Timestamp(iso(END), "COLLECTION_ONLY"))
     later = facts.at(Timestamp(iso(END + timedelta(seconds=2)), "COLLECTION_ONLY"))
     assert calculate_spot(early).coverage.n_complete == 0
@@ -378,3 +376,31 @@ def test_cached_source_facts_bind_fresh_assembly_without_relabeling_source_clock
         == original_receipt
     )
     assert early.assembled_at != later.assembled_at
+
+
+def test_window_evaluation_keeps_closed_native_facts_until_wire_serialization() -> None:
+    from tank.analysis.condition_input_codec import SpotWindowEvaluation
+    from tank.analysis.condition_inputs import SpotCalculationSource
+
+    instrument, rows = source_rows()
+    decoded = decode_windows([instrument], rows, chosen_boundary(END - timedelta(hours=1), precision="EXACT"))
+    graph = calculate_spot_window_graph(decoded.inputs)
+    evaluation = SpotWindowEvaluation(
+        graph=graph,
+        source=SpotCalculationSource.from_inputs(decoded.inputs.source),
+        source_evidence=decoded.source_evidence,
+        clocks=decoded.clocks,
+    )
+    wire = evaluation.wire_spots()
+    assert wire["EVENT"] == encode_scoped_condition_spot(
+        graph.spots["EVENT"], decoded.source_evidence, clocks=decoded.clocks
+    )
+    wire["EVENT"]["direction"] = "SELL"
+    assert evaluation.graph.spots["EVENT"].direction == "BUY"
+    with pytest.raises(ValueError, match="actual source subject"):
+        SpotWindowEvaluation(
+            graph=graph,
+            source=evaluation.source,
+            source_evidence=decoded.source_evidence,
+            clocks=decoded.clocks.model_copy(update={"token_id": "OTHER"}),
+        )

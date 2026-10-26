@@ -1,6 +1,5 @@
 """Consumed spot inputs, independent of transport, storage and output serialization."""
 
-from dataclasses import dataclass
 from datetime import datetime, timedelta
 from decimal import Decimal
 from typing import Literal, Self
@@ -219,11 +218,10 @@ class SpotCalculationPolicy(DomainModel):
         )
 
 
-class SpotCalculationInputs(DomainModel):
+class SpotCalculationFacts(DomainModel):
     token_id: str = Field(min_length=1, pattern=r"\S")
     start: datetime
     cutoff: datetime
-    assembled_at: Timestamp
     instruments: tuple[SpotInstrument, ...]
     minutes: tuple[SpotFlowObservation, ...]
     boundaries: tuple[SpotFlowObservation, ...]
@@ -254,17 +252,11 @@ class SpotCalculationInputs(DomainModel):
         return self
 
 
-@dataclass(frozen=True, slots=True)
-class SpotCalculationSource:
-    token_id: str
-    start: datetime
-    cutoff: datetime
-    instruments: tuple[SpotInstrument, ...]
-    minutes: tuple[SpotFlowObservation, ...]
-    boundaries: tuple[SpotFlowObservation, ...]
-    tickers: tuple[SpotTickerObservation, ...]
-    policy: SpotCalculationPolicy
+class SpotCalculationInputs(SpotCalculationFacts):
+    assembled_at: Timestamp
 
+
+class SpotCalculationSource(SpotCalculationFacts):
     @classmethod
     def from_inputs(cls, inputs: SpotCalculationInputs) -> Self:
         validated = SpotCalculationInputs.model_validate(inputs)

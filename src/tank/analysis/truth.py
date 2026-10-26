@@ -28,7 +28,7 @@ from typing import overload
 from pydantic import JsonValue
 
 from tank.analysis.condition_fingerprints import condition_input_fingerprints
-from tank.analysis.condition_graph_codec import encode_basic_condition_spot, encode_scoped_condition_spot
+from tank.analysis.condition_graph_codec import encode_basic_condition_spot
 from tank.analysis.condition_graph_contracts import (
     ConditionStateNodeKey,
     ConditionTopCacheKey,
@@ -36,6 +36,7 @@ from tank.analysis.condition_graph_contracts import (
 )
 from tank.analysis.condition_input_codec import (
     SpotConditionEvaluation,
+    SpotWindowEvaluation,
     decode_spot_inputs,
     decode_spot_windows,
 )
@@ -5054,7 +5055,7 @@ def bounded_market_snapshot(snapshot, end):
     return snapshot
 
 
-def spot_window_graph(snapshot, start, end, av):
+def spot_window_graph(snapshot) -> SpotWindowEvaluation:
     parameters = _PARAMETERS.get()
     if parameters is None:
         raise ValueError("Spot computation requires captured policy")
@@ -5079,23 +5080,11 @@ def spot_window_graph(snapshot, start, end, av):
         native_ticker_volume_field="volume_native",
     )
     graph = calculate_spot_window_graph(decoded.inputs)
-    snapshot["_primary"] = graph.primary
-    spots = {
-        name: encode_scoped_condition_spot(value, decoded.source_evidence, clocks=decoded.clocks)
-        for name, value in graph.spots.items()
-    }
-    instruments = [
-        instrument
-        for instrument in snapshot.get("instruments", [])
-        if instrument["token_id"] == snapshot["token_id"]
-    ]
-    return (
-        spots,
-        graph.durations_s,
-        graph.primary,
-        instruments,
-        graph,
-        SpotCalculationSource.from_inputs(decoded.inputs.source),
+    return SpotWindowEvaluation(
+        graph=graph,
+        source=SpotCalculationSource.from_inputs(decoded.inputs.source),
+        source_evidence=decoded.source_evidence,
+        clocks=decoded.clocks,
     )
 
 
@@ -5122,10 +5111,17 @@ def _compute_market_truth(snapshot, *, config=None):
             [point[0] for point in points],
             [point[1] for point in points],
         )
-    spots, windows, primary, instruments, spot_graph, spot_source = spot_window_graph(
-        snapshot, start, end, av
-    )
-    spot_inputs = spot_source.at(propagate_timestamp(snapshot, "assembled_at"))
+    spot_evaluation = spot_window_graph(snapshot)
+    spot_graph = spot_evaluation.graph
+    spots = spot_evaluation.wire_spots()
+    windows, primary = spot_graph.durations_s, spot_graph.primary
+    snapshot["_primary"] = primary
+    instruments = [
+        instrument
+        for instrument in snapshot.get("instruments", [])
+        if instrument["token_id"] == snapshot["token_id"]
+    ]
+    spot_inputs = spot_evaluation.source.at(propagate_timestamp(snapshot, "assembled_at"))
     snapshot["_has_event"] = bool(av)
     snapshot["_lead_start"] = start
     snapshot["_event_anchor"] = start if av else None
@@ -5531,12 +5527,17 @@ def condition_market_state(snapshot, end, cache):
 
         return deepcopy(remember(cache, key, build))
 
-    spots, windows, primary, instruments, _spot_graph, spot_source = node(
+    spot_evaluation = node(
         "spot",
         ("flow_bars", "flow_segments", "flow_parent_bars", "tickers", "instruments", "anchor"),
-        lambda: spot_window_graph(snapshot, start, end, av),
+        lambda: spot_window_graph(snapshot),
     )
-    spot_inputs = spot_source.at(propagate_timestamp(snapshot, "assembled_at"))
+    if not isinstance(spot_evaluation, SpotWindowEvaluation):
+        raise TypeError("Spot state cache requires its typed graph and source evidence")
+    _spot_graph = spot_evaluation.graph
+    spots = spot_evaluation.wire_spots()
+    windows, primary = _spot_graph.durations_s, _spot_graph.primary
+    spot_inputs = spot_evaluation.source.at(propagate_timestamp(snapshot, "assembled_at"))
     scoped = dict(
         snapshot,
         _primary=primary,
@@ -5776,7 +5777,9 @@ def compute_condition_values(snapshot, requirements, *, config=None, cache=None,
                         policy=policy,
                         native_ticker_volume_field="volume_native",
                     )
-                    value = SpotConditionEvaluation(calculate_spot(decoded.inputs), decoded.source_evidence)
+                    value = SpotConditionEvaluation(
+                        result=calculate_spot(decoded.inputs), source_evidence=decoded.source_evidence
+                    )
                 elif domain == "close":
                     value = condition_reference_close(selected, end)
                 elif domain == "dc":

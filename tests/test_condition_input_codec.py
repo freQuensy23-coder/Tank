@@ -512,3 +512,48 @@ def test_existing_embedded_parent_and_child_hashes_remain_bound_to_original_read
         == parent_descriptor.scope_projection_sha256
         == "f2389edea67da8a4744c7550ce4b4a37a9dc863b6e59dee4e29337503b7e7d49"
     )
+
+
+def test_cached_source_public_constructor_is_strict_and_has_no_processing_clock() -> None:
+    from tank.analysis.condition_inputs import SpotCalculationSource
+
+    source = SpotCalculationSource.from_inputs(decoded([minute()]).inputs)
+    payload = source.model_dump(mode="python")
+    assert "assembled_at" not in payload
+    with pytest.raises(ValidationError):
+        SpotCalculationSource.model_validate(dict(payload, token_id=17))
+    with pytest.raises(ValidationError):
+        SpotCalculationSource.model_validate(dict(payload, start="2026-10-19T12:00:00Z"))
+    with pytest.raises(ValidationError):
+        SpotCalculationSource.model_validate(
+            dict(payload, assembled_at=Timestamp(None, None, "NOT_CAPTURED"))
+        )
+    with pytest.raises(ValidationError):
+        SpotCalculationSource.model_validate(dict(payload, minutes=list(source.minutes)))
+
+
+def test_strict_immutable_evidence_snapshots_survive_copy_and_reject_rebound_bytes() -> None:
+    from copy import deepcopy
+
+    from tank.analysis.condition_input_codec import SpotSourceEvidence
+
+    source = decoded([minute()]).source_evidence
+    copied = deepcopy(source)
+    reference = source.references()[0]
+    original = source.original(reference)
+    changed_view = copied.effective(reference)
+    changed_view["buy_qty"] = "999"
+    assert source.original(reference) == original
+    assert copied.original(reference) == original
+    with pytest.raises(ValueError, match="identity is not captured"):
+        copied.source_reference("f" * 64)
+    foreign = reference.model_copy(update={"source_projection_sha256": "f" * 64})
+    with pytest.raises(ValueError, match="reference is not captured"):
+        copied.original(foreign)
+    assert copied.entries[0].projection.original == source.entries[0].projection.original
+    with pytest.raises(ValidationError):
+        SpotSourceEvidence.model_validate({"entries": list(source.entries)})
+    invalid = source.entries[0].projection.model_copy(update={"effective": b"{}"})
+    rebound = source.entries[0].model_copy(update={"projection": invalid})
+    with pytest.raises(ValidationError, match="actual evidence"):
+        SpotSourceEvidence(entries=(rebound,))
