@@ -181,6 +181,9 @@ async def test_explicit_replay_session_boundaries(
             timeout=2,
         )
     assert report["status"] == "COMPLETED"
+    assert report["execution_barrier"]["complete"] is True
+    assert report["execution_barrier"]["accepted_input_ids"]
+    assert "session_id" not in report["execution_barrier"]
     for barrier in report["execution_barriers"].values():
         assert barrier["complete"] is True
         assert barrier["accepted_input_ids"] and barrier["terminal_receipts"]

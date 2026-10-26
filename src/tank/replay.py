@@ -2349,7 +2349,7 @@ async def replay_agent_session(
                 "causal_tool_receipts": causal_tool_receipts,
                 "delivery_receipts": delivery_receipts,
                 "timer_receipts": timer_receipts,
-                "execution_barrier": execution,
+                "execution_barrier": execution.storage_record(),
                 "execution_barriers": execution_barriers,
                 "tool_error_receipts": [
                     {
