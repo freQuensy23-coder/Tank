@@ -90,6 +90,7 @@ from tank.analysis.condition_graph_contracts import (
     MetricSemanticsCadenceOrigin,
     MissingConditionProofObservation,
     NonForwardConditionMarketState,
+    ObservedConditionBasis,
     ObservedConditionCohort,
     ObservedConditionCohortComparison,
     ObservedConditionDepthCohort,
@@ -99,6 +100,7 @@ from tank.analysis.condition_graph_contracts import (
     ObservedConditionVolatility,
     SelectedConditionStablecoinPoint,
     SelectiveConditionConfidence,
+    UnavailableConditionBasis,
     UnavailableConditionCirculatingShare,
     UnavailableConditionLeadLag,
     UnavailableConditionOpenInterest,
@@ -513,8 +515,13 @@ def _derivative_venue_wire(value: ConditionDerivativeVenue) -> dict[str, JsonVal
         "venue": validated.venue,
         "instrument_id": validated.instrument_id,
         "coverage": {"venue": validated.venue},
-        "basis_bps": _decimal_wire(validated.basis_bps),
-        "basis_reason": validated.basis_reason,
+        "basis_bps": _decimal_wire(validated.basis.value_bps)
+        if isinstance(validated.basis, ObservedConditionBasis)
+        else None,
+        "basis_reason": validated.basis.reason
+        if isinstance(validated.basis, UnavailableConditionBasis)
+        else None,
+        "basis_status": validated.basis.status,
     }
     result.update(encode_condition_open_interest(validated.open_interest))
     result.update(encode_condition_funding(validated.funding))

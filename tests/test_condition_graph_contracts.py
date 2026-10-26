@@ -47,6 +47,7 @@ from tank.analysis.condition_graph_contracts import (
     ObservedConditionClose,
     ObservedConditionOpenInterest,
     SelectiveConditionValues,
+    UnavailableConditionBasis,
     UnavailableConditionClose,
     UnavailableConditionFunding,
     WindowedConditionSpot,
@@ -1019,8 +1020,7 @@ def test_derivative_window_refuses_invented_funding_dispersion_and_absent_sync_v
         funding=funding,
         liquidations=UnrequestedConditionLiquidations(status="NOT_REQUESTED"),
         oi_temporal_exclusions=None,
-        basis_bps=None,
-        basis_reason="INCOMPLETE",
+        basis=UnavailableConditionBasis(status="UNAVAILABLE", reason="INCOMPLETE"),
     )
     graph = BasicConditionDerivatives(
         token_id="T",
