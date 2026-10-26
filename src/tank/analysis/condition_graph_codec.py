@@ -2,22 +2,58 @@
 
 from collections.abc import Mapping
 from copy import deepcopy
+from decimal import Decimal
 from typing import Protocol
 
 from pydantic import JsonValue
 
 from tank.analysis.condition_graph_contracts import (
+    AvailableConditionFunding,
     BasicConditionSpot,
+    ConditionAggregateLiquidations,
     ConditionClose,
+    ConditionDerivatives,
+    ConditionDerivativeSupportFeatures,
+    ConditionDerivativeVenue,
     ConditionFlowAggregate,
     ConditionFlowAggregateProjection,
     ConditionFlowCaptureProjection,
     ConditionFlowCaptureWitness,
+    ConditionFunding,
+    ConditionFundingObservation,
+    ConditionIncrementalVolumes,
+    ConditionLiquidations,
+    ConditionNativeVolumeSupport,
+    ConditionObservedFundingDispersion,
+    ConditionObservedIncrementalVolume,
+    ConditionObservedPredicate,
+    ConditionOpenInterest,
+    ConditionPredicate,
+    ConditionReferenceTradeEvidenceRef,
+    ConditionReferenceTradeProjection,
+    ConditionSpotValues,
+    ConditionSynchronizedOpenInterest,
+    ConditionWireClocks,
+    EnrichedConditionDerivatives,
+    EnrichedConditionDerivativeVenue,
+    EnrichedConditionSpot,
     FlowAggregateEvidenceRef,
     FlowCaptureEvidenceRef,
     KnownConditionTradeCount,
+    ObservedConditionCohort,
+    ObservedConditionCohortComparison,
+    ObservedConditionSizeProfile,
+    UnavailableConditionLeadLag,
+    UnavailableConditionOpenInterest,
+    UnavailableConditionSizeProfile,
+    UnrequestedConditionFunding,
+    UnrequestedConditionOpenInterest,
+    WindowedConditionSpot,
 )
+from tank.analysis.statistics_contracts import DecimalRange, FloatRange
+from tank.contracts import DomainModel
 from tank.contracts.json import JsonDocument
+from tank.time_precision import Timestamp
 from tank.util import iso, sha256
 
 
@@ -174,12 +210,28 @@ def bind_flow_capture_evidence(
     )
 
 
-def encode_basic_condition_spot(
-    value: BasicConditionSpot, evidence: ConditionFlowEvidenceLookup
+def _spot_values_wire(
+    value: ConditionSpotValues, evidence: ConditionFlowEvidenceLookup
 ) -> dict[str, JsonValue]:
-    validated = BasicConditionSpot.model_validate(value)
+    validated = type(value).model_validate(value)
     result = JsonDocument.validate_value(
-        validated.model_dump(mode="json", exclude={"kind", "token_id"}, warnings="error")
+        validated.model_dump(
+            mode="json",
+            warnings="error",
+            include={
+                "venues",
+                "composite_max",
+                "breadth",
+                "cw_breadth",
+                "exact_majority",
+                "topn",
+                "concentration",
+                "direction",
+                "direction_reason",
+                "classification",
+                "coverage",
+            },
+        )
     )
     if not isinstance(result, dict):
         raise TypeError("A basic spot result must serialize as an object")
@@ -211,6 +263,14 @@ def encode_basic_condition_spot(
         validated.composite_max.model_dump(mode="json", exclude={"status"}, warnings="error")
     )
     result["composite_max"] = composite
+    return result
+
+
+def encode_basic_condition_spot(
+    value: BasicConditionSpot, evidence: ConditionFlowEvidenceLookup
+) -> dict[str, JsonValue]:
+    validated = BasicConditionSpot.model_validate(value)
+    result = _spot_values_wire(validated, evidence)
     result["composite_cohort"] = None
     result["cohort_consistent"] = {}
     result["size_profile"] = None
@@ -231,3 +291,437 @@ def encode_condition_reference_close(value: ConditionClose) -> dict[str, JsonVal
         raise TypeError("Reference close timestamp fields must serialize as an object")
     result.update(clock)
     return result
+
+
+def _model_wire(value: DomainModel) -> dict[str, JsonValue]:
+    validated = type(value).model_validate(value)
+    result = JsonDocument.validate_value(validated.model_dump(mode="json", warnings="error"))
+    if not isinstance(result, dict):
+        raise TypeError("A declared domain object must serialize as an object")
+    return result
+
+
+def _clock_wire(value: Timestamp, prefix: str) -> dict[str, JsonValue]:
+    validated = Timestamp.model_validate(value)
+    return {name: scalar for name, scalar in validated.fields(prefix).items()}
+
+
+def _decimal_wire(value: Decimal | None) -> str | None:
+    return None if value is None else str(value)
+
+
+def _range_wire(value: DecimalRange | FloatRange) -> list[JsonValue] | None:
+    validated = type(value).model_validate(value)
+    bounds = validated.bounds
+    if bounds is None:
+        return None
+    if isinstance(value, DecimalRange):
+        return [str(bounds.lower), str(bounds.upper)]
+    return [float(bounds.lower), float(bounds.upper)]
+
+
+def _predicate_wire(value: ConditionPredicate) -> bool | None:
+    validated = type(value).model_validate(value)
+    return validated.value if isinstance(validated, ConditionObservedPredicate) else None
+
+
+def encode_condition_open_interest(value: ConditionOpenInterest) -> dict[str, JsonValue]:
+    validated = type(value).model_validate(value)
+    if isinstance(validated, UnrequestedConditionOpenInterest):
+        return {}
+    if isinstance(validated, UnavailableConditionOpenInterest):
+        return {
+            "oi_class": None,
+            "oi_native_start": None,
+            "oi_native_end": None,
+            "oi_native_chg_pct": None,
+            "oi_usd_start": None,
+            "oi_usd_end": None,
+            "oi_usd_chg_pct": None,
+            "reason": validated.reason,
+            "detail": validated.detail,
+        }
+    result: dict[str, JsonValue] = {
+        "requested_window_duration_s": validated.requested_window_duration_s,
+        "observed_window_duration_s": validated.observed_window_duration_s,
+        "precision": validated.end_observed_at.precision,
+        "oi_native_start": str(validated.oi_native_start),
+        "oi_native_end": str(validated.oi_native_end),
+        "oi_native_chg_pct": validated.oi_native_chg_pct,
+        "oi_usd_start": _decimal_wire(validated.oi_usd_start),
+        "oi_usd_end": _decimal_wire(validated.oi_usd_end),
+        "oi_usd_chg_pct": validated.oi_usd_chg_pct,
+        "oi_usd_reason": validated.oi_usd_reason,
+        "oi_usd_detail": validated.oi_usd_detail,
+        "decomposition": _model_wire(validated.decomposition),
+        "native_normal_range": _range_wire(validated.native_normal_range),
+        "native_normal_range_reason": validated.native_normal_range.reason,
+        "usd_normal_range": _range_wire(validated.usd_normal_range),
+        "usd_normal_range_reason": validated.usd_normal_range.reason,
+        "native_oi_vs_normal": validated.native_oi_vs_normal,
+        "native_beyond": validated.native_beyond,
+        "usd_beyond": validated.usd_beyond,
+        "oi_class": validated.oi_class,
+        "classification_ready": validated.classification_ready,
+    }
+    result.update(_clock_wire(validated.start_observed_at, "start_observed_at"))
+    result.update(_clock_wire(validated.end_observed_at, "end_observed_at"))
+    return result
+
+
+def _funding_observed_clock(
+    observation: ConditionFundingObservation | None, prefix: str
+) -> dict[str, JsonValue]:
+    return {prefix: None} if observation is None else _clock_wire(observation.observed_at, prefix)
+
+
+def encode_condition_funding(value: ConditionFunding) -> dict[str, JsonValue]:
+    validated = type(value).model_validate(value)
+    if isinstance(validated, UnrequestedConditionFunding):
+        return {}
+    settled, estimate, start = validated.settled, validated.estimate, validated.start
+    selected: ConditionFundingObservation | None = None
+    if isinstance(validated, AvailableConditionFunding):
+        selected = estimate if validated.selected_kind == "CURRENT_ESTIMATE" else settled
+        if selected is None:
+            raise ValueError("Observed funding requires its actual selected observation")
+    result: dict[str, JsonValue] = {
+        "funding_settled_last": None if settled is None else str(settled.rate),
+        "funding_settled_interval_h": None if settled is None else _decimal_wire(settled.interval_h),
+        "funding_settled_8h_eq": None
+        if settled is None
+        else _decimal_wire(settled.equivalent_eight_hour_rate),
+        "funding_estimate": None if estimate is None else str(estimate.rate),
+        "funding_estimate_interval_h": None if estimate is None else _decimal_wire(estimate.interval_h),
+        "funding_estimate_8h_eq": None
+        if estimate is None
+        else _decimal_wire(estimate.equivalent_eight_hour_rate),
+        "funding_start": None if start is None else str(start.rate),
+        "funding_start_interval_h": None if start is None else _decimal_wire(start.interval_h),
+        "interval_h": None if selected is None else _decimal_wire(selected.interval_h),
+        "funding_8h_eq": None if selected is None else _decimal_wire(selected.equivalent_eight_hour_rate),
+        "funding_8h_kind": validated.selected_kind
+        if isinstance(validated, AvailableConditionFunding)
+        else None,
+        "funding_vs_normal": validated.funding_vs_normal
+        if isinstance(validated, AvailableConditionFunding)
+        else None,
+        "funding_normal_range_8h": _range_wire(validated.normal_range),
+        "funding_normal_range_reason": validated.normal_range.reason,
+        "funding_reason": None if isinstance(validated, AvailableConditionFunding) else validated.reason,
+    }
+    result.update(_funding_observed_clock(settled, "funding_settled_last_observed_at"))
+    result.update(_funding_observed_clock(estimate, "funding_estimate_observed_at"))
+    result.update(_funding_observed_clock(start, "funding_start_observed_at"))
+    return result
+
+
+def _liquidations_wire(value: ConditionLiquidations) -> dict[str, JsonValue]:
+    validated = ConditionLiquidations.model_validate(value)
+    result: dict[str, JsonValue] = {
+        "liq_coverage": validated.coverage,
+        "liq_source_coverage": validated.source_coverage,
+        "liq_source_origin": _model_wire(validated.source_origin),
+    }
+    for name, side in (("long", validated.long), ("short", validated.short)):
+        result["liq_" + name + "_count"] = side.observed_record_count
+        result["liq_" + name + "_native"] = _decimal_wire(side.native)
+        result["liq_" + name + "_usd"] = _decimal_wire(side.usd)
+        result["liq_" + name + "_usd_reason"] = side.usd_reason
+    window: dict[str, JsonValue] = {
+        "complete": validated.capture_window.complete,
+        "reason": validated.capture_window.reason,
+    }
+    window.update(_clock_wire(validated.capture_window.start, "start"))
+    window.update(_clock_wire(validated.capture_window.observed_through, "observed_through"))
+    result["liq_capture_window"] = window
+    return result
+
+
+def _derivative_venue_wire(value: ConditionDerivativeVenue) -> dict[str, JsonValue]:
+    validated = type(value).model_validate(value)
+    result: dict[str, JsonValue] = {
+        "venue": validated.venue,
+        "instrument_id": validated.instrument_id,
+        "coverage": {"venue": validated.venue},
+        "basis_bps": _decimal_wire(validated.basis_bps),
+        "basis_reason": validated.basis_reason,
+    }
+    result.update(encode_condition_open_interest(validated.open_interest))
+    result.update(encode_condition_funding(validated.funding))
+    if isinstance(validated.liquidations, ConditionLiquidations):
+        result.update(_liquidations_wire(validated.liquidations))
+    exclusions = validated.oi_temporal_exclusions
+    if exclusions is not None:
+        observation: dict[str, JsonValue] = {
+            "oi_native": _decimal_wire(exclusions.latest_observation.oi_native),
+            "oi_usd": _decimal_wire(exclusions.latest_observation.oi_usd),
+            "scope": exclusions.latest_observation.scope,
+        }
+        observation.update(_clock_wire(exclusions.latest_observation.observed_at, "ts"))
+        result["oi_temporal_exclusions"] = {
+            "count": exclusions.count,
+            "reason": exclusions.reason,
+            "detail": exclusions.detail,
+            "latest_observation": observation,
+        }
+    if isinstance(validated, EnrichedConditionDerivativeVenue):
+        support = validated.support
+        result.update(
+            {
+                "perp_taker_buy_share": support.perp_taker_buy_share,
+                "perp_taker_buy_share_reason": support.perp_taker_buy_share_reason,
+                "perp_volume_usd": _decimal_wire(support.perp_volume_usd),
+                "perp_volume_reason": support.perp_volume_reason,
+                "basis_normal_range": _range_wire(support.basis_normal_range),
+                "basis_normal_range_reason": support.basis_normal_range.reason,
+                "basis_vs_normal": support.basis_vs_normal,
+                "basis_widening": _predicate_wire(support.basis_widening),
+                "funding_rising": _predicate_wire(support.funding_rising),
+            }
+        )
+    return result
+
+
+def _native_volume_wire(value: ConditionNativeVolumeSupport) -> dict[str, JsonValue]:
+    validated = ConditionNativeVolumeSupport.model_validate(value)
+    return {
+        "value": _decimal_wire(validated.value),
+        "previous": _decimal_wire(validated.previous),
+        "normal_range": _range_wire(validated.normal_range),
+        "unit": validated.unit,
+        "window": validated.window,
+        "reason": validated.reason,
+    }
+
+
+def _derivative_support_wire(value: ConditionDerivativeSupportFeatures) -> dict[str, JsonValue]:
+    validated = ConditionDerivativeSupportFeatures.model_validate(value)
+    predicates: tuple[tuple[str, ConditionPredicate], ...] = (
+        ("spot_volume_up_beyond_normal", validated.spot_volume_up_beyond_normal),
+        ("spot_volume_within_normal", validated.spot_volume_within_normal),
+        ("perp_volume_up_beyond_normal", validated.perp_volume_up_beyond_normal),
+        ("perp_volume_within_normal", validated.perp_volume_within_normal),
+        ("perp_taker_flow_buy", validated.perp_taker_flow_buy),
+        ("basis_within_normal", validated.basis_within_normal),
+        ("basis_widening", validated.basis_widening),
+        ("funding_rising", validated.funding_rising),
+        ("liquidations_first_half_majority", validated.liquidations_first_half_majority),
+        ("large_ticket_buy_majority", validated.large_ticket_buy_majority),
+        ("large_tickets_minority", validated.large_tickets_minority),
+        ("large_ticket_sell_share_rising", validated.large_ticket_sell_share_rising),
+        ("exchange_inflows", validated.exchange_inflows),
+        ("localized_inventory_transfer", validated.localized_inventory_transfer),
+        ("ask_depth_building", validated.ask_depth_building),
+        ("ask_replenishment", validated.ask_replenishment),
+    )
+    result: dict[str, JsonValue] = {name: _predicate_wire(predicate) for name, predicate in predicates}
+    reasons: dict[str, JsonValue] = {
+        name: predicate.reason
+        for name, predicate in predicates
+        if not isinstance(predicate, ConditionObservedPredicate)
+    }
+    result["null_reasons"] = reasons
+    result["spot_volume"] = _native_volume_wire(validated.spot_volume)
+    result["perp_volume"] = _native_volume_wire(validated.perp_volume)
+    return result
+
+
+def encode_condition_derivatives(value: ConditionDerivatives) -> dict[str, JsonValue]:
+    validated = type(value).model_validate(value)
+    result: dict[str, JsonValue] = {
+        "per_venue": [_derivative_venue_wire(venue) for venue in validated.per_venue]
+    }
+    synchronized = validated.synchronized
+    if isinstance(synchronized, ConditionSynchronizedOpenInterest):
+        sync = encode_condition_open_interest(synchronized.values)
+        sync["venues"] = list(synchronized.venues)
+        result["synchronized"] = sync
+    else:
+        result["synchronized"] = None
+    result["synchronized_status"] = synchronized.status
+    dispersion = validated.funding_dispersion
+    result["funding_dispersion_8h"] = (
+        str(dispersion.value) if isinstance(dispersion, ConditionObservedFundingDispersion) else None
+    )
+    result["funding_dispersion_status"] = dispersion.status
+    if dispersion.status == "UNAVAILABLE":
+        result["funding_dispersion_reason"] = dispersion.reason
+    if isinstance(validated.liquidations, ConditionAggregateLiquidations):
+        totals: dict[str, JsonValue] = {}
+        for name, sides in (
+            ("complete_venues_total", validated.liquidations.complete_venues_total),
+            ("sampled_venues_min", validated.liquidations.sampled_venues_min),
+        ):
+            totals[name] = {"long": _decimal_wire(sides.long), "short": _decimal_wire(sides.short)}
+            totals[name + "_reasons"] = {"long": sides.long_reason, "short": sides.short_reason}
+        result["liquidations"] = totals
+    if isinstance(validated.incremental_volume, ConditionIncrementalVolumes):
+        incremental = validated.incremental_volume
+        result["incremental_volume_coverage"] = {
+            "spot": _model_wire(incremental.spot_coverage),
+            "perp": _model_wire(incremental.perp_coverage),
+        }
+        values = incremental.values
+        result["incremental_volume_usd"] = {
+            "spot": _decimal_wire(values.spot_usd),
+            "perp": _decimal_wire(values.perp_usd),
+        }
+        result["incremental_share"] = (
+            {
+                "spot": values.spot_share,
+                "perp": values.perp_share,
+                "increment_usd": {"spot": str(values.spot_usd), "perp": str(values.perp_usd)},
+            }
+            if isinstance(values, ConditionObservedIncrementalVolume)
+            else None
+        )
+        if not isinstance(values, ConditionObservedIncrementalVolume):
+            result["incremental_share_reason"] = values.reason
+    if isinstance(validated, EnrichedConditionDerivatives):
+        result["funding_dispersion_normal_range_8h"] = _range_wire(validated.funding_dispersion_normal_range)
+        result["funding_dispersion_beyond_normal"] = _predicate_wire(
+            validated.funding_dispersion_beyond_normal
+        )
+        lead = validated.lead_lag
+        sequence: list[JsonValue] = []
+        for point in lead.sequence:
+            item: dict[str, JsonValue] = {"venue": point.venue, "market": point.market}
+            item.update(_clock_wire(point.first_observed_at, "t_first"))
+            sequence.append(item)
+        lead_wire: dict[str, JsonValue] = {
+            "window": lead.interval.window,
+            "start": iso(lead.interval.start),
+            "cutoff": iso(lead.interval.cutoff),
+            "first_mover": lead.first_mover,
+            "spot_confirmed": _predicate_wire(lead.spot_confirmation),
+            "sequence": sequence,
+            "evaluated_markets": list(lead.evaluated_markets),
+        }
+        if isinstance(lead, UnavailableConditionLeadLag):
+            lead_wire["reason"] = lead.reason
+        result["lead_lag"] = lead_wire
+        result["support_features"] = _derivative_support_wire(validated.support_features)
+    else:
+        result["lead_lag"] = {
+            "first_mover": "UNKNOWN",
+            "spot_confirmed": None,
+            "sequence": [],
+            "status": "NOT_REQUESTED",
+        }
+    return result
+
+
+def encode_scoped_condition_spot(
+    value: WindowedConditionSpot | EnrichedConditionSpot,
+    evidence: ConditionFlowEvidenceLookup,
+    *,
+    clocks: ConditionWireClocks,
+) -> dict[str, JsonValue]:
+    validated = type(value).model_validate(value)
+    clock_context = ConditionWireClocks.model_validate(clocks)
+    if validated.token_id != clock_context.token_id:
+        raise ValueError("Spot serialization cannot borrow another subject's clock context")
+    bounds = clock_context.bounds(validated.interval)
+    result = _spot_values_wire(validated, evidence)
+    result.update(_clock_wire(bounds.start, "start"))
+    result.update(_clock_wire(bounds.cutoff, "cutoff"))
+    result["start_origin"] = bounds.start_origin
+    result["window"] = validated.interval.window
+    result.update(_clock_wire(validated.coverage_through, "observed_at"))
+    result["precision"] = validated.coverage_through.precision
+    cohort = validated.composite_cohort
+    if isinstance(cohort, ObservedConditionCohort):
+        cohort_wire = _model_wire(cohort)
+        del cohort_wire["status"]
+        cohort_wire["reason"] = None
+        result["composite_cohort"] = cohort_wire
+    else:
+        result["composite_cohort"] = None
+        result["composite_cohort_reason"] = cohort.reason
+    result["cohort_consistent"] = {
+        name: consistent for name, consistent in validated.cohort_consistent.items()
+    }
+    if isinstance(validated, EnrichedConditionSpot):
+        comparisons: dict[str, JsonValue] = {}
+        for name, comparison in validated.cohort_comparisons.items():
+            if isinstance(comparison, ObservedConditionCohortComparison):
+                current = _model_wire(comparison.current)
+                other = _model_wire(comparison.other)
+                del current["status"]
+                del other["status"]
+                comparisons[name] = {
+                    "cohort": list(comparison.cohort),
+                    "current": current,
+                    "other": other,
+                    "share_of_max": comparison.share_of_max,
+                    "share_majority": comparison.share_majority,
+                    "reason": None,
+                }
+            else:
+                comparisons[name] = {
+                    "cohort": list(comparison.cohort),
+                    "current": None,
+                    "other": None,
+                    "share_of_max": comparison.share_of_max,
+                    "share_majority": comparison.share_majority,
+                    "reason": comparison.reason,
+                }
+        result["cohort_comparisons"] = comparisons
+        profile = validated.size_profile
+        result["size_profile_status"] = profile.status
+        if isinstance(profile, ObservedConditionSizeProfile):
+            profile_wire = _model_wire(profile)
+            del profile_wire["status"]
+            result["size_profile"] = profile_wire
+        else:
+            result["size_profile"] = None
+            if isinstance(profile, UnavailableConditionSizeProfile):
+                result["size_profile_reason"] = profile.reason
+    else:
+        result["size_profile"] = None
+        result["size_profile_status"] = "NOT_REQUESTED"
+    return result
+
+
+def reference_trade_projection_sha256(value: ConditionReferenceTradeProjection) -> str:
+    projection = ConditionReferenceTradeProjection.model_validate(value)
+    serialized: JsonValue = _model_wire(projection)
+    envelope: dict[str, JsonValue] = {
+        "schema": "tank.condition.reference-trade.v1",
+        "projection": serialized,
+    }
+    return sha256(envelope)
+
+
+class ConditionReferenceTradeLookup(Protocol):
+    """Resolve original/effective storage-read trade evidence with qualified SPOT identity.
+
+    The adapter verifies its source descriptor and reprojects the expected token,
+    instrument, market, price and actual clock. Canonical storage-read projections
+    must not be described as original provider HTTP bytes.
+    """
+
+    def resolve_reference_trade(
+        self, reference: ConditionReferenceTradeEvidenceRef, *, expected: ConditionReferenceTradeProjection
+    ) -> Mapping[str, JsonValue]: ...
+
+
+class ConditionRelativeEvidenceLookup(ConditionFlowEvidenceLookup, ConditionReferenceTradeLookup, Protocol):
+    pass
+
+
+def reference_trade_evidence_wire(
+    value: ConditionReferenceTradeProjection,
+    reference: ConditionReferenceTradeEvidenceRef,
+    evidence: ConditionReferenceTradeLookup,
+) -> dict[str, JsonValue]:
+    projection = ConditionReferenceTradeProjection.model_validate(value)
+    validated = ConditionReferenceTradeEvidenceRef.model_validate(reference)
+    if validated.projection_sha256 != reference_trade_projection_sha256(projection):
+        raise ValueError("Reference trade evidence does not match its declared projection")
+    resolved = evidence.resolve_reference_trade(validated, expected=projection)
+    checked = JsonDocument.validate_value(dict(resolved))
+    if not isinstance(checked, dict):
+        raise TypeError("Reference trade evidence must serialize as an object")
+    return deepcopy(checked)

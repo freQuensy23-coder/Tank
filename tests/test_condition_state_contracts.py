@@ -2,7 +2,7 @@ from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 
 import pytest
-from pydantic import ValidationError
+from pydantic import JsonValue, ValidationError
 
 from tank.analysis.condition_graph_contracts import (
     ConditionAbsorptionDivergenceCandidate,
@@ -408,3 +408,22 @@ def test_selected_metric_cannot_pass_a_required_freshness_gate_without_observati
     )
     with pytest.raises(ValidationError, match="unproven freshness"):
         ConditionEvaluationProof.model_validate(proof.model_copy(update={"available": True}))
+
+
+@pytest.mark.parametrize("value", ["BULLISH", "BEARISH", "LOSER", -1, 1, -1.0, 1.0])
+def test_direction_declaration_preserves_actual_scalar_and_explicit_normalization(
+    value: str | int | float,
+) -> None:
+    from tank.analysis.condition_graph_contracts import DeclaredConditionDirection
+
+    declared = DeclaredConditionDirection.model_validate({"status": "DECLARED", "value": value})
+    assert declared.value == value and type(declared.value) is type(value)
+    assert declared.normalized() == ("SELL" if value in ("BEARISH", "LOSER", -1) else "BUY")
+
+
+@pytest.mark.parametrize("value", [True, False, 0, 2, "BUY", "SELL", "UNKNOWN", "1", None])
+def test_direction_declaration_refuses_implicit_positive_or_scalar_coercion(value: JsonValue) -> None:
+    from tank.analysis.condition_graph_contracts import DeclaredConditionDirection
+
+    with pytest.raises(ValidationError):
+        DeclaredConditionDirection.model_validate({"status": "DECLARED", "value": value})
