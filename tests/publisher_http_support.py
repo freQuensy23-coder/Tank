@@ -46,6 +46,7 @@ class ObservedRequest(DomainModel):
 class PublisherHTTPPeer:
     endpoint: ApifyEndpoint
     requests: list[ObservedRequest]
+    server_port: int
 
 
 @contextmanager
@@ -180,7 +181,7 @@ def serve_peer(
         endpoint = (
             "https://api.apify.com/v2" if context is not None else f"http://127.0.0.1:{server.server_port}/v2"
         )
-        yield PublisherHTTPPeer(ApifyEndpoint(base_url=endpoint), requests)
+        yield PublisherHTTPPeer(ApifyEndpoint(base_url=endpoint), requests, server.server_port)
     finally:
         server.shutdown()
         server.server_close()
