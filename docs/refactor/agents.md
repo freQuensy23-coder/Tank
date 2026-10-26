@@ -1782,3 +1782,23 @@ been migrated or independently strict-qualified; this is still an open worker
 body, not a completed function. The inventory deliberately does not equate an
 annotation with precise body typing or waive remaining aggregate/transport/vendor
 work. Final current-main caller qualification remains required for this branch.
+
+### Native metadata confirmation before mount
+
+An observed upload ID is now distinct from FILE_METADATA_VERIFIED. Before a new
+mount, files/{id} readback must report the same ID and the actual requested name,
+byte count and MIME (case normalization follows File.type), plus a matching
+session if native scope is reported. An unreported native scope remains None;
+it is not relabelled as a reported owner. Cached SHA remains a host-side byte
+receipt, never a claimed remote checksum. Missing or contradictory metadata
+preserves FILE_ID_OBSERVED, refuses mounting, and retries only readback. Existing
+confirmed mounts and verified historical pointers do not re-fetch unused bytes.
+Ambiguous native URL dot segments refuse before upload, and generated flat mount
+filenames escape path syntax without replacing the original declared filename.
+
+Thirty-nine native units pass in 2.24 seconds, and all six actual PostgreSQL
+cases pass in 3.91 seconds with zero skips/source guards. Independent strict five
+targets pass. Contradictory name/size/MIME/session scope and bool-as-size controls
+prove the ID survives while mount count stays zero; corrected readback finishes
+with one original upload. The fresh-cache writer/connected caller cohort remains
+held until its normal join and whole selection proof.

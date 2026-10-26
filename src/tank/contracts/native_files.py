@@ -53,8 +53,35 @@ class NativeFileIdObserved(PreparationClock):
     file_id: FileIdentity
 
 
-class NativeMountIntent(PreparationClock):
+class NativeVerifiedFileMetadata(DomainModel):
+    file_id: FileIdentity
+    filename: str
+    mime_type: str
+    size_bytes: Annotated[int, Field(ge=0)]
+    scope_session_id: FileIdentity | None
+
+
+class NativeFileMetadataVerified(PreparationClock):
+    phase: Literal["FILE_METADATA_VERIFIED"]
     upload: NativeFileIdObserved
+    metadata: NativeVerifiedFileMetadata
+
+    @model_validator(mode="after")
+    def metadata_binds_actual_source(self) -> Self:
+        source = self.upload.intent.scope
+        if (
+            self.metadata.file_id != self.upload.file_id
+            or self.metadata.filename != source.filename
+            or self.metadata.mime_type.lower() != source.mime.lower()
+            or self.metadata.size_bytes != source.size
+            or self.metadata.scope_session_id not in {None, source.session_id}
+        ):
+            raise ValueError("Native file metadata conflicts with its admitted upload source")
+        return self
+
+
+class NativeMountIntent(PreparationClock):
+    upload: NativeFileMetadataVerified
     mount_path: FileIdentity
 
     @model_validator(mode="after")
@@ -90,6 +117,7 @@ type NativeFilePreparation = Annotated[
     NativeFileNotRequested
     | NativeUploadUnconfirmed
     | NativeFileIdObserved
+    | NativeFileMetadataVerified
     | NativeMountUnconfirmed
     | NativeMountConfirmed
     | NativeLegacyMountConfirmed,

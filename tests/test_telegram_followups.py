@@ -1080,6 +1080,20 @@ async def test_reader_file_is_stored_for_the_session_and_named_in_the_agent_mess
             assert request.headers["anthropic-beta"] == "files-api-2025-04-14"
             uploads.append(request.content)
             return httpx.Response(200, json={"id": "file_private"})
+        if request.url.path == "/v1/files/file_private":
+            assert request.headers["anthropic-beta"] == "files-api-2025-04-14"
+            return httpx.Response(
+                200,
+                json={
+                    "id": "file_private",
+                    "type": "file",
+                    "filename": item["filename"],
+                    "mime_type": item["mime"],
+                    "size_bytes": item["size"],
+                    "created_at": "2026-10-26T00:00:00Z",
+                    "scope": None,
+                },
+            )
         assert request.url.path == "/v1/sessions/ses_1/resources"
         if request.method == "GET":
             return httpx.Response(200, json={"data": resources, "next_page": None})

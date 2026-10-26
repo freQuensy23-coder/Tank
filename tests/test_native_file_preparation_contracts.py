@@ -5,12 +5,14 @@ from pydantic import ValidationError
 
 from tank.contracts.native_files import (
     NativeFileIdObserved,
+    NativeFileMetadataVerified,
     NativeFileNotRequested,
     NativeFileSourceScope,
     NativeMountConfirmed,
     NativeMountIntent,
     NativeUploadIntent,
     NativeUploadUnconfirmed,
+    NativeVerifiedFileMetadata,
 )
 from tank.contracts.provenance import ResolvedVersionIdentity
 from tank.time_precision import Timestamp
@@ -40,6 +42,22 @@ def upload_intent() -> NativeUploadIntent:
     )
 
 
+def verified_file(upload: NativeFileIdObserved) -> NativeFileMetadataVerified:
+    source = upload.intent.scope
+    return NativeFileMetadataVerified(
+        phase="FILE_METADATA_VERIFIED",
+        upload=upload,
+        recorded_at=clock(),
+        metadata=NativeVerifiedFileMetadata(
+            file_id=upload.file_id,
+            filename=source.filename,
+            mime_type=source.mime,
+            size_bytes=source.size,
+            scope_session_id=None,
+        ),
+    )
+
+
 def test_fresh_declaration_has_no_native_identity_or_controller_version_invention() -> None:
     fresh = NativeFileNotRequested(phase="NOT_REQUESTED", scope=source_scope(), recorded_at=clock())
     assert set(fresh.model_dump()) == {"phase", "scope", "recorded_at"}
@@ -55,7 +73,7 @@ def test_confirmed_mount_retains_actual_upload_and_controller_evidence() -> None
         recorded_at=clock(),
     )
     mounting = NativeMountIntent(
-        upload=uploaded,
+        upload=verified_file(uploaded),
         mount_path="/workspace/uploads/question/report.txt",
         recorded_at=clock(),
     )
@@ -65,8 +83,8 @@ def test_confirmed_mount_retains_actual_upload_and_controller_evidence() -> None
         resource_id="native-resource",
         recorded_at=clock(),
     )
-    assert receipt.intent.upload.file_id == "native-file"
-    assert receipt.intent.upload.intent.scope == source_scope()
+    assert receipt.intent.upload.upload.file_id == "native-file"
+    assert receipt.intent.upload.upload.intent.scope == source_scope()
     assert receipt.resource_id == "native-resource"
 
 
@@ -98,7 +116,7 @@ def test_mount_intent_refuses_noncanonical_target(path: str) -> None:
         recorded_at=clock(),
     )
     with pytest.raises(ValidationError):
-        NativeMountIntent(upload=uploaded, mount_path=path, recorded_at=clock())
+        NativeMountIntent(upload=verified_file(uploaded), mount_path=path, recorded_at=clock())
 
 
 def test_constructed_nested_scope_is_revalidated_before_upload_intent() -> None:

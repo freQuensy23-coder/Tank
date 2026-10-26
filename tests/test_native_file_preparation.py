@@ -74,6 +74,8 @@ class NativeFiles:
         self.resources: list[dict[str, str]] = []
         self.lose_upload = lose_upload
         self.lose_mount = lose_mount
+        self.metadata_reads = 0
+        self.metadata_override: dict[str, JsonValue] | None = None
 
     def respond(self, request: httpx.Request) -> httpx.Response:
         assert "Idempotency-Key" not in request.headers
@@ -83,6 +85,21 @@ class NativeFiles:
             if self.lose_upload:
                 raise httpx.ReadError("lost upload response", request=request)
             return httpx.Response(200, json={"id": "file-native"})
+        if request.url.path == "/v1/files/file-native":
+            assert request.headers["anthropic-beta"] == "files-api-2025-04-14"
+            self.metadata_reads += 1
+            metadata: dict[str, JsonValue] = {
+                "id": "file-native",
+                "type": "file",
+                "filename": "data.csv",
+                "mime_type": "text/csv",
+                "size_bytes": 3,
+                "created_at": "2026-10-26T00:00:00Z",
+                "scope": None,
+            }
+            return httpx.Response(
+                200, json=self.metadata_override if self.metadata_override is not None else metadata
+            )
         assert request.url.path == "/v1/sessions/session/resources"
         assert request.headers["anthropic-beta"] == "managed-agents-2026-04-01"
         if request.method == "GET":
@@ -378,7 +395,7 @@ async def test_nonprogressing_resource_cursor_cannot_authorize_mount() -> None:
 
     def responding(request: httpx.Request) -> httpx.Response:
         nonlocal pages
-        if request.method == "GET":
+        if request.method == "GET" and request.url.path.endswith("/resources"):
             pages += 1
             return httpx.Response(200, json={"data": [], "next_page": "same-cursor"})
         return native.respond(request)
@@ -428,3 +445,56 @@ async def test_known_upload_recovery_does_not_reconstruct_unused_historical_mime
     assert after is not None and not unused.intersection(after)
     assert after["retained_extension"] == {"actual": "unchanged"}
     assert native.uploads == native.mounts == 1
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("filename", "other.csv"),
+        ("size_bytes", 4),
+        ("mime_type", "application/pdf"),
+        ("scope", {"type": "session", "id": "foreign-session"}),
+        ("size_bytes", True),
+    ],
+)
+async def test_contradictory_file_metadata_preserves_id_and_refuses_mount_then_recovers_read_only(
+    field: str,
+    value: JsonValue,
+) -> None:
+    repo = MemoryRepository()
+    metadata = await seed_file(repo)
+    native = NativeFiles()
+    response: dict[str, JsonValue] = {
+        "id": "file-native",
+        "type": "file",
+        "filename": metadata.filename,
+        "mime_type": metadata.mime,
+        "size_bytes": metadata.size,
+        "created_at": "2026-10-26T00:00:00Z",
+        "scope": None,
+    }
+    response[field] = value
+    native.metadata_override = response
+    async with httpx.AsyncClient(transport=httpx.MockTransport(native.respond)) as http:
+        with pytest.raises(ValueError):
+            await service(repo, http).prepare(source_scope(metadata))
+        stored = await repo.get("ops.telegram_files", metadata.file_key)
+        assert stored is not None
+        observed = PreparationRecord.model_validate(stored["native_preparation"]).root
+        assert observed.phase == "FILE_ID_OBSERVED" and observed.file_id == "file-native"
+        assert native.uploads == 1 and native.mounts == 0
+        native.metadata_override = None
+        await service(repo, http).prepare(source_scope(metadata))
+    assert native.uploads == native.mounts == 1 and native.metadata_reads == 2
+
+
+@pytest.mark.parametrize("identity", [".", ".."])
+async def test_ambiguous_native_session_segment_refuses_before_any_upload(identity: str) -> None:
+    repo = MemoryRepository()
+    metadata = await seed_file(repo)
+    scope = source_scope(metadata).model_copy(update={"session_id": identity})
+    native = NativeFiles()
+    async with httpx.AsyncClient(transport=httpx.MockTransport(native.respond)) as http:
+        with pytest.raises(ValueError, match="unambiguous path segment"):
+            await service(repo, http).prepare(scope)
+    assert native.uploads == native.mounts == 0

@@ -2912,6 +2912,29 @@
         "test_worker_refuses_missing_or_invalid_cutoff_without_calling_evaluator_or_guessing_clock",
         "test_constructed_invalid_receipt_cannot_cross_result_boundary"
       ]
+    },
+    {
+      "sites": [
+        {
+          "path": "src/tank/agents/native_file_preparation.py",
+          "symbol": "NativeFileTransport.metadata"
+        },
+        {
+          "path": "src/tank/contracts/native_files.py",
+          "symbol": "NativeVerifiedFileMetadata"
+        },
+        {
+          "path": "src/tank/agents/native_file_preparation.py",
+          "symbol": "cached_source"
+        }
+      ],
+      "kind": "consumed native metadata and historical cache projection",
+      "reason": "The readback confirms actual requested file metadata and ID; cached SHA is not a remote attestation. Native metadata scope None means no session scope was reported, and optional downloadability remains unreported when omitted. Known-ID recovery projects only actual cache owner/key/digest/name/MIME/size, preserving unconsumed original sender metadata/bytes as absent rather than reconstructing them. Legacy mount pointers remain a distinct observed-resource phase.",
+      "validation": [
+        "test_contradictory_file_metadata_preserves_id_and_refuses_mount_then_recovers_read_only",
+        "test_known_upload_recovery_does_not_reconstruct_unused_historical_mime_or_bytes",
+        "test_retained_mount_pointer_requires_actual_scoped_resource_and_preserves_history"
+      ]
     }
   ]
 }

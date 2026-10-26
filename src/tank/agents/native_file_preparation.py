@@ -15,6 +15,7 @@ from tank.contracts.json import decode_unique_json
 from tank.contracts.native_files import (
     FileIdentity,
     NativeFileIdObserved,
+    NativeFileMetadataVerified,
     NativeFileNotRequested,
     NativeFilePreparation,
     NativeFileSourceScope,
@@ -24,6 +25,7 @@ from tank.contracts.native_files import (
     NativeMountUnconfirmed,
     NativeUploadIntent,
     NativeUploadUnconfirmed,
+    NativeVerifiedFileMetadata,
 )
 from tank.contracts.provenance import ResolvedVersionIdentity
 from tank.contracts.session_followups import FollowupRefusalTarget
@@ -141,6 +143,34 @@ class NativeUploadedIdentity(DomainModel):
     id: FileIdentity
 
 
+class NativeRemoteFileScope(DomainModel):
+    type: Literal["session"]
+    id: FileIdentity
+
+
+class NativeFileMetadata(DomainModel):
+    type: Literal["file"]
+    id: FileIdentity
+    filename: str
+    mime_type: str
+    size_bytes: Annotated[int, Field(ge=0)]
+    created_at: str
+    downloadable: bool | None = None
+    scope: NativeRemoteFileScope | None = None
+
+    @model_validator(mode="after")
+    def reported_downloadability_is_boolean(self) -> Self:
+        if "downloadable" in self.model_fields_set and self.downloadable is None:
+            raise ValueError("Reported native downloadability must be a boolean")
+        return self
+
+
+def native_component(value: str) -> str:
+    if value in {".", ".."}:
+        raise ValueError("Native resource identity cannot form an unambiguous path segment")
+    return quote(value, safe="")
+
+
 class NativeFileTransport:
     def __init__(self, http: httpx.AsyncClient, base_url: str, api_key: str | None) -> None:
         self.http = http
@@ -157,7 +187,9 @@ class NativeFileTransport:
         page: str | None = None,
     ) -> dict[str, JsonValue]:
         headers = {
-            "anthropic-beta": "files-api-2025-04-14" if path == "files" else "managed-agents-2026-04-01"
+            "anthropic-beta": "files-api-2025-04-14"
+            if path == "files" or path.startswith("files/")
+            else "managed-agents-2026-04-01"
         }
         if self.api_key is not None:
             headers["x-api-key"] = self.api_key
@@ -180,8 +212,21 @@ class NativeFileTransport:
         wire = await self.request("POST", "files", file=(scope.filename, content, scope.mime))
         return NativeUploadedIdentity.model_validate({"id": wire["id"]})
 
+    async def metadata(self, file_id: str) -> NativeVerifiedFileMetadata:
+        wire = await self.request("GET", "files/" + native_component(file_id))
+        observed = NativeFileMetadata.model_validate(wire)
+        if observed.id != file_id:
+            raise ValueError("Native file readback returned another file identity")
+        return NativeVerifiedFileMetadata(
+            file_id=observed.id,
+            filename=observed.filename,
+            mime_type=observed.mime_type,
+            size_bytes=observed.size_bytes,
+            scope_session_id=observed.scope.id if observed.scope is not None else None,
+        )
+
     async def resources(self, session_id: str) -> list[NativeResource]:
-        path = "sessions/" + quote(session_id, safe="") + "/resources"
+        path = "sessions/" + native_component(session_id) + "/resources"
         resources: list[NativeResource] = []
         seen: set[str] = set()
         cursor = None
@@ -198,7 +243,7 @@ class NativeFileTransport:
     async def mount(self, session_id: str, file_id: str, path: str) -> NativeFileResource:
         wire = await self.request(
             "POST",
-            "sessions/" + quote(session_id, safe="") + "/resources",
+            "sessions/" + native_component(session_id) + "/resources",
             body={"type": "file", "file_id": file_id, "mount_path": path},
         )
         resource = NativeFileResource.model_validate(wire)
@@ -233,7 +278,9 @@ def preparation_scope(state: NativeFilePreparation) -> NativeFileSourceScope:
         return state.intent.scope
     if isinstance(state, NativeFileIdObserved):
         return state.intent.scope
-    return state.intent.upload.intent.scope
+    if isinstance(state, NativeFileMetadataVerified):
+        return state.upload.intent.scope
+    return state.intent.upload.upload.intent.scope
 
 
 class NativeFilePreparationService:
@@ -336,6 +383,7 @@ class NativeFilePreparationService:
 
     async def _prepare(self, scope: NativeFileSourceScope) -> str:
         scope = NativeFileSourceScope.model_validate(scope)
+        native_component(scope.session_id)
         current = await self.store.get("ops.telegram_files", scope.file_key)
         if current is None:
             raise NativePreparationUnavailable("Attached file cache is unavailable")
@@ -418,8 +466,22 @@ class NativeFilePreparationService:
             await self.save(scope, before, state)
             before = PreparationRecord(state).model_dump(mode="json")
         if isinstance(state, NativeFileIdObserved):
+            metadata = await self.transport.metadata(state.file_id)
+            verified = NativeFileMetadataVerified(
+                phase="FILE_METADATA_VERIFIED",
+                upload=state,
+                metadata=metadata,
+                recorded_at=self.clock(),
+            )
+            await self.save(scope, before, verified)
+            state = verified
+            before = PreparationRecord(state).model_dump(mode="json")
+        if isinstance(state, NativeFileMetadataVerified):
             digest = hashlib.sha256(canonical_json(scope.model_dump(mode="json")).encode()).hexdigest()
-            path = f"/workspace/uploads/{digest}/attachment-1/{quote(scope.filename, safe='')}"
+            filename = quote(scope.filename, safe="")
+            if filename in {".", ".."}:
+                filename = filename.replace(".", "%2E")
+            path = f"/workspace/uploads/{digest}/attachment-1/{filename}"
             mount_intent = NativeMountIntent(upload=state, mount_path=path, recorded_at=self.clock())
             pending_mount = NativeMountUnconfirmed(phase="MOUNT_UNCONFIRMED", intent=mount_intent)
             await self.save(scope, before, pending_mount)
@@ -428,7 +490,7 @@ class NativeFilePreparationService:
         if isinstance(state, NativeLegacyMountConfirmed):
             file_id, path = state.file_id, state.mount_path
         else:
-            file_id, path = state.intent.upload.file_id, state.intent.mount_path
+            file_id, path = state.intent.upload.upload.file_id, state.intent.mount_path
         occupants = [
             row for row in await self.transport.resources(scope.session_id) if row.mount_path == path
         ]
