@@ -10,7 +10,7 @@ from typing import Protocol, Self
 from pydantic import Field, JsonValue, model_validator
 
 from tank.contracts import DomainModel
-from tank.contracts.jobs import JobClaimRevision, JobClaimState, JobEnvelope
+from tank.contracts.jobs import JobClaimRevision, JobClaimScope, JobClaimState, JobEnvelope
 from tank.contracts.json import decode_json
 from tank.contracts.scheduler_commands import (
     InitialReactionCommand,
@@ -105,7 +105,7 @@ def reaction_job_command(payload: dict[str, JsonValue]) -> ReactionCaptureComman
     return _command(_reaction_input(payload))
 
 
-class ReactionClaimContext(DomainModel):
+class ReactionWireContext(DomainModel):
     claim: JobClaimState
     original_payload: JsonValue
     payload_sha256: ReactionFingerprint
@@ -148,12 +148,62 @@ class ReactionClaimContext(DomainModel):
             payload_sha256=sha256(envelope.payload),
         )
 
-    def same_execution(self, other: Self) -> bool:
-        return (
-            self.claim.job_id == other.claim.job_id
-            and self.claim.attempts == other.claim.attempts
-            and self.claim.recovery_count == other.claim.recovery_count
-            and self.payload_sha256 == other.payload_sha256
+
+class ReactionClaimContext(ReactionWireContext):
+    scope: JobClaimScope
+
+    @model_validator(mode="after")
+    def actual_owned_claim(self) -> Self:
+        if (
+            self.claim.status != "RUNNING"
+            or self.scope.job_id != self.claim.job_id
+            or self.scope.kind != self.claim.type
+            or self.scope.attempts != self.claim.attempts
+            or self.scope.recovery_count != self.claim.recovery_count
+            or self.scope.payload_revision != self.payload_sha256
+        ):
+            raise ValueError("Reaction execution requires its actual token-bound claim")
+        return self
+
+    @classmethod
+    def from_record(cls, record: Mapping[str, JsonValue]) -> Self:
+        wire = ReactionWireContext.from_record(record)
+        if "claim_token" not in record:
+            raise ValueError("Reaction execution requires the token from its actual claim")
+        scope = JobClaimScope.model_validate(
+            {
+                "job_id": wire.claim.job_id,
+                "kind": wire.claim.type,
+                "claim_token": record["claim_token"],
+                "attempts": wire.claim.attempts,
+                "recovery_count": wire.claim.recovery_count,
+                "payload_revision": wire.payload_sha256,
+            }
+        )
+        return cls(
+            claim=wire.claim,
+            original_payload=wire.original_payload,
+            payload_sha256=wire.payload_sha256,
+            scope=scope,
+        )
+
+    @classmethod
+    def from_envelope(cls, envelope: JobEnvelope) -> Self:
+        if envelope.claim_token is None:
+            raise ValueError("Reaction execution requires the token from its actual claim")
+        wire = ReactionWireContext.from_envelope(envelope)
+        return cls(
+            claim=wire.claim,
+            original_payload=wire.original_payload,
+            payload_sha256=wire.payload_sha256,
+            scope=JobClaimScope(
+                job_id=envelope.job_id,
+                kind=envelope.type,
+                claim_token=envelope.claim_token,
+                attempts=envelope.attempts,
+                recovery_count=envelope.recovery_count,
+                payload_revision=sha256(envelope.payload),
+            ),
         )
 
 
@@ -192,7 +242,7 @@ class ReactionJobInvocation(DomainModel):
 
 
 class QueuedReactionPeer(DomainModel):
-    context: ReactionClaimContext
+    context: ReactionWireContext
     queue_input: ChangedReactionJob
 
     @model_validator(mode="after")
@@ -240,7 +290,7 @@ async def reaction_leader(
         return leader
     async for record in queue.iter_all("ops.jobs", filters={"type": "REACTION_CAPTURE", "status": "QUEUED"}):
         try:
-            context = ReactionClaimContext.from_record(record)
+            context = ReactionWireContext.from_record(record)
             payload = context.original_payload
             if not isinstance(payload, dict) or "automatic_revision" not in payload:
                 continue
@@ -331,10 +381,9 @@ async def capture_reaction_job(
         record = await queue.get("ops.jobs", invocation.context.claim.job_id)
         if record is None:
             raise ReactionClaimLost("Reaction queue claim is no longer available")
-        actual_context = ReactionClaimContext.from_record(record)
-        if actual_context.claim.status != "RUNNING" or not invocation.context.same_execution(actual_context):
+        if not invocation.context.scope.matches(record):
             raise ReactionClaimLost("Reaction execution claim changed before capture")
-        active = ReactionJobInvocation.from_context(actual_context)
+        active = ReactionJobInvocation.from_record(record)
         stamp = Timestamp.model_validate(clock())
         if stamp.value is None:
             raise ValueError("Reaction arbitration requires its actual clock")
