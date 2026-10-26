@@ -1,12 +1,17 @@
 """Durable watch predicates, observed counters and lifecycle snapshots."""
 
+from collections.abc import Mapping
 from decimal import Decimal, InvalidOperation
 from typing import Literal, Self
 
-from pydantic import Field, JsonValue, field_validator, model_validator
+from pydantic import ConfigDict, Field, JsonValue, TypeAdapter, field_validator, model_validator
 
 from tank.contracts import DomainModel
+from tank.contracts.json import decode_json
 from tank.contracts.provenance import GenerationProvenance
+from tank.contracts.scalars import TrueFlag
+from tank.time_precision import Timestamp
+from tank.util import parse_iso_time
 
 type WatchMetric = Literal[
     "event.state",
@@ -100,13 +105,10 @@ class WatchCounter(WatchObservation):
     history: list[WatchObservation] = Field(default_factory=list)
 
 
-class WatchCondition(GenerationProvenance):
-    cond_id: str = Field(min_length=1)
-    event_id: str = Field(min_length=1)
-    token_id: str = Field(min_length=1)
-    role: Literal["UPGRADE", "DOWNGRADE", "INVALIDATION", "AGENT"]
+class WatchLifecycle(GenerationProvenance):
+    cond_id: str = Field(min_length=1, pattern=r"\S")
+    event_id: str = Field(min_length=1, pattern=r"\S")
     human_text: str
-    expr: WatchExpression
     status: Literal["ARMED", "FIRED", "CANCELLED", "EXPIRED"]
     created_by: str
     created_at: str
@@ -117,19 +119,8 @@ class WatchCondition(GenerationProvenance):
     expires_at_prec: str | None
     expires_at_prec_reason: str | None
     expires_at_bucket_anchor: Literal["START", "END", "UNSPECIFIED"] | None = None
-    agent_defined: bool = False
-    counters: dict[str, WatchCounter] = Field(default_factory=dict)
-    milestone_id: str | None = None
-    last_shown_by: str | None = None
-    rearmed_from: str | None = None
-    consumed_by: str | None = None
-    superseded_by: str | None = None
     cancelled_by: str | None = None
     cancel_provenance: GenerationProvenance | None = None
-    consumed_at: str | None = None
-    consumed_at_prec: str | None = None
-    consumed_at_prec_reason: str | None = None
-    consumed_at_bucket_anchor: Literal["START", "END", "UNSPECIFIED"] | None = None
     cancelled_at: str | None = None
     cancelled_at_prec: str | None = None
     cancelled_at_prec_reason: str | None = None
@@ -138,6 +129,27 @@ class WatchCondition(GenerationProvenance):
     last_evaluated_at_prec: str | None = None
     last_evaluated_at_prec_reason: str | None = None
     last_evaluated_at_bucket_anchor: Literal["START", "END", "UNSPECIFIED"] | None = None
+    fired_at: str | None = None
+    fired_at_prec: str | None = None
+    fired_at_prec_reason: str | None = None
+    fired_at_bucket_anchor: Literal["START", "END", "UNSPECIFIED"] | None = None
+
+
+class WatchCondition(WatchLifecycle):
+    token_id: str = Field(min_length=1)
+    role: Literal["UPGRADE", "DOWNGRADE", "INVALIDATION", "AGENT"]
+    expr: WatchExpression
+    agent_defined: bool = False
+    counters: dict[str, WatchCounter] = Field(default_factory=dict)
+    milestone_id: str | None = None
+    last_shown_by: str | None = None
+    rearmed_from: str | None = None
+    consumed_by: str | None = None
+    superseded_by: str | None = None
+    consumed_at: str | None = None
+    consumed_at_prec: str | None = None
+    consumed_at_prec_reason: str | None = None
+    consumed_at_bucket_anchor: Literal["START", "END", "UNSPECIFIED"] | None = None
     last_attempted_at: str | None = None
     last_attempted_at_prec: str | None = None
     last_attempted_at_prec_reason: str | None = None
@@ -147,10 +159,167 @@ class WatchCondition(GenerationProvenance):
     cleared_at_prec: str | None = None
     cleared_at_prec_reason: str | None = None
     cleared_at_bucket_anchor: Literal["START", "END", "UNSPECIFIED"] | None = None
-    fired_at: str | None = None
-    fired_at_prec: str | None = None
-    fired_at_prec_reason: str | None = None
-    fired_at_bucket_anchor: Literal["START", "END", "UNSPECIFIED"] | None = None
+
+
+class TimedReviewExpression(DomainModel):
+    review_at: str
+    review_question: str = Field(min_length=1, max_length=500, pattern=r"\S")
+
+    @field_validator("review_at")
+    @classmethod
+    def actual_requested_clock(cls, value: str) -> str:
+        parse_iso_time(value)
+        return value
+
+
+def parse_timed_review_expression(value: Mapping[str, JsonValue]) -> TimedReviewExpression | None:
+    """Recognize the timer variant without treating other expressions as valid metric predicates."""
+    if "review_at" in value or "review_question" in value:
+        return TimedReviewExpression.model_validate(value)
+    if "all" in value:
+        children = value["all"]
+        if not isinstance(children, list):
+            raise ValueError("A watch group requires its actual predicate array")
+        for child in children:
+            if not isinstance(child, dict):
+                raise ValueError("A watch predicate must be an object")
+            if parse_timed_review_expression(child) is not None:
+                raise ValueError("A timed review cannot be nested inside metric predicates")
+    return None
+
+
+class TimedReviewCondition(WatchLifecycle):
+    token_id: None
+    cancelled_by: Literal["AGENT", "EVENT_MISSING", "EVENT_TERMINAL"] | None = None
+    role: Literal["AGENT"]
+    agent_defined: TrueFlag
+    created_by: Literal["AGENT"]
+    expr: TimedReviewExpression
+
+    @model_validator(mode="after")
+    def actual_review_schedule(self) -> Self:
+        clocks = (
+            (
+                self.created_at,
+                self.created_at_prec,
+                self.created_at_prec_reason,
+                self.created_at_bucket_anchor,
+            ),
+            (
+                self.expires_at,
+                self.expires_at_prec,
+                self.expires_at_prec_reason,
+                self.expires_at_bucket_anchor,
+            ),
+            (
+                self.last_evaluated_at,
+                self.last_evaluated_at_prec,
+                self.last_evaluated_at_prec_reason,
+                self.last_evaluated_at_bucket_anchor,
+            ),
+            (self.fired_at, self.fired_at_prec, self.fired_at_prec_reason, self.fired_at_bucket_anchor),
+            (
+                self.cancelled_at,
+                self.cancelled_at_prec,
+                self.cancelled_at_prec_reason,
+                self.cancelled_at_bucket_anchor,
+            ),
+        )
+        for value, precision, reason, anchor in clocks:
+            Timestamp(value=value, precision=precision, precision_reason=reason, bucket_anchor=anchor)
+        created = parse_iso_time(self.created_at)
+        due = parse_iso_time(self.expr.review_at)
+        expiry = parse_iso_time(self.expires_at)
+        if not created < due < expiry:
+            raise ValueError("Timed review must lie strictly after creation and before expiry")
+        if self.human_text != self.expr.review_question:
+            raise ValueError("Timed review text must preserve its actual saved question")
+        if self.status == "FIRED":
+            if self.fired_at is None or not due <= parse_iso_time(self.fired_at) < expiry:
+                raise ValueError("Fired review requires its actual eligible evaluation clock")
+        elif self.fired_at is not None:
+            raise ValueError("An unfired review cannot claim a firing clock")
+        if self.status == "CANCELLED" and self.cancelled_by is None:
+            raise ValueError("Cancelled review requires its actual cancellation cause")
+        if self.status == "EXPIRED" and (
+            self.last_evaluated_at is None or parse_iso_time(self.last_evaluated_at) < expiry
+        ):
+            raise ValueError("Expired review requires its actual expiry evaluation clock")
+        return self
+
+
+class TimedReviewEventState(DomainModel):
+    kind: Literal["PRESENT"]
+    event_id: str = Field(min_length=1, pattern=r"\S")
+    lifecycle: Literal[
+        "DETECTED",
+        "SCORED",
+        "TRACKED",
+        "ANALYZING",
+        "ALERTED",
+        "MONITORING",
+        "COOLDOWN",
+        "INVALIDATED",
+        "CLOSED",
+        "MERGED",
+    ]
+
+
+class MissingTimedReviewEvent(DomainModel):
+    kind: Literal["MISSING"]
+    event_id: str = Field(min_length=1, pattern=r"\S")
+
+
+class UnloadedExpiredReviewEvent(DomainModel):
+    kind: Literal["NOT_LOADED"]
+    event_id: str = Field(min_length=1, pattern=r"\S")
+    reason: Literal["REVIEW_EXPIRED"]
+
+
+type TimedReviewEvent = TimedReviewEventState | MissingTimedReviewEvent | UnloadedExpiredReviewEvent
+
+
+class PendingTimedReview(DomainModel):
+    status: Literal["ARMED"]
+    reason: Literal["NOT_DUE"]
+
+
+class FireTimedReview(DomainModel):
+    status: Literal["FIRED"]
+    reason: Literal["REVIEW_DUE"]
+
+
+class ExpireTimedReview(DomainModel):
+    status: Literal["EXPIRED"]
+    reason: Literal["EXPIRY_REACHED"]
+
+
+class CancelTimedReview(DomainModel):
+    status: Literal["CANCELLED"]
+    reason: Literal["EVENT_MISSING", "EVENT_TERMINAL"]
+
+
+type TimedReviewAction = PendingTimedReview | FireTimedReview | ExpireTimedReview | CancelTimedReview
+
+
+type StoredWatchCondition = WatchCondition | TimedReviewCondition
+
+_WATCH_RECORDS: TypeAdapter[StoredWatchCondition] = TypeAdapter(
+    WatchCondition | TimedReviewCondition,
+    config=ConfigDict(hide_input_in_errors=True),
+)
+
+
+def parse_watch_condition(value: Mapping[str, JsonValue]) -> StoredWatchCondition:
+    return _WATCH_RECORDS.validate_python(value, strict=True)
+
+
+def encode_watch_condition(value: StoredWatchCondition) -> dict[str, JsonValue]:
+    validated = type(value).model_validate(value)
+    result = decode_json(validated.model_dump_json(exclude_unset=True, warnings="error"))
+    if not isinstance(result, dict):
+        raise TypeError("A watch condition must serialize as an object")
+    return result
 
 
 class WatchCall(DomainModel):

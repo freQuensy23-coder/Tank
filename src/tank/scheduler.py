@@ -7,14 +7,36 @@ from collections.abc import Awaitable, Callable, Mapping
 from datetime import UTC, date, timedelta
 from decimal import Decimal, InvalidOperation, localcontext
 from pathlib import Path
+from typing import Literal
 
 from pydantic import Field, JsonValue
 
+from tank.analysis.watch_contracts import (
+    CancelTimedReview,
+    FireTimedReview,
+    MissingTimedReviewEvent,
+    TimedReviewCondition,
+    TimedReviewEvent,
+    TimedReviewEventState,
+    UnloadedExpiredReviewEvent,
+    encode_watch_condition,
+    parse_timed_review_expression,
+)
+from tank.analysis.watch_policy import evaluate_timed_review
 from tank.contracts import DomainModel
 from tank.contracts.configuration import Thresholds
+from tank.contracts.json import decode_json
 from tank.contracts.provenance import ResolvedVersionIdentity
+from tank.runtime_contracts import TimedReviewFiredMessage
 from tank.settings import Settings
-from tank.time_precision import chosen_boundary, collection_clock, offset_schedule, propagate_timestamp
+from tank.time_precision import (
+    Timestamp,
+    chosen_boundary,
+    collection_clock,
+    offset_schedule,
+    propagate_timestamp,
+    timestamp_owned_fields,
+)
 from tank.util import iso, new_id, parse_time, utcnow
 
 log = logging.getLogger(__name__)
@@ -516,6 +538,8 @@ class Scheduler:
 
     @staticmethod
     def condition_requirements(expression):
+        if parse_timed_review_expression(expression) is not None:
+            return []
         if "all" in expression:
             return [item for child in expression["all"] for item in Scheduler.condition_requirements(child)]
         metric = expression["metric"]
@@ -537,14 +561,19 @@ class Scheduler:
         return truth
 
     async def eval_conditions(self, payload):
-        cutoff_stamp = propagate_timestamp(payload, "cutoff") if payload.get("cutoff") else collection_clock()
+        cutoff_stamp = propagate_timestamp(payload, "cutoff") if "cutoff" in payload else collection_clock()
         cutoff = cutoff_stamp.value
+        if cutoff is None:
+            raise ValueError("Condition evaluation requires an actual cutoff")
         cache = {}
         conditions = [
             cond async for cond in self.repo.iter_all("ana.watch_conditions", filters={"status": "ARMED"})
         ]
         requirement_sets = {}
         for condition in conditions:
+            if parse_timed_review_expression(condition["expr"]) is not None:
+                TimedReviewCondition.model_validate(condition)
+                continue
             key = (condition["event_id"], condition["token_id"])
             requirement_sets.setdefault(key, set()).update(
                 (item["metric"], item["window"]) for item in self.condition_requirements(condition["expr"])
@@ -592,6 +621,13 @@ class Scheduler:
             async with self.repo.lock("condition:" + cond["cond_id"]):
                 cond = await self.repo.get("ana.watch_conditions", cond["cond_id"])
                 if cond["status"] != "ARMED":
+                    continue
+                if parse_timed_review_expression(cond["expr"]) is not None:
+                    outcome = await self.eval_timed_review(
+                        TimedReviewCondition.model_validate(cond), cutoff_stamp
+                    )
+                    if outcome:
+                        outcomes[outcome].append(cond["cond_id"])
                     continue
                 if not cond.get("expires_at"):
                     log.error(
@@ -832,6 +868,95 @@ class Scheduler:
                 outcomes["fired" if fired else "evaluated"].append(cond["cond_id"])
 
         return outcomes
+
+    async def eval_timed_review(
+        self, condition: TimedReviewCondition, cutoff_stamp: Timestamp
+    ) -> Literal["fired", "evaluated"] | None:
+        snapshot = TimedReviewCondition.model_validate(condition)
+        clock = Timestamp.model_validate(cutoff_stamp)
+        if clock.value is None:
+            raise ValueError("Timed review evaluation requires its actual cutoff")
+        async with self.repo.lock("event:" + snapshot.event_id), self.repo.transaction():
+            row = await self.repo.get("ana.watch_conditions", snapshot.cond_id)
+            if row is None:
+                return None
+            current = TimedReviewCondition.model_validate(row)
+            if current.status != "ARMED":
+                return None
+            if (current.cond_id, current.event_id) != (snapshot.cond_id, snapshot.event_id):
+                raise ValueError("Timed review identity changed while acquiring its event lock")
+            event: dict[str, JsonValue] | None = None
+            state: TimedReviewEvent
+            if parse_time(current.expires_at) <= parse_time(clock.value):
+                state = UnloadedExpiredReviewEvent(
+                    kind="NOT_LOADED", event_id=current.event_id, reason="REVIEW_EXPIRED"
+                )
+            else:
+                event = await self.repo.get("evt.events", current.event_id)
+                state = (
+                    MissingTimedReviewEvent(kind="MISSING", event_id=current.event_id)
+                    if event is None
+                    else TimedReviewEventState.model_validate(
+                        {
+                            "kind": "PRESENT",
+                            "event_id": event["event_id"],
+                            "lifecycle": event["lifecycle"],
+                        }
+                    )
+                )
+            action = evaluate_timed_review(current, cutoff=clock, event=state)
+            updates: dict[str, JsonValue] = {
+                "status": action.status,
+                "last_evaluated_at": clock.value,
+                "last_evaluated_at_prec": clock.precision,
+                "last_evaluated_at_prec_reason": clock.precision_reason,
+                "last_evaluated_at_bucket_anchor": clock.bucket_anchor,
+            }
+            if isinstance(action, CancelTimedReview):
+                updates.update(
+                    cancelled_by=action.reason,
+                    cancelled_at=clock.value,
+                    cancelled_at_prec=clock.precision,
+                    cancelled_at_prec_reason=clock.precision_reason,
+                    cancelled_at_bucket_anchor=clock.bucket_anchor,
+                )
+            elif isinstance(action, FireTimedReview):
+                updates.update(
+                    fired_at=clock.value,
+                    fired_at_prec=clock.precision,
+                    fired_at_prec_reason=clock.precision_reason,
+                    fired_at_bucket_anchor=clock.bucket_anchor,
+                )
+                if event is None:
+                    raise ValueError("Firing a timed review requires its actual present event")
+                owned_clock_fields = timestamp_owned_fields("review_requested_at")
+                event_update = {
+                    name: value for name, value in event.items() if name not in owned_clock_fields
+                }
+                event_update.update(clock.fields("review_requested_at"))
+                await self.repo.put("evt.events", current.event_id, event_update)
+            updated = TimedReviewCondition.model_validate(current.model_copy(update=updates))
+            await self.repo.put("ana.watch_conditions", current.cond_id, encode_watch_condition(updated))
+            if isinstance(action, FireTimedReview):
+                message = TimedReviewFiredMessage(
+                    kind="CONDITION_FIRED",
+                    event_id=current.event_id,
+                    condition=updated,
+                    review_at=current.expr.review_at,
+                    review_question=current.expr.review_question,
+                    session_id=current.session_id,
+                )
+                payload = decode_json(message.model_dump_json(exclude_unset=True, warnings="error"))
+                if not isinstance(payload, dict):
+                    raise TypeError("Timed review notification must serialize as an object")
+                await self.repo.enqueue(
+                    "AGENT_MESSAGE",
+                    payload,
+                    f"{current.event_id}:CONDITION_FIRED:{current.cond_id}",
+                    priority=1,
+                    expires_at=offset_schedule(collection_clock(), timedelta(days=1)),
+                )
+            return "fired" if isinstance(action, FireTimedReview) else "evaluated"
 
     async def milestone_check(self, payload):
         event = await self.repo.get("evt.events", payload["event_id"])
@@ -1799,6 +1924,18 @@ class Scheduler:
     async def _advance_lifecycle(self, event, now):
         state = event["lifecycle"]
         event_id = event["event_id"]
+        review_pending = False
+        if state in {"TRACKED", "COOLDOWN"}:
+            review_pending = any(
+                [
+                    row.get("expr", {}).get("review_at")
+                    and row.get("expires_at")
+                    and parse_time(row["expires_at"]) > now
+                    async for row in self.repo.iter_all(
+                        "ana.watch_conditions", filters={"event_id": event_id, "status": "ARMED"}
+                    )
+                ]
+            )
         observations = await self.repo.list_latest(
             "evt.event_observations",
             "observed_at",
@@ -1808,6 +1945,7 @@ class Scheduler:
         )
         last = max(
             [event.get("known_to_us_at", iso(now))]
+            + ([event["review_requested_at"]] if event.get("review_requested_at") else [])
             + [o["observed_at"] for o in observations if o.get("observed_at")]
         )
         if state == "ALERTED":
@@ -1819,6 +1957,7 @@ class Scheduler:
         elif (
             (
                 state == "TRACKED"
+                and not review_pending
                 and (
                     not event.get("next_milestone")
                     or event["next_milestone"].get("status") in {"CONFIRMED", "VERIFIED", "FAILED", "MISSED"}
@@ -1826,7 +1965,12 @@ class Scheduler:
                 and now - parse_time(last) >= timedelta(days=self.thresholds.event_close_days)
             )
             or state == "COOLDOWN"
-            and now - parse_time(event.get("cooldown_at", last))
+            and not review_pending
+            and now
+            - max(
+                parse_time(event.get("cooldown_at", last)),
+                parse_time(event.get("review_requested_at", event.get("cooldown_at", last))),
+            )
             >= timedelta(days=self.thresholds.event_close_days)
         ):
             await self.repo.put(

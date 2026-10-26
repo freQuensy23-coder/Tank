@@ -49,7 +49,9 @@ def escaped(token: str) -> bytes:
     return "".join(chr(92) + "u" + f"{ord(character):04x}" for character in token).encode()
 
 
-def tainted_reply(location: Literal["VALUE", "ESCAPED", "KEY", "NESTED", "ENCODED", "UNSAFE_TAG"]) -> bytes:
+def tainted_reply(
+    location: Literal["VALUE", "ESCAPED", "KEY", "NESTED", "ENCODED", "UNSAFE_TAG", "REFERENCE"],
+) -> bytes:
     payload = healthy_reply()
     if location == "KEY":
         payload["telemetry"] = {"prefix-" + TOKEN: "ignored value"}
@@ -60,21 +62,36 @@ def tainted_reply(location: Literal["VALUE", "ESCAPED", "KEY", "NESTED", "ENCODE
             "bodyEncoding": "base64",
             "body": base64.b64encode(("prefix-" + TOKEN).encode()).decode(),
         }
+    elif location == "REFERENCE":
+        posts = payload["posts"]
+        assert isinstance(posts, list) and isinstance(posts[0], dict)
+        posts[0]["referencedPosts"] = [
+            {
+                "relation": "quoted",
+                "id": "2000",
+                "author": None,
+                "url": "https://x.com/i/status/2000",
+                "publishedAt": None,
+                "text": TOKEN,
+            }
+        ]
     elif location == "UNSAFE_TAG":
         payload["accounts"] = [{"handle": "alice", "status": TOKEN, "posts": 1, "historyGap": False}]
     else:
         payload["telemetry"] = {"unconsumed": TOKEN}
     wire = encode_json(payload)
-    if location in {"ESCAPED", "KEY", "NESTED", "UNSAFE_TAG"}:
+    if location in {"ESCAPED", "KEY", "NESTED", "UNSAFE_TAG", "REFERENCE"}:
         wire = wire.replace(TOKEN.encode(), escaped(TOKEN))
         assert TOKEN.encode() not in wire
     return wire
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("location", ["VALUE", "ESCAPED", "KEY", "NESTED", "ENCODED", "UNSAFE_TAG"])
+@pytest.mark.parametrize(
+    "location", ["VALUE", "ESCAPED", "KEY", "NESTED", "ENCODED", "UNSAFE_TAG", "REFERENCE"]
+)
 async def test_credential_in_any_decoded_wire_location_refuses_raw_rows_with_safe_error(
-    location: Literal["VALUE", "ESCAPED", "KEY", "NESTED", "ENCODED", "UNSAFE_TAG"],
+    location: Literal["VALUE", "ESCAPED", "KEY", "NESTED", "ENCODED", "UNSAFE_TAG", "REFERENCE"],
 ) -> None:
     wire = tainted_reply(location)
     cursors = {"alice": "100"}
@@ -163,8 +180,11 @@ class PrivacyFixtureSettings(Settings):
 
 
 @pytest.mark.asyncio
-async def test_actual_source_cannot_persist_or_acknowledge_escaped_credential_wire(tmp_path: Path) -> None:
-    wire = tainted_reply("NESTED")
+@pytest.mark.parametrize("location", ["NESTED", "REFERENCE"])
+async def test_actual_source_cannot_persist_or_acknowledge_escaped_credential_wire(
+    tmp_path: Path, location: Literal["NESTED", "REFERENCE"]
+) -> None:
+    wire = tainted_reply(location)
     repo = MemoryRepository()
     settings = PrivacyFixtureSettings(data_dir=tmp_path, apify_api_token=TOKEN, ops_progress_enabled=False)
     budgets = fixture_request_budgets()

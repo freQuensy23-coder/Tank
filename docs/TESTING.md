@@ -1,6 +1,6 @@
 # Tests
 
-Run commands in an isolated server-side development checkout with Python 3.13.13. Never use production credentials, production databases, or a personal browser profile.
+Run commands in a local development checkout with Python 3.13.13. Never use production credentials, production databases, or a personal browser profile.
 
 ## Commands
 

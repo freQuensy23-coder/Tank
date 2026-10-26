@@ -64,6 +64,32 @@ class PublicationNarrative(DomainModel):
     why: tuple[WhyBullet, ...] = Field(min_length=2, max_length=3)
 
 
+class PreliminaryNarrative(DomainModel):
+    kind: Literal["PRELIMINARY"]
+    what: str = Field(min_length=1, max_length=500, pattern=r"\S")
+    verdict: str = Field(min_length=1, max_length=160, pattern=r"\S")
+    why: tuple[WhyBullet, ...] = Field(min_length=1, max_length=3)
+    unconfirmed: str | None = Field(min_length=1, max_length=500, pattern=r"\S")
+
+
+class PreliminaryGateResult(DomainModel):
+    allowed: bool
+    reason: Literal[
+        "PRELIMINARY_CORRECTION",
+        "PRELIMINARY_REQUIRES_MATERIAL",
+        "TERMINAL_EVENT",
+        "STALE",
+        "PRELIMINARY_REQUIRES_EVIDENCE",
+        "PRELIMINARY",
+    ]
+
+    @model_validator(mode="after")
+    def consistent_eligibility(self) -> Self:
+        if self.allowed != (self.reason in {"PRELIMINARY", "PRELIMINARY_CORRECTION"}):
+            raise ValueError("Preliminary eligibility does not match its reason")
+        return self
+
+
 class PublicationPolicy(DomainModel):
     card_max_chars: int = Field(gt=0)
     update_rate_limit_s: int = Field(ge=0)
@@ -162,6 +188,15 @@ class PublicationBaseline(DomainModel):
         if any(not value.strip() for value in values):
             raise ValueError("Publication history requires actual token identities")
         return values
+
+
+class PreliminaryGateInputs(DomainModel):
+    event: PublicationEventFacts
+    assessment_class: AssessmentClass
+    has_current_sourced_claim: bool
+    previous: PublicationBaseline | None
+    previous_failed: bool
+    previous_terminal_correction: bool | None
 
 
 class PublicationChangeInputs(DomainModel):
@@ -563,15 +598,20 @@ class PendingCardAnalysis(DomainModel):
     kind: Literal["ANALYSIS_PENDING"]
 
 
+class PreliminaryCardAnalysis(DomainModel):
+    kind: Literal["PRELIMINARY_PENDING"]
+    denied: bool
+
+
 class CardInputs(DomainModel):
     registry: CardRegistryMembership
-    narrative: PublicationNarrative
+    narrative: PublicationNarrative | PreliminaryNarrative
     policy: PublicationPolicy
     event: CardEvent
     assessment: CardAssessment
     beneficiaries: tuple[CardBeneficiary, ...] = Field(max_length=3)
     other_subjects: tuple[CardSubject, ...]
-    mapping: CardMapping | PendingCardAnalysis
+    mapping: CardMapping | PendingCardAnalysis | PreliminaryCardAnalysis
     decisions_by_token: dict[str, CardDecision]
     market_by_token: dict[str, CardMarket]
 
@@ -598,6 +638,19 @@ class CardInputs(DomainModel):
         tokens = [value.token_id for value in self.beneficiaries]
         if len(tokens) != len(set(tokens)):
             raise ValueError("A card cannot repeat a selected beneficiary token")
+        if isinstance(self.mapping, PreliminaryCardAnalysis):
+            if (
+                not isinstance(self.narrative, PreliminaryNarrative)
+                or self.beneficiaries
+                or self.other_subjects
+                or self.decisions_by_token
+                or self.market_by_token
+            ):
+                raise ValueError("Preliminary analysis cannot claim financial subjects or results")
+            if not self.mapping.denied and self.narrative.unconfirmed is None:
+                raise ValueError("Preliminary publication requires its authored uncertainty")
+        elif isinstance(self.narrative, PreliminaryNarrative):
+            raise ValueError("Preliminary publication requires its explicit pending phase")
         if isinstance(self.mapping, PendingCardAnalysis) and (
             self.narrative.kind != "PARTIAL"
             or self.beneficiaries
@@ -606,7 +659,7 @@ class CardInputs(DomainModel):
             or self.market_by_token
         ):
             raise ValueError("Pending PARTIAL analysis cannot claim mapped financial subjects or results")
-        if self.narrative.kind != "PARTIAL":
+        if self.narrative.kind not in {"PARTIAL", "PRELIMINARY"}:
             mapping = self.mapping
             if not isinstance(mapping, CardMapping):
                 raise ValueError("Full analysis requires its actual beneficiary mapping")
