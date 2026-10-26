@@ -1,40 +1,40 @@
-# User instructions — Tank
+# Tank — agent instructions
 
-Updated 2026-10-20, from the human user in the original Tank conversation.
+Specifications live in `01_Tank_V0_PRD.md`, `02_Tank_V0_HLD.md`, `03_Tank_V0_Technical_Design.md` and `docs/`. This file holds only working rules.
 
-- The user has appointed a second agent as the lead for this same task. That agent's changes and architectural decisions take precedence over the original agent and all of its subagents.
-- Original-agent followers must stop overlapping edits until ownership is coordinated. Do not overwrite, revert, reformat, or replace the lead agent's changes with an older copy. Preserve existing evidence; supply read-only analysis and handoff information.
-- The lead agent may continue the user's work. These coordination instructions do not require the lead to obtain approval from the original agent.
-- Do not stop, clean up, or redeploy another agent's or an unidentified process/container.
-- Do not access the user's personal Chrome. X authorization was supplied as /Users/a.mametyev/.config/tank/x-session.json; preserve the original and keep secrets out of output.
+## Working environment
 
-Read-only original-agent handoff: `/srv/tank/data/qa/original-agent-handoff-20261020T162237Z/snapshot.json`. It records current evidence and unfinished work; it does not override the lead agent.
+- Develop and run tests in a local checkout. Servers are not development environments.
+- Do not access the user's personal Chrome.
+- Keep secrets out of source control, logs and command output.
+- Do not stop, clean up or redeploy another agent's or an unidentified process or container.
 
-## Lead coordination
+## Code
 
-The rules, workstreams and file ownership of the lead session are in /srv/tank-work/COORDINATION.md. Original-agent followers stay read-only: do not edit /srv/tank or /srv/tank-work.
+- Add no ordinary comments to active Python or Go source, tests, scripts, deployment helpers or capture code. Docstrings are allowed. Keep executable shebangs, Go compiler/build/line directives, cgo preambles and required literal integration patch data.
+- Preserve upstream and vendored third-party source, LICENSE/copyright notices, immutable history, retained fixture payloads and verification evidence.
+- Use modern Python syntax and absolute imports. Do not restore the retired Python exchange producer or legacy compatibility code.
+- Preserve public Go error strings covered by parity contracts.
+- Run Ruff check, Ruff format and mypy against the current source.
 
-## CI and active source policy
+## Tests
 
-- In an explicitly authorized isolated CI worktree, use Python 3.13.13 and the frozen uv.lock with uv 0.11.7. Production work remains subject to the lead coordination rules above.
-- Add no ordinary comments to active Python or Go source, tests, scripts, deployment helpers, or capture code. Docstrings are allowed. Preserve executable shebangs, Go compiler/build/line directives, cgo preambles, and required literal integration patch data.
-- Preserve upstream and vendored third-party source, LICENSE/copyright notices, immutable history, retained fixture payloads, and verification evidence. The source policy checker and Ruff explicitly exclude those trees.
-- Use modern Python syntax and absolute imports. Do not restore the retired Python exchange producer or legacy compatibility implementations.
-- Run Ruff checks, Ruff formatting, and mypy against the current source. Preserve public Go error strings covered by parity contracts; .golangci.yml narrowly exempts their exact ST1005 source expressions.
-- Unit tests select `not integration`, must have zero skips, take less than 10 seconds per case including fixtures, and have p90 below 1 second. Run integration separately with its actual services and require the full collected case set to pass with zero skips.
-- Use pytest-xdist `-n auto` and normal available CPU/memory. Do not introduce artificial resource quotas, worker caps, or CPU affinity restrictions.
-- CI builds and pushes the five images by commit SHA in parallel with the tests; only a commit whose whole CI run passed gets the `main` tag and can be deployed. Production deployment is the manual Deploy workflow, from main only; do not invoke it while doing CI maintenance.
+- Use the toolchain pinned in CI and the frozen `uv.lock`.
+- Follow [docs/TESTING.md](docs/TESTING.md). Unit tests select `not integration`, have zero skips, take under 10 s per case and keep p90 under 1 s. Integration runs separately against real services and must pass its full collected set with zero skips.
+- Run pytest with `-n auto`. Do not add resource quotas, worker caps or CPU affinity.
 
 ## Deployment
 
-- SSH access to the production server is not for deploys. Never deploy over SSH: no manual `docker compose` up/pull/restart, image changes or checkout updates in /srv/tank.
-- Every production deploy runs through the GitHub Actions `deploy` workflow (`.github/workflows/deploy.yml`), dispatched from the remote `main` branch.
+- Production is `oracle-vps` ([docs/OPERATIONS.md](docs/OPERATIONS.md)).
+- Deploy only with the GitHub Actions `deploy` workflow (`.github/workflows/deploy.yml`), started by hand from `main`. Do not start it during CI maintenance.
+- Never deploy over SSH: no `git clone`, `pull` or `checkout` on a server, no copying code, compose files or images to it, no manual `docker compose` up/pull/restart.
+- SSH to production is for read-only diagnostics. The only host-side change is the deployment owner editing secrets in `/srv/tank-deploy/.env`.
 
 ## Code Review Rules
 
 ### Code style
 
-- Check changed code against the CI and active source policy above, including the ordinary-comment prohibition and its exceptions, modern Python syntax, absolute imports, preserved public Go error strings, and protection of upstream/vendor source and retained evidence. Use the configured Ruff, formatting, mypy and Go CI results for mechanical checks; flag policy violations that those checks miss. Do not demand style-only rewrites of untouched code or protected third-party and evidence trees.
+- Check changed code against the Code rules above, including the ordinary-comment prohibition and its exceptions, modern Python syntax, absolute imports, preserved public Go error strings, and protection of upstream/vendor source and retained evidence. Use the configured Ruff, formatting, mypy and Go CI results for mechanical checks; flag policy violations that those checks miss. Do not demand style-only rewrites of untouched code or protected third-party and evidence trees.
 
 ### One MR, one feature
 

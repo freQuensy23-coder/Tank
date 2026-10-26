@@ -498,8 +498,8 @@ async def test_fresh_replay_session_reruns_market_and_decision_code(
     class Stream(httpx.AsyncByteStream):
         async def __aiter__(self):
             while True:
-                seq, event = await queue.get()
-                yield ("id: " + str(seq) + "\ndata: " + json.dumps(event) + "\n\n").encode()
+                _order, event = await queue.get()
+                yield ("data: " + json.dumps(event) + "\n\n").encode()
 
         async def aclose(self) -> None:
             pass
@@ -552,7 +552,7 @@ async def test_fresh_replay_session_reruns_market_and_decision_code(
             return httpx.Response(200, headers={"content-type": "text/event-stream"}, stream=Stream())
         if path.endswith("/events"):
             if request.method == "GET":
-                return httpx.Response(200, json={"data": []})
+                return httpx.Response(200, json={"data": [], "next_page": None})
             event = json.loads(request.content)["events"][0]
             if event.get("custom_tool_use_id") == "replay-decision":
                 decision_ack_bodies.append(copy.deepcopy(event))
@@ -1346,7 +1346,7 @@ async def test_fresh_multi_message_replay_advances_prefix_without_future_domain_
             event = dict(event, input=model_arguments(event["name"], event["input"]))
         nonlocal seq
         seq += 1
-        await queue.put(f"id: {seq}\ndata: {json.dumps(event)}\n\n".encode())
+        await queue.put(("data: " + json.dumps(event) + "\n\n").encode())
 
     accepted_inputs = []
     actor_stage = None
@@ -1393,7 +1393,7 @@ async def test_fresh_multi_message_replay_advances_prefix_without_future_domain_
             return httpx.Response(200, json={})
         if request.url.path.endswith("/events"):
             if request.method == "GET":
-                return httpx.Response(200, json={"data": []})
+                return httpx.Response(200, json={"data": [], "next_page": None})
             event = json.loads(request.content)["events"][0]
             accepted_id = "accepted-" + str(len(accepted_inputs) + 1)
             accepted_inputs.append(accepted_id)
@@ -2034,7 +2034,7 @@ async def test_native_replay_captured_delivery_creates_fresh_call_and_reruns_exp
             event = dict(event, input=model_arguments(event["name"], event["input"]))
         nonlocal seq
         seq += 1
-        await queue.put(f"id: {seq}\ndata: {json.dumps(event)}\n\n".encode())
+        await queue.put(("data: " + json.dumps(event) + "\n\n").encode())
 
     accepted_inputs = []
     actor_stage = None
@@ -2082,7 +2082,7 @@ async def test_native_replay_captured_delivery_creates_fresh_call_and_reruns_exp
             return httpx.Response(200, json={})
         if path.endswith("/events"):
             if request.method == "GET":
-                return httpx.Response(200, json={"data": []})
+                return httpx.Response(200, json={"data": [], "next_page": None})
             event = json.loads(request.content)["events"][0]
             accepted_id = "accepted-" + str(len(accepted_inputs) + 1)
             accepted_inputs.append(accepted_id)
@@ -2426,7 +2426,7 @@ async def test_native_condition_replay_uses_tool_cause_and_actual_watch_predicat
         seq += 1
         if event["type"] == "session.status_idle":
             settled_inputs.update(accepted_inputs)
-        await queue.put(f"id: {seq}\ndata: {json.dumps(event)}\n\n".encode())
+        await queue.put(("data: " + json.dumps(event) + "\n\n").encode())
 
     accepted_inputs = []
     settled_inputs = set()
@@ -2476,7 +2476,7 @@ async def test_native_condition_replay_uses_tool_cause_and_actual_watch_predicat
             return httpx.Response(200, json={})
         if path.endswith("/events"):
             if request.method == "GET":
-                return httpx.Response(200, json={"data": []})
+                return httpx.Response(200, json={"data": [], "next_page": None})
             event = json.loads(request.content)["events"][0]
             accepted_id = "accepted-" + str(len(accepted_inputs) + 1)
             accepted_inputs.append(accepted_id)
@@ -2979,7 +2979,7 @@ async def test_actual_reference_publication_retains_unsent_intent_and_ordinary_r
         sequence += 1
         if event["type"] == "session.status_idle":
             settled.update(accepted)
-        await queue.put(f"id: {sequence}\ndata: {json.dumps(event)}\n\n".encode())
+        await queue.put(("data: " + json.dumps(event) + "\n\n").encode())
 
     async def tool(name, arguments, execution_id) -> None:
         await emit(
@@ -3035,7 +3035,7 @@ async def test_actual_reference_publication_retains_unsent_intent_and_ordinary_r
             return httpx.Response(200, json={})
         if endpoint.endswith("/events"):
             if request.method == "GET":
-                return httpx.Response(200, json={"data": []})
+                return httpx.Response(200, json={"data": [], "next_page": None})
             event = json.loads(request.content)["events"][0]
             identity = "accepted-" + str(len(accepted) + 1)
             accepted.append(identity)

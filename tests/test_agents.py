@@ -1817,3 +1817,238 @@ async def test_missing_native_followup_records_absence_without_termination_or_in
     assert answer is not None
     assert answer["answer_status"] == "NO_SESSION" and answer["reason_text"] == GONE_TEXT
     assert len(await repo.list("ops.jobs", filters={"type": "TELEGRAM_ANSWER"})) == 1
+
+
+@pytest.mark.asyncio
+async def test_preliminary_denial_archive_requires_exact_corrected_revision_delivery() -> None:
+    repo = MemoryRepository()
+    opts, _ = settings()
+    event: dict[str, JsonValue] = {"event_id": "event", "lifecycle": "INVALIDATED"}
+    session: dict[str, JsonValue] = {"session_id": "session", "runtime_status": "IDLE"}
+    await repo.put(
+        "out.alerts",
+        "preliminary:1",
+        {
+            "event_id": "event",
+            "alert_id": "preliminary",
+            "version": 1,
+            "kind": "PRELIMINARY",
+            "terminal_correction": False,
+        },
+    )
+
+    def forbidden(request: httpx.Request) -> httpx.Response:
+        raise AssertionError("Archive eligibility must not invoke native HTTP")
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(forbidden)) as http:
+        service = SessionService(repo, opts, None, http=http, versions=declared_versions_fixture())
+        assert not await service.can_archive(session, event)
+        event["session_finalized_at"] = clock_iso()
+        assert not await service.can_archive(session, event)
+        await repo.put(
+            "out.alerts",
+            "preliminary:2",
+            {
+                "event_id": "event",
+                "alert_id": "preliminary",
+                "version": 2,
+                "kind": "PRELIMINARY",
+                "terminal_correction": True,
+            },
+        )
+        assert not await service.can_archive(session, event)
+        await repo.put(
+            "out.deliveries",
+            "earlier",
+            {"alert_id": "preliminary", "version": 1, "status": "SENT"},
+        )
+        assert not await service.can_archive(session, event)
+        await repo.put(
+            "out.deliveries",
+            "correction",
+            {"alert_id": "preliminary", "version": 2, "status": "SENT"},
+        )
+        assert await service.can_archive(session, event)
+
+
+@pytest.mark.asyncio
+async def test_preliminary_correction_cannot_finalize_an_existing_ordinary_chain() -> None:
+    repo = MemoryRepository()
+    opts, _ = settings()
+    event: dict[str, JsonValue] = {
+        "event_id": "event",
+        "lifecycle": "INVALIDATED",
+        "session_finalized_at": clock_iso(),
+    }
+    session: dict[str, JsonValue] = {"session_id": "session", "runtime_status": "IDLE"}
+    await repo.put(
+        "out.alerts",
+        "ordinary:1",
+        {"event_id": "event", "alert_id": "ordinary", "version": 1, "kind": "FULL"},
+    )
+    await repo.put(
+        "out.alerts",
+        "preliminary:9",
+        {
+            "event_id": "event",
+            "alert_id": "preliminary",
+            "version": 9,
+            "kind": "PRELIMINARY",
+            "terminal_correction": True,
+        },
+    )
+    await repo.put(
+        "out.deliveries",
+        "preliminary",
+        {"alert_id": "preliminary", "version": 9, "status": "SENT"},
+    )
+    async with httpx.AsyncClient() as http:
+        service = SessionService(repo, opts, None, http=http, versions=declared_versions_fixture())
+        assert not await service.can_archive(session, event)
+        await repo.put(
+            "out.alerts",
+            "ordinary:2",
+            {"event_id": "event", "alert_id": "ordinary", "version": 2, "kind": "UPDATE"},
+        )
+        assert not await service.can_archive(session, event)
+        await repo.put(
+            "out.deliveries",
+            "ordinary",
+            {"alert_id": "ordinary", "version": 2, "status": "SENT"},
+        )
+        assert await service.can_archive(session, event)
+
+
+@pytest.mark.asyncio
+async def test_closed_event_does_not_require_unused_denial_card_metadata() -> None:
+    repo = MemoryRepository()
+    opts, _ = settings()
+    await repo.put("out.alerts", "retained", {"event_id": "event", "alert_id": "retained"})
+    async with httpx.AsyncClient() as http:
+        service = SessionService(repo, opts, None, http=http, versions=declared_versions_fixture())
+        assert await service.can_archive(
+            {"session_id": "session", "runtime_status": "IDLE"},
+            {"event_id": "event", "lifecycle": "CLOSED"},
+        )
+
+
+@pytest.mark.asyncio
+async def test_unknown_card_revision_cannot_be_ranked_below_a_sent_terminal_update() -> None:
+    repo = MemoryRepository()
+    opts, _ = settings()
+    await repo.put(
+        "out.alerts",
+        "ordinary:1",
+        {"event_id": "event", "alert_id": "ordinary", "version": 1, "kind": "UPDATE"},
+    )
+    await repo.put(
+        "out.alerts",
+        "unknown-revision",
+        {"event_id": "event", "alert_id": "ordinary", "kind": "UPDATE"},
+    )
+    await repo.put(
+        "out.deliveries",
+        "ordinary",
+        {"alert_id": "ordinary", "version": 1, "status": "SENT"},
+    )
+    async with httpx.AsyncClient() as http:
+        service = SessionService(repo, opts, None, http=http, versions=declared_versions_fixture())
+        with pytest.raises(KeyError, match="version"):
+            await service.can_archive(
+                {"session_id": "session", "runtime_status": "IDLE"},
+                {"event_id": "event", "lifecycle": "INVALIDATED", "session_finalized_at": clock_iso()},
+            )
+
+
+@pytest.mark.asyncio
+async def test_watch_modes_validate_before_actual_dispatch_mutates_conditions(tmp_path: Path) -> None:
+    from scheduler_support import operational_reaction_services
+    from source_support import fixture_request_budgets
+
+    from tank.analysis.decision import DecisionEngine
+    from tank.analysis.watch_contracts import TimedReviewCondition, WatchCondition, parse_watch_condition
+    from tank.contracts.tool_schema import ToolSchemaError
+    from tank.event_tools import EventToolService
+    from tank.util import canonical_json, parse_time
+
+    repo = MemoryRepository()
+    opts = Settings(_env_file=None, data_dir=tmp_path, ops_progress_enabled=False)
+    versions = declared_versions_fixture()
+    await repo.put("evt.events", "event", {"event_id": "event", "lifecycle": "TRACKED"})
+    async with operational_reaction_services(
+        repo, opts, versions=versions, budgets=fixture_request_budgets()
+    ) as services:
+        tools = EventToolService(
+            repo,
+            opts,
+            services.truth,
+            DecisionEngine(),
+            versions=versions,
+            scheduler=services.scheduler,
+            pages=LivePageAccess(services.admission),
+        )
+        metric_result = await tools.dispatch(
+            "set_watch_condition",
+            {
+                "event_id": "event",
+                "action": "ARM",
+                "token_id": "world:WLD",
+                "conditions": [{"metric": "event.state", "op": "==", "value": "LIVE"}],
+            },
+            {"role": "system"},
+        )
+        assert isinstance(metric_result, dict) and metric_result["accepted"] is True
+        metric = metric_result["condition"]
+        assert isinstance(metric, dict) and isinstance(parse_watch_condition(metric), WatchCondition)
+        cond_id = metric["cond_id"]
+        assert isinstance(cond_id, str)
+        timed_result = await tools.dispatch(
+            "set_watch_condition",
+            {
+                "event_id": "event",
+                "action": "ARM",
+                "review_at": iso(utcnow() + timedelta(hours=1)),
+                "review_question": "Did the regulator publish its stated decision?",
+            },
+            {"role": "system"},
+        )
+        assert isinstance(timed_result, dict) and timed_result["accepted"] is True
+        timed = timed_result["condition"]
+        assert isinstance(timed, dict) and isinstance(parse_watch_condition(timed), TimedReviewCondition)
+        created, expiry = timed["created_at"], timed["expires_at"]
+        assert isinstance(created, str) and isinstance(expiry, str)
+        assert parse_time(expiry) - parse_time(created) == timedelta(hours=72)
+        original = await repo.get("ana.watch_conditions", cond_id)
+        assert original is not None
+        before = canonical_json(original)
+        private = "SYNTHETIC_PRIVATE_REVIEW_TEXT"
+        for invalid in (
+            {
+                "event_id": "event",
+                "action": "DISARM",
+                "cond_id": cond_id,
+                "review_at": iso(utcnow() + timedelta(hours=2)),
+                "review_question": private,
+            },
+            {
+                "event_id": "event",
+                "action": "ARM",
+                "review_at": iso(utcnow() + timedelta(hours=3)),
+                "review_question": private,
+                "text": "Forbidden second description",
+            },
+        ):
+            with pytest.raises(ValueError) as rejected:
+                await tools.dispatch("set_watch_condition", invalid, {"role": "system"})
+            assert not isinstance(rejected.value, ToolSchemaError)
+            assert private not in str(rejected.value)
+            current = await repo.get("ana.watch_conditions", cond_id)
+            assert current is not None and canonical_json(current) == before
+            assert len(await repo.list("ana.watch_conditions")) == 2
+            assert await repo.list("ops.jobs") == []
+        disarmed = await tools.dispatch(
+            "set_watch_condition",
+            {"event_id": "event", "action": "DISARM", "cond_id": cond_id},
+            {"role": "system"},
+        )
+        assert isinstance(disarmed, dict) and disarmed["status"] == "CANCELLED"

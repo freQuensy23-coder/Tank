@@ -51,6 +51,9 @@ from tank.analysis.card_contracts import (
     NegativeEventMarker,
     PendingCardAnalysis,
     PeriodRevenueProtocol,
+    PreliminaryCardAnalysis,
+    PreliminaryGateInputs,
+    PreliminaryNarrative,
     PublicationBaseline,
     PublicationDecisionStatus,
     PublicationEventFacts,
@@ -651,11 +654,28 @@ def card_inputs_from_records(
     market_truths: Sequence[Mapping[str, JsonValue]],
     *,
     registry: CardRegistryMembership,
-    narrative: PublicationNarrative,
+    narrative: PublicationNarrative | PreliminaryNarrative,
     policy: PublicationPolicy,
 ) -> CardInputs:
     registry = CardRegistryMembership.model_validate(registry)
     event_view = _event(event)
+    if isinstance(narrative, PreliminaryNarrative):
+        if beneficiaries or decisions or market_truths:
+            raise ValueError("Preliminary publication cannot project financial results")
+        return CardInputs(
+            registry=registry,
+            narrative=narrative,
+            policy=policy,
+            event=event_view,
+            assessment=_assessment(assessment),
+            beneficiaries=(),
+            other_subjects=(),
+            mapping=PreliminaryCardAnalysis(
+                kind="PRELIMINARY_PENDING", denied=_field(event, "lifecycle") == "INVALIDATED"
+            ),
+            decisions_by_token={},
+            market_by_token={},
+        )
     if narrative.kind == "PARTIAL" and event.get("beneficiary_map") is None:
         edges = event.get("beneficiary_edges")
         if (
@@ -877,3 +897,35 @@ class CardAssessmentClass(DomainModel):
 
 class PublicationNegativeMarker(DomainModel):
     value: NegativeEventMarker | None
+
+
+def preliminary_gate_inputs_from_records(
+    event: Mapping[str, JsonValue],
+    assessment: Mapping[str, JsonValue],
+    *,
+    previous: PublicationBaseline | None,
+    previous_failed: bool,
+    previous_terminal_correction: bool | None,
+) -> PreliminaryGateInputs:
+    claims = _records(_field(event, "claims"), "claims")
+    superseded: set[str] = set()
+    for claim in claims:
+        accepted = _boolean(_field(claim, "accepted"), "claim.accepted")
+        if accepted:
+            for ref in _texts(claim.get("supersedes_claim_ids", []), "supersedes_claim_ids"):
+                superseded.add(_text(ref, "supersedes_claim_ids"))
+    sourced = any(
+        _boolean(_field(claim, "accepted"), "claim.accepted")
+        and _text(_field(claim, "claim_id"), "claim_id") not in superseded
+        and bool(_text(_field(claim, "quote"), "quote").strip())
+        and bool(_records(_field(claim, "evidence"), "evidence"))
+        for claim in claims
+    )
+    return PreliminaryGateInputs(
+        event=_publication_facts(event),
+        assessment_class=_project(CardAssessmentClass, {"value": _field(assessment, "class")}).value,
+        has_current_sourced_claim=sourced,
+        previous=previous,
+        previous_failed=previous_failed,
+        previous_terminal_correction=previous_terminal_correction,
+    )

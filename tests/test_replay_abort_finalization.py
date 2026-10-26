@@ -192,7 +192,7 @@ async def test_actual_replay_abort_finalizes_owned_turn_after_stopping_follower(
             return httpx.Response(200, headers={"content-type": "text/event-stream"}, stream=Stream())
         if path.endswith("/events"):
             if request.method == "GET":
-                return httpx.Response(200, json={"data": []})
+                return httpx.Response(200, json={"data": [], "next_page": None})
             body = json.loads(request.content)["events"][0]
             if failure_kind == "lost_acceptance":
                 raise httpx.ReadError("Synthetic reply lost after acceptance", request=request)

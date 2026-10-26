@@ -165,6 +165,7 @@ jobs:
           tests/agent_configuration_fixtures.py tests/test_agents_classification.py
           tests/test_agents_required_versions.py tests/test_agents_scalar_flags.py
           tests/test_agents_jev_contracts.py
+          tests/test_pipeline_postgres.py
       - name: Check completed native readback contracts strictly
         env:
           MYPYPATH: src:tests
@@ -186,15 +187,22 @@ jobs:
           src/tank/agents/input_ownership.py src/tank/agents/outbound_inputs.py
           src/tank/agents/session_ownership.py tests/test_native_transport_contracts.py
           tests/test_session_native_lineage.py tests/test_session_outbound_intents.py
+      - name: Check completed source error layer contracts strictly
+        env:
+          MYPYPATH: src:tests
+        run: >-
+          uv run --frozen --extra dev mypy --config-file scripts/ci/mypy-foundation-tests.ini
+          src/tank/contracts/source_errors.py src/tank/diagnostic_documents.py
+          src/tank/sources/x_diagnostics.py tests/test_x_diagnostic_admission.py
+          tests/test_source_error_layering.py
       - name: Check completed quality module families strictly
         env:
           MYPYPATH: src:tests
         run: >-
           uv run --frozen --extra dev mypy --strict --follow-imports=silent --explicit-package-bases
           scripts/ci scripts/capture/gen_schema.py scripts/capture/gen_pyvectors.py scripts/capture/parity.py
-          scripts/acceptance/masking_contracts.py deploy/openma_lifecycle/native_network_probe.py
+          deploy/openma_lifecycle/native_network_probe.py
           tests/test_ci_budget.py tests/test_ci_go_results.py tests/test_capture_parity.py tests/test_capture_parity_contracts.py tests/test_native_network_probe.py tests/test_deploy.py
-          tests/test_acceptance_masking.py
           tests/bootstrap_support.py tests/test_bootstrap_support.py tests/test_refactor_inventory.py
           tests/test_actor_package_closure.py
       - name: Check captured configuration helpers strictly

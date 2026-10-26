@@ -3,6 +3,8 @@
 from datetime import timedelta
 
 from tank.analysis.card_contracts import (
+    PreliminaryGateInputs,
+    PreliminaryGateResult,
     PublicationChangeInputs,
     PublicationGateInputs,
     PublicationGateResult,
@@ -92,3 +94,27 @@ def alert_gate(inputs: PublicationGateInputs) -> PublicationGateResult:
     ):
         return PublicationGateResult(allowed=False, reason="UPDATE_RATE_LIMIT")
     return PublicationGateResult(allowed=True, reason="UPDATE")
+
+
+def preliminary_gate(inputs: PreliminaryGateInputs) -> PreliminaryGateResult:
+    inputs = PreliminaryGateInputs.model_validate(inputs)
+    event, previous = inputs.event, inputs.previous
+    if (
+        event.lifecycle == "INVALIDATED"
+        and previous is not None
+        and (
+            bool(event.active_fatal_ids - previous.event.active_fatal_ids)
+            or inputs.previous_failed
+            and inputs.previous_terminal_correction is True
+        )
+    ):
+        return PreliminaryGateResult(allowed=True, reason="PRELIMINARY_CORRECTION")
+    if inputs.assessment_class != "MATERIAL":
+        return PreliminaryGateResult(allowed=False, reason="PRELIMINARY_REQUIRES_MATERIAL")
+    if event.lifecycle in {"CLOSED", "MERGED", "INVALIDATED"}:
+        return PreliminaryGateResult(allowed=False, reason="TERMINAL_EVENT")
+    if event.freshness == "STALE" or event.trigger_freshness == "STALE":
+        return PreliminaryGateResult(allowed=False, reason="STALE")
+    if not inputs.has_current_sourced_claim:
+        return PreliminaryGateResult(allowed=False, reason="PRELIMINARY_REQUIRES_EVIDENCE")
+    return PreliminaryGateResult(allowed=True, reason="PRELIMINARY")
