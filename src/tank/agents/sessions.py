@@ -11,7 +11,7 @@ import time
 from collections.abc import Mapping, Sequence
 from contextlib import AsyncExitStack, suppress
 from datetime import timedelta
-from typing import Literal, Protocol
+from typing import Literal
 from urllib.parse import quote
 
 import httpx
@@ -54,6 +54,12 @@ from tank.agents.native_inputs import (
     NativeInputRequest,
     observe_native_input,
     parse_native_input,
+)
+from tank.agents.native_output_files import (
+    OutputReadPolicy,
+    SessionFileSender,
+    SessionOutputFiles,
+    output_request,
 )
 from tank.agents.native_readback import NativeSessionMissing, NativeSessionReader
 from tank.agents.native_retry import (
@@ -234,17 +240,6 @@ def material_event(event: dict[str, JsonValue]) -> bool:
     if not isinstance(content, list):
         return False
     return any(isinstance(block, dict) and block.get("type") == "refusal" for block in content)
-
-
-class SessionFileSender(Protocol):
-    async def send_session_file(
-        self,
-        question_id: str,
-        call_id: str,
-        filename: str,
-        content: bytes,
-        caption: str | None,
-    ) -> dict[str, JsonValue]: ...
 
 
 class SessionService:
@@ -604,49 +599,29 @@ class SessionService:
             clock=self.clock_timestamp,
         ).prepare_question(target)
 
-    async def send_file(self, session, arguments, call_id):
-        """send_telegram_file: read an output of this session and reply with it to the active follow-up."""
-        active = next(
-            (
-                row
-                for row in session.get("message_log", [])
-                if row["message_id"] == session.get("active_message_id")
+    async def send_file(
+        self,
+        session: dict[str, JsonValue],
+        arguments: dict[str, JsonValue],
+        call_id: str,
+    ) -> dict[str, JsonValue]:
+        request = output_request(session, arguments, call_id)
+        if self.telegram is None:
+            raise ValueError("send_telegram_file is unavailable without its Telegram sender")
+        outcome = await SessionOutputFiles(
+            self.repo,
+            self.telegram,
+            self.http,
+            self.settings.openma_url,
+            self.headers,
+            OutputReadPolicy(
+                max_bytes=DOCUMENT_LIMIT, attempts=10, retry_delay_s=1, timeout_s=REST_TIMEOUT_S
             ),
-            None,
-        )
-        payload = (active or {}).get("payload") or {}
-        if payload.get("kind") != "USER_QUESTION" or getattr(self, "telegram", None) is None:
-            raise ValueError("send_telegram_file is available only while answering a Telegram follow-up")
-        filename = arguments.get("filename")
-        if (
-            not isinstance(filename, str)
-            or filename in ("", ".", "..")
-            or "/" in filename
-            or "\\" in filename
-        ):
-            raise ValueError("filename must be a plain name inside /mnt/session/outputs")
-        content = None
-        url = self.url(f"sessions/{session['session_id']}/outputs/{quote(filename, safe='')}")
-        for _ in range(10):
-            async with self.http.stream("GET", url, headers=self.headers()) as response:
-                if response.status_code == 200:
-                    received = bytearray()
-                    async for block in response.aiter_bytes():
-                        received.extend(block)
-                        if len(received) > DOCUMENT_LIMIT:
-                            raise ValueError("File exceeds the 45 MB Telegram bot limit")
-                    content = bytes(received)
-                    break
-                if response.status_code != 404:
-                    response.raise_for_status()
-            await asyncio.sleep(1)
-        if content is None:
-            raise ValueError(f"/mnt/session/outputs/{filename} was not found in this session")
-        if len(content) > DOCUMENT_LIMIT:
-            raise ValueError("File exceeds the 45 MB Telegram bot limit")
-        return await self.telegram.send_session_file(
-            payload["question_id"], call_id, filename, content, arguments.get("caption")
-        )
+        ).send(request)
+        serialized = decode_unique_json(outcome.model_dump_json())
+        if not isinstance(serialized, dict):
+            raise TypeError("Native file tool outcome requires an object response")
+        return serialized
 
     async def validate_new_question_input(self, request: UserQuestionMessage, message_id: str) -> None:
         """Admit actual question scope before any native read or fresh text/file effect."""

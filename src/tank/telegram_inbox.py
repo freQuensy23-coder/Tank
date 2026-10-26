@@ -14,7 +14,7 @@ import json
 import logging
 import re
 import time
-from collections.abc import Mapping
+from collections.abc import AsyncIterator, Mapping
 from datetime import UTC, datetime, timedelta
 from difflib import SequenceMatcher
 from typing import Literal
@@ -37,11 +37,23 @@ from tank.contracts.session_followups import (
     followup_eligibility,
 )
 from tank.contracts.telegram_state import (
+    KnownTelegramFileDelivery,
     TelegramAnsweredQuestion,
+    TelegramAttachmentAttempt,
+    TelegramFailedAttachment,
+    TelegramFileAlreadySent,
+    TelegramFileDeliveryContext,
+    TelegramFileDeliveryOutcome,
+    TelegramFileSent,
+    TelegramFileUncertain,
+    TelegramGeneratedAttachment,
     TelegramInboxSettings,
     TelegramInboxStore,
+    TelegramQuestionRecipient,
+    TelegramSentAttachment,
     TelegramSentChunk,
     answer_chunk,
+    attachment_delivery,
     settled_question,
 )
 from tank.contracts.telegram_wire import (
@@ -105,7 +117,7 @@ PAIR_WINDOW_S = 10
 FORWARD_MATCH_S = 30
 MEMBER_CACHE_S = 600
 MESSAGE_LIMIT = 4000
-ANSWER_CHANNEL = "telegram:answer"
+ANSWER_CHANNEL: Literal["telegram:answer"] = "telegram:answer"
 CARD_CHANNEL = "telegram:alerts"
 
 NO_SESSION_TEXT = "Не нашёл сессию агента для этого сообщения. Ответьте на карточку Tank или перешлите её боту вместе с вопросом."
@@ -893,100 +905,127 @@ class TelegramInbox:
         result = response_result(response.content, method="sendDocument", status=response.status_code)
         return sent_message_receipt(result)
 
-    async def send_session_file(self, question_id, call_id, filename, content, caption=None):
-        """Deliver an agent file as a reply in the follow-up thread, once per tool call."""
-        question = await self.repo.get("out.user_questions", question_id)
-        if question is None:
-            raise ValueError("Follow-up question does not exist")
-        ledger = [
-            row
-            async for row in self.repo.iter_all(
-                "out.deliveries",
-                filters={"question_id": question_id, "channel": ANSWER_CHANNEL, "call_id": call_id},
+    @contextlib.asynccontextmanager
+    async def _locked_session_file(
+        self,
+        target: FollowupRefusalTarget,
+        call_id: str,
+        filename: str,
+    ) -> AsyncIterator[TelegramFileDeliveryContext]:
+        target = FollowupRefusalTarget.model_validate(target)
+        async with self.repo.lock("question:" + target.question_id):
+            question = await self.repo.get("out.user_questions", target.question_id)
+            if question is None:
+                raise ValueError("Follow-up question does not exist")
+            recipient = TelegramQuestionRecipient.from_record(question, target)
+            scope = TelegramAttachmentAttempt(
+                question_id=recipient.question_id,
+                session_id=recipient.session_id,
+                channel=ANSWER_CHANNEL,
+                purpose="ATTACHMENT",
+                chat_id=recipient.chat_id,
+                call_id=call_id,
+                filename=filename,
             )
-        ]
-        for row in ledger:
-            if row["status"] == "SENT":
-                return {"sent": True, "message_id": row["message_ref"], "duplicate": True}
-        if sum(row["status"] == "GENERATED" for row in ledger) > sum(
-            row["status"] == "FAILED" for row in ledger
-        ):
-            return {
-                "sent": "UNKNOWN",
-                "reason": "An earlier attempt of this call was interrupted after sending started; it may already have arrived. Call again to resend.",
-            }
-        self.active_token()
-        await self.repo.put(
-            "out.deliveries",
-            new_id("delivery"),
-            {
-                "channel": ANSWER_CHANNEL,
-                "question_id": question_id,
-                "session_id": question["session_id"],
-                "purpose": "ATTACHMENT",
-                "call_id": call_id,
-                "chat_id": question["chat_id"],
-                "status": "GENERATED",
-                "attempt": 1,
-                "filename": filename,
-                **collection_clock(utcnow()).fields("at"),
-            },
-            immutable=True,
-        )
-        try:
-            result = await self.send_document(
-                question["chat_id"],
-                filename,
-                content,
-                caption=caption,
-                reply_to=question.get("reply_to_message_id"),
-            )
-        except NOT_SENT:
+            ledger = [
+                attachment_delivery(row, recipient, call_id=scope.call_id, filename=scope.filename)
+                async for row in self.repo.iter_all(
+                    "out.deliveries",
+                    filters={
+                        "question_id": target.question_id,
+                        "channel": ANSWER_CHANNEL,
+                        "call_id": scope.call_id,
+                    },
+                )
+            ]
+            known: KnownTelegramFileDelivery | None = None
+            for row in ledger:
+                if isinstance(row, TelegramSentAttachment):
+                    known = TelegramFileAlreadySent(
+                        sent=True, message_id=str(row.message_ref), duplicate=True
+                    )
+                    break
+            if known is None and sum(isinstance(row, TelegramGeneratedAttachment) for row in ledger) > sum(
+                isinstance(row, TelegramFailedAttachment) for row in ledger
+            ):
+                known = TelegramFileUncertain(
+                    sent="UNKNOWN",
+                    reason="An earlier attempt of this call was interrupted after sending started; it may already have arrived. Call again to resend.",
+                )
+            yield TelegramFileDeliveryContext(recipient=recipient, attempt=scope, known=known)
+
+    async def lookup_session_file(
+        self,
+        target: FollowupRefusalTarget,
+        call_id: str,
+        filename: str,
+    ) -> KnownTelegramFileDelivery | None:
+        async with self._locked_session_file(target, call_id, filename) as context:
+            if context.known is None:
+                self.active_token()
+            return context.known
+
+    async def send_session_file(
+        self,
+        target: FollowupRefusalTarget,
+        call_id: str,
+        filename: str,
+        content: bytes,
+        caption: str | None = None,
+    ) -> TelegramFileDeliveryOutcome:
+        """Deliver to the locked authoritative question/session pair, once per tool call."""
+        async with self._locked_session_file(target, call_id, filename) as context:
+            if context.known is not None:
+                return context.known
+            recipient, scope = context.recipient, context.attempt
+            self.active_token()
             await self.repo.put(
                 "out.deliveries",
                 new_id("delivery"),
-                {
-                    "channel": ANSWER_CHANNEL,
-                    "question_id": question_id,
-                    "session_id": question["session_id"],
-                    "purpose": "ATTACHMENT",
-                    "call_id": call_id,
-                    "chat_id": question["chat_id"],
-                    "status": "FAILED",
-                    "attempt": 1,
-                    "filename": filename,
-                    **collection_clock(utcnow()).fields("at"),
-                },
+                scope.model_dump(mode="json")
+                | {"status": "GENERATED", "attempt": 1}
+                | collection_clock(utcnow()).fields("at"),
                 immutable=True,
             )
-            raise
-        await self.repo.put(
-            "out.deliveries",
-            new_id("delivery"),
-            {
-                "channel": ANSWER_CHANNEL,
-                "question_id": question_id,
-                "session_id": question["session_id"],
-                "purpose": "ATTACHMENT",
-                "call_id": call_id,
-                "chat_id": question["chat_id"],
-                "status": "SENT",
-                "attempt": 1,
-                "message_ref": str(result.message_id),
-                "telegram_date": result.date,
-                "text": caption or filename,
-                "filename": filename,
-                "bytes": len(content),
-                **collection_clock(utcnow()).fields("at"),
-            },
-            immutable=True,
-        )
-        return {
-            "sent": True,
-            "message_id": str(result.message_id),
-            "filename": filename,
-            "bytes": len(content),
-        }
+            try:
+                result = await self.send_document(
+                    recipient.chat_id,
+                    scope.filename,
+                    content,
+                    caption=caption,
+                    reply_to=recipient.reply_to_message_id,
+                )
+            except NOT_SENT:
+                await self.repo.put(
+                    "out.deliveries",
+                    new_id("delivery"),
+                    scope.model_dump(mode="json")
+                    | {"status": "FAILED", "attempt": 1}
+                    | collection_clock(utcnow()).fields("at"),
+                    immutable=True,
+                )
+                raise
+            await self.repo.put(
+                "out.deliveries",
+                new_id("delivery"),
+                scope.model_dump(mode="json")
+                | {
+                    "status": "SENT",
+                    "attempt": 1,
+                    "message_ref": str(result.message_id),
+                    "telegram_date": result.date,
+                    "text": scope.filename if caption is None else caption,
+                    "bytes": len(content),
+                }
+                | collection_clock(utcnow()).fields("at"),
+                immutable=True,
+            )
+            return TelegramFileSent(
+                sent=True,
+                message_id=str(result.message_id),
+                filename=scope.filename,
+                bytes=len(content),
+            )
 
     async def notice(self, row, text, status, *, also=(), subject=None, **extra):
         """Reply with a notice at most once, then settle the input (and any paired rows) together.
