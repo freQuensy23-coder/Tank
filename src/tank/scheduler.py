@@ -42,7 +42,6 @@ from tank.contracts.scheduler_commands import (
 )
 from tank.contracts.scheduler_results import (
     AppliedReactionChange,
-    CoalescedReaction,
     ConditionEvaluationResult,
     DeferredCondition,
     ReactionCaptureResult,
@@ -1114,24 +1113,6 @@ class Scheduler:
             request = ReactionLookupCommand.model_validate(request)
         else:
             raise ValueError("Reaction execution requires its admitted command")
-        if isinstance(request, RevisedReactionCommand):
-            async for job in self.repo.iter_all(
-                "ops.jobs", filters={"type": "REACTION_CAPTURE", "status": "QUEUED"}
-            ):
-                wire = job["payload"]
-                if not isinstance(wire, dict):
-                    raise ValueError("Queued reaction requires its actual payload")
-                if "automatic_revision" not in wire:
-                    continue
-                other = RevisedReactionCommand.model_validate(wire)
-                if other.change_id != request.change_id and (
-                    other.event_id,
-                    other.token_id,
-                    other.checkpoint,
-                ) == (request.event_id, request.token_id, request.checkpoint):
-                    return CoalescedReaction.model_validate(
-                        {"kind": "COALESCED", "coalesced_into": job["job_id"]}
-                    )
         lock = f"reaction:{request.event_id}:{request.token_id}:{request.checkpoint}"
         while True:
             async with self.repo.lock(lock):

@@ -88,16 +88,14 @@ class AppliedReactionChange(ReactionChangeTarget):
 
 
 class CoalescedReaction(DomainModel):
+    """A pending job reference, including historical job results; never capture completion."""
+
     kind: Literal["COALESCED"]
     coalesced_into: SchedulerIdentity
 
 
 type ReactionCaptureResult = (
-    CapturedReaction
-    | HistoricalCapturedReaction
-    | UnchangedReaction
-    | AppliedReactionChange
-    | CoalescedReaction
+    CapturedReaction | HistoricalCapturedReaction | UnchangedReaction | AppliedReactionChange
 )
 
 
@@ -205,8 +203,6 @@ def reaction_capture_result(value: ReactionCaptureResult) -> ReactionCaptureResu
             return UnchangedReaction.model_validate(value)
         case AppliedReactionChange():
             return AppliedReactionChange.model_validate(value)
-        case CoalescedReaction():
-            return CoalescedReaction.model_validate(value)
         case _:
             raise ValueError("Reaction execution did not produce an admitted receipt")
 

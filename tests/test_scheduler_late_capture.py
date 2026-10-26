@@ -14,6 +14,7 @@ from source_support import fixture_http_admission, fixture_versions
 from tank.contracts.scheduler_commands import reaction_command_from_wire
 from tank.contracts.scheduler_results import CapturedReaction, UnchangedReaction
 from tank.market.service import MarketService
+from tank.runtime import CLAIMED_REACTION
 from tank.scheduler import Scheduler
 from tank.settings import Settings
 from tank.storage import MemoryRepository
@@ -318,7 +319,8 @@ async def test_backfill_changes_append_reaction_revision_once_and_preserve_origi
         async with public_runtime(repo, tmp_path / "runtime", monkeypatch) as (runtime, _):
             owned_scheduler = runtime.scheduler
             runtime.scheduler = scheduler
-            runtime.handlers = {"REACTION_CAPTURE": runtime.reaction_capture_wire}
+            runtime.handlers = {"REACTION_CAPTURE": CLAIMED_REACTION}
+            runtime.reaction_handler = runtime.reaction_capture_wire
             stop = asyncio.Event()
             worker = asyncio.create_task(runtime.worker(stop))
             try:
