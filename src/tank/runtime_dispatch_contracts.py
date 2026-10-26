@@ -5,7 +5,7 @@ from typing import Annotated, Literal, Self
 from pydantic import Field, RootModel, model_validator
 
 from tank.contracts import DomainModel
-from tank.contracts.jobs import JobMetadata
+from tank.contracts.jobs import JobEnvelope
 from tank.runtime_contracts import (
     AgentMessage,
     DeliveryJob,
@@ -21,6 +21,7 @@ from tank.runtime_contracts import (
 )
 from tank.runtime_retry import ApplicationBackoff, WorkerRetrySchedule
 from tank.time_precision import Timestamp
+from tank.util import sha256
 
 type RuntimeJobKind = Literal[
     "FILTER_ITEM",
@@ -127,7 +128,7 @@ class RunningJobClaim(DomainModel):
 
 class ClaimedWork(DomainModel):
     payload_revision: str = Field(pattern=r"^[0-9a-f]{64}$")
-    job: JobMetadata
+    job: JobEnvelope
     command: RuntimeCommand
 
     @model_validator(mode="after")
@@ -136,6 +137,13 @@ class ClaimedWork(DomainModel):
             raise ValueError("Worker execution requires an actual running claimed attempt")
         if self.job.type != self.command.type:
             raise ValueError("Worker command differs from its claimed job kind")
+        if sha256(self.job.payload) != self.payload_revision:
+            raise ValueError("Worker revision differs from its original claimed payload")
+        admitted = RuntimeCommandRecord.model_validate(
+            {"type": self.job.type, "payload": self.job.payload}
+        ).root
+        if admitted != self.command:
+            raise ValueError("Worker command differs from its original claimed payload")
         return self
 
     def scope(self) -> RunningJobClaim:

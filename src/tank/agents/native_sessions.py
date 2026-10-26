@@ -9,6 +9,13 @@ from tank.contracts import DomainModel
 from tank.contracts.openma import ManagedAgentEffort
 from tank.contracts.provenance import AgentProvenance
 from tank.contracts.session_admission import SessionTarget
+from tank.runtime_contracts import (
+    AgentMessage,
+    ReplayBinding,
+    ScoutMessage,
+    SourceMessage,
+    UserQuestionMessage,
+)
 from tank.util import sha256
 
 
@@ -57,6 +64,49 @@ class NativeSessionResolution(DomainModel):
             if value is not None:
                 return value
         raise ValueError("Session mapping requires its actual declared routing identity")
+
+    @classmethod
+    def from_message(cls, message: AgentMessage, *, replay: bool) -> Self:
+        replay_identity: NativeReplayIdentity | None = None
+        if isinstance(message, ReplayBinding):
+            facts = (
+                message.replay_run_id,
+                message.replay_source_session_id,
+                message.replay_evidence_sha256,
+                message.replay_cutoff,
+                message.replay_at,
+                message.replay_at_prec,
+                message.replay_at_prec_reason,
+                message.replay_at_bucket_anchor,
+            )
+            authored = isinstance(message, SourceMessage) and (
+                message.origin is not None or message.historical is not None
+            )
+            if not replay and (any(value is not None for value in facts) or authored):
+                raise ValueError("Replay identity requires explicit replay composition")
+            if replay:
+                if message.replay_run_id is None:
+                    raise ValueError("Replay resolution requires its actual bound run identity")
+                replay_identity = NativeReplayIdentity(
+                    run_id=message.replay_run_id,
+                    source_session_id=message.replay_source_session_id,
+                    evidence_sha256=message.replay_evidence_sha256,
+                    cutoff=message.replay_cutoff,
+                )
+        elif replay:
+            raise ValueError("Replay resolution requires its actual bound run identity")
+        return cls(
+            target=SessionTarget(
+                session_id=message.session_id,
+                event_id=None
+                if isinstance(message, (ScoutMessage, UserQuestionMessage))
+                else message.event_id,
+                item_id=message.item_id if isinstance(message, SourceMessage) else None,
+                proposal_id=message.proposal_id if isinstance(message, ScoutMessage) else None,
+            ),
+            role="SCOUT" if isinstance(message, ScoutMessage) else "ANALYST",
+            replay=replay_identity,
+        )
 
     @classmethod
     def from_wire(

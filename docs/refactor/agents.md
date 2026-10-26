@@ -1901,3 +1901,38 @@ passed in 8.53 seconds, zero skips with wrapper source guards. Evidence is exter
 worker-completion-fixed-unit and worker-completion-actual. This qualifies only the
 queue lifecycle adapter; Runtime.worker activation, send_message orchestration,
 remaining Session body typing and assigned vendor work remain open.
+
+Typed actual message producer checkpoint (worker activation still held)
+
+SessionService.dispatch_message consumes MessageDispatchRequest with a closed
+AgentMessage, verified original payload digest and original queue wire evidence.
+Business routing reads the typed variant through NativeSessionResolution.from_message;
+ModelContext.message consumes the admitted request. Only context rendering and
+journal persistence use its original wire, preserving omitted versus explicitly
+null metadata rather than reconstructing evidence from normalized DTOs. Scout
+consumes the closed outcome and reads its actual authoritative session reference.
+The existing send_message caller admission/session-read boundary remains until
+the two reserved replay callers migrate. Native accepted, pending intent and
+historical indexed/unreported acceptance stay separate outcomes; refusal keeps
+its actual both-ID question target. No new native acceptance is inferred from an
+existing session row.
+
+ClaimedWork now retains its actual JobEnvelope and verifies both the original
+payload digest and re-admitted concrete command before dispatch. Constructed
+command substitution and wrong digests refuse. Independent strict seven targets
+pass (message dispatch, context, native session projections, worker contracts,
+worker repository and their two focused tests); scoped Ruff/format pass. Whole
+SessionService independent strict remains explicitly open, with its diagnostic
+retained externally; this checkpoint does not claim the aggregate is complete.
+
+Final source passed 128 connected units in 14.96 seconds (p90 .265 seconds,
+maximum .592 seconds) and all 29 collected actual PostgreSQL cases in 8.60 seconds,
+zero skips with unchanged wrapper fingerprints. Actual acknowledgment controls
+cover ACCEPTED/EMPTY/UNREPORTED, replay clock precision omitted versus explicit
+null, request JSON roundtrip, unchanged original native idempotency key and one
+POST on retry, plus original journal payload presence. Earlier alias-revalidation
+failures and new synthetic PG fixture admission failures remain diagnostic
+evidence; only authored fixture provenance/cursor/publication declarations were
+completed, with no historical evidence padding or production/schema relaxation.
+External proof prefix is worker-message-final3. Whole worker command dispatch,
+remaining Session body/tool/usage/event responsibilities and vendor work stay open.

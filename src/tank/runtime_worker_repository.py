@@ -5,7 +5,7 @@ from datetime import timedelta
 from pydantic import JsonValue, ValidationError
 
 from tank.contracts.job_repository import JobRepository, QueueStore
-from tank.contracts.jobs import ClaimedJob, InvalidJobClaim, JobEnvelope, JobMetadata
+from tank.contracts.jobs import ClaimedJob, InvalidJobClaim, JobEnvelope
 from tank.runtime_contracts import replace_job_clock
 from tank.runtime_dispatch_contracts import (
     ClaimedWork,
@@ -42,16 +42,9 @@ class RepositoryWorkerQueue:
         except ValidationError as error:
             return self.invalid_claim(claimed, error, ("payload",))
         try:
-            metadata = JobMetadata.model_validate(
-                {
-                    field: value
-                    for field, value in envelope.model_dump(mode="json", exclude_unset=True).items()
-                    if field in JobMetadata.model_fields
-                }
-            )
             return ClaimedWork.model_validate(
                 {
-                    "job": metadata,
+                    "job": envelope,
                     "command": command,
                     "payload_revision": sha256(envelope.payload),
                 },

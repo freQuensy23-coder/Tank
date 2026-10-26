@@ -502,3 +502,25 @@ async def test_worker_failure_uses_actual_attempt_and_declared_zero_delay(
     if not terminal:
         reclaimed = await queue.claim()
         assert isinstance(reclaimed, ClaimedWork) and reclaimed.job.attempts == 2
+
+
+async def test_constructed_work_cannot_replace_command_behind_original_claim() -> None:
+    from tank.runtime_dispatch_contracts import ClaimedWork, TelegramAnswerCommand
+    from tank.runtime_worker_repository import RepositoryWorkerQueue
+
+    repo = MemoryRepository()
+    await JobRepository(repo).enqueue("TELEGRAM_ANSWER", {"question_id": "original"}, "actual")
+    work = await RepositoryWorkerQueue(repo).claim()
+    assert isinstance(work, ClaimedWork)
+    changed = work.model_copy(
+        update={
+            "command": TelegramAnswerCommand.model_validate(
+                {"type": "TELEGRAM_ANSWER", "payload": {"question_id": "other"}}
+            )
+        }
+    )
+    with pytest.raises(ValidationError, match="original claimed payload"):
+        ClaimedWork.model_validate(changed, by_name=True)
+    changed_digest = work.model_copy(update={"payload_revision": "0" * 64})
+    with pytest.raises(ValidationError, match="revision differs"):
+        ClaimedWork.model_validate(changed_digest, by_name=True)
