@@ -13,6 +13,9 @@ requireDisposablePostgresDsn(process.env.TANK_TEST_DATABASE_URL, process.env.TAN
 const files = [
   'scripts/openma-persistence/verify-lock.test.mts',
   'tests/openma/persistence/continuation-input.test.mts',
+  'tests/openma/persistence/runtime-json.test.mts',
+  'tests/openma/persistence/history-metadata.test.mts',
+  'tests/openma/persistence/history-runner.test.mts',
   'tests/openma/persistence/continuation-sql.test.mts',
   'tests/openma/lifecycle/image-recovery.test.mjs',
 ];

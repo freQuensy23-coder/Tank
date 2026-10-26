@@ -1,4 +1,5 @@
 import { loadSessionContinuationSnapshot } from '@open-managed-agents/session-runtime-sql/continuation';
+import { encodeTankContinuationProjectionDocument } from '@open-managed-agents/session-runtime-contract/continuation';
 
 /**
  * apps/main-node — Node control-plane assembly for the Open Managed Agents API.
@@ -685,7 +686,7 @@ export async function createManagedNodeRuntime(foundation: NodeFoundation, compo
     realtime: new MemorySessionRealtimeHub(),
     projectionFor: (workspaceId) => new SessionRuntimeProjectionApplicationService({
       workspaceId,
-      persistence: new SqlSessionRuntimeProjectionPersistence(sql),
+      persistence: new SqlSessionRuntimeProjectionPersistence(sql, undefined, encodeTankContinuationProjectionDocument),
     }),
   });
   const managedSessionExecutionWorker = new NodeSessionExecutionWorker({

@@ -1,4 +1,5 @@
-import { encodeSessionEventDocument, type ExecutionProgressReceipt } from '@open-managed-agents/session-runtime-contract/history';
+import { encodeContinuationSessionEventDocument } from '@open-managed-agents/session-runtime-contract/continuation';
+import { type ExecutionProgressReceipt } from '@open-managed-agents/session-runtime-contract/history';
 import type { YieldSessionExecutionProgress, YieldSessionExecutionProgressResult } from '@open-managed-agents/session-runtime-contract/coordination';
 import { decodeContinuationExecutionEvents, validateContinuationExecutionEvents, imageRecoveryRetryBoundary, lastMatching, pendingImageRecoveries, planSessionContinuation, resultCallId, verifiedProgress, type ContinuationSnapshot } from '@open-managed-agents/session-runtime-contract/continuation';
 import { loadSessionContinuationSnapshot, requiredContinuationRows, SessionContinuationMissingError } from './continuation';
@@ -994,7 +995,7 @@ export class SqlSessionExecutionStore
         this.sql.prepare(`INSERT INTO managed_session_events
           (workspace_id, session_id, thread_id, id, type, document, processed_at)
           SELECT ?, ?, ?, ?, ?, ?, ? WHERE ${sessionSql} AND ${fenceSql}
-          ON CONFLICT (workspace_id, session_id, id) DO NOTHING`).bind(input.fence.workspaceId, input.fence.sessionId, current.laneId, receiptId, event.type, encodeSessionEventDocument(event, { revision: snapshot.revision + 1, index: 0 }, current.id, { attemptId: input.fence.attemptId, generation: input.fence.generation, progress }), Date.parse(event.processedAt), ...sessionBindings, ...fenceBindings),
+          ON CONFLICT (workspace_id, session_id, id) DO NOTHING`).bind(input.fence.workspaceId, input.fence.sessionId, current.laneId, receiptId, event.type, encodeContinuationSessionEventDocument(event, { revision: snapshot.revision + 1, index: 0 }, current.id, { attemptId: input.fence.attemptId, generation: input.fence.generation, progress }), Date.parse(event.processedAt), ...sessionBindings, ...fenceBindings),
         this.sql.prepare(`UPDATE managed_session_executions SET state = 'queued', lease_expires_at_ms = NULL,
           settled_at_ms = NULL, revision = revision + 1,
           attempt_count = CASE WHEN attempt_count > 0 THEN attempt_count - 1 ELSE attempt_count END
@@ -1155,7 +1156,7 @@ export class SqlSessionExecutionStore
               ${cursor ? 'AND (workspace_id > ? OR (workspace_id = ? AND id > ?))' : ''}
             ORDER BY workspace_id, id LIMIT 100`).bind(now, now,
               ...(cursor ? [cursor.workspaceId, cursor.workspaceId, cursor.executionId] : [])).all<ExecutionRow>();
-          const rows = recoveries.results ?? [];
+          const rows = requiredContinuationRows(recoveries.results);
           for (const row of rows) {
             const recovery = await this.retryImagePreflight({ fence: toFence(row) }, now, true);
             if (recovery === null) await this.terminalizeMatching(now, 'execution attempt limit exhausted',
