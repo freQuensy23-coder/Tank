@@ -12,10 +12,12 @@ import html
 import re
 import subprocess
 import sys
-from collections.abc import Iterator, Sequence
+from collections.abc import Iterator, Mapping, Sequence
 from contextlib import suppress
 from pathlib import Path
-from typing import Literal
+from typing import Annotated, Literal, Self
+
+from pydantic import BaseModel, ConfigDict, Field, StringConstraints, model_validator
 
 TYPE_MAP = [
     (r"timestamp with time zone", "timestamptz"),
@@ -75,7 +77,81 @@ def statements(sql: str) -> Iterator[str]:
             yield s
 
 
+class SchemaRecord(BaseModel):
+    model_config = ConfigDict(strict=True, extra="forbid", frozen=True)
+
+
+type SQLColumnName = Annotated[str, StringConstraints(pattern=r"^[A-Za-z_][A-Za-z0-9_]*$")]
+
+
+class KeyConstraint(SchemaRecord):
+    kind: Literal["PK", "UK"]
+    columns: tuple[SQLColumnName, ...] = Field(min_length=1)
+
+    @model_validator(mode="after")
+    def unique_columns(self) -> Self:
+        if len(set(self.columns)) != len(self.columns):
+            raise ValueError("Constraint columns must be unique")
+        return self
+
+
+class ForeignKeyConstraint(SchemaRecord):
+    kind: Literal["FK"]
+    columns: tuple[SQLColumnName, ...] = Field(min_length=1)
+    target_table: Annotated[str, StringConstraints(pattern=r"^[A-Za-z_]\w*\.[A-Za-z_]\w*$")]
+    target_columns: tuple[SQLColumnName, ...] = Field(min_length=1)
+    options: str
+
+    @model_validator(mode="after")
+    def matching_scope(self) -> Self:
+        if len(self.columns) != len(self.target_columns):
+            raise ValueError("Foreign key source and target arity must match")
+        if len(set(self.columns)) != len(self.columns) or len(set(self.target_columns)) != len(
+            self.target_columns
+        ):
+            raise ValueError("Foreign key columns must be unique")
+        return self
+
+
+class CheckConstraint(SchemaRecord):
+    kind: Literal["CK", "REQ"]
+    columns: tuple[SQLColumnName, ...]
+    valid: bool
+
+    @model_validator(mode="after")
+    def required_target(self) -> Self:
+        if self.kind == "REQ" and len(self.columns) != 1:
+            raise ValueError("Required-column checks must name exactly one target")
+        return self
+
+
+class ForeignKeyLink(SchemaRecord):
+    name: str = Field(min_length=1)
+    source_table: str
+    source_columns: tuple[SQLColumnName, ...] = Field(min_length=1)
+    target_table: str
+    target_columns: tuple[SQLColumnName, ...] = Field(min_length=1)
+
+    @model_validator(mode="after")
+    def matching_scope(self) -> Self:
+        if len(self.source_columns) != len(self.target_columns):
+            raise ValueError("Foreign key link source and target arity must match")
+        return self
+
+
+type Constraint = KeyConstraint | ForeignKeyConstraint | CheckConstraint
+
+
+def key_columns(statement: str) -> list[str]:
+    match = re.search(r"\((.*?)\)", statement)
+    if match is None:
+        raise ValueError("Unsupported key constraint syntax")
+    return cols_of(match.group(1))
+
+
 class Table:
+    constraints: dict[str, Constraint]
+
     def __init__(self, name):
         self.name = name
         self.schema = name.split(".")[0]
@@ -111,25 +187,39 @@ def parse_col_def(t, p):
     if d:
         c["default"] = d.group(1)
     if "PRIMARY KEY" in tail:
-        t.constraints[f"{t.name}_pkey"] = ("PK", [name])
+        t.constraints[f"{t.name}_pkey"] = KeyConstraint(kind="PK", columns=(name,))
     t.cols.append(c)
 
 
-def parse_constraint(t, text, name=None):
+def parse_constraint(t: Table, text: str, name: str | None = None) -> None:
+    if name is not None and re.fullmatch(r"[A-Za-z_]\w*", name) is None:
+        raise ValueError("Unsupported explicit constraint name")
     m = re.match(r"CONSTRAINT (\w+) (.*)$", text)
     if m:
         name, text = m.group(1), m.group(2)
     if text.startswith("PRIMARY KEY"):
-        cols = cols_of(re.search(r"\((.*?)\)", text).group(1))
-        t.constraints[name or f"{t.name}_pkey"] = ("PK", cols)
+        cols = key_columns(text)
+        t.constraints[name if name is not None else f"{t.name}_pkey"] = KeyConstraint(
+            kind="PK", columns=tuple(cols)
+        )
     elif text.startswith("UNIQUE"):
-        cols = cols_of(re.search(r"\((.*?)\)", text).group(1))
-        t.constraints[name or f"{t.name}_{'_'.join(cols)}_key"] = ("UK", cols)
+        cols = key_columns(text)
+        t.constraints[name if name is not None else f"{t.name}_{'_'.join(cols)}_key"] = KeyConstraint(
+            kind="UK", columns=tuple(cols)
+        )
     elif text.startswith("FOREIGN KEY"):
         m = re.fullmatch(r"FOREIGN KEY\s*\((.*?)\)\s+REFERENCES\s+(\w+\.\w+)\s*\((.*?)\)(.*)", text)
         if m is None:
             raise ValueError("Unsupported foreign key constraint syntax")
-        t.constraints[name] = ("FK", cols_of(m.group(1)), m.group(2), cols_of(m.group(3)), m.group(4).strip())
+        if name is None:
+            raise ValueError("Diagram foreign keys require an explicit constraint name")
+        t.constraints[name] = ForeignKeyConstraint(
+            kind="FK",
+            columns=tuple(cols_of(m.group(1))),
+            target_table=m.group(2),
+            target_columns=tuple(cols_of(m.group(3))),
+            options=m.group(4).strip(),
+        )
     elif text.startswith("CHECK"):
         expr = text[len("CHECK") :].strip()
         valid = not expr.endswith("NOT VALID")
@@ -140,16 +230,18 @@ def parse_constraint(t, text, name=None):
                 found = re.search(r"\b(\w+) IS NOT NULL", expr)
                 target = found.group(1) if found else None
             if target in names:
-                t.constraints[name] = ("REQ", [target], valid)
+                t.constraints[name] = CheckConstraint(kind="REQ", columns=(target,), valid=valid)
                 return
         used = [w for w in dict.fromkeys(re.findall(r"\b[a-z_][a-z0-9_]*\b", expr)) if w in names]
-        t.constraints[name or f"check_{len(t.constraints)}"] = ("CK", used, valid)
+        t.constraints[name if name is not None else f"check_{len(t.constraints)}"] = CheckConstraint(
+            kind="CK", columns=tuple(used), valid=valid
+        )
 
 
 def drop_column(t, name):
     """Remove a column with the constraints and indexes that use it, as PostgreSQL does."""
     t.cols = [c for c in t.cols if c["name"] != name]
-    t.constraints = {k: v for k, v in t.constraints.items() if name not in v[1]}
+    t.constraints = {k: v for k, v in t.constraints.items() if name not in v.columns}
     kept = [u for u in t.unique_indexes if name not in u[1]]
     t.indexes -= len(t.unique_indexes) - len(kept)
     t.unique_indexes = kept
@@ -254,14 +346,16 @@ def finish_pg(tables):
     t.cols = [new_col("version", "text"), new_col("applied_at", "timestamptz")]
     t.cols[1]["nn"] = True
     t.cols[1]["default"] = "now()"
-    t.constraints["schema_migrations_pkey"] = ("PK", ["version"])
+    t.constraints["schema_migrations_pkey"] = KeyConstraint(kind="PK", columns=("version",))
     t.note = "created by storage.py migrate()"
     tables[t.name] = t
     for t in tables.values():
         collapse_prec(t)
         for c in t.cols:
             c.update(pk=False, fk=False, uk=None, ck=False, req=False)
-        groups = [cols for kind, cols, *_ in t.constraints.values() if kind == "UK"]
+        groups = [
+            list(constraint.columns) for constraint in t.constraints.values() if constraint.kind == "UK"
+        ]
         groups += [cols for _, cols, _ in t.unique_indexes]
         t.groups = []
         for cols in groups:
@@ -269,7 +363,8 @@ def finish_pg(tables):
                 t.groups.append(cols)
         composite = [g for g in t.groups if len(g) > 1]
         present = {c["name"] for c in t.cols}
-        for kind, cols, *_ in t.constraints.values():
+        for constraint in t.constraints.values():
+            kind, cols = constraint.kind, constraint.columns
             for n in cols:
                 if n not in present:
                     continue
@@ -302,7 +397,7 @@ def finish_pg(tables):
             t.flags.append("UNLOGGED")
         if t.storage:
             t.flags.append(t.storage.replace("'", ""))
-        if not any(v[0] == "PK" for v in t.constraints.values()):
+        if not any(v.kind == "PK" for v in t.constraints.values()):
             t.flags.append("no PK")
     return tables
 
@@ -362,21 +457,19 @@ def diff_tables(base, tables):
     return drawn, removed
 
 
-def foreign_keys(tables):
-    out = []
-    for t in tables.values():
-        for name, (kind, *rest) in t.constraints.items():
-            if kind == "FK":
-                cols, ref, ref_cols, opts = rest
+def foreign_keys(tables: Mapping[str, Table]) -> list[ForeignKeyLink]:
+    out: list[ForeignKeyLink] = []
+    for table in tables.values():
+        for name, constraint in table.constraints.items():
+            if isinstance(constraint, ForeignKeyConstraint):
                 out.append(
-                    {
-                        "name": name,
-                        "src": t.name,
-                        "cols": cols,
-                        "dst": ref,
-                        "dst_cols": ref_cols,
-                        "opts": opts,
-                    }
+                    ForeignKeyLink(
+                        name=name,
+                        source_table=table.name,
+                        source_columns=constraint.columns,
+                        target_table=constraint.target_table,
+                        target_columns=constraint.target_columns,
+                    )
                 )
     return out
 
@@ -586,7 +679,7 @@ class Box:
 
 
 def index_count(t):
-    return t.indexes + sum(1 for v in t.constraints.values() if v[0] in ("PK", "UK"))
+    return t.indexes + sum(1 for v in t.constraints.values() if v.kind in ("PK", "UK"))
 
 
 def pg_metrics(tables):
@@ -790,9 +883,9 @@ LANES = {0: 1, 1: 4, 2: 5, 3: 4, 4: 2, 5: 2}
 
 
 def route(fk, boxes, col_of, col_x, col_w, gut, channel_y, spec, color):
-    src, dst = boxes[fk["src"]], boxes[fk["dst"]]
-    ci, cj = col_of[fk["src"]], col_of[fk["dst"]]
-    sy, dy = src.row_y(fk["cols"][0]), dst.row_y(fk["dst_cols"][0])
+    src, dst = boxes[fk.source_table], boxes[fk.target_table]
+    ci, cj = col_of[fk.source_table], col_of[fk.target_table]
+    sy, dy = src.row_y(fk.source_columns[0]), dst.row_y(fk.target_columns[0])
 
     def lane_x(g, k):
         left = col_x[g] + col_w[g]
@@ -832,8 +925,8 @@ def route(fk, boxes, col_of, col_x, col_w, gut, channel_y, spec, color):
         end_marker(pts[0][0], pts[0][1], s_dir, child, color),
         end_marker(pts[-1][0], pts[-1][1], d_dir, "one", color),
     ]
-    if len(fk["cols"]) > 1:
-        for c in fk["cols"][1:]:
+    if len(fk.source_columns) > 1:
+        for c in fk.source_columns[1:]:
             y2 = src.row_y(c)
             x2 = pts[0][0] + s_dir * 22
             parts.append(
@@ -908,9 +1001,13 @@ def integrity_gaps(tables, fks):
     single = {}
     for t in tables.values():
         keys = {g[0] for g in t.groups if len(g) == 1}
-        keys |= {cols[0] for kind, cols, *_ in t.constraints.values() if kind == "PK" and len(cols) == 1}
+        keys |= {
+            constraint.columns[0]
+            for constraint in t.constraints.values()
+            if constraint.kind == "PK" and len(constraint.columns) == 1
+        }
         single[t.name] = keys
-    declared = {(f["src"], f["cols"][0]) for f in fks}
+    declared = {(f.source_table, f.source_columns[0]) for f in fks}
     by_target, composite, blocked = {}, [], []
     for t in tables.values():
         for c in t.cols:
@@ -933,14 +1030,17 @@ def integrity_gaps(tables, fks):
         for t in tables.values()
         if single[t.name] & {"storage_key"}
         and not [g for g in t.groups if g != ["storage_key"]]
-        and not any(kind == "PK" and cols != ["storage_key"] for kind, cols, *_ in t.constraints.values())
+        and not any(
+            constraint.kind == "PK" and constraint.columns != ("storage_key",)
+            for constraint in t.constraints.values()
+        )
     ]
     keyless = [
         t.name
         for t in tables.values()
-        if not t.groups and not any(v[0] == "PK" for v in t.constraints.values())
+        if not t.groups and not any(v.kind == "PK" for v in t.constraints.values())
     ]
-    no_pk = [t.name for t in tables.values() if not any(v[0] == "PK" for v in t.constraints.values())]
+    no_pk = [t.name for t in tables.values() if not any(v.kind == "PK" for v in t.constraints.values())]
     n_mkt = sum(1 for n in no_pk if n.startswith("mkt."))
     ordered = sorted(by_target.items(), key=lambda kv: -kv[1])
     top = ", ".join(f"{k} ×{v}" for k, v in ordered[:5])
@@ -1026,17 +1126,19 @@ def render_pg(root, base_ref=None):
 
     edges = []
     for fk in fks:
-        color = SCHEMA[fk["src"].split(".")[0]][0]
-        edges.append(
-            route(fk, boxes, col_of, col_x, col_w, PG_GUTTERS, channel_y, PG_ROUTES[fk["name"]], color)
-        )
+        color = SCHEMA[fk.source_table.split(".")[0]][0]
+        edges.append(route(fk, boxes, col_of, col_x, col_w, PG_GUTTERS, channel_y, PG_ROUTES[fk.name], color))
 
     fx, fy = col_x[1], bottoms[1] + 6
     fw = col_w[1]
     rows = []
     for fk in fks:
         rows.append(
-            (fk["name"], f"{fk['src']}({', '.join(fk['cols'])})", f"{fk['dst']}({', '.join(fk['dst_cols'])})")
+            (
+                fk.name,
+                f"{fk.source_table}({', '.join(fk.source_columns)})",
+                f"{fk.target_table}({', '.join(fk.target_columns)})",
+            )
         )
     fh = 44 + len(rows) * 26 + 30
     panel = [

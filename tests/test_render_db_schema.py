@@ -2,7 +2,14 @@ from pathlib import Path
 
 import pytest
 
-from scripts.render_db_schema import Table, literal_assignments, parse_constraint, render_ch, render_pg
+from scripts.render_db_schema import (
+    ForeignKeyConstraint,
+    Table,
+    literal_assignments,
+    parse_constraint,
+    render_ch,
+    render_pg,
+)
 
 
 def test_foreign_key_accepts_sql_whitespace_and_preserves_composite_scope() -> None:
@@ -12,13 +19,12 @@ def test_foreign_key_accepts_sql_whitespace_and_preserves_composite_scope() -> N
         "CONSTRAINT current_scope FOREIGN KEY (event_id, token_id, dec_id) "
         "REFERENCES ana.decisions (event_id, token_id, dec_id) DEFERRABLE INITIALLY DEFERRED",
     )
-    assert table.constraints["current_scope"] == (
-        "FK",
-        ["event_id", "token_id", "dec_id"],
-        "ana.decisions",
-        ["event_id", "token_id", "dec_id"],
-        "DEFERRABLE INITIALLY DEFERRED",
-    )
+    constraint = table.constraints["current_scope"]
+    assert isinstance(constraint, ForeignKeyConstraint)
+    assert constraint.columns == ("event_id", "token_id", "dec_id")
+    assert constraint.target_table == "ana.decisions"
+    assert constraint.target_columns == ("event_id", "token_id", "dec_id")
+    assert constraint.options == "DEFERRABLE INITIALLY DEFERRED"
     with pytest.raises(ValueError, match="Unsupported foreign key constraint syntax"):
         parse_constraint(table, "FOREIGN KEY (event_id) REFERENCES missing_scope")
 
@@ -65,3 +71,40 @@ def test_svg_text_omits_unrequested_attributes_and_escapes_column_text() -> None
     assert explicit.attrib["font-weight"] == "600"
     assert explicit.attrib["text-anchor"] == "end"
     assert explicit.attrib["font-style"] == "italic"
+
+
+def test_sql_constraint_refusal_does_not_install_partial_scope() -> None:
+    table = Table("ana.decision_state_heads")
+    with pytest.raises(ValueError, match="arity must match"):
+        parse_constraint(
+            table,
+            "CONSTRAINT wrong_scope FOREIGN KEY (event_id, token_id) REFERENCES ana.decisions (event_id)",
+        )
+    assert "wrong_scope" not in table.constraints
+    with pytest.raises(ValueError, match="columns must be unique"):
+        parse_constraint(table, "CONSTRAINT repeated UNIQUE (event_id, event_id)")
+    assert "repeated" not in table.constraints
+
+
+def test_constraint_flags_and_column_scope_are_strict_and_immutable() -> None:
+    from pydantic import ValidationError
+
+    from scripts.render_db_schema import CheckConstraint, KeyConstraint
+
+    with pytest.raises(ValidationError):
+        CheckConstraint.model_validate({"kind": "CK", "columns": (), "valid": 1})
+    with pytest.raises(ValidationError):
+        KeyConstraint.model_validate({"kind": "PK", "columns": ()})
+    with pytest.raises(ValidationError):
+        CheckConstraint.model_validate({"kind": "REQ", "columns": (), "valid": True})
+
+
+@pytest.mark.parametrize(("attribute", "value"), [("columns", ("token_id",)), ("kind", "UK")])
+def test_runtime_constraint_mutations_are_refused(attribute: str, value: str | tuple[str, ...]) -> None:
+    from pydantic import ValidationError
+
+    from scripts.render_db_schema import KeyConstraint
+
+    parsed = KeyConstraint(kind="PK", columns=("event_id",))
+    with pytest.raises(ValidationError, match="frozen"):
+        setattr(parsed, attribute, value)
