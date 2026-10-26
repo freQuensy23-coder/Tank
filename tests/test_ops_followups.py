@@ -16,6 +16,7 @@ from test_telegram_followups import (
 
 from tank.agents import SessionService
 from tank.agents.context import CONTEXT_VERSION
+from tank.question_prompts import question_prompt
 from tank.storage import MemoryRepository
 from tank.telegram_inbox import (
     EARLY_ARCHIVED_TEXT,
@@ -144,7 +145,7 @@ async def test_ops_reply_about_analyzed_unpublished_item_continues_its_session_a
     ]
     assert (await repo.get("ops.telegram_messages", f"{OPS}:30"))["status"] == "QUESTION"
     assert telegram.sent == []
-    text = question_message(question)
+    text = question_message(question_prompt(question))
     assert "Tank Ops" in text and "itm_2" in text and "Делистинг токена" in text
     posts = []
     async with httpx.AsyncClient(transport=httpx.MockTransport(openma(posts, []))) as http:
@@ -202,7 +203,9 @@ async def test_ops_reply_about_published_item_continues_its_session_and_answers_
     question = await repo.get("out.user_questions", question_id)
     assert question["session_id"] == "ses_1" and question["chat_id"] == OPS
     assert question["reference"]["kind"] == "OPS_CARD" and question["reference"]["item_id"] == "itm_1"
-    assert "Tank Ops" in question_message(question) and "не публиковалась" not in question_message(question)
+    assert "Tank Ops" in question_message(
+        question_prompt(question)
+    ) and "не публиковалась" not in question_message(question_prompt(question))
     jobs = await repo.list("ops.jobs", filters={"type": "AGENT_MESSAGE"})
     assert [job["payload"] for job in jobs] == [
         {"kind": "USER_QUESTION", "session_id": "ses_1", "question_id": question_id}
@@ -398,7 +401,7 @@ async def test_alerts_follow_ups_are_unchanged_and_ops_needs_its_configured_chat
     await run_inbox(repo, telegram, now=NOW)
     question = await repo.get("out.user_questions", question_id_for(ALERTS, 9))
     assert question["reference"]["kind"] == "CARD" and question["chat_id"] == ALERTS
-    assert "Tank Ops" not in question_message(question)
+    assert "Tank Ops" not in question_message(question_prompt(question))
     assert telegram.sent == []
     async with httpx.AsyncClient(
         transport=httpx.MockTransport(FakeTelegram([{"update_id": 2, "message": ops_reply(30, 55)}]))

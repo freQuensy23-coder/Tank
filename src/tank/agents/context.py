@@ -24,6 +24,7 @@ from tank.agents.context_records import (
     reference_wire,
 )
 from tank.agents.context_registry import ContextConfiguration, ContextRegistry
+from tank.agents.message_dispatch import MessageDispatchRequest
 from tank.contracts import DomainModel
 from tank.contracts.tool_schema import SCOPED_TOOLS, parse_tool_definitions, validate_schema
 from tank.util import JsonInput, jsonable
@@ -690,7 +691,8 @@ class ModelContext:
             }
         return projected
 
-    async def message(self, payload: JsonValue, item: JsonValue) -> dict[str, JsonValue]:
+    async def message(self, request: MessageDispatchRequest, item: JsonValue) -> dict[str, JsonValue]:
+        request = MessageDispatchRequest.model_validate(request, by_name=True)
         current_event: JsonValue = None
         proposal: JsonValue = None
         open_proposals: list[JsonValue] | None = None
@@ -718,7 +720,7 @@ class ModelContext:
                 is None
             ]
         content = ContextMessageProjection(
-            message=await self.project(payload),
+            message=await self.project(request.original_wire),
             item=await self.project(item),
             current_event=current_event,
             proposal=proposal,

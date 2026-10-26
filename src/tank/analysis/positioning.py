@@ -6,10 +6,17 @@ from typing import Literal
 
 from pydantic import Field
 
+from tank.analysis.recorded_oi_decomposition import (
+    DefinedRecordedOiDecomposition,
+    RecordedOiDecomposition,
+    UndefinedRecordedOiDecomposition,
+)
 from tank.contracts import DomainModel
 
 type Scalar = Decimal | str | int | float
-type MissingOIUsdDetail = Literal["SYNCHRONIZED_MARK_OR_QUOTE_RATE_UNAVAILABLE", "REPORTED_USD_INVALID"]
+type MissingOIUsdDetail = Literal[
+    "SYNCHRONIZED_MARK_OR_QUOTE_RATE_UNAVAILABLE", "REPORTED_USD_INVALID", "RECORDED_USD_NOT_CAPTURED"
+]
 
 
 class OIDecomposition(DomainModel):
@@ -26,6 +33,9 @@ class MissingOIDecomposition(DomainModel):
     pos_share: None = None
     reason: Literal["INCOMPLETE"] = "INCOMPLETE"
     detail: MissingOIUsdDetail = "SYNCHRONIZED_MARK_OR_QUOTE_RATE_UNAVAILABLE"
+
+
+type OiDecompositionResult = OIDecomposition | MissingOIDecomposition | RecordedOiDecomposition
 
 
 def decomposition(n0: Scalar, n1: Scalar, p0: Scalar, p1: Scalar) -> OIDecomposition:
@@ -62,7 +72,7 @@ def _beyond(value: float | None, interval: Sequence[float] | None) -> bool | Non
 def oi_class(
     dn: float | None,
     du: float | None,
-    dec: OIDecomposition | MissingOIDecomposition,
+    dec: OiDecompositionResult,
     nrange: Sequence[float] | None,
     urange: Sequence[float] | None,
 ) -> Literal["REAL_NATIVE", "MIXED", "PRICE_MARKUP"] | None:
@@ -73,7 +83,7 @@ def oi_class(
 def oi_class_from_comparisons(
     nb: bool | None,
     ub: bool | None,
-    dec: OIDecomposition | MissingOIDecomposition,
+    dec: OiDecompositionResult,
 ) -> Literal["REAL_NATIVE", "MIXED", "PRICE_MARKUP"] | None:
     """Classify from actual baseline predicates without substituting a display ratio."""
     if any(value is not None and not isinstance(value, bool) for value in (nb, ub)):
@@ -81,6 +91,12 @@ def oi_class_from_comparisons(
     if nb is None:
         return None
     if nb:
+        if isinstance(dec, DefinedRecordedOiDecomposition):
+            majority = DefinedRecordedOiDecomposition.model_validate(dec).native_majority
+            return None if majority is None else "REAL_NATIVE" if majority else "MIXED"
+        if isinstance(dec, UndefinedRecordedOiDecomposition):
+            UndefinedRecordedOiDecomposition.model_validate(dec)
+            return None
         if isinstance(dec, MissingOIDecomposition) or dec.pos_share is None:
             return None
         terms = (dec.position, dec.markup, dec.interaction)

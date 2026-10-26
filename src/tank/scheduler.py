@@ -4,10 +4,11 @@ import asyncio
 import contextlib
 import logging
 from collections.abc import Awaitable, Callable, Mapping
-from datetime import UTC, date, timedelta
+from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal, InvalidOperation, localcontext
 from pathlib import Path
-from typing import Literal
+from threading import Event
+from typing import Literal, Protocol
 
 from pydantic import Field, JsonValue
 
@@ -24,8 +25,18 @@ from tank.analysis.watch_contracts import (
 )
 from tank.analysis.watch_policy import evaluate_timed_review
 from tank.contracts import DomainModel
+from tank.contracts.backup_manifest import BackupManifest
 from tank.contracts.configuration import Thresholds
 from tank.contracts.json import decode_json
+from tank.contracts.milestone_checks import (
+    MilestoneCheckCommand,
+    MilestoneEventOwner,
+    MilestoneExpiryCommand,
+    MilestoneKind,
+    MilestoneResolutionHistory,
+    MilestoneTimerState,
+    ScheduledMilestoneCheck,
+)
 from tank.contracts.provenance import ResolvedVersionIdentity
 from tank.contracts.scheduler_results import ConditionEvaluationResult, DeferredCondition
 from tank.runtime_contracts import TimedReviewFiredMessage
@@ -224,8 +235,7 @@ class Scheduler:
                 and parse_time(milestone["due_at"]) <= now
             ):
                 due_stamp = propagate_timestamp(milestone, "due_at")
-                due = due_stamp.value
-                kind = milestone.get("kind", milestone.get("milestone"))
+                kind = MilestoneKind.from_record(milestone).kind
                 expiry_stamp = (
                     propagate_timestamp(milestone, "expires_at")
                     if milestone.get("expires_at")
@@ -233,20 +243,29 @@ class Scheduler:
                 )
                 expires = expiry_stamp.value
                 if parse_time(expires) > now:
-                    await self.repo.enqueue(
-                        "MILESTONE_CHECK",
+                    scheduled = ScheduledMilestoneCheck.model_validate(
                         {
                             "event_id": event["event_id"],
                             "milestone": kind,
                             **due_stamp.fields("due_at"),
                             "source_id": milestone.get("source_id"),
-                        },
-                        f"{event['event_id']}:{kind}:{due}",
+                        }
+                    )
+                    await self.repo.enqueue(
+                        "MILESTONE_CHECK",
+                        scheduled.model_dump(mode="json", exclude_unset=True),
+                        f"{scheduled.event_id}:{scheduled.milestone}:{scheduled.due_at}",
                         priority=1,
                         expires_at=expiry_stamp,
                     )
             if milestone and milestone.get("due_at"):
-                await self.expire_milestone(event["event_id"], now)
+                timer = MilestoneTimerState.from_record(milestone)
+                await self.expire_milestone(
+                    MilestoneExpiryCommand(
+                        event_id=event["event_id"], milestone=timer.kind, due_at=timer.due_at
+                    ),
+                    now,
+                )
             assessment = await self.latest_assessment(event)
             if not assessment:
                 continue
@@ -375,31 +394,38 @@ class Scheduler:
 
                 self.launch(f"reaction-pre:{event['event_id']}:{token}", capture_pre)
 
-    async def expire_milestone(self, event_id, now):
-        """A missed verification window is a timer fact, never a source outcome."""
-        async with self.repo.lock("event:" + event_id), self.repo.transaction():
-            event = await self.repo.get("evt.events", event_id)
-            milestone = (event or {}).get("next_milestone")
-            if (
-                not milestone
-                or not milestone.get("due_at")
-                or milestone.get("status") in {"CONFIRMED", "VERIFIED", "FAILED", "MISSED"}
-            ):
+    async def expire_milestone(self, command: MilestoneExpiryCommand, now: datetime) -> None:
+        """Expire only the locked expected timer, never a successor or source outcome."""
+        command = MilestoneExpiryCommand.model_validate(command)
+        now = parse_time(now)
+        async with self.repo.lock("event:" + command.event_id), self.repo.transaction():
+            event = await self.repo.get("evt.events", command.event_id)
+            if event is None:
                 return
-            due = propagate_timestamp(milestone, "due_at")
+            MilestoneEventOwner.from_record(event, command.event_id)
+            milestone = event.get("next_milestone")
+            if milestone is None:
+                return
+            if not isinstance(milestone, dict):
+                raise ValueError("Milestone timer state requires an object")
+            timer = MilestoneTimerState.from_record(milestone)
+            if timer.kind != command.milestone or parse_time(timer.due_at) != parse_time(command.due_at):
+                raise ValueError("Milestone expiry conflicts with its expected timer")
+            if timer.status in {"CONFIRMED", "VERIFIED", "FAILED", "MISSED"}:
+                return
             expiry = (
-                propagate_timestamp(milestone, "expires_at")
-                if milestone.get("expires_at")
-                else offset_schedule(due, timedelta(hours=2))
+                timer.expires if timer.expires is not None else offset_schedule(timer.due, timedelta(hours=2))
             )
+            if expiry.value is None:
+                raise ValueError("Milestone expiry requires its actual occurrence")
             if parse_time(expiry.value) > now:
                 return
             missed = {**milestone, "status": "MISSED", **collection_clock(now).fields("missed_at")}
-            await self.repo.put("evt.events", event_id, {**event, "next_milestone": missed})
+            await self.repo.put("evt.events", command.event_id, {**event, "next_milestone": missed})
             await self.message(
                 "MILESTONE",
-                event_id,
-                "missed:" + str(milestone.get("kind", milestone.get("milestone"))) + ":" + due.value,
+                command.event_id,
+                "missed:" + timer.kind + ":" + timer.due_at,
                 milestone=missed,
                 verification_required=True,
                 instruction="Milestone verification window elapsed without accepted resolution. Re-score; verify source outcome. Timer expiry is not evidence that the source milestone failed.",
@@ -509,7 +535,7 @@ class Scheduler:
                         call["event_id"],
                         {**event, "call_expired": True, "call_expired_ids": expired_ids},
                     )
-                    await self.repo.put(
+                    closed_call = await self.repo.put(
                         "ana.calls",
                         call["call_id"],
                         {
@@ -519,7 +545,7 @@ class Scheduler:
                             **collection_clock(now).fields("closed_at"),
                         },
                     )
-                    await self.message("CALL_EXPIRED", call["event_id"], call["call_id"], call=call)
+                    await self.message("CALL_EXPIRED", call["event_id"], call["call_id"], call=closed_call)
 
     @staticmethod
     def anchor(event: Mapping[str, JsonValue]) -> dict[str, JsonValue]:
@@ -967,26 +993,21 @@ class Scheduler:
                 )
             return "fired" if isinstance(action, FireTimedReview) else "evaluated"
 
-    async def milestone_check(self, payload):
-        event = await self.repo.get("evt.events", payload["event_id"])
+    async def milestone_check(self, command: MilestoneCheckCommand) -> None:
+        command = MilestoneCheckCommand.model_validate(command)
+        event = await self.repo.get("evt.events", command.event_id)
         if event is None:
             raise ValueError("Milestone event does not exist")
-        matches = [
-            row
-            for row in event.get("milestone_resolutions", [])
-            if row.get("kind", row.get("milestone")) == payload["milestone"]
-            and (not payload.get("due_at") or row.get("due_at") == payload["due_at"])
-        ]
-        resolution = matches[-1] if matches else None
-
+        resolution = MilestoneResolutionHistory.from_record(event, command).latest(command)
+        due_key = "" if command.due_at is None else command.due_at
         await self.message(
             "MILESTONE",
-            payload["event_id"],
-            str(payload["milestone"]) + ":" + str(payload.get("due_at", "")),
-            milestone=payload["milestone"],
-            outcome=resolution.get("outcome") if resolution else None,
-            quotes=resolution.get("quotes", []) if resolution else [],
-            evidence=resolution.get("evidence", []) if resolution else [],
+            command.event_id,
+            command.milestone + ":" + due_key,
+            milestone=command.milestone,
+            outcome=resolution.outcome if resolution is not None else None,
+            quotes=resolution.quotes if resolution is not None else [],
+            evidence=resolution.evidence if resolution is not None else [],
             verification_required=resolution is None,
             instruction="Verify outcome against the scheduled official source; retain a quote. Mark a missed window explicitly."
             if resolution is None
@@ -2076,7 +2097,7 @@ def funding_state(derivatives):
     return "ABOVE" if "ABOVE" in values else "BELOW" if all(v == "BELOW" for v in values) else "WITHIN"
 
 
-def file_digest(path, *, cancelled=None):
+def file_digest(path: Path, *, cancelled: Event | None = None) -> str:
     import hashlib
 
     digest = hashlib.sha256()
@@ -2088,69 +2109,80 @@ def file_digest(path, *, cancelled=None):
     return digest.hexdigest()
 
 
-def verify_backup(directory, *, require_complete=True, protected=None, cancelled=None):
-    """Verify the relative-path recovery manifest before restoring evidence."""
-    import json
-    from pathlib import Path
+def backup_file(root: Path, relative: str) -> Path:
+    candidate = root / relative
+    if any(parent.is_symlink() for parent in (candidate, *candidate.parents) if parent != root):
+        raise ValueError("Backup file contains a symlink")
+    path = candidate.resolve()
+    if not path.is_relative_to(root) or not path.is_file():
+        raise ValueError("Backup file is missing or outside backup root")
+    return path
 
+
+def verify_backup(
+    directory: str | Path,
+    *,
+    require_complete: bool = True,
+    protected: Mapping[str, Path] | None = None,
+    cancelled: Event | None = None,
+) -> BackupManifest:
+    """Verify the relative-path recovery manifest before restoring evidence."""
     root = Path(directory).resolve()
     if require_complete and not (root / "COMPLETE").is_file():
         raise ValueError("Backup is incomplete")
-    manifest = json.loads((root / "manifest.json").read_text())
-    if protected:
-        for relative in manifest["files"]:
+    manifest = BackupManifest.from_bytes((root / "manifest.json").read_bytes())
+    if protected is not None:
+        for relative in manifest.files:
             parts = Path(relative).parts
-            if parts and parts[0] in manifest.get("roots", {}):
-                original = Path(manifest["roots"][parts[0]]).joinpath(*parts[1:])
+            if parts[0] in manifest.roots:
+                original = Path(manifest.roots[parts[0]]).joinpath(*parts[1:])
                 if is_protected_evidence_path(original, protected):
                     raise ValueError(
                         "Backup contains a protected credential path and cannot be used as ordinary evidence"
                     )
-    for relative, digest in manifest["files"].items():
-        path = (root / relative).resolve()
-        if not path.is_relative_to(root) or not path.is_file():
-            raise ValueError("Backup file is missing or outside backup root")
-        if file_digest(path, cancelled=cancelled) != digest:
+    for relative, digest in manifest.files.items():
+        if file_digest(backup_file(root, relative), cancelled=cancelled) != digest:
             raise ValueError("Backup file checksum mismatch")
-    if not all(name in manifest["files"] for name in ("tank.dump", "oma.dump")):
-        raise ValueError("Backup requires both Tank and OpenMA database dumps")
     return manifest
 
 
-def resolve_backup_reference(directory, reference, *, manifest=None):
-    """Map an original absolute/relative evidence path into a relocated backup."""
-    import json
-    from pathlib import Path
-
+def resolve_backup_reference(
+    directory: str | Path, reference: str | Path, *, manifest: BackupManifest | None = None
+) -> Path:
+    """Map an original evidence path into its checksum-verified recovery tree."""
     root = Path(directory).resolve()
-    manifest = manifest or json.loads((root / "manifest.json").read_text())
+    admitted = (
+        BackupManifest.from_bytes((root / "manifest.json").read_bytes())
+        if manifest is None
+        else BackupManifest.model_validate(manifest)
+    )
     original = Path(reference)
     if not original.is_absolute():
-        original = Path(manifest["reference_base"]) / original
+        original = Path(admitted.reference_base) / original
     original = original.resolve()
-    for label, source_root in manifest["roots"].items():
+    for label, source_root in admitted.roots.items():
         source = Path(source_root)
         if original.is_relative_to(source):
             relative = (Path(label) / original.relative_to(source)).as_posix()
-            path = (root / relative).resolve()
-            if relative not in manifest["files"] or not path.is_file():
+            if relative not in admitted.files:
                 raise ValueError("Evidence reference is missing from backup")
+            path = backup_file(root, relative)
+            if file_digest(path) != admitted.files[relative]:
+                raise ValueError("Backup file checksum mismatch")
             return path
     raise ValueError("Evidence reference is outside backed-up roots")
 
 
-def protected_evidence_paths(settings):
+class BackupProtectionSettings(Protocol):
+    codex_auth_path: Path
+
+
+def protected_evidence_paths(settings: BackupProtectionSettings) -> dict[str, Path]:
     """Credentials are never ordinary evidence/retention inputs."""
-    from pathlib import Path
-
-    paths = {}
-    auth = getattr(settings, "codex_auth_path", None)
-    if auth is not None:
-        paths["subscription sign-in directory"] = Path(auth).resolve().parent
-    return paths
+    return {"subscription sign-in directory": settings.codex_auth_path.resolve().parent}
 
 
-def is_protected_evidence_path(path, protected):
+def is_protected_evidence_path(path: str | Path, protected: Mapping[str, Path]) -> bool:
     from pathlib import Path
 
     resolved = Path(path).resolve()

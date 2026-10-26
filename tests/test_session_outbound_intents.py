@@ -9,6 +9,7 @@ from native_input_fixtures import acknowledge_native_input
 from pydantic import JsonValue, ValidationError
 from session_followup_fixtures import UnexpectedFollowupRefusals
 
+from tank.agents.message_dispatch import AcceptedMessageDispatch, observe_message_dispatch
 from tank.agents.native_inputs import NativeUserMessage, UnreportedNativeInput
 from tank.agents.outbound_inputs import (
     AcceptedOutboundInput,
@@ -71,6 +72,8 @@ async def test_actual_initial_acceptance_preserves_reported_or_unreported_receip
         )
         await service.post_message_intent("session", "message")
         again = await service.post_message_intent("session", "message")
+    outcome = observe_message_dispatch(again, "message")
+    assert isinstance(outcome, AcceptedMessageDispatch) and outcome.acceptance.receipt.status == receipt
     journal = again["message_log"]
     assert isinstance(journal, list) and isinstance(journal[0], dict)
     intent = journal[0]
