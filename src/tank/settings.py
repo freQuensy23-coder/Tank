@@ -17,7 +17,7 @@ from pydantic.fields import FieldInfo
 from pydantic_settings import BaseSettings, PydanticBaseSettingsSource, SettingsConfigDict
 
 from tank.contracts.configuration import DeliveryConfiguration, Thresholds
-from tank.contracts.json import JsonDocument, decode_json
+from tank.contracts.json import JsonDocument, decode_unique_json
 from tank.contracts.openma import OpenMAConfiguration
 from tank.contracts.provenance import ResolvedVersionIdentity
 from tank.contracts.registry import (
@@ -276,7 +276,7 @@ class Settings(BaseSettings):
         return self.read_config_bytes(relative).decode("utf-8")
 
     def read_config_json(self, relative: str) -> JsonValue:
-        return decode_json(self.read_config_bytes(relative))
+        return decode_unique_json(self.read_config_bytes(relative))
 
     def thresholds(self) -> Thresholds:
         return self.load_config_as("thresholds", Thresholds)
@@ -357,7 +357,7 @@ def resolve_versions(settings: Settings) -> Settings:
             if not isinstance(yaml.safe_load(content), dict):
                 raise ValueError(f"Configuration must be a mapping: {name}")
         elif name.endswith(".json"):
-            decode_json(content)
+            decode_unique_json(content)
     if _PROCESS_CODE_VERSION is None:
         _PROCESS_CODE_VERSION = _digest(_capture_tree(Path(__file__).parent, {".py", ".sql", ".json"}))
     resolved = settings.model_copy(update={"config_version": version, "code_version": _PROCESS_CODE_VERSION})
