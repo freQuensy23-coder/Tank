@@ -2740,32 +2740,48 @@ def enrich_evidence(
         )
         for tier in ("T1", "T2", "T3")
     }
-    split = {}
-    latest = {}
-    for b in snapshot.get("books", []):
-        if _market(b) != "SPOT" or b.get("token_id", snapshot.get("token_id")) != snapshot.get("token_id"):
+    split: dict[str, float | None] = {}
+    latest_indices: dict[str, int] = {}
+    source_books = snapshot.get("books", [])
+    for book_index, book in enumerate(source_books):
+        if _market(book) != "SPOT" or book.get("token_id", snapshot.get("token_id")) != snapshot.get(
+            "token_id"
+        ):
             continue
-        if b.get("integrity_ok") is True and (_venue(b) not in latest or _time(b) > _time(latest[_venue(b)])):
-            latest[_venue(b)] = b
-    askdepth = {
-        v: decimal((b.get("depth", {}).get("ask", {}).get("p1") or {}).get("usd")) for v, b in latest.items()
+        venue = _venue(book)
+        if not isinstance(venue, str) or not venue:
+            raise ValueError("Book split requires an actual nonblank venue")
+        prior_index = latest_indices.get(venue)
+        if book.get("integrity_ok") is True and (
+            prior_index is None or _time(book) > _time(source_books[prior_index])
+        ):
+            latest_indices[venue] = book_index
+    askdepth: dict[str, Decimal | None] = {
+        venue: decimal((source_books[position].get("depth", {}).get("ask", {}).get("p1") or {}).get("usd"))
+        for venue, position in latest_indices.items()
     }
-    total = sum(x for x in askdepth.values() if x is not None)
+    total = sum((value for value in askdepth.values() if value is not None), Decimal(0))
     for tier in ("T1", "T2", "T3"):
-        fills = []
-        if tiers.get(tier) and total and all(x is not None for x in askdepth.values()):
-            for venue, b in latest.items():
-                allocation = tiers[tier] * askdepth[venue] / total
-                levels = b.get("asks", b.get("levels", {}).get("asks", []))
-                mid = decimal(b.get("mid"))
-                fx = Decimal(1) if b.get("quote_asset") == "USD" else decimal(b.get("quote_usd_rate"))
+        fills: list[tuple[Decimal, float | None]] = []
+        notional: Decimal | None = decimal(tiers.get(tier))
+        if notional and total and all(value is not None for value in askdepth.values()):
+            for venue, position in latest_indices.items():
+                book = source_books[position]
+                depth = askdepth[venue]
+                if depth is None:
+                    raise ValueError("Book allocation requires the actual known venue depth")
+                allocation = notional * depth / total
+                levels = book.get("asks", book.get("levels", {}).get("asks", []))
+                mid = decimal(book.get("mid"))
+                fx = Decimal(1) if book.get("quote_asset") == "USD" else decimal(book.get("quote_usd_rate"))
                 impact = (
                     walk_book(levels, allocation / fx, mid) if levels and mid and allocation and fx else None
                 )
                 fills.append((allocation, impact))
+        measured_fills = [(amount, impact) for amount, impact in fills if impact is not None]
         split[tier] = (
-            sum(float(n / tiers[tier]) * i for n, i in fills)
-            if fills and all(i is not None for _, i in fills)
+            sum(float(amount / notional) * impact for amount, impact in measured_fills)
+            if fills and len(measured_fills) == len(fills) and notional is not None
             else None
         )
     liquidity["best_single_venue_slippage_bps"] = best
@@ -2813,31 +2829,41 @@ def enrich_evidence(
     )
     complete_venues = {v["venue"] for v in capture["venues"]}
 
-    conversion_bps = decimal(parameter("quote_conversion_uncertainty_bps", 2))
+    conversion_bps: Decimal | None = decimal(parameter("quote_conversion_uncertainty_bps", 2))
     unevaluated = []
     for index, a in enumerate(sorted(grouped)):
         for b in sorted(grouped)[index + 1 :]:
             ar, br = grouped[a], grouped[b]
             at, bt = grouped_times[a], grouped_times[b]
             times = sorted({frag_start, end} | {t for t in at + bt if frag_start <= t < end})
-            gaps = []
+            gaps: list[bool] = []
             second = False
             for t in times:
-                states = []
+                pair_states = []
                 for rows, stamps in ((ar, at), (br, bt)):
-                    k = bisect_right(stamps, t) - 1
-                    states.append(rows[k] if k >= 0 and (t - stamps[k]).total_seconds() <= cadence else None)
-                if None in states:
+                    quote_position = bisect_right(stamps, t) - 1
+                    pair_states.append(
+                        rows[quote_position]
+                        if quote_position >= 0 and (t - stamps[quote_position]).total_seconds() <= cadence
+                        else None
+                    )
+                x, y = pair_states
+                if x is None or y is None:
                     gaps = []
                     break
-                x, y = states
-                xm, ym = decimal(x.get("mid")), decimal(y.get("mid"))
-                xs, ys = decimal(x.get("spread_bps")), decimal(y.get("spread_bps"))
-                if None in (xm, ym, xs, ys) or not ym:
+                xm: Decimal | None = decimal(x.get("mid"))
+                ym: Decimal | None = decimal(y.get("mid"))
+                xs: Decimal | None = decimal(x.get("spread_bps"))
+                ys: Decimal | None = decimal(y.get("spread_bps"))
+                if xm is None or ym is None or xs is None or ys is None or not ym:
                     gaps = []
                     break
                 same_quote = _quote(x) == _quote(y)
                 cost = Decimal(0) if same_quote else conversion_bps
+                if cost is None:
+                    unevaluated.append([a, b])
+                    gaps = []
+                    break
                 xm, ym = (xm, ym) if same_quote else (_usd_mid(x, xm), _usd_mid(y, ym))
                 if xm is None or not ym:
                     unevaluated.append([a, b])
@@ -2848,12 +2874,12 @@ def enrich_evidence(
                     gaps.append(gap)
                 elif gaps and gaps[-1] and not gap:
                     closed = True
-                rest = []
+                rest: list[tuple[Decimal, Decimal] | None] = []
                 for stream in (x, y):
                     independent = stream.get("independent_rest") or {}
                     rt = independent.get("ts")
-                    rm = decimal(independent.get("mid"))
-                    rs = decimal(independent.get("spread_bps"))
+                    rm: Decimal | None = decimal(independent.get("mid"))
+                    rs: Decimal | None = decimal(independent.get("spread_bps"))
                     good = (
                         stream.get("second_path_confirmed") is True
                         and independent.get("source") == "PUBLIC_REST"
@@ -2865,27 +2891,35 @@ def enrich_evidence(
                         and rm > 0
                         and rs is not None
                     )
-                    rest.append((rm if same_quote else _usd_mid(stream, rm), rs) if good else None)
+                    if not good or rm is None or rs is None:
+                        rest.append(None)
+                        continue
+                    converted: Decimal | None = rm if same_quote else _usd_mid(stream, rm)
+                    rest.append((converted, rs) if converted is not None else None)
+                left_rest, right_rest = rest
                 second = second or (
-                    None not in rest
-                    and None not in (rest[0][0], rest[1][0])
-                    and abs(rest[0][0] - rest[1][0]) * 10000 > (rest[0][1] + rest[1][1] + cost) * rest[1][0]
+                    left_rest is not None
+                    and right_rest is not None
+                    and abs(left_rest[0] - right_rest[0]) * 10000
+                    > (left_rest[1] + right_rest[1] + cost) * right_rest[0]
                 )
             if gaps and all(gaps):
                 persistent = True
                 pairs.append([a, b])
                 validated = validated or (second and {a, b} <= complete_venues)
 
-    funding_groups = {
-        p["instrument_id"]: [] for p in deriv.get("per_venue", []) if p.get("funding_8h_eq") is not None
+    funding_instruments: set[str] = {
+        point["instrument_id"]
+        for point in deriv.get("per_venue", [])
+        if point.get("funding_8h_eq") is not None
     }
-    historical = []
-    states = {}
+    historical: list[tuple[datetime, Decimal]] = []
+    funding_states: dict[str, Decimal] = {}
     funding_rows = sorted(
         [
             r
             for r in snapshot.get("funding", [])
-            if r.get("instrument_id") in funding_groups
+            if r.get("instrument_id") in funding_instruments
             and r.get("kind") == "SETTLED"
             and _time(r) < start
             and _time(r) >= start - timedelta(days=lookback_days())
@@ -2896,9 +2930,9 @@ def enrich_evidence(
         rate, interval = decimal(row.get("rate")), decimal(row.get("interval_h"))
         if rate is None or not interval:
             continue
-        states[row["instrument_id"]] = rate * 8 / interval
-        if len(states) == len(funding_groups) and len(states) >= 2:
-            historical.append((_time(row), max(states.values()) - min(states.values())))
+        funding_states[row["instrument_id"]] = rate * 8 / interval
+        if len(funding_states) == len(funding_instruments) and len(funding_states) >= 2:
+            historical.append((_time(row), max(funding_states.values()) - min(funding_states.values())))
     normal_dispersion = (
         normal([value for _, value in historical])
         if historical
@@ -2909,10 +2943,10 @@ def enrich_evidence(
     dispersion = deriv.get("funding_dispersion_8h")
     funding_beyond = beyond(dispersion, normal_dispersion)
     confirmations = snapshot.get("funding_confirmations", [])
-    secondary = {}
+    confirmation_rates: dict[str, Decimal] = {}
     for row in confirmations:
         if (
-            row.get("instrument_id") not in funding_groups
+            row.get("instrument_id") not in funding_instruments
             or _time(row) is None
             or _time(row) > end
             or not _available(row, snapshot)
@@ -2924,13 +2958,13 @@ def enrich_evidence(
             continue
         rate = decimal(row.get("rate_8h_eq"))
         if rate is not None:
-            secondary[row["instrument_id"]] = rate
+            confirmation_rates[row["instrument_id"]] = rate
     secondary_dispersion = (
-        max(secondary.values()) - min(secondary.values())
-        if len(secondary) >= 2 and set(secondary) == set(funding_groups)
+        max(confirmation_rates.values()) - min(confirmation_rates.values())
+        if len(confirmation_rates) >= 2 and set(confirmation_rates) == set(funding_instruments)
         else None
     )
-    perp_ids = set(funding_groups)
+    perp_ids = set(funding_instruments)
     perp_complete = True
     for iid in perp_ids:
         if flow_window(snapshot, iid, frag_start, end) is None:
