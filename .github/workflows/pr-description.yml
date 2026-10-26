@@ -1,0 +1,30 @@
+name: pr-description
+
+on:
+  pull_request:
+    types: [opened, edited, synchronize, reopened]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pr-description-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  template:
+    name: PR description follows the template
+    runs-on: ubuntu-24.04
+    timeout-minutes: 2
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884
+        with:
+          version: "0.11.7"
+          python-version: "3.13.13"
+      - name: Template blocks are present and in order
+        env:
+          PR_BODY: ${{ github.event.pull_request.body }}
+        run: uv run --no-project python scripts/ci/check_pr_description.py
