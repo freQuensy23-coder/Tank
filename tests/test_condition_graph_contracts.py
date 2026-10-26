@@ -40,6 +40,7 @@ from tank.analysis.condition_graph_contracts import (
     ConditionSupplyGraph,
     ConditionTopVenueSignHistory,
     DeclaredConditionCadence,
+    EnrichedConditionDerivatives,
     EnrichedConditionLiquidity,
     NonForwardConditionInterval,
     ObservedConditionClose,
@@ -1173,12 +1174,10 @@ def test_volume_support_keeps_known_zero_within_range_and_unknown_prior_distinct
         )
 
 
-def test_enriched_empty_derivative_venues_cannot_create_a_negative_basis_predicate() -> None:
+def enriched_derivatives_without_observations() -> EnrichedConditionDerivatives:
     from tank.analysis.condition_graph_contracts import (
-        ConditionObservedPredicate,
         ConditionUnavailableFundingDispersion,
         ConditionUnavailablePredicate,
-        EnrichedConditionDerivatives,
         UnavailableConditionLeadLag,
         UnavailableConditionSynchronizedOpenInterest,
         UnrequestedConditionIncrementalVolumes,
@@ -1213,6 +1212,14 @@ def test_enriched_empty_derivative_venues_cannot_create_a_negative_basis_predica
         ),
         support_features=support,
     )
+    return graph
+
+
+def test_enriched_empty_derivative_venues_cannot_create_a_negative_basis_predicate() -> None:
+    from tank.analysis.condition_graph_contracts import ConditionObservedPredicate
+
+    graph = enriched_derivatives_without_observations()
+    support = graph.support_features
     assert graph.support_features.basis_within_normal.status == "UNAVAILABLE"
     with pytest.raises(ValidationError, match="replace unavailable inputs"):
         EnrichedConditionDerivatives.model_validate(

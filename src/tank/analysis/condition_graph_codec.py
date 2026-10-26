@@ -83,9 +83,11 @@ from tank.analysis.condition_graph_contracts import (
     EnrichedConditionSpot,
     FlowAggregateEvidenceRef,
     FlowCaptureEvidenceRef,
+    FullConditionMarketState,
     KnownConditionTradeCount,
     MetricSemanticsCadenceOrigin,
     MissingConditionProofObservation,
+    NonForwardConditionMarketState,
     ObservedConditionCohort,
     ObservedConditionCohortComparison,
     ObservedConditionDepthCohort,
@@ -2033,4 +2035,109 @@ def encode_condition_liquidity(
     else:
         result["vol_compression"] = {"status": "NOT_REQUESTED"}
         result["fragmentation"] = {"status": "NOT_REQUESTED"}
+    return result
+
+
+class ConditionStateEvidenceLookup(ConditionRelativeEvidenceLookup, ConditionSupplyEvidenceLookup, Protocol):
+    """Rejoin only the source witnesses actually consumed by a full state graph."""
+
+
+def encode_nonforward_condition_market_state(
+    value: NonForwardConditionMarketState, *, clocks: ConditionWireClocks
+) -> dict[str, JsonValue]:
+    state = NonForwardConditionMarketState.model_validate(value)
+    context = ConditionWireClocks.model_validate(clocks)
+    if (
+        state.token_id != context.token_id
+        or context.cutoff.value is None
+        or parse_iso_time(context.cutoff.value) != state.interval.cutoff
+    ):
+        raise ValueError("A nonforward result requires its actual subject and cutoff metadata")
+    result: dict[str, JsonValue] = {
+        "token_id": state.token_id,
+        "state_phase": state.kind,
+        "move_class": state.move_class,
+        "divergence": {"state": state.divergence_state},
+        "data_confidence": {"class": state.confidence},
+        "analysis_window": {
+            "start": iso(state.interval.start),
+            "cutoff": iso(state.interval.cutoff),
+            "reason": state.reason,
+        },
+    }
+    result.update(_clock_wire(context.cutoff, "cutoff"))
+    return result
+
+
+def encode_full_condition_market_state(
+    value: FullConditionMarketState,
+    evidence: ConditionStateEvidenceLookup,
+    *,
+    clocks: ConditionWireClocks,
+) -> dict[str, JsonValue]:
+    state = FullConditionMarketState.model_validate(value)
+    context = ConditionWireClocks.model_validate(clocks)
+    if (
+        state.token_id != context.token_id
+        or context.cutoff.value is None
+        or parse_iso_time(context.cutoff.value) != state.cutoff
+    ):
+        raise ValueError("Full state serialization requires its actual subject and cutoff metadata")
+    evaluation = state.candidates.divergence
+    proposal = state.candidates.proposal(fragmentation=state.liquidity.fragmentation.validated())
+    candidates: list[JsonValue] = []
+    for candidate in evaluation.candidates:
+        candidates.append(
+            {
+                "state": candidate.state,
+                "eligible": candidate.eligible(),
+                "refuted": _predicate_wire(candidate.refutation),
+                "testable": candidate.testable(),
+                "support": candidate.support,
+                "support_reason": candidate.support_reason,
+                "evaluation": _model_wire(candidate),
+            }
+        )
+    support_reason = (
+        "LOW_DATA_CONFIDENCE"
+        if state.data_confidence.classification == "LOW"
+        else proposal.reason
+        if proposal.status == "UNAVAILABLE"
+        else None
+    )
+    result: dict[str, JsonValue] = {
+        "token_id": state.token_id,
+        "state_phase": state.kind,
+        "spot": {
+            name: encode_scoped_condition_spot(spot, evidence, clocks=context)
+            for name, spot in state.spot.items()
+        },
+        "derivatives": {"windows": {state.primary_window: encode_condition_derivatives(state.derivatives)}},
+        "liquidity": encode_condition_liquidity(state.liquidity, clocks=context),
+        "supply": encode_condition_supply(state.supply, evidence, clocks=context),
+        "relative": encode_condition_relative(state.relative, evidence, clocks=context),
+        "data_confidence": encode_condition_confidence(state.data_confidence, clocks=context),
+        "primary_window": state.primary_window,
+        "eligible_before_divergence": [name for name in sorted(state.candidates.eligible_before_divergence)],
+        "eligible_support_before_divergence": {
+            name: count for name, count in state.candidates.eligible_before_divergence.items()
+        },
+        "move_class": state.move_class(),
+        "support": state.selected_support(),
+        "support_reason": support_reason,
+        "alternatives": list(state.alternatives()),
+        "divergence": {
+            "state": state.divergence_state(),
+            "triggered": _predicate_wire(evaluation.trigger),
+            "trigger_proof": _model_wire(evaluation.trigger),
+            "candidates": candidates,
+            "unresolved": list(evaluation.unresolved()),
+            "confirmed": state.absorption_confirmed(),
+            "confirmation_scope": "SELECTED_STATE_LABEL",
+        },
+        "class_confidence": state.class_confidence(),
+        "flags": list(state.candidates.flags),
+        "selection_proof": _model_wire(proposal),
+    }
+    result.update(_clock_wire(context.cutoff, "cutoff"))
     return result
