@@ -17,6 +17,7 @@ import httpx
 import pytest
 from native_input_fixtures import acknowledge_native_input
 from pydantic import JsonValue
+from runtime_failure_fixtures import bind_worker_fragment_failure_store
 from scheduling_support import RecordingReactionScheduling
 from source_support import fixture_http_admission, fixture_versions
 from test_agents_session_audit import settings as session_settings
@@ -24,6 +25,7 @@ from test_event_tools import complete_assessment_fixture, complete_event_fixture
 from test_session_binding_concurrency import fixture_repo
 from test_session_binding_concurrency import seed as seed_typed_session
 from test_truth_start_fixture import compact_start_snapshot
+from truth_support import fixture_truth_config
 
 from tank.agents import SessionService
 from tank.analysis.decision_codec import decision_inputs_from_records
@@ -269,6 +271,8 @@ async def test_wait_data_watch_refreshes_truth_before_decision_and_replays_lost_
 
         runtime = object.__new__(Runtime)
         runtime.repo, runtime.market, runtime.truth = repo, market, truth
+        bind_worker_fragment_failure_store(runtime, repo, fixture_versions())
+        runtime.settings = settings
         runtime.handlers = {"ESCALATE_TOKENS": runtime.escalate_wire, "RUN_MARKET_TRUTH": runtime.assess_wire}
         stop = asyncio.Event()
         worker = None
@@ -466,6 +470,8 @@ async def test_cancelled_preflight_reuses_job_before_any_decision_ledger(
             market.released = True
             runtime = object.__new__(Runtime)
             runtime.repo, runtime.market, runtime.truth = repo, market, truth
+            bind_worker_fragment_failure_store(runtime, repo, fixture_versions())
+            runtime.settings = settings
             runtime.handlers = {
                 "ESCALATE_TOKENS": runtime.escalate_wire,
                 "RUN_MARKET_TRUTH": runtime.assess_wire,
@@ -566,6 +572,8 @@ async def test_condition_firing_during_refresh_wait_is_deferred_until_its_own_re
         market.released = True
         runtime = object.__new__(Runtime)
         runtime.repo, runtime.market, runtime.truth = repo, market, truth
+        bind_worker_fragment_failure_store(runtime, repo, fixture_versions())
+        runtime.settings = settings
         runtime.handlers = {"ESCALATE_TOKENS": runtime.escalate_wire, "RUN_MARKET_TRUTH": runtime.assess_wire}
         stop = asyncio.Event()
         worker = asyncio.create_task(runtime.worker(stop))
@@ -706,7 +714,7 @@ def test_authored_current_minute_retains_estimable_hourly_benchmark_history() ->
 
     end = parse_time("2026-10-16T12:37:00Z")
     snapshot = shifted_snapshot(end)
-    result = compute_market_truth(snapshot)
+    result = compute_market_truth(snapshot, config=fixture_truth_config())
     assert result["cutoff"] == iso(end)
     assert result["relative"]["beta_btc"] is not None
     assert result["relative"]["beta_flags"]["btc"] is None

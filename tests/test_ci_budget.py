@@ -345,3 +345,13 @@ def test_missing_run_attempt_refuses_before_origin_or_jobs() -> None:
 def test_run_attempt_requires_positive_integer(attempt: int | str | None) -> None:
     with pytest.raises(ValueError):
         budget.Run.model_validate({"created_at": "2026-10-23T12:00:00Z", "run_attempt": attempt})
+
+
+def test_both_unit_lanes_and_the_aggregate_are_required_before_ci_can_pass() -> None:
+    required = {"test / Python unit (0)", "test / Python unit (1)", "test / Python unit complete"}
+    assert required <= budget.REQUIRED_JOBS
+    jobs = passed_jobs()
+    deadline = budget.timestamp("2026-10-23T12:04:00Z")
+    assert budget.result(jobs, deadline)
+    for missing in required:
+        assert not budget.result([job for job in jobs if job.name != missing], deadline)

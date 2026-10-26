@@ -1308,7 +1308,9 @@ pass. Evidence prefixes retirement-6c2-alias-focused,
 retirement-6c2-final-phase-unit and retirement-6c2-phase-pg are external.
 The earlier broad diagnostic remains 944 passed/two failed; one delivery
 failure is fixed by the tested alias correction, while the remaining
-Telegram terminal-answer legacy Runtime fixture still needs migration.
+Telegram terminal-answer legacy Runtime fixture still needed migration at
+that snapshot. Commit 4a362a56 later migrated that fixture with its original
+assertions intact and a passing focused control.
 This is a held checkpoint, not full Runtime/caller qualification or whole
 SessionService completion.
 
@@ -1558,3 +1560,118 @@ binding-change race refusing a native POST. Default Session mypy passes;
 whole independent strict remains incomplete. Evidence
 worker-fbc-question-phase-unit is external. This candidate remains held with
 the worker/native producer cohort; it is not a parent-ready activation.
+
+Standalone public queue repair on clean main49 parent
+
+This companion starts from canonical 5b77f741 (normal 8f/main49 ancestry),
+without the held worker/native/retirement streams. Immutable negative
+checkpoint 047e21df reproduces three actual workflow failures and one passing
+provided-delay control in 5.36 seconds: an omitted Telegram retry_after leaves
+a real answer job RUNNING for both retryable and terminal attempts, and an
+actual admission cap defer writes clock facets rejected by typed queue reads.
+Evidence public-5b-before-unit is external. No caller/assertion was weakened.
+
+runtime_retry now makes the existing application backoff explicit through
+closed models. TelegramResponseError keeps genuine provider retry_after=None;
+only the scheduling decision supplies application backoff from actual
+JobRetryState.attempts. Reported Telegram delays and actual DeliveryError
+directives remain distinct (including known delivery zero). Exponential
+backoff saturates at 60 without exponentiating unbounded counts, preserving
+the existing numeric policy. No default attempt 1 or arbitrary getattr error
+field remains at this worker call site. This does not claim the rest of the
+still-untyped worker body is migrated.
+
+The approved/reviewed slot-wait schema logic from held checkpoint 8840 is reimplemented
+narrowly here, not merged with its inactive ancestry. JobMetadata recognizes
+only the three actual optional clock facets already written by production.
+Any reported non-null facet uses Timestamp coherence validation; scalar-only/
+all-null metadata remains unreported and strictly aware, without invented
+precision/reason. The actual Runtime→SessionAdmission cap defer/wake path now
+survives JobRepository get, idempotent enqueue and next claim on both Memory
+and PostgreSQL. Malformed copied models refuse before writes; canonical JSON
+roundtrip checks preserve original scalar/nullable-facet representation.
+
+All 68 connected unit cases pass in 5.56 seconds, zero skips, p90 .404 seconds
+and maximum 1.005 seconds. All twelve selected actual PostgreSQL Runtime/
+precision/public-repair cases pass in 35.63 seconds, zero skips, complete
+collected set and source/service guards. Three answer controls use actual
+build_runtime, Inbox, HTTP response admission, worker and queue: omitted delay
+requeues at the declared 2 seconds, reported 7 remains 7, and the final attempt
+reaches FAILED/DELIVERY_FAILED without replacing the authoritative answer.
+Every service is real; the fixture preserves only pytest logging and rejects
+all undeclared external HTTP. Actual integration evidence is
+public-047-runtime-pg; units are public-047-connected-unit. Independent strict
+five policy/jobs/helper/pure-test targets and Ruff/check-format pass. Selected
+default mypy exposes existing outside-owner truth.py:5890 _condition_cache and
+deployment_postgres_helpers.py:65 nullable-row errors; no new target errors or
+suppressions were added. Whole Runtime/Session migration and assigned vendor
+backlog remain open; the clean public repair does not activate those cohorts.
+
+These owner gates ran on the frozen owned work-in-progress source above
+047e21df before the report/commit; product source did not change after the
+passing checks. The immutable wrapper fingerprints remain the exact proof
+identity; parent final-head integration qualification is still required.
+
+Qualified joint question-retirement and Runtime failure cohort
+
+Canonical product source 75e3bd1c normally joins the preserved 4a retirement,
+analysis fd35085e real worker fragments, quality 280fbc07 actual E2E adapter,
+public 494 retry/slot fixes and current parent 253f50da. The Runtime conflict
+kept both the required typed failure repository and explicit retry policy;
+append-only reports retain both complete histories. No inactive worker/native
+producer branch is ancestry. The only subsequent addition is the supported
+unknown-versus-occurred marker regression and final inventory/evidence text;
+product source did not change after the broad passing gates.
+
+SessionService.abandon_question/reconcile_answers and Runtime terminal failure/
+restart reconciliation now consume phase-specific strict records. Actual
+initial ACCEPTED/UNREPORTED/EMPTY receipts or sent_at are preserved without
+requiring an unused old body/budget. Unknown initial acceptance/journal state
+refuses explicitly before answer/native effects; no missing native ID becomes
+an unsent assertion. The existing controller send lock then repository session
+lock serializes retirement with actual initial/recovery POSTs and acceptance
+commit. Both-ID authoritative answer state is rechecked under the question
+lock, preserving the first answer and idempotent delivery. No distributed
+POST guarantee is claimed beyond these actual participating locks.
+
+Runtime requires a concrete RepositoryRuntimeFailures port in production
+composition. Its narrow store port owns actual queue locks, checks current
+job/type/status/target and phase-consumed facts, and performs exact sparse
+writes. Host refusals contain actual captured controller identity, actual
+recording clock and request-digest scope, remain distinct from native receipts,
+and are persisted before any handled marker. The closed JobEnvelope map and
+pre-serialization entity validation preserve absent-versus-explicit-null facts.
+Transient write/broken-ACK outcomes are sanitized named availability failures;
+permanent driver rejection and malformed global data do not become handled.
+Actual unrelated worker work still completes and restart preserves original
+receipt identity. Changed native 404 facts can close the question through the
+real refusal writer without rewriting past refusal or fabricating termination.
+
+All 966 broad affected units pass in 24.30 seconds, zero skips, p90 .321 seconds
+and maximum 5.632 seconds. The entire 140-case affected Linux integration
+collection passes in 65.66 seconds, zero skips, covering real PostgreSQL,
+replay/reference/market-refresh/four E2Es and public queue controls. Evidence
+retirement-75e3-joint-{unit,integration} is external; wrappers verify unchanged
+source/service identity. Independent strict contracts/runtime contracts/
+adapter/helper four targets pass. The two peer caller omissions from the
+previous 129/7 diagnostic are closed without weaker assertions/deadlines.
+
+Final audit correction: the suspected unknown-marker skip was disproved.
+Consumers already inspect marker.value, so an explicit unavailable timestamp
+remains eligible and never masquerades as handled. No product behavior was
+changed. The failed policy diagnostic is preserved externally as
+retirement-75e3-marker-policy-diagnostic.py and marker-before reports. The
+accurate current regression adds four passing units in 1.32 seconds and one
+actual PostgreSQL case in 2.13 seconds, zero skips, and independent test strict
+passes. It preserves explicit unknown reason versus all-null absence and
+proves the actual pending adapter does not invent a handled marker.
+
+The refreshed inventory includes the new inward retirement contracts, sparse
+failure adapter and public retry policy. Twenty-four SessionService/free-helper
+functions and the Runtime worker still lack complete signatures in this
+cohort; annotation status is not whole-body strict proof. Required send/file/
+usage/tool/event/execution-barrier migrations, remaining presentation coupling,
+and the assigned vendor programs remain open on their separate workstreams.
+Exact retained map/default/None classes and behavior controls are recorded by
+symbol/site in agents-exceptions.json. This bounded cohort does not waive any
+of the remaining global work.

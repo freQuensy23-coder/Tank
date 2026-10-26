@@ -9,6 +9,7 @@ from model_fixture import audited_result, model_arguments
 from native_input_fixtures import acknowledge_native_input
 from native_session_fixtures import created_native_session
 from source_support import fixture_versions
+from truth_support import fixture_truth_config
 
 from tank.replay import ReplayError, digest, load_inputs, original_replay_messages, recorded_page_access
 from tank.scheduler import Scheduler
@@ -601,7 +602,7 @@ async def test_reference_missing_market_is_unknown_not_zero_or_captured(
     save(path, packet)
     inputs = load_inputs(path, settings())
     snapshot = await ReplayMarketReader(inputs).snapshot("uniswap:UNI", packet["cutoff"])
-    truth = compute_market_truth(snapshot)
+    truth = compute_market_truth(snapshot, config=fixture_truth_config())
     assert truth["move_class"] == "UNKNOWN"
     assert snapshot["flow_bars"] == []
     assert snapshot["source_capture_claim"] is False
