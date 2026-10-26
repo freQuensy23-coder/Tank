@@ -2094,19 +2094,20 @@ CREATE TABLE ops.jobs (
 );
 CREATE INDEX ON ops.jobs (status, priority, run_after);
 
+-- A column without NOT NULL is null only with its reason in document.missing_fields.<column>;
+-- an unknown cost is never stored as 0.
 CREATE TABLE ops.llm_usage (
   id                  bigserial PRIMARY KEY,
   at                  timestamptz NOT NULL,
   call                text NOT NULL,                   -- FILTER | ROUTE (Decision-1) | SESSION | SCOUT
   subject_id          text NOT NULL,                   -- item_id / event_id / alert_id / prp_id
   model               text NOT NULL,
-  effort              text NOT NULL,
-  input_tokens        int NOT NULL,
-  cache_read_tokens   int NOT NULL,
-  cache_write_tokens  int NOT NULL,
-  output_tokens       int NOT NULL,
-  cost_usd            numeric(10,6),                   -- null when the provider reports no cost (Decision-1)
-  cost_reason         text,                            -- why cost_usd is null; unknown is never 0
+  effort              text,                            -- null for Decision-1
+  input_tokens        int,
+  cache_read_tokens   int,                             -- null for Decision-1
+  cache_write_tokens  int,                             -- null for Decision-1
+  output_tokens       int,
+  cost_usd            numeric(10,6),                   -- null for Decision-1: Azure reports no cost
   web_searches        int NOT NULL DEFAULT 0,
   stop_reason         text NOT NULL
 );
