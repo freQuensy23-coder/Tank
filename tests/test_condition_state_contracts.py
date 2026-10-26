@@ -509,3 +509,212 @@ def test_fresh_proof_context_can_advance_without_changing_unchanged_cache_coordi
     assert fresh.proofs[0].assembled_at == later
     with pytest.raises(ValidationError):
         SelectiveConditionValues.model_validate(original.model_copy(update={"assembled_at": None}))
+
+
+def test_proof_wire_preserves_actual_cache_identity_and_fresh_assembly_separately() -> None:
+    from tank.analysis.condition_graph_codec import encode_condition_evaluation_proof
+
+    selected = selective_close()
+    proof = selected.proofs[0]
+    wire = encode_condition_evaluation_proof(proof)
+    assert wire["metric"] == "price.close_vs_level" and wire["window"] == "W1H"
+    assert wire["dependency_fingerprint"] == "actual-head"
+    assert wire["content_sha256"] == "e" * 64 and wire["visibility_sha256"] == "f" * 64
+    assert wire["available"] is False and wire["reason"] == "INCOMPLETE"
+    assert wire["coverage"] is None and wire["observations"] == []
+    assert wire["freshness"] == {"kind": "NOT_APPLIED", "reason": "NO_ADDITIONAL_FRESHNESS_GATE"}
+    changed = type(proof).model_validate(
+        proof.model_copy(
+            update={
+                "assembled_at": Timestamp(value="2026-10-17T12:00:03Z", precision="COLLECTION_ONLY"),
+                "reused": True,
+            }
+        )
+    )
+    reused = encode_condition_evaluation_proof(changed)
+    assert reused["assembled_at"] == "2026-10-17T12:00:03Z" and reused["reused"] is True
+    assert reused["content_sha256"] == wire["content_sha256"]
+    assert reused["visibility_sha256"] == wire["visibility_sha256"]
+    assert wire["assembled_at"] == "2026-10-17T12:00:02Z"
+
+
+def stale_observed_depth() -> SelectiveConditionValues:
+    from test_condition_graph_contracts import AT, scoped_field_observation
+
+    from tank.analysis.condition_graph_contracts import (
+        AssessedConditionProofFreshness,
+        ConditionDepthNode,
+        ConditionDepthObservation,
+        ConditionEvaluationProof,
+        ConditionRequirement,
+        ConditionTopCacheKey,
+        ConditionUnavailableRequirement,
+        UnrequestedConditionFacet,
+    )
+
+    base = selective_close()
+    declared = scoped_field_observation("INSTRUMENT")
+    assert declared.instrument_id is not None
+    observed = ConditionDepthObservation(
+        token_id="T",
+        instrument_id=declared.instrument_id,
+        metric_key=declared.metric_key,
+        venue="venue",
+        observed_at=Timestamp(value="2026-10-17T11:59:00Z", precision="EXACT"),
+        cadence=declared.cadence,
+        fresh=False,
+    )
+    depth = ConditionDepthNode(
+        cutoff=AT,
+        observations=(observed,),
+        aggregate_depth_p1_usd=None,
+        pre_event_depth_p1_usd=None,
+        spread_ratio=2.0,
+    )
+    requirement = ConditionRequirement(metric="liq.spread_ratio", window="W1H")
+    proof = ConditionEvaluationProof(
+        requirement=requirement,
+        cache_key=ConditionTopCacheKey.model_validate(
+            base.proofs[0].cache_key.model_copy(update={"domain": "depth"})
+        ),
+        assembled_at=base.assembled_at,
+        reused=True,
+        available=False,
+        reason="INCOMPLETE",
+        freshness=AssessedConditionProofFreshness(kind="ASSESSED", observations=(observed,)),
+        coverage=None,
+    )
+    unrequested = UnrequestedConditionFacet(status="NOT_REQUESTED")
+    return SelectiveConditionValues(
+        token_id=base.token_id,
+        cutoff=base.cutoff,
+        assembled_at=base.assembled_at,
+        requested=(requirement,),
+        spot={},
+        derivatives={},
+        close=unrequested,
+        confidence=unrequested,
+        depth=depth,
+        state=unrequested,
+        relative=unrequested,
+        proofs=(proof,),
+        unavailable_metrics=(ConditionUnavailableRequirement(requirement=requirement, reason="INCOMPLETE"),),
+        request_sha256="c" * 64,
+        transient=True,
+    )
+
+
+def test_failed_fresh_gate_preserves_observed_source_facts_without_exposing_available_metric() -> None:
+    from tank.analysis.condition_graph_contracts import ConditionDepthNode
+
+    value = stale_observed_depth()
+    assert isinstance(value.depth, ConditionDepthNode)
+    assert value.depth.spread_ratio == 2.0
+    assert value.depth.observations[0].observed_at.value == "2026-10-17T11:59:00Z"
+    assert not value.depth.observations[0].fresh
+    assert value.proofs[0].reused and value.proofs[0].available is False
+    assert value.unavailable_metrics[0].reason == "INCOMPLETE"
+    with pytest.raises(ValidationError, match="unproven freshness gate"):
+        type(value.proofs[0]).model_validate(
+            value.proofs[0].model_copy(update={"available": True, "reason": None})
+        )
+
+
+@pytest.mark.parametrize("mutation", ["clock", "venue", "duplicate"])
+def test_selected_depth_proof_must_bind_consumed_books(mutation: str) -> None:
+    from tank.analysis.condition_graph_contracts import (
+        AssessedConditionProofFreshness,
+        ConditionDepthNode,
+        ConditionDepthObservation,
+        ConditionEvaluationProof,
+    )
+
+    selected = stale_observed_depth()
+    proof = selected.proofs[0]
+    assert isinstance(proof.freshness, AssessedConditionProofFreshness)
+    source = proof.freshness.observations[0]
+    assert isinstance(source, ConditionDepthObservation)
+    observations: tuple[ConditionDepthObservation, ...]
+    if mutation == "clock":
+        observation = ConditionDepthObservation.model_validate(
+            source.model_copy(
+                update={"observed_at": Timestamp(value="2026-10-17T11:58:00Z", precision="EXACT")}
+            )
+        )
+        observations = (observation,)
+    elif mutation == "venue":
+        observations = (
+            ConditionDepthObservation.model_validate(source.model_copy(update={"venue": "other"})),
+        )
+    else:
+        observations = (source, source)
+    revised = ConditionEvaluationProof.model_validate(
+        proof.model_copy(
+            update={"freshness": AssessedConditionProofFreshness(kind="ASSESSED", observations=observations)}
+        )
+    )
+    with pytest.raises(ValidationError, match="Depth freshness"):
+        SelectiveConditionValues.model_validate(selected.model_copy(update={"proofs": (revised,)}))
+    assert isinstance(selected.depth, ConditionDepthNode)
+    assert selected.depth.spread_ratio == 2.0
+    assert not selected.proofs[0].available
+
+
+def test_selected_depth_instrument_cannot_borrow_a_second_venue() -> None:
+    from tank.analysis.condition_graph_contracts import ConditionDepthNode, ConditionDepthObservation
+
+    selected = stale_observed_depth()
+    assert isinstance(selected.depth, ConditionDepthNode)
+    original = selected.depth.observations[0]
+    other = ConditionDepthObservation.model_validate(original.model_copy(update={"venue": "other"}))
+    with pytest.raises(ValidationError, match="one instrument to multiple venues"):
+        ConditionDepthNode.model_validate(
+            selected.depth.model_copy(update={"observations": (original, other)})
+        )
+
+
+def test_selective_spot_requires_scoped_source_coverage_instead_of_basic_cache_facts() -> None:
+    from test_condition_graph_contracts import basic_spot_graph, windowed_spot_graph
+
+    from tank.analysis.condition_graph_contracts import (
+        ConditionRequirement,
+        UnrequestedConditionFacet,
+    )
+
+    base = selective_close()
+    spot = windowed_spot_graph()
+    requirement = ConditionRequirement(metric="spot.cohort.direction", window="W1H")
+    original = base.proofs[0]
+    proof = type(original).model_validate(
+        original.model_copy(
+            update={
+                "requirement": requirement,
+                "cache_key": original.cache_key.model_copy(update={"domain": "spot"}),
+                "coverage": spot.coverage,
+                "available": True,
+                "reason": None,
+            }
+        )
+    )
+    graph = SelectiveConditionValues.model_validate(
+        base.model_copy(
+            update={
+                "requested": (requirement,),
+                "spot": {"W1H": spot},
+                "close": UnrequestedConditionFacet(status="NOT_REQUESTED"),
+                "proofs": (proof,),
+                "unavailable_metrics": (),
+            }
+        )
+    )
+    assert graph.spot["W1H"].coverage_through.precision == "BUCKET(60s)"
+    assert graph.spot["W1H"].coverage_through.bucket_anchor == "END"
+    with pytest.raises(ValidationError):
+        SelectiveConditionValues.model_validate(
+            graph.model_copy(update={"spot": {"W1H": basic_spot_graph()}})
+        )
+    wrong_key = proof.cache_key.model_copy(update={"requested_duration_s": 1800.0})
+    with pytest.raises(ValidationError, match="actual interval and proof duration"):
+        SelectiveConditionValues.model_validate(
+            graph.model_copy(update={"proofs": (proof.model_copy(update={"cache_key": wrong_key}),)})
+        )

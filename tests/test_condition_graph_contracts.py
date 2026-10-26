@@ -15,6 +15,7 @@ from tank.analysis.condition_graph_contracts import (
     CapturedConditionWalletFlows,
     ComparableConditionExchangeInventory,
     ConditionBookDepthBounds,
+    ConditionBookPairHistory,
     ConditionCadenceScope,
     ConditionCollection,
     ConditionDepthValues,
@@ -37,8 +38,11 @@ from tank.analysis.condition_graph_contracts import (
     ConditionReplenishmentScope,
     ConditionSplitExecution,
     ConditionSupplyGraph,
+    ConditionSynchronizedOpenInterest,
     ConditionTopVenueSignHistory,
     DeclaredConditionCadence,
+    EnrichedConditionDerivatives,
+    EnrichedConditionLiquidity,
     NonForwardConditionInterval,
     ObservedConditionClose,
     ObservedConditionOpenInterest,
@@ -991,7 +995,6 @@ def test_derivative_window_refuses_invented_funding_dispersion_and_absent_sync_v
         BasicConditionDerivatives,
         ConditionDerivativeVenue,
         ConditionObservedFundingDispersion,
-        ConditionSynchronizedOpenInterest,
         ConditionUnavailableFundingDispersion,
         UnavailableConditionSynchronizedOpenInterest,
         UnrequestedConditionIncrementalVolumes,
@@ -1044,8 +1047,8 @@ def test_derivative_window_refuses_invented_funding_dispersion_and_absent_sync_v
         BasicConditionDerivatives.model_validate(
             graph.model_copy(
                 update={
-                    "synchronized": ConditionSynchronizedOpenInterest(
-                        status="OBSERVED", venues=("unobserved",), values=observed_oi_without_usd()
+                    "synchronized": synchronized_oi_fixture(
+                        observed_oi_without_usd(), venue="unobserved", instrument_id="unobserved"
                     )
                 }
             )
@@ -1171,12 +1174,10 @@ def test_volume_support_keeps_known_zero_within_range_and_unknown_prior_distinct
         )
 
 
-def test_enriched_empty_derivative_venues_cannot_create_a_negative_basis_predicate() -> None:
+def enriched_derivatives_without_observations() -> EnrichedConditionDerivatives:
     from tank.analysis.condition_graph_contracts import (
-        ConditionObservedPredicate,
         ConditionUnavailableFundingDispersion,
         ConditionUnavailablePredicate,
-        EnrichedConditionDerivatives,
         UnavailableConditionLeadLag,
         UnavailableConditionSynchronizedOpenInterest,
         UnrequestedConditionIncrementalVolumes,
@@ -1211,6 +1212,14 @@ def test_enriched_empty_derivative_venues_cannot_create_a_negative_basis_predica
         ),
         support_features=support,
     )
+    return graph
+
+
+def test_enriched_empty_derivative_venues_cannot_create_a_negative_basis_predicate() -> None:
+    from tank.analysis.condition_graph_contracts import ConditionObservedPredicate
+
+    graph = enriched_derivatives_without_observations()
+    support = graph.support_features
     assert graph.support_features.basis_within_normal.status == "UNAVAILABLE"
     with pytest.raises(ValidationError, match="replace unavailable inputs"):
         EnrichedConditionDerivatives.model_validate(
@@ -2055,12 +2064,15 @@ def single_venue_liquidity() -> BasicConditionLiquidity:
         ConditionImpactTiers,
         ConditionLiquidityDepthTotals,
         ConditionLiquidityNetFlow,
+        ConditionLiquiditySpreadComparison,
         ConditionLiquidityVenue,
         ConditionNativeDepthAmount,
         ConditionRelativeReturn,
         ConditionReplenishmentScan,
+        ConditionSpreadSample,
         ConditionUnavailablePredicate,
         ConditionUSDDepthAmount,
+        ConditionVenueSpreadSamples,
         UnavailableConditionPreDepth,
         UnavailableConditionPreDepthBounds,
         UnavailableConditionPreDepthSides,
@@ -2114,6 +2126,19 @@ def single_venue_liquidity() -> BasicConditionLiquidity:
     )
     return BasicConditionLiquidity(
         kind="BASIC",
+        token_id="T",
+        spread=ConditionLiquiditySpreadComparison(
+            current=(
+                ConditionVenueSpreadSamples(
+                    venue=venue.venue,
+                    instrument_id=venue.instrument_id,
+                    samples=(ConditionSpreadSample(observed_at=venue.observed_at, spread_bps=1.0),),
+                ),
+            ),
+            prior=(),
+            prior_window=None,
+            prior_window_reason="NO_EVENT_ANCHOR",
+        ),
         interval=scope.interval,
         measurement_band_percent=1.0,
         per_venue=(venue,),
@@ -2604,8 +2629,7 @@ def test_volatility_absence_and_missing_baseline_do_not_become_normal_state() ->
         )
 
 
-def test_fragmentation_history_replays_actual_quote_changes_and_terminal_gap_closure() -> None:
-    from tank.analysis.condition_graph_contracts import ConditionBookPairHistory, ConditionObservedPredicate
+def fragmentation_pair_history() -> ConditionBookPairHistory:
     from tank.util import iso
 
     valuation = QuoteUsdValuation(rate=Decimal(1), basis="USD_UNIT", as_of=None, unavailable_reason=None)
@@ -2645,6 +2669,14 @@ def test_fragmentation_history_replays_actual_quote_changes_and_terminal_gap_clo
         right_cadence=cadence_for_book(right.instrument_id),
         quote_conversion_uncertainty_bps=Decimal(2),
     )
+    return history
+
+
+def test_fragmentation_history_replays_actual_quote_changes_and_terminal_gap_closure() -> None:
+    from tank.analysis.condition_graph_contracts import ConditionObservedPredicate
+
+    history = fragmentation_pair_history()
+    left_rows, right_rows = history.left, history.right
     assert len(history.gap_series()) == 91
     persistent, closed = history.persistent_gap(), history.gap_closed_quickly()
     assert isinstance(persistent, ConditionObservedPredicate) and persistent.value is True
@@ -3197,14 +3229,12 @@ def test_split_execution_preserves_missing_depth_fx_and_zero_order_causes() -> N
     )
 
 
-def test_enriched_liquidity_binds_selected_book_orders_and_actual_family_scope() -> None:
+def enriched_liquidity() -> EnrichedConditionLiquidity:
     from tank.analysis.condition_graph_contracts import (
         ConditionFragmentationGraph,
         ConditionImpactOrder,
         ConditionImpactOrders,
         ConditionVolatilityCompression,
-        EnrichedConditionLiquidity,
-        ObservedConditionSlippage,
         UnavailableConditionVolatility,
     )
 
@@ -3253,6 +3283,7 @@ def test_enriched_liquidity_binds_selected_book_orders_and_actual_family_scope()
         token_id="T",
         assembled_at=source.assembled_at,
         interval=basic.interval,
+        spread=basic.spread,
         measurement_band_percent=basic.measurement_band_percent,
         per_venue=basic.per_venue,
         current_depth=basic.current_depth,
@@ -3270,13 +3301,20 @@ def test_enriched_liquidity_binds_selected_book_orders_and_actual_family_scope()
             normal_range=FloatRange(bounds=None, reason="INCOMPLETE"),
         ),
     )
+    return graph
+
+
+def test_enriched_liquidity_binds_selected_book_orders_and_actual_family_scope() -> None:
+    from tank.analysis.condition_graph_contracts import ObservedConditionSlippage
+
+    graph = enriched_liquidity()
     value = graph.execution.split_slippage("T1")
     assert isinstance(value, ObservedConditionSlippage) and value.value == pytest.approx(100)
     best = graph.best_single_venue_slippage("T1")
     assert best.value is None
     with pytest.raises(ValidationError, match="selected book cohort"):
         type(graph).model_validate(
-            graph.model_copy(update={"execution": execution.model_copy(update={"books": ()})})
+            graph.model_copy(update={"execution": graph.execution.model_copy(update={"books": ()})})
         )
 
 
@@ -4313,3 +4351,47 @@ def test_selected_confidence_cannot_borrow_another_subjects_failed_requirement()
     assert model.confidence.classification == "MEDIUM"
     with pytest.raises(ValidationError):
         selective_confidence_graph("OTHER")
+
+
+def synchronized_oi_fixture(
+    point: ObservedConditionOpenInterest, *, venue: str, instrument_id: str
+) -> ConditionSynchronizedOpenInterest:
+    from tank.analysis.condition_graph_contracts import (
+        ConditionOISynchronization,
+        ConditionOISynchronizationContribution,
+        ConditionOISynchronizationEndpoint,
+    )
+
+    return ConditionSynchronizedOpenInterest(
+        status="OBSERVED",
+        venues=(venue,),
+        values=point,
+        synchronization=ConditionOISynchronization(
+            aggregation_class="SYNTHETIC_NATIVE_QUANTITY",
+            tolerance_s=0.0,
+            start=ConditionOISynchronizationEndpoint(
+                at=point.start_observed_at,
+                contributions=(
+                    ConditionOISynchronizationContribution(
+                        instrument_id=instrument_id,
+                        venue=venue,
+                        observed_at=point.start_observed_at,
+                        oi_native=point.oi_native_start,
+                        oi_usd=point.oi_usd_start,
+                    ),
+                ),
+            ),
+            end=ConditionOISynchronizationEndpoint(
+                at=point.end_observed_at,
+                contributions=(
+                    ConditionOISynchronizationContribution(
+                        instrument_id=instrument_id,
+                        venue=venue,
+                        observed_at=point.end_observed_at,
+                        oi_native=point.oi_native_end,
+                        oi_usd=point.oi_usd_end,
+                    ),
+                ),
+            ),
+        ),
+    )
