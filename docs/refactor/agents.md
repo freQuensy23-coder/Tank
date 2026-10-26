@@ -2185,3 +2185,13 @@ financial/E2E/Go qualification remain held.
 Actual PostgreSQL refusal-write-failure/restart selection also passes both collected
 cases in 23.62 seconds, zero skips/source guards. The changed refusal module and two
 real composition helpers pass independent strict checks; scoped Ruff/format pass.
+
+The remaining gateway-before-intake fixture now uses actual composed resources and
+records only the gateway start barrier/real close order; budget binding and release
+assertions remain. The pending-dependency control now queues an admitted evaluation
+command and proves its actual evaluator is never called while the predecessor is
+pending, without error or attempt cost. Gateway control passed; both failed/pending
+dependency cases pass in 19.20 seconds, zero skips/source guards. The first pending
+control exposed a fixture-only datetime/string assertion mismatch, preserved in
+worker-gateway-dependency-callers; parsing both declared clocks corrected it without
+changing the original one-second deadline or application policy.

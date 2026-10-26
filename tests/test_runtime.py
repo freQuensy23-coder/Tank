@@ -814,102 +814,108 @@ def test_doctor_only_checks_fake_subscription_auth_presence_and_internal_key(
 
 
 @pytest.mark.asyncio
-async def test_gateway_starts_in_same_runtime_before_sources_and_closes_after_drain() -> None:
+async def test_gateway_starts_in_same_runtime_before_sources_and_closes_after_drain(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     repo = MemoryRepository()
     stop = asyncio.Event()
     binding = asyncio.Event()
     allow_bind = asyncio.Event()
-    order = []
+    order: list[str] = []
+    async with lifecycle_runtime(repo, tmp_path, shutdown_grace_s=1) as observed:
+        runtime = observed.runtime
 
-    class Service:
-        def __init__(self, name) -> None:
-            self.name = name
-            self.started = asyncio.Event()
-
-        async def run(self, flag) -> None:
-            assert runtime.budget_binding is runtime.budget_scope.require_binding()
-            order.append("run:" + self.name)
-            self.started.set()
-            await flag.wait()
-
-        async def close(self) -> None:
-            order.append("close:" + self.name)
-
-    class Gateway:
-        async def start(self) -> None:
+        async def start_gateway() -> None:
             order.append("gateway:binding")
             binding.set()
             await allow_bind.wait()
             order.append("gateway:ready")
 
-        async def close(self) -> None:
+        monkeypatch.setattr(runtime.gateway, "start", start_gateway)
+        gateway_close = runtime.gateway.close
+        sessions_close = runtime.sessions.close
+
+        async def close_gateway() -> None:
+            await gateway_close()
             order.append("gateway:closed")
 
-    runtime = object.__new__(Runtime)
-    runtime.budget_scope = RequestBudgetScope()
-    runtime.budget_backend = MemoryBudgetBackend(SystemBudgetClock())
-    runtime.budget_binding = None
-    runtime.repo = repo
-    bind_worker_fragment_failure_store(runtime, repo, declared_versions_fixture())
-    runtime.settings = SimpleNamespace(shutdown_grace_s=1, ops_progress_enabled=False, replay=False)
-    runtime.active_jobs = set()
-    runtime.validate = lambda: None
-    runtime.bootstrap = AsyncMock()
-    runtime.handlers = {}
-    runtime.gateway = Gateway()
-    for name in ("sources", "scheduler", "market", "sessions", "pipeline", "delivery", "inbox"):
-        setattr(runtime, name, Service(name))
-    task = asyncio.create_task(runtime.run(stop))
-    await binding.wait()
-    assert not runtime.sources.started.is_set() and not runtime.sessions.started.is_set()
-    allow_bind.set()
-    await runtime.sources.started.wait()
-    await runtime.sessions.started.wait()
-    assert order.index("gateway:ready") < order.index("run:sources")
-    stop.set()
-    await task
-    assert order[-1] == "gateway:closed" and order.index("close:sessions") < order.index("gateway:closed")
-    assert runtime.budget_binding is None
-    with pytest.raises(RuntimeError, match="has not been bound"):
-        await runtime.budget_scope.wait_host("example.invalid")
+        async def close_sessions() -> None:
+            await sessions_close()
+            order.append("close:sessions")
+
+        monkeypatch.setattr(runtime.gateway, "close", close_gateway)
+        monkeypatch.setattr(runtime.sessions, "close", close_sessions)
+        for name, service in (("sources", runtime.sources), ("sessions", runtime.sessions)):
+            lifetime = observed.services[name]
+
+            def observe_run(
+                label: str, run: Callable[[asyncio.Event], Awaitable[None]]
+            ) -> Callable[[asyncio.Event], Awaitable[None]]:
+                async def run_service(flag: asyncio.Event) -> None:
+                    assert runtime.budget_binding is runtime.budget_scope.require_binding()
+                    order.append("run:" + label)
+                    await run(flag)
+
+                return run_service
+
+            monkeypatch.setattr(service, "run", observe_run(name, lifetime.run))
+        task = asyncio.create_task(runtime.run(stop))
+        await binding.wait()
+        assert not observed.services["sources"].started.is_set()
+        assert not observed.services["sessions"].started.is_set()
+        allow_bind.set()
+        await observed.services["sources"].started.wait()
+        await observed.services["sessions"].started.wait()
+        assert order.index("gateway:ready") < order.index("run:sources")
+        stop.set()
+        await task
+        assert order[-1] == "gateway:closed"
+        assert order.index("close:sessions") < order.index("gateway:closed")
+        assert runtime.budget_binding is None
+        with pytest.raises(RuntimeError, match="has not been bound"):
+            await runtime.budget_scope.wait_host("example.invalid")
 
 
 @pytest.mark.asyncio
 async def test_unfinished_dependency_defers_without_error_or_attempt_cost(
     caplog: pytest.LogCaptureFixture,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     from datetime import timedelta
 
-    from tank.util import iso, parse_time, utcnow
-
     repo = MemoryRepository()
     stop = asyncio.Event()
-    dep = await repo.enqueue("ESCALATE_TOKENS", {}, "pending", run_after=iso(utcnow() + timedelta(hours=1)))
-    child = await repo.enqueue("RUN_MARKET_TRUTH", {"_depends_on": [dep["job_id"]]}, "child", priority=0)
-    runtime = object.__new__(Runtime)
-    runtime.budget_scope = RequestBudgetScope()
-    runtime.budget_backend = MemoryBudgetBackend(SystemBudgetClock())
-    runtime.budget_binding = None
-    runtime.repo = repo
-    bind_worker_fragment_failure_store(runtime, repo, declared_versions_fixture())
-    runtime.settings = ProgressPreferences(ops_progress_enabled=False, replay=False)
-    runtime.handlers = {"RUN_MARKET_TRUTH": AsyncMock()}
-    task = asyncio.create_task(runtime.worker(stop))
-    try:
-        async with asyncio.timeout(1):
-            while True:
-                row = await repo.get("ops.jobs", child["job_id"])
-                if row["status"] == "QUEUED" and parse_time(row["run_after"]) > parse_time(
-                    child["run_after"]
-                ):
-                    break
-                await asyncio.sleep(0.001)
-        assert row["attempts"] == 0 and row["last_error"] is None
-        runtime.handlers["RUN_MARKET_TRUTH"].assert_not_called()
-        assert not [r for r in caplog.records if r.levelno >= 40]
-    finally:
-        stop.set()
-        await task
+    dep = await JobRepository(repo).enqueue(
+        "ESCALATE_TOKENS", {}, "pending", run_after=offset_schedule(collection_clock(), timedelta(hours=1))
+    )
+    child = await JobRepository(repo).enqueue(
+        "EVAL_CONDITIONS",
+        {**collection_clock().fields("cutoff"), "_depends_on": [dep.job_id]},
+        "child",
+        priority=0,
+    )
+    async with public_runtime(repo, tmp_path, monkeypatch) as (runtime, _):
+        evaluate = AsyncMock(wraps=runtime.scheduler.eval_conditions)
+        monkeypatch.setattr(runtime.scheduler, "eval_conditions", evaluate)
+        task = asyncio.create_task(runtime.worker(stop))
+        try:
+            async with asyncio.timeout(1):
+                while True:
+                    row = await repo.get("ops.jobs", child.job_id)
+                    assert row is not None
+                    if row["status"] == "QUEUED" and parse_time(row["run_after"]) > parse_time(
+                        child.run_after
+                    ):
+                        break
+                    await asyncio.sleep(0.001)
+            assert row["attempts"] == 0 and row["last_error"] is None
+            evaluate.assert_not_awaited()
+            assert not [record for record in caplog.records if record.levelno >= 40]
+        finally:
+            stop.set()
+            await task
 
 
 @pytest.mark.asyncio
