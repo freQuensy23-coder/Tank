@@ -8,12 +8,14 @@ from pathlib import Path
 
 import httpx
 import pytest
+from pydantic_settings import SettingsConfigDict
 from source_support import fixture_http_admission, fixture_versions
 
+from tank.contracts.scheduler_results import CapturedReaction, UnchangedReaction
 from tank.market.service import MarketService
-from tank.runtime import Runtime
+from tank.runtime_composition import build_runtime
 from tank.scheduler import Scheduler
-from tank.settings import Settings
+from tank.settings import Settings, resolve_versions
 from tank.storage import MemoryRepository
 from tank.time_precision import chosen_boundary, collection_clock
 from tank.util import iso, parse_time, utcnow
@@ -127,7 +129,10 @@ async def test_backfill_changes_append_reaction_revision_once_and_preserve_origi
             "anchor": {"type": "T1", "ts": iso(anchor), "ts_prec": "EXACT", "ts_prec_reason": None},
             "retro": True,
         }
-        original = await scheduler.reaction_capture(payload)
+        receipt = await scheduler.reaction_capture(payload)
+        assert isinstance(receipt, CapturedReaction)
+        original = await repo.get("out.reaction_checkpoints", receipt.checkpoint_key)
+        assert original is not None
         assert original["r_raw"] is None and original["revision"] == 1
 
         obligation = await market._schedule_event_backfill(
@@ -263,7 +268,7 @@ async def test_backfill_changes_append_reaction_revision_once_and_preserve_origi
             reason="Late duplicate capture",
         )
         result = await scheduler.reaction_capture(unchanged)
-        assert result["changed"] is False
+        assert isinstance(result, UnchangedReaction) and result.changed is False
         assert len([row async for row in repo.iter_all("out.reaction_checkpoints")]) == 2
 
         late_observed = utcnow()
@@ -309,10 +314,25 @@ async def test_backfill_changes_append_reaction_revision_once_and_preserve_origi
             if job["job_id"] not in previous_ids
         ]
         assert len(live_jobs) == 1 and "CAP-LIVE-" in live_jobs[0]["payload"]["change_id"]
-        runtime = object.__new__(Runtime)
-        runtime.repo = repo
+
+        class RuntimeFixtureSettings(Settings):
+            model_config = SettingsConfigDict(env_file=None)
+
+        runtime_settings = resolve_versions(
+            RuntimeFixtureSettings(
+                data_dir=tmp_path / "runtime",
+                backup_dir=tmp_path / "runtime-backup",
+                telegram_token="synthetic-telegram-token",
+                telegram_alerts_chat="synthetic-alerts",
+                telegram_ops_chat="synthetic-ops",
+                openma_api_key="synthetic-openma-key",
+                codex_gateway_key="synthetic-gateway-key",
+            )
+        )
+        runtime = build_runtime(repo, runtime_settings)
+        await runtime.scheduler.close()
+        runtime.scheduler = scheduler
         runtime.handlers = {"REACTION_CAPTURE": scheduler.reaction_capture}
-        runtime.active_jobs = set()
         stop = asyncio.Event()
         worker = asyncio.create_task(runtime.worker(stop))
         try:
@@ -323,9 +343,13 @@ async def test_backfill_changes_append_reaction_revision_once_and_preserve_origi
         finally:
             stop.set()
             await worker
-        assert live["revision"] == 3 and live["data_fingerprint"] != revised["data_fingerprint"]
-        assert live["r_raw"] == pytest.approx(0.2)
-        assert live["rwp_id"] == original["rwp_id"]
+            await runtime.close()
+        live_receipt = CapturedReaction.model_validate(live)
+        assert live_receipt.revision == 3 and live_receipt.data_fingerprint != revised["data_fingerprint"]
+        live_record = await repo.get("out.reaction_checkpoints", live_receipt.checkpoint_key)
+        assert live_record is not None and live_record["data_fingerprint"] == live_receipt.data_fingerprint
+        assert live_record["r_raw"] == pytest.approx(0.2)
+        assert live_record["rwp_id"] == original["rwp_id"]
         assert await repo.get("out.reaction_checkpoints", "e:test:T:PRE_1H:1") == original
         assert await repo.get("out.reaction_checkpoints", "e:test:T:PRE_1H:2") == revised
 
@@ -340,7 +364,7 @@ async def test_backfill_changes_append_reaction_revision_once_and_preserve_origi
         request.node.user_properties.extend(
             [
                 ("revision2_r_raw", revised["r_raw"]),
-                ("revision3_r_raw", live["r_raw"]),
+                ("revision3_r_raw", live_record["r_raw"]),
                 ("late_go_bar_complete", late_bar["complete"]),
                 ("late_go_last_price", late_bar["last_trade"]["price"]),
                 ("normalized_trades", len(late["trades"])),

@@ -9,6 +9,7 @@ from unittest.mock import AsyncMock
 import pytest
 from source_support import fixture_versions
 
+from tank.contracts.scheduler_results import CapturedReaction, UnchangedReaction
 from tank.scheduler import Scheduler
 from tank.settings import Settings
 from tank.storage import MemoryRepository
@@ -104,7 +105,7 @@ async def test_reaction_windows_inherit_anchor_and_capture_clock_is_collection(
     anchor = {"type": "T1", "ts": STAMP}
     if precision:
         anchor["ts_prec"] = precision
-    record = await scheduler.reaction_capture(
+    receipt = await scheduler.reaction_capture(
         {
             "event_id": "e",
             "token_id": "T",
@@ -112,6 +113,9 @@ async def test_reaction_windows_inherit_anchor_and_capture_clock_is_collection(
             "anchor": anchor,
         }
     )
+    assert isinstance(receipt, CapturedReaction)
+    record = await repo.get("out.reaction_checkpoints", receipt.checkpoint_key)
+    assert record is not None
     assert record["window_start_prec"] == record["window_end_prec"] == precision
     assert record["captured_at_prec"] == "COLLECTION_ONLY"
     assert record["anchor"]["ts_prec"] == precision
@@ -198,7 +202,12 @@ async def test_provenance_only_addition_does_not_create_late_data_revision(
         }
     )
 
-    legacy = {key: value for key, value in original.items() if not key.endswith(("_prec", "_prec_reason"))}
+    assert isinstance(original, CapturedReaction)
+    original_record = await repo.get("out.reaction_checkpoints", original.checkpoint_key)
+    assert original_record is not None
+    legacy = {
+        key: value for key, value in original_record.items() if not key.endswith(("_prec", "_prec_reason"))
+    }
     repo = MemoryRepository()
     scheduler.repo = repo
     await repo.put("out.reaction_checkpoints", "e:T:POST_1H:1", legacy)
@@ -212,5 +221,5 @@ async def test_provenance_only_addition_does_not_create_late_data_revision(
             "reason": "Late capture completed",
         }
     )
-    assert result["changed"] is False
+    assert isinstance(result, UnchangedReaction) and result.changed is False
     assert len(await repo.list("out.reaction_checkpoints")) == 1

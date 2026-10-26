@@ -27,7 +27,21 @@ from tank.contracts import DomainModel
 from tank.contracts.configuration import Thresholds
 from tank.contracts.json import decode_json
 from tank.contracts.provenance import ResolvedVersionIdentity
-from tank.contracts.scheduler_results import ConditionEvaluationResult, DeferredCondition
+from tank.contracts.scheduler_results import (
+    AppliedReactionChange,
+    CoalescedReaction,
+    ConditionEvaluationResult,
+    DeferredCondition,
+    ReactionCaptureResult,
+    ReactionChangeOwnership,
+    ReactionChangeState,
+    ReactionChangeTarget,
+    UnchangedReaction,
+    applied_reaction_change_receipt,
+    captured_reaction_receipt,
+    reaction_capture_result,
+    recorded_reaction_receipt,
+)
 from tank.runtime_contracts import TimedReviewFiredMessage
 from tank.settings import Settings
 from tank.time_precision import (
@@ -38,7 +52,7 @@ from tank.time_precision import (
     propagate_timestamp,
     timestamp_owned_fields,
 )
-from tank.util import iso, new_id, parse_time, utcnow
+from tank.util import iso, new_id, parse_time, sha256, utcnow
 
 log = logging.getLogger(__name__)
 CHECKPOINTS = {
@@ -1013,7 +1027,7 @@ class Scheduler:
         event = await self.repo.get("evt.events", payload["event_id"]) or {"event_id": payload["event_id"]}
         return payload["token_id"] not in await self.analysis_set(event)
 
-    async def reaction_capture(self, payload, *, wait_for_slot=False):
+    async def reaction_capture(self, payload, *, wait_for_slot: bool = False) -> ReactionCaptureResult:
         if payload.get("automatic_revision"):
             async for job in self.repo.iter_all(
                 "ops.jobs", filters={"type": "REACTION_CAPTURE", "status": "QUEUED"}
@@ -1025,13 +1039,15 @@ class Scheduler:
                     and (other.get("event_id"), other.get("token_id"), other.get("checkpoint"))
                     == (payload["event_id"], payload["token_id"], payload["checkpoint"])
                 ):
-                    return {"coalesced_into": job["job_id"]}
+                    return CoalescedReaction.model_validate(
+                        {"kind": "COALESCED", "coalesced_into": job["job_id"]}
+                    )
         lock = f"reaction:{payload['event_id']}:{payload['token_id']}:{payload['checkpoint']}"
         while True:
             async with self.repo.lock(lock):
                 plan = await self._reaction_plan(payload)
                 if plan["complete"]:
-                    return plan["result"]
+                    return reaction_capture_result(plan["result"])
 
             if self._reaction_slots.locked() and not wait_for_slot:
                 from tank.delivery import DeliveryDeferred
@@ -1044,10 +1060,10 @@ class Scheduler:
             async with self.repo.lock(lock):
                 current = await self._reaction_plan(payload)
                 if current["complete"]:
-                    return current["result"]
+                    return reaction_capture_result(current["result"])
                 if current["key"] != plan["key"] or current["payload"] != plan["payload"]:
                     continue
-                return await self._commit_reaction(current, measured)
+                return reaction_capture_result(await self._commit_reaction(current, measured))
 
     async def detect_late_data(self, now):
         marker = await self.repo.get("ops.scheduler_checkpoints", "reaction-capture-changes")
@@ -1170,7 +1186,19 @@ class Scheduler:
         if change_marker:
             applied = await self.repo.get("ops.scheduler_checkpoints", change_marker)
             if applied:
-                return {"complete": True, "result": applied["state"]}
+                return {
+                    "complete": True,
+                    "result": await self._applied_reaction_change(
+                        ReactionChangeTarget.model_validate(
+                            {
+                                field: payload[field]
+                                for field in ReactionChangeTarget.model_fields
+                                if field in payload
+                            }
+                        ),
+                        applied,
+                    ),
+                }
             latest_auto = await self._latest_reaction_revision(payload)
             if latest_auto is None:
                 raise ValueError("Automatic revision requires a captured checkpoint")
@@ -1183,7 +1211,7 @@ class Scheduler:
         if existing:
             if revision > 1 and payload.get("reason") != existing.get("reason"):
                 raise ValueError("Immutable reaction revision already exists with another reason")
-            return {"complete": True, "result": existing}
+            return {"complete": True, "result": recorded_reaction_receipt(key, existing)}
         latest = await self._latest_reaction_revision(payload)
         if revision > 1:
             if not str(payload.get("reason", "")).strip():
@@ -1340,7 +1368,73 @@ class Scheduler:
             "truth": {"benchmark": bench},
         }
 
+    async def _applied_reaction_change(
+        self, target: ReactionChangeTarget, marker: Mapping[str, JsonValue]
+    ) -> AppliedReactionChange:
+        owner = await self.repo.get("ops.scheduler_checkpoints", "reaction-change-owner:" + target.change_id)
+        if owner is None:
+            raise ValueError("Reaction change scope is unreported in retained marker")
+        return applied_reaction_change_receipt(target, marker, owner)
+
+    async def _record_reaction_change(
+        self, target: ReactionChangeTarget, state: ReactionChangeState
+    ) -> AppliedReactionChange:
+        """The caller holds its reaction/change locks before this atomic marker/owner write."""
+        target = ReactionChangeTarget.model_validate(target)
+        state = ReactionChangeState.model_validate(state)
+        marker_key = "reaction-change:" + target.change_id
+        owner_key = "reaction-change-owner:" + target.change_id
+        async with self.repo.transaction():
+            existing = await self.repo.get("ops.scheduler_checkpoints", marker_key)
+            if existing is not None:
+                receipt = await self._applied_reaction_change(target, existing)
+                if (receipt.changed, receipt.revision, receipt.data_fingerprint) != (
+                    state.changed,
+                    state.revision,
+                    state.data_fingerprint,
+                ):
+                    raise ValueError("Reaction change scope already owns a different stored result")
+                return receipt
+            if await self.repo.get("ops.scheduler_checkpoints", owner_key) is not None:
+                raise ValueError("Reaction change scope exists without its recorded marker")
+            stamp = collection_clock()
+            await self.repo.put(
+                "ops.scheduler_checkpoints",
+                marker_key,
+                {"checkpoint_id": marker_key, **stamp.fields("at"), "state": state.model_dump(mode="json")},
+                immutable=True,
+            )
+            marker = await self.repo.get("ops.scheduler_checkpoints", marker_key)
+            if marker is None:
+                raise ValueError("Reaction change marker is absent after successful storage")
+            owner = ReactionChangeOwnership(
+                checkpoint_id=owner_key,
+                marker_key=marker_key,
+                marker_sha256=sha256(marker),
+                change_id=target.change_id,
+                event_id=target.event_id,
+                token_id=target.token_id,
+                checkpoint=target.checkpoint,
+            )
+            await self.repo.put(
+                "ops.scheduler_checkpoints",
+                owner_key,
+                {**owner.model_dump(mode="json"), **stamp.fields("at")},
+                immutable=True,
+            )
+            return await self._applied_reaction_change(target, marker)
+
     async def _commit_reaction(self, plan, measured):
+        if plan["change_marker"] is not None:
+            payload = measured["payload"]
+            target = ReactionChangeTarget.model_validate(
+                {field: payload[field] for field in ReactionChangeTarget.model_fields if field in payload}
+            )
+            async with self.repo.lock("reaction-change-write:" + target.change_id):
+                return await self._commit_reaction_owned(plan, measured, target)
+        return await self._commit_reaction_owned(plan, measured, None)
+
+    async def _commit_reaction_owned(self, plan, measured, target: ReactionChangeTarget | None):
         payload, change_marker = measured["payload"], plan["change_marker"]
         revision, key, latest = plan["revision"], plan["key"], plan["latest"]
         captured_stamp = measured["captured_stamp"]
@@ -1362,13 +1456,26 @@ class Scheduler:
                 or sha256({name: latest.get(name) for name in fingerprint_data})
             )
         ):
-            state = {"changed": False, "revision": latest["revision"], "data_fingerprint": fingerprint}
-            await self.repo.put(
-                "ops.scheduler_checkpoints",
-                change_marker,
-                {"checkpoint_id": change_marker, **collection_clock().fields("at"), "state": state},
+            if target is None:
+                raise ValueError("Reaction change result requires its actual scope")
+            receipt = await self._record_reaction_change(
+                target,
+                ReactionChangeState.model_validate(
+                    {"changed": False, "revision": latest["revision"], "data_fingerprint": fingerprint}
+                ),
             )
-            return state
+            return UnchangedReaction.model_validate(
+                {
+                    "kind": "UNCHANGED",
+                    "change_id": receipt.change_id,
+                    "event_id": receipt.event_id,
+                    "token_id": receipt.token_id,
+                    "checkpoint": receipt.checkpoint,
+                    "changed": receipt.changed,
+                    "revision": receipt.revision,
+                    "data_fingerprint": receipt.data_fingerprint,
+                }
+            )
         record = {
             "data_fingerprint": fingerprint,
             "rwp_id": await self.reaction_pack_id(payload["event_id"], payload["token_id"]),
@@ -1384,17 +1491,17 @@ class Scheduler:
         }
         async with self.repo.transaction():
             await self.repo.put("out.reaction_checkpoints", key, record, immutable=True)
-            if change_marker:
-                await self.repo.put(
-                    "ops.scheduler_checkpoints",
-                    change_marker,
-                    {
-                        "checkpoint_id": change_marker,
-                        **collection_clock().fields("at"),
-                        "state": {"changed": True, "revision": revision, "data_fingerprint": fingerprint},
-                    },
+            if target is not None:
+                await self._record_reaction_change(
+                    target,
+                    ReactionChangeState.model_validate(
+                        {"changed": True, "revision": revision, "data_fingerprint": fingerprint}
+                    ),
                 )
-        return record
+        stored = await self.repo.get("out.reaction_checkpoints", key)
+        if stored is None:
+            raise ValueError("Reaction checkpoint is absent after successful storage")
+        return captured_reaction_receipt(key, stored)
 
     async def scout_proposal(self, hook, concept, evidence, explanation, now):
         """Record an observation, never change the canonical taxonomy or thresholds."""

@@ -10,6 +10,7 @@ from source_support import fixture_request_budgets, fixture_versions
 
 from tank.analysis.page_access import LivePageAccess
 from tank.analysis.watch_contracts import WatchCondition, WatchLeaf
+from tank.contracts.scheduler_results import CapturedReaction, CoalescedReaction
 from tank.models import Record
 from tank.runtime_contracts import ConditionFiredMessage, parse_agent_message
 from tank.scheduler import Scheduler
@@ -1387,6 +1388,9 @@ async def test_reaction_pre_capture_restart_resumes_only_missing_immutable_rows(
             "retro": True,
         }
     )
+    assert isinstance(original, CapturedReaction)
+    original_record = await repo.get("out.reaction_checkpoints", original.checkpoint_key)
+    assert original_record is not None
     await first.close()
     restarted = Scheduler(
         repo,
@@ -1403,7 +1407,7 @@ async def test_reaction_pre_capture_restart_resumes_only_missing_immutable_rows(
         await asyncio.gather(*restarted.background.values())
         rows = await repo.list("out.reaction_checkpoints")
         assert len(rows) == 3
-        assert next(r for r in rows if r["checkpoint"] == "PRE_24H") == original
+        assert next(r for r in rows if r["checkpoint"] == "PRE_24H") == original_record
         assert market.snapshot.await_count == 3
         assert len(await repo.list("ops.jobs", filters={"type": "REACTION_CAPTURE"})) == 5
     finally:
@@ -1791,57 +1795,80 @@ async def test_queued_duplicate_late_revision_is_skipped_at_run_time() -> None:
         versions=fixture_versions(),
     )
     result = await scheduler.reaction_capture(dict(payload, change_id="older"))
-    assert result == {"coalesced_into": queued["job_id"]}
+    assert isinstance(result, CoalescedReaction) and result.coalesced_into == queued["job_id"]
     market.snapshot.assert_not_called()
 
 
 @pytest.mark.asyncio
 async def test_reaction_measurements_are_limited_and_extra_jobs_requeue() -> None:
-    """At most REACTION_MEASUREMENT_SLOTS measurements run at once; another job
-    is deferred (re-queued without an attempt) instead of holding a worker."""
+    """Real checkpoint commits share the measurement bound and preserve deferred ownership."""
     import asyncio
+
+    from pydantic import JsonValue
 
     from tank.delivery import DeliveryDeferred
     from tank.scheduler import REACTION_MEASUREMENT_SLOTS
 
+    repo = MemoryRepository()
+    release = asyncio.Event()
+    at_capacity = asyncio.Event()
+    started: list[str] = []
+
+    async def snapshot(
+        token_id: str, cutoff: Timestamp, *, anchor: dict[str, JsonValue], scope: str
+    ) -> dict[str, JsonValue]:
+        start = propagate_timestamp(anchor, "ts")
+        assert start.value is not None
+        started.append(start.value)
+        if len(started) == REACTION_MEASUREMENT_SLOTS:
+            at_capacity.set()
+        await release.wait()
+        return {}
+
+    market = SimpleNamespace(snapshot=AsyncMock(side_effect=snapshot))
     scheduler = Scheduler(
-        MemoryRepository(),
+        repo,
         Settings(),
-        None,
+        market,
         None,
         thresholds=Settings(_env_file=None).thresholds(),
         versions=fixture_versions(),
     )
-    release = asyncio.Event()
-    started = []
-
-    async def plan(payload):
-        return {"complete": False, "payload": payload, "key": payload["checkpoint"]}
-
-    async def measure(payload):
-        started.append(payload["checkpoint"])
-        await release.wait()
-        return {}
-
-    async def commit(plan, measured):
-        return {"committed": plan["key"]}
-
-    scheduler._reaction_plan, scheduler._measure_reaction, scheduler._commit_reaction = plan, measure, commit
-    payloads = [{"event_id": "e", "token_id": "t", "checkpoint": f"C{n}"} for n in range(3)]
-    running = [
-        asyncio.create_task(scheduler.reaction_capture(p)) for p in payloads[:REACTION_MEASUREMENT_SLOTS]
+    stamp = iso(utcnow())
+    checkpoints = ["PRE_1H", "PRE_4H", "PRE_24H"]
+    payloads = [
+        {
+            "event_id": "e",
+            "token_id": "t",
+            "checkpoint": checkpoint,
+            "anchor": {"type": "T1", "ts": stamp, "ts_prec": "EXACT", "ts_prec_reason": None},
+        }
+        for checkpoint in checkpoints
     ]
-    await asyncio.sleep(0)
+    running = [
+        asyncio.create_task(scheduler.reaction_capture(payload))
+        for payload in payloads[:REACTION_MEASUREMENT_SLOTS]
+    ]
+    await asyncio.wait_for(at_capacity.wait(), 1)
     with pytest.raises(DeliveryDeferred):
         await scheduler.reaction_capture(payloads[-1])
-
     waiting = asyncio.create_task(scheduler.reaction_capture(payloads[-1], wait_for_slot=True))
     await asyncio.sleep(0)
     assert not waiting.done() and len(started) == REACTION_MEASUREMENT_SLOTS
     release.set()
-    assert [r["committed"] for r in await asyncio.gather(*running)] == ["C0", "C1"]
-    assert (await waiting) == {"committed": "C2"}
-    assert await scheduler.reaction_capture(payloads[-1]) == {"committed": "C2"}
+    receipts = [*await asyncio.gather(*running), await waiting]
+    assert all(isinstance(receipt, CapturedReaction) for receipt in receipts)
+    assert {receipt.checkpoint for receipt in receipts if isinstance(receipt, CapturedReaction)} == set(
+        checkpoints
+    )
+    assert await scheduler.reaction_capture(payloads[-1]) == receipts[-1]
+    records = await repo.list("out.reaction_checkpoints")
+    assert len(records) == 3 and market.snapshot.await_count == 3
+    for receipt in receipts:
+        assert isinstance(receipt, CapturedReaction)
+        record = await repo.get("out.reaction_checkpoints", receipt.checkpoint_key)
+        assert record is not None and record["data_fingerprint"] == receipt.data_fingerprint
+    await scheduler.close()
 
 
 @pytest.mark.asyncio
