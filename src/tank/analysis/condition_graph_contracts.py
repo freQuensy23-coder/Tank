@@ -1129,11 +1129,9 @@ class UnavailableConditionCohort(DomainModel):
 type ConditionCohort = ObservedConditionCohort | UnavailableConditionCohort
 
 
-class ScopedConditionSpot(ConditionSpotValues):
+class ConditionScopedSpotValues(ConditionSpotValues):
     interval: ConditionInterval
     coverage_through: Timestamp
-    composite_cohort: ConditionCohort
-    cohort_consistent: dict[ConditionWindow, bool]
 
     @model_validator(mode="after")
     def actual_window_scope(self) -> Self:
@@ -1143,6 +1141,52 @@ class ScopedConditionSpot(ConditionSpotValues):
                 raise ValueError("Window coverage must preserve its actual requested cutoff")
         elif stamp is not None:
             raise ValueError("No complete spot venues cannot assert observed window coverage")
+        return self
+
+
+class UnrequestedConditionSpotCalculation(DomainModel):
+    status: Literal["NOT_REQUESTED"]
+
+
+class DirectWindowConditionSpot(ConditionScopedSpotValues):
+    kind: Literal["DIRECT_WINDOW"]
+    composite_cohort: UnrequestedConditionSpotCalculation
+    cohort_comparisons: UnrequestedConditionSpotCalculation
+    size_profile: UnrequestedConditionSpotCalculation
+
+    @classmethod
+    def from_basic(
+        cls, value: BasicConditionSpot, *, interval: ConditionInterval, coverage_through: Timestamp
+    ) -> Self:
+        spot = BasicConditionSpot.model_validate(value)
+        return cls(
+            kind="DIRECT_WINDOW",
+            token_id=spot.token_id,
+            venues=spot.venues,
+            composite_max=spot.composite_max,
+            breadth=spot.breadth,
+            cw_breadth=spot.cw_breadth,
+            exact_majority=spot.exact_majority,
+            topn=spot.topn,
+            concentration=spot.concentration,
+            direction=spot.direction,
+            direction_reason=spot.direction_reason,
+            classification=spot.classification,
+            coverage=spot.coverage,
+            interval=interval,
+            coverage_through=coverage_through,
+            composite_cohort=UnrequestedConditionSpotCalculation(status="NOT_REQUESTED"),
+            cohort_comparisons=UnrequestedConditionSpotCalculation(status="NOT_REQUESTED"),
+            size_profile=UnrequestedConditionSpotCalculation(status="NOT_REQUESTED"),
+        )
+
+
+class ScopedConditionSpot(ConditionScopedSpotValues):
+    composite_cohort: ConditionCohort
+    cohort_consistent: dict[ConditionWindow, bool]
+
+    @model_validator(mode="after")
+    def distinct_cohort_windows(self) -> Self:
         if self.interval.window in self.cohort_consistent:
             raise ValueError("A spot consistency index compares distinct windows only")
         return self
@@ -1307,7 +1351,9 @@ def validate_condition_spot_pairs(
                     raise ValueError("An observed cohort requires actual strict native-volume majority")
 
 
-type ConditionSpot = BasicConditionSpot | WindowedConditionSpot | EnrichedConditionSpot
+type ConditionSpot = (
+    BasicConditionSpot | DirectWindowConditionSpot | WindowedConditionSpot | EnrichedConditionSpot
+)
 
 
 class ConditionSpotWindowGraph(DomainModel):
@@ -7248,7 +7294,7 @@ class SelectiveConditionValues(DomainModel):
     cutoff: Timestamp
     assembled_at: Timestamp
     requested: tuple[ConditionRequirement, ...]
-    spot: dict[ConditionWindow, WindowedConditionSpot]
+    spot: dict[ConditionWindow, DirectWindowConditionSpot | WindowedConditionSpot]
     derivatives: dict[ConditionWindow, BasicConditionDerivatives]
     close: ConditionClose | UncomputedConditionFacet
     confidence: SelectiveConditionConfidence | UncomputedConditionFacet

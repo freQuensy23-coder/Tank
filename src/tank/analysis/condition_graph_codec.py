@@ -78,6 +78,7 @@ from tank.analysis.condition_graph_contracts import (
     ConditionWireClocks,
     DeclaredConditionCadence,
     DeclaredConditionDirection,
+    DirectWindowConditionSpot,
     EnrichedConditionDerivatives,
     EnrichedConditionDerivativeVenue,
     EnrichedConditionLiquidity,
@@ -688,7 +689,10 @@ def _derivative_window_wire(
 
 
 def encode_scoped_condition_spot(
-    value: WindowedConditionSpot | CohortEnrichedConditionSpot | EnrichedConditionSpot,
+    value: DirectWindowConditionSpot
+    | WindowedConditionSpot
+    | CohortEnrichedConditionSpot
+    | EnrichedConditionSpot,
     evidence: ConditionFlowEvidenceLookup,
     *,
     clocks: ConditionWireClocks,
@@ -705,6 +709,15 @@ def encode_scoped_condition_spot(
     result["window"] = validated.interval.window
     result.update(_clock_wire(validated.coverage_through, "observed_at"))
     result["precision"] = validated.coverage_through.precision
+    if isinstance(validated, DirectWindowConditionSpot):
+        result["enrichment_phase"] = "DIRECT_WINDOW"
+        result["composite_cohort"] = None
+        result["composite_cohort_status"] = "NOT_REQUESTED"
+        result["cohort_consistent"] = {}
+        result["cohort_comparisons_status"] = "NOT_REQUESTED"
+        result["size_profile"] = None
+        result["size_profile_status"] = "NOT_REQUESTED"
+        return result
     cohort = validated.composite_cohort
     if isinstance(cohort, ObservedConditionCohort):
         cohort_wire = _model_wire(cohort)
