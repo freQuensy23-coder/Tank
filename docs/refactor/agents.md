@@ -2018,3 +2018,11 @@ fields remain untouched when unrequested; no old clock/reason is reconstructed.
 The pure family now passes all 23 pinned native cases in 5.94 seconds, zero skips
 with source guards; strict source/test and Ruff/format pass. Actual controlled-stop
 claim snapshot/cancellation/refund and stale-token consumer proof remain pending.
+
+Dependency reads retain their separate historical phase: the unchanged two-field
+DependencyState now lives inward in contracts.jobs and is exactly re-exported by
+runtime_dispatch_contracts. A known DONE dependency needs its actual job ID and
+status, not an unrelated current claim token/full envelope. The one canonical
+model prevents a reaction/dispatcher import cycle; actual readers must still
+match the returned identity against the requested storage key. All 24 pure cases
+pass in 6.35 seconds, zero skips/source guards; independent strict3/Ruff pass.
