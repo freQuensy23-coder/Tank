@@ -16,6 +16,7 @@ from pydantic import JsonValue
 from scheduling_support import RecordingReactionScheduling
 from session_followup_fixtures import UnexpectedFollowupRefusals
 from source_support import fixture_http_admission
+from truth_support import fixture_truth_config
 
 from tank.agents import ConfigurationError, Pipeline, SessionService
 from tank.agents.context import CONTEXT_VERSION
@@ -1072,7 +1073,10 @@ async def test_market_truth_wire_omits_internal_metadata_full_result_survives_re
     repo = MemoryRepository()
     opts, _ = settings()
     await seed_session(repo)
-    truth = compute_market_truth({"token_id": "world:WLD", "cutoff": "2026-10-16T12:00:00Z", "flow_bars": []})
+    truth = compute_market_truth(
+        {"token_id": "world:WLD", "cutoff": "2026-10-16T12:00:00Z", "flow_bars": []},
+        config=fixture_truth_config(),
+    )
     truth.update(mta_id="MTA-wire", event_id="evt_1")
     truth["evidence"] = {"measurement_metadata": {"canonical_source_key": "must remain"}}
     full = {"market_truth": [truth]}

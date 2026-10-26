@@ -8,6 +8,7 @@ from review_typed_fixtures import put_boundary, put_flow
 from scheduling_support import RecordingReactionScheduling
 from score_fixtures import unassessed_score_dimensions
 from source_support import fixture_http_admission, fixture_versions
+from truth_support import fixture_truth_config
 
 from tank.analysis.page_access import LivePageAccess
 from tank.review import ReviewService, validate_checks
@@ -125,9 +126,15 @@ async def test_outcome_immutable_revision_and_frozen_beta() -> None:
     assert a["btc_adjusted_return"] == pytest.approx(0.18) and a["direction_correct"] is True
     assert a["mfe"] == pytest.approx(0.3) and a["mae"] == pytest.approx(-0.1)
 
-    for reason in ("INSUFFICIENT_HISTORY", "NOT_ESTIMABLE", "NOT_CAPTURED"):
+    for reason, captured_value in (
+        ("INSUFFICIENT_HISTORY", None),
+        ("NOT_ESTIMABLE", None),
+        ("INSUFFICIENT_HISTORY", 1.0),
+        ("NOT_ESTIMABLE", 1.0),
+        ("NOT_CAPTURED", 1.0),
+    ):
         unavailable = deepcopy(truth)
-        unavailable["relative"]["beta_btc"] = 1.0
+        unavailable["relative"]["beta_btc"] = captured_value
         if reason == "NOT_CAPTURED":
             unavailable["relative"].pop("beta_flags")
         else:
@@ -231,7 +238,7 @@ async def test_real_truth_decision_publication_bundle_to_completed_review(tmp_pa
     snapshot["instruments"].append(
         {"instrument_id": "A:spot:BTC", "token_id": "BTC", "venue": "A", "market_type": "SPOT"}
     )
-    truth = compute_market_truth(snapshot)
+    truth = compute_market_truth(snapshot, config=fixture_truth_config())
     assert truth["move_class"] == "SPOT_LED_ACCUMULATION"
     assert truth["relative"]["ref_venue"] is not None
     truth.update(mta_id="actual-review-truth", event_id="actual-review-event")

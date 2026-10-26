@@ -7,6 +7,7 @@ from pathlib import Path
 import httpx
 import pytest
 from agent_source_fixtures import declared_versions_fixture, source_record_fixture
+from model_context_callback_fixtures import migration_callback
 from native_input_fixtures import acknowledge_native_input
 from native_session_fixtures import created_native_session, native_session_record
 from scheduling_support import RecordingReactionScheduling
@@ -100,12 +101,7 @@ class NativeSession:
 )
 async def test_legacy_callbacks_upgrade_before_delivery_and_new_turns_reject_ids(legacy, kind) -> None:
     repo, settings, session, item, event = legacy
-    payload = {
-        "kind": kind,
-        "session_id": session["session_id"],
-        "event_id": event["event_id"],
-        "item_id": item["item_id"],
-    }
+    payload = migration_callback(kind, event["event_id"], item["item_id"], session["session_id"])
     if kind == "SCOUT_REVIEW":
         session["proposal_id"] = "proposal_legacy"
         await repo.put(
@@ -316,7 +312,9 @@ async def test_failed_migration_never_marks_old_contract_current_or_delivers_a_c
             refusals=UnexpectedFollowupRefusals(),
         )
         with pytest.raises(httpx.HTTPStatusError):
-            await service.send_message({"kind": "MILESTONE", "event_id": event["event_id"]})
+            await service.send_message(
+                migration_callback("MILESTONE", event["event_id"], session["item_id"], session["session_id"])
+            )
     assert not any(row[1].endswith("/events") for row in native.requests)
     assert await repo.get("ops.agent_sessions", session["session_id"]) == session
 

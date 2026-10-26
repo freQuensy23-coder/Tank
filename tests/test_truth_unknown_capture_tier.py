@@ -3,6 +3,8 @@
 from pathlib import Path
 from runpy import run_path
 
+from truth_support import fixture_truth_config
+
 from tank.analysis.truth import capture_cadence, compute_market_truth
 
 
@@ -25,7 +27,7 @@ def test_unknown_historical_capture_tier_does_not_fall_back_to_base() -> None:
             "CAPTURE_TIER_HISTORY_UNAVAILABLE",
         )
     assert capture_cadence(snapshot, "supply", {"kind": "FUNDAMENTALS"}) == (21600.0, "CAPTURE_METADATA")
-    result = compute_market_truth(snapshot)
+    result = compute_market_truth(snapshot, config=fixture_truth_config())
     assert result["data_confidence"]["class"] == "MEDIUM"
     unknown = [
         failure

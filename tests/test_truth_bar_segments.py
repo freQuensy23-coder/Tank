@@ -5,6 +5,8 @@ from decimal import Decimal
 from pathlib import Path
 from runpy import run_path
 
+from truth_support import fixture_truth_config
+
 from tank.analysis.truth import compute_market_truth
 from tank.util import iso, parse_time
 
@@ -38,6 +40,8 @@ def fractional_packet():
                     end=iso(minute + timedelta(minutes=1)),
                     complete=True,
                     observed_at=iso(end),
+                    received_ts=iso(end),
+                    received_ts_prec="COLLECTION_ONLY",
                     buy_qty="2",
                     sell_qty="1",
                     sum_sq_qty="5",
@@ -72,6 +76,8 @@ def fractional_packet():
                         end=iso(end),
                         complete=True,
                         observed_at=iso(end),
+                        received_ts=iso(end),
+                        received_ts_prec="COLLECTION_ONLY",
                         buy_qty="3",
                         sell_qty="1",
                         sum_sq_qty="10",
@@ -98,7 +104,7 @@ def fractional_packet():
 def test_exact_bar_segments_support_fractional_window_and_current_cutoff_without_raw_trades() -> None:
     snapshot = fractional_packet()
     assert not any(key in snapshot for key in ("trades", "boundary_trades", "anchor_trades", "cutoff_trades"))
-    result = compute_market_truth(snapshot)
+    result = compute_market_truth(snapshot, config=fixture_truth_config())
     event = result["spot"]["EVENT"]
     assert event["coverage"]["n_complete"] == 2
     assert Decimal(event["composite_max"]["cvd"]) == Decimal(2 * (239 * 50 + 1 + 2))
@@ -114,7 +120,7 @@ def test_unregistered_boundary_is_incomplete_and_raw_trade_arrays_cannot_overrid
     snapshot["boundary_trades"] = [
         dict(instrument_id="A:spot:T", ts=snapshot["anchor"]["ts"], side="BUY", qty_native="9999999")
     ]
-    result = compute_market_truth(snapshot)
+    result = compute_market_truth(snapshot, config=fixture_truth_config())
     assert result["spot"]["EVENT"]["coverage"]["n_complete"] == 0
     assert {row["detail"] for row in result["spot"]["EVENT"]["coverage"]["excluded"]} == {
         "BOUNDARY_AGGREGATE_UNAVAILABLE"

@@ -68,8 +68,17 @@ def oi_class(
     urange: Sequence[float] | None,
 ) -> Literal["REAL_NATIVE", "MIXED", "PRICE_MARKUP"] | None:
     """The native-majority predicate uses exact dollar terms, never the rounded share."""
-    nb = _beyond(dn, nrange)
-    ub = _beyond(du, urange)
+    return oi_class_from_comparisons(_beyond(dn, nrange), _beyond(du, urange), dec)
+
+
+def oi_class_from_comparisons(
+    nb: bool | None,
+    ub: bool | None,
+    dec: OIDecomposition | MissingOIDecomposition,
+) -> Literal["REAL_NATIVE", "MIXED", "PRICE_MARKUP"] | None:
+    """Classify from actual baseline predicates without substituting a display ratio."""
+    if any(value is not None and not isinstance(value, bool) for value in (nb, ub)):
+        raise ValueError("OI baseline predicates require booleans or explicit unavailability")
     if nb is None:
         return None
     if nb:

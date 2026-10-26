@@ -27,6 +27,22 @@ from typing import overload
 
 from pydantic import JsonValue
 
+from tank.analysis.condition_fingerprints import condition_input_fingerprints
+from tank.analysis.condition_graph_codec import encode_scoped_condition_spot
+from tank.analysis.condition_graph_contracts import (
+    ConditionStateNodeKey,
+    ConditionTopCacheKey,
+    ConditionTopVenueSignHistory,
+    ConditionWireClocks,
+)
+from tank.analysis.condition_input_codec import (
+    SpotDirectEvidenceLookup,
+    SpotWindowEvidenceLookup,
+)
+from tank.analysis.condition_inputs import (
+    SpotCalculationPolicy,
+    SpotPolicyConfiguration,
+)
 from tank.analysis.execution import ExecutionLevelWire, ExecutionSide, execute_book_walk, execution_request
 from tank.analysis.positioning import (
     MissingOIDecomposition,
@@ -43,6 +59,10 @@ from tank.analysis.price_reference import (
     ReferencePriceReturn,
     ReferencePriceSeries,
     decode_price_cadence,
+)
+from tank.analysis.spot import (
+    SpotNativeMeasurement,
+    spot_native_measurements,
 )
 from tank.analysis.statistics_contracts import (
     BaselineCaches,
@@ -2529,8 +2549,29 @@ def _usd_mid(row, mid):
     return mid * rate if rate else None
 
 
-def enrich_evidence(snapshot, start, end, spots, primary, deriv, relative, liquidity):
+def enrich_evidence(
+    snapshot,
+    start,
+    end,
+    spots,
+    primary,
+    deriv,
+    relative,
+    liquidity,
+    *,
+    sign_history: ConditionTopVenueSignHistory,
+):
     """Compute cross-window claims only on pairwise common, complete venues."""
+    sign_history = ConditionTopVenueSignHistory.model_validate(sign_history)
+    selected_top = tuple(spots[primary]["topn"]["venues"]) if spots[primary].get("topn") else ()
+    if (
+        sign_history.interval.start != start
+        or sign_history.interval.cutoff != end
+        or set(sign_history.selected_venues) != set(selected_top)
+        or snapshot.get("token_id") is not None
+        and sign_history.token_id != snapshot["token_id"]
+    ):
+        raise ValueError("Enrichment sign history must bind its actual token, interval and selected venues")
     for name, left in spots.items():
         left["cohort_comparisons"] = {}
         for other, right in spots.items():
@@ -2695,32 +2736,48 @@ def enrich_evidence(snapshot, start, end, spots, primary, deriv, relative, liqui
         )
         for tier in ("T1", "T2", "T3")
     }
-    split = {}
-    latest = {}
-    for b in snapshot.get("books", []):
-        if _market(b) != "SPOT" or b.get("token_id", snapshot.get("token_id")) != snapshot.get("token_id"):
+    split: dict[str, float | None] = {}
+    latest_indices: dict[str, int] = {}
+    source_books = snapshot.get("books", [])
+    for book_index, book in enumerate(source_books):
+        if _market(book) != "SPOT" or book.get("token_id", snapshot.get("token_id")) != snapshot.get(
+            "token_id"
+        ):
             continue
-        if b.get("integrity_ok") is True and (_venue(b) not in latest or _time(b) > _time(latest[_venue(b)])):
-            latest[_venue(b)] = b
-    askdepth = {
-        v: decimal((b.get("depth", {}).get("ask", {}).get("p1") or {}).get("usd")) for v, b in latest.items()
+        if book.get("integrity_ok") is not True:
+            continue
+        venue = _venue(book)
+        if not isinstance(venue, str) or not venue:
+            raise ValueError("Book split requires an actual nonblank venue")
+        prior_index = latest_indices.get(venue)
+        if prior_index is None or _time(book) > _time(source_books[prior_index]):
+            latest_indices[venue] = book_index
+    askdepth: dict[str, Decimal | None] = {
+        venue: decimal((source_books[position].get("depth", {}).get("ask", {}).get("p1") or {}).get("usd"))
+        for venue, position in latest_indices.items()
     }
-    total = sum(x for x in askdepth.values() if x is not None)
+    total = sum((value for value in askdepth.values() if value is not None), Decimal(0))
     for tier in ("T1", "T2", "T3"):
-        fills = []
-        if tiers.get(tier) and total and all(x is not None for x in askdepth.values()):
-            for venue, b in latest.items():
-                allocation = tiers[tier] * askdepth[venue] / total
-                levels = b.get("asks", b.get("levels", {}).get("asks", []))
-                mid = decimal(b.get("mid"))
-                fx = Decimal(1) if b.get("quote_asset") == "USD" else decimal(b.get("quote_usd_rate"))
+        fills: list[tuple[Decimal, float | None]] = []
+        notional: Decimal | None = decimal(tiers.get(tier))
+        if notional and total and all(value is not None for value in askdepth.values()):
+            for venue, position in latest_indices.items():
+                book = source_books[position]
+                depth = askdepth[venue]
+                if depth is None:
+                    raise ValueError("Book allocation requires the actual known venue depth")
+                allocation = notional * depth / total
+                levels = book.get("asks", book.get("levels", {}).get("asks", []))
+                mid = decimal(book.get("mid"))
+                fx = Decimal(1) if book.get("quote_asset") == "USD" else decimal(book.get("quote_usd_rate"))
                 impact = (
                     walk_book(levels, allocation / fx, mid) if levels and mid and allocation and fx else None
                 )
                 fills.append((allocation, impact))
+        measured_fills = [(amount, impact) for amount, impact in fills if impact is not None]
         split[tier] = (
-            sum(float(n / tiers[tier]) * i for n, i in fills)
-            if fills and all(i is not None for _, i in fills)
+            sum(float(amount / notional) * impact for amount, impact in measured_fills)
+            if fills and len(measured_fills) == len(fills) and notional is not None
             else None
         )
     liquidity["best_single_venue_slippage_bps"] = best
@@ -2768,31 +2825,41 @@ def enrich_evidence(snapshot, start, end, spots, primary, deriv, relative, liqui
     )
     complete_venues = {v["venue"] for v in capture["venues"]}
 
-    conversion_bps = decimal(parameter("quote_conversion_uncertainty_bps", 2))
+    conversion_bps: Decimal | None = decimal(parameter("quote_conversion_uncertainty_bps", 2))
     unevaluated = []
     for index, a in enumerate(sorted(grouped)):
         for b in sorted(grouped)[index + 1 :]:
             ar, br = grouped[a], grouped[b]
             at, bt = grouped_times[a], grouped_times[b]
             times = sorted({frag_start, end} | {t for t in at + bt if frag_start <= t < end})
-            gaps = []
+            gaps: list[bool] = []
             second = False
             for t in times:
-                states = []
+                pair_states = []
                 for rows, stamps in ((ar, at), (br, bt)):
-                    k = bisect_right(stamps, t) - 1
-                    states.append(rows[k] if k >= 0 and (t - stamps[k]).total_seconds() <= cadence else None)
-                if None in states:
+                    quote_position = bisect_right(stamps, t) - 1
+                    pair_states.append(
+                        rows[quote_position]
+                        if quote_position >= 0 and (t - stamps[quote_position]).total_seconds() <= cadence
+                        else None
+                    )
+                x, y = pair_states
+                if x is None or y is None:
                     gaps = []
                     break
-                x, y = states
-                xm, ym = decimal(x.get("mid")), decimal(y.get("mid"))
-                xs, ys = decimal(x.get("spread_bps")), decimal(y.get("spread_bps"))
-                if None in (xm, ym, xs, ys) or not ym:
+                xm: Decimal | None = decimal(x.get("mid"))
+                ym: Decimal | None = decimal(y.get("mid"))
+                xs: Decimal | None = decimal(x.get("spread_bps"))
+                ys: Decimal | None = decimal(y.get("spread_bps"))
+                if xm is None or ym is None or xs is None or ys is None or not ym:
                     gaps = []
                     break
                 same_quote = _quote(x) == _quote(y)
                 cost = Decimal(0) if same_quote else conversion_bps
+                if cost is None:
+                    unevaluated.append([a, b])
+                    gaps = []
+                    break
                 xm, ym = (xm, ym) if same_quote else (_usd_mid(x, xm), _usd_mid(y, ym))
                 if xm is None or not ym:
                     unevaluated.append([a, b])
@@ -2803,12 +2870,12 @@ def enrich_evidence(snapshot, start, end, spots, primary, deriv, relative, liqui
                     gaps.append(gap)
                 elif gaps and gaps[-1] and not gap:
                     closed = True
-                rest = []
+                rest: list[tuple[Decimal, Decimal] | None] = []
                 for stream in (x, y):
                     independent = stream.get("independent_rest") or {}
                     rt = independent.get("ts")
-                    rm = decimal(independent.get("mid"))
-                    rs = decimal(independent.get("spread_bps"))
+                    rm: Decimal | None = decimal(independent.get("mid"))
+                    rs: Decimal | None = decimal(independent.get("spread_bps"))
                     good = (
                         stream.get("second_path_confirmed") is True
                         and independent.get("source") == "PUBLIC_REST"
@@ -2820,27 +2887,35 @@ def enrich_evidence(snapshot, start, end, spots, primary, deriv, relative, liqui
                         and rm > 0
                         and rs is not None
                     )
-                    rest.append((rm if same_quote else _usd_mid(stream, rm), rs) if good else None)
+                    if not good or rm is None or rs is None:
+                        rest.append(None)
+                        continue
+                    converted: Decimal | None = rm if same_quote else _usd_mid(stream, rm)
+                    rest.append((converted, rs) if converted is not None else None)
+                left_rest, right_rest = rest
                 second = second or (
-                    None not in rest
-                    and None not in (rest[0][0], rest[1][0])
-                    and abs(rest[0][0] - rest[1][0]) * 10000 > (rest[0][1] + rest[1][1] + cost) * rest[1][0]
+                    left_rest is not None
+                    and right_rest is not None
+                    and abs(left_rest[0] - right_rest[0]) * 10000
+                    > (left_rest[1] + right_rest[1] + cost) * right_rest[0]
                 )
             if gaps and all(gaps):
                 persistent = True
                 pairs.append([a, b])
                 validated = validated or (second and {a, b} <= complete_venues)
 
-    funding_groups = {
-        p["instrument_id"]: [] for p in deriv.get("per_venue", []) if p.get("funding_8h_eq") is not None
+    funding_instruments: set[str] = {
+        point["instrument_id"]
+        for point in deriv.get("per_venue", [])
+        if point.get("funding_8h_eq") is not None
     }
-    historical = []
-    states = {}
+    historical: list[tuple[datetime, Decimal]] = []
+    funding_states: dict[str, Decimal] = {}
     funding_rows = sorted(
         [
             r
             for r in snapshot.get("funding", [])
-            if r.get("instrument_id") in funding_groups
+            if r.get("instrument_id") in funding_instruments
             and r.get("kind") == "SETTLED"
             and _time(r) < start
             and _time(r) >= start - timedelta(days=lookback_days())
@@ -2851,9 +2926,9 @@ def enrich_evidence(snapshot, start, end, spots, primary, deriv, relative, liqui
         rate, interval = decimal(row.get("rate")), decimal(row.get("interval_h"))
         if rate is None or not interval:
             continue
-        states[row["instrument_id"]] = rate * 8 / interval
-        if len(states) == len(funding_groups) and len(states) >= 2:
-            historical.append((_time(row), max(states.values()) - min(states.values())))
+        funding_states[row["instrument_id"]] = rate * 8 / interval
+        if len(funding_states) == len(funding_instruments) and len(funding_states) >= 2:
+            historical.append((_time(row), max(funding_states.values()) - min(funding_states.values())))
     normal_dispersion = (
         normal([value for _, value in historical])
         if historical
@@ -2864,10 +2939,10 @@ def enrich_evidence(snapshot, start, end, spots, primary, deriv, relative, liqui
     dispersion = deriv.get("funding_dispersion_8h")
     funding_beyond = beyond(dispersion, normal_dispersion)
     confirmations = snapshot.get("funding_confirmations", [])
-    secondary = {}
+    confirmation_rates: dict[str, Decimal] = {}
     for row in confirmations:
         if (
-            row.get("instrument_id") not in funding_groups
+            row.get("instrument_id") not in funding_instruments
             or _time(row) is None
             or _time(row) > end
             or not _available(row, snapshot)
@@ -2879,13 +2954,13 @@ def enrich_evidence(snapshot, start, end, spots, primary, deriv, relative, liqui
             continue
         rate = decimal(row.get("rate_8h_eq"))
         if rate is not None:
-            secondary[row["instrument_id"]] = rate
+            confirmation_rates[row["instrument_id"]] = rate
     secondary_dispersion = (
-        max(secondary.values()) - min(secondary.values())
-        if len(secondary) >= 2 and set(secondary) == set(funding_groups)
+        max(confirmation_rates.values()) - min(confirmation_rates.values())
+        if len(confirmation_rates) >= 2 and set(confirmation_rates) == set(funding_instruments)
         else None
     )
-    perp_ids = set(funding_groups)
+    perp_ids = set(funding_instruments)
     perp_complete = True
     for iid in perp_ids:
         if flow_window(snapshot, iid, frag_start, end) is None:
@@ -2896,41 +2971,8 @@ def enrich_evidence(snapshot, start, end, spots, primary, deriv, relative, liqui
     deriv["funding_dispersion_normal_range_8h"] = normal_dispersion
     deriv["funding_dispersion_beyond_normal"] = funding_beyond
 
-    top = set(spots[primary]["topn"]["venues"]) if spots[primary].get("topn") else set()
-    signs = {v: [] for v in top}
-    cursor = start
-    while top and cursor + timedelta(minutes=15) <= end:
-        sub = spot_truth(
-            snapshot.get("flow_bars", []),
-            [],
-            [
-                i
-                for i in snapshot.get("instruments", [])
-                if _venue(i) in top
-                and i.get("token_id", snapshot.get("token_id")) == snapshot.get("token_id")
-            ],
-            cursor,
-            cursor + timedelta(minutes=15),
-            flow_segments=flow_segments(snapshot),
-            assembled_at=snapshot.get("assembled_at"),
-        )
-        found = {v["venue"]: v["sign"] for v in sub["venues"]}
-        for venue in top:
-            signs[venue].append(found.get(venue))
-        if any(venue not in found for venue in top):
-            break
-        cursor += timedelta(minutes=15)
-    flips = []
-    for values in signs.values():
-        if None in values or len(values) < 3:
-            continue
-        directional = [v for v in values if v != 0]
-        flips.append(sum(a != b for a, b in zip(directional, directional[1:], strict=False)))
-    top_flips = (
-        any(n > 1 for n in flips)
-        if signs and all(len(v) >= 3 and None not in v for v in signs.values())
-        else None
-    )
+    flips = sign_history.multiple_flips()
+    top_flips = flips.value if flips.status == "OBSERVED" else None
     liquidity["fragmentation"] = dict(
         window="W15M",
         cutoff=iso(end),
@@ -4377,7 +4419,7 @@ def decisive_facts(spot, derivatives, liquidity, relative, supply, move_class, w
             )
         )
 
-    cvd = spot["composite_max"].get("cvd")
+    cvd = decimal(spot["composite_max"].get("cvd"))
     direction = spot.get("direction")
     venues = spot["composite_max"].get("venues", [])
     spot_instruments = [v.get("instrument_id", v["venue"]) for v in spot.get("venues", [])]
@@ -4614,7 +4656,7 @@ def canonical_fact_text(fact):
     return f"{fact['text']} [{fact['window']}; {fact['unit']}; {label}]"
 
 
-def measurement_metadata(result):
+def measurement_metadata(result, *, spot_measurements: Sequence[SpotNativeMeasurement]):
     """Companion metadata preserves the literal §2 bare-field shapes.
 
     Every quantitative or null derived leaf inherits its nearest explicit window and analysis cutoff;
@@ -4803,6 +4845,25 @@ def measurement_metadata(result):
                     )
 
     walk(result, "", result["primary_window"], {})
+    for measurement in spot_measurements:
+        missing_fields[measurement.path] = dict(
+            value=measurement.value,
+            unit=measurement.unit,
+            window=measurement.window,
+            cutoff=result["cutoff"],
+            observed_at=measurement.observed_at.value,
+            observation_reason=measurement.observed_at.precision_reason
+            if measurement.observed_at.value is None
+            else None,
+            precision=measurement.observed_at.precision,
+            precision_reason=measurement.observed_at.precision_reason,
+            context_precision=measurement.observed_at.precision,
+            coverage=result["spot"][measurement.window]["coverage"],
+            coverage_reason=None,
+            reason=None,
+            representation="DECIMAL_STRING",
+            evidence_scope={"venue": measurement.venue} if measurement.venue is not None else {},
+        )
     return missing_fields
 
 
@@ -5024,61 +5085,18 @@ def bounded_market_snapshot(snapshot, end):
     return snapshot
 
 
-def spot_window_graph(snapshot, start, end, av):
-    instruments = [
-        i for i in snapshot.get("instruments", []) if i.get("token_id") in (None, snapshot.get("token_id"))
-    ]
-    primary = "EVENT" if av and 900 <= (end - start).total_seconds() <= 86400 else "W4H"
-    snapshot["_primary"] = primary
-    windows = dict(WINDOWS, EVENT=(end - start).total_seconds())
-    spots = {
-        name: spot_truth(
-            snapshot["flow_bars"],
-            snapshot["tickers"],
-            instruments,
-            end - timedelta(seconds=seconds),
-            end,
-            flow_segments=flow_segments(snapshot),
-            assembled_at=snapshot.get("assembled_at"),
-        )
-        for name, seconds in windows.items()
-    }
-    cohort = set.intersection(*(set(v["venue"] for v in s["venues"]) for s in spots.values()))
-    for name, s in spots.items():
-        s.update(
-            window=name,
-            start=iso(end - timedelta(seconds=windows[name])),
-            cutoff=iso(end),
-            observed_at=iso(end) if s["venues"] else None,
-            precision="BUCKET(60s)" if s["venues"] else None,
-        )
-        selected = [v for v in s["venues"] if v["venue"] in cohort]
-        c = _composite(selected)
-        share = ratio(c["volume"], s["composite_max"]["volume"])
-        share_majority = strict_majority(c["volume"], s["composite_max"]["volume"])
-        valid = len(cohort) >= int(parameter("min_spot_venues", 2)) and share_majority is True
-        c.update(
-            cohort=sorted(cohort),
-            share_of_max=share,
-            share_majority=share_majority,
-            velocity=None,
-            reason=None if valid else "NOT_COHORT_CONSISTENT",
-        )
-        s["composite_cohort"] = c if valid else None
-        s["cohort_consistent"] = {other: valid for other in spots if other != name}
-        prev = spot_truth(
-            snapshot["flow_bars"],
-            snapshot["tickers"],
-            instruments,
-            end - timedelta(seconds=2 * windows[name]),
-            end - timedelta(seconds=windows[name]),
-            flow_segments=flow_segments(snapshot),
-            assembled_at=snapshot.get("assembled_at"),
-        )
-        pv = [v for v in prev["venues"] if v["venue"] in cohort]
-        if valid and len(pv) == len(cohort):
-            c["velocity"] = ratio(c["volume"], sum(v["volume_native"] for v in pv))
-    return spots, windows, primary, instruments
+def _captured_spot_policy() -> SpotCalculationPolicy:
+    parameters = _PARAMETERS.get()
+    if parameters is None:
+        raise ValueError("Spot computation requires captured policy")
+    policy = SpotPolicyConfiguration.model_validate(
+        {
+            name: parameters[name]
+            for name in ("significant_flow_sigma", "min_spot_venues")
+            if name in parameters
+        }
+    ).calculation_policy()
+    return policy
 
 
 @precise
@@ -5104,7 +5122,28 @@ def _compute_market_truth(snapshot, *, config=None):
             [point[0] for point in points],
             [point[1] for point in points],
         )
-    spots, windows, primary, instruments = spot_window_graph(snapshot, start, end, av)
+    spot_evaluation = SpotWindowEvidenceLookup(
+        token_id=snapshot["token_id"],
+        cutoff=propagate_timestamp(snapshot, "cutoff"),
+        event_anchor=propagate_timestamp(snapshot, "anchor", missing_reason="NO_EVENT_ANCHOR"),
+        assembled_at=propagate_timestamp(snapshot, "assembled_at"),
+        instruments=snapshot.get("instruments", []),
+        flow_bars=snapshot.get("flow_bars", []),
+        flow_parent_bars=snapshot.get("flow_parent_bars", []),
+        flow_segments=flow_segments(snapshot),
+        tickers=snapshot.get("tickers", []),
+        policy=_captured_spot_policy(),
+        native_ticker_volume_field="volume_native",
+    )
+    spot_graph = spot_evaluation.graph
+    spots = spot_evaluation.wire_spots(assembled_at=propagate_timestamp(snapshot, "assembled_at"))
+    windows, primary = spot_graph.durations_s, spot_graph.primary
+    snapshot["_primary"] = primary
+    instruments = [
+        instrument
+        for instrument in snapshot.get("instruments", [])
+        if instrument["token_id"] == snapshot["token_id"]
+    ]
     snapshot["_has_event"] = bool(av)
     snapshot["_lead_start"] = start
     snapshot["_event_anchor"] = start if av else None
@@ -5127,7 +5166,21 @@ def _compute_market_truth(snapshot, *, config=None):
             window_liquidity["observed_at"] = min(v["observed_at"] for v in window_liquidity["per_venue"])
         window_liquidity["elasticity"].update(window=name, start=iso(wstart), cutoff=iso(end))
         window_liquidity["replenishment"].update(window=name, start=iso(wstart), cutoff=iso(end))
-        enrich_evidence(scoped, wstart, end, spots, name, d, relative, window_liquidity)
+        enrich_evidence(
+            scoped,
+            wstart,
+            end,
+            spots,
+            name,
+            d,
+            relative,
+            window_liquidity,
+            sign_history=spot_evaluation.sign_history(
+                interval=spot_graph.spots[name].interval,
+                selected_venues=spot_graph.spots[name].topn.venues,
+                assembled_at=propagate_timestamp(snapshot, "assembled_at"),
+            ),
+        )
         d["support_features"] = support_features(scoped, wstart, end, spots[name], d, window_liquidity, su)
         if name == "EVENT" and not av:
             d = derivatives_truth(dict(scoped, oi=[], funding=[], liquidations=[], klines=[]), wstart, end)
@@ -5223,7 +5276,9 @@ def _compute_market_truth(snapshot, *, config=None):
         "numeric_policy": "Native quantities, USD amounts and funding rates use adaptive Decimal arithmetic (128-digit minimum), serialized as decimal strings; dimensionless returns, beta, percentiles and ratios use FLOAT64 statistics; significance compares CVD squared against four times sum of squares exactly",
     }
     result = timestamp_companions(result, snapshot)
-    result["measurement_metadata"] = measurement_metadata(result)
+    result["measurement_metadata"] = measurement_metadata(
+        result, spot_measurements=spot_native_measurements(spot_graph)
+    )
     return jsonable(result)
 
 
@@ -5479,28 +5534,49 @@ def condition_market_state(snapshot, end, cache):
         }
 
     def node(name, fields, build):
-        head = (snapshot.get("domain_dependency_fingerprints") or {}).get(name)
-        if head is None:
-            head = fingerprint({field: snapshot.get(field) for field in fields})
-        elif not isinstance(head, str):
-            head = fingerprint(head)
-        key = (
-            "condition-state-node",
-            name,
-            iso(start),
-            iso(end),
-            head,
-            fingerprint(_PARAMETERS.get()),
-            fingerprint(snapshot.get("expected_direction")),
+        head, content, visibility = condition_input_fingerprints(snapshot, fields, name)
+        key = ConditionStateNodeKey(
+            node=name,
+            token_id=snapshot["token_id"],
+            start=start,
+            cutoff=end,
+            content_sha256=content,
+            visibility_sha256=visibility,
+            dependency_identity=head,
+            config_sha256=fingerprint(_PARAMETERS.get()),
+            expected_direction_sha256=fingerprint(snapshot.get("expected_direction")),
         )
 
-        return deepcopy(remember(cache, key, build))
+        cached = remember(cache, key, build)
+        if isinstance(cached, SpotWindowEvidenceLookup) and not cached.matches_visibility(
+            propagate_timestamp(snapshot, "assembled_at")
+        ):
+            cached = build()
+            cache[key] = cached
+        return cached if isinstance(cached, SpotWindowEvidenceLookup) else deepcopy(cached)
 
-    spots, windows, primary, instruments = node(
+    spot_evaluation = node(
         "spot",
-        ("flow_bars", "flow_segments", "tickers", "instruments", "anchor"),
-        lambda: spot_window_graph(snapshot, start, end, av),
+        ("flow_bars", "flow_segments", "flow_parent_bars", "tickers", "instruments", "anchor"),
+        lambda: SpotWindowEvidenceLookup(
+            token_id=snapshot["token_id"],
+            cutoff=propagate_timestamp(snapshot, "cutoff"),
+            event_anchor=propagate_timestamp(snapshot, "anchor", missing_reason="NO_EVENT_ANCHOR"),
+            assembled_at=propagate_timestamp(snapshot, "assembled_at"),
+            instruments=snapshot.get("instruments", []),
+            flow_bars=snapshot.get("flow_bars", []),
+            flow_parent_bars=snapshot.get("flow_parent_bars", []),
+            flow_segments=flow_segments(snapshot),
+            tickers=snapshot.get("tickers", []),
+            policy=_captured_spot_policy(),
+            native_ticker_volume_field="volume_native",
+        ),
     )
+    if not isinstance(spot_evaluation, SpotWindowEvidenceLookup):
+        raise TypeError("Spot state cache requires its typed graph and source evidence")
+    _spot_graph = spot_evaluation.graph
+    spots = spot_evaluation.wire_spots(assembled_at=propagate_timestamp(snapshot, "assembled_at"))
+    windows, primary = _spot_graph.durations_s, _spot_graph.primary
     scoped = dict(
         snapshot,
         _primary=primary,
@@ -5515,23 +5591,54 @@ def condition_market_state(snapshot, end, cache):
             "stat_price_series",
             "flow_bars",
             "flow_segments",
+            "flow_parent_bars",
             "reference_points",
             "tokens",
             "sector_baskets",
             "instruments",
             "expected_direction",
+            "anchor",
+            "capture_metadata",
+            "capture_tier",
+            "semantics",
+            "series_coverage_counts",
+            "relative_history_dependency_fingerprint",
         ),
         lambda: relative_truth(scoped, start, end, include_outcome=False),
     )
     wstart = end - timedelta(seconds=windows[primary])
     derivatives = node(
         "derivatives",
-        ("oi", "funding", "liquidations", "semantics", "instruments", "klines"),
+        (
+            "oi",
+            "funding",
+            "liquidations",
+            "semantics",
+            "instruments",
+            "klines",
+            "stat_volume_series",
+            "capture_metadata",
+            "capture_tier",
+        ),
         lambda: derivatives_truth(scoped, wstart, end),
     )
     liquidity = liquidity_truth(scoped, wstart, end, spots[primary], relative)
     supply = node("supply", ("supply", "anchor"), lambda: supply_truth(scoped, wstart, end))
-    enrich_evidence(scoped, wstart, end, spots, primary, derivatives, relative, liquidity)
+    enrich_evidence(
+        scoped,
+        wstart,
+        end,
+        spots,
+        primary,
+        derivatives,
+        relative,
+        liquidity,
+        sign_history=spot_evaluation.sign_history(
+            interval=_spot_graph.spots[primary].interval,
+            selected_venues=_spot_graph.spots[primary].topn.venues,
+            assembled_at=propagate_timestamp(snapshot, "assembled_at"),
+        ),
+    )
     derivatives["support_features"] = support_features(
         scoped, wstart, end, spots[primary], derivatives, liquidity, supply
     )
@@ -5568,6 +5675,7 @@ def compute_condition_values(snapshot, requirements, *, config=None, cache=None,
         requested = sorted({(r["metric"], r.get("window", "W1H")) for r in requirements})
         pending = []
         proofs = []
+        identities = {}
         for metric, window in requested:
             seconds = WINDOWS.get(window)
             if window == "EVENT" and snapshot.get("anchor"):
@@ -5577,22 +5685,24 @@ def compute_condition_values(snapshot, requirements, *, config=None, cache=None,
                 continue
             if metric in SPOT_CONDITION_METRICS:
                 domain = "spot"
-                fields = ("flow_bars", "flow_segments", "tickers", "instruments")
+                fields = ("flow_bars", "flow_segments", "flow_parent_bars", "tickers", "instruments")
             elif metric in DERIVATIVE_CONDITION_METRICS:
                 domain = "funding" if metric == "deriv.funding_vs_normal" else "oi"
-                fields = (domain, "instruments", "semantics", "capture_metadata")
+                fields = (domain, "instruments", "semantics", "capture_metadata", "capture_tier")
             elif metric == "price.close_vs_level":
                 domain = "close"
-                fields = ("flow_bars", "flow_segments", "klines", "instruments")
+                fields = ("flow_bars", "flow_segments", "flow_parent_bars", "klines", "instruments")
             elif metric == "dc.class":
                 domain = "dc"
                 fields = (
                     "flow_bars",
                     "flow_segments",
+                    "flow_parent_bars",
                     "tickers",
                     "instruments",
                     "semantics",
                     "capture_metadata",
+                    "capture_tier",
                     "oi",
                     "funding",
                     "klines",
@@ -5604,12 +5714,13 @@ def compute_condition_values(snapshot, requirements, *, config=None, cache=None,
                 seconds = (end - condition_primary_bounds(snapshot, end)[0]).total_seconds()
             elif metric in ("liq.depth_p1_vs_pre", "liq.spread_ratio"):
                 domain = "depth"
-                fields = ("books", "instruments", "anchor", "capture_metadata")
+                fields = ("books", "instruments", "anchor", "capture_metadata", "capture_tier")
             elif metric in COMPOSITE_CONDITION_METRICS:
                 domain = "state"
                 fields = (
                     "flow_bars",
                     "flow_segments",
+                    "flow_parent_bars",
                     "reference_points",
                     "tickers",
                     "instruments",
@@ -5617,6 +5728,7 @@ def compute_condition_values(snapshot, requirements, *, config=None, cache=None,
                     "sector_baskets",
                     "semantics",
                     "capture_metadata",
+                    "capture_tier",
                     "oi",
                     "funding",
                     "klines",
@@ -5637,8 +5749,12 @@ def compute_condition_values(snapshot, requirements, *, config=None, cache=None,
                 fields = (
                     "flow_bars",
                     "flow_segments",
+                    "flow_parent_bars",
                     "reference_points",
                     "instruments",
+                    "semantics",
+                    "capture_metadata",
+                    "capture_tier",
                     "tokens",
                     "sector_baskets",
                     "klines",
@@ -5652,21 +5768,29 @@ def compute_condition_values(snapshot, requirements, *, config=None, cache=None,
             else:
                 pending.append(dict(metric=metric, window=window, reason="NOT_SUPPORTED"))
                 continue
-            dependency = (snapshot.get("domain_dependency_fingerprints") or {}).get(domain)
-            if dependency is None:
-                dependency = fingerprint({field: snapshot.get(field) for field in fields})
-            elif not isinstance(dependency, str):
-                dependency = fingerprint(dependency)
-            key = (
-                domain,
-                window,
-                seconds,
-                iso(end),
-                dependency,
-                fingerprint(config),
-                fingerprint(snapshot.get("expected_direction")),
+            identity_slot = (domain, fields)
+            if identity_slot not in identities:
+                identities[identity_slot] = condition_input_fingerprints(snapshot, fields, domain)
+            dependency, content, visibility = identities[identity_slot]
+            key = ConditionTopCacheKey(
+                domain=domain,
+                token_id=snapshot["token_id"],
+                window=window,
+                requested_duration_s=seconds,
+                cutoff=end,
+                content_sha256=content,
+                visibility_sha256=visibility,
+                dependency_identity=dependency,
+                config_sha256=fingerprint(config),
+                expected_direction_sha256=fingerprint(snapshot.get("expected_direction")),
             )
             hit = key in cache
+            if hit and domain == "spot":
+                previous = cache[key]
+                if isinstance(previous, SpotDirectEvidenceLookup) and not previous.matches_visibility(
+                    propagate_timestamp(snapshot, "assembled_at")
+                ):
+                    hit = False
             if not hit:
                 selected = {field: snapshot[field] for field in fields if field in snapshot}
                 selected.update(
@@ -5675,16 +5799,29 @@ def compute_condition_values(snapshot, requirements, *, config=None, cache=None,
                     assembled_at=snapshot.get("assembled_at"),
                     domain_dependency_fingerprints=snapshot.get("domain_dependency_fingerprints", {}),
                 )
+                selected.update(propagate_timestamp(snapshot, "assembled_at").fields("assembled_at"))
                 start = end - timedelta(seconds=seconds)
                 if domain == "spot":
-                    value = spot_truth(
-                        selected.get("flow_bars", []),
-                        selected.get("tickers", []),
-                        selected.get("instruments", []),
-                        start,
-                        end,
+                    policy = SpotPolicyConfiguration.model_validate(
+                        {
+                            name: config[name]
+                            for name in ("significant_flow_sigma", "min_spot_venues")
+                            if name in config
+                        }
+                    ).calculation_policy()
+                    value = SpotDirectEvidenceLookup(
+                        token_id=selected["token_id"],
+                        start=start,
+                        cutoff=end,
+                        window=window,
+                        assembled_at=propagate_timestamp(snapshot, "assembled_at"),
+                        instruments=selected.get("instruments", []),
+                        flow_bars=selected.get("flow_bars", []),
+                        flow_parent_bars=selected.get("flow_parent_bars", []),
                         flow_segments=flow_segments(selected),
-                        assembled_at=selected.get("assembled_at"),
+                        tickers=selected.get("tickers", []),
+                        policy=policy,
+                        native_ticker_volume_field="volume_native",
                     )
                 elif domain == "close":
                     value = condition_reference_close(selected, end)
@@ -5718,7 +5855,21 @@ def compute_condition_values(snapshot, requirements, *, config=None, cache=None,
                 cache[key] = value
                 if len(cache) > 128:
                     cache.pop(next(iter(cache)))
-            value = deepcopy(cache[key])
+            cached = cache[key]
+            if domain == "spot":
+                if not isinstance(cached, SpotDirectEvidenceLookup):
+                    raise TypeError("Spot condition cache requires its typed evaluation and bound evidence")
+                value = encode_scoped_condition_spot(
+                    cached.result,
+                    cached,
+                    clocks=ConditionWireClocks(
+                        token_id=snapshot["token_id"],
+                        cutoff=propagate_timestamp(snapshot, "cutoff"),
+                        event_anchor=propagate_timestamp(snapshot.get("anchor") or {}, "ts"),
+                    ),
+                )
+            else:
+                value = deepcopy(cached)
             fresh = True
             observations = []
             if domain in ("oi", "funding"):
@@ -5848,6 +5999,9 @@ def compute_condition_values(snapshot, requirements, *, config=None, cache=None,
                     metric=metric,
                     window=window,
                     dependency_fingerprint=dependency,
+                    content_sha256=content,
+                    visibility_sha256=visibility,
+                    **propagate_timestamp(snapshot, "assembled_at").fields("assembled_at"),
                     reused=hit,
                     reason=None if fresh and available else "INCOMPLETE",
                     observations=observations,
@@ -5869,12 +6023,18 @@ def compute_condition_values(snapshot, requirements, *, config=None, cache=None,
                     dependencies=snapshot.get(
                         "dependency_fingerprint", [p["dependency_fingerprint"] for p in proofs]
                     ),
+                    evaluated_inputs=[
+                        (p["metric"], p["window"], p["content_sha256"], p["visibility_sha256"])
+                        for p in proofs
+                    ],
                     anchor=snapshot.get("anchor"),
+                    assembled_at=propagate_timestamp(snapshot, "assembled_at").fields("assembled_at"),
                     config=config,
                 )
             ),
             "proofs": proofs,
             "transient": True,
+            **propagate_timestamp(snapshot, "assembled_at").fields("assembled_at"),
         }
         result.update(propagate_timestamp(snapshot, "cutoff").fields("cutoff"))
         return jsonable(result)

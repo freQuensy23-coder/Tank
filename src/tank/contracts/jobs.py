@@ -6,6 +6,11 @@ from typing import Literal, Self
 from pydantic import Field, JsonValue, model_validator
 
 from tank.contracts import DomainModel
+from tank.contracts.question_retirement import (
+    QuestionFailureRefusalLedger,
+    QuestionFailureRefusalReceipt,
+    QuestionRefusalDigest,
+)
 from tank.time_precision import Timestamp
 from tank.util import parse_time
 
@@ -41,6 +46,9 @@ class JobMetadata(DomainModel):
     recovery_at_prec: str | None = None
     recovery_at_prec_reason: str | None = None
     slot_waiting_since: str | None = None
+    slot_waiting_since_prec: str | None = None
+    slot_waiting_since_prec_reason: str | None = None
+    slot_waiting_since_bucket_anchor: Literal["START", "END", "UNSPECIFIED"] | None = None
     slot_admitted: bool | None = None
     interrupted_at: str | None = None
     interrupted_at_prec: str | None = None
@@ -120,7 +128,21 @@ class JobMetadata(DomainModel):
         ):
             if any(item is not None for item in (value, precision, reason, anchor)):
                 Timestamp(value, precision, reason, anchor)
-        if self.slot_waiting_since is not None:
+        if any(
+            value is not None
+            for value in (
+                self.slot_waiting_since_prec,
+                self.slot_waiting_since_prec_reason,
+                self.slot_waiting_since_bucket_anchor,
+            )
+        ):
+            Timestamp(
+                self.slot_waiting_since,
+                self.slot_waiting_since_prec,
+                self.slot_waiting_since_prec_reason,
+                self.slot_waiting_since_bucket_anchor,
+            )
+        elif self.slot_waiting_since is not None:
             parse_time(self.slot_waiting_since)
         terminal = self.status in {"DONE", "FAILED", "EXPIRED"}
         if terminal != (self.finished_at is not None):
@@ -128,11 +150,36 @@ class JobMetadata(DomainModel):
         return self
 
 
+type HostQuestionRefusals = dict[QuestionRefusalDigest, QuestionFailureRefusalReceipt]
+
+
+def _unreported_question_refusals(value: HostQuestionRefusals | None) -> bool:
+    return value is None
+
+
 class JobEnvelope(JobMetadata):
     """Persisted queue wire envelope; dispatchers decode concrete command payloads."""
 
     payload: dict[str, JsonValue]
     result: JsonValue = None
+    host_question_failure_refusals: HostQuestionRefusals | None = Field(
+        default=None, exclude_if=_unreported_question_refusals
+    )
+
+    @model_validator(mode="after")
+    def actual_host_refusal_ledger(self) -> Self:
+        if "host_question_failure_refusals" in self.model_fields_set:
+            if self.host_question_failure_refusals is None:
+                raise ValueError("A reported host question refusal ledger cannot be null")
+            QuestionFailureRefusalLedger(job_id=self.job_id, entries=self.host_question_failure_refusals)
+        return self
+
+
+class ClaimedJob(DomainModel):
+    """Validated envelope plus the canonical unprojected persistence-document revision."""
+
+    envelope: JobEnvelope
+    revision: str = Field(pattern=r"^[0-9a-f]{64}$")
 
 
 class JobRetryState(DomainModel):

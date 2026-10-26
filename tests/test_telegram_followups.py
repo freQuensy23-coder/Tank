@@ -15,6 +15,7 @@ from tank.agents import SessionService
 from tank.agents.context import CONTEXT_VERSION
 from tank.agents.input_ownership import NativeOwnershipSnapshot
 from tank.contracts.openma import NativeSessionToolUpdate
+from tank.contracts.session_followups import FollowupRefusalTarget
 from tank.settings import Settings
 from tank.storage import MemoryRepository
 from tank.telegram_inbox import (
@@ -28,6 +29,7 @@ from tank.telegram_inbox import (
     chunks,
     question_id_for,
 )
+from tank.time_precision import collection_clock, propagate_timestamp
 from tank.util import iso
 
 BOT = 777
@@ -568,16 +570,26 @@ async def test_answered_question_requeues_its_lost_delivery_job() -> None:
 
 
 @pytest.mark.asyncio
-async def test_terminal_question_job_records_a_failure_answer() -> None:
-    from tank.runtime import Runtime
+async def test_terminal_question_job_records_a_failure_answer(tmp_path: Path) -> None:
+    from runtime_failure_fixtures import runtime_failure_fixture
+
+    from tank.runtime_contracts import JobStateFailureReason
 
     repo = MemoryRepository()
     question_id = await ask(repo)
-    runtime = object.__new__(Runtime)
-    runtime.settings = SimpleNamespace(ops_progress_enabled=False, replay=False)
-    runtime.repo = repo
-    job = {"type": "AGENT_MESSAGE", "payload": {"kind": "USER_QUESTION", "question_id": question_id}}
-    await runtime.terminal_delivery_failure(job, "EXPIRED")
+    question = await repo.get("out.user_questions", question_id)
+    assert question is not None
+    job = await repo.enqueue(
+        "AGENT_MESSAGE",
+        {"kind": "USER_QUESTION", "question_id": question_id, "session_id": question["session_id"]},
+        "expired-question",
+    )
+    job.update(status="EXPIRED", **collection_clock().fields("finished_at"))
+    await repo.put("ops.jobs", job["job_id"], job)
+    async with runtime_failure_fixture(repo, tmp_path, ops_progress_enabled=False) as runtime:
+        await runtime.terminal_delivery_failure_wire(
+            job, JobStateFailureReason(kind="STATE", status="EXPIRED")
+        )
     assert (await repo.get("out.user_questions", question_id))["answer_status"] == "FAILED"
     assert len(await repo.list("ops.jobs", filters={"type": "TELEGRAM_ANSWER"})) == 1
 
@@ -721,21 +733,18 @@ async def test_failed_session_without_answer_is_reconciled_after_restart() -> No
 
 
 @pytest.mark.asyncio
-async def test_terminal_answer_job_is_recorded_once_and_marked_reconciled() -> None:
-    from tank.runtime import Runtime
+async def test_terminal_answer_job_is_recorded_once_and_marked_reconciled(tmp_path: Path) -> None:
+    from runtime_failure_fixtures import runtime_failure_fixture
 
     repo = MemoryRepository()
     question_id = await ask(repo)
-    runtime = object.__new__(Runtime)
-    runtime.settings = SimpleNamespace(ops_progress_enabled=False, replay=False)
-    runtime.repo = repo
-    runtime.delivery = None
-    runtime.inbox = TelegramInbox(repo, inbox_settings(), http=httpx.AsyncClient())
     job = await repo.enqueue("TELEGRAM_ANSWER", {"question_id": question_id}, question_id)
-    await repo.put("ops.jobs", job["job_id"], {**job, "status": "FAILED"})
-    await runtime.reconcile_delivery_failures()
-    runtime._delivery_reconciled_at = None
-    await runtime.reconcile_delivery_failures()
+    job.update(status="FAILED", **collection_clock().fields("finished_at"))
+    await repo.put("ops.jobs", job["job_id"], job)
+    async with runtime_failure_fixture(repo, tmp_path, ops_progress_enabled=False) as runtime:
+        await runtime.reconcile_delivery_failures()
+        runtime._failure_reconcile_attempted_at = None
+        await runtime.reconcile_delivery_failures()
     assert (await repo.get("out.user_questions", question_id))["status"] == "DELIVERY_FAILED"
     failures = await repo.list("out.deliveries", filters={"question_id": question_id, "status": "FAILED"})
     assert len(failures) == 1
@@ -785,9 +794,10 @@ async def test_answer_ledger_rows_satisfy_the_delivery_schema_and_route_replies(
 
 
 def test_question_message_is_plain_text_with_truncated_reference() -> None:
+    from tank.question_prompts import question_prompt
     from tank.telegram_inbox import question_message
 
-    text = question_message({"text": "А дальше?", "reference": {"text": "x" * 5000}})
+    text = question_message(question_prompt({"text": "А дальше?", "reference": {"text": "x" * 5000}}))
     assert text.count("x") == 1024 and text.index("А дальше?") > text.index("x")
 
 
@@ -1063,12 +1073,43 @@ async def test_reader_file_is_stored_for_the_session_and_named_in_the_agent_mess
     mounts = []
     uploads = []
 
+    resources = []
+
     def openma(request: httpx.Request):
+        assert "Idempotency-Key" not in request.headers
         if request.url.path == "/v1/files":
+            assert request.headers["anthropic-beta"] == "files-api-2025-04-14"
             uploads.append(request.content)
             return httpx.Response(200, json={"id": "file_private"})
-        mounts.append(json.loads(request.content))
-        return httpx.Response(200, json={"id": "resource_private"})
+        if request.url.path == "/v1/files/file_private":
+            assert request.headers["anthropic-beta"] == "files-api-2025-04-14"
+            return httpx.Response(
+                200,
+                json={
+                    "id": "file_private",
+                    "type": "file",
+                    "filename": item["filename"],
+                    "mime_type": item["mime"],
+                    "size_bytes": item["size"],
+                    "created_at": "2026-10-26T00:00:00Z",
+                    "scope": None,
+                },
+            )
+        assert request.url.path == "/v1/sessions/ses_1/resources"
+        if request.method == "GET":
+            return httpx.Response(200, json={"data": resources, "next_page": None})
+        mount = json.loads(request.content)
+        mounts.append(mount)
+        resource = {
+            "id": "resource_private",
+            "type": "file",
+            "file_id": mount["file_id"],
+            "mount_path": mount["mount_path"],
+            "created_at": "2026-10-26T00:00:00Z",
+            "updated_at": "2026-10-26T00:00:00Z",
+        }
+        resources.append(resource)
+        return httpx.Response(200, json=resource)
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(openma)) as http:
         sessions = SessionService(
@@ -1079,9 +1120,11 @@ async def test_reader_file_is_stored_for_the_session_and_named_in_the_agent_mess
             versions=fixture_versions(),
             refusals=RepositoryFollowupRefusals(repo),
         )
-        session = await repo.get("ops.agent_sessions", "ses_1")
-        ready = await sessions.prepare_attachments(session, question)
-        again = await sessions.prepare_attachments(session, question)
+        from tank.contracts.session_followups import FollowupRefusalTarget
+
+        target = FollowupRefusalTarget(question_id=question["question_id"], session_id="ses_1")
+        ready = await sessions.prepare_attachments(target)
+        again = await sessions.prepare_attachments(target)
     text = question_message(ready)
     assert "Посчитай по этому файлу" in text and item["file_key"] not in text
     assert ready == again and len(uploads) == len(mounts) == 1
@@ -1157,7 +1200,10 @@ async def test_numeric_watch_comparisons_need_numbers() -> None:
 def test_reopening_fails_queued_follow_ups_of_the_failed_session() -> None:
     service = object.__new__(SessionService)
     service.clock_timestamp = lambda: __import__("tank.time_precision", fromlist=["x"]).collection_clock()
+    from tank.runtime_contracts import UserQuestionMessage
+
     session = {
+        "session_id": "session",
         "status": "FAILED",
         "message_log": [
             {
@@ -1172,7 +1218,9 @@ def test_reopening_fails_queued_follow_ups_of_the_failed_session() -> None:
             },
         ],
     }
-    service.reopen_for_question(session, {"question_id": "q1"}, "new_q")
+    service.reopen_for_question(
+        session, UserQuestionMessage(kind="USER_QUESTION", session_id="session", question_id="q1"), "new_q"
+    )
     assert session["message_log"][0]["turn_status"] == "FAILED"
     assert session["message_log"][1]["turn_status"] == "ACCEPTING"
     assert session["retired_message_ids"] == ["old_q"] and session["status"] == "OPEN"
@@ -1277,7 +1325,7 @@ async def test_fired_agent_watch_wakes_the_session_that_armed_it() -> None:
         thresholds=Settings(_env_file=None).thresholds(),
         versions=fixture_versions(),
     )
-    await scheduler.eval_conditions({"cutoff": iso(now)})
+    await scheduler.eval_conditions(propagate_timestamp({"cutoff": iso(now)}, "cutoff"))
     jobs = await repo.list("ops.jobs", filters={"type": "AGENT_MESSAGE"})
     assert (
         jobs[0]["payload"]["kind"] == "CONDITION_FIRED" and jobs[0]["payload"]["session_id"] == "ses_followup"
@@ -1384,6 +1432,10 @@ async def test_interrupted_file_send_is_not_repeated_blindly() -> None:
             "channel": "telegram:answer",
             "question_id": question_id,
             "call_id": "call_x",
+            "session_id": "ses_1",
+            "chat_id": str(USER),
+            "purpose": "ATTACHMENT",
+            "filename": "a.pdf",
             "status": "GENERATED",
             "attempt": 1,
             "at": "2027-01-15T08:00:00Z",
@@ -1393,8 +1445,10 @@ async def test_interrupted_file_send_is_not_repeated_blindly() -> None:
     telegram = FakeTelegram()
     async with httpx.AsyncClient(transport=httpx.MockTransport(telegram)) as http:
         inbox = TelegramInbox(repo, inbox_settings(), http=http)
-        result = await inbox.send_session_file(question_id, "call_x", "a.pdf", b"x")
-    assert result["sent"] == "UNKNOWN" and telegram.sent == []
+        result = await inbox.send_session_file(
+            FollowupRefusalTarget(question_id=question_id, session_id="ses_1"), "call_x", "a.pdf", b"x"
+        )
+    assert result.sent == "UNKNOWN" and telegram.sent == []
 
 
 @pytest.mark.asyncio

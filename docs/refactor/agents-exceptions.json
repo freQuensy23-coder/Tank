@@ -2595,6 +2595,424 @@
         "test_new_running_observation_does_not_reuse_an_earlier_end_turn_as_completion",
         "test_send_telegram_file_replies_with_the_session_output_once"
       ]
+    },
+    {
+      "sites": [
+        {
+          "path": "src/tank/agents/session_following.py",
+          "symbol": "FollowedSession",
+          "line": 12
+        },
+        {
+          "path": "src/tank/agents/session_following.py",
+          "symbol": "RecordedEventDecision",
+          "line": 38
+        },
+        {
+          "path": "src/tank/agents/sessions.py",
+          "symbol": "follower_state",
+          "line": 2458
+        }
+      ],
+      "kind": "unreported lifecycle and tool-result facts",
+      "reason": "runtime_status/event_id are required nullable projections of genuinely unreported local state; a missing local row or a row removed during readback returns no owned follower state and never creates one. is_event=None is an unreported record_event result, including absent/null stored result, and never becomes no_event=True. Only actual false under the matching session scope authorizes that local fact. Native absence/archive is a typed unavailable observation; it never manufactures RUNNING/ENDED or a native termination receipt. Later changed local state wins an in-flight readback.",
+      "validation": [
+        "test_follower_recovers_only_actual_reported_native_status",
+        "test_unavailable_follower_preserves_unknown_runtime_and_does_not_invent_termination",
+        "test_invalid_follower_fact_refuses_before_local_state_changes",
+        "test_later_local_event_state_wins_over_inflight_native_readback",
+        "test_unreported_event_decision_is_not_an_observed_no_event_or_foreign_fact",
+        "test_postgres_missing_follower_records_observation_without_terminal_or_runtime_guess"
+      ]
+    },
+    {
+      "sites": [
+        {
+          "path": "src/tank/agents/session_following.py",
+          "symbol": "native_runtime_status",
+          "line": 56
+        },
+        {
+          "path": "src/tank/agents/sessions.py",
+          "symbol": "follow",
+          "line": 2495
+        }
+      ],
+      "kind": "fixed protocol translation and owned-task startup absence",
+      "reason": "The states mapping is a closed NativeLifecycle-to-SessionRuntimeStatus translation, with no unknown-status default. stream_task=None is the not-yet-created owned task during startup/exception cleanup; only that actual task is cancelled and awaited. NativeFollowerUnavailable retains existing bounded retry/backoff rather than turning missing resources into terminal sessions or repeatedly creating fresh followers.",
+      "validation": [
+        "test_follower_recovers_only_actual_reported_native_status",
+        "test_missing_follower_cleans_owned_stream_and_preserves_retry_loop"
+      ]
+    },
+    {
+      "sites": [
+        {
+          "path": "src/tank/agents/session_reopening.py",
+          "symbol": "ReopenState",
+          "line": 22
+        },
+        {
+          "path": "src/tank/agents/session_reopening.py",
+          "symbol": "reopen_question_session",
+          "line": 83
+        }
+      ],
+      "kind": "unreported historical indexes and sparse persistence transition",
+      "reason": "retired=None means the old controller did not record a retired index; an explicitly null reported index rejects. Missing historical turn_status remains unknown and no native status is inferred. Sparse raw session/history objects are handled only by the named persistence mutation adapter, preserving unrelated bytes; lazy absent reopened history starts with the first actual controller observation, whereas reported null/non-array history rejects. New retired IDs come only from actual unfinished journal owners; completed/current owners survive. Reopening requires matching session/question target and a real clock before mutation.",
+      "validation": [
+        "test_reopening_retires_actual_unfinished_owners_and_preserves_completed_current_and_opaque_facts",
+        "test_invalid_reopening_refuses_before_mutating_observed_session",
+        "test_reopening_fails_queued_follow_ups_of_the_failed_session"
+      ]
+    },
+    {
+      "sites": [
+        {
+          "path": "src/tank/runtime_worker_repository.py",
+          "symbol": "RepositoryWorkerQueue",
+          "line": 25
+        },
+        {
+          "path": "src/tank/runtime_dispatch_contracts.py",
+          "symbol": "RunningJobClaim",
+          "line": 119
+        },
+        {
+          "path": "src/tank/runtime_dispatch_contracts.py",
+          "symbol": "RequeueRequest",
+          "line": 180
+        }
+      ],
+      "kind": "sparse queue persistence and phase-specific ownership",
+      "reason": "Original raw documents remain only inside the queue adapter for sparse writes, so unrelated historical receipt omissions survive. The application receives concrete commands; lifecycle requests consume only actual job/kind/RUNNING/positive-attempt/original-payload-digest facts, not unused full command data. Missing/currently changed rows return False without effects; absent dependencies return None for explicit failure policy, never completion. Optional expiry=None is actual unbounded lifetime; expiry writes require a real supplied observation boundary. A zero recovered claim cannot authorize execution or be replaced by one; its original raw revision is quarantined once with static sanitized diagnostics.",
+      "validation": [
+        "test_worker_requeue_preserves_actual_scope_and_refunds_only_its_claimed_attempt",
+        "test_changed_command_cannot_be_requeued_by_an_older_claim",
+        "test_worker_expiry_requires_actual_due_boundary_and_preserves_attempt_count",
+        "test_requeue_does_not_normalize_unrelated_historical_receipt_fields",
+        "test_unproved_zero_claim_attempt_is_quarantined_without_inventing_one"
+      ]
+    },
+    {
+      "sites": [
+        {
+          "path": "src/tank/runtime_retry.py",
+          "symbol": "worker_retry_schedule",
+          "line": 34
+        },
+        {
+          "path": "src/tank/runtime_retry.py",
+          "symbol": "ApplicationBackoff",
+          "line": 12
+        }
+      ],
+      "kind": "explicit application backoff versus provider absence",
+      "reason": "TelegramResponseError.retry_after=None is genuine unreported optional provider metadata and remains None on the exception. A reported positive Telegram delay is used directly; DeliveryError carries its actual delivery directive, including known zero. Errors without a usable reported Telegram delay use the declared existing exponential application policy from the validated actual attempt count, saturated at 60 without unbounded exponentiation. No arbitrary getattr retry field, default attempt 1, or fabricated provider retry_after is used. This is application scheduling policy, not recovered wire evidence.",
+      "validation": [
+        "test_real_answer_error_requeues_or_finishes_using_reported_or_application_delay",
+        "test_backoff_uses_actual_count_and_saturates_without_exponentiating_unbounded_input",
+        "test_reported_delay_and_delivery_zero_are_not_treated_as_absence",
+        "test_invalid_attempt_cannot_acquire_a_default_counter"
+      ]
+    },
+    {
+      "sites": [
+        {
+          "path": "src/tank/contracts/question_retirement.py",
+          "symbol": "QueuedQuestionSession",
+          "line": 21
+        },
+        {
+          "path": "src/tank/contracts/question_retirement.py",
+          "symbol": "ActiveQuestionIntent",
+          "line": 26
+        },
+        {
+          "path": "src/tank/contracts/question_retirement.py",
+          "symbol": "UnknownQuestionAcceptance",
+          "line": 30
+        },
+        {
+          "path": "src/tank/agents/sessions.py",
+          "symbol": "reconcile_answers",
+          "line": 1266
+        }
+      ],
+      "kind": "actual unreported session/input bindings",
+      "reason": "Queued questions can retain an unreported session binding; they never acquire a guessed native session and do not block independently bound questions. A missing active pointer means no recorded active intent. PENDING/RUNNING/null turn phase without retained initial acceptance is explicit unknown state and produces a named host refusal before answer/native effects. HTTP/validation/missing-record failures during answer reconciliation defer settlement and write no completion marker; malformed discovery bindings are not converted into valid state.",
+      "validation": [
+        "test_unbound_queued_question_cannot_invent_a_session_or_block_a_bound_answer",
+        "test_unproved_acceptance_does_not_become_an_unsent_intent"
+      ]
+    },
+    {
+      "sites": [
+        {
+          "path": "src/tank/agents/outbound_inputs.py",
+          "symbol": "retained_outbound_acceptance",
+          "line": 172
+        },
+        {
+          "path": "src/tank/agents/sessions.py",
+          "symbol": "abandon_question",
+          "line": 1192
+        }
+      ],
+      "kind": "phase-specific retained native acceptance and local retirement index",
+      "reason": "An observed ACCEPTED/UNREPORTED/EMPTY receipt, actual sent_at, or retained native input identity proves prior acceptance without consuming an unused historical body/retry budget. An unreported legacy receipt/native ID/clock remains explicit, never fabricated. No witness returns None, which does not mean unsent: unknown phases refuse. The retired_message_ids default empty list means no IDs were recorded in that local controller index; new entries are only actual observed owners. It never supplies retry/sequence provenance. Session/journal dictionaries are sparse persistence mutation boundaries protected by the existing controller send lock then actual session lock; already answered both-ID questions reconcile idempotent delivery without reconstructing unused input lineage. No cross-controller POST safety claim is made.",
+      "validation": [
+        "test_initial_acceptance_without_reported_id_is_preserved_as_accepted",
+        "test_accepted_question_retirement_does_not_require_unused_historical_body_or_budget",
+        "test_actual_postgres_retirement_preserves_native_acceptance_through_owned_post_races"
+      ]
+    },
+    {
+      "sites": [
+        {
+          "path": "src/tank/runtime_contracts.py",
+          "symbol": "read_failure_marker",
+          "line": 348
+        },
+        {
+          "path": "src/tank/runtime_contracts.py",
+          "symbol": "NoFailureProgress",
+          "line": 290
+        },
+        {
+          "path": "src/tank/runtime_contracts.py",
+          "symbol": "NoTerminalDelivery",
+          "line": 294
+        },
+        {
+          "path": "src/tank/runtime_contracts.py",
+          "symbol": "recorded_failure_reason",
+          "line": 456
+        }
+      ],
+      "kind": "requested failure phases and genuinely unreported clocks/error text",
+      "reason": "Wholly absent/all-null reconciliation clocks are unreported; explicit unavailable timestamps retain their reason and value=None. Consumers check actual marker.value before treating them as occurred. Disabled/not-applicable progress and unrequested/not-applicable notifications are closed named phases, never missing required payload fallbacks. A genuinely null stored last_error uses an explicitly tagged actual job-state reason; supplied and stored reasons remain distinct, and blank supplied errors reject. Raw job payload dictionaries are decoded only at the queue boundary into strict concrete notifications. Internal by_name revalidation applies only after wire admission, preserving strict public _depends_on aliases.",
+      "validation": [
+        "test_explicit_unknown_failure_clock_preserves_reason_without_claiming_occurrence",
+        "test_pending_unknown_clock_remains_eligible_without_a_handled_marker",
+        "test_terminal_failure_keeps_wire_alias_admission_and_revalidates_typed_payload",
+        "test_terminal_delivery_requires_the_actual_integer_attempt_before_any_effect"
+      ]
+    },
+    {
+      "sites": [
+        {
+          "path": "src/tank/contracts/question_retirement.py",
+          "symbol": "QuestionFailureRefusalLedger",
+          "line": 82
+        },
+        {
+          "path": "src/tank/runtime_failure_repository.py",
+          "symbol": "read_question_refusal_ledger",
+          "line": 55
+        },
+        {
+          "path": "src/tank/runtime_failure_repository.py",
+          "symbol": "RepositoryRuntimeFailures",
+          "line": 84
+        },
+        {
+          "path": "src/tank/runtime.py",
+          "symbol": "reconcile_delivery_failures",
+          "line": 385
+        }
+      ],
+      "kind": "dynamic request-digest index and exact sparse queue adapter",
+      "reason": "The ledger is an associative index keyed by actual request SHA256 with strict typed receipt values. A missing host-refusal field supplies no recorded entries for the first actual append; explicit null/malformed keys/scope reject and no native historical refusal is inferred. Raw queue documents remain only at the adapter for exact guarded sparse writes, preserving unrelated fields and prior controller/clock receipts. Missing/changed rows skip effects; an absent reconciliation attempt clock means this controller has not attempted it yet. Required receipt clocks and captured controller identities have no defaults. Only explicit transient driver/connection errors become sanitized unavailable outcomes; permanent driver rejection/global malformed state never becomes handled. Unknown retirement writes a host receipt before any handled marker, preserves native facts, and does not starve unrelated worker jobs.",
+      "validation": [
+        "test_receipt_write_failure_does_not_starve_fresh_worker_work_or_invent_a_question_answer",
+        "test_actual_postgres_worker_refusal_is_durable_and_preserves_fresh_work_after_persistence_failure",
+        "test_changed_job_target_cannot_execute_or_mark_an_older_failure_command",
+        "test_invalid_persistence_is_not_relabelled_as_retryable_availability_or_handled",
+        "test_actual_missing_native_observation_reconciles_changed_facts_without_rewriting_past_refusal"
+      ]
+    },
+    {
+      "sites": [
+        {
+          "path": "src/tank/contracts/jobs.py",
+          "symbol": "JobMetadata",
+          "line": 13
+        }
+      ],
+      "kind": "unreported historical admission-wait metadata",
+      "reason": "The real AdmissionDeferred writer emits canonical slot_waiting_since precision/reason/bucket-anchor facets. These fields are optional only because retained scalar-only/all-null-facet rows genuinely did not report precision. Any non-null facet uses Timestamp coherence validation; otherwise a present scalar must be an aware timestamp. Absence does not gain a precision/reason. Unknown fields remain forbidden.",
+      "validation": [
+        "test_admission_defer_clock_is_closed_and_the_next_typed_claim_remains_valid",
+        "test_legacy_slot_clock_does_not_gain_invented_precision_or_reason",
+        "test_invalid_slot_clock_refuses_before_any_repository_write",
+        "test_real_admission_defer_then_wake_preserves_typed_queue_contract",
+        "test_scalar_or_null_wait_metadata_roundtrips_without_invented_precision",
+        "test_incoherent_wait_clock_rejects_before_any_queue_write"
+      ]
+    },
+    {
+      "sites": [
+        {
+          "path": "src/tank/agents/native_file_preparation.py",
+          "symbol": "NativeFilePreparationService.save"
+        },
+        {
+          "path": "src/tank/agents/native_file_preparation.py",
+          "symbol": "NativeEffectReceipts"
+        },
+        {
+          "path": "src/tank/agents/native_file_preparation.py",
+          "symbol": "NativeFileTransport.request"
+        }
+      ],
+      "kind": "native cache and HTTP boundaries",
+      "reason": "Raw cache dictionaries preserve unrelated captured fields; the receipt map is a typed actual digest index, not a domain payload facade. Missing historical phase refuses rather than initializes fresh state. Optional transport body/file/page are genuine mutually exclusive HTTP options. Absent receipt index initializes only when recording an actual observed effect; explicit null refuses. Resource optional fields preserve actual protocol absence, and controller clocks never attest remote occurrence.",
+      "validation": [
+        "test_http_observes_committed_phases_outside_parent_session_transaction",
+        "test_concurrent_controller_observes_unconfirmed_upload_without_second_post",
+        "test_cancellation_drains_owned_native_effect_and_commits_observed_receipt",
+        "test_observed_upload_identity_survives_changed_cache_ownership_without_mount",
+        "test_explicit_null_effect_ledger_refuses_before_native_effect"
+      ]
+    },
+    {
+      "sites": [
+        {
+          "path": "src/tank/contracts/jobs.py",
+          "symbol": "JobMetadata",
+          "line": 13
+        }
+      ],
+      "kind": "unreported historical admission-wait metadata",
+      "reason": "The real AdmissionDeferred writer emits canonical slot_waiting_since precision/reason/bucket-anchor facets. These fields are optional only because retained scalar-only/all-null-facet rows genuinely did not report precision. Any non-null facet uses Timestamp coherence validation; otherwise a present scalar must be an aware timestamp. Absence does not gain a precision/reason. Unknown fields remain forbidden.",
+      "validation": [
+        "test_real_admission_defer_then_wake_preserves_typed_queue_contract",
+        "test_scalar_or_null_wait_metadata_roundtrips_without_invented_precision",
+        "test_incoherent_wait_clock_rejects_before_any_queue_write"
+      ]
+    },
+    {
+      "sites": [
+        {
+          "path": "src/tank/runtime.py",
+          "symbol": "Runtime.eval_conditions_wire",
+          "line": 206
+        },
+        {
+          "path": "src/tank/runtime_evaluation.py",
+          "symbol": "evaluate_condition_job",
+          "line": 17
+        }
+      ],
+      "kind": "queue wire boundary",
+      "reason": "The input dictionary is the actual persisted queue payload, admitted once as EvalConditionsJob. The output dictionary is only the ops.jobs.result JSON representation of a revalidated ConditionEvaluationResult. Nullable cutoff metadata preserves actual provenance; no clock/default is inferred.",
+      "validation": [
+        "test_actual_tick_queue_worker_preserves_cutoff_and_stores_real_evaluation_result",
+        "test_worker_refuses_missing_or_invalid_cutoff_without_calling_evaluator_or_guessing_clock",
+        "test_constructed_invalid_receipt_cannot_cross_result_boundary"
+      ]
+    },
+    {
+      "sites": [
+        {
+          "path": "src/tank/agents/native_file_preparation.py",
+          "symbol": "NativeFileTransport.metadata"
+        },
+        {
+          "path": "src/tank/contracts/native_files.py",
+          "symbol": "NativeVerifiedFileMetadata"
+        },
+        {
+          "path": "src/tank/agents/native_file_preparation.py",
+          "symbol": "cached_source"
+        }
+      ],
+      "kind": "consumed native metadata and historical cache projection",
+      "reason": "The readback confirms actual requested file metadata and ID; cached SHA is not a remote attestation. Native metadata scope None means no session scope was reported, and optional downloadability remains unreported when omitted. Known-ID recovery projects only actual cache owner/key/digest/name/MIME/size, preserving unconsumed original sender metadata/bytes as absent rather than reconstructing them. Legacy mount pointers remain a distinct observed-resource phase.",
+      "validation": [
+        "test_contradictory_file_metadata_preserves_id_and_refuses_mount_then_recovers_read_only",
+        "test_known_upload_recovery_does_not_reconstruct_unused_historical_mime_or_bytes",
+        "test_retained_mount_pointer_requires_actual_scoped_resource_and_preserves_history"
+      ]
+    },
+    {
+      "sites": [
+        {
+          "path": "src/tank/runtime_contracts.py",
+          "symbol": "ReplayBinding.actual_replay_schedule"
+        },
+        {
+          "path": "src/tank/runtime_contracts.py",
+          "symbol": "SourceMessage.authored_reference_is_bound"
+        }
+      ],
+      "kind": "actual replay clock and reference absence",
+      "reason": "Replay timing is genuine optional producer metadata. An aware scalar with wholly unreported facets remains unreported; no precision/reason is invented. Reported facets validate Timestamp. The exact authored-reference origin/strict-false pair requires actual replay run/time and cannot relabel a captured source session. Ordinary historical messages retain actual source-session lineage without inventing an origin or historical=True. Live composition refuses these metadata facts.",
+      "validation": [
+        "test_scalar_replay_clock_preserves_unreported_precision_and_original_wire_presence",
+        "test_reference_annotation_cannot_coerce_or_guess_nonhistorical_fact",
+        "test_live_resolution_refuses_unbound_clock_even_when_called_without_message_admission",
+        "test_actual_f24_phases_postgres",
+        "test_native_replay_captured_delivery_creates_fresh_call_and_reruns_expiry"
+      ]
+    },
+    {
+      "sites": [
+        {
+          "path": "src/tank/agents/native_output_files.py",
+          "symbol": "output_request"
+        },
+        {
+          "path": "src/tank/agents/native_output_files.py",
+          "symbol": "SessionOutputFiles.send"
+        },
+        {
+          "path": "src/tank/agents/sessions.py",
+          "symbol": "SessionService.send_file"
+        },
+        {
+          "path": "src/tank/telegram_inbox.py",
+          "symbol": "TelegramInbox.lookup_session_file"
+        }
+      ],
+      "kind": "owned output-file wire and genuine phase absence",
+      "reason": "Input dictionaries are the actual native-tool arguments and retained owner journal at admission; use-case reads named request attributes. Caption None denotes omitted tool input, while explicit null/malformed supplied caption refuses. Content None means no successful bounded read yet, distinct from observed empty bytes. Locked lookup None means no prior receipt blocks a fresh send, after credential validation; cached SENT/UNKNOWN need neither credentials nor unused native bytes. The remaining Session telegram=None is its existing explicit unconfigured/offline dependency state and refuses, not a fabricated success. Output dictionary is only native-tool JSON serialization of the validated outcome. Whole constructor/composition migration remains open.",
+      "validation": [
+        "test_invalid_caption_refuses_before_native_get_or_delivery_intent",
+        "test_foreign_stored_question_refuses_before_native_get_or_telegram",
+        "test_absent_owner_cannot_recover_stale_last_payload_for_file_output",
+        "test_known_sent_returns_cached_receipt_without_native_bytes_or_credentials",
+        "test_unknown_earlier_delivery_returns_without_native_get_or_telegram_post",
+        "test_rebound_question_after_native_get_is_rechecked_before_telegram_post"
+      ]
+    },
+    {
+      "sites": [
+        {
+          "path": "src/tank/agents/message_dispatch.py",
+          "symbol": "MessageDispatchRequest.original_wire"
+        },
+        {
+          "path": "src/tank/agents/context.py",
+          "symbol": "ModelContext.message"
+        },
+        {
+          "path": "src/tank/agents/sessions.py",
+          "symbol": "SessionService.send_message"
+        },
+        {
+          "path": "src/tank/runtime_dispatch_contracts.py",
+          "symbol": "ClaimedWork.job"
+        }
+      ],
+      "kind": "original queue wire evidence and transitional session read boundary",
+      "reason": "Closed AgentMessage and RuntimeCommand fields supply business facts. The actual original wire dictionary and its verified digest preserve input field presence, context evidence, persisted journal identity and original idempotency key; normalized DTO serialization is not asserted to be original evidence. ClaimedWork retains the authoritative JobEnvelope for actual job ownership and claim-aware reaction coordination. Existing send_message remains caller wire admission followed by authoritative session lookup while reserved replay callers migrate; it does not infer native acceptance from row existence. Whole Session aggregate/body and whole Runtime worker typing remain open.",
+      "validation": [
+        "test_actual_message_dispatch_preserves_wire_key_and_confirmed_phase_on_retry",
+        "test_mutated_admitted_message_cannot_change_original_owner_or_identity",
+        "test_constructed_work_cannot_replace_command_behind_original_claim"
+      ]
     }
   ]
 }

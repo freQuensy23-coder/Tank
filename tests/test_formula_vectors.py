@@ -10,6 +10,7 @@ from pathlib import Path
 import pytest
 from scheduling_support import RecordingReactionScheduling
 from source_support import fixture_http_admission, fixture_versions
+from truth_support import fixture_truth_config, unselected_spot_sign_history
 
 from tank.analysis.page_access import LivePageAccess
 from tank.analysis.truth import decomposition, enrich_evidence, oi_class, spot_truth
@@ -102,7 +103,15 @@ def test_t5_constant_cohort() -> None:
         context_inputs={"rv24": None, "rv_normal_range": None},
     )
     enrich_evidence(
-        {"cutoff": iso(END)}, END - timedelta(hours=1), END, spots, "W1H", {}, rel, {"per_venue": []}
+        {"cutoff": iso(END)},
+        END - timedelta(hours=1),
+        END,
+        spots,
+        "W1H",
+        {},
+        rel,
+        {"per_venue": []},
+        sign_history=unselected_spot_sign_history("T", END - timedelta(hours=1), END),
     )
     comparison = spots["W1H"]["cohort_comparisons"]["W24H"]
     assert comparison["cohort"] == ["binance", "kraken", "okx"]
@@ -296,7 +305,7 @@ def test_t8_data_confidence_medium_funding_freshness_blocks_start() -> None:
     from tank.analysis.decisions import DecisionEngine
     from tank.analysis.truth import compute_market_truth
 
-    truth = compute_market_truth(_three_venue_snapshot_with_stale_funding())
+    truth = compute_market_truth(_three_venue_snapshot_with_stale_funding(), config=fixture_truth_config())
     dc = truth["data_confidence"]
     assert truth["spot"][truth["primary_window"]]["coverage"]["n_complete"] == 3
     assert dc["derivatives_native_coverage_ready"] is True

@@ -167,3 +167,22 @@ def recoverable_outbound_inputs(session: dict[str, JsonValue]) -> tuple[PendingO
             if isinstance(phase, PendingOutboundInput):
                 pending.append(phase)
     return tuple(pending)
+
+
+def retained_outbound_acceptance(record: dict[str, JsonValue]) -> AcceptedOutboundInput | None:
+    """Read prior acceptance for retirement without consuming unused body or retry budget."""
+    if "initial_input_acceptance" in record:
+        receipt: NativeInputAcknowledgment | LegacyUnreportedAcceptance = RecordedReceipt.model_validate(
+            {"receipt": record["initial_input_acceptance"]}
+        ).receipt
+    else:
+        identity = RecordedInputIdentity.model_validate({"event_id": record.get("remote_event_id")}).event_id
+        if identity is None and record.get("sent_at") is None:
+            return None
+        receipt = LegacyUnreportedAcceptance(status="LEGACY_UNREPORTED", reason="RECEIPT_NOT_RETAINED")
+    return AcceptedOutboundInput(
+        phase="ACCEPTED",
+        message_id=MessageIdentity.model_validate({"message_id": record["message_id"]}).message_id,
+        receipt=receipt,
+        sent_at=propagate_timestamp(record, "sent_at") if "sent_at" in record else None,
+    )

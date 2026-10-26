@@ -11,6 +11,7 @@ from tank.analysis.page_access import LivePageAccess
 from tank.event_tools import EventToolService
 from tank.http_admission import ConfiguredHttpAdmission
 from tank.request_budget import MemoryBudgetBackend, RequestLedger, build_budget_backend
+from tank.runtime_failure_repository import RepositoryRuntimeFailures
 from tank.settings import Settings, resolve_versions
 from tank.sources import SourceService
 from tank.storage import MemoryRepository, PostgresRepository
@@ -55,6 +56,9 @@ async def test_production_composition_binds_the_real_scheduler_and_owns_shutdown
         assert runtime.market.admission.versions == settings.require_versions()
         assert isinstance(tools.pages, LivePageAccess)
         assert tools.pages.admission is runtime.market.admission
+        assert isinstance(runtime.failures, RepositoryRuntimeFailures)
+        assert runtime.failures.store is repo
+        assert runtime.failures.versions == settings.require_versions()
         assert runtime.budget_binding is None
         with pytest.raises(RuntimeError, match="has not been bound"):
             await runtime.budget_scope.wait_host("example.invalid")

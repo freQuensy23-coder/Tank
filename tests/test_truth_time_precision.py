@@ -1,12 +1,12 @@
 """TDD §0 timestamp siblings distinguish chosen bounds from source provenance."""
 
-from types import SimpleNamespace
-
 import pytest
 from source_support import fixture_versions
 from test_truth_start_fixture import synthetic_start_snapshot
+from truth_support import fixture_truth_config
 
 from tank.analysis.truth import MarketTruthService, compute_market_truth
+from tank.settings import Settings
 from tank.util import parse_time
 
 
@@ -49,7 +49,7 @@ def test_pure_truth_selected_bounds_exact_and_source_precision_propagated() -> N
 
     snapshot = packet()
     original = deepcopy(snapshot)
-    result = compute_market_truth(snapshot)
+    result = compute_market_truth(snapshot, config=fixture_truth_config())
     assert snapshot == original
     assert result["cutoff_prec"] == "EXACT"
     assert result["requested_cutoff_prec"] == "EXACT"
@@ -82,13 +82,13 @@ async def test_actual_service_preserves_event_public_and_anchor_precision_withou
             return value
 
     result = await MarketTruthService(
-        Repo(), SimpleNamespace(config_version="t", code_version="t"), Market(), versions=fixture_versions()
+        Repo(), Settings(_env_file=None), Market(), versions=fixture_versions()
     ).assess("E", "T", "2026-10-16T12:00:00Z")
     assert result["event_public_at_prec"] == "BUCKET(1h)"
     assert result["relative"]["anchor"]["ts_prec"] == "BUCKET(1h)"
     del event["public_at_prec"]
     legacy = await MarketTruthService(
-        Repo(), SimpleNamespace(config_version="t", code_version="t"), Market(), versions=fixture_versions()
+        Repo(), Settings(_env_file=None), Market(), versions=fixture_versions()
     ).assess("E", "T", "2026-10-16T12:00:00Z")
     assert legacy["event_public_at_prec"] is None
     assert legacy["relative"]["anchor"]["ts_prec"] is None
@@ -99,7 +99,7 @@ def test_supplied_uncertain_cutoff_and_offset_window_bounds_keep_uncertainty(pre
     snapshot = packet()
     snapshot["cutoff_prec"] = precision
     snapshot["cutoff_prec_reason"] = "INCOMPLETE" if precision is None else None
-    result = compute_market_truth(snapshot)
+    result = compute_market_truth(snapshot, config=fixture_truth_config())
     assert result["cutoff_prec"] == precision
     assert result["requested_cutoff_prec"] == precision
     assert result["relative"]["windows"]["W1H"]["start_prec"] == precision
@@ -126,6 +126,6 @@ def test_actual_book_canonical_exchange_timestamp_reaches_liquidity_precision() 
     summary = book.summary(received_ts=snapshot["assembled_at"])
     assert summary["exchange_ts_prec"] == "EXACT"
     snapshot["books"] = [row for row in snapshot["books"] if row["instrument_id"] != iid] + [summary]
-    result = compute_market_truth(snapshot)
+    result = compute_market_truth(snapshot, config=fixture_truth_config())
     observed = next(row for row in result["liquidity"]["per_venue"] if row["venue"] == "A")
     assert observed["precision"] == "EXACT"
