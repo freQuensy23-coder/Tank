@@ -1,16 +1,26 @@
 """Telegram response admission before application writes or offset confirmation."""
 
+import re
 from collections.abc import Mapping
+from urllib.parse import quote
 
+import httpx
 from pydantic import JsonValue, ValidationError
 
 from tank.contracts.json import decode_unique_json
 from tank.contracts.telegram_wire import (
     TelegramChatIdentity,
+    TelegramDownloadedFile,
     TelegramEmptyUpdate,
     TelegramFailure,
+    TelegramFileInfo,
+    TelegramFileReference,
+    TelegramMediaKind,
+    TelegramMediaSelection,
     TelegramMessageIdentity,
     TelegramMessageReceipt,
+    TelegramNamedFile,
+    TelegramPhotoSize,
     TelegramSenderIdentity,
     TelegramSentMessageReceipt,
     TelegramSuccess,
@@ -24,10 +34,13 @@ class TelegramProtocolError(ValueError):
 
 
 class TelegramResponseError(RuntimeError):
-    def __init__(self, method: str, status: int, *, retry_after: int | None) -> None:
+    def __init__(
+        self, method: str, status: int, *, retry_after: int | None, failure: TelegramFailure | None = None
+    ) -> None:
         super().__init__(f"Telegram {method} rejected (HTTP {status})")
         self.status = status
         self.retry_after = retry_after
+        self.failure = failure
 
 
 def response_result(payload: bytes, *, method: str, status: int) -> JsonValue:
@@ -38,7 +51,7 @@ def response_result(payload: bytes, *, method: str, status: int) -> JsonValue:
         if document.get("ok") is False:
             failure = TelegramFailure.model_validate(document)
             retry_after = failure.parameters.retry_after if failure.parameters is not None else None
-            raise TelegramResponseError(method, status, retry_after=retry_after)
+            raise TelegramResponseError(method, status, retry_after=retry_after, failure=failure)
         success = TelegramSuccess.model_validate(document)
     except TelegramResponseError:
         raise
@@ -70,6 +83,8 @@ def message_receipt(document: dict[str, JsonValue]) -> TelegramMessageReceipt:
             else None,
         }
     )
+    if identity.message_id != 0:
+        media_selection(document)
     return TelegramMessageReceipt(identity=identity, source_message=document)
 
 
@@ -134,3 +149,132 @@ def sent_message_receipt(result: JsonValue) -> TelegramSentMessageReceipt:
         )
     except (ValueError, ValidationError):
         raise TelegramProtocolError("Telegram sent message receipt is invalid") from None
+
+
+MEDIA_KINDS: tuple[TelegramMediaKind, ...] = ("document", "photo", "video", "audio", "voice", "animation")
+
+
+def media_selection(message: Mapping[str, JsonValue]) -> TelegramMediaSelection | None:
+    """Select actual file identity and declared metadata; unknown size stays unknown."""
+    for kind in MEDIA_KINDS:
+        if kind not in message:
+            continue
+        value = message[kind]
+        item: TelegramFileReference
+        file_name: str | None = None
+        reported_mime_type: str | None = None
+        if kind == "photo":
+            if not isinstance(value, list) or not value:
+                raise ValueError("Telegram photo requires declared sizes")
+            sizes: list[TelegramPhotoSize] = []
+            for candidate in value:
+                if not isinstance(candidate, dict):
+                    raise ValueError("Telegram photo size requires an object")
+                sizes.append(
+                    TelegramPhotoSize.model_validate(
+                        {
+                            field: candidate[field]
+                            for field in TelegramPhotoSize.model_fields
+                            if field in candidate
+                        }
+                    )
+                )
+            item = max(sizes, key=lambda photo: photo.width * photo.height)
+        else:
+            if not isinstance(value, dict):
+                raise ValueError("Telegram media requires its file object")
+            named = TelegramNamedFile.model_validate(
+                {field: value[field] for field in TelegramNamedFile.model_fields if field in value}
+            )
+            item = named
+            file_name = named.file_name
+            reported_mime_type = named.mime_type
+        message_id = message["message_id"]
+        if not isinstance(message_id, int) or isinstance(message_id, bool) or message_id <= 0:
+            raise ValueError("Telegram attachment requires its usable message identity")
+        name = file_name if file_name is not None and file_name else f"{kind}-{message_id}"
+        filename = re.sub(r"[^A-Za-z0-9._-]+", "_", name).strip("._")
+        if not filename:
+            filename = f"file-{message_id}"
+        return TelegramMediaSelection(
+            kind=kind,
+            file_id=item.file_id,
+            file_unique_id=item.file_unique_id,
+            filename=filename[:120],
+            reported_mime_type=reported_mime_type,
+            declared_size=item.file_size,
+        )
+    return None
+
+
+class FileTooLarge(ValueError):
+    """The actual declared or received file bytes exceed the Bot API download limit."""
+
+
+async def download_file(
+    http: httpx.AsyncClient, *, token: str, media: TelegramMediaSelection, limit: int
+) -> TelegramDownloadedFile:
+    if limit <= 0:
+        raise ValueError("Telegram file byte limit must be positive")
+    if media.declared_size is not None and media.declared_size > limit:
+        raise FileTooLarge("Telegram declared file size exceeds download byte limit")
+    try:
+        response = await http.post(
+            f"https://api.telegram.org/bot{token}/getFile",
+            json={"file_id": media.file_id},
+            follow_redirects=False,
+        )
+        try:
+            result = response_result(response.content, method="getFile", status=response.status_code)
+        except TelegramResponseError as error:
+            if (
+                error.status == 400
+                and error.failure is not None
+                and error.failure.error_code == 400
+                and error.failure.description == "Bad Request: file is too big"
+            ):
+                raise FileTooLarge("Telegram refused the oversized file download") from None
+            raise
+        try:
+            info = TelegramFileInfo.model_validate(result)
+        except ValidationError:
+            raise TelegramProtocolError("Telegram getFile result is invalid") from None
+        if info.file_unique_id != media.file_unique_id:
+            raise TelegramProtocolError("Telegram getFile identity conflicts with the selected attachment")
+        if info.file_size is not None and info.file_size > limit:
+            raise FileTooLarge("Telegram getFile declared size exceeds download byte limit")
+        if (
+            media.declared_size is not None
+            and info.file_size is not None
+            and media.declared_size != info.file_size
+        ):
+            raise TelegramProtocolError("Telegram getFile size conflicts with the selected attachment")
+        if info.file_path is None:
+            raise TelegramProtocolError("Telegram getFile did not provide a download path")
+        if (
+            info.file_path.startswith("/")
+            or "\\" in info.file_path
+            or any(part in (".", "..") for part in info.file_path.split("/"))
+        ):
+            raise TelegramProtocolError("Telegram getFile download path is invalid")
+        url = f"https://api.telegram.org/file/bot{token}/" + quote(info.file_path, safe="/")
+        chunks: list[bytes] = []
+        received = 0
+        async with http.stream("GET", url, follow_redirects=False) as file_response:
+            if file_response.status_code != 200:
+                raise TelegramResponseError("file download", file_response.status_code, retry_after=None)
+            content_type = file_response.headers.get("content-type")
+            async for chunk in file_response.aiter_bytes():
+                received += len(chunk)
+                if received > limit:
+                    raise FileTooLarge("Received Telegram file exceeds download byte limit")
+                chunks.append(chunk)
+        if (info.file_size is not None and received != info.file_size) or (
+            media.declared_size is not None and received != media.declared_size
+        ):
+            raise TelegramProtocolError("Received Telegram file bytes conflict with declared size")
+        return TelegramDownloadedFile(
+            content=b"".join(chunks), response_content_type=content_type, telegram=info
+        )
+    except httpx.HTTPError:
+        raise TelegramProtocolError("Telegram file transport failed") from None

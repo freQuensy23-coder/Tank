@@ -36,7 +36,13 @@ from tank.contracts.session_followups import (
     followup_eligibility,
 )
 from tank.contracts.telegram_wire import (
+    TelegramAttachmentReference,
+    TelegramCachedFile,
+    TelegramDownloadedFile,
+    TelegramFilePayload,
+    TelegramMediaSelection,
     TelegramMessageReceipt,
+    TelegramMimeSelection,
     TelegramSentMessageReceipt,
     TelegramUpdateCursor,
     TelegramUpdateReceipt,
@@ -52,8 +58,11 @@ from tank.question_answers import (
     validate_question_identity,
 )
 from tank.runtime_contracts import TelegramAnswerJob
+from tank.telegram_api import FileTooLarge as FileTooLarge
 from tank.telegram_api import (
     TelegramResponseError,
+    download_file,
+    media_selection,
     message_receipt,
     pairing_sender_id,
     response_result,
@@ -194,7 +203,6 @@ REFERENCE_LIMIT = 1024
 DOCUMENT_LIMIT = 45 * 1024 * 1024
 UPLOAD_LIMIT = 20 * 1024 * 1024
 TOO_LARGE_TEXT = "Файл больше 20 МБ, Telegram не даёт боту его скачать. Пришлите файл поменьше."
-MEDIA_KINDS = ("document", "photo", "video", "audio", "voice", "animation")
 NOT_SENT = (TelegramResponseError, httpx.ConnectError, httpx.ConnectTimeout)
 
 
@@ -219,37 +227,9 @@ def question_message(question):
     return "\n\n".join(lines)
 
 
-class FileTooLarge(ValueError):
-    """Telegram refuses bot downloads above 20 MB; the message is answered and set aside."""
-
-
-def media(message):
-    """The single file a Telegram message carries, if any: the largest photo size or the document."""
-    for kind in MEDIA_KINDS:
-        value = message.get(kind)
-        if not value:
-            continue
-        item = (
-            max(
-                value,
-                key=lambda size: (size.get("file_size") or 0, size.get("width", 0) * size.get("height", 0)),
-            )
-            if kind == "photo"
-            else value
-        )
-        extension = {"photo": ".jpg", "voice": ".ogg", "video": ".mp4", "animation": ".mp4"}.get(kind, "")
-        name = item.get("file_name") or f"{kind}-{message['message_id']}{extension}"
-        safe = re.sub(r"[^A-Za-z0-9._-]+", "_", name).strip("._") or f"file-{message['message_id']}"
-        return {
-            "kind": kind,
-            "file_id": item["file_id"],
-            "file_unique_id": item.get("file_unique_id", item["file_id"]),
-            "filename": safe[:120],
-            "mime": item.get("mime_type")
-            or ("image/jpeg" if kind == "photo" else "application/octet-stream"),
-            "size": int(item.get("file_size") or 0),
-        }
-    return None
+def media(message: Mapping[str, JsonValue]) -> TelegramMediaSelection | None:
+    """The admitted file selection; source metadata is not a downloaded byte receipt."""
+    return media_selection(message)
 
 
 def question_id_for(chat_id, message_id):
@@ -289,22 +269,10 @@ class TelegramInbox:
         response = await self.http.post(self.url(method), json=body)
         return response_result(response.content, method=method, status=response.status_code)
 
-    async def download(self, file_id):
-        try:
-            info = await self.call("getFile", {"file_id": file_id})
-        except RuntimeError as error:
-            if getattr(error, "status", None) == 400:
-                raise FileTooLarge("Telegram refused the file download") from error
-            raise
-        if int(info.get("file_size") or 0) > UPLOAD_LIMIT:
-            raise FileTooLarge("Telegram file exceeds 20 MB")
-        response = await self.http.get(
-            f"https://api.telegram.org/file/bot{self.settings.telegram_token}/{info['file_path']}"
+    async def download(self, item: TelegramMediaSelection) -> TelegramDownloadedFile:
+        return await download_file(
+            self.http, token=self.settings.telegram_token, media=item, limit=UPLOAD_LIMIT
         )
-        response.raise_for_status()
-        if len(response.content) > UPLOAD_LIMIT:
-            raise FileTooLarge("Telegram file exceeds 20 MB")
-        return response.content
 
     async def run(self, stop):
         if not self.enabled:
@@ -520,7 +488,11 @@ class TelegramInbox:
         bot = await self.bot()
         text = message_text(message)
         attachment = media(message)
-        if attachment and attachment["size"] > UPLOAD_LIMIT:
+        if (
+            attachment is not None
+            and attachment.declared_size is not None
+            and attachment.declared_size > UPLOAD_LIMIT
+        ):
             if message.get("forward_origin"):
                 partner = await self.pair(row)
             else:
@@ -732,7 +704,8 @@ class TelegramInbox:
             "session_id": row["session_id"],
             "event_id": row.get("event_id"),
             "question_id": row.get("question_id"),
-            "text": message_text(body) or (media(body) or {}).get("filename"),
+            "text": message_text(body)
+            or (selected.filename if (selected := media(body)) is not None else None),
         }
 
     async def ops_message_target(self, chat_id, ref):
@@ -1153,42 +1126,95 @@ class TelegramInbox:
             event_id=target.get("event_id"),
         )
 
-    async def attachments(self, row, question_id, session_id, *messages):
-        """Download each attached file (at most 20 MB): metadata in ops.telegram_files, bytes in ops.telegram_file_payloads."""
-        stored = []
+    async def attachments(
+        self, question_id: str, session_id: str, *messages: Mapping[str, JsonValue] | None
+    ) -> list[TelegramAttachmentReference]:
+        """Acquire attested file identities without relabelling historical borrowed-ID caches."""
+        stored: list[TelegramAttachmentReference] = []
         for message in messages:
-            item = media(message) if message else None
+            item = media(message) if message is not None else None
             if item is None:
                 continue
-            key = "tgf_" + sha256({"question_id": question_id, "file": item["file_unique_id"]})[:32]
-            existing = await self.repo.get("ops.telegram_files", key)
-            if existing:
-                item.update(filename=existing["filename"], mime=existing["mime"], size=existing["size"])
-            else:
-                content = await self.download(item["file_id"])
-                await self.repo.put(
-                    "ops.telegram_file_payloads",
-                    key,
-                    {"file_key": key, "content_base64": base64.b64encode(content).decode()},
-                )
-                await self.repo.put(
-                    "ops.telegram_files",
-                    key,
+            key = (
+                "tgf_"
+                + sha256(
                     {
-                        "file_key": key,
                         "question_id": question_id,
-                        "session_id": session_id,
-                        "filename": item["filename"],
-                        "mime": item["mime"],
-                        "size": len(content),
-                        "sha256": hashlib.sha256(content).hexdigest(),
-                        **collection_clock(utcnow()).fields("stored_at"),
-                    },
-                )
-                item["size"] = len(content)
-            stored.append(
-                {"file_key": key, "filename": item["filename"], "mime": item["mime"], "size": item["size"]}
+                        "file_unique_id": item.file_unique_id,
+                        "identity_basis": "TELEGRAM_FILE_UNIQUE_ID",
+                    }
+                )[:32]
             )
+            async with self.repo.lock("telegram-file:" + key):
+                existing = await self.repo.get("ops.telegram_files", key)
+                if existing is not None:
+                    cached = TelegramCachedFile.model_validate(
+                        {field: existing[field] for field in TelegramCachedFile.model_fields}
+                    )
+                    if (
+                        cached.file_key != key
+                        or cached.question_id != question_id
+                        or cached.session_id != session_id
+                        or cached.file_unique_id != item.file_unique_id
+                    ):
+                        raise ValueError("Telegram cached attachment ownership conflicts")
+                    payload_record = await self.repo.get("ops.telegram_file_payloads", key)
+                    if payload_record is None:
+                        raise ValueError("Telegram cached attachment bytes are unavailable")
+                    payload = TelegramFilePayload.model_validate(payload_record)
+                    if (
+                        payload.file_key != key
+                        or cached.size > UPLOAD_LIMIT
+                        or len(payload.content_base64) > 4 * ((UPLOAD_LIMIT + 2) // 3)
+                    ):
+                        raise ValueError("Telegram cached attachment payload identity or size conflicts")
+                    try:
+                        content = base64.b64decode(payload.content_base64, validate=True)
+                    except ValueError:
+                        raise ValueError("Telegram cached attachment bytes are invalid") from None
+                    if len(content) != cached.size or hashlib.sha256(content).hexdigest() != cached.sha256:
+                        raise ValueError("Telegram cached attachment bytes conflict with their receipt")
+                else:
+                    downloaded = await self.download(item)
+                    content = downloaded.content
+                    mime = TelegramMimeSelection.from_facts(
+                        item.reported_mime_type, downloaded.response_content_type
+                    )
+                    cached = TelegramCachedFile(
+                        file_key=key,
+                        question_id=question_id,
+                        session_id=session_id,
+                        file_unique_id=item.file_unique_id,
+                        file_identity_basis="TELEGRAM_FILE_UNIQUE_ID",
+                        filename=item.filename,
+                        mime=mime.value,
+                        mime_basis=mime.basis,
+                        reported_mime_type=item.reported_mime_type,
+                        declared_size=item.declared_size,
+                        response_content_type=downloaded.response_content_type,
+                        size=len(content),
+                        sha256=hashlib.sha256(content).hexdigest(),
+                    )
+                    payload = TelegramFilePayload(
+                        file_key=key, content_base64=base64.b64encode(content).decode()
+                    )
+                    async with self.repo.transaction():
+                        await self.repo.put(
+                            "ops.telegram_file_payloads", key, payload.model_dump(mode="json")
+                        )
+                        await self.repo.put(
+                            "ops.telegram_files",
+                            key,
+                            {
+                                **cached.model_dump(mode="json"),
+                                **collection_clock(utcnow()).fields("stored_at"),
+                            },
+                        )
+                stored.append(
+                    TelegramAttachmentReference(
+                        file_key=cached.file_key, filename=cached.filename, mime=cached.mime, size=cached.size
+                    )
+                )
         return stored
 
     async def question(self, row, target, *, forwarded=None):
@@ -1200,7 +1226,7 @@ class TelegramInbox:
             if existing is not None:
                 validate_question_identity(existing, binding)
             files = await self.attachments(
-                row, question_id, target["session_id"], message, forwarded["message"] if forwarded else None
+                question_id, target["session_id"], message, forwarded["message"] if forwarded else None
             )
             if existing is None:
                 await self.repo.put(
@@ -1217,7 +1243,7 @@ class TelegramInbox:
                         "reply_to_message_id": row["message_id"],
                         "forwarded_message_id": forwarded["message_id"] if forwarded else None,
                         "reference": target,
-                        "attachments": files,
+                        "attachments": [file.model_dump(mode="json") for file in files],
                         "telegram_date": message.get("date"),
                         **collection_clock(utcnow()).fields("asked_at"),
                     },
