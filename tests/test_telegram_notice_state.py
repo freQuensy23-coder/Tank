@@ -171,7 +171,11 @@ async def ingest_notice_material(repo: StorageBackend, tmp_path: Path) -> Source
 async def test_real_ops_no_session_cannot_settle_from_another_material_receipt(
     repo: StorageBackend, tmp_path: Path, subject: str
 ) -> None:
-    await ingest_notice_material(repo, tmp_path)
+    material = await ingest_notice_material(repo, tmp_path)
+    source_before = material.storage_record()
+    raw_path = Path(material.raw_ref)
+    raw_before = raw_path.read_bytes()
+    jobs_before = await repo.list("ops.jobs")
 
     def refuse(request: httpx.Request) -> httpx.Response:
         raise AssertionError("Foreign material receipt cannot authorize HTTP")
@@ -210,6 +214,9 @@ async def test_real_ops_no_session_cannot_settle_from_another_material_receipt(
             await inbox.ops_question(row, {"kind": "OPS_ITEM", "item_id": "actual-item", "text": None})
     assert await repo.get("ops.telegram_messages", "42:17") == row
     assert await repo.list("out.deliveries") == before
+    assert await repo.list("ops.jobs") == jobs_before
+    assert await repo.get("ingest.source_items", material.item_id) == source_before
+    assert raw_path.read_bytes() == raw_before
 
 
 async def test_real_ops_no_session_reuses_its_matching_material_receipt_without_new_http(
