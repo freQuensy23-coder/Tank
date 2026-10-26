@@ -22,7 +22,7 @@ from tank.runtime import Runtime
 from tank.sources.raw_store import write_raw_item
 from tank.storage import StorageBackend
 from tank.time_precision import chosen_boundary, collection_clock, offset_schedule
-from tank.util import canonical_json, iso, sha256, utcnow
+from tank.util import canonical_json, iso, new_id, sha256, utcnow
 
 
 async def seed_unverified_event(
@@ -284,10 +284,10 @@ async def test_actual_core_refuses_unattested_resolution_before_message(
     repo: StorageBackend, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, fault: str
 ) -> None:
     async with milestone_runtime(repo, tmp_path, monkeypatch) as context:
-        event_id = context.event_id
+        event_id = new_id("evt") if fault == "foreign-event" else context.event_id
         row = dict(context.event)
         if fault == "foreign-event":
-            row["event_id"] = "foreign"
+            row["event_id"] = new_id("evt")
         elif fault == "null-history":
             row["milestone_resolutions"] = None
         else:
@@ -300,6 +300,8 @@ async def test_actual_core_refuses_unattested_resolution_before_message(
                 MilestoneCheckCommand(event_id=event_id, milestone="VOTE")
             )
         assert not context.router.calls
+        if fault == "foreign-event":
+            assert await repo.get("evt.events", context.event_id) == context.event
     assert await repo.get("evt.events", event_id) == row
     assert await repo.list("ops.jobs") == []
 
@@ -461,8 +463,8 @@ async def test_actual_tool_schedule_validates_before_event_or_queue_effects(
     repo: StorageBackend, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, fault: str
 ) -> None:
     async with milestone_runtime(repo, tmp_path, monkeypatch) as context:
-        event_id = context.event_id
-        event = context.event | ({"event_id": "foreign"} if fault == "foreign-owner" else {})
+        event_id = new_id("evt") if fault == "foreign-owner" else context.event_id
+        event = context.event | ({"event_id": new_id("evt")} if fault == "foreign-owner" else {})
         await repo.put("evt.events", event_id, event)
         name: JsonValue = "VOTE" if fault == "foreign-owner" else "" if fault == "blank-name" else None
         due = chosen_boundary(utcnow(), precision="EXACT")
@@ -486,6 +488,8 @@ async def test_actual_tool_schedule_validates_before_event_or_queue_effects(
                 {},
             )
         assert not context.router.calls
+        if fault == "foreign-owner":
+            assert await repo.get("evt.events", context.event_id) == context.event
     assert await repo.get("evt.events", event_id) == event
     assert await repo.list("ops.jobs") == []
     assert await repo.list("ops.source_escalations") == []
