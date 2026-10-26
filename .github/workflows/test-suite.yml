@@ -234,6 +234,10 @@ jobs:
       - run: npm ci --prefix scripts/typescript --ignore-scripts --no-audit --no-fund
       - name: Check migrated TypeScript quality tools
         run: scripts/typescript/node_modules/.bin/tsc -p scripts/typescript/tsconfig.json
+      - name: Sandbox Python for the file I/O tests
+        run: |
+          uv python install 3.13.13
+          echo "TANK_FILE_IO_TEST_PYTHON=$(uv python find --managed-python 3.13.13)" >> "$GITHUB_ENV"
       - name: Local JavaScript units
         run: node scripts/test-node.mjs local-unit
       - name: Local JavaScript contracts

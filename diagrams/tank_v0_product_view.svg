@@ -249,7 +249,7 @@
 <text x="1284.0" y="472.0" font-size="11.5" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="342.0"><tspan font-weight="700">CONFIDENCE</tspan> — low / medium / high and the main unknown</text>
 <rect x="1262.0" y="478.0" width="386.0" height="194.0" rx="8" fill="none" stroke="none" stroke-width="0"/>
 <text x="1275.0" y="501.5" font-size="12" fill="#7B8794" text-anchor="start" xml:space="preserve">•</text>
-<text x="1286.0" y="501.0" font-size="12" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="350.0">≤ 3,500 characters, up to 3 tokens</text>
+<text x="1286.0" y="501.0" font-size="12" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="350.0">Up to 3 tokens</text>
 <text x="1275.0" y="520.5" font-size="12" fill="#7B8794" text-anchor="start" xml:space="preserve">•</text>
 <text x="1286.0" y="520.0" font-size="12" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="350.0">STRUCTURAL SHOCK: first card ≤ 3 min after Tank learns of it;</text>
 <text x="1286.0" y="536.0" font-size="12" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="350.0">the full card follows in the same thread</text>
@@ -263,22 +263,28 @@
 <text x="1286.0" y="625.0" font-size="12" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="350.0">grade, the stage or its verification, or a decisive condition</text>
 <text x="1286.0" y="641.0" font-size="12" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="350.0">changes, the event is denied or a call ends; at most 1 per 15 min</text>
 <text x="1286.0" y="657.0" font-size="12" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="350.0">— START, EXIT and broken theses at once</text>
-<rect x="1262.0" y="694.0" width="386.0" height="80.0" rx="8" fill="#F0F4F8" stroke="#627D98" stroke-width="1.2"/>
+<rect x="1262.0" y="694.0" width="386.0" height="150.0" rx="8" fill="#F0F4F8" stroke="#627D98" stroke-width="1.2"/>
 <text x="1274.0" y="718.0" font-size="13.5" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="362.0"><tspan font-weight="700">Telegram «Tank Ops»</tspan></text>
 <text x="1275.0" y="740.5" font-size="12" fill="#7B8794" text-anchor="start" xml:space="preserve">•</text>
-<text x="1286.0" y="740.0" font-size="12" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="350.0">DELIVERY FAILED (5 attempts)</text>
-<text x="1275.0" y="759.5" font-size="12" fill="#7B8794" text-anchor="start" xml:space="preserve">•</text>
-<text x="1286.0" y="759.0" font-size="12" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="350.0">HEARTBEAT daily at 08:00 UTC</text>
-<rect x="1262.0" y="794.0" width="386.0" height="131.0" rx="8" fill="#F0F4F8" stroke="#627D98" stroke-width="1.2"/>
-<text x="1274.0" y="818.0" font-size="13.5" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="362.0"><tspan font-weight="700">Review (operator, 14-day shadow mode)</tspan></text>
-<text x="1275.0" y="840.5" font-size="12" fill="#7B8794" text-anchor="start" xml:space="preserve">•</text>
-<text x="1286.0" y="840.0" font-size="12" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="350.0">Every card with its versions, evidence, delivery status and the</text>
-<text x="1286.0" y="856.0" font-size="12" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="350.0">move that followed</text>
-<text x="1275.0" y="875.5" font-size="12" fill="#7B8794" text-anchor="start" xml:space="preserve">•</text>
-<text x="1286.0" y="875.0" font-size="12" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="350.0">Labels for cards: CATCH · LATE · FALSE ALARM · NOISE; for</text>
-<text x="1286.0" y="891.0" font-size="12" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="350.0">events without a card: CORRECT SILENCE · MISS</text>
+<text x="1286.0" y="740.0" font-size="12" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="350.0"><tspan font-weight="700">ITEM PROGRESS</tspan> — one card per new material, updated as it</text>
+<text x="1286.0" y="756.0" font-size="12" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="350.0">moves on: filter, agent decision, whether a card went out</text>
+<text x="1275.0" y="775.5" font-size="12" fill="#7B8794" text-anchor="start" xml:space="preserve">•</text>
+<text x="1286.0" y="775.0" font-size="12" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="350.0"><tspan font-weight="700">ENTRY ERRORS</tspan> — source entries Tank could not read, once</text>
+<text x="1286.0" y="791.0" font-size="12" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="350.0">each; for a failed X profile, the HTTP responses attached</text>
+<text x="1275.0" y="810.5" font-size="12" fill="#7B8794" text-anchor="start" xml:space="preserve">•</text>
+<text x="1286.0" y="810.0" font-size="12" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="350.0"><tspan font-weight="700">DELIVERY FAILED</tspan> — a card not delivered after 5 attempts</text>
+<text x="1275.0" y="829.5" font-size="12" fill="#7B8794" text-anchor="start" xml:space="preserve">•</text>
+<text x="1286.0" y="829.0" font-size="12" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="350.0"><tspan font-weight="700">HEARTBEAT</tspan> daily at 08:00 UTC</text>
+<rect x="1262.0" y="864.0" width="386.0" height="131.0" rx="8" fill="#F0F4F8" stroke="#627D98" stroke-width="1.2"/>
+<text x="1274.0" y="888.0" font-size="13.5" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="362.0"><tspan font-weight="700">Review (operator, 14-day shadow mode)</tspan></text>
 <text x="1275.0" y="910.5" font-size="12" fill="#7B8794" text-anchor="start" xml:space="preserve">•</text>
-<text x="1286.0" y="910.0" font-size="12" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="350.0">Scout proposals: approve for testing · test more · reject</text>
+<text x="1286.0" y="910.0" font-size="12" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="350.0">Every card with its versions, evidence, delivery status and the</text>
+<text x="1286.0" y="926.0" font-size="12" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="350.0">move that followed</text>
+<text x="1275.0" y="945.5" font-size="12" fill="#7B8794" text-anchor="start" xml:space="preserve">•</text>
+<text x="1286.0" y="945.0" font-size="12" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="350.0">Labels for cards: CATCH · LATE · FALSE ALARM · NOISE; for</text>
+<text x="1286.0" y="961.0" font-size="12" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="350.0">events without a card: CORRECT SILENCE · MISS</text>
+<text x="1275.0" y="980.5" font-size="12" fill="#7B8794" text-anchor="start" xml:space="preserve">•</text>
+<text x="1286.0" y="980.0" font-size="12" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="350.0">Scout proposals: approve for testing · test more · reject</text>
 <path d="M 960.0 1000.0 L 1243.0 1000.0" fill="none" stroke="#2F855A" stroke-width="1.5" stroke-linejoin="round"/>
 <rect x="996.2" y="983.0" width="218.6" height="15.0" fill="#FFFFFF" opacity="0.92"/>
 <text x="1105.5" y="993.0" font-size="11" fill="#2F855A" text-anchor="middle" xml:space="preserve"><tspan font-weight="700">STRUCTURAL SHOCK: first card ≤ 3 min</tspan></text>
@@ -341,7 +347,7 @@
 <text x="56.0" y="880.0" font-size="12" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="368.0"><a href="https://x.com/EleanorTerrett" target="_blank"><tspan fill="#1D4ED8" text-decoration="underline">@EleanorTerrett</tspan></a>, <a href="https://x.com/WuBlockchain" target="_blank"><tspan fill="#1D4ED8" text-decoration="underline">@WuBlockchain</tspan></a>, <a href="https://x.com/tier10k" target="_blank"><tspan fill="#1D4ED8" text-decoration="underline">@tier10k</tspan></a>, <a href="https://x.com/zachxbt" target="_blank"><tspan fill="#1D4ED8" text-decoration="underline">@zachxbt</tspan></a>,</text>
 <text x="56.0" y="896.0" font-size="12" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="368.0"><a href="https://x.com/PeckShieldAlert" target="_blank"><tspan fill="#1D4ED8" text-decoration="underline">@PeckShieldAlert</tspan></a>, <a href="https://x.com/lookonchain" target="_blank"><tspan fill="#1D4ED8" text-decoration="underline">@lookonchain</tspan></a></text>
 <text x="45.0" y="915.5" font-size="12" fill="#7B8794" text-anchor="start" xml:space="preserve">•</text>
-<text x="56.0" y="915.0" font-size="12" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="368.0">Max delay: 1 min</text>
+<text x="56.0" y="915.0" font-size="12" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="368.0">Max delay: 2 min</text>
 <rect x="32.0" y="1531.0" width="404.0" height="150.0" rx="8" fill="#F5F7FA" stroke="#9AA5B1" stroke-width="1.0"/>
 <text x="44.0" y="1555.0" font-size="13.5" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="380.0"><tspan font-weight="700">Market data: 6 venues</tspan></text>
 <text x="45.0" y="1577.5" font-size="12" fill="#7B8794" text-anchor="start" xml:space="preserve">•</text>
@@ -371,24 +377,24 @@
 <path d="M 436.0 210.0 L 470.0 210.0" fill="none" stroke="#334E68" stroke-width="1.5" marker-end="url(#ah-s)" stroke-linejoin="round"/>
 <path d="M 436.0 711.0 L 453.0 711.0 L 453.0 210.0" fill="none" stroke="#334E68" stroke-width="1.5" stroke-linejoin="round"/>
 <path d="M 436.0 1601.0 L 470.0 1601.0" fill="none" stroke="#334E68" stroke-width="1.5" marker-end="url(#ah-s)" stroke-linejoin="round"/>
-<text x="1262.0" y="961.0" font-size="11" fill="#7B8794" text-anchor="start" xml:space="preserve" letter-spacing="1.2"><tspan font-weight="700">RUNS ALONGSIDE THE MAIN FLOW</tspan></text>
-<rect x="1262.0" y="973.0" width="386.0" height="125.0" rx="8" fill="#FFFFFF" stroke="#334E68" stroke-width="1.5"/>
-<text x="1274.0" y="997.0" font-size="13.5" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="362.0"><tspan font-weight="700">Closer watch after a MAJOR grade</tspan></text>
-<text x="1274.0" y="1019.0" font-size="12" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="362.0">Once step 3 grades an event MAJOR or higher, Tank checks the</text>
-<text x="1274.0" y="1035.0" font-size="12" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="362.0">official sources of its organizations every 15 s for 2 h, and around a</text>
-<text x="1274.0" y="1051.0" font-size="12" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="362.0">known milestone (vote end, effective date, launch) from 5 min</text>
-<text x="1274.0" y="1067.0" font-size="12" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="362.0">before until confirmed or 2 h after, to catch a confirmation, details</text>
-<text x="1274.0" y="1083.0" font-size="12" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="362.0">or a denial fast</text>
-<rect x="1262.0" y="1112.0" width="386.0" height="125.0" rx="8" fill="#FFFFFF" stroke="#334E68" stroke-width="1.5"/>
-<text x="1274.0" y="1136.0" font-size="13.5" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="362.0"><tspan font-weight="700">One analysis per event</tspan></text>
-<text x="1274.0" y="1158.0" font-size="12" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="362.0">Steps 2–7 are one continuous analysis. Later news about the event</text>
-<text x="1274.0" y="1174.0" font-size="12" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="362.0">(a repeat or a development within 3 days), an official denial, a</text>
-<text x="1274.0" y="1190.0" font-size="12" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="362.0">milestone or a fired condition is added to it, even while it runs →</text>
-<text x="1274.0" y="1206.0" font-size="12" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="362.0">the steps it affects run again → a threaded update when a decision</text>
-<text x="1274.0" y="1222.0" font-size="12" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="362.0">changes</text>
-<rect x="1262.0" y="1251.0" width="386.0" height="93.0" rx="8" fill="#FFF8E6" stroke="#C99A2E" stroke-width="1.2"/>
-<text x="1274.0" y="1275.0" font-size="13.5" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="362.0"><tspan font-weight="700">Scout for unknown patterns</tspan></text>
-<text x="1274.0" y="1297.0" font-size="12" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="362.0">A beneficiary layer, market behavior or discovery path outside the</text>
-<text x="1274.0" y="1313.0" font-size="12" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="362.0">known patterns → a proposal to the operator, who approves</text>
-<text x="1274.0" y="1329.0" font-size="12" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="362.0">testing</text>
+<text x="1262.0" y="1031.0" font-size="11" fill="#7B8794" text-anchor="start" xml:space="preserve" letter-spacing="1.2"><tspan font-weight="700">RUNS ALONGSIDE THE MAIN FLOW</tspan></text>
+<rect x="1262.0" y="1043.0" width="386.0" height="125.0" rx="8" fill="#FFFFFF" stroke="#334E68" stroke-width="1.5"/>
+<text x="1274.0" y="1067.0" font-size="13.5" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="362.0"><tspan font-weight="700">Closer watch after a MAJOR grade</tspan></text>
+<text x="1274.0" y="1089.0" font-size="12" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="362.0">Once step 3 grades an event MAJOR or higher, Tank checks the</text>
+<text x="1274.0" y="1105.0" font-size="12" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="362.0">official sources of its organizations every 15 s for 2 h, and around a</text>
+<text x="1274.0" y="1121.0" font-size="12" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="362.0">known milestone (vote end, effective date, launch) from 5 min</text>
+<text x="1274.0" y="1137.0" font-size="12" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="362.0">before until confirmed or 2 h after, to catch a confirmation, details</text>
+<text x="1274.0" y="1153.0" font-size="12" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="362.0">or a denial fast</text>
+<rect x="1262.0" y="1182.0" width="386.0" height="125.0" rx="8" fill="#FFFFFF" stroke="#334E68" stroke-width="1.5"/>
+<text x="1274.0" y="1206.0" font-size="13.5" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="362.0"><tspan font-weight="700">One analysis per event</tspan></text>
+<text x="1274.0" y="1228.0" font-size="12" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="362.0">Steps 2–7 are one continuous analysis. Later news about the event</text>
+<text x="1274.0" y="1244.0" font-size="12" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="362.0">(a repeat or a development within 3 days), an official denial, a</text>
+<text x="1274.0" y="1260.0" font-size="12" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="362.0">milestone or a fired condition is added to it, even while it runs →</text>
+<text x="1274.0" y="1276.0" font-size="12" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="362.0">the steps it affects run again → a threaded update when a decision</text>
+<text x="1274.0" y="1292.0" font-size="12" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="362.0">changes</text>
+<rect x="1262.0" y="1321.0" width="386.0" height="93.0" rx="8" fill="#FFF8E6" stroke="#C99A2E" stroke-width="1.2"/>
+<text x="1274.0" y="1345.0" font-size="13.5" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="362.0"><tspan font-weight="700">Scout for unknown patterns</tspan></text>
+<text x="1274.0" y="1367.0" font-size="12" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="362.0">A beneficiary layer, market behavior or discovery path outside the</text>
+<text x="1274.0" y="1383.0" font-size="12" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="362.0">known patterns → a proposal to the operator, who approves</text>
+<text x="1274.0" y="1399.0" font-size="12" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="362.0">testing</text>
 </svg>

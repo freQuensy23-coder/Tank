@@ -158,5 +158,5 @@ def card_inputs() -> CardInputs:
             verdict="Approval changes access.",
             why=("The approval is confirmed", "not estimable"),
         ),
-        policy=PublicationPolicy(card_max_chars=5000, update_rate_limit_s=900),
+        policy=PublicationPolicy(update_rate_limit_s=900),
     )

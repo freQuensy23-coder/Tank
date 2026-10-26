@@ -604,7 +604,7 @@ async def test_current_full_publication_uses_literal_render_and_excludes_undecid
         outlook = text.split("OUTLOOK:", 1)[1].split("WHAT TO DO:", 1)[0]
         assert all("• " + name + ": " in outlook for name in ("Base", "Upside", "Failure"))
         assert not any(now in line for line in lines if line.startswith("MARKET TRUTH:"))
-        assert len(text) <= 3500 and "linter" not in alert
+        assert "linter" not in alert
         assert len(await repo.list("ops.jobs", filters={"type": "DELIVER"})) == 1
         assert not any(row.get("status") == "SENT" for row in await repo.list("out.deliveries"))
         sent: list[WireRecord] = []
@@ -683,7 +683,7 @@ def test_public_clock_preserves_declared_precision_without_inventing_intraday_ti
     values = values.model_copy(update={"event": values.event.model_copy(update={"public_at": stamp})})
     card = render(values)
     assert "public " + expected + " · known 12:31Z" in card
-    assert "WHAT TO DO: WAIT" in card and len(card) <= 3500
+    assert "WHAT TO DO: WAIT" in card
 
 
 def test_end_labelled_bucket_and_unknown_edge_are_not_reinterpreted() -> None:
@@ -821,28 +821,14 @@ def test_each_layer_reason_is_visible_without_generic_rule_reference_or_mutation
         render(values.model_copy(update={"mapping": mapping.model_copy(update={"layer_explanations": {}})}))
 
 
-def test_card_length_diagnostics_preserve_full_preview_and_structured_guidance() -> None:
-    from tank.analysis.card_contracts import CardLengthDiagnostics
-
+def test_long_card_is_rendered_whole_without_a_tank_length_limit() -> None:
     values = card_inputs()
     claim = values.event.claims[0].model_copy(update={"object_text": "Unchanged material uncertainty " * 170})
     values = values.model_copy(update={"event": values.event.model_copy(update={"claims": (claim,)})})
     original = values.model_copy(deep=True)
-    with pytest.raises(ValueError, match="CARD_LENGTH") as caught:
-        render(values)
-    diagnostic = CardLengthDiagnostics.model_validate_json(str(caught.value).removeprefix("CARD_LENGTH: "))
-    assert diagnostic.max_chars == 5000 and diagnostic.actual == len(diagnostic.preview)
-    assert diagnostic.excess == diagnostic.actual - 5000
-    assert (
-        sum(section.chars for section in diagnostic.sections) + diagnostic.newline_chars == diagnostic.actual
-    )
-    assert (
-        claim.object_text in diagnostic.preview
-        and "publish-only shortening may be insufficient" in diagnostic.guidance
-    )
-    assert any("supersedes_claim_ids" in field for field in diagnostic.editable_fields) and values == original
-    policy = values.policy.model_copy(update={"card_max_chars": 100000})
-    assert render(values.model_copy(update={"policy": policy})) == diagnostic.preview
+    text = render(values)
+    assert len(text) > 5000 and claim.object_text in text
+    assert values == original
 
 
 def test_market_truth_names_venue_oi_class_markup_and_spot_breadth() -> None:
@@ -1108,31 +1094,23 @@ def test_what_precedes_analysis_and_preserves_every_other_section(kind: Publicat
     assert rich_message_text(rich).splitlines()[1] == "WHAT: " + what
 
 
-def test_what_counts_toward_card_limit_without_truncation() -> None:
-    from tank.analysis.card_contracts import CardLengthDiagnostics
+def test_what_is_kept_whole_and_cards_above_the_old_cap_publish() -> None:
     from tank.telegram_rich import card_rich_message, rich_message_text
 
     values = card_inputs()
     original = render(values)
     what = values.narrative.what + " The approved product remains documented."
     narrative = values.narrative.model_copy(update={"what": what})
-    policy = values.policy.model_copy(update={"card_max_chars": len(original)})
-    with pytest.raises(ValueError, match="CARD_LENGTH") as caught:
-        render(values.model_copy(update={"narrative": narrative, "policy": policy}))
-    diagnostic = CardLengthDiagnostics.model_validate_json(str(caught.value).removeprefix("CARD_LENGTH: "))
-    assert diagnostic.excess == len(what) - len(values.narrative.what)
-    assert (
-        "WHAT: " + what in diagnostic.preview
-        and "publish_card.what / verdict / why" in diagnostic.editable_fields
+    assert len(render(values.model_copy(update={"narrative": narrative}))) == len(original) + len(what) - len(
+        values.narrative.what
     )
-    assert any(section.section == "WHAT" for section in diagnostic.sections)
-    rich_limit = len(rich_message_text(card_rich_message(original, values.assessment.scores)))
-    with pytest.raises(ValueError, match="CARD_LENGTH"):
-        card_rich_message(
-            render(values.model_copy(update={"narrative": narrative})),
-            values.assessment.scores,
-            max_chars=rich_limit,
-        )
+    claim = values.event.claims[0].model_copy(update={"object_text": "Unchanged material uncertainty " * 200})
+    values = values.model_copy(
+        update={"event": values.event.model_copy(update={"claims": (claim,)}), "narrative": narrative}
+    )
+    text = render(values)
+    assert len(text) > 5000 and claim.object_text in text and "WHAT: " + what in text
+    assert "WHAT: " + what in rich_message_text(card_rich_message(text, values.assessment.scores))
 
 
 def test_nested_day_bucket_refuses_uncaptured_timezone() -> None:

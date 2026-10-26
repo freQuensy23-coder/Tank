@@ -27,7 +27,7 @@ def rendering_inputs() -> CardInputs:
             "verdict": "The product was approved.",
             "why": ["Approval changes access.", "Usage remains unmeasured."],
         },
-        "policy": {"card_max_chars": 5000, "update_rate_limit_s": 900},
+        "policy": {"update_rate_limit_s": 900},
         "event": {
             "statement": "World approved the product.",
             "state": "APPROVED",
@@ -278,7 +278,7 @@ def test_projection_requires_authored_facts_without_repairing_headline() -> None
         verdict="The product was approved.",
         why=("Approval changes access.", "Usage remains unmeasured."),
     )
-    policy = PublicationPolicy(card_max_chars=5000, update_rate_limit_s=900)
+    policy = PublicationPolicy(update_rate_limit_s=900)
     projected = card_inputs_from_records(
         event,
         assessment,
@@ -346,7 +346,7 @@ def test_projection_never_borrows_rejected_claim_as_verified_evidence() -> None:
         [],
         registry=fixture_registry_membership(),
         narrative=narrative,
-        policy=PublicationPolicy(card_max_chars=5000, update_rate_limit_s=900),
+        policy=PublicationPolicy(update_rate_limit_s=900),
     )
     text = compose_card(projected)
     assert "VERIFIED: n/a (no verified claims)" in text
@@ -387,19 +387,14 @@ def test_cooldown_projection_requires_exact_acknowledged_revision() -> None:
         publication_baseline_from_records(alert, [], sent_delivery=sent)
 
 
-def test_length_refusal_preserves_full_untruncated_preview() -> None:
-    from tank.contracts.json import decode_json
-
+def test_long_render_preserves_full_untruncated_claim() -> None:
     inputs = rendering_inputs()
-    policy = inputs.policy.model_copy(update={"card_max_chars": 100})
-    expected = compose_card(inputs)
-    with pytest.raises(ValueError, match="CARD_LENGTH") as failure:
-        compose_card(inputs.model_copy(update={"policy": policy}))
-    diagnostic = decode_json(str(failure.value).removeprefix("CARD_LENGTH: "))
-    assert isinstance(diagnostic, dict)
-    assert diagnostic["preview"] == expected
-    assert diagnostic["actual"] == len(expected)
-    assert diagnostic["excess"] == len(expected) - 100
+    claim = inputs.event.claims[0].model_copy(update={"object_text": "Material uncertainty " * 300})
+    inputs = inputs.model_copy(update={"event": inputs.event.model_copy(update={"claims": (claim,)})})
+    original = inputs.model_copy(deep=True)
+    text = compose_card(inputs)
+    assert len(text) > 5000 and claim.object_text in text
+    assert inputs == original
 
 
 def test_calendar_bucket_and_unknown_precision_do_not_gain_intraday_precision() -> None:
@@ -494,7 +489,7 @@ def test_duplicate_claim_identity_is_refused_without_picking_an_authority() -> N
             [],
             registry=fixture_registry_membership(),
             narrative=narrative,
-            policy=PublicationPolicy(card_max_chars=5000, update_rate_limit_s=900),
+            policy=PublicationPolicy(update_rate_limit_s=900),
         )
 
 
@@ -532,7 +527,7 @@ def test_outside_subject_evidence_requires_a_current_accepted_claim() -> None:
         verdict="The product was proposed.",
         why=("The proposal changes intended access.", "Deployment remains unverified."),
     )
-    policy = PublicationPolicy(card_max_chars=5000, update_rate_limit_s=900)
+    policy = PublicationPolicy(update_rate_limit_s=900)
     rejected = card_inputs_from_records(
         event,
         assessment,
@@ -575,7 +570,7 @@ def test_first_partial_card_requires_no_fabricated_beneficiary_map_or_market_res
         verdict="The product was approved.",
         why=("Approval changes access.", "Market analysis remains pending."),
     )
-    policy = PublicationPolicy(card_max_chars=5000, update_rate_limit_s=900)
+    policy = PublicationPolicy(update_rate_limit_s=900)
     partial = card_inputs_from_records(
         event,
         assessment,
@@ -625,7 +620,7 @@ def test_pending_partial_projection_cannot_hide_supplied_unscoped_financial_fact
             [],
             registry=fixture_registry_membership(),
             narrative=narrative,
-            policy=PublicationPolicy(card_max_chars=5000, update_rate_limit_s=900),
+            policy=PublicationPolicy(update_rate_limit_s=900),
         )
 
 
@@ -643,7 +638,7 @@ def test_gate_reads_actual_event_contradictions_without_requiring_undeclared_ass
         assessment,
         [],
         previous=None,
-        policy=PublicationPolicy(card_max_chars=5000, update_rate_limit_s=900),
+        policy=PublicationPolicy(update_rate_limit_s=900),
         now=datetime(2026, 10, 18, 13, tzinfo=UTC),
     )
     assert facts.event.active_fatal_ids == frozenset({"actual-fatal"})
