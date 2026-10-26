@@ -8,7 +8,6 @@ from pathlib import Path
 
 import httpx
 import pytest
-from pydantic import JsonValue
 from runtime_public_fixtures import public_runtime
 from source_support import fixture_http_admission, fixture_versions
 
@@ -317,12 +316,9 @@ async def test_backfill_changes_append_reaction_revision_once_and_preserve_origi
         assert len(live_jobs) == 1 and "CAP-LIVE-" in live_jobs[0]["payload"]["change_id"]
 
         async with public_runtime(repo, tmp_path / "runtime", monkeypatch) as (runtime, _):
-
-            async def capture_wire(payload: dict[str, JsonValue]) -> dict[str, JsonValue]:
-                receipt = await scheduler.reaction_capture(reaction_command_from_wire(payload))
-                return receipt.model_dump(mode="json")
-
-            runtime.handlers = {"REACTION_CAPTURE": capture_wire}
+            owned_scheduler = runtime.scheduler
+            runtime.scheduler = scheduler
+            runtime.handlers = {"REACTION_CAPTURE": runtime.reaction_capture_wire}
             stop = asyncio.Event()
             worker = asyncio.create_task(runtime.worker(stop))
             try:
@@ -333,6 +329,7 @@ async def test_backfill_changes_append_reaction_revision_once_and_preserve_origi
             finally:
                 stop.set()
                 await worker
+                runtime.scheduler = owned_scheduler
         live_receipt = CapturedReaction.model_validate(live)
         assert live_receipt.revision == 3 and live_receipt.data_fingerprint != revised["data_fingerprint"]
         live_record = await repo.get("out.reaction_checkpoints", live_receipt.checkpoint_key)
