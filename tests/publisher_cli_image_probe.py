@@ -11,12 +11,25 @@ from publisher_state_support import ProviderState, source_artifact
 
 from tank.contracts import DomainModel
 from tank.contracts.scalars import OneInt, TrueFlag
-from tank.deployment.contracts import ActiveRelease, RolledBackTransaction, SourceBuild
+from tank.deployment.contracts import (
+    ActiveRelease,
+    BuildCacheKey,
+    BuildID,
+    RolledBackTransaction,
+    SourceBuild,
+)
 from tank.deployment.journal import PublisherJournal
+from tank.deployment.submissions import ReceivedBuildSubmission, UnknownBuildSubmission
 
 
 class CLIOutcome(DomainModel):
-    case: Literal["forward", "lost-ack", "terminated-after-acceptance"]
+    case: Literal[
+        "forward",
+        "lost-ack",
+        "terminated-after-acceptance",
+        "terminated-after-build-acceptance",
+        "terminated-before-build-cache",
+    ]
     physical_tls_requests: int
     builds: OneInt
 
@@ -29,7 +42,13 @@ class CLIProof(DomainModel):
 
 def run_probe(root: Path, package: Path, orchestrator_sha: str, sha: str) -> None:
     results: list[CLIOutcome] = []
-    for name in ("forward", "lost-ack", "terminated-after-acceptance"):
+    for name in (
+        "forward",
+        "lost-ack",
+        "terminated-after-acceptance",
+        "terminated-after-build-acceptance",
+        "terminated-before-build-cache",
+    ):
         uncertain = name == "lost-ack"
         interrupted = name == "terminated-after-acceptance"
         host = root / name
@@ -61,6 +80,7 @@ def run_probe(root: Path, package: Path, orchestrator_sha: str, sha: str) -> Non
 
         active_process: subprocess.Popen[bytes] | None = None
         active_action: str | None = None
+        build_interruption_fired = False
 
         def after_tag_update() -> bool:
             if interrupted and active_action == "activate":
@@ -69,7 +89,22 @@ def run_probe(root: Path, package: Path, orchestrator_sha: str, sha: str) -> Non
                 return True
             return False
 
-        def command(action: str, *, succeeds: bool) -> None:
+        def interrupt_build() -> bool:
+            nonlocal build_interruption_fired
+            if build_interruption_fired or active_action != "prepare":
+                return False
+            assert active_process is not None and active_process.poll() is None
+            active_process.terminate()
+            build_interruption_fired = True
+            return True
+
+        def after_build_start() -> bool:
+            return name == "terminated-after-build-acceptance" and interrupt_build()
+
+        def after_build_snapshot(build_id: BuildID) -> bool:
+            return name == "terminated-before-build-cache" and build_id == "B" * 17 and interrupt_build()
+
+        def command(action: str, *, succeeds: bool, expected_signal: bool) -> None:
             nonlocal active_process, active_action
             active_action = action
             active_process = subprocess.Popen(
@@ -103,7 +138,7 @@ def run_probe(root: Path, package: Path, orchestrator_sha: str, sha: str) -> Non
             )
             stdout, stderr = active_process.communicate(timeout=30)
             code = active_process.returncode
-            if interrupted and action == "activate":
+            if expected_signal:
                 assert code == -15
             assert (code == 0) is succeeds, (action, code, stderr)
             assert b"synthetic-publisher-image-token" not in stdout + stderr
@@ -115,23 +150,46 @@ def run_probe(root: Path, package: Path, orchestrator_sha: str, sha: str) -> Non
             certificate=Path("/tls/certificate.pem"),
             private_key=Path("/tls/private-key.pem"),
             after_tag_update=after_tag_update,
+            after_build_start=after_build_start,
+            after_build_snapshot=after_build_snapshot,
         ) as peer:
-            command("prepare", succeeds=True)
+            build_interrupted = name in {"terminated-after-build-acceptance", "terminated-before-build-cache"}
+            command("prepare", succeeds=not build_interrupted, expected_signal=build_interrupted)
+            if build_interrupted:
+                assert build_interruption_fired
+                submissions = list(state.glob("submission-*.json"))
+                assert len(submissions) == 1
+                if name == "terminated-after-build-acceptance":
+                    unknown = UnknownBuildSubmission.model_validate_json(submissions[0].read_bytes())
+                    before = len(peer.requests)
+                    command("prepare", succeeds=False, expected_signal=False)
+                    assert len(provider.started) == 1
+                    assert UnknownBuildSubmission.model_validate_json(submissions[0].read_bytes()) == unknown
+                    assert len(peer.requests) > before
+                    assert provider.direct == "A" * 17 and provider.tag_updates == []
+                    assert journal.read_transaction() is None
+                    results.append(CLIOutcome(case=name, physical_tls_requests=len(peer.requests), builds=1))
+                    continue
+                receipt = ReceivedBuildSubmission.model_validate_json(submissions[0].read_bytes())
+                assert receipt.observation.id == "B" * 17
+                assert receipt.observation.status == "SUCCEEDED"
+                command("prepare", succeeds=True, expected_signal=False)
+                assert journal.read_submission(BuildCacheKey(source_digest=receipt.source_digest)) is None
             assert provider.direct == "A" * 17
-            command("activate", succeeds=not (uncertain or interrupted))
+            command("activate", succeeds=not (uncertain or interrupted), expected_signal=interrupted)
             assert provider.direct == "B" * 17
             if uncertain or interrupted:
                 pending = journal.read_transaction()
                 assert pending is not None and pending.activation_attempted
                 provider.fault = "NONE"
-                command("rollback", succeeds=True)
+                command("rollback", succeeds=True, expected_signal=False)
                 assert provider.direct == "A" * 17
                 assert isinstance(journal.read_transaction(), RolledBackTransaction)
-                command("rollback_finish", succeeds=True)
+                command("rollback_finish", succeeds=True, expected_signal=False)
             else:
-                command("commit", succeeds=True)
+                command("commit", succeeds=True, expected_signal=False)
                 marker.write_text(sha + "\n")
-                command("finish", succeeds=True)
+                command("finish", succeeds=True, expected_signal=False)
                 active = journal.read_active()
                 assert active is not None and active.release_sha == sha
             assert journal.read_transaction() is None

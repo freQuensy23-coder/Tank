@@ -26,6 +26,7 @@ from tank.deployment.api_contracts import (
     VersionUpload,
 )
 from tank.deployment.apify_api import ApifyEndpoint, Method
+from tank.deployment.contracts import BuildID
 from tank.deployment.identities import CommitSHA
 from tank.deployment.journal import PublisherJournal
 
@@ -56,6 +57,8 @@ def serve_peer(
     port: int,
     context: ssl.SSLContext | None,
     after_tag_update: Callable[[], bool] | None,
+    after_build_start: Callable[[], bool] | None,
+    after_build_snapshot: Callable[[BuildID], bool] | None,
     wire_fault: WireFault | None,
 ) -> Iterator[PublisherHTTPPeer]:
     requests: list[ObservedRequest] = []
@@ -128,11 +131,17 @@ def serve_peer(
                     return
                 assert query == {"version": ["0.3"], "tag": ["tank-" + selected_sha[:12]]}
                 reply = provider.start_build(selected_sha)
+                if after_build_start is not None and after_build_start():
+                    self.close_connection = True
+                    return
             elif self.command == "GET" and path.path == "/v2/actor-builds/c99YRMlKXube5V0gV":
                 reply = provider.historical_build()
             elif self.command == "GET" and path.path.startswith("/v2/actor-builds/"):
                 build_id = path.path.removeprefix("/v2/actor-builds/")
                 reply = provider.wait_build(build_id) if query else provider.completed_build(build_id)
+                if not query and after_build_snapshot is not None and after_build_snapshot(build_id):
+                    self.close_connection = True
+                    return
             else:
                 self.send_error(404)
                 return
@@ -183,7 +192,15 @@ def publisher_http_peer(
     provider: ProviderState, journal: PublisherJournal, selected_sha: CommitSHA
 ) -> Iterator[PublisherHTTPPeer]:
     with serve_peer(
-        provider, journal, selected_sha, port=0, context=None, after_tag_update=None, wire_fault=None
+        provider,
+        journal,
+        selected_sha,
+        port=0,
+        context=None,
+        after_tag_update=None,
+        after_build_start=None,
+        after_build_snapshot=None,
+        wire_fault=None,
     ) as peer:
         yield peer
 
@@ -197,6 +214,8 @@ def publisher_https_peer(
     certificate: Path,
     private_key: Path,
     after_tag_update: Callable[[], bool] | None,
+    after_build_start: Callable[[], bool] | None,
+    after_build_snapshot: Callable[[BuildID], bool] | None,
 ) -> Iterator[PublisherHTTPPeer]:
     context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
     context.load_cert_chain(certificate, private_key)
@@ -207,6 +226,8 @@ def publisher_https_peer(
         port=443,
         context=context,
         after_tag_update=after_tag_update,
+        after_build_start=after_build_start,
+        after_build_snapshot=after_build_snapshot,
         wire_fault=None,
     ) as peer:
         yield peer
@@ -225,6 +246,8 @@ def publisher_wrong_actor_peer(
         port=0,
         context=None,
         after_tag_update=None,
+        after_build_start=None,
+        after_build_snapshot=None,
         wire_fault="ACTOR_IDENTITY",
     ) as peer:
         yield peer
@@ -243,6 +266,8 @@ def publisher_upload_failure_peer(
         port=0,
         context=None,
         after_tag_update=None,
+        after_build_start=None,
+        after_build_snapshot=None,
         wire_fault="UPLOAD_FAILURE",
     ) as peer:
         yield peer
@@ -256,7 +281,15 @@ def publisher_legacy_fault_peer(
     fault: LegacyFault,
 ) -> Iterator[PublisherHTTPPeer]:
     with serve_peer(
-        provider, journal, selected_sha, port=0, context=None, after_tag_update=None, wire_fault=fault
+        provider,
+        journal,
+        selected_sha,
+        port=0,
+        context=None,
+        after_tag_update=None,
+        after_build_start=None,
+        after_build_snapshot=None,
+        wire_fault=fault,
     ) as peer:
         yield peer
 
@@ -274,6 +307,8 @@ def publisher_tag_limit_peer(
         port=0,
         context=None,
         after_tag_update=None,
+        after_build_start=None,
+        after_build_snapshot=None,
         wire_fault="BUILD_TAG_LENGTH",
     ) as peer:
         yield peer
