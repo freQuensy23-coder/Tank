@@ -1072,12 +1072,29 @@ async def test_reader_file_is_stored_for_the_session_and_named_in_the_agent_mess
     mounts = []
     uploads = []
 
+    resources = []
+
     def openma(request: httpx.Request):
+        assert "Idempotency-Key" not in request.headers
         if request.url.path == "/v1/files":
+            assert request.headers["anthropic-beta"] == "files-api-2025-04-14"
             uploads.append(request.content)
             return httpx.Response(200, json={"id": "file_private"})
-        mounts.append(json.loads(request.content))
-        return httpx.Response(200, json={"id": "resource_private"})
+        assert request.url.path == "/v1/sessions/ses_1/resources"
+        if request.method == "GET":
+            return httpx.Response(200, json={"data": resources, "next_page": None})
+        mount = json.loads(request.content)
+        mounts.append(mount)
+        resource = {
+            "id": "resource_private",
+            "type": "file",
+            "file_id": mount["file_id"],
+            "mount_path": mount["mount_path"],
+            "created_at": "2026-10-26T00:00:00Z",
+            "updated_at": "2026-10-26T00:00:00Z",
+        }
+        resources.append(resource)
+        return httpx.Response(200, json=resource)
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(openma)) as http:
         sessions = SessionService(
@@ -1088,9 +1105,11 @@ async def test_reader_file_is_stored_for_the_session_and_named_in_the_agent_mess
             versions=fixture_versions(),
             refusals=RepositoryFollowupRefusals(repo),
         )
-        session = await repo.get("ops.agent_sessions", "ses_1")
-        ready = await sessions.prepare_attachments(session, question)
-        again = await sessions.prepare_attachments(session, question)
+        from tank.contracts.session_followups import FollowupRefusalTarget
+
+        target = FollowupRefusalTarget(question_id=question["question_id"], session_id="ses_1")
+        ready = await sessions.prepare_attachments(target)
+        again = await sessions.prepare_attachments(target)
     text = question_message(ready)
     assert "Посчитай по этому файлу" in text and item["file_key"] not in text
     assert ready == again and len(uploads) == len(mounts) == 1
