@@ -1919,7 +1919,7 @@ async def replay_agent_session(
                     raise ReplayDivergence(
                         "Original condition trigger predates the fresh available-state clock"
                     )
-                await scheduler.eval_conditions(trigger.fields("cutoff"))
+                await scheduler.eval_conditions(trigger)
                 identity = (message.get("condition") or {}).get("cond_id")
                 canonical_kind = "CONDITION_FIRED"
             else:

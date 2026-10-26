@@ -28,7 +28,7 @@ from tank.telegram_inbox import (
     chunks,
     question_id_for,
 )
-from tank.time_precision import collection_clock
+from tank.time_precision import collection_clock, propagate_timestamp
 from tank.util import iso
 
 BOT = 777
@@ -1285,7 +1285,7 @@ async def test_fired_agent_watch_wakes_the_session_that_armed_it() -> None:
         thresholds=Settings(_env_file=None).thresholds(),
         versions=fixture_versions(),
     )
-    await scheduler.eval_conditions({"cutoff": iso(now)})
+    await scheduler.eval_conditions(propagate_timestamp({"cutoff": iso(now)}, "cutoff"))
     jobs = await repo.list("ops.jobs", filters={"type": "AGENT_MESSAGE"})
     assert (
         jobs[0]["payload"]["kind"] == "CONDITION_FIRED" and jobs[0]["payload"]["session_id"] == "ses_followup"
