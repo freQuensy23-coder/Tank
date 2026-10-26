@@ -798,3 +798,38 @@ def test_apify_error_names_reason_without_token(tmp_path: Path) -> None:
         assert "HTTP 400: invalid-input tag must be at most 30 characters long" in str(error.value)
         assert "synthetic-publisher-image-token" not in str(error.value)
         assert not fixture.api.started
+
+
+@pytest.mark.integration(
+    reason="Actual Linux deployment script must refuse malformed marker before any publisher or Docker effect"
+)
+@pytest.mark.parametrize("marker", ["empty", "invalid", "symlink", "fifo"])
+def test_invalid_previous_marker_refuses_before_effects(
+    typed_publisher: HTTPPublisherRig, marker: str
+) -> None:
+    fixture = typed_publisher
+    path = fixture.marker.path
+    path.unlink()
+    if marker == "empty":
+        path.write_bytes(b"")
+    elif marker == "invalid":
+        path.write_text("not-a-release")
+    elif marker == "symlink":
+        target = path.with_name("marker-target")
+        target.write_text(fixture.previous.release.release_sha + "\n")
+        path.symlink_to(target)
+    else:
+        os.mkfifo(path)
+    host = owned_shell_host(
+        fixture,
+        fixture.peer.endpoint,
+        selected=fixture.publisher.sha,
+        artifact=fixture.selected,
+        failure="SELECTED",
+    )
+    result = host.deploy(fixture.publisher.sha)
+    assert result.returncode == 1
+    assert "invalid previous release" in result.stdout
+    assert not fixture.peer.requests
+    assert not (host.root / "effects.log").exists()
+    assert fixture.journal.read_transaction() is None

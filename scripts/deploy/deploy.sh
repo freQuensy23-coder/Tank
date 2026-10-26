@@ -91,9 +91,13 @@ verify() {
   return $fail
 }
 
-previous=$(cat deployed 2>/dev/null || true)
-[[ -z "$previous" || "$previous" =~ ^[0-9a-f]{40}$ ]] || { echo "invalid previous release SHA"; exit 1; }
-release="releases/$SHA"
+if [ -e deployed ] || [ -L deployed ]; then
+  [ -f deployed ] && [ ! -L deployed ] || { echo "invalid previous release marker type"; exit 1; }
+  previous=$(cat -- deployed)
+  [[ "$previous" =~ ^[0-9a-f]{40}$ ]] || { echo "invalid previous release SHA"; exit 1; }
+else
+  previous=""
+fi
 docker pull "$PUBLISHER_IMAGE"
 worker() {
   [ "$#" -eq 2 ] || { echo "publisher action and transaction identity are required" >&2; return 1; }
