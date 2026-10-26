@@ -12,7 +12,7 @@ import respx
 from agent_source_fixtures import declared_versions_fixture
 from pydantic import JsonValue
 from pydantic_settings import SettingsConfigDict
-from runtime_failure_fixtures import bind_worker_fragment_failure_store, runtime_failure_fixture
+from runtime_failure_fixtures import runtime_failure_fixture
 from runtime_lifecycle_fixtures import lifecycle_runtime
 from runtime_public_fixtures import public_runtime
 from source_support import fixture_http_admission
@@ -24,9 +24,9 @@ from tank.contracts.json import decode_json, encode_json
 from tank.contracts.provenance import ResolvedVersionIdentity
 from tank.contracts.scheduler_results import ConditionEvaluationResult
 from tank.market.capture_contracts import CaptureReadiness
-from tank.request_budget import MemoryBudgetBackend, RequestBudgets, RequestBudgetScope, SystemBudgetClock
+from tank.request_budget import RequestBudgets
 from tank.runtime import Runtime
-from tank.runtime_contracts import MarketTruthJob, TelegramAnswerJob
+from tank.runtime_contracts import DeliveryJob, MarketTruthJob, TelegramAnswerJob
 from tank.settings import Settings, resolve_versions
 from tank.storage import MemoryRepository, Repository
 from tank.time_precision import Timestamp, collection_clock, offset_schedule
@@ -1172,7 +1172,7 @@ async def transport_database(backend, postgres_template):
     "backend", ["memory", pytest.param("postgres", marks=[pytest.mark.integration, pytest.mark.postgres])]
 )
 async def test_delivery_order_wait_requeues_without_spending_network_attempts(
-    monkeypatch: pytest.MonkeyPatch, backend, transport_database
+    monkeypatch: pytest.MonkeyPatch, backend, transport_database, tmp_path: Path
 ) -> None:
     from datetime import timedelta
 
@@ -1189,6 +1189,7 @@ async def test_delivery_order_wait_requeues_without_spending_network_attempts(
     clock = [base + timedelta(minutes=30)]
     for module in ("tank.util", "tank.storage", "tank.delivery", "tank.runtime"):
         monkeypatch.setattr(module + ".utcnow", lambda: clock[0])
+    monkeypatch.setattr("tank.runtime.collection_clock", lambda: collection_clock(clock[0]))
 
     monkeypatch.setattr("tank.delivery.DELIVERY_LOCK_WAIT_S", 0.2)
     aid = new_id("alert")
@@ -1294,23 +1295,22 @@ async def test_delivery_order_wait_requeues_without_spending_network_attempts(
 
             async def run_one() -> None:
                 stop = asyncio.Event()
-                runtime = object.__new__(Runtime)
-                runtime.budget_scope = RequestBudgetScope()
-                runtime.budget_backend = MemoryBudgetBackend(SystemBudgetClock())
-                runtime.budget_binding = None
-                runtime.settings = settings
-                runtime.repo = repo
-                bind_worker_fragment_failure_store(runtime, repo, declared_versions_fixture())
-                runtime.delivery = delivery
+                deliver = delivery.deliver
 
-                async def handle(payload):
+                async def observed_delivery(payload: DeliveryJob | dict[str, JsonValue]) -> None:
                     try:
-                        return await delivery.deliver(payload)
+                        await deliver(payload)
                     finally:
                         stop.set()
 
-                runtime.handlers = {"DELIVER": handle}
-                await asyncio.wait_for(runtime.worker(stop), 3)
+                with monkeypatch.context() as patch:
+                    patch.setattr(delivery, "deliver", observed_delivery)
+                    async with runtime_failure_fixture(
+                        repo, tmp_path / "runtime", ops_progress_enabled=False
+                    ) as runtime:
+                        await runtime.delivery.close()
+                        runtime.delivery = delivery
+                        await asyncio.wait_for(runtime.worker(stop), 3)
 
             held, release = asyncio.Event(), asyncio.Event()
 
@@ -1363,7 +1363,7 @@ async def test_delivery_order_wait_requeues_without_spending_network_attempts(
 )
 @pytest.mark.parametrize("lock_kind", ["event", "delivery"])
 async def test_contended_delivery_lock_is_scheduling_then_sends_once(
-    monkeypatch: pytest.MonkeyPatch, backend, lock_kind, transport_database
+    monkeypatch: pytest.MonkeyPatch, backend, lock_kind, transport_database, tmp_path: Path
 ) -> None:
 
     import httpx
@@ -1471,22 +1471,22 @@ async def test_contended_delivery_lock_is_scheduling_then_sends_once(
 
             async def run_one() -> None:
                 stop = asyncio.Event()
-                runtime = object.__new__(Runtime)
-                runtime.budget_scope = RequestBudgetScope()
-                runtime.budget_backend = MemoryBudgetBackend(SystemBudgetClock())
-                runtime.budget_binding = None
-                runtime.settings = settings
-                runtime.repo, runtime.delivery = repo, delivery
-                bind_worker_fragment_failure_store(runtime, repo, declared_versions_fixture())
+                deliver = delivery.deliver
 
-                async def handle(payload):
+                async def observed_delivery(payload: DeliveryJob | dict[str, JsonValue]) -> None:
                     try:
-                        return await delivery.deliver(payload)
+                        await deliver(payload)
                     finally:
                         stop.set()
 
-                runtime.handlers = {"DELIVER": handle}
-                await asyncio.wait_for(runtime.worker(stop), TIMEOUTS["DELIVER"] + 2)
+                with monkeypatch.context() as patch:
+                    patch.setattr(delivery, "deliver", observed_delivery)
+                    async with runtime_failure_fixture(
+                        repo, tmp_path / "runtime", ops_progress_enabled=False
+                    ) as runtime:
+                        await runtime.delivery.close()
+                        runtime.delivery = delivery
+                        await asyncio.wait_for(runtime.worker(stop), TIMEOUTS["DELIVER"] + 2)
 
             assert TIMEOUTS["DELIVER"] > http.timeout.read == 8
             await run_one()

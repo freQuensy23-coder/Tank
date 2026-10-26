@@ -2214,3 +2214,16 @@ capture request/history, confidence, timing, request independence and stored res
 oracles remain. Both cases pass in 20.47 seconds, zero skips/source guards. Initial
 setup incorrectly attempted to close the pure MarketTruthService; removing that
 nonexistent cleanup call fixed the fixture only (first diagnostic preserved).
+
+All six Memory/PostgreSQL delivery ordering/contention controls now run the closed
+worker with actual composed required ports and the original actual DeliveryService.
+Recording wrappers delegate the real delivery and stop only after its observed
+outcome. The simulated application clock is passed through the real collection-clock
+boundary; no provider retry delay is invented. Original seven scheduling deferrals,
+attempt refunds, HTTP failure/retry count, expiry preservation, cancellation/lock
+lifetime, ledger phases and one-send/idempotency assertions all pass in 59.03 seconds,
+zero skips/source guards. All handler-map/object-fragment worker construction is now
+removed from test_runtime and test_session_admission; peer reaction/X/market-refresh
+caller migrations and global qualification remain open. The remaining isolated
+Runtime.__new__ adapter test does not run a worker and is not a whole-module typing
+completion claim.
