@@ -26,6 +26,7 @@ from tank.market.quote_valuation import (
     current_quote_history_policy,
     qualify_captured_quote_value,
     qualify_quote_facts,
+    qualify_unknown_quote,
     qualify_usd_unit,
     retain_quote_rate_history,
 )
@@ -231,12 +232,7 @@ def test_unregistered_quote_identity_preserves_native_value_without_inference() 
             }
         )
     )
-    value = qualify_captured_quote_value(
-        point,
-        MissingQuoteUsdRate(kind="NO_CAPTURED_SAMPLE", quote_asset=None, reason="QUOTE_RATE_NOT_CAPTURED"),
-        policy=current_quote_age_policy(VERSIONS),
-        assembled_at=receipt(AT + timedelta(seconds=2)),
-    )
+    value = qualify_unknown_quote(point, versions=VERSIONS, assembled_at=receipt(AT + timedelta(seconds=2)))
     assert value.usd_value is None and value.facts.native.value == Decimal(3)
     assert value.unavailable_reasons == ("QUOTE_ASSET_NOT_CAPTURED",)
 
@@ -405,3 +401,31 @@ def test_wire_roundtrip_preserves_original_clock_metadata_and_refuses_boolean_qu
         NativeQuoteValue.model_validate_json(encoded.replace('"value":"3"', '"value":true'))
     with pytest.raises(ValidationError):
         QuoteRateEvidenceRef.model_validate(evidence("a").model_copy(update={"kind": "PROVIDER_BODY"}))
+
+
+def test_unknown_quote_phase_refuses_known_currency_and_retains_actual_receipt_gate() -> None:
+    with pytest.raises(ValueError, match="unknown quote identity"):
+        qualify_unknown_quote(
+            native(Decimal(3), quote_asset="USDT", denomination="QUOTE"),
+            versions=VERSIONS,
+            assembled_at=receipt(AT),
+        )
+    point = native(Decimal(3), quote_asset="USDT", denomination="QUOTE")
+    unknown = NativeQuoteValue.model_validate(
+        point.model_copy(
+            update={
+                "scope": UnknownQuoteValuationScope(
+                    kind="QUOTE_NOT_CAPTURED",
+                    instrument_id="opaque",
+                    token_id="target:T",
+                    quote_asset=None,
+                    reason="QUOTE_ASSET_NOT_CAPTURED",
+                )
+            }
+        )
+    )
+    result = qualify_unknown_quote(unknown, versions=VERSIONS, assembled_at=receipt(AT - timedelta(days=1)))
+    assert result.facts.native == unknown
+    assert result.proof.rate.kind == "QUOTE_NOT_CAPTURED"
+    assert result.unavailable_reasons == ("QUOTE_ASSET_NOT_CAPTURED", "NATIVE_RECEIPT_AFTER_ASSEMBLY")
+    assert QualifiedQuoteValue.model_validate_json(result.model_dump_json()) == result

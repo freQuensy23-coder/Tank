@@ -9,6 +9,7 @@ from tank.contracts.quote_valuation import (
     CapturedRateValuationContext,
     NativeQuoteValue,
     QualifiedQuoteValue,
+    QuoteNotCapturedValuationContext,
     QuoteRateAgePolicy,
     QuoteRateHistoryPolicy,
     QuoteUsdRateSource,
@@ -51,6 +52,16 @@ def qualify_usd_unit(
     facts = QuoteValuationFacts.calculate(
         native,
         UsdUnitValuationContext(kind="USD_UNIT", versions=versions),
+    )
+    return qualify_quote_facts(facts, assembled_at=assembled_at)
+
+
+def qualify_unknown_quote(
+    native: NativeQuoteValue, *, versions: ResolvedVersionIdentity, assembled_at: Timestamp
+) -> QualifiedQuoteValue:
+    facts = QuoteValuationFacts.calculate(
+        native,
+        QuoteNotCapturedValuationContext(kind="QUOTE_NOT_CAPTURED", versions=versions),
     )
     return qualify_quote_facts(facts, assembled_at=assembled_at)
 

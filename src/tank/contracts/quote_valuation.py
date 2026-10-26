@@ -114,13 +114,20 @@ class UsdUnitValuationContext(DomainModel):
     versions: ResolvedVersionIdentity
 
 
+class QuoteNotCapturedValuationContext(DomainModel):
+    kind: Literal["QUOTE_NOT_CAPTURED"]
+    versions: ResolvedVersionIdentity
+
+
 class CapturedRateValuationContext(DomainModel):
     kind: Literal["CURRENT_ANALYSIS_CAPTURED_RATE"]
     policy: QuoteRateAgePolicy
     source: QuoteUsdRateSource
 
 
-type QuoteValuationContext = UsdUnitValuationContext | CapturedRateValuationContext
+type QuoteValuationContext = (
+    UsdUnitValuationContext | QuoteNotCapturedValuationContext | CapturedRateValuationContext
+)
 
 
 class QuoteValueCalculation(DomainModel):
@@ -156,6 +163,10 @@ def quote_usd_denomination(value: QuoteDenomination) -> UsdDenomination:
 
 
 def _quote_calculation(native: NativeQuoteValue, context: QuoteValuationContext) -> QuoteValueCalculation:
+    if isinstance(context, QuoteNotCapturedValuationContext):
+        if not isinstance(native.scope, UnknownQuoteValuationScope):
+            raise ValueError("QUOTE_NOT_CAPTURED requires actual unknown quote identity")
+        return QuoteValueCalculation(value=None, reason="QUOTE_ASSET_NOT_CAPTURED")
     if isinstance(context, UsdUnitValuationContext):
         if not isinstance(native.scope, QuoteValuationScope) or native.scope.quote_asset != "USD":
             raise ValueError("USD_UNIT requires an actually declared USD quote")
@@ -223,7 +234,7 @@ class CapturedQuoteRateVisibility(DomainModel):
 
 
 class UnappliedQuoteRateVisibility(DomainModel):
-    kind: Literal["USD_UNIT", "NO_USABLE_RATE"]
+    kind: Literal["USD_UNIT", "QUOTE_NOT_CAPTURED", "NO_USABLE_RATE"]
 
 
 type QuoteRateVisibility = CapturedQuoteRateVisibility | UnappliedQuoteRateVisibility
@@ -268,6 +279,8 @@ class QuoteValuationProof(DomainModel):
         rate: QuoteRateVisibility
         if isinstance(value.context, UsdUnitValuationContext):
             rate = UnappliedQuoteRateVisibility(kind="USD_UNIT")
+        elif isinstance(value.context, QuoteNotCapturedValuationContext):
+            rate = UnappliedQuoteRateVisibility(kind="QUOTE_NOT_CAPTURED")
         elif isinstance(value.context.source, CapturedQuoteUsdRate):
             rate = CapturedQuoteRateVisibility(
                 kind="CAPTURED_RATE_RECEIPT",
