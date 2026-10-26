@@ -2,6 +2,7 @@
 
 import argparse
 import os
+import socket
 import subprocess
 import sys
 from pathlib import Path
@@ -56,6 +57,9 @@ def run_probe(
         declared.runtime.orchestrator_sha == declared.runtime.selected_release_sha
     ):
         raise ValueError("Actual package identities do not match the requested proof mode")
+    addresses = {entry[4][0] for entry in socket.getaddrinfo("api.apify.com", 443, type=socket.SOCK_STREAM)}
+    if addresses != {"127.0.0.1"}:
+        raise ValueError("The image proof requires loopback-only API DNS before worker launch")
     results: list[CLIOutcome] = []
     for name in (
         "forward",
