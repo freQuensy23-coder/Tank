@@ -1,9 +1,12 @@
 """Mechanical witness admission before recovery eligibility or storage effects."""
 
 import pytest
-from pydantic import ValidationError
+from pydantic import JsonValue, ValidationError
 
-from tank.contracts.reaction_recovery import ReactionRecoveryWitnessRequest
+from tank.contracts.reaction_recovery import (
+    ReactionRecoveryWitnessRequest,
+    RetainedCoalescedReaction,
+)
 
 
 def request_fields() -> dict[str, str]:
@@ -51,3 +54,41 @@ def test_recovery_witness_roles_cannot_alias(field: str, alias: str) -> None:
     fields[field] = fields[alias]
     with pytest.raises(ValidationError):
         ReactionRecoveryWitnessRequest.model_validate(fields)
+
+
+@pytest.mark.parametrize(
+    "result",
+    [{"coalesced_into": "peer"}, {"kind": "COALESCED", "coalesced_into": "peer"}],
+)
+def test_actual_retained_coalescing_results_preserve_wire_presence(
+    result: dict[str, JsonValue],
+) -> None:
+    admitted = RetainedCoalescedReaction.model_validate(result)
+    assert admitted.root.coalesced_into == "peer"
+    assert admitted.model_dump(mode="json") == result
+    assert RetainedCoalescedReaction.model_validate_json(admitted.model_dump_json()) == admitted
+
+
+@pytest.mark.parametrize(
+    "result",
+    [
+        {},
+        {"coalesced_into": None},
+        {"coalesced_into": ""},
+        {"coalesced_into": "peer", "revision": 2},
+        {"kind": "CAPTURED", "coalesced_into": "peer"},
+        {"kind": None, "coalesced_into": "peer"},
+        {"kind": "COALESCED", "coalesced_into": "peer", "applied": True},
+    ],
+)
+def test_partial_or_mixed_results_cannot_authorize_recovery(
+    result: dict[str, JsonValue],
+) -> None:
+    with pytest.raises(ValidationError):
+        RetainedCoalescedReaction.model_validate(result)
+
+
+def test_retained_result_validation_does_not_echo_payload_values() -> None:
+    with pytest.raises(ValidationError) as failure:
+        RetainedCoalescedReaction.model_validate({"coalesced_into": {"secret": "sensitive-value"}})
+    assert "sensitive-value" not in str(failure.value)

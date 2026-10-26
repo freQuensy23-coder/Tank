@@ -2,14 +2,27 @@
 
 from typing import Annotated, Literal, Self
 
-from pydantic import StringConstraints, model_validator
+from pydantic import ConfigDict, RootModel, StringConstraints, model_validator
 
 from tank.contracts import DomainModel
+from tank.contracts.scheduler_results import CoalescedReaction
 
 RecoveryStorageKey = Annotated[str, StringConstraints(min_length=1, pattern=r"\S")]
 RecoveryWitnessCollection = Literal[
     "ops.jobs", "mkt.backfill_runs", "out.reaction_checkpoints", "ops.scheduler_checkpoints"
 ]
+
+
+class LegacyCoalescedReaction(DomainModel):
+    """The original writer's complete result, without a later discriminator."""
+
+    coalesced_into: RecoveryStorageKey
+
+
+class RetainedCoalescedReaction(RootModel[LegacyCoalescedReaction | CoalescedReaction]):
+    """Recognize only the two actual historical coalescing result contracts."""
+
+    model_config = ConfigDict(strict=True, hide_input_in_errors=True, revalidate_instances="always")
 
 
 class ReactionRecoveryWitnessAddress(DomainModel):
