@@ -10,7 +10,7 @@ from pathlib import Path
 import pytest
 from scheduling_support import RecordingReactionScheduling
 from source_support import fixture_http_admission, fixture_versions
-from truth_support import fixture_truth_config
+from truth_support import fixture_truth_config, unselected_spot_sign_history
 
 from tank.analysis.page_access import LivePageAccess
 from tank.analysis.truth import decomposition, enrich_evidence, oi_class, spot_truth
@@ -103,7 +103,15 @@ def test_t5_constant_cohort() -> None:
         context_inputs={"rv24": None, "rv_normal_range": None},
     )
     enrich_evidence(
-        {"cutoff": iso(END)}, END - timedelta(hours=1), END, spots, "W1H", {}, rel, {"per_venue": []}
+        {"cutoff": iso(END)},
+        END - timedelta(hours=1),
+        END,
+        spots,
+        "W1H",
+        {},
+        rel,
+        {"per_venue": []},
+        sign_history=unselected_spot_sign_history("T", END - timedelta(hours=1), END),
     )
     comparison = spots["W1H"]["cohort_comparisons"]["W24H"]
     assert comparison["cohort"] == ["binance", "kraken", "okx"]
