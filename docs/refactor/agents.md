@@ -2269,3 +2269,25 @@ This closes this concrete inward-I/O violation, not the broader generic Reposito
 source-adapter or whole-application architecture/typing scope. Historical recovery,
 pending-demand and the separate completion-observation behavior correction remain
 held and are not implied by this worker candidate. No parent worktree was edited.
+
+### Source lifecycle I/O adapter moved outward
+
+On coherent parent b026dd0e, SourceExtractionRepository and its two raw-document
+admission helpers _identity/_state now live in tank/source_repository.py. Their
+ASTs are identical to the base after formatting, recorded independently in
+source-repository-relocation-ast.json. Pure SourceExtractionIdentity/State and the
+four-method SourceLifecycleStore remain in contracts/source_repository.py. All
+three actual callers (EventTools, SessionService and source lifecycle tests) use
+the outward adapter; analysis delegated only its import hunk. There is no
+compatibility re-export, behavior change, new layout-only test or storage rewrite.
+
+All 37 existing lifecycle/Session/EventTools completion units pass in 16.45 s;
+all 23 actual PostgreSQL caller cases pass in 17.81 s, zero skips/source guards.
+Original historical-field/byte preservation, terminal/missing no-write guards,
+identity refusal, capture-lock reload/concurrent metadata and actual observation
+completion assertions remain. Independent strict three adapter/port/test targets
+and scoped Ruff/format pass. Active exception/inventory locations are updated;
+quality owns explicit strict CI/global inventory addition while retaining the
+pure contract target. Generic Repository relocation is independently foundation
+owned. The observation-CAS behavior branch is separate and remains held for its
+full caller/boundary cohort; no parent files or immutable evidence changed here.
