@@ -7,18 +7,30 @@ import stat
 import subprocess
 import sys
 import threading
+from collections.abc import Iterator
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlsplit
 
 import pytest
-from publisher_state_support import rig
+from publisher_http_support import (
+    publisher_http_peer,
+    publisher_upload_failure_peer,
+    publisher_wrong_actor_peer,
+)
+from publisher_state_support import BuildState, rig, source_artifact
+from publisher_transition_support import HTTPPublisherRig, http_rig, write_artifact
+from pydantic import SecretStr
 
-from tank.deployment.artifact_contracts import SourceBundle
-from tank.deployment.artifacts import source_files
-from tank.deployment.contracts import ActiveRelease
+from tank.deployment.api_contracts import Base64SourceFile, SourceSnapshot
+from tank.deployment.apify_api import ApifyAPI, ApifyAPIError, ApifyEndpoint
+from tank.deployment.artifact_contracts import SourceArtifact, SourceBundle
+from tank.deployment.artifacts import ArtifactError, FilesystemArtifacts, source_files
+from tank.deployment.contracts import ActiveRelease, SourceBuild, SourceRelease
 from tank.deployment.credentials import PublisherCredentialError, host_token
 from tank.deployment.journal import JournalError
+from tank.deployment.markers import FilesystemTankReleaseState
+from tank.deployment.publisher import Publisher, PublisherStateError
 
 ROOT = Path(__file__).resolve().parents[1]
 SPEC = importlib.util.spec_from_file_location("apify_deploy", ROOT / "scripts/deploy/apify_deploy.py")
@@ -305,155 +317,225 @@ def finish_release(instance, tmp_path):
     instance.finish()
 
 
+@pytest.fixture
+def typed_publisher(tmp_path: Path) -> Iterator[HTTPPublisherRig]:
+    with http_rig(tmp_path, fault="NONE") as fixture:
+        yield fixture
+
+
+def actual_publisher(
+    fixture: HTTPPublisherRig, artifact: Path, sha: str, endpoint: ApifyEndpoint
+) -> Publisher:
+    return Publisher(
+        ApifyAPI(SecretStr("synthetic-publisher-image-token"), endpoint),
+        FilesystemArtifacts(artifact),
+        fixture.journal,
+        fixture.marker,
+        sha,
+        clock=fixture.publisher.clock,
+        policy=fixture.publisher.policy,
+    )
+
+
+def finish_typed(instance: Publisher, marker: FilesystemTankReleaseState) -> None:
+    instance.activate()
+    instance.commit()
+    marker.path.write_text(instance.sha + "\n")
+    instance.finish()
+
+
 @pytest.mark.integration
 def test_changed_worker_publishes_verifies_then_activates_and_reuses_unchanged(
-    apify_stand, release, tmp_path
-):
-    instance = publisher(apify_stand, release, tmp_path)
-    instance.prepare()
-    assert apify_stand.direct == deploy.BASELINE_BUILD
-    assert instance.read("active.json") is None
-    assert instance.read("pending.json")["candidate"]["release_sha"] == SHA
-    version = apify_stand.versions[deploy.VERSION]
-    assert version["buildTag"] is None and version["envVars"] == []
-    assert not version["applyEnvVarsToBuild"]
-    finish_release(instance, tmp_path)
-    assert apify_stand.direct == BUILD
-    assert instance.read("active.json")["release_sha"] == SHA
-    assert instance.read("pending.json") is None
-    assert stat.S_IMODE((tmp_path / "apify-state/active.json").stat().st_mode) == 0o600
-    assert stat.S_IMODE((tmp_path / "apify-state").stat().st_mode) == 0o700
-    manifest = json.loads((release / "manifest.json").read_bytes())
-    manifest["release_sha"] = NEXT_SHA
-    (release / "manifest.json").write_bytes(deploy.canonical(manifest))
-    newer = publisher(apify_stand, release, tmp_path, NEXT_SHA)
-    newer.prepare()
-    finish_release(newer, tmp_path)
-    assert newer.read("active.json")["release_sha"] == NEXT_SHA
-    assert newer.read("active.json")["build"]["release_sha"] == SHA
-    assert len([item for item in apify_stand.requests if item[0] == "POST" and "/builds?" in item[1]]) == 1
-    assert (
-        len([item for item in apify_stand.requests if item[0] == "PUT" and item[1].endswith(deploy.ACTOR_ID)])
-        == 1
+    typed_publisher: HTTPPublisherRig,
+) -> None:
+    fixture = typed_publisher
+    instance = fixture.publisher
+    previous = fixture.journal.read_active()
+    assert previous is not None
+    prepared = instance.prepare()
+    assert fixture.api.direct == previous.build_id
+    pending = fixture.journal.read_transaction()
+    assert pending is not None and pending.candidate == prepared.candidate
+    assert fixture.api.version is not None
+    assert fixture.api.version.buildTag is None and fixture.api.version.envVars == []
+    assert fixture.api.version.applyEnvVarsToBuild is False
+    finish_typed(instance, fixture.marker)
+    active = fixture.journal.read_active()
+    assert active is not None and active.release_sha == instance.sha
+    assert fixture.journal.read_transaction() is None
+    assert stat.S_IMODE((fixture.journal.state / "active.json").stat().st_mode) == 0o600
+    assert stat.S_IMODE(fixture.journal.state.stat().st_mode) == 0o700
+    selected = fixture.selected
+    next_release = SourceArtifact(
+        release=SourceRelease(
+            release_sha="c" * 40,
+            source_digest=selected.release.source_digest,
+            contract=selected.release.contract,
+            actor_id=selected.release.actor_id,
+        ),
+        bundle=selected.bundle,
     )
+    path = fixture.artifact.parent / "next"
+    write_artifact(path, next_release)
+    newer = actual_publisher(fixture, path, next_release.release.release_sha, fixture.peer.endpoint)
+    newer.prepare()
+    finish_typed(newer, fixture.marker)
+    reused = fixture.journal.read_active()
+    assert reused is not None and reused.release_sha == next_release.release.release_sha
+    assert isinstance(reused.build, SourceBuild) and reused.build.release_sha == instance.sha
+    assert len(fixture.api.started) == 1
+    assert len(fixture.api.tag_updates) == 1
 
 
 @pytest.mark.integration
 @pytest.mark.parametrize("failure", ["fail_upload", "fail_build", "snapshot_tamper"])
-def test_publication_errors_do_not_activate_or_commit(apify_stand, release, tmp_path, failure):
-    setattr(apify_stand, failure, True)
-    instance = publisher(apify_stand, release, tmp_path)
-    with pytest.raises((deploy.DeployError, ValueError)) as error:
-        instance.prepare()
-    assert "synthetic-token" not in str(error.value)
-    assert apify_stand.direct == deploy.BASELINE_BUILD
-    assert instance.read("active.json") is None
-    assert instance.read("pending.json") is None
+def test_publication_errors_do_not_activate_or_commit(
+    typed_publisher: HTTPPublisherRig, failure: str
+) -> None:
+    fixture = typed_publisher
+    previous = fixture.journal.read_active()
+    if failure == "fail_upload":
+        with publisher_upload_failure_peer(fixture.api, fixture.journal, fixture.publisher.sha) as peer:
+            instance = actual_publisher(fixture, fixture.artifact, fixture.publisher.sha, peer.endpoint)
+            with pytest.raises(ApifyAPIError):
+                instance.prepare()
+    else:
+        fixture.api.fault = "BUILD_FAIL" if failure == "fail_build" else "UPLOAD_TAMPER"
+        with pytest.raises((ApifyAPIError, PublisherStateError, ValueError)) as error:
+            fixture.publisher.prepare()
+        assert "synthetic-publisher-image-token" not in str(error.value)
+    assert fixture.api.direct == "A" * 17
+    assert fixture.journal.read_active() == previous
+    assert fixture.journal.read_transaction() is None
 
 
 @pytest.mark.integration
 @pytest.mark.parametrize("failure", ["ignore", "uncertain"])
 def test_failed_tag_readback_or_uncertain_update_restores_previous_build(
-    apify_stand, release, tmp_path, failure
-):
-    instance = publisher(apify_stand, release, tmp_path)
-    instance.prepare()
-    apify_stand.activation = failure
-    with pytest.raises(deploy.DeployError):
-        instance.activate()
-    assert instance.read("pending.json")["activation_attempted"]
-    apify_stand.activation = "ok"
-    instance.rollback()
-    instance.rollback_finish()
-    assert apify_stand.direct == deploy.BASELINE_BUILD
-    assert instance.read("pending.json") is None
-    assert instance.read("active.json") is None
+    typed_publisher: HTTPPublisherRig, failure: str
+) -> None:
+    fixture = typed_publisher
+    previous = fixture.journal.read_active()
+    fixture.publisher.prepare()
+    fixture.api.fault = "TAG_IGNORE" if failure == "ignore" else "TAG_UNCERTAIN"
+    with pytest.raises((ApifyAPIError, PublisherStateError)):
+        fixture.publisher.activate()
+    pending = fixture.journal.read_transaction()
+    assert pending is not None and pending.activation_attempted
+    fixture.api.fault = "NONE"
+    fixture.publisher.rollback()
+    fixture.publisher.rollback_finish()
+    assert fixture.api.direct == "A" * 17
+    assert fixture.journal.read_transaction() is None
+    assert fixture.journal.read_active() == previous
 
 
 @pytest.mark.integration
-def test_build_poll_failure_is_not_treated_as_success(apify_stand, release, tmp_path):
-    apify_stand.poll_status = "TIMED-OUT"
-    with pytest.raises(deploy.DeployError, match="failed"):
-        publisher(apify_stand, release, tmp_path).prepare()
-    assert apify_stand.direct == deploy.BASELINE_BUILD
-    assert any("waitForFinish=60" in path for _, path, _ in apify_stand.requests)
+def test_build_poll_failure_is_not_treated_as_success(typed_publisher: HTTPPublisherRig) -> None:
+    fixture = typed_publisher
+    fixture.api.fault = "BUILD_FAIL"
+    with pytest.raises(PublisherStateError, match="failed"):
+        fixture.publisher.prepare()
+    assert fixture.api.direct == "A" * 17
+    assert any("waitForFinish=60" in request.path for request in fixture.peer.requests)
 
 
 @pytest.mark.integration
-def test_build_deadline_cannot_activate_incomplete_build(apify_stand, release, tmp_path):
-    apify_stand.poll_status = "RUNNING"
-    instance = publisher(apify_stand, release, tmp_path)
-    times = iter([0, 601])
-    instance.clock = lambda: next(times)
-    with pytest.raises(deploy.DeployError, match="deadline"):
-        instance.prepare()
-    assert apify_stand.direct == deploy.BASELINE_BUILD
-    assert instance.read("pending.json") is None
+def test_build_deadline_cannot_activate_incomplete_build(typed_publisher: HTTPPublisherRig) -> None:
+    fixture = typed_publisher
+    fixture.api.fault = "BUILD_RUNNING"
+    times = iter((0.0, 601.0))
+    fixture.publisher.clock = lambda: next(times)
+    with pytest.raises(PublisherStateError, match="deadline"):
+        fixture.publisher.prepare()
+    assert fixture.api.direct == "A" * 17
+    assert fixture.journal.read_transaction() is None
 
 
 @pytest.mark.integration
-def test_worker_rollback_failure_retains_recovery_transaction(apify_stand, release, tmp_path):
-    instance = publisher(apify_stand, release, tmp_path)
-    instance.prepare()
-    instance.activate()
-    apify_stand.fail_rollback = True
-    with pytest.raises(deploy.DeployError):
-        instance.rollback()
-    assert apify_stand.direct == BUILD
-    assert instance.read("pending.json")["previous"] == deploy.BASELINE_BUILD
-    with pytest.raises(deploy.DeployError, match="unfinished"):
-        instance.prepare()
+def test_worker_rollback_failure_retains_recovery_transaction(typed_publisher: HTTPPublisherRig) -> None:
+    fixture = typed_publisher
+    fixture.publisher.prepare()
+    fixture.publisher.activate()
+    fixture.api.fault = "ROLLBACK_FAIL"
+    with pytest.raises((ApifyAPIError, PublisherStateError)):
+        fixture.publisher.rollback()
+    assert fixture.api.direct == "B" * 17
+    pending = fixture.journal.read_transaction()
+    assert pending is not None and pending.previous == "A" * 17
+    with pytest.raises(PublisherStateError, match="Unfinished"):
+        fixture.publisher.prepare()
 
 
 @pytest.mark.integration
-def test_committed_release_can_rollback_before_tank_marker_finishes(apify_stand, release, tmp_path):
-    instance = publisher(apify_stand, release, tmp_path)
-    instance.prepare()
-    finish_release(instance, tmp_path)
-    original_active = instance.read("active.json")
-    (release / "worker/main.py").write_text("value = 2\n")
-    manifest = json.loads((release / "manifest.json").read_bytes())
-    manifest.update(
-        release_sha=NEXT_SHA, source_digest=deploy.digest(deploy.source_files(release / "worker"))
-    )
-    (release / "manifest.json").write_bytes(deploy.canonical(manifest))
-    newer = publisher(apify_stand, release, tmp_path, NEXT_SHA)
-    newer.prepare()
-    newer.activate()
-    newer.commit()
-    assert apify_stand.direct == OTHER_BUILD
-    with pytest.raises(deploy.DeployError, match="Tank release marker"):
-        newer.finish()
-    newer.rollback()
-    newer.rollback_finish()
-    assert apify_stand.direct == BUILD
-    assert newer.read("active.json") == original_active
-    assert (tmp_path / "deployed").read_text().strip() == SHA
+def test_committed_release_can_rollback_before_tank_marker_finishes(
+    typed_publisher: HTTPPublisherRig,
+) -> None:
+    fixture = typed_publisher
+    fixture.publisher.prepare()
+    finish_typed(fixture.publisher, fixture.marker)
+    previous = fixture.journal.read_active()
+    selected = source_artifact("c" * 40, b"next-body")
+    path = fixture.artifact.parent / "next"
+    write_artifact(path, selected)
+    with publisher_http_peer(fixture.api, fixture.journal, selected.release.release_sha) as peer:
+        newer = actual_publisher(fixture, path, selected.release.release_sha, peer.endpoint)
+        newer.prepare()
+        newer.activate()
+        newer.commit()
+        assert fixture.api.direct == "C" * 17
+        with pytest.raises(PublisherStateError, match="Tank release marker"):
+            newer.finish()
+        newer.rollback()
+        newer.rollback_finish()
+    assert fixture.api.direct == "B" * 17
+    assert fixture.journal.read_active() == previous
+    assert fixture.marker.deployed() == fixture.publisher.sha
 
 
 @pytest.mark.integration
 @pytest.mark.parametrize("change", ["artifact", "active_tag", "cached_build", "actor_identity", "contract"])
-def test_provenance_drift_fails_closed(apify_stand, release, tmp_path, change):
-    instance = publisher(apify_stand, release, tmp_path)
-    instance.prepare()
-    finish_release(instance, tmp_path)
-    if change == "artifact":
-        (release / "worker/Dockerfile").write_text("tampered")
-    elif change == "active_tag":
-        apify_stand.direct = OTHER_BUILD
-    elif change == "cached_build":
-        apify_stand.builds[BUILD]["actVersion"]["sourceFiles"][0]["content"] = "dGFtcGVyZWQ="
-    elif change == "actor_identity":
-        apify_stand.builds[BUILD]["actId"] = "wrong-actor"
+def test_provenance_drift_fails_closed(typed_publisher: HTTPPublisherRig, change: str) -> None:
+    fixture = typed_publisher
+    fixture.publisher.prepare()
+    finish_typed(fixture.publisher, fixture.marker)
+    active = fixture.journal.read_active()
+    if change == "actor_identity":
+        with publisher_wrong_actor_peer(fixture.api, fixture.journal, fixture.publisher.sha) as peer:
+            altered = actual_publisher(fixture, fixture.artifact, fixture.publisher.sha, peer.endpoint)
+            with pytest.raises(ValueError):
+                altered.prepare()
     else:
-        snapshot = apify_stand.builds[BUILD]["actVersion"]["sourceFiles"]
-        marker = next(item for item in snapshot if item["name"] == deploy.MARKER)
-        value = json.loads(base64.b64decode(marker["content"]))
-        value["contract"] = "incompatible"
-        marker["content"] = base64.b64encode(deploy.canonical(value)).decode()
-    with pytest.raises(deploy.DeployError):
-        instance.prepare()
-    assert instance.read("pending.json") is None
+        if change == "artifact":
+            (fixture.artifact / "worker/Dockerfile").write_text("tampered")
+        elif change == "active_tag":
+            fixture.api.direct = "Z" * 17
+        else:
+            observed = fixture.api.builds["B" * 17]
+            entries = list(observed.source.sourceFiles)
+            index = next(
+                i
+                for i, entry in enumerate(entries)
+                if entry.name == ("tank-release.json" if change == "contract" else "main.py")
+            )
+            entry = entries[index]
+            body = b"tampered"
+            if change == "contract":
+                marker = fixture.selected.release.model_dump(mode="json")
+                marker["contract"] = "incompatible"
+                body = json.dumps(marker).encode()
+            entries[index] = Base64SourceFile(
+                name=entry.name, format="BASE64", content=base64.b64encode(body).decode()
+            )
+            fixture.api.builds[observed.id] = BuildState(
+                id=observed.id,
+                status=observed.status,
+                source=SourceSnapshot(sourceType="SOURCE_FILES", sourceFiles=entries),
+            )
+        with pytest.raises((ArtifactError, ApifyAPIError, PublisherStateError, ValueError)):
+            fixture.publisher.prepare()
+    assert fixture.journal.read_transaction() is None
+    assert fixture.journal.read_active() == active
 
 
 @pytest.mark.integration

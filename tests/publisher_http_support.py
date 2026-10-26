@@ -8,6 +8,7 @@ from contextlib import contextmanager
 from dataclasses import dataclass
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from typing import Literal
 from urllib.parse import parse_qs, urlsplit
 
 from publisher_state_support import ProviderState
@@ -48,6 +49,7 @@ def serve_peer(
     port: int,
     context: ssl.SSLContext | None,
     after_tag_update: Callable[[], bool] | None,
+    wire_fault: Literal["ACTOR_IDENTITY", "UPLOAD_FAILURE"] | None,
 ) -> Iterator[PublisherHTTPPeer]:
     requests: list[ObservedRequest] = []
 
@@ -93,6 +95,9 @@ def serve_peer(
                 actor + "/versions",
                 actor + "/versions/0.3",
             }:
+                if wire_fault == "UPLOAD_FAILURE":
+                    self.send_error(503)
+                    return
                 provider.upload_version(
                     VersionUpload.model_validate_json(body), replace=self.command == "PUT"
                 )
@@ -109,6 +114,8 @@ def serve_peer(
                 self.send_error(404)
                 return
             document = json.dumps({"data": reply.model_dump(mode="json")}).encode()
+            if wire_fault == "ACTOR_IDENTITY" and isinstance(reply, CompletedBuildSnapshot):
+                document = document.replace(b'"actId": "rbf5CQKQgKNVl4SfO"', b'"actId": "unrelated"')
             self.send_response(200)
             self.send_header("Content-Type", "application/json")
             self.send_header("Content-Length", str(len(document)))
@@ -138,7 +145,9 @@ def serve_peer(
 def publisher_http_peer(
     provider: ProviderState, journal: PublisherJournal, selected_sha: CommitSHA
 ) -> Iterator[PublisherHTTPPeer]:
-    with serve_peer(provider, journal, selected_sha, port=0, context=None, after_tag_update=None) as peer:
+    with serve_peer(
+        provider, journal, selected_sha, port=0, context=None, after_tag_update=None, wire_fault=None
+    ) as peer:
         yield peer
 
 
@@ -155,6 +164,48 @@ def publisher_https_peer(
     context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
     context.load_cert_chain(certificate, private_key)
     with serve_peer(
-        provider, journal, selected_sha, port=443, context=context, after_tag_update=after_tag_update
+        provider,
+        journal,
+        selected_sha,
+        port=443,
+        context=context,
+        after_tag_update=after_tag_update,
+        wire_fault=None,
+    ) as peer:
+        yield peer
+
+
+@contextmanager
+def publisher_wrong_actor_peer(
+    provider: ProviderState,
+    journal: PublisherJournal,
+    selected_sha: CommitSHA,
+) -> Iterator[PublisherHTTPPeer]:
+    with serve_peer(
+        provider,
+        journal,
+        selected_sha,
+        port=0,
+        context=None,
+        after_tag_update=None,
+        wire_fault="ACTOR_IDENTITY",
+    ) as peer:
+        yield peer
+
+
+@contextmanager
+def publisher_upload_failure_peer(
+    provider: ProviderState,
+    journal: PublisherJournal,
+    selected_sha: CommitSHA,
+) -> Iterator[PublisherHTTPPeer]:
+    with serve_peer(
+        provider,
+        journal,
+        selected_sha,
+        port=0,
+        context=None,
+        after_tag_update=None,
+        wire_fault="UPLOAD_FAILURE",
     ) as peer:
         yield peer
