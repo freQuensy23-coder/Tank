@@ -526,7 +526,7 @@ async def test_recovery_atomically_links_one_current_budget_and_preserves_origin
     assert queued["priority"] == original["priority"]
     assert queued["max_attempts"] == original["max_attempts"]
     assert queued["status"] == "QUEUED"
-    assert queued["result"] is None
+    assert "result" not in queued
     due = propagate_timestamp(queued, "run_after")
     expiry = propagate_timestamp(queued, "expires_at")
     assert operation.value is not None and due.value is not None and expiry.value is not None
