@@ -1370,3 +1370,21 @@ original raw revision in every valid ledger case. Checkpoint 57377441 remains
 inactive; its adapter must consume the forthcoming raw claim-revision API and
 qualify omitted nested facets before activation. The limited passing cases
 above did not contain such a ledger and do not establish full parity.
+
+Send admission prerequisite in the inactive worker stream
+
+send_message now admits the actual closed AgentMessage before using its
+routing facts. NativeSessionResolution.mapping_identity selects the declared
+existing-session/event/proposal/item namespace in the existing order and
+refuses missing routing facts instead of str(None). ContextBinding provides
+the actual session ID; LegacyToolContext.needs_migration distinguishes an
+unreported context version from a declared version, without inventing zero.
+An actual missing session after tool synchronization raises instead of being
+passed onward as a usable session. USER_QUESTION scope uses its typed target.
+All 197 affected Agent/workflow/model-context/Telegram unit callers pass in
+17.54 seconds, zero skips (worker-e587-send-admission-unit). Default Session
+source mypy, independent native session-contract strict and Ruff pass.
+Independent whole Session strict remains incomplete: actual untyped
+reopening/follower/attachment/presentation dependencies and constructor
+repository inference are open; this does not claim the send result port is
+complete or activate the new worker dispatcher.

@@ -159,7 +159,13 @@ from tank.contracts.source_repository import SourceExtractionRepository
 from tank.delivery import DeliveryDeferred
 from tank.ops_progress import session_progress
 from tank.question_answers import record_answer, validate_question_identity
-from tank.runtime_contracts import ScoutMessage, ScoutReviewJob, UserQuestionMessage
+from tank.runtime_contracts import (
+    ScoutMessage,
+    ScoutReviewJob,
+    SourceMessage,
+    UserQuestionMessage,
+    parse_agent_message,
+)
 from tank.telegram_inbox import DOCUMENT_LIMIT, question_message
 from tank.time_precision import Timestamp, collection_clock, offset_schedule, propagate_timestamp
 from tank.util import canonical_json, jsonable, parse_time, sha256, utcnow
@@ -675,35 +681,31 @@ class SessionService:
             payload["question_id"], call_id, filename, content, arguments.get("caption")
         )
 
-    async def send_message(self, payload):
-        if payload.get("kind") == "USER_QUESTION" and not await self.continuable(
-            UserQuestionMessage.model_validate(payload)
-        ):
+    async def send_message(self, payload: dict[str, JsonValue]) -> dict[str, JsonValue] | None:
+        message = parse_agent_message(payload)
+        if isinstance(message, UserQuestionMessage) and not await self.continuable(message):
             return None
         item = (
-            await self.repo.get("ingest.source_items", payload["item_id"]) if payload.get("item_id") else None
+            await self.repo.get("ingest.source_items", message.item_id)
+            if isinstance(message, SourceMessage)
+            else None
         )
-        mapping_identity = (
-            payload.get("session_id")
-            or payload.get("event_id")
-            or payload.get("proposal_id")
-            or payload.get("item_id")
+        request = NativeSessionResolution.from_wire(
+            payload,
+            role=native_role_for_message(message.kind),
+            replay=self.settings.replay,
         )
-        async with self.repo.lock("session-mapping:" + str(mapping_identity)):
-            session = await self.resolve(
-                NativeSessionResolution.from_wire(
-                    payload,
-                    role=native_role_for_message(payload["kind"]),
-                    replay=self.settings.replay,
-                )
-            )
-            ContextBinding.from_session(session)
-        sid, key = session["session_id"], sha256(payload)
-        migrating = session.get("model_context_version", 0) < CONTEXT_VERSION
-        if migrating or payload.get("kind") == "USER_QUESTION":
+        async with self.repo.lock("session-mapping:" + request.mapping_identity()):
+            session = await self.resolve(request)
+            binding = ContextBinding.from_session(session)
+        sid, key = binding.session_id, sha256(payload)
+        migrating = LegacyToolContext.from_record(session).needs_migration(CONTEXT_VERSION)
+        if migrating or isinstance(message, UserQuestionMessage):
             if (await self.sync_tools(sid)).status == "BUSY":
                 raise DeliveryDeferred(offset_schedule(collection_clock(), timedelta(seconds=30)))
             session = await self.repo.get("ops.agent_sessions", sid)
+            if session is None:
+                raise KeyError(sid)
         content = await ModelContext(self.repo, self.settings, session).message(payload, item)
         note = CONTEXT_TRANSITION[bool(session.get("proposal_id"))]
         if migrating:
@@ -711,7 +713,7 @@ class SessionService:
         async with self.send_locks.setdefault(sid, asyncio.Lock()):
             async with self.repo.lock("session:" + sid):
                 session = await self.repo.get("ops.agent_sessions", sid)
-                if payload.get("kind") == "USER_QUESTION":
+                if isinstance(message, UserQuestionMessage):
                     if session is not None:
                         require_owned_session_identity(sid, session)
                     eligibility = followup_eligibility(
@@ -719,7 +721,7 @@ class SessionService:
                     )
                     if not isinstance(eligibility, FollowupCandidate):
                         await self.refusals.record(
-                            FollowupRefusalTarget(question_id=payload["question_id"], session_id=sid),
+                            FollowupRefusalTarget(question_id=message.question_id, session_id=sid),
                             eligibility,
                         )
                         return None
