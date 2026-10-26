@@ -2334,3 +2334,11 @@ all old/new exhausted input, restart and no-repeat effects. Barrier validation
 also requires pending/failed lists to match the actual admitted queue states.
 These changes remain unqualified under the shared inode hold; no tests were
 silently skipped or reclassified and no compatibility map was restored.
+Static review during the explicit qualifier hold added consistency refusal for a
+reported prior-tool retirement whose queue state is not FAILED, whose execution
+identity differs from its index, or whose replacement equals the retired input.
+Genuinely omitted old receipt metadata remains unreported; no unused body/counter
+was added. Independent strict four targets now pass (contract plus new pure,
+actual-boundary and lineage caller modules); default checking of sessions.py and
+scoped Ruff/format pass. These are static results only; functional qualification
+still waits for the parent's actual retry and quality's seed checkpoint.

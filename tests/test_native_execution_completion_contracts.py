@@ -123,3 +123,26 @@ def test_reported_receipt_and_return_clocks_require_actual_aware_occurrences(clo
             attempt=None,
             returned_at=clock,
         )
+
+
+@pytest.mark.parametrize("malformed", ["STATE", "IDENTITY", "SELF_REPLACEMENT"])
+def test_reported_supersession_facts_cannot_contradict_native_scope(malformed: str) -> None:
+    record = terminal_record()
+    state: dict[str, JsonValue] = {"execution_id": "old", "state": "FAILED", "settled_outcome": "FAILED"}
+    replacement = "input"
+    if malformed == "STATE":
+        state.update(state="COMPLETED", settled_outcome="COMPLETED")
+    elif malformed == "IDENTITY":
+        state["execution_id"] = "foreign"
+    else:
+        replacement = "old"
+    record["superseded_native_inputs"] = {
+        "old": {
+            "reason": "FAILED_PRIOR_TURN_ATTEMPT",
+            "queue_state": state,
+            "replacement_input_id": replacement,
+            "message_id": "owner",
+        }
+    }
+    with pytest.raises(ValidationError):
+        CompletionSessionSnapshot.from_record(record)

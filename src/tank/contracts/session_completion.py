@@ -306,6 +306,12 @@ class PriorToolInputReceipt(DomainModel):
     replacement_input_id: CompletionIdentity | None = None
     message_id: CompletionIdentity | None = None
 
+    @model_validator(mode="after")
+    def reported_failure_is_actual(self) -> Self:
+        if self.queue_state is not None and self.queue_state.state != "FAILED":
+            raise ValueError("Prior tool retirement contradicts its observed queue state")
+        return self
+
 
 type SupersededInputReceipt = RetriedInputReceipt | PriorToolInputReceipt
 
@@ -350,6 +356,15 @@ class CompletionSessionSnapshot(DomainModel):
             raise ValueError("Completion receipt identity differs from its key")
         if any(key != state.execution_id for key, state in self.execution_states.items()):
             raise ValueError("Completion execution identity differs from its key")
+        for identity, receipt in self.superseded_inputs.items():
+            if receipt.replacement_input_id == identity:
+                raise ValueError("Superseded native input cannot replace itself")
+            if (
+                isinstance(receipt, PriorToolInputReceipt)
+                and receipt.queue_state is not None
+                and receipt.queue_state.execution_id != identity
+            ):
+                raise ValueError("Prior tool retirement references another execution")
         return self
 
 
