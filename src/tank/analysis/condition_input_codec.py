@@ -1,5 +1,6 @@
 """Storage-read projection for spot calculations and separately retained source evidence."""
 
+import json
 from collections.abc import Mapping, Sequence
 from datetime import datetime, timedelta
 from decimal import Decimal, InvalidOperation
@@ -50,7 +51,14 @@ def source_descriptor_digest(descriptor: FlowSourceDescriptor) -> str:
 
 
 def _admitted_source_descriptor_digest(descriptor: FlowSourceDescriptor) -> str:
-    return sha256(descriptor.model_dump(mode="json"))
+    payload = json.dumps(
+        descriptor.model_dump(mode="json"),
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=False,
+        allow_nan=False,
+    ).encode()
+    return sha256(payload)
 
 
 class FlowEvidenceEntry(DomainModel):
