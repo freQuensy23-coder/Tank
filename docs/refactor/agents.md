@@ -1972,3 +1972,32 @@ evidence; only authored fixture provenance/cursor/publication declarations were
 completed, with no historical evidence padding or production/schema relaxation.
 External proof prefix is worker-message-final3. Whole worker command dispatch,
 remaining Session body/tool/usage/event responsibilities and vendor work stay open.
+
+Inactive atomic claim contract prerequisite
+
+JobMetadata.claim_token preserves genuine historical/not-yet-claimed absence as
+omission, including bare JSON dump/read roundtrip; explicit reported null refuses.
+Current JobClaimScope and InvalidJobClaim require an observed nonblank token.
+Scope.matches checks the original raw payload digest and actual RUNNING identity,
+attempt and nullable observed recovery count before envelope admission. Recovery
+count None is unreported context, never a generated zero or the authority token.
+The backend must mint a fresh actual token on every claim, including same-attempt
+recovery and refunded admission/dependency deferral.
+
+QueueStore defines transition_claimed_job with a synchronous fresh-JobEnvelope to
+closed JobClaimMutation callback under actual row atomicity, and separate token/
+original-revision quarantine for malformed rows. Mutation.apply_to replaces only
+reported lifecycle scalars and complete named timestamp families on original raw
+wire; omitted fields remain untouched, explicit result None means actual void,
+and terminal mutations require an occurred completion clock. Optional patch fields
+represent an unrequested write, not guessed provider/domain facts. A None backend
+outcome means no matching owned RUNNING claim and no effect; physical implementation
+and consumer qualification are pending and must not be inferred from this API.
+
+This pure checkpoint is based on canonical 025240b8, with no held worker/native
+extras. Independent strict source/test three targets, Ruff/format and 21 pinned
+native pure cases pass (10.30 seconds total, zero skips/source guards). Proof prefix
+job-claim-mutations-roundtrip; backend Memory/PostgreSQL fencing and three stale
+controller races remain held for the paired cohort. These claims concern atomic
+queue acknowledgment/failure/requeue, not a distributed external-effect lease;
+network calls must not run inside this callback/row lock.

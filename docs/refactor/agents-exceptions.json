@@ -3013,6 +3013,35 @@
         "test_mutated_admitted_message_cannot_change_original_owner_or_identity",
         "test_constructed_work_cannot_replace_command_behind_original_claim"
       ]
+    },
+    {
+      "sites": [
+        {
+          "path": "src/tank/contracts/jobs.py",
+          "symbol": "JobMetadata.claim_token"
+        },
+        {
+          "path": "src/tank/contracts/jobs.py",
+          "symbol": "JobClaimScope.recovery_count"
+        },
+        {
+          "path": "src/tank/contracts/jobs.py",
+          "symbol": "JobClaimMutation"
+        },
+        {
+          "path": "src/tank/contracts/job_repository.py",
+          "symbol": "QueueStore.transition_claimed_job"
+        }
+      ],
+      "kind": "observed claim token and sparse persistence command absence",
+      "reason": "Old/not-yet-claimed token absence remains omitted; current claim scopes and invalid-claim receipts require a real token. Nullable observed recovery_count remains unreported context, not generation zero or authority. Mutation field omission means no requested write; explicit null attempts/clocks refuse, explicit result=None is an actual void result. None transition outcome means no matching owned RUNNING claim/no effect, pending real backend qualification. Raw Mapping in matches/apply_to is the actual storage wire; closed scope/mutation fields supply business facts and preserve unrelated evidence.",
+      "validation": [
+        "test_historical_token_absence_stays_unreported_and_reported_null_refuses",
+        "test_current_scope_requires_the_actual_nonempty_token",
+        "test_original_payload_revision_distinguishes_boolean_integer_and_float",
+        "test_sparse_mutation_replaces_clock_family_without_normalizing_unrelated_result",
+        "test_completion_distinguishes_explicit_void_result_from_unreported_result"
+      ]
     }
   ]
 }

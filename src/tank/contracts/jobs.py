@@ -11,11 +11,18 @@ from tank.contracts.question_retirement import (
     QuestionFailureRefusalReceipt,
     QuestionRefusalDigest,
 )
-from tank.time_precision import Timestamp
-from tank.util import parse_time
+from tank.time_precision import Timestamp, timestamp_owned_fields
+from tank.util import parse_time, sha256
+
+
+def _unreported_claim_token(value: str | None) -> bool:
+    return value is None
 
 
 class JobMetadata(DomainModel):
+    claim_token: str | None = Field(
+        default=None, min_length=1, pattern=r"\S", exclude_if=_unreported_claim_token
+    )
     job_id: str
     type: str
     priority: int = Field(ge=0, le=4)
@@ -72,6 +79,8 @@ class JobMetadata(DomainModel):
 
     @model_validator(mode="after")
     def validate_lifecycle_clocks(self) -> Self:
+        if "claim_token" in self.model_fields_set and self.claim_token is None:
+            raise ValueError("A reported queue claim token cannot be null")
         for value, precision, reason, anchor in (
             (
                 self.created_at,
@@ -181,6 +190,13 @@ class ClaimedJob(DomainModel):
     envelope: JobEnvelope
     revision: str = Field(pattern=r"^[0-9a-f]{64}$")
 
+    @property
+    def claim_token(self) -> str:
+        token = self.envelope.claim_token
+        if token is None:
+            raise ValueError("A current queue claim requires its actual claim token")
+        return token
+
 
 class JobRetryState(DomainModel):
     """Retry only needs execution fields, including for direct SQL jobs lacking provenance."""
@@ -247,6 +263,7 @@ class JobClaimState(JobRetryState):
 class JobClaimRevision(DomainModel):
     """Only the identity/state needed for conditional rejection of a claimed wire row."""
 
+    claim_token: str = Field(min_length=1, pattern=r"\S")
     job_id: str
     type: str
     status: Literal["QUEUED", "RUNNING", "DONE", "FAILED", "EXPIRED"]
@@ -256,6 +273,7 @@ class JobClaimRevision(DomainModel):
     def from_document(cls, document: Mapping[str, JsonValue]) -> Self:
         return cls.model_validate(
             {
+                "claim_token": document["claim_token"],
                 "job_id": document["job_id"],
                 "type": document["type"],
                 "status": document["status"],
@@ -265,9 +283,95 @@ class JobClaimRevision(DomainModel):
 
 
 class InvalidJobClaim(DomainModel):
+    claim_token: str = Field(min_length=1, pattern=r"\S")
     job_id: str
     kind: str
     attempts: int = Field(ge=0)
     revision: str = Field(pattern=r"^[0-9a-f]{64}$")
     error_codes: tuple[str, ...]
     error_fields: tuple[str, ...]
+
+
+class JobClaimScope(DomainModel):
+    job_id: str = Field(min_length=1, pattern=r"\S")
+    kind: str = Field(min_length=1, pattern=r"\S")
+    claim_token: str = Field(min_length=1, pattern=r"\S")
+    attempts: int = Field(ge=1)
+    recovery_count: int | None = Field(ge=0)
+    payload_revision: str = Field(pattern=r"^[0-9a-f]{64}$")
+
+    def matches(self, document: Mapping[str, JsonValue]) -> bool:
+        scope = JobClaimScope.model_validate(self)
+        payload = document.get("payload")
+        attempts = document.get("attempts")
+        recovery = document.get("recovery_count")
+        if not isinstance(payload, dict) or type(attempts) is not int:
+            return False
+        if recovery is not None and type(recovery) is not int:
+            return False
+        return (
+            document.get("job_id") == scope.job_id
+            and document.get("type") == scope.kind
+            and document.get("claim_token") == scope.claim_token
+            and document.get("status") == "RUNNING"
+            and attempts == scope.attempts
+            and recovery == scope.recovery_count
+            and sha256(payload) == scope.payload_revision
+        )
+
+
+class JobClaimMutation(DomainModel):
+    """Only the named lifecycle fields an owned worker transition may replace."""
+
+    status: Literal["QUEUED", "DONE", "FAILED", "EXPIRED"]
+    attempts: int | None = Field(default=None, ge=0)
+    last_error: str | None = Field(default=None, min_length=1, pattern=r"\S")
+    result: JsonValue = None
+    run_after: Timestamp | None = None
+    finished_at: Timestamp | None = None
+    slot_waiting_since: Timestamp | None = None
+
+    @model_validator(mode="after")
+    def actual_mutation(self) -> Self:
+        if "attempts" in self.model_fields_set and self.attempts is None:
+            raise ValueError("A reported queue attempt cannot be null")
+        for field, stamp in (
+            ("run_after", self.run_after),
+            ("finished_at", self.finished_at),
+            ("slot_waiting_since", self.slot_waiting_since),
+        ):
+            if field in self.model_fields_set and stamp is None:
+                raise ValueError("A reported queue clock requires its named timestamp state")
+            if field != "finished_at" and stamp is not None and stamp.value is None:
+                raise ValueError("A queue schedule or waiting clock requires its actual occurrence")
+        if self.status != "QUEUED" and (self.finished_at is None or self.finished_at.value is None):
+            raise ValueError("A terminal queue mutation requires its actual completion occurrence")
+        if self.status == "QUEUED" and self.finished_at is not None and self.finished_at.value is not None:
+            raise ValueError("An unfinished queue mutation cannot report a terminal occurrence")
+        if self.status == "DONE" and "result" not in self.model_fields_set:
+            raise ValueError("Queue completion requires its actual result including explicit no-result")
+        return self
+
+    def apply_to(self, document: Mapping[str, JsonValue]) -> dict[str, JsonValue]:
+        mutation = JobClaimMutation.model_validate(self)
+        updated = dict(document)
+        updated["status"] = mutation.status
+        for field, value in (
+            ("attempts", mutation.attempts),
+            ("last_error", mutation.last_error),
+            ("result", mutation.result),
+        ):
+            if field in mutation.model_fields_set:
+                updated[field] = value
+        for field, stamp in (
+            ("run_after", mutation.run_after),
+            ("finished_at", mutation.finished_at),
+            ("slot_waiting_since", mutation.slot_waiting_since),
+        ):
+            if field in mutation.model_fields_set:
+                if stamp is None:
+                    raise ValueError("A reported queue clock requires its named timestamp state")
+                owned = timestamp_owned_fields(field)
+                updated = {key: value for key, value in updated.items() if key not in owned}
+                updated.update(stamp.fields(field))
+        return updated

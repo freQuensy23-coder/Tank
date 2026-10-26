@@ -76,6 +76,7 @@ def command_refusal(claimed: ClaimedJob) -> InvalidJobClaim:
         raise AssertionError("The authored command contains a non-string item identifier")
     assert codes == ("string_type",)
     return InvalidJobClaim(
+        claim_token=claimed.claim_token,
         job_id=claimed.envelope.job_id,
         kind=claimed.envelope.type,
         attempts=claimed.envelope.attempts,
