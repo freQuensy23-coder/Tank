@@ -12,33 +12,35 @@ import (
 	"github.com/freQuensy23-coder/Tank/capture/internal/pytime"
 )
 
+type TimestampText string
+
 type Record struct {
-	StorageKey           string     `json:"storage_key"`
-	Anchor               *time.Time `json:"anchor"`
-	AnchorPrec           *string    `json:"anchor_prec"`
-	AnchorPrecReason     *string    `json:"anchor_prec_reason"`
-	BackfillID           string     `json:"backfill_id"`
-	CodeVersion          *string    `json:"code_version"`
-	ConfigVersion        *string    `json:"config_version"`
-	EventID              *string    `json:"event_id"`
-	FinishedAt           *time.Time `json:"finished_at"`
-	FinishedAtPrec       *string    `json:"finished_at_prec"`
-	FinishedAtPrecReason *string    `json:"finished_at_prec_reason"`
-	InstrumentID         *string    `json:"instrument_id"`
-	Reason               *string    `json:"reason"`
-	ReceivedTS           *time.Time `json:"received_ts"`
-	ReceivedTSPrec       *string    `json:"received_ts_prec"`
-	ReceivedTSPrecReason *string    `json:"received_ts_prec_reason"`
-	RecordedAt           *time.Time `json:"recorded_at"`
-	RecordedAtPrec       *string    `json:"recorded_at_prec"`
-	RecordedAtPrecReason *string    `json:"recorded_at_prec_reason"`
-	StartedAt            *time.Time `json:"started_at"`
-	StartedAtPrec        *string    `json:"started_at_prec"`
-	StartedAtPrecReason  *string    `json:"started_at_prec_reason"`
-	Status               *string    `json:"status"`
-	TokenID              *string    `json:"token_id"`
-	ResultJSON           *string    `json:"result"`
-	SemanticFingerprint  *string    `json:"semantic_fingerprint"`
+	StorageKey           string         `json:"storage_key"`
+	Anchor               *TimestampText `json:"anchor"`
+	AnchorPrec           *string        `json:"anchor_prec"`
+	AnchorPrecReason     *string        `json:"anchor_prec_reason"`
+	BackfillID           string         `json:"backfill_id"`
+	CodeVersion          *string        `json:"code_version"`
+	ConfigVersion        *string        `json:"config_version"`
+	EventID              *string        `json:"event_id"`
+	FinishedAt           *TimestampText `json:"finished_at"`
+	FinishedAtPrec       *string        `json:"finished_at_prec"`
+	FinishedAtPrecReason *string        `json:"finished_at_prec_reason"`
+	InstrumentID         *string        `json:"instrument_id"`
+	Reason               *string        `json:"reason"`
+	ReceivedTS           *TimestampText `json:"received_ts"`
+	ReceivedTSPrec       *string        `json:"received_ts_prec"`
+	ReceivedTSPrecReason *string        `json:"received_ts_prec_reason"`
+	RecordedAt           *TimestampText `json:"recorded_at"`
+	RecordedAtPrec       *string        `json:"recorded_at_prec"`
+	RecordedAtPrecReason *string        `json:"recorded_at_prec_reason"`
+	StartedAt            *TimestampText `json:"started_at"`
+	StartedAtPrec        *string        `json:"started_at_prec"`
+	StartedAtPrecReason  *string        `json:"started_at_prec_reason"`
+	Status               *string        `json:"status"`
+	TokenID              *string        `json:"token_id"`
+	ResultJSON           *string        `json:"result"`
+	SemanticFingerprint  *string        `json:"semantic_fingerprint"`
 }
 
 var physicalFields = [...]string{
@@ -115,11 +117,14 @@ func DecodeRecord(data []byte) (Record, error) {
 	return record, nil
 }
 
-func clockText(value *time.Time) *string {
+func clockText(value *TimestampText) *string {
 	if value == nil {
 		return nil
 	}
-	text := pytime.ISO(*value)
+	text := string(*value)
+	if parsed, err := time.Parse(time.RFC3339Nano, text); err == nil {
+		text = pytime.ISO(parsed)
+	}
 	return &text
 }
 

@@ -14,6 +14,8 @@ import (
 
 func text(value string) *string { return &value }
 
+func stamp(value string) *TimestampText { result := TimestampText(value); return &result }
+
 func physicalDocument(t *testing.T, row Record) []byte {
 	t.Helper()
 	data, err := json.Marshal(row)
@@ -116,25 +118,25 @@ func TestPhysicalDecoderRefusesDuplicateUnknownAndTrailingDocuments(t *testing.T
 	}
 }
 
-func TestPhysicalClockPreservesActualInstantWithoutAddingOrigin(t *testing.T) {
+func TestPhysicalClockPreservesExactTransportTextWithoutAddingOrigin(t *testing.T) {
 	at := time.Date(2026, 10, 26, 11, 12, 13, 123456000, time.FixedZone("declared-offset", 3*3600))
-	row := Record{StorageKey: "BF-record", BackfillID: "BF-record", Anchor: &at}
+	row := Record{StorageKey: "BF-record", BackfillID: "BF-record", Anchor: stamp(at.Format(time.RFC3339Nano))}
 	decoded, err := DecodeRecord(physicalDocument(t, row))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if decoded.Anchor == nil || !decoded.Anchor.Equal(at) || decoded.AnchorPrec != nil || decoded.AnchorPrecReason != nil {
+	if decoded.Anchor == nil || *decoded.Anchor != TimestampText(at.Format(time.RFC3339Nano)) || decoded.AnchorPrec != nil || decoded.AnchorPrecReason != nil {
 		t.Fatal("physical clock or unavailable provenance changed")
 	}
 }
 
 func TestMalformedConsumedFactsRemainPhysicalEvidence(t *testing.T) {
-	row := Record{StorageKey: "", BackfillID: "", Status: text("UNSUPPORTED"), TokenID: nil, ResultJSON: text(`{"prior":false}`)}
+	row := Record{StorageKey: "", BackfillID: "", Status: text("UNSUPPORTED"), Anchor: stamp("malformed-retained-anchor"), TokenID: nil, ResultJSON: text(`{"prior":false}`)}
 	decoded, err := DecodeRecord(physicalDocument(t, row))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if decoded.StorageKey != "" || decoded.BackfillID != "" || decoded.TokenID != nil || decoded.Status == nil || *decoded.Status != "UNSUPPORTED" {
+	if decoded.StorageKey != "" || decoded.BackfillID != "" || decoded.TokenID != nil || decoded.Status == nil || *decoded.Status != "UNSUPPORTED" || decoded.Anchor == nil || *decoded.Anchor != "malformed-retained-anchor" {
 		t.Fatal("physical decoding silently repaired consumed facts")
 	}
 }
@@ -150,12 +152,12 @@ func TestSQLJsonTextMustBeACompleteValue(t *testing.T) {
 
 func TestExplicitZeroTimeIsNotMissingPhysicalClock(t *testing.T) {
 	at := time.Time{}
-	row := Record{StorageKey: "BF-record", BackfillID: "BF-record", Anchor: &at}
+	row := Record{StorageKey: "BF-record", BackfillID: "BF-record", Anchor: stamp(at.Format(time.RFC3339Nano))}
 	decoded, err := DecodeRecord(physicalDocument(t, row))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if decoded.Anchor == nil || !decoded.Anchor.Equal(at) {
+	if decoded.Anchor == nil || *decoded.Anchor != TimestampText(at.Format(time.RFC3339Nano)) {
 		t.Fatal("explicit zero time became an absent clock")
 	}
 }
@@ -171,7 +173,7 @@ func TestInvalidUTF8IsRefusedInsteadOfReplaced(t *testing.T) {
 func TestSemanticDocumentPreservesExactPriorNumbersWithoutChangingPhysicalRow(t *testing.T) {
 	at := time.Date(2026, 10, 26, 0, 0, 0, 0, time.UTC)
 	raw := `{"big":9007199254740993,"fraction":0.123456789012345678901,"label":"0.123456789012345678901"}`
-	row := Record{StorageKey: "physical-BF", BackfillID: "BF", TokenID: text("TOKEN"), Anchor: &at, AnchorPrec: text("EXACT"), CodeVersion: text("captured-code"), ConfigVersion: text("captured-config"), RecordedAt: &at, ResultJSON: &raw}
+	row := Record{StorageKey: "physical-BF", BackfillID: "BF", TokenID: text("TOKEN"), Anchor: stamp(at.Format(time.RFC3339Nano)), AnchorPrec: text("EXACT"), CodeVersion: text("captured-code"), ConfigVersion: text("captured-config"), RecordedAt: stamp(at.Format(time.RFC3339Nano)), ResultJSON: &raw}
 	before := physicalDocument(t, row)
 	document, err := row.SemanticDocument()
 	if err != nil {
