@@ -11,11 +11,14 @@ from typing import Literal, Self
 from pydantic import Field, model_validator
 
 from tank.analysis.condition_derivative_inputs import (
+    CapturedOISynchronizationRules,
     DerivativeInstrument,
     OIInputEvidenceRef,
     OIObservation,
     OIReadSnapshot,
+    OIRuleReadScope,
     OISelectionPolicy,
+    UncapturedOISynchronizationRules,
 )
 from tank.analysis.condition_graph_contracts import ConditionInterval, ConditionWindow
 from tank.analysis.oi_ratio import (
@@ -24,6 +27,11 @@ from tank.analysis.oi_ratio import (
     OiFractionNotEstimable,
     exact_oi_endpoint_fraction,
     native_oi_change,
+)
+from tank.analysis.oi_synchronization import (
+    OISynchronizationPolicy,
+    OISynchronizedSelection,
+    _select_oi_synchronization,
 )
 from tank.analysis.statistics_contracts import FloatBounds, FloatRange
 from tank.contracts import DomainModel
@@ -404,6 +412,35 @@ class OpenInterestCalculator:
     def __init__(self, source: OIReadSnapshot, policy: OISelectionPolicy) -> None:
         self._source = OIReadSnapshot.model_validate(source)
         self._policy = OISelectionPolicy.model_validate(policy)
+
+    def synchronize(
+        self,
+        request: OIWindowRequest,
+        *,
+        rules: CapturedOISynchronizationRules | UncapturedOISynchronizationRules,
+        policy: OISynchronizationPolicy,
+        window: ConditionWindow,
+    ) -> OISynchronizedSelection:
+        actual = OIWindowRequest.model_validate(request)
+        actual_rules: CapturedOISynchronizationRules | UncapturedOISynchronizationRules
+        if isinstance(rules, CapturedOISynchronizationRules):
+            actual_rules = CapturedOISynchronizationRules.model_validate(rules)
+            if actual_rules.scope != OIRuleReadScope.from_snapshot(self._source):
+                raise ValueError("OI synchronization rules must match the actual admitted source scope")
+        elif isinstance(rules, UncapturedOISynchronizationRules):
+            actual_rules = UncapturedOISynchronizationRules.model_validate(rules)
+            if actual_rules.token_id != self._source.token_id:
+                raise ValueError("Uncaptured OI semantics cannot borrow another subject")
+        else:
+            raise TypeError("OI synchronization requires an explicit captured or uncaptured rule phase")
+        return _select_oi_synchronization(
+            self._source,
+            self._policy,
+            actual,
+            rules=actual_rules,
+            policy=OISynchronizationPolicy.model_validate(policy),
+            window=window,
+        )
 
     def native_baseline(
         self, request: OIWindowRequest, *, window: ConditionWindow

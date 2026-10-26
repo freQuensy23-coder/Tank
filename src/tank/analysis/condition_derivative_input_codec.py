@@ -7,12 +7,18 @@ from typing import Literal
 from pydantic import JsonValue
 
 from tank.analysis.condition_derivative_inputs import (
+    CapturedOISynchronizationRules,
     DerivativeInstrument,
     OIInputEvidenceRef,
     OIObservation,
     OIReadSnapshot,
+    OIRuleEvidenceRef,
+    OIRuleReadScope,
+    OIRuleSourceDescriptor,
+    OIRuleSourceProjection,
     OISourceDescriptor,
     OISourceProjection,
+    OISynchronizationRule,
     ReportedDerivativeNumber,
 )
 from tank.contracts.json import decode_json
@@ -193,3 +199,38 @@ def resolve_oi_observation(
             raise ValueError("OI source observation disagrees with the actual consumed projection")
         return row
     raise ValueError("OI source evidence reference is not captured")
+
+
+def decode_oi_synchronization_rules(
+    *, scope: OIRuleReadScope, records: Sequence[Mapping[str, JsonInput]]
+) -> CapturedOISynchronizationRules:
+    scope = OIRuleReadScope.model_validate(scope)
+    entries: list[OIRuleSourceProjection] = []
+    selected_ids = {value.instrument_id for value in scope.instruments}
+    for index, original in enumerate(records):
+        metric_key = original.get("metric_key")
+        if not isinstance(metric_key, str) or metric_key not in scope.metric_keys:
+            continue
+        instrument_id = original.get("instrument_id")
+        if isinstance(instrument_id, str) and instrument_id not in selected_ids:
+            continue
+        row, payload = _wire(original)
+        rule = OISynchronizationRule.model_validate(
+            {name: row.get(name) for name in OISynchronizationRule.model_fields}
+        )
+        descriptor = OIRuleSourceDescriptor(
+            format="OI_SYNC_RULE_READ_V1",
+            row_index=index,
+            original_projection_sha256=sha256(payload),
+            qualified_scope_sha256=sha256(scope),
+            rule_projection_sha256=sha256(rule),
+        )
+        reference = OIRuleEvidenceRef(
+            row_index=index,
+            projection_sha256=descriptor.rule_projection_sha256,
+            source_evidence_sha256=sha256(descriptor),
+        )
+        entries.append(
+            OIRuleSourceProjection(original=payload, rule=rule, descriptor=descriptor, reference=reference)
+        )
+    return CapturedOISynchronizationRules(status="CAPTURED", scope=scope, entries=tuple(entries))
