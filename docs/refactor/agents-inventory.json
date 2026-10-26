@@ -1042,18 +1042,10 @@
     },
     {
       "path": "src/tank/agents/native_file_preparation.py",
-      "lines": 458,
+      "lines": 520,
       "functions": [
         {
           "symbol": "PreparationStore.get",
-          "line": 43,
-          "missing_parameters": [],
-          "missing_return": false,
-          "dict_nodes": 0,
-          "get_calls": 0
-        },
-        {
-          "symbol": "PreparationStore.put",
           "line": 45,
           "missing_parameters": [],
           "missing_return": false,
@@ -1061,8 +1053,16 @@
           "get_calls": 0
         },
         {
+          "symbol": "PreparationStore.put",
+          "line": 47,
+          "missing_parameters": [],
+          "missing_return": false,
+          "dict_nodes": 0,
+          "get_calls": 0
+        },
+        {
           "symbol": "PreparationStore.lock",
-          "line": 49,
+          "line": 51,
           "missing_parameters": [],
           "missing_return": false,
           "dict_nodes": 0,
@@ -1070,7 +1070,7 @@
         },
         {
           "symbol": "PreparationClockSource.__call__",
-          "line": 53,
+          "line": 55,
           "missing_parameters": [],
           "missing_return": false,
           "dict_nodes": 0,
@@ -1078,7 +1078,23 @@
         },
         {
           "symbol": "NativeEffectReceipts.receipt_keys_match_observed_facts",
-          "line": 70,
+          "line": 72,
+          "missing_parameters": [],
+          "missing_return": false,
+          "dict_nodes": 0,
+          "get_calls": 0
+        },
+        {
+          "symbol": "NativeFileMetadata.reported_downloadability_is_boolean",
+          "line": 162,
+          "missing_parameters": [],
+          "missing_return": false,
+          "dict_nodes": 0,
+          "get_calls": 0
+        },
+        {
+          "symbol": "native_component",
+          "line": 168,
           "missing_parameters": [],
           "missing_return": false,
           "dict_nodes": 0,
@@ -1086,7 +1102,7 @@
         },
         {
           "symbol": "NativeFileTransport.__init__",
-          "line": 145,
+          "line": 175,
           "missing_parameters": [],
           "missing_return": false,
           "dict_nodes": 0,
@@ -1094,7 +1110,7 @@
         },
         {
           "symbol": "NativeFileTransport.request",
-          "line": 150,
+          "line": 180,
           "missing_parameters": [],
           "missing_return": false,
           "dict_nodes": 3,
@@ -1102,15 +1118,23 @@
         },
         {
           "symbol": "NativeFileTransport.upload",
-          "line": 179,
+          "line": 211,
           "missing_parameters": [],
           "missing_return": false,
           "dict_nodes": 1,
           "get_calls": 0
         },
         {
+          "symbol": "NativeFileTransport.metadata",
+          "line": 215,
+          "missing_parameters": [],
+          "missing_return": false,
+          "dict_nodes": 0,
+          "get_calls": 0
+        },
+        {
           "symbol": "NativeFileTransport.resources",
-          "line": 183,
+          "line": 228,
           "missing_parameters": [],
           "missing_return": false,
           "dict_nodes": 0,
@@ -1118,7 +1142,7 @@
         },
         {
           "symbol": "NativeFileTransport.mount",
-          "line": 198,
+          "line": 243,
           "missing_parameters": [],
           "missing_return": false,
           "dict_nodes": 1,
@@ -1126,7 +1150,7 @@
         },
         {
           "symbol": "source_scope",
-          "line": 210,
+          "line": 255,
           "missing_parameters": [],
           "missing_return": false,
           "dict_nodes": 0,
@@ -1134,7 +1158,7 @@
         },
         {
           "symbol": "cached_source",
-          "line": 222,
+          "line": 267,
           "missing_parameters": [],
           "missing_return": false,
           "dict_nodes": 2,
@@ -1142,7 +1166,7 @@
         },
         {
           "symbol": "preparation_scope",
-          "line": 229,
+          "line": 274,
           "missing_parameters": [],
           "missing_return": false,
           "dict_nodes": 0,
@@ -1150,7 +1174,7 @@
         },
         {
           "symbol": "NativeFilePreparationService.__init__",
-          "line": 240,
+          "line": 287,
           "missing_parameters": [],
           "missing_return": false,
           "dict_nodes": 0,
@@ -1158,7 +1182,7 @@
         },
         {
           "symbol": "NativeFilePreparationService.prepare_question",
-          "line": 253,
+          "line": 300,
           "missing_parameters": [],
           "missing_return": false,
           "dict_nodes": 0,
@@ -1166,7 +1190,7 @@
         },
         {
           "symbol": "NativeFilePreparationService.save",
-          "line": 290,
+          "line": 337,
           "missing_parameters": [],
           "missing_return": false,
           "dict_nodes": 1,
@@ -1174,7 +1198,7 @@
         },
         {
           "symbol": "NativeFilePreparationService.prepare",
-          "line": 323,
+          "line": 370,
           "missing_parameters": [],
           "missing_return": false,
           "dict_nodes": 0,
@@ -1182,7 +1206,7 @@
         },
         {
           "symbol": "NativeFilePreparationService._prepare",
-          "line": 337,
+          "line": 384,
           "missing_parameters": [],
           "missing_return": false,
           "dict_nodes": 2,
@@ -1338,7 +1362,7 @@
     },
     {
       "path": "src/tank/agents/native_sessions.py",
-      "lines": 351,
+      "lines": 357,
       "functions": [
         {
           "symbol": "NativeReplayIdentity.bound_evidence",
@@ -1374,7 +1398,7 @@
         },
         {
           "symbol": "NativeSessionDeployment.from_wire",
-          "line": 103,
+          "line": 109,
           "missing_parameters": [],
           "missing_return": false,
           "dict_nodes": 1,
@@ -1382,7 +1406,7 @@
         },
         {
           "symbol": "NativeSessionIdentity.marker",
-          "line": 122,
+          "line": 128,
           "missing_parameters": [],
           "missing_return": false,
           "dict_nodes": 0,
@@ -1390,7 +1414,7 @@
         },
         {
           "symbol": "NativeSessionIdentityMetadata.from_binding",
-          "line": 133,
+          "line": 139,
           "missing_parameters": [],
           "missing_return": false,
           "dict_nodes": 0,
@@ -1398,7 +1422,7 @@
         },
         {
           "symbol": "NativeSessionIdentityMetadata.complete_identity_binding",
-          "line": 142,
+          "line": 148,
           "missing_parameters": [],
           "missing_return": false,
           "dict_nodes": 0,
@@ -1406,7 +1430,7 @@
         },
         {
           "symbol": "NativeSessionIdentityMetadata.expected_fields",
-          "line": 151,
+          "line": 157,
           "missing_parameters": [],
           "missing_return": false,
           "dict_nodes": 1,
@@ -1414,7 +1438,7 @@
         },
         {
           "symbol": "NativeSessionObservation.verify_binding",
-          "line": 181,
+          "line": 187,
           "missing_parameters": [],
           "missing_return": false,
           "dict_nodes": 0,
@@ -1422,7 +1446,7 @@
         },
         {
           "symbol": "observe_native_session",
-          "line": 193,
+          "line": 199,
           "missing_parameters": [],
           "missing_return": false,
           "dict_nodes": 1,
@@ -1430,7 +1454,7 @@
         },
         {
           "symbol": "observe_native_session_page",
-          "line": 209,
+          "line": 215,
           "missing_parameters": [],
           "missing_return": false,
           "dict_nodes": 1,
@@ -1438,7 +1462,7 @@
         },
         {
           "symbol": "NativeOpeningSource.consistent_origin",
-          "line": 228,
+          "line": 234,
           "missing_parameters": [],
           "missing_return": false,
           "dict_nodes": 0,
@@ -1446,7 +1470,7 @@
         },
         {
           "symbol": "NativeOpeningSource.opening_item",
-          "line": 237,
+          "line": 243,
           "missing_parameters": [],
           "missing_return": false,
           "dict_nodes": 0,
@@ -1454,7 +1478,7 @@
         },
         {
           "symbol": "NativeSessionEndpoint.request",
-          "line": 242,
+          "line": 248,
           "missing_parameters": [],
           "missing_return": false,
           "dict_nodes": 0,
@@ -1462,7 +1486,7 @@
         },
         {
           "symbol": "NativeSessionDiscovery.__init__",
-          "line": 254,
+          "line": 260,
           "missing_parameters": [],
           "missing_return": false,
           "dict_nodes": 0,
@@ -1470,7 +1494,7 @@
         },
         {
           "symbol": "NativeSessionDiscovery.discover_or_create",
-          "line": 258,
+          "line": 264,
           "missing_parameters": [],
           "missing_return": false,
           "dict_nodes": 1,
@@ -1478,7 +1502,7 @@
         },
         {
           "symbol": "NativeStoredSessionBinding.from_record",
-          "line": 305,
+          "line": 311,
           "missing_parameters": [],
           "missing_return": false,
           "dict_nodes": 2,
@@ -1486,7 +1510,7 @@
         },
         {
           "symbol": "NativeStoredSessionBinding.matches_origin_scope",
-          "line": 321,
+          "line": 327,
           "missing_parameters": [],
           "missing_return": false,
           "dict_nodes": 0,
@@ -1494,7 +1518,7 @@
         },
         {
           "symbol": "NativeStoredSessionBinding.verify",
-          "line": 326,
+          "line": 332,
           "missing_parameters": [],
           "missing_return": false,
           "dict_nodes": 0,
@@ -1502,7 +1526,7 @@
         },
         {
           "symbol": "native_role_for_message",
-          "line": 344,
+          "line": 350,
           "missing_parameters": [],
           "missing_return": false,
           "dict_nodes": 0,
@@ -3454,7 +3478,7 @@
     },
     {
       "path": "src/tank/contracts/native_files.py",
-      "lines": 97,
+      "lines": 125,
       "functions": [
         {
           "symbol": "PreparationClock.actual_controller_occurrence",
@@ -3465,8 +3489,16 @@
           "get_calls": 0
         },
         {
+          "symbol": "NativeFileMetadataVerified.metadata_binds_actual_source",
+          "line": 70,
+          "missing_parameters": [],
+          "missing_return": false,
+          "dict_nodes": 0,
+          "get_calls": 0
+        },
+        {
           "symbol": "NativeMountIntent.workspace_mount",
-          "line": 61,
+          "line": 88,
           "missing_parameters": [],
           "missing_return": false,
           "dict_nodes": 0,
@@ -4774,11 +4806,11 @@
     },
     {
       "path": "src/tank/runtime_contracts.py",
-      "lines": 590,
+      "lines": 630,
       "functions": [
         {
           "symbol": "MarketTruthJob.validate_cutoff",
-          "line": 41,
+          "line": 42,
           "missing_parameters": [],
           "missing_return": false,
           "dict_nodes": 0,
@@ -4786,7 +4818,23 @@
         },
         {
           "symbol": "parse_delivery_job",
-          "line": 117,
+          "line": 118,
+          "missing_parameters": [],
+          "missing_return": false,
+          "dict_nodes": 0,
+          "get_calls": 0
+        },
+        {
+          "symbol": "ReplayBinding.actual_replay_schedule",
+          "line": 143,
+          "missing_parameters": [],
+          "missing_return": false,
+          "dict_nodes": 0,
+          "get_calls": 0
+        },
+        {
+          "symbol": "SourceMessage.authored_reference_is_bound",
+          "line": 169,
           "missing_parameters": [],
           "missing_return": false,
           "dict_nodes": 0,
@@ -4794,7 +4842,7 @@
         },
         {
           "symbol": "parse_direct_agent_message",
-          "line": 163,
+          "line": 201,
           "missing_parameters": [],
           "missing_return": false,
           "dict_nodes": 0,
@@ -4802,7 +4850,7 @@
         },
         {
           "symbol": "ConditionFiredMessage.matches_condition",
-          "line": 183,
+          "line": 221,
           "missing_parameters": [],
           "missing_return": false,
           "dict_nodes": 0,
@@ -4810,7 +4858,7 @@
         },
         {
           "symbol": "TimedReviewFiredMessage.matches_review",
-          "line": 200,
+          "line": 238,
           "missing_parameters": [],
           "missing_return": false,
           "dict_nodes": 0,
@@ -4818,7 +4866,7 @@
         },
         {
           "symbol": "CallExpiredMessage.describes_expired_call",
-          "line": 226,
+          "line": 265,
           "missing_parameters": [],
           "missing_return": false,
           "dict_nodes": 0,
@@ -4826,7 +4874,7 @@
         },
         {
           "symbol": "parse_agent_message",
-          "line": 256,
+          "line": 296,
           "missing_parameters": [],
           "missing_return": false,
           "dict_nodes": 0,
@@ -4834,7 +4882,7 @@
         },
         {
           "symbol": "replace_job_clock",
-          "line": 279,
+          "line": 319,
           "missing_parameters": [],
           "missing_return": false,
           "dict_nodes": 1,
@@ -4842,30 +4890,6 @@
         },
         {
           "symbol": "FailedAnswerNotification.actual_question_identity",
-          "line": 315,
-          "missing_parameters": [],
-          "missing_return": false,
-          "dict_nodes": 0,
-          "get_calls": 0
-        },
-        {
-          "symbol": "FailureRecordIdentity.from_record",
-          "line": 333,
-          "missing_parameters": [],
-          "missing_return": false,
-          "dict_nodes": 1,
-          "get_calls": 0
-        },
-        {
-          "symbol": "read_failure_marker",
-          "line": 348,
-          "missing_parameters": [],
-          "missing_return": false,
-          "dict_nodes": 0,
-          "get_calls": 0
-        },
-        {
-          "symbol": "failure_payload",
           "line": 355,
           "missing_parameters": [],
           "missing_return": false,
@@ -4873,8 +4897,32 @@
           "get_calls": 0
         },
         {
+          "symbol": "FailureRecordIdentity.from_record",
+          "line": 373,
+          "missing_parameters": [],
+          "missing_return": false,
+          "dict_nodes": 1,
+          "get_calls": 0
+        },
+        {
+          "symbol": "read_failure_marker",
+          "line": 388,
+          "missing_parameters": [],
+          "missing_return": false,
+          "dict_nodes": 0,
+          "get_calls": 0
+        },
+        {
+          "symbol": "failure_payload",
+          "line": 395,
+          "missing_parameters": [],
+          "missing_return": false,
+          "dict_nodes": 0,
+          "get_calls": 0
+        },
+        {
           "symbol": "failure_agent_kind",
-          "line": 362,
+          "line": 402,
           "missing_parameters": [],
           "missing_return": false,
           "dict_nodes": 0,
@@ -4882,7 +4930,7 @@
         },
         {
           "symbol": "terminal_notification",
-          "line": 369,
+          "line": 409,
           "missing_parameters": [],
           "missing_return": false,
           "dict_nodes": 2,
@@ -4890,7 +4938,7 @@
         },
         {
           "symbol": "terminal_progress",
-          "line": 399,
+          "line": 439,
           "missing_parameters": [],
           "missing_return": false,
           "dict_nodes": 2,
@@ -4898,7 +4946,7 @@
         },
         {
           "symbol": "failure_reason_text",
-          "line": 448,
+          "line": 488,
           "missing_parameters": [],
           "missing_return": false,
           "dict_nodes": 0,
@@ -4906,7 +4954,7 @@
         },
         {
           "symbol": "recorded_failure_reason",
-          "line": 456,
+          "line": 496,
           "missing_parameters": [],
           "missing_return": false,
           "dict_nodes": 1,
@@ -4914,7 +4962,7 @@
         },
         {
           "symbol": "TerminalJobFailure.declared_failure_scope",
-          "line": 474,
+          "line": 514,
           "missing_parameters": [],
           "missing_return": false,
           "dict_nodes": 1,
@@ -4922,7 +4970,7 @@
         },
         {
           "symbol": "TerminalJobFailure.from_record",
-          "line": 505,
+          "line": 545,
           "missing_parameters": [],
           "missing_return": false,
           "dict_nodes": 1,
@@ -4930,7 +4978,7 @@
         },
         {
           "symbol": "FailureReconciliationItem.from_record",
-          "line": 533,
+          "line": 573,
           "missing_parameters": [],
           "missing_return": false,
           "dict_nodes": 1,
@@ -4938,7 +4986,7 @@
         },
         {
           "symbol": "FailureJournalUnavailable.__init__",
-          "line": 575,
+          "line": 615,
           "missing_parameters": [],
           "missing_return": false,
           "dict_nodes": 0,
@@ -4946,7 +4994,7 @@
         },
         {
           "symbol": "FailureJournalRejected.__init__",
-          "line": 580,
+          "line": 620,
           "missing_parameters": [],
           "missing_return": false,
           "dict_nodes": 0,
@@ -4954,7 +5002,7 @@
         },
         {
           "symbol": "FailureJournalScopeChanged.__init__",
-          "line": 585,
+          "line": 625,
           "missing_parameters": [],
           "missing_return": false,
           "dict_nodes": 0,

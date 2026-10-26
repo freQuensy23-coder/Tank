@@ -2935,6 +2935,27 @@
         "test_known_upload_recovery_does_not_reconstruct_unused_historical_mime_or_bytes",
         "test_retained_mount_pointer_requires_actual_scoped_resource_and_preserves_history"
       ]
+    },
+    {
+      "sites": [
+        {
+          "path": "src/tank/runtime_contracts.py",
+          "symbol": "ReplayBinding.actual_replay_schedule"
+        },
+        {
+          "path": "src/tank/runtime_contracts.py",
+          "symbol": "SourceMessage.authored_reference_is_bound"
+        }
+      ],
+      "kind": "actual replay clock and reference absence",
+      "reason": "Replay timing is genuine optional producer metadata. An aware scalar with wholly unreported facets remains unreported; no precision/reason is invented. Reported facets validate Timestamp. The exact authored-reference origin/strict-false pair requires actual replay run/time and cannot relabel a captured source session. Ordinary historical messages retain actual source-session lineage without inventing an origin or historical=True. Live composition refuses these metadata facts.",
+      "validation": [
+        "test_scalar_replay_clock_preserves_unreported_precision_and_original_wire_presence",
+        "test_reference_annotation_cannot_coerce_or_guess_nonhistorical_fact",
+        "test_live_resolution_refuses_unbound_clock_even_when_called_without_message_admission",
+        "test_actual_f24_phases_postgres",
+        "test_native_replay_captured_delivery_creates_fresh_call_and_reruns_expiry"
+      ]
     }
   ]
 }

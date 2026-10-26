@@ -509,7 +509,7 @@ class Scheduler:
                         call["event_id"],
                         {**event, "call_expired": True, "call_expired_ids": expired_ids},
                     )
-                    await self.repo.put(
+                    closed_call = await self.repo.put(
                         "ana.calls",
                         call["call_id"],
                         {
@@ -519,7 +519,7 @@ class Scheduler:
                             **collection_clock(now).fields("closed_at"),
                         },
                     )
-                    await self.message("CALL_EXPIRED", call["event_id"], call["call_id"], call=call)
+                    await self.message("CALL_EXPIRED", call["event_id"], call["call_id"], call=closed_call)
 
     @staticmethod
     def anchor(event: Mapping[str, JsonValue]) -> dict[str, JsonValue]:
