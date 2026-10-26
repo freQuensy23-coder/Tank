@@ -128,6 +128,7 @@ def case(
         cutoff=parse_iso_time(cutoff),
         assembled_at=Timestamp("2026-10-19T12:04:00Z", "COLLECTION_ONLY"),
         instruments=identities,
+        flow_parent_bars=[],
         flow_bars=bars,
         flow_segments=[] if pieces is None else pieces,
         tickers=[] if tickers is None else tickers,

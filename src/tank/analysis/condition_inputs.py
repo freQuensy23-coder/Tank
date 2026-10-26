@@ -8,6 +8,7 @@ from pydantic import Field, field_validator, model_validator
 
 from tank.contracts import DomainModel
 from tank.contracts.configuration import Thresholds
+from tank.market.trade_contracts import EmptyBoundarySegment
 from tank.time_precision import Timestamp
 from tank.util import parse_iso_time
 
@@ -20,8 +21,8 @@ class SpotInstrument(DomainModel):
 
 
 class FlowSourceDescriptor(DomainModel):
-    format: Literal["SPOT_STORAGE_READ_V1"]
-    collection: Literal["flow_bars", "flow_segments"]
+    format: Literal["SPOT_INPUT_READ_V1"]
+    collection: Literal["flow_bars", "flow_segments", "flow_parent_bars"]
     row_index: int = Field(ge=0)
     parent_index: int | None = Field(ge=0)
     original_projection_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
@@ -35,17 +36,37 @@ class FlowSourceDescriptor(DomainModel):
     def actual_parent_scope(self) -> Self:
         if (self.parent_index is None) != (self.parent_source_evidence_sha256 is None):
             raise ValueError("Embedded source lineage requires its actual parent identity")
-        if self.parent_index is not None and self.collection != "flow_bars":
+        if self.parent_index is not None and self.collection not in {"flow_bars", "flow_parent_bars"}:
             raise ValueError("Only an embedded flow-bar piece inherits a parent flow projection")
         return self
 
 
 class FlowInputEvidenceRef(DomainModel):
-    collection: Literal["flow_bars", "flow_segments"]
+    collection: Literal["flow_bars", "flow_segments", "flow_parent_bars"]
     row_index: int = Field(ge=0)
     parent_index: int | None = Field(ge=0)
     source_projection_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
     source_evidence_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+
+
+class SpotFlowParent(DomainModel):
+    """Actual parent restrictions; a last-trade receipt is not a document write clock."""
+
+    instrument: SpotInstrument
+    start: datetime
+    end: datetime
+    received_at: Timestamp
+    observed_at: Timestamp
+    evidence: FlowInputEvidenceRef
+
+    @model_validator(mode="after")
+    def actual_parent_minute(self) -> Self:
+        start, end = parse_iso_time(self.start), parse_iso_time(self.end)
+        if start.second or start.microsecond or end != start + timedelta(minutes=1):
+            raise ValueError("A source parent requires its actual aligned minute interval")
+        if self.evidence.parent_index is not None:
+            raise ValueError("A source parent cannot itself be an embedded piece")
+        return self
 
 
 class SpotFlowObservation(DomainModel):
@@ -66,6 +87,8 @@ class SpotFlowObservation(DomainModel):
     observed_at: Timestamp
     source_reasons: tuple[str, ...]
     evidence: FlowInputEvidenceRef
+    parent_document: SpotFlowParent | None
+    generated_empty: EmptyBoundarySegment | None
 
     @field_validator("start", "end")
     @classmethod
@@ -80,6 +103,29 @@ class SpotFlowObservation(DomainModel):
             self.start.second or self.start.microsecond or self.end != self.start + timedelta(minutes=1)
         ):
             raise ValueError("A full-minute spot row requires its aligned UTC minute")
+        if self.parent_document is not None and (
+            self.parent_document.instrument != self.instrument
+            or not self.parent_document.start <= self.start < self.end <= self.parent_document.end
+            or self.evidence.parent_index != self.parent_document.evidence.row_index
+            or self.evidence.collection != self.parent_document.evidence.collection
+        ):
+            raise ValueError("Embedded flow must bind its actual parent interval and scope")
+        proof = self.generated_empty
+        if proof is not None and (
+            self.kind != "BOUNDARY"
+            or proof.instrument_id != self.instrument.instrument_id
+            or proof.start != self.start
+            or proof.end != self.end
+            or proof.buy_qty != self.buy_qty
+            or proof.sell_qty != self.sell_qty
+            or proof.sum_sq_qty != self.sum_sq_qty
+            or proof.n_buy != self.n_buy
+            or proof.n_sell != self.n_sell
+            or self.observed_at.precision != "COLLECTION_ONLY"
+            or self.observed_at.value is None
+            or proof.observed_at != parse_iso_time(self.observed_at.value)
+        ):
+            raise ValueError("Generated empty visibility must bind its actual writer projection")
         for count, quantity in ((self.n_buy, self.buy_qty), (self.n_sell, self.sell_qty)):
             if count is not None and quantity is not None and (count == 0) != (quantity == 0):
                 raise ValueError("Captured side count contradicts its native quantity")
@@ -90,12 +136,35 @@ class SpotFlowObservation(DomainModel):
         return self
 
     def visible_at(self, assembled_at: Timestamp) -> bool | None:
-        if assembled_at.value is None or self.received_at.value is None:
+        if assembled_at.value is None:
             return None
         assembly = parse_iso_time(assembled_at.value)
-        if self.end > assembly or parse_iso_time(self.received_at.value) > assembly:
+        if self.end > assembly:
             return False
-        return self.observed_at.value is None or parse_iso_time(self.observed_at.value) <= assembly
+        if self.observed_at.value is not None and parse_iso_time(self.observed_at.value) > assembly:
+            return False
+        parent = self.parent_document
+        if parent is not None:
+            if parent.received_at.value is not None and parse_iso_time(parent.received_at.value) > assembly:
+                return False
+            if parent.observed_at.value is not None and parse_iso_time(parent.observed_at.value) > assembly:
+                return False
+        if self.received_at.value is not None:
+            return parse_iso_time(self.received_at.value) <= assembly
+        if self.generated_empty is not None:
+            return True
+        return None
+
+    def visibility_basis(
+        self, assembled_at: Timestamp
+    ) -> Literal["SOURCE_RECEIPT", "GENERATED_EMPTY_PIECE"] | None:
+        if self.visible_at(assembled_at) is not True:
+            return None
+        if self.received_at.value is not None:
+            return "SOURCE_RECEIPT"
+        if self.generated_empty is not None:
+            return "GENERATED_EMPTY_PIECE"
+        raise ValueError("Visible flow requires its actual receipt or generated-empty witness")
 
 
 class SpotTickerObservation(DomainModel):

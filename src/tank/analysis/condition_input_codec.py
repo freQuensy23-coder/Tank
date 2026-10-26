@@ -7,7 +7,7 @@ from decimal import Decimal, InvalidOperation
 from types import MappingProxyType
 from typing import Literal
 
-from pydantic import JsonValue
+from pydantic import JsonValue, ValidationError
 
 from tank.analysis.condition_graph_codec import flow_aggregate_projection_sha256
 from tank.analysis.condition_graph_contracts import ConditionFlowAggregateProjection, FlowAggregateEvidenceRef
@@ -17,11 +17,13 @@ from tank.analysis.condition_inputs import (
     SpotCalculationInputs,
     SpotCalculationPolicy,
     SpotFlowObservation,
+    SpotFlowParent,
     SpotInstrument,
     SpotTickerObservation,
 )
 from tank.analysis.spot import aggregate_projection
 from tank.contracts.json import decode_json
+from tank.market.trade_contracts import EmptyBoundarySegment
 from tank.time_precision import Timestamp, propagate_timestamp
 from tank.util import JsonInput, canonical_json, parse_iso_time, sha256
 
@@ -75,9 +77,10 @@ class SpotSourceEvidence:
                 parent_reference = digests[parent]
                 parent_descriptor = checked[parent_reference].descriptor
                 if (
-                    parent_reference.collection != "flow_bars"
+                    parent_reference.collection not in {"flow_bars", "flow_parent_bars"}
                     or parent_reference.parent_index is not None
                     or parent_reference.row_index != projection.descriptor.parent_index
+                    or parent_reference.collection != projection.descriptor.collection
                     or parent_descriptor.scope != projection.descriptor.scope
                 ):
                     raise ValueError("Embedded spot lineage must bind its actual parent row and scope")
@@ -119,6 +122,7 @@ class SpotSourceEvidence:
             descriptor.scope,
             source,
             boundary=source.collection == "flow_segments" or source.parent_index is not None,
+            parent_document=None,
         )
         projection = aggregate_projection(observed)
         if flow_aggregate_projection_sha256(projection) != reference.projection_sha256:
@@ -173,12 +177,26 @@ def _count(row: Mapping[str, JsonValue], field: str) -> int | None:
 
 
 def _identity(
-    row: Mapping[str, JsonValue], known: Mapping[str, SpotInstrument], token_id: str, non_spot: frozenset[str]
+    row: Mapping[str, JsonValue],
+    known: Mapping[str, SpotInstrument],
+    token_id: str,
+    non_spot: frozenset[str],
+    foreign: Mapping[str, SpotInstrument],
 ) -> SpotInstrument | None:
     instrument_id = _text(row, "instrument_id")
     if instrument_id in non_spot:
         if row.get("market_type") not in (None, "PERP_LINEAR"):
             raise ValueError("Spot source market contradicts its actual instrument")
+        return None
+    foreign_scope = foreign.get(instrument_id)
+    if foreign_scope is not None:
+        for field, foreign_value in (
+            ("token_id", foreign_scope.token_id),
+            ("venue", foreign_scope.venue),
+            ("market_type", foreign_scope.market_type),
+        ):
+            if row.get(field) is not None and row[field] != foreign_value:
+                raise ValueError("Excluded benchmark source contradicts its actual instrument scope")
         return None
     registered = known.get(instrument_id)
     if registered is not None:
@@ -207,12 +225,21 @@ def _identity(
     return instrument
 
 
+def _generated_empty_piece(row: Mapping[str, JsonValue]) -> EmptyBoundarySegment | None:
+    fields = {name: row[name] for name in EmptyBoundarySegment.model_fields if name in row}
+    try:
+        return EmptyBoundarySegment.model_validate_json(canonical_json(fields))
+    except ValidationError:
+        return None
+
+
 def _flow(
     row: Mapping[str, JsonValue],
     instrument: SpotInstrument,
     reference: FlowInputEvidenceRef,
     *,
     boundary: bool,
+    parent_document: SpotFlowParent | None,
 ) -> SpotFlowObservation:
     start_field = "start" if boundary else "minute_start"
     start = parse_iso_time(_text(row, start_field))
@@ -224,6 +251,7 @@ def _flow(
     for field in ("gap_reason", "coverage_reason"):
         if row.get(field) is not None:
             reasons.append(_text(row, field))
+    generated_empty = _generated_empty_piece(row) if boundary else None
     return SpotFlowObservation(
         instrument=instrument,
         start=start,
@@ -242,6 +270,8 @@ def _flow(
         observed_at=propagate_timestamp(row, "observed_at"),
         source_reasons=tuple(sorted(set(reasons))),
         evidence=reference,
+        parent_document=parent_document,
+        generated_empty=generated_empty,
     )
 
 
@@ -253,12 +283,14 @@ def decode_spot_inputs(
     assembled_at: Timestamp,
     instruments: Sequence[Mapping[str, JsonInput]],
     flow_bars: Sequence[Mapping[str, JsonInput]],
+    flow_parent_bars: Sequence[Mapping[str, JsonInput]],
     flow_segments: Sequence[Mapping[str, JsonInput]],
     tickers: Sequence[Mapping[str, JsonInput]],
     policy: SpotCalculationPolicy,
     native_ticker_volume_field: Literal["volume_native", "volume"],
 ) -> DecodedSpotInputs:
     known: dict[str, SpotInstrument] = {}
+    foreign: dict[str, SpotInstrument] = {}
     identity_sources: dict[str, tuple[bytes, Literal["INSTRUMENT_READ", "SOURCE_ROW"]]] = {}
     other_markets: set[str] = set()
     for source in instruments:
@@ -266,13 +298,24 @@ def decode_spot_inputs(
         market = _text(row, "market_type")
         if market == "PERP_LINEAR":
             identity_key = _text(row, "instrument_id")
-            if identity_key in other_markets or identity_key in known:
+            if identity_key in other_markets or identity_key in known or identity_key in foreign:
                 raise ValueError("Spot instrument input cannot repeat an identity")
             other_markets.add(identity_key)
             continue
         if market != "SPOT":
             raise ValueError("Spot read projection does not recognize the declared market type")
-        identity = _identity(row, known, token_id, frozenset(other_markets))
+        if _text(row, "token_id") != token_id:
+            identity_key = _text(row, "instrument_id")
+            if identity_key in other_markets or identity_key in known or identity_key in foreign:
+                raise ValueError("Spot instrument input cannot repeat an identity")
+            foreign[identity_key] = SpotInstrument(
+                token_id=_text(row, "token_id"),
+                instrument_id=identity_key,
+                venue=_text(row, "venue"),
+                market_type="SPOT",
+            )
+            continue
+        identity = _identity(row, known, token_id, frozenset(other_markets), foreign)
         if identity is None:
             raise ValueError("An explicitly spot instrument cannot become another market type")
         if identity.instrument_id in known:
@@ -284,17 +327,17 @@ def decode_spot_inputs(
     boundaries: list[SpotFlowObservation] = []
     standalone_intervals: set[tuple[str, datetime, datetime]] = set()
 
-    def read_flow(
+    def capture_flow(
         source: Mapping[str, JsonInput],
         index: int,
         parent: int | None,
         *,
-        boundary: bool,
+        collection: Literal["flow_bars", "flow_segments", "flow_parent_bars"],
         original: Mapping[str, JsonInput] | None = None,
         parent_reference: FlowInputEvidenceRef | None = None,
-    ) -> SpotFlowObservation | None:
+    ) -> tuple[dict[str, JsonValue], SpotInstrument, FlowInputEvidenceRef] | None:
         row, payload = _wire(source)
-        identity = _identity(row, known, token_id, frozenset(other_markets))
+        identity = _identity(row, known, token_id, frozenset(other_markets), foreign)
         if identity is None:
             return None
         known[identity.instrument_id] = identity
@@ -311,8 +354,8 @@ def decode_spot_inputs(
         )
         row, payload = _wire(effective)
         descriptor = FlowSourceDescriptor(
-            format="SPOT_STORAGE_READ_V1",
-            collection="flow_segments" if boundary and parent is None else "flow_bars",
+            format="SPOT_INPUT_READ_V1",
+            collection=collection,
             row_index=index,
             parent_index=parent,
             original_projection_sha256=sha256(original_payload),
@@ -337,58 +380,98 @@ def decode_spot_inputs(
             scope_original=scope_original,
             descriptor=descriptor,
         )
-        return _flow(row, identity, reference, boundary=boundary)
+        return row, identity, reference
 
     for index, source in enumerate(flow_segments):
-        observed = read_flow(source, index, None, boundary=True)
-        if observed is not None:
+        geometry, _payload = _wire(source)
+        piece_start, piece_end = (
+            parse_iso_time(_text(geometry, "start")),
+            parse_iso_time(_text(geometry, "end")),
+        )
+        if piece_start < start or piece_end > cutoff:
+            continue
+        captured = capture_flow(source, index, None, collection="flow_segments")
+        if captured is not None:
+            row, identity, reference = captured
+            observed = _flow(row, identity, reference, boundary=True, parent_document=None)
             key = (observed.instrument.instrument_id, observed.start, observed.end)
             if key in standalone_intervals:
                 raise ValueError("Standalone boundary source repeats an aggregate interval")
             standalone_intervals.add(key)
             boundaries.append(observed)
-    for index, source in enumerate(flow_bars):
-        observed = read_flow(source, index, None, boundary=False)
-        if observed is None:
-            continue
-        minutes.append(observed)
-        raw, _payload = _wire(source)
-        pieces = raw.get("boundary_segments")
-        if pieces is None:
-            continue
-        if not isinstance(pieces, list):
-            raise ValueError("Embedded boundary evidence requires an array")
-        for piece_index, piece in enumerate(pieces):
-            if not isinstance(piece, dict):
-                raise ValueError("Embedded boundary evidence requires objects")
-            effective: dict[str, JsonInput] = dict(piece)
-            inherited = {
-                "instrument_id": observed.instrument.instrument_id,
-                "token_id": observed.instrument.token_id,
-                "venue": observed.instrument.venue,
-                "market_type": observed.instrument.market_type,
-            }
-            for field, actual in inherited.items():
-                if piece.get(field) is not None and piece[field] != actual:
-                    raise ValueError("Embedded boundary contradicts its actual parent scope")
-                effective[field] = actual
-            boundary_row = read_flow(
-                effective,
-                piece_index,
-                index,
-                boundary=True,
-                original=piece,
-                parent_reference=observed.evidence,
+    parent_sources: tuple[
+        tuple[Literal["flow_bars", "flow_parent_bars"], Sequence[Mapping[str, JsonInput]]], ...
+    ] = (("flow_bars", flow_bars), ("flow_parent_bars", flow_parent_bars))
+    for collection, sources in parent_sources:
+        for index, source in enumerate(sources):
+            geometry, _payload = _wire(source)
+            source_start = parse_iso_time(_text(geometry, "minute_start"))
+            if source_start >= cutoff or source_start + timedelta(minutes=1) <= start:
+                continue
+            captured = capture_flow(source, index, None, collection=collection)
+            if captured is None:
+                continue
+            raw, identity, reference = captured
+            minute_start = parse_iso_time(_text(raw, "minute_start"))
+            parent = SpotFlowParent(
+                instrument=identity,
+                start=minute_start,
+                end=minute_start + timedelta(minutes=1),
+                received_at=propagate_timestamp(raw, "received_ts"),
+                observed_at=propagate_timestamp(raw, "observed_at"),
+                evidence=reference,
             )
-            if boundary_row is None:
-                raise ValueError("A spot boundary cannot change its actual parent market")
-            if not observed.start <= boundary_row.start < boundary_row.end <= observed.end:
-                raise ValueError("Embedded boundary must remain inside its actual parent minute")
-            boundaries.append(boundary_row)
+            if collection == "flow_bars" and start <= parent.start and parent.end <= cutoff:
+                minutes.append(_flow(raw, identity, reference, boundary=False, parent_document=None))
+            pieces = raw.get("boundary_segments")
+            if pieces is None:
+                continue
+            if not isinstance(pieces, list):
+                raise ValueError("Embedded boundary evidence requires an array")
+            for piece_index, piece in enumerate(pieces):
+                if not isinstance(piece, dict):
+                    raise ValueError("Embedded boundary evidence requires objects")
+                piece_start = parse_iso_time(_text(piece, "start"))
+                piece_end = parse_iso_time(_text(piece, "end"))
+                if not parent.start <= piece_start < piece_end <= parent.end:
+                    raise ValueError("Embedded boundary must remain inside its actual parent minute")
+                if piece_start < start or piece_end > cutoff:
+                    continue
+                effective: dict[str, JsonInput] = dict(piece)
+                inherited = {
+                    "instrument_id": identity.instrument_id,
+                    "token_id": identity.token_id,
+                    "venue": identity.venue,
+                    "market_type": identity.market_type,
+                }
+                for field, actual in inherited.items():
+                    if piece.get(field) is not None and piece[field] != actual:
+                        raise ValueError("Embedded boundary contradicts its actual parent scope")
+                    effective[field] = actual
+                boundary_source = capture_flow(
+                    effective,
+                    piece_index,
+                    index,
+                    collection=collection,
+                    original=piece,
+                    parent_reference=reference,
+                )
+                if boundary_source is None:
+                    raise ValueError("A spot boundary cannot change its actual parent market")
+                boundary_wire, boundary_identity, boundary_reference = boundary_source
+                boundaries.append(
+                    _flow(
+                        boundary_wire,
+                        boundary_identity,
+                        boundary_reference,
+                        boundary=True,
+                        parent_document=parent,
+                    )
+                )
     ticker_values: list[SpotTickerObservation] = []
     for source in tickers:
         row, _payload = _wire(source)
-        identity = _identity(row, known, token_id, frozenset(other_markets))
+        identity = _identity(row, known, token_id, frozenset(other_markets), foreign)
         if identity is None:
             continue
         known[identity.instrument_id] = identity

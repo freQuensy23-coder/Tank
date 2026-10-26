@@ -60,6 +60,7 @@ def decoded(
         cutoff=AT + timedelta(minutes=1),
         assembled_at=Timestamp("2026-10-19T12:02:00Z", "COLLECTION_ONLY"),
         instruments=[INSTRUMENT],
+        flow_parent_bars=[],
         flow_bars=rows,
         flow_segments=[] if pieces is None else pieces,
         tickers=[] if tickers is None else tickers,
@@ -76,6 +77,7 @@ def test_absent_counts_and_precision_are_not_zero_or_exact() -> None:
     assert row.observed_at.value is None and row.observed_at.precision is None
     assert row.received_at.precision == "COLLECTION_ONLY"
     assert row.visible_at(result.inputs.assembled_at) is True
+    assert row.visibility_basis(result.inputs.assembled_at) == "SOURCE_RECEIPT"
     missing_receipt = decoded([dict(minute(), received_ts=None)])
     assert missing_receipt.inputs.minutes[0].visible_at(result.inputs.assembled_at) is None
 
@@ -187,6 +189,7 @@ def test_scope_cannot_be_inferred_from_instrument_identifier_spelling() -> None:
             cutoff=AT + timedelta(minutes=1),
             assembled_at=Timestamp(None, None, "ASSEMBLY_NOT_CAPTURED"),
             instruments=[],
+            flow_parent_bars=[],
             flow_bars=[minute()],
             flow_segments=[],
             tickers=[],
@@ -227,3 +230,185 @@ def test_spot_policy_uses_actual_captured_threshold_values_without_numeric_defau
     assert policy.significant_flow_sigma == Decimal("3.0") and policy.min_spot_venues == 4
     with pytest.raises(ValidationError):
         SpotCalculationPolicy.model_validate({"significant_flow_sigma": Decimal(2)})
+
+
+def generated_empty_bar() -> dict[str, JsonInput]:
+    from tank.contracts.json import decode_json
+    from tank.market.flow import FlowAccumulator
+    from tank.market.trade_contracts import FlowIdentity
+    from tank.util import iso
+
+    observed = AT + timedelta(seconds=31)
+    accumulator = FlowAccumulator(now=lambda: observed)
+    identity = FlowIdentity(
+        instrument_id="VENUE:spot:T", token_id="T", venue="binance", market_type="SPOT", quote_asset="USD"
+    )
+    accumulator.empty_minute(identity, AT)
+    accumulator.prove_range(
+        identity.instrument_id,
+        AT,
+        AT + timedelta(seconds=30),
+        complete=True,
+        source="declared-empty-stream-fixture",
+        observed_at=observed,
+    )
+    accumulator.register_boundaries(identity.instrument_id, [AT + timedelta(seconds=30)])
+    bar = accumulator.record((identity.instrument_id, iso(AT)), complete=False)
+    value = decode_json(bar.model_dump_json())
+    if not isinstance(value, dict):
+        raise ValueError("Actual flow writer must serialize its bar object")
+    return dict(value)
+
+
+def partial_parent_inputs(parent: dict[str, JsonInput]) -> DecodedSpotInputs:
+    scope = dict(INSTRUMENT)
+    if "venue" in parent:
+        scope["venue"] = parent["venue"]
+    return decode_spot_inputs(
+        token_id="T",
+        start=AT,
+        cutoff=AT + timedelta(seconds=30),
+        assembled_at=Timestamp("2026-10-19T12:00:40Z", "COLLECTION_ONLY"),
+        instruments=[scope],
+        flow_bars=[],
+        flow_parent_bars=[parent],
+        flow_segments=[],
+        tickers=[],
+        policy=SpotCalculationPolicy(significant_flow_sigma=Decimal(2), min_spot_venues=2),
+        native_ticker_volume_field="volume_native",
+    )
+
+
+def test_actual_generated_empty_piece_preserves_its_own_clock_without_a_trade_receipt() -> None:
+    source = generated_empty_bar()
+    original = dict(source)
+    result = partial_parent_inputs(source)
+    assert result.inputs.minutes == ()
+    assert len(result.inputs.boundaries) == 1
+    piece = result.inputs.boundaries[0]
+    assert piece.generated_empty is not None
+    assert piece.received_at.value is None
+    assert piece.observed_at.value == "2026-10-19T12:00:31Z"
+    assert piece.visible_at(result.inputs.assembled_at) is True
+    assert piece.visibility_basis(result.inputs.assembled_at) == "GENERATED_EMPTY_PIECE"
+    assert piece.parent_document is not None
+    assert piece.parent_document.end == AT + timedelta(minutes=1)
+    assert piece.evidence.collection == "flow_parent_bars"
+    assert result.source_evidence.original(piece.parent_document.evidence) == original
+    assert source == original
+
+
+@pytest.mark.parametrize("field,value", [("observed_at", "2026-10-19T12:00:41Z"), ("observed_at_prec", None)])
+def test_empty_piece_future_or_unknown_generation_does_not_gain_visibility(
+    field: str,
+    value: JsonInput,
+) -> None:
+    source = generated_empty_bar()
+    pieces = source["boundary_segments"]
+    assert isinstance(pieces, list)
+    first = pieces[0]
+    assert isinstance(first, dict)
+    first[field] = value
+    result = partial_parent_inputs(source)
+    piece = result.inputs.boundaries[0]
+    if field == "observed_at":
+        assert piece.visible_at(result.inputs.assembled_at) is False
+    else:
+        assert piece.generated_empty is None
+        assert piece.visible_at(result.inputs.assembled_at) is None
+
+
+def test_parent_last_trade_receipt_cannot_authorize_an_unknown_legacy_zero_piece() -> None:
+    source = with_boundary(
+        {
+            "start": "2026-10-19T12:00:00Z",
+            "end": "2026-10-19T12:00:30Z",
+            "complete": True,
+            "buy_qty": "0",
+            "sell_qty": "0",
+            "sum_sq_qty": "0",
+            "n_buy": 0,
+            "n_sell": 0,
+            "observed_at": "2026-10-19T12:00:20Z",
+            "observed_at_prec": "COLLECTION_ONLY",
+            "observed_at_prec_reason": None,
+        }
+    )
+    source["received_ts"] = "2026-10-19T12:00:05Z"
+    result = partial_parent_inputs(source)
+    piece = result.inputs.boundaries[0]
+    assert piece.generated_empty is None and piece.received_at.value is None
+    assert piece.visible_at(result.inputs.assembled_at) is None
+
+
+def test_actual_late_parent_restricts_even_an_earlier_generated_piece() -> None:
+    source = generated_empty_bar()
+    source["received_ts"] = "2026-10-19T12:00:41Z"
+    result = partial_parent_inputs(source)
+    assert result.inputs.boundaries[0].visible_at(result.inputs.assembled_at) is False
+
+
+def test_unrequested_parent_money_and_future_piece_money_do_not_enter_the_calculation() -> None:
+    source = generated_empty_bar()
+    source["buy_qty"] = "future-parent-financial-canary"
+    pieces = source["boundary_segments"]
+    assert isinstance(pieces, list)
+    for piece in pieces:
+        assert isinstance(piece, dict)
+        if piece["end"] != "2026-10-19T12:00:30Z":
+            piece["buy_qty"] = "future-piece-financial-canary"
+    result = partial_parent_inputs(source)
+    assert result.inputs.minutes == ()
+    assert result.inputs.boundaries[0].buy_qty == Decimal(0)
+
+
+def test_declared_benchmark_scope_is_separate_and_cannot_impersonate_the_subject() -> None:
+    benchmark: dict[str, JsonInput] = {
+        "instrument_id": "BENCHMARK:spot:B",
+        "token_id": "B",
+        "venue": "BENCHMARK",
+        "market_type": "SPOT",
+    }
+    foreign = dict(
+        minute(), instrument_id=benchmark["instrument_id"], token_id="B", buy_qty="non-subject-canary"
+    )
+
+    def actual() -> DecodedSpotInputs:
+        return decode_spot_inputs(
+            token_id="T",
+            start=AT,
+            cutoff=AT + timedelta(minutes=1),
+            assembled_at=Timestamp("2026-10-19T12:02:00Z", "COLLECTION_ONLY"),
+            instruments=[INSTRUMENT, benchmark],
+            flow_bars=[minute(), foreign],
+            flow_parent_bars=[],
+            flow_segments=[],
+            tickers=[],
+            policy=SpotCalculationPolicy(significant_flow_sigma=Decimal(2), min_spot_venues=2),
+            native_ticker_volume_field="volume_native",
+        )
+
+    result = actual()
+    assert tuple(row.token_id for row in result.inputs.instruments) == ("T",)
+    assert len(result.inputs.minutes) == 1
+    foreign["token_id"] = "T"
+    with pytest.raises(ValueError, match="benchmark source contradicts"):
+        actual()
+
+
+def test_unrequested_standalone_money_does_not_change_the_selected_scope_or_values() -> None:
+    future = dict(minute(), minute_start="2026-10-19T12:03:00Z", buy_qty="future-native-canary")
+    result = decoded(
+        [minute(), future],
+        pieces=[
+            {
+                "instrument_id": "VENUE:spot:T",
+                "start": "2026-10-19T12:03:00Z",
+                "end": "2026-10-19T12:03:30Z",
+                "buy_qty": "future-piece-canary",
+            }
+        ],
+    )
+    assert len(result.inputs.minutes) == 1
+    assert result.inputs.minutes[0].buy_qty == Decimal(3)
+    assert result.inputs.boundaries == ()
