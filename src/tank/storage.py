@@ -45,6 +45,7 @@ from tank.contracts.jobs import (
     JobRetryState,
 )
 from tank.contracts.json import JsonDocument
+from tank.contracts.stored_documents import ImmutableDocument as ImmutableDocument
 from tank.market_codec import StoredRow, StoredValue
 from tank.market_codec import decode as decode_market
 from tank.market_schema import MARKET_ALIASES, MARKET_COLUMNS
@@ -113,11 +114,6 @@ class ClaimResult(DomainModel):
     analysis_busy: bool
     fresh_event: bool
     deferred: int
-
-
-class ImmutableDocument(DomainModel):
-    document: Record
-    immutable: bool
 
 
 def _same_jsonb_value(left: JsonValue, right: JsonValue) -> bool:
