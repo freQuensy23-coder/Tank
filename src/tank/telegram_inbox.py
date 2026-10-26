@@ -41,6 +41,7 @@ from tank.contracts.telegram_wire import (
     TelegramDownloadedFile,
     TelegramFilePayload,
     TelegramMediaSelection,
+    TelegramMembershipCache,
     TelegramMessageReceipt,
     TelegramMimeSelection,
     TelegramSentMessageReceipt,
@@ -60,12 +61,17 @@ from tank.question_answers import (
 from tank.runtime_contracts import TelegramAnswerJob
 from tank.telegram_api import FileTooLarge as FileTooLarge
 from tank.telegram_api import (
+    TelegramAuthorizationUnavailable,
     TelegramConfigurationError,
     TelegramResponseError,
+    authorization_subject,
+    bot_identity,
     download_file,
     media_selection,
+    membership_observation,
     message_receipt,
     pairing_sender_id,
+    require_membership_selector,
     require_telegram_token,
     response_result,
     sent_message_receipt,
@@ -90,7 +96,6 @@ MEMBER_CACHE_S = 600
 MESSAGE_LIMIT = 4000
 ANSWER_CHANNEL = "telegram:answer"
 CARD_CHANNEL = "telegram:alerts"
-MEMBER_STATUSES = {"creator", "administrator", "member"}
 
 NO_SESSION_TEXT = "Не нашёл сессию агента для этого сообщения. Ответьте на карточку Tank или перешлите её боту вместе с вопросом."
 HINT_TEXT = "Ответьте на карточку Tank или перешлите её боту вместе с вопросом."
@@ -254,8 +259,8 @@ class TelegramInbox:
             http if http is not None else httpx.AsyncClient(timeout=httpx.Timeout(POLL_TIMEOUT_S + 15))
         )
         self.owns_http = http is None
-        self.bot_id = None
-        self.members = {}
+        self.bot_id: int | None = None
+        self.members: dict[tuple[str, int], TelegramMembershipCache] = {}
         self.next_prune = 0.0
 
     @property
@@ -344,9 +349,9 @@ class TelegramInbox:
             await self.repo.put("ops.source_checkpoints", LEGACY_CHAT_KEY, state)
         return state["cursor"]
 
-    async def bot(self):
+    async def bot(self) -> int:
         if self.bot_id is None:
-            self.bot_id = (await self.call("getMe", {}))["id"]
+            self.bot_id = bot_identity(await self.call("getMe", {})).id
         return self.bot_id
 
     async def poll(self, timeout: int = POLL_TIMEOUT_S) -> int:
@@ -458,31 +463,29 @@ class TelegramInbox:
             bool(ops) and str(chat_id) == str(ops) and str(chat_id) != str(self.settings.telegram_alerts_chat)
         )
 
-    async def authorized(self, message):
-        chat = message["chat"]
-        if str(chat["id"]) == str(self.settings.telegram_alerts_chat) or self.ops_chat(chat["id"]):
+    async def authorized(self, message: Mapping[str, JsonValue]) -> bool:
+        subject = authorization_subject(message)
+        if str(subject.chat.id) == str(self.settings.telegram_alerts_chat) or self.ops_chat(subject.chat.id):
             return True
-        if chat.get("type") != "private":
+        if subject.chat.type != "private":
             return False
-        user = (message.get("from") or {}).get("id")
-        if user is None:
-            return False
-        cached = self.members.get(user)
-        if cached and cached[1] > time.monotonic():
-            return cached[0]
-        try:
-            member = await self.call(
-                "getChatMember", {"chat_id": self.settings.telegram_alerts_chat, "user_id": user}
-            )
-            allowed = member.get("status") in MEMBER_STATUSES or (
-                member.get("status") == "restricted" and member.get("is_member") is True
-            )
-        except RuntimeError as error:
-            if getattr(error, "status", None) not in (400, 403):
-                raise
-            allowed = False
-        self.members[user] = (allowed, time.monotonic() + MEMBER_CACHE_S)
-        return allowed
+        if subject.sender is None:
+            raise TelegramAuthorizationUnavailable("Private Telegram sender identity was not reported")
+        selector = require_membership_selector(self.settings.telegram_alerts_chat)
+        user = subject.sender.id
+        key = (selector, user)
+        cached = self.members.get(key)
+        if cached is not None and cached.expires_monotonic > time.monotonic():
+            if cached.observation.user.id != user:
+                raise ValueError("Telegram membership cache belongs to another requested user")
+            return cached.observation.permitted
+        observation = membership_observation(
+            await self.call("getChatMember", {"chat_id": selector, "user_id": user}), user
+        )
+        self.members[key] = TelegramMembershipCache(
+            observation=observation, expires_monotonic=time.monotonic() + MEMBER_CACHE_S
+        )
+        return observation.permitted
 
     async def handle(self, row, now):
         message = row["message"]

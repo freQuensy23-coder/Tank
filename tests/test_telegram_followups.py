@@ -98,7 +98,7 @@ class FakeTelegram:
                 },
             )
         if method == "getMe":
-            return httpx.Response(200, json={"ok": True, "result": {"id": BOT}})
+            return httpx.Response(200, json={"ok": True, "result": {"id": BOT, "is_bot": True}})
         if method == "getUpdates":
             ready = [row for row in self.updates if row["update_id"] >= body.get("offset", 0)]
             return httpx.Response(200, json={"ok": True, "result": ready})
@@ -113,7 +113,7 @@ class FakeTelegram:
                         "parameters": {"retry_after": 1},
                     },
                 )
-            result = {"status": self.member}
+            result = {"status": self.member, "user": {"id": body["user_id"]}}
             if self.is_member is not None:
                 result["is_member"] = self.is_member
             return httpx.Response(200, json={"ok": True, "result": result})

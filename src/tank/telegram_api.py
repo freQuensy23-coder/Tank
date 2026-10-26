@@ -9,18 +9,23 @@ from pydantic import JsonValue, ValidationError
 
 from tank.contracts.json import decode_unique_json
 from tank.contracts.telegram_wire import (
+    TelegramAuthorizationSubject,
+    TelegramBotIdentity,
     TelegramChatIdentity,
     TelegramDownloadedFile,
     TelegramEmptyUpdate,
     TelegramFailure,
     TelegramFileInfo,
     TelegramFileReference,
+    TelegramKnownMembership,
     TelegramMediaKind,
     TelegramMediaSelection,
+    TelegramMembership,
     TelegramMessageIdentity,
     TelegramMessageReceipt,
     TelegramNamedFile,
     TelegramPhotoSize,
+    TelegramRestrictedMembership,
     TelegramSenderIdentity,
     TelegramSentMessageReceipt,
     TelegramSuccess,
@@ -289,3 +294,69 @@ async def download_file(
         )
     except httpx.HTTPError:
         raise TelegramProtocolError("Telegram file transport failed") from None
+
+
+class TelegramAuthorizationUnavailable(RuntimeError):
+    """Required authorization evidence is unreported, not a negative membership fact."""
+
+
+def authorization_subject(message: Mapping[str, JsonValue]) -> TelegramAuthorizationSubject:
+    try:
+        chat = message["chat"]
+        if not isinstance(chat, dict):
+            raise ValueError("Telegram authorization requires its reported chat")
+        sender = message.get("from")
+        if sender is None:
+            if "from" in message:
+                raise ValueError("A reported Telegram sender requires its object")
+        elif not isinstance(sender, dict):
+            raise ValueError("A reported Telegram sender requires its object")
+        return TelegramAuthorizationSubject(
+            chat=TelegramChatIdentity.model_validate({"id": chat["id"], "type": chat["type"]}),
+            sender=TelegramSenderIdentity.model_validate({"id": sender["id"]})
+            if sender is not None
+            else None,
+        )
+    except (KeyError, ValueError, ValidationError):
+        raise TelegramProtocolError("Telegram authorization subject is invalid") from None
+
+
+def require_membership_selector(value: str | None) -> str:
+    if not isinstance(value, str) or not value.strip():
+        raise TelegramConfigurationError("Telegram membership lookup requires its configured chat selector")
+    return value
+
+
+def bot_identity(result: JsonValue) -> TelegramBotIdentity:
+    try:
+        if not isinstance(result, dict):
+            raise ValueError("Telegram bot identity requires an object")
+        return TelegramBotIdentity.model_validate(
+            {field: result[field] for field in TelegramBotIdentity.model_fields if field in result}
+        )
+    except (ValueError, ValidationError):
+        raise TelegramProtocolError("Telegram getMe identity is invalid") from None
+
+
+def membership_observation(result: JsonValue, requested_user_id: int) -> TelegramMembership:
+    try:
+        requested = TelegramSenderIdentity(id=requested_user_id)
+        if not isinstance(result, dict) or not isinstance(result["user"], dict):
+            raise ValueError("Telegram membership requires its actual user")
+        user = TelegramSenderIdentity.model_validate({"id": result["user"]["id"]})
+        if user.id != requested.id:
+            raise ValueError("Telegram membership user conflicts with its requested identity")
+        if result.get("status") == "restricted":
+            return TelegramRestrictedMembership.model_validate(
+                {
+                    "user": user,
+                    **{field: result[field] for field in ("status", "is_member") if field in result},
+                }
+            )
+        return TelegramKnownMembership.model_validate(
+            {"user": user, **{field: result[field] for field in ("status",) if field in result}}
+        )
+    except (KeyError, ValueError, ValidationError):
+        raise TelegramProtocolError(
+            "Telegram membership observation is invalid or belongs to another user"
+        ) from None

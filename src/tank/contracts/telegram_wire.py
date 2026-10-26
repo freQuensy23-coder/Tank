@@ -207,3 +207,39 @@ class TelegramMimeSelection(DomainModel):
         if response_header is not None and response_header.strip():
             return cls(value=response_header, basis="DOWNLOAD_HEADER")
         return cls(value="application/octet-stream", basis="STORAGE_DEFAULT")
+
+
+class TelegramAuthorizationSubject(DomainModel):
+    chat: TelegramChatIdentity
+    sender: TelegramSenderIdentity | None
+
+
+class TelegramBotIdentity(TelegramSenderIdentity):
+    is_bot: TrueFlag
+
+
+class TelegramKnownMembership(DomainModel):
+    user: TelegramSenderIdentity
+    status: Literal["creator", "administrator", "member", "left", "kicked"]
+
+    @property
+    def permitted(self) -> bool:
+        return self.status in {"creator", "administrator", "member"}
+
+
+class TelegramRestrictedMembership(DomainModel):
+    user: TelegramSenderIdentity
+    status: Literal["restricted"]
+    is_member: bool
+
+    @property
+    def permitted(self) -> bool:
+        return self.is_member
+
+
+type TelegramMembership = TelegramKnownMembership | TelegramRestrictedMembership
+
+
+class TelegramMembershipCache(DomainModel):
+    observation: TelegramMembership
+    expires_monotonic: Annotated[float, Field(ge=0)]
