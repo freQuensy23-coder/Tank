@@ -9,7 +9,7 @@ import { DEFAULT_LOCK_PATHS, verifyPersistenceLocks } from './verify-lock.mts';
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
 if (process.versions.node !== '24.22.0' || process.argv.length !== 2) throw new Error('Persistence qualification requires Node24.22.0 and no selection arguments');
 verifyPersistenceLocks(DEFAULT_LOCK_PATHS);
-requireDisposablePostgresDsn(process.env.TANK_TEST_DATABASE_URL);
+requireDisposablePostgresDsn(process.env.TANK_TEST_DATABASE_URL, process.env.TANK_OPENMA_PERSISTENCE_DATABASE_HOST);
 const files = [
   'scripts/openma-persistence/verify-lock.test.mts',
   'tests/openma/persistence/continuation-input.test.mts',

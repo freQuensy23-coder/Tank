@@ -1,7 +1,7 @@
 import { encodeSessionEventDocument, type ExecutionProgressReceipt } from '@open-managed-agents/session-runtime-contract/history';
 import type { YieldSessionExecutionProgress, YieldSessionExecutionProgressResult } from '@open-managed-agents/session-runtime-contract/coordination';
 import { decodeContinuationExecutionEvents, validateContinuationExecutionEvents, imageRecoveryRetryBoundary, lastMatching, pendingImageRecoveries, planSessionContinuation, resultCallId, verifiedProgress, type ContinuationSnapshot } from '@open-managed-agents/session-runtime-contract/continuation';
-import { loadSessionContinuationSnapshot, SessionContinuationMissingError } from './continuation';
+import { loadSessionContinuationSnapshot, requiredContinuationRows, SessionContinuationMissingError } from './continuation';
 import type {
   AdmitSessionExecution,
   AdmitSessionExecutionResult,
@@ -487,7 +487,8 @@ export class SqlSessionExecutionStore
           OR (state = 'failed' AND failure = 'retained_configuration_changed' AND interrupt_requested_at_ms IS NULL))
         AND attempt_count < max_attempts AND deadline_at_ms > ?
       ORDER BY admitted_at_ms, id`).bind(input.workspaceId ?? null, input.workspaceId ?? null, input.sessionId ?? null, input.sessionId ?? null, input.laneId ?? null, input.laneId ?? null, claimedAt, input.ownerId, claimedAt).all<ExecutionRow>();
-    const ordered = (candidates.results ?? []).map(row => ({
+    const rows = requiredContinuationRows(candidates.results);
+    const ordered = rows.map(row => ({
       row,
       callback: decodeContinuationExecutionEvents(row.events_json).some(event => resultCallId(event) !== undefined)
     })).sort((left, right) => Number(right.callback) - Number(left.callback));
@@ -515,7 +516,7 @@ export class SqlSessionExecutionStore
           .bind(claimedAt, row.workspace_id, row.id, row.revision, claimedAt, input.ownerId, row.workspace_id, row.session_id).run();
         continue;
       }
-      const eligible = (candidates.results ?? []).filter(candidate => candidate.workspace_id === row.workspace_id
+      const eligible = rows.filter(candidate => candidate.workspace_id === row.workspace_id
         && candidate.session_id === row.session_id && candidate.lane_id === row.lane_id && candidate.state === 'failed'
         && snapshot.executions.some(execution => execution.id === candidate.id && execution.revision === Number(candidate.revision)));
       let planning = pendingImageRecoveries(snapshot, eligible.map(candidate => candidate.id));

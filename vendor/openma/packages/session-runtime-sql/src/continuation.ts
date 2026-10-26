@@ -13,7 +13,7 @@ function continuationRow(value: unknown, fields: readonly string[]): Record<stri
   if (!isContinuationRow(value) || Object.keys(value).some(key => !fields.includes(key))) throw new ContinuationProtocolError('Invalid persisted continuation row');
   return value;
 }
-function continuationRows(values: unknown[] | undefined): unknown[] {
+export function requiredContinuationRows<T>(values: T[] | undefined): T[] {
   if (values === undefined) throw new ContinuationProtocolError('Missing continuation SELECT result');
   return values;
 }
@@ -53,14 +53,14 @@ export async function loadSessionContinuationSnapshot(sql: SqlClient, scope: {
   const result = await sql.prepare(`SELECT id, lane_id, state, revision, events_json, attempt_count,
     interrupt_requested_at_ms FROM managed_session_executions WHERE workspace_id = ? AND session_id = ?
     ORDER BY admitted_at_ms, id`).bind(scope.workspaceId, scope.sessionId).all<unknown>();
-  const executions = continuationRows(result.results).map(executionRow);
+  const executions = requiredContinuationRows(result.results).map(executionRow);
   const identities = new Set(executions.map(row => row.id));
   if (identities.size !== executions.length) throw new ContinuationProtocolError('Duplicate continuation execution identity');
   const recoveries = await sql.prepare(`SELECT execution_id, after_event_id FROM managed_session_image_recoveries
     WHERE workspace_id = ? AND execution_id IN (SELECT id FROM managed_session_executions WHERE workspace_id = ? AND session_id = ?)`)
     .bind(scope.workspaceId, scope.workspaceId, scope.sessionId).all<unknown>();
   const recoveryBoundaries = new Map<string, ContinuationImageRecovery>();
-  for (const value of continuationRows(recoveries.results)) {
+  for (const value of requiredContinuationRows(recoveries.results)) {
     const row = continuationRow(value, ['execution_id', 'after_event_id']), id = rowString(row.execution_id);
     if (!identities.has(id) || recoveryBoundaries.has(id)) throw new ContinuationProtocolError('Invalid continuation recovery identity');
     recoveryBoundaries.set(id, decodeContinuationImageRecovery(rowString(row.after_event_id)));

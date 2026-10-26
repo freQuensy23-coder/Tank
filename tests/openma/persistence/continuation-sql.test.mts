@@ -10,7 +10,7 @@ import { ensureSessionExecutionCoordinatorSchema, SqlSessionExecutionStore } fro
 import { ContinuationProtocolError } from '../../../vendor/openma/packages/session-runtime-contract/src/continuation.ts';
 import { SqlSessionEventStore } from '../../../vendor/openma/packages/session-event-store-sql/src/index.ts';
 import type { Session, SentSessionEvent } from '../../../vendor/openma/packages/managed-agents-domain/src/sessions/index.ts';
-import type { SqlClient } from '../../../vendor/openma/packages/sql-client/src/ports.ts';
+import type { SqlClient, SqlRunResult, SqlSelectResult, SqlStatement } from '../../../vendor/openma/packages/sql-client/src/ports.ts';
 
 interface Fixture {
   sql: SqlClient;
@@ -19,7 +19,7 @@ interface Fixture {
   session: Session;
 }
 async function fixture(t: TestContext): Promise<Fixture> {
-  const dsn = requireDisposablePostgresDsn(process.env.TANK_TEST_DATABASE_URL);
+  const dsn = requireDisposablePostgresDsn(process.env.TANK_TEST_DATABASE_URL, process.env.TANK_OPENMA_PERSISTENCE_DATABASE_HOST);
   const schema = 'continuation_' + randomUUID().replaceAll('-', '');
   const connection = postgres(dsn);
   const configured = new URL(dsn);
@@ -152,4 +152,42 @@ test('actual PG event outbox captures validated input before an asynchronous pol
   if (captured.type !== 'user.message') throw new Error('Expected captured message');
   assert.deepEqual(captured.content, [{ type: 'text', text: 'captured original' }]);
   assert.equal(observed.revision, 2);
+});
+
+
+function missingCandidateResult(statement: SqlStatement): SqlStatement {
+  return {
+    bind(...parameters: unknown[]): SqlStatement { return missingCandidateResult(statement.bind(...parameters)); },
+    run<T = unknown>(): Promise<SqlRunResult<T>> { return statement.run<T>(); },
+    first<T = unknown>(): Promise<T | null> { return statement.first<T>(); },
+    all<T = unknown>(): Promise<SqlSelectResult<T>> { return Promise.resolve({}); },
+  };
+}
+
+test('a missing required driver SELECT result refuses instead of reporting an empty queue', async (t: TestContext): Promise<void> => {
+  const f = await fixture(t);
+  let faults = 0;
+  const client: SqlClient = {
+    prepare(query: string): SqlStatement {
+      const statement = f.sql.prepare(query);
+      if (query.includes('AND attempt_count < max_attempts') && query.includes('ORDER BY admitted_at_ms, id')) {
+        faults++;
+        return missingCandidateResult(statement);
+      }
+      return statement;
+    },
+    batch<T = unknown>(statements: SqlStatement[]): Promise<SqlRunResult<T>[]> { return f.sql.batch<T>(statements); },
+    exec(query: string): Promise<void> { return f.sql.exec(query); },
+  };
+  const store = new SqlSessionExecutionStore(client, { callbackContinuations: true, serializeSessionClaims: true });
+  const before = await persisted(f.sql);
+  await assert.rejects(store.claim({ ...f.scope, ownerId: 'worker', attemptId: 'attempt', claimedAt: '2026-10-26T00:00:01Z', leaseTtlMs: 10000 }),
+    (error: unknown): boolean => {
+      assert.ok(error instanceof ContinuationProtocolError);
+      assert.equal(error.message, 'Missing continuation SELECT result');
+      return true;
+    });
+  assert.equal(faults, 1);
+  assert.deepEqual(await persisted(f.sql), before);
+  assert.equal((await f.store.claim({ ...f.scope, ownerId: 'real-worker', attemptId: 'real-attempt', claimedAt: '2026-10-26T00:00:01Z', leaseTtlMs: 10000 })).type, 'claimed');
 });

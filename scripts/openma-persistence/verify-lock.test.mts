@@ -60,13 +60,13 @@ test('a changed upstream transitive resolution or archive integrity is refused',
 test('the explicit disposable database preserves allowed credentials without exposing them', (): void => {
   for (const host of ['127.0.0.1', 'localhost', 'pg']) {
     const value = 'postgresql://tank_ci:fake-disposable@' + host + ':5432/tank_test_persistence';
-    assert.equal(requireDisposablePostgresDsn(value), value);
+    assert.equal(requireDisposablePostgresDsn(value, host), value);
   }
 });
 for (const [index, value] of [undefined, '', 'FAKE_SECRET_VALUE', 'postgresql://tank_ci:fake@production.invalid/tank_test_persistence',
   'postgresql://tank_ci:fake@127.0.0.1/production', 'postgresql://postgres:fake@127.0.0.1/tank_test_persistence'].entries()) {
   test('invalid or absent disposable database is refused without input echo ' + index, (): void => {
-    assert.throws((): void => { requireDisposablePostgresDsn(value); }, (error: unknown): boolean => {
+    assert.throws((): void => { requireDisposablePostgresDsn(value, '127.0.0.1'); }, (error: unknown): boolean => {
       assert.ok(error instanceof Error);
       assert.ok(!error.message.includes('FAKE_SECRET_VALUE'));
       assert.ok(!error.message.includes('fake@'));
@@ -74,3 +74,12 @@ for (const [index, value] of [undefined, '', 'FAKE_SECRET_VALUE', 'postgresql://
     });
   });
 }
+
+
+test('registered container addresses remain explicit and cannot be inferred from the supplied DSN', (): void => {
+  const value = 'postgresql://tank_ci:fake-disposable@172.19.0.4:5432/tank_test_persistence';
+  assert.equal(requireDisposablePostgresDsn(value, '172.19.0.4'), value);
+  for (const expected of [undefined, '172.19.0.5', '8.8.8.8']) {
+    assert.throws((): void => { requireDisposablePostgresDsn(value, expected); });
+  }
+});
