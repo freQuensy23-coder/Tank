@@ -1,6 +1,6 @@
 # Architectural findings for MR 39
 
-Current implementation checkpoint: `f12718b6c18a578aa484b57eb3fd2448e108d532`, including main `49c418014f8ba52bf1fce32e9cf8840733d1ae01`. All five global requirements remain open. Development and tests now run in local worktrees under the user's explicit environment clarification; production is unchanged.
+Current implementation checkpoint: `3a056abe4bd75fc5ea5d97ad40d32a0170e8590f`, including main `49c418014f8ba52bf1fce32e9cf8840733d1ae01`. All five global requirements remain open. Development and tests now run in local worktrees under the user's explicit environment clarification; production is unchanged.
 
 The [earlier architecture audit](history/architecture-1b21697d.md) preserves the detailed findings and evidence at its stated historical checkpoint. Its held/integrated labels describe that checkpoint, not the current branch. The updates below and the five owner reports establish current scope. See [the plan](PLAN.md), [executable boundaries](executable-boundaries.md), [foundation](foundation.md), [analysis](analysis.md), [agents](agents.md), [ingestion](ingestion.md), and [quality](quality.md).
 
@@ -45,6 +45,10 @@ The three verified Codex findings on `59b963cf` are integrated: beta availabilit
 
 ## Further integrated boundary repairs
 
+- JSON and YAML configuration admission now rejects ambiguous explicit keys before typed consumption or version snapshot publication. Actual YAML aliases, merge precedence and local overrides remain supported; captured source bytes are unchanged. The JSON cohort has 136 passing units and the YAML cohort 154, with original refusal reproductions retained.
+- The typed publisher and deployment-principal repair are integrated. Actual image and isolated process proofs bind the configured effective UID/GID and preserve exact file ownership/mode checks. UNKNOWN acceptance cannot authorize a second POST. Production identity/network reachability and the unavailable authentic historical positive remain explicitly unproved; see [the publisher ledger](publisher.md).
+- Node verification now resolves the actual vendor's extensionless TypeScript imports without changing vendor bytes. Strict compilation and all 168 local Node units pass. [Measured CI calibration](ci-measured-refresh.md) preserves all cases, workers and deadlines while balancing the existing lanes from complete current artifacts; new workflow timing remains to be measured.
+
 - Native continuation projection opts into Tank attempt/generation metadata only at its actual composition. The generic public adapter retains upstream event shape; protected reader, codec, configuration and five-case module bytes remain unchanged. Required recovery SELECT results refuse before a claim instead of turning missing driver output into an empty batch. See [durable public-history CI](openma-public-history-ci.md).
 - Backup reads require the actual manifest and preserve historical field presence. Rechecked containment, symlink and hash failures cannot silently use a disk fallback. Returning a filesystem path does not claim to eliminate later caller-side TOCTOU.
 - Telegram notices bind actual chat/purpose/attempt/item ownership before effects. A general ignored/unmatched notice legitimately has no material item; a material-specific Ops notice cannot borrow a foreign or missing cached identity.
@@ -55,7 +59,7 @@ The three verified Codex findings on `59b963cf` are integrated: beta availabilit
 - Typed Runtime/worker, completion barriers and reaction scheduling: accepted-input retirement and native file preparation are already integrated. New claim-token/physical-write fencing, closed dispatch, phase-specific completion and dependent replay/Telegram/E2E callers remain a held cohort. Local bounded evidence does not qualify the unmerged combination.
 - Condition graph and actual producers: strict graph/clock/evidence contracts and bounded family serializers exist. The first actual Spot producer cohort and content/consumed-visibility identities are integrated; they preserve live cache reuse without freezing fixture clocks. Fresh assembly receipts remain separate. OI, funding, close, confidence, depth, relative and full-state producer/cache families remain incomplete. Native-quote quantities require actual conversion evidence before being labeled USD.
 - Scheduler commands/results: typed evaluation and reaction receipts require real stored effects and all worker/replay consumers. A reproduced cross-target reaction-marker reuse defect requires atomic scoped ownership; historical unbound markers cannot acquire an invented owner.
-- Actor publisher: named transaction records, actual application-image CLI, durable intent and six signal/crash controls are qualified on their declared image. UNKNOWN remote acceptance still forbids a duplicate POST. Root review found a shell/process UID mismatch; the actual-principal fix and its new image proof are held before activation. No live provider or production deployment is used.
+- Publisher final verification: the actual-principal fix and new image proof are integrated. Whole-source CI artifacts pass all current Python cases, while the workflow still needs green typing, Node verification and completion within its unchanged budget. No live provider or production deployment is used.
 
 ## Retained distinctions and completion gates
 
