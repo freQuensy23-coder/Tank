@@ -6,7 +6,7 @@ from datetime import datetime, timedelta
 from decimal import Decimal
 from fractions import Fraction
 from math import isfinite
-from typing import Literal, Self
+from typing import TYPE_CHECKING, Literal, Self
 
 from pydantic import Field, model_validator
 
@@ -29,14 +29,20 @@ from tank.analysis.oi_ratio import (
     native_oi_change,
 )
 from tank.analysis.oi_synchronization import (
+    ObservedOISynchronizedSelection,
     OISynchronizationPolicy,
     OISynchronizedSelection,
+    UnavailableOISynchronizedSelection,
     _select_oi_synchronization,
 )
 from tank.analysis.statistics_contracts import FloatBounds, FloatRange
 from tank.contracts import DomainModel
 from tank.time_precision import Timestamp
 from tank.util import parse_iso_time
+
+if TYPE_CHECKING:
+    from tank.analysis.oi_composite_history import ObservedOICompositeWindow
+
 
 type OIObservationExclusionReason = Literal[
     "ASSEMBLY_CLOCK_NOT_CAPTURED",
@@ -428,6 +434,17 @@ class OpenInterestCalculator:
         self._source = OIReadSnapshot.model_validate(source)
         self._policy = OISelectionPolicy.model_validate(policy)
 
+    @property
+    def token_id(self) -> str:
+        return self._source.token_id
+
+    def observation(self, reference: OIInputEvidenceRef) -> OIObservation:
+        actual = OIInputEvidenceRef.model_validate(reference)
+        for point in self._source.observations:
+            if point.evidence == actual:
+                return point
+        raise ValueError("OI observation reference is not owned by this admitted read")
+
     def synchronize(
         self,
         request: OIWindowRequest,
@@ -455,6 +472,29 @@ class OpenInterestCalculator:
             rules=actual_rules,
             policy=OISynchronizationPolicy.model_validate(policy),
             window=window,
+        )
+
+    def composite_window(
+        self,
+        request: OIWindowRequest,
+        *,
+        rules: CapturedOISynchronizationRules | UncapturedOISynchronizationRules,
+        policy: OISynchronizationPolicy,
+        window: ConditionWindow,
+    ) -> "ObservedOICompositeWindow | UnavailableOISynchronizedSelection":
+        """Preserve actual same-measure pair cohorts before computing composite ranges."""
+        from tank.analysis.oi_composite_history import ObservedOICompositeWindow, _composite_history
+
+        actual = OIWindowRequest.model_validate(request)
+        selection = self.synchronize(actual, rules=rules, policy=policy, window=window)
+        if not isinstance(selection, ObservedOISynchronizedSelection):
+            return selection
+        if not isinstance(rules, CapturedOISynchronizationRules):
+            raise ValueError("An observed OI composite requires its actual captured rules")
+        return ObservedOICompositeWindow(
+            status="OBSERVED",
+            selection=selection,
+            history=_composite_history(self._source, self._policy, actual, selection=selection, rules=rules),
         )
 
     def native_baseline(
