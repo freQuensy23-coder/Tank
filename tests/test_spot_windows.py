@@ -417,6 +417,9 @@ def test_calculator_owns_validated_inputs_and_refuses_invalid_copied_models() ->
     decoded = decode_windows([instrument], rows, chosen_boundary(start, precision="EXACT"))
     source = decoded.inputs.source
     calculator = SpotCalculator(source)
+    assert calculator._source is not source
+    assert calculator._source.minutes is not source.minutes
+    assert calculator._source.minutes[0] is not source.minutes[0]
     interval = ConditionInterval(window="EVENT", start=start, cutoff=END)
     expected = calculator.sign_history(interval=interval, selected_venues=("VENUE",))
     rows.clear()

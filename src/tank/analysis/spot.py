@@ -2,7 +2,6 @@
 
 from collections.abc import Iterator, Sequence
 from contextlib import contextmanager
-from copy import deepcopy
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from decimal import Decimal, localcontext
@@ -817,7 +816,7 @@ class SpotCalculator:
     __slots__ = ("_source",)
 
     def __init__(self, inputs: SpotCalculationInputs) -> None:
-        self._source = deepcopy(SpotCalculationInputs.model_validate(inputs))
+        self._source = SpotCalculationInputs.model_validate(inputs)
 
     def sign_history(
         self, *, interval: ConditionInterval, selected_venues: tuple[str, ...]
