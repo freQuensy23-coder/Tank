@@ -1109,3 +1109,22 @@ contract/actual-preflight cases pass again in 1.89 seconds, zero skips, with
 source identity verified (followup-final-unknown-facts external evidence).
 The refreshed inventory covers 41 owned active Python files and still lists
 30 SessionService/free-helper and four Runtime functions annotation-incomplete.
+
+Final bounded cohort readiness supersedes the earlier peer hold: canonical
+35cc6309 normally contains current parent ee54ddba, ingestion reporter/callers,
+quality c70f323e E2E/preliminary callers and analysis 8e8a5b65 replay/callers.
+Only the timed Telegram fixture constructor overlap needed reconciliation;
+all incoming typed guards/dynamic event identity and the real refusal writer
+were preserved. The complete joint selection covers 71 affected source/caller
+test files. All 1,165 units pass in 65.54 seconds, zero skips, p90 0.631 seconds,
+maximum 6.137 seconds. All 192 collected Linux integrations pass in 64.30
+seconds, zero skips. Both local wrappers exit zero and verify unchanged source
+identities and exact owned service/runtime identities. Evidence prefix is
+followup-35cc6309-joint-{unit,integration} under external agents evidence.
+Independent strict 14 targets, scoped Ruff and comment checks pass. Configured
+whole-source mypy checks 157 files with only the existing owner
+analysis/truth.py:5890 condition-cache annotation error; the nullable watch
+loop error is resolved by its canonical owner companion. This qualifies the
+required refusal/eligibility cohort and its current callers for parent review;
+it does not close the remaining whole-session/runtime/vendor work or claim
+that the queued ownership-chronology concern has been reproduced or fixed.
