@@ -122,6 +122,16 @@ def _equal(left: JsonValue, right: JsonValue) -> bool:
     return left == right
 
 
+def _accepts(value: JsonValue, schema: JsonValue, path: str) -> bool:
+    try:
+        _validate(value, schema, path)
+    except ToolSchemaError:
+        raise
+    except ValueError:
+        return False
+    return True
+
+
 def _validate(value: JsonValue, schema: JsonValue, path: str) -> None:
     if isinstance(schema, bool):
         if not schema:
@@ -129,6 +139,12 @@ def _validate(value: JsonValue, schema: JsonValue, path: str) -> None:
         return
     if not isinstance(schema, dict):
         raise ToolSchemaError("Configured tool schema must be an object or boolean")
+    conjunction = _array(schema, "allOf")
+    if conjunction is not None and not conjunction:
+        raise ToolSchemaError("Configured tool schema allOf must not be empty")
+    for keyword in ("if", "then", "else"):
+        if keyword in schema and not isinstance(schema[keyword], (bool, dict)):
+            raise ToolSchemaError(f"Configured tool schema {keyword} must be an object or boolean")
     if "type" in schema:
         raw = schema["type"]
         if isinstance(raw, str):
@@ -142,6 +158,31 @@ def _validate(value: JsonValue, schema: JsonValue, path: str) -> None:
     choices = _array(schema, "enum")
     if choices is not None and not any(_equal(value, choice) for choice in choices):
         raise ValueError(f"{path}: invalid enum; allowed: {choices}")
+    if "const" in schema and not _equal(value, schema["const"]):
+        raise ValueError(f"{path}: does not match the required constant")
+    if conjunction is not None:
+        matches = sum(_accepts(value, option, path) for option in conjunction)
+        if matches != len(conjunction):
+            raise ValueError(f"{path}: does not satisfy every required form")
+    if "if" in schema:
+        selected = "then" if _accepts(value, schema["if"], path) else "else"
+        selected_matches = True
+        for keyword in ("then", "else"):
+            if keyword in schema:
+                matches_branch = _accepts(value, schema[keyword], path)
+                if keyword == selected:
+                    selected_matches = matches_branch
+        if not selected_matches:
+            raise ValueError(f"{path}: does not satisfy its conditional form")
+    if "not" in schema and _accepts(value, schema["not"], path):
+        raise ValueError(f"{path}: matches a forbidden form")
+    exclusive_forms = _array(schema, "oneOf")
+    if exclusive_forms is not None:
+        if not exclusive_forms:
+            raise ToolSchemaError("Configured tool schema oneOf must not be empty")
+        matches = sum(_accepts(value, option, path) for option in exclusive_forms)
+        if matches != 1:
+            raise ValueError(f"{path}: must match exactly one allowed form")
     alternatives = _array(schema, "anyOf")
     if alternatives is not None:
         if not alternatives:
@@ -222,6 +263,6 @@ def _validate(value: JsonValue, schema: JsonValue, path: str) -> None:
 
 
 def validate_schema(value: JsonValue, schema: JsonValue, path: str = "$") -> None:
-    """Validate strict JSON types, finite numbers and every declared structural constraint."""
+    """Validate strict JSON types, finite numbers and supported tool-schema constraints."""
     _finite(value, path)
     _validate(value, schema, path)

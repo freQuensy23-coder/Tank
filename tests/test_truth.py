@@ -5,7 +5,6 @@ from decimal import Decimal
 from pathlib import Path
 
 import pytest
-from score_fixtures import unassessed_score_dimensions
 from source_support import fixture_versions
 
 from tank.analysis.truth import (
@@ -1807,17 +1806,38 @@ def test_canonical_text_facts_print_units_windows_and_preserve_audit_companion()
     for text, detail in zip(truth["decisive_facts"], truth["decisive_fact_details"], strict=False):
         assert detail["unit"] in text and detail["window"] in text
         assert "coverage" in text or "covered" in text or "complete" in text
-    event = {"event_id": "E", "event_state": "APPROVED", "state_verified": True, "freshness": "FRESH"}
-    assessment = {
-        "dims": unassessed_score_dimensions(),
-        "class": "MAJOR",
-        "certainty": "HIGH",
-        "impact_horizon": {"impact_start": "NOW"},
-    }
-    beneficiary = {"token_id": "T", "role": "PRIMARY", "credible": True, "capture_class": "DIRECT"}
-    decision = DecisionEngine().evaluate(event, assessment, beneficiary, truth)
+    from test_card_template import card_inputs, wire_card_inputs
+
+    from tank.analysis.card_codec import card_inputs_from_records, card_registry_from_record
+    from tank.analysis.decision_codec import decision_inputs_from_records
+
+    event, assessment, beneficiary, _, _ = wire_card_inputs()
+    event.update(
+        event_id=snapshot["event_id"],
+        lifecycle="ANALYZING",
+        next_milestone=None,
+        token_labels={"T": "Synthetic Token (T)"},
+    )
+    assessment.update(
+        event_id=snapshot["event_id"], ems_id="EMS-synthetic", impact_horizon={"impact_start": "NOW"}
+    )
+    beneficiary.update(event_id=snapshot["event_id"], token_id="T", exposure_score=8)
+    evaluation = DecisionEngine().evaluate(
+        decision_inputs_from_records(event, assessment, beneficiary, truth, open_call=None, conditions=())
+    )
+    decision = {"token_id": "T", **evaluation.model_dump(mode="json")}
+    authored = card_inputs()
     card = compose_card(
-        event, assessment, [beneficiary], [decision], [truth], verdict="Verified synthetic event."
+        card_inputs_from_records(
+            event,
+            assessment,
+            [beneficiary],
+            [decision],
+            [truth],
+            registry=card_registry_from_record({"tokens": [{"token_id": "T"}]}),
+            narrative=authored.narrative,
+            policy=authored.policy,
+        )
     )
     assert "NATIVE_TOKEN" in card
     assert "EVENT" in card

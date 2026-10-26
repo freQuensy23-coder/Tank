@@ -1,107 +1,105 @@
-"""Deterministic written-rule decisions. No network or persistence."""
+"""Pure deterministic written-rule calculations and explicit decision materialization."""
 
-from decimal import Decimal
-
-from tank.analysis.watch_contracts import WatchPolicyInputs, WatchProposal, WatchReferencePrices, WatchRule
+from tank.analysis.decision_contracts import (
+    Action,
+    ActionRule,
+    Bias,
+    Confidence,
+    ConfidenceCaps,
+    ConfidenceInput,
+    ConfidenceLimitation,
+    DecisionCore,
+    DecisionDraft,
+    DecisionEvaluation,
+    DecisionIdentity,
+    DecisionInputs,
+    DecisionLiquidity,
+    DecisionMaterialization,
+    DecisionMetadata,
+    DecisionMilestone,
+    DecisionOutlook,
+    DecisionRecord,
+    DecisionScenarioReasons,
+    DecisionScenarios,
+    DecisionStatusWriter,
+    DecisionWatch,
+    EndedDecisionTracking,
+    Grade,
+    Horizon,
+    Potential,
+    TradeReason,
+)
+from tank.analysis.watch_contracts import (
+    WatchCondition,
+    WatchPolicyInputs,
+    WatchProposal,
+    WatchReferencePrices,
+    WatchRule,
+)
 from tank.analysis.watch_policy import build_watch_conditions, watch_leaf, watch_rule
-from tank.time_precision import propagate_timestamp
-from tank.util import new_id
+from tank.time_precision import Timestamp
+from tank.util import canonical_json
 
 POSITIVE_ACTIONS = frozenset({"START", "WATCH_TO_START", "ADD", "HOLD"})
+GRADES: tuple[Grade, ...] = ("A", "B", "C", "D")
+BASE_TRADE_REASONS: dict[Grade, TradeReason] = {
+    "A": "TRADE_BASE_A",
+    "B": "TRADE_BASE_B",
+    "C": "TRADE_BASE_C",
+    "D": "TRADE_BASE_D",
+}
 
 
-def _enum(value, default="UNKNOWN"):
-    return str(value or default).upper().replace(" ", "_").replace("-", "_")
+def _watch(rule: WatchRule, *, milestone: DecisionMilestone | None) -> DecisionWatch:
+    return DecisionWatch(role=rule.role, human_text=rule.human_text, expr=rule.expr, milestone=milestone)
 
 
-def _contradictions(event, assessment):
-    return [
-        c
-        for c in event.get("contradictions", []) + assessment.get("contradictions", [])
-        if not c.get("resolved_at")
-    ]
-
-
-def _proposal(rule: WatchRule) -> WatchProposal:
-    return WatchProposal(
-        cond_id=new_id("CND"), role=rule.role, human_text=rule.human_text, expr=rule.expr, status="ARMED"
-    )
+def _without_event_premise(text: str | None) -> tuple[str | None, str | None]:
+    if text is not None and "event" in text.casefold():
+        return (None, "no event premise")
+    return (text, None)
 
 
 class DecisionEngine:
-    def __init__(self, settings=None):
-        self.settings = settings
-        self.thresholds = settings.load_config("thresholds") if settings is not None else {}
-
-    def evaluate(self, event, assessment, beneficiary, market_truth, *, open_call=None, conditions=None):
-        m = market_truth
-        dc = m.get("data_confidence") or {}
-        data = _enum(dc.get("class"), "LOW")
-        move = _enum(m.get("move_class"))
-        relative = m.get("relative") or {}
-        band = _enum(relative.get("repricing_band"))
-        context = _enum(relative.get("market_context"))
-        liq = m.get("liquidity") or {}
-        liquidity = _enum(liq.get("liquidity_state"))
-        divergence = m.get("divergence") or {}
-        confirmed = (
-            _enum(divergence.get("state")) in {"ABSORPTION_CONFIRMED", "CONFIRMED"}
-            or m.get("absorption_confirmed") is True
+    def evaluate(self, inputs: DecisionInputs) -> DecisionEvaluation:
+        inputs = DecisionInputs.model_validate(inputs)
+        event, assessment, beneficiary, market = (
+            inputs.event,
+            inputs.assessment,
+            inputs.beneficiary,
+            inputs.market,
         )
-        spot = (m.get("spot") or {}).get(m.get("primary_window", "W4H"), {})
-        direction, breadth = _enum(spot.get("direction")), _enum(spot.get("classification"))
-        exact_majority = spot.get("exact_majority") or {}
-        selling_majority = exact_majority.get("sell")
-        if selling_majority is None:
-            selling_majority = Decimal(str((spot.get("cw_breadth") or {}).get("sell") or 0)) > Decimal("0.5")
-        selling = direction == "SELL" and selling_majority is True
-        deriv = m.get("derivatives") or {}
-        if not isinstance(deriv, dict):
-            deriv = {}
-        positioning = (deriv.get("windows") or {}).get("W4H") or deriv
-        sync = positioning.get("synchronized") or {}
-        funding_above = positioning.get("funding_vs_normal") == "ABOVE" or any(
-            v.get("funding_vs_normal") == "ABOVE" for v in positioning.get("per_venue", [])
-        )
-        oi_above = (
-            (sync.get("native_beyond") is True and (sync.get("oi_native_chg_pct") or 0) > 0)
-            or sync.get(
-                "native_oi_vs_normal", sync.get("oi_native_vs_normal", positioning.get("native_oi_vs_normal"))
-            )
-            == "ABOVE"
-            or sync.get("oi_native_up_beyond_normal") is True
+        data, move = (market.data_confidence, market.move)
+        relative = market.relative
+        band, context = (relative.repricing_band, relative.market_context)
+        liquidity = market.liquidity.state if isinstance(market.liquidity, DecisionLiquidity) else None
+        confirmed = market.divergence.absorption_confirmed
+        direction, breadth = (market.spot.direction, market.spot.breadth)
+        selling = direction == "SELL" and market.spot.selling_majority is True
+        positioning = market.positioning
+        sync = positioning.synchronized
+        funding_above = any(value == "ABOVE" for value in positioning.venue_funding)
+        oi_above = sync is not None and (
+            sync.native_beyond is True
+            and sync.native_change is not None
+            and (sync.native_change > 0)
+            or sync.native_vs_normal == "ABOVE"
         )
         crowded = funding_above and oi_above
-        role = _enum(beneficiary.get("role"))
-        capture = _enum(
-            beneficiary.get(
-                "capture_class",
-                beneficiary.get(
-                    "capture",
-                    beneficiary.get(
-                        "token_capture", assessment.get("capture_class", assessment.get("capture"))
-                    ),
-                ),
-            )
-        )
-        if isinstance(beneficiary.get("capture"), dict):
-            capture = _enum(beneficiary["capture"].get("capture_class", beneficiary["capture"].get("class")))
-        cls = _enum(assessment.get("class", assessment.get("ems_class")))
+        role, capture = (beneficiary.role, beneficiary.capture_class)
+        cls = assessment.classification
         shock = cls == "STRUCTURAL_SHOCK"
-        contradictions = _contradictions(event, assessment)
-        fatal = (
-            any(c.get("type") == "FATAL" for c in contradictions) or event.get("lifecycle") == "INVALIDATED"
-        )
-        unresolved = any(c.get("type") == "UNRESOLVED" for c in contradictions)
-
+        fatal = event.fatal_contradiction or event.invalidated
+        unresolved = event.unresolved_contradiction
         credible = (
-            beneficiary.get("thesis_link_credible") is True
-            if role == "LOSER"
-            else beneficiary.get("credible", role == "PRIMARY" and bool(beneficiary.get("evidence")))
+            beneficiary.thesis_link_credible is True if role == "LOSER" else beneficiary.credible
         ) and role in {"PRIMARY", "SECONDARY", "LOSER"}
-        state = _enum(event.get("event_state", event.get("state")))
-        verified = event.get("state_verified", event.get("verified", False))
+        state, verified = (event.state, event.state_verified)
         later = state in {"APPROVED", "SIGNED", "DEPLOYED", "LIVE", "MONEY_FLOWING"}
+        thesis: Grade
+        trade: Grade
+        bias: Bias
+        potential: Potential
         if fatal or not credible:
             thesis = "D"
         elif capture in {"INDIRECT", "NARRATIVE_ONLY", "UNKNOWN"}:
@@ -109,14 +107,11 @@ class DecisionEngine:
         elif (
             capture == "DIRECT"
             and role in {"PRIMARY", "SECONDARY"}
-            and cls in {"MAJOR", "STRUCTURAL_SHOCK"}
-            and (
-                role == "PRIMARY"
-                or beneficiary.get("exposure_score", beneficiary.get("exposure_level")) in {8, 10}
-            )
+            and (cls in {"MAJOR", "STRUCTURAL_SHOCK"})
+            and (role == "PRIMARY" or beneficiary.exposure_score in {8, 10})
             and later
-            and verified
-            and not unresolved
+            and (verified is True)
+            and (not unresolved)
         ):
             thesis = "A"
         else:
@@ -124,7 +119,7 @@ class DecisionEngine:
         if (
             data == "LOW"
             or move in {"DISTRIBUTION", "LIQUIDITY_VACUUM"}
-            or (role != "LOSER" and selling and move != "PASSIVE_SPOT_ABSORPTION")
+            or (role != "LOSER" and selling and (move != "PASSIVE_SPOT_ABSORPTION"))
         ):
             trade = "D"
         elif (
@@ -136,7 +131,7 @@ class DecisionEngine:
                 "REAL_MARKET_FRAGMENTATION",
                 "UNKNOWN",
             }
-            or (move == "SELL_SIDE_ABSORPTION" and not m.get("seller_exhaustion"))
+            or (move == "SELL_SIDE_ABSORPTION" and market.seller_exhaustion is not True)
             or band == "HEAVY"
             or crowded
         ):
@@ -147,19 +142,21 @@ class DecisionEngine:
                 or (move == "PASSIVE_SPOT_ABSORPTION" and confirmed)
             )
             and band in {"NEGATIVE", "UNPRICED", "EARLY"}
-            and liquidity == "NORMAL"
-            and data == "HIGH"
+            and (liquidity == "NORMAL")
+            and (data == "HIGH")
         ):
             trade = "A"
         else:
             trade = "B"
         raw_trade = trade
         resilience = (
-            shock and Decimal(str((relative.get("windows", {}).get("EVENT") or {}).get("r_btc_adj") or 0)) > 0
+            shock
+            and relative.event_btc_adjusted_return is not None
+            and (relative.event_btc_adjusted_return > 0)
         )
-        if context in {"HEADWIND", "STRESS"} and not resilience:
-            trade = "ABCD"[min(3, "ABCD".index(trade) + 1)]
-        if data == "LOW" or (move == "UNKNOWN" and capture in {"NARRATIVE_ONLY", "UNKNOWN"} and not shock):
+        if context in {"HEADWIND", "STRESS"} and (not resilience):
+            trade = GRADES[min(3, GRADES.index(trade) + 1)]
+        if data == "LOW" or (move == "UNKNOWN" and capture in {"NARRATIVE_ONLY", "UNKNOWN"} and (not shock)):
             bias = "UNKNOWN"
         elif (
             move in {"SHORT_SQUEEZE", "LIQUIDITY_VACUUM"}
@@ -174,129 +171,103 @@ class DecisionEngine:
         else:
             bias = "NEUTRAL"
         early = band in {"UNPRICED", "EARLY"}
-        compressed = (liq.get("vol_compression") or {}).get("state") == "COMPRESSED"
-        squeeze = oi_above and any(
-            v.get("funding_vs_normal") == "BELOW" for v in positioning.get("per_venue", [])
+        compressed = (
+            isinstance(market.liquidity, DecisionLiquidity) and market.liquidity.compression == "COMPRESSED"
         )
+        squeeze = oi_above and any(value == "BELOW" for value in positioning.venue_funding)
         if band == "HEAVY" or crowded:
             potential = "LOW"
         elif shock and early and (liquidity == "THIN" or compressed):
             potential = "EXPLOSIVE"
-        elif (shock and early) or (
-            cls == "MAJOR" and early and (liquidity == "THIN" or compressed or squeeze)
-        ):
+        elif shock and early or (cls == "MAJOR" and early and (liquidity == "THIN" or compressed or squeeze)):
             potential = "HIGH"
         elif cls in {"MAJOR", "STRUCTURAL_SHOCK"}:
             potential = "MEDIUM"
         else:
             potential = "LOW"
-        impact = _enum(
-            assessment.get("impact_start", (assessment.get("impact_horizon") or {}).get("impact_start"))
-        )
+        impact = assessment.impact_start
+        horizon: Horizon | None
         if move in {"SHORT_SQUEEZE", "LIQUIDITY_VACUUM"}:
-            horizon, reason = "1h", "market override"
+            horizon, reason = ("H1", "market override")
         elif move == "PERP_LED_CHASE":
-            horizon, reason = "4h", "market override"
+            horizon, reason = ("H4", "market override")
+        elif impact == "UNKNOWN":
+            horizon, reason = (None, "impact start unavailable")
         else:
-            horizon = {
-                "NOW": "12h" if move in {"SPOT_LED_ACCUMULATION", "ORGANIC_MIXED"} else "4h",
-                "DAYS": "24h" if assessment.get("all_dependencies_within_24h") else "3d",
-                "WEEKS": "7d",
-                "MONTHS": "7d",
-                "YEARS": "7d",
-            }.get(impact, "24h")
-            reason = "impact start: " + impact
-        horizon = {"1h": "H1", "4h": "H4", "12h": "H12", "24h": "H24", "3d": "D3", "7d": "D7"}[horizon]
-        fired = [c for c in conditions or [] if c.get("status") == "FIRED"]
-        roles = {c.get("role") for c in fired}
-        if open_call:
-            if fatal or "INVALIDATION" in roles:
-                action, rule = "EXIT", "B1"
-            elif trade == "D" or "DOWNGRADE" in roles:
-                action, rule = "REDUCE", "B2"
-            elif "UPGRADE" in roles and trade == "A" and thesis in {"A", "B"} and band != "HEAVY":
-                action, rule = "ADD", "B3"
+            if impact == "NOW":
+                horizon = "H12" if move in {"SPOT_LED_ACCUMULATION", "ORGANIC_MIXED"} else "H4"
+            elif impact == "DAYS":
+                horizon = "H24" if assessment.all_dependencies_within_24h is True else "D3"
             else:
-                action, rule = "HOLD", "B4"
+                horizon = "D7"
+            reason = "impact start: " + impact
+        roles = inputs.triggers.roles
+        action: Action
+        rule: ActionRule
+        if inputs.open_call is not None:
+            if fatal or "INVALIDATION" in roles:
+                action, rule = ("EXIT", "B1")
+            elif trade == "D" or "DOWNGRADE" in roles:
+                action, rule = ("REDUCE", "B2")
+            elif "UPGRADE" in roles and trade == "A" and (thesis in {"A", "B"}) and (band != "HEAVY"):
+                action, rule = ("ADD", "B3")
+            else:
+                action, rule = ("HOLD", "B4")
         elif data == "LOW":
-            action, rule = "WAIT", "A1"
-        elif shock and role == "PRIMARY" and band == "HEAVY":
-            action, rule = "DONT_CHASE", "A0"
+            action, rule = ("WAIT", "A1")
+        elif shock and role == "PRIMARY" and (band == "HEAVY"):
+            action, rule = ("DONT_CHASE", "A0")
         elif role == "LOSER" or bias == "BEARISH":
-            action, rule = "WAIT", "A2"
+            action, rule = ("WAIT", "A2")
         elif thesis == "D" or fatal:
-            action, rule = "WAIT", "A3"
-        elif any(
-            condition.get("status") == "FIRED"
-            and condition.get("role") in {"DOWNGRADE", "INVALIDATION"}
-            and (condition.get("expr") or {}).get("metric") == "price.close_vs_level"
-            and (condition.get("expr") or {}).get("op") == "<"
-            for condition in conditions or []
-        ):
-            action, rule = "WAIT", "WATCH_ANCHOR_LOST"
-        elif any(
-            condition.get("status") == "FIRED"
-            and condition.get("role") == "DOWNGRADE"
-            and any(
-                expression.get("metric") == "spot.cohort.direction" and expression.get("value") == "SELL"
-                for expression in (condition.get("expr") or {}).get("all", [])
-            )
-            for condition in conditions or []
-        ):
-            action, rule = "WAIT", "WATCH_SELL_DOWNGRADE"
+            action, rule = ("WAIT", "A3")
+        elif inputs.triggers.anchor_lost:
+            action, rule = ("WAIT", "WATCH_ANCHOR_LOST")
+        elif inputs.triggers.sell_downgrade:
+            action, rule = ("WAIT", "WATCH_SELL_DOWNGRADE")
         elif trade == "A":
             if thesis in {"A", "B"}:
                 action, rule = ("WATCH_TO_START", "A6") if unresolved else ("START", "A5")
             elif thesis == "C" and potential in {"HIGH", "EXPLOSIVE"}:
-                action, rule = "START", "A7"
+                action, rule = ("START", "A7")
             else:
-                action, rule = "WAIT", "A8"
+                action, rule = ("WAIT", "A8")
         elif trade == "B":
             action, rule = ("WATCH_TO_START", "A9") if thesis in {"A", "B"} else ("WAIT", "A10")
         elif thesis in {"A", "B"} and (
             move in {"PERP_LED_CHASE", "SHORT_SQUEEZE", "PRICE_MARKUP_FAKE_OI", "LIQUIDITY_VACUUM"}
             or band == "HEAVY"
         ):
-            action, rule = "DONT_CHASE", "A11"
+            action, rule = ("DONT_CHASE", "A11")
         else:
-            action, rule = "WAIT", "A12"
+            action, rule = ("WAIT", "A12")
         if action == "START" and (data != "HIGH" or unresolved):
             action, rule = (
                 "WATCH_TO_START",
                 "START_HIGH_DATA_GUARD" if data != "HIGH" else "START_UNRESOLVED_GUARD",
             )
-        references = WatchReferencePrices.model_validate(
-            {
-                "anchor_price": (relative.get("anchor") or {}).get("ref_price"),
-                "entry_price": (relative.get("windows", {}).get("EVENT") or {}).get(
-                    "entry_ref_price", relative.get("entry_ref_price")
-                ),
-                "invalidation_price": open_call.get("invalidation_price") if open_call is not None else None,
-            }
+        references = WatchReferencePrices(
+            anchor_price=relative.anchor_price,
+            entry_price=relative.entry_price,
+            invalidation_price=inputs.open_call.invalidation_price if inputs.open_call is not None else None,
         )
         watches = [
-            _proposal(watch)
+            _watch(watch, milestone=None)
             for watch in build_watch_conditions(
                 WatchPolicyInputs(
                     action=action,
                     move=move,
-                    band=band,
+                    band=band if band is not None else "UNKNOWN",
                     prices=references,
-                    has_open_call=bool(open_call),
+                    has_open_call=inputs.open_call is not None,
                     wait_data=rule == "A1",
                 )
             )
         ]
-        milestone = event.get("next_milestone")
-        if milestone:
-            milestone_id = (
-                milestone.get("milestone_id", milestone.get("name"))
-                if isinstance(milestone, dict)
-                else milestone
-            )
+        if event.milestone is not None:
             watches.extend(
-                _proposal(watch)
-                for watch in [
+                _watch(watch, milestone=event.milestone)
+                for watch in (
                     watch_rule(
                         "UPGRADE",
                         "Milestone verified; re-score the event.",
@@ -307,181 +278,274 @@ class DecisionEngine:
                         "Milestone failed or missed its window; re-score, fatal when thesis-dependent.",
                         watch_leaf("milestone.outcome", "in", ["FAILED", "MISSED"]),
                     ),
-                ]
-            )
-            watches[-2:] = [
-                WatchProposal(
-                    cond_id=watch.cond_id,
-                    role=watch.role,
-                    human_text=watch.human_text,
-                    expr=watch.expr,
-                    status="ARMED",
-                    milestone_id=milestone_id,
                 )
-                for watch in watches[-2:]
-            ]
-
-        certainty = _enum(assessment.get("certainty", event.get("certainty")), "LOW")
-        class_conf = (
+            )
+        certainty = event.certainty
+        class_conf: Confidence = (
             "LOW"
             if move == "UNKNOWN"
             else "MEDIUM"
-            if m.get("alternatives") or divergence.get("unresolved")
-            else _enum(m.get("class_confidence"), "HIGH")
+            if market.alternatives or market.divergence.unresolved
+            else market.class_confidence
         )
-        rank = {"LOW": 0, "MEDIUM": 1, "HIGH": 2}
-        confidence = min([data, certainty, class_conf], key=lambda x: rank.get(x, 0))
-
+        rank: dict[Confidence, int] = {"LOW": 0, "MEDIUM": 1, "HIGH": 2}
+        confidence = min((data, certainty, class_conf), key=lambda value: rank[value])
+        caps: tuple[tuple[ConfidenceInput, Confidence], ...] = (
+            ("data", data),
+            ("certainty", certainty),
+            ("class", class_conf),
+        )
         limiting_input = (
-            None
-            if confidence == "HIGH"
-            else next(
-                name
-                for name, value in (("data", data), ("certainty", certainty), ("class", class_conf))
-                if rank.get(value, 0) == rank.get(confidence, 0)
-            )
+            None if confidence == "HIGH" else next((name for name, value in caps if value == confidence))
         )
-        alternatives = list(divergence.get("unresolved") or []) + list(m.get("alternatives") or [])
-        confidence_limiting = {
-            "input": limiting_input,
-            "text": None
+        alternatives = market.divergence.unresolved + market.alternatives
+        confidence_limiting = ConfidenceLimitation(
+            input=limiting_input,
+            text=None
             if limiting_input in {None, "data"}
             else f"Event certainty {certainty}: not confirmed by a HIGH-certainty source"
             if limiting_input == "certainty"
             else "Move class unresolved: no class eligible (UNKNOWN)"
             if move == "UNKNOWN"
-            else "Move class has unresolved alternatives: " + ", ".join(str(a) for a in alternatives)
+            else "Move class has unresolved alternatives: " + ", ".join(alternatives)
             if alternatives
             else f"Move class confidence {class_conf}",
-        }
+        )
         if data == "LOW":
-            scenarios = {
-                "base": "UNKNOWN: market evidence incomplete.",
-                "upside": "UNKNOWN until class and data resolve.",
-                "failure": "Thesis invalid if the event is denied.",
-            }
+            scenarios = DecisionScenarios(
+                base="UNKNOWN: market evidence incomplete.",
+                upside="UNKNOWN until class and data resolve.",
+                failure="Thesis invalid if the event is denied.",
+            )
         elif move == "UNKNOWN":
-            complete = (spot.get("coverage") or {}).get("n_complete")
-            venues = " on complete venues" if isinstance(complete, int) and complete else ""
+            complete = market.spot.complete_venues
+            venues = " on complete venues" if complete is not None and complete > 0 else ""
             flow = (
                 f"spot flow {direction} and {breadth}"
-                if direction != "UNKNOWN" and breadth != "UNKNOWN"
+                if direction is not None
+                and direction != "UNKNOWN"
+                and (breadth is not None)
+                and (breadth != "UNKNOWN")
                 else "spot flow not classified"
             )
-            scenarios = {
-                "base": f"No classifiable move yet: {flow} in the primary window{venues}.",
-                "upside": "Upgrade if spot turns BUY and BROAD with native OI within its normal range (spot-led buying).",
-                "failure": "Thesis invalid if the event is denied.",
-            }
+            scenarios = DecisionScenarios(
+                base=f"No classifiable move yet: {flow} in the primary window{venues}.",
+                upside="Upgrade if spot turns BUY and BROAD with native OI within its normal range (spot-led buying).",
+                failure="Thesis invalid if the event is denied.",
+            )
         elif move == "PERP_LED_CHASE":
-            scenarios = {
-                "base": "Chase risk persists while spot does not confirm.",
-                "upside": "Move gains support if spot turns BUY and funding normalizes.",
-                "failure": "Move unwinds if price loses the event anchor.",
-            }
+            scenarios = DecisionScenarios(
+                base="Chase risk persists while spot does not confirm.",
+                upside="Move gains support if spot turns BUY and funding normalizes.",
+                failure="Move unwinds if price loses the event anchor.",
+            )
         elif move == "PRICE_MARKUP_FAKE_OI":
             scenarios = (
-                {
-                    "base": "USD OI rose on price markup, not new positions; spot buying carries the move.",
-                    "upside": "Move gains support if native OI and spot volume rise with spot BUY.",
-                    "failure": "Move unwinds if price loses the event anchor.",
-                }
+                DecisionScenarios(
+                    base="USD OI rose on price markup, not new positions; spot buying carries the move.",
+                    upside="Move gains support if native OI and spot volume rise with spot BUY.",
+                    failure="Move unwinds if price loses the event anchor.",
+                )
                 if direction == "BUY"
-                else {
-                    "base": "USD OI rose on price markup, not new positions; spot does not confirm the move.",
-                    "upside": "Move gains support if spot turns BUY with native OI rising.",
-                    "failure": "Move unwinds if price loses the event anchor.",
-                }
+                else DecisionScenarios(
+                    base="USD OI rose on price markup, not new positions; spot does not confirm the move.",
+                    upside="Move gains support if spot turns BUY with native OI rising.",
+                    failure="Move unwinds if price loses the event anchor.",
+                )
             )
         elif move == "SHORT_SQUEEZE":
-            scenarios = {
-                "base": "Squeeze persists while short covering dominates.",
-                "upside": "Move extends if spot demand replaces covering.",
-                "failure": "Move fades if covering ends without spot demand.",
-            }
+            scenarios = DecisionScenarios(
+                base="Squeeze persists while short covering dominates.",
+                upside="Move extends if spot demand replaces covering.",
+                failure="Move fades if covering ends without spot demand.",
+            )
         elif move == "LIQUIDITY_VACUUM":
-            scenarios = {
-                "base": "Thin depth keeps price unstable.",
-                "upside": "Move gains support if depth recovers with spot BUY.",
-                "failure": "Move reverses if depth stays depleted and demand fades.",
-            }
+            scenarios = DecisionScenarios(
+                base="Thin depth keeps price unstable.",
+                upside="Move gains support if depth recovers with spot BUY.",
+                failure="Move reverses if depth stays depleted and demand fades.",
+            )
         elif move == "REAL_MARKET_FRAGMENTATION":
-            scenarios = {
-                "base": "Venue disagreement persists while gaps remain.",
-                "upside": "Direction resolves if complete venues converge with spot BUY.",
-                "failure": "Event move fades if venues converge lower.",
-            }
+            scenarios = DecisionScenarios(
+                base="Venue disagreement persists while gaps remain.",
+                upside="Direction resolves if complete venues converge with spot BUY.",
+                failure="Event move fades if venues converge lower.",
+            )
         elif move == "PASSIVE_SPOT_ABSORPTION":
-            scenarios = {
-                "base": "Divergence persists while price resists spot SELL.",
-                "upside": "Move strengthens if refill persists and spot turns BUY.",
-                "failure": "Move fails if depth depletes and price loses anchor.",
-            }
+            scenarios = DecisionScenarios(
+                base="Divergence persists while price resists spot SELL.",
+                upside="Move strengthens if refill persists and spot turns BUY.",
+                failure="Move fails if depth depletes and price loses anchor.",
+            )
         elif move == "SELL_SIDE_ABSORPTION":
-            scenarios = {
-                "base": "Supply caps price while aggressive buyers meet refilling asks.",
-                "upside": "Move extends if sellers exhaust and price responds.",
-                "failure": "Move fades if supply persists and demand weakens.",
-            }
+            scenarios = DecisionScenarios(
+                base="Supply caps price while aggressive buyers meet refilling asks.",
+                upside="Move extends if sellers exhaust and price responds.",
+                failure="Move fades if supply persists and demand weakens.",
+            )
         elif bias == "BEARISH" or move == "DISTRIBUTION":
-            scenarios = {
-                "base": "Negative thesis persists with spot SELL.",
-                "upside": "Recovery requires spot BUY and resolved negative evidence.",
-                "failure": "Negative thesis fails if spot demand strengthens and event reverses.",
-            }
+            scenarios = DecisionScenarios(
+                base="Negative thesis persists with spot SELL.",
+                upside="Recovery requires spot BUY and resolved negative evidence.",
+                failure="Negative thesis fails if spot demand strengthens and event reverses.",
+            )
         else:
-            scenarios = {
-                "base": "Event move persists while spot supports price.",
-                "upside": "Move extends if spot demand strengthens without crowding.",
-                "failure": "Thesis fails on denial or loss of the event anchor.",
-            }
-
-        scenario_reasons = {}
-        if not event.get("event_id") and not event.get("statement"):
-            for name, text in list(scenarios.items()):
-                if "event" in text.casefold():
-                    scenarios[name] = None
-                    scenario_reasons[name] = "no event premise"
-
-        tactical = thesis == "C" and action in POSITIVE_ACTIONS
-        outlook_tactical = thesis == "C" and bias == "BULLISH"
-        return {
-            "dec_id": new_id("DEC"),
-            "event_id": event.get("event_id"),
-            "token_id": beneficiary.get("token_id", m.get("token_id")),
-            **propagate_timestamp(m, "cutoff", missing_reason="LEGACY_CUTOFF_PRECISION_UNAVAILABLE").fields(
-                "cutoff"
+            scenarios = DecisionScenarios(
+                base="Event move persists while spot supports price.",
+                upside="Move extends if spot demand strengthens without crowding.",
+                failure="Thesis fails on denial or loss of the event anchor.",
+            )
+        scenario_reasons = DecisionScenarioReasons(base=None, upside=None, failure=None)
+        if not event.has_premise:
+            base, base_reason = _without_event_premise(scenarios.base)
+            upside, upside_reason = _without_event_premise(scenarios.upside)
+            failure, failure_reason = _without_event_premise(scenarios.failure)
+            scenarios = DecisionScenarios(base=base, upside=upside, failure=failure)
+            scenario_reasons = DecisionScenarioReasons(
+                base=base_reason, upside=upside_reason, failure=failure_reason
+            )
+        reasons: list[TradeReason] = [BASE_TRADE_REASONS[raw_trade]]
+        if trade != raw_trade and context == "HEADWIND":
+            reasons.append("CONTEXT_HEADWIND")
+        elif trade != raw_trade and context == "STRESS":
+            reasons.append("CONTEXT_STRESS")
+        return DecisionEvaluation(
+            thesis_grade=thesis,
+            thesis_rule=thesis,
+            trade_grade=trade,
+            trade_rule=raw_trade,
+            trade_reasons=reasons,
+            action=action,
+            action_rule=rule,
+            tactical=thesis == "C" and action in POSITIVE_ACTIONS,
+            investigate=move in {"UNKNOWN", "REAL_MARKET_FRAGMENTATION"},
+            confidence_limiting=confidence_limiting,
+            conditions=watches,
+            outlook=DecisionOutlook(
+                direction=bias,
+                direction_rule=bias,
+                potential=potential,
+                potential_rule=potential,
+                best_horizon=horizon,
+                horizon_reason=reason,
+                confidence=confidence,
+                caps=ConfidenceCaps(data=data, event=certainty, market_truth=class_conf),
+                confidence_limiting=confidence_limiting,
+                tactical=thesis == "C" and bias == "BULLISH",
+                scenarios=scenarios,
+                scenario_reasons=scenario_reasons,
             ),
-            "thesis_grade": thesis,
-            "thesis_rule": thesis,
-            "trade_grade": trade,
-            "trade_rule": raw_trade,
-            "trade_reasons": ["TRADE_BASE_" + raw_trade]
-            + (["CONTEXT_" + context] if trade != raw_trade else []),
-            "action": action,
-            "action_rule": rule,
-            "tactical": tactical,
-            "investigate": move in {"UNKNOWN", "REAL_MARKET_FRAGMENTATION"},
-            "confidence_limiting": confidence_limiting,
-            "conditions": [watch.model_dump(mode="json", exclude_unset=True) for watch in watches],
-            "outlook": {
-                "direction": bias,
-                "direction_rule": bias,
-                "potential": potential,
-                "potential_rule": potential,
-                "best_horizon": horizon,
-                "horizon_reason": reason,
-                "confidence": confidence,
-                "caps": {"data": data, "event": certainty, "market_truth": class_conf},
-                "confidence_limiting": confidence_limiting,
-                "tactical": outlook_tactical,
-                "scenarios": scenarios,
-                "scenario_reasons": scenario_reasons,
-            },
-            "thresholds_version": self.thresholds.get("version", "unversioned"),
-            "config_version": getattr(
-                self.settings, "config_version", assessment.get("config_version", "unversioned")
-            ),
-            "code_version": getattr(self.settings, "code_version", "0.1.0"),
-            "provenance": {"ems_id": assessment.get("ems_id"), "mta_id": m.get("mta_id")},
-        }
+        )
+
+
+def _core(evaluation: DecisionCore) -> DecisionCore:
+    return DecisionCore(
+        thesis_grade=evaluation.thesis_grade,
+        thesis_rule=evaluation.thesis_rule,
+        trade_grade=evaluation.trade_grade,
+        trade_rule=evaluation.trade_rule,
+        trade_reasons=evaluation.trade_reasons,
+        action=evaluation.action,
+        action_rule=evaluation.action_rule,
+        tactical=evaluation.tactical,
+        investigate=evaluation.investigate,
+        confidence_limiting=evaluation.confidence_limiting,
+        outlook=evaluation.outlook,
+    )
+
+
+def materialize_decision(evaluation: DecisionEvaluation, context: DecisionMaterialization) -> DecisionDraft:
+    evaluation = DecisionEvaluation.model_validate(evaluation)
+    context = DecisionMaterialization.model_validate(context)
+    if len(evaluation.conditions) != len(context.condition_ids):
+        raise ValueError("Every decision watch requires its explicit allocated identity")
+    proposals: list[WatchProposal] = []
+    for watch, condition_id in zip(evaluation.conditions, context.condition_ids, strict=True):
+        if watch.milestone is None:
+            proposal = WatchProposal(
+                cond_id=condition_id,
+                role=watch.role,
+                human_text=watch.human_text,
+                expr=watch.expr,
+                status="ARMED",
+            )
+        else:
+            proposal = WatchProposal(
+                cond_id=condition_id,
+                role=watch.role,
+                human_text=watch.human_text,
+                expr=watch.expr,
+                status="ARMED",
+                milestone_id=watch.milestone.reference,
+            )
+        proposals.append(proposal)
+    return DecisionDraft(calculation=_core(evaluation), metadata=context.metadata, proposals=proposals)
+
+
+def finalize_decision(
+    draft: DecisionDraft,
+    *,
+    conditions: list[WatchCondition],
+    conditions_shown: tuple[str, ...],
+    outlook_id: str,
+) -> DecisionRecord:
+    draft = DecisionDraft.model_validate(draft)
+    for proposed in draft.proposals:
+        if not any(
+            condition.role == proposed.role
+            and canonical_json(condition.expr) == canonical_json(proposed.expr)
+            for condition in conditions
+        ):
+            raise ValueError("Reconciliation omitted a required decision watch predicate")
+    return DecisionRecord(
+        calculation=draft.calculation,
+        metadata=draft.metadata,
+        conditions=conditions,
+        conditions_shown=conditions_shown,
+        outlook_id=outlook_id,
+    )
+
+
+def end_decision_tracking(
+    frozen: DecisionRecord,
+    *,
+    decision_id: str,
+    expired_call_ids: tuple[str, ...],
+    status_recorded_at: Timestamp,
+    writer: DecisionStatusWriter,
+) -> DecisionRecord:
+    """Record an inactive status without recalculating or relabeling frozen financial evidence."""
+    frozen = DecisionRecord.model_validate(frozen)
+    prior = frozen.metadata
+    identity = prior.identity
+    metadata = DecisionMetadata(
+        identity=DecisionIdentity(
+            decision_id=decision_id,
+            event_id=identity.event_id,
+            token_id=identity.token_id,
+            cutoff=identity.cutoff,
+            thresholds_version=identity.thresholds_version,
+            versions=identity.versions,
+            generation=identity.generation,
+            assessment_id=identity.assessment_id,
+            market_truth_id=identity.market_truth_id,
+        ),
+        calculated_at=prior.calculated_at,
+        management=prior.management,
+        contradiction_ids=prior.contradiction_ids,
+        prices=prior.prices,
+        tracking=EndedDecisionTracking(
+            kind="ENDED",
+            previous_decision_id=identity.decision_id,
+            expired_call_ids=expired_call_ids,
+            status_recorded_at=status_recorded_at,
+            writer=writer,
+        ),
+    )
+    return DecisionRecord(
+        calculation=frozen.calculation,
+        metadata=metadata,
+        conditions=[],
+        conditions_shown=(),
+        outlook_id=frozen.outlook_id,
+    )

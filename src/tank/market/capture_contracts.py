@@ -7,6 +7,7 @@ from pydantic import ConfigDict, Field, JsonValue, PositiveInt, RootModel, model
 
 from tank.contracts import DomainModel
 from tank.contracts.configuration import Thresholds
+from tank.contracts.scalars import TrueFlag
 from tank.market.capture import EventAnchor
 from tank.time_precision import Timestamp
 from tank.util import parse_time
@@ -370,7 +371,7 @@ class CaptureWaitOutcome(DomainModel):
     reason: str | None
     bounded_wait_s: float = Field(ge=0)
     observed_at: Timestamp
-    incomplete_windows_excluded: Literal[True] = True
+    incomplete_windows_excluded: TrueFlag = True
 
     @model_validator(mode="after")
     def observed_collection_clock(self) -> Self:

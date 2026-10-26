@@ -4,7 +4,7 @@
 
 | Topic | Rule |
 |---|---|
-| IDs | ULID-based, typed prefixes: `ITM-` item (`web-<hash>` for a page read with `fetch_page` or a `web_search` result), `EVT-` event, `OBS-` observation, `CLM-` claim, `EMS-`, `EDG-` beneficiary edge, `MTA-` Market Truth assessment, `OUT-` outlook, `DEC-` decision, `CND-` watch condition, `CAL-` call, `ALR-` alert (+ integer version), `RWP-` reaction pack, `JOB-`, `PRP-` proposal, `FIX-` fixture. `source_id`, `entity_id`, `token_id`, `instrument_id` are readable registry keys (e.g. `binance:spot:UNIUSDT`). Evidence bundles are content-addressed: `EVB-<sha256>`. Tool arguments take these IDs and keys; how to find them: «Finding record IDs for tool arguments» below. |
+| IDs | ULID-based, typed prefixes: `ITM-` item (`web-<hash>` for a page read with `fetch_page` or a `web_search` result), `EVT-` event, `OBS-` observation, `CLM-` claim, `EMS-`, `EDG-` beneficiary edge, `MTA-` Market Truth assessment, `DEC-` decision, `CND-` watch condition, `CAL-` call, `ALR-` alert (+ integer version), `RWP-` reaction pack, `JOB-`, `PRP-` proposal, `FIX-` fixture. `source_id`, `entity_id`, `token_id`, `instrument_id` are readable registry keys (e.g. `binance:spot:UNIUSDT`). Evidence bundles are content-addressed: `EVB-<sha256>`. Tool arguments take these IDs and keys; how to find them: «Finding record IDs for tool arguments» below. |
 | Time | UTC everywhere; stored with microsecond resolution. Every timestamp field has a sibling precision: `EXACT`, `BUCKET(<size>)`, `COLLECTION_ONLY`. |
 | Units | Native token quantity and USD notional are separate decimal fields. Returns are decimal fractions. Funding is stored as rate per interval + `interval_h`, with derived `rate_8h_eq`. Basis in bps. |
 | Missing data | Never 0. Every measurable is `Measured{value, unit, window, observed_at, precision, coverage, reason}`; when `value = null`, `reason ∈ {NOT_SUPPORTED, SOURCE_FAILED, INCOMPLETE, NOT_APPLICABLE, NOT_ESTIMABLE, PENDING}`. |
@@ -365,8 +365,7 @@ MarketTruthAssessment
   data_confidence: DataConfidence
   class_confidence: Certainty
 
-MovementOutlook
-  out_id, token_id, event_id, cutoff
+MovementOutlook                      # stored as the decision's `outlook`, no id of its own
   direction: DirectionBias; direction_rule: str      # §6.1 row matched
   potential: MovePotential; potential_rule: str      # §6.2 row matched
   best_horizon: Horizon; horizon_reason: str
@@ -494,22 +493,22 @@ Fixture
 
 | Table | Key | Notes |
 |---|---|---|
-| `sources`, `entities`, `entity_aliases`, `tokens`, `instruments`, `sector_baskets`, `metric_semantics` | natural slugs | Loaded from the config repository; version stamped. |
+| `sources`, `entities`, `entity_aliases`, `tokens`, `instruments`, `sector_baskets`, `exchange_addresses` | natural slugs | Loaded from the config repository; version stamped. The dependency map and metric semantics stay in their YAML files; `get_registry` gives agents the dependency map. |
 | `source_items` | `item_id`; unique (`source_id`, `external_id`) | Index `content_hash`, `observed_at`. |
-| `events` | `event_id` | Index `known_to_us_at`, `lifecycle`; GIN on entities. |
+| `events` | `event_id` | Index `known_to_us_at`, `lifecycle`. |
 | `event_observations`, `claims` | `obs_id`, `claim_id` | FK to events/items. |
 | `state_changes` | serial | Append-only. |
 | `ems_assessments`, `capture_chains`, `beneficiary_maps`, `beneficiary_edges` | id + version | Versioned rows. |
 | `klines_1m`, `flow_bars_1m` | (`instrument_id`, minute) | ClickHouse `mkt.*` (ReplacingMergeTree, daily partitions); base tier 90 days ⚙. |
 | `book_summaries` | (`instrument_id`, ts) | ClickHouse; kept 72 hours; summary fields only (no order-book levels). |
 | `oi_obs`, `funding_obs`, `liq_obs`, `tickers_24h`, `trades` | (`instrument_id`, ts) | ClickHouse (daily partitions); `trades` (every print) 30 days. |
-| `market_truth`, `outlooks`, `decisions`, `contradictions`, `watch_conditions`, `calls` | ids | `market_truth` indexed by (`token_id`, `cutoff`). |
+| `market_truth`, `decisions`, `contradictions`, `watch_conditions`, `calls` | ids | `market_truth` indexed by (`token_id`, `cutoff`); a decision carries its outlook. |
 | `alerts`, `deliveries`, `ops_notices`, `evidence_bundles`, `reaction_checkpoints`, `reviews` | ids | Append-only (UPDATE/DELETE rejected by trigger). |
 | `hot_tokens` | (`token_id`, `event_id`) | Hot set (§9); read on start to subscribe the hot tokens again. |
 | `jobs` | `job_id`; unique `idem_key` | The service's job queue (§3.8). |
 | `agent_sessions`, `tool_calls` | `session_id`, `call_id` | The OpenMA session of each event, and every tool call with its input, result and timing (§3.2). |
 | `expansion_proposals` | `prp_id` | Only table the scout role may write, together with its own logs. |
-| `fixtures`, `replay_runs` | ids | Sealed outcomes stored outside the DB path the pipeline reads. |
+| `fixtures`, `replay_runs` | — | Files, not tables: fixtures are listed in `tests/fixtures/manifest.json`; a replay run freezes its inputs and outputs in its output directory. Sealed outcomes stay outside anything the pipeline reads. |
 
 Core DDL: §14.
 
@@ -728,7 +727,7 @@ GitHub evidence is SOURCE_SIDE_SUPPORT: it can raise an integration claim to BUI
 
 - Account set: the 86 handles in 01 §4.3, listed as `x_accounts` in `registry.yaml`.
 - Reader: one synchronous run of the Apify actor `fdfsfsdfasfa/tank-x-notifier` (build `direct`) every 120 s, authorized by `APIFY_API_TOKEN`; no X account or session. The actor reads each account's public profile page signed out and returns every visible own post, usually the latest five per account (no reposts, no protected accounts), with the next per-account cursors.
-- Per post: status ID, author handle, text, exact publish time and post URL; the raw evidence is the actor response. The first run for an account only records its cursor, so posts from before Tank watched it are never ingested; later, a post is new when its ID is above the cursor. An account that posted more than its profile shows between runs is reported as a history gap for that pass.
+- Per post: status ID, author handle, complete text, exact publish time and post URL; the raw evidence is the actor response. A post that quotes, replies to or links another post carries that post in the item's `quoted` field, one block per post: `@monitored quoted|replied to|linked a post by @author (post URL, published time):` followed by its text, or `[text unavailable: reason]`. That text is the other author's words, not the monitored account's. Signed-out profiles show no reposts and no replies to other accounts, so those never arrive. The first run for an account only records its cursor, so posts from before Tank watched it are never ingested; later, a post is new when its ID is above the cursor. An account that posted more than its profile shows between runs is reported as a history gap for that pass.
 - Handle check: `tank sources check` calls `https://publish.twitter.com/oembed?url=https://x.com/{handle}` for each handle (follows the redirect to `publish.x.com`; HTTP 200 = exists) and confirms the owner from the profile bio (`https://syndication.twitter.com/srv/timeline-profile/screen-name/{handle}`, rate-limited to a few requests per minute) or from the person's IQ.wiki, Wikidata or GitHub profile; all 86 passed on 16–17 Oct 2026 (e.g. @el33th4xor bio: "Founder and CEO @avalabs"; @vnovakovski: IQ.wiki "founder and CEO of Lighter"; @fleupold_: Devcon speaker page and GitHub bio "Technical lead at CowProtocol"). Organization handles were taken from the project's own website, docs or GitHub organization; people's handles from the official team page, IQ.wiki, Wikidata, GitHub or reputable news. Handles that must not be used: wrong person — @nathanallman (an unrelated account; Ondo's founder Nathan Allman used @nathanlallman and died on 25 May 2026); unconfirmed or squatted — @fleupold (Felix Leupold is @fleupold_), @CoWDAO, @HyperFoundation, @HyperliquidLabs, @worldcoin (re-registered in Mar 2026); HTTP 404 — @aerodromefi, @OndoFinance, @quant_network, @ethena_labs, @eulerlabs. Left out because no official source confirms the owner: @iliensinc (Hyperliquid co-founder), @MathisGD_ (Morpho co-founder), @chef_mochi (PancakeSwap). Left out as dormant or no longer at the project: @nearfoundation, @k06a, @PaoloTasca, @kevinsekniqi, @Tederminant, @John1wu.
 - Terms: the actor reads the public X web UI, which carries terms-of-service risk, and Apify bills each run (recorded in `terms_notes`).
 
@@ -880,7 +879,7 @@ Every token has at least three spot venues and two perpetual venues. Binance spo
 
 # Design table contracts and deployed schema (PostgreSQL 16 and ClickHouse)
 
-The DDL excerpt below records the design document's table vocabulary and field meanings. It is not an executable dump of the deployed database. Versioned migrations define the implementation. Non-market registry/event/operational rows retain JSONB `document` plus typed projections. Market series and prints are typed ClickHouse tables (the section "Market tables in ClickHouse"): no whole-row `document` or `extras`. Their named JSONB fields hold domain structures such as boundary segments, coverage and per-field missing reasons. Inspect the live read-only schema before composing a query; do not assume that an illustrative primary-key declaration is the physical storage key.
+The DDL excerpt below records the design document's table vocabulary and field meanings. It is not an executable dump of the deployed database. Versioned migrations define the implementation. Non-market registry/event/operational rows retain JSONB `document` plus typed projections. Nested objects such as EMS `dims`, Market Truth `divergence` and `data_confidence`, the decision `outlook`, the alert `card_struct`, the job `payload` and tool call `input`/`result` are only in `document`: read them as `document->'outlook'`. GIN indexes exist only on `evt.claims`, `ops.agent_sessions`, `ops.tool_calls`, `out.deliveries` and `out.user_questions`, and serve `document @> '{"key": "value"}'`, not `document->>'key' = 'value'`. Market series and prints are typed ClickHouse tables (the section "Market tables in ClickHouse"): no whole-row `document` or `extras`. Their named JSONB fields hold domain structures such as boundary segments, coverage and per-field missing reasons. Inspect the live read-only schema before composing a query; do not assume that an illustrative primary-key declaration is the physical storage key.
 
 ```sql
 SELECT table_schema, table_name
@@ -981,21 +980,12 @@ CREATE TABLE evt.events (
   certainty          text NOT NULL,
   timing_confidence  text NOT NULL,
   best_source_class  text NOT NULL,
-  next_milestone     jsonb,
   lifecycle          text NOT NULL,
   merged_into        text REFERENCES evt.events(event_id),
   current_ems_id     text
 );
 CREATE INDEX ON evt.events (known_to_us_at);
 CREATE INDEX ON evt.events (lifecycle);
-
-CREATE TABLE evt.event_entities (
-  event_id  text NOT NULL REFERENCES evt.events(event_id),
-  entity_id text NOT NULL,
-  role      text NOT NULL,
-  PRIMARY KEY (event_id, entity_id, role)
-);
-CREATE INDEX ON evt.event_entities (entity_id);
 
 CREATE TABLE evt.event_observations (
   obs_id        text PRIMARY KEY,
@@ -1039,12 +1029,9 @@ CREATE TABLE evt.ems_assessments (
   event_id        text NOT NULL REFERENCES evt.events(event_id),
   version         int  NOT NULL,
   cutoff          timestamptz NOT NULL,
-  dims            jsonb NOT NULL,                      -- 7 × DimScore
-  gates           jsonb NOT NULL,
   class           text NOT NULL,
   criterion       text NOT NULL,
   class_reasons   text[] NOT NULL,
-  impact_horizon  jsonb NOT NULL,
   config_version  text NOT NULL,
   model_id        text NOT NULL,
   prompt_version  text NOT NULL,
@@ -1060,12 +1047,9 @@ CREATE TABLE ana.market_truth (
   move_class        text NOT NULL,
   support           int,
   alternatives      text[] NOT NULL,                  -- other eligible move classes (§5.8)
-  divergence        jsonb NOT NULL,
   flags             text[] NOT NULL,
   decisive_facts    text[] NOT NULL,
-  data_confidence   jsonb NOT NULL,
   class_confidence  text NOT NULL,
-  detail            jsonb NOT NULL,                    -- SpotTruth per window, Derivatives, Liquidity, Supply, RelativePrice
   config_version    text NOT NULL,
   code_version      text NOT NULL
 );
@@ -1084,7 +1068,6 @@ CREATE TABLE ana.decisions (
   tactical      boolean NOT NULL,
   investigate   boolean NOT NULL,
   call_id       text,
-  outlook       jsonb NOT NULL,
   conditions    text[] NOT NULL                        -- cond_ids shown on the card (≤ 2)
 );
 
@@ -1109,7 +1092,6 @@ CREATE TABLE out.alerts (                              -- append-only, one row p
   event_id            text NOT NULL REFERENCES evt.events(event_id),
   generated_at        timestamptz NOT NULL,
   card_text           text NOT NULL,
-  card_struct         jsonb NOT NULL,
   decisions           text[] NOT NULL,
   evidence_bundle_id  char(64) NOT NULL,
   supersedes_version  int,
@@ -1150,7 +1132,6 @@ CREATE TABLE ops.jobs (
   type          text NOT NULL,
   priority      smallint NOT NULL,
   idem_key      text NOT NULL UNIQUE,
-  payload       jsonb NOT NULL,
   status        text NOT NULL DEFAULT 'QUEUED'
                 CHECK (status IN ('QUEUED','RUNNING','DONE','FAILED','EXPIRED')),
   attempts      int NOT NULL DEFAULT 0,
@@ -1192,8 +1173,6 @@ CREATE TABLE ops.tool_calls (
   call_id         text PRIMARY KEY,                    -- OpenMA custom tool_use id
   session_id      text NOT NULL REFERENCES ops.agent_sessions(session_id),
   tool            text NOT NULL,
-  input           jsonb NOT NULL,
-  result          jsonb,
   status          text NOT NULL CHECK (status IN ('PENDING','DONE','REFUSED','ERROR')),
   requested_at    timestamptz NOT NULL,
   answered_at     timestamptz
@@ -1361,25 +1340,7 @@ with psycopg.connect(os.environ["TANK_DB_URL"]) as connection:
     recent = pd.read_sql_query("SELECT item_id,source_id,observed_at FROM ingest.source_items ORDER BY observed_at DESC LIMIT 20", connection)
 ```
 
-The current deployment explicitly routes Jev through OpenRouter: `POST https://openrouter.ai/api/v1/systemone`, `Authorization: Bearer` with `OPENROUTER_API_KEY`, and pinned request model `typesafe/jev-1.13`. `TANK_JEV_PROVIDER=openrouter` selects this route; the production adapter uses plain `httpx` with the unchanged typed state/questions body. The current primary design specifies this System One endpoint. An earlier chat/completions specification was corrected after its typed-body HTTP400 failure; that is historical evidence, not an outstanding endpoint deviation. No chat wrapping is used. This does not route the analyst through OpenRouter: analyst/scout models continue through the Codex subscription gateway. Calibration must use Pipeline's exact versioned filter/routing questions and state, not a paraphrase. A read-only research call can use HTTP directly without printing the key:
-
-```python
-import os
-import httpx
-payload = {
-    "model": "typesafe/jev-1.13",
-    "state": {"text": "the source text being assessed"},
-    "questions": {"relevant": {"type": "noul", "instructions": "Is this text about crypto?", "criteria": {"true": "About crypto", "false": "Not about crypto"}}}
-}
-with httpx.Client(timeout=20, trust_env=False) as client:
-    response = client.post("https://openrouter.ai/api/v1/systemone", headers={"Authorization": "Bearer " + os.environ["OPENROUTER_API_KEY"]}, json=payload)
-    response.raise_for_status()
-    result = response.json()
-    if result.get("model") != "typesafe/jev-1.13-20260917":
-        raise ValueError("Unverified Jev model revision")
-```
-
-The observed and accepted OpenRouter revision is `typesafe/jev-1.13-20260917`; preserve returned request/model/usage provenance and reject an unverified revision. This illustrative research question is not a replacement for Pipeline's calibration prompts. Honor the configured OpenRouter account's actual rate limits and retry metadata; no universal free quota is assumed. Do not change provider or select `latest`/another model as a fallback. Only OpenRouter `/api/v1/systemone` is supported; there is no direct TypeSafe credential, SDK route or provider fallback. Production sandbox scripts receive only OPENROUTER_API_KEY and TANK_JEV_PROVIDER=openrouter for this route. Replay receives neither provider key nor provider-routing environment.
+Tank's filter and routing classifier is Microsoft-Decision-1 version 1 through Microsoft Foundry. The service uses `/providers/microsoft/v1/systemone`, the configured deployment name `decision-1`, and typed `state`/`questions` with `noul` probabilities. The Foundry credential belongs to the service and is not exposed to agent sandboxes. Read the recorded relevance, routing scores and `ops.llm_usage` provenance instead of calling a substitute classifier. Analyst/scout models use the Codex subscription gateway. There is no automatic model/provider fallback; replay only reuses an exact saved request. Historical Jev rows remain historical evidence, and the current 0.5 cutoffs are uncalibrated for Decision-1.
 
 DuckDuckGo search needs **no API key** and costs zero. Use Tank's custom `web_search(query)` for facts: it stores titles, URLs and snippets as durable evidence. It uses pinned `ddgs==9.16.0`, exact DuckDuckGo backend only, 10 results, declared source User-Agent, at least 2 seconds between requests, and retry delays 5/15/45 seconds for the specified rate-limit/block/timeout failures. Its audited transport permits one `POST https://html.duckduckgo.com/html/` per attempt, does not follow redirects and does not load ambient proxies/credentials. It prevents DDGS metasearch fallback; a generic `DDGS().text(backend="duckduckgo")` is not a safe substitute because the library can substitute engines internally. Empty/failure results return explicit errors, never a paid or alternate-engine search. Search has no credential secret.
 
@@ -1751,43 +1712,6 @@ Ticker natural identity is instrument plus timestamp; funding identity is instru
 Read with `TANK_DB_URL`. These hold no exchange series or prints.
 
 ## mkt.supply_obs
-
-| Column | PostgreSQL type |
-|---|---|
-| `available` | `boolean` |
-| `chain` | `text` |
-| `classification_required` | `boolean` |
-| `code_version` | `text` |
-| `config_version` | `text` |
-| `fee_scope` | `text` |
-| `instrument_id` | `text` |
-| `kind` | `text` |
-| `reason` | `text` |
-| `received_ts` | `timestamptz` |
-| `received_ts_prec` | `text` |
-| `received_ts_prec_reason` | `text` |
-| `recorded_at` | `timestamptz` |
-| `recorded_at_prec` | `text` |
-| `recorded_at_prec_reason` | `text` |
-| `token_id` | `text` |
-| `transfer_queries_succeeded` | `bigint` |
-| `ts` | `timestamptz` |
-| `ts_prec` | `text` |
-| `ts_prec_reason` | `text` |
-| `unlocks` | `jsonb` |
-| `flows` | `jsonb` |
-| `coverage_errors` | `jsonb` |
-| `balances` | `jsonb` |
-| `pools` | `jsonb` |
-| `series` | `jsonb` |
-| `metrics` | `jsonb` |
-| `protocols` | `jsonb` |
-| `identity_evidence` | `jsonb` |
-| `inference_limits` | `text[]` |
-| `unsupported_venues` | `text[]` |
-| `semantic_fingerprint` | `text` |
-
-## mkt.supply
 
 | Column | PostgreSQL type |
 |---|---|

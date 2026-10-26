@@ -8,6 +8,7 @@ from typing import Annotated, Literal, Protocol
 from pydantic import Field
 
 from tank.contracts import DomainModel
+from tank.contracts.scalars import FalseFlag
 from tank.fixture_reference_sources import RetainedInputOrigin, SourceDigest
 from tank.util import sha256
 
@@ -55,7 +56,7 @@ class CapturedProjectionCodeInventory(DomainModel):
     fixed_source_path: ProjectionSourcePath
     verified_input_packets: int = Field(gt=0)
     excluded_fixture: Literal["F-02_MANIFEST_MISMATCH"]
-    archived_code_executed: Literal[False]
+    archived_code_executed: FalseFlag
     entries: list[VerifiedGitProjectionCode | UnresolvedProjectionCode] = Field(min_length=1)
 
 

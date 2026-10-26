@@ -8,17 +8,17 @@ from typing import Literal, Protocol
 import httpx
 from pydantic import JsonValue, ValidationError
 
+from tank.agents.classification import DECISION_PROMPT_VERSION as DECISION_PROMPT_VERSION
 from tank.agents.classification import FILTER as FILTER
 from tank.agents.classification import FILTER_CRITERIA as FILTER_CRITERIA
-from tank.agents.classification import JEV_PROMPT_VERSION as JEV_PROMPT_VERSION
 from tank.agents.classification import ROUTE as ROUTE
 from tank.agents.classification import ROUTE_CRITERIA as ROUTE_CRITERIA
-from tank.agents.classification import JevClassifier
-from tank.agents.jev import JevEvent, JevItem, JevState
+from tank.agents.classification import DecisionClassifier
+from tank.agents.decision import DecisionEvent, DecisionItem, DecisionState
 from tank.agents.pipeline_contracts import (
     ClassificationIdentity,
     ClassificationName,
-    JevScoreRecord,
+    DecisionScoreRecord,
     RoutingCandidate,
     RoutingRegistry,
 )
@@ -50,7 +50,11 @@ type CutoffName = Literal["filter_cutoff", "routing_cutoff"]
 
 class PipelineSettings(Protocol):
     @property
-    def opencode_api_key(self) -> str | None: ...
+    def foundry_api_key(self) -> str | None: ...
+    @property
+    def foundry_endpoint(self) -> str: ...
+    @property
+    def foundry_deployment(self) -> str: ...
     @property
     def replay(self) -> bool: ...
 
@@ -95,9 +99,9 @@ class Pipeline:
         self.http = httpx.AsyncClient(timeout=15) if http is None else http
         self.owns_http = http is None
         self.items = Repository(repo, SOURCE_ITEMS)
-        self.scores = Repository(repo, Collection("ops.llm_usage", JevScoreRecord))
+        self.scores = Repository(repo, Collection("ops.llm_usage", DecisionScoreRecord))
         self.jobs = JobRepository(repo)
-        self.classifier = JevClassifier(self.scores, settings, self.http, versions=versions)
+        self.classifier = DecisionClassifier(self.scores, settings, self.http, versions=versions)
 
     def cutoff(self, name: CutoffName) -> float:
         try:
@@ -130,24 +134,24 @@ class Pipeline:
         return stored.root
 
     @staticmethod
-    def item_view(item: FeedSourceItem) -> JevItem:
+    def item_view(item: FeedSourceItem) -> DecisionItem:
         return item_view(RoutingItem.from_source(item))
 
     @staticmethod
-    def state(item: FeedSourceItem) -> JevState:
+    def state(item: FeedSourceItem) -> DecisionState:
         return item_state(RoutingItem.from_source(item))
 
-    async def score(self, item: FeedSourceItem, name: ClassificationName, state: JevState) -> float:
+    async def score(self, item: FeedSourceItem, name: ClassificationName, state: DecisionState) -> float:
         return await self.classifier.score(item, name, state)
 
     def score_identity(
-        self, item: FeedSourceItem, name: ClassificationName, state: JevState
+        self, item: FeedSourceItem, name: ClassificationName, state: DecisionState
     ) -> ClassificationIdentity:
         return self.classifier.score_identity(item, name, state)
 
     async def _score_record(
-        self, item: FeedSourceItem, name: ClassificationName, state: JevState
-    ) -> JevScoreRecord:
+        self, item: FeedSourceItem, name: ClassificationName, state: DecisionState
+    ) -> DecisionScoreRecord:
         return await self.classifier._score_record(item, name, state)
 
     async def filter_item_wire(self, payload: dict[str, JsonValue]) -> dict[str, JsonValue]:
@@ -159,7 +163,7 @@ class Pipeline:
             item = await self.source_item(payload.item_id)
             if isinstance(item.processing, RoutedSource):
                 return item
-            scored: JevScoreRecord | None = None
+            scored: DecisionScoreRecord | None = None
             cutoff: float | None = None
             if not isinstance(item.relevance, AlwaysRelevance):
                 cutoff = self.cutoff("filter_cutoff")
@@ -177,7 +181,7 @@ class Pipeline:
                         p_relevant=scored.score,
                         cutoff=cutoff,
                         model=scored.resolved_model_id,
-                        provider=scored.jev_provider,
+                        provider=scored.classifier_provider,
                         requested_model=scored.requested_model_id,
                         semantic_model_id=scored.semantic_model_id,
                         model_pin_evidence=scored.model_pin_evidence,
@@ -219,10 +223,10 @@ class Pipeline:
     def identities(self, item: FeedSourceItem) -> set[str]:
         return self.selector().identities(RoutingItem.from_source(item))
 
-    def event_view(self, event: RoutingCandidate) -> JevEvent:
+    def event_view(self, event: RoutingCandidate) -> DecisionEvent:
         return self.selector().event_view(event)
 
-    def routing_state(self, item: FeedSourceItem, event: RoutingCandidate) -> JevState:
+    def routing_state(self, item: FeedSourceItem, event: RoutingCandidate) -> DecisionState:
         return self.selector().routing_state(RoutingItem.from_source(item), event)
 
     async def _candidate_events(

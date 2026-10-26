@@ -109,7 +109,7 @@ async def test_actual_r11_intermediate_idle_does_not_complete_tool_result_execut
         if request.method == "POST":
             return httpx.Response(200, json=acknowledge_native_input(request, returned))
         if request.url.path.endswith("/events"):
-            return httpx.Response(200, json={"data": history})
+            return httpx.Response(200, json={"data": history, "next_page": None})
         raise AssertionError(str(request.url))
 
     async def dispatch(tool, args, context):
@@ -167,7 +167,7 @@ async def test_finalizer_failure_is_not_completed_and_retry_supersedes_only_fail
         if request.method == "POST":
             posts.append(json.loads(request.content))
             return httpx.Response(200, json=acknowledge_native_input(request, "accepted-retry"))
-        return httpx.Response(200, json={"data": []})
+        return httpx.Response(200, json={"data": [], "next_page": None})
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http:
         service = SessionService(repo, config(), None, http=http, versions=declared_versions_fixture())
@@ -204,7 +204,7 @@ async def test_restart_recovers_correlated_duplicate_idle_without_business_reexe
                     ]
                 },
             )
-        return httpx.Response(200, json={"data": [idle("old-idle", "accepted-message")]})
+        return httpx.Response(200, json={"data": [idle("old-idle", "accepted-message")], "next_page": None})
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http:
         service = SessionService(repo, config(), None, http=http, versions=declared_versions_fixture())
@@ -494,7 +494,7 @@ async def test_equal_time_terminal_then_running_order_uses_committed_queue_not_l
                     ]
                 },
             )
-        return httpx.Response(200, json={"data": [ended, running]})
+        return httpx.Response(200, json={"data": [ended, running], "next_page": None})
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http:
         service = SessionService(repo, config(), None, http=http, versions=declared_versions_fixture())
@@ -616,7 +616,7 @@ async def test_native_completion_preserves_source_failures_without_failing_sessi
             posts.append(request.content)
             return httpx.Response(200, json=acknowledge_native_input(request, "replacement"))
         if request.url.path.endswith("/events"):
-            return httpx.Response(200, json={"data": []})
+            return httpx.Response(200, json={"data": [], "next_page": None})
         if request.url.path.endswith("/executions"):
             return httpx.Response(
                 200,

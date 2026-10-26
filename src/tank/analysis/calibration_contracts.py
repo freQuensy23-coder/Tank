@@ -2,11 +2,13 @@
 
 from datetime import datetime
 from typing import Annotated, Literal, Self
+from urllib.parse import urlsplit
 
 from pydantic import Field, field_validator, model_validator
 
 from tank.contracts import DomainModel
 from tank.contracts.provenance import ResolvedVersionIdentity
+from tank.contracts.scalars import FalseFlag
 from tank.contracts.source_items import SourceIdentityHints
 from tank.contracts.sources import SourceAuthorRole
 
@@ -244,14 +246,46 @@ class RoutingMetrics(RoutingSummary):
         )
 
 
-class CalibrationGeneration(ResolvedVersionIdentity):
+class CalibrationGenerationBase(ResolvedVersionIdentity):
     packet_sha256: Digest
     prompt_version: str
     registry_sha256: Digest
     routing_window_days: int = Field(gt=0)
+
+
+class JevCalibrationGeneration(CalibrationGenerationBase):
     jev_endpoint: Literal["https://opencode.ai/inference/systemone/v1/systemone"]
     jev_request_model: Literal["jev-1.13-free", "jev-1.13"]
     jev_resolved_models: list[str]
+
+
+class DecisionCalibrationGeneration(CalibrationGenerationBase):
+    classifier_provider: Literal["azure-foundry"]
+    classifier_endpoint: str
+    classifier_request_model: str = Field(min_length=1, pattern=r"\S")
+    classifier_resolved_models: tuple[Literal["microsoft-decision-1"], ...] = Field(min_length=1)
+    semantic_model_id: Literal["microsoft-decision-1:1"]
+
+    @field_validator("classifier_endpoint")
+    @classmethod
+    def actual_configured_resource(cls, value: str) -> str:
+        parsed = urlsplit(value)
+        if (
+            parsed.scheme != "https"
+            or parsed.hostname is None
+            or not parsed.hostname.endswith(".services.ai.azure.com")
+            or parsed.username is not None
+            or parsed.password is not None
+            or parsed.port not in (None, 443)
+            or parsed.path != "/providers/microsoft/v1/systemone"
+            or parsed.query
+            or parsed.fragment
+        ):
+            raise ValueError("Calibration requires its actual configured Foundry classifier endpoint")
+        return value
+
+
+type CalibrationGeneration = JevCalibrationGeneration | DecisionCalibrationGeneration
 
 
 class CalibrationCounts(DomainModel):
@@ -288,7 +322,7 @@ class FilterMetrics(DomainModel):
 class BestMeasuredRouting(DomainModel):
     cutoff: Probability
     metrics: RoutingMetrics
-    automatic_apply: Literal[False]
+    automatic_apply: FalseFlag
 
 
 type CalibrationRejection = Literal[

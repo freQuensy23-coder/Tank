@@ -4,7 +4,7 @@ scout_agent_id: agent_IfiasmbmBp8jHUa16iaKO
 environment_id: env_rKT0gPZkTp8auR0P0ae_C
 replay_environment_id: env_8Atn4un8vnLTHWyi3nYfI
 release: 85d5361f535c7221de975838dc48444e468cc02e
-prompt_version: baseline-3.5-tool-ids
+prompt_version: baseline-3.6-preliminary-reviews
 model_id: gpt-6.1-sol
 reasoning_effort: medium
 model_prices:
@@ -14,7 +14,7 @@ model_prices:
     cache_read_per_million: 0
     cache_creation_per_million: 0
 pricing_basis: Analysis uses operator ChatGPT subscription; no per-token charge and
-  no V0 token/spending caps. DuckDuckGo web search is free; Jev paid usage remains
+  no V0 token/spending caps. DuckDuckGo web search is free; Decision-1 paid usage remains
   recorded.
 model_access: CHATGPT_SUBSCRIPTION_CODEX_OAUTH
 gateway_base_url: http://tank:8790/v1

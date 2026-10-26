@@ -1,5 +1,6 @@
 """Decision facts, pure policy results and explicit publication identity."""
 
+from datetime import datetime
 from decimal import Decimal
 from typing import Literal, Self
 
@@ -9,10 +10,43 @@ from tank.analysis.watch_contracts import WatchCondition, WatchProposal, WatchRu
 from tank.contracts import DomainModel
 from tank.contracts.provenance import GenerationProvenance, ResolvedVersionIdentity
 from tank.time_precision import Timestamp
+from tank.util import parse_iso_time
 
 type Confidence = Literal["LOW", "MEDIUM", "HIGH"]
 type Grade = Literal["A", "B", "C", "D"]
 type Action = Literal["START", "WATCH_TO_START", "ADD", "HOLD", "WAIT", "DONT_CHASE", "EXIT", "REDUCE"]
+type ActionRule = Literal[
+    "A0",
+    "A1",
+    "A2",
+    "A3",
+    "A5",
+    "A6",
+    "A7",
+    "A8",
+    "A9",
+    "A10",
+    "A11",
+    "A12",
+    "B1",
+    "B2",
+    "B3",
+    "B4",
+    "WATCH_ANCHOR_LOST",
+    "WATCH_SELL_DOWNGRADE",
+    "START_HIGH_DATA_GUARD",
+    "START_UNRESOLVED_GUARD",
+]
+type TradeReason = Literal[
+    "TRADE_BASE_A",
+    "TRADE_BASE_B",
+    "TRADE_BASE_C",
+    "TRADE_BASE_D",
+    "CONTEXT_HEADWIND",
+    "CONTEXT_STRESS",
+]
+
+
 type MoveClass = Literal[
     "SPOT_LED_ACCUMULATION",
     "ORGANIC_MIXED",
@@ -29,7 +63,7 @@ type MoveClass = Literal[
 type RepricingBand = Literal["NEGATIVE", "UNPRICED", "EARLY", "SUBSTANTIAL", "HEAVY", "UNKNOWN"]
 type NormalPosition = Literal["ABOVE", "BELOW", "WITHIN"]
 type Direction = Literal["BUY", "SELL", "NEUTRAL", "UNKNOWN"]
-type Breadth = Literal["BROAD", "CONCENTRATED", "FRAGMENTED", "NARROW", "UNKNOWN"]
+type Breadth = Literal["BROAD", "CONCENTRATED", "DIVERGENT", "NARROW", "INSUFFICIENT_DATA", "UNKNOWN"]
 type Bias = Literal["UNKNOWN", "TWO_SIDED", "BEARISH", "BULLISH", "NEUTRAL"]
 type Potential = Literal["LOW", "MEDIUM", "HIGH", "EXPLOSIVE"]
 type Horizon = Literal["H1", "H4", "H12", "H24", "D3", "D7"]
@@ -40,7 +74,7 @@ type ConfidenceInput = Literal["data", "certainty", "class"]
 
 
 class DecisionMilestone(DomainModel):
-    reference: str | None
+    reference: str | None = Field(min_length=1)
 
 
 class DecisionEvent(DomainModel):
@@ -78,7 +112,14 @@ class DecisionRelative(DomainModel):
 
 class DecisionLiquidity(DomainModel):
     state: Literal["NORMAL", "THIN", "VACUUM", "UNKNOWN"] | None
-    compression: Literal["COMPRESSED", "NORMAL", "ELEVATED", "UNKNOWN"] | None
+    compression: Literal["COMPRESSED", "NORMAL", "EXPANDED", "UNKNOWN"] | None
+
+
+class UnavailableDecisionLiquidity(DomainModel):
+    reason: Literal["INCOMPLETE"]
+
+
+type DecisionLiquidityInput = DecisionLiquidity | UnavailableDecisionLiquidity
 
 
 class DecisionSpot(DomainModel):
@@ -109,7 +150,7 @@ class DecisionMarket(DomainModel):
     class_confidence: Confidence
     move: MoveClass
     relative: DecisionRelative
-    liquidity: DecisionLiquidity
+    liquidity: DecisionLiquidityInput
     spot: DecisionSpot
     positioning: DecisionPositioning
     divergence: DecisionDivergence
@@ -119,6 +160,27 @@ class DecisionMarket(DomainModel):
 
 class DecisionOpenCall(DomainModel):
     invalidation_price: Decimal = Field(gt=0)
+
+
+class DecisionCallContext(DomainModel):
+    call_id: str = Field(min_length=1)
+    event_id: str = Field(min_length=1)
+    token_id: str = Field(min_length=1)
+    status: Literal["OPEN"]
+    opened_at: Timestamp
+    invalidation_price: Decimal = Field(gt=0)
+
+    @model_validator(mode="after")
+    def actual_call(self) -> Self:
+        if any(not value.strip() for value in (self.call_id, self.event_id, self.token_id)):
+            raise ValueError("Decision call context requires actual identities")
+        self.opened_instant()
+        return self
+
+    def opened_instant(self) -> datetime:
+        if self.opened_at.value is None:
+            raise ValueError("Decision call context requires its actual opening clock")
+        return parse_iso_time(self.opened_at.value)
 
 
 class DecisionTriggers(DomainModel):
@@ -163,6 +225,39 @@ class DecisionScenarioReasons(DomainModel):
     failure: str | None
 
 
+type ScenarioExplanationState = Literal["AVAILABLE", "UNAVAILABLE", "EXPLANATION_NOT_CAPTURED"]
+
+
+def _scenario_explanation_state(text: str | None, reason: str | None) -> ScenarioExplanationState:
+    if text is not None:
+        return "AVAILABLE"
+    if reason is None or not reason.strip():
+        return "EXPLANATION_NOT_CAPTURED"
+    return "UNAVAILABLE"
+
+
+class ScenarioExplanation(DomainModel):
+    state: ScenarioExplanationState
+    text: str | None
+    reason: str | None
+
+    @model_validator(mode="after")
+    def captured_state(self) -> Self:
+        if self.state != _scenario_explanation_state(self.text, self.reason):
+            raise ValueError("Scenario explanation status disagrees with its captured fields")
+        return self
+
+    @classmethod
+    def from_values(cls, text: str | None, reason: str | None) -> Self:
+        return cls(state=_scenario_explanation_state(text, reason), text=text, reason=reason)
+
+
+class ScenarioExplanations(DomainModel):
+    base: ScenarioExplanation
+    upside: ScenarioExplanation
+    failure: ScenarioExplanation
+
+
 class DecisionOutlook(DomainModel):
     direction: Bias
     direction_rule: Bias
@@ -177,15 +272,23 @@ class DecisionOutlook(DomainModel):
     scenarios: DecisionScenarios
     scenario_reasons: DecisionScenarioReasons
 
+    @property
+    def scenario_explanations(self) -> ScenarioExplanations:
+        return ScenarioExplanations(
+            base=ScenarioExplanation.from_values(self.scenarios.base, self.scenario_reasons.base),
+            upside=ScenarioExplanation.from_values(self.scenarios.upside, self.scenario_reasons.upside),
+            failure=ScenarioExplanation.from_values(self.scenarios.failure, self.scenario_reasons.failure),
+        )
+
 
 class DecisionCore(DomainModel):
     thesis_grade: Grade
     thesis_rule: Grade
     trade_grade: Grade
     trade_rule: Grade
-    trade_reasons: list[str]
+    trade_reasons: list[TradeReason]
     action: Action
-    action_rule: str = Field(min_length=1)
+    action_rule: ActionRule
     tactical: bool
     investigate: bool
     confidence_limiting: ConfidenceLimitation
@@ -214,6 +317,18 @@ class DecisionIdentity(DomainModel):
 
     @model_validator(mode="after")
     def actual_provenance(self) -> Self:
+        if any(
+            not value.strip()
+            for value in (
+                self.decision_id,
+                self.event_id,
+                self.token_id,
+                self.assessment_id,
+                self.market_truth_id,
+                self.thresholds_version,
+            )
+        ):
+            raise ValueError("Decision identities and declared threshold version must be nonempty")
         if self.cutoff.value is None:
             raise ValueError("A produced decision requires its actual market cutoff")
         if (
@@ -242,10 +357,34 @@ class ActiveDecisionTracking(DomainModel):
     kind: Literal["ACTIVE"]
 
 
+class DecisionStatusWriter(DomainModel):
+    versions: ResolvedVersionIdentity
+    generation: GenerationProvenance
+
+    @model_validator(mode="after")
+    def actual_writer_identity(self) -> Self:
+        if (
+            self.generation.config_version != self.versions.config_version
+            or self.generation.code_version != self.versions.code_version
+        ):
+            raise ValueError("Decision status generation does not match its resolved writer identity")
+        return self
+
+
 class EndedDecisionTracking(DomainModel):
     kind: Literal["ENDED"]
     previous_decision_id: str = Field(min_length=1)
     expired_call_ids: tuple[str, ...] = Field(min_length=1)
+    status_recorded_at: Timestamp
+    writer: DecisionStatusWriter
+
+    @model_validator(mode="after")
+    def actual_status_recording(self) -> Self:
+        if self.status_recorded_at.value is None or self.status_recorded_at.precision != "COLLECTION_ONLY":
+            raise ValueError("Ended decision tracking requires its actual local status-recording clock")
+        if len(self.expired_call_ids) != len(set(self.expired_call_ids)):
+            raise ValueError("Expired decision call identities must be unique")
+        return self
 
 
 type DecisionTracking = ActiveDecisionTracking | EndedDecisionTracking
@@ -263,6 +402,13 @@ class DecisionMetadata(DomainModel):
     def actual_calculation(self) -> Self:
         if self.calculated_at.value is None:
             raise ValueError("A produced decision requires its actual calculation clock")
+        if any(not value.strip() for value in self.contradiction_ids):
+            raise ValueError("Decision contradiction identities must be nonempty")
+        if isinstance(self.tracking, EndedDecisionTracking):
+            if self.tracking.previous_decision_id == self.identity.decision_id:
+                raise ValueError("Ended tracking cannot reference itself as predecessor")
+            if any(not value.strip() for value in self.tracking.expired_call_ids):
+                raise ValueError("Expired call identities must be nonempty")
         return self
 
 
@@ -284,6 +430,12 @@ class DecisionDraft(DomainModel):
     metadata: DecisionMetadata
     proposals: list[WatchProposal]
 
+    @model_validator(mode="after")
+    def ended_watches(self) -> Self:
+        if isinstance(self.metadata.tracking, EndedDecisionTracking) and self.proposals:
+            raise ValueError("Ended tracking cannot propose active watch conditions")
+        return self
+
 
 class DecisionRecord(DomainModel):
     calculation: DecisionCore
@@ -294,6 +446,12 @@ class DecisionRecord(DomainModel):
 
     @model_validator(mode="after")
     def reconciled_watches(self) -> Self:
+        identity = self.metadata.identity
+        for condition in self.conditions:
+            if condition.event_id != identity.event_id or condition.token_id != identity.token_id:
+                raise ValueError("Decision watch belongs to a different event or token")
+            if condition.status != "ARMED":
+                raise ValueError("Reconciled decision watches must actually be armed")
         ids = [condition.cond_id for condition in self.conditions]
         if len(ids) != len(set(ids)) or len(self.conditions_shown) != len(set(self.conditions_shown)):
             raise ValueError("Decision watch identities must be unique")
@@ -302,3 +460,22 @@ class DecisionRecord(DomainModel):
         if isinstance(self.metadata.tracking, EndedDecisionTracking) and self.conditions:
             raise ValueError("Ended tracking cannot retain active watch conditions")
         return self
+
+
+class OutlookConditionRefs(DomainModel):
+    upgrade: tuple[str, ...]
+    downgrade: tuple[str, ...]
+
+    @model_validator(mode="after")
+    def actual_distinct_references(self) -> Self:
+        values = self.upgrade + self.downgrade
+        if any(not value.strip() for value in values) or len(values) != len(set(values)):
+            raise ValueError("Outlook watch references require distinct actual identities")
+        return self
+
+    @classmethod
+    def from_conditions(cls, conditions: list[WatchCondition]) -> Self:
+        return cls(
+            upgrade=tuple(value.cond_id for value in conditions if value.role == "UPGRADE"),
+            downgrade=tuple(value.cond_id for value in conditions if value.role == "DOWNGRADE"),
+        )

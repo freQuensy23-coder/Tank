@@ -1,14 +1,18 @@
 import json
 import time
+from pathlib import Path
 from types import SimpleNamespace
 
 import httpx
 import pytest
 from native_input_fixtures import acknowledge_native_input
+from native_session_fixtures import native_session_record
+from pydantic import JsonValue
 from source_support import fixture_versions
 
 from tank.agents import SessionService
 from tank.agents.context import CONTEXT_VERSION
+from tank.contracts.openma import NativeSessionToolUpdate
 from tank.settings import Settings
 from tank.storage import MemoryRepository
 from tank.telegram_inbox import (
@@ -154,6 +158,8 @@ async def seed(repo, *, status="OPEN", rich_message=None) -> None:
                     "message_id": "m0",
                     "payload": {"kind": "NEW_ITEM", "item_id": "itm_1"},
                     "remote_event_id": "in_0",
+                    "retry_count": 0,
+                    "native_input_attempts": {"in_0": 0},
                     "turn_status": "DONE" if status != "FAILED" else "FAILED",
                 }
             ],
@@ -299,10 +305,33 @@ async def ask(repo, session_status="OPEN"):
     return question_id
 
 
+def native_reply(
+    session_id: str,
+    *,
+    tools: list[JsonValue] | None = None,
+    agent_snapshot: dict[str, JsonValue] | None = None,
+) -> dict[str, JsonValue]:
+    snapshot: dict[str, JsonValue] = {} if agent_snapshot is None else dict(agent_snapshot)
+    if tools is not None:
+        snapshot["tools"] = tools
+    return native_session_record(
+        session_id,
+        agent_id="agt_1",
+        environment_id="env_1",
+        metadata={},
+        model_id="gpt-6.1-sol",
+        agent_snapshot=snapshot,
+    )
+
+
 def openma(posts, history):
+    observed_tools: list[JsonValue] = []
+
     def handler(request: httpx.Request):
+        nonlocal observed_tools
         if request.method == "POST" and not request.url.path.endswith("/events"):
-            assert "tools" in json.loads(request.content)["agent"]
+            posted = NativeSessionToolUpdate.model_validate_json(request.content)
+            observed_tools = [tool.model_dump(mode="json") for tool in posted.agent.tools]
             return httpx.Response(200, json={"id": "ses_1", "status": "idle"})
         if request.method == "POST":
             body = json.loads(request.content)
@@ -312,7 +341,9 @@ def openma(posts, history):
             ordered = history[::-1] if request.url.params.get("order") == "desc" else history
             return httpx.Response(200, json={"data": ordered, "next_page": None})
         if request.url.path.startswith("/v1/sessions/") and request.url.path.count("/") == 3:
-            return httpx.Response(200, json={"id": request.url.path.rsplit("/", 1)[-1], "status": "idle"})
+            return httpx.Response(
+                200, json=native_reply(request.url.path.rsplit("/", 1)[-1], tools=observed_tools)
+            )
         raise AssertionError(request.url.path)
 
     return handler
@@ -568,15 +599,19 @@ async def test_first_question_is_answered_while_a_second_is_still_running() -> N
         {"id": "r2", "type": "session.status_running", "execution_id": "in_q2"},
     ]
 
+    observed_tools: list[JsonValue] = []
+
     def handler(request: httpx.Request):
+        nonlocal observed_tools
         if request.method == "POST" and not request.url.path.endswith("/events"):
-            assert "tools" in json.loads(request.content)["agent"]
-            return httpx.Response(200, json={"id": "ses_1", "status": "idle"})
+            posted = NativeSessionToolUpdate.model_validate_json(request.content)
+            observed_tools = [tool.model_dump(mode="json") for tool in posted.agent.tools]
+            return httpx.Response(200, json=native_reply("ses_1", tools=observed_tools))
         if request.method == "POST":
             posts.append(json.loads(request.content))
             return httpx.Response(200, json=acknowledge_native_input(request, next(ids)))
         if not request.url.path.endswith("/events"):
-            return httpx.Response(200, json={"id": "ses_1", "status": "idle"})
+            return httpx.Response(200, json=native_reply("ses_1", tools=observed_tools))
         ordered = history[::-1] if request.url.params.get("order") == "desc" else history
         return httpx.Response(200, json={"data": ordered, "next_page": None})
 
@@ -736,11 +771,15 @@ async def test_idle_session_receives_the_current_tools_once() -> None:
     settings = session_settings()
     settings.read_config_json = lambda relative: custom
     requests = []
+    observed_tools: list[JsonValue] = []
 
     def handler(request: httpx.Request):
+        nonlocal observed_tools
         requests.append((request.method, request.url.path, json.loads(request.content or b"{}")))
         if request.method == "GET":
-            return httpx.Response(200, json={"id": "ses_1", "agent": {"id": "agt_1"}})
+            return httpx.Response(200, json=native_reply("ses_1", tools=observed_tools))
+        posted = NativeSessionToolUpdate.model_validate_json(request.content)
+        observed_tools = [tool.model_dump(mode="json") for tool in posted.agent.tools]
         return httpx.Response(200, json={})
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http:
@@ -758,52 +797,83 @@ async def test_idle_session_receives_the_current_tools_once() -> None:
 
 
 @pytest.mark.asyncio
-async def test_agent_watch_rules_arm_disarm_and_survive_decision_reconciliation() -> None:
+async def test_agent_watch_rules_arm_disarm_and_survive_decision_reconciliation(tmp_path: Path) -> None:
+    from scheduler_support import operational_reaction_services
+    from source_support import fixture_request_budgets
+
+    from tank.analysis.decision_watches import DecisionWatchCommand
+    from tank.analysis.page_access import LivePageAccess
+    from tank.analysis.watch_contracts import WatchCondition, WatchLeaf
+    from tank.contracts.provenance import GenerationProvenance
     from tank.event_tools import EventToolService
 
     repo = MemoryRepository()
     await repo.put("evt.events", "evt_1", {"event_id": "evt_1", "lifecycle": "MONITORING"})
-    tools = object.__new__(EventToolService)
-    tools.versions = fixture_versions()
-    tools.repo = repo
-    tools.settings = SimpleNamespace(
-        config_version="c", code_version="v", ops_progress_enabled=False, replay=False
-    )
-    armed = await tools.set_watch_condition(
-        {
-            "event_id": "evt_1",
-            "action": "ARM",
-            "token_id": "bitcoin:BTC",
-            "text": "Wake me if OI jumps",
-            "conditions": [{"metric": "deriv.native_oi_chg_pct", "op": ">", "value": 5, "persist_count": 2}],
-            "expires_in_hours": 24,
-        },
-        {"session_id": "ses_1"},
-    )
-    condition = armed["condition"]
-    assert condition["role"] == "AGENT" and condition["expr"]["persist"]["count"] == 2
-    await tools.reconcile_conditions(
-        {"dec_id": "dec_1", "event_id": "evt_1", "token_id": "bitcoin:BTC", "conditions": []},
-        [await repo.get("ana.watch_conditions", condition["cond_id"])],
-        [],
-        {},
-    )
-    assert (await repo.get("ana.watch_conditions", condition["cond_id"]))["status"] == "ARMED"
-    with pytest.raises(ValueError, match="not evaluated"):
-        await tools.set_watch_condition(
+    settings = Settings(data_dir=tmp_path, ops_progress_enabled=False)
+    versions = fixture_versions()
+    async with operational_reaction_services(
+        repo, settings, versions=versions, budgets=fixture_request_budgets()
+    ) as services:
+        tools = EventToolService(
+            repo,
+            settings,
+            services.truth,
+            None,
+            versions=versions,
+            scheduler=services.scheduler,
+            pages=LivePageAccess(services.admission),
+        )
+        armed = await tools.set_watch_condition(
             {
                 "event_id": "evt_1",
                 "action": "ARM",
                 "token_id": "bitcoin:BTC",
-                "conditions": [{"metric": "DROP TABLE", "op": ">", "value": 1}],
+                "text": "Wake me if OI jumps",
+                "conditions": [
+                    {"metric": "deriv.native_oi_chg_pct", "op": ">", "value": 5, "persist_count": 2}
+                ],
+                "expires_in_hours": 24,
             },
-            {},
+            {"session_id": "ses_1"},
         )
-    disarmed = await tools.set_watch_condition(
-        {"event_id": "evt_1", "action": "DISARM", "cond_id": condition["cond_id"]}, {}
-    )
-    assert disarmed["status"] == "CANCELLED"
-    assert (await repo.get("ana.watch_conditions", condition["cond_id"]))["cancelled_by"] == "AGENT"
+        condition = WatchCondition.model_validate(armed["condition"])
+        assert condition.role == "AGENT"
+        assert isinstance(condition.expr, WatchLeaf) and condition.expr.persist.count == 2
+        existing = WatchCondition.model_validate(await repo.get("ana.watch_conditions", condition.cond_id))
+        generation = GenerationProvenance.model_validate(
+            existing.model_dump(mode="json", include=set(GenerationProvenance.model_fields))
+        )
+        reconciliation = await tools.reconcile_conditions(
+            DecisionWatchCommand(
+                decision_id="dec_1",
+                event_id="evt_1",
+                token_id="bitcoin:BTC",
+                generation=generation,
+                proposals=[],
+            ),
+            [existing],
+            [],
+            prepared_condition_ids=None,
+        )
+        assert reconciliation.active == [] and reconciliation.shown == ()
+        retained = WatchCondition.model_validate(await repo.get("ana.watch_conditions", condition.cond_id))
+        assert retained.status == "ARMED"
+        with pytest.raises(ValueError, match="not evaluated"):
+            await tools.set_watch_condition(
+                {
+                    "event_id": "evt_1",
+                    "action": "ARM",
+                    "token_id": "bitcoin:BTC",
+                    "conditions": [{"metric": "DROP TABLE", "op": ">", "value": 1}],
+                },
+                {},
+            )
+        disarmed = await tools.set_watch_condition(
+            {"event_id": "evt_1", "action": "DISARM", "cond_id": condition.cond_id}, {}
+        )
+        assert disarmed["status"] == "CANCELLED"
+        cancelled = WatchCondition.model_validate(await repo.get("ana.watch_conditions", condition.cond_id))
+        assert cancelled.cancelled_by == "AGENT"
 
 
 async def asked(repo, telegram, message_id=20, text="Почему не шорт?"):
@@ -1161,24 +1231,28 @@ async def test_ordered_watch_on_categorical_metric_is_refused() -> None:
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("status,raises", [(503, True), (429, True), (400, False)])
-async def test_tool_sync_retries_transient_rejections_only(status, raises) -> None:
+@pytest.mark.parametrize("status", [503, 429, 400])
+async def test_tool_sync_refuses_unconfirmed_update_after_http_rejection(status: int) -> None:
     repo = MemoryRepository()
     await seed(repo)
     settings = session_settings()
     settings.read_config_json = lambda relative: [
         {"name": "x", "description": "d", "input_schema": {"type": "object"}}
     ]
+    attempts: list[str] = []
 
-    async with httpx.AsyncClient(
-        transport=httpx.MockTransport(lambda r: httpx.Response(status, json={}))
-    ) as http:
+    def handler(request: httpx.Request) -> httpx.Response:
+        attempts.append(request.method)
+        if request.method == "GET":
+            return httpx.Response(200, json=native_reply("ses_1"))
+        return httpx.Response(status, json={})
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http:
         service = SessionService(repo, settings, None, http=http, versions=fixture_versions())
-        if raises:
-            with pytest.raises(httpx.HTTPStatusError):
-                await service.sync_tools("ses_1")
-        else:
+        with pytest.raises(httpx.HTTPStatusError) as failure:
             await service.sync_tools("ses_1")
+    assert failure.value.response.status_code == status
+    assert attempts == ["GET", "POST"]
     assert not (await repo.get("ops.agent_sessions", "ses_1")).get("tools_sha256")
 
 
@@ -1515,6 +1589,8 @@ async def test_answer_lookup_reads_history_only_back_to_the_question() -> None:
             "message_id": "mq",
             "payload": {"kind": "USER_QUESTION", "question_id": "q"},
             "remote_event_id": "in_q",
+            "retry_count": 0,
+            "native_input_attempts": {"in_q": 0},
         }
     )
     history = [{"id": f"old{n}", "type": "agent.message", "content": []} for n in range(250)] + [
@@ -1696,10 +1772,15 @@ async def test_watch_mutation_hydrates_prompt_provenance_first() -> None:
         calls.append(request.url.path)
         return httpx.Response(
             200,
-            json={
-                "id": "ses_1",
-                "agent": {"id": "agt_1", "system": "s", "skills": [], "tools": [], "model": {"id": "m"}},
-            },
+            json=native_reply(
+                "ses_1",
+                agent_snapshot={
+                    "system": "s",
+                    "skills": [],
+                    "tools": [],
+                    "model": {"id": "m"},
+                },
+            ),
         )
 
     async def dispatch(tool, arguments, context):
@@ -1777,7 +1858,7 @@ async def test_question_to_a_remotely_terminated_session_answers_terminated() ->
     question_id = await ask(repo)
 
     def handler(request: httpx.Request):
-        return httpx.Response(200, json={"id": "ses_1", "status": "terminated"})
+        return httpx.Response(200, json={**native_reply("ses_1"), "status": "terminated"})
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http:
         service = SessionService(repo, session_settings(), None, http=http, versions=fixture_versions())
@@ -1873,7 +1954,7 @@ async def test_paired_size_notice_failure_keeps_both_messages_retryable() -> Non
 
 
 @pytest.mark.asyncio
-async def test_question_to_a_session_missing_in_openma_answers_terminated() -> None:
+async def test_question_to_a_session_missing_in_openma_answers_no_session() -> None:
     repo = MemoryRepository()
     question_id = await ask(repo)
     async with httpx.AsyncClient(
@@ -1882,7 +1963,11 @@ async def test_question_to_a_session_missing_in_openma_answers_terminated() -> N
         service = SessionService(repo, session_settings(), None, http=http, versions=fixture_versions())
         payload = {"kind": "USER_QUESTION", "session_id": "ses_1", "question_id": question_id}
         assert await service.send_message(payload) is None
-    assert (await repo.get("out.user_questions", question_id))["answer_status"] == "TERMINATED"
+    assert (await repo.get("out.user_questions", question_id))["answer_status"] == "NO_SESSION"
+
+    remote = (await repo.get("ops.agent_sessions", "ses_1"))["remote_state"]
+    assert remote["kind"] == "MISSING" and remote["missing"] is True
+    assert "status" not in remote and "archived_at" not in remote
 
 
 @pytest.mark.asyncio
@@ -2201,3 +2286,81 @@ async def test_question_text_keeps_user_filenames_and_literal_hashes() -> None:
     text = posts[0][1]["events"][0]["content"][0]["text"]
     assert question["text"] in text
     assert question_id not in text and "session_id" not in text
+
+
+@pytest.mark.asyncio
+async def test_retained_missing_native_resource_answers_once_without_another_remote_request() -> None:
+    from tank.contracts.native_readback import NativeSessionMissing
+    from tank.telegram_inbox import GONE_TEXT, closed_reason
+    from tank.time_precision import collection_clock
+
+    repo = MemoryRepository()
+    question_id = await ask(repo)
+    session = await repo.get("ops.agent_sessions", "ses_1")
+    session["remote_state"] = {
+        **NativeSessionMissing(kind="MISSING", missing=True, session_id="ses_1").model_dump(mode="json"),
+        **collection_clock("2026-10-25T00:00:00Z").fields("checked_at"),
+    }
+    await repo.put("ops.agent_sessions", "ses_1", session)
+    assert closed_reason(session) == ("NO_SESSION", GONE_TEXT)
+
+    def refuse_native(request: httpx.Request) -> httpx.Response:
+        raise AssertionError(f"Retained missing-resource observation caused native I/O: {request.method}")
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(refuse_native)) as http:
+        service = SessionService(repo, session_settings(), None, http=http, versions=fixture_versions())
+        request = {"kind": "USER_QUESTION", "session_id": "ses_1", "question_id": question_id}
+        assert await service.send_message(request) is None
+        assert await service.send_message(request) is None
+    telegram = FakeTelegram()
+    async with httpx.AsyncClient(transport=httpx.MockTransport(telegram)) as http:
+        inbox = TelegramInbox(repo, inbox_settings(), http=http)
+        await inbox.answer({"question_id": question_id})
+        await inbox.answer({"question_id": question_id})
+    assert [row["text"] for row in telegram.sent] == [GONE_TEXT]
+    assert telegram.sent[0]["reply_parameters"]["message_id"] == 9
+    answered = await repo.get("out.user_questions", question_id)
+    assert answered["answer_status"] == "NO_SESSION"
+    stored = await repo.get("ops.agent_sessions", "ses_1")
+    assert stored["remote_state"] == session["remote_state"] and stored["status"] == "OPEN"
+    assert "termination_receipt" not in stored and "archive_reason" not in stored
+    assert len(await repo.list("ops.jobs", filters={"type": "TELEGRAM_ANSWER"})) == 1
+
+
+@pytest.mark.asyncio
+async def test_ops_session_selection_prefers_actual_live_session_over_retained_missing_resource() -> None:
+    from tank.contracts.native_readback import NativeSessionMissing
+    from tank.telegram_inbox import GONE_TEXT, closed_reason
+
+    repo = MemoryRepository()
+    await seed(repo)
+    missing = await repo.get("ops.agent_sessions", "ses_1")
+    live = {**missing, "session_id": "ses_live"}
+    missing["remote_state"] = NativeSessionMissing(
+        kind="MISSING",
+        missing=True,
+        session_id="ses_1",
+    ).model_dump(mode="json")
+    await repo.put("ops.agent_sessions", "ses_1", missing)
+    await repo.put("ops.agent_sessions", "ses_live", live)
+    async with httpx.AsyncClient(transport=httpx.MockTransport(FakeTelegram())) as http:
+        inbox = TelegramInbox(repo, inbox_settings(), http=http)
+        selected = await inbox.item_session("itm_1", {"evt_1"})
+        assert selected["session_id"] == "ses_live" and closed_reason(selected) is None
+        await repo.delete("ops.agent_sessions", "ses_live")
+        fallback = await inbox.item_session("itm_1", {"evt_1"})
+        assert fallback["session_id"] == "ses_1"
+        assert closed_reason(fallback) == ("NO_SESSION", GONE_TEXT)
+    assert (await repo.get("ops.agent_sessions", "ses_1")) == missing
+
+
+def test_missing_resource_does_not_relabel_a_recorded_termination() -> None:
+    from tank.telegram_inbox import closed_reason
+
+    session: dict[str, JsonValue] = {
+        "session_id": "session",
+        "status": "ENDED",
+        "termination_receipt": {"event_id": "termination"},
+        "remote_state": {"kind": "MISSING", "missing": True, "session_id": "session"},
+    }
+    assert closed_reason(session) == ("TERMINATED", TERMINATED_TEXT)

@@ -118,7 +118,6 @@ def _market_record(row):
         "mkt.book_summaries",
         "mkt.tickers_24h",
         "mkt.supply_obs",
-        "mkt.supply",
     }
 
 
@@ -718,7 +717,7 @@ async def run_captured_tools(inputs, repo):
         oma_db_password=None,
         apify_api_token=None,
         openma_api_key=None,
-        openrouter_api_key=None,
+        foundry_api_key=None,
         telegram_token=None,
         tavily_api_key=None,
         etherscan_api_key=None,
@@ -799,7 +798,7 @@ async def run_captured_tools(inputs, repo):
                 repo,
                 settings,
                 market_truth,
-                DecisionEngine(settings),
+                DecisionEngine(),
                 versions=versions,
                 scheduler=scheduling,
                 pages=recorded_page_access(inputs),
@@ -1327,7 +1326,7 @@ async def run_operational_replay(bundle_path, repo, settings, *, http=None):
         repo,
         settings,
         truth,
-        DecisionEngine(settings),
+        DecisionEngine(),
         versions=versions,
         scheduler=scheduler,
         pages=recorded_page_access(inputs),

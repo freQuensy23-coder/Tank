@@ -18,8 +18,6 @@ from tank.contracts.openma import (
     AgentUpdateReceipt,
     AgentVersionIdentity,
     AnthropicSkillVersion,
-    BuiltinToolObservation,
-    CustomToolObservation,
     EnvironmentNetworkObservation,
     EnvironmentPackagesObservation,
     LimitedNetwork,
@@ -28,14 +26,13 @@ from tank.contracts.openma import (
     ManagedAgentMetadata,
     ManagedAgentName,
     ManagedAgentObservation,
-    ManagedBuiltinToolset,
-    ManagedCustomTool,
     ManagedEnvironmentBinding,
     ManagedEnvironmentName,
     ManagedEnvironmentObservation,
     ManagedSkillName,
     ManagedSkillVersion,
     ManagedTool,
+    ManagedToolManifest,
     ModelCardCompatibility,
     ModelCardCost,
     ModelCardDefinition,
@@ -52,15 +49,13 @@ from tank.contracts.openma import (
     RegisteredSkill,
     SkillFile,
     SkillResourceIdentity,
-    ToolEnablement,
-    ToolObservation,
-    ToolSwitch,
-    ToolSwitchObservation,
     UnrestrictedNetwork,
-    UnsupportedToolObservation,
+    openma_tools_match,
+)
+from tank.contracts.openma import (
+    observe_openma_tool as _tool_observation,
 )
 from tank.contracts.provenance import ResolvedVersionIdentity
-from tank.contracts.tool_schema import parse_tool_definitions
 from tank.util import canonical_json
 
 log = logging.getLogger(__name__)
@@ -185,24 +180,10 @@ def skill_digest(settings: CapturedSkillConfiguration, name: ManagedSkillName) -
 
 
 def managed_tools(settings: ToolConfiguration, name: ManagedAgentName) -> list[ManagedTool]:
-    definitions = parse_tool_definitions(settings.read_config_json(f"skills/{name}/tools.json"))
-    tools: list[ManagedTool] = [
-        ManagedBuiltinToolset(
-            type="agent_toolset_20260401",
-            default_config=ToolEnablement(enabled=True),
-            configs=[ToolSwitch(name="browser", enabled=True)],
-        )
-    ]
-    tools.extend(
-        ManagedCustomTool(
-            type="custom",
-            name=definition.name,
-            description=definition.description,
-            input_schema=definition.input_schema,
-        )
-        for definition in definitions
+    manifest = ManagedToolManifest.from_definitions(
+        name, settings.read_config_json(f"skills/{name}/tools.json")
     )
-    return tools
+    return list(manifest.tools)
 
 
 def agent_tools(settings: ToolConfiguration, name: ManagedAgentName) -> list[dict[str, JsonValue]]:
@@ -278,38 +259,6 @@ def _registered_metadata(agent: dict[str, JsonValue]) -> dict[ManagedSkillName, 
                 }
             )
     return result
-
-
-def _tool_observation(value: JsonValue) -> ToolObservation:
-    row = _object(value)
-    kind = _text(row["type"])
-    if kind == "custom":
-        schema = row.get("input_schema")
-        return CustomToolObservation(
-            kind="custom",
-            name=_text(row["name"]),
-            description=_optional_text(row.get("description")),
-            input_schema=None if schema is None else _object(schema),
-        )
-    if kind == "agent_toolset_20260401":
-        default = row.get("default_config")
-        configs = row.get("configs")
-        switches: list[ToolSwitchObservation] = []
-        if configs is not None:
-            for raw in _array(configs):
-                switch = _object(raw)
-                switches.append(
-                    ToolSwitchObservation(
-                        name=_text(switch["name"]), enabled=_optional_bool(switch.get("enabled"))
-                    )
-                )
-        return BuiltinToolObservation(
-            kind="builtin",
-            type="agent_toolset_20260401",
-            default_enabled=None if default is None else _optional_bool(_object(default).get("enabled")),
-            configs=sorted(switches, key=lambda switch: switch.name),
-        )
-    return UnsupportedToolObservation(kind="unsupported", type=kind)
 
 
 def _agent_observation(value: JsonValue) -> ManagedAgentObservation:
@@ -519,16 +468,6 @@ def agent_payload(
     )
 
 
-def _tools_key(tools: list[ToolObservation]) -> dict[str, ToolObservation]:
-    result: dict[str, ToolObservation] = {}
-    for tool in tools:
-        key = "custom:" + tool.name if isinstance(tool, CustomToolObservation) else "builtin:" + tool.type
-        if key in result:
-            raise OpenMAContractViolation("OpenMA tool observation repeats an identity")
-        result[key] = tool
-    return result
-
-
 def _agent_current(
     observed: ManagedAgentObservation,
     wanted: ManagedAgentDefinition,
@@ -536,7 +475,6 @@ def _agent_current(
 ) -> bool:
     if observed.tools is None or observed.skills is None:
         return False
-    desired_tools = [_tool_observation(_wire(tool)) for tool in wanted.tools]
     return (
         observed.name == wanted.name
         and observed.model_id == wanted.model.id
@@ -548,7 +486,7 @@ def _agent_current(
             key in observed.retained_metadata and observed.retained_metadata[key] == value
             for key, value in wanted.metadata.retained_entries.items()
         )
-        and _tools_key(observed.tools) == _tools_key(desired_tools)
+        and openma_tools_match(observed.tools, wanted.tools)
         and sorted(observed.skills, key=lambda skill: (skill.type, skill.skill_id, skill.version))
         == sorted(wanted.skills, key=lambda skill: (skill.type, skill.skill_id, skill.version))
         and observed.registered_skills == expected_skills

@@ -16,7 +16,7 @@ class AgentFixtureSettings:
     documents: FixtureConfigurations
     tool_reader: Callable[[str], JsonValue]
     openrouter_api_key: str | None
-    opencode_api_key: str | None
+    foundry_api_key: str | None
     replay: bool
     ops_progress_enabled: bool
     openma_api_key: str
@@ -27,6 +27,9 @@ class AgentFixtureSettings:
     telegram_token: str | None
     codex_gateway_key: str | None
     database_url: str | None
+
+    foundry_endpoint: str = "https://synthetic.services.ai.azure.com"
+    foundry_deployment: str = "decision-1"
 
     def load_config(self, name: str) -> dict[str, JsonValue]:
         return self.documents[name]
@@ -42,7 +45,7 @@ class AgentFixtureSettings:
             value
             for value in (
                 self.openrouter_api_key,
-                self.opencode_api_key,
+                self.foundry_api_key,
                 self.openma_api_key,
                 self.telegram_token,
                 self.codex_gateway_key,

@@ -1,11 +1,12 @@
 """Operational cache metadata; market payloads remain at their storage wire boundary."""
 
 from datetime import datetime
-from typing import Annotated, Literal
+from typing import Annotated
 
-from pydantic import Field, JsonValue, field_validator
+from pydantic import Field, field_validator
 
 from tank.contracts import DomainModel
+from tank.contracts.scalars import OneInt
 from tank.models import Record
 from tank.util import parse_iso_time
 
@@ -49,16 +50,9 @@ def _utc_day(value: datetime | str) -> datetime:
 
 
 class SavedKlineDayCounts(DomainModel):
-    version: Literal[1]
+    version: OneInt
     saved_at: str
     counts: list[tuple[InstrumentID, str, DayCount]]
-
-    @field_validator("version", mode="before")
-    @classmethod
-    def integer_version(cls, value: JsonValue) -> JsonValue:
-        if not isinstance(value, int) or isinstance(value, bool):
-            raise ValueError("Cache version must be an integer")
-        return value
 
     @field_validator("saved_at")
     @classmethod

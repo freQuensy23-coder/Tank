@@ -1,11 +1,11 @@
-version: baseline-2.5
+version: decision-1-1
 # Uncalibrated midpoint, user decision 2026-10-20, see todo.md: calibrate on labeled real news later (03 §3.1, 01 V0-B).
 filter_cutoff: 0.5
 routing_cutoff: 0.5
-filter_model: typesafe/jev-1.13
+filter_model: microsoft-decision-1:1
 calibration_required:
-- 'filter_cutoff: V0-B highest cutoff retaining >=95% relevant items (uncalibrated midpoint until then)'
-- 'routing_cutoff: V0-B highest cutoff with precision and recall >=0.90 (uncalibrated midpoint until then)'
+- 'filter_cutoff: V0-B highest cutoff retaining >=95% relevant items (Decision-1 remains uncalibrated; midpoint until then)'
+- 'routing_cutoff: V0-B highest cutoff with precision and recall >=0.90 (Decision-1 remains uncalibrated; midpoint until then)'
 - 'tank_agent_statement_timeout_ms: V0-G'
 - 'tank_agent_connection_limit: V0-G'
 tank_agent_statement_timeout_ms: null

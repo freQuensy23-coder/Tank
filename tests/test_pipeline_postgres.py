@@ -18,9 +18,9 @@ from agent_source_fixtures import (
 from postgres_helpers import PostgresTemplate
 from pydantic import JsonValue
 
-from tank.agents.jev import JevState
+from tank.agents.decision import DecisionState
 from tank.agents.pipeline import Pipeline
-from tank.agents.pipeline_contracts import ClassificationName, JevScoreRecord, RoutingCandidate
+from tank.agents.pipeline_contracts import ClassificationName, DecisionScoreRecord, RoutingCandidate
 from tank.contracts.repository import Collection
 from tank.contracts.source_items import FeedSourceItem
 from tank.ops_progress import DisabledSourceProgress
@@ -118,7 +118,7 @@ async def test_independent_routing_calls_overlap_preserve_source_updates_and_ded
     pipe = Pipeline(repo, opts, progress=DisabledSourceProgress(), versions=declared_versions_fixture())
     arrived, release, both_blocked = set(), asyncio.Event(), asyncio.Event()
 
-    async def score(item: FeedSourceItem, name: ClassificationName, state: JevState) -> float:
+    async def score(item: FeedSourceItem, name: ClassificationName, state: DecisionState) -> float:
         assert state.event is not None and state.event.statement == marker
         item_id = item.item_id
         assert isinstance(item_id, str)
@@ -161,7 +161,9 @@ async def test_independent_routing_calls_overlap_preserve_source_updates_and_ded
         assert first["extraction_reason"] == "preserved"
         score_calls = 0
 
-        async def duplicate_score(item: FeedSourceItem, name: ClassificationName, state: JevState) -> float:
+        async def duplicate_score(
+            item: FeedSourceItem, name: ClassificationName, state: DecisionState
+        ) -> float:
             nonlocal score_calls
             score_calls += 1
             await asyncio.sleep(0.02)
@@ -218,7 +220,7 @@ async def test_parallel_candidate_scores_survive_retry_without_partial_winner(
         ),
     )
     config: dict[str, dict[str, JsonValue]] = {"registry": {}, "thresholds": {"routing_cutoff": 0.8}}
-    opts = pipeline_settings_fixture(config)
+    opts = pipeline_settings_fixture(config, foundry_api_key="FAKE-offline-key")
     candidates = [
         RoutingCandidate(
             event_id=marker + "-" + key,
@@ -251,7 +253,7 @@ async def test_parallel_candidate_scores_survive_retry_without_partial_winner(
         return httpx.Response(
             200,
             json={
-                "model": "jev-1.13-free",
+                "model": "microsoft-decision-1",
                 "usage": {"input_tokens": 10},
                 "answers": {"same_event": {"type": "noul", "noul": 0.9 if key == "c" else 0.95}},
             },
@@ -391,7 +393,7 @@ async def test_jev_billed_cost_or_explicit_unknown_persists_under_sql_contract(
     """Real SQL constraints accept unknown billing only with its canonical reason."""
 
     repo = isolated_routing_repo
-    opts = pipeline_settings_fixture({"registry": {}, "thresholds": {}})
+    opts = pipeline_settings_fixture({"registry": {}, "thresholds": {}}, foundry_api_key="FAKE_TEST_KEY")
     item = source_item_fixture(new_id("COST-TEST"), source_id="S30", text="Ethereum news")
     calls = []
 
@@ -403,7 +405,7 @@ async def test_jev_billed_cost_or_explicit_unknown_persists_under_sql_contract(
         return httpx.Response(
             200,
             json={
-                "model": "jev-1.13-free",
+                "model": "microsoft-decision-1",
                 "usage": usage,
                 "answers": {"relevant": {"type": "noul", "noul": 0.9}},
             },
@@ -418,11 +420,11 @@ async def test_jev_billed_cost_or_explicit_unknown_persists_under_sql_contract(
     assert len(calls) == 1
     records = await repo.list("ops.llm_usage", filters={"item_id": item.item_id})
     assert len(records) == 1
-    row = Collection("ops.llm_usage", JevScoreRecord).decode(records[0])
-    assert row.billing_basis == "OPENCODE_REPORTED"
+    row = Collection("ops.llm_usage", DecisionScoreRecord).decode(records[0])
+    assert row.billing_basis == "AZURE_FOUNDRY_REPORTED"
     if reported_cost is None:
         assert row.cost_usd is None
-        assert row.missing_fields.cost_usd == row.cost_reason == "OpenCode does not report usage.cost"
+        assert row.missing_fields.cost_usd == row.cost_reason == "Azure Foundry does not report usage.cost"
     else:
         assert row.cost_usd == Decimal(str(reported_cost))
         assert row.cost_reason is None

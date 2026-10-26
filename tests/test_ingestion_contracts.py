@@ -147,8 +147,8 @@ def test_source_configuration_requires_adapter_inputs_and_unique_identities() ->
 
 
 def test_entry_error_variants_preserve_run_identity_and_validate_evidence() -> None:
+    from tank.contracts.source_errors import AccountEntryError, parse_entry_error
     from tank.ops_entry_errors import error_key
-    from tank.sources.errors import AccountEntryError, parse_entry_error
 
     run_error = parse_entry_error({"reason": "RUN_DEGRADED", "account": None})
     assert isinstance(run_error, AccountEntryError)

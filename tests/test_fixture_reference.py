@@ -6,6 +6,8 @@ from pathlib import Path
 import httpx
 import pytest
 from model_fixture import audited_result, model_arguments
+from native_input_fixtures import acknowledge_native_input
+from native_session_fixtures import created_native_session
 from source_support import fixture_versions
 
 from tank.replay import ReplayError, digest, load_inputs, original_replay_messages, recorded_page_access
@@ -870,7 +872,13 @@ async def test_actual_f24_phased_producers_keep_session_and_immutable_checkpoint
         }
         p["records"][0]["record"].update(author="@tier10k", author_label="@tier10k")
         p["records"][1]["record"].update(author_organization="Robinhood")
-    cfg["openma"] = {"agent_id": "analyst", "environment_id": "analysis", "replay_environment_id": "replay"}
+    cfg["openma"] = {
+        "agent_id": "analyst",
+        "environment_id": "analysis",
+        "replay_environment_id": "replay",
+        "prompt_version": "synthetic-phased-replay-prompt",
+        "reasoning_effort": "medium",
+    }
     if publication:
         p["tool_results"] = [
             {
@@ -935,7 +943,7 @@ async def test_actual_f24_phased_producers_keep_session_and_immutable_checkpoint
         seq += 1
         if event["type"] == "session.status_idle":
             settled.update(accepted)
-        await queue.put(f"id: {seq}\ndata: {json.dumps(event)}\n\n".encode())
+        await queue.put(("data: " + json.dumps(event) + "\n\n").encode())
 
     async def tool(name, args, execution) -> None:
         await emit(
@@ -948,7 +956,9 @@ async def test_actual_f24_phased_producers_keep_session_and_immutable_checkpoint
             }
         )
 
-    async def transport_body(request: httpx.Request):
+    native_records = {}
+
+    async def transport_body(request: httpx.Request) -> httpx.Response:
         nonlocal stage, item, eid, claim_id
         route = request.url.path
         if route.endswith("/executions"):
@@ -969,35 +979,35 @@ async def test_actual_f24_phased_producers_keep_session_and_immutable_checkpoint
             )
         if route.endswith("/sessions"):
             if request.method == "GET":
-                return httpx.Response(200, json={"data": []})
+                return httpx.Response(200, json={"data": [], "next_page": None})
             created.append(json.loads(request.content))
-            return httpx.Response(201, json={"id": "phase-session"})
+            native_records["phase-session"] = created_native_session(
+                request,
+                "phase-session",
+                agent_snapshot={
+                    "version": 1,
+                    "system": "Synthetic phased transport actor",
+                    "skills": [],
+                    "tools": [],
+                    "model": {"id": "fixture-model"},
+                },
+            )
+            return httpx.Response(201, json=native_records["phase-session"])
         if route.endswith("/sessions/phase-session"):
             if request.method == "POST":
                 metadata = json.loads(request.content)["metadata"]
                 assert metadata["tank_replay_cutoff"] == view.capture.manifest.cutoff
                 assert metadata["tank_replay_evidence_sha256"] == view.capture.manifest_sha256
-                return httpx.Response(200, json={})
-            return httpx.Response(
-                200,
-                json={
-                    "agent": {
-                        "id": "analyst",
-                        "version": 1,
-                        "system": "Synthetic phased transport actor",
-                        "skills": [],
-                        "tools": [],
-                        "model": {"id": "fixture-model"},
-                    }
-                },
-            )
+                native_records["phase-session"]["metadata"] = metadata
+                return httpx.Response(200, json=native_records["phase-session"])
+            return httpx.Response(200, json=native_records["phase-session"])
         if route.endswith("/archive"):
             return httpx.Response(200, json={})
         if route.endswith("/events/stream"):
             return httpx.Response(200, stream=Stream(), headers={"content-type": "text/event-stream"})
         if route.endswith("/events"):
             if request.method == "GET":
-                return httpx.Response(200, json={"data": []})
+                return httpx.Response(200, json={"data": [], "next_page": None})
             event = json.loads(request.content)["events"][0]
             identity = "accepted-" + str(len(accepted))
             accepted.append(identity)
@@ -1026,7 +1036,7 @@ async def test_actual_f24_phased_producers_keep_session_and_immutable_checkpoint
                     assert first["state"]["ingest.source_items"][0]["item_id"] == "lead"
                     assert "FUTURE_CONFIRMATION_CANARY" not in json.dumps(first)
                 if fail_later and item == "confirmation":
-                    return httpx.Response(200, json={"data": [{"id": identity}]})
+                    return httpx.Response(200, json=acknowledge_native_input(request, identity))
                 await tool("get_item", {"item_id": item}, identity)
             else:
                 result = await audited_result(repo, event)
@@ -1045,7 +1055,7 @@ async def test_actual_f24_phased_producers_keep_session_and_immutable_checkpoint
                                 }
                             )
                             await tool(lookup, arguments, identity)
-                            return httpx.Response(200, json={"data": [{"id": identity}]})
+                            return httpx.Response(200, json=acknowledge_native_input(request, identity))
                     else:
                         if missing_lookup:
                             assert event["is_error"] is True
@@ -1240,7 +1250,7 @@ async def test_actual_f24_phased_producers_keep_session_and_immutable_checkpoint
                             "stop_reason": {"type": "end_turn"},
                         }
                     )
-            return httpx.Response(200, json={"data": [{"id": identity}]})
+            return httpx.Response(200, json=acknowledge_native_input(request, identity))
         raise AssertionError(route)
 
     async def transport(request: httpx.Request):
@@ -1278,7 +1288,7 @@ async def test_actual_f24_phased_producers_keep_session_and_immutable_checkpoint
         repo,
         config,
         reaction_truth,
-        DecisionEngine(config),
+        DecisionEngine(),
         reference_clock=TrustedFixtureClock(inputs),
         versions=fixture_versions(),
         scheduler=reaction_scheduler,

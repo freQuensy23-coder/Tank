@@ -64,7 +64,7 @@ def settings(
         documents=config,
         tool_reader=Settings(_env_file=None).read_config_json,
         openrouter_api_key="secret",
-        opencode_api_key=None,
+        foundry_api_key="FAKE_FOUNDRY_KEY",
         replay=False,
         ops_progress_enabled=False,
         openma_api_key="secret",
@@ -124,7 +124,7 @@ async def test_filter_requires_calibration_and_logs_typed_usage() -> None:
         return httpx.Response(
             200,
             json={
-                "model": "jev-1.13-free",
+                "model": "microsoft-decision-1",
                 "answers": {"relevant": {"type": "noul", "noul": 0.9}},
                 "usage": {"input_tokens": 100, "output_tokens": 0, "cost": "0.0000042"},
             },
@@ -148,8 +148,8 @@ async def test_filter_requires_calibration_and_logs_typed_usage() -> None:
     assert len(jobs) == 1 and jobs[0]["type"] == "ROUTE_ITEM"
     usage = await repo.list("ops.llm_usage")
     assert usage[0]["cost_usd"] == "0.0000042"
-    assert usage[0]["billing_basis"] == "OPENCODE_REPORTED"
-    assert usage[0]["endpoint"] == "https://opencode.ai/inference/systemone/v1/systemone"
+    assert usage[0]["billing_basis"] == "AZURE_FOUNDRY_REPORTED"
+    assert usage[0]["endpoint"] == "https://synthetic.services.ai.azure.com/providers/microsoft/v1/systemone"
 
 
 @pytest.mark.asyncio
@@ -193,7 +193,7 @@ async def test_routing_whole_word_alias_three_day_and_best_score() -> None:
         return httpx.Response(
             200,
             json={
-                "model": "jev-1.13-free",
+                "model": "microsoft-decision-1",
                 "answers": {"same_event": {"type": "noul", "noul": 0.95 if event == "best" else 0.85}},
                 "usage": {"input_tokens": 100},
             },
@@ -333,7 +333,9 @@ async def test_sse_resume_and_paginated_recovery_dedup_usage() -> None:
             return httpx.Response(
                 200,
                 headers={"content-type": "text/event-stream"},
-                text="id: 4\nevent: span.model_request_end\ndata: " + json.dumps(event) + "\n\n",
+                text="id: 4\nevent: span.model_request_end\ndata: "
+                + json.dumps({**event, "seq": 4})
+                + "\n\n",
             )
         if req.url.params.get("page") == "next":
             return httpx.Response(200, json={"data": [event], "next_page": None})
@@ -421,14 +423,14 @@ async def test_canonical_event_routing_and_added_message() -> None:
     def handler(req):
         body = json.loads(req.content)
         posted.append(body)
-        if req.url.host == "opencode.ai":
-            assert req.url.path == "/inference/systemone/v1/systemone"
+        if req.url.host == "synthetic.services.ai.azure.com":
+            assert req.url.path == "/providers/microsoft/v1/systemone"
             assert body["state"]["event"]["stage"] == "live"
             assert body["state"]["event"]["tokens"] == ["AAVE"]
             return httpx.Response(
                 200,
                 json={
-                    "model": "jev-1.13-free",
+                    "model": "microsoft-decision-1",
                     "answers": {"same_event": {"type": "noul", "noul": 0.99}},
                     "usage": {"input_tokens": 100},
                 },
@@ -520,6 +522,7 @@ async def test_slow_denial_turn_remains_until_exit_update_delivered(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     from tank.analysis import cards
+    from tank.analysis.card_contracts import CardInputs
     from tank.analysis.decisions import DecisionEngine
     from tank.event_tools import EventToolService
     from tank.settings import Settings
@@ -530,7 +533,7 @@ async def test_slow_denial_turn_remains_until_exit_update_delivered(
         repo,
         opts,
         None,
-        DecisionEngine(opts),
+        DecisionEngine(),
         versions=declared_versions_fixture(),
         scheduler=RecordingReactionScheduling(),
         pages=LivePageAccess(fixture_http_admission()),
@@ -545,7 +548,9 @@ async def test_slow_denial_turn_remains_until_exit_update_delivered(
             "certainty": "HIGH",
             "event_state": "DEPLOYED",
             "state_verified": True,
-            "lifecycle": "ALERTED",
+            "lifecycle": "MONITORING",
+            "next_milestone": None,
+            "contradictions": [],
             "current_ems_id": "ems",
             "public_at": now,
             "known_to_us_at": now,
@@ -561,6 +566,9 @@ async def test_slow_denial_turn_remains_until_exit_update_delivered(
             "ems_id": "ems",
             "event_id": "evt_1",
             "class": "MAJOR",
+            "criterion": "A deployed product announcement is the recorded synthetic major event.",
+            "impact_horizon": {"impact_start": "UNKNOWN"},
+            "all_dependencies_within_24h": None,
             "dims": {
                 key: {"value": None, "reason": "NO_ESTIMATE"}
                 for key in (
@@ -576,7 +584,25 @@ async def test_slow_denial_turn_remains_until_exit_update_delivered(
         },
     )
     await repo.put(
-        "evt.beneficiary_maps", "map", {"event_id": "evt_1", "map_version": 1, "analysis_set": ["world:WLD"]}
+        "evt.beneficiary_maps",
+        "map",
+        {
+            "event_id": "evt_1",
+            "map_version": 1,
+            "analysis_set": ["world:WLD"],
+            "least_repriced_edge": None,
+            "no_credible_secondary_reason": "The synthetic announcement names only the product issuer.",
+            "layers": {
+                "ISSUER_PRODUCT": {"note": "Only the named product issuer is identified."},
+                "VENUE_DEX": {"note": "The announcement identifies no venue relationship."},
+                "SETTLEMENT_L1_L2": {"note": "The announcement identifies no settlement relationship."},
+                "LIQUIDITY_EXECUTION": {"note": "The announcement identifies no liquidity relationship."},
+                "LENDING_COLLATERAL": {"note": "The announcement identifies no lending relationship."},
+                "ORACLE_DATA": {"note": "The announcement identifies no oracle relationship."},
+                "INTEROPERABILITY": {"note": "The announcement identifies no interoperability relationship."},
+                "CUSTODY_COMPLIANCE": {"note": "The announcement identifies no custody relationship."},
+            },
+        },
     )
     await repo.put(
         "evt.beneficiary_edges",
@@ -588,6 +614,12 @@ async def test_slow_denial_turn_remains_until_exit_update_delivered(
             "role": "PRIMARY",
             "credible": True,
             "tradable": True,
+            "capture_class": "UNKNOWN",
+            "exposure_score": None,
+            "thesis_link_credible": None,
+            "evidence": [],
+            "layer": "ISSUER_PRODUCT",
+            "causal_chain": "The announced product belongs to the named issuer.",
             "map_version": 1,
         },
     )
@@ -599,13 +631,54 @@ async def test_slow_denial_turn_remains_until_exit_update_delivered(
             "event_id": "evt_1",
             "token_id": "world:WLD",
             "cutoff": now,
-            "data_confidence": {"class": "LOW"},
+            "data_confidence": {"class": "LOW", "limiting": None},
+            "decisive_facts": [],
+            "class_confidence": "LOW",
+            "move_class": "UNKNOWN",
+            "primary_window": "EVENT",
+            "relative": {
+                "repricing_band": None,
+                "market_context": None,
+                "entry_ref_price": None,
+                "anchor": {"ref_price": None},
+                "windows": {"EVENT": {"r_raw": None, "r_btc_adj": None}},
+                "context_inputs": {"return_normal_range": None, "btc_return_24h": None},
+            },
+            "liquidity": {"window": "EVENT", "start": None, "cutoff": now, "reason": "INCOMPLETE"},
+            "spot": {
+                "EVENT": {
+                    "window": "EVENT",
+                    "direction": None,
+                    "classification": None,
+                    "exact_majority": {"sell": None},
+                    "coverage": {"n_complete": None, "excluded": []},
+                    "venues": [],
+                }
+            },
+            "derivatives": {
+                "window": "W4H",
+                "synchronized": None,
+                "per_venue": [],
+                "windows": {"W4H": {"synchronized": None, "per_venue": []}},
+            },
+            "supply": {"holders_revenue": {"protocols": []}},
+            "divergence": {"state": "UNKNOWN", "unresolved": []},
+            "alternatives": [],
         },
     )
     await repo.put(
         "ana.calls",
         "call",
-        {"call_id": "call", "event_id": "evt_1", "token_id": "world:WLD", "status": "OPEN", "opened_at": now},
+        {
+            "call_id": "call",
+            "event_id": "evt_1",
+            "token_id": "world:WLD",
+            "status": "OPEN",
+            "opened_at": now,
+            "opened_at_prec": "COLLECTION_ONLY",
+            "opened_at_prec_reason": None,
+            "invalidation_price": "0.9",
+        },
     )
     await repo.put(
         "ingest.source_items",
@@ -637,9 +710,10 @@ async def test_slow_denial_turn_remains_until_exit_update_delivered(
     ) as http:
         service = SessionService(repo, opts, tools.dispatch, http=http, versions=declared_versions_fixture())
 
-        monkeypatch.setattr(
-            cards, "compose_card", lambda *a, **k: "Original product card" + "\n" + score_summary(a[1])
-        )
+        def original_card(inputs: CardInputs) -> str:
+            return "Original product card" + "\n" + score_summary(inputs.assessment.scores)
+
+        monkeypatch.setattr(cards, "compose_card", original_card)
         await service.process_event(
             "ses_1",
             {
@@ -709,9 +783,11 @@ async def test_slow_denial_turn_remains_until_exit_update_delivered(
         )
         decision = (await repo.get("ops.tool_calls", "ses_1:decision_exit"))["result"]
         assert decision["action"] == "EXIT"
-        monkeypatch.setattr(
-            cards, "compose_card", lambda *a, **k: "EXIT: Official cancellation" + "\n" + score_summary(a[1])
-        )
+
+        def exit_card(inputs: CardInputs) -> str:
+            return "EXIT: Official cancellation" + "\n" + score_summary(inputs.assessment.scores)
+
+        monkeypatch.setattr(cards, "compose_card", exit_card)
         await service.process_event(
             "ses_1",
             {
@@ -798,7 +874,7 @@ async def test_concurrent_items_without_event_candidates_open_distinct_idempoten
     creates, messages = [], []
 
     def handler(request: httpx.Request):
-        assert request.url.host != "opencode.ai"
+        assert request.url.host != "synthetic.services.ai.azure.com"
         if request.method == "GET":
             return httpx.Response(200, json={"data": [], "next_page": None})
         body = json.loads(request.content)
@@ -1038,7 +1114,7 @@ async def test_routing_and_resume_find_late_history_with_one_row_pages() -> None
         return httpx.Response(
             200,
             json={
-                "model": "jev-1.13-free",
+                "model": "microsoft-decision-1",
                 "answers": {
                     "same_event": {"type": "noul", "noul": 0.99 if "event" in body["state"] else 0.85}
                 },
@@ -1504,3 +1580,283 @@ async def test_explicit_missing_native_session_never_falls_back_to_creation(
         await service.close()
     assert not calls
     assert await repo.list("ops.agent_sessions") == []
+
+
+@pytest.mark.asyncio
+async def test_missing_native_followup_records_absence_without_termination_or_input() -> None:
+    from tank.telegram_inbox import GONE_TEXT
+
+    repo = MemoryRepository()
+    opts, _ = settings()
+    await seed_session(repo)
+    await repo.put(
+        "out.user_questions",
+        "question",
+        {
+            "question_id": "question",
+            "session_id": "ses_1",
+            "status": "PENDING",
+            "answer_status": None,
+            "text": "Can the analysis continue?",
+        },
+    )
+    calls: list[tuple[str, str]] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls.append((request.method, request.url.path))
+        return httpx.Response(404, json={"error": "synthetic-private-provider-message"})
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http:
+        service = SessionService(repo, opts, None, http=http, versions=declared_versions_fixture())
+        result = await service.send_message(
+            {"kind": "USER_QUESTION", "session_id": "ses_1", "question_id": "question"}
+        )
+        await service.close()
+    assert result is None
+    assert calls == [("GET", "/v1/sessions/ses_1")]
+    stored = await repo.get("ops.agent_sessions", "ses_1")
+    assert stored is not None
+    remote = stored["remote_state"]
+    assert isinstance(remote, dict)
+    assert remote["kind"] == "MISSING" and remote["missing"] is True
+    assert "status" not in remote and "termination_receipt" not in stored
+    assert remote["checked_at_prec"] == "COLLECTION_ONLY"
+    answer = await repo.get("out.user_questions", "question")
+    assert answer is not None
+    assert answer["answer_status"] == "NO_SESSION" and answer["reason_text"] == GONE_TEXT
+    assert len(await repo.list("ops.jobs", filters={"type": "TELEGRAM_ANSWER"})) == 1
+
+
+@pytest.mark.asyncio
+async def test_preliminary_denial_archive_requires_exact_corrected_revision_delivery() -> None:
+    repo = MemoryRepository()
+    opts, _ = settings()
+    event: dict[str, JsonValue] = {"event_id": "event", "lifecycle": "INVALIDATED"}
+    session: dict[str, JsonValue] = {"session_id": "session", "runtime_status": "IDLE"}
+    await repo.put(
+        "out.alerts",
+        "preliminary:1",
+        {
+            "event_id": "event",
+            "alert_id": "preliminary",
+            "version": 1,
+            "kind": "PRELIMINARY",
+            "terminal_correction": False,
+        },
+    )
+
+    def forbidden(request: httpx.Request) -> httpx.Response:
+        raise AssertionError("Archive eligibility must not invoke native HTTP")
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(forbidden)) as http:
+        service = SessionService(repo, opts, None, http=http, versions=declared_versions_fixture())
+        assert not await service.can_archive(session, event)
+        event["session_finalized_at"] = clock_iso()
+        assert not await service.can_archive(session, event)
+        await repo.put(
+            "out.alerts",
+            "preliminary:2",
+            {
+                "event_id": "event",
+                "alert_id": "preliminary",
+                "version": 2,
+                "kind": "PRELIMINARY",
+                "terminal_correction": True,
+            },
+        )
+        assert not await service.can_archive(session, event)
+        await repo.put(
+            "out.deliveries",
+            "earlier",
+            {"alert_id": "preliminary", "version": 1, "status": "SENT"},
+        )
+        assert not await service.can_archive(session, event)
+        await repo.put(
+            "out.deliveries",
+            "correction",
+            {"alert_id": "preliminary", "version": 2, "status": "SENT"},
+        )
+        assert await service.can_archive(session, event)
+
+
+@pytest.mark.asyncio
+async def test_preliminary_correction_cannot_finalize_an_existing_ordinary_chain() -> None:
+    repo = MemoryRepository()
+    opts, _ = settings()
+    event: dict[str, JsonValue] = {
+        "event_id": "event",
+        "lifecycle": "INVALIDATED",
+        "session_finalized_at": clock_iso(),
+    }
+    session: dict[str, JsonValue] = {"session_id": "session", "runtime_status": "IDLE"}
+    await repo.put(
+        "out.alerts",
+        "ordinary:1",
+        {"event_id": "event", "alert_id": "ordinary", "version": 1, "kind": "FULL"},
+    )
+    await repo.put(
+        "out.alerts",
+        "preliminary:9",
+        {
+            "event_id": "event",
+            "alert_id": "preliminary",
+            "version": 9,
+            "kind": "PRELIMINARY",
+            "terminal_correction": True,
+        },
+    )
+    await repo.put(
+        "out.deliveries",
+        "preliminary",
+        {"alert_id": "preliminary", "version": 9, "status": "SENT"},
+    )
+    async with httpx.AsyncClient() as http:
+        service = SessionService(repo, opts, None, http=http, versions=declared_versions_fixture())
+        assert not await service.can_archive(session, event)
+        await repo.put(
+            "out.alerts",
+            "ordinary:2",
+            {"event_id": "event", "alert_id": "ordinary", "version": 2, "kind": "UPDATE"},
+        )
+        assert not await service.can_archive(session, event)
+        await repo.put(
+            "out.deliveries",
+            "ordinary",
+            {"alert_id": "ordinary", "version": 2, "status": "SENT"},
+        )
+        assert await service.can_archive(session, event)
+
+
+@pytest.mark.asyncio
+async def test_closed_event_does_not_require_unused_denial_card_metadata() -> None:
+    repo = MemoryRepository()
+    opts, _ = settings()
+    await repo.put("out.alerts", "retained", {"event_id": "event", "alert_id": "retained"})
+    async with httpx.AsyncClient() as http:
+        service = SessionService(repo, opts, None, http=http, versions=declared_versions_fixture())
+        assert await service.can_archive(
+            {"session_id": "session", "runtime_status": "IDLE"},
+            {"event_id": "event", "lifecycle": "CLOSED"},
+        )
+
+
+@pytest.mark.asyncio
+async def test_unknown_card_revision_cannot_be_ranked_below_a_sent_terminal_update() -> None:
+    repo = MemoryRepository()
+    opts, _ = settings()
+    await repo.put(
+        "out.alerts",
+        "ordinary:1",
+        {"event_id": "event", "alert_id": "ordinary", "version": 1, "kind": "UPDATE"},
+    )
+    await repo.put(
+        "out.alerts",
+        "unknown-revision",
+        {"event_id": "event", "alert_id": "ordinary", "kind": "UPDATE"},
+    )
+    await repo.put(
+        "out.deliveries",
+        "ordinary",
+        {"alert_id": "ordinary", "version": 1, "status": "SENT"},
+    )
+    async with httpx.AsyncClient() as http:
+        service = SessionService(repo, opts, None, http=http, versions=declared_versions_fixture())
+        with pytest.raises(KeyError, match="version"):
+            await service.can_archive(
+                {"session_id": "session", "runtime_status": "IDLE"},
+                {"event_id": "event", "lifecycle": "INVALIDATED", "session_finalized_at": clock_iso()},
+            )
+
+
+@pytest.mark.asyncio
+async def test_watch_modes_validate_before_actual_dispatch_mutates_conditions(tmp_path: Path) -> None:
+    from scheduler_support import operational_reaction_services
+    from source_support import fixture_request_budgets
+
+    from tank.analysis.decisions import DecisionEngine
+    from tank.analysis.watch_contracts import TimedReviewCondition, WatchCondition, parse_watch_condition
+    from tank.contracts.tool_schema import ToolSchemaError
+    from tank.event_tools import EventToolService
+    from tank.util import canonical_json, parse_time
+
+    repo = MemoryRepository()
+    opts = Settings(_env_file=None, data_dir=tmp_path, ops_progress_enabled=False)
+    versions = declared_versions_fixture()
+    await repo.put("evt.events", "event", {"event_id": "event", "lifecycle": "TRACKED"})
+    async with operational_reaction_services(
+        repo, opts, versions=versions, budgets=fixture_request_budgets()
+    ) as services:
+        tools = EventToolService(
+            repo,
+            opts,
+            services.truth,
+            DecisionEngine(),
+            versions=versions,
+            scheduler=services.scheduler,
+            pages=LivePageAccess(services.admission),
+        )
+        metric_result = await tools.dispatch(
+            "set_watch_condition",
+            {
+                "event_id": "event",
+                "action": "ARM",
+                "token_id": "world:WLD",
+                "conditions": [{"metric": "event.state", "op": "==", "value": "LIVE"}],
+            },
+            {"role": "system"},
+        )
+        assert isinstance(metric_result, dict) and metric_result["accepted"] is True
+        metric = metric_result["condition"]
+        assert isinstance(metric, dict) and isinstance(parse_watch_condition(metric), WatchCondition)
+        cond_id = metric["cond_id"]
+        assert isinstance(cond_id, str)
+        timed_result = await tools.dispatch(
+            "set_watch_condition",
+            {
+                "event_id": "event",
+                "action": "ARM",
+                "review_at": iso(utcnow() + timedelta(hours=1)),
+                "review_question": "Did the regulator publish its stated decision?",
+            },
+            {"role": "system"},
+        )
+        assert isinstance(timed_result, dict) and timed_result["accepted"] is True
+        timed = timed_result["condition"]
+        assert isinstance(timed, dict) and isinstance(parse_watch_condition(timed), TimedReviewCondition)
+        created, expiry = timed["created_at"], timed["expires_at"]
+        assert isinstance(created, str) and isinstance(expiry, str)
+        assert parse_time(expiry) - parse_time(created) == timedelta(hours=72)
+        original = await repo.get("ana.watch_conditions", cond_id)
+        assert original is not None
+        before = canonical_json(original)
+        private = "SYNTHETIC_PRIVATE_REVIEW_TEXT"
+        for invalid in (
+            {
+                "event_id": "event",
+                "action": "DISARM",
+                "cond_id": cond_id,
+                "review_at": iso(utcnow() + timedelta(hours=2)),
+                "review_question": private,
+            },
+            {
+                "event_id": "event",
+                "action": "ARM",
+                "review_at": iso(utcnow() + timedelta(hours=3)),
+                "review_question": private,
+                "text": "Forbidden second description",
+            },
+        ):
+            with pytest.raises(ValueError) as rejected:
+                await tools.dispatch("set_watch_condition", invalid, {"role": "system"})
+            assert not isinstance(rejected.value, ToolSchemaError)
+            assert private not in str(rejected.value)
+            current = await repo.get("ana.watch_conditions", cond_id)
+            assert current is not None and canonical_json(current) == before
+            assert len(await repo.list("ana.watch_conditions")) == 2
+            assert await repo.list("ops.jobs") == []
+        disarmed = await tools.dispatch(
+            "set_watch_condition",
+            {"event_id": "event", "action": "DISARM", "cond_id": cond_id},
+            {"role": "system"},
+        )
+        assert isinstance(disarmed, dict) and disarmed["status"] == "CANCELLED"

@@ -38,6 +38,8 @@ async def test_fresh_import_rederives_policy_without_old_classifier_outputs(
             "semantics": {},
             "dependency_map": {},
             "openma": {
+                "prompt_version": "synthetic-replay-policy-prompt",
+                "reasoning_effort": "medium",
                 "agent_id": "fixture-agent",
                 "environment_id": "live",
                 "replay_environment_id": "replay",
