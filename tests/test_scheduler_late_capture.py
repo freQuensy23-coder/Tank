@@ -459,6 +459,29 @@ async def run_after_failed_peer(
     command = reaction_command_from_wire(original.payload)
     assert isinstance(command, RevisedReactionCommand)
     source_payload = canonical_json(original.payload)
+    prior_peers: list[JobEnvelope] = []
+    async for record in repo.iter_all("ops.jobs", filters={"type": "REACTION_CAPTURE", "status": "DONE"}):
+        candidate = JobEnvelope.model_validate(record)
+        request = reaction_command_from_wire(candidate.payload)
+        if (
+            isinstance(request, RevisedReactionCommand)
+            and (request.event_id, request.token_id, request.checkpoint)
+            == (command.event_id, command.token_id, command.checkpoint)
+            and request.change_id != command.change_id
+        ):
+            assert candidate.expires_at is not None
+            prior_peers.append(candidate)
+    assert prior_peers
+    prior_peer = min(prior_peers, key=lambda job: job.job_id)
+    assert prior_peer.expires_at is not None and prior_peer.priority == original.priority
+    assert parse_time(prior_peer.expires_at) < parse_time(original.expires_at)
+    peer_source_payload = canonical_json(prior_peer.payload)
+    peer_expiry = Timestamp(
+        prior_peer.expires_at,
+        prior_peer.expires_at_prec,
+        prior_peer.expires_at_prec_reason,
+        prior_peer.expires_at_bucket_anchor,
+    )
     original_expiry = Timestamp(
         original.expires_at,
         original.expires_at_prec,
@@ -510,11 +533,11 @@ async def run_after_failed_peer(
                 await first_claimed.wait()
                 peer = await jobs.enqueue(
                     "REACTION_CAPTURE",
-                    original.payload,
+                    prior_peer.payload,
                     "reaction-fixture-peer:" + original.job_id,
-                    priority=1,
+                    priority=prior_peer.priority,
                     max_attempts=1,
-                    expires_at=original_expiry,
+                    expires_at=peer_expiry,
                 )
                 peer_id = peer.job_id
                 release_first.set()
@@ -622,6 +645,8 @@ async def run_after_failed_peer(
     assert peer_id is not None
     peer_state = await jobs.get(peer_id)
     assert peer_state is not None and peer_state.status == "FAILED" and peer_state.attempts == 1
+    assert canonical_json(peer_state.payload) == peer_source_payload
+    assert peer_state.expires_at == prior_peer.expires_at
     return ReactionWorkerRun(receipts=[receipt], auxiliary_job_ids=(peer_id,))
 
 
