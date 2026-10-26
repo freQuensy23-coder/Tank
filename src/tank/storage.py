@@ -2462,6 +2462,27 @@ async def _iter_metadata(
         raise ValueError("fields must contain1..50 top-level string names")
     if batch_size < 1:
         raise ValueError("batch_size must be positive")
+    from tank import clickhouse_market as chm
+
+    if isinstance(self, MemoryRepository) and chm.client(self, collection) is None:
+        after_key: str | None = None
+        while True:
+            metadata_page: list[tuple[str, Record]] = []
+            async with self._read():
+                for key, row in sorted(self._data.get(collection, {}).items()):
+                    if after_key is not None and key <= after_key:
+                        continue
+                    if all(name in row and row[name] == value for name, value in (filters or {}).items()):
+                        metadata_page.append(
+                            (key, copy.deepcopy({field: row.get(field) for field in fields}))
+                        )
+                        if len(metadata_page) == batch_size:
+                            break
+            for _, metadata in metadata_page:
+                yield metadata
+            if len(metadata_page) < batch_size:
+                return
+            after_key = metadata_page[-1][0]
     if not isinstance(self, PostgresRepository) or collection in MARKET_COLUMNS:
         async for row in self.iter_all(collection, filters=filters, batch_size=batch_size):
             yield {field: row.get(field) for field in fields}

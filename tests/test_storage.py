@@ -1415,3 +1415,76 @@ async def test_memory_json_refusal_preserves_the_existing_immutable_document(inv
             "ops.scheduler_checkpoints", "finite-checkpoint", {**record, "state": {"counter": invalid}}
         )
     assert await repo.get("ops.scheduler_checkpoints", "finite-checkpoint") == record
+
+
+async def test_metadata_projection_preserves_raw_names_filter_absence_and_page_isolation(
+    repo: StorageBackend,
+) -> None:
+    prefix = new_id("metadata")
+    at = clock_iso()
+
+    def checkpoint(suffix: str) -> Record:
+        return {
+            "checkpoint_id": prefix + suffix,
+            "scan_group": prefix,
+            "at": at,
+            "at_prec": "COLLECTION_ONLY",
+            "at_prec_reason": None,
+            "state": {"values": [1]},
+        }
+
+    await repo.put("ops.scheduler_checkpoints", prefix + "a", checkpoint("a"))
+    await repo.put("ops.scheduler_checkpoints", prefix + "c", {**checkpoint("c"), "marker": None})
+    await repo.put("ops.scheduler_checkpoints", prefix + "e", {**checkpoint("e"), "marker": "present"})
+    explicit_null = [
+        row
+        async for row in repo.iter_metadata(
+            "ops.scheduler_checkpoints",
+            ("checkpoint_id", "marker"),
+            filters={"scan_group": prefix, "marker": None},
+            batch_size=1,
+        )
+    ]
+    assert explicit_null == [{"checkpoint_id": prefix + "c", "marker": None}]
+    stream = repo.iter_metadata(
+        "ops.scheduler_checkpoints",
+        ("checkpoint_id", "at", "at_precision", "state", "missing"),
+        filters={"scan_group": prefix},
+        batch_size=1,
+    )
+    first = await anext(stream)
+    assert first["checkpoint_id"] == prefix + "a" and first["at"] == at
+    assert first["at_precision"] is None and first["missing"] is None
+    state = first["state"]
+    assert isinstance(state, dict)
+    values = state["values"]
+    assert isinstance(values, list)
+    values.append(99)
+    assert present(await repo.get("ops.scheduler_checkpoints", prefix + "a"))["state"] == {"values": [1]}
+    await repo.put("ops.scheduler_checkpoints", prefix + "0", checkpoint("0"))
+    await repo.put("ops.scheduler_checkpoints", prefix + "b", checkpoint("b"))
+    rest = [row async for row in stream]
+    assert [row["checkpoint_id"] for row in rest] == [prefix + suffix for suffix in ("b", "c", "e")]
+    with pytest.raises(ValueError, match="metadata rollback"):
+        async with repo.transaction():
+            await repo.put(
+                "ops.scheduler_checkpoints", prefix + "a", {**checkpoint("a"), "state": {"values": [9]}}
+            )
+            own_write = [
+                row
+                async for row in repo.iter_metadata(
+                    "ops.scheduler_checkpoints",
+                    ("state",),
+                    filters={"checkpoint_id": prefix + "a"},
+                    batch_size=1,
+                )
+            ]
+            assert own_write == [{"state": {"values": [9]}}]
+            raise ValueError("metadata rollback")
+    restored = [
+        row
+        async for row in repo.iter_metadata(
+            "ops.scheduler_checkpoints", ("state",), filters={"checkpoint_id": prefix + "a"}, batch_size=1
+        )
+    ]
+    assert restored == [{"state": {"values": [1]}}]
