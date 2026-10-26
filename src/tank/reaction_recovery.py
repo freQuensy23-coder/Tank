@@ -34,7 +34,7 @@ from tank.contracts.scheduler_results import (
 )
 from tank.contracts.stored_documents import ImmutableDocument, NativeBackfillWitness
 from tank.runtime_reaction import reaction_job_command
-from tank.time_precision import propagate_timestamp
+from tank.time_precision import propagate_timestamp, reconcile_precision
 from tank.util import parse_time, sha256
 
 type RecoveryWitnessIndex = Mapping[
@@ -266,9 +266,12 @@ def recovery_eligibility(evidence: ReactionRecoveryEvidence) -> ReactionRecovery
         return ReactionRecoveryUnresolved(kind="UNRESOLVED", reason="CHECKPOINT_CLOCK_UNREPORTED")
     if (
         parse_time(anchor.value) != parse_time(source.anchor.value)
-        or anchor.precision != source.anchor.precision
         or anchor.bucket_anchor != source.anchor.bucket_anchor
     ):
+        return ReactionRecoveryUnresolved(kind="UNRESOLVED", reason="CHECKPOINT_SCOPE_MISMATCH")
+    try:
+        reconcile_precision((anchor.precision, source.anchor.precision), field="anchor")
+    except ValueError:
         return ReactionRecoveryUnresolved(kind="UNRESOLVED", reason="CHECKPOINT_SCOPE_MISMATCH")
     if parse_time(checkpoint.captured_at.value) >= parse_time(source.finished_at.value):
         return ReactionRecoveryUnresolved(kind="UNRESOLVED", reason="SOURCE_MAY_ALREADY_BE_CAPTURED")

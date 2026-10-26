@@ -449,3 +449,19 @@ def test_source_projection_preserves_reported_bucket_orientation() -> None:
         }
     )
     assert source.anchor.bucket_anchor == "END"
+
+
+def test_equivalent_known_bucket_units_preserve_the_same_declared_scope() -> None:
+    fields = recovery_evidence_fields()
+    source = fields["source"]
+    checkpoint = fields["checkpoint"]
+    assert isinstance(source, dict) and isinstance(checkpoint, dict)
+    source["anchor"] = Timestamp("2026-10-19T00:00:00Z", "BUCKET(60m)", bucket_anchor="START").model_dump(
+        mode="json"
+    )
+    checkpoint["anchor"] = {
+        "type": "T0",
+        **Timestamp("2026-10-19T00:00:00Z", "BUCKET(1h)", bucket_anchor="START").fields("ts"),
+    }
+    result = recovery_eligibility(ReactionRecoveryEvidence.model_validate(fields))
+    assert result.kind == "ELIGIBLE"
