@@ -43,12 +43,15 @@ from tank.analysis.condition_graph_contracts import (
     ConditionIncrementalVolumes,
     ConditionLiquidations,
     ConditionNativeVolumeSupport,
+    ConditionNoPositiveSupplyEvidence,
     ConditionObservedFieldFailure,
     ConditionObservedFundingDispersion,
     ConditionObservedIncrementalVolume,
     ConditionObservedPredicate,
     ConditionOpenInterest,
+    ConditionPositiveSupplyEvidence,
     ConditionPredicate,
+    ConditionReceiptVisibility,
     ConditionReferenceTradeEvidenceRef,
     ConditionReferenceTradeProjection,
     ConditionRelativeGraph,
@@ -56,6 +59,7 @@ from tank.analysis.condition_graph_contracts import (
     ConditionRelativeWindow,
     ConditionScheduledUnlock,
     ConditionSpotValues,
+    ConditionSupplyGraph,
     ConditionSynchronizedOpenInterest,
     ConditionWalletFlow,
     ConditionWalletFlowEvidenceRef,
@@ -80,6 +84,7 @@ from tank.analysis.condition_graph_contracts import (
     UnavailableConditionLeadLag,
     UnavailableConditionOpenInterest,
     UnavailableConditionSizeProfile,
+    UnavailableConditionSupplyObservation,
     UnrequestedConditionFunding,
     UnrequestedConditionOpenInterest,
     WindowedConditionSpot,
@@ -1544,4 +1549,99 @@ def encode_condition_chain_liquidity(
     result.update(_clock_wire(chain.observed_at, "observed_at"))
     if isinstance(current, SelectedConditionStablecoinPoint):
         result.update(_clock_wire(current.observed_at, "supply_usd_observed_at"))
+    return result
+
+
+def _supply_visibility_failure(value: ConditionReceiptVisibility) -> str | None:
+    visibility = value.eligible()
+    if isinstance(visibility, ConditionObservedPredicate):
+        return None if visibility.value else "RECEIVED_AFTER_ASSEMBLY"
+    return "RECEIPT_VISIBILITY_UNPROVEN"
+
+
+def encode_condition_supply(
+    value: ConditionSupplyGraph,
+    evidence: ConditionSupplyEvidenceLookup,
+    *,
+    clocks: ConditionWireClocks,
+) -> dict[str, JsonValue]:
+    supply = ConditionSupplyGraph.model_validate(value)
+    context = ConditionWireClocks.model_validate(clocks)
+    if supply.token_id != context.token_id:
+        raise ValueError("Supply serialization cannot borrow another token's clock context")
+    bounds = context.bounds(supply.interval)
+    unavailable: dict[str, JsonValue] = {}
+    if isinstance(supply.exchange_inventory, ComparableConditionExchangeInventory):
+        inventory = encode_condition_exchange_inventory(supply.exchange_inventory, clocks=context)
+        failure = _supply_visibility_failure(supply.exchange_inventory.current_visibility)
+        if failure is not None:
+            unavailable["exchange_inventory"] = failure
+    else:
+        inventory = {"value": None, "reason": supply.exchange_inventory.reason}
+        unavailable["exchange_inventory"] = supply.exchange_inventory.reason
+    wallet = supply.wallet_flows
+    if isinstance(wallet, CapturedConditionWalletFlows):
+        wallet_wire = encode_condition_wallet_flows(wallet, evidence)
+        observation = wallet.observed_evidence()
+        if isinstance(observation, UnavailableConditionSupplyObservation):
+            unavailable["flows"] = observation.reason
+        flows = wallet_wire["flows"]
+    else:
+        flows = []
+        wallet_wire = _model_wire(wallet)
+        unavailable["flows"] = wallet.reason
+    unlocks = supply.unlocks
+    if isinstance(unlocks, CapturedConditionUnlocks):
+        unlock_wire = encode_condition_unlocks(unlocks, evidence)
+        schedules = unlock_wire["unlocks_next_14d"]
+        failure = _supply_visibility_failure(unlocks.visibility)
+        if failure is not None:
+            unavailable["unlocks"] = failure
+    else:
+        schedules = []
+        unlock_wire = _model_wire(unlocks)
+        unavailable["unlocks"] = unlocks.reason
+    lending = supply.lending
+    if isinstance(lending, CapturedConditionLending):
+        lending_wire = encode_condition_lending(lending, evidence)
+        failure = _supply_visibility_failure(lending.current_visibility)
+        if failure is not None:
+            unavailable["lending"] = failure
+    else:
+        lending_wire = {"value": None, "reason": lending.reason}
+        unavailable["lending"] = lending.reason
+    primary_chain = supply.primary_chain_context()
+    if isinstance(primary_chain, CapturedConditionChainLiquidity):
+        failure = _supply_visibility_failure(primary_chain.visibility)
+        if failure is not None:
+            unavailable["stablecoin_chain"] = failure
+    else:
+        unavailable["stablecoin_chain"] = primary_chain.reason
+    presence = supply.evidence()
+    result: dict[str, JsonValue] = {
+        "token_id": supply.token_id,
+        "window": supply.interval.window,
+        "holders_revenue": encode_condition_holders_revenue(supply.holders_revenue, clocks=context),
+        "exchange_inventory": inventory,
+        "flows": flows,
+        "wallet_flow_observation": wallet_wire,
+        "unlocks_next_14d": schedules,
+        "unlock_schedule": unlock_wire,
+        "lending": lending_wire,
+        "stablecoin_chain": encode_condition_chain_liquidity(primary_chain, clocks=context),
+        "chain_contexts": [
+            encode_condition_chain_liquidity(chain, clocks=context) for chain in supply.chain_contexts
+        ],
+        "settlement_chain": _model_wire(supply.settlement_chain),
+        "unavailable": unavailable,
+        "supply_in_evidence": "TRUE"
+        if isinstance(presence, ConditionPositiveSupplyEvidence)
+        else "FALSE"
+        if isinstance(presence, ConditionNoPositiveSupplyEvidence)
+        else "UNKNOWN",
+        "supply_evidence": _model_wire(presence),
+    }
+    result.update(_clock_wire(bounds.start, "start"))
+    result.update(_clock_wire(bounds.cutoff, "cutoff"))
+    result.update(_clock_wire(supply.assembled_at, "assembled_at"))
     return result
