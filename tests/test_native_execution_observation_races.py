@@ -159,3 +159,79 @@ async def test_accepted_input_change_during_status_read_cannot_finalize_old_inpu
     assert current is not None and current["active_message_id"] == request.message_id
     assert current["runtime_status"] == "RUNNING" and "verified_native_completion" not in current
     assert await repo.list("ops.jobs") == []
+
+
+async def test_observation_receipt_fences_state_value_aba_without_historical_generation(
+    tmp_path: Path, completion_repo: StorageBackend
+) -> None:
+    repo = completion_repo
+    session = await seed_execution_inputs(repo, 1)
+    session["native_execution_states"] = {
+        "input-000": {"execution_id": "input-000", "state": "RUNNING", "settled_outcome": None}
+    }
+    await repo.put("ops.agent_sessions", "session", session)
+    initial = CompletionSessionSnapshot.from_record(session)
+    assert initial.execution_observation is None and "native_execution_observation" not in session
+    captured, release = asyncio.Event(), asyncio.Event()
+    calls: list[str] = []
+
+    def routes(router: respx.MockRouter) -> None:
+        async def answer(request: httpx.Request) -> httpx.Response:
+            state = ("FAILED", "QUEUED", "RUNNING")[len(calls)]
+            calls.append(state)
+            result = httpx.Response(
+                200,
+                json={
+                    "data": [
+                        {
+                            "execution_id": "input-000",
+                            "state": state,
+                            "settled_outcome": "FAILED" if state == "FAILED" else None,
+                        }
+                    ]
+                },
+            )
+            if len(calls) == 1:
+                captured.set()
+                await release.wait()
+            return result
+
+        router.get("http://native.invalid/v1/sessions/session/executions").mock(side_effect=answer)
+
+    async with (
+        runtime_failure_fixture(
+            repo, tmp_path / "first", ops_progress_enabled=False, http_routes=routes
+        ) as first,
+        runtime_failure_fixture(
+            repo, tmp_path / "second", ops_progress_enabled=False, http_routes=routes
+        ) as second,
+        runtime_failure_fixture(
+            repo, tmp_path / "third", ops_progress_enabled=False, http_routes=routes
+        ) as third,
+    ):
+        stale = asyncio.create_task(first.sessions.execution_barrier(initial, verify_remote=True))
+        try:
+            await asyncio.wait_for(captured.wait(), 2)
+            await second.sessions.execution_barrier(initial, verify_remote=True)
+            after_second = await repo.get("ops.agent_sessions", "session")
+            assert after_second is not None
+            second_snapshot = CompletionSessionSnapshot.from_record(after_second)
+            assert second_snapshot.execution_observation is not None
+            await third.sessions.execution_barrier(second_snapshot, verify_remote=True)
+            after_third = await repo.get("ops.agent_sessions", "session")
+            assert after_third is not None
+            third_snapshot = CompletionSessionSnapshot.from_record(after_third)
+            assert third_snapshot.execution_observation is not None
+            assert third_snapshot.execution_states == initial.execution_states
+            assert (
+                third_snapshot.execution_observation.observation_id
+                != second_snapshot.execution_observation.observation_id
+            )
+            release.set()
+            late = await asyncio.wait_for(stale, 2)
+        finally:
+            release.set()
+            await asyncio.gather(stale, return_exceptions=True)
+    assert await repo.get("ops.agent_sessions", "session") == after_third
+    assert late.execution_states["input-000"].state == "RUNNING" and not late.complete
+    assert calls == ["FAILED", "QUEUED", "RUNNING"]

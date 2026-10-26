@@ -172,6 +172,7 @@ from tank.contracts.session_completion import (
     CompletionSessionSnapshot,
     CompletionToolInput,
     FailedToolAttempt,
+    HostExecutionObservation,
     NativeExecutionBarrier,
     NativeExecutionPage,
     NativeExecutionQuery,
@@ -211,7 +212,7 @@ from tank.runtime_contracts import (
 )
 from tank.telegram_inbox import DOCUMENT_LIMIT
 from tank.time_precision import Timestamp, collection_clock, offset_schedule, propagate_timestamp
-from tank.util import canonical_json, jsonable, parse_time, sha256, utcnow
+from tank.util import canonical_json, jsonable, new_id, parse_time, sha256, utcnow
 
 log = logging.getLogger(__name__)
 
@@ -974,40 +975,63 @@ class SessionService:
             async with self.repo.lock("session:" + snapshot.session_id):
                 current = await self.completion_record(snapshot.session_id)
                 fresh = CompletionSessionSnapshot.from_record(current)
-                merged = {**fresh.execution_states, **states}
-                current["native_execution_states"] = {
-                    key: state.model_dump(mode="json") for key, state in merged.items()
-                }
-                owners = {message.message_id: message for message in fresh.journal}
-                retired = dict(fresh.superseded_inputs)
-                for call in calls:
-                    identity = call.input_id
-                    state = merged.get(identity) if identity is not None else None
-                    owner = owners.get(call.message_id) if call.message_id is not None else None
-                    if identity is None or state is None or state.state != "FAILED" or owner is None:
-                        continue
-                    previous = FailedToolAttempt(
-                        input_id=identity, message_id=call.message_id, attempt=call.attempt
+                calls = [
+                    CompletionToolInput.from_record(row)
+                    async for row in self.repo.iter_all(
+                        "ops.tool_calls", filters={"session_id": snapshot.session_id}
                     )
-                    replacement = CompletionAttemptOwner(
-                        message_id=owner.message_id,
-                        attempt=owner.retry_attempt,
-                        replacement_input_id=owner.native_input_id,
-                    )
-                    if previous.is_prior_to(replacement):
-                        retired[identity] = PriorToolInputReceipt(
-                            reason="FAILED_PRIOR_TURN_ATTEMPT",
-                            queue_state=state,
-                            replacement_input_id=owner.native_input_id,
-                            message_id=owner.message_id,
-                        )
-                if retired != fresh.superseded_inputs:
-                    current["superseded_native_inputs"] = {
-                        key: receipt.model_dump(mode="json", exclude_unset=True)
-                        for key, receipt in retired.items()
+                ]
+                derive_execution_barrier(fresh, calls)
+                matches = (
+                    fresh.execution_observation == snapshot.execution_observation
+                    and fresh.execution_states == snapshot.execution_states
+                )
+                if states and matches:
+                    merged = {**fresh.execution_states, **states}
+                    current["native_execution_states"] = {
+                        key: state.model_dump(mode="json") for key, state in merged.items()
                     }
-                await put_owned_session(self.repo, snapshot.session_id, current)
-                snapshot = CompletionSessionSnapshot.from_record(current)
+                    owners = {message.message_id: message for message in fresh.journal}
+                    retired = dict(fresh.superseded_inputs)
+                    for call in calls:
+                        identity = call.input_id
+                        state = merged.get(identity) if identity is not None else None
+                        owner = owners.get(call.message_id) if call.message_id is not None else None
+                        if identity is None or state is None or state.state != "FAILED" or owner is None:
+                            continue
+                        previous = FailedToolAttempt(
+                            input_id=identity, message_id=call.message_id, attempt=call.attempt
+                        )
+                        replacement = CompletionAttemptOwner(
+                            message_id=owner.message_id,
+                            attempt=owner.retry_attempt,
+                            replacement_input_id=owner.native_input_id,
+                        )
+                        if previous.is_prior_to(replacement):
+                            retired[identity] = PriorToolInputReceipt(
+                                reason="FAILED_PRIOR_TURN_ATTEMPT",
+                                queue_state=state,
+                                replacement_input_id=owner.native_input_id,
+                                message_id=owner.message_id,
+                            )
+                    if retired != fresh.superseded_inputs:
+                        current["superseded_native_inputs"] = {
+                            key: receipt.model_dump(mode="json", exclude_unset=True)
+                            for key, receipt in retired.items()
+                        }
+                    observation = HostExecutionObservation(
+                        source="HOST_MANAGED_EXECUTION_STATUS",
+                        observation_id=new_id("native_status_observation"),
+                        session_id=snapshot.session_id,
+                        execution_ids=list(states),
+                        recorded_at=self.clock_timestamp(),
+                        versions=self.versions,
+                    )
+                    current["native_execution_observation"] = observation.model_dump(mode="json")
+                    await put_owned_session(self.repo, snapshot.session_id, current)
+                    snapshot = CompletionSessionSnapshot.from_record(current)
+                else:
+                    snapshot = fresh
             delay = min(poll.delay * 2, 1.0) if poll is not None and poll.signature == signature else 0.05
             self.execution_polls[snapshot.session_id] = ExecutionPoll(
                 deadline=time.monotonic() + delay, delay=delay, signature=signature

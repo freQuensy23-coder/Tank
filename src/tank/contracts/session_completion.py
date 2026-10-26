@@ -6,8 +6,10 @@ from typing import Annotated, Literal, Self
 from pydantic import BeforeValidator, Field, JsonValue, model_validator
 
 from tank.contracts import DomainModel
+from tank.contracts.provenance import ResolvedVersionIdentity
 from tank.contracts.scalars import require_integer
 from tank.contracts.source_items import ExtractionStatus
+from tank.time_precision import Timestamp
 from tank.util import parse_time
 
 type CompletionIdentity = Annotated[str, Field(min_length=1, pattern=r"\S")]
@@ -316,6 +318,23 @@ class PriorToolInputReceipt(DomainModel):
 type SupersededInputReceipt = RetriedInputReceipt | PriorToolInputReceipt
 
 
+class HostExecutionObservation(DomainModel):
+    source: Literal["HOST_MANAGED_EXECUTION_STATUS"]
+    observation_id: CompletionIdentity
+    session_id: CompletionIdentity
+    execution_ids: list[NativeExecutionIdentity] = Field(min_length=1)
+    recorded_at: Timestamp
+    versions: ResolvedVersionIdentity
+
+    @model_validator(mode="after")
+    def actual_observation_scope_and_clock(self) -> Self:
+        if len(set(self.execution_ids)) != len(self.execution_ids):
+            raise ValueError("Execution observation repeats an input identity")
+        if self.recorded_at.value is None:
+            raise ValueError("Execution observation requires its actual recorded time")
+        return self
+
+
 class CompletionSessionSnapshot(DomainModel):
     session_id: CompletionIdentity
     active_message_id: CompletionIdentity | None
@@ -323,10 +342,13 @@ class CompletionSessionSnapshot(DomainModel):
     retired_message_ids: list[CompletionIdentity]
     terminal_receipts: dict[CompletionIdentity, NativeExecutionReceipt]
     execution_states: dict[CompletionIdentity, NativeExecutionState]
+    execution_observation: HostExecutionObservation | None
     superseded_inputs: dict[CompletionIdentity, SupersededInputReceipt]
 
     @classmethod
     def from_record(cls, record: Mapping[str, JsonValue]) -> Self:
+        if "native_execution_observation" in record and record["native_execution_observation"] is None:
+            raise ValueError("Reported execution observation cannot be null")
         raw = record.get("message_log", [])
         if not isinstance(raw, list):
             raise ValueError("Completion message journal must be an array")
@@ -343,6 +365,7 @@ class CompletionSessionSnapshot(DomainModel):
                 "retired_message_ids": record.get("retired_message_ids", []),
                 "terminal_receipts": record.get("native_execution_receipts", {}),
                 "execution_states": record.get("native_execution_states", {}),
+                "execution_observation": record.get("native_execution_observation"),
                 "superseded_inputs": record.get("superseded_native_inputs", {}),
             }
         )
@@ -360,6 +383,11 @@ class CompletionSessionSnapshot(DomainModel):
             raise ValueError("Completion receipt identity differs from its key")
         if any(key != state.execution_id for key, state in self.execution_states.items()):
             raise ValueError("Completion execution identity differs from its key")
+        if self.execution_observation is not None:
+            if self.execution_observation.session_id != self.session_id:
+                raise ValueError("Execution observation belongs to another session")
+            if not set(self.execution_observation.execution_ids) <= self.execution_states.keys():
+                raise ValueError("Execution observation lacks its reported state rows")
         for identity, receipt in self.superseded_inputs.items():
             if receipt.replacement_input_id == identity:
                 raise ValueError("Superseded native input cannot replace itself")
