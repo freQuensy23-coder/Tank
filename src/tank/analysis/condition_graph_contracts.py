@@ -6686,6 +6686,7 @@ class ConditionTopCacheKey(DomainModel):
     window: ConditionWindow
     requested_duration_s: float = Field(gt=0)
     cutoff: datetime
+    assembled_at: Timestamp
     dependency_identity: str = Field(min_length=1, pattern=r"\S")
     config_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
     expected_direction_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
@@ -6701,6 +6702,7 @@ class ConditionStateNodeKey(DomainModel):
     token_id: str = Field(min_length=1, pattern=r"\S")
     start: datetime
     cutoff: datetime
+    assembled_at: Timestamp
     dependency_identity: str = Field(min_length=1, pattern=r"\S")
     config_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
     expected_direction_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
