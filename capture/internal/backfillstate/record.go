@@ -8,6 +8,8 @@ import (
 	"io"
 	"time"
 	"unicode/utf8"
+
+	"github.com/freQuensy23-coder/Tank/capture/internal/pytime"
 )
 
 type Record struct {
@@ -111,4 +113,38 @@ func DecodeRecord(data []byte) (Record, error) {
 		return Record{}, errors.New("physical backfill result JSON text is invalid")
 	}
 	return record, nil
+}
+
+func clockText(value *time.Time) *string {
+	if value == nil {
+		return nil
+	}
+	text := pytime.ISO(*value)
+	return &text
+}
+
+func (r Record) SemanticDocument() ([]byte, error) {
+	type fields Record
+	var result json.RawMessage
+	if r.ResultJSON != nil {
+		if !json.Valid([]byte(*r.ResultJSON)) {
+			return nil, errors.New("physical backfill result JSON text is invalid")
+		}
+		result = json.RawMessage(*r.ResultJSON)
+	}
+	wire := struct {
+		StorageKey *string         `json:"storage_key,omitempty"`
+		Anchor     *string         `json:"anchor"`
+		FinishedAt *string         `json:"finished_at"`
+		ReceivedTS *string         `json:"received_ts"`
+		RecordedAt *string         `json:"recorded_at"`
+		StartedAt  *string         `json:"started_at"`
+		Result     json.RawMessage `json:"result"`
+		*fields
+	}{
+		Anchor: clockText(r.Anchor), FinishedAt: clockText(r.FinishedAt),
+		ReceivedTS: clockText(r.ReceivedTS), RecordedAt: clockText(r.RecordedAt),
+		StartedAt: clockText(r.StartedAt), Result: result, fields: (*fields)(&r),
+	}
+	return json.Marshal(wire)
 }

@@ -2,6 +2,8 @@ package backfillstate
 
 import (
 	"bytes"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"strings"
 	"testing"
@@ -163,5 +165,28 @@ func TestInvalidUTF8IsRefusedInsteadOfReplaced(t *testing.T) {
 	malformed := bytes.Replace(data, []byte("PENDING"), []byte{'P', 0xff}, 1)
 	if _, err := DecodeRecord(malformed); err == nil {
 		t.Fatal("invalid UTF-8 was silently normalized")
+	}
+}
+
+func TestSemanticDocumentPreservesExactPriorNumbersWithoutChangingPhysicalRow(t *testing.T) {
+	at := time.Date(2026, 10, 26, 0, 0, 0, 0, time.UTC)
+	raw := `{"big":9007199254740993,"fraction":0.123456789012345678901,"label":"0.123456789012345678901"}`
+	row := Record{StorageKey: "physical-BF", BackfillID: "BF", TokenID: text("TOKEN"), Anchor: &at, AnchorPrec: text("EXACT"), CodeVersion: text("captured-code"), ConfigVersion: text("captured-config"), RecordedAt: &at, ResultJSON: &raw}
+	before := physicalDocument(t, row)
+	document, err := row.SemanticDocument()
+	if err != nil {
+		t.Fatal(err)
+	}
+	actual, err := schema.FingerprintDocument(document, "mkt.backfill_runs")
+	if err != nil {
+		t.Fatal(err)
+	}
+	expected := `{"anchor":"2026-10-26T00:00:00Z","anchor_prec":"EXACT","backfill_id":"BF","result":{"big":9007199254740993,"fraction":0.123456789012345678901,"label":"0.123456789012345678901"},"token_id":"TOKEN"}`
+	sum := sha256.Sum256([]byte(expected))
+	if actual != hex.EncodeToString(sum[:]) {
+		t.Fatalf("exact evidence fingerprint changed: %s", actual)
+	}
+	if !bytes.Equal(before, physicalDocument(t, row)) || *row.ResultJSON != raw {
+		t.Fatal("semantic projection rewrote stored evidence")
 	}
 }
