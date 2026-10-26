@@ -223,10 +223,15 @@ jobs:
         with:
           node-version: "24.22.0"
           package-manager-cache: false
+      - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884
+        with:
+          version: "0.11.7"
+      - name: Sandbox Python for the file I/O tests
+        run: |
+          uv python install 3.13.13
+          echo "TANK_FILE_IO_TEST_PYTHON=$(uv python find --managed-python 3.13.13)" >> "$GITHUB_ENV"
       - name: Local JavaScript units
         run: node scripts/test-node.mjs local-unit
-        env:
-          TANK_FILE_IO_TEST_PYTHON: /usr/bin/python3.12
       - name: Local JavaScript contracts
         run: node scripts/test-node.mjs local-contract
       - name: Sandbox qualification evidence gate regressions

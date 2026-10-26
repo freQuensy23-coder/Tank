@@ -10,7 +10,6 @@ SCORE_DIMENSIONS = (
     ("Implementation", "implementation"),
 )
 RICH_TEXT_LIMIT = 32768
-CARD_TEXT_LIMIT = 5000
 CARD_LABELS = (
     "WHAT",
     "VERIFIED",
@@ -113,7 +112,7 @@ def score_table(assessment):
     }
 
 
-def card_rich_message(text, assessment, *, max_chars=CARD_TEXT_LIMIT):
+def card_rich_message(text, assessment):
     """Freeze the card with one native score table; all agent text stays literal."""
     marker = "\n" + score_summary(assessment)
     before, found, after = text.partition(marker)
@@ -134,11 +133,10 @@ def card_rich_message(text, assessment, *, max_chars=CARD_TEXT_LIMIT):
             blocks.append({"type": "paragraph", "text": content})
     message = {"blocks": blocks}
     length = len(rich_message_text(message))
-    limit = min(max_chars, RICH_TEXT_LIMIT)
     block_count = len(blocks) + sum(len(block.get("cells", [])) for block in blocks)
-    if length > limit or block_count > 500:
+    if length > RICH_TEXT_LIMIT or block_count > 500:
         raise ValueError(
             f"CARD_LENGTH: rich message has {length} characters and {block_count} blocks; "
-            f"maximum {limit} characters and 500 blocks"
+            f"Telegram maximum {RICH_TEXT_LIMIT} characters and 500 blocks"
         )
     return message
