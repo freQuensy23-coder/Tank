@@ -2245,23 +2245,22 @@ full default-unit timing remain outstanding; this checkpoint is not global relea
 
 ### Concrete queue adapter moved outward
 
-From caller-qualified worker0d5bc86e, the concrete JobRepository now lives in
+From caller-qualified worker 0d5bc86e, the concrete JobRepository now lives in
 src/tank/job_repository.py. contracts/job_repository.py retains only the precise
 ten-method QueueStore Protocol; required envelope/claim/mutation records remain
 in contracts/jobs.py. The concrete class AST is identical before and after the
-move/formatting (SHA2564704fe313cd6cfa9e04beff8e93202d8a453d85ba8499b2ed7d82897189db6a8).
-External job-repository-relocation-ast.json records both hashes and all24 actual
-caller paths. Pipeline and worker imports split port versus adapter;22 test
+move/formatting (SHA256 4704fe313cd6cfa9e04beff8e93202d8a453d85ba8499b2ed7d82897189db6a8).
+External job-repository-relocation-ast.json records both hashes and all 24 actual
+caller paths. Pipeline and worker imports split port versus adapter; 22 test
 imports use the new outward path. No compatibility re-export, forwarding class,
 annotation suppression, storage algorithm or callback policy changed.
 
-All58 selected existing queue/claim/quarantine/raw-revision/clock/controlled/atomic
-units pass7.93s; all37 actual PostgreSQL cases pass10.97s, zero skips/source guards.
+All 58 selected existing queue/claim/quarantine/raw-revision/clock/controlled/atomic
+units pass in 7.93 s; all 37 actual PostgreSQL cases pass in 10.97 s, zero skips/source guards.
 These retain real minimal-store transaction/rollback, malformed original revision,
 raw payload/omitted clock metadata, fresh-token refund/recovery ABA and concurrent
-row-lock controls. Independent strict8 targets including both modules and actual
-consumers pass; scoped Ruff/format and import search pass. Configured202-source
-mypy has only the separately owned truth _condition_cache error. The proposed
+row-lock controls. Independent strict 8 targets including both modules and actual
+consumers pass; scoped Ruff/format and import search pass. Configured mypy across 202 sources has only the separately owned truth _condition_cache error. The proposed
 layout-only assertion was removed before qualification per lead review; no new
 mechanical-layout test remains. Quality will add the independently signed new
 adapter to explicit strict CI/inventory while keeping the inward port target.
