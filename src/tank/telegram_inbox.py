@@ -24,6 +24,7 @@ from pydantic import JsonValue
 
 from tank import ops_cards
 from tank.analysis.cards import telegram_card_html
+from tank.contracts.native_files import NativeFileNotRequested, NativeFileSourceScope
 from tank.contracts.native_readback import NativeSessionMissing
 from tank.contracts.session_followups import (
     FollowupCandidate,
@@ -1208,6 +1209,20 @@ class TelegramInbox:
                         file_key=key, content_base64=base64.b64encode(content).decode()
                     )
                     async with self.repo.transaction():
+                        stored_at = collection_clock(utcnow())
+                        native_preparation = NativeFileNotRequested(
+                            phase="NOT_REQUESTED",
+                            recorded_at=stored_at,
+                            scope=NativeFileSourceScope(
+                                file_key=cached.file_key,
+                                question_id=cached.question_id,
+                                session_id=cached.session_id,
+                                cached_sha256=cached.sha256,
+                                filename=cached.filename,
+                                mime=cached.mime,
+                                size=cached.size,
+                            ),
+                        )
                         await self.repo.put(
                             "ops.telegram_file_payloads", key, payload.model_dump(mode="json")
                         )
@@ -1216,7 +1231,8 @@ class TelegramInbox:
                             key,
                             {
                                 **cached.model_dump(mode="json"),
-                                **collection_clock(utcnow()).fields("stored_at"),
+                                **stored_at.fields("stored_at"),
+                                "native_preparation": native_preparation.model_dump(mode="json"),
                             },
                         )
                 stored.append(
