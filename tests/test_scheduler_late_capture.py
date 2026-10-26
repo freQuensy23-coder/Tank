@@ -104,9 +104,9 @@ async def test_backfill_changes_append_reaction_revision_once_and_preserve_origi
     *,
     capture_runner: ReactionRunner = run_claimed_reactions,
 ) -> None:
-    import tank.scheduler as scheduler_module
+    import tank.reaction_timing as reaction_timing
 
-    monkeypatch.setattr(scheduler_module, "LATE_REVISION_DEFER_S", 0)
+    monkeypatch.setattr(reaction_timing, "LATE_REVISION_DEFER_S", 0)
     anchor = utcnow().replace(second=0, microsecond=0) - timedelta(hours=2)
     inst: dict[str, JsonValue] = {
         "instrument_id": "binance:spot:TUSD",
