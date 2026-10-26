@@ -26,7 +26,7 @@ from publisher_transition_support import HTTPPublisherRig, http_rig, write_artif
 from publisher_workflow_support import execute, step
 from pydantic import SecretStr
 
-from tank.deployment.api_contracts import Base64SourceFile, SourceSnapshot
+from tank.deployment.api_contracts import Base64SourceFile, BuildObservation, SourceSnapshot
 from tank.deployment.apify_api import ApifyAPI, ApifyAPIError, ApifyEndpoint
 from tank.deployment.artifact_contracts import PublisherArtifactRuntime, SourceArtifact, SourceBundle
 from tank.deployment.artifacts import ArtifactError, FilesystemArtifacts, source_files
@@ -833,3 +833,42 @@ def test_invalid_previous_marker_refuses_before_effects(
     assert not fixture.peer.requests
     assert not (host.root / "effects.log").exists()
     assert fixture.journal.read_transaction() is None
+
+
+@pytest.mark.integration(reason="Actual HTTP completion must remain inside the declared build deadline")
+@pytest.mark.parametrize("completed_at,accepted", [(599.0, True), (600.0, False), (601.0, False)])
+def test_late_successful_build_cannot_authorize_activation(
+    typed_publisher: HTTPPublisherRig,
+    monkeypatch: pytest.MonkeyPatch,
+    completed_at: float,
+    accepted: bool,
+) -> None:
+    fixture = typed_publisher
+    now = [0.0]
+    fixture.publisher.clock = lambda: now[0]
+    wait = fixture.api.wait_build
+
+    def completed(build_id: str) -> BuildObservation:
+        now[0] = completed_at
+        return wait(build_id)
+
+    monkeypatch.setattr(fixture.api, "wait_build", completed)
+    previous = fixture.journal.read_active()
+    if accepted:
+        prepared = fixture.publisher.prepare()
+        assert prepared.candidate.build_id == "B" * 17
+        assert fixture.journal.read_transaction() is not None
+    else:
+        with pytest.raises(PublisherStateError, match="deadline"):
+            fixture.publisher.prepare()
+        assert fixture.journal.read_transaction() is None
+        assert (
+            fixture.journal.read_cached_build(
+                BuildCacheKey(source_digest=fixture.selected.release.source_digest)
+            )
+            is None
+        )
+    assert fixture.api.builds["B" * 17].status == "SUCCEEDED"
+    assert fixture.api.direct == "A" * 17
+    assert fixture.journal.read_active() == previous
+    assert not fixture.api.tag_updates

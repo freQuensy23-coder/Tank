@@ -151,7 +151,7 @@ class Publisher:
                 build = self.api.wait_build(build_id)
                 if build.id != build_id:
                     raise PublisherStateError("Build response identity mismatch")
-            if build.status != "SUCCEEDED":
+            if build.status != "SUCCEEDED" or self.clock() >= deadline:
                 raise PublisherStateError("Worker build failed or exceeded deadline")
             candidate = self._source_provenance(build_id, artifact.release.source_digest)
             if candidate.release_sha != self.sha:
