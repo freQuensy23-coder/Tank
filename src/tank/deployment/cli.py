@@ -121,10 +121,8 @@ def run(arguments: Arguments) -> None:
     ):
         raise PublisherStateError("Forward publication requires the selected release identity")
     policy = PublisherPolicy(build_timeout_s=arguments.build_timeout_s)
-    if os.geteuid() != 0:
-        raise PublisherStateError("Production publisher must run as root")
     verify_package_runtime(arguments.package, invocation, arguments.runtime_root)
-    token = host_token(arguments.credential_file, owner_uid=0)
+    token = host_token(arguments.credential_file, owner_uid=os.geteuid())
     publisher = Publisher(
         ApifyAPI(token, ApifyEndpoint(base_url="https://api.apify.com/v2")),
         FilesystemArtifacts(arguments.package),

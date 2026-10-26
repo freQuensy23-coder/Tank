@@ -7,6 +7,8 @@ selected=$3
 transaction=$4
 action=$5
 host_root=$(readlink -e "$6")
+effective_gid=$(id -g)
+[[ "$effective_gid" =~ ^[0-9]+$ ]] || { echo "publisher primary group is unavailable" >&2; exit 1; }
 [[ "$orchestrator" =~ ^[0-9a-f]{40}$ && "$selected" =~ ^[0-9a-f]{40}$ && "$transaction" =~ ^[0-9a-f]{40}$ ]] || { echo "invalid publisher identity" >&2; exit 1; }
 [[ "$image" = "ghcr.io/frequensy23-coder/tank/tank:$orchestrator" ]] || { echo "invalid publisher image" >&2; exit 1; }
 case "$action" in
@@ -83,7 +85,7 @@ docker create --pull never --cidfile "$work/cid" \
   --label "org.tank.publisher.owner=$nonce" \
   --label "org.tank.publisher.image=$image" \
   --label "org.tank.publisher.root=$host_root" \
-  --user 0:0 --network host --read-only \
+  --user "$EUID:$effective_gid" --network host --read-only \
   --volume "$host_root:/host:ro" --volume "$state:/host/apify-state:rw" \
   --env PYTHONDONTWRITEBYTECODE=1 --workdir /host \
   --entrypoint /opt/tank/venv/bin/python "$image" \

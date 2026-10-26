@@ -94,7 +94,18 @@ jobs:
           printf '%s\n' "$SSH_KEY" > ~/.ssh/id_deploy && chmod 600 ~/.ssh/id_deploy
           printf '%s\n' "$SSH_KNOWN_HOSTS" > ~/.ssh/known_hosts
           ssh_opts=(-i ~/.ssh/id_deploy -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes)
-          ssh "${ssh_opts[@]}" "$SSH_USER@$SSH_HOST" "install -d -m 700 /srv/tank-deploy/releases"
+          ssh "${ssh_opts[@]}" "$SSH_USER@$SSH_HOST" 'set -eu
+          uid=$(id -u)
+          gid=$(id -g)
+          credential=/srv/tank-deploy/.env
+          state=/srv/tank-deploy/apify-state
+          [ ! -L "$credential" ] && [ -f "$credential" ] && [ "$(stat -c "%u:%a" "$credential")" = "$uid:600" ] || { echo "deployment credential must be private and owned by the authenticated principal" >&2; exit 1; }
+          if [ -e "$state" ] || [ -L "$state" ]; then
+            [ ! -L "$state" ] && [ -d "$state" ] && [ "$(stat -c "%u:%a" "$state")" = "$uid:700" ] || { echo "publisher state must be private and owned by the authenticated principal" >&2; exit 1; }
+          fi
+          docker info >/dev/null
+          printf "Verified deployment effective UID=%s GID=%s without elevation\n" "$uid" "$gid"
+          install -d -m 700 /srv/tank-deploy/releases'
           scp -r "${ssh_opts[@]}" "$RUNNER_TEMP/$SHA" "$SSH_USER@$SSH_HOST:/srv/tank-deploy/releases/"
           scp "${ssh_opts[@]}" compose.yaml "$RUNNER_TEMP/tank-orchestrator/scripts/deploy/deploy.sh" "$RUNNER_TEMP/tank-orchestrator/scripts/deploy/publisher_worker.sh" "$RUNNER_TEMP/tank-orchestrator/scripts/deploy/publisher_worker.bash" "$SSH_USER@$SSH_HOST:/srv/tank-deploy/"
           ssh "${ssh_opts[@]}" "$SSH_USER@$SSH_HOST" "/srv/tank-deploy/deploy.sh $SHA $ORCHESTRATOR_SHA"

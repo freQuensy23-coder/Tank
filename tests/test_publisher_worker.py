@@ -109,7 +109,7 @@ def test_successful_worker_uses_known_owned_identity_and_leaves_no_active_lease(
             "rm",
         ]
         created = observed.calls[0].arguments
-        assert created[created.index("--user") + 1] == "0:0"
+        assert created[created.index("--user") + 1] == f"{os.geteuid()}:{os.getegid()}"
         assert created[created.index("--transaction-release-sha") + 1] == "b" * 40
         assert created[created.index("--entrypoint") + 1] == "/opt/tank/venv/bin/python"
     assert not (stand.host / "apify-state/.worker-active").exists()
