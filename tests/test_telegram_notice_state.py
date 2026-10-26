@@ -5,25 +5,15 @@ from pathlib import Path
 import httpx
 import pytest
 from pydantic import JsonValue
+from test_storage import repo as repo
 from test_telegram_preflight import PreflightSettings
 
-from tank.storage import MemoryRepository
+from tank.storage import MemoryRepository, StorageBackend
 from tank.telegram_inbox import ANSWER_CHANNEL, TelegramInbox, question_id_for
+from tank.time_precision import collection_clock
 
 
-@pytest.mark.parametrize(
-    "fault",
-    [
-        "foreign-chat",
-        "missing-message-ref",
-        "zero-message-ref",
-        "missing-attempt",
-        "missing-purpose",
-        "unknown-purpose",
-    ],
-)
-async def test_malformed_notice_receipt_cannot_settle_the_actual_input(tmp_path: Path, fault: str) -> None:
-    repo = MemoryRepository()
+async def invalid_notice_receipt(repo: StorageBackend, tmp_path: Path, fault: str) -> None:
 
     def refuse(request: httpx.Request) -> httpx.Response:
         raise AssertionError("Invalid retained receipt cannot authorize a new POST")
@@ -50,6 +40,7 @@ async def test_malformed_notice_receipt_cannot_settle_the_actual_input(tmp_path:
             "status": "SENT",
             "message_ref": "101",
             "text": "Actual notice",
+            **collection_clock().fields("at"),
         }
         if fault == "foreign-chat":
             receipt["chat_id"] = "99"
@@ -71,11 +62,25 @@ async def test_malformed_notice_receipt_cannot_settle_the_actual_input(tmp_path:
     assert await repo.list("out.deliveries") == before
 
 
+@pytest.mark.parametrize(
+    "fault", ["foreign-chat", "missing-message-ref", "zero-message-ref", "missing-purpose", "unknown-purpose"]
+)
+async def test_malformed_notice_receipt_cannot_settle_the_actual_input(
+    repo: StorageBackend, tmp_path: Path, fault: str
+) -> None:
+    await invalid_notice_receipt(repo, tmp_path, fault)
+
+
+async def test_unreported_notice_attempt_is_not_fabricated_for_an_unconstrained_old_row(
+    tmp_path: Path,
+) -> None:
+    await invalid_notice_receipt(MemoryRepository(), tmp_path, "missing-attempt")
+
+
 @pytest.mark.parametrize("uncertain", [False, True])
 async def test_actual_notice_phase_reconciles_without_new_token_or_post(
-    tmp_path: Path, uncertain: bool
+    repo: StorageBackend, tmp_path: Path, uncertain: bool
 ) -> None:
-    repo = MemoryRepository()
     calls = 0
 
     def respond(request: httpx.Request) -> httpx.Response:
