@@ -41,6 +41,23 @@ def test_shards_preserve_every_file_and_are_stable(integration_checks: tuple[Mod
     assert {path: shard.shard_for(path, 3) for path in [*paths, "tests/new.py"] if path in before} == before
 
 
+@pytest.mark.parametrize(
+    "path,index",
+    [
+        ("tests/test_fixture_reference.py", 1),
+        ("tests/test_replay.py", 1),
+        ("tests/test_agents_workflow.py", 2),
+        ("tests/test_fetch_page_deadline.py", 0),
+    ],
+)
+def test_measured_slow_files_keep_whole_file_assignments(
+    integration_checks: tuple[ModuleType, ModuleType], path: str, index: int
+) -> None:
+    shard, _ = integration_checks
+    assert shard.shard_for(path, 3) == index
+    assert 0 <= shard.shard_for(path, 2) < 2
+
+
 @pytest.mark.parametrize("value", ["-1/3", "3/3", "0/0", "0", "a/3", "0/1/2"])
 def test_invalid_shard_is_rejected(integration_checks: tuple[ModuleType, ModuleType], value: str) -> None:
     shard, _ = integration_checks
