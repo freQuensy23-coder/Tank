@@ -5,7 +5,6 @@ stream ignores Last-Event-ID, while the native Node transport honors it.
 """
 
 import asyncio
-import base64
 import copy
 import logging
 import time
@@ -47,6 +46,7 @@ from tank.agents.input_ownership import (
     UnprovedInputOwnership,
 )
 from tank.agents.message_dispatch import PendingMessageDispatch, find_message_dispatch
+from tank.agents.native_file_preparation import NativeFilePreparationService, NativeFileTransport
 from tank.agents.native_inputs import (
     AcceptedNativeInput,
     NativeInput,
@@ -596,43 +596,13 @@ class SessionService:
             await put_owned_session(self.repo, sid, current)
         return CONTEXT_TRANSITION[state.proposal_id is not None]
 
-    async def prepare_attachments(self, session, question) -> QuestionPrompt:
-        question_prompt(question)
-        question = copy.deepcopy(question)
-        for index, item in enumerate(question.get("attachments") or [], 1):
-            key = item["file_key"]
-            metadata = await self.repo.get("ops.telegram_files", key)
-            payload = await self.repo.get("ops.telegram_file_payloads", key)
-            if metadata is None or payload is None:
-                raise ValueError("The attached file is unavailable")
-            mount = (metadata.get("model_mounts") or {}).get(session["session_id"])
-            if not mount:
-                content = base64.b64decode(payload["content_base64"], validate=True)
-                uploaded = await self.request(
-                    "POST",
-                    "files",
-                    files={
-                        "file": (item["filename"], content, item.get("mime") or "application/octet-stream")
-                    },
-                )
-                stamp = str(
-                    question.get("created_at")
-                    or question.get("received_at")
-                    or metadata.get("stored_at")
-                    or "current-question"
-                ).replace(":", "-")
-                path = f"/workspace/uploads/{stamp}/attachment-{index}/{item['filename']}"
-                await self.request(
-                    "POST",
-                    f"sessions/{session['session_id']}/resources",
-                    json={"type": "file", "file_id": uploaded["id"], "mount_path": path},
-                    idem="mount:" + sha256({"session": session["session_id"], "file": key}),
-                )
-                mount = {"path": path, "file_id": uploaded["id"]}
-                metadata.setdefault("model_mounts", {})[session["session_id"]] = mount
-                await self.repo.put("ops.telegram_files", key, metadata)
-            item["path"] = mount["path"]
-        return question_prompt(question)
+    async def prepare_attachments(self, target: FollowupRefusalTarget) -> QuestionPrompt:
+        return await NativeFilePreparationService(
+            self.repo,
+            NativeFileTransport(self.http, self.settings.openma_url, self.settings.openma_api_key),
+            self.versions,
+            clock=self.clock_timestamp,
+        ).prepare_question(target)
 
     async def send_file(self, session, arguments, call_id):
         """send_telegram_file: read an output of this session and reply with it to the active follow-up."""
@@ -773,15 +743,11 @@ class SessionService:
                 if intent is None:
                     text = canonical_json(content)
                     if isinstance(message, UserQuestionMessage):
-                        async with self.repo.lock("question:" + message.question_id):
-                            question = await self.repo.get("out.user_questions", message.question_id)
-                            if question is None:
-                                raise KeyError(message.question_id)
-                            validate_question_identity(
-                                question,
-                                FollowupRefusalTarget(question_id=message.question_id, session_id=sid),
+                        text = question_message(
+                            await self.prepare_attachments(
+                                FollowupRefusalTarget(question_id=message.question_id, session_id=sid)
                             )
-                            text = question_message(await self.prepare_attachments(session, question))
+                        )
                         if migrating:
                             text = note + "\n\n" + text
                     body = {

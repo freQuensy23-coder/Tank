@@ -1697,3 +1697,40 @@ phase persistence, scoped resource reconciliation, historical pointer handling,
 pre-upload ownership admission and paired fresh-cache writer remain open.
 Pinned file/resource routes provide no upload/mount Idempotency-Key guarantee;
 an unconfirmed upload without an observed ID cannot authorize a blind repost.
+
+### Native preparation adapter candidate — paired writer still held
+
+The actual Session producer now accepts the authoritative question/session target
+and re-reads it under the question lock. It admits the prompt, all file references
+and cache ownership before effects. The native adapter records a committed upload
+intent, retains the actually observed file ID, records mount intent, and confirms
+only an actual scoped file resource. Upload uses files-api-2025-04-14; resource
+routes use managed-agents-2026-04-01. Neither route is credited with honoring an
+Idempotency-Key. Unknown upload acceptance refuses automatic repost. Lost mount
+acknowledgment is recovered by actual complete resource pages; foreign occupied
+paths and disappearance of confirmed resources refuse. Legacy pointers require
+matching scoped resource evidence and retain their original cache fields.
+
+PostgreSQL advisory locks hold transactions. Therefore the adapter owns and drains
+an awaited preparation task, using the repository's actual task-owned transaction
+contract to commit each short file CAS independently of the parent session/question
+transaction. HTTP runs outside file transactions. The child never requests session
+or question locks; no file-first path acquires a parent lock. Foundation reviewed
+that boundary. Actual PostgreSQL tests observe committed intent from an independent
+task during HTTP while the parent owns its session transaction. Concurrent callers
+cannot authorize a second upload; cancellation drains the owned preparation task.
+
+Observed effect receipts are retained in the cache row's typed digest-keyed
+native_effect_receipts map before the current-phase CAS. This preserves an actual
+upload identity even when cache ownership changes; it does not rewrite the new
+owner or continue mounting. A durable observed receipt can recover a failed hot
+phase update, while absent acceptance remains unknown. The earlier draft's proposed
+unregistered collection failed its diagnostic and was removed before this candidate.
+No schema or storage implementation was changed.
+
+The final transport source passes independent strict checks with contracts and
+three test modules. Twenty-six units pass in 1.80 seconds; six actual PostgreSQL
+cases pass in 3.10 seconds, zero skips, including the changed-owner receipt control.
+This remains an inactive paired candidate: ingestion's fresh-cache initialization
+and the existing Session caller/attachment fixture cohort must normally join and
+qualify before activation. Whole worker and remaining Session typing stay open.

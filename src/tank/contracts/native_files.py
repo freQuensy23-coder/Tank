@@ -77,11 +77,21 @@ class NativeMountConfirmed(PreparationClock):
     resource_id: FileIdentity
 
 
+class NativeLegacyMountConfirmed(PreparationClock):
+    phase: Literal["LEGACY_MOUNT_CONFIRMED"]
+    scope: NativeFileSourceScope
+    versions: ResolvedVersionIdentity
+    file_id: FileIdentity
+    resource_id: FileIdentity
+    mount_path: FileIdentity
+
+
 type NativeFilePreparation = Annotated[
     NativeFileNotRequested
     | NativeUploadUnconfirmed
     | NativeFileIdObserved
     | NativeMountUnconfirmed
-    | NativeMountConfirmed,
+    | NativeMountConfirmed
+    | NativeLegacyMountConfirmed,
     Field(discriminator="phase"),
 ]

@@ -2850,6 +2850,31 @@
         "test_scalar_or_null_wait_metadata_roundtrips_without_invented_precision",
         "test_incoherent_wait_clock_rejects_before_any_queue_write"
       ]
+    },
+    {
+      "sites": [
+        {
+          "path": "src/tank/agents/native_file_preparation.py",
+          "symbol": "NativeFilePreparationService.save"
+        },
+        {
+          "path": "src/tank/agents/native_file_preparation.py",
+          "symbol": "NativeEffectReceipts"
+        },
+        {
+          "path": "src/tank/agents/native_file_preparation.py",
+          "symbol": "NativeFileTransport.request"
+        }
+      ],
+      "kind": "native cache and HTTP boundaries",
+      "reason": "Raw cache dictionaries preserve unrelated captured fields; the receipt map is a typed actual digest index, not a domain payload facade. Missing historical phase refuses rather than initializes fresh state. Optional transport body/file/page are genuine mutually exclusive HTTP options. Absent receipt index initializes only when recording an actual observed effect; explicit null refuses. Resource optional fields preserve actual protocol absence, and controller clocks never attest remote occurrence.",
+      "validation": [
+        "test_http_observes_committed_phases_outside_parent_session_transaction",
+        "test_concurrent_controller_observes_unconfirmed_upload_without_second_post",
+        "test_cancellation_drains_owned_native_effect_and_commits_observed_receipt",
+        "test_observed_upload_identity_survives_changed_cache_ownership_without_mount",
+        "test_explicit_null_effect_ledger_refuses_before_native_effect"
+      ]
     }
   ]
 }
