@@ -2665,6 +2665,50 @@
         "test_invalid_reopening_refuses_before_mutating_observed_session",
         "test_reopening_fails_queued_follow_ups_of_the_failed_session"
       ]
+    },
+    {
+      "sites": [
+        {
+          "path": "src/tank/contracts/jobs.py",
+          "symbol": "JobMetadata",
+          "line": 18
+        }
+      ],
+      "kind": "unreported admission wait clock metadata",
+      "reason": "slot_waiting_since precision/reason/bucket-anchor facets are genuinely optional for retained scalar-only queue rows. Any actual non-null facet uses Timestamp coherence validation; scalar-only/all-null-facet rows use strict aware parsing without invented precision/reason. The actual AdmissionDeferred writer already emits these canonical facets. Optional declarations preserve historical omission under the actual exclude-unset queue codec and do not allow arbitrary extras.",
+      "validation": [
+        "test_admission_defer_clock_is_closed_and_the_next_typed_claim_remains_valid",
+        "test_legacy_slot_clock_does_not_gain_invented_precision_or_reason",
+        "test_invalid_slot_clock_refuses_before_any_repository_write"
+      ]
+    },
+    {
+      "sites": [
+        {
+          "path": "src/tank/runtime_worker_repository.py",
+          "symbol": "RepositoryWorkerQueue",
+          "line": 25
+        },
+        {
+          "path": "src/tank/runtime_dispatch_contracts.py",
+          "symbol": "RunningJobClaim",
+          "line": 119
+        },
+        {
+          "path": "src/tank/runtime_dispatch_contracts.py",
+          "symbol": "RequeueRequest",
+          "line": 180
+        }
+      ],
+      "kind": "sparse queue persistence and phase-specific ownership",
+      "reason": "Original raw documents remain only inside the queue adapter for sparse writes, so unrelated historical receipt omissions survive. The application receives concrete commands; lifecycle requests consume only actual job/kind/RUNNING/positive-attempt/original-payload-digest facts, not unused full command data. Missing/currently changed rows return False without effects; absent dependencies return None for explicit failure policy, never completion. Optional expiry=None is actual unbounded lifetime; expiry writes require a real supplied observation boundary. A zero recovered claim cannot authorize execution or be replaced by one; its original raw revision is quarantined once with static sanitized diagnostics.",
+      "validation": [
+        "test_worker_requeue_preserves_actual_scope_and_refunds_only_its_claimed_attempt",
+        "test_changed_command_cannot_be_requeued_by_an_older_claim",
+        "test_worker_expiry_requires_actual_due_boundary_and_preserves_attempt_count",
+        "test_requeue_does_not_normalize_unrelated_historical_receipt_fields",
+        "test_unproved_zero_claim_attempt_is_quarantined_without_inventing_one"
+      ]
     }
   ]
 }

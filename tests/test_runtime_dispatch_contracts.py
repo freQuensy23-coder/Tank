@@ -200,3 +200,205 @@ async def test_worker_quarantine_uses_raw_revision_with_unreported_nested_receip
         original["host_question_failure_refusals"]
     )
     assert not await queue.reject_invalid(invalid)
+
+
+async def test_worker_requeue_preserves_actual_scope_and_refunds_only_its_claimed_attempt(
+    repo: StorageBackend,
+) -> None:
+    from datetime import timedelta
+
+    from tank.runtime_dispatch_contracts import ClaimedWork, RequeueRequest
+    from tank.runtime_worker_repository import RepositoryWorkerQueue
+    from tank.time_precision import collection_clock, offset_schedule
+
+    job = await JobRepository(repo).enqueue("TELEGRAM_ANSWER", {"question_id": "question"}, "requeue")
+    queue = RepositoryWorkerQueue(repo)
+    work = await queue.claim()
+    assert isinstance(work, ClaimedWork)
+    not_before = offset_schedule(collection_clock(), timedelta(seconds=30))
+    assert await queue.requeue(
+        RequeueRequest(claim=work.scope(), not_before=not_before, reason="DELIVERY_WAIT")
+    )
+    stored = await repo.get("ops.jobs", job.job_id)
+    assert stored is not None and stored["status"] == "QUEUED" and stored["attempts"] == 0
+    assert stored["run_after"] == not_before.value and stored["payload"] == job.payload
+    assert not await queue.requeue(
+        RequeueRequest(claim=work.scope(), not_before=not_before, reason="DELIVERY_WAIT")
+    )
+    assert await repo.get("ops.jobs", job.job_id) == stored
+
+
+async def test_changed_command_cannot_be_requeued_by_an_older_claim(repo: StorageBackend) -> None:
+    from datetime import timedelta
+
+    from tank.runtime_dispatch_contracts import ClaimedWork, RequeueRequest
+    from tank.runtime_worker_repository import RepositoryWorkerQueue
+    from tank.time_precision import collection_clock, offset_schedule
+
+    job = await JobRepository(repo).enqueue("TELEGRAM_ANSWER", {"question_id": "original"}, "scope")
+    queue = RepositoryWorkerQueue(repo)
+    work = await queue.claim()
+    assert isinstance(work, ClaimedWork)
+    changed = await repo.get("ops.jobs", job.job_id)
+    assert changed is not None
+    changed["payload"] = {"question_id": "changed"}
+    await repo.put("ops.jobs", job.job_id, changed)
+    assert not await queue.requeue(
+        RequeueRequest(
+            claim=work.scope(),
+            not_before=offset_schedule(collection_clock(), timedelta(seconds=1)),
+            reason="DELIVERY_WAIT",
+        )
+    )
+    assert await repo.get("ops.jobs", job.job_id) == changed
+
+
+async def test_worker_expiry_requires_actual_due_boundary_and_preserves_attempt_count(
+    repo: StorageBackend,
+) -> None:
+    from datetime import timedelta
+
+    from tank.runtime_dispatch_contracts import ClaimedWork
+    from tank.runtime_worker_repository import RepositoryWorkerQueue
+    from tank.time_precision import Timestamp, collection_clock, offset_schedule
+
+    observed = collection_clock()
+    expires = offset_schedule(observed, timedelta(days=1))
+    job = await JobRepository(repo).enqueue(
+        "TELEGRAM_ANSWER", {"question_id": "question"}, "expiry", expires_at=expires
+    )
+    queue = RepositoryWorkerQueue(repo)
+    work = await queue.claim()
+    assert isinstance(work, ClaimedWork)
+    with pytest.raises(ValueError, match="actual controller"):
+        await queue.expire(work.scope(), Timestamp(None, None, "No observation clock retained"))
+    assert not await queue.expire(work.scope(), observed)
+    assert await queue.expire(work.scope(), offset_schedule(observed, timedelta(days=2)))
+    stored = await repo.get("ops.jobs", job.job_id)
+    assert stored is not None and stored["status"] == "EXPIRED" and stored["attempts"] == 1
+    assert stored["finished_at"] is not None and stored["payload"] == job.payload
+    assert not await queue.expire(work.scope(), offset_schedule(observed, timedelta(days=3)))
+
+
+async def test_requeue_does_not_normalize_unrelated_historical_receipt_fields(repo: StorageBackend) -> None:
+    from datetime import timedelta
+
+    from test_job_claim_revision import requeued_job_with_partial_receipt_clock
+
+    from tank.runtime_dispatch_contracts import ClaimedWork, RequeueRequest
+    from tank.runtime_worker_repository import RepositoryWorkerQueue
+    from tank.time_precision import collection_clock, offset_schedule
+    from tank.util import canonical_json
+
+    _, job_id = await requeued_job_with_partial_receipt_clock(repo)
+    original = await repo.get("ops.jobs", job_id)
+    assert original is not None
+    original["payload"] = {"item_id": "item"}
+    await repo.put("ops.jobs", job_id, original)
+    queue = RepositoryWorkerQueue(repo)
+    work = await queue.claim()
+    assert isinstance(work, ClaimedWork)
+    assert await queue.requeue(
+        RequeueRequest(
+            claim=work.scope(),
+            not_before=offset_schedule(collection_clock(), timedelta(seconds=1)),
+            reason="DEPENDENCY_WAIT",
+        )
+    )
+    stored = await repo.get("ops.jobs", job_id)
+    assert stored is not None and stored["status"] == "QUEUED"
+    assert canonical_json(stored["host_question_failure_refusals"]) == canonical_json(
+        original["host_question_failure_refusals"]
+    )
+
+
+async def test_admission_defer_clock_is_closed_and_the_next_typed_claim_remains_valid(
+    repo: StorageBackend,
+) -> None:
+    from tank.runtime_dispatch_contracts import ClaimedWork, RequeueRequest
+    from tank.runtime_worker_repository import RepositoryWorkerQueue
+    from tank.time_precision import collection_clock
+
+    job = await JobRepository(repo).enqueue(
+        "AGENT_MESSAGE", {"kind": "NEW_ITEM", "item_id": "item"}, "admission"
+    )
+    queue = RepositoryWorkerQueue(repo)
+    work = await queue.claim()
+    assert isinstance(work, ClaimedWork)
+    assert await queue.requeue(
+        RequeueRequest(claim=work.scope(), not_before=collection_clock(), reason="SESSION_ADMISSION")
+    )
+    stored = await repo.get("ops.jobs", job.job_id)
+    assert stored is not None and stored["attempts"] == 0
+    assert stored["slot_waiting_since"] == stored["created_at"]
+    assert stored["slot_waiting_since_prec"] == stored["created_at_prec"]
+    assert stored["slot_waiting_since_prec_reason"] == stored["created_at_prec_reason"]
+    reclaimed = await queue.claim()
+    assert isinstance(reclaimed, ClaimedWork) and reclaimed.job.attempts == 1
+    assert reclaimed.job.slot_waiting_since == work.job.created_at
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "facets",
+    [
+        {},
+        {
+            "slot_waiting_since_prec": None,
+            "slot_waiting_since_prec_reason": None,
+            "slot_waiting_since_bucket_anchor": None,
+        },
+    ],
+)
+async def test_legacy_slot_clock_does_not_gain_invented_precision_or_reason(
+    facets: dict[str, JsonValue],
+) -> None:
+    repo = MemoryRepository()
+    job = await JobRepository(repo).enqueue("TELEGRAM_ANSWER", {"question_id": "question"}, "legacy-clock")
+    document = {
+        **job.model_dump(mode="json", exclude_unset=True),
+        "slot_waiting_since": "2026-10-26T00:00:00Z",
+        **facets,
+    }
+    decoded = JobEnvelope.model_validate(document)
+    serialized = decoded.model_dump(mode="json", exclude_unset=True)
+    assert serialized == document
+    assert decoded.slot_waiting_since_prec is None and decoded.slot_waiting_since_prec_reason is None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "clock",
+    [
+        {"slot_waiting_since": "2026-10-26T00:00:00"},
+        {"slot_waiting_since": None, "slot_waiting_since_prec": "EXACT"},
+        {"slot_waiting_since": "2026-10-26T00:00:00Z", "slot_waiting_since_prec": "NOT_A_PRECISION"},
+    ],
+)
+async def test_invalid_slot_clock_refuses_before_any_repository_write(clock: dict[str, JsonValue]) -> None:
+    repo = MemoryRepository()
+    jobs = JobRepository(repo)
+    job = await jobs.enqueue("TELEGRAM_ANSWER", {"question_id": "question"}, "bad-clock")
+    before = await repo.get("ops.jobs", job.job_id)
+    with pytest.raises(ValidationError):
+        await jobs.put(job.model_copy(update=clock))
+    assert await repo.get("ops.jobs", job.job_id) == before
+
+
+async def test_unproved_zero_claim_attempt_is_quarantined_without_inventing_one(repo: StorageBackend) -> None:
+    from tank.contracts.jobs import InvalidJobClaim
+    from tank.runtime_worker_repository import RepositoryWorkerQueue
+
+    job = await JobRepository(repo).enqueue("FILTER_ITEM", {"item_id": "item"}, "unproved-recovery")
+    stored = await repo.get("ops.jobs", job.job_id)
+    assert stored is not None
+    stored["recovery_reclaim"] = True
+    await repo.put("ops.jobs", job.job_id, stored)
+    queue = RepositoryWorkerQueue(repo)
+    invalid = await queue.claim()
+    assert isinstance(invalid, InvalidJobClaim) and invalid.attempts == 0
+    assert invalid.error_fields == ("claim",)
+    assert await queue.reject_invalid(invalid)
+    terminal = await repo.get("ops.jobs", job.job_id)
+    assert terminal is not None and terminal["status"] == "FAILED" and terminal["attempts"] == 0
+    assert await queue.claim() is None

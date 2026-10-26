@@ -19,6 +19,7 @@ from tank.runtime_contracts import (
     ScoutReviewJob,
     TelegramAnswerJob,
 )
+from tank.time_precision import Timestamp
 
 type RuntimeJobKind = Literal[
     "FILTER_ITEM",
@@ -115,7 +116,16 @@ class DependencyState(DomainModel):
     status: Literal["QUEUED", "RUNNING", "DONE", "FAILED", "EXPIRED"]
 
 
+class RunningJobClaim(DomainModel):
+    job_id: str = Field(min_length=1, pattern=r"\S")
+    type: RuntimeJobKind
+    status: Literal["RUNNING"]
+    attempts: int = Field(ge=1)
+    payload_revision: str = Field(pattern=r"^[0-9a-f]{64}$")
+
+
 class ClaimedWork(DomainModel):
+    payload_revision: str = Field(pattern=r"^[0-9a-f]{64}$")
     job: JobMetadata
     command: RuntimeCommand
 
@@ -126,6 +136,17 @@ class ClaimedWork(DomainModel):
         if self.job.type != self.command.type:
             raise ValueError("Worker command differs from its claimed job kind")
         return self
+
+    def scope(self) -> RunningJobClaim:
+        return RunningJobClaim.model_validate(
+            {
+                "job_id": self.job.job_id,
+                "type": self.job.type,
+                "status": self.job.status,
+                "attempts": self.job.attempts,
+                "payload_revision": self.payload_revision,
+            }
+        )
 
 
 class MissingDependency(DomainModel):
@@ -154,3 +175,15 @@ class WaitingDependencies(DomainModel):
 
 
 type DependencyReadiness = ReadyDependencies | WaitingDependencies
+
+
+class RequeueRequest(DomainModel):
+    claim: RunningJobClaim
+    not_before: Timestamp
+    reason: Literal["DEPENDENCY_WAIT", "DELIVERY_WAIT", "SESSION_ADMISSION"]
+
+    @model_validator(mode="after")
+    def actual_schedule(self) -> Self:
+        if self.not_before.value is None:
+            raise ValueError("Worker requeue requires an actual schedule boundary")
+        return self

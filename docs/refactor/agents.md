@@ -1493,3 +1493,38 @@ All 96 native/config/runtime/composition/version unit callers pass in 5.92
 seconds, zero skips (worker-6f646-native-config-unit), scoped Ruff clean.
 This closes that configuration accessor, not the still-open whole Session
 constructor or worker body. No permissive settings default was introduced.
+
+Inactive typed queue lifecycle and actual admission-clock parity
+
+RunningJobClaim carries only actual job/kind/RUNNING/positive attempt and the
+original payload digest. RequeueRequest uses that narrow phase scope rather
+than revalidating unused full commands (the initial two failing cases exposed
+that overvalidation). RepositoryWorkerQueue rechecks current scope under the
+canonical job lock, patches only the owned schedule/completion fields and
+validates before writing original raw JSON. It does not reserialize unrelated
+historical receipts. Waits refund exactly the observed claimed attempt;
+changed scopes and repeated transitions produce no effects. Expiry requires
+an actual supplied observation boundary and actual current due expiry; an
+unbounded job does not invent one. Counter zero under an unproved recovery
+flag becomes a once-only invalid claim, not attempt one or a running effect.
+This preserves the existing single-controller scope, not a new distributed
+execution lease or cross-controller POST safety claim.
+
+Root authorized the narrow JobMetadata admission-clock companion after the
+real writer audit: slot_waiting_since_prec/prec_reason/bucket_anchor are now
+closed optional fields. Any reported non-null metadata validates coherently
+with Timestamp; scalar-only/all-null-facet retained rows keep strict aware
+parsing and no invented precision/reason. Foundation reviewed the exact
+frozen diff at HEAD597dea63+WIP and found no source issue. Actual defer then
+next typed claim passes on Memory/PostgreSQL; malformed copied models reject
+before a repository write. The generic extra-field policy remains closed.
+
+All 31 connected queue/envelope/revision units pass in 1.76 seconds and all
+18 actual PostgreSQL cases pass in 3.81 seconds, zero skips, unchanged local
+wrappers/source guards exit zero. Independent jobs/dispatch/adapter/test four
+targets and Ruff pass. Evidence worker-597-lifecycle-final-unit and
+worker-597-lifecycle-final-pg is external. Earlier intermediate 30/17 proof
+is retained; the final extra case specifically proves zero-attempt quarantine.
+These are inactive queue transitions; concrete worker dispatch/results and
+remaining send/follower/attachment dependencies still require activation and
+whole caller proof. Retirement 4a remains separate and immutable.
