@@ -2381,3 +2381,10 @@ fresh accepted-input control still prevents old-input-set completion. Static
 contract/test targets and Session source checking pass; scoped Ruff/format pass.
 Actual 64+1, correlation/second-page no-write, full caller/replay/Telegram/E2E and
 whole-cohort proof remain required before activation. No parent files changed.
+The actual status-boundary pair on unchanged observation source19 now passes all
+seven Memory units in 6.86 s and all seven PostgreSQL cases in 7.59 s, zero skips
+and source guards. It proves exactly 64+1 queried IDs, correlated ordered states,
+no partial write for wrong/missing/order/extra/outcome or second-page failures,
+and actual ownership refusal before recovery/native effects. This adds real
+boundary proof to the earlier pure contracts and four PG races; replay, Telegram
+and full completion/E2E cohort closure remain pending.
