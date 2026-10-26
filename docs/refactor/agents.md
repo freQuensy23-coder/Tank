@@ -2206,3 +2206,11 @@ Session service and blocks only its admission boundary, preserving 50 ms timeout
 zero dispatch, original expiry and attempt refund. All three actual admission
 cases pass in 22.17 seconds, zero skips/source guards; Ruff/format pass. The older
 module's untyped fixture helpers remain explicit test typing debt, not strict proof.
+
+Both actual external-capture bounded-incomplete→PARTIAL/FAILED history controls now
+run the closed worker on actual composed Runtime ports, sharing the test's actual
+Market/Truth/Scheduler instances and retained capture transport. All original
+capture request/history, confidence, timing, request independence and stored result
+oracles remain. Both cases pass in 20.47 seconds, zero skips/source guards. Initial
+setup incorrectly attempted to close the pure MarketTruthService; removing that
+nonexistent cleanup call fixed the fixture only (first diagnostic preserved).

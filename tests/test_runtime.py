@@ -12,7 +12,7 @@ import respx
 from agent_source_fixtures import declared_versions_fixture
 from pydantic import JsonValue
 from pydantic_settings import SettingsConfigDict
-from runtime_failure_fixtures import bind_worker_fragment_failure_store
+from runtime_failure_fixtures import bind_worker_fragment_failure_store, runtime_failure_fixture
 from runtime_lifecycle_fixtures import lifecycle_runtime
 from runtime_public_fixtures import public_runtime
 from source_support import fixture_http_admission
@@ -21,7 +21,6 @@ from tank.analysis.truth_contracts import MarketTruthAssessmentRef
 from tank.contracts import DomainModel
 from tank.contracts.job_repository import JobRepository
 from tank.contracts.json import decode_json, encode_json
-from tank.contracts.progress import ProgressPreferences
 from tank.contracts.provenance import ResolvedVersionIdentity
 from tank.contracts.scheduler_results import ConditionEvaluationResult
 from tank.market.capture_contracts import CaptureReadiness
@@ -1039,11 +1038,14 @@ async def test_external_capture_consumer_uses_bounded_incomplete_then_terminal_h
         config_version="fixture",
         code_version="fixture",
     )
-    async with httpx.AsyncClient(
-        transport=httpx.MockTransport(
-            lambda req: (_ for _ in ()).throw(AssertionError("No external requests"))
-        )
-    ) as http:
+    async with (
+        httpx.AsyncClient(
+            transport=httpx.MockTransport(
+                lambda req: (_ for _ in ()).throw(AssertionError("No external requests"))
+            )
+        ) as http,
+        runtime_failure_fixture(repo, tmp_path / "runtime", ops_progress_enabled=False) as runtime,
+    ):
         market = MarketService(
             repo,
             settings,
@@ -1054,22 +1056,13 @@ async def test_external_capture_consumer_uses_bounded_incomplete_then_terminal_h
         truth = MarketTruthService(repo, settings, market, versions=declared_versions_fixture())
         original = truth.assess
         truth.assess = AsyncMock(wraps=original)
-        runtime = object.__new__(Runtime)
-        runtime.budget_scope = RequestBudgetScope()
-        runtime.budget_backend = MemoryBudgetBackend(SystemBudgetClock())
-        runtime.budget_binding = None
-        runtime.repo = repo
-        bind_worker_fragment_failure_store(runtime, repo, declared_versions_fixture())
-        runtime.settings = ProgressPreferences(ops_progress_enabled=False, replay=False)
+        from tank.scheduler import Scheduler
+
+        await runtime.scheduler.close()
+        await runtime.market.close()
         runtime.market = market
         runtime.truth = truth
-        runtime.handlers = {
-            "RUN_MARKET_TRUTH": runtime.assess_wire,
-            "EVAL_CONDITIONS": __import__("tank.scheduler", fromlist=["Scheduler"])
-            .Scheduler(repo, settings, market, truth, versions=declared_versions_fixture())
-            .eval_conditions,
-        }
-        runtime.active_jobs = set()
+        runtime.scheduler = Scheduler(repo, settings, market, truth, versions=declared_versions_fixture())
         await market._schedule_event_backfill("e", "T", Timestamp(anchor, "EXACT", None))
         capture_task = asyncio.create_task(external_capture_worker())
         job = await repo.enqueue(
