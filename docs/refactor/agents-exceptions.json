@@ -2983,6 +2983,36 @@
         "test_mutated_admitted_message_cannot_change_original_owner_or_identity",
         "test_constructed_work_cannot_replace_command_behind_original_claim"
       ]
+    },
+    {
+      "sites": [
+        {
+          "path": "src/tank/agents/native_output_files.py",
+          "symbol": "output_request"
+        },
+        {
+          "path": "src/tank/agents/native_output_files.py",
+          "symbol": "SessionOutputFiles.send"
+        },
+        {
+          "path": "src/tank/agents/sessions.py",
+          "symbol": "SessionService.send_file"
+        },
+        {
+          "path": "src/tank/telegram_inbox.py",
+          "symbol": "TelegramInbox.lookup_session_file"
+        }
+      ],
+      "kind": "owned output-file wire and genuine phase absence",
+      "reason": "Input dictionaries are the actual native-tool arguments and retained owner journal at admission; use-case reads named request attributes. Caption None denotes omitted tool input, while explicit null/malformed supplied caption refuses. Content None means no successful bounded read yet, distinct from observed empty bytes. Locked lookup None means no prior receipt blocks a fresh send, after credential validation; cached SENT/UNKNOWN need neither credentials nor unused native bytes. The remaining Session telegram=None is its existing explicit unconfigured/offline dependency state and refuses, not a fabricated success. Output dictionary is only native-tool JSON serialization of the validated outcome. Whole constructor/composition migration remains open.",
+      "validation": [
+        "test_invalid_caption_refuses_before_native_get_or_delivery_intent",
+        "test_foreign_stored_question_refuses_before_native_get_or_telegram",
+        "test_absent_owner_cannot_recover_stale_last_payload_for_file_output",
+        "test_known_sent_returns_cached_receipt_without_native_bytes_or_credentials",
+        "test_unknown_earlier_delivery_returns_without_native_get_or_telegram_post",
+        "test_rebound_question_after_native_get_is_rechecked_before_telegram_post"
+      ]
     }
   ]
 }

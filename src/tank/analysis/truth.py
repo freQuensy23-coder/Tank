@@ -2748,13 +2748,13 @@ def enrich_evidence(
             "token_id"
         ):
             continue
+        if book.get("integrity_ok") is not True:
+            continue
         venue = _venue(book)
         if not isinstance(venue, str) or not venue:
             raise ValueError("Book split requires an actual nonblank venue")
         prior_index = latest_indices.get(venue)
-        if book.get("integrity_ok") is True and (
-            prior_index is None or _time(book) > _time(source_books[prior_index])
-        ):
+        if prior_index is None or _time(book) > _time(source_books[prior_index]):
             latest_indices[venue] = book_index
     askdepth: dict[str, Decimal | None] = {
         venue: decimal((source_books[position].get("depth", {}).get("ask", {}).get("p1") or {}).get("usd"))

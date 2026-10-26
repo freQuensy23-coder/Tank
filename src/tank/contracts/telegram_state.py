@@ -216,3 +216,75 @@ class QuestionPrompt(DomainModel):
     text: str | None
     reference: QuestionPromptReference | None
     attachments: list[QuestionPromptAttachment] | None
+
+
+type KnownTelegramFileDelivery = TelegramFileAlreadySent | TelegramFileUncertain
+
+
+class TelegramAttachmentAttempt(FollowupRefusalTarget):
+    channel: Literal["telegram:answer"]
+    purpose: Literal["ATTACHMENT"]
+    chat_id: ChatReference
+    call_id: NonblankText
+    filename: NonblankText
+
+
+class TelegramFileDeliveryContext(DomainModel):
+    recipient: TelegramQuestionRecipient
+    attempt: TelegramAttachmentAttempt
+    known: KnownTelegramFileDelivery | None
+
+
+class TelegramGeneratedAttachment(TelegramAttachmentAttempt):
+    status: Literal["GENERATED"]
+
+
+class TelegramFailedAttachment(TelegramAttachmentAttempt):
+    status: Literal["FAILED"]
+
+
+class TelegramSentAttachment(TelegramAttachmentAttempt):
+    status: Literal["SENT"]
+    message_ref: MessageReference
+
+
+type TelegramAttachmentDelivery = (
+    TelegramGeneratedAttachment | TelegramFailedAttachment | TelegramSentAttachment
+)
+
+
+def attachment_delivery(
+    record: Mapping[str, JsonValue],
+    recipient: TelegramQuestionRecipient,
+    *,
+    call_id: str,
+    filename: str,
+) -> TelegramAttachmentDelivery:
+    match record.get("status"):
+        case "GENERATED":
+            result: TelegramAttachmentDelivery = TelegramGeneratedAttachment.model_validate(
+                {
+                    field: record[field]
+                    for field in TelegramGeneratedAttachment.model_fields
+                    if field in record
+                }
+            )
+        case "FAILED":
+            result = TelegramFailedAttachment.model_validate(
+                {field: record[field] for field in TelegramFailedAttachment.model_fields if field in record}
+            )
+        case "SENT":
+            result = TelegramSentAttachment.model_validate(
+                {field: record[field] for field in TelegramSentAttachment.model_fields if field in record}
+            )
+        case _:
+            raise ValueError("Telegram file delivery has no admitted attempt phase")
+    if (
+        result.question_id != recipient.question_id
+        or result.session_id != recipient.session_id
+        or str(result.chat_id) != recipient.chat_key
+        or result.call_id != call_id
+        or result.filename != filename
+    ):
+        raise ValueError("Telegram file delivery conflicts with its actual target")
+    return result
