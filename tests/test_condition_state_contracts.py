@@ -509,3 +509,30 @@ def test_fresh_proof_context_can_advance_without_changing_unchanged_cache_coordi
     assert fresh.proofs[0].assembled_at == later
     with pytest.raises(ValidationError):
         SelectiveConditionValues.model_validate(original.model_copy(update={"assembled_at": None}))
+
+
+def test_proof_wire_preserves_actual_cache_identity_and_fresh_assembly_separately() -> None:
+    from tank.analysis.condition_graph_codec import encode_condition_evaluation_proof
+
+    selected = selective_close()
+    proof = selected.proofs[0]
+    wire = encode_condition_evaluation_proof(proof)
+    assert wire["metric"] == "price.close_vs_level" and wire["window"] == "W1H"
+    assert wire["dependency_fingerprint"] == "actual-head"
+    assert wire["content_sha256"] == "e" * 64 and wire["visibility_sha256"] == "f" * 64
+    assert wire["available"] is False and wire["reason"] == "INCOMPLETE"
+    assert wire["coverage"] is None and wire["observations"] == []
+    assert wire["freshness"] == {"kind": "NOT_APPLIED", "reason": "NO_ADDITIONAL_FRESHNESS_GATE"}
+    changed = type(proof).model_validate(
+        proof.model_copy(
+            update={
+                "assembled_at": Timestamp(value="2026-10-17T12:00:03Z", precision="COLLECTION_ONLY"),
+                "reused": True,
+            }
+        )
+    )
+    reused = encode_condition_evaluation_proof(changed)
+    assert reused["assembled_at"] == "2026-10-17T12:00:03Z" and reused["reused"] is True
+    assert reused["content_sha256"] == wire["content_sha256"]
+    assert reused["visibility_sha256"] == wire["visibility_sha256"]
+    assert wire["assembled_at"] == "2026-10-17T12:00:02Z"

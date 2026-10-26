@@ -8,6 +8,7 @@ from typing import Literal, Protocol
 from pydantic import JsonValue
 
 from tank.analysis.condition_graph_contracts import (
+    AssessedConditionProofFreshness,
     AvailableConditionFunding,
     BasicConditionSpot,
     CapturedConditionChainLiquidity,
@@ -30,6 +31,7 @@ from tank.analysis.condition_graph_contracts import (
     ConditionDerivatives,
     ConditionDerivativeSupportFeatures,
     ConditionDerivativeVenue,
+    ConditionEvaluationProof,
     ConditionFieldObservation,
     ConditionFlowAggregate,
     ConditionFlowAggregateProjection,
@@ -73,6 +75,7 @@ from tank.analysis.condition_graph_contracts import (
     FlowCaptureEvidenceRef,
     KnownConditionTradeCount,
     MetricSemanticsCadenceOrigin,
+    MissingConditionProofObservation,
     ObservedConditionCohort,
     ObservedConditionCohortComparison,
     ObservedConditionMarketContext,
@@ -203,6 +206,7 @@ def _checked_capture_projection(value: ConditionFlowCaptureProjection) -> Condit
         ConditionFlowCaptureProjection,
         ConditionFlowCaptureWitness,
         ConditionFlowAggregateProjection,
+        ConditionEvaluationProof,
         ConditionFlowAggregate,
     ):
         raise TypeError("A declared flow capture projection is required")
@@ -1644,4 +1648,53 @@ def encode_condition_supply(
     result.update(_clock_wire(bounds.start, "start"))
     result.update(_clock_wire(bounds.cutoff, "cutoff"))
     result.update(_clock_wire(supply.assembled_at, "assembled_at"))
+    return result
+
+
+def encode_condition_evaluation_proof(value: ConditionEvaluationProof) -> dict[str, JsonValue]:
+    proof = ConditionEvaluationProof.model_validate(value)
+    observations: list[JsonValue] = []
+    freshness = proof.freshness
+    if isinstance(freshness, AssessedConditionProofFreshness):
+        for observation in freshness.observations:
+            item: dict[str, JsonValue] = {
+                "token_id": observation.token_id,
+                "instrument_id": observation.instrument_id,
+            }
+            item.update(_clock_wire(observation.observed_at, "observed_at"))
+            item.update(_cadence_wire(observation.cadence))
+            if isinstance(observation, MissingConditionProofObservation):
+                item.update(
+                    {
+                        "status": observation.status,
+                        "collection": observation.collection,
+                        "reason": observation.reason,
+                    }
+                )
+            else:
+                item["fresh"] = observation.fresh
+                if isinstance(observation, ConditionFieldObservation):
+                    item.update(
+                        {
+                            "collection": observation.collection,
+                            "age_s": observation.age_s,
+                            "reason": observation.reason,
+                        }
+                    )
+            observations.append(item)
+    key = proof.cache_key
+    result: dict[str, JsonValue] = {
+        "metric": proof.requirement.metric,
+        "window": proof.requirement.window,
+        "dependency_fingerprint": key.dependency_identity,
+        "content_sha256": key.content_sha256,
+        "visibility_sha256": key.visibility_sha256,
+        "reused": proof.reused,
+        "reason": proof.reason,
+        "observations": observations,
+        "available": proof.available,
+        "coverage": None if proof.coverage is None else _model_wire(proof.coverage),
+        "freshness": _model_wire(freshness),
+    }
+    result.update(_clock_wire(proof.assembled_at, "assembled_at"))
     return result
