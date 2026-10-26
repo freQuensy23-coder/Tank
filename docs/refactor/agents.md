@@ -1205,3 +1205,78 @@ zero skips; independent strict three targets and Ruff pass. Evidence is
 termination-receipt-correction-unit.{log,xml} under external agents evidence.
 This is a separate bounded correction from the still-unfixed chronology
 reproduction; it does not alter the qualified fa1ca989 checkpoint.
+
+### Typed observed answers and locked question settlement
+
+This bounded slice replaces the anonymous turn_answers text/ended payloads
+with NativeTurnAnswer records keyed by actual journal message identity.
+NativeOwnershipSnapshot carries actual recorded lineage, while absent journal
+metadata remains None rather than an invented empty journal. Full native
+callback ownership resolution still validates the full journal. A declared
+answer-query selection preserves other actual message IDs as explicitly
+unselected; it never manufactures their retry counts or accepted inputs.
+
+The first broad test pass exposed six unchanged exhausted-retry regressions:
+the initial new settlement projection was incorrectly validating prior input
+metadata for FAILED questions. That product overvalidation was removed.
+QuestionSettlementSession now reads only basic identity/phase facts first;
+FAILED settlement never reads the historical input, retry count or body.
+Lineage is projected only for the selected history-consuming questions. The
+six original opaque-body/input regressions pass unchanged. A new real-service
+case also proves an opaque failed question and old tool lineage cannot block
+a fresh independently owned answer, while preserving all unrelated bytes.
+
+The managed history adapter requires actual data and next_page, including a
+real string cursor "0". It rejects missing or incompatible page declarations,
+cycles and conflicting event identities. No Node descending cursor is
+invented. The pinned managed route accepts order=desc and returns exactly
+those two paging fields. Only event identity, running execution, agent text
+or redacted blocks, and actual idle stop reason are projected. Missing native
+execution correlation remains uncorrelated; it cannot inherit another
+input's text. A new running observation invalidates earlier end_turn
+completion, and a higher declared attempt cannot inherit failed text.
+COMPLETED with text=None preserves an observed end_turn without observed
+text; UNSETTLED means completion was not confirmed, not invented native
+status. File delivery remains its existing separate idempotent effect.
+
+The pure ManagedEventPage/NodeEventPage/NativeWireEvent definitions moved
+unchanged into contracts/native_events.py. native_transport explicitly
+reexports them for existing callers, and answer projections import the
+inward DTOs instead of the persistence-containing adapter. The response maps
+remain only native wire admission, current storage patches, and precise
+indexes keyed by actual event/execution/message identities. Exact None,
+default and mapping sites and reasons are in agents-exceptions.json.
+
+Before answering, deliver_answers re-reads the actual session, journal
+question and retry lineage under the session lock. It passes both actual
+question/session IDs to the existing locked question writer. A missing
+question produces no answer_recorded marker, a changed lineage cannot
+publish old text, and a changed question binding refuses. A historical
+payload need not invent a missing session_id because the actual session key
+and the stored question's binding are both checked; a present conflicting
+payload value rejects. Existing first-answer and idempotent delivery
+behavior is retained. Three ingestion-owned direct turn_answers tests were
+narrowly migrated to typed snapshot input and attribute assertions, with the
+same text, no-text, retry and page-count oracles. No peer intake/media edits
+were replaced.
+
+Qualification on the frozen owned source prefix based on 1f748f91: all 837
+collected broad Session/native/runtime/Telegram units pass in 24.55 seconds,
+zero skips, p90 0.313 seconds and maximum 5.462 seconds. All 126 collected
+affected Linux integrations pass in 72.57 seconds, zero skips, including
+actual replay/reference/market/E2E callers and the two real PostgreSQL
+matching/foreign-question settlement cases. Both wrappers exit zero and
+verify unchanged source/service identity. Evidence prefixes are
+answer-settlement-final-broad-unit and answer-settlement-affected-integration
+under external agents evidence. Independent strict seven targets, configured
+default four source targets, scoped Ruff/format, source-comment and diff
+checks pass. Tests ran against the frozen owned work-in-progress source
+before the report/commit; no product code changed after these gates.
+
+This closes turn_answers/deliver_answers typing and the associated answer
+contracts, not whole SessionService. The refreshed inventory retains 26
+SessionService/free-helper and four Runtime functions incomplete. Whole
+execution-barrier/tool/usage/event orchestration, remaining Telegram/file
+presentation coupling and the assigned vendor implementation backlog remain
+open. Earlier 19e0dc59 was an inactive contract checkpoint, not qualified
+caller activation; the final source and real caller proofs supersede it.
