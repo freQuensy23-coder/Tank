@@ -6686,7 +6686,8 @@ class ConditionTopCacheKey(DomainModel):
     window: ConditionWindow
     requested_duration_s: float = Field(gt=0)
     cutoff: datetime
-    assembled_at: Timestamp
+    content_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+    visibility_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
     dependency_identity: str = Field(min_length=1, pattern=r"\S")
     config_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
     expected_direction_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
@@ -6702,7 +6703,8 @@ class ConditionStateNodeKey(DomainModel):
     token_id: str = Field(min_length=1, pattern=r"\S")
     start: datetime
     cutoff: datetime
-    assembled_at: Timestamp
+    content_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+    visibility_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
     dependency_identity: str = Field(min_length=1, pattern=r"\S")
     config_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
     expected_direction_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
@@ -6829,6 +6831,7 @@ def condition_metric_domain(metric: ConditionMetric) -> ConditionCacheDomain:
 class ConditionEvaluationProof(DomainModel):
     requirement: ConditionRequirement
     cache_key: ConditionTopCacheKey
+    assembled_at: Timestamp
     reused: bool
     available: bool
     reason: Literal["INCOMPLETE"] | None
@@ -6899,6 +6902,7 @@ type UncomputedConditionFacet = UnrequestedConditionFacet | UnsupportedCondition
 class SelectiveConditionValues(DomainModel):
     token_id: str = Field(min_length=1, pattern=r"\S")
     cutoff: Timestamp
+    assembled_at: Timestamp
     requested: tuple[ConditionRequirement, ...]
     spot: dict[ConditionWindow, BasicConditionSpot]
     derivatives: dict[ConditionWindow, BasicConditionDerivatives]
@@ -6945,6 +6949,8 @@ class SelectiveConditionValues(DomainModel):
                 "Selected window indexes must preserve every actually evaluated requested window"
             )
         for proof in self.proofs:
+            if proof.assembled_at != self.assembled_at:
+                raise ValueError("Condition proofs must preserve the current actual assembly context")
             if (
                 proof.cache_key.domain == "spot"
                 and proof.coverage != self.spot[proof.requirement.window].coverage

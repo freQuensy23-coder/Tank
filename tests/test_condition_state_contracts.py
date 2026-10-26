@@ -178,7 +178,8 @@ def test_cache_identity_keeps_subject_and_all_actual_dependency_coordinates() ->
         window="W1H",
         requested_duration_s=3600,
         cutoff=cutoff,
-        assembled_at=Timestamp(value="2026-10-17T12:00:02Z", precision="COLLECTION_ONLY"),
+        content_sha256="e" * 64,
+        visibility_sha256="f" * 64,
         dependency_identity="explicit-provider-head",
         config_sha256="a" * 64,
         expected_direction_sha256="b" * 64,
@@ -205,7 +206,8 @@ def test_cache_identity_keeps_subject_and_all_actual_dependency_coordinates() ->
         token_id=key.token_id,
         start=cutoff - timedelta(hours=1),
         cutoff=cutoff,
-        assembled_at=Timestamp(value="2026-10-17T12:00:02Z", precision="COLLECTION_ONLY"),
+        content_sha256="e" * 64,
+        visibility_sha256="f" * 64,
         dependency_identity=key.dependency_identity,
         config_sha256=key.config_sha256,
         expected_direction_sha256=key.expected_direction_sha256,
@@ -237,6 +239,7 @@ def selective_close() -> SelectiveConditionValues:
     return SelectiveConditionValues(
         token_id="T",
         cutoff=stamp,
+        assembled_at=Timestamp(value="2026-10-17T12:00:02Z", precision="COLLECTION_ONLY"),
         requested=(requirement,),
         spot={},
         derivatives={},
@@ -260,11 +263,13 @@ def selective_close() -> SelectiveConditionValues:
                     window="W1H",
                     requested_duration_s=3600,
                     cutoff=datetime(2026, 10, 17, 12, tzinfo=UTC),
-                    assembled_at=Timestamp(value="2026-10-17T12:00:02Z", precision="COLLECTION_ONLY"),
+                    content_sha256="e" * 64,
+                    visibility_sha256="f" * 64,
                     dependency_identity="actual-head",
                     config_sha256="a" * 64,
                     expected_direction_sha256="b" * 64,
                 ),
+                assembled_at=Timestamp(value="2026-10-17T12:00:02Z", precision="COLLECTION_ONLY"),
                 reused=False,
                 available=False,
                 reason="INCOMPLETE",
@@ -318,11 +323,13 @@ def test_proof_freshness_requires_real_observations_and_binds_actual_cutoff() ->
             window="W1H",
             requested_duration_s=3600,
             cutoff=AT,
-            assembled_at=Timestamp(value="2026-10-17T12:00:02Z", precision="COLLECTION_ONLY"),
+            content_sha256="e" * 64,
+            visibility_sha256="f" * 64,
             dependency_identity="book-head",
             config_sha256="a" * 64,
             expected_direction_sha256="b" * 64,
         ),
+        assembled_at=Timestamp(value="2026-10-17T12:00:02Z", precision="COLLECTION_ONLY"),
         reused=True,
         available=True,
         reason=None,
@@ -401,11 +408,13 @@ def test_selected_metric_cannot_pass_a_required_freshness_gate_without_observati
             window="W1H",
             requested_duration_s=3600,
             cutoff=datetime(2026, 10, 17, 12, tzinfo=UTC),
-            assembled_at=Timestamp(value="2026-10-17T12:00:02Z", precision="COLLECTION_ONLY"),
+            content_sha256="e" * 64,
+            visibility_sha256="f" * 64,
             dependency_identity="funding-head",
             config_sha256="a" * 64,
             expected_direction_sha256="b" * 64,
         ),
+        assembled_at=Timestamp(value="2026-10-17T12:00:02Z", precision="COLLECTION_ONLY"),
         reused=False,
         available=False,
         reason="INCOMPLETE",
@@ -435,20 +444,19 @@ def test_direction_declaration_refuses_implicit_positive_or_scalar_coercion(valu
         DeclaredConditionDirection.model_validate({"status": "DECLARED", "value": value})
 
 
-def test_condition_cache_keys_require_actual_assembly_visibility_coordinates() -> None:
+def test_condition_cache_keys_bind_consumed_content_and_visibility_without_processing_clock() -> None:
     from tank.analysis.condition_graph_contracts import ConditionStateNodeKey, ConditionTopCacheKey
     from tank.contracts.json import decode_json, encode_json
 
     cutoff = datetime(2026, 10, 17, 12, tzinfo=UTC)
-    initial = Timestamp(value="2026-10-17T12:00:00Z", precision="COLLECTION_ONLY")
-    admitted = Timestamp(value="2026-10-17T12:00:01Z", precision="COLLECTION_ONLY")
     top = ConditionTopCacheKey(
         domain="spot",
         token_id="T",
         window="W1H",
         requested_duration_s=3600.0,
         cutoff=cutoff,
-        assembled_at=initial,
+        content_sha256="e" * 64,
+        visibility_sha256="f" * 64,
         dependency_identity="same-captured-flow-source-head",
         config_sha256="a" * 64,
         expected_direction_sha256="b" * 64,
@@ -458,29 +466,46 @@ def test_condition_cache_keys_require_actual_assembly_visibility_coordinates() -
         token_id="T",
         start=cutoff - timedelta(hours=1),
         cutoff=cutoff,
-        assembled_at=initial,
+        content_sha256=top.content_sha256,
+        visibility_sha256=top.visibility_sha256,
         dependency_identity=top.dependency_identity,
         config_sha256=top.config_sha256,
         expected_direction_sha256=top.expected_direction_sha256,
     )
-    changed_top = type(top).model_validate(top.model_copy(update={"assembled_at": admitted}))
-    changed_state = type(state).model_validate(state.model_copy(update={"assembled_at": admitted}))
-    assert changed_top not in {top} and changed_state not in {state}
     for key in (top, state):
-        wire = decode_json(key.model_dump_json())
-        assert isinstance(wire, dict)
-        assert wire["assembled_at"] == {
-            "value": "2026-10-17T12:00:00Z",
-            "precision": "COLLECTION_ONLY",
-            "precision_reason": None,
-            "bucket_anchor": None,
-        }
-        del wire["assembled_at"]
-        with pytest.raises(ValidationError):
-            type(key).model_validate_json(encode_json(wire))
-    unknown = type(top).model_validate(
-        top.model_copy(
-            update={"assembled_at": Timestamp(value=None, precision=None, precision_reason="NOT_CAPTURED")}
+        for field in ("content_sha256", "visibility_sha256"):
+            different = type(key).model_validate(key.model_copy(update={field: "0" * 64}))
+            assert different not in {key}
+            wire = decode_json(key.model_dump_json())
+            assert isinstance(wire, dict)
+            assert "assembled_at" not in wire
+            del wire[field]
+            with pytest.raises(ValidationError):
+                type(key).model_validate_json(encode_json(wire))
+            with pytest.raises(ValidationError):
+                type(key).model_validate_json(encode_json({**wire, field: "G" * 64}))
+
+
+def test_fresh_proof_context_can_advance_without_changing_unchanged_cache_coordinates() -> None:
+    from tank.analysis.condition_graph_contracts import SelectiveConditionValues
+
+    original = selective_close()
+    later = Timestamp(value="2026-10-17T12:00:03Z", precision="COLLECTION_ONLY")
+    with pytest.raises(ValidationError, match="actual assembly context"):
+        SelectiveConditionValues.model_validate(original.model_copy(update={"assembled_at": later}))
+    fresh = SelectiveConditionValues.model_validate(
+        original.model_copy(
+            update={
+                "assembled_at": later,
+                "proofs": tuple(
+                    proof.model_copy(update={"assembled_at": later, "reused": True})
+                    for proof in original.proofs
+                ),
+            }
         )
     )
-    assert unknown.assembled_at.value is None and unknown != top
+    assert fresh.proofs[0].cache_key == original.proofs[0].cache_key
+    assert fresh.proofs[0].reused is True and fresh.assembled_at == later
+    assert fresh.proofs[0].assembled_at == later
+    with pytest.raises(ValidationError):
+        SelectiveConditionValues.model_validate(original.model_copy(update={"assembled_at": None}))
