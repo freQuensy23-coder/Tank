@@ -6,7 +6,7 @@ from typing import Annotated, Literal, Self
 from pydantic import Field, JsonValue, model_validator
 
 from tank.contracts import DomainModel
-from tank.time_precision import Timestamp
+from tank.time_precision import Timestamp, propagate_timestamp, timestamp_owned_fields
 from tank.util import parse_time
 
 type MilestoneIdentity = Annotated[str, Field(min_length=1, pattern=r"\S")]
@@ -39,6 +39,60 @@ class MilestoneCheckCommand(DomainModel):
     @classmethod
     def from_notification(cls, record: Mapping[str, JsonValue]) -> Self:
         return cls.model_validate({field: record[field] for field in cls.model_fields if field in record})
+
+
+class MilestoneExpiryCommand(MilestoneCheckCommand):
+    due_at: str = Field(...)
+
+
+class MilestoneEventOwner(DomainModel):
+    event_id: MilestoneIdentity
+
+    @classmethod
+    def from_record(cls, record: Mapping[str, JsonValue], expected_event_id: str) -> Self:
+        owner = cls.model_validate({"event_id": record["event_id"]} if "event_id" in record else {})
+        if owner.event_id != expected_event_id:
+            raise ValueError("Milestone event conflicts with its requested identity")
+        return owner
+
+
+class MilestoneTimerState(DomainModel):
+    kind: MilestoneIdentity
+    status: Literal["PENDING", "CONFIRMED", "VERIFIED", "FAILED", "MISSED"] | None
+    due: Timestamp
+    expires: Timestamp | None
+
+    @model_validator(mode="after")
+    def actual_clock(self) -> Self:
+        if self.due.value is None:
+            raise ValueError("Milestone timer requires its actual deadline")
+        if self.expires is not None and self.expires.value is None:
+            raise ValueError("Milestone expiry requires its actual occurrence")
+        return self
+
+    @property
+    def due_at(self) -> str:
+        if self.due.value is None:
+            raise ValueError("Milestone timer requires its actual deadline")
+        return self.due.value
+
+    @classmethod
+    def from_record(cls, record: Mapping[str, JsonValue]) -> Self:
+        due = propagate_timestamp(record, "due_at")
+        expiry_fields = {
+            field: record[field] for field in timestamp_owned_fields("expires_at") if field in record
+        }
+        expiry = propagate_timestamp(record, "expires_at") if expiry_fields else None
+        if expiry is not None and expiry.value is None:
+            expiry = None
+        return cls.model_validate(
+            {
+                "kind": MilestoneKind.from_record(record).kind,
+                "status": record.get("status"),
+                "due": due,
+                "expires": expiry,
+            }
+        )
 
 
 class ScheduledMilestoneCheck(MilestoneCheckCommand):
@@ -91,8 +145,7 @@ class AcceptedMilestoneResolution(DomainModel):
         return cls.model_validate(projected)
 
 
-class MilestoneEventWire(DomainModel):
-    event_id: MilestoneIdentity
+class MilestoneEventWire(MilestoneEventOwner):
     milestone_resolutions: list[dict[str, JsonValue]] = Field(default_factory=list)
 
 

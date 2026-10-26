@@ -64,6 +64,7 @@ from tank.analysis.publication_ordering import exposure_priority_from_record
 from tank.analysis.reaction_scheduling import AssessmentFreeDiagnosticScheduling, ReactionScheduling
 from tank.analysis.truth_contracts import MarketTruthAssessmentRef
 from tank.analysis.watch_contracts import WatchCondition, encode_watch_condition, parse_watch_condition
+from tank.contracts.milestone_checks import MilestoneEventOwner, ScheduledMilestoneCheck
 from tank.contracts.page_evidence import (
     FetchPageRequest,
     PageRead,
@@ -3405,11 +3406,20 @@ class EventToolService:
 
     async def schedule_milestone(self, a, c):
         event = await self.require("evt.events", a["event_id"])
+        MilestoneEventOwner.from_record(event, a["event_id"])
         due_stamp = propagate_timestamp(a, "due_at", missing_reason="CALLER_DID_NOT_DECLARE_DUE_PRECISION")
         due = due_stamp.value
         source_id = a["source_id"]
         if not await self.registered_source(source_id):
             raise ValueError("Milestone source_id must be a registered source")
+        scheduled = ScheduledMilestoneCheck.model_validate(
+            {
+                "event_id": event["event_id"],
+                "milestone": a["milestone"],
+                **due_stamp.fields("due_at"),
+                "source_id": source_id,
+            }
+        )
         event["next_milestone"] = {
             "kind": a["milestone"],
             **due_stamp.fields("due_at"),
@@ -3418,12 +3428,7 @@ class EventToolService:
         await self.repo.put("evt.events", event["event_id"], event)
         job = await self.repo.enqueue(
             "MILESTONE_CHECK",
-            {
-                "event_id": event["event_id"],
-                "milestone": a["milestone"],
-                **due_stamp.fields("due_at"),
-                "source_id": source_id,
-            },
+            scheduled.model_dump(mode="json", exclude_unset=True),
             f"{event['event_id']}:{a['milestone']}:{due}",
             run_after=due_stamp,
             expires_at=offset_schedule(

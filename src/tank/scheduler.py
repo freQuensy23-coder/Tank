@@ -4,7 +4,7 @@ import asyncio
 import contextlib
 import logging
 from collections.abc import Awaitable, Callable, Mapping
-from datetime import UTC, date, timedelta
+from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal, InvalidOperation, localcontext
 from pathlib import Path
 from typing import Literal
@@ -28,8 +28,11 @@ from tank.contracts.configuration import Thresholds
 from tank.contracts.json import decode_json
 from tank.contracts.milestone_checks import (
     MilestoneCheckCommand,
+    MilestoneEventOwner,
+    MilestoneExpiryCommand,
     MilestoneKind,
     MilestoneResolutionHistory,
+    MilestoneTimerState,
     ScheduledMilestoneCheck,
 )
 from tank.contracts.provenance import ResolvedVersionIdentity
@@ -254,7 +257,13 @@ class Scheduler:
                         expires_at=expiry_stamp,
                     )
             if milestone and milestone.get("due_at"):
-                await self.expire_milestone(event["event_id"], now)
+                timer = MilestoneTimerState.from_record(milestone)
+                await self.expire_milestone(
+                    MilestoneExpiryCommand(
+                        event_id=event["event_id"], milestone=timer.kind, due_at=timer.due_at
+                    ),
+                    now,
+                )
             assessment = await self.latest_assessment(event)
             if not assessment:
                 continue
@@ -383,31 +392,38 @@ class Scheduler:
 
                 self.launch(f"reaction-pre:{event['event_id']}:{token}", capture_pre)
 
-    async def expire_milestone(self, event_id, now):
-        """A missed verification window is a timer fact, never a source outcome."""
-        async with self.repo.lock("event:" + event_id), self.repo.transaction():
-            event = await self.repo.get("evt.events", event_id)
-            milestone = (event or {}).get("next_milestone")
-            if (
-                not milestone
-                or not milestone.get("due_at")
-                or milestone.get("status") in {"CONFIRMED", "VERIFIED", "FAILED", "MISSED"}
-            ):
+    async def expire_milestone(self, command: MilestoneExpiryCommand, now: datetime) -> None:
+        """Expire only the locked expected timer, never a successor or source outcome."""
+        command = MilestoneExpiryCommand.model_validate(command)
+        now = parse_time(now)
+        async with self.repo.lock("event:" + command.event_id), self.repo.transaction():
+            event = await self.repo.get("evt.events", command.event_id)
+            if event is None:
                 return
-            due = propagate_timestamp(milestone, "due_at")
+            MilestoneEventOwner.from_record(event, command.event_id)
+            milestone = event.get("next_milestone")
+            if milestone is None:
+                return
+            if not isinstance(milestone, dict):
+                raise ValueError("Milestone timer state requires an object")
+            timer = MilestoneTimerState.from_record(milestone)
+            if timer.kind != command.milestone or parse_time(timer.due_at) != parse_time(command.due_at):
+                raise ValueError("Milestone expiry conflicts with its expected timer")
+            if timer.status in {"CONFIRMED", "VERIFIED", "FAILED", "MISSED"}:
+                return
             expiry = (
-                propagate_timestamp(milestone, "expires_at")
-                if milestone.get("expires_at")
-                else offset_schedule(due, timedelta(hours=2))
+                timer.expires if timer.expires is not None else offset_schedule(timer.due, timedelta(hours=2))
             )
+            if expiry.value is None:
+                raise ValueError("Milestone expiry requires its actual occurrence")
             if parse_time(expiry.value) > now:
                 return
             missed = {**milestone, "status": "MISSED", **collection_clock(now).fields("missed_at")}
-            await self.repo.put("evt.events", event_id, {**event, "next_milestone": missed})
+            await self.repo.put("evt.events", command.event_id, {**event, "next_milestone": missed})
             await self.message(
                 "MILESTONE",
-                event_id,
-                "missed:" + str(milestone.get("kind", milestone.get("milestone"))) + ":" + due.value,
+                command.event_id,
+                "missed:" + timer.kind + ":" + timer.due_at,
                 milestone=missed,
                 verification_required=True,
                 instruction="Milestone verification window elapsed without accepted resolution. Re-score; verify source outcome. Timer expiry is not evidence that the source milestone failed.",

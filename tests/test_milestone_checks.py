@@ -5,6 +5,7 @@ from datetime import timedelta
 from pathlib import Path
 
 import pytest
+from agent_source_fixtures import source_item_fixture
 from pydantic import JsonValue, ValidationError
 from runtime_public_fixtures import public_runtime
 from test_runtime_condition_evaluation import finished_attempt
@@ -13,9 +14,81 @@ from test_storage import repo as repo
 from tank.contracts.job_repository import JobRepository
 from tank.contracts.milestone_checks import MilestoneCheckCommand, MilestoneKind, MilestoneResolutionHistory
 from tank.replay import replay_milestone_timer
+from tank.runtime import Runtime
+from tank.sources.raw_store import write_raw_item
 from tank.storage import StorageBackend
-from tank.time_precision import chosen_boundary, collection_clock
-from tank.util import iso, utcnow
+from tank.time_precision import chosen_boundary, collection_clock, offset_schedule
+from tank.util import canonical_json, iso, sha256, utcnow
+
+
+async def seed_unverified_event(runtime: Runtime, repo: StorageBackend) -> dict[str, JsonValue]:
+    observed = utcnow()
+    published = iso(observed - timedelta(seconds=1))
+    statement = "Unverified social lead about a scheduled vote"
+    payload = canonical_json({"text": statement, "published_at": published}).encode()
+    raw_ref, raw_sha256 = write_raw_item(
+        runtime.settings.data_dir, "S29", "milestone-context", observed, payload
+    )
+    versions = runtime.settings.require_versions()
+    item = source_item_fixture(
+        "milestone-context",
+        source_id="S29",
+        source="Synthetic social post",
+        author="synthetic-reader",
+        text=statement,
+        source_class="SOCIAL_LEAD",
+        observed_at=iso(observed),
+        published_at=published,
+        published_prec="EXACT",
+        raw_ref=raw_ref,
+        raw_sha256=raw_sha256,
+        content_hash=sha256(statement),
+        config_version=versions.config_version,
+        code_version=versions.code_version,
+    )
+    await repo.put("ingest.source_items", item.item_id, item.storage_record())
+    created = await runtime.sessions.tool_dispatch(
+        "record_event",
+        {
+            "item_id": item.item_id,
+            "is_event": True,
+            "statement": statement,
+            "certainty": "LOW",
+            "certainty_reason": "Unverified synthetic social lead; no accepted outcome evidence",
+            "entities": [],
+            "token_ids": [],
+            "event_time": {"value": None, "precision": "UNKNOWN", "quote": None},
+            "public_at": {
+                "value": published,
+                "precision": "EXACT",
+                "basis": "Synthetic social post publication metadata",
+                "quote": None,
+            },
+            "timing_confidence": "LOW",
+            "freshness": "FRESH",
+            "claims": [],
+            "next_milestone": None,
+            "checked_sources": [],
+        },
+        {},
+    )
+    assert isinstance(created, dict) and isinstance(created["event_id"], str)
+    event = await repo.get("evt.events", created["event_id"])
+    assert event is not None
+    assert event["event_state"] == "RUMOR" and event["state_verified"] is False
+    assert event["certainty"] == "LOW" and event["best_source_class"] == "SOCIAL_LEAD"
+    assert event["public_at"] == published
+    assert await repo.list("ops.jobs") == []
+    return event
+
+
+async def test_unverified_milestone_context_uses_actual_source_and_event_producers(
+    repo: StorageBackend, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    async with public_runtime(repo, tmp_path, monkeypatch) as (runtime, router):
+        event = await seed_unverified_event(runtime, repo)
+        assert event["next_milestone"] is None
+        assert not router.calls
 
 
 def resolution(due: str) -> dict[str, JsonValue]:
@@ -99,7 +172,13 @@ async def test_queue_missing_required_fact_fails_before_event_lookup_or_message(
         **collection_clock().fields("due_at"),
     }
     del payload[missing]
-    job = await JobRepository(repo).enqueue("MILESTONE_CHECK", payload, "invalid-milestone", max_attempts=1)
+    job = await JobRepository(repo).enqueue(
+        "MILESTONE_CHECK",
+        payload,
+        "invalid-milestone",
+        max_attempts=1,
+        expires_at=offset_schedule(collection_clock(), timedelta(hours=2)),
+    )
     async with public_runtime(repo, tmp_path, monkeypatch) as (runtime, router):
         stop = asyncio.Event()
         worker = asyncio.create_task(runtime.worker(stop))
@@ -221,3 +300,141 @@ def test_kind_alias_preserves_actual_name_and_rejects_conflict() -> None:
     assert MilestoneKind.from_record({"milestone": "VOTE"}).kind == "VOTE"
     with pytest.raises(ValueError, match="conflict"):
         MilestoneKind.from_record({"kind": "VOTE", "milestone": "HEARING"})
+
+
+@pytest.mark.parametrize("difference", ["kind", "deadline"])
+async def test_recorded_missed_timer_cannot_expire_a_successor_before_divergence(
+    repo: StorageBackend, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, difference: str
+) -> None:
+    due = utcnow() - timedelta(hours=3)
+    original: dict[str, JsonValue] = {
+        "kind": "VOTE",
+        "source_id": "S01",
+        **chosen_boundary(due, precision="EXACT").fields("due_at"),
+    }
+    successor = original | (
+        {"kind": "SUCCESSOR"}
+        if difference == "kind"
+        else chosen_boundary(due + timedelta(minutes=5), precision="EXACT").fields("due_at")
+    )
+    event: dict[str, JsonValue] = {"event_id": "event", "next_milestone": successor}
+    await repo.put("evt.events", "event", event)
+    async with public_runtime(repo, tmp_path, monkeypatch) as (runtime, router):
+        with pytest.raises(ValueError, match="expected timer"):
+            await replay_milestone_timer(
+                runtime.scheduler,
+                {"event_id": "event", "milestone": original | {"status": "MISSED"}},
+                collection_clock(),
+            )
+        assert not router.calls
+    assert await repo.get("evt.events", "event") == event
+    assert await repo.list("ops.jobs") == []
+
+
+async def test_expiry_rechecks_expected_timer_after_waiting_for_event_lock(
+    repo: StorageBackend, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    due = utcnow() - timedelta(hours=3)
+    original: dict[str, JsonValue] = {
+        "kind": "VOTE",
+        **chosen_boundary(due, precision="EXACT").fields("due_at"),
+    }
+    event: dict[str, JsonValue] = {"event_id": "event", "next_milestone": original}
+    await repo.put("evt.events", "event", event)
+    entered = asyncio.Event()
+    async with public_runtime(repo, tmp_path, monkeypatch) as (runtime, router):
+
+        async def expire() -> None:
+            entered.set()
+            await replay_milestone_timer(
+                runtime.scheduler,
+                {"event_id": "event", "milestone": original | {"status": "MISSED"}},
+                collection_clock(),
+            )
+
+        async with repo.lock("event:event"):
+            task = asyncio.create_task(expire())
+            await entered.wait()
+            await asyncio.sleep(0)
+            assert not task.done()
+            successor = event | {"next_milestone": original | {"kind": "SUCCESSOR"}}
+            await repo.put("evt.events", "event", successor)
+        with pytest.raises(ValueError, match="expected timer"):
+            await task
+        assert not router.calls
+    assert await repo.get("evt.events", "event") == successor
+    assert await repo.list("ops.jobs") == []
+
+
+async def test_actual_tool_schedule_queue_worker_preserves_declared_clock_and_escalation(
+    repo: StorageBackend, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    due = utcnow() - timedelta(minutes=5)
+    due_stamp = chosen_boundary(due, precision="BUCKET(1m)")
+    await repo.put("evt.events", "event", {"event_id": "event"})
+    async with public_runtime(repo, tmp_path, monkeypatch) as (runtime, router):
+        result = await runtime.sessions.tool_dispatch(
+            "schedule_milestone",
+            {
+                "event_id": "event",
+                "milestone": "VOTE",
+                "source_id": "S01",
+                "due_at": due_stamp.value,
+                "due_at_prec": due_stamp.precision,
+            },
+            {},
+        )
+        assert isinstance(result, dict) and isinstance(result["job_id"], str)
+        job_id = result["job_id"]
+        job = await repo.get("ops.jobs", job_id)
+        assert job is not None and isinstance(job["payload"], dict)
+        assert all(job["payload"][field] == value for field, value in due_stamp.fields("due_at").items())
+        stop = asyncio.Event()
+        check = runtime.scheduler.milestone_check
+
+        async def stopping(command: MilestoneCheckCommand) -> None:
+            await check(command)
+            stop.set()
+
+        monkeypatch.setattr(runtime.scheduler, "milestone_check", stopping)
+        worker = asyncio.create_task(runtime.worker(stop))
+        try:
+            final = await finished_attempt(repo, job_id)
+        finally:
+            stop.set()
+            await asyncio.wait_for(worker, 2)
+        assert final["status"] == "DONE" and final["result"] is None
+        assert not router.calls
+    escalations = await repo.list("ops.source_escalations")
+    assert len(escalations) == 1
+    assert escalations[0]["source_id"] == "S01" and escalations[0]["interval_s"] == 15
+    assert escalations[0]["starts_at_prec"] == escalations[0]["expires_at_prec"] == "BUCKET(1m)"
+    messages = await repo.list("ops.jobs", filters={"type": "AGENT_MESSAGE"})
+    assert len(messages) == 1
+    payload = messages[0]["payload"]
+    assert isinstance(payload, dict) and payload["verification_required"] is True
+
+
+@pytest.mark.parametrize("fault", ["foreign-owner", "blank-name", "null-name"])
+async def test_actual_tool_schedule_validates_before_event_or_queue_effects(
+    repo: StorageBackend, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, fault: str
+) -> None:
+    event: dict[str, JsonValue] = {"event_id": "foreign" if fault == "foreign-owner" else "event"}
+    await repo.put("evt.events", "event", event)
+    name: JsonValue = "VOTE" if fault == "foreign-owner" else "" if fault == "blank-name" else None
+    async with public_runtime(repo, tmp_path, monkeypatch) as (runtime, router):
+        with pytest.raises((ValueError, ValidationError)):
+            await runtime.sessions.tool_dispatch(
+                "schedule_milestone",
+                {
+                    "event_id": "event",
+                    "milestone": name,
+                    "source_id": "S01",
+                    **collection_clock().fields("due_at"),
+                },
+                {},
+            )
+        assert not router.calls
+    assert await repo.get("evt.events", "event") == event
+    assert await repo.list("ops.jobs") == []
+    assert await repo.list("ops.source_escalations") == []

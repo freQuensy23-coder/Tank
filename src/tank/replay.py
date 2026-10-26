@@ -22,7 +22,11 @@ from pydantic import JsonValue
 from tank.analysis.page_access import RecordedPageAccess, RecordedResultsOnlyPageReader
 from tank.contracts import DomainModel
 from tank.contracts.configuration import Thresholds
-from tank.contracts.milestone_checks import MilestoneCheckCommand, MissedMilestoneIdentity
+from tank.contracts.milestone_checks import (
+    MilestoneCheckCommand,
+    MilestoneExpiryCommand,
+    MissedMilestoneIdentity,
+)
 from tank.contracts.provenance import ResolvedVersionIdentity
 from tank.contracts.source_items import SourceRelevance
 from tank.fixture_reference_code import CURRENT_PROJECTION_CODE, ProjectionCodeEvidence
@@ -35,7 +39,7 @@ from tank.util import canonical_json, iso, parse_time
 
 class MilestoneTimerScheduler(Protocol):
     async def milestone_check(self, command: MilestoneCheckCommand) -> None: ...
-    async def expire_milestone(self, event_id: str, now: datetime) -> None: ...
+    async def expire_milestone(self, command: MilestoneExpiryCommand, now: datetime) -> None: ...
 
 
 async def replay_milestone_timer(
@@ -51,10 +55,10 @@ async def replay_milestone_timer(
         missed = MissedMilestoneIdentity.from_notification(milestone)
         if "due_at" in message and message["due_at"] != missed.due_at:
             raise ValueError("Milestone timer deadline declarations conflict")
-        command = MilestoneCheckCommand.from_notification(
+        command = MilestoneExpiryCommand.from_notification(
             dict(message, milestone=missed.kind, due_at=missed.due_at)
         )
-        await scheduler.expire_milestone(command.event_id, parse_time(trigger.value))
+        await scheduler.expire_milestone(command, parse_time(trigger.value))
     else:
         await scheduler.milestone_check(MilestoneCheckCommand.from_notification(message))
 
