@@ -84,6 +84,7 @@ from tank.analysis.condition_graph_contracts import (
     UnrequestedConditionOpenInterest,
     WindowedConditionSpot,
 )
+from tank.analysis.spot_enrichment import CohortEnrichedConditionSpot
 from tank.analysis.statistics_contracts import (
     DecimalRange,
     FloatRange,
@@ -653,7 +654,7 @@ def encode_condition_derivatives(value: ConditionDerivatives) -> dict[str, JsonV
 
 
 def encode_scoped_condition_spot(
-    value: WindowedConditionSpot | EnrichedConditionSpot,
+    value: WindowedConditionSpot | CohortEnrichedConditionSpot | EnrichedConditionSpot,
     evidence: ConditionFlowEvidenceLookup,
     *,
     clocks: ConditionWireClocks,
@@ -682,7 +683,10 @@ def encode_scoped_condition_spot(
     result["cohort_consistent"] = {
         name: consistent for name, consistent in validated.cohort_consistent.items()
     }
-    if isinstance(validated, EnrichedConditionSpot):
+    if isinstance(validated, (CohortEnrichedConditionSpot, EnrichedConditionSpot)):
+        result["enrichment_phase"] = (
+            "COHORT_COMPARISONS" if isinstance(validated, CohortEnrichedConditionSpot) else "FULL_ENRICHMENT"
+        )
         comparisons: dict[str, JsonValue] = {}
         for name, comparison in validated.cohort_comparisons.items():
             if isinstance(comparison, ObservedConditionCohortComparison):

@@ -1,10 +1,11 @@
 """Condition-query evidence independent of orchestration and cached wire documents."""
 
+from collections.abc import Iterable, Mapping
 from datetime import datetime, timedelta
 from decimal import Decimal, localcontext
 from math import isfinite
 from statistics import median
-from typing import Annotated, Literal, Self
+from typing import Annotated, Literal, Protocol, Self
 
 from pydantic import BeforeValidator, Field, field_validator, model_validator
 
@@ -1011,6 +1012,15 @@ def _sum_native(left: Decimal, right: Decimal) -> Decimal:
         return left + right
 
 
+def sum_condition_native(values: Iterable[Decimal]) -> Decimal:
+    total = Decimal(0)
+    for value in values:
+        if not isinstance(value, Decimal) or not value.is_finite():
+            raise ValueError("Native totals require actual finite Decimal quantities")
+        total = _sum_native(total, value)
+    return total
+
+
 class ConditionSpotValues(DomainModel):
     token_id: str = Field(min_length=1, pattern=r"\S")
     venues: tuple[ConditionSpotVenue, ...]
@@ -1243,7 +1253,54 @@ class EnrichedConditionSpot(ScopedConditionSpot):
             self.size_profile, UnrequestedConditionSizeProfile
         ):
             raise ValueError("Only the primary window computes the requested large-ticket profile")
+        if isinstance(self.size_profile, ObservedConditionSizeProfile) and not set(
+            self.size_profile.compatible_venues
+        ).issubset(venue.venue for venue in self.venues):
+            raise ValueError("A primary size profile cannot borrow an unobserved venue")
         return self
+
+
+class ConditionSpotPairFacts(Protocol):
+    @property
+    def venues(self) -> tuple[ConditionSpotVenue, ...]: ...
+
+    @property
+    def composite_max(self) -> ConditionComposite: ...
+
+    @property
+    def cohort_comparisons(self) -> Mapping[ConditionWindow, ConditionCohortComparison]: ...
+
+
+def validate_condition_spot_pairs(
+    spots: Mapping[ConditionWindow, ConditionSpotPairFacts],
+) -> None:
+    for spot in spots.values():
+        own_venues = {venue.venue: venue for venue in spot.venues}
+        for other, comparison in spot.cohort_comparisons.items():
+            if other not in spots:
+                raise ValueError("A pairwise comparison requires its actual other window")
+            target_venues = {venue.venue: venue for venue in spots[other].venues}
+            common = set(own_venues) & set(target_venues)
+            if set(comparison.cohort) != common:
+                raise ValueError("Pairwise enrichment must preserve the actual complete-venue intersection")
+            if isinstance(comparison, ObservedConditionCohortComparison):
+                if (
+                    comparison.current.volume
+                    != sum_condition_native(own_venues[venue].volume_native for venue in comparison.cohort)
+                    or comparison.current.cvd
+                    != sum_condition_native(own_venues[venue].cvd for venue in comparison.cohort)
+                    or comparison.other.volume
+                    != sum_condition_native(target_venues[venue].volume_native for venue in comparison.cohort)
+                    or comparison.other.cvd
+                    != sum_condition_native(target_venues[venue].cvd for venue in comparison.cohort)
+                ):
+                    raise ValueError("Cohort comparison must preserve both windows' exact native totals")
+                if (
+                    not isinstance(spot.composite_max, ObservedConditionComposite)
+                    or sum_condition_native((comparison.current.volume, comparison.current.volume))
+                    <= spot.composite_max.volume
+                ):
+                    raise ValueError("An observed cohort requires actual strict native-volume majority")
 
 
 type ConditionSpot = BasicConditionSpot | WindowedConditionSpot | EnrichedConditionSpot
@@ -6610,6 +6667,7 @@ class FullConditionMarketState(DomainModel):
             )
         ):
             raise ValueError("Full state cannot borrow another token's financial context")
+        validate_condition_spot_pairs(self.spot)
         pre_event = self.relative.pre_event_support()
         if "PRE_EVENT_RUNUP" in self.candidates.flags and not (
             isinstance(pre_event, ConditionObservedPredicate) and pre_event.value
