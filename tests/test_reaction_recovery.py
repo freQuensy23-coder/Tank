@@ -1,12 +1,14 @@
 """Evidence-gated recovery admission and actual transactional queue/link effects."""
 
 import asyncio
+import os
 from collections.abc import AsyncIterator, Mapping, Sequence
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Literal, Never, Protocol
 
+import httpx
 import pytest
 from agent_source_fixtures import source_item_fixture
 from pydantic import JsonValue, ValidationError
@@ -1084,7 +1086,11 @@ async def test_recovery_snapshot_is_held_against_actual_checkpoint_and_marker_wr
     monkeypatch: pytest.MonkeyPatch,
     writer_kind: Literal["latest", "marker"],
 ) -> None:
-    async with public_runtime(repo, tmp_path, monkeypatch) as (runtime, _):
+    async with public_runtime(repo, tmp_path, monkeypatch) as (runtime, router):
+        endpoint = httpx.URL(os.environ["CLICKHOUSE_TEST_URL"])
+        router.route(
+            method="POST", scheme=endpoint.scheme, host=endpoint.host, port=endpoint.port, path="/"
+        ).pass_through()
         now = utcnow().replace(second=0, microsecond=0)
         history = await measured_recovery_history(repo, runtime, now)
         independent_history = await measured_recovery_history(repo, runtime, now)
