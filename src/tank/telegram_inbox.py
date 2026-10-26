@@ -65,6 +65,7 @@ from tank.telegram_api import (
     media_selection,
     message_receipt,
     pairing_sender_id,
+    require_telegram_token,
     response_result,
     sent_message_receipt,
     update_receipts,
@@ -270,9 +271,8 @@ class TelegramInbox:
         return response_result(response.content, method=method, status=response.status_code)
 
     async def download(self, item: TelegramMediaSelection) -> TelegramDownloadedFile:
-        return await download_file(
-            self.http, token=self.settings.telegram_token, media=item, limit=UPLOAD_LIMIT
-        )
+        token = require_telegram_token(self.settings.telegram_token)
+        return await download_file(self.http, token=token, media=item, limit=UPLOAD_LIMIT)
 
     async def run(self, stop):
         if not self.enabled:
@@ -1174,6 +1174,10 @@ class TelegramInbox:
                         raise ValueError("Telegram cached attachment bytes are invalid") from None
                     if len(content) != cached.size or hashlib.sha256(content).hexdigest() != cached.sha256:
                         raise ValueError("Telegram cached attachment bytes conflict with their receipt")
+                    if item.declared_size is not None and item.declared_size != len(content):
+                        raise ValueError(
+                            "Telegram current declared size conflicts with verified cached bytes"
+                        )
                 else:
                     downloaded = await self.download(item)
                     content = downloaded.content

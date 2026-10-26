@@ -18,6 +18,7 @@ from tank.settings import Settings
 from tank.storage import MemoryRepository, PostgresRepository
 from tank.telegram_api import (
     FileTooLarge,
+    TelegramConfigurationError,
     TelegramProtocolError,
     TelegramResponseError,
     download_file,
@@ -239,6 +240,27 @@ async def assert_attested_cache_retention(
         )
         [first] = await inbox.attachments("q", "s", message)
         [again] = await inbox.attachments("q", "s", message)
+        cached_only = TelegramInbox(repo, FileSettings(data_dir=tmp_path, telegram_token=None), http=http)
+        [without_token] = await cached_only.attachments("q", "s", message)
+        assert without_token == first
+        matching_file: dict[str, JsonValue] = {
+            "file_id": "download-id",
+            "file_unique_id": "stable-id",
+            "file_size": 6,
+            "mime_type": "text/x-later-claim",
+            "file_name": "later-name.txt",
+        }
+        [matching] = await inbox.attachments("q", "s", {"message_id": 1, "document": matching_file})
+        assert matching == first
+        metadata_before = await repo.list("ops.telegram_files")
+        payloads_before = await repo.list("ops.telegram_file_payloads")
+        for current_size in (20, 0):
+            with pytest.raises(ValueError, match="current declared size"):
+                await inbox.attachments(
+                    "q", "s", {"message_id": 1, "document": {**matching_file, "file_size": current_size}}
+                )
+        assert await repo.list("ops.telegram_files") == metadata_before
+        assert await repo.list("ops.telegram_file_payloads") == payloads_before
         with pytest.raises(ValueError, match="ownership conflicts"):
             await inbox.attachments("q", "foreign-session", message)
     assert first == again and first.file_key != old_key and first.size == 6
@@ -307,3 +329,33 @@ async def test_postgres_attested_file_cache_retains_unattested_history_and_check
 ) -> None:
     async with postgres_template.repository(os.environ["TANK_SOURCE_TEST_DATABASE_URL"]) as repo:
         await assert_attested_cache_retention(repo, tmp_path)
+
+
+@pytest.mark.parametrize("token", [None, "", " \t"])
+async def test_uncached_active_download_requires_real_nonblank_token_before_http(
+    tmp_path: Path, token: str | None
+) -> None:
+    repo = MemoryRepository()
+
+    def refuse(request: httpx.Request) -> httpx.Response:
+        raise AssertionError("Unconfigured download must not issue HTTP")
+
+    message: dict[str, JsonValue] = {
+        "message_id": 1,
+        "document": {"file_id": "download-id", "file_unique_id": "stable-id"},
+    }
+    async with httpx.AsyncClient(transport=httpx.MockTransport(refuse)) as http:
+        inbox = TelegramInbox(repo, FileSettings(data_dir=tmp_path, telegram_token=token), http=http)
+        with pytest.raises(TelegramConfigurationError, match="nonblank token"):
+            await inbox.attachments("q", "s", message)
+    assert await repo.list("ops.telegram_files") == []
+    assert await repo.list("ops.telegram_file_payloads") == [] and await repo.list("ops.jobs") == []
+
+
+async def test_direct_download_boundary_rejects_blank_typed_token_before_http() -> None:
+    def refuse(request: httpx.Request) -> httpx.Response:
+        raise AssertionError("Blank token must not issue HTTP")
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(refuse)) as http:
+        with pytest.raises(TelegramConfigurationError):
+            await download_file(http, token="", media=selection(), limit=100)

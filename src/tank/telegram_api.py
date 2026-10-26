@@ -33,6 +33,16 @@ class TelegramProtocolError(ValueError):
     """An API response cannot establish the required Telegram facts."""
 
 
+class TelegramConfigurationError(ValueError):
+    """An active API operation lacks its actual configured credential."""
+
+
+def require_telegram_token(value: str | None) -> str:
+    if not isinstance(value, str) or not value.strip():
+        raise TelegramConfigurationError("Telegram active operation requires a nonblank token")
+    return value
+
+
 class TelegramResponseError(RuntimeError):
     def __init__(
         self, method: str, status: int, *, retry_after: int | None, failure: TelegramFailure | None = None
@@ -214,6 +224,7 @@ class FileTooLarge(ValueError):
 async def download_file(
     http: httpx.AsyncClient, *, token: str, media: TelegramMediaSelection, limit: int
 ) -> TelegramDownloadedFile:
+    token = require_telegram_token(token)
     if limit <= 0:
         raise ValueError("Telegram file byte limit must be positive")
     if media.declared_size is not None and media.declared_size > limit:
