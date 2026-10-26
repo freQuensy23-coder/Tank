@@ -81,7 +81,9 @@ class FakeTelegram:
         body = json.loads(request.content or b"{}")
         if method == "getFile":
             if body["file_id"] not in self.files:
-                return httpx.Response(400, json={"ok": False, "description": "Bad Request: file is too big"})
+                return httpx.Response(
+                    400, json={"ok": False, "error_code": 400, "description": "Bad Request: file is too big"}
+                )
             return httpx.Response(
                 200,
                 json={
