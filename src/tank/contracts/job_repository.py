@@ -140,25 +140,7 @@ class JobRepository:
 
     async def reject_invalid(self, invalid: InvalidJobClaim) -> bool:
         invalid = InvalidJobClaim.model_validate(invalid)
-        async with self._store.lock("job:" + invalid.job_id):
-            document = await self._store.get("ops.jobs", invalid.job_id)
-            if document is None:
-                return False
-            current = JobClaimRevision.from_document(document)
-            if (
-                current.status != "RUNNING"
-                or current.job_id != invalid.job_id
-                or current.type != invalid.kind
-                or current.attempts != invalid.attempts
-                or sha256(document) != invalid.revision
-            ):
-                return False
-            await self._store.put(
-                "ops.jobs",
-                invalid.job_id,
-                {**document, "status": "FAILED", "last_error": "INVALID_QUEUE_ENVELOPE"},
-            )
-            return True
+        return await self._store.quarantine_job_claim(invalid)
 
     async def finish(self, job_id: str) -> None:
         await self._store.finish_job(job_id)
