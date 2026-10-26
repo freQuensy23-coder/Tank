@@ -27,7 +27,7 @@ POLICY = OISelectionPolicy(tolerance_s=60, minimum_history_days=7, lookback_days
 SYNC_POLICY = OISynchronizationPolicy(eligible_venues=("binance", "okx", "bybit"))
 
 
-def source() -> OIReadSnapshot:
+def source(*, reported_usd: str | None) -> OIReadSnapshot:
     instruments: list[dict[str, JsonInput]] = [
         {
             "instrument_id": iid,
@@ -44,7 +44,7 @@ def source() -> OIReadSnapshot:
             "metric_key": "AUTHORED_OI",
             "ts": iso(at),
             "oi_native": quantity,
-            "oi_usd": None,
+            "oi_usd": reported_usd,
             "received_ts": iso(END + timedelta(seconds=1)),
         }
         for iid, at, quantity in (
@@ -90,20 +90,23 @@ def rules(value: OIReadSnapshot, records: list[dict[str, JsonInput]]) -> Capture
 
 
 def test_actual_common_grid_keeps_each_contract_and_selected_source_clock() -> None:
-    value = source()
+    value = source(reported_usd=None)
     declared = rules(value, [semantic_rule()])
     result = OpenInterestCalculator(value, POLICY).synchronize(
         request(), rules=declared, policy=SYNC_POLICY, window="W1H"
     )
     assert isinstance(result, ObservedOISynchronizedSelection)
-    assert result.witness.start.native_total() == Decimal(30)
-    assert result.witness.end.native_total() == Decimal(34)
-    assert result.witness.start.usd_total() is None and result.witness.end.usd_total() is None
-    assert result.witness.tolerance_s == 60
-    assert result.witness.start.at.value == iso(START + timedelta(seconds=10))
-    assert result.witness.end.at.value == iso(END - timedelta(seconds=10))
-    assert result.witness.end.at.precision is None
-    assert {point.instrument_id for point in result.witness.end.contributions} == {"A", "B"}
+    assert result.native_witness.start.native_total() == Decimal(30)
+    assert result.native_witness.end.native_total() == Decimal(34)
+    assert all(
+        item.start.reported_usd.value is None and item.end.reported_usd.value is None
+        for item in result.sources
+    )
+    assert result.native_witness.tolerance_s == 60
+    assert result.native_witness.start.at.value == iso(START + timedelta(seconds=10))
+    assert result.native_witness.end.at.value == iso(END - timedelta(seconds=10))
+    assert result.native_witness.end.at.precision is None
+    assert {point.instrument_id for point in result.native_witness.end.contributions} == {"A", "B"}
     selected = {point.instrument.instrument_id: point for point in result.sources}
     assert selected["A"].end.observed_at.value == iso(END - timedelta(seconds=10))
     assert selected["A"].end.evidence != value.observations[-1].evidence
@@ -112,7 +115,7 @@ def test_actual_common_grid_keeps_each_contract_and_selected_source_clock() -> N
 
 
 def test_uncaptured_semantics_cannot_become_single_sided_by_default() -> None:
-    result = OpenInterestCalculator(source(), POLICY).synchronize(
+    result = OpenInterestCalculator(source(reported_usd=None), POLICY).synchronize(
         request(),
         rules=UncapturedOISynchronizationRules(
             status="NOT_CAPTURED", token_id="T", reason="OI_SEMANTICS_NOT_CAPTURED"
@@ -125,7 +128,7 @@ def test_uncaptured_semantics_cannot_become_single_sided_by_default() -> None:
 
 
 def test_captured_unknown_sidedness_is_not_promoted() -> None:
-    value = source()
+    value = source(reported_usd=None)
     declared = rules(value, [semantic_rule() | {"sidedness": None}])
     result = OpenInterestCalculator(value, POLICY).synchronize(
         request(), rules=declared, policy=SYNC_POLICY, window="W1H"
@@ -136,7 +139,7 @@ def test_captured_unknown_sidedness_is_not_promoted() -> None:
 
 
 def test_incompatible_classes_do_not_form_a_synchronized_total() -> None:
-    value = source()
+    value = source(reported_usd=None)
     declared = rules(
         value, [semantic_rule() | {"instrument_id": iid, "aggregation_class": iid} for iid in ("A", "B")]
     )
@@ -149,7 +152,7 @@ def test_incompatible_classes_do_not_form_a_synchronized_total() -> None:
 
 
 def test_equal_rule_projection_does_not_overwrite_distinct_source_evidence() -> None:
-    value = source()
+    value = source(reported_usd=None)
     declared = rules(
         value, [semantic_rule() | {"source_basis_date": date} for date in ("2026-01-01", "2026-10-01")]
     )
@@ -166,7 +169,7 @@ def test_equal_rule_projection_does_not_overwrite_distinct_source_evidence() -> 
 
 
 def test_specific_unknown_rule_cannot_fall_through_to_favorable_global_rule() -> None:
-    value = source()
+    value = source(reported_usd=None)
     declared = rules(
         value, [semantic_rule(), semantic_rule() | {"instrument_id": "B", "sidedness": "UNKNOWN"}]
     )
@@ -179,7 +182,7 @@ def test_specific_unknown_rule_cannot_fall_through_to_favorable_global_rule() ->
 
 
 def test_rule_scope_and_original_projection_are_revalidated_before_calculation() -> None:
-    value = source()
+    value = source(reported_usd=None)
     with pytest.raises(ValidationError, match="instrument scope"):
         rules(value, [semantic_rule() | {"instrument_id": "A", "venue": "other"}])
     declared = rules(value, [semantic_rule() | {"sidedness": "UNKNOWN"}])
@@ -195,7 +198,7 @@ def test_rule_scope_and_original_projection_are_revalidated_before_calculation()
 
 
 def test_caller_mutation_cannot_change_captured_rule_or_qualified_scope() -> None:
-    value = source()
+    value = source(reported_usd=None)
     original = semantic_rule()
     declared = rules(value, [original])
     original["sidedness"] = "UNKNOWN"
@@ -204,3 +207,18 @@ def test_caller_mutation_cannot_change_captured_rule_or_qualified_scope() -> Non
     )
     assert isinstance(result, ObservedOISynchronizedSelection)
     assert declared.scope.metric_keys == ("AUTHORED_OI",)
+
+
+@pytest.mark.parametrize("reported,expected", [("20", Decimal(20)), ("NaN", None), ("-1", Decimal(-1))])
+def test_raw_usd_quality_does_not_erase_known_native_synchronization(
+    reported: str, expected: Decimal | None
+) -> None:
+    value = source(reported_usd=reported)
+    result = OpenInterestCalculator(value, POLICY).synchronize(
+        request(), rules=rules(value, [semantic_rule()]), policy=SYNC_POLICY, window="W1H"
+    )
+    assert isinstance(result, ObservedOISynchronizedSelection)
+    assert result.native_witness.start.native_total() == Decimal(30)
+    assert result.native_witness.end.native_total() == Decimal(34)
+    assert result.sources[0].start.reported_usd.value == expected
+    assert "oi_usd" not in result.native_witness.start.contributions[0].model_dump(mode="json")

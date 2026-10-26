@@ -243,7 +243,7 @@ def test_registry_scope_qualifies_uncaptured_row_metadata_without_rewriting_evid
     row = observation() | {"token_id": None, "venue": None, "quote_asset": None}
     source = decode_oi_inputs(token_id="T", instruments=[instrument()], observations=[row])
     point = source.observations[0]
-    assert point.instrument.token_id == "T" and point.instrument.quote_asset == "USDT"
+    assert point.instrument.token_id == "T" and point.quote_asset == "USDT"
     original = resolve_oi_observation(source, point.evidence, expected=point)
     assert original["token_id"] is None
     assert original["venue"] is None
@@ -380,3 +380,97 @@ def test_extreme_magnitude_gap_keeps_every_actual_pair_without_integer_expansion
     assert baseline.normal_range.bounds is None and baseline.normal_range.reason == "NOT_ESTIMABLE"
     current = calculator.select(request)[0].native_change(normal_range=baseline.normal_range)
     assert current is not None and current.value == 0.2
+
+
+def test_valid_scalar_copy_cannot_relabel_an_original_oi_quantity() -> None:
+    from tank.analysis.condition_derivative_inputs import OISelectionPolicy, ReportedDerivativeNumber
+
+    value = decode_oi_inputs(token_id="T", instruments=[instrument()], observations=[observation()])
+    point = value.observations[0].model_copy(
+        update={"native_quantity": ReportedDerivativeNumber(status="OBSERVED", value=Decimal(999))}
+    )
+    with pytest.raises(ValidationError, match="canonical source read"):
+        OpenInterestCalculator(
+            value.model_copy(update={"observations": (point,)}),
+            OISelectionPolicy(
+                tolerance_s=60, minimum_history_days=7, lookback_days=28, quantiles=(0.025, 0.975)
+            ),
+        )
+
+
+def test_self_consistent_hashes_cannot_change_the_actual_scope_record() -> None:
+    from tank.analysis.condition_derivative_inputs import OISelectionPolicy
+    from tank.util import sha256
+
+    value = decode_oi_inputs(token_id="T", instruments=[instrument()], observations=[observation()])
+    original = value.source_projections[0]
+    wrong = value.instruments[0].model_copy(update={"venue": "other"})
+    descriptor = original.descriptor.model_copy(update={"instrument": wrong})
+    reference = original.reference.model_copy(update={"source_evidence_sha256": sha256(descriptor)})
+    source_projection = original.model_copy(update={"descriptor": descriptor, "reference": reference})
+    point = value.observations[0].model_copy(update={"instrument": wrong, "evidence": reference})
+    changed = value.model_copy(
+        update={"instruments": (wrong,), "observations": (point,), "source_projections": (source_projection,)}
+    )
+    with pytest.raises(ValidationError, match="actual scope read"):
+        OpenInterestCalculator(
+            changed,
+            OISelectionPolicy(
+                tolerance_s=60, minimum_history_days=7, lookback_days=28, quantiles=(0.025, 0.975)
+            ),
+        )
+
+
+def test_oi_sidecar_duplicate_keys_refuse_even_when_all_hashes_match() -> None:
+    from tank.analysis.condition_derivative_inputs import OISelectionPolicy, ReportedDerivativeNumber
+    from tank.util import sha256
+
+    value = decode_oi_inputs(token_id="T", instruments=[instrument()], observations=[observation()])
+    original = value.source_projections[0]
+    duplicated = original.original.replace(b'"oi_native":"0"', b'"oi_native":"0","oi_native":"2"')
+    assert duplicated != original.original
+    descriptor = original.descriptor.model_copy(update={"original_projection_sha256": sha256(duplicated)})
+    reference = original.reference.model_copy(
+        update={"source_projection_sha256": sha256(duplicated), "source_evidence_sha256": sha256(descriptor)}
+    )
+    source_projection = original.model_copy(
+        update={"original": duplicated, "descriptor": descriptor, "reference": reference}
+    )
+    point = value.observations[0].model_copy(
+        update={
+            "native_quantity": ReportedDerivativeNumber(status="OBSERVED", value=Decimal(2)),
+            "evidence": reference,
+        }
+    )
+    changed = value.model_copy(update={"observations": (point,), "source_projections": (source_projection,)})
+    with pytest.raises(ValidationError, match="keys must be unique"):
+        OpenInterestCalculator(
+            changed,
+            OISelectionPolicy(
+                tolerance_s=60, minimum_history_days=7, lookback_days=28, quantiles=(0.025, 0.975)
+            ),
+        )
+
+
+def test_quote_unit_is_a_value_fact_without_blocking_native_identity() -> None:
+    row = observation() | {"quote_asset": "USD"}
+    value = decode_oi_inputs(
+        token_id="T", instruments=[instrument() | {"quote_asset": None}], observations=[row]
+    )
+    assert value.observations[0].quote_asset == "USD"
+    assert value.observations[0].native_quantity.value == Decimal(0)
+    assert value.instruments[0].instrument_id == "venue:perp:T"
+    assert (
+        resolve_oi_observation(value, value.observations[0].evidence, expected=value.observations[0])[
+            "quote_asset"
+        ]
+        == "USD"
+    )
+
+
+def test_unregistered_row_cannot_lend_its_quote_unit_to_a_later_row() -> None:
+    first = observation() | instrument() | {"quote_asset": "USD"}
+    second = observation() | instrument() | {"quote_asset": None, "ts": "2026-10-16T12:01:00Z"}
+    value = decode_oi_inputs(token_id="T", instruments=[], observations=[first, second])
+    assert tuple(point.quote_asset for point in value.observations) == ("USD", None)
+    assert all(point.native_quantity.value == Decimal(0) for point in value.observations)

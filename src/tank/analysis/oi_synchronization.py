@@ -2,6 +2,7 @@
 
 from bisect import bisect_left, bisect_right
 from datetime import datetime, timedelta
+from decimal import Decimal
 from typing import TYPE_CHECKING, Literal, Self
 
 from pydantic import Field, model_validator
@@ -9,6 +10,7 @@ from pydantic import Field, model_validator
 from tank.analysis.condition_derivative_inputs import (
     CapturedOISynchronizationRules,
     DerivativeInstrument,
+    OIInputEvidenceRef,
     OIObservation,
     OIReadSnapshot,
     OIRuleEvidenceRef,
@@ -17,10 +19,8 @@ from tank.analysis.condition_derivative_inputs import (
 )
 from tank.analysis.condition_graph_contracts import (
     ConditionInterval,
-    ConditionOISynchronization,
-    ConditionOISynchronizationContribution,
-    ConditionOISynchronizationEndpoint,
     ConditionWindow,
+    sum_condition_native,
 )
 from tank.contracts import DomainModel
 from tank.time_precision import Timestamp
@@ -73,11 +73,71 @@ class OISynchronizedSourceContribution(DomainModel):
         return self
 
 
+class NativeOISynchronizationContribution(DomainModel):
+    instrument_id: str = Field(min_length=1, pattern=r"\S")
+    venue: str = Field(min_length=1, pattern=r"\S")
+    observed_at: Timestamp
+    oi_native: Decimal = Field(ge=0)
+    evidence: OIInputEvidenceRef
+
+
+class NativeOISynchronizationEndpoint(DomainModel):
+    at: Timestamp
+    contributions: tuple[NativeOISynchronizationContribution, ...] = Field(min_length=1)
+
+    @model_validator(mode="after")
+    def actual_grid(self) -> Self:
+        if self.at.value is None or len({value.instrument_id for value in self.contributions}) != len(
+            self.contributions
+        ):
+            raise ValueError("A native OI grid requires an actual clock and distinct source instruments")
+        return self
+
+    def native_total(self) -> Decimal:
+        validated = type(self).model_validate(self)
+        return sum_condition_native(point.oi_native for point in validated.contributions)
+
+
+class NativeOISynchronizationWitness(DomainModel):
+    aggregation_class: str = Field(min_length=1, pattern=r"\S")
+    tolerance_s: float = Field(ge=0)
+    start: NativeOISynchronizationEndpoint
+    end: NativeOISynchronizationEndpoint
+
+    @model_validator(mode="after")
+    def actual_sources(self) -> Self:
+        initial = {value.instrument_id: value for value in self.start.contributions}
+        final = {value.instrument_id: value for value in self.end.contributions}
+        if set(initial) != set(final):
+            raise ValueError("Native OI synchronization must preserve its actual endpoint instrument cohort")
+        for endpoint in (self.start, self.end):
+            if endpoint.at.value is None:
+                raise ValueError("Native OI synchronization requires its actual grid clocks")
+            grid = parse_iso_time(endpoint.at.value)
+            for point in endpoint.contributions:
+                if (
+                    point.observed_at.value is None
+                    or abs((parse_iso_time(point.observed_at.value) - grid).total_seconds())
+                    > self.tolerance_s
+                ):
+                    raise ValueError("Native OI sources must satisfy their actual declared grid tolerance")
+        for iid, point in initial.items():
+            closing = final[iid]
+            if (
+                point.venue != closing.venue
+                or point.observed_at.value is None
+                or closing.observed_at.value is None
+                or parse_iso_time(point.observed_at.value) > parse_iso_time(closing.observed_at.value)
+            ):
+                raise ValueError("Native OI sources cannot change venue or reverse their actual clocks")
+        return self
+
+
 class ObservedOISynchronizedSelection(DomainModel):
     status: Literal["OBSERVED"]
     token_id: str = Field(min_length=1, pattern=r"\S")
     interval: ConditionInterval
-    witness: ConditionOISynchronization
+    native_witness: NativeOISynchronizationWitness
     sources: tuple[OISynchronizedSourceContribution, ...] = Field(min_length=1)
     excluded: tuple[OISynchronizationExclusion, ...]
 
@@ -93,12 +153,15 @@ class ObservedOISynchronizedSelection(DomainModel):
         excluded_ids = [value.instrument_id for value in self.excluded]
         if len(excluded_ids) != len(set(excluded_ids)) or set(excluded_ids) & set(sources):
             raise ValueError("OI synchronization cannot both include and exclude one instrument")
-        for endpoint, is_end in ((self.witness.start, False), (self.witness.end, True)):
+        for endpoint, is_end in ((self.native_witness.start, False), (self.native_witness.end, True)):
             target = self.interval.cutoff if is_end else self.interval.start
             if endpoint.at.value is None:
                 raise ValueError("Observed OI synchronization requires actual grid bounds")
             grid = parse_iso_time(endpoint.at.value)
-            if grid > self.interval.cutoff or abs((grid - target).total_seconds()) > self.witness.tolerance_s:
+            if (
+                grid > self.interval.cutoff
+                or abs((grid - target).total_seconds()) > self.native_witness.tolerance_s
+            ):
                 raise ValueError("OI synchronization grid must bind its actual requested endpoint tolerance")
             if {value.instrument_id for value in endpoint.contributions} != set(sources):
                 raise ValueError("OI synchronization must preserve every actual endpoint source")
@@ -111,14 +174,12 @@ class ObservedOISynchronizedSelection(DomainModel):
                 ):
                     raise ValueError("OI synchronization cannot borrow a future source observation")
                 rule = source.end_rule if is_end else source.start_rule
-                if point.reported_usd.status == "NOT_ESTIMABLE":
-                    raise ValueError("Observed synchronized OI cannot hide an invalid selected USD source")
-                if (value.venue, value.observed_at, value.oi_native, value.oi_usd) != (
+                if (value.venue, value.observed_at, value.oi_native, value.evidence) != (
                     point.instrument.venue,
                     point.observed_at,
                     point.native_quantity.value,
-                    point.reported_usd.value,
-                ) or rule.aggregation_class != self.witness.aggregation_class:
+                    point.evidence,
+                ) or rule.aggregation_class != self.native_witness.aggregation_class:
                     raise ValueError("OI synchronization witness disagrees with its actual selected source")
         return self
 
@@ -132,7 +193,6 @@ class UnavailableOISynchronizedSelection(DomainModel):
         "NO_COMPARABLE_INSTRUMENTS",
         "INCOMPATIBLE_AGGREGATION_CLASSES",
         "NO_COMMON_GRID",
-        "INVALID_USD_SOURCE",
     ]
     eligible_instrument_ids: tuple[str, ...]
     excluded: tuple[OISynchronizationExclusion, ...]
@@ -296,17 +356,6 @@ def _select_oi_synchronization(
         )
     initial_grid = valid[min(initial_candidates, key=lambda at: (abs((at - start).total_seconds()), at))]
     final_grid = valid[min(final_candidates, key=lambda at: (abs((at - cutoff).total_seconds()), at))]
-    for selected_point in (*initial_grid.points, *final_grid.points):
-        usd = selected_point.reported_usd
-        if usd.status == "NOT_ESTIMABLE" or usd.value is not None and usd.value < 0:
-            return UnavailableOISynchronizedSelection(
-                status="UNAVAILABLE",
-                token_id=source.token_id,
-                interval=interval,
-                reason="INVALID_USD_SOURCE",
-                eligible_instrument_ids=eligible,
-                excluded=tuple(excluded),
-            )
     sources = tuple(
         OISynchronizedSourceContribution(
             instrument=initial_point.instrument,
@@ -319,30 +368,30 @@ def _select_oi_synchronization(
             initial_grid.points, final_grid.points, initial_grid.rules, final_grid.rules, strict=True
         )
     )
-    endpoints: list[ConditionOISynchronizationEndpoint] = []
+    endpoints: list[NativeOISynchronizationEndpoint] = []
     for grid_projection in (initial_grid, final_grid):
-        contributions: list[ConditionOISynchronizationContribution] = []
+        contributions: list[NativeOISynchronizationContribution] = []
         for point in grid_projection.points:
             native = point.native_quantity.value
             if native is None:
                 raise ValueError("Selected OI synchronization lost its actual native contribution")
             contributions.append(
-                ConditionOISynchronizationContribution(
+                NativeOISynchronizationContribution(
                     instrument_id=point.instrument.instrument_id,
                     venue=point.instrument.venue,
                     observed_at=point.observed_at,
                     oi_native=native,
-                    oi_usd=point.reported_usd.value,
+                    evidence=point.evidence,
                 )
             )
         endpoints.append(
-            ConditionOISynchronizationEndpoint(at=grid_projection.at, contributions=tuple(contributions))
+            NativeOISynchronizationEndpoint(at=grid_projection.at, contributions=tuple(contributions))
         )
     return ObservedOISynchronizedSelection(
         status="OBSERVED",
         token_id=source.token_id,
         interval=interval,
-        witness=ConditionOISynchronization(
+        native_witness=NativeOISynchronizationWitness(
             aggregation_class=next(iter(classes)),
             tolerance_s=float(tolerance),
             start=endpoints[0],

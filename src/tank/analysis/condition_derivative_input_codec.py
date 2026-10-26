@@ -1,7 +1,6 @@
 """Qualified OI storage reads without timestamp, unit or valuation invention."""
 
 from collections.abc import Mapping, Sequence
-from decimal import Decimal, InvalidOperation
 from typing import Literal
 
 from pydantic import JsonValue
@@ -19,10 +18,9 @@ from tank.analysis.condition_derivative_inputs import (
     OISourceDescriptor,
     OISourceProjection,
     OISynchronizationRule,
-    ReportedDerivativeNumber,
+    read_oi_quote_asset,
 )
-from tank.contracts.json import decode_json
-from tank.time_precision import propagate_timestamp
+from tank.contracts.json import decode_json, decode_unique_json
 from tank.util import JsonInput, canonical_json, sha256
 
 
@@ -41,76 +39,6 @@ def _required_text(row: Mapping[str, JsonValue], field: str) -> str:
     return value
 
 
-def _optional_text(row: Mapping[str, JsonValue], field: str) -> str | None:
-    value = row.get(field)
-    if value is not None and not isinstance(value, str):
-        raise ValueError("OI text metadata cannot be coerced: " + field)
-    return value
-
-
-def _reported(value: JsonValue) -> ReportedDerivativeNumber:
-    if value is None:
-        return ReportedDerivativeNumber(status="NOT_CAPTURED", value=None)
-    if isinstance(value, bool) or not isinstance(value, (str, int, float)):
-        return ReportedDerivativeNumber(status="NOT_ESTIMABLE", value=None)
-    try:
-        parsed = Decimal(str(value))
-    except InvalidOperation:
-        return ReportedDerivativeNumber(status="NOT_ESTIMABLE", value=None)
-    return ReportedDerivativeNumber(
-        status="OBSERVED" if parsed.is_finite() else "NOT_ESTIMABLE",
-        value=parsed if parsed.is_finite() else None,
-    )
-
-
-def _instrument(row: Mapping[str, JsonValue]) -> DerivativeInstrument:
-    if row.get("market_type") != "PERP_LINEAR":
-        raise ValueError("OI read scope must declare its actual derivative market type")
-    return DerivativeInstrument(
-        instrument_id=_required_text(row, "instrument_id"),
-        token_id=_required_text(row, "token_id"),
-        venue=_required_text(row, "venue"),
-        market_type="PERP_LINEAR",
-        quote_asset=_optional_text(row, "quote_asset"),
-    )
-
-
-def _point(
-    row: Mapping[str, JsonValue], instrument: DerivativeInstrument, reference: OIInputEvidenceRef
-) -> OIObservation:
-    for field, expected in (
-        ("instrument_id", instrument.instrument_id),
-        ("token_id", instrument.token_id),
-        ("venue", instrument.venue),
-        ("market_type", instrument.market_type),
-        ("quote_asset", instrument.quote_asset),
-    ):
-        if row.get(field) is not None and row[field] != expected:
-            raise ValueError("OI source scope contradicts its qualified instrument: " + field)
-    eligible = row.get("synchronized_eligible")
-    if eligible is not None and not isinstance(eligible, bool):
-        raise ValueError("OI synchronization eligibility must be an actual captured boolean")
-    stamp = row.get("ts")
-    declared_edge = "ts_bucket_anchor" in row or isinstance(stamp, dict) and "bucket_anchor" in stamp
-    return OIObservation(
-        instrument=instrument,
-        observed_at=propagate_timestamp(row, "ts", precision_aliases=("timestamp_precision", "precision")),
-        received_at=propagate_timestamp(row, "received_ts"),
-        native_quantity=_reported(row.get("oi_native")),
-        reported_usd=_reported(row.get("oi_usd")),
-        usd_derivation_label=_optional_text(row, "oi_usd_source"),
-        mark_price=_reported(row.get("mark_price")),
-        mark_observed_at=propagate_timestamp(row, "mark_as_of"),
-        index_price=_reported(row.get("index_price")),
-        metric_key=_optional_text(row, "metric_key"),
-        raw_unit=_optional_text(row, "raw_unit"),
-        sidedness=_optional_text(row, "sidedness"),
-        synchronized_eligible=eligible,
-        edge_declaration="DECLARED" if declared_edge else "ABSENT",
-        evidence=reference,
-    )
-
-
 def decode_oi_inputs(
     *,
     token_id: str,
@@ -120,16 +48,18 @@ def decode_oi_inputs(
     known: dict[str, DerivativeInstrument] = {}
     scopes: dict[str, bytes] = {}
     registry_ids: set[str] = set()
+    registry_quotes: dict[str, str | None] = {}
     for original in instruments:
         if original.get("token_id") != token_id or original.get("market_type") != "PERP_LINEAR":
             continue
         row, payload = _wire(original)
-        instrument = _instrument(row)
+        instrument = DerivativeInstrument.from_record(row)
         if instrument.instrument_id in known:
             raise ValueError("OI instrument read cannot contain ambiguous duplicate identities")
         known[instrument.instrument_id] = instrument
         scopes[instrument.instrument_id] = payload
         registry_ids.add(instrument.instrument_id)
+        registry_quotes[instrument.instrument_id] = read_oi_quote_asset(row)
     points: list[OIObservation] = []
     sources: list[OISourceProjection] = []
     for index, original in enumerate(observations):
@@ -145,8 +75,9 @@ def decode_oi_inputs(
             selected = known[iid]
             scope_payload = scopes[iid]
             basis = "INSTRUMENT_READ"
+            scope_quote = registry_quotes[iid]
         else:
-            selected = _instrument(row)
+            selected = DerivativeInstrument.from_record(row)
             if selected.token_id != token_id:
                 raise ValueError("OI source must belong to its actual requested subject")
             if iid in known and known[iid] != selected:
@@ -154,8 +85,9 @@ def decode_oi_inputs(
             known[iid] = selected
             scope_payload = payload
             basis = "SOURCE_ROW"
+            scope_quote = read_oi_quote_asset(row)
         descriptor = OISourceDescriptor(
-            format="OI_INPUT_READ_V1",
+            format="OI_INPUT_READ_V2",
             collection="mkt.oi_obs",
             row_index=index,
             original_projection_sha256=sha256(payload),
@@ -168,7 +100,11 @@ def decode_oi_inputs(
             source_projection_sha256=descriptor.original_projection_sha256,
             source_evidence_sha256=sha256(descriptor),
         )
-        points.append(_point(row, selected, reference))
+        points.append(
+            OIObservation.from_record(
+                row, instrument=selected, reference=reference, scope_quote_asset=scope_quote
+            )
+        )
         sources.append(
             OISourceProjection(
                 original=payload,
@@ -192,10 +128,19 @@ def resolve_oi_observation(
     for source in snapshot.source_projections:
         if source.reference != reference:
             continue
-        row = decode_json(source.original)
+        row = decode_unique_json(source.original)
         if not isinstance(row, dict):
             raise ValueError("OI source evidence must retain its original object")
-        if _point(row, source.descriptor.instrument, reference) != expected:
+        scope = decode_unique_json(source.scope_original)
+        if not isinstance(scope, dict):
+            raise ValueError("OI scope evidence must retain its actual source object")
+        projected = OIObservation.from_record(
+            row,
+            instrument=source.descriptor.instrument,
+            reference=reference,
+            scope_quote_asset=read_oi_quote_asset(scope),
+        )
+        if projected.model_dump(mode="json") != expected.model_dump(mode="json"):
             raise ValueError("OI source observation disagrees with the actual consumed projection")
         return row
     raise ValueError("OI source evidence reference is not captured")
