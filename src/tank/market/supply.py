@@ -4,6 +4,7 @@ import time
 from datetime import timedelta
 from decimal import Decimal as D
 
+from tank.logging import redact_text
 from tank.market.cadences import supply_cadences as supply_cadences
 from tank.market.errors import SemanticError
 from tank.market.precision import async_precise, precise
@@ -80,12 +81,12 @@ class SupplyCapture:
         self.lending_pool_catalog = catalog
         self.lending_pool_identities = {row["pool_id"]: row for row in catalog.get("pools", [])}
 
+    def diagnostic_reason(self, error: BaseException | str) -> str:
+        return redact_text(str(error), tuple(self.settings.configured_secrets()))
+
     async def record(self, token, kind, **fields):
-        if self.settings.etherscan_api_key:
-            fields = {
-                k: (v.replace(self.settings.etherscan_api_key, "[REDACTED]") if isinstance(v, str) else v)
-                for k, v in fields.items()
-            }
+        if isinstance(fields.get("reason"), str):
+            fields["reason"] = self.diagnostic_reason(fields["reason"])
         observed = clock_iso()
         row = dict(
             token_id=token["token_id"],
@@ -141,7 +142,9 @@ class SupplyCapture:
                 try:
                     await call(token)
                 except Exception as exc:
-                    await self.record(token, kind.upper(), available=False, reason=str(exc))
+                    await self.record(
+                        token, kind.upper(), available=False, reason=self.diagnostic_reason(exc)
+                    )
                 state[token_id, kind] = now
         self.market._supply_longest_pass_s = max(
             getattr(self.market, "_supply_longest_pass_s", 0.0), time.monotonic() - started
@@ -221,7 +224,7 @@ class SupplyCapture:
                             "chainid": chainid,
                             "contract": contract["address"],
                             "operation": "decimals",
-                            "reason": str(exc),
+                            "reason": self.diagnostic_reason(exc),
                         }
                     )
                     continue
@@ -293,7 +296,9 @@ class SupplyCapture:
                             ):
                                 break
                     except Exception as exc:
-                        errors.append({"wallet": wallet, "chainid": chainid, "reason": str(exc)})
+                        errors.append(
+                            {"wallet": wallet, "chainid": chainid, "reason": self.diagnostic_reason(exc)}
+                        )
                 balances.append(
                     {
                         "venue": group["venue"],
@@ -424,7 +429,9 @@ class SupplyCapture:
                 if not isinstance(data, list):
                     raise SemanticError("stablecoin chart schema mismatch")
             except Exception as exc:
-                await self.record(token, "CHAIN_LIQUIDITY", available=False, chain=chain, reason=str(exc))
+                await self.record(
+                    token, "CHAIN_LIQUIDITY", available=False, chain=chain, reason=self.diagnostic_reason(exc)
+                )
                 continue
             values = []
             for row in data:
@@ -492,8 +499,9 @@ class SupplyCapture:
                         source_url="https://api.llama.fi/summary/fees/" + slug + "?dataType=" + kind,
                     )
                 except Exception as exc:
-                    metrics[kind] = {"available": False, "reason": str(exc)}
-                    errors.append({"slug": slug, "metric": kind, "reason": str(exc)})
+                    reason = self.diagnostic_reason(exc)
+                    metrics[kind] = {"available": False, "reason": reason}
+                    errors.append({"slug": slug, "metric": kind, "reason": reason})
             protocols[slug] = metrics
         aggregate = {}
         for kind in ("dailyFees", "dailyRevenue", "dailyHoldersRevenue"):

@@ -35,6 +35,12 @@ from tank.contracts.session_followups import (
     Terminated,
     followup_eligibility,
 )
+from tank.contracts.telegram_wire import (
+    TelegramMessageReceipt,
+    TelegramSentMessageReceipt,
+    TelegramUpdateCursor,
+    TelegramUpdateReceipt,
+)
 from tank.ops_progress import STAGES
 from tank.question_answers import (
     QuestionAnswerRepository as QuestionAnswerRepository,
@@ -46,6 +52,14 @@ from tank.question_answers import (
     validate_question_identity,
 )
 from tank.runtime_contracts import TelegramAnswerJob
+from tank.telegram_api import (
+    TelegramResponseError,
+    message_receipt,
+    pairing_sender_id,
+    response_result,
+    sent_message_receipt,
+    update_receipts,
+)
 from tank.telegram_rich import message_text, rich_message_text
 from tank.time_precision import collection_clock, offset_schedule
 from tank.util import new_id, parse_time, sha256, utcnow
@@ -181,7 +195,7 @@ DOCUMENT_LIMIT = 45 * 1024 * 1024
 UPLOAD_LIMIT = 20 * 1024 * 1024
 TOO_LARGE_TEXT = "Файл больше 20 МБ, Telegram не даёт боту его скачать. Пришлите файл поменьше."
 MEDIA_KINDS = ("document", "photo", "video", "audio", "voice", "animation")
-NOT_SENT = (RuntimeError, httpx.ConnectError, httpx.ConnectTimeout)
+NOT_SENT = (TelegramResponseError, httpx.ConnectError, httpx.ConnectTimeout)
 
 
 def question_message(question):
@@ -271,16 +285,9 @@ class TelegramInbox:
     def url(self, method):
         return f"https://api.telegram.org/bot{self.settings.telegram_token}/{method}"
 
-    async def call(self, method, body):
+    async def call(self, method: str, body: dict[str, JsonValue]) -> JsonValue:
         response = await self.http.post(self.url(method), json=body)
-        data = response.json()
-        if response.status_code != 200 or not data.get("ok"):
-            retry = (data.get("parameters") or {}).get("retry_after", 1)
-            error = RuntimeError(f"Telegram {method} rejected (HTTP {response.status_code})")
-            error.retry_after = retry
-            error.status = response.status_code
-            raise error
-        return data["result"]
+        return response_result(response.content, method=method, status=response.status_code)
 
     async def download(self, file_id):
         try:
@@ -370,18 +377,24 @@ class TelegramInbox:
             self.bot_id = (await self.call("getMe", {}))["id"]
         return self.bot_id
 
-    async def poll(self, timeout=POLL_TIMEOUT_S):
-        state = await self.repo.get("ops.source_checkpoints", CURSOR_KEY) or {}
-        offset = int(state.get("cursor") or 0)
+    async def poll(self, timeout: int = POLL_TIMEOUT_S) -> int:
+        state = await self.repo.get("ops.source_checkpoints", CURSOR_KEY)
+        if state is None:
+            offset = 0
+        else:
+            cursor = TelegramUpdateCursor.model_validate(
+                {"source_id": state["source_id"], "cursor": state["cursor"]}
+            )
+            offset = int(cursor.cursor)
         updates = await self.call(
             "getUpdates", {"offset": offset, "timeout": timeout, "allowed_updates": ["message"]}
         )
-        for update in updates:
-            message = update.get("message")
-            if message and message.get("chat") and message.get("message_id") is not None:
-                await self.store(message, update["update_id"])
-            offset = max(offset, int(update["update_id"]) + 1)
-        if updates:
+        receipts = update_receipts(updates)
+        for update in receipts:
+            if isinstance(update.payload, TelegramMessageReceipt) and update.payload.identity.message_id != 0:
+                await self.store_receipt(update.payload, update.update_id)
+            offset = max(offset, update.update_id + 1)
+        if receipts:
             await self.repo.put(
                 "ops.source_checkpoints",
                 CURSOR_KEY,
@@ -391,24 +404,32 @@ class TelegramInbox:
                     **collection_clock(utcnow()).fields("updated_at"),
                 },
             )
-        return len(updates)
+        return len(receipts)
 
-    async def store(self, message, update_id):
-        key = f"{message['chat']['id']}:{message['message_id']}"
+    async def store(self, message: dict[str, JsonValue], update_id: int) -> None:
+        receipt = message_receipt(message)
+        update = TelegramUpdateReceipt.model_validate({"update_id": update_id, "payload": receipt})
+        return await self.store_receipt(receipt, update.update_id)
+
+    async def store_receipt(self, receipt: TelegramMessageReceipt, update_id: int) -> None:
+        identity = receipt.identity
+        if identity.message_id == 0:
+            raise ValueError("Telegram message is not yet usable")
+        key = f"{identity.chat.id}:{identity.message_id}"
         if await self.repo.get("ops.telegram_messages", key):
             return
         await self.repo.put(
             "ops.telegram_messages",
             key,
             {
-                "chat_id": str(message["chat"]["id"]),
-                "message_id": int(message["message_id"]),
-                "user_id": str((message.get("from") or {}).get("id", "")),
-                "update_id": int(update_id),
-                "date": int(message.get("date") or 0),
-                "pair_bucket": int(message.get("date") or 0) // PAIR_WINDOW_S,
+                "chat_id": str(identity.chat.id),
+                "message_id": identity.message_id,
+                "user_id": str(identity.sender.id) if identity.sender is not None else None,
+                "update_id": update_id,
+                "date": identity.date,
+                "pair_bucket": identity.date // PAIR_WINDOW_S,
                 "status": "RECEIVED",
-                "message": message,
+                "message": receipt.source_message,
                 **collection_clock(utcnow()).fields("received_at"),
             },
         )
@@ -585,7 +606,10 @@ class TelegramInbox:
 
     async def companion(self, row, *, forwarded):
         """The comment sent with a forward (or the forward sent with a comment) by the same user."""
-        date = row["message"].get("date", 0)
+        user_id = pairing_sender_id(row)
+        if user_id is None:
+            return None
+        date = row["message"]["date"]
         candidates = []
         bucket = date // PAIR_WINDOW_S
         nearby = []
@@ -594,12 +618,14 @@ class TelegramInbox:
                 other
                 async for other in self.repo.iter_all(
                     "ops.telegram_messages",
-                    filters={"chat_id": row["chat_id"], "user_id": row["user_id"], "pair_bucket": near},
+                    filters={"chat_id": row["chat_id"], "user_id": user_id, "pair_bucket": near},
                 )
             ]
         for other in nearby:
             body = other["message"]
             if other["message_id"] == row["message_id"] or other["status"] != "RECEIVED":
+                continue
+            if pairing_sender_id(other) != user_id:
                 continue
             if bool(body.get("forward_origin")) == forwarded or body.get("reply_to_message"):
                 continue
@@ -858,13 +884,27 @@ class TelegramInbox:
         candidates.sort(key=lambda row: (row[0], row[1]), reverse=True)
         return candidates[0][2] if candidates[0][0] >= 0.5 or len(candidates) == 1 else None
 
-    async def send(self, chat_id, text, reply_to=None):
-        body = {"chat_id": chat_id, "text": text, "link_preview_options": {"is_disabled": True}}
+    async def send(
+        self, chat_id: str | int, text: str, reply_to: str | int | None = None
+    ) -> TelegramSentMessageReceipt:
+        body: dict[str, JsonValue] = {
+            "chat_id": chat_id,
+            "text": text,
+            "link_preview_options": {"is_disabled": True},
+        }
         if reply_to is not None:
             body["reply_parameters"] = {"message_id": int(reply_to), "allow_sending_without_reply": True}
-        return await self.call("sendMessage", body)
+        return sent_message_receipt(await self.call("sendMessage", body))
 
-    async def send_document(self, chat_id, filename, content, *, caption=None, reply_to=None):
+    async def send_document(
+        self,
+        chat_id: str | int,
+        filename: str,
+        content: bytes,
+        *,
+        caption: str | None = None,
+        reply_to: str | int | None = None,
+    ) -> TelegramSentMessageReceipt:
         data = {"chat_id": str(chat_id)}
         if caption:
             data["caption"] = utf16_prefix(caption, 1024)
@@ -875,12 +915,8 @@ class TelegramInbox:
         response = await self.http.post(
             self.url("sendDocument"), data=data, files={"document": (filename, content)}
         )
-        body = response.json()
-        if response.status_code != 200 or not body.get("ok"):
-            error = RuntimeError(f"Telegram sendDocument rejected (HTTP {response.status_code})")
-            error.retry_after = (body.get("parameters") or {}).get("retry_after", 1)
-            raise error
-        return body["result"]
+        result = response_result(response.content, method="sendDocument", status=response.status_code)
+        return sent_message_receipt(result)
 
     async def send_session_file(self, question_id, call_id, filename, content, caption=None):
         """Deliver an agent file as a reply in the follow-up thread, once per tool call."""
@@ -960,8 +996,8 @@ class TelegramInbox:
                 "chat_id": question["chat_id"],
                 "status": "SENT",
                 "attempt": 1,
-                "message_ref": str(result["message_id"]),
-                "telegram_date": result.get("date"),
+                "message_ref": str(result.message_id),
+                "telegram_date": result.date,
                 "text": caption or filename,
                 "filename": filename,
                 "bytes": len(content),
@@ -971,7 +1007,7 @@ class TelegramInbox:
         )
         return {
             "sent": True,
-            "message_id": str(result["message_id"]),
+            "message_id": str(result.message_id),
             "filename": filename,
             "bytes": len(content),
         }
@@ -1023,8 +1059,8 @@ class TelegramInbox:
                 {
                     **base,
                     "status": "SENT",
-                    "message_ref": str(result["message_id"]),
-                    "telegram_date": result.get("date"),
+                    "message_ref": str(result.message_id),
+                    "telegram_date": result.date,
                     **collection_clock(utcnow()).fields("at"),
                 },
                 immutable=True,
@@ -1103,8 +1139,8 @@ class TelegramInbox:
                 {
                     **ledger,
                     "status": "SENT",
-                    "message_ref": str(result["message_id"]),
-                    "telegram_date": result.get("date"),
+                    "message_ref": str(result.message_id),
+                    "telegram_date": result.date,
                     **collection_clock(utcnow()).fields("at"),
                 },
                 immutable=True,
@@ -1229,6 +1265,7 @@ class TelegramInbox:
             if row.get("purpose") == "ANSWER" and row.get("chunk") is not None
         ]
         previous = question.get("reply_to_message_id")
+        unresolved = False
         for index, part in enumerate(parts):
             rows = [row for row in ledger if row["chunk"] == index]
             sent = next((row for row in rows if row["status"] == "SENT"), None)
@@ -1238,6 +1275,7 @@ class TelegramInbox:
             if sum(row["status"] == "GENERATED" for row in rows) > sum(
                 row["status"] == "FAILED" for row in rows
             ):
+                unresolved = True
                 continue
             base = {
                 "channel": ANSWER_CHANNEL,
@@ -1266,7 +1304,7 @@ class TelegramInbox:
                     immutable=True,
                 )
                 raise
-            previous = str(result["message_id"])
+            previous = str(result.message_id)
             await self.repo.put(
                 "out.deliveries",
                 new_id("delivery"),
@@ -1274,11 +1312,13 @@ class TelegramInbox:
                     **base,
                     "status": "SENT",
                     "message_ref": previous,
-                    "telegram_date": result.get("date"),
+                    "telegram_date": result.date,
                     **collection_clock(utcnow()).fields("at"),
                 },
                 immutable=True,
             )
+        if unresolved:
+            return
         async with self.repo.lock("question:" + question["question_id"]):
             question = await self.repo.get("out.user_questions", binding.question_id)
             if question is None:
