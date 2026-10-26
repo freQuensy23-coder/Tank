@@ -1,7 +1,11 @@
 """Pure OI endpoint selection over owned, validated source observations."""
 
-from datetime import datetime
+from bisect import bisect_left
+from collections.abc import Sequence
+from datetime import datetime, timedelta
 from decimal import Decimal
+from fractions import Fraction
+from math import isfinite
 from typing import Literal, Self
 
 from pydantic import Field, model_validator
@@ -13,13 +17,15 @@ from tank.analysis.condition_derivative_inputs import (
     OIReadSnapshot,
     OISelectionPolicy,
 )
+from tank.analysis.condition_graph_contracts import ConditionInterval, ConditionWindow
 from tank.analysis.oi_ratio import NativeOiChange, native_oi_change
-from tank.analysis.statistics_contracts import FloatRange
+from tank.analysis.statistics_contracts import FloatBounds, FloatRange
 from tank.contracts import DomainModel
 from tank.time_precision import Timestamp
 from tank.util import parse_iso_time
 
 type OIObservationExclusionReason = Literal[
+    "ASSEMBLY_CLOCK_NOT_CAPTURED",
     "SOURCE_CLOCK_NOT_CAPTURED",
     "SOURCE_AFTER_CUTOFF",
     "OI_BUCKET_EDGE_UNSPECIFIED",
@@ -138,6 +144,8 @@ def _exclusion(point: OIObservation, request: OIWindowRequest) -> OIObservationE
         return "OI_BUCKET_EDGE_UNSPECIFIED"
     if point.received_at.value is None:
         return "RECEIPT_NOT_CAPTURED"
+    if request.assembled_at.value is None:
+        return "ASSEMBLY_CLOCK_NOT_CAPTURED"
     if point.visible_at(request.assembled_at) is False:
         return "RECEIPT_AFTER_ASSEMBLY"
     return None
@@ -173,6 +181,160 @@ def _endpoint(
     return SelectedOIEndpoint(status="OBSERVED", at=at, observation=selected, tolerance_s=tolerance_s)
 
 
+class OINativeHistoryBaseline(DomainModel):
+    instrument: DerivativeInstrument
+    interval: ConditionInterval
+    normal_range: FloatRange
+    population_basis: Literal["OBSERVED_NATIVE_ENDPOINT_PAIRS"]
+    source_observation_count: int = Field(ge=0)
+    distinct_source_time_count: int = Field(ge=0)
+    pair_count: int = Field(ge=0)
+    rejected_pair_count: int = Field(ge=0)
+    pair_tolerance_s: float = Field(ge=0)
+    first_observed_at: Timestamp
+    last_observed_at: Timestamp
+    first_pair_end_at: Timestamp
+    last_pair_end_at: Timestamp
+
+    @model_validator(mode="after")
+    def actual_population(self) -> Self:
+        if self.distinct_source_time_count > self.source_observation_count:
+            raise ValueError("OI history cannot invent more distinct clocks than source observations")
+        if self.pair_count + self.rejected_pair_count != self.distinct_source_time_count:
+            raise ValueError("OI history cannot invent more evaluated pairs than observed endpoints")
+        if (self.source_observation_count > 0) != (
+            self.first_observed_at.value is not None and self.last_observed_at.value is not None
+        ):
+            raise ValueError("OI history extent requires its actual observed source clocks")
+        if (self.pair_count > 0) != (
+            self.first_pair_end_at.value is not None and self.last_pair_end_at.value is not None
+        ):
+            raise ValueError("OI pair extent requires actual qualified pair endpoints")
+        if self.normal_range.bounds is not None and not self.pair_count:
+            raise ValueError("An observed OI baseline requires actual endpoint pairs")
+        return self
+
+
+def _quantile(values: Sequence[Fraction], probability: float) -> Fraction:
+    if not values:
+        raise ValueError("OI quantiles require an actual nonempty observed population")
+    position = (len(values) - 1) * Fraction(str(probability))
+    index = position.numerator // position.denominator
+    low, high = values[index], values[min(index + 1, len(values) - 1)]
+    return low + (high - low) * (position - index)
+
+
+def _display_bound(value: Fraction) -> float | None:
+    try:
+        displayed = float(value)
+    except OverflowError:
+        return None
+    if not isfinite(displayed) or value != 0 and displayed == 0:
+        return None
+    return displayed
+
+
+def _native_history(
+    source: OIReadSnapshot, policy: OISelectionPolicy, request: OIWindowRequest, *, window: ConditionWindow
+) -> tuple[OINativeHistoryBaseline, ...]:
+    if request.start.value is None or request.cutoff.value is None:
+        raise ValueError("OI history requires the actual requested logical interval")
+    start, cutoff = parse_iso_time(request.start.value), parse_iso_time(request.cutoff.value)
+    interval = ConditionInterval(window=window, start=start, cutoff=cutoff)
+    duration = cutoff - start
+    horizon = start - timedelta(days=policy.lookback_days)
+    minimum = timedelta(days=policy.minimum_history_days)
+    baselines: list[OINativeHistoryBaseline] = []
+    for instrument in source.instruments:
+        by_time: dict[datetime, OIObservation] = {}
+        clocks: dict[datetime, Timestamp] = {}
+        observation_count = 0
+        ambiguous = False
+        for point in source.observations:
+            if point.instrument != instrument or _exclusion(point, request) is not None:
+                continue
+            at = point.reported_time()
+            if at is None or not horizon <= at < start:
+                continue
+            observation_count += 1
+            if at in by_time:
+                ambiguous = True
+                if clocks[at] != point.observed_at:
+                    clocks[at] = Timestamp(point.observed_at.value, None, "HISTORY_CLOCK_METADATA_DIFFERS")
+            else:
+                by_time[at] = point
+                clocks[at] = point.observed_at
+        times = sorted(by_time)
+        gaps = sorted((right - left).total_seconds() for left, right in zip(times, times[1:], strict=False))
+        tolerance = max(float(policy.tolerance_s), gaps[len(gaps) // 2] / 2 if gaps else 0.0)
+        changes: list[Fraction] = []
+        ends: list[datetime] = []
+        rejected = 0
+        if not ambiguous and request.assembled_at.value is not None:
+            for at in times:
+                target = at - duration
+                index = bisect_left(times, target)
+                candidates = [
+                    (abs((times[position] - target).total_seconds()), times[position])
+                    for position in (index - 1, index)
+                    if 0 <= position < len(times)
+                    and times[position] < at
+                    and abs((times[position] - target).total_seconds()) <= tolerance
+                ]
+                old = by_time[min(candidates)[1]] if candidates else None
+                initial = None if old is None else old.native_quantity.value
+                final = by_time[at].native_quantity.value
+                if initial is None or initial <= 0 or final is None or final < 0:
+                    rejected += 1
+                    continue
+                changes.append((Fraction(final) - Fraction(initial)) / Fraction(initial))
+                ends.append(at)
+        else:
+            rejected = len(times)
+        bounds: FloatBounds | None = None
+        reason: Literal["INCOMPLETE", "INSUFFICIENT_HISTORY", "NOT_ESTIMABLE"] | None
+        if ambiguous or request.assembled_at.value is None:
+            reason = "INCOMPLETE"
+        elif (
+            not times or times[-1] - times[0] < minimum or not ends or ends[-1] - ends[0] + duration < minimum
+        ):
+            reason = "INSUFFICIENT_HISTORY"
+        else:
+            ordered = sorted(changes)
+            lower = _display_bound(_quantile(ordered, policy.quantiles[0]))
+            upper = _display_bound(_quantile(ordered, policy.quantiles[1]))
+            if lower is None or upper is None:
+                reason = "NOT_ESTIMABLE"
+            else:
+                bounds, reason = FloatBounds(lower=lower, upper=upper), None
+        baselines.append(
+            OINativeHistoryBaseline(
+                instrument=instrument,
+                interval=interval,
+                normal_range=FloatRange(bounds=bounds, reason=reason),
+                population_basis="OBSERVED_NATIVE_ENDPOINT_PAIRS",
+                source_observation_count=observation_count,
+                distinct_source_time_count=len(times),
+                pair_count=len(changes),
+                rejected_pair_count=rejected,
+                pair_tolerance_s=tolerance,
+                first_observed_at=clocks[times[0]]
+                if times
+                else Timestamp(None, None, "NO_HISTORY_OBSERVATIONS"),
+                last_observed_at=clocks[times[-1]]
+                if times
+                else Timestamp(None, None, "NO_HISTORY_OBSERVATIONS"),
+                first_pair_end_at=clocks[ends[0]]
+                if ends
+                else Timestamp(None, None, "NO_QUALIFIED_ENDPOINT_PAIRS"),
+                last_pair_end_at=clocks[ends[-1]]
+                if ends
+                else Timestamp(None, None, "NO_QUALIFIED_ENDPOINT_PAIRS"),
+            )
+        )
+    return tuple(baselines)
+
+
 class OpenInterestCalculator:
     """Own immutable admitted reads once; keep actual assembly in each request."""
 
@@ -181,6 +343,12 @@ class OpenInterestCalculator:
     def __init__(self, source: OIReadSnapshot, policy: OISelectionPolicy) -> None:
         self._source = OIReadSnapshot.model_validate(source)
         self._policy = OISelectionPolicy.model_validate(policy)
+
+    def native_baseline(
+        self, request: OIWindowRequest, *, window: ConditionWindow
+    ) -> tuple[OINativeHistoryBaseline, ...]:
+        actual = OIWindowRequest.model_validate(request)
+        return _native_history(self._source, self._policy, actual, window=window)
 
     def select(self, request: OIWindowRequest) -> tuple[OIInstrumentWindow, ...]:
         actual = OIWindowRequest.model_validate(request)

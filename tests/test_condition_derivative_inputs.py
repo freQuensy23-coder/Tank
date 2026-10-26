@@ -5,6 +5,7 @@ from pydantic import ValidationError
 
 from tank.analysis.condition_derivative_input_codec import decode_oi_inputs, resolve_oi_observation
 from tank.analysis.condition_derivative_inputs import OIReadSnapshot
+from tank.analysis.open_interest import OIWindowRequest, OpenInterestCalculator
 from tank.util import JsonInput
 
 
@@ -247,3 +248,79 @@ def test_registry_scope_qualifies_uncaptured_row_metadata_without_rewriting_evid
     assert original["token_id"] is None
     assert original["venue"] is None
     assert original["quote_asset"] is None
+
+
+def historical_case(*, spacing_h: int, wide: bool) -> tuple[OpenInterestCalculator, OIWindowRequest]:
+    from datetime import timedelta
+
+    from tank.analysis.condition_derivative_inputs import OISelectionPolicy
+    from tank.analysis.open_interest import OIWindowRequest, OpenInterestCalculator
+    from tank.time_precision import chosen_boundary, collection_clock
+    from tank.util import iso, parse_iso_time
+
+    cutoff = parse_iso_time("2026-10-16T12:00:00Z")
+    start = cutoff - timedelta(hours=1)
+    rows = [
+        observation()
+        | {
+            "ts": iso(start - timedelta(hours=hour)),
+            "oi_native": "1E400" if wide and hour % 2 == 0 else "1" if wide else "10",
+        }
+        for hour in range(1, 241, spacing_h)
+    ]
+    rows.extend(
+        [
+            observation() | {"ts": iso(start + timedelta(seconds=10)), "oi_native": "10"},
+            observation() | {"ts": iso(cutoff - timedelta(seconds=10)), "oi_native": "12"},
+        ]
+    )
+    source = decode_oi_inputs(token_id="T", instruments=[instrument()], observations=rows)
+    return (
+        OpenInterestCalculator(
+            source,
+            OISelectionPolicy(
+                tolerance_s=60, minimum_history_days=7, lookback_days=28, quantiles=(0.025, 0.975)
+            ),
+        ),
+        OIWindowRequest(
+            start=chosen_boundary(start, precision="EXACT"),
+            cutoff=chosen_boundary(cutoff, precision="EXACT"),
+            assembled_at=collection_clock(cutoff + timedelta(seconds=2)),
+        ),
+    )
+
+
+def test_native_history_preserves_genuinely_observed_zero_changes() -> None:
+    calculator, request = historical_case(spacing_h=1, wide=False)
+    baseline = calculator.native_baseline(request, window="W1H")[0]
+    assert baseline.source_observation_count == baseline.distinct_source_time_count == 240
+    assert baseline.pair_count == 239 and baseline.rejected_pair_count == 1
+    assert baseline.normal_range.bounds is not None
+    assert baseline.normal_range.bounds.lower == baseline.normal_range.bounds.upper == 0
+    assert baseline.normal_range.reason is None
+    current = calculator.select(request)[0].native_change(normal_range=baseline.normal_range)
+    assert current is not None and current.value == 0.2
+    assert current.position == "ABOVE" and current.beyond is True
+
+
+def test_unrepresentable_history_does_not_drop_pairs_or_erase_native_endpoints() -> None:
+    calculator, request = historical_case(spacing_h=1, wide=True)
+    baseline = calculator.native_baseline(request, window="W1H")[0]
+    assert baseline.source_observation_count == 240
+    assert baseline.pair_count == 239 and baseline.rejected_pair_count == 1
+    assert baseline.normal_range.bounds is None
+    assert baseline.normal_range.reason == "NOT_ESTIMABLE"
+    current = calculator.select(request)[0].native_change(normal_range=baseline.normal_range)
+    assert current is not None and current.value == 0.2
+    assert current.endpoints.start == Decimal(10) and current.endpoints.end == Decimal(12)
+    assert current.position is None and current.beyond is None
+
+
+def test_sparse_history_cannot_pair_an_observation_with_itself_to_manufacture_zero() -> None:
+    calculator, request = historical_case(spacing_h=24, wide=False)
+    baseline = calculator.native_baseline(request, window="W1H")[0]
+    assert baseline.source_observation_count == 10
+    assert baseline.pair_count == 0 and baseline.rejected_pair_count == 10
+    assert baseline.normal_range.bounds is None
+    assert baseline.normal_range.reason == "INSUFFICIENT_HISTORY"
+    assert baseline.first_pair_end_at.value is None and baseline.last_pair_end_at.value is None
