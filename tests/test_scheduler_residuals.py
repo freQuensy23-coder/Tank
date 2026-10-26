@@ -11,7 +11,7 @@ from source_support import fixture_versions
 from tank.scheduler import Scheduler
 from tank.settings import Settings
 from tank.storage import MemoryRepository
-from tank.time_precision import chosen_boundary
+from tank.time_precision import chosen_boundary, propagate_timestamp
 from tank.util import iso, parse_time
 
 NOW = parse_time("2026-10-18T12:00:00Z")
@@ -240,7 +240,9 @@ async def test_conditions_share_truth_for_identical_event_token_cutoff() -> None
                 "expr": {"metric": "mt.move_class", "op": "==", "value": "OTHER"},
             },
         )
-    await scheduler.eval_conditions(chosen_boundary(NOW, precision="EXACT").fields("cutoff"))
+    await scheduler.eval_conditions(
+        propagate_timestamp(chosen_boundary(NOW, precision="EXACT").fields("cutoff"), "cutoff")
+    )
     truth.assess.assert_awaited_once()
 
 
@@ -313,7 +315,9 @@ async def test_selective_condition_union_never_calls_full_assess_or_persists_mis
         )
     for minute in (0, 1):
         await scheduler.eval_conditions(
-            chosen_boundary(NOW + timedelta(minutes=minute), precision="EXACT").fields("cutoff")
+            propagate_timestamp(
+                chosen_boundary(NOW + timedelta(minutes=minute), precision="EXACT").fields("cutoff"), "cutoff"
+            )
         )
     assert truth.condition_values.await_count == 2
     assert truth.condition_values.call_args.kwargs["requirements"] == [
@@ -373,13 +377,19 @@ async def test_closed_hour_completion_or_correction_is_rechecked_without_double_
         },
     )
     for stamp in (first, first + timedelta(minutes=3)):
-        await scheduler.eval_conditions(chosen_boundary(stamp, precision="EXACT").fields("cutoff"))
+        await scheduler.eval_conditions(
+            propagate_timestamp(chosen_boundary(stamp, precision="EXACT").fields("cutoff"), "cutoff")
+        )
         assert (await repo.get("ana.watch_conditions", "c"))["counters"]["root"]["count"] == 1
-    await scheduler.eval_conditions(chosen_boundary(second, precision="EXACT").fields("cutoff"))
+    await scheduler.eval_conditions(
+        propagate_timestamp(chosen_boundary(second, precision="EXACT").fields("cutoff"), "cutoff")
+    )
     assert (await repo.get("ana.watch_conditions", "c"))["status"] == "ARMED"
     values[iso(second)] = "BUY"
     await scheduler.eval_conditions(
-        chosen_boundary(second + timedelta(minutes=3), precision="EXACT").fields("cutoff")
+        propagate_timestamp(
+            chosen_boundary(second + timedelta(minutes=3), precision="EXACT").fields("cutoff"), "cutoff"
+        )
     )
     condition = await repo.get("ana.watch_conditions", "c")
     assert condition["status"] == "FIRED"
@@ -422,9 +432,13 @@ async def test_late_correction_of_preceding_closed_hour_cannot_false_fire() -> N
             "expr": {"metric": "spot.cohort.direction", "op": "==", "value": "BUY", "persist": {"count": 2}},
         },
     )
-    await scheduler.eval_conditions(chosen_boundary(first, precision="EXACT").fields("cutoff"))
+    await scheduler.eval_conditions(
+        propagate_timestamp(chosen_boundary(first, precision="EXACT").fields("cutoff"), "cutoff")
+    )
     values[iso(first)] = "SELL"
-    await scheduler.eval_conditions(chosen_boundary(second, precision="EXACT").fields("cutoff"))
+    await scheduler.eval_conditions(
+        propagate_timestamp(chosen_boundary(second, precision="EXACT").fields("cutoff"), "cutoff")
+    )
     condition = await repo.get("ana.watch_conditions", "c")
     assert condition["status"] == "ARMED" and condition["counters"]["root"]["count"] == 1
     assert condition["counters"]["root"]["history"][0]["matched"] is False

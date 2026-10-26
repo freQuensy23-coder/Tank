@@ -12,6 +12,7 @@ from source_support import fixture_versions
 from tank.scheduler import Scheduler
 from tank.settings import Settings
 from tank.storage import MemoryRepository
+from tank.time_precision import propagate_timestamp
 from tank.util import parse_time
 
 STAMP = "2026-10-17T12:00:00Z"
@@ -167,7 +168,7 @@ async def test_legacy_condition_cutoff_stays_explicit_unknown() -> None:
             "expr": {"metric": "event.state", "op": "==", "value": "APPROVED"},
         },
     )
-    await scheduler.eval_conditions({"cutoff": STAMP})
+    await scheduler.eval_conditions(propagate_timestamp({"cutoff": STAMP}, "cutoff"))
     row = await repo.get("ana.watch_conditions", "c")
     assert row["last_evaluated_at_prec"] is None
     assert row["last_evaluated_at_prec_reason"] == "INCOMPLETE"
