@@ -150,6 +150,44 @@ def test_observed_native_zero_start_retains_endpoints_and_an_explicit_undefined_
     assert value.oi_class is None and value.classification_ready is False
 
 
+def test_invalid_reported_usd_preserves_native_endpoints_and_its_distinct_source_cause() -> None:
+    base = observed_oi_without_usd()
+    value = ObservedConditionOpenInterest.model_validate(
+        base.model_copy(
+            update={
+                "oi_usd_start": None,
+                "oi_usd_end": Decimal(0),
+                "oi_usd_chg_pct_reason": "INCOMPLETE",
+                "oi_usd_reason": "NOT_ESTIMABLE",
+                "oi_usd_detail": "REPORTED_USD_INVALID",
+                "decomposition": MissingOIDecomposition(detail="REPORTED_USD_INVALID"),
+            }
+        )
+    )
+    wire = encode_condition_open_interest(value)
+    assert wire["oi_native_start"] == "10" and wire["oi_native_end"] == "0"
+    assert wire["oi_native_chg_pct"] == -1.0 and wire["native_beyond"] is True
+    assert wire["oi_usd_start"] is None and wire["oi_usd_end"] == "0"
+    assert wire["oi_usd_reason"] == "NOT_ESTIMABLE"
+    assert wire["oi_usd_detail"] == "REPORTED_USD_INVALID"
+    assert wire["oi_usd_chg_pct_reason"] == "INCOMPLETE"
+    assert isinstance(value.decomposition, MissingOIDecomposition)
+    assert value.decomposition.detail == "REPORTED_USD_INVALID"
+    assert value.classification_ready is False
+    with pytest.raises(ValidationError, match="explicit qualification cause"):
+        ObservedConditionOpenInterest.model_validate(value.model_copy(update={"oi_usd_reason": "INCOMPLETE"}))
+    with pytest.raises(ValidationError, match="explicit qualification cause"):
+        ObservedConditionOpenInterest.model_validate(
+            value.model_copy(update={"oi_usd_detail": "SYNCHRONIZED_MARK_OR_QUOTE_RATE_UNAVAILABLE"})
+        )
+    with pytest.raises(ValidationError, match="missing-conversion gap"):
+        ObservedConditionOpenInterest.model_validate(
+            base.model_copy(
+                update={"oi_usd_reason": "NOT_ESTIMABLE", "oi_usd_detail": "REPORTED_USD_INVALID"}
+            )
+        )
+
+
 def test_classification_helper_retains_existing_api_and_three_valued_predicates() -> None:
     dec = decomposition(Decimal(10), Decimal(20), Decimal(2), Decimal(2))
     assert oi_class(1.0, 1.0, dec, [-0.1, 0.1], [-0.1, 0.1]) == "REAL_NATIVE"

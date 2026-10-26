@@ -9,6 +9,7 @@ from pydantic import Field
 from tank.contracts import DomainModel
 
 type Scalar = Decimal | str | int | float
+type MissingOIUsdDetail = Literal["SYNCHRONIZED_MARK_OR_QUOTE_RATE_UNAVAILABLE", "REPORTED_USD_INVALID"]
 
 
 class OIDecomposition(DomainModel):
@@ -24,9 +25,7 @@ class MissingOIDecomposition(DomainModel):
     interaction: None = None
     pos_share: None = None
     reason: Literal["INCOMPLETE"] = "INCOMPLETE"
-    detail: Literal["SYNCHRONIZED_MARK_OR_QUOTE_RATE_UNAVAILABLE"] = (
-        "SYNCHRONIZED_MARK_OR_QUOTE_RATE_UNAVAILABLE"
-    )
+    detail: MissingOIUsdDetail = "SYNCHRONIZED_MARK_OR_QUOTE_RATE_UNAVAILABLE"
 
 
 def decomposition(n0: Scalar, n1: Scalar, p0: Scalar, p1: Scalar) -> OIDecomposition:
