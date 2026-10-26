@@ -33,7 +33,7 @@ class ReportedDerivativeNumber(DomainModel):
 
 class OISourceDescriptor(DomainModel):
     format: Literal["OI_INPUT_READ_V1"]
-    collection: Literal["mkt.oi"]
+    collection: Literal["mkt.oi_obs"]
     row_index: int = Field(ge=0)
     original_projection_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
     scope_projection_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")

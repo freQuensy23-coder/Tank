@@ -149,7 +149,7 @@ def decode_oi_inputs(
             basis = "SOURCE_ROW"
         descriptor = OISourceDescriptor(
             format="OI_INPUT_READ_V1",
-            collection="mkt.oi",
+            collection="mkt.oi_obs",
             row_index=index,
             original_projection_sha256=sha256(payload),
             scope_projection_sha256=sha256(scope_payload),
