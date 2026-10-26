@@ -354,6 +354,18 @@ async def job_failure_progress(
             "target": target,
         }
     )
+    await record_job_failure_progress(repo, settings, view, reason)
+
+
+async def record_job_failure_progress(
+    repo: EventProgressRepository,
+    settings: ProgressSettings,
+    view: JobFailureProgressView,
+    reason: str,
+) -> None:
+    if not enabled(settings):
+        return
+    view = JobFailureProgressView.model_validate(view)
     stage: ProgressStage = (
         "PROCESSING_EXPIRED" if view.status == "EXPIRED" or reason == "EXPIRED" else "PROCESSING_FAILED"
     )
