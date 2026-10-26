@@ -4,8 +4,8 @@ import pytest
 
 from scripts.render_db_schema import (
     ForeignKeyConstraint,
-    Table,
     literal_assignments,
+    new_table,
     parse_constraint,
     render_ch,
     render_pg,
@@ -13,7 +13,7 @@ from scripts.render_db_schema import (
 
 
 def test_foreign_key_accepts_sql_whitespace_and_preserves_composite_scope() -> None:
-    table = Table("ana.decision_state_heads")
+    table = new_table("ana.decision_state_heads")
     parse_constraint(
         table,
         "CONSTRAINT current_scope FOREIGN KEY (event_id, token_id, dec_id) "
@@ -74,7 +74,7 @@ def test_svg_text_omits_unrequested_attributes_and_escapes_column_text() -> None
 
 
 def test_sql_constraint_refusal_does_not_install_partial_scope() -> None:
-    table = Table("ana.decision_state_heads")
+    table = new_table("ana.decision_state_heads")
     with pytest.raises(ValueError, match="arity must match"):
         parse_constraint(
             table,
@@ -201,3 +201,50 @@ def test_renderer_uses_declared_retention_values_without_policy_fallback(tmp_pat
     assert "kept 0 days (base_retention_days)" in render_ch(tmp_path)
     with pytest.raises(ValidationError):
         RetentionConfiguration.model_validate({"base_retention_days": 90})
+
+
+def test_partial_unique_index_does_not_claim_unconditional_identity() -> None:
+    from scripts.render_db_schema import finish_pg, index_count, parse_pg
+
+    tables, _ = parse_pg(
+        iter(
+            [
+                "CREATE TABLE qa.example (id text, active boolean);"
+                "CREATE UNIQUE INDEX active_id ON qa.example (id) WHERE active;"
+            ]
+        )
+    )
+    table = finish_pg(tables)["qa.example"]
+    assert table.unique_indexes[0].predicate == "active"
+    assert table.groups == ()
+    assert table.col("id").unique_marker is None
+    assert index_count(table) == 1
+
+
+def test_sql_column_nullability_and_sequence_changes_are_independent_diff_facts() -> None:
+    from scripts.render_db_schema import diff_tables, finish_pg, parse_pg
+
+    before, _ = parse_pg(iter(["CREATE TABLE qa.example (id bigint);"]))
+    after, _ = parse_pg(
+        iter(["CREATE TABLE qa.example (id bigint NOT NULL DEFAULT nextval('qa.example_id_seq'));"])
+    )
+    drawn, removed = diff_tables(finish_pg(before), finish_pg(after))
+    column = drawn["qa.example"].col("id")
+    assert not removed
+    assert column.change == "altered"
+    assert column.not_null
+    assert column.sequence_default
+    assert column.sql_type == "int8"
+
+
+def test_rendered_column_does_not_coerce_missing_flags_or_boolean_numbers() -> None:
+    from pydantic import ValidationError
+
+    from scripts.render_db_schema import SQLColumn
+
+    with pytest.raises(ValidationError):
+        SQLColumn.model_validate({"name": "id", "sql_type": "text"})
+    with pytest.raises(ValidationError):
+        SQLColumn.model_validate(
+            {"name": "id", "sql_type": "text", "not_null": 1, "sequence_default": False, "precision": False}
+        )

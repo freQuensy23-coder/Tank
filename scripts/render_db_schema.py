@@ -7,7 +7,6 @@ commit diagrams/tank_postgres_schema.{svg,png} and diagrams/tank_clickhouse_sche
 
 import argparse
 import ast
-import copy
 import html
 import re
 import subprocess
@@ -311,49 +310,172 @@ def key_columns(statement: str) -> list[str]:
     return cols_of(match.group(1))
 
 
-class Table:
+class SQLColumn(SchemaRecord):
+    name: SQLColumnName
+    sql_type: NonBlankText
+    not_null: bool
+    sequence_default: bool
+    precision: bool
+
+
+class UniqueIndex(SchemaRecord):
+    name: NonBlankText
+    columns: tuple[SQLColumnName, ...] = Field(min_length=1)
+    predicate: NonBlankText | None
+
+
+class ConstraintEntry(SchemaRecord):
+    name: NonBlankText
+    rule: Constraint
+
+
+class ParsedTable(BaseModel):
+    model_config = ConfigDict(strict=True, extra="forbid", validate_assignment=True)
+    name: SQLTableName
+    cols: list[SQLColumn]
     constraints: dict[str, Constraint]
+    unique_indexes: list[UniqueIndex]
+    indexes: Annotated[int, Field(ge=0)]
+    triggers: list[str]
+    unlogged: bool
+    storage: NonBlankText | None
+    note: NonBlankText | None
 
-    def __init__(self, name):
-        self.name = name
-        self.schema = name.split(".")[0]
-        self.cols = []
-        self.constraints = {}
-        self.unique_indexes = []
-        self.indexes = 0
-        self.triggers = []
-        self.unlogged = False
-        self.storage = None
-        self.note = None
+    @property
+    def namespace(self) -> str:
+        return self.name.split(".")[0]
 
-    def col(self, name):
-        for c in self.cols:
-            if c["name"] == name:
-                return c
+    def col(self, name: str) -> SQLColumn:
+        for column in self.cols:
+            if column.name == name:
+                return column
         raise KeyError(f"{self.name}.{name}")
 
 
-def new_col(name, typ):
-    return {"name": name, "type": norm_type(typ), "nn": False, "default": None, "prec": False, "ref": None}
+type RowHighlight = Literal["added", "removed", "altered"]
+type TableChange = Literal["plain", "unchanged", "added", "removed", "altered"]
 
 
-def parse_col_def(t, p):
-    name, rest = p.split(" ", 1)
-    m = re.search(r" (NOT NULL|DEFAULT|PRIMARY KEY|UNIQUE|CONSTRAINT|CHECK|REFERENCES)\b", " " + rest)
-    typ = (" " + rest)[: m.start()].strip() if m else rest
-    c = new_col(name, typ)
-    tail = rest[len(typ) :]
-    if "NOT NULL" in tail:
-        c["nn"] = True
-    d = re.search(r"DEFAULT (\S+)", tail)
-    if d:
-        c["default"] = d.group(1)
+class RenderedColumn(SQLColumn):
+    primary_key: bool
+    foreign_key: bool
+    unique_marker: str | None
+    check: bool
+    required_check: bool
+    logical_reference: str | None
+    change: RowHighlight | None
+
+    def highlighted(self, change: RowHighlight) -> "RenderedColumn":
+        return RenderedColumn(
+            name=self.name,
+            sql_type=self.sql_type,
+            not_null=self.not_null,
+            sequence_default=self.sequence_default,
+            precision=self.precision,
+            primary_key=self.primary_key,
+            foreign_key=self.foreign_key,
+            unique_marker=self.unique_marker,
+            check=self.check,
+            required_check=self.required_check,
+            logical_reference=self.logical_reference,
+            change=change,
+        )
+
+
+class IndexDelta(SchemaRecord):
+    before: Annotated[int, Field(ge=0)]
+    after: Annotated[int, Field(ge=0)]
+
+    @model_validator(mode="after")
+    def changed_count(self) -> Self:
+        if self.before == self.after:
+            raise ValueError("An index delta requires distinct counts")
+        return self
+
+
+class RenderedTable(SchemaRecord):
+    name: SQLTableName
+    cols: tuple[RenderedColumn, ...] = Field(min_length=1)
+    constraints: tuple[ConstraintEntry, ...]
+    unique_indexes: tuple[UniqueIndex, ...]
+    indexes: Annotated[int, Field(ge=0)]
+    triggers: tuple[str, ...]
+    unlogged: bool
+    storage: NonBlankText | None
+    note: NonBlankText | None
+    groups: tuple[tuple[str, ...], ...]
+    flags: tuple[str, ...]
+    change: TableChange
+    index_delta: IndexDelta | None
+
+    @property
+    def namespace(self) -> str:
+        return self.name.split(".")[0]
+
+    def col(self, name: str) -> RenderedColumn:
+        for column in self.cols:
+            if column.name == name:
+                return column
+        raise KeyError(f"{self.name}.{name}")
+
+    def compared(
+        self, columns: tuple[RenderedColumn, ...], change: TableChange, delta: IndexDelta | None
+    ) -> "RenderedTable":
+        return RenderedTable(
+            name=self.name,
+            cols=columns,
+            constraints=self.constraints,
+            unique_indexes=self.unique_indexes,
+            indexes=self.indexes,
+            triggers=self.triggers,
+            unlogged=self.unlogged,
+            storage=self.storage,
+            note=self.note,
+            groups=self.groups,
+            flags=self.flags,
+            change=change,
+            index_delta=delta,
+        )
+
+
+def new_table(name: str) -> ParsedTable:
+    return ParsedTable(
+        name=name,
+        cols=[],
+        constraints={},
+        unique_indexes=[],
+        indexes=0,
+        triggers=[],
+        unlogged=False,
+        storage=None,
+        note=None,
+    )
+
+
+def new_col(name: str, typ: str, not_null: bool, sequence_default: bool, precision: bool) -> SQLColumn:
+    return SQLColumn(
+        name=name,
+        sql_type=norm_type(typ),
+        not_null=not_null,
+        sequence_default=sequence_default,
+        precision=precision,
+    )
+
+
+def parse_col_def(table: ParsedTable, statement: str) -> None:
+    name, rest = statement.split(" ", 1)
+    match = re.search(r" (NOT NULL|DEFAULT|PRIMARY KEY|UNIQUE|CONSTRAINT|CHECK|REFERENCES)\b", " " + rest)
+    kind = (" " + rest)[: match.start()].strip() if match else rest
+    tail = rest[len(kind) :]
+    default = re.search(r"DEFAULT (\S+)", tail)
+    sequence = default is not None and default.group(1).startswith("nextval")
+    column = new_col(name, kind, "NOT NULL" in tail, sequence, False)
     if "PRIMARY KEY" in tail:
-        t.constraints[f"{t.name}_pkey"] = KeyConstraint(kind="PK", columns=(name,))
-    t.cols.append(c)
+        table.constraints[f"{table.name}_pkey"] = KeyConstraint(kind="PK", columns=(name,))
+    table.cols.append(column)
 
 
-def parse_constraint(t: Table, text: str, name: str | None = None) -> None:
+def parse_constraint(t: ParsedTable, text: str, name: str | None = None) -> None:
     if name is not None and re.fullmatch(r"[A-Za-z_]\w*", name) is None:
         raise ValueError("Unsupported explicit constraint name")
     m = re.match(r"CONSTRAINT (\w+) (.*)$", text)
@@ -385,13 +507,13 @@ def parse_constraint(t: Table, text: str, name: str | None = None) -> None:
     elif text.startswith("CHECK"):
         expr = text[len("CHECK") :].strip()
         valid = not expr.endswith("NOT VALID")
-        names = {c["name"] for c in t.cols}
+        names = {c.name for c in t.cols}
         if name and name.startswith("required_"):
-            target = name[len("required_") :]
+            target: str | None = name[len("required_") :]
             if target not in names:
                 found = re.search(r"\b(\w+) IS NOT NULL", expr)
                 target = found.group(1) if found else None
-            if target in names:
+            if target is not None and target in names:
                 t.constraints[name] = CheckConstraint(kind="REQ", columns=(target,), valid=valid)
                 return
         used = [w for w in dict.fromkeys(re.findall(r"\b[a-z_][a-z0-9_]*\b", expr)) if w in names]
@@ -400,17 +522,28 @@ def parse_constraint(t: Table, text: str, name: str | None = None) -> None:
         )
 
 
-def drop_column(t, name):
-    """Remove a column with the constraints and indexes that use it, as PostgreSQL does."""
-    t.cols = [c for c in t.cols if c["name"] != name]
-    t.constraints = {k: v for k, v in t.constraints.items() if name not in v.columns}
-    kept = [u for u in t.unique_indexes if name not in u[1]]
-    t.indexes -= len(t.unique_indexes) - len(kept)
-    t.unique_indexes = kept
+def drop_column(table: ParsedTable, name: str) -> None:
+    table.cols = [column for column in table.cols if column.name != name]
+    table.constraints = {key: value for key, value in table.constraints.items() if name not in value.columns}
+    retained = [index for index in table.unique_indexes if name not in index.columns]
+    table.indexes -= len(table.unique_indexes) - len(retained)
+    table.unique_indexes = retained
 
 
-def parse_pg(sources):
-    tables, schemas, owners = {}, [], {}
+def mark_sequence_default(table: ParsedTable, name: str) -> None:
+    found = table.col(name)
+    table.cols = [
+        new_col(column.name, column.sql_type, column.not_null, True, column.precision)
+        if column.name == found.name
+        else column
+        for column in table.cols
+    ]
+
+
+def parse_pg(sources: Iterator[str]) -> tuple[dict[str, ParsedTable], list[str]]:
+    tables: dict[str, ParsedTable] = {}
+    schemas: list[str] = []
+    owners: dict[tuple[str, str], str] = {}
     for source in sources:
         for s in statements(source):
             if m := re.match(r"CREATE SCHEMA (IF NOT EXISTS )?(\w+)", s):
@@ -422,11 +555,11 @@ def parse_pg(sources):
                 if owner in tables:
                     t = tables[owner]
                     t.indexes -= 1
-                    t.unique_indexes = [u for u in t.unique_indexes if u[0] != m.group(3)]
+                    t.unique_indexes = [u for u in t.unique_indexes if u.name != m.group(3)]
             elif m := re.match(
                 r"CREATE (UNLOGGED )?TABLE (IF NOT EXISTS )?(\w+\.\w+) \((.*?)\)( WITH \((.*)\))?$", s
             ):
-                t = tables.setdefault(m.group(3), Table(m.group(3)))
+                t = tables.setdefault(m.group(3), new_table(m.group(3)))
                 t.unlogged = bool(m.group(1))
                 t.storage = m.group(6)
                 for part in split_top(m.group(4)):
@@ -449,7 +582,7 @@ def parse_pg(sources):
                 elif a := re.match(r"DROP CONSTRAINT (IF EXISTS )?(\w+)", action):
                     t.constraints.pop(a.group(2), None)
                 elif a := re.match(r"ALTER COLUMN (\w+) SET DEFAULT nextval", action):
-                    t.col(a.group(1))["default"] = "nextval"
+                    mark_sequence_default(t, a.group(1))
             elif m := re.match(
                 r"CREATE (UNIQUE )?INDEX (IF NOT EXISTS )?(\w+) ON (\w+\.\w+)( USING (\w+))? ?\((.*?)\)( WHERE .*)?$",
                 s,
@@ -458,26 +591,46 @@ def parse_pg(sources):
                 t.indexes += 1
                 owners[(m.group(4).split(".")[0], m.group(3))] = m.group(4)
                 if m.group(1):
-                    t.unique_indexes.append((m.group(3), cols_of(m.group(7)), bool(m.group(8))))
+                    t.unique_indexes.append(
+                        UniqueIndex(
+                            name=m.group(3),
+                            columns=tuple(cols_of(m.group(7))),
+                            predicate=m.group(8).removeprefix(" WHERE ") if m.group(8) is not None else None,
+                        )
+                    )
             elif m := re.match(r"CREATE TRIGGER (\w+) .* ON (\w+\.\w+) .* FUNCTION ([\w.]+)\(", s):
                 tables[m.group(2)].triggers.append(m.group(3))
     return tables, schemas
 
 
-def collapse_prec(t):
-    names = {c["name"] for c in t.cols}
-    drop = set()
-    for c in t.cols:
-        if c["type"] != "timestamptz":
+def collapse_prec(table: ParsedTable) -> None:
+    names = {column.name for column in table.cols}
+    hidden: set[str] = set()
+    paired: set[str] = set()
+    for column in table.cols:
+        if column.sql_type != "timestamptz":
             continue
-        bases = [c["name"]] + ([c["name"][:-3]] if c["name"].endswith("_at") else [])
-        for b in bases:
-            pair = {b + "_prec", b + "_prec_reason"} & names
-            if pair:
-                drop |= pair
-                c["prec"] = True
-                break
-    t.cols = [c for c in t.cols if c["name"] not in drop]
+        bases = [column.name]
+        if column.name.endswith("_at"):
+            bases.append(column.name[:-3])
+        matches: list[set[str]] = []
+        for base in bases:
+            pair = {base + "_prec", base + "_prec_reason"}
+            found = pair & names
+            if found and found != pair:
+                raise ValueError("Timestamp precision metadata requires both companion columns")
+            if found:
+                matches.append(found)
+        if len(matches) > 1:
+            raise ValueError("Timestamp precision metadata has ambiguous companion names")
+        if matches:
+            hidden.update(matches[0])
+            paired.add(column.name)
+    table.cols = [
+        new_col(column.name, column.sql_type, column.not_null, column.sequence_default, column.name in paired)
+        for column in table.cols
+        if column.name not in hidden
+    ]
 
 
 LOGICAL = {
@@ -503,71 +656,98 @@ SPECIFIC = {
 }
 
 
-def finish_pg(tables):
-    t = Table("ops.schema_migrations")
-    t.cols = [new_col("version", "text"), new_col("applied_at", "timestamptz")]
-    t.cols[1]["nn"] = True
-    t.cols[1]["default"] = "now()"
-    t.constraints["schema_migrations_pkey"] = KeyConstraint(kind="PK", columns=("version",))
-    t.note = "created by storage.py migrate()"
-    tables[t.name] = t
-    for t in tables.values():
-        collapse_prec(t)
-        for c in t.cols:
-            c.update(pk=False, fk=False, uk=None, ck=False, req=False)
-        groups = [
-            list(constraint.columns) for constraint in t.constraints.values() if constraint.kind == "UK"
+def finish_pg(tables: Mapping[str, ParsedTable]) -> dict[str, RenderedTable]:
+    ledger = new_table("ops.schema_migrations")
+    ledger.cols = [
+        new_col("version", "text", False, False, False),
+        new_col("applied_at", "timestamptz", True, False, False),
+    ]
+    ledger.constraints["schema_migrations_pkey"] = KeyConstraint(kind="PK", columns=("version",))
+    ledger.note = "created by storage.py migrate()"
+    parsed = {**tables, ledger.name: ledger}
+    finished: dict[str, RenderedTable] = {}
+    for table in parsed.values():
+        collapse_prec(table)
+        groups: list[tuple[str, ...]] = []
+        candidates = [
+            constraint.columns for constraint in table.constraints.values() if constraint.kind == "UK"
         ]
-        groups += [cols for _, cols, _ in t.unique_indexes]
-        t.groups = []
-        for cols in groups:
-            if cols not in t.groups:
-                t.groups.append(cols)
-        composite = [g for g in t.groups if len(g) > 1]
-        present = {c["name"] for c in t.cols}
-        for constraint in t.constraints.values():
-            kind, cols = constraint.kind, constraint.columns
-            for n in cols:
-                if n not in present:
-                    continue
-                c = t.col(n)
-                if kind == "PK":
-                    c["pk"] = True
-                    c["nn"] = True
-                elif kind == "FK":
-                    c["fk"] = True
-                elif kind == "CK":
-                    c["ck"] = True
-                elif kind == "REQ" and not c["nn"]:
-                    c["req"] = True
-        for g in t.groups:
-            label = f"U{composite.index(g) + 1}" if len(g) > 1 else "UK"
-            for n in g:
-                c = t.col(n)
-                if not (c["pk"] and len(g) == 1):
-                    c["uk"] = label if c["uk"] is None else c["uk"]
-        own = {g[0] for g in t.groups if len(g) == 1}
-        for c in t.cols:
-            target = SPECIFIC.get((t.name, c["name"])) or LOGICAL.get(c["name"])
-            if c["fk"] or not target or target == t.name:
-                continue
-            if c["name"] in own and c["name"] in ("source_id", "entity_id", "token_id", "instrument_id"):
-                continue
-            c["ref"] = target
-        t.flags = list(dict.fromkeys(TRIGGER_FLAGS[f] for f in t.triggers))
-        if t.unlogged:
-            t.flags.append("UNLOGGED")
-        if t.storage:
-            t.flags.append(t.storage.replace("'", ""))
-        if not any(v.kind == "PK" for v in t.constraints.values()):
-            t.flags.append("no PK")
-    return tables
+        candidates += [index.columns for index in table.unique_indexes if index.predicate is None]
+        for columns in candidates:
+            if columns not in groups:
+                groups.append(columns)
+        composite = [group for group in groups if len(group) > 1]
+        own = {group[0] for group in groups if len(group) == 1}
+        rendered: list[RenderedColumn] = []
+        for column in table.cols:
+            related = [rule for rule in table.constraints.values() if column.name in rule.columns]
+            primary = any(rule.kind == "PK" for rule in related)
+            foreign = any(rule.kind == "FK" for rule in related)
+            not_null = column.not_null or primary
+            unique_marker: str | None = None
+            for group in groups:
+                if column.name in group and not (primary and len(group) == 1):
+                    unique_marker = f"U{composite.index(group) + 1}" if len(group) > 1 else "UK"
+                    break
+            reference = SPECIFIC.get((table.name, column.name))
+            if reference is None:
+                reference = LOGICAL.get(column.name)
+            if (
+                foreign
+                or reference == table.name
+                or (
+                    column.name in own
+                    and column.name in {"source_id", "entity_id", "token_id", "instrument_id"}
+                )
+            ):
+                reference = None
+            rendered.append(
+                RenderedColumn(
+                    name=column.name,
+                    sql_type=column.sql_type,
+                    not_null=not_null,
+                    sequence_default=column.sequence_default,
+                    precision=column.precision,
+                    primary_key=primary,
+                    foreign_key=foreign,
+                    unique_marker=unique_marker,
+                    check=any(rule.kind == "CK" for rule in related),
+                    required_check=not not_null and any(rule.kind == "REQ" for rule in related),
+                    logical_reference=reference,
+                    change=None,
+                )
+            )
+        flags = list(dict.fromkeys(TRIGGER_FLAGS[function] for function in table.triggers))
+        if table.unlogged:
+            flags.append("UNLOGGED")
+        if table.storage is not None:
+            flags.append(table.storage.replace("'", ""))
+        if not any(rule.kind == "PK" for rule in table.constraints.values()):
+            flags.append("no PK")
+        finished[table.name] = RenderedTable(
+            name=table.name,
+            cols=tuple(rendered),
+            constraints=tuple(
+                ConstraintEntry(name=name, rule=rule) for name, rule in table.constraints.items()
+            ),
+            unique_indexes=tuple(table.unique_indexes),
+            indexes=table.indexes,
+            triggers=tuple(table.triggers),
+            unlogged=table.unlogged,
+            storage=table.storage,
+            note=table.note,
+            groups=tuple(groups),
+            flags=tuple(flags),
+            change="plain",
+            index_delta=None,
+        )
+    return finished
 
 
-def pg_model_at(root, ref):
+def pg_model_at(root: Path, ref: str) -> dict[str, RenderedTable]:
     """The finished PostgreSQL model of the migrations committed at a git ref."""
 
-    def git(*args):
+    def git(*args: str) -> str:
         return subprocess.run(
             ["git", "-C", str(root), *args], check=True, capture_output=True, text=True
         ).stdout
@@ -579,50 +759,49 @@ def pg_model_at(root, ref):
     return finish_pg(tables)
 
 
-def diff_tables(base, tables):
-    """The tables to draw for a schema diff against base, each with its change.
-
-    A removed column or table stays in place struck through, an added or altered one is marked;
-    change is None for a table that did not change."""
-    drawn = {}
-    for name, t in tables.items():
-        d = copy.copy(t)
+def diff_tables(
+    base: Mapping[str, RenderedTable], tables: Mapping[str, RenderedTable]
+) -> tuple[dict[str, RenderedTable], dict[str, RenderedTable]]:
+    drawn: dict[str, RenderedTable] = {}
+    for name, table in tables.items():
         old = base.get(name)
         if old is None:
-            d.cols = [dict(c, change="added") for c in t.cols]
-            d.change, d.idx_was = "added", None
-            drawn[name] = d
+            drawn[name] = table.compared(
+                tuple(column.highlighted("added") for column in table.cols), "added", None
+            )
             continue
-        now = {c["name"]: c for c in t.cols}
-        was = {c["name"]: c for c in old.cols}
-        cols = []
-        for c in old.cols:
-            if c["name"] not in now:
-                cols.append(dict(c, change="removed", ref=None))
-            elif (c["type"], c["nn"]) != (now[c["name"]]["type"], now[c["name"]]["nn"]):
-                cols.append(dict(now[c["name"]], change="altered"))
+        current = {column.name: column for column in table.cols}
+        previous = {column.name: column for column in old.cols}
+        columns: list[RenderedColumn] = []
+        for column in old.cols:
+            if column.name not in current:
+                columns.append(column.highlighted("removed"))
+            elif column != current[column.name]:
+                columns.append(current[column.name].highlighted("altered"))
             else:
-                cols.append(now[c["name"]])
-        cols += [dict(c, change="added") for c in t.cols if c["name"] not in was]
-        d.cols = cols
-        d.idx_was = index_count(old) if index_count(old) != index_count(t) else None
-        altered = d.idx_was is not None or old.flags != t.flags or any(c.get("change") for c in cols)
-        d.change = "altered" if altered else None
-        drawn[name] = d
-    removed = {}
-    for name, old in base.items():
-        if name not in tables:
-            d = copy.copy(old)
-            d.cols = [dict(c, change="removed", ref=None) for c in old.cols]
-            d.change, d.idx_was = "removed", None
-            removed[name] = d
+                columns.append(current[column.name])
+        columns.extend(column.highlighted("added") for column in table.cols if column.name not in previous)
+        before, after = index_count(old), index_count(table)
+        delta = IndexDelta(before=before, after=after) if before != after else None
+        changed = (
+            delta is not None
+            or old.flags != table.flags
+            or any(column.change is not None for column in columns)
+        )
+        drawn[name] = table.compared(tuple(columns), "altered" if changed else "unchanged", delta)
+    removed = {
+        name: table.compared(tuple(column.highlighted("removed") for column in table.cols), "removed", None)
+        for name, table in base.items()
+        if name not in tables
+    }
     return drawn, removed
 
 
-def foreign_keys(tables: Mapping[str, Table]) -> list[ForeignKeyLink]:
+def foreign_keys(tables: Mapping[str, RenderedTable]) -> list[ForeignKeyLink]:
     out: list[ForeignKeyLink] = []
     for table in tables.values():
-        for name, constraint in table.constraints.items():
+        for entry in table.constraints:
+            name, constraint = entry.name, entry.rule
             if isinstance(constraint, ForeignKeyConstraint):
                 out.append(
                     ForeignKeyLink(
@@ -649,6 +828,8 @@ def literal_assignments(path: Path, names: Set[str]) -> dict[str, object]:
         else:
             continue
         if target.id in names:
+            if value is None:
+                raise ValueError("Schema assignment requires an explicit literal")
             with suppress(ValueError):
                 found[target.id] = ast.literal_eval(value)
     return found
@@ -875,28 +1056,36 @@ def end_marker(x: float, y: float, s: Literal[-1, 1], kind: Literal["one", "many
     return "".join(out)
 
 
-class Box:
+type Coordinate = int | FiniteFloat
+
+
+class Box(SchemaRecord):
     """A positioned table box with per-row anchors."""
 
-    def __init__(self, name, x, y, w, rows, head_h):
-        self.name, self.x, self.y, self.w = name, x, y, w
-        self.rows = rows
-        self.head_h = head_h
-        self.h = head_h + len(rows) * ROW + 3
+    name: str
+    x: Coordinate
+    y: Coordinate
+    w: Coordinate
+    rows: tuple[RenderedColumn | ClickHouseRow, ...]
+    head_h: Coordinate
 
-    def row_y(self, col):
-        i = [r["name"] for r in self.rows].index(col)
-        return self.y + self.head_h + i * ROW + ROW / 2
+    @property
+    def h(self) -> Coordinate:
+        return self.head_h + len(self.rows) * ROW + 3
+
+    def row_y(self, col: str) -> Coordinate:
+        index = [row.name for row in self.rows].index(col)
+        return self.y + self.head_h + index * ROW + ROW / 2
 
 
-def index_count(t):
-    return t.indexes + sum(1 for v in t.constraints.values() if v.kind in ("PK", "UK"))
+def index_count(t: RenderedTable) -> int:
+    return t.indexes + sum(1 for entry in t.constraints if entry.rule.kind in ("PK", "UK"))
 
 
-def pg_metrics(tables) -> PostgreSQLMeasurements:
-    name = max(len(c["name"]) for t in tables for c in t.cols)
-    typ = max(len(c["type"]) for t in tables for c in t.cols)
-    ref = max([len(c["ref"]) + 2 for t in tables for c in t.cols if c["ref"]] or [0])
+def pg_metrics(tables: Sequence[RenderedTable]) -> PostgreSQLMeasurements:
+    name = max(len(c.name) for t in tables for c in t.cols)
+    typ = max(len(c.sql_type) for t in tables for c in t.cols)
+    ref = max([len(c.logical_reference) + 2 for t in tables for c in t.cols if c.logical_reference] or [0])
     name_x = 50
     type_x = name_x + name * CW * 10.8 + 14
     prec_x = type_x + typ * CW * 10 + 4
@@ -908,14 +1097,16 @@ def pg_metrics(tables) -> PostgreSQLMeasurements:
     )
 
 
-def pg_table(t, x, y, w, mx):
-    fill, tint, _ = SCHEMA[t.schema]
-    change = getattr(t, "change", "")
+def pg_table(
+    t: RenderedTable, x: Coordinate, y: Coordinate, w: Coordinate, mx: PostgreSQLMeasurements
+) -> tuple[Box, str]:
+    fill, tint, _ = SCHEMA[t.namespace]
+    change = t.change
     if change == "removed":
         fill, tint = DIFF_RED, DIFF_WASH
     schema, short = t.name.split(".")
-    box = Box(t.name, x, y, w, t.cols, HEAD + SUB)
-    fade = ' opacity="0.3"' if change is None else ""
+    box = Box(name=t.name, x=x, y=y, w=w, rows=t.cols, head_h=HEAD + SUB)
+    fade = ' opacity="0.3"' if change == "unchanged" else ""
     out = [f'<g id="{esc(t.name)}"{fade}>']
     out.append(
         f'<rect x="{x + 2}" y="{y + 3}" width="{w}" height="{box.h}" rx="5" fill="#000" opacity="0.07"/>'
@@ -942,69 +1133,69 @@ def pg_table(t, x, y, w, mx):
     n_idx = index_count(t)
     idx = f"{n_idx} idx" if n_idx else "no idx"
     idx_ink = MUTED
-    if getattr(t, "idx_was", None) is not None:
-        idx, idx_ink = f"{t.idx_was} → {n_idx} idx", DIFF_RED
+    if t.index_delta is not None:
+        idx, idx_ink = f"{t.index_delta.before} → {t.index_delta.after} idx", DIFF_RED
     out.append(
         f'<text x="{x + w - 8}" y="{y + HEAD + 10.6}" font-family="{SANS}" font-size="8.6" fill="{idx_ink}" '
         f'{'font-weight="700" ' if idx_ink == DIFF_RED else ""}text-anchor="end">{idx}</text>'
     )
     for i, c in enumerate(t.cols):
         ry = y + HEAD + SUB + i * ROW
-        row_change = c.get("change")
+        row_change = c.change
         if row_change:
             out.append(f'<rect x="{x + 0.6}" y="{ry}" width="{w - 1.2}" height="{ROW}" fill="{DIFF_WASH}"/>')
         elif i % 2:
             out.append(f'<rect x="{x + 0.6}" y="{ry}" width="{w - 1.2}" height="{ROW}" fill="#F7FAFC"/>')
         bx = x + 6
         labels = []
-        if c["pk"]:
+        if c.primary_key:
             labels.append("PK")
-        if c["fk"]:
+        if c.foreign_key:
             labels.append("FK")
-        if c["uk"]:
-            labels.append(c["uk"])
-        if c["ck"]:
+        if c.unique_marker:
+            labels.append(c.unique_marker)
+        if c.check:
             labels.append("CK")
-        if c["default"] == "nextval":
+        if c.sequence_default:
             labels.append("SEQ")
         for lab in labels[:3]:
             g, bw = badge(bx, ry + 3, lab)
             out.append(g)
             bx += bw + 2
-        envelope = c["name"] in ("document", "immutable") and t.cols[0]["name"] == "storage_key"
+        envelope = c.name in ("document", "immutable") and t.cols[0].name == "storage_key"
         ink = DIFF_RED if row_change else FAINT if envelope else INK
-        weight = ' font-weight="700"' if c["pk"] else ""
+        weight = ' font-weight="700"' if c.primary_key else ""
         nx = max(x + mx.name_x, bx + 3)
         out.append(
-            f'<text x="{nx:.1f}" y="{ry + 12.2}" font-family="{MONO}" font-size="10.8" fill="{ink}"{weight}>{esc(c["name"])}</text>'
+            f'<text x="{nx:.1f}" y="{ry + 12.2}" font-family="{MONO}" font-size="10.8" fill="{ink}"{weight}>{esc(c.name)}</text>'
         )
         out.append(
             f'<text x="{x + mx.type_x:.1f}" y="{ry + 12.2}" font-family="{MONO}" font-size="10" '
-            f'fill="{DIFF_RED if row_change else FAINT if envelope else MUTED}">{esc(c["type"])}</text>'
+            f'fill="{DIFF_RED if row_change else FAINT if envelope else MUTED}">{esc(c.sql_type)}</text>'
         )
         if row_change == "removed":
-            end = x + mx.type_x + tw(c["type"], 10)
+            end = x + mx.type_x + tw(c.sql_type, 10)
             out.append(
                 f'<path d="M{nx - 2:.1f},{ry + 8.5} H{end + 2:.1f}" stroke="{DIFF_RED}" stroke-width="1.2"/>'
             )
-        if c["prec"]:
-            px = x + mx.type_x + tw(c["type"], 10) + 4
+        if c.precision:
+            px = x + mx.type_x + tw(c.sql_type, 10) + 4
             out.append(
                 f'<text x="{px:.1f}" y="{ry + 11.8}" font-family="{SANS}" font-size="8" fill="#DD6B20" font-weight="600">+prec</text>'
             )
-        if c["nn"]:
+        if c.not_null:
             out.append(
                 f'<text x="{x + mx.nn_x:.1f}" y="{ry + 11.8}" font-family="{SANS}" font-size="8" '
                 f'fill="{FAINT if envelope else "#2D3748"}" font-weight="700">NN</text>'
             )
-        elif c["req"]:
+        elif c.required_check:
             out.append(
                 f'<text x="{x + mx.nn_x:.1f}" y="{ry + 11.8}" font-family="{SANS}" font-size="8" fill="{FAINT}" font-weight="600">nn</text>'
             )
-        if c["ref"]:
+        if c.logical_reference is not None and row_change != "removed":
             out.append(
                 f'<text x="{x + mx.ref_x:.1f}" y="{ry + 12}" font-family="{MONO}" font-size="9.2" fill="#3182CE" '
-                f'font-style="italic">→ {esc(c["ref"])}</text>'
+                f'font-style="italic">→ {esc(c.logical_reference)}</text>'
             )
     out.append("</g>")
     return box, "".join(out)
@@ -1205,35 +1396,37 @@ COMPOSITE = {
         ["event_id", "map_version"],
     ),
 }
-DESIGN_FKS = []
+DESIGN_FKS: tuple[tuple[str, str, str], ...] = ()
 DESIGN_SERIAL_PKS = [("evt.state_changes", "id"), ("out.deliveries", "id"), ("ops.llm_usage", "id")]
 
 
-def integrity_gaps(tables, fks):
+def integrity_gaps(tables: Mapping[str, RenderedTable], fks: Sequence[ForeignKeyLink]) -> list[str]:
     """Constraints the DDL leaves to application code, computed from the parsed schema."""
     single = {}
     for t in tables.values():
         keys = {g[0] for g in t.groups if len(g) == 1}
         keys |= {
             constraint.columns[0]
-            for constraint in t.constraints.values()
+            for constraint in (entry.rule for entry in t.constraints)
             if constraint.kind == "PK" and len(constraint.columns) == 1
         }
         single[t.name] = keys
     declared = {(f.source_table, f.source_columns[0]) for f in fks}
-    by_target, composite, blocked = {}, [], []
+    by_target: dict[str, int] = {}
+    composite: list[str] = []
+    blocked: list[str] = []
     for t in tables.values():
         for c in t.cols:
-            if not c["ref"]:
+            if not c.logical_reference:
                 continue
-            if (t.name, c["name"]) in COMPOSITE:
-                cols, dst, dcols = COMPOSITE[(t.name, c["name"])]
-                assert dcols in tables[dst].groups
+            if (t.name, c.name) in COMPOSITE:
+                cols, dst, dcols = COMPOSITE[(t.name, c.name)]
+                assert tuple(dcols) in tables[dst].groups
                 composite.append(f"{t.name}({', '.join(cols)}) → {dst}")
                 continue
-            dst = c["ref"].rstrip("[]")
-            if c["ref"].endswith("[]") or REF_TARGET[dst] not in single[dst]:
-                blocked.append(f"{t.name}.{c['name']}")
+            dst = c.logical_reference.rstrip("[]")
+            if c.logical_reference.endswith("[]") or REF_TARGET[dst] not in single[dst]:
+                blocked.append(f"{t.name}.{c.name}")
                 continue
             by_target[dst] = by_target.get(dst, 0) + 1
     missing_design = [f"{s}.{c} → {d}" for s, c, d in DESIGN_FKS if (s, c) not in declared]
@@ -1242,18 +1435,22 @@ def integrity_gaps(tables, fks):
         t.name
         for t in tables.values()
         if single[t.name] & {"storage_key"}
-        and not [g for g in t.groups if g != ["storage_key"]]
+        and not [g for g in t.groups if g != ("storage_key",)]
         and not any(
             constraint.kind == "PK" and constraint.columns != ("storage_key",)
-            for constraint in t.constraints.values()
+            for constraint in (entry.rule for entry in t.constraints)
         )
     ]
     keyless = [
         t.name
         for t in tables.values()
-        if not t.groups and not any(v.kind == "PK" for v in t.constraints.values())
+        if not t.groups and not any(v.kind == "PK" for v in (entry.rule for entry in t.constraints))
     ]
-    no_pk = [t.name for t in tables.values() if not any(v.kind == "PK" for v in t.constraints.values())]
+    no_pk = [
+        t.name
+        for t in tables.values()
+        if not any(v.kind == "PK" for v in (entry.rule for entry in t.constraints))
+    ]
     n_mkt = sum(1 for n in no_pk if n.startswith("mkt."))
     ordered = sorted(by_target.items(), key=lambda kv: -kv[1])
     top = ", ".join(f"{k} ×{v}" for k, v in ordered[:5])
@@ -1283,11 +1480,11 @@ def integrity_gaps(tables, fks):
     ]
 
 
-def render_pg(root, base_ref=None):
+def render_pg(root: Path, base_ref: str | None = None) -> str:
     mig = sorted((root / "src/tank/migrations").glob("*.sql"))
     span = f"{mig[0].name[:3]}–{mig[-1].name[:3]}"
-    tables, schemas = parse_pg(p.read_text() for p in mig)
-    tables = finish_pg(tables)
+    parsed, schemas = parse_pg(p.read_text() for p in mig)
+    tables = finish_pg(parsed)
     fks = foreign_keys(tables)
     placed = {n for col in PG_COLUMNS for n in col}
     missing = set(tables) - placed
@@ -1301,14 +1498,14 @@ def render_pg(root, base_ref=None):
             same = [sum(m.split(".")[0] == n.split(".")[0] for m in names) for names in layout]
             layout[same.index(max(same))].append(n)
             drawn[n] = removed[n]
-        rows = [c for t in drawn.values() for c in t.cols]
+        changed_rows = [c for t in drawn.values() for c in t.cols]
         before = sum(index_count(t) for t in base.values())
         after = sum(index_count(t) for t in tables.values())
         diff_line = (
             f"Diff {base_ref} → working tree: tables {len(base)} → {len(tables)}, "
-            f"columns removed {sum(c.get('change') == 'removed' for c in rows)}, "
-            f"added {sum(c.get('change') == 'added' for c in rows)}, "
-            f"altered {sum(c.get('change') == 'altered' for c in rows)}, indexes {before} → {after}. "
+            f"columns removed {sum(c.change == 'removed' for c in changed_rows)}, "
+            f"added {sum(c.change == 'added' for c in changed_rows)}, "
+            f"altered {sum(c.change == 'altered' for c in changed_rows)}, indexes {before} → {after}. "
             "Red: removed (struck through), added or altered; unchanged tables are faded."
         )
 
@@ -1510,9 +1707,9 @@ def render_pg(root, base_ref=None):
     bw4 = 840
     hdr.append(f'<rect x="{lx4}" y="{ly}" width="{bw4}" height="190" rx="6" fill="#F7FAFC" stroke="{LINE}"/>')
     hdr.append(text(lx4 + 14, ly + 22, "Schemas", 12, INK, 700))
-    counts = {}
+    counts: dict[str, int] = {}
     for t in tables.values():
-        counts[t.schema] = counts.get(t.schema, 0) + 1
+        counts[t.namespace] = counts.get(t.namespace, 0) + 1
     order = ["reg", "ingest", "evt", "ana", "out", "ops", "mkt", "qa", "scout"]
     for i, s in enumerate(order):
         cx = lx4 + 16 + (i // 3) * ((bw4 - 20) / 3)
@@ -1627,7 +1824,14 @@ CH_ACCENT = "#FFCC00"
 CH_TINT = "#FFFBEA"
 
 
-def ch_table(t, x, y, w, mx, retention: RetentionRule):
+def ch_table(
+    t: ClickHouseTable,
+    x: Coordinate,
+    y: Coordinate,
+    w: Coordinate,
+    mx: ClickHouseMeasurements,
+    retention: RetentionRule,
+) -> tuple[Box, str]:
     rows = ch_rows(t)
     engine = [
         ("ENGINE", "ReplacingMergeTree(_version)"),
@@ -1645,7 +1849,7 @@ def ch_table(t, x, y, w, mx, retention: RetentionRule):
     if t.name in CH_WRITER:
         engine.append(("", CH_WRITER[t.name]))
     eng_h = 8 + len(engine) * 13
-    box = Box(t.name, x, y, w, rows, HEAD + eng_h)
+    box = Box(name=t.name, x=x, y=y, w=w, rows=tuple(rows), head_h=HEAD + eng_h)
     schema, short = t.name.split(".")
     out = [f'<g id="{esc(t.name)}">']
     out.append(
@@ -1705,7 +1909,7 @@ def ch_table(t, x, y, w, mx, retention: RetentionRule):
     return box, "".join(out)
 
 
-def render_ch(root):
+def render_ch(root: Path) -> str:
     tables = ch_model(root)
     raw_configuration: object = yaml.safe_load((root / "config/thresholds.yaml").read_text())
     configuration = RetentionConfiguration.model_validate(raw_configuration)
@@ -1886,7 +2090,7 @@ def render_ch(root):
     return "\n".join(svg)
 
 
-def main():
+def main() -> None:
     parser = argparse.ArgumentParser(
         description="Render diagrams/tank_postgres_schema.svg and diagrams/tank_clickhouse_schema.svg "
         "from src/tank/migrations, src/tank/market_schema.py and src/tank/clickhouse_market.py."
