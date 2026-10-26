@@ -1,11 +1,13 @@
 """Actual source batches retain every deferred change across cursor advancement."""
 
 import os
+from collections.abc import Mapping
 from datetime import timedelta
 from pathlib import Path
 
 import httpx
 import pytest
+from pydantic import JsonValue
 from runtime_public_fixtures import public_runtime
 from test_storage import repo as repo
 
@@ -93,3 +95,36 @@ async def test_actual_source_batch_retains_skipped_change_and_empty_batch_resume
         assert all(d.phase == "BLOCKED" for d in final.demands.values())
         assert len(await repo.list("ops.jobs", filters={"type": "REACTION_CAPTURE"})) == 2
         assert await repo.list("mkt.backfill_runs") == originals
+
+
+async def test_cursor_revision_and_failed_commit_preserve_the_previous_batch(
+    repo: StorageBackend, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    async with public_runtime(repo, tmp_path, monkeypatch) as (runtime, _):
+        coordinator = ReactionDemandCoordinator(repo, runtime.market)
+        original = await coordinator.snapshot()
+        first = collection_clock(utcnow())
+        assert await coordinator._commit_batch(original, first, {}, {})
+        committed = await repo.get("ops.scheduler_checkpoints", CHECKPOINT_KEY)
+        assert committed is not None
+        assert not await coordinator._commit_batch(
+            original, collection_clock(utcnow() + timedelta(seconds=1)), {}, {}
+        )
+        assert await repo.get("ops.scheduler_checkpoints", CHECKPOINT_KEY) == committed
+        current = await coordinator.snapshot()
+        put = repo.put
+
+        async def failed_put(
+            collection: str, key: str, record: Mapping[str, JsonValue], *, immutable: bool = False
+        ) -> Record:
+            stored = await put(collection, key, record, immutable=immutable)
+            if collection == "ops.scheduler_checkpoints" and key == CHECKPOINT_KEY:
+                raise OSError("Authored commit failure after actual storage")
+            return stored
+
+        monkeypatch.setattr(repo, "put", failed_put)
+        with pytest.raises(OSError, match="Authored commit failure"):
+            await coordinator._commit_batch(
+                current, collection_clock(utcnow() + timedelta(seconds=2)), {}, {}
+            )
+        assert await repo.get("ops.scheduler_checkpoints", CHECKPOINT_KEY) == committed

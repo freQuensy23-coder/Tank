@@ -353,6 +353,12 @@ async def test_backfill_changes_append_reaction_revision_once_and_preserve_origi
 
         first_change = reaction_command_from_wire(jobs[0].payload)
         assert isinstance(first_change, RevisedReactionCommand)
+        demand_checkpoint = present(await repo.get("ops.scheduler_checkpoints", "reaction-capture-changes"))
+        demand_state = demand_checkpoint["state"]
+        assert isinstance(demand_state, dict)
+        demand_rows = demand_state["demands"]
+        assert isinstance(demand_rows, dict)
+        assert first_change.change_id not in demand_rows
         unchanged = dict(
             jobs[0].payload,
             change_id=first_change.change_id + ":same",
