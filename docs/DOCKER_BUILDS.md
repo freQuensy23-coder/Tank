@@ -67,6 +67,6 @@ does not automatically export package-cache mount contents. Normal local builds
 reuse both through the persistent builder.
 
 Use `docker buildx du` to inspect builder cache usage. Avoid global prune commands
-on this shared server; they discard other work and make later builds cold.
+on a shared machine; they discard other work and make later builds cold.
 The main and sandbox context allowlists reduce available inputs; actual BuildKit
 transfer bytes must be measured because it already transfers files lazily.

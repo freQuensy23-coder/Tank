@@ -517,7 +517,7 @@ class DeliveryService:
                 raise ValueError("Delivery subject does not exist")
             if not notice:
                 prior = await self._all("out.alerts", filters={"event_id": record["event_id"]})
-                if record.get("kind") == "UPDATE" and any(
+                if record.get("kind") in {"UPDATE", "PRELIMINARY"} and any(
                     row["alert_id"] == record["alert_id"] and row["version"] > record["version"]
                     for row in prior
                 ):
@@ -535,7 +535,11 @@ class DeliveryService:
                 boundaries = []
                 if record.get("delivery_not_before"):
                     boundaries.append(propagate_timestamp(record, "delivery_not_before"))
-                if record.get("kind") == "UPDATE" and not record.get("delivery_immediate", False) and sent:
+                if (
+                    record.get("kind") in {"UPDATE", "PRELIMINARY"}
+                    and not record.get("delivery_immediate", False)
+                    and sent
+                ):
                     latest_sent = max(sent, key=lambda row: parse_time(row["at"]))
                     limits = ((record.get("card_struct") or {}).get("event") or {}).get("thresholds") or {}
                     boundaries.append(
@@ -654,6 +658,15 @@ class DeliveryService:
                         f"Карточка {subject}; Telegram message_id={message_ref}",
                         key=subject,
                     )
+                    if record.get("kind") == "PRELIMINARY":
+                        event = await self.repo.get("evt.events", record["event_id"])
+                        if (
+                            event
+                            and event.get("lifecycle") == "INVALIDATED"
+                            and record.get("terminal_correction")
+                        ):
+                            await self._finalize_invalidated(event, record)
+                        return None
                     await self._activate_calls(record, sent_at)
                     event = await self.repo.get("evt.events", record["event_id"])
                     if event and not event.get("first_card_delivered_at"):
@@ -701,16 +714,7 @@ class DeliveryService:
                             "ana.calls", filters={"event_id": event["event_id"], "status": "OPEN"}
                         )
                         if not open_calls:
-                            await self.repo.put(
-                                "evt.events",
-                                event["event_id"],
-                                {
-                                    **event,
-                                    **collection_clock(utcnow()).fields("session_finalized_at"),
-                                    "terminal_alert_id": record["alert_id"],
-                                    "terminal_alert_version": record["version"],
-                                },
-                            )
+                            await self._finalize_invalidated(event, record)
                 if not notice and record.get("milestone_resolution_id"):
                     event = await self.repo.get("evt.events", record["event_id"])
                     if event and event.get("milestone_resolution_id") == record["milestone_resolution_id"]:
@@ -742,6 +746,19 @@ class DeliveryService:
                         )
 
         return None
+
+    async def _finalize_invalidated(self, event, record):
+        """The delivered denial correction lets the invalidated event's session finish."""
+        await self.repo.put(
+            "evt.events",
+            event["event_id"],
+            {
+                **event,
+                **collection_clock(utcnow()).fields("session_finalized_at"),
+                "terminal_alert_id": record["alert_id"],
+                "terminal_alert_version": record["version"],
+            },
+        )
 
     async def _activate_calls(self, alert, sent_at=None):
         sent_at = sent_at or collection_clock(utcnow())

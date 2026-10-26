@@ -21,6 +21,13 @@ from pydantic import JsonValue, ValidationError
 
 from tank.agents.admission import SessionAdmission
 from tank.agents.admission_repository import admission_candidate, build_admission
+from tank.agents.archive_contracts import (
+    ArchiveAlertIdentity,
+    ArchiveDelivery,
+    ArchiveFinalization,
+    archive_card,
+    terminal_archive_card,
+)
 from tank.agents.context import CONTEXT_TRANSITION, CONTEXT_VERSION, ModelContext
 from tank.agents.context_binding import ContextBinding
 from tank.agents.input_ownership import JournalInputLineage, NativeInputOwner, ToolInputLineage
@@ -2180,7 +2187,9 @@ class SessionService:
         if any(tool.get("status") == "PENDING" or not tool.get("returned_at") for tool in tools):
             return False
         alerts = [row async for row in self.repo.iter_all("out.alerts", filters={"event_id": eid})]
-        alert_ids = {alert["alert_id"] for alert in alerts}
+        alert_ids = {
+            ArchiveAlertIdentity.model_validate({"alert_id": alert["alert_id"]}).alert_id for alert in alerts
+        }
         jobs = []
         for status in ("QUEUED", "RUNNING"):
             jobs.extend([row async for row in self.repo.iter_all("ops.jobs", filters={"status": status})])
@@ -2195,26 +2204,29 @@ class SessionService:
             ):
                 return False
         if state == "INVALIDATED" and alerts:
-            if not event.get("session_finalized_at"):
+            finalization = ArchiveFinalization.model_validate(
+                {"session_finalized_at": event.get("session_finalized_at")}
+            )
+            if finalization.session_finalized_at is None:
                 return False
-            latest = max(alerts, key=lambda alert: alert.get("version", 0))
-            if latest.get("kind") != "UPDATE":
+            latest = terminal_archive_card([archive_card(alert) for alert in alerts])
+            if latest is None:
                 return False
             deliveries = [
-                row
+                ArchiveDelivery.model_validate(
+                    {"alert_id": row["alert_id"], "version": row["version"], "status": row["status"]}
+                )
                 async for row in self.repo.iter_all(
                     "out.deliveries",
                     filters={
-                        "alert_id": latest["alert_id"],
-                        "version": latest.get("version"),
+                        "alert_id": latest.alert_id,
+                        "version": latest.version,
                         "status": "SENT",
                     },
                 )
             ]
             if not any(
-                row.get("alert_id") == latest["alert_id"]
-                and row.get("version") == latest.get("version")
-                and row.get("status") == "SENT"
+                row.alert_id == latest.alert_id and row.version == latest.version and row.status == "SENT"
                 for row in deliveries
             ):
                 return False

@@ -3,6 +3,15 @@
 from typing import Literal
 
 from tank.analysis.watch_contracts import (
+    CancelTimedReview,
+    ExpireTimedReview,
+    FireTimedReview,
+    MissingTimedReviewEvent,
+    PendingTimedReview,
+    TimedReviewAction,
+    TimedReviewCondition,
+    TimedReviewEvent,
+    UnloadedExpiredReviewEvent,
     WatchAll,
     WatchLeaf,
     WatchMetric,
@@ -11,6 +20,8 @@ from tank.analysis.watch_contracts import (
     WatchRule,
     WatchScalar,
 )
+from tank.time_precision import Timestamp
+from tank.util import parse_iso_time
 
 
 def watch_leaf(
@@ -142,3 +153,29 @@ def build_watch_conditions(context: WatchPolicyInputs) -> list[WatchRule]:
         )
     )
     return result
+
+
+def evaluate_timed_review(
+    condition: TimedReviewCondition, *, cutoff: Timestamp, event: TimedReviewEvent
+) -> TimedReviewAction:
+    current = TimedReviewCondition.model_validate(condition)
+    clock = Timestamp.model_validate(cutoff)
+    state = type(event).model_validate(event)
+    if current.status != "ARMED":
+        raise ValueError("Only an armed timed review can be evaluated")
+    if state.event_id != current.event_id:
+        raise ValueError("Timed review event state must preserve its actual event identity")
+    if clock.value is None:
+        raise ValueError("Timed review evaluation requires its actual cutoff")
+    at = parse_iso_time(clock.value)
+    if at >= parse_iso_time(current.expires_at):
+        return ExpireTimedReview(status="EXPIRED", reason="EXPIRY_REACHED")
+    if isinstance(state, UnloadedExpiredReviewEvent):
+        raise ValueError("An unexpired review requires its actual event state")
+    if isinstance(state, MissingTimedReviewEvent):
+        return CancelTimedReview(status="CANCELLED", reason="EVENT_MISSING")
+    if state.lifecycle in {"CLOSED", "MERGED", "INVALIDATED"}:
+        return CancelTimedReview(status="CANCELLED", reason="EVENT_TERMINAL")
+    if at >= parse_iso_time(current.expr.review_at):
+        return FireTimedReview(status="FIRED", reason="REVIEW_DUE")
+    return PendingTimedReview(status="ARMED", reason="NOT_DUE")
