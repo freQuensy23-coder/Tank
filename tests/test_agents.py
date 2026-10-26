@@ -22,6 +22,7 @@ from tank.agents import ConfigurationError, Pipeline, SessionService
 from tank.agents.context import CONTEXT_VERSION
 from tank.agents.native_sessions import NativeSessionResolution
 from tank.analysis.page_access import LivePageAccess
+from tank.contracts.native_usage import NativeUsageSession, NativeUsageSpan
 from tank.contracts.source_items import parse_feed_source_item
 from tank.ops_progress import DisabledSourceProgress
 from tank.runtime_contracts import ScoutReviewJob
@@ -562,7 +563,7 @@ async def test_stream_processing_preserves_concurrent_added_message() -> None:
         service.start_stream = lambda sid: None
         original_usage = service.usage
 
-        async def usage(session, event) -> None:
+        async def usage(session: NativeUsageSession, event: NativeUsageSpan) -> None:
             await service.send_message({"kind": "ITEM_ADDED", "event_id": "evt_1", "item_id": "itm_2"})
             await original_usage(session, event)
 
@@ -1352,7 +1353,7 @@ async def test_usage_propagates_provider_processed_precision_without_inference(p
             versions=declared_versions_fixture(),
             refusals=UnexpectedFollowupRefusals(),
         )
-        await service.usage(session, event)
+        await service.usage(NativeUsageSession.from_record(session), NativeUsageSpan.from_wire(event))
     row = await repo.get("ops.llm_usage", "ses_1:usage")
     assert row["at"] == event["processed_at"]
     assert row["at_prec"] == row["processed_at_prec"] == precision

@@ -101,6 +101,7 @@ from tank.agents.native_transport import (
     native_event_sequence,
     next_native_cursor,
 )
+from tank.agents.native_usage import record_native_usage
 from tank.agents.outbound_inputs import (
     AcceptedOutboundInput,
     MessageIdentity,
@@ -148,6 +149,7 @@ from tank.agents.wire import tool_wire_result
 from tank.agents.workflow import SOURCE_COMPLETION_VERSION
 from tank.contracts.json import decode_json, decode_unique_json
 from tank.contracts.native_readback import NativeSessionReference
+from tank.contracts.native_usage import NativeUsageSession, NativeUsageSpan
 from tank.contracts.openma import (
     ManagedAgentName,
     ManagedToolManifest,
@@ -1821,67 +1823,13 @@ class SessionService:
             )
             await self.repo.put("ops.tool_calls", key, stored)
 
-    async def usage(self, session, event):
-        usage = event.get("model_usage")
-        if not usage:
-            return
-        model = event.get("model") or session["model_id"]
-        key = session["session_id"] + ":" + event["id"]
-        optional = {
-            "input_tokens": usage.get("input_tokens"),
-            "output_tokens": usage.get("output_tokens"),
-            "cache_read_tokens": usage.get("cache_read_input_tokens"),
-            "cache_write_tokens": usage.get("cache_creation_input_tokens"),
-            "effort": session.get("effort"),
-            "stop_reason": event.get("finish_reason"),
-            "web_searches": usage.get("server_tool_use", {}).get(
-                "web_search_requests", event.get("web_searches")
-            ),
-        }
-        missing_fields = {
-            key: "Provider span or deployed configuration did not supply this measurement"
-            for key, value in optional.items()
-            if value is None
-        }
-        measured_at = self.event_timestamp(event)
-        await self.repo.put(
-            "ops.llm_usage",
-            key,
-            {
-                "usage_id": key,
-                "session_id": session["session_id"],
-                "event_id": session.get("event_id"),
-                "call": "AGENT",
-                "model_id": model,
-                "prompt_version": session["prompt_version"],
-                "prompt_version_basis": session.get("prompt_version_basis"),
-                "prompt_version_reason": session.get("prompt_version_reason"),
-                "prompt_label": session.get("prompt_label"),
-                "agent_version": session.get("agent_version"),
-                "cache_read_tokens": usage.get("cache_read_input_tokens"),
-                "cache_write_tokens": usage.get("cache_creation_input_tokens"),
-                "effort": session.get("effort"),
-                "stop_reason": event.get("finish_reason"),
-                "web_searches": usage.get("server_tool_use", {}).get(
-                    "web_search_requests", event.get("web_searches")
-                ),
-                "usage": usage,
-                "missing_fields": missing_fields,
-                **usage,
-                "cost_usd": "0",
-                "billing_basis": "SUBSCRIPTION",
-                "cost_reason": "ChatGPT subscription: no per-token charge",
-                "model": model,
-                "subject_id": session.get("event_id") or session["session_id"],
-                **measured_at.fields("at"),
-                **self.clock_timestamp().fields("created_at"),
-                **propagate_timestamp(event, "processed_at").fields("processed_at"),
-                "config_version": self.versions.config_version,
-                "code_version": self.versions.code_version,
-                "session_config_version": session.get("config_version"),
-                "session_code_version": session.get("code_version"),
-            },
-            immutable=True,
+    async def usage(self, session: NativeUsageSession, span: NativeUsageSpan) -> None:
+        await record_native_usage(
+            self.repo,
+            session,
+            span,
+            versions=self.versions,
+            collected_at=self.clock_timestamp(),
         )
 
     async def process_event(self, sid, event, seq=None):
@@ -2050,7 +1998,7 @@ class SessionService:
                     else "REQUIRES_ACTION"
                 )
             elif kind == "span.model_request_end":
-                await self.usage(session, event)
+                await self.usage(NativeUsageSession.from_record(session), NativeUsageSpan.from_wire(event))
             superseded_failure = bool(
                 event.get("_host_turn_retry_count", 0)
                 < next(
