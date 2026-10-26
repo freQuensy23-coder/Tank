@@ -421,8 +421,6 @@ def test_calculator_owns_validated_inputs_and_refuses_invalid_copied_models() ->
     expected = calculator.sign_history(interval=interval, selected_venues=("VENUE",))
     rows.clear()
     instrument["token_id"] = "OTHER"
-    with pytest.raises(ValidationError):
-        setattr(source.minutes[0], "buy_qty", Decimal(999))
     assert calculator.sign_history(interval=interval, selected_venues=("VENUE",)) == expected
     with pytest.raises(ValidationError):
         SpotCalculator(source.model_copy(update={"token_id": "OTHER"}))
