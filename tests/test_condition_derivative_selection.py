@@ -396,3 +396,86 @@ def test_requested_view_does_not_coerce_another_state_analysis_window() -> None:
     )
     with pytest.raises(ValidationError, match="different subject or interval"):
         type(view).model_validate(view.model_copy(update={"state": state}))
+
+
+def test_missing_requested_funding_is_not_replaced_by_observed_state_data() -> None:
+    view = derivative_view("funding", 0)
+    source = view.requested
+    row = source.per_venue[0]
+    missing = UnavailableConditionFunding(
+        status="UNAVAILABLE",
+        reason="INCOMPLETE",
+        settled=None,
+        estimate=None,
+        start=None,
+        normal_range=DecimalRange(bounds=None, reason="INSUFFICIENT_HISTORY"),
+    )
+    row = type(row).model_validate(row.model_copy(update={"funding": missing}))
+    source = type(source).model_validate(
+        source.model_copy(
+            update={
+                "per_venue": (row,),
+                "funding_dispersion": ConditionUnavailableFundingDispersion(
+                    status="UNAVAILABLE", reason="INSUFFICIENT_OBSERVATIONS", observation_count=0
+                ),
+            }
+        )
+    )
+    proof = type(view.proofs[0]).model_validate(
+        view.proofs[0].model_copy(update={"available": False, "reason": "INCOMPLETE"})
+    )
+    view = type(view).model_validate(view.model_copy(update={"requested": source, "proofs": (proof,)}))
+    wire = encode_requested_condition_derivatives(view)
+    rows = wire["per_venue"]
+    assert isinstance(rows, list) and isinstance(rows[0], dict)
+    assert rows[0]["funding_vs_normal"] is None
+    assert rows[0]["funding_evaluation_reason"] == "INCOMPLETE"
+    assert rows[0]["basis_bps"] == "7"
+    state = rows[0]["state_funding_facts"]
+    assert isinstance(state, dict) and state["funding_vs_normal"] == "WITHIN"
+
+
+@pytest.mark.parametrize("case", ["MISSING", "EXTRA"])
+def test_same_window_views_cannot_silently_change_the_token_instrument_universe(case: str) -> None:
+    from tank.analysis.condition_graph_contracts import ConditionObservedFundingDispersion
+
+    view = derivative_view("funding", 0)
+    state = view.state
+    assert state is not None
+    if case == "MISSING":
+        support = type(state.support_features).model_validate(
+            state.support_features.model_copy(
+                update={
+                    "basis_within_normal": ConditionUnavailablePredicate(
+                        status="UNAVAILABLE", reason="INCOMPLETE"
+                    )
+                }
+            )
+        )
+        state = type(state).model_validate(
+            state.model_copy(
+                update={
+                    "per_venue": (),
+                    "support_features": support,
+                    "funding_dispersion": ConditionUnavailableFundingDispersion(
+                        status="UNAVAILABLE", reason="INSUFFICIENT_OBSERVATIONS", observation_count=0
+                    ),
+                }
+            )
+        )
+    else:
+        other = type(state.per_venue[0]).model_validate(
+            state.per_venue[0].model_copy(update={"venue": "okx", "instrument_id": "other-opaque-instrument"})
+        )
+        state = type(state).model_validate(
+            state.model_copy(
+                update={
+                    "per_venue": (*state.per_venue, other),
+                    "funding_dispersion": ConditionObservedFundingDispersion(
+                        status="OBSERVED", value=Decimal(0), observation_count=2
+                    ),
+                }
+            )
+        )
+    with pytest.raises(ValidationError, match="same actual instrument universe"):
+        type(view).model_validate(view.model_copy(update={"state": state}))

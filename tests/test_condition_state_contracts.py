@@ -618,3 +618,56 @@ def test_failed_fresh_gate_preserves_observed_source_facts_without_exposing_avai
         type(value.proofs[0]).model_validate(
             value.proofs[0].model_copy(update={"available": True, "reason": None})
         )
+
+
+@pytest.mark.parametrize("mutation", ["clock", "venue", "duplicate"])
+def test_selected_depth_proof_must_bind_consumed_books(mutation: str) -> None:
+    from tank.analysis.condition_graph_contracts import (
+        AssessedConditionProofFreshness,
+        ConditionDepthNode,
+        ConditionDepthObservation,
+        ConditionEvaluationProof,
+    )
+
+    selected = stale_observed_depth()
+    proof = selected.proofs[0]
+    assert isinstance(proof.freshness, AssessedConditionProofFreshness)
+    source = proof.freshness.observations[0]
+    assert isinstance(source, ConditionDepthObservation)
+    observations: tuple[ConditionDepthObservation, ...]
+    if mutation == "clock":
+        observation = ConditionDepthObservation.model_validate(
+            source.model_copy(
+                update={"observed_at": Timestamp(value="2026-10-17T11:58:00Z", precision="EXACT")}
+            )
+        )
+        observations = (observation,)
+    elif mutation == "venue":
+        observations = (
+            ConditionDepthObservation.model_validate(source.model_copy(update={"venue": "other"})),
+        )
+    else:
+        observations = (source, source)
+    revised = ConditionEvaluationProof.model_validate(
+        proof.model_copy(
+            update={"freshness": AssessedConditionProofFreshness(kind="ASSESSED", observations=observations)}
+        )
+    )
+    with pytest.raises(ValidationError, match="Depth freshness"):
+        SelectiveConditionValues.model_validate(selected.model_copy(update={"proofs": (revised,)}))
+    assert isinstance(selected.depth, ConditionDepthNode)
+    assert selected.depth.spread_ratio == 2.0
+    assert not selected.proofs[0].available
+
+
+def test_selected_depth_instrument_cannot_borrow_a_second_venue() -> None:
+    from tank.analysis.condition_graph_contracts import ConditionDepthNode, ConditionDepthObservation
+
+    selected = stale_observed_depth()
+    assert isinstance(selected.depth, ConditionDepthNode)
+    original = selected.depth.observations[0]
+    other = ConditionDepthObservation.model_validate(original.model_copy(update={"venue": "other"}))
+    with pytest.raises(ValidationError, match="one instrument to multiple venues"):
+        ConditionDepthNode.model_validate(
+            selected.depth.model_copy(update={"observations": (original, other)})
+        )

@@ -475,6 +475,9 @@ class ConditionDepthNode(ConditionDepthValues):
         venues = [value.venue for value in self.observations]
         if len(venues) != len(set(venues)):
             raise ValueError("A depth cache node cannot repeat a venue observation")
+        instruments = [value.instrument_id for value in self.observations]
+        if len(instruments) != len(set(instruments)):
+            raise ValueError("A depth cache node cannot assign one instrument to multiple venues")
         for observation in self.observations:
             stamp = observation.observed_at.value
             if stamp is None:
@@ -7179,6 +7182,31 @@ class SelectiveConditionValues(DomainModel):
             fresh = isinstance(proof.freshness, UnappliedConditionProofFreshness) or (
                 isinstance(proof.freshness, AssessedConditionProofFreshness) and proof.freshness.passes()
             )
+            if (
+                proof.cache_key.domain == "depth"
+                and isinstance(self.depth, ConditionDepthNode)
+                and isinstance(proof.freshness, AssessedConditionProofFreshness)
+            ):
+                selected_books = {
+                    (value.instrument_id, value.metric_key): value for value in self.depth.observations
+                }
+                observed_books = [
+                    value
+                    for value in proof.freshness.observations
+                    if not isinstance(value, MissingConditionProofObservation)
+                ]
+                observed_keys = [(value.instrument_id, value.metric_key) for value in observed_books]
+                if len(observed_keys) != len(set(observed_keys)) or set(observed_keys) != set(selected_books):
+                    raise ValueError("Depth freshness must bind the actual selected book cohort")
+                for observation in observed_books:
+                    if observation.instrument_id is None:
+                        raise ValueError("Depth freshness requires the actual selected instrument")
+                    selected_book = selected_books[(observation.instrument_id, observation.metric_key)]
+                    if observation.observed_at != selected_book.observed_at or (
+                        isinstance(observation, ConditionDepthObservation)
+                        and observation.venue != selected_book.venue
+                    ):
+                        raise ValueError("Depth freshness cannot borrow another book's source clock or venue")
             if proof.available != (self._metric_available(proof.requirement) and fresh):
                 raise ValueError(
                     "Proof availability must preserve actual financial facts and the applicable freshness gate"
@@ -7485,9 +7513,12 @@ class ConditionRequestedDerivativeView(DomainModel):
                     "Requested and state derivative views cannot coerce different subject or interval scopes"
                 )
             state_venues = {venue.instrument_id: venue for venue in self.state.per_venue}
+            if set(state_venues) != set(identities):
+                raise ValueError(
+                    "Same-window requested and state derivatives require the same actual instrument universe"
+                )
             for identity, venue in identities.items():
-                if identity in state_venues:
-                    _condition_observed_derivative_consistency(state_venues[identity], venue)
+                _condition_observed_derivative_consistency(state_venues[identity], venue)
         return self
 
     @classmethod

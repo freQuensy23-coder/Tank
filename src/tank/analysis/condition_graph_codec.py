@@ -2156,47 +2156,36 @@ def encode_requested_condition_derivatives(value: ConditionRequestedDerivativeVi
     state = view.state
     direct = {venue.instrument_id: venue for venue in source.per_venue}
     state_venues = {} if state is None else {venue.instrument_id: venue for venue in state.per_venue}
-    identities = [*state_venues, *(identity for identity in direct if identity not in state_venues)]
+    identities = list(direct) if state is None else list(state_venues)
     funding_requested = view.requested_domain("funding")
     if funding_requested:
         funding_fresh = view.freshness_passes("funding")
     rows: list[JsonValue] = []
     for identity in identities:
-        full = state_venues.get(identity)
-        requested = direct.get(identity)
-        if full is not None:
-            row = _derivative_venue_wire(full)
-        elif requested is not None:
-            row = _derivative_venue_wire(requested)
-        else:
-            raise ValueError("A merged derivative requires its actual indexed source record")
+        full = None if state is None else state_venues[identity]
+        requested = direct[identity]
+        row = _derivative_venue_wire(requested if full is None else full)
         row["state_membership"] = full is not None
         if funding_requested:
             if full is not None:
                 row["state_funding_facts"] = _model_wire(full.funding)
-            if requested is None:
+            row.update(encode_condition_funding(requested.funding))
+            row["funding_source_facts"] = _model_wire(requested.funding)
+            row["funding_requested"] = True
+            available = (
+                isinstance(requested.funding, AvailableConditionFunding)
+                and requested.funding.funding_vs_normal is not None
+            )
+            row["funding_evaluation_available"] = available and funding_fresh
+            row["funding_evaluation_reason"] = (
+                None
+                if available and funding_fresh
+                else "FRESHNESS_GATE_FAILED"
+                if not funding_fresh
+                else "INCOMPLETE"
+            )
+            if not funding_fresh:
                 row["funding_vs_normal"] = None
-                row["funding_requested"] = False
-                row["funding_evaluation_available"] = False
-                row["funding_evaluation_reason"] = "OUTSIDE_REQUESTED_INSTRUMENT_SCOPE"
-            else:
-                row.update(encode_condition_funding(requested.funding))
-                row["funding_source_facts"] = _model_wire(requested.funding)
-                row["funding_requested"] = True
-                available = (
-                    isinstance(requested.funding, AvailableConditionFunding)
-                    and requested.funding.funding_vs_normal is not None
-                )
-                row["funding_evaluation_available"] = available and funding_fresh
-                row["funding_evaluation_reason"] = (
-                    None
-                    if available and funding_fresh
-                    else "FRESHNESS_GATE_FAILED"
-                    if not funding_fresh
-                    else "INCOMPLETE"
-                )
-                if not funding_fresh:
-                    row["funding_vs_normal"] = None
         rows.append(row)
     result = _derivative_window_wire(source if state is None else state, rows)
     if view.requested_domain("oi"):
