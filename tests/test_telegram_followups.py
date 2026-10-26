@@ -1,6 +1,6 @@
 import json
 import time
-from datetime import timedelta
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -27,7 +27,7 @@ from tank.telegram_inbox import (
     chunks,
     question_id_for,
 )
-from tank.util import iso, utcnow
+from tank.util import iso
 
 BOT = 777
 ALERTS = "-100500"
@@ -1885,7 +1885,7 @@ async def test_notice_is_retried_after_a_transient_failure_and_sent_once() -> No
 
 
 @pytest.mark.asyncio
-async def test_watch_mutation_hydrates_prompt_provenance_first() -> None:
+async def test_watch_mutation_hydrates_prompt_provenance_first(monkeypatch: pytest.MonkeyPatch) -> None:
     repo = MemoryRepository()
     await seed(repo)
     session = await repo.get("ops.agent_sessions", "ses_1")
@@ -1911,7 +1911,13 @@ async def test_watch_mutation_hydrates_prompt_provenance_first() -> None:
             ),
         )
 
-    due = iso(utcnow() + timedelta(hours=1))
+    fixed_now = datetime(2027, 1, 15, 8, tzinfo=UTC)
+
+    def clock() -> datetime:
+        return fixed_now
+
+    monkeypatch.setattr("tank.agents.sessions.utcnow", clock)
+    due = iso(fixed_now + timedelta(hours=1))
 
     async def dispatch(
         tool: str, arguments: dict[str, JsonValue], context: dict[str, JsonValue]
