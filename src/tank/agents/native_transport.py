@@ -7,6 +7,7 @@ from typing import Annotated, Literal, Protocol, Self
 
 from pydantic import Field, JsonValue, model_validator
 
+from tank.agents.input_ownership import UnprovedOwnershipReason
 from tank.agents.native_retry import UnknownRetryReason
 from tank.agents.session_ownership import put_owned_session, require_owned_session_identity
 from tank.contracts import DomainModel
@@ -60,7 +61,7 @@ class NativeRetryRefusal(DomainModel):
     schema_version: OneInt
     session_id: str = Field(min_length=1)
     frame: NativeFrameIdentity
-    reason: UnknownRetryReason
+    reason: UnknownRetryReason | UnprovedOwnershipReason
     sequence: int | None = Field(ge=0)
     recorded_at: Timestamp
     controller: ResolvedVersionIdentity
@@ -142,7 +143,7 @@ class NativeRetryRefusalJournal:
         self,
         session_id: str,
         frame: NativeFrameIdentity,
-        reason: UnknownRetryReason,
+        reason: UnknownRetryReason | UnprovedOwnershipReason,
         sequence: int | None,
     ) -> NativeRetryRefusal:
         async with self.store.lock("session:" + session_id):

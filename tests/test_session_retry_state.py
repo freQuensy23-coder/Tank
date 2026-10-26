@@ -166,6 +166,7 @@ async def test_exhausted_retry_records_terminal_failure_without_consuming_histor
             None,
             http=http,
             versions=declared_versions_fixture(),
+            refusals=UnexpectedFollowupRefusals(),
         )
         await service.process_event("session", {"id": "final-failure", "type": "session.error"})
     stored = await repo.get("ops.agent_sessions", "session")
