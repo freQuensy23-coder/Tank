@@ -10,6 +10,7 @@ from tank.clickhouse_market import ClickHouse, _record, _response_timestamp
 from tank.contracts import DomainModel
 from tank.contracts.job_repository import JobRepository
 from tank.contracts.jobs import InvalidJobClaim, JobEnvelope
+from tank.contracts.registry import RegistryEntity
 from tank.contracts.repository import Collection, Repository
 from tank.contracts.score import ScoreAssessment, ScoreAssessmentView, ScoreDimension, ScoreDimensions
 from tank.market.trade_contracts import FlowInstrument, QuoteUsdValuation
@@ -45,21 +46,43 @@ def test_domain_rejects_missing_coerced_and_unknown_fields(
         Observation.model_validate(payload)
 
 
+def reviewed_entity() -> RegistryEntity:
+    return RegistryEntity(
+        entity_id="fixture-entity",
+        kind="OTHER",
+        names=["Repository contract fixture"],
+        aliases=["Fixture"],
+        tokens=[],
+        official_sources=[],
+        layers_served=[],
+        competes_with=[],
+        identity_reviewed_at="2026-10-25T12:34:56.123456Z",
+        identity_reviewed_at_prec="COLLECTION_ONLY",
+        identity_reviewed_at_prec_reason=None,
+    )
+
+
 async def test_typed_repository_roundtrips_timestamps_and_preserves_immutability() -> None:
     store = MemoryRepository()
-    repository = Repository(store, Collection("qa.fixtures", Observation))
-    item = Observation(instrument_id="btc", observed_at=datetime.now(UTC), count=1)
+    repository = Repository(store, Collection("reg.entities", RegistryEntity))
+    item = reviewed_entity()
     assert await repository.get("missing") is None
     assert await repository.put("one", item, immutable=True) == item
-    assert await repository.get("one") == item
+    loaded = await repository.get("one")
+    assert loaded == item
+    assert loaded is not None
+    assert loaded.identity_reviewed_at == "2026-10-25T12:34:56.123456Z"
+    assert loaded.identity_reviewed_at_prec == "COLLECTION_ONLY"
+    assert loaded.identity_reviewed_at_prec_reason is None
     with pytest.raises(ImmutableRecordError):
-        await repository.put("one", item.model_copy(update={"count": 2}), immutable=True)
+        await repository.put("one", item.model_copy(update={"name": "Changed fixture"}), immutable=True)
+    assert await repository.get("one") == item
 
 
 async def test_typed_repository_validates_persisted_payload() -> None:
     store = MemoryRepository()
-    await store.put("qa.fixtures", "one", {"instrument_id": "btc", "count": 1})
-    repository = Repository(store, Collection("qa.fixtures", Observation))
+    await store.put("reg.entities", "one", {"entity_id": "fixture-entity"})
+    repository = Repository(store, Collection("reg.entities", RegistryEntity))
     with pytest.raises(ValidationError):
         await repository.get("one")
 
@@ -73,12 +96,21 @@ def test_typed_configuration_reports_missing_fields(tmp_path: Path) -> None:
 
 async def test_repository_refuses_unvalidated_constructed_entity_before_write() -> None:
     store = MemoryRepository()
-    repository = Repository(store, Collection("qa.fixtures", Observation))
-    entity = Observation.model_construct(instrument_id="btc", observed_at=datetime.now(UTC), count=1)
-    object.__setattr__(entity, "count", "bad")
+    repository = Repository(store, Collection("reg.entities", RegistryEntity))
+    entity = RegistryEntity.model_construct(
+        entity_id="fixture-entity",
+        kind="OTHER",
+        names=["Repository contract fixture"],
+        aliases=["Fixture"],
+        tokens=[],
+        official_sources=[],
+        layers_served=[],
+        competes_with=[],
+    )
+    object.__setattr__(entity, "kind", "INVALID_ENTITY_KIND")
     with pytest.raises(ValueError):
         await repository.put("invalid", entity)
-    assert await store.get("qa.fixtures", "invalid") is None
+    assert await store.get("reg.entities", "invalid") is None
 
 
 class Measurements(DomainModel):
@@ -87,12 +119,12 @@ class Measurements(DomainModel):
 
 async def test_repository_refuses_nested_mutation_before_write() -> None:
     store = MemoryRepository()
-    repository = Repository(store, Collection("qa.fixtures", Measurements))
-    entity = Measurements(samples=[1.0])
-    entity.samples.append(float("nan"))
+    repository = Repository(store, Collection("reg.entities", RegistryEntity))
+    entity = reviewed_entity()
+    entity.aliases.append("")
     with pytest.raises(ValueError):
         await repository.put("invalid", entity)
-    assert await store.get("qa.fixtures", "invalid") is None
+    assert await store.get("reg.entities", "invalid") is None
 
 
 @pytest.mark.parametrize(
@@ -116,10 +148,10 @@ def test_market_codec_does_not_treat_invalid_source_metadata_as_absent() -> None
 
 async def test_repository_refuses_wrong_runtime_schema_before_write() -> None:
     store = MemoryRepository()
-    repository = Repository[BaseModel](store, Collection[BaseModel]("qa.fixtures", Observation))
-    with pytest.raises(TypeError, match="requires Observation"):
+    repository = Repository[BaseModel](store, Collection[BaseModel]("reg.entities", RegistryEntity))
+    with pytest.raises(TypeError, match="requires RegistryEntity"):
         await repository.put("invalid", Measurements(samples=[1.0]))
-    assert await store.get("qa.fixtures", "invalid") is None
+    assert await store.get("reg.entities", "invalid") is None
 
 
 def test_score_projection_keeps_complete_domain_metadata_out_of_display() -> None:
@@ -378,8 +410,12 @@ async def test_invalid_claim_rejection_refuses_a_changed_revision() -> None:
 async def test_raw_document_store_rejects_nonfinite_json_before_write() -> None:
     store = MemoryRepository()
     with pytest.raises(ValueError, match="finite"):
-        await store.put("qa.fixtures", "invalid", {"value": float("nan")})
-    assert await store.get("qa.fixtures", "invalid") is None
+        await store.put(
+            "reg.entities",
+            "invalid",
+            {**reviewed_entity().model_dump(mode="json"), "identity_reviewed_at_bucket_size_s": float("nan")},
+        )
+    assert await store.get("reg.entities", "invalid") is None
 
 
 def test_timestamp_validation_reason_does_not_echo_raw_source_value() -> None:
