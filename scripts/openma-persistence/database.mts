@@ -18,5 +18,5 @@ export function requireDisposablePostgresDsn(value: string | undefined, expected
     database.username !== 'tank_ci' ||
     !/^\/tank_test_[a-z0-9_]+$/.test(database.pathname)
   ) throw new Error('Invalid disposable persistence database');
-  return value;
+  return database.href;
 }
