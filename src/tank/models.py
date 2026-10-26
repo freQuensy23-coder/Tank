@@ -298,12 +298,6 @@ TABLE_COLUMNS = {
         "venue_symbol": "text",
     },
     "reg.sector_baskets": {"basket_id": "text"},
-    "reg.dependency_map": {"edge_id": "text", "entity_id": "text", "token_id": "text"},
-    "reg.metric_semantics": {
-        "metric_key": "text",
-        "venue": "text",
-        "market_type": "text",
-    },
     "reg.exchange_addresses": {"address": "text", "chain": "text", "entity_id": "text"},
     "evt.capture_chains": {"event_id": "text", "token_id": "text", "version": "int", "capture_class": "text"},
     "evt.beneficiary_maps": {"event_id": "text", "map_version": "int", "cutoff": "timestamptz"},
@@ -340,7 +334,6 @@ TABLE_COLUMNS = {
     "mkt.tickers_24h": {"instrument_id": "text", "ts": "timestamptz"},
     "mkt.unlocks": {"token_id": "text", "date": "timestamptz", "qty": "numeric"},
     "mkt.supply_obs": {"token_id": "text", "ts": "timestamptz", "kind": "text"},
-    "ana.outlooks": {"out_id": "text", "event_id": "text", "token_id": "text", "cutoff": "timestamptz"},
     "ana.contradictions": {
         "contradiction_id": "text",
         "event_id": "text",
@@ -677,7 +670,6 @@ TIMESTAMP_PRECISION_FIELDS = {
     },
     "mkt.unlocks": {"date": "date_prec"},
     "mkt.supply_obs": {"ts": "ts_prec", "recorded_at": "recorded_at_prec", "received_ts": "received_ts_prec"},
-    "ana.outlooks": {"cutoff": "cutoff_prec"},
     "ana.contradictions": {"detected_at": "detected_at_prec", "resolved_at": "resolved_at_prec"},
     "ana.watch_conditions": {"expires_at": "expires_at_prec", "fired_at": "fired_at_prec"},
     "out.evidence_bundles": {"cutoff": "cutoff_prec"},

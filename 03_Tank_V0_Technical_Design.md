@@ -19,7 +19,7 @@ Values marked ⚙ are collected in §12 with their basis: a PRD requirement, an 
 
 | Topic | Rule |
 |---|---|
-| IDs | ULID-based, typed prefixes: `ITM-` item, `EVT-` event, `OBS-` observation, `CLM-` claim, `EMS-`, `EDG-` beneficiary edge, `MTA-` Market Truth assessment, `OUT-` outlook, `DEC-` decision, `CND-` watch condition, `CAL-` call, `ALR-` alert (+ integer version), `RWP-` reaction pack, `JOB-`, `PRP-` proposal, `FIX-` fixture. `source_id`, `entity_id`, `token_id`, `instrument_id` are readable slugs (e.g. `binance:spot:UNIUSDT`). Evidence bundles are content-addressed: `EVB-<sha256>`. |
+| IDs | ULID-based, typed prefixes: `ITM-` item, `EVT-` event, `OBS-` observation, `CLM-` claim, `EMS-`, `EDG-` beneficiary edge, `MTA-` Market Truth assessment, `DEC-` decision, `CND-` watch condition, `CAL-` call, `ALR-` alert (+ integer version), `RWP-` reaction pack, `JOB-`, `PRP-` proposal, `FIX-` fixture. `source_id`, `entity_id`, `token_id`, `instrument_id` are readable slugs (e.g. `binance:spot:UNIUSDT`). Evidence bundles are content-addressed: `EVB-<sha256>`. |
 | Time | UTC everywhere; stored with microsecond resolution. Every timestamp field has a sibling precision: `EXACT`, `BUCKET(<size>)`, `COLLECTION_ONLY`. |
 | Units | Native token quantity and USD notional are separate decimal fields. Returns are decimal fractions. Funding is stored as rate per interval + `interval_h`, with derived `rate_8h_eq`. Basis in bps. |
 | Missing data | Never 0. Every measurable is `Measured{value, unit, window, observed_at, precision, coverage, reason}`; when `value = null`, `reason ∈ {NOT_SUPPORTED, SOURCE_FAILED, INCOMPLETE, NOT_APPLICABLE, NOT_ESTIMABLE, PENDING}`. |
@@ -425,8 +425,7 @@ MarketTruthAssessment
   data_confidence: DataConfidence
   class_confidence: Certainty
 
-MovementOutlook
-  out_id, token_id, event_id, cutoff
+MovementOutlook                      # stored as the decision's `outlook`, no id of its own
   direction: DirectionBias; direction_rule: str      # §6.1 row matched
   potential: MovePotential; potential_rule: str      # §6.2 row matched
   best_horizon: Horizon; horizon_reason: str
@@ -555,7 +554,7 @@ Fixture
 
 | Table | Key | Notes |
 |---|---|---|
-| `sources`, `entities`, `entity_aliases`, `tokens`, `instruments`, `sector_baskets`, `metric_semantics` | natural slugs | Loaded from the config repository; version stamped. |
+| `sources`, `entities`, `entity_aliases`, `tokens`, `instruments`, `sector_baskets`, `exchange_addresses` | natural slugs | Loaded from the config repository; version stamped. The dependency map and metric semantics stay in their YAML files; `get_registry` gives agents the dependency map. |
 | `source_items` | `item_id`; unique (`source_id`, `external_id`) | Index `content_hash`, `observed_at`. |
 | `events` | `event_id` | Index `known_to_us_at`, `lifecycle`. |
 | `event_observations`, `claims` | `obs_id`, `claim_id` | FK to events/items. |
@@ -565,7 +564,7 @@ Fixture
 | `book_summaries` | (`instrument_id`, ts) | ClickHouse; kept 72 hours ⚙; summary fields only, no order-book levels. |
 | `oi_obs`, `funding_obs`, `liq_obs`, `tickers_24h` | (`instrument_id`, ts) | ClickHouse, daily partitions. |
 | `trades` | (`instrument_id`, ts, `trade_id`) | ClickHouse, every print; 30 days ⚙ (MAJOR+ event days kept). |
-| `market_truth`, `outlooks`, `decisions`, `contradictions`, `watch_conditions`, `calls` | ids | `market_truth` indexed by (`token_id`, `cutoff`). |
+| `market_truth`, `decisions`, `contradictions`, `watch_conditions`, `calls` | ids | `market_truth` indexed by (`token_id`, `cutoff`); a decision carries its outlook. |
 | `alerts`, `deliveries`, `ops_notices`, `evidence_bundles`, `reaction_checkpoints`, `reviews` | ids | Append-only (UPDATE/DELETE rejected by trigger). |
 | `hot_tokens` | (`token_id`, `event_id`) | Hot set (§9); read on start to subscribe the hot tokens again. |
 | `jobs` | `job_id`; unique `idem_key` | The service's job queue (§3.8). |
