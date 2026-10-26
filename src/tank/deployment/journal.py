@@ -17,13 +17,14 @@ from tank.deployment.contracts import (
     Transaction,
     TransactionDocument,
 )
+from tank.deployment.submissions import BuildSubmission, SubmissionDocument
 
 
 class JournalError(RuntimeError):
     pass
 
 
-type JournalValue = ActiveRelease | BuildProvenance | Transaction
+type JournalValue = ActiveRelease | BuildProvenance | Transaction | BuildSubmission
 
 
 def private_identity(info: os.stat_result, *, directory: bool) -> None:
@@ -145,3 +146,18 @@ class PublisherJournal:
 
     def write_cached_build(self, build: BuildProvenance) -> None:
         self._write(build.source_digest + ".json", build)
+
+    def read_submission(self, key: BuildCacheKey) -> BuildSubmission | None:
+        document = self._read("submission-" + key.source_digest + ".json")
+        if document is None:
+            return None
+        submission = SubmissionDocument.model_validate_json(document).root
+        if submission.source_digest != key.source_digest:
+            raise JournalError("Submission digest differs from its journal key")
+        return submission
+
+    def write_submission(self, submission: BuildSubmission) -> None:
+        self._write("submission-" + submission.source_digest + ".json", submission)
+
+    def remove_submission(self, key: BuildCacheKey) -> None:
+        self._remove("submission-" + key.source_digest + ".json")

@@ -20,6 +20,7 @@ from tank.deployment.identities import CommitSHA
 from tank.deployment.journal import JournalError, PublisherJournal
 from tank.deployment.markers import FilesystemTankReleaseState, ReleaseMarkerError
 from tank.deployment.publisher import Publisher, PublisherStateError
+from tank.time_precision import collection_clock
 
 
 class StandInvocation(DomainModel):
@@ -77,6 +78,7 @@ def run(invocation: StandInvocation, configuration: StandConfiguration) -> None:
         FilesystemTankReleaseState(root / "deployed"),
         invocation.transaction,
         clock=time.monotonic,
+        collection_clock=collection_clock,
         policy=PublisherPolicy(build_timeout_s=600.0),
     )
     with (root / "effects.log").open("a") as stream:

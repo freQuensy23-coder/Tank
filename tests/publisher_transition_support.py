@@ -16,6 +16,7 @@ from tank.deployment.artifacts import FilesystemArtifacts
 from tank.deployment.journal import PublisherJournal
 from tank.deployment.markers import FilesystemTankReleaseState
 from tank.deployment.publisher import Publisher
+from tank.time_precision import collection_clock
 
 
 @dataclass(frozen=True)
@@ -52,6 +53,7 @@ def http_rig(root: Path, *, fault: Fault) -> Iterator[HTTPPublisherRig]:
             fixture.marker,
             fixture.selected.release.release_sha,
             clock=time.monotonic,
+            collection_clock=collection_clock,
             policy=fixture.publisher.policy,
         )
         yield HTTPPublisherRig(

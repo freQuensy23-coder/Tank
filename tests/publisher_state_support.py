@@ -31,6 +31,7 @@ from tank.deployment.identities import CommitSHA
 from tank.deployment.journal import PublisherJournal
 from tank.deployment.markers import FilesystemTankReleaseState
 from tank.deployment.publisher import Publisher
+from tank.time_precision import collection_clock
 
 ROOT = Path(__file__).resolve().parents[1]
 type Fault = Literal[
@@ -243,6 +244,7 @@ def rig(root: Path, *, fault: Fault) -> PublisherRig:
         marker,
         selected.release.release_sha,
         clock=lambda: 0.0,
+        collection_clock=collection_clock,
         policy=PublisherPolicy(build_timeout_s=600.0),
     )
     return PublisherRig(publisher, api, journal, marker, previous, selected)

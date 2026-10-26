@@ -14,6 +14,7 @@ from tank.deployment.api_contracts import (
 from tank.deployment.artifact_contracts import SelectedArtifact
 from tank.deployment.contracts import ActiveRelease, BuildCacheKey, BuildID, BuildProvenance, Transaction
 from tank.deployment.identities import CommitSHA
+from tank.deployment.submissions import BuildSubmission
 
 
 class PublisherAPI(Protocol):
@@ -54,6 +55,12 @@ class PublisherState(Protocol):
     def read_cached_build(self, key: BuildCacheKey) -> BuildProvenance | None: ...
 
     def write_cached_build(self, build: BuildProvenance) -> None: ...
+
+    def read_submission(self, key: BuildCacheKey) -> BuildSubmission | None: ...
+
+    def write_submission(self, submission: BuildSubmission) -> None: ...
+
+    def remove_submission(self, key: BuildCacheKey) -> None: ...
 
 
 class TankReleaseState(Protocol):

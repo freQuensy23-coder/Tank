@@ -33,6 +33,8 @@ from tank.deployment.contracts import (
 )
 from tank.deployment.identities import SHA256, CommitSHA
 from tank.deployment.ports import PublisherAPI, PublisherArtifacts, PublisherState, TankReleaseState
+from tank.deployment.submissions import ReceivedBuildSubmission, UnknownBuildSubmission
+from tank.time_precision import Timestamp
 
 BASELINE_BUILD: Final = "c99YRMlKXube5V0gV"
 BASELINE_DIGEST: Final = "a9a53d45f1cdc30634da29a71ae9d6a0a4a5b57e1f60eaf8a443c7cb7568e310"
@@ -53,6 +55,7 @@ class Publisher:
         sha: CommitSHA,
         *,
         clock: Callable[[], float],
+        collection_clock: Callable[[], Timestamp],
         policy: PublisherPolicy,
     ) -> None:
         self.api = api
@@ -61,6 +64,7 @@ class Publisher:
         self.releases = releases
         self.sha = sha
         self.clock = clock
+        self.collection_clock = collection_clock
         self.policy = policy
 
     def current(self) -> BuildID:
@@ -134,29 +138,80 @@ class Publisher:
     def _source_candidate(
         self, artifact: SourceArtifact, previous: BuildID, active: ActiveRelease | None
     ) -> SourceBuild:
-        cached = self.state.read_cached_build(BuildCacheKey(source_digest=artifact.release.source_digest))
+        key = BuildCacheKey(source_digest=artifact.release.source_digest)
+        submission = self.state.read_submission(key)
+        if submission is not None and submission.release_sha != self.sha:
+            raise PublisherStateError("Pending build submission belongs to a different release")
+        if isinstance(submission, UnknownBuildSubmission):
+            raise PublisherStateError("Build acceptance is unknown; another submission is refused")
+        cached = self.state.read_cached_build(key)
         if cached is not None:
             candidate = self._source_provenance(cached.build_id, artifact.release.source_digest)
             if candidate != cached:
                 raise PublisherStateError("Cached build provenance mismatch")
+            if submission is not None:
+                if submission.observation.id != candidate.build_id:
+                    raise PublisherStateError("Received build differs from its cached candidate")
+                self.state.remove_submission(key)
             return candidate
-        if active is not None and active.build.source_digest == artifact.release.source_digest:
+        if (
+            submission is None
+            and active is not None
+            and active.build.source_digest == artifact.release.source_digest
+        ):
             candidate = self._source_provenance(previous, artifact.release.source_digest)
         else:
-            self._upload(artifact)
-            build = self.api.start_build(self.sha)
+            if submission is None:
+                self._upload(artifact)
+                intent = UnknownBuildSubmission(
+                    phase="ACCEPTANCE_UNKNOWN",
+                    release_sha=self.sha,
+                    source_digest=artifact.release.source_digest,
+                    requested_at=self.collection_clock(),
+                    budget_s=self.policy.build_timeout_s,
+                )
+                self.state.write_submission(intent)
+                started = self.clock()
+                build = self.api.start_build(self.sha)
+                submission = ReceivedBuildSubmission(
+                    phase="BUILD_RECEIVED",
+                    release_sha=intent.release_sha,
+                    source_digest=intent.source_digest,
+                    requested_at=intent.requested_at,
+                    budget_s=intent.budget_s,
+                    observation=build,
+                )
+                self.state.write_submission(submission)
+                deadline = started + intent.budget_s
+            else:
+                build = submission.observation
+                deadline = self.clock() + max(0.0, submission.remaining(self.collection_clock()))
             build_id = build.id
-            deadline = self.clock() + self.policy.build_timeout_s
             while build.status in {"READY", "RUNNING"} and self.clock() < deadline:
                 build = self.api.wait_build(build_id)
                 if build.id != build_id:
                     raise PublisherStateError("Build response identity mismatch")
-            if build.status != "SUCCEEDED" or self.clock() >= deadline:
+                submission = ReceivedBuildSubmission(
+                    phase="BUILD_RECEIVED",
+                    release_sha=submission.release_sha,
+                    source_digest=submission.source_digest,
+                    requested_at=submission.requested_at,
+                    budget_s=submission.budget_s,
+                    observation=build,
+                )
+                self.state.write_submission(submission)
+            if (
+                build.status != "SUCCEEDED"
+                or self.clock() >= deadline
+                or submission.remaining(self.collection_clock()) <= 0
+            ):
                 raise PublisherStateError("Worker build failed or exceeded deadline")
             candidate = self._source_provenance(build_id, artifact.release.source_digest)
             if candidate.release_sha != self.sha:
                 raise PublisherStateError("New build release SHA mismatch")
         self.state.write_cached_build(candidate)
+        if submission is not None:
+            self.state.remove_submission(key)
         return candidate
 
     def prepare(self) -> PreparedPublication:

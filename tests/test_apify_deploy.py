@@ -44,6 +44,7 @@ from tank.deployment.credentials import PublisherCredentialError, host_token
 from tank.deployment.journal import JournalError, PublisherJournal
 from tank.deployment.markers import FilesystemTankReleaseState
 from tank.deployment.publisher import BASELINE_BUILD, BASELINE_DIGEST, Publisher, PublisherStateError
+from tank.time_precision import collection_clock
 
 ROOT = Path(__file__).resolve().parents[1]
 SHA = "a" * 40
@@ -202,6 +203,7 @@ def actual_publisher(
         fixture.marker,
         sha,
         clock=fixture.publisher.clock,
+        collection_clock=collection_clock,
         policy=fixture.publisher.policy,
     )
 
@@ -611,7 +613,7 @@ def test_deploy_retry_recovers_process_death_before_journal_rename(
         assert cached is not None
         observed = fixture.api.completed_build(cached.build_id)
         assert observed.actVersion.decoded()["main.py"] == candidate.bundle.files["main.py"]
-        assert len(fixture.api.started) == 3
+        assert len(fixture.api.started) == 2
     else:
         assert len(fixture.api.started) == 2
 
@@ -780,6 +782,7 @@ def test_legacy_build_drift_blocks_bootstrap_and_rollback(
             marker,
             fixture.publisher.sha,
             clock=fixture.publisher.clock,
+            collection_clock=collection_clock,
             policy=fixture.publisher.policy,
         )
         with pytest.raises((PublisherStateError, ValueError)):

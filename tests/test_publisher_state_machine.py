@@ -14,6 +14,7 @@ from tank.deployment.contracts import (
     WorkerRestored,
 )
 from tank.deployment.publisher import Publisher, PublisherStateError
+from tank.time_precision import collection_clock
 
 
 def test_real_journal_transitions_record_attempt_before_external_tag_effect(
@@ -158,6 +159,7 @@ def test_same_source_new_release_preserves_original_build_provenance_without_bui
         fixture.marker,
         selected.release.release_sha,
         clock=lambda: 0.0,
+        collection_clock=collection_clock,
         policy=PublisherPolicy(build_timeout_s=600.0),
     )
     prepared = following.prepare()
@@ -181,6 +183,7 @@ def test_mismatched_selected_identity_refuses_before_provider_effects(tmp_path: 
         fixture.marker,
         "c" * 40,
         clock=lambda: 0.0,
+        collection_clock=collection_clock,
         policy=PublisherPolicy(build_timeout_s=600.0),
     )
     with pytest.raises(PublisherStateError, match="artifact identity mismatch"):
@@ -201,6 +204,7 @@ def test_expired_build_wait_never_activates_running_provider_state(tmp_path: Pat
         fixture.marker,
         fixture.selected.release.release_sha,
         clock=lambda: next(times),
+        collection_clock=collection_clock,
         policy=PublisherPolicy(build_timeout_s=600.0),
     )
     with pytest.raises(PublisherStateError, match="exceeded deadline"):
@@ -264,6 +268,7 @@ def test_new_selected_release_discovers_actual_interrupted_older_transaction(tmp
         fixture.marker,
         "c" * 40,
         clock=lambda: 0.0,
+        collection_clock=collection_clock,
         policy=PublisherPolicy(build_timeout_s=600.0),
     )
     before = list(fixture.api.lookups)

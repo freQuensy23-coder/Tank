@@ -23,6 +23,7 @@ from tank.deployment.publisher import Publisher, PublisherStateError
 from tank.deployment.runtime import PublisherRuntimeError, verify_runtime
 from tank.deployment.runtime_contracts import RuntimeInvocation
 from tank.deployment.source_runtime import verify_source_archive
+from tank.time_precision import collection_clock
 
 
 class InvocationArguments(DomainModel):
@@ -131,6 +132,7 @@ def run(arguments: Arguments) -> None:
         FilesystemTankReleaseState(arguments.tank_marker),
         command.release_sha,
         clock=time.monotonic,
+        collection_clock=collection_clock,
         policy=policy,
     )
     for line in execute_command(command, publisher).lines:

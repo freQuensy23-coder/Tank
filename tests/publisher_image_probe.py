@@ -15,6 +15,7 @@ from tank.deployment.contracts import RolledBackTransaction
 from tank.deployment.publisher import Publisher
 from tank.deployment.runtime import verify_runtime
 from tank.deployment.runtime_contracts import RuntimeInvocation
+from tank.time_precision import collection_clock
 
 
 def probe(root: Path, sha: str) -> None:
@@ -30,6 +31,7 @@ def probe(root: Path, sha: str) -> None:
             fixture.marker,
             fixture.selected.release.release_sha,
             clock=time.monotonic,
+            collection_clock=collection_clock,
             policy=fixture.publisher.policy,
         )
         prepared = publisher.prepare()
@@ -55,6 +57,7 @@ def probe(root: Path, sha: str) -> None:
             fixture.marker,
             fixture.selected.release.release_sha,
             clock=time.monotonic,
+            collection_clock=collection_clock,
             policy=fixture.publisher.policy,
         )
         publisher.prepare()
@@ -76,6 +79,7 @@ def probe(root: Path, sha: str) -> None:
             fixture.marker,
             fixture.selected.release.release_sha,
             clock=time.monotonic,
+            collection_clock=collection_clock,
             policy=fixture.publisher.policy,
         )
         restarted.rollback()
