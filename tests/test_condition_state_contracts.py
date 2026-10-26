@@ -536,3 +536,85 @@ def test_proof_wire_preserves_actual_cache_identity_and_fresh_assembly_separatel
     assert reused["content_sha256"] == wire["content_sha256"]
     assert reused["visibility_sha256"] == wire["visibility_sha256"]
     assert wire["assembled_at"] == "2026-10-17T12:00:02Z"
+
+
+def stale_observed_depth() -> SelectiveConditionValues:
+    from test_condition_graph_contracts import AT, scoped_field_observation
+
+    from tank.analysis.condition_graph_contracts import (
+        AssessedConditionProofFreshness,
+        ConditionDepthNode,
+        ConditionDepthObservation,
+        ConditionEvaluationProof,
+        ConditionRequirement,
+        ConditionTopCacheKey,
+        ConditionUnavailableRequirement,
+        UnrequestedConditionFacet,
+    )
+
+    base = selective_close()
+    declared = scoped_field_observation("INSTRUMENT")
+    assert declared.instrument_id is not None
+    observed = ConditionDepthObservation(
+        token_id="T",
+        instrument_id=declared.instrument_id,
+        metric_key=declared.metric_key,
+        venue="venue",
+        observed_at=Timestamp(value="2026-10-17T11:59:00Z", precision="EXACT"),
+        cadence=declared.cadence,
+        fresh=False,
+    )
+    depth = ConditionDepthNode(
+        cutoff=AT,
+        observations=(observed,),
+        aggregate_depth_p1_usd=None,
+        pre_event_depth_p1_usd=None,
+        spread_ratio=2.0,
+    )
+    requirement = ConditionRequirement(metric="liq.spread_ratio", window="W1H")
+    proof = ConditionEvaluationProof(
+        requirement=requirement,
+        cache_key=ConditionTopCacheKey.model_validate(
+            base.proofs[0].cache_key.model_copy(update={"domain": "depth"})
+        ),
+        assembled_at=base.assembled_at,
+        reused=True,
+        available=False,
+        reason="INCOMPLETE",
+        freshness=AssessedConditionProofFreshness(kind="ASSESSED", observations=(observed,)),
+        coverage=None,
+    )
+    unrequested = UnrequestedConditionFacet(status="NOT_REQUESTED")
+    return SelectiveConditionValues(
+        token_id=base.token_id,
+        cutoff=base.cutoff,
+        assembled_at=base.assembled_at,
+        requested=(requirement,),
+        spot={},
+        derivatives={},
+        close=unrequested,
+        confidence=unrequested,
+        depth=depth,
+        state=unrequested,
+        relative=unrequested,
+        proofs=(proof,),
+        unavailable_metrics=(ConditionUnavailableRequirement(requirement=requirement, reason="INCOMPLETE"),),
+        request_sha256="c" * 64,
+        transient=True,
+    )
+
+
+def test_failed_fresh_gate_preserves_observed_source_facts_without_exposing_available_metric() -> None:
+    from tank.analysis.condition_graph_contracts import ConditionDepthNode
+
+    value = stale_observed_depth()
+    assert isinstance(value.depth, ConditionDepthNode)
+    assert value.depth.spread_ratio == 2.0
+    assert value.depth.observations[0].observed_at.value == "2026-10-17T11:59:00Z"
+    assert not value.depth.observations[0].fresh
+    assert value.proofs[0].reused and value.proofs[0].available is False
+    assert value.unavailable_metrics[0].reason == "INCOMPLETE"
+    with pytest.raises(ValidationError, match="unproven freshness gate"):
+        type(value.proofs[0]).model_validate(
+            value.proofs[0].model_copy(update={"available": True, "reason": None})
+        )

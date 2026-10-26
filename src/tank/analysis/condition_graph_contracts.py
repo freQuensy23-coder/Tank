@@ -7137,8 +7137,13 @@ class SelectiveConditionValues(DomainModel):
                     or proof.coverage.venues != expected_venues
                 ):
                     raise ValueError("OI proof coverage cannot differ from its actual selected cohort")
-            if proof.available != self._metric_available(proof.requirement):
-                raise ValueError("Proof availability must preserve its actual selected financial facts")
+            fresh = isinstance(proof.freshness, UnappliedConditionProofFreshness) or (
+                isinstance(proof.freshness, AssessedConditionProofFreshness) and proof.freshness.passes()
+            )
+            if proof.available != (self._metric_available(proof.requirement) and fresh):
+                raise ValueError(
+                    "Proof availability must preserve actual financial facts and the applicable freshness gate"
+                )
             if proof.cache_key.token_id != self.token_id or proof.cache_key.cutoff != end:
                 raise ValueError("A selected result cannot borrow another subject or cutoff proof")
             if (proof.available and proof.reason is None) != (proof.requirement not in unavailable):
