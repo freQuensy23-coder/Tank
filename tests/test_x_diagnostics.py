@@ -9,6 +9,7 @@ from types import SimpleNamespace
 
 import httpx
 import pytest
+from pydantic import JsonValue
 from pydantic_settings import SettingsConfigDict
 from source_support import (
     fixture_http_admission,
@@ -25,12 +26,14 @@ from tank.delivery import DeliveryError, DeliveryService
 from tank.diagnostic_documents import documents
 from tank.ops_entry_errors import report_entry_errors
 from tank.runtime import Runtime
+from tank.runtime_dispatch_contracts import ClaimedWork, DeliverCommand
 from tank.settings import Settings, resolve_versions
 from tank.sources import SourceService
 from tank.sources.x_diagnostics import admit_source_errors, sanitize
 from tank.sources.xsensor import XSensor
 from tank.storage import MemoryRepository
-from tank.util import sha256
+from tank.time_precision import Timestamp, collection_clock
+from tank.util import TimeInput, sha256
 
 
 def diagnostics(
@@ -460,6 +463,11 @@ async def test_job_runner_preserves_independent_document_retry_budgets(
     now = utcnow()
     for module in (tank.delivery, tank.runtime, tank.storage):
         monkeypatch.setattr(module, "utcnow", lambda: now)
+
+    def observed_clock(value: TimeInput | None = None, *, policy: str = "COLLECTION_ONLY") -> Timestamp:
+        return collection_clock(now if value is None else value, policy=policy)
+
+    monkeypatch.setattr(tank.runtime, "collection_clock", observed_clock)
     repo = MemoryRepository()
     notice = await notice_for(repo, diagnostics("full body"), tmp_path)
     [job] = await repo.list("ops.jobs", filters={"type": "DELIVER"})
@@ -485,6 +493,7 @@ async def test_job_runner_preserves_independent_document_retry_budgets(
         httpx.AsyncClient(transport=telegram_transport(send)) as http,
         delivery_runtime(repo, telegram_settings(tmp_path), http, monkeypatch) as runtime,
     ):
+        execute = runtime.execute_work_wire
         for _ in range(30):
             current = await repo.get("ops.jobs", job["job_id"])
             if current["status"] in {"DONE", "FAILED"}:
@@ -492,13 +501,15 @@ async def test_job_runner_preserves_independent_document_retry_budgets(
             now = max(now, parse_time(current["run_after"])) + timedelta(microseconds=1)
             stop = asyncio.Event()
 
-            async def deliver(payload):
+            async def deliver(work: ClaimedWork) -> JsonValue:
+                if not isinstance(work.command, DeliverCommand):
+                    raise AssertionError("Diagnostic worker fixture refuses unrelated job kinds")
                 try:
-                    await runtime.delivery.deliver(payload)
+                    return await execute(work)
                 finally:
                     stop.set()
 
-            runtime.handlers = {"DELIVER": deliver}
+            monkeypatch.setattr(runtime, "execute_work_wire", deliver)
             await runtime.worker(stop)
     current = await repo.get("ops.jobs", job["job_id"])
     assert current["status"] == ("FAILED" if exhaust_first else "DONE")
@@ -527,6 +538,11 @@ async def test_job_runner_defers_large_successful_document_batches_without_spend
     elapsed = 0
     for module in (tank.delivery, tank.runtime, tank.storage):
         monkeypatch.setattr(module, "utcnow", lambda: now)
+
+    def observed_clock(value: TimeInput | None = None, *, policy: str = "COLLECTION_ONLY") -> Timestamp:
+        return collection_clock(now if value is None else value, policy=policy)
+
+    monkeypatch.setattr(tank.runtime, "collection_clock", observed_clock)
     monkeypatch.setattr(tank.delivery, "time", SimpleNamespace(monotonic=lambda: elapsed))
     repo = MemoryRepository()
     notice_id = await report_entry_errors(
@@ -567,6 +583,7 @@ async def test_job_runner_defers_large_successful_document_batches_without_spend
         httpx.AsyncClient(transport=telegram_transport(send)) as http,
         delivery_runtime(repo, telegram_settings(tmp_path), http, monkeypatch) as runtime,
     ):
+        execute = runtime.execute_work_wire
         for _ in range(50):
             current = await repo.get("ops.jobs", job["job_id"])
             if current["status"] in {"DONE", "FAILED"}:
@@ -574,13 +591,15 @@ async def test_job_runner_defers_large_successful_document_batches_without_spend
             now = max(now, parse_time(current["run_after"])) + timedelta(microseconds=1)
             stop = asyncio.Event()
 
-            async def deliver(payload):
+            async def deliver(work: ClaimedWork) -> JsonValue:
+                if not isinstance(work.command, DeliverCommand):
+                    raise AssertionError("Diagnostic worker fixture refuses unrelated job kinds")
                 try:
-                    await runtime.delivery.deliver(payload)
+                    return await execute(work)
                 finally:
                     stop.set()
 
-            runtime.handlers = {"DELIVER": deliver}
+            monkeypatch.setattr(runtime, "execute_work_wire", deliver)
             started = elapsed
             await runtime.worker(stop)
             batches.append(elapsed - started)
