@@ -9,7 +9,7 @@ from pydantic import Field
 from tank.contracts import DomainModel
 from tank.contracts.json import JsonDocument
 from tank.time_precision import Timestamp, propagate_timestamp, timestamp_owned_fields
-from tank.util import JsonInput, jsonable, parse_iso_time, sha256
+from tank.util import JsonInput, canonical_json, jsonable, parse_iso_time, sha256
 
 type VisibilityDomain = Literal[
     "spot", "oi", "funding", "close", "dc", "depth", "state", "relative", "derivatives", "supply"
@@ -29,7 +29,7 @@ class InvalidVisibilityClock(DomainModel):
 
 
 class ConditionClockComparison(DomainModel):
-    source_path: str = Field(min_length=1, pattern=r"\S")
+    source_paths: tuple[str, ...] = Field(min_length=1)
     field: SourceClockField
     source_clock: Timestamp | InvalidVisibilityClock
     relation: AssemblyRelation
@@ -87,14 +87,23 @@ def condition_visibility(
     receipt. Source content is a canonical read projection, not provider HTTP bytes.
     """
     assembly = Timestamp.model_validate(assembled_at)
-    comparisons: list[ConditionClockComparison] = []
+    groups: dict[
+        tuple[SourceClockField, str], tuple[Timestamp | InvalidVisibilityClock, AssemblyRelation, list[str]]
+    ] = {}
 
     def compare(row: Mapping[str, JsonInput], path: str, field: SourceClockField) -> None:
+        selected = {name: row[name] for name in timestamp_owned_fields(field) if name in row}
+        try:
+            raw_key = canonical_json(selected)
+        except (ValueError, TypeError, OverflowError):
+            raw_key = "INVALID_CAPTURED_TIMESTAMP"
+        group_key = (field, raw_key)
+        if group_key in groups:
+            groups[group_key][2].append(path)
+            return
         clock: Timestamp | InvalidVisibilityClock
         try:
-            wire = JsonDocument.validate_value(
-                jsonable({name: row[name] for name in timestamp_owned_fields(field) if name in row})
-            )
+            wire = JsonDocument.validate_value(jsonable(selected))
             if not isinstance(wire, dict):
                 raise ValueError("A timestamp projection must be an object")
             clock = propagate_timestamp(wire, field, missing_reason="SOURCE_CLOCK_NOT_CAPTURED")
@@ -113,9 +122,7 @@ def condition_visibility(
                 if parse_iso_time(clock.value) <= parse_iso_time(assembly.value)
                 else "AFTER_ASSEMBLY"
             )
-        comparisons.append(
-            ConditionClockComparison(source_path=path, field=field, source_clock=clock, relation=relation)
-        )
+        groups[group_key] = (clock, relation, [path])
 
     typed_spot = domain in {"spot", "state"}
     spot_read = domain in {"spot", "close", "dc", "state", "relative"}
@@ -183,6 +190,11 @@ def condition_visibility(
             token_id=token_id,
             content_sha256=content_sha256,
             assembly_knowledge="KNOWN" if assembly.value is not None else "UNCAPTURED",
-            comparisons=tuple(comparisons),
+            comparisons=tuple(
+                ConditionClockComparison(
+                    source_paths=tuple(paths), field=field, source_clock=clock, relation=relation
+                )
+                for (field, _raw_key), (clock, relation, paths) in groups.items()
+            ),
         ),
     )

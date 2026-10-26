@@ -161,6 +161,13 @@ def _wire(row: Mapping[str, JsonInput]) -> tuple[dict[str, JsonValue], bytes]:
     return value, payload
 
 
+def _input_time(row: Mapping[str, JsonInput], field: str) -> datetime:
+    value = row.get(field)
+    if not isinstance(value, (str, datetime)):
+        raise ValueError("Spot geometry requires a declared ISO or aware datetime: " + field)
+    return parse_iso_time(value)
+
+
 def _text(row: Mapping[str, JsonValue], field: str) -> str:
     value = row.get(field)
     if not isinstance(value, str) or not value.strip():
@@ -362,7 +369,7 @@ def decode_spot_inputs(
         if identity.instrument_id not in identity_sources:
             identity_sources[identity.instrument_id] = (payload, "SOURCE_ROW")
         scope_original, scope_basis = identity_sources[identity.instrument_id]
-        _original_row, original_payload = _wire(source if original is None else original)
+        original_payload = payload if original is None else canonical_json(original).encode()
         effective: dict[str, JsonValue] = dict(row)
         effective.update(
             token_id=identity.token_id,
@@ -370,7 +377,9 @@ def decode_spot_inputs(
             venue=identity.venue,
             market_type=identity.market_type,
         )
-        row, payload = _wire(effective)
+        if effective != row:
+            payload = canonical_json(effective).encode()
+        row = effective
         descriptor = FlowSourceDescriptor(
             format="SPOT_INPUT_READ_V1",
             collection=collection,
@@ -401,11 +410,7 @@ def decode_spot_inputs(
         return row, identity, reference
 
     for index, source in enumerate(flow_segments):
-        geometry, _payload = _wire(source)
-        piece_start, piece_end = (
-            parse_iso_time(_text(geometry, "start")),
-            parse_iso_time(_text(geometry, "end")),
-        )
+        piece_start, piece_end = _input_time(source, "start"), _input_time(source, "end")
         if piece_start < start or piece_end > cutoff:
             continue
         captured = capture_flow(source, index, None, collection="flow_segments")
@@ -422,8 +427,7 @@ def decode_spot_inputs(
     ] = (("flow_bars", flow_bars), ("flow_parent_bars", flow_parent_bars))
     for collection, sources in parent_sources:
         for index, source in enumerate(sources):
-            geometry, _payload = _wire(source)
-            source_start = parse_iso_time(_text(geometry, "minute_start"))
+            source_start = _input_time(source, "minute_start")
             if source_start >= cutoff or source_start + timedelta(minutes=1) <= start:
                 continue
             captured = capture_flow(source, index, None, collection=collection)
@@ -431,21 +435,24 @@ def decode_spot_inputs(
                 continue
             raw, identity, reference = captured
             minute_start = parse_iso_time(_text(raw, "minute_start"))
-            parent = SpotFlowParent(
-                instrument=identity,
-                start=minute_start,
-                end=minute_start + timedelta(minutes=1),
-                received_at=propagate_timestamp(raw, "received_ts"),
-                observed_at=propagate_timestamp(raw, "observed_at"),
-                evidence=reference,
-            )
-            if collection == "flow_bars" and start <= parent.start and parent.end <= cutoff:
+            minute_end = minute_start + timedelta(minutes=1)
+            if collection == "flow_bars" and start <= minute_start and minute_end <= cutoff:
                 minutes.append(_flow(raw, identity, reference, boundary=False, parent_document=None))
             pieces = raw.get("boundary_segments")
             if pieces is None:
                 continue
             if not isinstance(pieces, list):
                 raise ValueError("Embedded boundary evidence requires an array")
+            if not pieces:
+                continue
+            parent = SpotFlowParent(
+                instrument=identity,
+                start=minute_start,
+                end=minute_end,
+                received_at=propagate_timestamp(raw, "received_ts"),
+                observed_at=propagate_timestamp(raw, "observed_at"),
+                evidence=reference,
+            )
             for piece_index, piece in enumerate(pieces):
                 if not isinstance(piece, dict):
                     raise ValueError("Embedded boundary evidence requires objects")
