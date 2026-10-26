@@ -67,7 +67,9 @@ async def test_missing_required_message_fact_refuses_entire_batch_before_storage
         return httpx.Response(200, content=payload)
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(respond)) as http:
-        inbox = TelegramInbox(repo, TelegramSettings(data_dir=tmp_path), http=http)
+        inbox = TelegramInbox(
+            repo, TelegramSettings(data_dir=tmp_path, telegram_token="synthetic-private-token"), http=http
+        )
         with pytest.raises(TelegramProtocolError, match="batch is invalid"):
             await inbox.poll(timeout=0)
     assert await repo.list("ops.telegram_messages") == []
@@ -196,7 +198,9 @@ async def test_two_messages_with_unreported_sender_do_not_gain_pairing_authority
         raise AssertionError("Pairing cannot issue HTTP")
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(refuse)) as http:
-        inbox = TelegramInbox(repo, TelegramSettings(data_dir=tmp_path), http=http)
+        inbox = TelegramInbox(
+            repo, TelegramSettings(data_dir=tmp_path, telegram_token="synthetic-private-token"), http=http
+        )
         assert await inbox.companion(row, forwarded=True) is None
 
 
@@ -218,7 +222,9 @@ async def test_existing_invalid_cursor_does_not_reset_to_first_update(
         raise AssertionError("Invalid retained cursor cannot request updates")
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(refuse)) as http:
-        inbox = TelegramInbox(repo, TelegramSettings(data_dir=tmp_path), http=http)
+        inbox = TelegramInbox(
+            repo, TelegramSettings(data_dir=tmp_path, telegram_token="synthetic-private-token"), http=http
+        )
         with pytest.raises((KeyError, ValidationError)):
             await inbox.poll(timeout=0)
     assert await repo.get("ops.source_checkpoints", CURSOR_KEY) == state
@@ -255,7 +261,9 @@ async def test_retained_empty_sender_does_not_pair_but_reported_sender_still_doe
         raise AssertionError("Pair projection cannot issue HTTP")
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(refuse)) as http:
-        inbox = TelegramInbox(repo, TelegramSettings(data_dir=tmp_path), http=http)
+        inbox = TelegramInbox(
+            repo, TelegramSettings(data_dir=tmp_path, telegram_token="synthetic-private-token"), http=http
+        )
         candidate = await inbox.companion(originals[0], forwarded=True)
     if known_sender:
         assert candidate is not None and candidate["message_id"] == 18
