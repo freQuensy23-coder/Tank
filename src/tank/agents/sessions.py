@@ -133,8 +133,9 @@ from tank.contracts.source_items import (
 from tank.contracts.source_repository import SourceExtractionRepository
 from tank.delivery import DeliveryDeferred
 from tank.ops_progress import session_progress
+from tank.question_answers import record_answer
 from tank.runtime_contracts import ScoutMessage, ScoutReviewJob, UserQuestionMessage
-from tank.telegram_inbox import DOCUMENT_LIMIT, question_message, record_answer
+from tank.telegram_inbox import DOCUMENT_LIMIT, question_message
 from tank.time_precision import Timestamp, collection_clock, offset_schedule, propagate_timestamp
 from tank.util import canonical_json, jsonable, parse_time, sha256, utcnow
 

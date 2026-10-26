@@ -1769,7 +1769,7 @@ async def test_explicit_missing_native_session_never_falls_back_to_creation(
 
 @pytest.mark.asyncio
 async def test_missing_native_followup_records_absence_without_termination_or_input() -> None:
-    from tank.telegram_inbox import GONE_TEXT
+    from tank.telegram_inbox import GONE_TEXT, RepositoryFollowupRefusals
 
     repo = MemoryRepository()
     opts, _ = settings()
@@ -1798,7 +1798,7 @@ async def test_missing_native_followup_records_absence_without_termination_or_in
             None,
             http=http,
             versions=declared_versions_fixture(),
-            refusals=UnexpectedFollowupRefusals(),
+            refusals=RepositoryFollowupRefusals(repo),
         )
         result = await service.send_message(
             {"kind": "USER_QUESTION", "session_id": "ses_1", "question_id": "question"}
@@ -1841,7 +1841,14 @@ async def test_preliminary_denial_archive_requires_exact_corrected_revision_deli
         raise AssertionError("Archive eligibility must not invoke native HTTP")
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(forbidden)) as http:
-        service = SessionService(repo, opts, None, http=http, versions=declared_versions_fixture())
+        service = SessionService(
+            repo,
+            opts,
+            None,
+            http=http,
+            versions=declared_versions_fixture(),
+            refusals=UnexpectedFollowupRefusals(),
+        )
         assert not await service.can_archive(session, event)
         event["session_finalized_at"] = clock_iso()
         assert not await service.can_archive(session, event)
@@ -1903,7 +1910,14 @@ async def test_preliminary_correction_cannot_finalize_an_existing_ordinary_chain
         {"alert_id": "preliminary", "version": 9, "status": "SENT"},
     )
     async with httpx.AsyncClient() as http:
-        service = SessionService(repo, opts, None, http=http, versions=declared_versions_fixture())
+        service = SessionService(
+            repo,
+            opts,
+            None,
+            http=http,
+            versions=declared_versions_fixture(),
+            refusals=UnexpectedFollowupRefusals(),
+        )
         assert not await service.can_archive(session, event)
         await repo.put(
             "out.alerts",
@@ -1925,7 +1939,14 @@ async def test_closed_event_does_not_require_unused_denial_card_metadata() -> No
     opts, _ = settings()
     await repo.put("out.alerts", "retained", {"event_id": "event", "alert_id": "retained"})
     async with httpx.AsyncClient() as http:
-        service = SessionService(repo, opts, None, http=http, versions=declared_versions_fixture())
+        service = SessionService(
+            repo,
+            opts,
+            None,
+            http=http,
+            versions=declared_versions_fixture(),
+            refusals=UnexpectedFollowupRefusals(),
+        )
         assert await service.can_archive(
             {"session_id": "session", "runtime_status": "IDLE"},
             {"event_id": "event", "lifecycle": "CLOSED"},
@@ -1952,7 +1973,14 @@ async def test_unknown_card_revision_cannot_be_ranked_below_a_sent_terminal_upda
         {"alert_id": "ordinary", "version": 1, "status": "SENT"},
     )
     async with httpx.AsyncClient() as http:
-        service = SessionService(repo, opts, None, http=http, versions=declared_versions_fixture())
+        service = SessionService(
+            repo,
+            opts,
+            None,
+            http=http,
+            versions=declared_versions_fixture(),
+            refusals=UnexpectedFollowupRefusals(),
+        )
         with pytest.raises(KeyError, match="version"):
             await service.can_archive(
                 {"session_id": "session", "runtime_status": "IDLE"},
