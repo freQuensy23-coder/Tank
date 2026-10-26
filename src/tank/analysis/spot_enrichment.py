@@ -9,6 +9,7 @@ from pydantic import Field, model_validator
 from tank.analysis.condition_graph_contracts import (
     ConditionCohortComparison,
     ConditionWindow,
+    DirectWindowConditionSpot,
     EnrichedConditionSpot,
     ObservedConditionCohortComparison,
     ObservedConditionSizeProfile,
@@ -172,7 +173,7 @@ def finish_spot_enrichment(
 
 
 class ConditionRequestedSpotView(DomainModel):
-    requested: WindowedConditionSpot
+    requested: DirectWindowConditionSpot | WindowedConditionSpot
     state: CohortEnrichedConditionSpot | EnrichedConditionSpot | None
 
     @model_validator(mode="after")
