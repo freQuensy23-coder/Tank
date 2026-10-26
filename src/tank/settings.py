@@ -17,6 +17,7 @@ from pydantic.fields import FieldInfo
 from pydantic_settings import BaseSettings, PydanticBaseSettingsSource, SettingsConfigDict
 
 from tank.contracts.configuration import DeliveryConfiguration, Thresholds
+from tank.contracts.configuration_yaml import ConfigurationYamlLoader
 from tank.contracts.json import JsonDocument, decode_unique_json
 from tank.contracts.openma import OpenMAConfiguration
 from tank.contracts.provenance import ResolvedVersionIdentity
@@ -31,7 +32,7 @@ from tank.util import JsonInput
 
 _PROCESS_CODE_VERSION: str | None = None
 _CONFIG_SUFFIXES = {".yaml", ".yml", ".json", ".md"}
-_YAML_LOADER = yaml.SafeLoader
+_YAML_LOADER = ConfigurationYamlLoader
 
 
 CONFIG_OWNED_FIELDS = ("user_agent", "telegram_alerts_chat", "telegram_ops_chat")
@@ -354,7 +355,7 @@ def resolve_versions(settings: Settings) -> Settings:
         raise ValueError("Configuration changed during capture; retry after completing the edit")
     for name, content in captured.items():
         if name.endswith((".yaml", ".yml")):
-            if not isinstance(yaml.safe_load(content), dict):
+            if not isinstance(yaml.load(content, Loader=_YAML_LOADER), dict):
                 raise ValueError(f"Configuration must be a mapping: {name}")
         elif name.endswith(".json"):
             decode_unique_json(content)
