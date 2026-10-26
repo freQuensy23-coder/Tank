@@ -12,8 +12,10 @@ import html
 import re
 import subprocess
 import sys
+from collections.abc import Iterator, Sequence
 from contextlib import suppress
 from pathlib import Path
+from typing import Literal
 
 TYPE_MAP = [
     (r"timestamp with time zone", "timestamptz"),
@@ -35,14 +37,14 @@ TRIGGER_FLAGS = {
 }
 
 
-def norm_type(t):
+def norm_type(t: str) -> str:
     t = t.strip()
     for a, b in TYPE_MAP:
         t = re.sub("^" + a, b, t)
     return t
 
 
-def split_top(body):
+def split_top(body: str) -> list[str]:
     parts, depth, cur = [], 0, ""
     for ch in body:
         if ch in "([":
@@ -59,11 +61,11 @@ def split_top(body):
     return parts
 
 
-def cols_of(text):
+def cols_of(text: str) -> list[str]:
     return [c.strip() for c in text.split(",")]
 
 
-def statements(sql):
+def statements(sql: str) -> Iterator[str]:
     sql = re.sub(r"CREATE FUNCTION.*?\$\$.*?\$\$;", "", sql, flags=re.S)
     sql = re.sub(r"--[^\n]*", "", sql)
     sql = sql.replace('"', "")
@@ -507,15 +509,15 @@ BADGE = {
 }
 
 
-def esc(s):
-    return html.escape(str(s), quote=True)
+def esc(s: str) -> str:
+    return html.escape(s, quote=True)
 
 
-def tw(s, size):
+def tw(s: str, size: float) -> float:
     return len(s) * CW * size
 
 
-def badge(x, y, label):
+def badge(x: float, y: float, label: str) -> tuple[str, float]:
     fill, ink = BADGE[label]
     w = 6 + len(label) * 5.2
     return (
@@ -526,7 +528,9 @@ def badge(x, y, label):
     )
 
 
-def rounded(points, r=6):
+def rounded(points: Sequence[tuple[float, float]], r: float = 6) -> str:
+    if len(points) < 2:
+        raise ValueError("A diagram route requires at least two points")
     d = f"M{points[0][0]:.1f},{points[0][1]:.1f}"
     for i in range(1, len(points) - 1):
         (x0, y0), (x1, y1), (x2, y2) = points[i - 1], points[i], points[i + 1]
@@ -545,7 +549,7 @@ def rounded(points, r=6):
     return d
 
 
-def end_marker(x, y, s, kind, color):
+def end_marker(x: float, y: float, s: Literal[-1, 1], kind: Literal["one", "many"], color: str) -> str:
     """IE end marker on a table edge at (x, y); s=+1 points right (away from a right edge)."""
     out = []
     if kind == "many":
@@ -838,7 +842,7 @@ def route(fk, boxes, col_of, col_x, col_w, gut, channel_y, spec, color):
     return "".join(parts)
 
 
-def legend_line(x, y, kind, color="#2D3748"):
+def legend_line(x: float, y: float, kind: Literal["fk", "11", "logical"], color: str = "#2D3748") -> str:
     out = [f'<path d="M{x},{y} H{x + 70}" stroke="{color}" stroke-width="1.35"/>']
     if kind == "fk":
         out.append(end_marker(x, y, 1, "many", color))
@@ -849,10 +853,20 @@ def legend_line(x, y, kind, color="#2D3748"):
     return "".join(out)
 
 
-def text(x, y, s, size=11, fill=INK, weight=None, family=SANS, anchor=None, style=None):
-    attrs = f' font-weight="{weight}"' if weight else ""
-    attrs += f' text-anchor="{anchor}"' if anchor else ""
-    attrs += f' font-style="{style}"' if style else ""
+def text(
+    x: float,
+    y: float,
+    s: str,
+    size: float = 11,
+    fill: str = INK,
+    weight: Literal[100, 200, 300, 400, 500, 600, 700, 800, 900] | None = None,
+    family: str = SANS,
+    anchor: Literal["start", "middle", "end"] | None = None,
+    style: Literal["normal", "italic", "oblique"] | None = None,
+) -> str:
+    attrs = f' font-weight="{weight}"' if weight is not None else ""
+    attrs += f' text-anchor="{anchor}"' if anchor is not None else ""
+    attrs += f' font-style="{style}"' if style is not None else ""
     return f'<text x="{x:.1f}" y="{y:.1f}" font-family="{family}" font-size="{size}" fill="{fill}"{attrs}>{s}</text>'
 
 

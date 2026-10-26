@@ -40,3 +40,28 @@ def test_current_diagrams_cover_actual_decision_heads_and_market_schema() -> Non
     assert "flow_bars_1m" in clickhouse
     assert postgres == (root / "diagrams/tank_postgres_schema.svg").read_text()
     assert clickhouse == (root / "diagrams/tank_clickhouse_schema.svg").read_text()
+
+
+def test_svg_route_geometry_preserves_endpoints_and_bounds_corner_radius() -> None:
+    from scripts.render_db_schema import rounded
+
+    assert rounded([(0, 0), (10, 0), (10, 20)]) == ("M0.0,0.0 L5.0,0.0 Q10.0,0.0 10.0,5.0 L10.0,20.0")
+    assert rounded([(0, 0), (0, 0), (10, 0)]) == "M0.0,0.0 L0.0,0.0 L10.0,0.0"
+    with pytest.raises(ValueError, match="requires at least two points"):
+        rounded([(0, 0)])
+
+
+def test_svg_text_omits_unrequested_attributes_and_escapes_column_text() -> None:
+    from xml.etree.ElementTree import fromstring
+
+    from scripts.render_db_schema import esc, text
+
+    implicit = fromstring(text(1, 2, esc('a&b < "quoted"')))
+    assert implicit.text == 'a&b < "quoted"'
+    assert "font-weight" not in implicit.attrib
+    assert "text-anchor" not in implicit.attrib
+    assert "font-style" not in implicit.attrib
+    explicit = fromstring(text(1, 2, "Label", weight=600, anchor="end", style="italic"))
+    assert explicit.attrib["font-weight"] == "600"
+    assert explicit.attrib["text-anchor"] == "end"
+    assert explicit.attrib["font-style"] == "italic"
