@@ -4,7 +4,17 @@ from pydantic import ValidationError
 
 from tank.contracts.job_repository import JobRepository, QueueStore
 from tank.contracts.jobs import InvalidJobClaim, JobMetadata
-from tank.runtime_dispatch_contracts import ClaimedWork, DependencyState, RuntimeCommandRecord
+from tank.runtime_dispatch_contracts import (
+    ClaimedWork,
+    DependencyFailure,
+    DependencyReadiness,
+    DependencyState,
+    FailedDependency,
+    MissingDependency,
+    ReadyDependencies,
+    RuntimeCommandRecord,
+    WaitingDependencies,
+)
 from tank.util import sha256
 
 
@@ -61,3 +71,26 @@ class RepositoryWorkerQueue:
         if dependency.job_id != job_id:
             raise ValueError("Job dependency identity differs from its storage key")
         return dependency
+
+    async def dependencies(self, work: ClaimedWork) -> DependencyReadiness:
+        waiting: list[str] = []
+        for job_id in work.command.payload.depends_on:
+            dependency = await self.dependency(job_id)
+            if dependency is None:
+                raise DependencyFailure(MissingDependency(job_id=job_id, reason="MISSING"))
+            if dependency.status in {"FAILED", "EXPIRED"}:
+                raise DependencyFailure(
+                    FailedDependency.model_validate(
+                        {
+                            "job_id": dependency.job_id,
+                            "reason": dependency.status,
+                        }
+                    )
+                )
+            if dependency.status != "DONE":
+                waiting.append(dependency.job_id)
+        return (
+            WaitingDependencies(status="WAITING", job_ids=tuple(waiting))
+            if waiting
+            else ReadyDependencies(status="READY")
+        )

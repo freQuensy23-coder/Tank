@@ -126,3 +126,31 @@ class ClaimedWork(DomainModel):
         if self.job.type != self.command.type:
             raise ValueError("Worker command differs from its claimed job kind")
         return self
+
+
+class MissingDependency(DomainModel):
+    job_id: str = Field(min_length=1, pattern=r"\S")
+    reason: Literal["MISSING"]
+
+
+class FailedDependency(DomainModel):
+    job_id: str = Field(min_length=1, pattern=r"\S")
+    reason: Literal["FAILED", "EXPIRED"]
+
+
+class DependencyFailure(RuntimeError):
+    def __init__(self, failed: MissingDependency | FailedDependency) -> None:
+        self.failed = failed
+        super().__init__("Durable job dependency failed or is missing")
+
+
+class ReadyDependencies(DomainModel):
+    status: Literal["READY"]
+
+
+class WaitingDependencies(DomainModel):
+    status: Literal["WAITING"]
+    job_ids: tuple[Annotated[str, Field(min_length=1, pattern=r"\S")], ...] = Field(min_length=1)
+
+
+type DependencyReadiness = ReadyDependencies | WaitingDependencies

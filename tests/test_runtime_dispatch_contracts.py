@@ -5,6 +5,7 @@ from postgres_helpers import PostgresTemplate
 from pydantic import JsonValue, ValidationError
 
 from tank.contracts.job_repository import JobRepository
+from tank.contracts.jobs import JobEnvelope
 from tank.runtime_dispatch_contracts import (
     DeliverCommand,
     DependencyState,
@@ -24,8 +25,6 @@ async def test_claimed_delivery_decodes_exact_declared_dependency_metadata() -> 
     )
     claim = await jobs.claim()
     assert claim is not None
-    from tank.contracts.jobs import JobEnvelope
-
     assert isinstance(claim, JobEnvelope)
     command = RuntimeCommandRecord.model_validate({"type": claim.type, "payload": claim.payload}).root
     assert isinstance(command, DeliverCommand)
@@ -126,3 +125,52 @@ async def test_postgres_worker_command_quarantine_preserves_real_claim_revision(
         assert stored["status"] == "FAILED" and stored["payload"] == job.payload
         assert stored["finished_at"] is not None
         assert not await queue.reject_invalid(invalid)
+
+
+@pytest.mark.asyncio
+async def test_dependency_wait_then_completion_uses_actual_state_without_consuming_an_attempt() -> None:
+    from tank.runtime_dispatch_contracts import ClaimedWork, ReadyDependencies, WaitingDependencies
+    from tank.runtime_worker_repository import RepositoryWorkerQueue
+
+    repo = MemoryRepository()
+    jobs = JobRepository(repo)
+    dependency = await jobs.enqueue("TELEGRAM_ANSWER", {"question_id": "question"}, "prior", priority=4)
+    dependencies: list[JsonValue] = [dependency.job_id]
+    queued = await jobs.enqueue(
+        "DELIVER",
+        {"alert_id": "alert", "version": 1, "channel": "telegram:alerts", "_depends_on": dependencies},
+        "waiting",
+        priority=0,
+    )
+    queue = RepositoryWorkerQueue(repo)
+    work = await queue.claim()
+    assert isinstance(work, ClaimedWork) and work.job.job_id == queued.job_id
+    waiting = await queue.dependencies(work)
+    assert isinstance(waiting, WaitingDependencies) and waiting.job_ids == (dependency.job_id,)
+    observed = await repo.get("ops.jobs", queued.job_id)
+    assert observed is not None and observed["attempts"] == 1 and observed["status"] == "RUNNING"
+    prior = await jobs.claim()
+    assert isinstance(prior, JobEnvelope) and prior.job_id == dependency.job_id
+    await jobs.finish(dependency.job_id)
+    assert isinstance(await queue.dependencies(work), ReadyDependencies)
+
+
+@pytest.mark.asyncio
+async def test_missing_dependency_is_an_explicit_failure_not_a_completed_or_waiting_state() -> None:
+    from tank.runtime_dispatch_contracts import ClaimedWork, DependencyFailure, MissingDependency
+    from tank.runtime_worker_repository import RepositoryWorkerQueue
+
+    repo = MemoryRepository()
+    dependencies: list[JsonValue] = ["missing"]
+    await JobRepository(repo).enqueue(
+        "DELIVER",
+        {"alert_id": "alert", "version": 1, "channel": "telegram:alerts", "_depends_on": dependencies},
+        "missing-prior",
+    )
+    queue = RepositoryWorkerQueue(repo)
+    work = await queue.claim()
+    assert isinstance(work, ClaimedWork)
+    with pytest.raises(DependencyFailure) as failure:
+        await queue.dependencies(work)
+    assert isinstance(failure.value.failed, MissingDependency)
+    assert failure.value.failed.job_id == "missing"

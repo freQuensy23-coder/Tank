@@ -1415,3 +1415,15 @@ declares its actual synthetic session ID and typed question request while
 retaining its old/current/retired/status assertions. This closes that helper
 dependency, not the still-untyped follower/attachment/presentation portions
 of SessionService or the inactive worker activation.
+
+Inactive dependency policy
+
+RepositoryWorkerQueue.dependencies returns named READY/WAITING states from
+actual dependency identity/status projections; a missing or FAILED/EXPIRED
+prerequisite raises a typed DependencyFailure carrying that exact observed
+reason/identity. No dependency reads change the worker attempt/status or
+pretend missing state is complete. Dynamic job_ids are actual queue IDs;
+WaitingDependencies requires at least one ID. All nine command/Memory queue
+cases pass in 1.89 seconds, zero skips, independent strict three targets
+(worker-e587-dependencies-unit). The raw revision correction remains pending
+foundation's additive API; this is still inactive worker work.
