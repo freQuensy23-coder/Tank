@@ -245,10 +245,10 @@ async def test_wait_data_watch_refreshes_truth_before_decision_and_replays_lost_
         assert initial["action"] == "WAIT"
         watch = next(row for row in initial["conditions"] if row["role"] == "UPGRADE")
         assert watch["expr"]["metric"] == "dc.class" and watch["expr"]["value"] == "HIGH"
-        await scheduler.eval_conditions(chosen_boundary(end, precision="BUCKET(1m)").fields("cutoff"))
+        await scheduler.eval_conditions(chosen_boundary(end, precision="BUCKET(1m)"))
         assert (await repo.get("ana.watch_conditions", watch["cond_id"]))["status"] == "ARMED"
         market.released = True
-        await scheduler.eval_conditions(chosen_boundary(end, precision="BUCKET(1m)").fields("cutoff"))
+        await scheduler.eval_conditions(chosen_boundary(end, precision="BUCKET(1m)"))
         fired = await repo.get("ana.watch_conditions", watch["cond_id"])
         assert fired["status"] == "FIRED" and not fired.get("consumed_by")
         messages = [row async for row in repo.iter_all("ops.jobs", filters={"type": "AGENT_MESSAGE"})]

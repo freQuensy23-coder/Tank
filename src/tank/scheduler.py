@@ -27,6 +27,7 @@ from tank.contracts import DomainModel
 from tank.contracts.configuration import Thresholds
 from tank.contracts.json import decode_json
 from tank.contracts.provenance import ResolvedVersionIdentity
+from tank.contracts.scheduler_results import ConditionEvaluationResult, DeferredCondition
 from tank.runtime_contracts import TimedReviewFiredMessage
 from tank.settings import Settings
 from tank.time_precision import (
@@ -560,8 +561,8 @@ class Scheduler:
 
         return truth
 
-    async def eval_conditions(self, payload):
-        cutoff_stamp = propagate_timestamp(payload, "cutoff") if "cutoff" in payload else collection_clock()
+    async def eval_conditions(self, cutoff_stamp: Timestamp) -> ConditionEvaluationResult:
+        cutoff_stamp = Timestamp.model_validate(cutoff_stamp)
         cutoff = cutoff_stamp.value
         if cutoff is None:
             raise ValueError("Condition evaluation requires an actual cutoff")
@@ -569,7 +570,7 @@ class Scheduler:
         conditions = [
             cond async for cond in self.repo.iter_all("ana.watch_conditions", filters={"status": "ARMED"})
         ]
-        requirement_sets = {}
+        requirement_sets: dict[tuple[str, str], set[tuple[str, str]]] = {}
         for condition in conditions:
             if parse_timed_review_expression(condition["expr"]) is not None:
                 TimedReviewCondition.model_validate(condition)
@@ -590,7 +591,9 @@ class Scheduler:
         started = loop.time()
         deadline = started + EVAL_CONDITIONS_BUDGET_S
         limit = {"until": deadline}
-        outcomes = {"evaluated": [], "fired": [], "deferred": []}
+        evaluated: list[str] = []
+        fired_conditions: list[str] = []
+        deferred: list[DeferredCondition] = []
 
         async def bounded_truth(key, requirements):
 
@@ -607,9 +610,10 @@ class Scheduler:
         event_cache = {}
         for position, cond in enumerate(conditions):
             if loop.time() - started > EVAL_CONDITIONS_BUDGET_S:
-                outcomes["deferred"] += [
-                    {"cond_id": c["cond_id"], "reason": "BATCH_BUDGET"} for c in conditions[position:]
-                ]
+                deferred.extend(
+                    DeferredCondition(cond_id=c["cond_id"], reason="BATCH_BUDGET")
+                    for c in conditions[position:]
+                )
                 log.warning(
                     "EVAL_CONDITIONS budget of %ss reached; %s of %s conditions continue next minute",
                     EVAL_CONDITIONS_BUDGET_S,
@@ -626,8 +630,10 @@ class Scheduler:
                     outcome = await self.eval_timed_review(
                         TimedReviewCondition.model_validate(cond), cutoff_stamp
                     )
-                    if outcome:
-                        outcomes[outcome].append(cond["cond_id"])
+                    if outcome == "fired":
+                        fired_conditions.append(cond["cond_id"])
+                    elif outcome == "evaluated":
+                        evaluated.append(cond["cond_id"])
                     continue
                 if not cond.get("expires_at"):
                     log.error(
@@ -833,7 +839,7 @@ class Scheduler:
                             "last_attempt_outcome": "READ_TIMEOUT",
                         },
                     )
-                    outcomes["deferred"].append({"cond_id": cond["cond_id"], "reason": "READ_TIMEOUT"})
+                    deferred.append(DeferredCondition(cond_id=cond["cond_id"], reason="READ_TIMEOUT"))
                     log.warning(
                         "EVAL_CONDITIONS: market read for %s exceeded its %ss budget; retried next minute",
                         cond["cond_id"],
@@ -865,9 +871,12 @@ class Scheduler:
                         )
                 else:
                     await self.repo.put("ana.watch_conditions", cond["cond_id"], updated)
-                outcomes["fired" if fired else "evaluated"].append(cond["cond_id"])
+                if fired:
+                    fired_conditions.append(cond["cond_id"])
+                else:
+                    evaluated.append(cond["cond_id"])
 
-        return outcomes
+        return ConditionEvaluationResult(evaluated=evaluated, fired=fired_conditions, deferred=deferred)
 
     async def eval_timed_review(
         self, condition: TimedReviewCondition, cutoff_stamp: Timestamp

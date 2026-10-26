@@ -2875,6 +2875,43 @@
         "test_observed_upload_identity_survives_changed_cache_ownership_without_mount",
         "test_explicit_null_effect_ledger_refuses_before_native_effect"
       ]
+    },
+    {
+      "sites": [
+        {
+          "path": "src/tank/contracts/jobs.py",
+          "symbol": "JobMetadata",
+          "line": 13
+        }
+      ],
+      "kind": "unreported historical admission-wait metadata",
+      "reason": "The real AdmissionDeferred writer emits canonical slot_waiting_since precision/reason/bucket-anchor facets. These fields are optional only because retained scalar-only/all-null-facet rows genuinely did not report precision. Any non-null facet uses Timestamp coherence validation; otherwise a present scalar must be an aware timestamp. Absence does not gain a precision/reason. Unknown fields remain forbidden.",
+      "validation": [
+        "test_real_admission_defer_then_wake_preserves_typed_queue_contract",
+        "test_scalar_or_null_wait_metadata_roundtrips_without_invented_precision",
+        "test_incoherent_wait_clock_rejects_before_any_queue_write"
+      ]
+    },
+    {
+      "sites": [
+        {
+          "path": "src/tank/runtime.py",
+          "symbol": "Runtime.eval_conditions_wire",
+          "line": 206
+        },
+        {
+          "path": "src/tank/runtime_evaluation.py",
+          "symbol": "evaluate_condition_job",
+          "line": 17
+        }
+      ],
+      "kind": "queue wire boundary",
+      "reason": "The input dictionary is the actual persisted queue payload, admitted once as EvalConditionsJob. The output dictionary is only the ops.jobs.result JSON representation of a revalidated ConditionEvaluationResult. Nullable cutoff metadata preserves actual provenance; no clock/default is inferred.",
+      "validation": [
+        "test_actual_tick_queue_worker_preserves_cutoff_and_stores_real_evaluation_result",
+        "test_worker_refuses_missing_or_invalid_cutoff_without_calling_evaluator_or_guessing_clock",
+        "test_constructed_invalid_receipt_cannot_cross_result_boundary"
+      ]
     }
   ]
 }
