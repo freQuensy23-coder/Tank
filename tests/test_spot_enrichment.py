@@ -192,3 +192,54 @@ def test_pairwise_phase_retains_exact_named_windows_and_primary_role() -> None:
         ConditionSpotCohortGraph.model_validate(
             phase.model_copy(update={"durations_s": {**phase.durations_s, "W1H": 7200.0}})
         )
+
+
+def test_requested_spot_retains_actual_coverage_clock_and_computed_enrichment() -> None:
+    from tank.analysis.condition_graph_codec import encode_requested_condition_spot
+    from tank.analysis.spot_enrichment import ConditionRequestedSpotView
+
+    source = windowed_spot_graph()
+    enriched = cohort_phase().spots["W1H"]
+    lookup = EvidenceLookup(projection())
+    view = ConditionRequestedSpotView(requested=source, state=enriched)
+    wire = encode_requested_condition_spot(view, lookup, clocks=condition_wire_clocks())
+    consistency = wire["cohort_consistent"]
+    assert isinstance(consistency, dict)
+    assert consistency["W4H"] is True
+    assert wire["observed_at"] == "2026-10-17T12:00:00Z"
+    assert wire["observed_at_prec"] == "BUCKET(60s)"
+    assert wire["observed_at_bucket_anchor"] == "END"
+    assert wire["enrichment_phase"] == "COHORT_COMPARISONS"
+    assert lookup.calls == 0
+
+
+def test_requested_spot_does_not_fill_unknown_coverage_precision_from_interval_math() -> None:
+    from tank.analysis.condition_graph_codec import encode_requested_condition_spot
+    from tank.analysis.spot_enrichment import ConditionRequestedSpotView
+    from tank.time_precision import Timestamp
+
+    source = windowed_spot_graph()
+    observed = Timestamp(value=source.coverage_through.value, precision=None, precision_reason="NOT_CAPTURED")
+    source = WindowedConditionSpot.model_validate(source.model_copy(update={"coverage_through": observed}))
+    wire = encode_requested_condition_spot(
+        ConditionRequestedSpotView(requested=source, state=None),
+        EvidenceLookup(projection()),
+        clocks=condition_wire_clocks(),
+    )
+    assert wire["observed_at_prec"] is None
+    assert wire["observed_at_prec_reason"] == "NOT_CAPTURED"
+    with pytest.raises(ValidationError, match="same actual subject/window/source clock"):
+        ConditionRequestedSpotView(requested=source, state=cohort_phase().spots["W1H"])
+
+
+def test_requested_spot_refuses_another_window_or_changed_coverage_before_lookup() -> None:
+    from tank.analysis.spot_enrichment import ConditionRequestedSpotView
+
+    source = windowed_spot_graph()
+    with pytest.raises(ValidationError, match="same actual subject/window/source clock"):
+        ConditionRequestedSpotView(requested=source, state=cohort_phase().spots["W4H"])
+    state = cohort_phase().spots["W1H"]
+    coverage = state.coverage.model_copy(update={"covered_share_est": 0.75})
+    state = type(state).model_validate(state.model_copy(update={"coverage": coverage}))
+    with pytest.raises(ValidationError, match="selected spot financial or coverage facts"):
+        ConditionRequestedSpotView(requested=source, state=state)

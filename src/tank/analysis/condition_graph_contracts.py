@@ -475,6 +475,9 @@ class ConditionDepthNode(ConditionDepthValues):
         venues = [value.venue for value in self.observations]
         if len(venues) != len(set(venues)):
             raise ValueError("A depth cache node cannot repeat a venue observation")
+        instruments = [value.instrument_id for value in self.observations]
+        if len(instruments) != len(set(instruments)):
+            raise ValueError("A depth cache node cannot assign one instrument to multiple venues")
         for observation in self.observations:
             stamp = observation.observed_at.value
             if stamp is None:
@@ -1643,10 +1646,103 @@ class ConditionDerivativeVenue(DomainModel):
         return self
 
 
+class ConditionOISynchronizationContribution(DomainModel):
+    instrument_id: str = Field(min_length=1, pattern=r"\S")
+    venue: str = Field(min_length=1, pattern=r"\S")
+    observed_at: Timestamp
+    oi_native: Decimal = Field(ge=0)
+    oi_usd: Decimal | None = Field(ge=0)
+
+    @model_validator(mode="after")
+    def actual_source_clock(self) -> Self:
+        if self.observed_at.value is None:
+            raise ValueError("A synchronized OI contribution requires its actual source clock")
+        return self
+
+
+class ConditionOISynchronizationEndpoint(DomainModel):
+    at: Timestamp
+    contributions: tuple[ConditionOISynchronizationContribution, ...] = Field(min_length=1)
+
+    @model_validator(mode="after")
+    def actual_grid_and_sources(self) -> Self:
+        if self.at.value is None:
+            raise ValueError("A synchronized OI endpoint requires its actual grid clock")
+        identities = [value.instrument_id for value in self.contributions]
+        if len(identities) != len(set(identities)):
+            raise ValueError("A synchronized OI endpoint cannot repeat an instrument contribution")
+        return self
+
+    def native_total(self) -> Decimal:
+        return sum_condition_native(value.oi_native for value in self.contributions)
+
+    def usd_total(self) -> Decimal | None:
+        values: list[Decimal] = []
+        for contribution in self.contributions:
+            if contribution.oi_usd is None:
+                return None
+            values.append(contribution.oi_usd)
+        return sum_condition_native(values)
+
+
+class ConditionOISynchronization(DomainModel):
+    aggregation_class: str = Field(min_length=1, pattern=r"\S")
+    tolerance_s: float = Field(ge=0)
+    start: ConditionOISynchronizationEndpoint
+    end: ConditionOISynchronizationEndpoint
+
+    @model_validator(mode="after")
+    def actual_matching_contributions(self) -> Self:
+        start = {value.instrument_id: value for value in self.start.contributions}
+        end = {value.instrument_id: value for value in self.end.contributions}
+        if set(start) != set(end):
+            raise ValueError("Synchronized OI endpoints must retain the same actual instrument cohort")
+        for endpoint in (self.start, self.end):
+            if endpoint.at.value is None:
+                raise ValueError("Synchronized OI requires its actual grid clocks")
+            grid = parse_iso_time(endpoint.at.value)
+            for contribution in endpoint.contributions:
+                stamp = contribution.observed_at.value
+                if stamp is None or abs((parse_iso_time(stamp) - grid).total_seconds()) > self.tolerance_s:
+                    raise ValueError(
+                        "Synchronized OI source clocks must satisfy the actual declared tolerance"
+                    )
+        for identity, initial in start.items():
+            final = end[identity]
+            if initial.venue != final.venue:
+                raise ValueError("Synchronized OI cannot relabel an instrument's venue between endpoints")
+            if initial.observed_at.value is None or final.observed_at.value is None:
+                raise ValueError("Synchronized OI requires actual contribution clocks")
+            if parse_iso_time(initial.observed_at.value) > parse_iso_time(final.observed_at.value):
+                raise ValueError("Synchronized OI source endpoints cannot run backwards")
+        return self
+
+
 class ConditionSynchronizedOpenInterest(DomainModel):
     status: Literal["OBSERVED"]
     venues: tuple[Annotated[str, Field(min_length=1, pattern=r"\S")], ...] = Field(min_length=1)
     values: ObservedConditionOpenInterest
+    synchronization: ConditionOISynchronization
+
+    @model_validator(mode="after")
+    def actual_distinct_cohort(self) -> Self:
+        if len(self.venues) != len(set(self.venues)):
+            raise ValueError("Observed synchronized OI requires distinct actual cohort venues")
+        witness = self.synchronization
+        if set(self.venues) != {value.venue for value in witness.end.contributions}:
+            raise ValueError("Synchronized OI venue summary must preserve actual instrument contributions")
+        for endpoint, stamp, native, usd in (
+            (
+                witness.start,
+                self.values.start_observed_at,
+                self.values.oi_native_start,
+                self.values.oi_usd_start,
+            ),
+            (witness.end, self.values.end_observed_at, self.values.oi_native_end, self.values.oi_usd_end),
+        ):
+            if endpoint.at != stamp or endpoint.native_total() != native or endpoint.usd_total() != usd:
+                raise ValueError("Synchronized OI totals and grid clocks must preserve actual contributions")
+        return self
 
 
 class UnavailableConditionSynchronizedOpenInterest(DomainModel):
@@ -1828,6 +1924,19 @@ class ConditionDerivativeWindow[Venue: ConditionDerivativeVenue](DomainModel):
                 )
         if isinstance(self.synchronized, ConditionSynchronizedOpenInterest):
             self.validate_oi_window(self.synchronized.values)
+            source_venues = {value.instrument_id: value.venue for value in self.per_venue}
+            for endpoint in (self.synchronized.synchronization.start, self.synchronized.synchronization.end):
+                for contribution in endpoint.contributions:
+                    if (
+                        contribution.instrument_id not in source_venues
+                        or source_venues[contribution.instrument_id] != contribution.venue
+                    ):
+                        raise ValueError("Synchronized OI cannot borrow an absent derivative instrument")
+                    if (
+                        contribution.observed_at.value is None
+                        or parse_iso_time(contribution.observed_at.value) > self.interval.cutoff
+                    ):
+                        raise ValueError("Synchronized OI contributions cannot occur after the actual cutoff")
         if isinstance(self.liquidations, ConditionAggregateLiquidations):
             for coverage, totals in (
                 ("COMPLETE", self.liquidations.complete_venues_total),
@@ -3606,7 +3715,101 @@ class UnavailableConditionLiquidityState(DomainModel):
     reason: ConditionPredicateUnavailableReason
 
 
+class ConditionSpreadSample(DomainModel):
+    observed_at: Timestamp
+    spread_bps: float = Field(ge=0)
+
+    @model_validator(mode="after")
+    def actual_sample_clock(self) -> Self:
+        if self.observed_at.value is None:
+            raise ValueError("A measured spread requires its actual source observation clock")
+        return self
+
+
+class ConditionVenueSpreadSamples(DomainModel):
+    venue: str = Field(min_length=1, pattern=r"\S")
+    instrument_id: str = Field(min_length=1, pattern=r"\S")
+    samples: tuple[ConditionSpreadSample, ...] = Field(min_length=1)
+
+    @model_validator(mode="after")
+    def distinct_sample_clocks(self) -> Self:
+        clocks = tuple(sample.observed_at.value for sample in self.samples)
+        if len(clocks) != len(set(clocks)):
+            raise ValueError("Spread samples cannot duplicate an actual venue observation")
+        return self
+
+    def mean_bps(self) -> Decimal:
+        value = type(self).model_validate(self)
+        with localcontext() as context:
+            context.prec = 128
+            return sum((Decimal(str(sample.spread_bps)) for sample in value.samples), Decimal(0)) / len(
+                value.samples
+            )
+
+
+class ConditionSpreadRatio(DomainModel):
+    value: float | None = Field(ge=0)
+    reason: Literal["INCOMPLETE", "NO_EVENT_ANCHOR", "ZERO_BASELINE", "NOT_ESTIMABLE"] | None
+
+    @model_validator(mode="after")
+    def actual_absence(self) -> Self:
+        if (self.value is None) != (self.reason is not None):
+            raise ValueError("Missing spread ratio requires its actual comparison gap")
+        return self
+
+
+class ConditionLiquiditySpreadComparison(DomainModel):
+    current: tuple[ConditionVenueSpreadSamples, ...]
+    prior: tuple[ConditionVenueSpreadSamples, ...]
+    prior_window: ConditionPreDepthWindow | None
+    prior_window_reason: Literal["NO_EVENT_ANCHOR"] | None
+
+    @model_validator(mode="after")
+    def actual_selected_samples(self) -> Self:
+        if (self.prior_window is None) != (self.prior_window_reason is not None):
+            raise ValueError("A missing pre-spread window requires its actual absent event anchor")
+        if self.prior_window is None and self.prior:
+            raise ValueError("A missing pre-spread window cannot retain invented samples")
+        for groups in (self.current, self.prior):
+            if len({group.venue for group in groups}) != len(groups):
+                raise ValueError("Spread comparison cannot duplicate a contributing venue")
+        if any(len(group.samples) != 1 for group in self.current):
+            raise ValueError("Current spread comparison uses the actual latest selected book per venue")
+        if self.prior_window is not None:
+            for group in self.prior:
+                for sample in group.samples:
+                    if (
+                        sample.observed_at.value is None
+                        or not self.prior_window.start
+                        <= parse_iso_time(sample.observed_at.value)
+                        < self.prior_window.cutoff
+                    ):
+                        raise ValueError(
+                            "Prior spread samples must preserve their actual selected baseline window"
+                        )
+        return self
+
+    def ratio(self) -> ConditionSpreadRatio:
+        value = type(self).model_validate(self)
+        if value.prior_window is None:
+            return ConditionSpreadRatio(value=None, reason="NO_EVENT_ANCHOR")
+        if not value.current or not value.prior:
+            return ConditionSpreadRatio(value=None, reason="INCOMPLETE")
+        with localcontext() as context:
+            context.prec = 128
+            current = sum((group.mean_bps() for group in value.current), Decimal(0)) / len(value.current)
+            prior = sum((group.mean_bps() for group in value.prior), Decimal(0)) / len(value.prior)
+            if prior == 0:
+                return ConditionSpreadRatio(value=None, reason="ZERO_BASELINE")
+            ratio = float(current / prior)
+        if not isfinite(ratio) or ratio == 0 and current != 0:
+            return ConditionSpreadRatio(value=None, reason="NOT_ESTIMABLE")
+        return ConditionSpreadRatio(value=ratio, reason=None)
+
+
 class ConditionLiquidityValues(DomainModel):
+    token_id: str = Field(min_length=1, pattern=r"\S")
+    spread: ConditionLiquiditySpreadComparison
     interval: ConditionInterval
     measurement_band_percent: float = Field(gt=0)
     per_venue: tuple[ConditionLiquidityVenue, ...]
@@ -3619,15 +3822,35 @@ class ConditionLiquidityValues(DomainModel):
     def actual_book_and_policy_scope(self) -> Self:
         if self.measurement_band_percent not in (0.5, 1.0, 2.0):
             raise ValueError("Liquidity depth requires an actually supported measurement band")
-        venues = tuple(venue.venue for venue in self.per_venue)
-        if len(venues) != len(set(venues)):
-            raise ValueError("A liquidity window cannot duplicate its selected book venue")
         for venue in self.per_venue:
             if (
                 venue.observed_at.value is None
                 or parse_iso_time(venue.observed_at.value) > self.interval.cutoff
             ):
                 raise ValueError("A liquidity window cannot borrow a future or unclocked book")
+        books = {venue.venue: venue for venue in self.per_venue}
+        current_spreads = {group.venue: group for group in self.spread.current}
+        if set(current_spreads) != {venue.venue for venue in self.per_venue if venue.spread_bps is not None}:
+            raise ValueError(
+                "Current spread samples must preserve exactly the actual selected books with known spread"
+            )
+        for group in (*self.spread.current, *self.spread.prior):
+            if group.venue not in books or group.instrument_id != books[group.venue].instrument_id:
+                raise ValueError("Spread comparison cannot borrow another selected book instrument")
+        for name, group in current_spreads.items():
+            sample = group.samples[0]
+            book = books[name]
+            if (sample.observed_at, sample.spread_bps) != (book.observed_at, book.spread_bps):
+                raise ValueError("Current spread must retain the actual selected book clock and value")
+        if isinstance(self.previous_depth, UnavailableConditionPreDepth):
+            if self.spread.prior_window is not None:
+                raise ValueError("A missing pre-depth anchor cannot invent a pre-spread window")
+        elif self.spread.prior_window != self.previous_depth.window:
+            raise ValueError("Pre-spread selection must retain the actual pre-depth baseline window")
+        venues = tuple(venue.venue for venue in self.per_venue)
+        if len(venues) != len(set(venues)):
+            raise ValueError("A liquidity window cannot duplicate its selected book venue")
+        for venue in self.per_venue:
             valuation_at = venue.quote_valuation.as_of
             if valuation_at is not None and valuation_at > self.interval.cutoff:
                 raise ValueError("A liquidity window cannot borrow future quote conversion evidence")
@@ -5184,7 +5407,6 @@ class ConditionSplitExecution(DomainModel):
 
 class EnrichedConditionLiquidity(ConditionLiquidityValues):
     kind: Literal["ENRICHED"]
-    token_id: str = Field(min_length=1, pattern=r"\S")
     assembled_at: Timestamp
     fragmentation: ConditionFragmentationGraph
     vol_compression: ConditionVolatilityCompression
@@ -6857,12 +7079,15 @@ type ConditionProofFreshness = (
 
 
 class ConditionOpenInterestCoverage(DomainModel):
+    instruments: tuple[Annotated[str, Field(min_length=1, pattern=r"\S")], ...]
     venues: tuple[Annotated[str, Field(min_length=1, pattern=r"\S")], ...]
 
     @model_validator(mode="after")
     def distinct_actual_cohort(self) -> Self:
         if len(self.venues) != len(set(self.venues)):
             raise ValueError("OI proof coverage must preserve distinct actual synchronized venues")
+        if len(self.instruments) != len(set(self.instruments)):
+            raise ValueError("OI proof coverage must preserve distinct actual synchronized instruments")
         return self
 
 
@@ -6884,6 +7109,39 @@ def condition_metric_domain(metric: ConditionMetric) -> ConditionCacheDomain:
             return "depth"
         case "mt.move_class" | "mt.divergence_state":
             return "state"
+
+
+def _condition_derivative_metric_available(
+    derivatives: BasicConditionDerivatives, metric: ConditionMetric
+) -> bool:
+    domain = condition_metric_domain(metric)
+    if domain == "funding":
+        return bool(derivatives.per_venue) and all(
+            isinstance(venue.funding, AvailableConditionFunding)
+            and venue.funding.funding_vs_normal is not None
+            for venue in derivatives.per_venue
+        )
+    if domain != "oi":
+        raise ValueError("Derivative availability requires an actual OI or funding metric")
+    synchronized = derivatives.synchronized
+    if not isinstance(synchronized, ConditionSynchronizedOpenInterest):
+        return False
+    match metric:
+        case "deriv.native_oi_chg_pct":
+            return True
+        case "deriv.native_oi_vs_normal":
+            return synchronized.values.native_oi_vs_normal is not None
+        case "deriv.oi_class":
+            return synchronized.values.oi_class is not None
+    raise ValueError("OI availability requires an actual OI condition metric")
+
+
+def _condition_proof_freshness_passes(value: ConditionProofFreshness) -> bool:
+    return (
+        isinstance(value, UnappliedConditionProofFreshness)
+        or isinstance(value, AssessedConditionProofFreshness)
+        and value.passes()
+    )
 
 
 class ConditionEvaluationProof(DomainModel):
@@ -6962,7 +7220,7 @@ class SelectiveConditionValues(DomainModel):
     cutoff: Timestamp
     assembled_at: Timestamp
     requested: tuple[ConditionRequirement, ...]
-    spot: dict[ConditionWindow, BasicConditionSpot]
+    spot: dict[ConditionWindow, WindowedConditionSpot]
     derivatives: dict[ConditionWindow, BasicConditionDerivatives]
     close: ConditionClose | UncomputedConditionFacet
     confidence: SelectiveConditionConfidence | UncomputedConditionFacet
@@ -7022,15 +7280,62 @@ class SelectiveConditionValues(DomainModel):
                 if (
                     not isinstance(proof.coverage, ConditionOpenInterestCoverage)
                     or proof.coverage.venues != expected_venues
+                    or proof.coverage.instruments
+                    != (
+                        tuple(value.instrument_id for value in synchronized.synchronization.end.contributions)
+                        if isinstance(synchronized, ConditionSynchronizedOpenInterest)
+                        else ()
+                    )
                 ):
                     raise ValueError("OI proof coverage cannot differ from its actual selected cohort")
-            if proof.available != self._metric_available(proof.requirement):
-                raise ValueError("Proof availability must preserve its actual selected financial facts")
+            fresh = isinstance(proof.freshness, UnappliedConditionProofFreshness) or (
+                isinstance(proof.freshness, AssessedConditionProofFreshness) and proof.freshness.passes()
+            )
+            if (
+                proof.cache_key.domain == "depth"
+                and isinstance(self.depth, ConditionDepthNode)
+                and isinstance(proof.freshness, AssessedConditionProofFreshness)
+            ):
+                selected_books = {
+                    (value.instrument_id, value.metric_key): value for value in self.depth.observations
+                }
+                observed_books = [
+                    value
+                    for value in proof.freshness.observations
+                    if not isinstance(value, MissingConditionProofObservation)
+                ]
+                observed_keys = [(value.instrument_id, value.metric_key) for value in observed_books]
+                if len(observed_keys) != len(set(observed_keys)) or set(observed_keys) != set(selected_books):
+                    raise ValueError("Depth freshness must bind the actual selected book cohort")
+                for observation in observed_books:
+                    if observation.instrument_id is None:
+                        raise ValueError("Depth freshness requires the actual selected instrument")
+                    selected_book = selected_books[(observation.instrument_id, observation.metric_key)]
+                    if observation.observed_at != selected_book.observed_at or (
+                        isinstance(observation, ConditionDepthObservation)
+                        and observation.venue != selected_book.venue
+                    ):
+                        raise ValueError("Depth freshness cannot borrow another book's source clock or venue")
+            if proof.available != (self._metric_available(proof.requirement) and fresh):
+                raise ValueError(
+                    "Proof availability must preserve actual financial facts and the applicable freshness gate"
+                )
             if proof.cache_key.token_id != self.token_id or proof.cache_key.cutoff != end:
                 raise ValueError("A selected result cannot borrow another subject or cutoff proof")
             if (proof.available and proof.reason is None) != (proof.requirement not in unavailable):
                 raise ValueError("Unavailable facts must preserve their actual proof result")
         for window, spot in self.spot.items():
+            if (
+                spot.interval.window != window
+                or spot.interval.cutoff != end
+                or any(
+                    proof.cache_key.requested_duration_s
+                    != (spot.interval.cutoff - spot.interval.start).total_seconds()
+                    for proof in self.proofs
+                    if proof.cache_key.domain == "spot" and proof.requirement.window == window
+                )
+            ):
+                raise ValueError("Selected spot facts require their actual interval and proof duration")
             if spot.token_id != self.token_id or not any(
                 value.window == window and condition_metric_domain(value.metric) == "spot"
                 for value in self.requested
@@ -7118,25 +7423,7 @@ class SelectiveConditionValues(DomainModel):
         if domain == "spot":
             return self.spot[window].direction is not None
         if domain in {"oi", "funding"}:
-            derivatives = self.derivatives[window]
-            if domain == "funding":
-                return bool(derivatives.per_venue) and all(
-                    isinstance(venue.funding, AvailableConditionFunding)
-                    and venue.funding.funding_vs_normal is not None
-                    for venue in derivatives.per_venue
-                )
-            synchronized = derivatives.synchronized
-            if not isinstance(synchronized, ConditionSynchronizedOpenInterest):
-                return False
-            values = synchronized.values
-            match metric:
-                case "deriv.native_oi_chg_pct":
-                    return True
-                case "deriv.native_oi_vs_normal":
-                    return values.native_oi_vs_normal is not None
-                case "deriv.oi_class":
-                    return values.oi_class is not None
-            raise ValueError("OI availability requires an actual OI condition metric")
+            return _condition_derivative_metric_available(self.derivatives[window], metric)
         if domain == "close":
             return isinstance(self.close, ObservedConditionClose)
         if domain == "dc":
@@ -7157,6 +7444,238 @@ class SelectiveConditionValues(DomainModel):
             isinstance(self.relative.repricing.band(), ObservedConditionRepricingBand)
             if metric == "price.repricing_band"
             else self.relative.windows["EVENT"].raw.value is not None
+        )
+
+
+type ConditionDerivativeDomain = Literal["oi", "funding"]
+
+
+def _condition_observed_derivative_consistency(
+    state: EnrichedConditionDerivativeVenue, requested: ConditionDerivativeVenue
+) -> None:
+    if (state.venue, state.instrument_id) != (requested.venue, requested.instrument_id):
+        raise ValueError("A requested derivative cannot borrow another venue or instrument")
+    old, current = state.open_interest, requested.open_interest
+    if (
+        isinstance(old, ObservedConditionOpenInterest)
+        and isinstance(current, ObservedConditionOpenInterest)
+        and (
+            old.oi_native_start,
+            old.oi_native_end,
+            old.start_observed_at,
+            old.end_observed_at,
+            old.requested_window_duration_s,
+            old.observed_window_duration_s,
+        )
+        != (
+            current.oi_native_start,
+            current.oi_native_end,
+            current.start_observed_at,
+            current.end_observed_at,
+            current.requested_window_duration_s,
+            current.observed_window_duration_s,
+        )
+    ):
+        raise ValueError("Shared observed native OI requires the same actual quantities and endpoint clocks")
+    old_funding, new_funding = state.funding, requested.funding
+    if isinstance(old_funding, UnrequestedConditionFunding) or isinstance(
+        new_funding, UnrequestedConditionFunding
+    ):
+        return
+    for old_point, point in (
+        (old_funding.settled, new_funding.settled),
+        (old_funding.estimate, new_funding.estimate),
+        (old_funding.start, new_funding.start),
+    ):
+        if old_point is not None and point is not None:
+            if (old_point.kind, old_point.rate, old_point.observed_at) != (
+                point.kind,
+                point.rate,
+                point.observed_at,
+            ):
+                raise ValueError(
+                    "Shared funding observations require their actual kind, rate and source clock"
+                )
+            if (
+                old_point.interval_h is not None
+                and point.interval_h is not None
+                and old_point.interval_h != point.interval_h
+            ):
+                raise ValueError("A funding observation cannot change its declared settlement duration")
+
+
+class ConditionRequestedDerivativeView(DomainModel):
+    requested: BasicConditionDerivatives
+    state: EnrichedConditionDerivatives | None
+    proofs: tuple[ConditionEvaluationProof, ...] = Field(min_length=1)
+
+    def proofs_for(self, domain: ConditionDerivativeDomain) -> tuple[ConditionEvaluationProof, ...]:
+        return tuple(proof for proof in self.proofs if proof.cache_key.domain == domain)
+
+    def requested_domain(self, domain: ConditionDerivativeDomain) -> bool:
+        return bool(self.proofs_for(domain))
+
+    def freshness_passes(self, domain: ConditionDerivativeDomain) -> bool:
+        proofs = self.proofs_for(domain)
+        if not proofs:
+            raise ValueError("Freshness is defined only for an actually requested derivative domain")
+        return all(
+            isinstance(proof.freshness, AssessedConditionProofFreshness) and proof.freshness.passes()
+            for proof in proofs
+        )
+
+    @model_validator(mode="after")
+    def exact_requested_scope(self) -> Self:
+        source = self.requested
+        identities = {venue.instrument_id: venue for venue in source.per_venue}
+        if self.requested_domain("oi") and (
+            isinstance(source.synchronized, UnrequestedConditionSynchronizedOpenInterest)
+            or any(
+                isinstance(venue.open_interest, UnrequestedConditionOpenInterest)
+                for venue in source.per_venue
+            )
+        ):
+            raise ValueError("A selected OI view cannot contain an unrequested calculation")
+        if self.requested_domain("funding") and any(
+            isinstance(venue.funding, UnrequestedConditionFunding) for venue in source.per_venue
+        ):
+            raise ValueError("A selected funding view cannot contain an unrequested calculation")
+        seen: set[ConditionRequirement] = set()
+        for proof in self.proofs:
+            if proof.requirement in seen:
+                raise ValueError("A derivative view cannot duplicate its actual requested proof")
+            seen.add(proof.requirement)
+            key = proof.cache_key
+            if key.domain not in {"oi", "funding"} or (
+                key.token_id,
+                key.window,
+                key.cutoff,
+                key.requested_duration_s,
+            ) != (
+                source.token_id,
+                source.interval.window,
+                source.interval.cutoff,
+                (source.interval.cutoff - source.interval.start).total_seconds(),
+            ):
+                raise ValueError("A derivative view requires actual subject, window and cutoff proof scope")
+            if proof.assembled_at != self.proofs[0].assembled_at:
+                raise ValueError("A derivative view cannot mix fresh evaluation contexts")
+            if key.domain == "oi":
+                expected_cohort = (
+                    source.synchronized.venues
+                    if isinstance(source.synchronized, ConditionSynchronizedOpenInterest)
+                    else ()
+                )
+                if (
+                    not isinstance(proof.coverage, ConditionOpenInterestCoverage)
+                    or proof.coverage.venues != expected_cohort
+                    or proof.coverage.instruments
+                    != (
+                        tuple(
+                            value.instrument_id
+                            for value in source.synchronized.synchronization.end.contributions
+                        )
+                        if isinstance(source.synchronized, ConditionSynchronizedOpenInterest)
+                        else ()
+                    )
+                ):
+                    raise ValueError("Requested OI proof must preserve its actual synchronized cohort")
+            if proof.available != (
+                _condition_derivative_metric_available(source, proof.requirement.metric)
+                and _condition_proof_freshness_passes(proof.freshness)
+            ):
+                raise ValueError(
+                    "Requested derivative availability requires its actual financial facts and fresh gate"
+                )
+            if isinstance(proof.freshness, AssessedConditionProofFreshness):
+                observations = proof.freshness.observations
+                observation_ids = tuple(observation.instrument_id for observation in observations)
+                if len(set(observation_ids)) != len(observation_ids) or None in observation_ids:
+                    raise ValueError("Derivative freshness requires distinct actual instruments")
+                expected_ids = set(identities)
+                if key.domain == "oi":
+                    expected_ids = (
+                        {
+                            value.instrument_id
+                            for value in source.synchronized.synchronization.end.contributions
+                        }
+                        if isinstance(source.synchronized, ConditionSynchronizedOpenInterest)
+                        else set()
+                    )
+                if set(observation_ids) != expected_ids:
+                    raise ValueError(
+                        "Freshness observations must match the actual selected derivative cohort"
+                    )
+                for observation in observations:
+                    if isinstance(observation, MissingConditionProofObservation):
+                        continue
+                    identity = observation.instrument_id
+                    if identity is None:
+                        raise ValueError("Derivative freshness requires its actual instrument")
+                    venue = identities[identity]
+                    stamp: Timestamp | None = None
+                    if key.domain == "oi" and isinstance(
+                        source.synchronized, ConditionSynchronizedOpenInterest
+                    ):
+                        contributions = {
+                            value.instrument_id: value
+                            for value in source.synchronized.synchronization.end.contributions
+                        }
+                        stamp = contributions[identity].observed_at
+                    if key.domain == "funding" and isinstance(venue.funding, AvailableConditionFunding):
+                        point = (
+                            venue.funding.estimate
+                            if venue.funding.selected_kind == "CURRENT_ESTIMATE"
+                            else venue.funding.settled
+                        )
+                        if point is None:
+                            raise ValueError("Selected funding requires its actual source observation")
+                        stamp = point.observed_at
+                    if stamp is not None and observation.observed_at != stamp:
+                        raise ValueError(
+                            "Derivative freshness cannot borrow another financial observation clock"
+                        )
+        for domain in ("oi", "funding"):
+            domain_proofs = tuple(proof for proof in self.proofs if proof.cache_key.domain == domain)
+            if domain_proofs and any(
+                proof.cache_key != domain_proofs[0].cache_key or proof.freshness != domain_proofs[0].freshness
+                for proof in domain_proofs
+            ):
+                raise ValueError(
+                    "One requested derivative domain must retain its actual common input and freshness context"
+                )
+        if self.state is not None:
+            if (self.state.token_id, self.state.interval) != (source.token_id, source.interval):
+                raise ValueError(
+                    "Requested and state derivative views cannot coerce different subject or interval scopes"
+                )
+            state_venues = {venue.instrument_id: venue for venue in self.state.per_venue}
+            if set(state_venues) != set(identities):
+                raise ValueError(
+                    "Same-window requested and state derivatives require the same actual instrument universe"
+                )
+            for identity, venue in identities.items():
+                _condition_observed_derivative_consistency(state_venues[identity], venue)
+        return self
+
+    @classmethod
+    def from_selection(cls, value: SelectiveConditionValues, window: ConditionWindow) -> Self:
+        selected = SelectiveConditionValues.model_validate(value)
+        source = selected.derivatives[window]
+        state = (
+            selected.state.derivatives
+            if isinstance(selected.state, FullConditionMarketState)
+            and selected.state.primary_window == window
+            else None
+        )
+        return cls(
+            requested=source,
+            state=state,
+            proofs=tuple(
+                proof
+                for proof in selected.proofs
+                if proof.requirement.window == window and proof.cache_key.domain in {"oi", "funding"}
+            ),
         )
 
 

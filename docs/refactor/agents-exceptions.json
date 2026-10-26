@@ -2488,6 +2488,113 @@
         "test_text_of_a_failed_attempt_is_never_the_answer",
         "test_send_telegram_file_replies_with_the_session_output_once"
       ]
+    },
+    {
+      "sites": [
+        {
+          "path": "src/tank/agents/input_ownership.py",
+          "symbol": "NativeOwnershipSnapshot.from_record"
+        },
+        {
+          "path": "src/tank/agents/sessions.py",
+          "symbol": "SessionService.native_input_owner"
+        }
+      ],
+      "kind": "actual journal absence and explicit answer-query ownership scope",
+      "reason": "lineages=None preserves a truly unretained journal, distinct from an observed empty tuple. message_ids=None requests the full journal; a declared selection preserves every other actual message identity in unselected_message_ids without validating unused historical retry/input facts. Native callback processing still constructs a full snapshot and does not exclude malformed global state. The answer query skips tool lineage only when its retained message identity is actually outside that declared selection; no owner, attempt or input is reconstructed. IDs and duplicate journal ownership remain validated.",
+      "validation": [
+        "test_absent_journal_is_unknown_and_cannot_manufacture_an_answer_or_history_request",
+        "test_failed_question_with_opaque_history_does_not_block_a_fresh_owned_answer",
+        "test_contradictory_lineage_is_not_relabelled_as_a_handled_host_refusal"
+      ]
+    },
+    {
+      "sites": [
+        {
+          "path": "src/tank/agents/answer_settlement.py",
+          "symbol": "QuestionSettlementSession.from_record"
+        },
+        {
+          "path": "src/tank/agents/answer_settlement.py",
+          "symbol": "QuestionSettlement"
+        },
+        {
+          "path": "src/tank/agents/sessions.py",
+          "symbol": "SessionService.deliver_answers"
+        }
+      ],
+      "kind": "phase-specific question settlement with historical facts left unknown",
+      "reason": "The basic settlement projection requires actual session/message/question identities. Absent status or turn phase stays None and cannot claim completion; answer_recorded=None is an unreported marker, with the locked question writer authoritative for idempotence. A missing journal is None, not an invented empty journal. FAILED settlement never consumes prior input, body or retry count. A question payload may lack its historical session_id: the actual session storage key is validated and the target includes that session, which is rechecked against the stored question under its lock. A present conflicting payload session rejects. Missing/deleted sessions or question rows cause no false answer marker. A changed retry lineage cannot publish earlier text. Retained current dictionaries are the exact sparse persistence boundary; only answer_recorded is changed after a real writer receipt.",
+      "validation": [
+        "test_exhausted_retry_records_terminal_failure_without_consuming_historical_body",
+        "test_missing_question_does_not_mark_the_journal_answer_recorded",
+        "test_a_retry_during_history_read_cannot_publish_the_previous_attempt_text",
+        "test_actual_postgres_settlement_rechecks_question_session_before_answer_and_delivery",
+        "test_question_binding_changed_during_history_read_refuses_before_answer_effects"
+      ]
+    },
+    {
+      "sites": [
+        {
+          "path": "src/tank/agents/answer_settlement.py",
+          "symbol": "NativeAnswerQuery"
+        },
+        {
+          "path": "src/tank/agents/answer_settlement.py",
+          "symbol": "AnswerHistoryPage.from_wire"
+        },
+        {
+          "path": "src/tank/agents/answer_settlement.py",
+          "symbol": "answer_history_event"
+        },
+        {
+          "path": "src/tank/agents/sessions.py",
+          "symbol": "SessionService.turn_answers"
+        },
+        {
+          "path": "src/tank/contracts/native_events.py",
+          "symbol": "ManagedEventPage"
+        },
+        {
+          "path": "src/tank/contracts/native_events.py",
+          "symbol": "NodeEventPage"
+        }
+      ],
+      "kind": "actual managed descending-history wire boundary and declared traversal cutoff",
+      "reason": "Managed descending traversal requires data plus next_page from the pinned managed route/schema; it does not infer a Node descending cursor or accept missing paging declarations. None or an empty input cutoff means read through the terminal managed page, preserving the existing direct query contract; a nonempty actual input cutoff stops after those IDs are observed. next_page=None is the actual terminal fact; cursor 0 as a string remains valid, while cycles refuse. Provider maps are raw wire records projected into only consumed identity/running/message/idle fields; other provider metadata is neither fabricated nor rewritten. Optional running/idle execution IDs are source-backed protocol absence and remain uncorrelated. Text/redacted blocks follow the actual pinned schema, and idle stop reason is required. The page DTO definitions moved inward unchanged, with explicit adapter reexports.",
+      "validation": [
+        "test_managed_history_keeps_zero_cursor_and_stops_at_the_actual_requested_input",
+        "test_descending_managed_history_requires_its_actual_paging_contract",
+        "test_cycling_history_refuses_before_question_or_cursor_effects",
+        "test_repeated_native_event_identity_with_conflicting_text_cannot_settle_a_question",
+        "test_missing_requested_input_identity_refuses_before_native_history"
+      ]
+    },
+    {
+      "sites": [
+        {
+          "path": "src/tank/agents/answer_settlement.py",
+          "symbol": "NativeTurnAnswer"
+        },
+        {
+          "path": "src/tank/agents/answer_settlement.py",
+          "symbol": "collect_turn_answers"
+        },
+        {
+          "path": "src/tank/agents/answer_settlement.py",
+          "symbol": "HistoryMessage.text"
+        }
+      ],
+      "kind": "observed no-text completion and actual-ID answer indexes",
+      "reason": "text=None is an unreported textual answer, including an actual end_turn with no final text or only redacted blocks; file delivery remains a separate effect. UNSETTLED means no confirmed end_turn for the latest observed execution, not a fabricated native running state. Known attempt zero remains distinct from unknown; a higher retry discards earlier attempt text, while tool continuations of the same declared attempt may retain earlier actually observed text. A new running observation invalidates an older completion. The owners/texts/ended/events/answers maps are in-memory indexes keyed by actual execution, event or journal-message IDs with precise value models/scalars, not anonymous domain payloads.",
+      "validation": [
+        "test_completed_owned_turn_records_actual_text_or_explicit_absence_once",
+        "test_text_of_a_failed_attempt_is_never_the_answer",
+        "test_redacted_only_completed_turn_keeps_text_genuinely_unreported",
+        "test_uncorrelated_running_frame_cannot_inherit_another_inputs_text",
+        "test_new_running_observation_does_not_reuse_an_earlier_end_turn_as_completion",
+        "test_send_telegram_file_replies_with_the_session_output_once"
+      ]
     }
   ]
 }

@@ -118,3 +118,17 @@ def test_unknown_assembly_is_distinct_from_a_known_later_context() -> None:
     known = evaluate(inputs, domain="spot")
     assert unknown.projection.assembly_knowledge == "UNCAPTURED"
     assert unknown.projection.fingerprint() != known.projection.fingerprint()
+
+
+def test_equal_clock_facts_are_grouped_without_losing_any_source_membership() -> None:
+    inputs: dict[str, JsonValue] = {
+        "oi": [
+            {"received_ts": iso(AT), "received_ts_prec": "COLLECTION_ONLY", "oi_native": str(index)}
+            for index in range(100)
+        ]
+    }
+    result = evaluate(inputs, domain="oi")
+    (comparison,) = result.projection.comparisons
+    assert comparison.source_paths == tuple(f"oi[{index}]" for index in range(100))
+    assert comparison.relation == "AT_OR_BEFORE_ASSEMBLY"
+    assert comparison.source_clock == Timestamp(iso(AT), "COLLECTION_ONLY")

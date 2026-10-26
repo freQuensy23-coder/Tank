@@ -148,3 +148,60 @@ def test_dedicated_test_database_is_accepted() -> None:
             "TANK_E2E_DATABASE_URL": "host=172.30.60.2 dbname=tank_test_e2e user=postgres",
         }
     )
+
+
+@pytest.mark.parametrize("protected_file", [False, True])
+def test_credential_alias_is_refused_before_open(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, protected_file: bool
+) -> None:
+    target = tmp_path / "credentials"
+    target.mkdir()
+    secret = target / "auth.json"
+    secret.write_text("synthetic")
+    alias = tmp_path / "alias"
+    alias.symlink_to(target, target_is_directory=True)
+    monkeypatch.setattr(policy, "_PROTECTED_CREDENTIAL_FILES", {secret} if protected_file else set())
+    monkeypatch.setattr(policy, "_PROTECTED_CREDENTIAL_ROOTS", () if protected_file else (target,))
+
+    def forbidden_native(*args: object, **kwargs: object) -> None:
+        raise AssertionError("protected alias reached native open")
+
+    monkeypatch.setattr(policy, "_ORIGINAL_OPEN", forbidden_native)
+    monkeypatch.setattr(policy, "_ORIGINAL_IO_OPEN", forbidden_native)
+    with pytest.raises(policy.OfflineCredentialError):
+        policy._open(alias / "auth.json")
+    with pytest.raises(policy.OfflineCredentialError):
+        policy._io_open(alias / "auth.json")
+
+
+@pytest.mark.parametrize("protected_file", [False, True])
+def test_protected_ancestor_retarget_is_observed_on_each_read(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, protected_file: bool
+) -> None:
+    old = tmp_path / "old"
+    new = tmp_path / "new"
+    old.mkdir()
+    new.mkdir()
+    ancestor = tmp_path / "ancestor"
+    ancestor.symlink_to(old, target_is_directory=True)
+    protected = ancestor / "auth.json" if protected_file else ancestor
+    monkeypatch.setattr(policy, "_PROTECTED_CREDENTIAL_FILES", {protected} if protected_file else set())
+    monkeypatch.setattr(policy, "_PROTECTED_CREDENTIAL_ROOTS", () if protected_file else (protected,))
+    policy._check_credential_file(new / "auth.json", "r")
+    ancestor.unlink()
+    ancestor.symlink_to(new, target_is_directory=True)
+    with pytest.raises(policy.OfflineCredentialError):
+        policy._check_credential_file(new / "auth.json", "r")
+    policy._check_credential_file(old / "auth.json", "r")
+
+
+def test_late_created_protected_symlink_is_observed(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    target = tmp_path / "target"
+    target.mkdir()
+    protected = tmp_path / "not-yet-created"
+    monkeypatch.setattr(policy, "_PROTECTED_CREDENTIAL_FILES", set())
+    monkeypatch.setattr(policy, "_PROTECTED_CREDENTIAL_ROOTS", (protected,))
+    policy._check_credential_file(target / "auth.json", "r")
+    protected.symlink_to(target, target_is_directory=True)
+    with pytest.raises(policy.OfflineCredentialError):
+        policy._check_credential_file(target / "auth.json", "r")

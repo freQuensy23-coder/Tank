@@ -185,3 +185,11 @@ def test_dependency_map_preserves_evidence_gated_promotion() -> None:
     dependencies = Settings(config_dir=C, _env_file=None).dependencies()
     assert len(dependencies.edges) == 37
     assert all(edge.evidence_required_for_promotion for edge in dependencies.edges)
+
+
+def test_thresholds_roundtrip_current_operational_configuration() -> None:
+    settings = Settings(config_dir=C, _env_file=None)
+    configured = settings.load_config("thresholds")
+    validated = settings.thresholds()
+    assert "card_max_chars" not in configured
+    assert validated.model_dump(mode="json") == configured

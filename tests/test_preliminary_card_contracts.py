@@ -45,7 +45,7 @@ def test_low_certainty_preliminary_has_no_financial_projection() -> None:
         (),
         registry=fixture_registry_membership(),
         narrative=narrative,
-        policy=PublicationPolicy(card_max_chars=5000, update_rate_limit_s=900),
+        policy=PublicationPolicy(update_rate_limit_s=900),
     )
     text = compose_card(inputs)
     assert text.startswith("PRELIMINARY · MATERIAL")

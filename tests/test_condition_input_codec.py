@@ -437,3 +437,78 @@ def test_captured_spot_policy_retains_numeric_threshold_and_discrete_count(sigma
 def test_captured_spot_policy_refuses_absent_or_coerced_facts(values: dict[str, JsonInput]) -> None:
     with pytest.raises(ValidationError):
         SpotPolicyConfiguration.model_validate(values)
+
+
+@pytest.mark.parametrize("qualified", [False, True])
+def test_existing_minute_evidence_hashes_are_preserved_after_read_allocation_optimization(
+    qualified: bool,
+) -> None:
+    row = minute()
+    if qualified:
+        row.update(token_id="T", venue="VENUE", market_type="SPOT")
+    result = decoded([row])
+    (reference,) = result.source_evidence.references()
+    descriptor = result.source_evidence.descriptor(reference)
+    expected_original = (
+        "eb5d54ed53038def61246ccb55c7229c32169d754ffb08fa48b41a616c6f908f"
+        if qualified
+        else "584a33fa5bb1bf19e420f1cb6c12efff1a204208208366d522bd25431b6b6a9a"
+    )
+    expected_evidence = (
+        "7055042cc05ebe63d651e12f3c675207c09ce836ff795cb11ddd97065fea5d76"
+        if qualified
+        else "7ba2d5a085039b2cd0a1e9e5afda7842f19da7e23aa1ff8c87e5f2763098213f"
+    )
+    assert descriptor.original_projection_sha256 == expected_original
+    assert (
+        descriptor.effective_projection_sha256
+        == "eb5d54ed53038def61246ccb55c7229c32169d754ffb08fa48b41a616c6f908f"
+    )
+    assert (
+        descriptor.scope_projection_sha256
+        == "f2389edea67da8a4744c7550ce4b4a37a9dc863b6e59dee4e29337503b7e7d49"
+    )
+    assert reference.source_evidence_sha256 == expected_evidence
+    assert descriptor.parent_source_evidence_sha256 is None
+
+
+def test_existing_embedded_parent_and_child_hashes_remain_bound_to_original_read_evidence() -> None:
+    piece: dict[str, JsonInput] = {
+        "start": "2026-10-19T12:00:00Z",
+        "end": "2026-10-19T12:00:30Z",
+        "complete": True,
+        "buy_qty": "1",
+        "sell_qty": "0",
+        "sum_sq_qty": "1",
+        "n_buy": 1,
+        "n_sell": 0,
+        "captured_extra": {"source": "retained"},
+    }
+    result = decoded([with_boundary(piece)])
+    parent, child = result.source_evidence.references()
+    parent_descriptor = result.source_evidence.descriptor(parent)
+    child_descriptor = result.source_evidence.descriptor(child)
+    assert (
+        parent_descriptor.original_projection_sha256
+        == "6de118ae1c52ee9362e70b282a9eedd280b5b592ee1f92f9331e4f958944e4c8"
+    )
+    assert (
+        parent_descriptor.effective_projection_sha256
+        == "76ade1fbe90f787e0428e45818527e71018deb368490177c7a3c1474d0dab667"
+    )
+    assert parent.source_evidence_sha256 == "d79282fa386f75caec6cd6873ef148162597dd11427ec99ca329049bdc0690d2"
+    assert (
+        child_descriptor.original_projection_sha256
+        == "0512f92b13da28bf1bdf2c38ca49ec9195be664a3eb0cb2594690541db9b9fba"
+    )
+    assert (
+        child_descriptor.effective_projection_sha256
+        == "13b0748e582c32633472d4947f0b948ae1bf2885e7f896de638f0975244eba3f"
+    )
+    assert child.source_evidence_sha256 == "41bfa994661dcfb58fbe1fcc390a92452c34711dbe65b0290f1486281e805a8d"
+    assert child_descriptor.parent_source_evidence_sha256 == parent.source_evidence_sha256
+    assert (
+        child_descriptor.scope_projection_sha256
+        == parent_descriptor.scope_projection_sha256
+        == "f2389edea67da8a4744c7550ce4b4a37a9dc863b6e59dee4e29337503b7e7d49"
+    )

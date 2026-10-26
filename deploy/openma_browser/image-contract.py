@@ -1,4 +1,4 @@
-"""Real image check: Python 3.12, analysis libraries, Chromium and worker RPC.
+"""Real image check: Python 3.13, analysis libraries, Chromium and worker RPC.
 
 Run inside the sandbox image, with no credentials/network and a local fixture.
 The container is a fake VM executor for this test; KVM is not certified here.
@@ -19,7 +19,7 @@ from pathlib import Path
 
 
 def main() -> None:
-    assert sys.version_info[:2] == (3, 12), sys.version
+    assert sys.version_info[:2] == (3, 13), sys.version
     cache = json.loads(Path("/opt/tank/browser-font-cache.json").read_text())
     assert cache["engine"] == "Playwright default bundled Chromium headless shell"
     assert cache["cache_format"] == 12 and cache["chromium"] == "156.0.8078.4"
