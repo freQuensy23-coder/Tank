@@ -11,6 +11,8 @@ from source_support import fixture_versions
 from tank.analysis.truth import compute_market_truth
 from tank.util import iso, parse_time
 
+SPOT_POLICY = {"significant_flow_sigma": 2, "min_spot_venues": 2}
+
 SYNTHETIC_END = parse_time("2026-10-16T12:00:00Z")
 
 
@@ -23,6 +25,9 @@ def synthetic_start_snapshot(*, end: datetime = SYNTHETIC_END, event_window_h: i
         "token_id": "T",
         "event_id": "EVT-SYNTHETIC",
         "cutoff": iso(end),
+        "assembled_at": iso(end),
+        "assembled_at_prec": "COLLECTION_ONLY",
+        "tickers": [],
         "anchor": {"type": "T0", "ts": iso(anchor)},
         "instruments": [],
         "flow_bars": [],
@@ -83,6 +88,11 @@ def synthetic_start_snapshot(*, end: datetime = SYNTHETIC_END, event_window_h: i
                     "instrument_id": iid,
                     "token_id": "T",
                     "minute_start": iso(t),
+                    "minute_start_prec": "BUCKET(60s)",
+                    "venue": venue,
+                    "market_type": "SPOT",
+                    "received_ts": iso(end),
+                    "received_ts_prec": "COLLECTION_ONLY",
                     "buy_qty": 100,
                     "sell_qty": 50,
                     "sum_sq_qty": 1,
@@ -257,7 +267,7 @@ def compact_start_snapshot():
 
 
 def test_synthetic_start_truth_positive_path() -> None:
-    result = compute_market_truth(compact_start_snapshot())
+    result = compute_market_truth(compact_start_snapshot(), config=SPOT_POLICY)
     assert result["data_confidence"]["class"] == "HIGH", result["data_confidence"]
     assert result["move_class"] == "SPOT_LED_ACCUMULATION", result
     assert result["relative"]["repricing_band"] == "EARLY", result["relative"]
@@ -270,7 +280,7 @@ def test_confidence_diagnostics_do_not_add_unlisted_grade_conditions() -> None:
 
     for row in snapshot["oi"]:
         row["oi_usd"] = None
-    result = compute_market_truth(snapshot)
+    result = compute_market_truth(snapshot, config=SPOT_POLICY)
     assert result["data_confidence"]["class"] == "HIGH", result["data_confidence"]
     assert result["data_confidence"]["derivatives_classification_ready"] is False
     assert result["data_confidence"]["failed"] == []
@@ -301,12 +311,12 @@ def test_threshold_configuration_is_consumed_and_isolated_between_calls() -> Non
     ]
     snapshot["semantics"] = [row for row in snapshot["semantics"] if row["market_type"] == "SPOT"]
     snapshot["oi"], snapshot["funding"] = [], []
-    strict = compute_market_truth(snapshot, config={"min_spot_venues": 3})
+    strict = compute_market_truth(snapshot, config=dict(SPOT_POLICY, min_spot_venues=3))
     assert strict["data_confidence"]["class"] == "LOW"
     assert strict["data_confidence"]["limiting"]["condition"] == "spot_coverage"
-    neutral = compute_market_truth(snapshot, config={"significant_flow_sigma": 1000000})
+    neutral = compute_market_truth(snapshot, config=dict(SPOT_POLICY, significant_flow_sigma=1000000))
     assert neutral["spot"][neutral["primary_window"]]["direction"] == "NEUTRAL"
-    baseline = compute_market_truth(snapshot)
+    baseline = compute_market_truth(snapshot, config=SPOT_POLICY)
     assert baseline["data_confidence"]["class"] == "HIGH"
     assert baseline["spot"][baseline["primary_window"]]["direction"] == "BUY"
 
@@ -316,7 +326,7 @@ def legacy_semantic_baseline():
     snapshot = compact_start_snapshot()
     for row in snapshot["semantics"]:
         row.pop("semantic_confidence", None)
-    baseline = compute_market_truth(snapshot)
+    baseline = compute_market_truth(snapshot, config=SPOT_POLICY)
     assert baseline["data_confidence"]["class"] == "HIGH"
 
     def fresh():
@@ -333,12 +343,12 @@ def test_legacy_semantic_status_cannot_reduce_confidence_or_mask_real_freshness(
     snapshot, baseline = legacy_semantic_baseline()
     for row in snapshot["semantics"]:
         row["semantic_confidence"] = status
-    actual = compute_market_truth(snapshot)
+    actual = compute_market_truth(snapshot, config=SPOT_POLICY)
     assert actual["data_confidence"] == baseline["data_confidence"]
     assert actual["derivatives"]["synchronized"] == baseline["derivatives"]["synchronized"]
     if status == "INFERRED":
         snapshot["books"] = []
-        missing = compute_market_truth(snapshot)
+        missing = compute_market_truth(snapshot, config=SPOT_POLICY)
         assert missing["data_confidence"]["class"] == "MEDIUM"
         assert missing["data_confidence"]["limiting"]["condition"] == "freshness"
 
@@ -346,13 +356,13 @@ def test_legacy_semantic_status_cannot_reduce_confidence_or_mask_real_freshness(
 def test_missing_instrument_registry_and_selftest_records_do_not_cap_observed_confidence() -> None:
     snapshot = compact_start_snapshot()
     end = parse_time(snapshot["cutoff"])
-    baseline = compute_market_truth(snapshot)
+    baseline = compute_market_truth(snapshot, config=SPOT_POLICY)
     assert baseline["data_confidence"]["class"] == "HIGH"
 
     snapshot["instruments"] = []
     for row in snapshot["semantics"]:
         row["semantic_confidence"] = "DOCUMENTED_UNTESTED"
-    observed = compute_market_truth(snapshot)
+    observed = compute_market_truth(snapshot, config=SPOT_POLICY)
     assert observed["data_confidence"] == baseline["data_confidence"]
     assert observed["spot"] == baseline["spot"]
     assert observed["derivatives"] == baseline["derivatives"]
@@ -360,16 +370,15 @@ def test_missing_instrument_registry_and_selftest_records_do_not_cap_observed_co
     snapshot["books"] = [
         row for row in snapshot["books"] if parse_time(row["exchange_ts"]) < end - timedelta(seconds=10)
     ]
-    stale = compute_market_truth(snapshot)
+    stale = compute_market_truth(snapshot, config=SPOT_POLICY)
     assert stale["data_confidence"]["class"] == "MEDIUM"
     assert stale["data_confidence"]["limiting"]["condition"] == "freshness"
     assert stale["data_confidence"]["limiting"]["collection"] == "books"
 
 
 async def _assess_loser_snapshot():
-    from types import SimpleNamespace
-
     from tank.analysis.truth import MarketTruthService
+    from tank.settings import Settings
 
     class Repo:
         async def get(self, *args):
@@ -390,7 +399,7 @@ async def _assess_loser_snapshot():
 
     return await MarketTruthService(
         Repo(),
-        SimpleNamespace(config_version="test", code_version="test"),
+        Settings(_env_file=None),
         Market(),
         versions=fixture_versions(),
     ).assess("EVT", "T", "2026-10-16T12:00:00Z")
@@ -403,7 +412,10 @@ def test_latest_durable_beneficiary_role_sets_loser_repricing_direction() -> Non
     assert result["relative"]["expected_direction"] == "LOSER"
     assert result["relative"]["repricing_sign"] == -1
     assert result["relative"]["repricing_band"] == "UNPRICED"
-    assert compute_market_truth(compact_start_snapshot())["relative"]["repricing_band"] == "EARLY"
+    assert (
+        compute_market_truth(compact_start_snapshot(), config=SPOT_POLICY)["relative"]["repricing_band"]
+        == "EARLY"
+    )
 
 
 def test_zero_variance_benchmark_cannot_manufacture_adjusted_move_classification() -> None:
@@ -412,7 +424,7 @@ def test_zero_variance_benchmark_cannot_manufacture_adjusted_move_classification
     for row in snapshot["klines"]:
         if row["instrument_id"] == "A:spot:BTC" and parse_time(row["open_time"]) < anchor:
             row["c"] = 100
-    result = compute_market_truth(snapshot)
+    result = compute_market_truth(snapshot, config=SPOT_POLICY)
     relative = result["relative"]
     assert relative["beta_btc"] is None
     assert relative["beta_flags"]["btc"] == "NOT_ESTIMABLE"
@@ -457,7 +469,7 @@ def test_sparse_benchmark_gap_does_not_authorize_adjusted_move() -> None:
         or parse_time(row["open_time"]) < anchor
         or parse_time(row["open_time"]) == selected_open
     ]
-    result = compute_market_truth(snapshot)
+    result = compute_market_truth(snapshot, config=SPOT_POLICY)
     relative = result["relative"]
     event = relative["windows"]["EVENT"]
     assert relative["beta_flags"]["btc"] is None
