@@ -158,6 +158,13 @@ class JobEnvelope(JobMetadata):
         return self
 
 
+class ClaimedJob(DomainModel):
+    """Validated envelope plus the canonical unprojected persistence-document revision."""
+
+    envelope: JobEnvelope
+    revision: str = Field(pattern=r"^[0-9a-f]{64}$")
+
+
 class JobRetryState(DomainModel):
     """Retry only needs execution fields, including for direct SQL jobs lacking provenance."""
 
