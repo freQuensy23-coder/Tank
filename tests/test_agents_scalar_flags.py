@@ -13,7 +13,7 @@ from tank.agents.native_readback import NativeSessionMissing
 from tank.agents.pipeline_contracts import DecisionScoreRecord
 from tank.agents.tool_contracts import FailedToolResponse, NativeToolResult
 from tank.contracts.repository import Collection, Repository
-from tank.runtime_contracts import RevisedReactionJob
+from tank.runtime_reaction import ChangedReactionJob
 from tank.storage import MemoryRepository
 
 
@@ -92,10 +92,10 @@ def test_actual_tool_error_and_revision_flags_require_boolean_true(invalid: Json
         "reason": "Declared",
     }
     assert (
-        RevisedReactionJob.model_validate({**revision, "automatic_revision": True}).automatic_revision is True
+        ChangedReactionJob.model_validate({**revision, "automatic_revision": True}).automatic_revision is True
     )
     with pytest.raises(ValidationError):
-        RevisedReactionJob.model_validate({**revision, "automatic_revision": invalid})
+        ChangedReactionJob.model_validate({**revision, "automatic_revision": invalid})
     assert NativeSessionMissing(kind="MISSING", missing=True, session_id="session").missing is True
     with pytest.raises(ValidationError):
         NativeSessionMissing.model_validate({"kind": "MISSING", "missing": invalid, "session_id": "session"})

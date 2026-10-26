@@ -1513,20 +1513,10 @@
           "path": "src/tank/agents/admission_repository.py",
           "symbol": "SessionAdmissionRepository.wake",
           "line": 214
-        },
-        {
-          "path": "src/tank/runtime.py",
-          "symbol": "Runtime.worker",
-          "line": 170
-        },
-        {
-          "path": "src/tank/runtime.py",
-          "symbol": "Runtime.run",
-          "line": 366
         }
       ],
       "kind": "owned timestamp wire serialization",
-      "reason": "These dictionaries are the actual persisted job document at write boundaries. Canonical timestamp_owned_fields from cbad735 clears the value and every recognized precision/reason/bucket alias before new typed Timestamp fields are merged. Unrelated prefixes/captured data survive. A missing timestamp value refuses; first waiting time copies real creation value/precision/reason rather than inventing an observed clock. This does not approve remaining untyped worker internals.",
+      "reason": "These dictionaries are the actual persisted job document at write boundaries. Canonical timestamp_owned_fields from cbad735 clears the value and every recognized precision/reason/bucket alias before new typed Timestamp fields are merged. Unrelated prefixes/captured data survive. A missing timestamp value refuses; first waiting time copies real creation value/precision/reason rather than inventing an observed clock. Current worker lifecycle writes are separately covered by the closed atomic mutation contract.",
       "validation": [
         "test_wake_replaces_all_owned_clock_aliases_and_preserves_other_record_bytes",
         "test_real_admission_deferral_replaces_clock_facets_and_copies_creation_precision",
@@ -2960,6 +2950,33 @@
     {
       "sites": [
         {
+          "path": "src/tank/agents/message_dispatch.py",
+          "symbol": "MessageDispatchRequest.original_wire"
+        },
+        {
+          "path": "src/tank/agents/context.py",
+          "symbol": "ModelContext.message"
+        },
+        {
+          "path": "src/tank/agents/sessions.py",
+          "symbol": "SessionService.send_message"
+        },
+        {
+          "path": "src/tank/runtime_dispatch_contracts.py",
+          "symbol": "ClaimedWork.job"
+        }
+      ],
+      "kind": "original queue wire evidence and transitional session read boundary",
+      "reason": "Closed AgentMessage and RuntimeCommand fields supply business facts. The actual original wire dictionary and its verified digest preserve input field presence, context evidence, persisted journal identity and original idempotency key; normalized DTO serialization is not asserted to be original evidence. ClaimedWork retains the authoritative JobEnvelope for actual job ownership and claim-aware reaction coordination. Existing send_message remains caller wire admission followed by authoritative session lookup while reserved replay callers migrate; it does not infer native acceptance from row existence. Whole Session aggregate/body migration and complete worker caller qualification remain open.",
+      "validation": [
+        "test_actual_message_dispatch_preserves_wire_key_and_confirmed_phase_on_retry",
+        "test_mutated_admitted_message_cannot_change_original_owner_or_identity",
+        "test_constructed_work_cannot_replace_command_behind_original_claim"
+      ]
+    },
+    {
+      "sites": [
+        {
           "path": "src/tank/agents/native_output_files.py",
           "symbol": "output_request"
         },
@@ -2990,33 +3007,6 @@
     {
       "sites": [
         {
-          "path": "src/tank/agents/message_dispatch.py",
-          "symbol": "MessageDispatchRequest.original_wire"
-        },
-        {
-          "path": "src/tank/agents/context.py",
-          "symbol": "ModelContext.message"
-        },
-        {
-          "path": "src/tank/agents/sessions.py",
-          "symbol": "SessionService.send_message"
-        },
-        {
-          "path": "src/tank/runtime_dispatch_contracts.py",
-          "symbol": "ClaimedWork.job"
-        }
-      ],
-      "kind": "original queue wire evidence and transitional session read boundary",
-      "reason": "Closed AgentMessage and RuntimeCommand fields supply business facts. The actual original wire dictionary and its verified digest preserve input field presence, context evidence, persisted journal identity and original idempotency key; normalized DTO serialization is not asserted to be original evidence. ClaimedWork retains the authoritative JobEnvelope for actual job ownership and claim-aware reaction coordination. Existing send_message remains caller wire admission followed by authoritative session lookup while reserved replay callers migrate; it does not infer native acceptance from row existence. Whole Session aggregate/body and whole Runtime worker typing remain open.",
-      "validation": [
-        "test_actual_message_dispatch_preserves_wire_key_and_confirmed_phase_on_retry",
-        "test_mutated_admitted_message_cannot_change_original_owner_or_identity",
-        "test_constructed_work_cannot_replace_command_behind_original_claim"
-      ]
-    },
-    {
-      "sites": [
-        {
           "path": "src/tank/contracts/jobs.py",
           "symbol": "JobMetadata.claim_token"
         },
@@ -3041,6 +3031,30 @@
         "test_original_payload_revision_distinguishes_boolean_integer_and_float",
         "test_sparse_mutation_replaces_clock_family_without_normalizing_unrelated_result",
         "test_completion_distinguishes_explicit_void_result_from_unreported_result"
+      ]
+    },
+    {
+      "sites": [
+        {
+          "path": "src/tank/runtime.py",
+          "symbol": "Runtime.active_claims"
+        },
+        {
+          "path": "src/tank/runtime.py",
+          "symbol": "Runtime.execute_work_wire"
+        },
+        {
+          "path": "src/tank/runtime.py",
+          "symbol": "Runtime.interrupt_claims"
+        }
+      ],
+      "kind": "actual claim index, durable wire result and observed acknowledgment",
+      "reason": "The associative index is keyed only by actual job ID/token with closed ClaimedWork values. JsonValue is solely the persisted queue result serialization after concrete typed per-kind use cases; void None is their actual no-result contract, not an invented provider success. interrupt_claims returns only definitely acknowledged scopes; an empty tuple can mean no current matching scope or unavailable acknowledgment and makes no false no-effect claim after lost commit ACK. No row lock spans network I/O; before-dispatch scope observations do not grant a distributed lease.",
+      "validation": [
+        "test_actual_owned_worker_stop_preserves_or_refunds_only_its_current_claim",
+        "test_lost_interruption_commit_ack_never_refunds_twice_or_claims_a_false_ack",
+        "test_actual_tick_queue_worker_preserves_cutoff_and_stores_real_evaluation_result",
+        "test_real_answer_error_requeues_or_finishes_using_reported_or_application_delay"
       ]
     }
   ]
