@@ -759,6 +759,7 @@ async def test_recovery_due_work_runs_actual_worker_and_measured_checkpoint_once
         for minute in range(1441):
             opened = anchor - timedelta(minutes=1) + timedelta(minutes=minute)
             key = instrument_id + ":" + iso(opened)
+            close = "110" if minute == 1440 else "100"
             await repo.put(
                 "mkt.klines_1m",
                 key,
@@ -768,8 +769,12 @@ async def test_recovery_due_work_runs_actual_worker_and_measured_checkpoint_once
                     "open_time": iso(opened),
                     "interval_s": 60,
                     "complete": True,
-                    "c": "110" if minute == 1440 else "100",
-                    "quote_volume_usd": "1000",
+                    "o": close,
+                    "h": close,
+                    "l": close,
+                    "c": close,
+                    "volume_native": "10",
+                    "quote_volume_usd": "1100" if minute == 1440 else "1000",
                     **collection_clock(current - timedelta(seconds=1)).fields("recorded_at"),
                 },
             )
@@ -788,7 +793,17 @@ async def test_recovery_due_work_runs_actual_worker_and_measured_checkpoint_once
         final = await repo.get("mkt.klines_1m", final_key)
         assert final is not None
         await repo.put(
-            "mkt.klines_1m", final_key, final | {"c": "120", **collection_clock().fields("recorded_at")}
+            "mkt.klines_1m",
+            final_key,
+            final
+            | {
+                "o": "120",
+                "h": "120",
+                "l": "120",
+                "c": "120",
+                "quote_volume_usd": "1200",
+                **collection_clock().fields("recorded_at"),
+            },
         )
         backfill_id = new_id("backfill")
         await repo.put(
@@ -989,6 +1004,7 @@ async def measured_recovery_history(
     keys: list[str] = []
     for minute in range(1441):
         opened = anchor - timedelta(minutes=1) + timedelta(minutes=minute)
+        close = "110" if minute == 1440 else "100"
         keys.append(instrument_id + ":" + iso(opened))
         records.append(
             {
@@ -997,8 +1013,12 @@ async def measured_recovery_history(
                 "open_time": iso(opened),
                 "interval_s": 60,
                 "complete": True,
-                "c": "110" if minute == 1440 else "100",
-                "quote_volume_usd": "1000",
+                "o": close,
+                "h": close,
+                "l": close,
+                "c": close,
+                "volume_native": "10",
+                "quote_volume_usd": "1100" if minute == 1440 else "1000",
                 **collection_clock(now - timedelta(seconds=1)).fields("recorded_at"),
             }
         )
@@ -1016,7 +1036,17 @@ async def measured_recovery_history(
     final = await repo.get("mkt.klines_1m", final_key)
     assert final is not None
     await repo.put(
-        "mkt.klines_1m", final_key, final | {"c": "120", **collection_clock().fields("recorded_at")}
+        "mkt.klines_1m",
+        final_key,
+        final
+        | {
+            "o": "120",
+            "h": "120",
+            "l": "120",
+            "c": "120",
+            "quote_volume_usd": "1200",
+            **collection_clock().fields("recorded_at"),
+        },
     )
     backfill_id = new_id("backfill")
     await repo.put(
