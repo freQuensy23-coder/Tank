@@ -38,7 +38,7 @@ A config change is a commit and a deploy. There is no SIGHUP reload, mounted con
 
 ## Configuration and secrets
 
-All nonsecret settings are in the repository: `config/*.yaml`, the image `ENV` lines and `compose.yaml`. The host keeps exactly one file, `/srv/tank-deploy/.env` (mode0600, owner root), with the secrets and the few host-specific values. `.env.example` lists every variable; Compose refuses to start if a required one is missing. Never put secret values in source control, build arguments, image layers, command arguments or logs.
+All nonsecret settings are in the repository: `config/*.yaml`, the image `ENV` lines and `compose.yaml`. The host keeps exactly one file, `/srv/tank-deploy/.env` (mode0600, owned by the configured authenticated deployment principal), with the secrets and the few host-specific values. `.env.example` lists every variable; Compose refuses to start if a required one is missing. Never put secret values in source control, build arguments, image layers, command arguments or logs.
 
 - Secrets: `POSTGRES_PASSWORD`, `TANK_DB_PASSWORD`, `OMA_DB_PASSWORD`, `TANK_AGENT_DB_PASSWORD`, `TANK_REPLAY_AGENT_DB_PASSWORD`, `OMA_API_KEY`, `OMA_ROOT_SECRET`, `OMA_AUTH_SECRET`, `OPENROUTER_API_KEY`, `TANK_FOUNDRY_API_KEY`, `TELEGRAM_BOT_TOKEN`, `ETHERSCAN_API_KEY`, `CODEX_GATEWAY_KEY`, `APIFY_API_TOKEN`. Root, auth and internal keys are distinct random values.
 - Host values: `KVM_GID` (`stat -c %g /dev/kvm`), `TANK_SANDBOX_CPUS`, `TANK_SANDBOX_MEMORY_MIB`, `TANK_BACKUP_PATH`.
