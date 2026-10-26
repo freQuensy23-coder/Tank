@@ -2269,3 +2269,9 @@ This closes this concrete inward-I/O violation, not the broader generic Reposito
 source-adapter or whole-application architecture/typing scope. Historical recovery,
 pending-demand and the separate completion-observation behavior correction remain
 held and are not implied by this worker candidate. No parent worktree was edited.
+
+### Milestone quarantine caller alignment
+
+On clean parent b026dd0e, the six missing-required-fact milestone queue cases now assert the closed worker's declared `INVALID_QUEUE_ENVELOPE` quarantine result rather than the retired dispatch-time `ValidationError` label. The controls retain FAILED, the exact original payload, absent result, zero HTTP, and no AGENT_MESSAGE jobs; they additionally verify one actual claim attempt and zero event reads before quarantine. No production policy or milestone behavior changed.
+
+The approved read-only dependency runner passed all six Memory cases in 8.71 seconds and all six PostgreSQL cases in 10.41 seconds, with zero skips and unchanged source guards. External receipts are `evidence/agents/milestone-quarantine-{unit,pg}.{log,xml}` under the local tool root. Ruff and format checks pass. Independent strict checking of the existing test file still reports its prior untyped Scheduler.tick call at line 149; this bounded caller repair neither suppresses nor claims to close that dependency.
