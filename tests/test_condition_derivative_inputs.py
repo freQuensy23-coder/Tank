@@ -185,9 +185,19 @@ def test_actual_derivative_producer_and_typed_selection_preserve_native_endpoint
     from tank.analysis.open_interest import OIWindowRequest, OpenInterestCalculator, SelectedOIEndpoint
     from tank.time_precision import chosen_boundary, collection_clock
 
-    first = observation() | {"ts": "2026-10-16T11:00:10Z", "oi_native": "10", "mark_price": None}
-    last = observation() | {"ts": "2026-10-16T11:59:50Z", "oi_native": "12", "mark_price": None}
-    registry = instrument()
+    first = observation() | {
+        "ts": "2026-10-16T11:00:10Z",
+        "oi_native": "10",
+        "mark_price": None,
+        "metric_key": "AUTHORED_OI",
+    }
+    last = observation() | {
+        "ts": "2026-10-16T11:59:50Z",
+        "oi_native": "12",
+        "mark_price": None,
+        "metric_key": "AUTHORED_OI",
+    }
+    registry = instrument() | {"venue": "binance"}
     source = decode_oi_inputs(token_id="T", instruments=[registry], observations=[first, last])
     request = OIWindowRequest(
         start=chosen_boundary("2026-10-16T11:00:00Z", precision="EXACT"),
@@ -205,10 +215,19 @@ def test_actual_derivative_producer_and_typed_selection_preserve_native_endpoint
             "assembled_at": "2026-10-16T12:00:02Z",
             "instruments": [registry],
             "oi": [first, last],
+            "semantics": [
+                {
+                    "instrument_id": "venue:perp:T",
+                    "metric_key": "AUTHORED_OI",
+                    "sidedness": "SINGLE_SIDED",
+                    "aggregation_class": "AUTHORED_SINGLE_SIDED",
+                    "cadence_s": 60,
+                }
+            ],
         },
         [{"metric": "deriv.native_oi_chg_pct", "window": "W1H"}],
         config=fixture_truth_config(),
-    )["derivatives"]["windows"]["W1H"]["per_venue"][0]
+    )["derivatives"]["windows"]["W1H"]["synchronized"]
     assert isinstance(selected.start, SelectedOIEndpoint)
     assert isinstance(selected.end, SelectedOIEndpoint)
     assert selected.start.observation.native_quantity.value == actual["oi_native_start"] == Decimal(10)
