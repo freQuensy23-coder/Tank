@@ -21,6 +21,7 @@ from collections.abc import (
 from contextlib import AbstractAsyncContextManager, asynccontextmanager, suppress
 from contextvars import ContextVar
 from datetime import datetime, timedelta
+from decimal import Decimal
 from pathlib import Path
 from typing import Literal, Protocol, Self, overload
 
@@ -99,6 +100,29 @@ class ClaimResult(DomainModel):
 class ImmutableDocument(DomainModel):
     document: Record
     immutable: bool
+
+
+def _same_jsonb_value(left: JsonValue, right: JsonValue) -> bool:
+    """Match JSONB value identity without Python's boolean/number equality."""
+    if isinstance(left, bool) or isinstance(right, bool):
+        return isinstance(left, bool) and isinstance(right, bool) and left == right
+    if isinstance(left, (int, float)) and isinstance(right, (int, float)):
+        return Decimal(str(left)) == Decimal(str(right))
+    if isinstance(left, dict):
+        return (
+            isinstance(right, dict)
+            and left.keys() == right.keys()
+            and all(_same_jsonb_value(value, right[key]) for key, value in left.items())
+        )
+    if isinstance(left, list):
+        return (
+            isinstance(right, list)
+            and len(left) == len(right)
+            and all(_same_jsonb_value(a, b) for a, b in zip(left, right, strict=True))
+        )
+    if left is None:
+        return right is None
+    return isinstance(left, str) and isinstance(right, str) and left == right
 
 
 class ImmutableRecordError(ValueError):
@@ -989,7 +1013,7 @@ class MemoryRepository(QueueMixin):
             if old is not None and (
                 (collection, key) in self._immutable or collection in APPEND_ONLY or immutable
             ):
-                if old != document:
+                if not _same_jsonb_value(old, document):
                     raise ImmutableRecordError(f"Immutable record: {collection}/{key}")
                 if immutable:
                     self._immutable.add((collection, key))
@@ -1516,7 +1540,7 @@ class PostgresRepository(QueueMixin):
                     raise ValueError("Decision state heads require mutable storage")
                 _validate_decision_head_write(key, document, None if previous is None else previous.document)
             if previous is not None and (previous.immutable or immutable or collection in APPEND_ONLY):
-                if previous.document != document:
+                if not _same_jsonb_value(previous.document, document):
                     raise ImmutableRecordError(f"Immutable record: {collection}/{key}")
                 if immutable and not previous.immutable:
                     await conn.execute(
