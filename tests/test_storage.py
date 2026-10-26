@@ -2,7 +2,10 @@ import asyncio
 import os
 from collections.abc import AsyncIterator
 from contextlib import AsyncExitStack, asynccontextmanager
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
+from decimal import Decimal
+from enum import StrEnum
+from pathlib import Path
 
 import pytest
 import pytest_asyncio
@@ -11,11 +14,12 @@ from foundation_helpers import present, text_field
 from postgres_helpers import PostgresTemplate
 from pydantic import JsonValue
 
+from tank.contracts import DomainModel
 from tank.contracts.job_repository import JobRepository
 from tank.contracts.jobs import InvalidJobClaim
 from tank.models import Record
 from tank.storage import ImmutableRecordError, MemoryRepository, PostgresRepository, StorageBackend
-from tank.util import clock_iso, iso, new_id, parse_time, sha256, utcnow
+from tank.util import JsonInput, canonical_json, clock_iso, iso, new_id, parse_time, sha256, utcnow
 
 
 def nested_values(record: Record) -> list[JsonValue]:
@@ -1103,14 +1107,20 @@ async def test_captures_wait_for_a_fresh_event_card(repo: StorageBackend) -> Non
 async def test_memory_reads_return_isolated_values_and_see_own_writes_before_rollback() -> None:
     repo = MemoryRepository()
     original: Record = {"token_id": "a", "nested": {"values": [1]}}
-    await repo.put("reg.tokens", "a", complete_fixture_record("reg.tokens", original))
+    expected: Record = {"token_id": "a", "nested": {"values": [1]}}
+    returned = await repo.put("reg.tokens", "a", complete_fixture_record("reg.tokens", original))
+    nested_values(original).append(7)
+    nested_values(returned).append(8)
+    assert nested_values(original) == [1, 7]
+    assert nested_values(returned) == [1, 8]
+    assert await repo.get("reg.tokens", "a") == expected
     fetched = present(await repo.get("reg.tokens", "a"))
     listed = await repo.list("reg.tokens")
     scanned = [row async for row in repo.iter_all("reg.tokens")]
     nested_values(fetched).append(2)
     nested_values(listed[0]).append(3)
     nested_values(scanned[0]).append(4)
-    assert await repo.get("reg.tokens", "a") == original
+    assert await repo.get("reg.tokens", "a") == expected
     with pytest.raises(ValueError, match="rollback"):
         async with repo.transaction():
             await repo.put(
@@ -1122,7 +1132,7 @@ async def test_memory_reads_return_isolated_values_and_see_own_writes_before_rol
             assert nested_values((await repo.list("reg.tokens"))[0]) == [9]
             assert [nested_values(row) async for row in repo.iter_all("reg.tokens")] == [[9]]
             raise ValueError("rollback")
-    assert await repo.get("reg.tokens", "a") == original
+    assert await repo.get("reg.tokens", "a") == expected
 
 
 async def test_memory_cancelled_reader_keeps_writer_exclusive_and_releases_waiter() -> None:
@@ -1325,3 +1335,83 @@ async def test_invalid_claim_rejection_is_atomic_and_sparse_on_real_backend(repo
     assert stored["finished_at_prec"] == "COLLECTION_ONLY"
     assert "run_after_prec" not in stored
     assert await jobs.claim() is None
+
+
+class CheckpointWireState(DomainModel):
+    labels: list[str]
+
+
+class CheckpointWireTag(StrEnum):
+    RECORDED = "RECORDED"
+
+
+async def test_memory_put_keeps_independent_normalized_and_validated_json_trees() -> None:
+    repo = MemoryRepository()
+    observed = datetime(2026, 10, 17, 12, 34, 56, 123456, tzinfo=UTC)
+    labels = CheckpointWireState(labels=["before"])
+    values: list[JsonInput] = [True, 1, 1.0, None, "1", Decimal("1.2300"), observed]
+    record: dict[str, JsonInput] = {
+        "checkpoint_id": "wire-ownership",
+        "at": observed,
+        "at_prec": "COLLECTION_ONLY",
+        "at_prec_reason": None,
+        "state": {
+            "model": labels,
+            "values": values,
+            "pair": ("a", "b"),
+            "tag": CheckpointWireTag.RECORDED,
+            "path": Path("retained.json"),
+        },
+    }
+    expected: Record = {
+        "checkpoint_id": "wire-ownership",
+        "at": "2026-10-17T12:34:56.123456Z",
+        "at_prec": "COLLECTION_ONLY",
+        "at_prec_reason": None,
+        "state": {
+            "model": {"labels": ["before"]},
+            "values": [True, 1, 1.0, None, "1", "1.2300", "2026-10-17T12:34:56.123456Z"],
+            "pair": ["a", "b"],
+            "tag": "RECORDED",
+            "path": "retained.json",
+        },
+    }
+    returned = await repo.put("ops.scheduler_checkpoints", "wire-ownership", record, immutable=True)
+    assert canonical_json(returned) == canonical_json(expected)
+    labels.labels.append("input-model-mutation")
+    values.append("input-list-mutation")
+    returned_state = returned["state"]
+    assert isinstance(returned_state, dict)
+    returned_values = returned_state["values"]
+    assert isinstance(returned_values, list)
+    returned_values.append("returned-list-mutation")
+    returned_model = returned_state["model"]
+    assert isinstance(returned_model, dict)
+    returned_labels = returned_model["labels"]
+    assert isinstance(returned_labels, list)
+    returned_labels.append("returned-model-mutation")
+    stored = present(await repo.get("ops.scheduler_checkpoints", "wire-ownership"))
+    assert canonical_json(stored) == canonical_json(expected)
+    with pytest.raises(ImmutableRecordError):
+        await repo.put("ops.scheduler_checkpoints", "wire-ownership", returned)
+    assert canonical_json(
+        present(await repo.get("ops.scheduler_checkpoints", "wire-ownership"))
+    ) == canonical_json(expected)
+
+
+@pytest.mark.parametrize("invalid", [float("nan"), float("inf"), float("-inf")])
+async def test_memory_json_refusal_preserves_the_existing_immutable_document(invalid: float) -> None:
+    repo = MemoryRepository()
+    record: Record = {
+        "checkpoint_id": "finite-checkpoint",
+        "at": "2026-10-17T12:34:56.123456Z",
+        "at_prec": "COLLECTION_ONLY",
+        "at_prec_reason": None,
+        "state": {"counter": 1},
+    }
+    await repo.put("ops.scheduler_checkpoints", "finite-checkpoint", record, immutable=True)
+    with pytest.raises(ValueError, match="finite"):
+        await repo.put(
+            "ops.scheduler_checkpoints", "finite-checkpoint", {**record, "state": {"counter": invalid}}
+        )
+    assert await repo.get("ops.scheduler_checkpoints", "finite-checkpoint") == record

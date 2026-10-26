@@ -965,6 +965,7 @@ class MemoryRepository(QueueMixin):
     async def put(
         self, collection: str, key: str, record: Mapping[str, JsonInput], *, immutable: bool = False
     ) -> Record:
+        """Retain separate normalized-return and validated-store ownership without duplicate clones."""
         if collection in MARKET_COLUMNS:
             changed = await self.put_market_batch(collection, [record], keys=[str(key)])
             if changed:
@@ -976,7 +977,9 @@ class MemoryRepository(QueueMixin):
         _table(collection)
         key = str(key)
         document = jsonable(dict(record))
-        JsonDocument.validate_value(document)
+        validated = JsonDocument.validate_value(document)
+        if not isinstance(validated, dict):
+            raise TypeError("A stored document must validate as a JSON object")
         async with self.transaction():
             old = self._data.get(collection, {}).get(key)
             if collection == "ana.decision_state_heads":
@@ -998,10 +1001,14 @@ class MemoryRepository(QueueMixin):
                 raise ValueError("Duplicate job idempotency key")
             if collection == "ops.jobs":
                 _stamp_job_clock_fields(document)
-            self._data.setdefault(collection, {})[key] = copy.deepcopy(document)
+                self._data.setdefault(collection, {})[key] = copy.deepcopy(document)
+                returned = copy.deepcopy(document)
+            else:
+                self._data.setdefault(collection, {})[key] = validated
+                returned = document
             if immutable or collection in APPEND_ONLY:
                 self._immutable.add((collection, key))
-            return copy.deepcopy(document)
+            return returned
 
     async def get(self, collection: str, key: str) -> Record | None:
         _table(collection)
