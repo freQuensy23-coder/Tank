@@ -1833,7 +1833,7 @@ class PostgresRepository(QueueMixin):
                 UPDATE ops.jobs SET status='RUNNING',
                 attempts=attempts+CASE WHEN document->>'recovery_reclaim'='true' THEN 0 ELSE 1 END,
                 document=document||jsonb_build_object('status','RUNNING','recovery_reclaim',false,
-                  'claim_token',%(claim_token)s,
+                  'claim_token',%(claim_token)s::text,
                   'attempts',attempts+CASE WHEN document->>'recovery_reclaim'='true' THEN 0 ELSE 1 END)
                 WHERE storage_key=(SELECT storage_key FROM pick) RETURNING document)
               SELECT (SELECT document FROM claimed) AS document,
