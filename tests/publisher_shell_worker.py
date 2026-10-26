@@ -77,7 +77,7 @@ def run(invocation: StandInvocation, configuration: StandConfiguration) -> None:
             if configuration.interrupt == "receipt" and matching_writes == 1:
                 original_replace(source, destination, src_dir_fd=src_dir_fd, dst_dir_fd=dst_dir_fd)
                 return
-            assert re.fullmatch(r"\.[A-Za-z0-9_.]+\.tmp", source)
+            assert re.fullmatch(r"\.[A-Za-z0-9_.-]+\.tmp", source)
             os._exit(73)
         original_replace(source, destination, src_dir_fd=src_dir_fd, dst_dir_fd=dst_dir_fd)
 

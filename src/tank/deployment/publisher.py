@@ -140,8 +140,6 @@ class Publisher:
     ) -> SourceBuild:
         key = BuildCacheKey(source_digest=artifact.release.source_digest)
         submission = self.state.read_submission(key)
-        if submission is not None and submission.release_sha != self.sha:
-            raise PublisherStateError("Pending build submission belongs to a different release")
         if isinstance(submission, UnknownBuildSubmission):
             raise PublisherStateError("Build acceptance is unknown; another submission is refused")
         cached = self.state.read_cached_build(key)
@@ -209,8 +207,8 @@ class Publisher:
             ):
                 raise PublisherStateError("Worker build failed or exceeded deadline")
             candidate = self._source_provenance(build_id, artifact.release.source_digest)
-            if candidate.release_sha != self.sha:
-                raise PublisherStateError("New build release SHA mismatch")
+            if candidate.release_sha != submission.release_sha:
+                raise PublisherStateError("Received build release SHA mismatch")
         self.state.write_cached_build(candidate)
         if submission is not None:
             self.state.remove_submission(key)
