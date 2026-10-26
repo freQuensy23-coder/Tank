@@ -1753,3 +1753,12 @@ naive and unknown cutoffs fail before evaluation. A constructed invalid typed
 receipt also refuses before serialization. Independent strict checks pass for
 runtime_evaluation, scheduler_results, runtime_public_fixtures and the result
 boundary test. Whole Runtime.worker body typing remains open.
+
+The unchanged native adapter candidate has additional source-backed boundary
+controls: verified retained mount pointers preserve unrelated session history,
+duplicate raw upload identity facts refuse with static private-value-free errors,
+nonprogressing resource cursors cannot authorize mounting, and a confirmed
+resource ID cannot be replaced merely because path/file ID match. The full
+31-case native unit selection passes in 1.63 seconds with zero skips; independent
+five-target strict checks pass. These do not replace the pending real fresh-cache
+writer and complete Session caller proof.

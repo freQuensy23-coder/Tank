@@ -314,3 +314,88 @@ async def test_explicit_null_effect_ledger_refuses_before_native_effect() -> Non
         with pytest.raises(ValueError):
             await service(repo, http).prepare(metadata)
     assert native.uploads == native.mounts == 0
+
+
+async def test_retained_mount_pointer_requires_actual_scoped_resource_and_preserves_history() -> None:
+    repo = MemoryRepository()
+    metadata = await seed_file(repo)
+    stored = await repo.get("ops.telegram_files", metadata.file_key)
+    assert stored is not None
+    stored.pop("native_preparation")
+    pointers: dict[str, JsonValue] = {
+        "session": {"file_id": "retained-file", "path": "/workspace/retained/data.csv"},
+        "other-session": {"file_id": "other-file", "path": "/workspace/other.csv"},
+    }
+    stored["model_mounts"] = pointers
+    await repo.put("ops.telegram_files", metadata.file_key, stored)
+    native = NativeFiles()
+    native.resources.append(
+        {
+            "id": "retained-resource",
+            "type": "file",
+            "file_id": "retained-file",
+            "mount_path": "/workspace/retained/data.csv",
+            "created_at": "2026-10-26T00:00:00Z",
+            "updated_at": "2026-10-26T00:00:00Z",
+        }
+    )
+    async with httpx.AsyncClient(transport=httpx.MockTransport(native.respond)) as http:
+        assert await service(repo, http).prepare(metadata) == "/workspace/retained/data.csv"
+        assert await service(repo, http).prepare(metadata) == "/workspace/retained/data.csv"
+    after = await repo.get("ops.telegram_files", metadata.file_key)
+    assert after is not None and after["model_mounts"] == pointers
+    assert (
+        PreparationRecord.model_validate(after["native_preparation"]).root.phase == "LEGACY_MOUNT_CONFIRMED"
+    )
+    assert native.uploads == native.mounts == 0
+
+
+async def test_duplicate_upload_identity_refuses_without_overwriting_ownership_or_echoing_values() -> None:
+    from tank.contracts.json import DuplicateJsonKeyError
+
+    repo = MemoryRepository()
+    metadata = await seed_file(repo)
+    requests: list[str] = []
+
+    def responding(request: httpx.Request) -> httpx.Response:
+        requests.append(request.url.path)
+        return httpx.Response(200, content=b'{"id":"private-first","id":"private-second"}')
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(responding)) as http:
+        with pytest.raises(DuplicateJsonKeyError) as failure:
+            await service(repo, http).prepare(metadata)
+        assert "private-first" not in str(failure.value) and "private-second" not in str(failure.value)
+        with pytest.raises(NativePreparationUnavailable, match="automatic repost refused"):
+            await service(repo, http).prepare(metadata)
+    assert requests == ["/v1/files"]
+
+
+async def test_nonprogressing_resource_cursor_cannot_authorize_mount() -> None:
+    repo = MemoryRepository()
+    metadata = await seed_file(repo)
+    native = NativeFiles()
+    pages = 0
+
+    def responding(request: httpx.Request) -> httpx.Response:
+        nonlocal pages
+        if request.method == "GET":
+            pages += 1
+            return httpx.Response(200, json={"data": [], "next_page": "same-cursor"})
+        return native.respond(request)
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(responding)) as http:
+        with pytest.raises(ValueError, match="did not advance"):
+            await service(repo, http).prepare(metadata)
+    assert pages == 2 and native.uploads == 1 and native.mounts == 0
+
+
+async def test_confirmed_resource_identity_cannot_be_replaced_by_same_path_and_file() -> None:
+    repo = MemoryRepository()
+    metadata = await seed_file(repo)
+    native = NativeFiles()
+    async with httpx.AsyncClient(transport=httpx.MockTransport(native.respond)) as http:
+        await service(repo, http).prepare(metadata)
+        native.resources[0]["id"] = "replacement-resource"
+        with pytest.raises(NativePreparationUnavailable, match="resource identity changed"):
+            await service(repo, http).prepare(metadata)
+    assert native.uploads == native.mounts == 1
