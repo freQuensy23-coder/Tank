@@ -1,11 +1,13 @@
 """Actual loopback HTTP serialization for the typed synthetic publisher provider."""
 
 import json
+import ssl
 import threading
 from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
 from urllib.parse import parse_qs, urlsplit
 
 from publisher_state_support import ProviderState
@@ -38,8 +40,13 @@ class PublisherHTTPPeer:
 
 
 @contextmanager
-def publisher_http_peer(
-    provider: ProviderState, journal: PublisherJournal, selected_sha: CommitSHA
+def serve_peer(
+    provider: ProviderState,
+    journal: PublisherJournal,
+    selected_sha: CommitSHA,
+    *,
+    port: int,
+    context: ssl.SSLContext | None,
 ) -> Iterator[PublisherHTTPPeer]:
     requests: list[ObservedRequest] = []
 
@@ -107,12 +114,40 @@ def publisher_http_peer(
         def log_message(self, format: str, *args: str) -> None:
             return None
 
-    server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    server = ThreadingHTTPServer(("127.0.0.1", port), Handler)
+    if context is not None:
+        server.socket = context.wrap_socket(server.socket, server_side=True)
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
     try:
-        yield PublisherHTTPPeer(ApifyEndpoint(base_url=f"http://127.0.0.1:{server.server_port}/v2"), requests)
+        endpoint = (
+            "https://api.apify.com/v2" if context is not None else f"http://127.0.0.1:{server.server_port}/v2"
+        )
+        yield PublisherHTTPPeer(ApifyEndpoint(base_url=endpoint), requests)
     finally:
         server.shutdown()
         server.server_close()
         thread.join()
+
+
+@contextmanager
+def publisher_http_peer(
+    provider: ProviderState, journal: PublisherJournal, selected_sha: CommitSHA
+) -> Iterator[PublisherHTTPPeer]:
+    with serve_peer(provider, journal, selected_sha, port=0, context=None) as peer:
+        yield peer
+
+
+@contextmanager
+def publisher_https_peer(
+    provider: ProviderState,
+    journal: PublisherJournal,
+    selected_sha: CommitSHA,
+    *,
+    certificate: Path,
+    private_key: Path,
+) -> Iterator[PublisherHTTPPeer]:
+    context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+    context.load_cert_chain(certificate, private_key)
+    with serve_peer(provider, journal, selected_sha, port=443, context=context) as peer:
+        yield peer
