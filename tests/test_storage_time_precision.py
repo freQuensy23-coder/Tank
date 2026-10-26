@@ -9,9 +9,16 @@ import pytest_asyncio
 from foundation_helpers import present, text_field
 from postgres_helpers import PostgresTemplate
 
+from tank.contracts.jobs import JobEnvelope
 from tank.models import Record
 from tank.storage import MemoryRepository, PostgresRepository, _projection
-from tank.time_precision import chosen_boundary, collection_clock, offset_schedule
+from tank.time_precision import (
+    Timestamp,
+    chosen_boundary,
+    collection_clock,
+    offset_schedule,
+    propagate_timestamp,
+)
 from tank.util import clock_iso, iso, parse_time, utcnow
 
 
@@ -203,3 +210,82 @@ async def test_upgrade_nullable_metadata_preserves_immutable_history(upgrade_pg:
     changed = present(await repo.get("ops.jobs", "legacy-job"))
     assert changed["created_at_prec"] is None and changed["created_at_prec_reason"] == "INCOMPLETE"
     assert await repo.get("out.ops_notices", "legacy-notice") == legacy
+
+
+async def _retry_replaces_bucket_clock(repo: MemoryRepository | PostgresRepository) -> None:
+    boundary = Timestamp("2026-10-01T00:00:00Z", "BUCKET(60s)", None, "END")
+    job = await repo.enqueue(
+        "CUSTOM", {"checkpoint": {"items": [1, 2]}}, "retry-bucket-clock", run_after=boundary
+    )
+    JobEnvelope.model_validate(job)
+    claimed = present(await repo.claim_job())
+    assert claimed["run_after_bucket_anchor"] == "END"
+    original_payload = claimed["payload"]
+    original_created = propagate_timestamp(claimed, "created_at")
+    original_expiry = propagate_timestamp(claimed, "expires_at")
+    await repo.fail_job(text_field(claimed, "job_id"), "retryable", retry_after=0)
+    retried = present(await repo.get("ops.jobs", text_field(claimed, "job_id")))
+    assert retried["status"] == "QUEUED" and retried["run_after_prec"] == "COLLECTION_ONLY"
+    assert "run_after_bucket_anchor" not in retried
+    assert propagate_timestamp(retried, "created_at") == original_created
+    assert propagate_timestamp(retried, "expires_at") == original_expiry
+    assert retried["payload"] == original_payload
+    JobEnvelope.model_validate(retried)
+    next_claim = present(await repo.claim_job())
+    assert next_claim["attempts"] == 2
+    await repo.finish_job(text_field(next_claim, "job_id"))
+    complete = JobEnvelope.model_validate(
+        present(await repo.get("ops.jobs", text_field(next_claim, "job_id")))
+    )
+    assert complete.status == "DONE" and complete.finished_at_prec == "COLLECTION_ONLY"
+
+
+async def _recovery_replaces_reported_clock_alias(repo: MemoryRepository | PostgresRepository) -> None:
+    job = await repo.enqueue("CUSTOM", {"source": "retained"}, "recovery-clock-alias")
+    await repo.claim_job()
+    assert await repo.recover_jobs() == 1
+    reclaimed = present(await repo.claim_job())
+    assert reclaimed["recovery_count"] == 1
+    original_created = propagate_timestamp(reclaimed, "created_at")
+    original_schedule = propagate_timestamp(reclaimed, "run_after")
+    prior_value = text_field(reclaimed, "recovery_at")
+    reclaimed["recovery_at_prec"] = None
+    reclaimed["recovery_at_prec_reason"] = "PRECISION_NOT_RETAINED_IN_CAPTURE"
+    JobEnvelope.model_validate(reclaimed)
+    reclaimed["recovery_at_precision"] = "UNKNOWN"
+    assert propagate_timestamp(reclaimed, "recovery_at").precision is None
+    await repo.put("ops.jobs", text_field(job, "job_id"), reclaimed)
+    assert await repo.recover_jobs() == 1
+    recovered = present(await repo.get("ops.jobs", text_field(job, "job_id")))
+    assert "recovery_at_precision" not in recovered
+    clock = propagate_timestamp(recovered, "recovery_at")
+    assert clock.precision == "COLLECTION_ONLY" and clock.precision_reason is None
+    assert clock.value is not None and parse_time(clock.value) >= parse_time(prior_value)
+    assert recovered["recovery_count"] == 2 and recovered["payload"] == {"source": "retained"}
+    assert propagate_timestamp(recovered, "created_at") == original_created
+    assert propagate_timestamp(recovered, "run_after") == original_schedule
+    JobEnvelope.model_validate(recovered)
+
+
+async def test_memory_retry_replaces_complete_bucket_clock_family() -> None:
+    await _retry_replaces_bucket_clock(MemoryRepository())
+
+
+async def test_memory_recovery_replaces_reported_unknown_clock_alias() -> None:
+    await _recovery_replaces_reported_clock_alias(MemoryRepository())
+
+
+@pytest.mark.integration
+@pytest.mark.postgres
+async def test_postgres_retry_replaces_complete_bucket_clock_family(
+    disposable_pg: PostgresRepository,
+) -> None:
+    await _retry_replaces_bucket_clock(disposable_pg)
+
+
+@pytest.mark.integration
+@pytest.mark.postgres
+async def test_postgres_recovery_replaces_reported_unknown_clock_alias(
+    disposable_pg: PostgresRepository,
+) -> None:
+    await _recovery_replaces_reported_clock_alias(disposable_pg)
