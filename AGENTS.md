@@ -30,6 +30,12 @@ Specifications live in `01_Tank_V0_PRD.md`, `02_Tank_V0_HLD.md`, `03_Tank_V0_Tec
 - Never deploy over SSH: no `git clone`, `pull` or `checkout` on a server, no copying code, compose files or images to it, no manual `docker compose` up/pull/restart.
 - SSH to production is for read-only diagnostics. The only host-side change is the deployment owner editing secrets in `/srv/tank-deploy/.env`.
 
+## Pull requests
+
+- Write every PR description in English from `.github/pull_request_template.md`. The `pr-description` CI check fails when its blocks are missing or out of order.
+- Make the before, after and red diff images of a changed diagram with `scripts/diagram_diff.sh <base-ref> <diagram.svg> <out-dir>`.
+- After a database schema change, regenerate the schema diagrams with `uv run python scripts/render_db_schema.py --png`.
+
 ## Code Review Rules
 
 ### Code style
