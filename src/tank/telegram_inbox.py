@@ -14,7 +14,7 @@ import json
 import logging
 import re
 import time
-from collections.abc import Mapping
+from collections.abc import AsyncIterator, Mapping
 from datetime import UTC, datetime, timedelta
 from difflib import SequenceMatcher
 from typing import Literal
@@ -36,10 +36,12 @@ from tank.contracts.session_followups import (
     followup_eligibility,
 )
 from tank.contracts.telegram_state import (
+    KnownTelegramFileDelivery,
     TelegramAnsweredQuestion,
     TelegramAttachmentAttempt,
     TelegramFailedAttachment,
     TelegramFileAlreadySent,
+    TelegramFileDeliveryContext,
     TelegramFileDeliveryOutcome,
     TelegramFileSent,
     TelegramFileUncertain,
@@ -922,15 +924,13 @@ class TelegramInbox:
         result = response_result(response.content, method="sendDocument", status=response.status_code)
         return sent_message_receipt(result)
 
-    async def send_session_file(
+    @contextlib.asynccontextmanager
+    async def _locked_session_file(
         self,
         target: FollowupRefusalTarget,
         call_id: str,
         filename: str,
-        content: bytes,
-        caption: str | None = None,
-    ) -> TelegramFileDeliveryOutcome:
-        """Deliver to the locked authoritative question/session pair, once per tool call."""
+    ) -> AsyncIterator[TelegramFileDeliveryContext]:
         target = FollowupRefusalTarget.model_validate(target)
         async with self.repo.lock("question:" + target.question_id):
             question = await self.repo.get("out.user_questions", target.question_id)
@@ -957,16 +957,46 @@ class TelegramInbox:
                     },
                 )
             ]
+            known: KnownTelegramFileDelivery | None = None
             for row in ledger:
                 if isinstance(row, TelegramSentAttachment):
-                    return TelegramFileAlreadySent(sent=True, message_id=str(row.message_ref), duplicate=True)
-            if sum(isinstance(row, TelegramGeneratedAttachment) for row in ledger) > sum(
+                    known = TelegramFileAlreadySent(
+                        sent=True, message_id=str(row.message_ref), duplicate=True
+                    )
+                    break
+            if known is None and sum(isinstance(row, TelegramGeneratedAttachment) for row in ledger) > sum(
                 isinstance(row, TelegramFailedAttachment) for row in ledger
             ):
-                return TelegramFileUncertain(
+                known = TelegramFileUncertain(
                     sent="UNKNOWN",
                     reason="An earlier attempt of this call was interrupted after sending started; it may already have arrived. Call again to resend.",
                 )
+            yield TelegramFileDeliveryContext(recipient=recipient, attempt=scope, known=known)
+
+    async def lookup_session_file(
+        self,
+        target: FollowupRefusalTarget,
+        call_id: str,
+        filename: str,
+    ) -> KnownTelegramFileDelivery | None:
+        async with self._locked_session_file(target, call_id, filename) as context:
+            if context.known is None:
+                self.active_token()
+            return context.known
+
+    async def send_session_file(
+        self,
+        target: FollowupRefusalTarget,
+        call_id: str,
+        filename: str,
+        content: bytes,
+        caption: str | None = None,
+    ) -> TelegramFileDeliveryOutcome:
+        """Deliver to the locked authoritative question/session pair, once per tool call."""
+        async with self._locked_session_file(target, call_id, filename) as context:
+            if context.known is not None:
+                return context.known
+            recipient, scope = context.recipient, context.attempt
             self.active_token()
             await self.repo.put(
                 "out.deliveries",

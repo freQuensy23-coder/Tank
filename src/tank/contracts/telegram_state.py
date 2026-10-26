@@ -187,12 +187,21 @@ class TelegramFileUncertain(DomainModel):
 type TelegramFileDeliveryOutcome = TelegramFileSent | TelegramFileAlreadySent | TelegramFileUncertain
 
 
+type KnownTelegramFileDelivery = TelegramFileAlreadySent | TelegramFileUncertain
+
+
 class TelegramAttachmentAttempt(FollowupRefusalTarget):
     channel: Literal["telegram:answer"]
     purpose: Literal["ATTACHMENT"]
     chat_id: ChatReference
     call_id: NonblankText
     filename: NonblankText
+
+
+class TelegramFileDeliveryContext(DomainModel):
+    recipient: TelegramQuestionRecipient
+    attempt: TelegramAttachmentAttempt
+    known: KnownTelegramFileDelivery | None
 
 
 class TelegramGeneratedAttachment(TelegramAttachmentAttempt):
