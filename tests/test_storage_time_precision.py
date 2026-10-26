@@ -8,6 +8,7 @@ import pytest
 import pytest_asyncio
 from foundation_helpers import present, text_field
 from postgres_helpers import PostgresTemplate
+from pydantic import JsonValue
 
 from tank.contracts.jobs import JobEnvelope
 from tank.models import Record
@@ -214,8 +215,9 @@ async def test_upgrade_nullable_metadata_preserves_immutable_history(upgrade_pg:
 
 async def _retry_replaces_bucket_clock(repo: MemoryRepository | PostgresRepository) -> None:
     boundary = Timestamp("2026-10-01T00:00:00Z", "BUCKET(60s)", None, "END")
+    items: list[JsonValue] = [1, 2]
     job = await repo.enqueue(
-        "CUSTOM", {"checkpoint": {"items": [1, 2]}}, "retry-bucket-clock", run_after=boundary
+        "CUSTOM", {"checkpoint": {"items": items}}, "retry-bucket-clock", run_after=boundary
     )
     JobEnvelope.model_validate(job)
     claimed = present(await repo.claim_job())
