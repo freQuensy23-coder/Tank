@@ -6,7 +6,7 @@ from agent_source_fixtures import declared_versions_fixture
 from pydantic import JsonValue
 from session_followup_fixtures import UnexpectedFollowupRefusals
 
-from tank.agents.input_ownership import NativeInputOwner, UnprovedInputOwnership
+from tank.agents.input_ownership import NativeInputOwner, NativeOwnershipSnapshot, UnprovedInputOwnership
 from tank.agents.sessions import SessionService
 from tank.settings import Settings
 from tank.storage import MemoryRepository
@@ -48,7 +48,7 @@ async def test_actual_service_resolves_recorded_current_superseded_and_tool_inpu
             versions=declared_versions_fixture(),
             refusals=UnexpectedFollowupRefusals(),
         )
-        owner = await service.native_input_owner(session, kind)
+        owner = await service.native_input_owner(NativeOwnershipSnapshot.from_record(session), kind)
     assert owner == NativeInputOwner(message_id="message", attempt=0 if kind == "superseded" else 1)
 
 
@@ -79,7 +79,7 @@ async def test_historical_unknown_retry_attempt_cannot_be_invented_from_position
             refusals=UnexpectedFollowupRefusals(),
         )
         with pytest.raises(UnprovedInputOwnership, match="recorded retry attempt"):
-            await service.native_input_owner(session, kind)
+            await service.native_input_owner(NativeOwnershipSnapshot.from_record(session), kind)
     assert message["retry_count"] == 1
     assert "native_input_attempts" not in message
 
@@ -109,4 +109,4 @@ async def test_two_actual_messages_cannot_claim_one_native_input() -> None:
             refusals=UnexpectedFollowupRefusals(),
         )
         with pytest.raises(ValueError, match="conflicting journal ownership"):
-            await service.native_input_owner(session, "shared-input")
+            await service.native_input_owner(NativeOwnershipSnapshot.from_record(session), "shared-input")

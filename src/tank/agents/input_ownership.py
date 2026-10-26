@@ -108,23 +108,47 @@ class ToolInputLineage(DomainModel):
 
 class NativeOwnershipSnapshot(DomainModel):
     session_id: InputIdentity
-    lineages: tuple[JournalInputLineage, ...]
+    lineages: tuple[JournalInputLineage, ...] | None
+    unselected_message_ids: tuple[InputIdentity, ...]
 
     @model_validator(mode="after")
     def distinct_message_owners(self) -> Self:
-        ids = [lineage.message_id for lineage in self.lineages]
+        if self.lineages is None:
+            if self.unselected_message_ids:
+                raise ValueError("Unobserved native journal cannot declare message scope")
+            return self
+        ids = [lineage.message_id for lineage in self.lineages] + list(self.unselected_message_ids)
         if len(set(ids)) != len(ids):
             raise ValueError("Native input journal repeats a message identity")
         return self
 
     @classmethod
-    def from_record(cls, record: dict[str, JsonValue]) -> Self:
-        journal = record.get("message_log", [])
+    def from_record(cls, record: dict[str, JsonValue], *, message_ids: frozenset[str] | None = None) -> Self:
+        if "message_log" not in record:
+            return cls.model_validate(
+                {"session_id": record["session_id"], "lineages": None, "unselected_message_ids": ()}
+            )
+        journal = record["message_log"]
         if not isinstance(journal, list):
             raise ValueError("Native input journal must be an array")
         lineages: list[JournalInputLineage] = []
+        unselected: list[InputIdentity] = []
         for raw in journal:
             if not isinstance(raw, dict):
                 raise ValueError("Native input journal message must be an object")
-            lineages.append(JournalInputLineage.from_record(raw))
-        return cls.model_validate({"session_id": record["session_id"], "lineages": tuple(lineages)})
+            identity = JournalMessageIdentity.model_validate({"message_id": raw["message_id"]})
+            if message_ids is not None and identity.message_id not in message_ids:
+                unselected.append(identity.message_id)
+            else:
+                lineages.append(JournalInputLineage.from_record(raw))
+        return cls.model_validate(
+            {
+                "session_id": record["session_id"],
+                "lineages": tuple(lineages),
+                "unselected_message_ids": tuple(unselected),
+            }
+        )
+
+
+class JournalMessageIdentity(DomainModel):
+    message_id: InputIdentity

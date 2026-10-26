@@ -5,10 +5,10 @@ from typing import Annotated, Literal, Self
 
 from pydantic import Field, JsonValue, model_validator
 
-from tank.agents.input_ownership import NativeInputOwner, NativeOwnershipSnapshot
-from tank.agents.native_transport import ManagedEventPage
+from tank.agents.input_ownership import JournalMessageIdentity, NativeInputOwner, NativeOwnershipSnapshot
 from tank.agents.tool_contracts import NativeText
 from tank.contracts import DomainModel
+from tank.contracts.native_events import ManagedEventPage
 from tank.contracts.session_followups import FollowupRefusalTarget
 
 type AnswerIdentity = Annotated[str, Field(min_length=1, pattern=r"\S")]
@@ -77,6 +77,11 @@ class AnswerHistoryPage(DomainModel):
         return cls(events=tuple(answer_history_event(event) for event in page.data), next_page=page.next_page)
 
 
+class NativeAnswerQuery(DomainModel):
+    ownership: NativeOwnershipSnapshot
+    input_ids: tuple[AnswerIdentity, ...] | None
+
+
 class NativeTurnAnswer(DomainModel):
     message_id: AnswerIdentity
     attempt: int = Field(ge=0)
@@ -98,6 +103,8 @@ def collect_turn_answers(
     for event in history:
         if isinstance(event, HistoryRunning):
             current = event.execution_id
+            if current is not None:
+                ended.pop(current, None)
             if current is not None and current not in execution_order:
                 execution_order.append(current)
         elif isinstance(event, HistoryMessage) and current is not None:
@@ -129,7 +136,6 @@ def collect_turn_answers(
 class QuestionSettlement(DomainModel):
     message_id: AnswerIdentity
     question_id: AnswerIdentity
-    input_id: AnswerIdentity | None
     turn_status: TurnPhase | None
     answer_recorded: bool | None
 
@@ -138,44 +144,51 @@ class QuestionSettlement(DomainModel):
 
 
 class QuestionSettlementSession(DomainModel):
-    ownership: NativeOwnershipSnapshot
+    session_id: AnswerIdentity
     status: Literal["OPEN", "FAILED", "ENDED"] | None
-    questions: tuple[QuestionSettlement, ...]
+    questions: tuple[QuestionSettlement, ...] | None
 
     @model_validator(mode="after")
     def questions_have_distinct_journal_owners(self) -> Self:
-        messages = {lineage.message_id for lineage in self.ownership.lineages}
-        ids: set[str] = set()
-        for question in self.questions:
-            if question.message_id not in messages or question.message_id in ids:
-                raise ValueError("Question settlement conflicts with its actual journal owner")
-            ids.add(question.message_id)
+        if self.questions is None:
+            return self
+        ids = [question.message_id for question in self.questions]
+        if len(set(ids)) != len(ids):
+            raise ValueError("Question settlement repeats a journal owner")
         return self
 
     @classmethod
     def from_record(cls, raw: dict[str, JsonValue]) -> Self:
-        ownership = NativeOwnershipSnapshot.from_record(raw)
-        journal = raw.get("message_log", [])
+        header = cls.model_validate(
+            {"session_id": raw["session_id"], "status": raw.get("status"), "questions": None}
+        )
+        if "message_log" not in raw:
+            return header
+        journal = raw["message_log"]
         if not isinstance(journal, list):
             raise ValueError("Native question journal must be an array")
         questions: list[QuestionSettlement] = []
+        message_ids: set[str] = set()
         for row in journal:
             if not isinstance(row, dict):
                 raise ValueError("Native question journal message must be an object")
+            identity = JournalMessageIdentity.model_validate({"message_id": row["message_id"]})
+            if identity.message_id in message_ids:
+                raise ValueError("Question settlement repeats a journal owner")
+            message_ids.add(identity.message_id)
             payload = row.get("payload")
             if not isinstance(payload, dict) or payload.get("kind") != "USER_QUESTION":
                 continue
-            if payload["session_id"] != ownership.session_id:
+            if "session_id" in payload and payload["session_id"] != header.session_id:
                 raise ValueError("Question payload belongs to another native session")
             questions.append(
                 QuestionSettlement.model_validate(
                     {
-                        "message_id": row["message_id"],
+                        "message_id": identity.message_id,
                         "question_id": payload["question_id"],
-                        "input_id": row.get("remote_event_id"),
                         "turn_status": row.get("turn_status"),
                         "answer_recorded": row.get("answer_recorded"),
                     }
                 )
             )
-        return cls.model_validate({"ownership": ownership, "status": raw.get("status"), "questions": tuple(questions)})
+        return cls(session_id=header.session_id, status=header.status, questions=tuple(questions))
