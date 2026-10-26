@@ -219,6 +219,13 @@ def source_scope(metadata: TelegramCachedFile) -> NativeFileSourceScope:
     )
 
 
+def cached_source(record: dict[str, JsonValue]) -> NativeFileSourceScope:
+    return NativeFileSourceScope.model_validate(
+        {name: record[name] for name in ("file_key", "question_id", "session_id", "filename", "mime", "size")}
+        | {"cached_sha256": record["sha256"]}
+    )
+
+
 def preparation_scope(state: NativeFilePreparation) -> NativeFileSourceScope:
     if isinstance(state, (NativeFileNotRequested, NativeLegacyMountConfirmed)):
         return state.scope
@@ -254,14 +261,12 @@ class NativeFilePreparationService:
             if prompt.attachments is None:
                 return prompt
             references = AttachmentReferences.model_validate(question["attachments"]).root
-            metadata: list[TelegramCachedFile] = []
+            metadata: list[NativeFileSourceScope] = []
             for reference in references:
                 row = await self.store.get("ops.telegram_files", reference.file_key)
                 if row is None:
                     raise NativePreparationUnavailable("Attached file cache is unavailable")
-                admitted = TelegramCachedFile.model_validate(
-                    {key: row[key] for key in TelegramCachedFile.model_fields if key in row}
-                )
+                admitted = cached_source(row)
                 if (
                     admitted.question_id != target.question_id
                     or admitted.session_id != target.session_id
@@ -309,17 +314,15 @@ class NativeFilePreparationService:
                 before is None and "native_preparation" in current
             ):
                 raise NativePreparationUnavailable("Native preparation changed before receipt persistence")
-            admitted = TelegramCachedFile.model_validate(
-                {key: current[key] for key in TelegramCachedFile.model_fields if key in current}
-            )
-            if source_scope(admitted) != scope or preparation_scope(state) != scope:
+            admitted = cached_source(current)
+            if admitted != scope or preparation_scope(state) != scope:
                 raise NativePreparationUnavailable("Native preparation source ownership changed")
             current["native_preparation"] = PreparationRecord(state).model_dump(mode="json")
             await self.store.put("ops.telegram_files", scope.file_key, current)
 
-    async def prepare(self, metadata: TelegramCachedFile) -> str:
+    async def prepare(self, scope: NativeFileSourceScope) -> str:
         """Own and drain a task whose short phase transactions precede native effects."""
-        task = asyncio.create_task(self._prepare(metadata))
+        task = asyncio.create_task(self._prepare(scope))
         try:
             return await asyncio.shield(task)
         except asyncio.CancelledError as cancelled:
@@ -331,17 +334,14 @@ class NativeFilePreparationService:
             task.result()
             raise cancelled
 
-    async def _prepare(self, metadata: TelegramCachedFile) -> str:
-        metadata = TelegramCachedFile.model_validate(metadata)
-        scope = source_scope(metadata)
+    async def _prepare(self, scope: NativeFileSourceScope) -> str:
+        scope = NativeFileSourceScope.model_validate(scope)
         current = await self.store.get("ops.telegram_files", scope.file_key)
         if current is None:
             raise NativePreparationUnavailable("Attached file cache is unavailable")
         receipts = NativeEffectReceipts.model_validate(current.get("native_effect_receipts", {})).root
-        admitted = TelegramCachedFile.model_validate(
-            {key: current[key] for key in TelegramCachedFile.model_fields if key in current}
-        )
-        if source_scope(admitted) != scope:
+        admitted = cached_source(current)
+        if admitted != scope:
             raise NativePreparationUnavailable("Attached file cache ownership changed")
         if "native_preparation" not in current:
             mounts = current.get("model_mounts")

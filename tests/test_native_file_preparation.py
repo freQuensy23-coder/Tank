@@ -117,8 +117,8 @@ async def test_actual_upload_and_scoped_resource_readback_are_once_only() -> Non
     native = NativeFiles()
     async with httpx.AsyncClient(transport=httpx.MockTransport(native.respond)) as http:
         prepared = service(repo, http)
-        path = await prepared.prepare(metadata)
-        assert await prepared.prepare(metadata) == path
+        path = await prepared.prepare(source_scope(metadata))
+        assert await prepared.prepare(source_scope(metadata)) == path
     assert native.uploads == native.mounts == 1
     stored = await repo.get("ops.telegram_files", metadata.file_key)
     assert stored is not None
@@ -133,9 +133,9 @@ async def test_lost_upload_response_durably_refuses_blind_repost_on_restart() ->
     native = NativeFiles(lose_upload=True)
     async with httpx.AsyncClient(transport=httpx.MockTransport(native.respond)) as http:
         with pytest.raises(httpx.ReadError):
-            await service(repo, http).prepare(metadata)
+            await service(repo, http).prepare(source_scope(metadata))
         with pytest.raises(NativePreparationUnavailable, match="automatic repost refused"):
-            await service(repo, http).prepare(metadata)
+            await service(repo, http).prepare(source_scope(metadata))
     assert native.uploads == 1 and native.mounts == 0
 
 
@@ -145,8 +145,8 @@ async def test_lost_mount_response_reconciles_actual_resource_without_second_pos
     native = NativeFiles(lose_mount=True)
     async with httpx.AsyncClient(transport=httpx.MockTransport(native.respond)) as http:
         with pytest.raises(httpx.ReadError):
-            await service(repo, http).prepare(metadata)
-        path = await service(repo, http).prepare(metadata)
+            await service(repo, http).prepare(source_scope(metadata))
+        path = await service(repo, http).prepare(source_scope(metadata))
     assert path == native.resources[0]["mount_path"]
     assert native.uploads == native.mounts == 1
 
@@ -161,7 +161,7 @@ async def test_unreported_legacy_preparation_never_becomes_fresh_upload() -> Non
     native = NativeFiles()
     async with httpx.AsyncClient(transport=httpx.MockTransport(native.respond)) as http:
         with pytest.raises(NativePreparationUnavailable, match="unreported"):
-            await service(repo, http).prepare(metadata)
+            await service(repo, http).prepare(source_scope(metadata))
     assert native.uploads == native.mounts == 0
 
 
@@ -196,7 +196,7 @@ async def test_upload_intent_persistence_failure_precedes_every_native_effect() 
     native = NativeFiles()
     async with httpx.AsyncClient(transport=httpx.MockTransport(native.respond)) as http:
         with pytest.raises(ConnectionError):
-            await service(repo, http).prepare(metadata)
+            await service(repo, http).prepare(source_scope(metadata))
     assert native.uploads == native.mounts == 0
     stored = await repo.get("ops.telegram_files", metadata.file_key)
     assert stored is not None
@@ -209,8 +209,8 @@ async def test_lost_file_receipt_commit_ack_recovers_observed_id_without_upload(
     native = NativeFiles()
     async with httpx.AsyncClient(transport=httpx.MockTransport(native.respond)) as http:
         with pytest.raises(ConnectionError):
-            await service(repo, http).prepare(metadata)
-        await service(repo, http).prepare(metadata)
+            await service(repo, http).prepare(source_scope(metadata))
+        await service(repo, http).prepare(source_scope(metadata))
     assert native.uploads == native.mounts == 1
 
 
@@ -220,8 +220,8 @@ async def test_durable_effect_receipt_recovers_uncommitted_cache_phase() -> None
     native = NativeFiles()
     async with httpx.AsyncClient(transport=httpx.MockTransport(native.respond)) as http:
         with pytest.raises(ConnectionError):
-            await service(repo, http).prepare(metadata)
-        await service(repo, http).prepare(metadata)
+            await service(repo, http).prepare(source_scope(metadata))
+        await service(repo, http).prepare(source_scope(metadata))
     assert native.uploads == native.mounts == 1
 
 
@@ -231,10 +231,10 @@ async def test_foreign_resource_at_mount_path_refuses_without_reposting() -> Non
     native = NativeFiles(lose_mount=True)
     async with httpx.AsyncClient(transport=httpx.MockTransport(native.respond)) as http:
         with pytest.raises(httpx.ReadError):
-            await service(repo, http).prepare(metadata)
+            await service(repo, http).prepare(source_scope(metadata))
         native.resources[0]["file_id"] = "foreign-file"
         with pytest.raises(NativePreparationUnavailable, match="different resource"):
-            await service(repo, http).prepare(metadata)
+            await service(repo, http).prepare(source_scope(metadata))
     assert native.uploads == native.mounts == 1
 
 
@@ -312,7 +312,7 @@ async def test_explicit_null_effect_ledger_refuses_before_native_effect() -> Non
     native = NativeFiles()
     async with httpx.AsyncClient(transport=httpx.MockTransport(native.respond)) as http:
         with pytest.raises(ValueError):
-            await service(repo, http).prepare(metadata)
+            await service(repo, http).prepare(source_scope(metadata))
     assert native.uploads == native.mounts == 0
 
 
@@ -340,8 +340,8 @@ async def test_retained_mount_pointer_requires_actual_scoped_resource_and_preser
         }
     )
     async with httpx.AsyncClient(transport=httpx.MockTransport(native.respond)) as http:
-        assert await service(repo, http).prepare(metadata) == "/workspace/retained/data.csv"
-        assert await service(repo, http).prepare(metadata) == "/workspace/retained/data.csv"
+        assert await service(repo, http).prepare(source_scope(metadata)) == "/workspace/retained/data.csv"
+        assert await service(repo, http).prepare(source_scope(metadata)) == "/workspace/retained/data.csv"
     after = await repo.get("ops.telegram_files", metadata.file_key)
     assert after is not None and after["model_mounts"] == pointers
     assert (
@@ -363,10 +363,10 @@ async def test_duplicate_upload_identity_refuses_without_overwriting_ownership_o
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(responding)) as http:
         with pytest.raises(DuplicateJsonKeyError) as failure:
-            await service(repo, http).prepare(metadata)
+            await service(repo, http).prepare(source_scope(metadata))
         assert "private-first" not in str(failure.value) and "private-second" not in str(failure.value)
         with pytest.raises(NativePreparationUnavailable, match="automatic repost refused"):
-            await service(repo, http).prepare(metadata)
+            await service(repo, http).prepare(source_scope(metadata))
     assert requests == ["/v1/files"]
 
 
@@ -385,7 +385,7 @@ async def test_nonprogressing_resource_cursor_cannot_authorize_mount() -> None:
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(responding)) as http:
         with pytest.raises(ValueError, match="did not advance"):
-            await service(repo, http).prepare(metadata)
+            await service(repo, http).prepare(source_scope(metadata))
     assert pages == 2 and native.uploads == 1 and native.mounts == 0
 
 
@@ -394,8 +394,37 @@ async def test_confirmed_resource_identity_cannot_be_replaced_by_same_path_and_f
     metadata = await seed_file(repo)
     native = NativeFiles()
     async with httpx.AsyncClient(transport=httpx.MockTransport(native.respond)) as http:
-        await service(repo, http).prepare(metadata)
+        await service(repo, http).prepare(source_scope(metadata))
         native.resources[0]["id"] = "replacement-resource"
         with pytest.raises(NativePreparationUnavailable, match="resource identity changed"):
-            await service(repo, http).prepare(metadata)
+            await service(repo, http).prepare(source_scope(metadata))
+    assert native.uploads == native.mounts == 1
+
+
+async def test_known_upload_recovery_does_not_reconstruct_unused_historical_mime_or_bytes() -> None:
+    repo = MemoryRepository()
+    metadata = await seed_file(repo)
+    native = NativeFiles(lose_mount=True)
+    async with httpx.AsyncClient(transport=httpx.MockTransport(native.respond)) as http:
+        with pytest.raises(httpx.ReadError):
+            await service(repo, http).prepare(source_scope(metadata))
+        row = await repo.get("ops.telegram_files", metadata.file_key)
+        assert row is not None
+        unused = {
+            "reported_mime_type",
+            "response_content_type",
+            "mime_basis",
+            "declared_size",
+            "file_unique_id",
+            "file_identity_basis",
+        }
+        for field in unused:
+            row.pop(field)
+        row["retained_extension"] = {"actual": "unchanged"}
+        await repo.put("ops.telegram_files", metadata.file_key, row)
+        await repo.delete("ops.telegram_file_payloads", metadata.file_key)
+        assert await service(repo, http).prepare(source_scope(metadata)) == native.resources[0]["mount_path"]
+    after = await repo.get("ops.telegram_files", metadata.file_key)
+    assert after is not None and not unused.intersection(after)
+    assert after["retained_extension"] == {"actual": "unchanged"}
     assert native.uploads == native.mounts == 1

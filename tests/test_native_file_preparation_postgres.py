@@ -6,7 +6,7 @@ from pydantic import JsonValue
 from test_native_file_preparation import NativeFiles, seed_file, service
 from test_storage import repo as repo
 
-from tank.agents.native_file_preparation import NativePreparationUnavailable, PreparationRecord
+from tank.agents.native_file_preparation import NativePreparationUnavailable, PreparationRecord, source_scope
 from tank.storage import StorageBackend
 
 
@@ -18,12 +18,12 @@ async def test_actual_storage_restart_respects_native_acceptance_phase(
     native = NativeFiles(lose_upload=lost == "upload", lose_mount=lost == "mount")
     async with httpx.AsyncClient(transport=httpx.MockTransport(native.respond)) as http:
         with pytest.raises(httpx.ReadError):
-            await service(repo, http).prepare(metadata)
+            await service(repo, http).prepare(source_scope(metadata))
         if lost == "upload":
             with pytest.raises(NativePreparationUnavailable, match="automatic repost refused"):
-                await service(repo, http).prepare(metadata)
+                await service(repo, http).prepare(source_scope(metadata))
         else:
-            await service(repo, http).prepare(metadata)
+            await service(repo, http).prepare(source_scope(metadata))
     assert native.uploads == 1 and native.mounts == (1 if lost == "mount" else 0)
     stored = await repo.get("ops.telegram_files", metadata.file_key)
     assert stored is not None
@@ -96,11 +96,11 @@ async def test_concurrent_controller_observes_unconfirmed_upload_without_second_
         return native.respond(request)
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(responding)) as http:
-        first = asyncio.create_task(service(repo, http).prepare(metadata))
+        first = asyncio.create_task(service(repo, http).prepare(source_scope(metadata)))
         try:
             await asyncio.wait_for(entered.wait(), 2)
             with pytest.raises(NativePreparationUnavailable, match="automatic repost refused"):
-                await service(repo, http).prepare(metadata)
+                await service(repo, http).prepare(source_scope(metadata))
         finally:
             release.set()
             await first
@@ -123,7 +123,7 @@ async def test_cancellation_drains_owned_native_effect_and_commits_observed_rece
         return native.respond(request)
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(responding)) as http:
-        owner = asyncio.create_task(service(repo, http).prepare(metadata))
+        owner = asyncio.create_task(service(repo, http).prepare(source_scope(metadata)))
         await asyncio.wait_for(entered.wait(), 2)
         owner.cancel()
         await asyncio.sleep(0)
@@ -131,7 +131,7 @@ async def test_cancellation_drains_owned_native_effect_and_commits_observed_rece
         release.set()
         with pytest.raises(asyncio.CancelledError):
             await owner
-        await service(repo, http).prepare(metadata)
+        await service(repo, http).prepare(source_scope(metadata))
     assert native.uploads == native.mounts == 1
 
 
@@ -155,7 +155,7 @@ async def test_observed_upload_identity_survives_changed_cache_ownership_without
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(responding)) as http:
         with pytest.raises(NativePreparationUnavailable, match="source ownership changed"):
-            await service(repo, http).prepare(metadata)
+            await service(repo, http).prepare(source_scope(metadata))
     stored = await repo.get("ops.telegram_files", metadata.file_key)
     assert stored is not None and stored["question_id"] == "new-question"
     receipts = NativeEffectReceipts.model_validate(stored["native_effect_receipts"]).root

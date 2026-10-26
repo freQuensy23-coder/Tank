@@ -1762,3 +1762,14 @@ resource ID cannot be replaced merely because path/file ID match. The full
 31-case native unit selection passes in 1.63 seconds with zero skips; independent
 five-target strict checks pass. These do not replace the pending real fresh-cache
 writer and complete Session caller proof.
+
+Known-ID recovery now consumes the exact NativeFileSourceScope projection rather
+than re-admitting unused original Telegram sender MIME/unique-ID provenance. Live
+cache admission remains strict at its producer. A real lost-mount-response control
+removes the already-consumed original bytes and sender metadata, recovers the
+observed resource without another upload/mount, and proves those absent fields
+are not reconstructed. Thirty-two units pass in 1.55 seconds; the same six actual
+PostgreSQL cases pass in 3.33 seconds, zero skips. Independent adapter/test strict
+checks pass. The actual pre-writer attachment fixture currently refuses missing
+native preparation, as expected; its negative one-case evidence is preserved and
+must turn green only through the paired fresh writer, not fixture initialization.
