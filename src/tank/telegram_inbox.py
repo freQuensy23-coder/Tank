@@ -66,6 +66,8 @@ from tank.question_answers import (
 from tank.question_answers import (
     validate_question_identity,
 )
+from tank.question_prompts import REFERENCE_LIMIT
+from tank.question_prompts import question_message as question_message
 from tank.runtime_contracts import TelegramAnswerJob
 from tank.telegram_api import FileTooLarge as FileTooLarge
 from tank.telegram_api import (
@@ -214,32 +216,10 @@ def chunks(text, limit=MESSAGE_LIMIT):
     return parts or [EMPTY_TEXT]
 
 
-REFERENCE_LIMIT = 1024
 DOCUMENT_LIMIT = 45 * 1024 * 1024
 UPLOAD_LIMIT = 20 * 1024 * 1024
 TOO_LARGE_TEXT = "Файл больше 20 МБ, Telegram не даёт боту его скачать. Пришлите файл поменьше."
 NOT_SENT = (TelegramResponseError, TelegramConfigurationError, httpx.ConnectError, httpx.ConnectTimeout)
-
-
-def question_message(question):
-    """The follow-up as the agent reads it: the referenced Telegram text, the reader's words and files."""
-    target = question.get("reference") or {}
-    reference = (target.get("text") or "")[:REFERENCE_LIMIT]
-    lines = [f"Пришёл фоллоуап через Telegram на сообщение с текстом:\n{reference}"]
-    if target.get("kind") == OPS_KIND:
-        lines.append(
-            f"Вопрос задан в чате Tank Ops о материале {target.get('item_id')}; ответ уйдёт туда же."
-        )
-    lines.append(question.get("text") or "(без текста)")
-    for item in question.get("attachments") or []:
-        lines.append(
-            f"Пользователь приложил файл {item['filename']} ({item['size']} байт): {item.get('path', 'файл недоступен')}."
-        )
-    lines.append(
-        "Твоё последнее сообщение в этом ходе уйдёт пользователю ответом в Telegram; "
-        "файл можно отправить тулом send_telegram_file."
-    )
-    return "\n\n".join(lines)
 
 
 def media(message: Mapping[str, JsonValue]) -> TelegramMediaSelection | None:

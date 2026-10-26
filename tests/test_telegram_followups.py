@@ -785,9 +785,10 @@ async def test_answer_ledger_rows_satisfy_the_delivery_schema_and_route_replies(
 
 
 def test_question_message_is_plain_text_with_truncated_reference() -> None:
+    from tank.question_prompts import question_prompt
     from tank.telegram_inbox import question_message
 
-    text = question_message({"text": "А дальше?", "reference": {"text": "x" * 5000}})
+    text = question_message(question_prompt({"text": "А дальше?", "reference": {"text": "x" * 5000}}))
     assert text.count("x") == 1024 and text.index("А дальше?") > text.index("x")
 
 
