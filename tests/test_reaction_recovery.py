@@ -2,12 +2,18 @@
 
 import asyncio
 from collections.abc import Mapping
+from datetime import timedelta
+from pathlib import Path
+from typing import Literal, Never
 
 import pytest
 from pydantic import JsonValue, ValidationError
+from runtime_public_fixtures import public_runtime
 from source_support import fixture_versions
 from test_storage import repo as repo
 
+from tank.contracts.job_repository import JobRepository
+from tank.contracts.jobs import JobEnvelope
 from tank.contracts.reaction_recovery import (
     ReactionRecoveryCommand,
     ReactionRecoveryEvidence,
@@ -17,6 +23,12 @@ from tank.contracts.reaction_recovery import (
     ReactionRecoveryWitnessRequest,
     RetainedCoalescedReaction,
 )
+from tank.contracts.scheduler_commands import (
+    InitialReactionCommand,
+    ReactionAnchorFacts,
+    RevisedReactionCommand,
+)
+from tank.contracts.scheduler_results import ReactionCaptureResultDocument
 from tank.contracts.stored_documents import ImmutableDocument, NativeBackfillWitness
 from tank.models import Record
 from tank.reaction_recovery import (
@@ -28,9 +40,10 @@ from tank.reaction_recovery import (
     recovery_idempotency_key,
     recovery_link_key,
 )
+from tank.reaction_timing import late_reaction_schedule
 from tank.storage import ImmutableRecordError, MemoryRepository, StorageBackend
 from tank.time_precision import Timestamp, collection_clock, propagate_timestamp
-from tank.util import JsonInput, parse_time, sha256
+from tank.util import JsonInput, iso, new_id, parse_time, sha256, utcnow
 
 
 def request_fields() -> dict[str, str]:
@@ -688,3 +701,195 @@ async def test_recovery_enqueue_and_link_failure_roll_back_as_one_effect(
     recovered = await recovery.recover(command)
     assert recovered.kind == "QUEUED"
     assert len(await repo.list("ops.jobs")) == 3
+
+
+async def observed_terminal_job(
+    jobs: JobRepository, job_id: str, expected: Literal["DONE", "FAILED"]
+) -> JobEnvelope:
+    async with asyncio.timeout(5):
+        while True:
+            job = await jobs.get(job_id)
+            assert job is not None
+            if job.status == expected:
+                return job
+            assert job.status not in {"DONE", "FAILED", "EXPIRED"}
+            await asyncio.sleep(0)
+
+
+async def test_recovery_due_work_runs_actual_worker_and_measured_checkpoint_once(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    current = utcnow().replace(second=0, microsecond=0)
+    for module in ("tank.util", "tank.storage", "tank.runtime", "tank.scheduler"):
+        monkeypatch.setattr(module + ".utcnow", lambda: current)
+    repo = MemoryRepository()
+    async with public_runtime(repo, tmp_path, monkeypatch) as (runtime, _):
+        event_id, token_id = "recovery-benchmark-event", "bitcoin:BTC"
+        anchor = current - timedelta(hours=25)
+        await repo.put("evt.events", event_id, {"event_id": event_id})
+        await repo.put(
+            "evt.beneficiary_maps",
+            event_id + ":1",
+            {"event_id": event_id, "map_version": 1, "analysis_set": []},
+        )
+        instruments = [
+            row.instrument_id
+            for row in runtime.settings.registry().instruments
+            if row.token_id == token_id
+            and row.market_type == "SPOT"
+            and row.active
+            and ":spot:" in row.instrument_id
+        ]
+        assert instruments
+        instrument_id = instruments[0]
+        final_key = instrument_id + ":" + iso(anchor + timedelta(hours=24) - timedelta(minutes=1))
+        for minute in range(1441):
+            opened = anchor - timedelta(minutes=1) + timedelta(minutes=minute)
+            key = instrument_id + ":" + iso(opened)
+            await repo.put(
+                "mkt.klines_1m",
+                key,
+                {
+                    "instrument_id": instrument_id,
+                    "market_type": "SPOT",
+                    "open_time": iso(opened),
+                    "interval_s": 60,
+                    "complete": True,
+                    "c": "110" if minute == 1440 else "100",
+                    "quote_volume_usd": "1000",
+                    **collection_clock(current - timedelta(seconds=1)).fields("recorded_at"),
+                },
+            )
+        initial = await runtime.scheduler.reaction_capture(
+            InitialReactionCommand(
+                event_id=event_id,
+                token_id=token_id,
+                checkpoint="POST_24H",
+                anchor=ReactionAnchorFacts(type="T0", ts=iso(anchor), ts_prec="EXACT"),
+            )
+        )
+        assert initial.kind == "CAPTURED"
+        original_checkpoint = await repo.get("out.reaction_checkpoints", initial.checkpoint_key)
+        assert original_checkpoint is not None and original_checkpoint["r_raw"] == pytest.approx(0.1)
+        current += timedelta(minutes=1)
+        final = await repo.get("mkt.klines_1m", final_key)
+        assert final is not None
+        await repo.put(
+            "mkt.klines_1m", final_key, final | {"c": "120", **collection_clock().fields("recorded_at")}
+        )
+        backfill_id = new_id("backfill")
+        await repo.put(
+            "mkt.backfill_runs",
+            backfill_id,
+            {
+                "backfill_id": backfill_id,
+                "event_id": event_id,
+                "token_id": token_id,
+                "status": "FAILED",
+                **Timestamp(iso(anchor), "EXACT").fields("anchor"),
+                **collection_clock().fields("finished_at"),
+            },
+        )
+        source_wire = await repo.get("mkt.backfill_runs", backfill_id)
+        assert source_wire is not None
+        source = recovery_backfill_from_record(source_wire)
+        original_command = RevisedReactionCommand(
+            event_id=event_id,
+            token_id=token_id,
+            checkpoint="POST_24H",
+            automatic_revision=True,
+            change_id=source.change_id + ":POST_24H",
+            reason="Late capture completed: " + backfill_id + " (FAILED)",
+        )
+        schedule = late_reaction_schedule(collection_clock())
+        old = await repo.enqueue(
+            "REACTION_CAPTURE",
+            original_command.storage_fields(),
+            "reaction-late:" + original_command.change_id,
+            priority=2,
+            max_attempts=5,
+            run_after=schedule.run_after,
+            expires_at=schedule.expires_at,
+        )
+        current += timedelta(seconds=1)
+        peer = await repo.enqueue(
+            "REACTION_CAPTURE",
+            original_command.storage_fields() | {"change_id": "declared-fault-peer:POST_24H"},
+            "declared-fault-peer",
+            priority=2,
+            max_attempts=1,
+            run_after=late_reaction_schedule(collection_clock()).run_after,
+            expires_at=late_reaction_schedule(collection_clock()).expires_at,
+        )
+        old_id, peer_id = old["job_id"], peer["job_id"]
+        assert isinstance(old_id, str) and isinstance(peer_id, str)
+        assert schedule.run_after.value is not None
+        current = parse_time(schedule.run_after.value)
+        claimed = await repo.claim_job()
+        assert claimed is not None and claimed["job_id"] == old_id
+        await repo.put(
+            "ops.jobs",
+            old_id,
+            claimed
+            | {
+                "status": "DONE",
+                "result": {"coalesced_into": peer_id},
+                **collection_clock().fields("finished_at"),
+            },
+        )
+        peer_due = propagate_timestamp(peer, "run_after")
+        assert peer_due.value is not None
+        current = parse_time(peer_due.value)
+        entered = asyncio.Event()
+
+        async def failed_read(payload: InitialReactionCommand) -> Never:
+            entered.set()
+            raise RuntimeError("Declared peer measurement read failure")
+
+        jobs = JobRepository(repo)
+        with monkeypatch.context() as failure:
+            failure.setattr(runtime.scheduler, "_measure_reaction", failed_read)
+            stop = asyncio.Event()
+            worker = asyncio.create_task(runtime.worker(stop))
+            try:
+                async with asyncio.timeout(5):
+                    await entered.wait()
+                    failed = await observed_terminal_job(jobs, peer_id, "FAILED")
+                assert failed.attempts == 1
+            finally:
+                stop.set()
+                await worker
+        old_before = await repo.get("ops.jobs", old_id)
+        recovery = ReactionRecovery(
+            repo,
+            execution=ReactionRecoveryExecution(
+                versions=runtime.settings.require_versions(), replay=runtime.settings.replay
+            ),
+            clock=collection_clock,
+        )
+        request = ReactionRecoveryCommand(original_job_id=old_id, source_backfill_id=backfill_id)
+        recovered = await recovery.recover(request)
+        assert recovered.kind == "QUEUED"
+        assert await repo.claim_job() is None
+        work = await jobs.get(recovered.job_id)
+        assert work is not None
+        due = propagate_timestamp(work.model_dump(mode="json"), "run_after")
+        assert due.value is not None
+        current = parse_time(due.value)
+        stop = asyncio.Event()
+        worker = asyncio.create_task(runtime.worker(stop))
+        try:
+            completed = await observed_terminal_job(jobs, recovered.job_id, "DONE")
+        finally:
+            stop.set()
+            await worker
+        result = ReactionCaptureResultDocument.model_validate(completed.result).root
+        assert result.kind == "CAPTURED" and result.revision == 2
+        captured = await repo.get("out.reaction_checkpoints", result.checkpoint_key)
+        assert captured is not None and captured["r_raw"] == pytest.approx(0.2)
+        assert await repo.get("out.reaction_checkpoints", initial.checkpoint_key) == original_checkpoint
+        assert await repo.get("ops.jobs", old_id) == old_before
+        again = await recovery.recover(request)
+        assert again.kind == "ALREADY_APPLIED"
+        assert len(await repo.list("out.reaction_checkpoints")) == 2
+        assert len(await repo.list("ops.jobs")) == 3
