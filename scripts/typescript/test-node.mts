@@ -9,6 +9,7 @@ const lanes = {
   "local-unit": [
     "scripts/typescript/test-report.test.mts",
     "scripts/typescript/inventory.test.mts",
+    "scripts/typescript/register-openma-source.test.mts",
     "deploy/openma-entrypoint.test.mjs",
     "tests/openma/agents/tool-config.test.mjs",
     "tests/openma/lifecycle/retained-session.test.mjs",
