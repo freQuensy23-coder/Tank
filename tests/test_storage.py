@@ -1467,9 +1467,8 @@ async def test_metadata_projection_preserves_raw_names_filter_absence_and_page_i
     assert [row["checkpoint_id"] for row in rest] == [prefix + suffix for suffix in ("b", "c", "e")]
     with pytest.raises(ValueError, match="metadata rollback"):
         async with repo.transaction():
-            await repo.put(
-                "ops.scheduler_checkpoints", prefix + "a", {**checkpoint("a"), "state": {"values": [9]}}
-            )
+            changed: Record = {**checkpoint("a"), "state": {"values": [9]}}
+            await repo.put("ops.scheduler_checkpoints", prefix + "a", changed)
             own_write = [
                 row
                 async for row in repo.iter_metadata(
