@@ -104,3 +104,27 @@ class ToolInputLineage(DomainModel):
                 "TOOL_INPUT_ATTEMPT_NOT_RETAINED", "Acknowledged tool input has no recorded retry attempt"
             )
         return NativeInputOwner(message_id=self.message_id, attempt=self.attempt)
+
+
+class NativeOwnershipSnapshot(DomainModel):
+    session_id: InputIdentity
+    lineages: tuple[JournalInputLineage, ...]
+
+    @model_validator(mode="after")
+    def distinct_message_owners(self) -> Self:
+        ids = [lineage.message_id for lineage in self.lineages]
+        if len(set(ids)) != len(ids):
+            raise ValueError("Native input journal repeats a message identity")
+        return self
+
+    @classmethod
+    def from_record(cls, record: dict[str, JsonValue]) -> Self:
+        journal = record.get("message_log", [])
+        if not isinstance(journal, list):
+            raise ValueError("Native input journal must be an array")
+        lineages: list[JournalInputLineage] = []
+        for raw in journal:
+            if not isinstance(raw, dict):
+                raise ValueError("Native input journal message must be an object")
+            lineages.append(JournalInputLineage.from_record(raw))
+        return cls.model_validate({"session_id": record["session_id"], "lineages": tuple(lineages)})
