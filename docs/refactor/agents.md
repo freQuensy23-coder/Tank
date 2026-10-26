@@ -2420,3 +2420,11 @@ This closes this concrete inward-I/O violation, not the broader generic Reposito
 source-adapter or whole-application architecture/typing scope. Historical recovery,
 pending-demand and the separate completion-observation behavior correction remain
 held and are not implied by this worker candidate. No parent worktree was edited.
+
+### Current-parent completion cohort qualification
+
+Normal join of public b026dd0e into the completion/replay/Telegram cohort is 32433c62. Product and callers auto-merged; the three owned report conflicts preserve both cohorts, and the signature inventory is regenerated against the actual merged sources. The previously qualified E2E instruments forwarding is inherited through that normal join, with no copied fixture or assertion changes.
+
+On this exact coherent source, all 361 selected units pass in 19.16 seconds and all 82 connected actual integrations pass in 30.51 seconds, zero skips and source guards. This includes native 64+1/correlation/no-partial-write admission, Memory/PostgreSQL stale observation/ABA/accepted-input races, original unknown-vs-zero and exhausted unused-body controls, workflow/retention/ownership, replay/reference/abort, the delegated Telegram consumers, all four actual E2Es and preliminary archive integration. Earlier de472's sole stale E2E fixture diagnostic remains preserved separately. Independent strict four precise completion targets and scoped Ruff/format13 pass. Configured mypy checks232 sources and retains only analysis.truth._condition_cache's existing missing annotation; untyped bodies elsewhere remain explicit work, not a green whole-application claim.
+
+This qualifies the bounded completion/caller behavior cohort for lead review, not all remaining Session body/tool/usage/event typing, historical recovery/pending-demand, vendor implementation, or the whole application. No parent files were edited.
