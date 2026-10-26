@@ -3989,6 +3989,8 @@ def _condition_book_price_gap(
     if left_rate is None or right_rate is None:
         return ConditionUnavailablePredicate(status="UNAVAILABLE", reason="QUOTE_CONVERSION_UNAVAILABLE")
     for valuation in (left.quote_valuation, right.quote_valuation):
+        if valuation.basis == "EXPLICIT_UNCLOCKED_INPUT":
+            return ConditionUnavailablePredicate(status="UNAVAILABLE", reason="QUOTE_CONVERSION_UNAVAILABLE")
         if valuation.as_of is not None and valuation.as_of > at:
             return ConditionUnavailablePredicate(status="UNAVAILABLE", reason="INCOMPLETE")
     values = (left.mid_quote, right.mid_quote, left_rate, right_rate)

@@ -2392,6 +2392,26 @@ def test_cross_currency_gap_requires_actual_fx_instead_of_a_stablecoin_peg_defau
     )
     unknown = sample.gap()
     assert unknown.status == "UNAVAILABLE" and unknown.reason == "QUOTE_CONVERSION_UNAVAILABLE"
+    unclocked = left.model_copy(
+        update={
+            "quote_valuation": QuoteUsdValuation(
+                rate=Decimal("0.999"),
+                as_of=None,
+                basis="EXPLICIT_UNCLOCKED_INPUT",
+                unavailable_reason=None,
+            )
+        }
+    )
+    undeclared_time = sample.model_copy(update={"left": unclocked}).gap()
+    assert undeclared_time.status == "UNAVAILABLE"
+    assert undeclared_time.reason == "QUOTE_CONVERSION_UNAVAILABLE"
+    same_quote = sample.model_copy(
+        update={
+            "left": unclocked,
+            "right": primary_quote("b", "USDT", Decimal(100), unclocked.quote_valuation),
+        }
+    ).gap()
+    assert same_quote.status == "OBSERVED" and same_quote.value is True
     actual = left.model_copy(
         update={
             "quote_valuation": QuoteUsdValuation(
