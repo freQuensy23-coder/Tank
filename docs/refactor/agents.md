@@ -2195,3 +2195,14 @@ dependency cases pass in 19.20 seconds, zero skips/source guards. The first pend
 control exposed a fixture-only datetime/string assertion mismatch, preserved in
 worker-gateway-dependency-callers; parsing both declared clocks corrected it without
 changing the original one-second deadline or application policy.
+
+Actual running-session admission caller migration now composes Runtime and all
+required ports rather than assigning a Session-only handler fragment. It retains
+the original real SessionService/native transport and delegates the reconciliation
+observation to the actual failure repository. Both Memory/PostgreSQL fairness,
+ordered wake, running-session bypass, unchanged source/event clocks, all jobs DONE
+and original one-second barriers pass. The slow admission case binds the actual
+Session service and blocks only its admission boundary, preserving 50 ms timeout,
+zero dispatch, original expiry and attempt refund. All three actual admission
+cases pass in 22.17 seconds, zero skips/source guards; Ruff/format pass. The older
+module's untyped fixture helpers remain explicit test typing debt, not strict proof.
