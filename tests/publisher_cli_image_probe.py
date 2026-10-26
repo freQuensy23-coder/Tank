@@ -1,20 +1,34 @@
 """Exercise the unchanged CLI against a loopback TLS provider with networking disabled."""
 
-import json
 import os
 import subprocess
 import sys
 from pathlib import Path
+from typing import Literal
 
 from publisher_http_support import publisher_https_peer
 from publisher_state_support import ProviderState, source_artifact
 
+from tank.contracts import DomainModel
+from tank.contracts.scalars import OneInt, TrueFlag
 from tank.deployment.contracts import ActiveRelease, RolledBackTransaction, SourceBuild
 from tank.deployment.journal import PublisherJournal
 
 
-def run_probe(root: Path, package: Path, sha: str) -> None:
-    results: list[dict[str, str | int]] = []
+class CLIOutcome(DomainModel):
+    case: Literal["forward", "lost-ack", "terminated-after-acceptance"]
+    physical_tls_requests: int
+    builds: OneInt
+
+
+class CLIProof(DomainModel):
+    actual_cli: TrueFlag
+    api_host: Literal["loopback-only-api.apify.com"]
+    cases: tuple[CLIOutcome, ...]
+
+
+def run_probe(root: Path, package: Path, orchestrator_sha: str, sha: str) -> None:
+    results: list[CLIOutcome] = []
     for name in ("forward", "lost-ack", "terminated-after-acceptance"):
         uncertain = name == "lost-ack"
         interrupted = name == "terminated-after-acceptance"
@@ -65,7 +79,7 @@ def run_probe(root: Path, package: Path, sha: str) -> None:
                     "tank.deployment.cli",
                     action,
                     "--orchestrator-sha",
-                    sha,
+                    orchestrator_sha,
                     "--selected-release-sha",
                     sha,
                     "--transaction-release-sha",
@@ -123,10 +137,20 @@ def run_probe(root: Path, package: Path, sha: str) -> None:
             assert journal.read_transaction() is None
             assert len(provider.started) == 1
             results.append(
-                {"case": name, "physical_tls_requests": len(peer.requests), "builds": len(provider.started)}
+                CLIOutcome.model_validate(
+                    {
+                        "case": name,
+                        "physical_tls_requests": len(peer.requests),
+                        "builds": len(provider.started),
+                    }
+                )
             )
-    print(json.dumps({"actual_cli": True, "api_host": "loopback-only-api.apify.com", "cases": results}))
+    print(
+        CLIProof(
+            actual_cli=True, api_host="loopback-only-api.apify.com", cases=tuple(results)
+        ).model_dump_json()
+    )
 
 
 if __name__ == "__main__":
-    run_probe(Path(sys.argv[1]), Path(sys.argv[2]), sys.argv[3])
+    run_probe(Path(sys.argv[1]), Path(sys.argv[2]), sys.argv[3], sys.argv[4])
