@@ -146,3 +146,15 @@ def test_reported_supersession_facts_cannot_contradict_native_scope(malformed: s
     }
     with pytest.raises(ValidationError):
         CompletionSessionSnapshot.from_record(record)
+
+
+@pytest.mark.parametrize("journal", [None, [], [{"message_id": "old-owner", "remote_event_id": "old"}]])
+def test_nonnull_completion_owner_requires_its_actual_journal_row(
+    journal: list[dict[str, str]] | None,
+) -> None:
+    record: dict[str, JsonValue] = {"session_id": "session", "active_message_id": "missing-owner"}
+    if journal is not None:
+        rows: list[JsonValue] = [dict(row) for row in journal]
+        record["message_log"] = rows
+    with pytest.raises(ValidationError, match="active owner"):
+        CompletionSessionSnapshot.from_record(record)

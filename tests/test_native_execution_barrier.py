@@ -134,3 +134,17 @@ async def test_unadmitted_execution_page_cannot_partially_persist_or_finalize(
     assert len(calls) == (2 if malformed == "SECOND_BATCH" else 1)
     assert await repo.get("ops.agent_sessions", "session") == session
     assert await repo.list("ops.jobs") == []
+
+
+async def test_invalid_current_owner_refuses_before_recovery_or_native_effects(
+    tmp_path: Path, completion_repo: StorageBackend
+) -> None:
+    repo = completion_repo
+    session = await seed_execution_inputs(repo, 1)
+    session["active_message_id"] = "foreign-owner"
+    await repo.put("ops.agent_sessions", "session", session)
+    async with runtime_failure_fixture(repo, tmp_path, ops_progress_enabled=False) as runtime:
+        with pytest.raises(ValidationError, match="active owner"):
+            await runtime.sessions.completed_turn("session")
+    assert await repo.get("ops.agent_sessions", "session") == session
+    assert await repo.list("ops.jobs") == []

@@ -942,6 +942,7 @@ class SessionService:
         if current is None:
             raise KeyError(identity.session_id)
         require_owned_session_identity(identity.session_id, current)
+        CompletionSessionSnapshot.from_record(current)
         return current
 
     async def execution_barrier(
@@ -1276,6 +1277,7 @@ class SessionService:
 
     async def settled_turn(self, sid: str) -> NativeExecutionBarrier:
         """Read committed queue states, drain history, and recheck actual accepted inputs."""
+        await self.completion_record(sid)
         await self.recover_outbound_inputs(sid)
         session = await self.completion_record(sid)
         local = await self.execution_barrier(CompletionSessionSnapshot.from_record(session))

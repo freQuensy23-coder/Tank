@@ -318,6 +318,7 @@ type SupersededInputReceipt = RetriedInputReceipt | PriorToolInputReceipt
 
 class CompletionSessionSnapshot(DomainModel):
     session_id: CompletionIdentity
+    active_message_id: CompletionIdentity | None
     journal: list[CompletionJournalMessage]
     retired_message_ids: list[CompletionIdentity]
     terminal_receipts: dict[CompletionIdentity, NativeExecutionReceipt]
@@ -337,6 +338,7 @@ class CompletionSessionSnapshot(DomainModel):
         return cls.model_validate(
             {
                 "session_id": record.get("session_id"),
+                "active_message_id": record.get("active_message_id"),
                 "journal": journal,
                 "retired_message_ids": record.get("retired_message_ids", []),
                 "terminal_receipts": record.get("native_execution_receipts", {}),
@@ -352,6 +354,8 @@ class CompletionSessionSnapshot(DomainModel):
             self.retired_message_ids
         ):
             raise ValueError("Completion session repeats a message identity")
+        if self.active_message_id is not None and self.active_message_id not in identities:
+            raise ValueError("Completion active owner is absent from its journal")
         if any(key != receipt.id for key, receipt in self.terminal_receipts.items()):
             raise ValueError("Completion receipt identity differs from its key")
         if any(key != state.execution_id for key, state in self.execution_states.items()):

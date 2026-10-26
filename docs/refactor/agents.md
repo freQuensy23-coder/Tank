@@ -2342,3 +2342,11 @@ was added. Independent strict four targets now pass (contract plus new pure,
 actual-boundary and lineage caller modules); default checking of sessions.py and
 scoped Ruff/format pass. These are static results only; functional qualification
 still waits for the parent's actual retry and quality's seed checkpoint.
+The completion snapshot also enforces the already established active-owner invariant:
+a non-null active pointer must name one actual distinct journal row. Settlement
+admits the current record before recovery can post anything, retaining valid
+origin-only/pre-input absence. New pure and actual-boundary controls cover wrong,
+empty and absent journals and zero native/recovery effects; these remain pending
+functional qualification. This is enforcement of the existing ownership contract,
+not a claim of a newly reproduced public defect. Static four-target/source checks
+continue to pass; heavy qualifiers remain explicitly held by the parent.
