@@ -245,7 +245,7 @@ async def test_actual_producer_consumer_workflow(tmp_path: Path, backend, case, 
                     "Hydration reset processing ordinals"
                 )
                 assert (await repo.get("ops.agent_sessions", "s"))["event_id"] == eid
-            assert result["complete"]
+            assert result.complete
             progress = await repo.list("out.ops_notices", filters={"kind": "ITEM_PROGRESS"})
             stages = {row["stage"] for row in progress}
             assert ("AGENT_REJECTED" if case == "NO_EVENT" else "AGENT_COMPLETED") in stages
@@ -256,7 +256,7 @@ async def test_actual_producer_consumer_workflow(tmp_path: Path, backend, case, 
             if case in {"SHOCK_RESUME", "FULL_EMPTY_SET"}:
                 assert "ALERT_QUEUED" in stages and "ALERT_SENT" not in stages
             requests_before = len(posts)
-            assert (await service.completed_turn("s"))["complete"]
+            assert (await service.completed_turn("s")).complete
             assert len(posts) == requests_before
             assert await repo.list("out.ops_notices", filters={"kind": "ITEM_PROGRESS"}) == progress
             assert len(await repo.list("out.alerts")) == (
@@ -332,7 +332,7 @@ async def test_native_idle_accepts_agent_chosen_order_without_semantic_retry(too
         await service.process_event(
             "s", idle("end", "ack-" + str(len(posts)) if posts else "accepted-message")
         )
-        assert (await service.completed_turn("s"))["complete"]
+        assert (await service.completed_turn("s")).complete
         current = await repo.get("ops.agent_sessions", "s")
         assert current["status"] == "OPEN" and current["message_log"][0]["turn_status"] == "DONE"
         assert current["message_log"][0]["retry_count"] == 0
@@ -345,7 +345,7 @@ async def test_native_idle_accepts_agent_chosen_order_without_semantic_retry(too
         }
         reads.clear()
         for _ in range(3):
-            assert (await service.completed_turn("s"))["complete"]
+            assert (await service.completed_turn("s")).complete
         assert not reads and len(posts) == len(tools)
 
         await service.process_event(

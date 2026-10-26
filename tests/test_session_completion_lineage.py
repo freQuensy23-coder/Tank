@@ -12,6 +12,7 @@ from postgres_helpers import PostgresTemplate
 from pydantic import JsonValue
 from runtime_failure_fixtures import runtime_failure_fixture
 
+from tank.contracts.session_completion import CompletionSessionSnapshot
 from tank.storage import MemoryRepository, StorageBackend
 from tank.time_precision import collection_clock
 
@@ -130,18 +131,21 @@ async def test_failed_tool_input_requires_observed_older_attempt_before_superses
     async with runtime_failure_fixture(
         repo, tmp_path, ops_progress_enabled=False, http_routes=routes
     ) as runtime:
-        result = await runtime.sessions.execution_barrier(session, verify_remote=True)
+        result = await runtime.sessions.execution_barrier(
+            CompletionSessionSnapshot.from_record(session), verify_remote=True
+        )
     stored = await repo.get("ops.agent_sessions", "session")
     assert stored is not None
     if tool_attempt is None:
         assert "superseded_native_inputs" not in stored
-        assert result["complete"] is False
-        assert result["failed_input_ids"] == ["failed-tool"]
+        assert result.complete is False
+        assert result.failed_input_ids == ["failed-tool"]
     else:
         retired = stored["superseded_native_inputs"]
         assert isinstance(retired, dict)
-        assert retired["failed-tool"]["replacement_input_id"] == "replacement"
-        assert result["complete"] is True
+        receipt = retired["failed-tool"]
+        assert isinstance(receipt, dict) and receipt["replacement_input_id"] == "replacement"
+        assert result.complete is True
     assert stored["message_log"] == session["message_log"]
     assert "retry_count" not in stored
 
@@ -202,9 +206,9 @@ async def test_independently_completed_input_settles_without_unused_retry_or_bod
         repo, tmp_path, ops_progress_enabled=False, http_routes=routes
     ) as runtime:
         result = await runtime.sessions.completed_turn("session")
-        assert result["complete"] is True
+        assert result.complete is True
         repeated = await runtime.sessions.completed_turn("session")
-        assert repeated["complete"] is True
+        assert repeated.complete is True
     stored = await repo.get("ops.agent_sessions", "session")
     assert stored is not None and stored["runtime_status"] == "IDLE" and stored["active_message_id"] is None
     journal = stored["message_log"]

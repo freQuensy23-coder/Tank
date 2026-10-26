@@ -39,6 +39,15 @@ async def seed(repo, *, age_days, event=None, no_event=False) -> None:
     last = iso(utcnow() - timedelta(days=age_days))
     if event is not None:
         await repo.put("evt.events", "evt_1", {"event_id": "evt_1", "lifecycle": event})
+    receipts = {
+        "idle": {
+            "id": "idle",
+            "type": "session.status_idle",
+            "execution_id": "accepted",
+            "stop_reason": {"type": "end_turn"},
+        }
+    }
+    states = {"accepted": {"execution_id": "accepted", "state": "COMPLETED", "settled_outcome": "COMPLETED"}}
     await repo.put(
         "ops.agent_sessions",
         "ses_1",
@@ -52,9 +61,31 @@ async def seed(repo, *, age_days, event=None, no_event=False) -> None:
             "opened_at": iso(utcnow() - timedelta(days=age_days + 1)),
             "last_event_at": last,
             "messages": ["m0"],
+            "native_execution_receipts": receipts,
+            "native_execution_states": states,
+            "verified_native_completion": {
+                "complete": True,
+                "accepted_input_ids": ["accepted"],
+                "pending_input_ids": [],
+                "failed_input_ids": [],
+                "unidentified_inputs": [],
+                "pending_action_ids": [],
+                "terminal_receipts": receipts,
+                "execution_states": states,
+            },
+            "verified_source_completion": {
+                "m0": {
+                    "version": 4,
+                    "item_id": "itm_1",
+                    "native_input_id": "accepted",
+                    "retry_attempt": None,
+                    "outcome": "MISSING_SOURCE_ITEM",
+                }
+            },
             "message_log": [
                 {
                     "message_id": "m0",
+                    "remote_event_id": "accepted",
                     "payload": {"kind": "NEW_ITEM", "item_id": "itm_1"},
                     "requested_at": iso(utcnow() - timedelta(days=age_days + 1)),
                     "sent_at": iso(utcnow() - timedelta(days=age_days + 1)),
@@ -82,11 +113,6 @@ async def finish(repo, config=None):
             refusals=UnexpectedFollowupRefusals(),
         )
 
-        async def complete(*args, **kwargs):
-            return {"complete": True, "accepted_input_ids": []}
-
-        service.completed_turn = complete
-        service.execution_barrier = complete
         assert await service.finish_if_idle("ses_1")
     return posts, await repo.get("ops.agent_sessions", "ses_1")
 

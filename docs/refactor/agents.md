@@ -2285,3 +2285,45 @@ local cursor is declared zero. Existing/frozen payloads and original attempt/bod
 controls are unchanged; no missing retry count was padded. All setup receipts stay
 separate from the final green complete case set. Scalar version admission also
 uses the canonical strict integer guard, rejecting float/string/bool lookalikes.
+
+### Inactive native barrier result closure checkpoint
+
+On separate cd4fca7f review ancestry, execution_barrier now requires a named
+CompletionSessionSnapshot and returns NativeExecutionBarrier; settled_turn and
+completed_turn return the same session-bound closed result. There is no raw-map
+compatibility union or indexing facade. Actual orchestration consumes named
+journal/tool/receipt/queue-state facts, correlates every requested response before
+any persistence, and rechecks the locked current session before settlement.
+The pinned managed API session-executions.ts declares exactly execution_id/state/
+settled_outcome, unique ordered ids[] of length 1–64 and IDs at most 191 characters.
+Those constraints and state/outcome agreement are admitted explicitly; UNKNOWN is
+preserved, never changed to RUNNING/ENDED. Only queried state observations are
+merged onto the fresh locked state, preserving unrelated current entries.
+
+storage_record is the actual persisted/captured report boundary and excludes the
+internal session_id while keeping all original external keys and actual optional
+receipt-field presence. incomplete() revalidates a conservative false result without
+fabricating a native pending/failed state. Missing retry counters and partial unused
+bodies remain valid. Known superseded-input receipts retain their original two
+writer variants and reported optional fields; no failure or replacement identity
+is guessed for old declared markers. Empty associative indexes mean no recorded
+authorizing fact, not invented history. Actual return/receipt clock strings must
+be aware; absent unused receipt clocks remain unreported. Provider states and
+actual call/session identity must agree with their index/query scope.
+
+Owned caller assertions now use typed properties and explicit persisted-proof
+serialization. The retention fixture no longer mocks both completion methods to
+return true with zero accepted inputs: it authors the completed native input,
+terminal receipt/state and independent cached proof that its idle-session premise
+requires, preserving unknown retry count and all original archive/no-I/O/time
+assertions. Actual execution-page tests are authored for 64+1 batching, wrong
+order/missing rows/contradictory outcome/extra fields and second-batch failure with
+no partial write. Replay's sole completed_turn consumer is reserved to analysis.
+
+This is API synchronization only, NOT a qualified activation. Source Session mypy
+and independent pure-contract targets passed before the first functional gate;
+that Linux gate exited during dependency copy before pytest because the owned VM
+exhausted inodes. Its complete setup log is preserved, quality owns diagnosis,
+and all new qualifiers are held as instructed. No retry, cleanup, environment or
+service change was made here. Worker14a and completion523 remain immutable and
+separate, and financial/E2E/global worker qualification remains outstanding.
