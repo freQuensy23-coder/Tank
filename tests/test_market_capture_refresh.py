@@ -17,6 +17,7 @@ import httpx
 import pytest
 from native_input_fixtures import acknowledge_native_input
 from pydantic import JsonValue
+from runtime_failure_fixtures import bind_worker_fragment_failure_store
 from scheduling_support import RecordingReactionScheduling
 from source_support import fixture_http_admission, fixture_versions
 from test_agents_session_audit import settings as session_settings
@@ -269,6 +270,8 @@ async def test_wait_data_watch_refreshes_truth_before_decision_and_replays_lost_
 
         runtime = object.__new__(Runtime)
         runtime.repo, runtime.market, runtime.truth = repo, market, truth
+        bind_worker_fragment_failure_store(runtime, repo, fixture_versions())
+        runtime.settings = settings
         runtime.handlers = {"ESCALATE_TOKENS": runtime.escalate_wire, "RUN_MARKET_TRUTH": runtime.assess_wire}
         stop = asyncio.Event()
         worker = None
@@ -466,6 +469,8 @@ async def test_cancelled_preflight_reuses_job_before_any_decision_ledger(
             market.released = True
             runtime = object.__new__(Runtime)
             runtime.repo, runtime.market, runtime.truth = repo, market, truth
+            bind_worker_fragment_failure_store(runtime, repo, fixture_versions())
+            runtime.settings = settings
             runtime.handlers = {
                 "ESCALATE_TOKENS": runtime.escalate_wire,
                 "RUN_MARKET_TRUTH": runtime.assess_wire,
@@ -566,6 +571,8 @@ async def test_condition_firing_during_refresh_wait_is_deferred_until_its_own_re
         market.released = True
         runtime = object.__new__(Runtime)
         runtime.repo, runtime.market, runtime.truth = repo, market, truth
+        bind_worker_fragment_failure_store(runtime, repo, fixture_versions())
+        runtime.settings = settings
         runtime.handlers = {"ESCALATE_TOKENS": runtime.escalate_wire, "RUN_MARKET_TRUTH": runtime.assess_wire}
         stop = asyncio.Event()
         worker = asyncio.create_task(runtime.worker(stop))
