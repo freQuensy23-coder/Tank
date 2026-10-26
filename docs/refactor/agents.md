@@ -1311,3 +1311,31 @@ failure is fixed by the tested alias correction, while the remaining
 Telegram terminal-answer legacy Runtime fixture still needs migration.
 This is a held checkpoint, not full Runtime/caller qualification or whole
 SessionService completion.
+
+Inactive worker command admission checkpoint
+
+runtime_dispatch_contracts defines the eleven actual durable command variants,
+ClaimedWork (RUNNING with an observed positive claimed attempt and matching
+kind), and DependencyState (only actual job identity/status). This is an
+application contract, not the persistence JobEnvelope renamed as a domain
+aggregate. RepositoryWorkerQueue uses the canonical JobRepository claim and
+invalid-revision quarantine. Original payload facts remain at that queue
+boundary; a concrete command refusal records only static validation codes
+and the payload field name. Its digest uses the strictly decoded envelope's
+canonical, exclude-unset serialization, preserving original optional-field
+omission and raw JSON payload/result numeric kinds. Quarantine still compares
+the actual complete stored revision under the canonical job lock before any
+terminal change. The dependency adapter refuses mismatched storage identity;
+a truly missing dependency remains None for explicit worker policy.
+
+Seven command/real Memory queue cases pass in 1.73 seconds, and the real
+PostgreSQL command-quarantine case passes in 2.47 seconds, zero skips, under
+the unchanged local wrappers. Independent strict contracts/adapter/test three
+targets and scoped Ruff pass. Evidence worker-0441-queue-unit-3 and
+worker-0441-queue-pg is external. Earlier two setup diagnostics remain recorded:
+the malformed synthetic dependency omitted required storage fields, then
+reused an actual idempotency key; authored complete setup now preserves the
+intended wrong-identity refusal oracle. These contracts/adapter are inactive.
+The worker, Session send producer/result phases and scheduler side-effect
+result ports still need their coordinated migration and caller proof; this
+checkpoint does not close the remaining Runtime method or whole Session.

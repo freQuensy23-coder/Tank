@@ -1,0 +1,128 @@
+"""Actual durable command admission is closed before worker effects."""
+
+import pytest
+from postgres_helpers import PostgresTemplate
+from pydantic import JsonValue, ValidationError
+
+from tank.contracts.job_repository import JobRepository
+from tank.runtime_dispatch_contracts import (
+    DeliverCommand,
+    DependencyState,
+    RuntimeCommandRecord,
+)
+from tank.storage import MemoryRepository
+
+
+@pytest.mark.asyncio
+async def test_claimed_delivery_decodes_exact_declared_dependency_metadata() -> None:
+    jobs = JobRepository(MemoryRepository())
+    dependencies: list[JsonValue] = ["prior"]
+    await jobs.enqueue(
+        "DELIVER",
+        {"alert_id": "alert", "version": 1, "channel": "telegram:alerts", "_depends_on": dependencies},
+        "delivery",
+    )
+    claim = await jobs.claim()
+    assert claim is not None
+    from tank.contracts.jobs import JobEnvelope
+
+    assert isinstance(claim, JobEnvelope)
+    command = RuntimeCommandRecord.model_validate({"type": claim.type, "payload": claim.payload}).root
+    assert isinstance(command, DeliverCommand)
+    assert command.payload.depends_on == ["prior"]
+    assert command.payload.model_dump(mode="json", by_alias=True, exclude_unset=True) == claim.payload
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        {"alert_id": "alert", "version": True, "channel": "telegram:alerts"},
+        {"alert_id": "alert", "version": 1, "channel": "telegram:alerts", "depends_on": []},
+        {"alert_id": "alert", "version": 1},
+    ],
+)
+def test_closed_dispatch_refuses_invalid_delivery_facts(payload: dict[str, str | int | list[str]]) -> None:
+    with pytest.raises(ValidationError):
+        RuntimeCommandRecord.model_validate({"type": "DELIVER", "payload": payload})
+
+
+def test_dispatch_refuses_unknown_kind_and_dependency_projection_requires_actual_identity() -> None:
+    with pytest.raises(ValidationError):
+        RuntimeCommandRecord.model_validate({"type": "UNREGISTERED", "payload": {}})
+    with pytest.raises(ValidationError):
+        DependencyState.model_validate({"status": "DONE"})
+    assert DependencyState(job_id="prior", status="DONE").status == "DONE"
+
+
+@pytest.mark.asyncio
+async def test_worker_queue_quarantines_invalid_command_once_without_changing_unrelated_facts() -> None:
+    from tank.contracts.jobs import InvalidJobClaim
+    from tank.runtime_worker_repository import RepositoryWorkerQueue
+
+    repo = MemoryRepository()
+    job = await JobRepository(repo).enqueue(
+        "DELIVER", {"alert_id": "alert", "version": True, "channel": "telegram:alerts"}, "invalid"
+    )
+    queue = RepositoryWorkerQueue(repo)
+    invalid = await queue.claim()
+    assert isinstance(invalid, InvalidJobClaim)
+    assert invalid.error_fields == ("payload",)
+    assert await queue.reject_invalid(invalid)
+    terminal = await repo.get("ops.jobs", job.job_id)
+    assert terminal is not None
+    assert terminal["payload"] == job.payload
+    assert terminal["status"] == "FAILED" and terminal["last_error"] == "INVALID_QUEUE_ENVELOPE"
+    assert not await queue.reject_invalid(invalid)
+    assert await queue.claim() is None
+
+
+@pytest.mark.asyncio
+async def test_worker_queue_preserves_changed_claim_and_requires_real_dependency_scope() -> None:
+    from tank.contracts.jobs import InvalidJobClaim
+    from tank.runtime_worker_repository import RepositoryWorkerQueue
+
+    repo = MemoryRepository()
+    job = await JobRepository(repo).enqueue("UNKNOWN", {}, "unregistered")
+    queue = RepositoryWorkerQueue(repo)
+    invalid = await queue.claim()
+    assert isinstance(invalid, InvalidJobClaim)
+    changed = await repo.get("ops.jobs", job.job_id)
+    assert changed is not None
+    changed["payload"] = {"new_fact": "preserve"}
+    await repo.put("ops.jobs", job.job_id, changed)
+    assert not await queue.reject_invalid(invalid)
+    assert await repo.get("ops.jobs", job.job_id) == changed
+    await repo.put(
+        "ops.jobs",
+        "dependency",
+        {**job.model_dump(mode="json", exclude_unset=True), "job_id": "wrong", "idem_key": "dependency"},
+    )
+    with pytest.raises(ValueError, match="identity"):
+        await queue.dependency("dependency")
+    assert await queue.dependency("missing") is None
+
+
+@pytest.mark.integration
+@pytest.mark.postgres
+@pytest.mark.asyncio
+async def test_postgres_worker_command_quarantine_preserves_real_claim_revision(
+    postgres_template: PostgresTemplate,
+) -> None:
+    import os
+
+    from tank.contracts.jobs import InvalidJobClaim
+    from tank.runtime_worker_repository import RepositoryWorkerQueue
+
+    async with postgres_template.repository(os.environ["TANK_TEST_DATABASE_URL"]) as repo:
+        job = await JobRepository(repo).enqueue(
+            "DELIVER", {"alert_id": "alert", "version": True, "channel": "telegram:alerts"}, "invalid"
+        )
+        queue = RepositoryWorkerQueue(repo)
+        invalid = await queue.claim()
+        assert isinstance(invalid, InvalidJobClaim)
+        assert await queue.reject_invalid(invalid)
+        stored = await repo.get("ops.jobs", job.job_id)
+        assert stored is not None
+        assert stored["status"] == "FAILED" and stored["payload"] == job.payload
+        assert stored["finished_at"] is not None
+        assert not await queue.reject_invalid(invalid)
