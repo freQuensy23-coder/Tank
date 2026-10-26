@@ -17,7 +17,7 @@
   "publisher_build_id_introduction_at": "2026-10-24T18:47:13Z",
   "digest_pin_introduction": "e1408097a7823c231adebb4661bf9ac4af37dde3",
   "digest_pin_introduction_at": "2026-10-24T19:16:16Z",
-  "pin_introduction_artifact_limit": "That commit added code/docs/tests, not the authentic baseline source payload. Its tests replaced BASELINE_DIGEST with the digest of main.py='legacy fixture\\n'. Those positives do not prove the pinned baseline.",
+  "pin_introduction_artifact_limit": "That commit added code/docs/tests, not the authentic baseline source payload. Its tests substituted a synthetic single-file main.py payload ending in a newline and changed BASELINE_DIGEST to match. Those positives do not prove the pinned baseline.",
   "read_only_searches": [
     "Exact build ID and digest in owned retained JSON/JSONL evidence",
     "Current tracked source, tests and documentation",
@@ -26,9 +26,32 @@
     "Parent-reported review of25 retained market/capture acceptance packets; these are not an actor baseline source artifact"
   ],
   "retained_unavailable_note": "server-snapshot/NEXT_COHORTS-history-20261025T204921Z.md explicitly records no exact baseline actor payload in owned evidence",
-  "search_limit": "These searches are not an assertion that every accessible GitHub workflow artifact has been inspected. Parent is reviewing accessible repository/workflow artifacts separately. No credentialed provider retrieval has been performed.",
+  "search_limit": "These bounded Git/artifact searches do not prove the pinned digest is false or identify the original provider source revision. No authentic provider response or matching source table has been established, and no credentialed provider retrieval has been performed.",
   "positive_legacy_bootstrap_proven": false,
   "positive_legacy_activation_proven": false,
   "positive_legacy_rollback_proven": false,
-  "compatibility_disposition": "HELD_FOR_PARENT_REVIEW; preserve exact identity/digest/allowlist and authentic refusal semantics, never fabricate a matching positive payload"
+  "compatibility_disposition": "HELD_FOR_PARENT_REVIEW; preserve exact identity/digest/allowlist and authentic refusal semantics, never fabricate a matching positive payload",
+  "parent_additional_read_only_searches": {
+    "historical_actor_revisions": 14,
+    "file_tables_compared": 28,
+    "table_variants": [
+      "Full tracked apify/x-reader table",
+      "Same table without .actor entries"
+    ],
+    "matching_pinned_digest": false,
+    "f390_workflow_artifacts": "No artifacts available",
+    "e140_unit_artifact": "Contemporary X worker/package and baseline constants only; not an original provider source response",
+    "old_code_executed": false,
+    "provider_calls": false,
+    "evidence": [
+      {
+        "file": "publisher-legacy-git-manifest-search.json",
+        "sha256": "97e8b863eac883f7e06a5a132a794f33f8d1e91f700a283835987b5d6f4729bb"
+      },
+      {
+        "file": "publisher-legacy-e140-artifact-inspection.json",
+        "sha256": "7f3fec0054fee051fb6fa7d2136334b403ba89cc6673a8ff9ed7cc8705343168"
+      }
+    ]
+  }
 }
