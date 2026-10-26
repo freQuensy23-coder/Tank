@@ -1,17 +1,20 @@
 """Evidence-gated recovery admission and actual transactional queue/link effects."""
 
 import asyncio
-from collections.abc import Mapping
-from datetime import timedelta
+from collections.abc import AsyncIterator, Mapping, Sequence
+from contextlib import asynccontextmanager
+from datetime import datetime, timedelta
 from pathlib import Path
-from typing import Literal, Never
+from typing import Literal, Never, Protocol
 
 import pytest
+from agent_source_fixtures import source_item_fixture
 from pydantic import JsonValue, ValidationError
 from runtime_public_fixtures import public_runtime
 from source_support import fixture_versions
 from test_storage import repo as repo
 
+from tank.contracts import DomainModel
 from tank.contracts.job_repository import JobRepository
 from tank.contracts.jobs import JobEnvelope
 from tank.contracts.reaction_recovery import (
@@ -19,16 +22,22 @@ from tank.contracts.reaction_recovery import (
     ReactionRecoveryEvidence,
     ReactionRecoveryExecution,
     ReactionRecoveryLink,
+    ReactionRecoveryOutcome,
     ReactionRecoveryUnresolved,
     ReactionRecoveryWitnessRequest,
     RetainedCoalescedReaction,
 )
 from tank.contracts.scheduler_commands import (
     InitialReactionCommand,
+    ManualReactionRevisionCommand,
     ReactionAnchorFacts,
     RevisedReactionCommand,
 )
-from tank.contracts.scheduler_results import ReactionCaptureResultDocument
+from tank.contracts.scheduler_results import (
+    CapturedReaction,
+    ReactionCaptureResult,
+    ReactionCaptureResultDocument,
+)
 from tank.contracts.stored_documents import ImmutableDocument, NativeBackfillWitness
 from tank.models import Record
 from tank.reaction_recovery import (
@@ -41,6 +50,8 @@ from tank.reaction_recovery import (
     recovery_link_key,
 )
 from tank.reaction_timing import late_reaction_schedule
+from tank.runtime import Runtime
+from tank.scheduler import ReactionEventIdentity
 from tank.storage import ImmutableRecordError, MemoryRepository, StorageBackend
 from tank.time_precision import Timestamp, collection_clock, propagate_timestamp
 from tank.util import JsonInput, iso, new_id, parse_time, sha256, utcnow
@@ -893,3 +904,271 @@ async def test_recovery_due_work_runs_actual_worker_and_measured_checkpoint_once
         assert again.kind == "ALREADY_APPLIED"
         assert len(await repo.list("out.reaction_checkpoints")) == 2
         assert len(await repo.list("ops.jobs")) == 3
+
+
+class RecordEventWire(Protocol):
+    async def __call__(
+        self, tool: Literal["record_event"], arguments: Record, context: Record
+    ) -> JsonValue: ...
+
+
+class MeasuredRecoveryHistory(DomainModel):
+    request: ReactionRecoveryCommand
+    original_command: RevisedReactionCommand
+    checkpoint: CapturedReaction
+
+
+async def measured_recovery_history(
+    repo: StorageBackend, runtime: Runtime, now: datetime
+) -> MeasuredRecoveryHistory:
+    anchor = now - timedelta(hours=25)
+    item_id = new_id("item")
+    text = "Unverified synthetic benchmark reference at " + iso(anchor)
+    item = source_item_fixture(
+        item_id,
+        text=text,
+        source_class="SOCIAL_LEAD",
+        published_at=iso(now),
+        published_prec="EXACT",
+        observed_at=iso(utcnow()),
+    )
+    await repo.put("ingest.source_items", item_id, item.storage_record())
+    dispatch: RecordEventWire = runtime.sessions.tool_dispatch
+    result = await dispatch(
+        "record_event",
+        {
+            "item_id": item_id,
+            "is_event": True,
+            "statement": text,
+            "certainty": "LOW",
+            "certainty_reason": "Unverified authored social lead",
+            "timing_confidence": "LOW",
+            "entities": [],
+            "token_ids": ["bitcoin:BTC"],
+            "event_time": {"value": iso(anchor), "precision": "EXACT", "quote": text},
+            "public_at": {
+                "value": iso(now),
+                "precision": "EXACT",
+                "basis": "Authored social publication",
+                "quote": text,
+            },
+            "freshness": "FRESH",
+            "claims": [],
+            "next_milestone": None,
+            "checked_sources": [],
+        },
+        {},
+    )
+    assert isinstance(result, dict)
+    event = ReactionEventIdentity.model_validate(
+        {field: result[field] for field in ReactionEventIdentity.model_fields if field in result}
+    )
+    assert result["accepted_claims"] == []
+    event_row = await repo.get("evt.events", event.event_id)
+    assert event_row is not None
+    assert event_row["event_state"] == "RUMOR" and event_row["state_verified"] is False
+    assert event_row["certainty"] == "LOW" and event_row["best_source_class"] == "SOCIAL_LEAD"
+    await repo.put(
+        "evt.beneficiary_maps",
+        event.event_id + ":1",
+        {"event_id": event.event_id, "map_version": 1, "analysis_set": []},
+    )
+    instruments = [
+        row.instrument_id
+        for row in runtime.settings.registry().instruments
+        if row.token_id == "bitcoin:BTC"
+        and row.market_type == "SPOT"
+        and row.active
+        and ":spot:" in row.instrument_id
+    ]
+    assert instruments
+    instrument_id = instruments[0]
+    records: list[Record] = []
+    keys: list[str] = []
+    for minute in range(1441):
+        opened = anchor - timedelta(minutes=1) + timedelta(minutes=minute)
+        keys.append(instrument_id + ":" + iso(opened))
+        records.append(
+            {
+                "instrument_id": instrument_id,
+                "market_type": "SPOT",
+                "open_time": iso(opened),
+                "interval_s": 60,
+                "complete": True,
+                "c": "110" if minute == 1440 else "100",
+                "quote_volume_usd": "1000",
+                **collection_clock(now - timedelta(seconds=1)).fields("recorded_at"),
+            }
+        )
+    await repo.put_market_batch("mkt.klines_1m", records, keys=keys)
+    first = await runtime.scheduler.reaction_capture(
+        InitialReactionCommand(
+            event_id=event.event_id,
+            token_id="bitcoin:BTC",
+            checkpoint="POST_24H",
+            anchor=ReactionAnchorFacts(type="T0", ts=iso(anchor), ts_prec="EXACT"),
+        )
+    )
+    assert first.kind == "CAPTURED"
+    final_key = instrument_id + ":" + iso(anchor + timedelta(hours=24) - timedelta(minutes=1))
+    final = await repo.get("mkt.klines_1m", final_key)
+    assert final is not None
+    await repo.put(
+        "mkt.klines_1m", final_key, final | {"c": "120", **collection_clock().fields("recorded_at")}
+    )
+    backfill_id = new_id("backfill")
+    await repo.put(
+        "mkt.backfill_runs",
+        backfill_id,
+        {
+            "backfill_id": backfill_id,
+            "event_id": event.event_id,
+            "token_id": "bitcoin:BTC",
+            "status": "FAILED",
+            **Timestamp(iso(anchor), "EXACT").fields("anchor"),
+            **collection_clock().fields("finished_at"),
+        },
+    )
+    source_wire = await repo.get("mkt.backfill_runs", backfill_id)
+    assert source_wire is not None
+    source = recovery_backfill_from_record(source_wire)
+    command = RevisedReactionCommand(
+        event_id=event.event_id,
+        token_id="bitcoin:BTC",
+        checkpoint="POST_24H",
+        automatic_revision=True,
+        change_id=source.change_id + ":POST_24H",
+        reason="Late capture completed: " + backfill_id + " (FAILED)",
+    )
+    original = await repo.enqueue(
+        "REACTION_CAPTURE", command.storage_fields(), "retained-original:" + command.change_id, max_attempts=5
+    )
+    peer = await repo.enqueue(
+        "REACTION_CAPTURE",
+        command.storage_fields() | {"change_id": "retained-other-source:POST_24H"},
+        "retained-peer:" + command.change_id,
+        max_attempts=1,
+    )
+    original_id, peer_id = original["job_id"], peer["job_id"]
+    assert isinstance(original_id, str) and isinstance(peer_id, str)
+    await repo.put(
+        "ops.jobs",
+        original_id,
+        original
+        | {
+            "status": "DONE",
+            "attempts": 1,
+            "result": {"coalesced_into": peer_id},
+            **collection_clock().fields("finished_at"),
+        },
+    )
+    await repo.put(
+        "ops.jobs",
+        peer_id,
+        peer | {"status": "FAILED", "attempts": 1, **collection_clock().fields("finished_at")},
+    )
+    return MeasuredRecoveryHistory(
+        request=ReactionRecoveryCommand(original_job_id=original_id, source_backfill_id=backfill_id),
+        original_command=command,
+        checkpoint=first,
+    )
+
+
+@pytest.mark.integration
+@pytest.mark.postgres
+@pytest.mark.parametrize("repo", ["postgres"], indirect=True)
+@pytest.mark.parametrize("writer_kind", ["latest", "marker"])
+async def test_recovery_snapshot_is_held_against_actual_checkpoint_and_marker_writers(
+    repo: StorageBackend,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    writer_kind: Literal["latest", "marker"],
+) -> None:
+    async with public_runtime(repo, tmp_path, monkeypatch) as (runtime, _):
+        now = utcnow().replace(second=0, microsecond=0)
+        history = await measured_recovery_history(repo, runtime, now)
+        independent_history = await measured_recovery_history(repo, runtime, now)
+        original_before = await repo.get("ops.jobs", history.request.original_job_id)
+        target = history.original_command
+        target_key = f"reaction:{target.event_id}:{target.token_id}:{target.checkpoint}"
+        selected, release = asyncio.Event(), asyncio.Event()
+        writer_attempted, writer_acquired = asyncio.Event(), asyncio.Event()
+        recovery_task: asyncio.Task[ReactionRecoveryOutcome] | None = None
+        writer_task: asyncio.Task[ReactionCaptureResult] | None = None
+        read_metadata, acquire_lock = repo.iter_metadata, repo.lock
+
+        async def observed_metadata(
+            collection: str, fields: Sequence[str], *, filters: Record | None = None, batch_size: int = 1000
+        ) -> AsyncIterator[Record]:
+            async for row in read_metadata(collection, fields, filters=filters, batch_size=batch_size):
+                yield row
+            if collection == "out.reaction_checkpoints" and asyncio.current_task() is recovery_task:
+                selected.set()
+                await release.wait()
+
+        @asynccontextmanager
+        async def observed_lock(key: str) -> AsyncIterator[StorageBackend]:
+            watching = key == target_key and asyncio.current_task() is writer_task
+            if watching:
+                writer_attempted.set()
+            async with acquire_lock(key) as held:
+                if watching:
+                    writer_acquired.set()
+                yield held
+
+        monkeypatch.setattr(repo, "iter_metadata", observed_metadata)
+        monkeypatch.setattr(repo, "lock", observed_lock)
+        recovery = ReactionRecovery(
+            repo,
+            execution=ReactionRecoveryExecution(
+                versions=runtime.settings.require_versions(), replay=runtime.settings.replay
+            ),
+            clock=collection_clock,
+        )
+        recovery_task = asyncio.create_task(recovery.recover(history.request))
+        try:
+            async with asyncio.timeout(10):
+                await selected.wait()
+                command = (
+                    ManualReactionRevisionCommand(
+                        event_id=target.event_id,
+                        token_id=target.token_id,
+                        checkpoint=target.checkpoint,
+                        revision=history.checkpoint.revision + 1,
+                        reason="Concurrent actual newer checkpoint",
+                    )
+                    if writer_kind == "latest"
+                    else target
+                )
+                writer_task = asyncio.create_task(runtime.scheduler.reaction_capture(command))
+                await writer_attempted.wait()
+                assert not writer_acquired.is_set()
+                independent = await recovery.recover(independent_history.request)
+                assert independent.kind == "QUEUED"
+                assert not writer_acquired.is_set()
+                release.set()
+                queued = await recovery_task
+                assert queued.kind == "QUEUED"
+                written = await writer_task
+                assert writer_acquired.is_set()
+                assert written.kind == "CAPTURED" and written.revision == 2
+        finally:
+            release.set()
+            for task in (recovery_task, writer_task):
+                if task is not None and not task.done():
+                    task.cancel()
+            await asyncio.gather(
+                *(task for task in (recovery_task, writer_task) if task is not None), return_exceptions=True
+            )
+        assert await repo.get("ops.jobs", history.request.original_job_id) == original_before
+        link_wire = await repo.get("ops.scheduler_checkpoints", queued.recovery_link_key)
+        assert link_wire is not None
+        link = ReactionRecoveryLink.model_validate(link_wire)
+        assert link.state.checkpoint == history.checkpoint
+        jobs_before = await repo.list("ops.jobs")
+        repeated = await recovery.recover(history.request)
+        if writer_kind == "marker":
+            assert repeated.kind == "ALREADY_APPLIED"
+        else:
+            assert repeated.kind == "UNRESOLVED" and repeated.reason == "RECOVERY_LINK_UNADMITTED"
+        assert await repo.list("ops.jobs") == jobs_before
