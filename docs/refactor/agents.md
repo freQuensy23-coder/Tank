@@ -1936,3 +1936,16 @@ evidence; only authored fixture provenance/cursor/publication declarations were
 completed, with no historical evidence padding or production/schema relaxation.
 External proof prefix is worker-message-final3. Whole worker command dispatch,
 remaining Session body/tool/usage/event responsibilities and vendor work stay open.
+
+Typed claimed-job admission checkpoint
+
+runtime_admission.worker_admission projects only admitted AgentMessage/Scout
+variants into the existing AdmissionCandidate, using actual envelope job ID,
+priority and slot_waiting_since or original creation clock. None denotes a
+non-session command, with no slot write. SessionService.admit_candidate requires
+and revalidates the named candidate; the existing queue-wire caller delegates to
+that same use case. Native resolution and admission share agent_message_target,
+so routing does not reverse-serialize a model into an anonymous business input.
+Independent strict four targets/Ruff pass, plus 16 connected units in 6.92 seconds
+and all 13 actual PostgreSQL cases in 8.51 seconds, zero skips/source guards.
+This is a whole-worker dependency checkpoint; dispatcher activation remains open.

@@ -159,6 +159,7 @@ from tank.contracts.question_retirement import (
     UnprovedQuestionRetirement,
     UnretainedQuestionJournal,
 )
+from tank.contracts.session_admission import AdmissionCandidate
 from tank.contracts.session_followups import (
     FollowupCandidate,
     FollowupEligibility,
@@ -2583,7 +2584,10 @@ class SessionService:
         return self.admission().policy.max_running_sessions
 
     async def admit(self, job: dict[str, JsonValue]) -> None:
-        await self.admission().admit(admission_candidate(job))
+        await self.admit_candidate(admission_candidate(job))
+
+    async def admit_candidate(self, candidate: AdmissionCandidate) -> None:
+        await self.admission().admit(AdmissionCandidate.model_validate(candidate))
 
     async def wake_waiting(self) -> None:
         await self.admission().wake()

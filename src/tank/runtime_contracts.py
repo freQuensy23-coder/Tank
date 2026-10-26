@@ -9,6 +9,7 @@ from tank.contracts import DomainModel
 from tank.contracts.progress import JobFailureProgressView
 from tank.contracts.question_retirement import QuestionFailureRefusalReceipt
 from tank.contracts.scalars import FalseFlag, TrueFlag
+from tank.contracts.session_admission import SessionTarget
 from tank.contracts.session_followups import FollowupRefusalTarget
 from tank.time_precision import Timestamp, propagate_timestamp, timestamp_owned_fields
 from tank.util import parse_iso_time
@@ -291,6 +292,15 @@ type AgentMessage = (
     | CallExpiredMessage
     | MilestoneMessage
 )
+
+
+def agent_message_target(message: AgentMessage) -> SessionTarget:
+    return SessionTarget(
+        session_id=message.session_id,
+        event_id=None if isinstance(message, (ScoutMessage, UserQuestionMessage)) else message.event_id,
+        item_id=message.item_id if isinstance(message, SourceMessage) else None,
+        proposal_id=message.proposal_id if isinstance(message, ScoutMessage) else None,
+    )
 
 
 def parse_agent_message(payload: dict[str, JsonValue]) -> AgentMessage:
