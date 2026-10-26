@@ -9,6 +9,8 @@ from typing import Literal
 
 from pydantic import JsonValue
 
+from tank.analysis.condition_graph_codec import flow_aggregate_projection_sha256
+from tank.analysis.condition_graph_contracts import ConditionFlowAggregateProjection, FlowAggregateEvidenceRef
 from tank.analysis.condition_inputs import (
     FlowInputEvidenceRef,
     FlowSourceDescriptor,
@@ -18,6 +20,7 @@ from tank.analysis.condition_inputs import (
     SpotInstrument,
     SpotTickerObservation,
 )
+from tank.analysis.spot import aggregate_projection
 from tank.contracts.json import decode_json
 from tank.time_precision import Timestamp, propagate_timestamp
 from tank.util import JsonInput, canonical_json, parse_iso_time, sha256
@@ -102,6 +105,25 @@ class SpotSourceEvidence:
 
     def descriptor(self, reference: FlowInputEvidenceRef) -> FlowSourceDescriptor:
         return self._rows[reference].descriptor
+
+    def resolve_flow_aggregate(
+        self, reference: FlowAggregateEvidenceRef, *, expected: ConditionFlowAggregateProjection
+    ) -> Mapping[str, JsonValue]:
+        if flow_aggregate_projection_sha256(expected) != reference.projection_sha256:
+            raise ValueError("Expected flow projection does not match its evidence reference")
+        source = self.source_reference(reference.source_evidence_sha256)
+        descriptor = self.descriptor(source)
+        effective = self.effective(source)
+        observed = _flow(
+            effective,
+            descriptor.scope,
+            source,
+            boundary=source.collection == "flow_segments" or source.parent_index is not None,
+        )
+        projection = aggregate_projection(observed)
+        if flow_aggregate_projection_sha256(projection) != reference.projection_sha256:
+            raise ValueError("Actual source financial projection does not match the requested evidence")
+        return effective
 
     def references(self) -> tuple[FlowInputEvidenceRef, ...]:
         return tuple(self._rows)
@@ -280,6 +302,14 @@ def decode_spot_inputs(
             identity_sources[identity.instrument_id] = (payload, "SOURCE_ROW")
         scope_original, scope_basis = identity_sources[identity.instrument_id]
         _original_row, original_payload = _wire(source if original is None else original)
+        effective: dict[str, JsonValue] = dict(row)
+        effective.update(
+            token_id=identity.token_id,
+            instrument_id=identity.instrument_id,
+            venue=identity.venue,
+            market_type=identity.market_type,
+        )
+        row, payload = _wire(effective)
         descriptor = FlowSourceDescriptor(
             format="SPOT_STORAGE_READ_V1",
             collection="flow_segments" if boundary and parent is None else "flow_bars",
@@ -368,6 +398,7 @@ def decode_spot_inputs(
                 observed_at=propagate_timestamp(row, "ts"),
                 trailing_day_native_volume=_amount(row, native_ticker_volume_field),
                 native_volume_field=native_ticker_volume_field,
+                received_at=propagate_timestamp(row, "received_ts"),
             )
         )
     return DecodedSpotInputs(

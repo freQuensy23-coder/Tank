@@ -93,7 +93,7 @@ class SpotFlowObservation(DomainModel):
         if assembled_at.value is None or self.received_at.value is None:
             return None
         assembly = parse_iso_time(assembled_at.value)
-        if parse_iso_time(self.received_at.value) > assembly:
+        if self.end > assembly or parse_iso_time(self.received_at.value) > assembly:
             return False
         return self.observed_at.value is None or parse_iso_time(self.observed_at.value) <= assembly
 
@@ -103,6 +103,16 @@ class SpotTickerObservation(DomainModel):
     observed_at: Timestamp
     trailing_day_native_volume: Decimal | None = Field(ge=0)
     native_volume_field: Literal["volume_native", "volume"]
+    received_at: Timestamp
+
+    def visible_at(self, assembled_at: Timestamp) -> bool | None:
+        if assembled_at.value is None or self.received_at.value is None or self.observed_at.value is None:
+            return None
+        assembly = parse_iso_time(assembled_at.value)
+        return (
+            parse_iso_time(self.received_at.value) <= assembly
+            and parse_iso_time(self.observed_at.value) <= assembly
+        )
 
 
 class SpotCalculationPolicy(DomainModel):
