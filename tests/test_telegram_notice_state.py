@@ -121,3 +121,94 @@ async def test_actual_notice_phase_reconciles_without_new_token_or_post(
         assert {receipt["status"] for receipt in before} == {"GENERATED"}
     else:
         assert {receipt["status"] for receipt in before} == {"GENERATED", "SENT"}
+
+
+@pytest.mark.parametrize("subject", ["foreign", "absent", "null"])
+async def test_real_ops_no_session_cannot_settle_from_another_material_receipt(
+    repo: StorageBackend, tmp_path: Path, subject: str
+) -> None:
+    from agent_source_fixtures import source_item_fixture
+
+    await repo.put("ingest.source_items", "actual-item", source_item_fixture("actual-item").storage_record())
+
+    def refuse(request: httpx.Request) -> httpx.Response:
+        raise AssertionError("Foreign material receipt cannot authorize HTTP")
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(refuse)) as http:
+        inbox = TelegramInbox(repo, PreflightSettings(data_dir=tmp_path, telegram_token=None), http=http)
+        await inbox.store(
+            {
+                "chat": {"id": 42, "type": "private"},
+                "message_id": 17,
+                "date": 1800000000,
+                "text": "Why this material?",
+            },
+            1,
+        )
+        row = await repo.get("ops.telegram_messages", "42:17")
+        assert row is not None
+        receipt: dict[str, JsonValue] = {
+            "question_id": question_id_for("42", 17),
+            "channel": ANSWER_CHANNEL,
+            "purpose": "NOTICE",
+            "chat_id": "42",
+            "attempt": 1,
+            "status": "SENT",
+            "message_ref": "101",
+            "item_id": "foreign-item",
+            **collection_clock().fields("at"),
+        }
+        if subject == "absent":
+            receipt.pop("item_id")
+        elif subject == "null":
+            receipt["item_id"] = None
+        await repo.put("out.deliveries", "foreign-material", receipt, immutable=True)
+        before = await repo.list("out.deliveries")
+        with pytest.raises(ValueError):
+            await inbox.ops_question(row, {"kind": "OPS_ITEM", "item_id": "actual-item", "text": None})
+    assert await repo.get("ops.telegram_messages", "42:17") == row
+    assert await repo.list("out.deliveries") == before
+
+
+async def test_real_ops_no_session_reuses_its_matching_material_receipt_without_new_http(
+    repo: StorageBackend, tmp_path: Path
+) -> None:
+    from agent_source_fixtures import source_item_fixture
+
+    source = source_item_fixture("actual-item").storage_record()
+    await repo.put("ingest.source_items", "actual-item", source)
+    calls = 0
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        nonlocal calls
+        calls += 1
+        return httpx.Response(200, json={"ok": True, "result": {"message_id": 101, "date": 1800000001}})
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(respond)) as http:
+        active = TelegramInbox(
+            repo, PreflightSettings(data_dir=tmp_path, telegram_token="synthetic-private-token"), http=http
+        )
+        await active.store(
+            {
+                "chat": {"id": 42, "type": "private"},
+                "message_id": 17,
+                "date": 1800000000,
+                "text": "Why this material?",
+            },
+            1,
+        )
+        row = await repo.get("ops.telegram_messages", "42:17")
+        assert row is not None
+        target: dict[str, JsonValue] = {"kind": "OPS_ITEM", "item_id": "actual-item", "text": None}
+        await active.ops_question(row, target)
+        before = await repo.list("out.deliveries")
+        assert {delivery["status"] for delivery in before} == {"GENERATED", "SENT"}
+        assert all(delivery["item_id"] == "actual-item" for delivery in before)
+        inactive = TelegramInbox(repo, PreflightSettings(data_dir=tmp_path, telegram_token=None), http=http)
+        await inactive.ops_question(row, target)
+        assert await repo.list("out.deliveries") == before
+    assert calls == 1
+    current = await repo.get("ops.telegram_messages", "42:17")
+    assert current is not None and current["status"] == "NO_SESSION"
+    assert current["item_id"] == "actual-item" and current["reason"] == "NOT_YET_RECEIVED"
+    assert await repo.get("ingest.source_items", "actual-item") == source

@@ -5,7 +5,7 @@ from contextlib import AbstractAsyncContextManager
 from datetime import datetime
 from typing import Annotated, Literal, Protocol, Self
 
-from pydantic import Field, JsonValue
+from pydantic import Field, JsonValue, model_validator
 
 from tank.contracts import DomainModel
 from tank.contracts.scalars import TrueFlag
@@ -319,12 +319,23 @@ class TelegramNoticeSubject(DomainModel):
     item_id: NonblankText
 
 
+def _unreported_notice_item(item_id: str | None) -> bool:
+    return item_id is None
+
+
 class TelegramNoticeIdentity(DomainModel):
     question_id: NonblankText
     channel: Literal["telegram:answer"]
     purpose: Literal["NOTICE"]
     chat_id: ChatReference
     attempt: Annotated[int, Field(ge=1)]
+    item_id: NonblankText | None = Field(default=None, exclude_if=_unreported_notice_item)
+
+    @model_validator(mode="after")
+    def actual_reported_item(self) -> Self:
+        if "item_id" in self.model_fields_set and self.item_id is None:
+            raise ValueError("A reported Telegram notice material identity cannot be null")
+        return self
 
 
 class TelegramGeneratedNotice(TelegramNoticeIdentity):
@@ -344,7 +355,11 @@ type TelegramNoticeAttempt = TelegramGeneratedNotice | TelegramFailedNotice | Te
 
 
 def notice_attempt(
-    record: Mapping[str, JsonValue], target: TelegramInputTarget, question_id: str
+    record: Mapping[str, JsonValue],
+    target: TelegramInputTarget,
+    question_id: str,
+    *,
+    subject: TelegramNoticeSubject | None = None,
 ) -> TelegramNoticeAttempt:
     match record.get("status"):
         case "GENERATED":
@@ -363,6 +378,8 @@ def notice_attempt(
             raise ValueError("Telegram notice has no admitted attempt phase")
     if result.question_id != question_id or str(result.chat_id) != str(target.chat_id):
         raise ValueError("Telegram notice receipt conflicts with its actual input")
+    if subject is not None and result.item_id != subject.item_id:
+        raise ValueError("Telegram notice receipt conflicts with its actual material")
     return result
 
 
@@ -374,6 +391,22 @@ class TelegramInputDisposition(DomainModel):
     status: TelegramInputStatus
 
 
-class TelegramNoticeRequest(DomainModel):
+class TelegramGeneralNoticeRequest(DomainModel):
     text: NonblankText
-    status: TelegramNoticeStatus
+    status: Literal["IGNORED", "UNMATCHED"]
+    subject: TelegramNoticeSubject | None = None
+
+
+class TelegramItemNoticeRequest(DomainModel):
+    text: NonblankText
+    status: Literal["NO_SESSION"]
+    subject: TelegramNoticeSubject
+
+
+type TelegramNoticeRequest = TelegramGeneralNoticeRequest | TelegramItemNoticeRequest
+
+
+class TelegramOpsItemTarget(DomainModel):
+    kind: Literal["OPS_ITEM"]
+    item_id: NonblankText
+    text: str | None = None

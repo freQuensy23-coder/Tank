@@ -48,6 +48,7 @@ from tank.contracts.telegram_state import (
     TelegramFileDeliveryOutcome,
     TelegramFileSent,
     TelegramFileUncertain,
+    TelegramGeneralNoticeRequest,
     TelegramGeneratedAttachment,
     TelegramInboxSettings,
     TelegramInboxStore,
@@ -55,9 +56,11 @@ from tank.contracts.telegram_state import (
     TelegramInputPatch,
     TelegramInputStatus,
     TelegramInputTarget,
+    TelegramItemNoticeRequest,
     TelegramNoticeRequest,
     TelegramNoticeStatus,
     TelegramNoticeSubject,
+    TelegramOpsItemTarget,
     TelegramQuestionRecipient,
     TelegramSentAttachment,
     TelegramSentChunk,
@@ -796,13 +799,14 @@ class TelegramInbox:
             events.add(item["route_event_id"])
         return item, events
 
-    async def ops_question(self, row, target):
+    async def ops_question(self, row: Mapping[str, JsonValue], target: Mapping[str, JsonValue]) -> None:
         """A reply in Tank Ops continues the agent session that handled the material, answered in Ops.
 
         Published or not, the material's own session takes the question. When no session took the
         material, the reader gets only the reason.
         """
-        item_id = target["item_id"]
+        incoming = TelegramOpsItemTarget.model_validate(target)
+        item_id = incoming.item_id
         item, events = await self.item_events(item_id)
         if item is None:
             await self.notice(row, OPS_UNMATCHED_TEXT, "UNMATCHED", item_id=item_id)
@@ -816,7 +820,7 @@ class TelegramInbox:
                     "session_id": session["session_id"],
                     "event_id": session.get("event_id"),
                     "item_id": item_id,
-                    "text": target.get("text"),
+                    "text": incoming.text,
                 },
             )
             return
@@ -1059,9 +1063,15 @@ class TelegramInbox:
     ) -> None:
         """Admit retained notice authority before sending or settling paired inputs."""
         target = TelegramInputTarget.from_record(row)
-        request = TelegramNoticeRequest(text=text, status=status)
         key = question_id_for(target.chat_id, target.message_id)
         subject_view = None if subject is None else TelegramNoticeSubject.model_validate(subject)
+        request: TelegramNoticeRequest
+        if status == "NO_SESSION":
+            if subject_view is None:
+                raise ValueError("A no-session material notice requires its actual subject")
+            request = TelegramItemNoticeRequest(text=text, status=status, subject=subject_view)
+        else:
+            request = TelegramGeneralNoticeRequest(text=text, status=status, subject=subject_view)
         patch_fields: dict[str, JsonValue] = {}
         if reason is not None:
             patch_fields["reason"] = reason
@@ -1079,7 +1089,7 @@ class TelegramInbox:
         if subject_view is not None and patch.item_id is not None and subject_view.item_id != patch.item_id:
             raise ValueError("Telegram notice subject conflicts with its input disposition")
         ledger = [
-            notice_attempt(delivery, target, key)
+            notice_attempt(delivery, target, key, subject=request.subject)
             async for delivery in self.repo.iter_all(
                 "out.deliveries", filters={"question_id": key, "channel": ANSWER_CHANNEL}
             )
