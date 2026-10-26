@@ -101,3 +101,24 @@ test('canonical guarded authority matches the actual postgres driver without a c
     requireDisposablePostgresDsn('postgresql://tank_ci:synthetic@127.0.0.1,unregistered.example/tank_test_guard', '127.0.0.1');
   });
 });
+
+
+test('supplied startup options cannot override the validated actual driver identity', async (): Promise<void> => {
+  const base = 'postgresql://tank_ci:synthetic@127.0.0.1/tank_test_guard';
+  const cases: readonly { parameter: 'user' | 'database'; value: string }[] = [
+    { parameter: 'user', value: 'other_user' }, { parameter: 'database', value: 'other_database' },
+  ];
+  for (const entry of cases) {
+    const input = base + '?' + entry.parameter + '=' + entry.value;
+    const unguarded = postgres(input);
+    try { assert.equal(unguarded.options.connection[entry.parameter], entry.value); }
+    finally { await unguarded.end(); }
+    assert.throws((): void => { requireDisposablePostgresDsn(input, '127.0.0.1'); });
+  }
+  for (const suffix of ['?application_name=unregistered', '?idle_timeout=1', '?options=unsafe', '#fragment']) {
+    assert.throws((): void => { requireDisposablePostgresDsn(base + suffix, '127.0.0.1'); });
+  }
+  for (const input of ['postgresql://tank_ci@127.0.0.1/tank_test_guard', 'postgresql://tank_ci:@127.0.0.1/tank_test_guard']) {
+    assert.throws((): void => { requireDisposablePostgresDsn(input, '127.0.0.1'); });
+  }
+});
