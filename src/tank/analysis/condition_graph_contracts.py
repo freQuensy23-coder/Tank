@@ -557,6 +557,16 @@ class ConditionConfidenceBase(DomainModel):
             raise ValueError("Reduced data confidence requires its actual first failed input")
         return self
 
+    def subjects(self) -> frozenset[str]:
+        checked = type(self).model_validate(self)
+        subjects = {observation.token_id for observation in checked.freshness}
+        for failure in checked.failed:
+            if isinstance(failure, ConditionRequiredFieldFailure):
+                subjects.add(failure.token_id)
+            elif isinstance(failure, ConditionObservedFieldFailure):
+                subjects.add(failure.observation.token_id)
+        return frozenset(subjects)
+
 
 class FullConditionConfidence(ConditionConfidenceBase):
     kind: Literal["FULL"]
@@ -6587,7 +6597,7 @@ class FullConditionMarketState(DomainModel):
             isinstance(pre_event, ConditionObservedPredicate) and pre_event.value
         ):
             raise ValueError("A pre-event runup flag requires actual event-anchored observed support")
-        if any(observation.token_id != self.token_id for observation in self.data_confidence.freshness):
+        if self.data_confidence.subjects() - {self.token_id}:
             raise ValueError("Full confidence cannot borrow another subject's observed freshness")
         if any(window.interval.cutoff != self.cutoff for window in self.relative.windows.values()):
             raise ValueError("Full relative context cannot borrow another cutoff")
@@ -7005,8 +7015,7 @@ class SelectiveConditionValues(DomainModel):
         ):
             raise ValueError("Selected depth facts must preserve actual subject/cutoff scope")
         if isinstance(self.confidence, SelectiveConditionConfidence) and (
-            self.confidence.analysis_window.cutoff != end
-            or any(observation.token_id != self.token_id for observation in self.confidence.freshness)
+            self.confidence.analysis_window.cutoff != end or self.confidence.subjects() - {self.token_id}
         ):
             raise ValueError("Selected confidence must preserve the actual cutoff")
         if isinstance(self.state, FullConditionMarketState) and (

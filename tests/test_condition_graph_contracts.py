@@ -42,6 +42,7 @@ from tank.analysis.condition_graph_contracts import (
     NonForwardConditionInterval,
     ObservedConditionClose,
     ObservedConditionOpenInterest,
+    SelectiveConditionValues,
     UnavailableConditionClose,
     UnavailableConditionFunding,
     WindowedConditionSpot,
@@ -50,6 +51,7 @@ from tank.analysis.positioning import MissingOIDecomposition
 from tank.analysis.statistics_contracts import DecimalBounds, DecimalRange, FloatBounds, FloatRange
 from tank.market.trade_contracts import QuoteUsdValuation
 from tank.time_precision import Timestamp
+from tank.util import sha256
 
 AT = datetime(2026, 10, 17, 12, tzinfo=UTC)
 
@@ -4170,3 +4172,94 @@ def test_venue_capture_requires_each_instrument_not_the_union_of_their_minutes()
     assert isinstance(result, ConditionObservedPredicate) and result.value is True
     missing = type(actual).model_validate(actual.model_copy(update={"captures": (first,)}))
     assert isinstance(missing.complete(), ConditionUnavailablePredicate)
+
+
+def selective_confidence_graph(token_id: str) -> SelectiveConditionValues:
+    from tank.analysis.condition_graph_contracts import (
+        ConditionEvaluationProof,
+        ConditionRequiredFieldFailure,
+        ConditionRequirement,
+        ConditionTopCacheKey,
+        SelectiveConditionConfidence,
+        SelectiveConditionValues,
+        UnappliedConditionProofFreshness,
+        UnrequestedConditionFacet,
+    )
+
+    observation = scoped_field_observation("INSTRUMENT")
+    assert observation.instrument_id is not None
+    cadence = type(observation.cadence).model_validate(
+        observation.cadence.model_copy(
+            update={"scope": observation.cadence.scope.model_copy(update={"token_id": token_id})}
+        )
+    )
+    failure = ConditionRequiredFieldFailure(
+        token_id=token_id,
+        metric_key=None,
+        kind="REQUIRED_FIELD",
+        condition="freshness",
+        reason="INCOMPLETE",
+        collection="books",
+        instrument_id=observation.instrument_id,
+        metric_family="depth",
+        cadence=cadence,
+    )
+    requirement = ConditionRequirement(metric="dc.class", window="W4H")
+    unrequested = UnrequestedConditionFacet(status="NOT_REQUESTED")
+    return SelectiveConditionValues(
+        token_id="T",
+        cutoff=Timestamp(value="2026-10-17T12:00:00Z", precision="COLLECTION_ONLY"),
+        requested=(requirement,),
+        spot={},
+        derivatives={},
+        close=unrequested,
+        depth=unrequested,
+        state=unrequested,
+        relative=unrequested,
+        confidence=SelectiveConditionConfidence(
+            kind="SELECTIVE",
+            classification="MEDIUM",
+            failed=(failure,),
+            limiting=failure,
+            derivatives_native_coverage_ready=True,
+            freshness=(),
+            derivatives_classification_ready=None,
+            derivatives_classification_ready_reason="NOT_ESTIMABLE",
+            analysis_window=ConditionInterval(window="W4H", start=AT - timedelta(hours=4), cutoff=AT),
+        ),
+        proofs=(
+            ConditionEvaluationProof(
+                requirement=requirement,
+                cache_key=ConditionTopCacheKey(
+                    domain="dc",
+                    token_id="T",
+                    window="W4H",
+                    requested_duration_s=14400.0,
+                    cutoff=AT,
+                    dependency_identity="fixture-confidence-source-generation",
+                    config_sha256=sha256({"fixture": "confidence-policy"}),
+                    expected_direction_sha256=sha256({"fixture": "no-direction-requested"}),
+                ),
+                reused=False,
+                available=True,
+                reason=None,
+                freshness=UnappliedConditionProofFreshness(
+                    kind="NOT_APPLIED", reason="NO_ADDITIONAL_FRESHNESS_GATE"
+                ),
+                coverage=None,
+            ),
+        ),
+        unavailable_metrics=(),
+        request_sha256=sha256({"fixture": "dc.class", "window": "W4H"}),
+        transient=True,
+    )
+
+
+def test_selected_confidence_cannot_borrow_another_subjects_failed_requirement() -> None:
+    model = selective_confidence_graph("T")
+    from tank.analysis.condition_graph_contracts import SelectiveConditionConfidence
+
+    assert isinstance(model.confidence, SelectiveConditionConfidence)
+    assert model.confidence.classification == "MEDIUM"
+    with pytest.raises(ValidationError):
+        selective_confidence_graph("OTHER")
