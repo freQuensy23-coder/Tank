@@ -1893,10 +1893,12 @@ async def test_watch_mutation_hydrates_prompt_provenance_first(monkeypatch: pyte
     session.pop("prompt_version_basis")
     session["prompt_version"] = "legacy-label"
     await repo.put("ops.agent_sessions", "ses_1", session)
-    await repo.put("evt.events", session["event_id"], {"event_id": session["event_id"]})
+    event_id = session["event_id"]
+    assert isinstance(event_id, str)
+    await repo.put("evt.events", event_id, {"event_id": event_id})
     calls: list[str] = []
 
-    def handler(request: httpx.Request):
+    def handler(request: httpx.Request) -> httpx.Response:
         calls.append(request.url.path)
         return httpx.Response(
             200,
@@ -1923,7 +1925,7 @@ async def test_watch_mutation_hydrates_prompt_provenance_first(monkeypatch: pyte
         tool: str, arguments: dict[str, JsonValue], context: dict[str, JsonValue]
     ) -> dict[str, JsonValue]:
         assert tool == "set_watch_condition"
-        assert arguments["event_id"] == "evt_1" and arguments["review_at"] == due
+        assert arguments["event_id"] == event_id and arguments["review_at"] == due
         assert arguments["review_question"] == "Has the official update been published?"
         return {"tool": tool, "prompt_version": context["prompt_version"]}
 
@@ -1946,6 +1948,7 @@ async def test_watch_mutation_hydrates_prompt_provenance_first(monkeypatch: pyte
             },
             "call_w",
         )
+    assert isinstance(result["prompt_version"], str)
     assert calls == ["/v1/sessions/ses_1"] and len(result["prompt_version"]) == 64
 
 
