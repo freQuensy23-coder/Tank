@@ -384,7 +384,10 @@ async def test_disposable_postgres_selective_condition_inputs_and_sql_footprint(
             assert Decimal(current_oi["oi_native_end"]) == 1001
             assert current_oi["oi_class"] == "MIXED"
             assert population_calls == ["W1H"]
-            assert not any(point["reused"] for point in oi_corrected["_condition_evaluation"]["proofs"][:1])
+            assert [point["reused"] for point in oi_corrected["_condition_evaluation"]["proofs"]] == [
+                False,
+                True,
+            ]
             assert not any(
                 query.lstrip().upper().startswith(("INSERT", "UPDATE", "DELETE")) for query in statements
             )
