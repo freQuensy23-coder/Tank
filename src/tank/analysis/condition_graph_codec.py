@@ -10,6 +10,7 @@ from pydantic import JsonValue
 from tank.analysis.condition_graph_contracts import (
     AvailableConditionFunding,
     BasicConditionSpot,
+    CapturedConditionLending,
     CapturedConditionUnlocks,
     CapturedConditionWalletFlows,
     ConditionAggregateLiquidations,
@@ -1151,14 +1152,26 @@ def encode_condition_depth(value: ConditionDepthNode, *, clocks: ConditionWireCl
     }
 
 
-class ConditionSupplyEvidenceLookup(Protocol):
-    """Reproject verified captured-observation facts without replacing absent evidence."""
-
+class ConditionWalletFlowEvidenceLookup(Protocol):
     def resolve_wallet_flow(
         self, reference: ConditionWalletFlowEvidenceRef, *, expected: ConditionWalletFlow
     ) -> Mapping[str, JsonValue]: ...
 
+
+class ConditionUnlockEvidenceLookup(Protocol):
     def resolve_unlock(self, *, expected: ConditionScheduledUnlock) -> Mapping[str, JsonValue]: ...
+
+
+class ConditionLendingEvidenceLookup(Protocol):
+    def resolve_lending_observation(
+        self, *, expected: CapturedConditionLending
+    ) -> Mapping[str, JsonValue]: ...
+
+
+class ConditionSupplyEvidenceLookup(
+    ConditionWalletFlowEvidenceLookup, ConditionUnlockEvidenceLookup, ConditionLendingEvidenceLookup, Protocol
+):
+    """Reproject verified captured-observation facts without replacing absent evidence."""
 
 
 def _verified_supply_wire(value: Mapping[str, JsonValue]) -> dict[str, JsonValue]:
@@ -1169,7 +1182,7 @@ def _verified_supply_wire(value: Mapping[str, JsonValue]) -> dict[str, JsonValue
 
 
 def encode_condition_wallet_flows(
-    value: CapturedConditionWalletFlows, evidence: ConditionSupplyEvidenceLookup
+    value: CapturedConditionWalletFlows, evidence: ConditionWalletFlowEvidenceLookup
 ) -> dict[str, JsonValue]:
     captured = CapturedConditionWalletFlows.model_validate(value)
     flows: list[JsonValue] = []
@@ -1203,7 +1216,7 @@ def encode_condition_wallet_flows(
 
 
 def encode_condition_unlocks(
-    value: CapturedConditionUnlocks, evidence: ConditionSupplyEvidenceLookup
+    value: CapturedConditionUnlocks, evidence: ConditionUnlockEvidenceLookup
 ) -> dict[str, JsonValue]:
     captured = CapturedConditionUnlocks.model_validate(value)
     visibility = captured.visibility.eligible()
@@ -1247,3 +1260,79 @@ def encode_condition_unlocks(
     }
     result.update(_clock_wire(captured.observed_at, "observed_at"))
     return result
+
+
+def encode_condition_lending(
+    value: CapturedConditionLending, evidence: ConditionLendingEvidenceLookup
+) -> dict[str, JsonValue]:
+    captured = CapturedConditionLending.model_validate(value)
+    visibility = captured.current_visibility.eligible()
+    if not isinstance(visibility, ConditionObservedPredicate) or not visibility.value:
+        return {
+            "status": "UNAVAILABLE",
+            "window": captured.requested_window,
+            "reason": "RECEIVED_AFTER_ASSEMBLY"
+            if isinstance(visibility, ConditionObservedPredicate)
+            else "RECEIPT_VISIBILITY_UNPROVEN",
+        }
+    wire = _verified_supply_wire(evidence.resolve_lending_observation(expected=captured))
+    raw_pools = wire["pools"]
+    if not isinstance(raw_pools, list):
+        raise ValueError("Verified lending observation requires its actual pool array")
+    pool_records: list[dict[str, JsonValue]] = []
+    actual_ids: set[str] = set()
+    expected_pools = {pool.pool_id: pool for pool in captured.pools}
+    for raw in raw_pools:
+        if not isinstance(raw, dict):
+            raise ValueError("Verified lending pool must be an object")
+        pool_id = raw["pool_id"]
+        if not isinstance(pool_id, str) or not pool_id.strip() or pool_id in actual_ids:
+            raise ValueError("Verified lending pools require distinct actual identities")
+        actual_ids.add(pool_id)
+        pool_records.append(raw)
+    if actual_ids != set(expected_pools):
+        raise ValueError("Verified lending pool identities differ from the requested captured observation")
+    prior_visibility = captured.previous_visibility.eligible()
+    prior_visible = isinstance(prior_visibility, ConditionObservedPredicate) and prior_visibility.value
+    for raw in pool_records:
+        pool_id = raw["pool_id"]
+        if not isinstance(pool_id, str):
+            raise ValueError("Verified lending pool requires its actual identity")
+        pool = expected_pools[pool_id]
+        utilization = pool.utilization()
+        change = pool.change()
+        raw.update(
+            {
+                "utilization": _decimal_wire(utilization.value),
+                "utilization_reason": utilization.reason,
+                "chg_24h": change.value if prior_visible else None,
+                "chg_24h_reason": "PRIOR_OBSERVATION_NOT_CAPTURED"
+                if captured.previous_source_observation_sha256 is None
+                else change.reason
+                if prior_visible
+                else "PRIOR_RECEIVED_AFTER_ASSEMBLY"
+                if isinstance(prior_visibility, ConditionObservedPredicate)
+                else "PRIOR_RECEIPT_VISIBILITY_UNPROVEN",
+                "borrow_apr": None,
+                "borrow_apr_reason": "NOT_ESTIMABLE",
+                "borrow_apr_policy_reason": pool.borrow_apr().reason,
+                "identity_qualification": _model_wire(pool.identity),
+            }
+        )
+    serialized_pools: list[JsonValue] = [pool for pool in pool_records]
+    wire.update(
+        {
+            "window": captured.requested_window,
+            "pools": serialized_pools,
+            "borrow_apr": None,
+            "reason": "APY_IS_NOT_APR",
+            "unmapped_pool_ids": list(captured.unmapped_pool_ids),
+            "source_observation_sha256": captured.source_observation_sha256,
+            "previous_source_observation_sha256": captured.previous_source_observation_sha256,
+            "capture_visibility": _model_wire(captured.current_visibility),
+            "previous_capture_visibility": _model_wire(captured.previous_visibility),
+        }
+    )
+    wire.update(_clock_wire(captured.observed_at, "observed_at"))
+    wire.update(_clock_wire(captured.previous_observed_at, "previous_observed_at"))
+    return wire

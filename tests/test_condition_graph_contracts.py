@@ -3662,6 +3662,24 @@ def test_lending_pool_cannot_borrow_another_registered_identity() -> None:
         type(pool).model_validate(pool.model_copy(update={"identity": identity}))
 
 
+def lending_storage_observation(at: str) -> dict[str, JsonValue]:
+    return {
+        "token_id": "T",
+        "kind": "LENDING",
+        "ts": at,
+        "ts_prec": None,
+        "ts_prec_reason": "NOT_CAPTURED",
+        "pools": [
+            {
+                "pool_id": "fixture-pool",
+                "total_supply_usd": "100",
+                "total_borrow_usd": "0",
+                "borrow_apy": "7.00",
+            }
+        ],
+    }
+
+
 def test_lending_observed_change_requires_actual_prior_timestamp_and_same_assembly() -> None:
     from tank.analysis.condition_graph_contracts import CapturedConditionLending
 
@@ -3676,6 +3694,8 @@ def test_lending_observed_change_requires_actual_prior_timestamp_and_same_assemb
                 value="2026-10-17T12:00:00Z", precision=None, precision_reason="NOT_CAPTURED"
             ),
             previous_observed_at=Timestamp(value=None, precision=None, precision_reason="NOT_CAPTURED"),
+            source_observation_sha256=sha256(lending_storage_observation("2026-10-17T12:00:00Z")),
+            previous_source_observation_sha256=None,
             current_visibility=visibility,
             previous_visibility=visibility,
             pools=(lending_pool(),),
@@ -3690,6 +3710,8 @@ def test_lending_observed_change_requires_actual_prior_timestamp_and_same_assemb
         previous_observed_at=Timestamp(
             value="2026-10-16T12:00:00Z", precision=None, precision_reason="NOT_CAPTURED"
         ),
+        source_observation_sha256=sha256(lending_storage_observation("2026-10-17T12:00:00Z")),
+        previous_source_observation_sha256=sha256(lending_storage_observation("2026-10-16T12:00:00Z")),
         current_visibility=visibility,
         previous_visibility=visibility,
         pools=(lending_pool(),),
@@ -3699,6 +3721,10 @@ def test_lending_observed_change_requires_actual_prior_timestamp_and_same_assemb
     with pytest.raises(ValidationError, match="distinct from unmapped"):
         type(recorded).model_validate(
             recorded.model_copy(update={"unmapped_pool_ids": (recorded.pools[0].pool_id,)})
+        )
+    with pytest.raises(ValidationError, match="actual prior observation presence"):
+        type(recorded).model_validate(
+            recorded.model_copy(update={"previous_source_observation_sha256": None})
         )
 
 

@@ -15,6 +15,7 @@ from tank.analysis.condition_graph_codec import (
 )
 from tank.analysis.condition_graph_contracts import (
     BasicConditionDerivatives,
+    CapturedConditionLending,
     ConditionFlowAggregateProjection,
     ConditionGeneratedEmptyFlowProjection,
     ConditionReferenceTradeEvidenceRef,
@@ -1390,3 +1391,161 @@ def test_supply_wire_propagates_source_reprojection_refusal_without_filling_expe
     )
     with pytest.raises(ValueError, match="does not reproject"):
         encode_condition_unlocks(changed_unlocks, evidence)
+
+
+def captured_lending() -> CapturedConditionLending:
+    from test_condition_graph_contracts import AT, lending_pool, lending_storage_observation, wallet_flows
+
+    from tank.time_precision import Timestamp
+
+    visibility = wallet_flows().query_visibility
+    return CapturedConditionLending(
+        status="CAPTURED_POOLS",
+        token_id="T",
+        requested_window="W24H",
+        cutoff=AT,
+        observed_at=Timestamp(value="2026-10-17T12:00:00Z", precision=None, precision_reason="NOT_CAPTURED"),
+        previous_observed_at=Timestamp(
+            value="2026-10-16T12:00:00Z", precision=None, precision_reason="NOT_CAPTURED"
+        ),
+        source_observation_sha256=sha256(lending_storage_observation("2026-10-17T12:00:00Z")),
+        previous_source_observation_sha256=sha256(lending_storage_observation("2026-10-16T12:00:00Z")),
+        current_visibility=visibility,
+        previous_visibility=visibility,
+        pools=(lending_pool(),),
+        unmapped_pool_ids=(),
+    )
+
+
+class LendingWireEvidence:
+    def __init__(self, expected: CapturedConditionLending) -> None:
+        from test_condition_graph_contracts import lending_storage_observation
+
+        self.expected = expected
+        self.wire = lending_storage_observation("2026-10-17T12:00:00Z")
+        self.calls = 0
+
+    def resolve_lending_observation(self, *, expected: CapturedConditionLending) -> Mapping[str, JsonValue]:
+        self.calls += 1
+        if expected != self.expected or expected.source_observation_sha256 != sha256(self.wire):
+            raise ValueError("Captured lending observation does not match its source witness")
+        return self.wire
+
+
+def test_lending_wire_retains_provider_apy_lexical_form_and_never_infers_apr() -> None:
+    from tank.analysis.condition_graph_codec import encode_condition_lending
+
+    model = captured_lending()
+    evidence = LendingWireEvidence(model)
+    original = deepcopy(evidence.wire)
+    wire = encode_condition_lending(model, evidence)
+    pools = wire["pools"]
+    assert isinstance(pools, list) and len(pools) == 1
+    pool = pools[0]
+    assert isinstance(pool, dict)
+    assert pool["borrow_apy"] == "7.00" and pool["total_supply_usd"] == "100"
+    assert pool["utilization"] == "0" and pool["chg_24h"] == 0.0
+    assert pool["borrow_apr"] is None and pool["borrow_apr_reason"] == "NOT_ESTIMABLE"
+    assert pool["borrow_apr_policy_reason"] == "APY_IS_NOT_APR"
+    assert wire["observed_at_prec"] is None and wire["observed_at_prec_reason"] == "NOT_CAPTURED"
+    assert wire["source_observation_sha256"] == sha256(original)
+    pool["borrow_apy"] = "changed"
+    assert evidence.wire == original and evidence.calls == 1
+
+
+def test_lending_wire_does_not_expose_a_future_received_prior_comparison() -> None:
+    from tank.analysis.condition_graph_codec import encode_condition_lending
+    from tank.time_precision import Timestamp
+
+    model = captured_lending()
+    prior_future = type(model).model_validate(
+        model.model_copy(
+            update={
+                "previous_visibility": model.previous_visibility.model_copy(
+                    update={
+                        "received_at": Timestamp(value="2026-10-17T12:00:01Z", precision="COLLECTION_ONLY")
+                    }
+                )
+            }
+        )
+    )
+    wire = encode_condition_lending(prior_future, LendingWireEvidence(prior_future))
+    pools = wire["pools"]
+    assert isinstance(pools, list)
+    pool = pools[0]
+    assert isinstance(pool, dict)
+    assert pool["utilization"] == "0" and pool["chg_24h"] is None
+    assert pool["chg_24h_reason"] == "PRIOR_RECEIVED_AFTER_ASSEMBLY"
+    current_future = type(model).model_validate(
+        model.model_copy(update={"current_visibility": prior_future.previous_visibility})
+    )
+    evidence = LendingWireEvidence(current_future)
+    assert encode_condition_lending(current_future, evidence) == {
+        "status": "UNAVAILABLE",
+        "window": "W24H",
+        "reason": "RECEIVED_AFTER_ASSEMBLY",
+    }
+    assert evidence.calls == 0
+
+
+def test_lending_wire_requires_the_exact_current_and_prior_source_witnesses() -> None:
+    from tank.analysis.condition_graph_codec import encode_condition_lending
+
+    model = captured_lending()
+    evidence = LendingWireEvidence(model)
+    wrong_source = type(model).model_validate(
+        model.model_copy(update={"source_observation_sha256": "0" * 64})
+    )
+    with pytest.raises(ValueError, match="source witness"):
+        encode_condition_lending(wrong_source, evidence)
+    with pytest.raises(ValidationError, match="actual prior observation presence"):
+        type(model).model_validate(model.model_copy(update={"previous_source_observation_sha256": None}))
+
+
+def test_current_lending_observation_does_not_invent_a_missing_prior_row_or_receipt() -> None:
+    from tank.analysis.condition_graph_codec import encode_condition_lending
+    from tank.time_precision import Timestamp
+
+    model = captured_lending()
+    no_prior_clock = Timestamp(value=None, precision=None, precision_reason="PRIOR_OBSERVATION_NOT_CAPTURED")
+    no_prior = type(model).model_validate(
+        model.model_copy(
+            update={
+                "previous_observed_at": no_prior_clock,
+                "previous_source_observation_sha256": None,
+                "previous_visibility": model.previous_visibility.model_copy(
+                    update={"received_at": no_prior_clock}
+                ),
+                "pools": (model.pools[0].model_copy(update={"previous_utilization": None}),),
+            }
+        )
+    )
+    wire = encode_condition_lending(no_prior, LendingWireEvidence(no_prior))
+    pools = wire["pools"]
+    assert isinstance(pools, list)
+    pool = pools[0]
+    assert isinstance(pool, dict)
+    assert pool["utilization"] == "0" and pool["chg_24h"] is None
+    assert pool["chg_24h_reason"] == "PRIOR_OBSERVATION_NOT_CAPTURED"
+    assert wire["previous_source_observation_sha256"] is None
+    assert wire["previous_observed_at"] is None
+    with pytest.raises(ValidationError, match="absent prior.*source receipt"):
+        type(no_prior).model_validate(
+            no_prior.model_copy(update={"previous_visibility": model.previous_visibility})
+        )
+
+
+def test_lending_wire_does_not_match_a_pool_by_position_or_duplicate_identity() -> None:
+    from tank.analysis.condition_graph_codec import encode_condition_lending
+
+    model = captured_lending()
+    evidence = LendingWireEvidence(model)
+    pools = evidence.wire["pools"]
+    assert isinstance(pools, list)
+    pools.append(deepcopy(pools[0]))
+    duplicated = type(model).model_validate(
+        model.model_copy(update={"source_observation_sha256": sha256(evidence.wire)})
+    )
+    evidence.expected = duplicated
+    with pytest.raises(ValueError, match="distinct actual identities"):
+        encode_condition_lending(duplicated, evidence)

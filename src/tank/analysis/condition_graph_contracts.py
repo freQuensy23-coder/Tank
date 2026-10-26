@@ -5819,6 +5819,8 @@ class CapturedConditionLending(DomainModel):
     cutoff: datetime
     observed_at: Timestamp
     previous_observed_at: Timestamp
+    source_observation_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+    previous_source_observation_sha256: str | None = Field(pattern=r"^[0-9a-f]{64}$")
     current_visibility: ConditionReceiptVisibility
     previous_visibility: ConditionReceiptVisibility
     pools: tuple[ConditionLendingPoolCalculation, ...] = Field(min_length=1)
@@ -5832,10 +5834,14 @@ class CapturedConditionLending(DomainModel):
     @model_validator(mode="after")
     def actual_lending_scope(self) -> Self:
         current, previous = self.observed_at.value, self.previous_observed_at.value
+        if (previous is None) != (self.previous_source_observation_sha256 is None):
+            raise ValueError("Lending prior provenance must match actual prior observation presence")
         if current is None or parse_iso_time(current) > self.cutoff:
             raise ValueError("Captured lending requires its actual nonfuture source timestamp")
         if any(pool.previous_utilization is not None for pool in self.pools) and previous is None:
             raise ValueError("Observed utilization change requires its actual prior capture timestamp")
+        if previous is None and self.previous_visibility.received_at.value is not None:
+            raise ValueError("An absent prior lending observation cannot claim a source receipt")
         if previous is not None and (
             parse_iso_time(previous) > parse_iso_time(current)
             or parse_iso_time(previous) > self.cutoff - timedelta(days=1)
