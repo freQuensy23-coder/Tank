@@ -50,13 +50,20 @@ def test_actual_serializer_uses_indexed_immutable_original_evidence() -> None:
     point = lookup.source.minutes[0]
     aggregate = bound_aggregate(point)
     original["buy_qty"] = "999"
+    caller_extension = original["writer_note"]
+    assert isinstance(caller_extension, dict)
+    caller_extension["captured"] = "caller mutation"
     assert point.buy_qty == Decimal(3)
     assert lookup.source_reference(point.evidence.source_evidence_sha256) == point.evidence
     first = flow_aggregate_evidence_wire(aggregate, lookup)
     assert first["buy_qty"] == "3"
     assert first["writer_note"] == {"captured": "unchanged"}
     first["buy_qty"] = "888"
+    resolved_extension = first["writer_note"]
+    assert isinstance(resolved_extension, dict)
+    resolved_extension["captured"] = "resolved view mutation"
     assert flow_aggregate_evidence_wire(aggregate, lookup)["buy_qty"] == "3"
+    assert flow_aggregate_evidence_wire(aggregate, lookup)["writer_note"] == {"captured": "unchanged"}
     assert lookup.snapshot.original(point.evidence) == minute()
 
 
