@@ -7,7 +7,8 @@ from collections.abc import Awaitable, Callable, Mapping
 from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal, InvalidOperation, localcontext
 from pathlib import Path
-from typing import Literal
+from threading import Event
+from typing import Literal, Protocol
 
 from pydantic import Field, JsonValue
 
@@ -24,6 +25,7 @@ from tank.analysis.watch_contracts import (
 )
 from tank.analysis.watch_policy import evaluate_timed_review
 from tank.contracts import DomainModel
+from tank.contracts.backup_manifest import BackupManifest
 from tank.contracts.configuration import Thresholds
 from tank.contracts.json import decode_json
 from tank.contracts.milestone_checks import (
@@ -2095,7 +2097,7 @@ def funding_state(derivatives):
     return "ABOVE" if "ABOVE" in values else "BELOW" if all(v == "BELOW" for v in values) else "WITHIN"
 
 
-def file_digest(path, *, cancelled=None):
+def file_digest(path: Path, *, cancelled: Event | None = None) -> str:
     import hashlib
 
     digest = hashlib.sha256()
@@ -2107,69 +2109,80 @@ def file_digest(path, *, cancelled=None):
     return digest.hexdigest()
 
 
-def verify_backup(directory, *, require_complete=True, protected=None, cancelled=None):
-    """Verify the relative-path recovery manifest before restoring evidence."""
-    import json
-    from pathlib import Path
+def backup_file(root: Path, relative: str) -> Path:
+    candidate = root / relative
+    if any(parent.is_symlink() for parent in (candidate, *candidate.parents) if parent != root):
+        raise ValueError("Backup file contains a symlink")
+    path = candidate.resolve()
+    if not path.is_relative_to(root) or not path.is_file():
+        raise ValueError("Backup file is missing or outside backup root")
+    return path
 
+
+def verify_backup(
+    directory: str | Path,
+    *,
+    require_complete: bool = True,
+    protected: Mapping[str, Path] | None = None,
+    cancelled: Event | None = None,
+) -> BackupManifest:
+    """Verify the relative-path recovery manifest before restoring evidence."""
     root = Path(directory).resolve()
     if require_complete and not (root / "COMPLETE").is_file():
         raise ValueError("Backup is incomplete")
-    manifest = json.loads((root / "manifest.json").read_text())
-    if protected:
-        for relative in manifest["files"]:
+    manifest = BackupManifest.from_bytes((root / "manifest.json").read_bytes())
+    if protected is not None:
+        for relative in manifest.files:
             parts = Path(relative).parts
-            if parts and parts[0] in manifest.get("roots", {}):
-                original = Path(manifest["roots"][parts[0]]).joinpath(*parts[1:])
+            if parts[0] in manifest.roots:
+                original = Path(manifest.roots[parts[0]]).joinpath(*parts[1:])
                 if is_protected_evidence_path(original, protected):
                     raise ValueError(
                         "Backup contains a protected credential path and cannot be used as ordinary evidence"
                     )
-    for relative, digest in manifest["files"].items():
-        path = (root / relative).resolve()
-        if not path.is_relative_to(root) or not path.is_file():
-            raise ValueError("Backup file is missing or outside backup root")
-        if file_digest(path, cancelled=cancelled) != digest:
+    for relative, digest in manifest.files.items():
+        if file_digest(backup_file(root, relative), cancelled=cancelled) != digest:
             raise ValueError("Backup file checksum mismatch")
-    if not all(name in manifest["files"] for name in ("tank.dump", "oma.dump")):
-        raise ValueError("Backup requires both Tank and OpenMA database dumps")
     return manifest
 
 
-def resolve_backup_reference(directory, reference, *, manifest=None):
-    """Map an original absolute/relative evidence path into a relocated backup."""
-    import json
-    from pathlib import Path
-
+def resolve_backup_reference(
+    directory: str | Path, reference: str | Path, *, manifest: BackupManifest | None = None
+) -> Path:
+    """Map an original evidence path into its checksum-verified recovery tree."""
     root = Path(directory).resolve()
-    manifest = manifest or json.loads((root / "manifest.json").read_text())
+    admitted = (
+        BackupManifest.from_bytes((root / "manifest.json").read_bytes())
+        if manifest is None
+        else BackupManifest.model_validate(manifest)
+    )
     original = Path(reference)
     if not original.is_absolute():
-        original = Path(manifest["reference_base"]) / original
+        original = Path(admitted.reference_base) / original
     original = original.resolve()
-    for label, source_root in manifest["roots"].items():
+    for label, source_root in admitted.roots.items():
         source = Path(source_root)
         if original.is_relative_to(source):
             relative = (Path(label) / original.relative_to(source)).as_posix()
-            path = (root / relative).resolve()
-            if relative not in manifest["files"] or not path.is_file():
+            if relative not in admitted.files:
                 raise ValueError("Evidence reference is missing from backup")
+            path = backup_file(root, relative)
+            if file_digest(path) != admitted.files[relative]:
+                raise ValueError("Backup file checksum mismatch")
             return path
     raise ValueError("Evidence reference is outside backed-up roots")
 
 
-def protected_evidence_paths(settings):
+class BackupProtectionSettings(Protocol):
+    codex_auth_path: Path
+
+
+def protected_evidence_paths(settings: BackupProtectionSettings) -> dict[str, Path]:
     """Credentials are never ordinary evidence/retention inputs."""
-    from pathlib import Path
-
-    paths = {}
-    auth = getattr(settings, "codex_auth_path", None)
-    if auth is not None:
-        paths["subscription sign-in directory"] = Path(auth).resolve().parent
-    return paths
+    return {"subscription sign-in directory": settings.codex_auth_path.resolve().parent}
 
 
-def is_protected_evidence_path(path, protected):
+def is_protected_evidence_path(path: str | Path, protected: Mapping[str, Path]) -> bool:
     from pathlib import Path
 
     resolved = Path(path).resolve()
