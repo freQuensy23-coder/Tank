@@ -42,6 +42,7 @@ from tank.runtime_contracts import (
     failure_reason_text,
     replace_job_clock,
 )
+from tank.runtime_retry import worker_retry_schedule
 from tank.scheduler import Scheduler
 from tank.settings import Settings
 from tank.storage import Repository
@@ -317,7 +318,9 @@ class Runtime:
                     await self.repo.fail_job(
                         job["job_id"],
                         type(exc).__name__,
-                        retry_after=getattr(exc, "retry_after", min(60, 2 ** job.get("attempts", 1))),
+                        retry_after=worker_retry_schedule(
+                            exc, JobRetryState.from_document(job).attempts
+                        ).seconds,
                     )
                     current = await self.repo.get("ops.jobs", job["job_id"])
                     if current and current["status"] in {"FAILED", "EXPIRED"}:
