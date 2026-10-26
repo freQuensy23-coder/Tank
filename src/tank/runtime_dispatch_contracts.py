@@ -5,6 +5,7 @@ from typing import Annotated, Literal, Self
 from pydantic import Field, RootModel, model_validator
 
 from tank.contracts import DomainModel
+from tank.contracts.jobs import DependencyState as DependencyState
 from tank.contracts.jobs import JobClaimScope, JobEnvelope
 from tank.runtime_contracts import (
     AgentMessage,
@@ -111,11 +112,6 @@ type RuntimeCommand = Annotated[
 
 class RuntimeCommandRecord(RootModel[RuntimeCommand]):
     model_config = {"strict": True, "hide_input_in_errors": True, "revalidate_instances": "always"}
-
-
-class DependencyState(DomainModel):
-    job_id: str = Field(min_length=1, pattern=r"\S")
-    status: Literal["QUEUED", "RUNNING", "DONE", "FAILED", "EXPIRED"]
 
 
 class RunningJobClaim(JobClaimScope):

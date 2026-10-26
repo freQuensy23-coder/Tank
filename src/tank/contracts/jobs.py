@@ -292,6 +292,11 @@ class InvalidJobClaim(DomainModel):
     error_fields: tuple[str, ...]
 
 
+class DependencyState(DomainModel):
+    job_id: str = Field(min_length=1, pattern=r"\S")
+    status: Literal["QUEUED", "RUNNING", "DONE", "FAILED", "EXPIRED"]
+
+
 class JobClaimScope(DomainModel):
     job_id: str = Field(min_length=1, pattern=r"\S")
     kind: str = Field(min_length=1, pattern=r"\S")
