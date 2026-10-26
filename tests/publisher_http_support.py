@@ -3,7 +3,7 @@
 import json
 import ssl
 import threading
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -47,6 +47,7 @@ def serve_peer(
     *,
     port: int,
     context: ssl.SSLContext | None,
+    after_tag_update: Callable[[], bool] | None,
 ) -> Iterator[PublisherHTTPPeer]:
     requests: list[ObservedRequest] = []
 
@@ -82,6 +83,9 @@ def serve_peer(
                 except RuntimeError:
                     if provider.fault != "TAG_UNCERTAIN":
                         raise
+                    self.close_connection = True
+                    return
+                if after_tag_update is not None and after_tag_update():
                     self.close_connection = True
                     return
                 reply = provider.actor()
@@ -134,7 +138,7 @@ def serve_peer(
 def publisher_http_peer(
     provider: ProviderState, journal: PublisherJournal, selected_sha: CommitSHA
 ) -> Iterator[PublisherHTTPPeer]:
-    with serve_peer(provider, journal, selected_sha, port=0, context=None) as peer:
+    with serve_peer(provider, journal, selected_sha, port=0, context=None, after_tag_update=None) as peer:
         yield peer
 
 
@@ -146,8 +150,11 @@ def publisher_https_peer(
     *,
     certificate: Path,
     private_key: Path,
+    after_tag_update: Callable[[], bool] | None,
 ) -> Iterator[PublisherHTTPPeer]:
     context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
     context.load_cert_chain(certificate, private_key)
-    with serve_peer(provider, journal, selected_sha, port=443, context=context) as peer:
+    with serve_peer(
+        provider, journal, selected_sha, port=443, context=context, after_tag_update=after_tag_update
+    ) as peer:
         yield peer

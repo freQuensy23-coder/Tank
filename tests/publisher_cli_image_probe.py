@@ -15,7 +15,9 @@ from tank.deployment.journal import PublisherJournal
 
 def run_probe(root: Path, package: Path, sha: str) -> None:
     results: list[dict[str, str | int]] = []
-    for name, uncertain in (("forward", False), ("lost-ack", True)):
+    for name in ("forward", "lost-ack", "terminated-after-acceptance"):
+        uncertain = name == "lost-ack"
+        interrupted = name == "terminated-after-acceptance"
         host = root / name
         host.mkdir(mode=0o700)
         state = host / "apify-state"
@@ -43,8 +45,20 @@ def run_probe(root: Path, package: Path, sha: str) -> None:
         for key in ("HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "http_proxy", "https_proxy", "all_proxy"):
             environment.pop(key, None)
 
+        active_process: subprocess.Popen[bytes] | None = None
+        active_action: str | None = None
+
+        def after_tag_update() -> bool:
+            if interrupted and active_action == "activate":
+                assert active_process is not None and active_process.poll() is None
+                active_process.terminate()
+                return True
+            return False
+
         def command(action: str, *, succeeds: bool) -> None:
-            result = subprocess.run(
+            nonlocal active_process, active_action
+            active_action = action
+            active_process = subprocess.Popen(
                 [
                     sys.executable,
                     "-m",
@@ -70,11 +84,15 @@ def run_probe(root: Path, package: Path, sha: str) -> None:
                     "600",
                 ],
                 env=environment,
-                capture_output=True,
-                check=False,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
             )
-            assert (result.returncode == 0) is succeeds, (action, result.returncode, result.stderr)
-            assert b"synthetic-publisher-image-token" not in result.stdout + result.stderr
+            stdout, stderr = active_process.communicate(timeout=30)
+            code = active_process.returncode
+            if interrupted and action == "activate":
+                assert code == -15
+            assert (code == 0) is succeeds, (action, code, stderr)
+            assert b"synthetic-publisher-image-token" not in stdout + stderr
 
         with publisher_https_peer(
             provider,
@@ -82,12 +100,13 @@ def run_probe(root: Path, package: Path, sha: str) -> None:
             sha,
             certificate=Path("/tls/certificate.pem"),
             private_key=Path("/tls/private-key.pem"),
+            after_tag_update=after_tag_update,
         ) as peer:
             command("prepare", succeeds=True)
             assert provider.direct == "A" * 17
-            command("activate", succeeds=not uncertain)
+            command("activate", succeeds=not (uncertain or interrupted))
             assert provider.direct == "B" * 17
-            if uncertain:
+            if uncertain or interrupted:
                 pending = journal.read_transaction()
                 assert pending is not None and pending.activation_attempted
                 provider.fault = "NONE"
