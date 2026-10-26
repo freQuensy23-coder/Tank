@@ -68,6 +68,7 @@ from tank.contracts.scheduler_results import (
     reaction_capture_result,
     recorded_reaction_receipt,
 )
+from tank.reaction_timing import CAPTURE_EXPIRY_S, LATE_REVISION_DEFER_S
 from tank.runtime_contracts import TimedReviewFiredMessage
 from tank.settings import Settings
 from tank.time_precision import (
@@ -105,10 +106,7 @@ REACTION_RETRY_S = 30
 
 
 CAPTURE_YIELD_POLL_S, CAPTURE_YIELD_MAX_S = 2, 300
-CAPTURE_EXPIRY_S, CAPTURE_EXPIRY_SAFETY_S = 6 * 3600, 1200
-
-
-LATE_REVISION_DEFER_S = 1800
+CAPTURE_EXPIRY_SAFETY_S = 1200
 
 
 class _EvalBudgetSpent(Exception):
@@ -1220,7 +1218,7 @@ class Scheduler:
                     run_after=offset_schedule(
                         collection_clock(now), timedelta(seconds=LATE_REVISION_DEFER_S)
                     ),
-                    expires_at=offset_schedule(collection_clock(now), timedelta(hours=6)),
+                    expires_at=offset_schedule(collection_clock(now), timedelta(seconds=CAPTURE_EXPIRY_S)),
                 )
         await self.repo.put(
             "ops.scheduler_checkpoints",
