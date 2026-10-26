@@ -182,19 +182,28 @@ def test_active_history_job_preserves_existing_lane_and_actual_runner_contract()
         run: str | None = None
 
     class Job(BaseModel):
-        model_config = ConfigDict(extra="ignore", strict=True, populate_by_name=True)
+        model_config = ConfigDict(extra="ignore", strict=True)
         steps: list[Step]
+
+    class HistoryJob(Job):
         runs_on: Literal["ubuntu-24.04"] = Field(alias="runs-on")
         timeout_minutes: int = Field(alias="timeout-minutes", strict=True)
+
+    class HistoryJobs(BaseModel):
+        model_config = ConfigDict(extra="ignore", strict=True)
+        history: HistoryJob = Field(alias="node-public-history")
+
+    class HistoryWorkflow(BaseModel):
+        model_config = ConfigDict(extra="ignore", strict=True)
+        jobs: HistoryJobs
 
     class Workflow(BaseModel):
         model_config = ConfigDict(extra="ignore", strict=True)
         jobs: dict[str, Job]
 
-    document = Workflow.model_validate(
-        yaml.safe_load((ROOT / ".github/workflows/test-suite.yml").read_bytes())
-    )
-    assert document.jobs["node-public-history"].timeout_minutes == 4
+    raw = yaml.safe_load((ROOT / ".github/workflows/test-suite.yml").read_bytes())
+    document = Workflow.model_validate(raw)
+    assert HistoryWorkflow.model_validate(raw).jobs.history.timeout_minutes == 4
     existing = "\n".join(step.run for step in document.jobs["node-persistence"].steps if step.run is not None)
     history = "\n".join(
         step.run for step in document.jobs["node-public-history"].steps if step.run is not None
