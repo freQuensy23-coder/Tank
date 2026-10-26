@@ -27,7 +27,7 @@ from tank.contracts.configuration import Thresholds
 from tank.contracts.job_repository import JobRepository, QueueStore
 from tank.contracts.progress import SourceProgressSink
 from tank.contracts.provenance import ResolvedVersionIdentity
-from tank.contracts.repository import Collection, Repository
+from tank.contracts.repository import Collection, DocumentStore, Repository
 from tank.contracts.source_items import (
     SOURCE_ITEMS,
     AlwaysRelevance,
@@ -62,7 +62,7 @@ class PipelineSettings(Protocol):
     def thresholds(self) -> Thresholds: ...
 
 
-class PipelineStore(QueueStore, Protocol):
+class PipelineStore(QueueStore, DocumentStore, Protocol):
     def iter_range(
         self,
         collection: str,
