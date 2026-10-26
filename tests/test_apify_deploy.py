@@ -12,6 +12,13 @@ from pathlib import Path
 from urllib.parse import parse_qs, urlsplit
 
 import pytest
+from publisher_state_support import rig
+
+from tank.deployment.artifact_contracts import SourceBundle
+from tank.deployment.artifacts import source_files
+from tank.deployment.contracts import ActiveRelease
+from tank.deployment.credentials import PublisherCredentialError, host_token
+from tank.deployment.journal import JournalError
 
 ROOT = Path(__file__).resolve().parents[1]
 SPEC = importlib.util.spec_from_file_location("apify_deploy", ROOT / "scripts/deploy/apify_deploy.py")
@@ -32,7 +39,7 @@ HISTORICAL_RELEASES = [
 
 
 @pytest.fixture
-def release(tmp_path):
+def release(tmp_path: Path) -> Path:
     path = tmp_path / "release"
     worker = path / "worker"
     worker.mkdir(parents=True)
@@ -53,87 +60,95 @@ def release(tmp_path):
 
 
 @pytest.mark.parametrize("mode", [0o644, 0o660, 0o400])
-def test_host_secret_permissions_fail_closed(tmp_path, mode):
+def test_host_secret_permissions_fail_closed(tmp_path: Path, mode: int) -> None:
     path = tmp_path / ".env"
     path.write_text("APIFY_API_TOKEN=synthetic\n")
     path.chmod(mode)
-    with pytest.raises(deploy.DeployError, match="permissions"):
-        deploy.host_token(path)
+    with pytest.raises(PublisherCredentialError, match="owned and private"):
+        host_token(path, owner_uid=os.geteuid())
 
 
-def test_host_secret_owner_and_symlink_fail_closed(tmp_path, monkeypatch):
+def test_host_secret_owner_and_symlink_fail_closed(tmp_path: Path) -> None:
     path = tmp_path / ".env"
     path.write_text("APIFY_API_TOKEN=synthetic\n")
     path.chmod(0o600)
-    monkeypatch.setattr(deploy.os, "geteuid", lambda: path.stat().st_uid + 1)
-    with pytest.raises(deploy.DeployError, match="owner"):
-        deploy.host_token(path)
-    monkeypatch.undo()
+    with pytest.raises(PublisherCredentialError, match="owned and private"):
+        host_token(path, owner_uid=path.stat().st_uid + 1)
     link = tmp_path / "link"
     link.symlink_to(path)
-    with pytest.raises(deploy.DeployError, match="type"):
-        deploy.host_token(link)
+    with pytest.raises(OSError):
+        host_token(link, owner_uid=os.geteuid())
 
 
 @pytest.mark.parametrize("value", ["synthetic_token-123", "'synthetic_token-123'", '"synthetic_token-123"'])
-def test_only_apify_token_is_read_from_single_host_store(tmp_path, value):
+def test_only_apify_token_is_read_from_single_host_store(tmp_path: Path, value: str) -> None:
     path = tmp_path / ".env"
     path.write_text("UNRELATED_SECRET=never-copy\nAPIFY_API_TOKEN=" + value + "\n")
     path.chmod(0o600)
-    assert deploy.host_token(path) == "synthetic_token-123"
+    assert host_token(path, owner_uid=os.geteuid()).get_secret_value() == "synthetic_token-123"
 
 
 @pytest.mark.parametrize(
     "contents", ["", "APIFY_API_TOKEN=a\nAPIFY_API_TOKEN=b", "APIFY_API_TOKEN=$(command)"]
 )
-def test_missing_ambiguous_or_shell_token_is_refused(tmp_path, contents):
+def test_missing_ambiguous_or_shell_token_is_refused(tmp_path: Path, contents: str) -> None:
     path = tmp_path / ".env"
     path.write_text(contents)
     path.chmod(0o600)
-    with pytest.raises(deploy.DeployError):
-        deploy.host_token(path)
+    with pytest.raises(PublisherCredentialError):
+        host_token(path, owner_uid=os.geteuid())
 
 
-def test_source_digest_includes_paths_bytes_and_build_manifest(release):
-    files = deploy.source_files(release / "worker")
-    baseline = deploy.digest(files)
-    assert deploy.digest(dict(reversed(list(files.items())))) == baseline
-    assert deploy.digest({**files, "Dockerfile": b"different"}) != baseline
-    renamed = dict(files)
+def test_source_digest_includes_paths_bytes_and_build_manifest(release: Path) -> None:
+    files = source_files(release / "worker")
+    baseline = files.digest()
+    assert SourceBundle(files=dict(reversed(list(files.files.items())))).digest() == baseline
+    assert SourceBundle(files={**files.files, "Dockerfile": b"different"}).digest() != baseline
+    renamed = dict(files.files)
     renamed["renamed.py"] = renamed.pop("main.py")
-    assert deploy.digest(renamed) != baseline
+    assert SourceBundle(files=renamed).digest() != baseline
 
 
-def test_journal_replacement_and_removal_sync_parent_after_effect(tmp_path, monkeypatch):
-    instance = deploy.Publisher(None, tmp_path, tmp_path / "apify-state", SHA)
-    instance.write("pending.json", {"old": True})
-    events = []
-    original = deploy.os.fsync
+def test_journal_replacement_and_removal_sync_parent_after_effect(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fixture = rig(tmp_path, fault="NONE")
+    old = fixture.journal.read_active()
+    assert old is not None
+    updated = ActiveRelease(release_sha="c" * 40, build_id=old.build_id, build=old.build)
+    events: list[tuple[bool, ActiveRelease | None]] = []
+    original = os.fsync
 
-    def sync(descriptor):
+    def sync(descriptor: int) -> None:
         original(descriptor)
-        events.append((stat.S_ISDIR(os.fstat(descriptor).st_mode), instance.read("pending.json")))
+        events.append((stat.S_ISDIR(os.fstat(descriptor).st_mode), fixture.journal.read_active()))
 
-    monkeypatch.setattr(deploy.os, "fsync", sync)
-    instance.write("pending.json", {"new": True})
-    instance.remove("pending.json")
-    assert events == [(False, {"old": True}), (True, {"new": True}), (True, None)]
-    assert not list(instance.state.glob("*.tmp"))
+    monkeypatch.setattr(os, "fsync", sync)
+    fixture.journal.write_active(updated)
+    fixture.journal.remove_active()
+    assert events == [(False, old), (True, updated), (True, None)]
+    assert not list(fixture.journal.state.glob("*.tmp"))
 
 
 @pytest.mark.parametrize("change", ["permissions", "replacement"])
-def test_invalid_staging_is_not_published_or_unowned_staging_removed(tmp_path, monkeypatch, change):
-    instance = deploy.Publisher(None, tmp_path, tmp_path / "apify-state", SHA)
-    instance.write("active.json", {"old": True})
+def test_invalid_staging_is_not_published_or_unowned_staging_removed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, change: str
+) -> None:
+    fixture = rig(tmp_path, fault="NONE")
+    old = fixture.journal.read_active()
+    assert old is not None
+    updated = ActiveRelease(release_sha="c" * 40, build_id=old.build_id, build=old.build)
     witness = tmp_path / "witness"
     witness.write_text("untouched")
-    original = deploy.os.fsync
-    staging = []
+    original = os.fsync
+    staging: list[Path] = []
 
-    def sync(descriptor):
+    def sync(descriptor: int) -> None:
         original(descriptor)
         if stat.S_ISREG(os.fstat(descriptor).st_mode):
-            path = Path(os.readlink(f"/proc/self/fd/{descriptor}"))
+            candidates = list(fixture.journal.state.glob(".active.json.*.tmp"))
+            assert len(candidates) == 1
+            path = candidates[0]
             staging.append(path)
             if change == "permissions":
                 path.chmod(0o644)
@@ -141,10 +156,10 @@ def test_invalid_staging_is_not_published_or_unowned_staging_removed(tmp_path, m
                 path.unlink()
                 path.symlink_to(witness)
 
-    monkeypatch.setattr(deploy.os, "fsync", sync)
-    with pytest.raises(deploy.DeployError):
-        instance.write("active.json", {"new": True})
-    assert instance.read("active.json") == {"old": True}
+    monkeypatch.setattr(os, "fsync", sync)
+    with pytest.raises(JournalError):
+        fixture.journal.write_active(updated)
+    assert fixture.journal.read_active() == old
     assert witness.read_text() == "untouched"
     assert len(staging) == 1
     if change == "replacement":
