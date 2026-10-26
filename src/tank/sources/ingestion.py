@@ -9,7 +9,7 @@ from pydantic import Field, JsonValue
 from tank.contracts import DomainModel
 from tank.contracts.progress import SourceProgressSink
 from tank.contracts.provenance import ResolvedVersionIdentity
-from tank.contracts.repository import DocumentStore, Repository
+from tank.contracts.repository import DocumentStore
 from tank.contracts.source_items import (
     SOURCE_ITEMS,
     ArticleDiscovery,
@@ -23,6 +23,7 @@ from tank.contracts.source_items import (
     captured_source_item,
 )
 from tank.contracts.sources import SourceAccount, SourceDefinition
+from tank.repository import Repository
 from tank.sources.organization import PublisherContext, publisher_organization
 from tank.sources.policy import initial_relevance, is_filtered_source
 from tank.util import sha256

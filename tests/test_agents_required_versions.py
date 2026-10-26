@@ -17,8 +17,9 @@ from tank.agents.pipeline_contracts import DecisionScoreRecord
 from tank.agents.sessions import SessionService
 from tank.bootstrap import sync_registry
 from tank.contracts.provenance import ResolvedVersionIdentity
-from tank.contracts.repository import Collection, Repository
+from tank.contracts.repository import Collection
 from tank.ops_progress import DisabledSourceProgress
+from tank.repository import Repository
 from tank.settings import Settings
 from tank.storage import MemoryRepository
 
