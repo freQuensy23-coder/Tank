@@ -13,6 +13,7 @@ from source_support import fixture_versions
 
 from tank.agents import SessionService
 from tank.agents.context import CONTEXT_VERSION
+from tank.agents.input_ownership import NativeOwnershipSnapshot
 from tank.contracts.openma import NativeSessionToolUpdate
 from tank.settings import Settings
 from tank.storage import MemoryRepository
@@ -101,7 +102,15 @@ class FakeTelegram:
             return httpx.Response(200, json={"ok": True, "result": ready})
         if method == "getChatMember":
             if self.member_error:
-                return httpx.Response(self.member_error, json={"ok": False, "parameters": {"retry_after": 1}})
+                return httpx.Response(
+                    self.member_error,
+                    json={
+                        "ok": False,
+                        "error_code": self.member_error,
+                        "description": "Synthetic membership request rejected",
+                        "parameters": {"retry_after": 1},
+                    },
+                )
             result = {"status": self.member}
             if self.is_member is not None:
                 result["is_member"] = self.is_member
@@ -396,11 +405,9 @@ async def test_question_goes_into_the_same_session_and_final_turn_text_becomes_t
         assert "Пришёл фоллоуап через Telegram" in text and "Почему не шорт?" in text
         assert "question_id" not in text and "{" not in text
         session = await repo.get("ops.agent_sessions", "ses_1")
-        answers = await service.turn_answers(session)
-        assert answers[session["message_log"][-1]["message_id"]] == {
-            "text": "Потому что OI падает.",
-            "ended": True,
-        }
+        answers = await service.turn_answers(NativeOwnershipSnapshot.from_record(session))
+        answer = answers[session["message_log"][-1]["message_id"]]
+        assert (answer.text, answer.ended) == ("Потому что OI падает.", True)
         session["message_log"][-1]["turn_status"] = "DONE"
         await repo.put("ops.agent_sessions", "ses_1", session)
         await service.deliver_answers("ses_1")
@@ -1485,7 +1492,15 @@ async def test_prompt_is_resent_after_a_definite_telegram_rejection() -> None:
     def flaky(request: httpx.Request):
         if request.url.path.endswith("/sendMessage") and outage["left"]:
             outage["left"] -= 1
-            return httpx.Response(429, json={"ok": False, "parameters": {"retry_after": 1}})
+            return httpx.Response(
+                429,
+                json={
+                    "ok": False,
+                    "error_code": 429,
+                    "description": "Too Many Requests",
+                    "parameters": {"retry_after": 1},
+                },
+            )
         return original(request)
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(flaky)) as http:
@@ -1738,8 +1753,8 @@ async def test_answer_lookup_reads_history_only_back_to_the_question() -> None:
             versions=fixture_versions(),
             refusals=RepositoryFollowupRefusals(repo),
         )
-        answers = await service.turn_answers(session, ["in_q"])
-    assert answers["mq"] == {"text": "Ответ", "ended": True} and pages == [0]
+        answers = await service.turn_answers(NativeOwnershipSnapshot.from_record(session), ["in_q"])
+    assert (answers["mq"].text, answers["mq"].ended) == ("Ответ", True) and pages == [0]
 
 
 def test_chunks_respect_telegram_utf16_length() -> None:
@@ -1872,7 +1887,9 @@ async def test_notice_is_retried_after_a_transient_failure_and_sent_once() -> No
     def flaky(request: httpx.Request):
         if request.url.path.endswith("/sendMessage") and outage["left"]:
             outage["left"] -= 1
-            return httpx.Response(503, json={"ok": False})
+            return httpx.Response(
+                503, json={"ok": False, "error_code": 503, "description": "Synthetic API rejection"}
+            )
         return original(request)
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(flaky)) as http:
@@ -1973,7 +1990,12 @@ async def test_one_permanently_failing_message_never_blocks_the_others() -> None
     def blocked(request: httpx.Request):
         if request.url.path.endswith("/sendMessage") and json.loads(request.content)["chat_id"] == str(USER):
             return httpx.Response(
-                403, json={"ok": False, "description": "Forbidden: bot was blocked by the user"}
+                403,
+                json={
+                    "ok": False,
+                    "error_code": 403,
+                    "description": "Forbidden: bot was blocked by the user",
+                },
             )
         return original(request)
 
@@ -2107,7 +2129,9 @@ async def test_paired_size_notice_failure_keeps_both_messages_retryable() -> Non
     def flaky(request: httpx.Request):
         if request.url.path.endswith("/sendMessage") and outage["left"]:
             outage["left"] -= 1
-            return httpx.Response(502, json={"ok": False})
+            return httpx.Response(
+                502, json={"ok": False, "error_code": 502, "description": "Synthetic API rejection"}
+            )
         return original(request)
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(flaky)) as http:
@@ -2391,8 +2415,8 @@ async def test_text_of_a_failed_attempt_is_never_the_answer() -> None:
             versions=fixture_versions(),
             refusals=RepositoryFollowupRefusals(repo),
         )
-        answers = await service.turn_answers(session, ["in_first"])
-    assert answers["mq"] == {"text": None, "ended": True}
+        answers = await service.turn_answers(NativeOwnershipSnapshot.from_record(session), ["in_first"])
+    assert (answers["mq"].text, answers["mq"].ended) == (None, True)
 
 
 @pytest.mark.asyncio
