@@ -5,7 +5,8 @@ from typing import Annotated, Literal, Self
 from pydantic import Field, RootModel, model_validator
 
 from tank.contracts import DomainModel
-from tank.contracts.jobs import JobEnvelope
+from tank.contracts.jobs import DependencyState as DependencyState
+from tank.contracts.jobs import JobClaimScope, JobEnvelope
 from tank.runtime_contracts import (
     AgentMessage,
     DeliveryJob,
@@ -14,11 +15,10 @@ from tank.runtime_contracts import (
     ItemJob,
     MarketTruthJob,
     MilestoneCheckJob,
-    RevisedReactionJob,
-    ScheduledReactionJob,
     ScoutReviewJob,
     TelegramAnswerJob,
 )
+from tank.runtime_reaction import ReactionInput
 from tank.runtime_retry import ApplicationBackoff, WorkerRetrySchedule
 from tank.time_precision import Timestamp
 from tank.util import sha256
@@ -80,7 +80,7 @@ class MilestoneCheckCommand(DomainModel):
 
 class ReactionCaptureCommand(DomainModel):
     type: Literal["REACTION_CAPTURE"]
-    payload: ScheduledReactionJob | RevisedReactionJob
+    payload: ReactionInput
 
 
 class ScoutReviewCommand(DomainModel):
@@ -113,17 +113,8 @@ class RuntimeCommandRecord(RootModel[RuntimeCommand]):
     model_config = {"strict": True, "hide_input_in_errors": True, "revalidate_instances": "always"}
 
 
-class DependencyState(DomainModel):
-    job_id: str = Field(min_length=1, pattern=r"\S")
-    status: Literal["QUEUED", "RUNNING", "DONE", "FAILED", "EXPIRED"]
-
-
-class RunningJobClaim(DomainModel):
-    job_id: str = Field(min_length=1, pattern=r"\S")
-    type: RuntimeJobKind
-    status: Literal["RUNNING"]
-    attempts: int = Field(ge=1)
-    payload_revision: str = Field(pattern=r"^[0-9a-f]{64}$")
+class RunningJobClaim(JobClaimScope):
+    kind: RuntimeJobKind
 
 
 class ClaimedWork(DomainModel):
@@ -144,14 +135,16 @@ class ClaimedWork(DomainModel):
         ).root
         if admitted != self.command:
             raise ValueError("Worker command differs from its original claimed payload")
+        self.scope()
         return self
 
     def scope(self) -> RunningJobClaim:
         return RunningJobClaim.model_validate(
             {
                 "job_id": self.job.job_id,
-                "type": self.job.type,
-                "status": self.job.status,
+                "kind": self.job.type,
+                "claim_token": self.job.claim_token,
+                "recovery_count": self.job.recovery_count,
                 "attempts": self.job.attempts,
                 "payload_revision": self.payload_revision,
             }
