@@ -2055,12 +2055,15 @@ def single_venue_liquidity() -> BasicConditionLiquidity:
         ConditionImpactTiers,
         ConditionLiquidityDepthTotals,
         ConditionLiquidityNetFlow,
+        ConditionLiquiditySpreadComparison,
         ConditionLiquidityVenue,
         ConditionNativeDepthAmount,
         ConditionRelativeReturn,
         ConditionReplenishmentScan,
+        ConditionSpreadSample,
         ConditionUnavailablePredicate,
         ConditionUSDDepthAmount,
+        ConditionVenueSpreadSamples,
         UnavailableConditionPreDepth,
         UnavailableConditionPreDepthBounds,
         UnavailableConditionPreDepthSides,
@@ -2114,6 +2117,19 @@ def single_venue_liquidity() -> BasicConditionLiquidity:
     )
     return BasicConditionLiquidity(
         kind="BASIC",
+        token_id="T",
+        spread=ConditionLiquiditySpreadComparison(
+            current=(
+                ConditionVenueSpreadSamples(
+                    venue=venue.venue,
+                    instrument_id=venue.instrument_id,
+                    samples=(ConditionSpreadSample(observed_at=venue.observed_at, spread_bps=1.0),),
+                ),
+            ),
+            prior=(),
+            prior_window=None,
+            prior_window_reason="NO_EVENT_ANCHOR",
+        ),
         interval=scope.interval,
         measurement_band_percent=1.0,
         per_venue=(venue,),
@@ -3253,6 +3269,7 @@ def test_enriched_liquidity_binds_selected_book_orders_and_actual_family_scope()
         token_id="T",
         assembled_at=source.assembled_at,
         interval=basic.interval,
+        spread=basic.spread,
         measurement_band_percent=basic.measurement_band_percent,
         per_venue=basic.per_venue,
         current_depth=basic.current_depth,

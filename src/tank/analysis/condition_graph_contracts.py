@@ -3606,7 +3606,101 @@ class UnavailableConditionLiquidityState(DomainModel):
     reason: ConditionPredicateUnavailableReason
 
 
+class ConditionSpreadSample(DomainModel):
+    observed_at: Timestamp
+    spread_bps: float = Field(ge=0)
+
+    @model_validator(mode="after")
+    def actual_sample_clock(self) -> Self:
+        if self.observed_at.value is None:
+            raise ValueError("A measured spread requires its actual source observation clock")
+        return self
+
+
+class ConditionVenueSpreadSamples(DomainModel):
+    venue: str = Field(min_length=1, pattern=r"\S")
+    instrument_id: str = Field(min_length=1, pattern=r"\S")
+    samples: tuple[ConditionSpreadSample, ...] = Field(min_length=1)
+
+    @model_validator(mode="after")
+    def distinct_sample_clocks(self) -> Self:
+        clocks = tuple(sample.observed_at.value for sample in self.samples)
+        if len(clocks) != len(set(clocks)):
+            raise ValueError("Spread samples cannot duplicate an actual venue observation")
+        return self
+
+    def mean_bps(self) -> Decimal:
+        value = type(self).model_validate(self)
+        with localcontext() as context:
+            context.prec = 128
+            return sum((Decimal(str(sample.spread_bps)) for sample in value.samples), Decimal(0)) / len(
+                value.samples
+            )
+
+
+class ConditionSpreadRatio(DomainModel):
+    value: float | None = Field(ge=0)
+    reason: Literal["INCOMPLETE", "NO_EVENT_ANCHOR", "ZERO_BASELINE", "NOT_ESTIMABLE"] | None
+
+    @model_validator(mode="after")
+    def actual_absence(self) -> Self:
+        if (self.value is None) != (self.reason is not None):
+            raise ValueError("Missing spread ratio requires its actual comparison gap")
+        return self
+
+
+class ConditionLiquiditySpreadComparison(DomainModel):
+    current: tuple[ConditionVenueSpreadSamples, ...]
+    prior: tuple[ConditionVenueSpreadSamples, ...]
+    prior_window: ConditionPreDepthWindow | None
+    prior_window_reason: Literal["NO_EVENT_ANCHOR"] | None
+
+    @model_validator(mode="after")
+    def actual_selected_samples(self) -> Self:
+        if (self.prior_window is None) != (self.prior_window_reason is not None):
+            raise ValueError("A missing pre-spread window requires its actual absent event anchor")
+        if self.prior_window is None and self.prior:
+            raise ValueError("A missing pre-spread window cannot retain invented samples")
+        for groups in (self.current, self.prior):
+            if len({group.venue for group in groups}) != len(groups):
+                raise ValueError("Spread comparison cannot duplicate a contributing venue")
+        if any(len(group.samples) != 1 for group in self.current):
+            raise ValueError("Current spread comparison uses the actual latest selected book per venue")
+        if self.prior_window is not None:
+            for group in self.prior:
+                for sample in group.samples:
+                    if (
+                        sample.observed_at.value is None
+                        or not self.prior_window.start
+                        <= parse_iso_time(sample.observed_at.value)
+                        < self.prior_window.cutoff
+                    ):
+                        raise ValueError(
+                            "Prior spread samples must preserve their actual selected baseline window"
+                        )
+        return self
+
+    def ratio(self) -> ConditionSpreadRatio:
+        value = type(self).model_validate(self)
+        if value.prior_window is None:
+            return ConditionSpreadRatio(value=None, reason="NO_EVENT_ANCHOR")
+        if not value.current or not value.prior:
+            return ConditionSpreadRatio(value=None, reason="INCOMPLETE")
+        with localcontext() as context:
+            context.prec = 128
+            current = sum((group.mean_bps() for group in value.current), Decimal(0)) / len(value.current)
+            prior = sum((group.mean_bps() for group in value.prior), Decimal(0)) / len(value.prior)
+            if prior == 0:
+                return ConditionSpreadRatio(value=None, reason="ZERO_BASELINE")
+            ratio = float(current / prior)
+        if not isfinite(ratio) or ratio == 0 and current != 0:
+            return ConditionSpreadRatio(value=None, reason="NOT_ESTIMABLE")
+        return ConditionSpreadRatio(value=ratio, reason=None)
+
+
 class ConditionLiquidityValues(DomainModel):
+    token_id: str = Field(min_length=1, pattern=r"\S")
+    spread: ConditionLiquiditySpreadComparison
     interval: ConditionInterval
     measurement_band_percent: float = Field(gt=0)
     per_venue: tuple[ConditionLiquidityVenue, ...]
@@ -3619,15 +3713,35 @@ class ConditionLiquidityValues(DomainModel):
     def actual_book_and_policy_scope(self) -> Self:
         if self.measurement_band_percent not in (0.5, 1.0, 2.0):
             raise ValueError("Liquidity depth requires an actually supported measurement band")
-        venues = tuple(venue.venue for venue in self.per_venue)
-        if len(venues) != len(set(venues)):
-            raise ValueError("A liquidity window cannot duplicate its selected book venue")
         for venue in self.per_venue:
             if (
                 venue.observed_at.value is None
                 or parse_iso_time(venue.observed_at.value) > self.interval.cutoff
             ):
                 raise ValueError("A liquidity window cannot borrow a future or unclocked book")
+        books = {venue.venue: venue for venue in self.per_venue}
+        current_spreads = {group.venue: group for group in self.spread.current}
+        if set(current_spreads) != {venue.venue for venue in self.per_venue if venue.spread_bps is not None}:
+            raise ValueError(
+                "Current spread samples must preserve exactly the actual selected books with known spread"
+            )
+        for group in (*self.spread.current, *self.spread.prior):
+            if group.venue not in books or group.instrument_id != books[group.venue].instrument_id:
+                raise ValueError("Spread comparison cannot borrow another selected book instrument")
+        for name, group in current_spreads.items():
+            sample = group.samples[0]
+            book = books[name]
+            if (sample.observed_at, sample.spread_bps) != (book.observed_at, book.spread_bps):
+                raise ValueError("Current spread must retain the actual selected book clock and value")
+        if isinstance(self.previous_depth, UnavailableConditionPreDepth):
+            if self.spread.prior_window is not None:
+                raise ValueError("A missing pre-depth anchor cannot invent a pre-spread window")
+        elif self.spread.prior_window != self.previous_depth.window:
+            raise ValueError("Pre-spread selection must retain the actual pre-depth baseline window")
+        venues = tuple(venue.venue for venue in self.per_venue)
+        if len(venues) != len(set(venues)):
+            raise ValueError("A liquidity window cannot duplicate its selected book venue")
+        for venue in self.per_venue:
             valuation_at = venue.quote_valuation.as_of
             if valuation_at is not None and valuation_at > self.interval.cutoff:
                 raise ValueError("A liquidity window cannot borrow future quote conversion evidence")
@@ -5184,7 +5298,6 @@ class ConditionSplitExecution(DomainModel):
 
 class EnrichedConditionLiquidity(ConditionLiquidityValues):
     kind: Literal["ENRICHED"]
-    token_id: str = Field(min_length=1, pattern=r"\S")
     assembled_at: Timestamp
     fragmentation: ConditionFragmentationGraph
     vol_compression: ConditionVolatilityCompression
