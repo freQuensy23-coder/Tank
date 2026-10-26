@@ -233,7 +233,7 @@ jobs:
           MYPYPATH: src:tests
         run: >-
           uv run --frozen --extra dev mypy --config-file scripts/ci/mypy-foundation-tests.ini
-          tests/conftest.py tests/test_offline_native_contracts.py
+          tests/conftest.py tests/test_offline_native_contracts.py tests/test_offline_boundary.py
       - name: Check captured configuration helpers strictly
         env:
           MYPYPATH: src:tests
