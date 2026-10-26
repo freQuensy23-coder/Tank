@@ -9,7 +9,7 @@ import pytest
 from pydantic import JsonValue, ValidationError
 
 from tank.contracts.source_items import FailedExtraction, SkippedExtraction
-from tank.contracts.source_repository import SourceExtractionRepository
+from tank.source_repository import SourceExtractionRepository
 from tank.storage import MemoryRepository
 from tank.util import canonical_json
 

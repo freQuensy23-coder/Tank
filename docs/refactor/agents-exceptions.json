@@ -105,7 +105,7 @@
     {
       "sites": [
         {
-          "path": "src/tank/contracts/source_repository.py",
+          "path": "src/tank/source_repository.py",
           "symbol": "_state",
           "line": 36
         }
@@ -120,17 +120,17 @@
     {
       "sites": [
         {
-          "path": "src/tank/contracts/source_repository.py",
+          "path": "src/tank/source_repository.py",
           "symbol": "SourceExtractionRepository.get",
           "line": 52
         },
         {
-          "path": "src/tank/contracts/source_repository.py",
+          "path": "src/tank/source_repository.py",
           "symbol": "SourceExtractionRepository.transition",
           "line": 56
         },
         {
-          "path": "src/tank/contracts/source_repository.py",
+          "path": "src/tank/source_repository.py",
           "symbol": "SourceExtractionRepository.complete",
           "line": 73
         }
@@ -145,7 +145,7 @@
     {
       "sites": [
         {
-          "path": "src/tank/contracts/source_repository.py",
+          "path": "src/tank/source_repository.py",
           "symbol": "SourceExtractionRepository._write",
           "line": 89
         }
@@ -3076,6 +3076,26 @@
         "test_command_quarantine_uses_original_claim_revision_despite_valid_model_normalization",
         "test_reclaimed_same_attempt_refuses_completion_from_previous_controller",
         "test_atomic_completion_serializes_recovery_until_real_write_commits"
+      ]
+    },
+    {
+      "sites": [
+        {
+          "path": "src/tank/contracts/source_repository.py",
+          "symbol": "SourceLifecycleStore"
+        },
+        {
+          "path": "src/tank/source_repository.py",
+          "symbol": "SourceExtractionRepository"
+        }
+      ],
+      "kind": "source lifecycle port inward and concrete I/O adapter outward",
+      "reason": "Pure source identity/state records and the four-method capability protocol stay inward. Concrete get/transition/complete/_write and two raw persisted-document admission helpers now live outward, with exact AST equivalence and no re-export. Genuine missing record stays None; terminal guards and authoritative complete preserve the existing phase policy without inventing prior state. Unrelated capture fields and original serialized facts remain untouched. This is a placement/import correction, not a new lifecycle behavior or blanket architecture waiver.",
+      "validation": [
+        "test_historical_transition_preserves_unrelated_serialized_data_and_clears_old_rejection",
+        "test_terminal_guard_and_missing_record_do_not_manufacture_updates",
+        "test_historical_transition_requires_owned_identity",
+        "test_transition_reloads_under_capture_lock_and_preserves_concurrent_metadata"
       ]
     }
   ]

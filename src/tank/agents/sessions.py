@@ -179,7 +179,6 @@ from tank.contracts.source_items import (
     FailedExtraction,
     SkippedExtraction,
 )
-from tank.contracts.source_repository import SourceExtractionRepository
 from tank.contracts.telegram_state import QuestionPrompt
 from tank.delivery import DeliveryDeferred
 from tank.ops_progress import session_progress
@@ -191,6 +190,7 @@ from tank.runtime_contracts import (
     SourceMessage,
     UserQuestionMessage,
 )
+from tank.source_repository import SourceExtractionRepository
 from tank.telegram_inbox import DOCUMENT_LIMIT
 from tank.time_precision import Timestamp, collection_clock, offset_schedule, propagate_timestamp
 from tank.util import canonical_json, jsonable, parse_time, sha256, utcnow
