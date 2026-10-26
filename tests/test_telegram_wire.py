@@ -8,10 +8,20 @@ import pytest
 from pydantic import JsonValue, ValidationError
 from pydantic_settings import SettingsConfigDict
 
-from tank.contracts.telegram_wire import TelegramInaccessibleMessage, TelegramUnsupportedUpdate
+from tank.contracts.telegram_wire import (
+    TelegramEmptyUpdate,
+    TelegramInaccessibleMessage,
+    TelegramUnsupportedUpdate,
+)
 from tank.settings import Settings
 from tank.storage import MemoryRepository
-from tank.telegram_api import TelegramProtocolError, TelegramResponseError, response_result, update_receipts
+from tank.telegram_api import (
+    TelegramProtocolError,
+    TelegramResponseError,
+    pairing_sender_id,
+    response_result,
+    update_receipts,
+)
 from tank.telegram_inbox import CURSOR_KEY, TelegramInbox
 
 
@@ -212,3 +222,75 @@ async def test_existing_invalid_cursor_does_not_reset_to_first_update(
         with pytest.raises((KeyError, ValidationError)):
             await inbox.poll(timeout=0)
     assert await repo.get("ops.source_checkpoints", CURSOR_KEY) == state
+
+
+@pytest.mark.parametrize("known_sender", [False, True])
+async def test_retained_empty_sender_does_not_pair_but_reported_sender_still_does(
+    tmp_path: Path, known_sender: bool
+) -> None:
+    repo = MemoryRepository()
+    first = incoming()
+    first["forward_origin"] = {"type": "hidden_user", "date": 1_800_000_000, "sender_user_name": "unknown"}
+    second = incoming()
+    second["message_id"] = 18
+    sender_id = "42" if known_sender else ""
+    if known_sender:
+        first["from"] = {"id": 42}
+        second["from"] = {"id": 42}
+    originals: list[dict[str, JsonValue]] = []
+    for body in (first, second):
+        record: dict[str, JsonValue] = {
+            "chat_id": "-1001",
+            "message_id": body["message_id"],
+            "user_id": sender_id,
+            "date": 1_800_000_000,
+            "pair_bucket": 180_000_000,
+            "status": "RECEIVED",
+            "message": body,
+        }
+        originals.append(record)
+        await repo.put("ops.telegram_messages", f"-1001:{body['message_id']}", record)
+
+    def refuse(request: httpx.Request) -> httpx.Response:
+        raise AssertionError("Pair projection cannot issue HTTP")
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(refuse)) as http:
+        inbox = TelegramInbox(repo, TelegramSettings(data_dir=tmp_path), http=http)
+        candidate = await inbox.companion(originals[0], forwarded=True)
+    if known_sender:
+        assert candidate is not None and candidate["message_id"] == 18
+    else:
+        assert candidate is None
+    for original in originals:
+        assert await repo.get("ops.telegram_messages", f"-1001:{original['message_id']}") == original
+    assert await repo.list("out.user_questions") == [] and await repo.list("ops.jobs") == []
+
+
+@pytest.mark.parametrize("stored,sender", [("", {"id": 42}), ("42", None), ("", {}), (None, {"id": 42})])
+def test_historical_projection_does_not_guess_or_replace_required_sender_identity(
+    stored: JsonValue, sender: JsonValue
+) -> None:
+    message = incoming()
+    if sender is not None:
+        message["from"] = sender
+    with pytest.raises((KeyError, ValueError)):
+        pairing_sender_id({"user_id": stored, "message": message})
+
+
+async def test_success_description_and_no_optional_update_payload_are_valid_wire(tmp_path: Path) -> None:
+    payload = b'{"ok":true,"description":"actual optional success metadata","result":[{"update_id":8}]}'
+    result = response_result(payload, method="getUpdates", status=200)
+    [receipt] = update_receipts(result)
+    assert isinstance(receipt.payload, TelegramEmptyUpdate)
+    assert receipt.payload.reason == "NO_OPTIONAL_PAYLOAD"
+    repo = await poll_payload(payload, tmp_path, MemoryRepository())
+    assert await repo.list("ops.telegram_messages") == []
+    state = await repo.get("ops.source_checkpoints", CURSOR_KEY)
+    assert state is not None and state["cursor"] == "9"
+
+
+@pytest.mark.parametrize("description", [None, 0, False, []])
+def test_present_success_description_requires_actual_string(description: JsonValue) -> None:
+    payload = json.dumps({"ok": True, "description": description, "result": []}).encode()
+    with pytest.raises(TelegramProtocolError):
+        response_result(payload, method="getUpdates", status=200)

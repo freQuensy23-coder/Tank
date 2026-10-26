@@ -1,10 +1,13 @@
 """Telegram response admission before application writes or offset confirmation."""
 
+from collections.abc import Mapping
+
 from pydantic import JsonValue, ValidationError
 
 from tank.contracts.json import decode_unique_json
 from tank.contracts.telegram_wire import (
     TelegramChatIdentity,
+    TelegramEmptyUpdate,
     TelegramFailure,
     TelegramMessageIdentity,
     TelegramMessageReceipt,
@@ -75,14 +78,16 @@ def update_receipts(document: JsonValue) -> list[TelegramUpdateReceipt]:
         if not isinstance(document, list):
             raise ValueError("Telegram updates require an array")
         receipts: list[TelegramUpdateReceipt] = []
-        payload: TelegramMessageReceipt | TelegramUnsupportedUpdate
+        payload: TelegramMessageReceipt | TelegramUnsupportedUpdate | TelegramEmptyUpdate
         for item in document:
             if not isinstance(item, dict):
                 raise ValueError("Telegram update requires an object")
             kinds = [key for key in item if key != "update_id"]
-            if len(kinds) != 1:
-                raise ValueError("Telegram update requires exactly one payload kind")
-            if "message" in item:
+            if len(kinds) > 1:
+                raise ValueError("Telegram update permits at most one payload kind")
+            if not kinds:
+                payload = TelegramEmptyUpdate(reason="NO_OPTIONAL_PAYLOAD")
+            elif "message" in item:
                 message = item["message"]
                 if not isinstance(message, dict):
                     raise ValueError("Telegram update message requires an object")
@@ -97,3 +102,22 @@ def update_receipts(document: JsonValue) -> list[TelegramUpdateReceipt]:
         return receipts
     except (KeyError, ValueError, ValidationError):
         raise TelegramProtocolError("Telegram update batch is invalid") from None
+
+
+def pairing_sender_id(record: Mapping[str, JsonValue]) -> str | None:
+    """Read old intake's empty sentinel only when its retained wire actually omitted sender."""
+    stored = record["user_id"]
+    message = record["message"]
+    if not isinstance(message, dict):
+        raise ValueError("Retained Telegram message requires its original object")
+    if "from" not in message:
+        if stored not in (None, ""):
+            raise ValueError("Retained Telegram sender contradicts absent wire sender")
+        return None
+    sender = message["from"]
+    if not isinstance(sender, dict):
+        raise ValueError("Retained Telegram sender requires its actual object")
+    identity = TelegramSenderIdentity.model_validate({"id": sender["id"]})
+    if stored != str(identity.id):
+        raise ValueError("Retained Telegram sender identity conflicts with its wire")
+    return stored

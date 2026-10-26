@@ -1,8 +1,8 @@
 """Validated Telegram wire facts consumed by update intake and file acquisition."""
 
-from typing import Annotated, Literal
+from typing import Annotated, Literal, Self
 
-from pydantic import AfterValidator, Field, JsonValue
+from pydantic import AfterValidator, Field, JsonValue, model_validator
 
 from tank.contracts import DomainModel
 from tank.contracts.scalars import FalseFlag, TrueFlag, ZeroInt
@@ -52,9 +52,13 @@ class TelegramUnsupportedUpdate(DomainModel):
     kind: Annotated[str, Field(min_length=1)]
 
 
+class TelegramEmptyUpdate(DomainModel):
+    reason: Literal["NO_OPTIONAL_PAYLOAD"]
+
+
 class TelegramUpdateReceipt(DomainModel):
     update_id: Annotated[int, Field(ge=0)]
-    payload: TelegramMessageReceipt | TelegramUnsupportedUpdate
+    payload: TelegramMessageReceipt | TelegramUnsupportedUpdate | TelegramEmptyUpdate
 
 
 class TelegramRetryParameters(DomainModel):
@@ -65,6 +69,13 @@ class TelegramRetryParameters(DomainModel):
 class TelegramSuccess(DomainModel):
     ok: TrueFlag
     result: JsonValue
+    description: str | None = None
+
+    @model_validator(mode="after")
+    def reported_description_is_text(self) -> Self:
+        if "description" in self.model_fields_set and self.description is None:
+            raise ValueError("A reported Telegram description requires text")
+        return self
 
 
 class TelegramFailure(DomainModel):

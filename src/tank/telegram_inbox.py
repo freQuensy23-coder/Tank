@@ -27,7 +27,7 @@ from tank.contracts.native_readback import NativeSessionMissing
 from tank.contracts.telegram_wire import TelegramMessageReceipt, TelegramUpdateCursor, TelegramUpdateReceipt
 from tank.ops_progress import STAGES
 from tank.runtime_contracts import TelegramAnswerJob
-from tank.telegram_api import message_receipt, response_result, update_receipts
+from tank.telegram_api import message_receipt, pairing_sender_id, response_result, update_receipts
 from tank.telegram_rich import message_text, rich_message_text
 from tank.time_precision import collection_clock, offset_schedule
 from tank.util import new_id, parse_time, sha256, utcnow
@@ -615,7 +615,8 @@ class TelegramInbox:
 
     async def companion(self, row, *, forwarded):
         """The comment sent with a forward (or the forward sent with a comment) by the same user."""
-        if row["user_id"] is None:
+        user_id = pairing_sender_id(row)
+        if user_id is None:
             return None
         date = row["message"]["date"]
         candidates = []
@@ -626,12 +627,14 @@ class TelegramInbox:
                 other
                 async for other in self.repo.iter_all(
                     "ops.telegram_messages",
-                    filters={"chat_id": row["chat_id"], "user_id": row["user_id"], "pair_bucket": near},
+                    filters={"chat_id": row["chat_id"], "user_id": user_id, "pair_bucket": near},
                 )
             ]
         for other in nearby:
             body = other["message"]
             if other["message_id"] == row["message_id"] or other["status"] != "RECEIVED":
+                continue
+            if pairing_sender_id(other) != user_id:
                 continue
             if bool(body.get("forward_origin")) == forwarded or body.get("reply_to_message"):
                 continue
