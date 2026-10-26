@@ -11,7 +11,12 @@ from pydantic import BeforeValidator, Field, field_validator, model_validator
 
 from tank.analysis.execution import BookWalkRequest, BookWalkResult, execute_book_walk
 from tank.analysis.oi_ratio import NativeOiChangeFailure, UsdOiChangeFailure, native_oi_change, usd_oi_change
-from tank.analysis.positioning import MissingOIDecomposition, OIDecomposition, oi_class_from_comparisons
+from tank.analysis.positioning import (
+    MissingOIDecomposition,
+    MissingOIUsdDetail,
+    OIDecomposition,
+    oi_class_from_comparisons,
+)
 from tank.analysis.price_reference import ReferencePriceReturn
 from tank.analysis.statistics_contracts import (
     BetaEstimate,
@@ -1396,8 +1401,8 @@ class ObservedConditionOpenInterest(DomainModel):
     oi_usd_end: Decimal | None = Field(ge=0)
     oi_usd_chg_pct: float | None = Field(ge=-1)
     oi_usd_chg_pct_reason: UsdOiChangeFailure | None
-    oi_usd_reason: Literal["INCOMPLETE"] | None
-    oi_usd_detail: Literal["SYNCHRONIZED_MARK_OR_QUOTE_RATE_UNAVAILABLE"] | None
+    oi_usd_reason: Literal["INCOMPLETE", "NOT_ESTIMABLE"] | None
+    oi_usd_detail: MissingOIUsdDetail | None
     decomposition: OIDecomposition | MissingOIDecomposition
     native_normal_range: FloatRange
     usd_normal_range: FloatRange
@@ -1431,6 +1436,8 @@ class ObservedConditionOpenInterest(DomainModel):
         if missing_usd:
             if self.oi_usd_reason is None or self.oi_usd_detail is None:
                 raise ValueError("Missing USD endpoints require their actual source gap")
+            if (self.oi_usd_reason == "NOT_ESTIMABLE") != (self.oi_usd_detail == "REPORTED_USD_INVALID"):
+                raise ValueError("Invalid reported USD requires its explicit qualification cause")
         elif self.oi_usd_reason is not None or self.oi_usd_detail is not None:
             raise ValueError("Known USD endpoints cannot claim a missing-conversion gap")
         if (self.native_oi_vs_normal, self.native_beyond) != (native.position, native.beyond):
