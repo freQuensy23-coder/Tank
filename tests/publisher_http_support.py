@@ -18,6 +18,7 @@ from tank.deployment.api_contracts import (
     ActorTagUpdate,
     BuildObservation,
     CompletedBuildSnapshot,
+    HistoricalBuildSnapshot,
     UploadedVersion,
     VersionUpload,
 )
@@ -25,7 +26,11 @@ from tank.deployment.apify_api import ApifyEndpoint
 from tank.deployment.identities import CommitSHA
 from tank.deployment.journal import PublisherJournal
 
-type Reply = ActorSnapshot | BuildObservation | CompletedBuildSnapshot | UploadedVersion
+type Reply = (
+    ActorSnapshot | BuildObservation | CompletedBuildSnapshot | UploadedVersion | HistoricalBuildSnapshot
+)
+type LegacyFault = Literal["source", "version", "build_number", "status", "actor"]
+type WireFault = Literal["ACTOR_IDENTITY", "UPLOAD_FAILURE"] | LegacyFault
 
 
 @dataclass(frozen=True)
@@ -49,7 +54,7 @@ def serve_peer(
     port: int,
     context: ssl.SSLContext | None,
     after_tag_update: Callable[[], bool] | None,
-    wire_fault: Literal["ACTOR_IDENTITY", "UPLOAD_FAILURE"] | None,
+    wire_fault: WireFault | None,
 ) -> Iterator[PublisherHTTPPeer]:
     requests: list[ObservedRequest] = []
 
@@ -107,6 +112,8 @@ def serve_peer(
             elif self.command == "POST" and path.path == actor + "/builds":
                 assert query == {"version": ["0.3"], "tag": ["tank-" + selected_sha[:12]]}
                 reply = provider.start_build(selected_sha)
+            elif self.command == "GET" and path.path == "/v2/actor-builds/c99YRMlKXube5V0gV":
+                reply = provider.historical_build()
             elif self.command == "GET" and path.path.startswith("/v2/actor-builds/"):
                 build_id = path.path.removeprefix("/v2/actor-builds/")
                 reply = provider.wait_build(build_id) if query else provider.completed_build(build_id)
@@ -116,6 +123,20 @@ def serve_peer(
             document = json.dumps({"data": reply.model_dump(mode="json")}).encode()
             if wire_fault == "ACTOR_IDENTITY" and isinstance(reply, CompletedBuildSnapshot):
                 document = document.replace(b'"actId": "rbf5CQKQgKNVl4SfO"', b'"actId": "unrelated"')
+            if isinstance(reply, HistoricalBuildSnapshot):
+                match wire_fault:
+                    case "source":
+                        document = document.replace(
+                            b'"content": "unverified fixture"', b'"content": "changed"'
+                        )
+                    case "version":
+                        document = document.replace(b'"versionNumber": "0.2"', b'"versionNumber": "9.9"')
+                    case "build_number":
+                        document = document.replace(b'"buildNumber": "0.2.2"', b'"buildNumber": "0.2.3"')
+                    case "status":
+                        document = document.replace(b'"status": "SUCCEEDED"', b'"status": "FAILED"')
+                    case "actor":
+                        document = document.replace(b'"actId": "rbf5CQKQgKNVl4SfO"', b'"actId": "unrelated"')
             self.send_response(200)
             self.send_header("Content-Type", "application/json")
             self.send_header("Content-Length", str(len(document)))
@@ -207,5 +228,18 @@ def publisher_upload_failure_peer(
         context=None,
         after_tag_update=None,
         wire_fault="UPLOAD_FAILURE",
+    ) as peer:
+        yield peer
+
+
+@contextmanager
+def publisher_legacy_fault_peer(
+    provider: ProviderState,
+    journal: PublisherJournal,
+    selected_sha: CommitSHA,
+    fault: LegacyFault,
+) -> Iterator[PublisherHTTPPeer]:
+    with serve_peer(
+        provider, journal, selected_sha, port=0, context=None, after_tag_update=None, wire_fault=fault
     ) as peer:
         yield peer

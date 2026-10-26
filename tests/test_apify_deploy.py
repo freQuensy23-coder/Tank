@@ -1,36 +1,48 @@
 import base64
 import importlib.util
+import io
 import json
 import os
 import shutil
 import stat
 import subprocess
 import sys
+import tarfile
 import threading
 from collections.abc import Iterator
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from typing import Literal
 from urllib.parse import parse_qs, urlsplit
 
 import pytest
 from publisher_http_support import (
+    LegacyFault,
     publisher_http_peer,
+    publisher_legacy_fault_peer,
     publisher_upload_failure_peer,
     publisher_wrong_actor_peer,
 )
 from publisher_state_support import BuildState, rig, source_artifact
 from publisher_transition_support import HTTPPublisherRig, http_rig, write_artifact
+from publisher_workflow_support import execute, step
 from pydantic import SecretStr
 
 from tank.deployment.api_contracts import Base64SourceFile, SourceSnapshot
 from tank.deployment.apify_api import ApifyAPI, ApifyAPIError, ApifyEndpoint
-from tank.deployment.artifact_contracts import SourceArtifact, SourceBundle
+from tank.deployment.artifact_contracts import PublisherArtifactRuntime, SourceArtifact, SourceBundle
 from tank.deployment.artifacts import ArtifactError, FilesystemArtifacts, source_files
-from tank.deployment.contracts import ActiveRelease, SourceBuild, SourceRelease
+from tank.deployment.contracts import (
+    ActiveRelease,
+    DeploymentTransaction,
+    HistoricalRelease,
+    SourceBuild,
+    SourceRelease,
+)
 from tank.deployment.credentials import PublisherCredentialError, host_token
-from tank.deployment.journal import JournalError
+from tank.deployment.journal import JournalError, PublisherJournal
 from tank.deployment.markers import FilesystemTankReleaseState
-from tank.deployment.publisher import Publisher, PublisherStateError
+from tank.deployment.publisher import BASELINE_BUILD, BASELINE_DIGEST, Publisher, PublisherStateError
 
 ROOT = Path(__file__).resolve().parents[1]
 SPEC = importlib.util.spec_from_file_location("apify_deploy", ROOT / "scripts/deploy/apify_deploy.py")
@@ -540,36 +552,66 @@ def test_provenance_drift_fails_closed(typed_publisher: HTTPPublisherRig, change
 
 @pytest.mark.integration
 @pytest.mark.process
-def test_package_uses_selected_git_bytes_not_untracked_or_dirty_source(release, tmp_path):
+def test_package_uses_selected_git_bytes_not_untracked_or_dirty_source(release: Path, tmp_path: Path) -> None:
     repository = tmp_path / "repository"
     repository.mkdir()
     shutil.copytree(release / "worker", repository / "apify/x-reader")
-    (repository / "scripts/deploy").mkdir(parents=True)
-    shutil.copy(ROOT / "scripts/deploy/apify_deploy.py", repository / "scripts/deploy/apify_deploy.py")
-    commands = [
+    for command in (
         ["git", "init", "-q"],
-        ["git", "config", "user.email", "ci@example.invalid"],
-        ["git", "config", "user.name", "CI"],
         ["git", "add", "."],
-        ["git", "commit", "-qm", "fixture"],
-    ]
-    for command in commands:
+        ["git", "-c", "user.name=CI", "-c", "user.email=ci@example.invalid", "commit", "-qm", "fixture"],
+    ):
         subprocess.run(command, cwd=repository, check=True, capture_output=True)
     sha = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=repository, text=True).strip()
-    (repository / "apify/x-reader/main.py").write_text("dirty\n")
-    (repository / "apify/x-reader/untracked.env").write_text("secret-like-test-data")
-    destination = tmp_path / "artifact"
+    orchestrator = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=ROOT, text=True).strip()
     subprocess.run(
-        [sys.executable, str(ROOT / "scripts/deploy/apify_deploy.py"), "package", sha, str(destination)],
+        ["git", "fetch", "--quiet", "--no-tags", str(ROOT), orchestrator],
         cwd=repository,
         check=True,
         capture_output=True,
     )
+    archive = tmp_path / "orchestrator"
+    archive.mkdir()
+    archive_bytes = subprocess.check_output(
+        ["git", "archive", orchestrator, "src", "scripts/deploy", "pyproject.toml", "uv.lock"], cwd=ROOT
+    )
+    with tarfile.open(fileobj=io.BytesIO(archive_bytes)) as bundle:
+        bundle.extractall(archive, filter="data")
+    (repository / "apify/x-reader/main.py").write_text("dirty\n")
+    (repository / "apify/x-reader/untracked.env").write_text("secret-like-test-data")
+    destination = tmp_path / "artifact"
+    environment = dict(os.environ)
+    environment.update(PYTHONPATH=str(archive / "src"), PYTHONDONTWRITEBYTECODE="1")
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "tank.deployment.cli",
+            "package",
+            "--orchestrator-sha",
+            orchestrator,
+            "--selected-release-sha",
+            sha,
+            "--runtime-root",
+            str(archive),
+            "--repository",
+            str(repository),
+            "--destination",
+            str(destination),
+            "--image-repository",
+            "ghcr.io/frequensy23-coder/tank/tank",
+        ],
+        cwd=repository,
+        env=environment,
+        check=False,
+        capture_output=True,
+    )
+    assert result.returncode == 0, result.stderr
     assert (destination / "worker/main.py").read_text() == "value = 1\n"
     assert not (destination / "worker/untracked.env").exists()
-    manifest = json.loads((destination / "manifest.json").read_bytes())
-    assert manifest["release_sha"] == sha
-    assert manifest["source_digest"] == deploy.digest(deploy.source_files(destination / "worker"))
+    manifest = SourceRelease.model_validate_json(result.stdout)
+    assert manifest.release_sha == sha
+    assert manifest.source_digest == source_files(destination / "worker").digest()
 
 
 @pytest.mark.integration
@@ -761,17 +803,12 @@ def test_deploy_retry_recovers_process_death_before_journal_rename(
         assert newer.read(manifest["source_digest"] + ".json")["build_id"] == OTHER_BUILD
 
 
-@pytest.mark.integration
-@pytest.mark.process
+@pytest.mark.integration(reason="Actual selected historical Git bytes and current archived publisher CLI")
 @pytest.mark.parametrize("sha", HISTORICAL_RELEASES)
-def test_workflow_packages_historical_main_with_current_orchestrator(tmp_path, sha):
-    import yaml
-
-    workflow = yaml.safe_load((ROOT / ".github/workflows/deploy.yml").read_text())
-    steps = workflow["jobs"]["deploy"]["steps"]
-    target = next(step for step in steps if step.get("id") == "target")
-    package_step = next(step for step in steps if step.get("name", "").startswith("Package the selected"))
-    production_step = next(step for step in steps if step.get("name") == "Deploy on the production host")
+def test_workflow_packages_historical_main_with_current_orchestrator(
+    tmp_path: Path,
+    sha: str,
+) -> None:
     repository = tmp_path / "repository"
     subprocess.run(
         ["git", "clone", "--shared", "--no-checkout", str(ROOT), str(repository)],
@@ -781,6 +818,7 @@ def test_workflow_packages_historical_main_with_current_orchestrator(tmp_path, s
     subprocess.run(
         ["git", "checkout", "-q", "--detach", "HEAD"], cwd=repository, check=True, capture_output=True
     )
+    orchestrator = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=repository, text=True).strip()
     subprocess.run(
         ["git", "update-ref", "refs/remotes/origin/main", sha],
         cwd=repository,
@@ -789,157 +827,152 @@ def test_workflow_packages_historical_main_with_current_orchestrator(tmp_path, s
     )
     runner = tmp_path / "runner"
     runner.mkdir()
-    output = tmp_path / "output"
-    environment = {**os.environ, "INPUT_SHA": sha, "RUNNER_TEMP": str(runner), "GITHUB_OUTPUT": str(output)}
-    subprocess.run(
-        ["bash", "-euo", "pipefail", "-c", target["run"]],
-        cwd=repository,
-        env=environment,
-        check=True,
-        capture_output=True,
+    output = tmp_path / "target-output"
+    environment = dict(os.environ)
+    environment.update(INPUT_SHA=sha, RUNNER_TEMP=str(runner), GITHUB_OUTPUT=str(output))
+    targeted = execute(step(identifier="target", name=None), repository, environment)
+    assert targeted.returncode == 0, targeted.stderr
+    assert output.read_text() == f"sha={sha}\norchestrator_sha={orchestrator}\n"
+    archive = runner / "tank-orchestrator"
+    environment.update(
+        SHA=sha,
+        ORCHESTRATOR_SHA=orchestrator,
+        GITHUB_WORKSPACE=str(repository),
+        GITHUB_REPOSITORY="freQuensy23-coder/Tank",
+        UV_PROJECT_ENVIRONMENT=sys.prefix,
+        PYTHONPATH=str(archive / "src"),
+        PYTHONDONTWRITEBYTECODE="1",
     )
-    assert output.read_text() == f"sha={sha}\n"
-    assert not (repository / "scripts/deploy/apify_deploy.py").exists()
-    assert not (repository / "apify/x-reader").exists()
-    subprocess.run(
-        ["bash", "-euo", "pipefail", "-c", package_step["run"]],
-        cwd=repository,
-        env={**environment, "SHA": sha},
-        check=True,
-        capture_output=True,
+    packaged = execute(
+        step(identifier=None, name="Package the selected X worker with the main orchestrator"),
+        repository,
+        environment,
     )
-    artifact = runner / sha
-    manifest = json.loads((artifact / "manifest.json").read_bytes())
-    assert manifest["release_sha"] == sha
-    assert manifest["contract"] == deploy.LEGACY_CONTRACT
-    assert manifest["worker_mode"] == ("unused" if sha == HISTORICAL_RELEASES[-1] else "legacy")
-    assert manifest["build_id"] == deploy.BASELINE_BUILD
-    assert manifest["source_digest"] == deploy.BASELINE_DIGEST
-    assert not (artifact / "worker").exists()
-    assert (artifact / "apify_deploy.py").read_bytes() == (
-        ROOT / "scripts/deploy/apify_deploy.py"
+    assert packaged.returncode == 0, packaged.stderr
+    release = HistoricalRelease.model_validate_json(packaged.stdout)
+    assert release.release_sha == sha
+    assert release.worker_mode == ("unused" if sha == HISTORICAL_RELEASES[-1] else "legacy")
+    package = runner / sha
+    assert not (package / "worker").exists()
+    runtime = PublisherArtifactRuntime.model_validate_json((package / "publisher-runtime.json").read_bytes())
+    assert runtime.runtime.orchestrator_sha == orchestrator
+    assert runtime.runtime.selected_release_sha == sha
+    assert orchestrator != sha
+    assert (package / "publisher-image").read_text() == runtime.image_reference + "\n"
+    assert not (tmp_path / "apify-state").exists()
+    assert (archive / "scripts/deploy/publisher_worker.sh").read_bytes() == (
+        ROOT / "scripts/deploy/publisher_worker.sh"
     ).read_bytes()
-    assert (runner / "tank-orchestrator/deploy.sh").read_bytes() == (
-        ROOT / "scripts/deploy/deploy.sh"
-    ).read_bytes()
-    assert 'compose.yaml "$RUNNER_TEMP/tank-orchestrator/deploy.sh"' in production_step["run"]
-    with (repository / "config/sources.yaml").open("a") as stream:
-        stream.write("\nunreviewed: changed\n")
-    subprocess.run(["git", "add", "config/sources.yaml"], cwd=repository, check=True, capture_output=True)
-    subprocess.run(
-        [
-            "git",
-            "-c",
-            "user.name=CI",
-            "-c",
-            "user.email=ci@example.invalid",
-            "commit",
-            "-qm",
-            "unreviewed compatibility",
-        ],
-        cwd=repository,
-        check=True,
-        capture_output=True,
-    )
-    changed = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=repository, text=True).strip()
-    rejected = subprocess.run(
-        [
-            sys.executable,
-            str(runner / "tank-orchestrator/apify_deploy.py"),
-            "package",
-            changed,
-            str(runner / changed),
-        ],
-        cwd=repository,
-        text=True,
-        capture_output=True,
-    )
-    assert rejected.returncode != 0
-    assert "historical worker compatibility not verified" in rejected.stderr
-    assert not (runner / changed).exists()
 
 
 @pytest.mark.integration
 @pytest.mark.parametrize("mode", ["legacy", "unused"])
-def test_historical_worker_selection_never_rebuilds_or_relabels_source(apify_stand, release, tmp_path, mode):
-    current = publisher(apify_stand, release, tmp_path)
-    current.prepare()
-    finish_release(current, tmp_path)
-    original = current.read("active.json")
-    historical = tmp_path / "historical"
-    historical.mkdir()
-    compatibility = next(key for key, value in deploy.LEGACY_INPUTS.items() if value == mode)
-    (historical / "manifest.json").write_bytes(
-        deploy.canonical(
-            {
-                "release_sha": NEXT_SHA,
-                "actor_id": deploy.ACTOR_ID,
-                "contract": deploy.LEGACY_CONTRACT,
-                "worker_mode": mode,
-                "compatibility_digest": compatibility,
-                "source_digest": deploy.BASELINE_DIGEST,
-                "build_id": deploy.BASELINE_BUILD,
-            }
-        )
+def test_historical_worker_selection_never_rebuilds_or_relabels_source(
+    typed_publisher: HTTPPublisherRig, mode: Literal["legacy", "unused"]
+) -> None:
+    fixture = typed_publisher
+    fixture.publisher.prepare()
+    finish_typed(fixture.publisher, fixture.marker)
+    previous = fixture.journal.read_active()
+    compatibility = (
+        "67141bdf567e9c73678efb290e3cae04bae0f11bbd5ad2087db8520bd035035a"
+        if mode == "unused"
+        else "1dcfa5489d2f3622ddcad2d8d45a5515d9734407c4d5a3533e15e3fce6b3ba39"
     )
-    instance = publisher(apify_stand, historical, tmp_path, NEXT_SHA)
-    instance.prepare()
-    instance.activate()
-    instance.commit()
-    instance.rollback()
-    instance.rollback_finish()
-    assert instance.read("active.json") == original
-    assert apify_stand.direct == BUILD
-    assert (tmp_path / "deployed").read_text().strip() == SHA
-    instance.prepare()
-    finish_release(instance, tmp_path)
-    expected_build = deploy.BASELINE_BUILD if mode == "legacy" else BUILD
-    assert apify_stand.direct == expected_build
-    active = instance.read("active.json")
-    assert active["release_sha"] == NEXT_SHA
-    assert active["build_id"] == expected_build
+    release = HistoricalRelease(
+        release_sha="c" * 40,
+        source_digest=BASELINE_DIGEST,
+        contract="tank-x-reader-legacy-0.2.2",
+        actor_id="rbf5CQKQgKNVl4SfO",
+        worker_mode=mode,
+        compatibility_digest=compatibility,
+        build_id=BASELINE_BUILD,
+    )
+    historical = fixture.artifact.parent / "historical"
+    historical.mkdir()
+    (historical / "manifest.json").write_text(release.model_dump_json())
+    instance = actual_publisher(fixture, historical, release.release_sha, fixture.peer.endpoint)
     if mode == "legacy":
-        assert "release_sha" not in active["build"]
-        assert active["build"]["build_number"] == "0.2.2"
+        with pytest.raises(PublisherStateError, match="Legacy build provenance mismatch"):
+            instance.prepare()
+        assert fixture.journal.read_transaction() is None
+        assert fixture.journal.read_active() == previous
     else:
-        assert active["build"] == original["build"]
-    assert len([item for item in apify_stand.requests if item[0] == "POST" and "/builds?" in item[1]]) == 1
-    instance.prepare()
-    instance.activate()
-    instance.rollback()
-    instance.rollback_finish()
-    assert instance.read("active.json") == active
-    assert apify_stand.direct == expected_build
+        instance.prepare()
+        instance.activate()
+        instance.commit()
+        instance.rollback()
+        instance.rollback_finish()
+        assert fixture.journal.read_active() == previous
+        assert fixture.marker.deployed() == fixture.publisher.sha
+        instance.prepare()
+        finish_typed(instance, fixture.marker)
+        active = fixture.journal.read_active()
+        assert active is not None and previous is not None
+        assert active.release_sha == release.release_sha
+        assert active.build_id == previous.build_id and active.build == previous.build
+        instance.prepare()
+        instance.activate()
+        instance.rollback()
+        instance.rollback_finish()
+        assert fixture.journal.read_active() == active
+    assert fixture.api.direct == "B" * 17
+    assert len(fixture.api.started) == 1
+    assert fixture.api.tag_updates == ["B" * 17]
 
 
 @pytest.mark.integration
 @pytest.mark.parametrize("change", ["source", "version", "build_number", "status", "actor"])
-def test_legacy_build_drift_blocks_bootstrap_and_rollback(apify_stand, release, tmp_path, change):
-    instance = publisher(apify_stand, release, tmp_path)
-    instance.prepare()
-    instance.activate()
-    baseline = apify_stand.builds[deploy.BASELINE_BUILD]
-    if change == "source":
-        baseline["actVersion"]["sourceFiles"][0]["content"] = "changed"
-    elif change == "version":
-        baseline["actVersion"]["versionNumber"] = "9.9"
-    elif change == "build_number":
-        baseline["buildNumber"] = "0.2.3"
-    elif change == "status":
-        baseline["status"] = "FAILED"
-    else:
-        baseline["actId"] = "unrelated"
-    with pytest.raises(deploy.DeployError):
-        instance.rollback()
-    assert apify_stand.direct == BUILD
-    assert instance.read("pending.json")["activation_attempted"]
-    assert not instance.read("pending.json").get("rolled_back")
-    (tmp_path / "separate").mkdir()
-    separate = publisher(apify_stand, release, tmp_path / "separate")
-    apify_stand.direct = deploy.BASELINE_BUILD
-    with pytest.raises(deploy.DeployError):
-        separate.prepare()
-    assert separate.read("pending.json") is None
+def test_legacy_build_drift_blocks_bootstrap_and_rollback(
+    typed_publisher: HTTPPublisherRig, change: LegacyFault
+) -> None:
+    """Authored invalid historical claims never stand in for unavailable original baseline bytes."""
+    fixture = typed_publisher
+    prepared = fixture.publisher.prepare()
+    fixture.publisher.activate()
+    claimed = DeploymentTransaction(
+        release_sha=fixture.publisher.sha,
+        previous=BASELINE_BUILD,
+        previous_active=None,
+        previous_release_sha="",
+        candidate=prepared.candidate,
+        activation_attempted=True,
+    )
+    fixture.journal.write_transaction(claimed)
+    original = fixture.journal.read_active()
+    with publisher_legacy_fault_peer(fixture.api, fixture.journal, fixture.publisher.sha, change) as peer:
+        instance = actual_publisher(fixture, fixture.artifact, fixture.publisher.sha, peer.endpoint)
+        with pytest.raises((PublisherStateError, ValueError)) as refused:
+            instance.rollback()
+        expected = {
+            "source": "provenance mismatch",
+            "version": "versionNumber",
+            "build_number": "buildNumber",
+            "status": "status",
+            "actor": "actId",
+        }
+        assert expected[change] in str(refused.value)
+        assert fixture.api.direct == "B" * 17
+        assert fixture.journal.read_active() == original
+        assert fixture.journal.read_transaction() == claimed
+        separate = fixture.artifact.parent / "separate"
+        separate.mkdir()
+        state = PublisherJournal(separate / "apify-state")
+        marker = FilesystemTankReleaseState(separate / "deployed")
+        fixture.api.direct = BASELINE_BUILD
+        bootstrap = Publisher(
+            ApifyAPI(SecretStr("synthetic-publisher-image-token"), peer.endpoint),
+            FilesystemArtifacts(fixture.artifact),
+            state,
+            marker,
+            fixture.publisher.sha,
+            clock=fixture.publisher.clock,
+            policy=fixture.publisher.policy,
+        )
+        with pytest.raises((PublisherStateError, ValueError)):
+            bootstrap.prepare()
+        assert state.read_transaction() is None
+    assert fixture.api.tag_updates == ["B" * 17]
 
 
 def test_apify_error_names_reason_without_token(apify_stand):
