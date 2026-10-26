@@ -1339,3 +1339,34 @@ intended wrong-identity refusal oracle. These contracts/adapter are inactive.
 The worker, Session send producer/result phases and scheduler side-effect
 result ports still need their coordinated migration and caller proof; this
 checkpoint does not close the remaining Runtime method or whole Session.
+
+Inactive session-message result phases
+
+message_dispatch distinguishes an actually recorded pending initial intent,
+an observed native acceptance (including explicit UNREPORTED/EMPTY receipts),
+a historical accepted-message index with no retained receipt, and a declined
+question target. INDEXED_UNREPORTED does not claim a newly dispatched native
+input. The observer reads only the requested journal owner and actual stored
+index, rejects duplicate/contradictory owner evidence, and does not require an
+unused body/retry budget to describe already observed acceptance. A pending
+intent still requires its real declared zero attempt and native input body.
+Actual no-session refusal remains a separate typed target phase.
+
+Twenty result/outbound cases pass in 2.14 seconds, zero skips, including the
+real mocked-HTTP initial accepted/unreported/empty post and idempotency cases
+with their existing original oracles. Independent result source/test strict
+two targets and Ruff pass. This is an inactive result observer, not an untyped
+send_message wrapper presented as a complete port. The actual send producer,
+attachment preparation and coordinated scheduler results remain under
+migration. Evidence worker-573-message-phase-unit-2 is external; the prior
+single test expectation diagnostic used ValidationError where an actually
+missing required retry_count correctly raises KeyError, with no source
+fallback introduced.
+
+Correction to inactive worker claim-revision rationale: foundation identified
+that nested Timestamp serializers can add omitted nullable facets even under
+exclude_unset. Therefore normalized envelope serialization is not a reliable
+original raw revision in every valid ledger case. Checkpoint 57377441 remains
+inactive; its adapter must consume the forthcoming raw claim-revision API and
+qualify omitted nested facets before activation. The limited passing cases
+above did not contain such a ledger and do not establish full parity.
