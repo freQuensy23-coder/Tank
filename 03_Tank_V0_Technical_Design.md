@@ -70,7 +70,7 @@ Values marked ⚙ are collected in §12 with their basis: a PRD requirement, an 
 | `ContradictionType` | FATAL, UNRESOLVED, DIAGNOSTIC, EXPLAINABLE |
 | `AlertKind` | PARTIAL, FULL, UPDATE, PRELIMINARY |
 | `DeliveryStatus` | GENERATED, SENT, FAILED |
-| `OpsNoticeKind` | DELIVERY_FAILED, HEARTBEAT, ITEM_PROGRESS |
+| `OpsNoticeKind` | ITEM_PROGRESS, ENTRY_ERRORS, DELIVERY_FAILED, HEARTBEAT (sent); ENTRY_ERROR (the stored once-only marker of one broken entry, never sent on its own) |
 | `EventLifecycle` | DETECTED, SCORED, TRACKED, ANALYZING, ALERTED, MONITORING, COOLDOWN, CLOSED, MERGED, INVALIDATED |
 | `ScoutHook` | BENEFICIARY_LAYER, MARKET_TRUTH_STATE, SOURCE_OPPORTUNITY, ALTERNATIVE_EXPLANATION |
 | `ScoutRecommendation` | SUBCATEGORY, TEST_MORE, NEW_CATEGORY, REJECT |
@@ -484,11 +484,19 @@ DeliveryRecord                       # append-only ledger; one row per transitio
   channel, status: DeliveryStatus
   message_ref: str?; attempt: int; at: ts; error: str?
 
-OpsNotice                            # append-only; one "Tank Ops" message
+OpsNotice                            # append-only; one "Tank Ops" message (§7.6)
   notice_id, kind: OpsNoticeKind
-  subject_id: str?                   # alert_id of a DELIVERY_FAILED
+  subject_id: str?                   # item_id (ITEM_PROGRESS), source_id (ENTRY_ERRORS, ENTRY_ERROR), alert_id (DELIVERY_FAILED)
+  stage: str?                        # ITEM_PROGRESS: the processing stage reached
+  entry_errors: [{reason, entry?, entry_index?, proposal_id?, account?, error?, payload_sha256?, diagnostics?}]?   # ENTRY_ERRORS
+  document_manifest: [{filename, sha256, bytes}]?                  # ENTRY_ERRORS with HTTP responses of a failed X profile
   text: str; created_at
-  created_by: scheduler (HEARTBEAT) | delivery (DELIVERY_FAILED)
+  created_by: ops-progress (ITEM_PROGRESS) | source-poller (ENTRY_ERRORS, ENTRY_ERROR) | delivery (DELIVERY_FAILED) | scheduler (HEARTBEAT)
+
+OpsCard                              # mutable; the "Tank Ops" card of one material
+  item_id, chat_id
+  message_ref: str?                  # Telegram message, edited in place as later stages arrive
+  covered_notice_ids: [notice_id]; delivery_status
 
 EvidenceBundle                       # content-addressed JSON
   bundle_id = sha256(canonical_json)
@@ -560,12 +568,13 @@ Fixture
 | `event_observations`, `claims` | `obs_id`, `claim_id` | FK to events/items. |
 | `state_changes` | serial | Append-only. |
 | `ems_assessments`, `capture_chains`, `beneficiary_maps`, `beneficiary_edges` | id + version | Versioned rows. |
-| `klines_1m`, `flow_bars_1m` | (`instrument_id`, minute) | ClickHouse ReplacingMergeTree, daily partitions; base tier 90 days ⚙. |
+| `klines_1m`, `flow_bars_1m` | (`instrument_id`, minute) | ClickHouse ReplacingMergeTree, daily partitions; base tier 90 days ⚙. Every ClickHouse table here is written only by tank-capture (02 §5.1) and read by Tank and, read-only, by the agents. |
 | `book_summaries` | (`instrument_id`, ts) | ClickHouse; kept 72 hours ⚙; summary fields only, no order-book levels. |
 | `oi_obs`, `funding_obs`, `liq_obs`, `tickers_24h` | (`instrument_id`, ts) | ClickHouse, daily partitions. |
 | `trades` | (`instrument_id`, ts, `trade_id`) | ClickHouse, every print; 30 days ⚙ (MAJOR+ event days kept). |
 | `market_truth`, `decisions`, `contradictions`, `watch_conditions`, `calls` | ids | `market_truth` indexed by (`token_id`, `cutoff`); a decision carries its outlook. |
 | `alerts`, `deliveries`, `ops_notices`, `evidence_bundles`, `reaction_checkpoints`, `reviews` | ids | Append-only (UPDATE/DELETE rejected by trigger). |
+| `ops_cards` | (`chat_id`, `item_id`) | The "Tank Ops" card of each material and its Telegram message; mutable, edited as notices arrive (§7.6). |
 | `hot_tokens` | (`token_id`, `event_id`) | Hot set (§9); read on start to subscribe the hot tokens again. |
 | `jobs` | `job_id`; unique `idem_key` | The service's job queue (§3.8). |
 | `agent_sessions`, `tool_calls` | `session_id`, `call_id` | The OpenMA session of each event, and every tool call with its input, result and timing (§3.2). |
@@ -727,38 +736,40 @@ Seed for the beneficiary walk (§4.7). An edge supported only by this map starts
 |---|---|
 | S01–S14 (regulators, exchanges, listing diffs), S15–S22 (issuer posts), S23 new topics, S24 new proposals and state changes, S25 releases, S26–S28 new entries | ROUTE_ITEM |
 | S29 posts of the 41 organization accounts of 01 §4.3 | ROUTE_ITEM |
-| S29 posts of founders, C-level and the other accounts of 01 §4.3; S25 commits; S30–S34 news | FILTER_ITEM (Jev), then ROUTE_ITEM if relevant |
+| S29 posts of founders, C-level and the other accounts of 01 §4.3; S25 commits; S30–S34 news | FILTER_ITEM (Decision-1), then ROUTE_ITEM if relevant |
 
-**FILTER_ITEM (Jev).** TypeSafe's classification model, called through OpenRouter, answers one yes/no question per item with a probability; it does not generate text. The filter asks whether the item is about crypto. An item about crypto gets a ROUTE_ITEM job; any other item is stored with its score and marked SKIPPED.
+**FILTER_ITEM (Decision-1).** Microsoft-Decision-1, a classification model served by Azure Foundry (operator's decision of 25 Oct 2026, replacing Jev), answers one yes/no question per item with a probability; it does not generate text. The filter asks whether the item is about crypto. An item about crypto gets a ROUTE_ITEM job; any other item is stored with its score and marked SKIPPED.
 
-- Endpoint: `POST https://openrouter.ai/api/v1/systemone` (OpenRouter serves Jev's own System One API: the same `state` and `questions` as below, answers as `noul`), header `Authorization: Bearer <key>` (Docker secret `openrouter_api_key`), plain `httpx`; model pinned to `typesafe/jev-1.13` ($0.042 per million input tokens, output free).
-- `state`: the item only — `{"source": "<source name>", "author": "<handle or outlet>", "text": "<item text>", "quoted": "<quoted or reposted text, or null>"}`. Nothing else goes into `state`: Jev answers worse when the state carries unrelated material.
-- `questions`:
+- Endpoint: `POST <TANK_FOUNDRY_ENDPOINT>/providers/microsoft/v1/systemone`, where the endpoint is the HTTPS origin of the Azure Foundry resource; header `api-key: <TANK_FOUNDRY_API_KEY>` from the host `.env` (02 §8); plain `httpx`. Body `{"model": "<TANK_FOUNDRY_DEPLOYMENT, default decision-1>", "state": …, "questions": …}`; the deployment serves Microsoft-Decision-1 version 1. The answer must name the model `microsoft-decision-1`, carry a `usage` object and give every question a finite `noul` probability between 0 and 1; anything else fails the call. An HTTP error fails the call: it is not retried inside the call and never goes to another model or provider.
+- `state`: the item only — `{"item": {"source": "<source name>", "author": "<handle or outlet, when it differs from the source>", "title": "<title>", "text": "<item text without a repeated title, at most 12,000 characters>", "quoted": "<quoted text, when the source gives one>"}}`; empty fields are left out. Nothing else goes into `state`: the model answers worse when the state carries unrelated material.
+- `questions` (prompt version `decision-1-v1`):
 
 ```json
 {"relevant": {"type": "noul",
-  "instructions": "Is this text about crypto - crypto assets, crypto exchanges, crypto regulation or enforcement, blockchain networks, or one of these projects: Bitcoin, Ethereum, Uniswap, PancakeSwap, Aerodrome, Curve, 1inch, 0x, CoW Protocol, Hyperliquid, Lighter, Aave, Morpho, Euler, Ondo, LayerZero, Quant, Avalanche, NEAR, Plasma, Ethena, World (Worldcoin)? Whether it reports anything new or important does not matter here. General finance, technology or politics that does not touch crypto does not count.",
-  "criteria": {"true": "About crypto", "false": "Not about crypto"}}}
+  "instructions": "Is `item` about crypto: crypto assets, crypto exchanges, crypto regulation or enforcement, blockchain networks, or one of these projects: Bitcoin, Ethereum, Uniswap, PancakeSwap, Aerodrome, Curve, 1inch, 0x, CoW Protocol, Hyperliquid, Lighter, Aave, Morpho, Euler, Ondo, LayerZero, Quant, Avalanche, NEAR, Plasma, Ethena, World (Worldcoin)?",
+  "criteria": {"true": "About crypto, even if it reports nothing new or important.",
+               "false": "General finance, technology or politics that does not touch crypto."}}}
 ```
 
-- Decision: `noul ≥ cutoff` → relevant. The cutoff is not chosen in advance. Both cutoffs are calibrated offline, before the service first starts: the 200 labeled items of V0-B are historical items collected from the sources' archives and feeds, `tank calibrate` scores them with Jev outside the service, and the cutoff is set to the highest value at which ≥ 95% of the items labeled relevant pass (01 V0-B). The value is then recorded in the configuration (01 D6).
-- Every call is logged in `ops.llm_usage` (call `FILTER`); the score is stored on the item for audit and for setting the cutoff.
+- Decision: `noul ≥ filter_cutoff` → relevant. Until it is calibrated, the cutoff is the uncalibrated midpoint ⚙0.5 (§12); Jev's earlier scores and cutoffs do not carry over to Decision-1. Calibration runs offline on the 200 labeled items of V0-B (historical items collected from the sources' archives and feeds): `tank calibrate` scores them with Decision-1 outside the service and proposes the highest value at which ≥ 95% of the items labeled relevant pass (01 V0-B); the operator records it in the configuration (01 D6). Nothing changes a cutoff automatically.
+- Every call is logged in `ops.llm_usage` (call `FILTER`) with the requested and resolved model, the endpoint and the token counts. Azure reports no cost, so the cost is stored as unknown, never as zero. Scores are cached by provider, resource, deployment, prompt version and the exact question and state, so the same request is never sent twice. The score is stored on the item for audit and calibration.
 
-**ROUTE_ITEM (Jev): one event, one session.** Decides whether the item opens a new agent session or joins the session of an event that received news in the last ⚙3 days (01 FR-E-02).
+**ROUTE_ITEM (Decision-1): one event, one session.** Decides whether the item opens a new agent session or joins the session of an event that received news in the last ⚙3 days (01 FR-E-02).
 
 - Candidates: events whose session received an item in the last 3 days and that share an entity or token with the item. Entities are the registry aliases (§2.11; whole words, case-insensitive) found in the item text, the quoted text and the author's organization. No shared entity → no candidates.
-- One Jev question per candidate; `state` = the item as in FILTER_ITEM plus `{"event": {"statement": "...", "entities": [...], "tokens": [...], "stage": "...", "known_to_us_at": "..."}}`:
+- One Decision-1 question per candidate, through the same endpoint; `state` = `{"item": <as in FILTER_ITEM>, "event": {"statement": "<the agent's statement>", "entities": [<readable names>], "tokens": [<tickers>], "stage": "<event state>"}}`:
 
 ```json
 {"same_event": {"type": "noul",
-  "instructions": "Does the item report the same real-world event as the event described, or a new development of it - a confirmation, denial, stage change, new detail or new party? Another event about the same project does not count.",
-  "criteria": {"true": "Same event or a development of it", "false": "A different event"}}}
+  "instructions": "Does `item` report the same real-world event as `event`, or a new development of that event?",
+  "criteria": {"true": "The same event, or a development of it: a confirmation, denial, stage change, new detail or new party.",
+               "false": "A different event, even one about the same project, company, exchange or token."}}}
 ```
 
-- Decision: the candidate with the highest `noul` at or above the routing cutoff gets the item as ITEM_ADDED (§3.2), even while its agent is still working; with no candidate at or above it, NEW_ITEM opens a session. The routing cutoff is calibrated at V0-B on the labeled repeats and developments: the highest value at which routing precision and recall both reach 0.90 (01 V0-B). The value is recorded in the configuration (01 D6).
-- Every call is logged in `ops.llm_usage` (call `ROUTE`); the decision, the event and the score are stored on the item.
+- Decision: the candidate with the highest `noul` at or above `routing_cutoff` gets the item as ITEM_ADDED (§3.2), even while its agent is still working; with no candidate at or above it, NEW_ITEM opens a session. Until it is calibrated, the routing cutoff is the uncalibrated midpoint ⚙0.5. It is calibrated at V0-B on the labeled repeats and developments: the highest value at which routing precision and recall both reach 0.90 (01 V0-B), recorded in the configuration (01 D6).
+- Every call is logged in `ops.llm_usage` (call `ROUTE`) like FILTER_ITEM; the decision, the event and the score are stored on the item.
 
-Expected load (estimate from feed sizes on 16 Oct 2026): ≈ 230 items/day go straight to ROUTE_ITEM (CORE ≈ 180, organization accounts ≈ 50); ≈ 610 items/day go through FILTER_ITEM (news ≈ 250, other X accounts ≈ 330, GitHub commits ≈ 30), of which ≈ 410 are assumed to be about crypto (nearly all of CoinDesk, The Block, the X accounts and the commits; few BBC and Bloomberg items). About 40% of the ≈ 640 routed items are assumed to join an existing session, because outlets and accounts repeat the same news: ≈ 385 new sessions and ≈ 255 added items a day. Jev: ≈ 610 filter calls × ≈ 700 tokens plus ≈ 1,280 routing calls (≈ 2 candidates per item) × ≈ 1,000 tokens ≈ 1.7 M tokens/day ≈ $0.07/day at $0.042 per million input tokens (output free).
+Expected load (estimate from feed sizes on 16 Oct 2026): ≈ 230 items/day go straight to ROUTE_ITEM (CORE ≈ 180, organization accounts ≈ 50); ≈ 610 items/day go through FILTER_ITEM (news ≈ 250, other X accounts ≈ 330, GitHub commits ≈ 30), of which ≈ 410 are assumed to be about crypto (nearly all of CoinDesk, The Block, the X accounts and the commits; few BBC and Bloomberg items). About 40% of the ≈ 640 routed items are assumed to join an existing session, because outlets and accounts repeat the same news: ≈ 385 new sessions and ≈ 255 added items a day. Decision-1: ≈ 610 filter calls × ≈ 700 tokens plus ≈ 1,280 routing calls (≈ 2 candidates per item) × ≈ 1,000 tokens ≈ 1.7 M tokens/day; its cost is not reported by Azure and is not estimated here.
 
 ### S29 profile retries, Ops HTTP diagnostics and worker publication
 
@@ -780,7 +791,7 @@ One event, one agent session. The first item of an event opens a session on Tank
 |---|---|
 | Platform | OpenMA, self-hosted (02 §5), through its Managed Agents API `/v1/*` at `http://openma:8787` on the Compose network; API key `OMA_API_KEY` from the host `.env` |
 | Agent | `tank-event-analyst`, versioned in OpenMA: `model` = the OpenMA Model Card for `gpt-6.1-sol`: a custom provider (`pi_config.api: openai-responses`) whose `base_url` is Tank's `codex_gateway`, which signs each call with the operator's ChatGPT subscription (Codex sign-in, no API key; 02 §5), `model.effort` per §12, `harness: "pi"`, the skills `tank-event-analyst` and `tank-data`, Tank's custom tools below and OpenMA's built-in sandbox tools; no MCP servers |
-| Session | `POST /v1/sessions` per event in the environment `tank-analysis` (02 §8): the session's own litebox sandbox, a microVM where the agent creates and edits files and runs any command or script; Python 3.12 with `pandas`, `numpy`, `scipy`, `statsmodels`, `duckdb`, `psycopg`, `httpx`; unrestricted internet; read-only access as `tank_agent` to the database `tank` (`TANK_DB_URL`) and to ClickHouse `mkt` (`http://clickhouse:8123`, the same credentials). OpenMA keeps an append-only log of every message, tool call, command and output |
+| Session | `POST /v1/sessions` per event in the environment `tank-analysis` (02 §8): the session's own litebox sandbox, a microVM where the agent creates and edits files and runs any command or script; Python 3.13 with `pandas`, `numpy`, `scipy`, `statsmodels`, `duckdb`, `psycopg`, `httpx`; unrestricted internet; read-only access as `tank_agent` to the database `tank` (`TANK_DB_URL`) and to ClickHouse `mkt` (`http://clickhouse:8123`, the same credentials). OpenMA keeps an append-only log of every message, tool call, command and output |
 | Messages | `POST /v1/sessions/{id}/events` with a `user.message`. OpenMA accepts a message while the agent is working, queues it and hands it over as soon as the current turn ends, so Tank never waits for a session to be free |
 | Tool calls | Tank's tools are OpenMA custom tools that Tank executes: the session emits `agent.custom_tool_use` and pauses (`requires_action`); `sessions` runs the tool and answers with `user.custom_tool_result`. A slow tool (`get_market_truth`) answers when its job finishes |
 | Streams | `sessions` follows a session's stream (`GET /v1/sessions/{id}/events/stream`) while the agent works. On start it replays each open session from `last_event_seq` (`Last-Event-ID`) and keeps following the ones still at work; a tool call left without a result runs again, and a write tool that already ran returns its stored result (`ops.tool_calls`, keyed by the call id) |
@@ -915,7 +926,7 @@ Claim rules. They are written in the skill and followed by the agent; the tools 
 
 A second agent, `tank-scout-reviewer`, reviews scout proposals (§10) in one session per proposal, with `web_search`, `search_tank_items` and `record_review`, and the same full built-in sandbox toolset and unrestricted internet as the analyst; record IDs come from read-only SQL.
 
-Load and cost (estimate). `gpt-6.1-sol` runs on the operator's ChatGPT subscription: its tokens carry no per-token charge (on the API the same load would cost ≈ $16 a day at $2 per million input tokens, $0.10 cached, $10 output). Web search goes to DuckDuckGo at no charge (≈ 135 searches a day); the only paid call is Jev:
+Load and cost (estimate). `gpt-6.1-sol` runs on the operator's ChatGPT subscription: its tokens carry no per-token charge (on the API the same load would cost ≈ $16 a day at $2 per million input tokens, $0.10 cached, $10 output). Web search goes to DuckDuckGo at no charge (≈ 135 searches a day). The paid calls are Decision-1, whose cost Azure does not report, and the Apify runs that read X (one every 120 s, billed per run; 02 §3.7):
 
 | Work | Per day | Per unit: input / cached / output tokens; web searches | Paid calls/day |
 |---|---|---|---|
@@ -924,8 +935,9 @@ Load and cost (estimate). `gpt-6.1-sol` runs on the operator's ChatGPT subscript
 | Added items (a turn in an open session) | ≈ 255 | 4,000 / 12,000 / 800; 0.1 | — |
 | Condition, milestone and call messages | ≈ 20 | 4,000 / 30,000 / 1,000 | — |
 | Scout reviews | 2 | 20,000 / 4,000 / 4,000; 2 | — |
-| Jev, filter and routing (§3.1) | ≈ 1,890 calls | 700–1,000 / — / — | ≈ $0.07 |
-| **Total** | | ≈ 3.7 M input, 7.4 M cached and 0.8 M output tokens a day on the subscription, before the agents' own scripts | **≈ $0.07/day** |
+| Decision-1, filter and routing (§3.1) | ≈ 1,890 calls | 700–1,000 / — / — | unknown (not reported by Azure) |
+| Apify actor for S29 (02 §3.7) | ≈ 720 runs | — | billed per run |
+| **Total** | | ≈ 3.7 M input, 7.4 M cached and 0.8 M output tokens a day on the subscription, before the agents' own scripts | **Decision-1 and Apify runs; not estimated** |
 
 ### 3.3 Event identity
 
@@ -1010,7 +1022,7 @@ PRELIMINARY delivery leaves a MATERIAL event TRACKED and does not set ordinary f
 
 ### 3.8 The service and its jobs
 
-- **One service.** Tank runs as one asyncio process (02 §5). Long-lived tasks read the sources and the markets: one polling loop per source, the X sensor, one task per venue WebSocket, the base-tier pollers, the scheduler, and a stream task per working session. Everything else is a job.
+- **One service.** Tank runs as one asyncio process (02 §5). Long-lived tasks: one polling loop per source, the X sensor, the hot-set and supply loops of `market`, the scheduler, and a stream task per working session. The venue WebSockets and the base-tier pollers run in tank-capture (02 §5.1), which Tank drives only through tables. Everything else is a job.
 - **Queue.** PostgreSQL `ops.jobs`; the service's 8 async workers claim with `SELECT … FOR UPDATE SKIP LOCKED` ordered by `(priority, run_after)` (§14) and run each job under its timeout. On start, jobs left RUNNING by a stopped service go back to QUEUED.
 - **Idempotency.** `idem_key` is unique; a DONE job with the same key is never re-run. Re-evaluations include the cutoff bucket in the key.
 - **Serialization.** One session per event serializes the agent's work on it; `publish_card` also takes a per-event lock, so one event never produces two concurrent alert versions.
@@ -1204,6 +1216,8 @@ Modifiers: HEADWIND → one notch down; STRESS → one notch down. Exception: ST
 
 ### 5.1 Capture tiers
 
+Both tiers run in tank-capture (02 §5.1), which writes everything below into ClickHouse `mkt`; Tank's Market Truth reads it from there. The normalization of §5.2 is implemented in tank-capture's Go port and kept identical to the Python reference `tank.market` by the parity harness.
+
 | Tier | Universe | Data (endpoints in 02 §4) | Cadence ⚙ |
 |---|---|---|---|
 | Base | The 22 tokens of 01 §4.1 on every covered market (coverage matrix in 02 §4.10) | REST 1m klines (Binance spot and USDⓈ-M klines carry taker-buy volume; others OHLCV only); 24h tickers; native OI (Binance `openInterest`, OKX `oiCcy`, Bybit `singleOpenInterest`, Hyperliquid `openInterest`); funding settled + estimate | Klines every 60 s; OI and funding every 300 s |
@@ -1336,8 +1350,9 @@ A synchronized composite includes only venues whose OI observations fall within 
 
 - **Reference venue:** the complete spot venue with the largest trailing-24h covered volume.
 - **Anchor:** T0 when exact and verified, else T1, else `known_to_us_at`; the type is recorded. Anchor price = last reference-venue trade before the anchor.
-- **Beta:** OLS of 1h log returns versus BTC (and ETH) over the stored history (up to 90 days, at least 7, §0), with the Blume adjustment `β_s = (2/3)·β + 1/3` (the standard correction toward 1); β = 1 with a flag when history is insufficient.
+- **Beta:** OLS of paired 1h log returns versus BTC (and ETH) over the stored history (up to 90 days, at least 7 days / 168 paired hourly returns, §0), with the Blume adjustment `β_s = (2/3)·β + 1/3` applied only to an estimable regression. Fewer paired returns produce `beta = null` with `INSUFFICIENT_HISTORY`; zero benchmark variance or an otherwise non-estimable regression produces `beta = null` with `NOT_ESTIMABLE`. Never substitute beta 1 for absent evidence. An estimated beta of zero remains a valid measurement.
 - **Per window:** `r_raw`; `r_btc_adj = r − β_btc·r_btc`; `r_eth_adj` likewise; `r_sector_adj = r − mean(r of sector constituents except the token)` using the baskets of 01 §4.1 (DEX & execution: UNI, CAKE, AERO, CRV, 1INCH, ZRX, COW; Lending & credit: AAVE, MORPHO, EUL; L1/settlement: AVAX, NEAR, XPL; Perp DEX: HYPE, LIT; RWA: ONDO; Interoperability: ZRO, QNT; Synthetic dollar: ENA); a basket with < 2 tradable constituents other than the token is compared with the DeFi composite (DEX & execution, Lending & credit, Perp DEX, RWA, Interoperability, Synthetic dollar); WLD gets `r_sector_adj` = n/a (NOT_APPLICABLE); `pctile` = percentile of `r_btc_adj` among the token's stored windows of the same length — the move relative to its own volatility (01 FR-T-09).
+- **Unavailable regression:** retain independently observed `r_raw` and other available benchmark evidence. A missing BTC/ETH beta makes the corresponding adjusted return unavailable with its actual reason; adjusted historical samples, their normal ranges/percentiles and adjusted pre-event run-up must not be synthesized. An explicitly selected raw-return benchmark (including BTC judged against its own raw history) remains independent of beta availability. Offline review uses the frozen beta and its estimation flag: flagged, missing or uncaptured beta cannot authorize an adjusted outcome or direction, and later prices must not supply a replacement regression. Historical records containing a flagged numeric fallback remain unchanged and are treated as unavailable for adjusted conclusions.
 - **Event window** runs from the anchor to the cutoff and is kept separate from rolling 24h statistics.
 - **Pre-event run-up:** BTC-adjusted return over [anchor − 24h, anchor) beyond its normal range (§0) → flag `PRE_EVENT_RUNUP`.
 
@@ -1563,7 +1578,7 @@ An identical preliminary with unchanged recorded facts and identical what/verdic
 - The card is template-first: classes, numbers, windows, units, enums and condition texts come from structured data. The agent supplies what, the verdict sentence and WHY bullets; FULL/UPDATE require 2–3 bullets. PRELIMINARY requires at least one nonblank bullet and unconfirmed. Supplied prose stays under the skill's wording rules.
 - The VERIFIED / NOT VERIFIED line is built from the claims: verified claims with their source; unverified claims with what is missing (e.g., "no OpenAI or World announcement").
 - PRELIMINARY reuses the existing PARTIAL layout and native score table. Prefix the usual MATERIAL headline with PRELIMINARY, append unconfirmed to NOT VERIFIED, and omit market/outlook/action blocks just as PARTIAL does. There is no separate preliminary rendering template. The source-link limitation is listed in §11.6.
-- At most ⚙3 token blocks; card length ≤ ⚙5,000 characters.
+- At most ⚙3 token blocks. Tank sets no card length limit of its own (only Telegram's, §7.6).
 - Missing fields print as `n/a (<reason>)`.
 
 Wording rules. They are written in the skill: the agent follows them in the verdict and WHY bullets, and the template's own text is written so it never breaks them. Tank does not check the card's prose; a broken rule is found in review (§11.5).
@@ -1585,11 +1600,19 @@ Wording rules. They are written in the skill: the agent follows them in the verd
 
 ### 7.6 Delivery and ledger
 
-- Telegram Bot API sendRichMessage with explicit rich_message.blocks for new cards in "Tank Alerts"; a compact, bordered table replaces the abbreviated Scores line. Its seven rows show the full dimension name, score out of 10 (or "Not assessed"), and saved rationale. Freeze the rich payload in the alert and evidence bundle before queueing delivery. Keep a readable text representation for follow-up context. Legacy cards and "Tank Ops" notices use sendMessage with parse_mode=HTML. Updates set reply_parameters.message_id to the first card. The rendered card, including table cells, is limited to 5,000 characters and Telegram's 500-block limit.
+- Telegram Bot API sendRichMessage with explicit rich_message.blocks for new cards in "Tank Alerts"; a compact, bordered table replaces the abbreviated Scores line. Its seven rows show the full dimension name, score out of 10 (or "Not assessed"), and saved rationale. Freeze the rich payload in the alert and evidence bundle before queueing delivery. Keep a readable text representation for follow-up context. Legacy cards and "Tank Ops" notices use sendMessage with parse_mode=HTML. Updates set reply_parameters.message_id to the first card. Tank sets no length limit of its own: `publish_card` refuses only a card whose rich message exceeds Telegram's limits (32,768 characters including table cells, 500 blocks), with the reason and the counts, so the agent can shorten it; nothing is cut silently.
 - Before sending, the ledger is checked for (`alert_id`, `version`, `channel`) = SENT; if present, nothing is re-sent.
 - Retries with exponential backoff (1, 2, 4, 8, 16 s), honoring rate-limit `retry_after`. After the last attempt the status is FAILED and Tank Ops gets DELIVERY_FAILED.
-- Operator chat: delivery failure; daily heartbeat at ⚙08:00 UTC (alerts in 24 h, hot-set size, queue lag, LLM spending).
-- Each ops notice is an `out.ops_notices` row plus a DELIVER job, written by the scheduler (HEARTBEAT) or `delivery` (DELIVERY_FAILED); its delivery transitions go to the same ledger with `notice_id` set.
+- "Tank Ops" gets four kinds of notice (01 §7.2). Each is an `out.ops_notices` row plus a DELIVER job in `telegram:ops`, written in one transaction; its delivery transitions go to the same ledger with `notice_id` set:
+
+| Kind | Written by | When | Delivery |
+|---|---|---|---|
+| ITEM_PROGRESS | `ops-progress` | Each processing stage of a new unique material: received, filter passed / rejected / not required (stage codes `JEV_*`, kept from Jev so history keeps its meaning), queued for and accepted by the agent, an extra source fetched by the agent, event recorded or observation added, no event, assessed, analysis updated, card blocked / queued / sent / failed, agent finished, processing failed or expired. One notice per material, stage and reason | Priority 2, 7-day expiry. One card per material in `out.ops_cards`: the first stage is sent with sendMessage, later stages edit that message (editMessageText) |
+| ENTRY_ERRORS | `source-poller` | A source poll found entries that do not become materials (no identifier or link, an entry outside the source's format, a damaged feed document, a tracked Snapshot proposal missing, an X profile not read). Each broken entry is reported once: its `ENTRY_ERROR` marker is keyed by source, feed, reason and the entry's own identity, not by the poll time; all new errors of one poll form one notice | Priority 2, 7-day expiry; text cut to Telegram's limit with "… and N more", the full list stays in the notice. For an X profile whose attempts all failed, the HTTP responses (status, allowlisted headers, body, without credentials or cookies) go as documents (sendDocument) in reply to the notice, each with its own delivery receipt |
+| DELIVERY_FAILED | `delivery` | A card or update for "Tank Alerts" reached its terminal failure (5 attempts); the material's card also shows the failed stage. A failed Ops notice creates no further notice | Priority 0, 5 attempts, 1-day expiry |
+| HEARTBEAT | `scheduler` | The first scheduler tick at or after ⚙08:00 UTC each day: cards delivered in the last 24 h, tokens in the hot set, the analysis backlog (queued, running) and the oldest queued job's lag, LLM spending since 00:00 UTC (the known subtotal plus the number of usage records without a cost), and the number of Ops cards that failed to deliver or update | Priority 0, 5 attempts, 1-day expiry |
+
+ITEM_PROGRESS and ENTRY_ERRORS are not written in replay or when `ops_progress_enabled` is off. A reader's reply to the card of a material goes to the agent session that handled it (01 FR-P-03).
 
 ---
 
@@ -1607,7 +1630,7 @@ Wording rules. They are written in the skill: the agent follows them in the verd
 ## 9. Adaptive polling
 
 - **Token tier:** BASE → HOT when the agent calls `get_market_truth` for a MAJOR+ event → BASE once that event's +72h checkpoint is captured and no open call or armed condition exists. The hot set is capped at ⚙15 tokens; the lowest-priority token (lowest EMS class, then the oldest event) is demoted.
-- **Hand-off:** ESCALATE_TOKENS (a job of `get_market_truth`) writes the token to `mkt.hot_tokens` and calls `market`, which subscribes it on every covered market (02 §4.10) and fills the pre-event windows (§5.1). The scheduler applies the demotion rule every minute, and `market` unsubscribes a demoted token. On start, `market` subscribes every token in `mkt.hot_tokens` again.
+- **Hand-off:** ESCALATE_TOKENS (a job of `get_market_truth`) has `market` write the token to `mkt.hot_tokens` and a pre-event backfill obligation to `mkt.backfill_runs`. tank-capture follows `mkt.hot_tokens`: it subscribes the token on every covered market (02 §4.10), fills the pre-event windows (§5.1) and marks the obligation done or failed. The scheduler applies the demotion rule every minute by removing the token from `mkt.hot_tokens`, and tank-capture unsubscribes it. After a restart, tank-capture subscribes every token in `mkt.hot_tokens` again and Tank re-creates any missing obligation.
 - **Source cadence:** NORMAL ↔ ESCALATED (15 s) with an expiry per trigger (01 FR-D-02): set by `set_assessment` when the final class is MAJOR+ (2 h) and by `schedule_milestone` (the milestone window); the scheduler then runs that source's loop every 15 s. Each source has a token-bucket budget derived from its limits; escalation never exceeds it, and a rate-limit response triggers backoff.
 
 ---
@@ -1751,8 +1774,8 @@ Every number the rules use, with its basis. A number without a basis is not used
 | Area | Parameter | Value | Basis |
 |---|---|---|---|
 | Conventions | Normal range; majority; significant flow | Middle 95% of the token's own history; more than half; `\|CVD\| ≥ 2·√Σq²` | Definitions in §0; 95% is the usual significance level |
-| Filter | Jev model | `typesafe/jev-1.13` (OpenRouter) | Version pin, so results are reproducible (01 D6) |
-| | Cutoff | Set at V0-B | Calibrated: the highest value at which ≥ 95% of the items labeled relevant pass (01 V0-B, §3.1) |
+| Filter and routing | Model | Microsoft-Decision-1 version 1 on Azure Foundry, deployment `decision-1` (`TANK_FOUNDRY_DEPLOYMENT`); prompt version `decision-1-v1` | Operator's decision of 25 Oct 2026; the answer must name `microsoft-decision-1`, and cached scores are keyed by deployment and prompt version, so results stay attributable (01 D6) |
+| | Filter cutoff | 0.5 (uncalibrated midpoint) until set at V0-B | Calibrated: the highest value at which ≥ 95% of the items labeled relevant pass (01 V0-B, §3.1) |
 | Freshness | FRESH / NORMAL / MEDIUM / POOR / OLD upper bounds (STALE beyond) | 1 h / 4 h / 8 h / 24 h / 48 h | 01 FR-E-03 |
 | Grading | STRUCTURAL SHOCK minimum stage | APPROVED, verified | 01 §6.3 |
 | Beneficiaries | Credible: capture / exposure / state | ≥ INDIRECT / ≥ likely rail / ≥ BUILT | Rubric levels (§4.5, §4.7) |
@@ -1768,7 +1791,7 @@ Every number the rules use, with its basis. A number without a basis is not used
 | Relative | History behind normal ranges and β | Stored base tier, at least 7 d | 90-day base tier (01 §9); 7 d = one weekly cycle |
 | | β adjustment | (2/3)·β + 1/3 | Blume adjustment (standard) |
 | Lifecycle | Event closes; open call expires | 7 d without news and no pending milestone; 7 d | Longest forecast horizon (01 FR-O-01) |
-| Alerting | Update rate limit; card max chars | 15 min; 5,000 | 01 FR-A-04, FR-A-05 |
+| Alerting | Update rate limit | 15 min | 01 FR-A-04 |
 | | Heartbeat | 08:00 UTC | 01 §7.2 |
 | Capture & polling | Per-source intervals; escalated interval; escalation expiry | 01 §4.2 max delays (02 §3); 15 s; 2 h | 01 §4.2, FR-D-02 |
 | | Hot-set cap | 15 | 01 FR-B-03 |
@@ -1782,7 +1805,7 @@ Every number the rules use, with its basis. A number without a basis is not used
 | | Sandbox | litebox microVM per session (environment `tank-analysis`); internet unrestricted; PostgreSQL and ClickHouse read-only as `tank_agent` | Operator's decision |
 | | Statement timeout and connection limit of `tank_agent` | Set at V0-G | Calibrated: agent queries never push the service past the speed limits of 01 §9 |
 | | Web search | DuckDuckGo through `ddgs` 9.16.0; ≥ 2 s between searches; retries after 5, 15 and 45 s | No key, no cost (01 D9); DuckDuckGo publishes no rate limit, so searches are spaced and retried |
-| Routing | Window; cutoff | 3 d; calibrated offline before the first start (V0-B set) | 01 FR-E-02; calibrated (§3.1) |
+| Routing | Window; cutoff | 3 d; 0.5 (uncalibrated midpoint) until set at V0-B | 01 FR-E-02; calibrated: precision and recall both ≥ 0.90 (01 V0-B, §3.1) |
 
 ---
 
@@ -1799,7 +1822,7 @@ Every input left open in earlier drafts is fixed in this version:
 | Exchange wallet lists (pinned commits) | 02 §4.8 |
 | Test cases | §11.3 |
 
-Values the operator provides at installation (kept outside the repository):
+Values the operator provides at installation, kept outside the repository. Every secret below is a variable of the production host's single `.env` (`/srv/tank-deploy/.env`, 02 §8); there are no Docker secrets:
 
 | Value | Where it is stored |
 |---|---|
@@ -1809,7 +1832,8 @@ Values the operator provides at installation (kept outside the repository):
 | ChatGPT sign-in for `gpt-6.1-sol` (the operator's subscription) | `auth.json` written by `codex login` on the operator's computer, copied once into the `tank` volume `codex-auth`; `codex_gateway` keeps it refreshed |
 | Internal key between OpenMA's Model Card and `codex_gateway` | `.env` `CODEX_GATEWAY_KEY` |
 | OpenMA root and auth secrets; OpenMA API key | `.env` `OMA_ROOT_SECRET`, `OMA_AUTH_SECRET` and `OMA_API_KEY` |
-| OpenRouter API key (Jev) | `.env` `OPENROUTER_API_KEY`; environment `tank-analysis` (`OPENROUTER_API_KEY`) |
+| Azure Foundry key of Decision-1; optionally the resource origin and the deployment name | `.env` `TANK_FOUNDRY_API_KEY`; `TANK_FOUNDRY_ENDPOINT`, `TANK_FOUNDRY_DEPLOYMENT` (defaults in `.env.example`); never passed to the sandboxes |
+| OpenRouter API key (the agents' own scripts in the sandbox) | `.env` `OPENROUTER_API_KEY`; environment `tank-analysis` (`OPENROUTER_API_KEY`) |
 | Etherscan API key | `.env` `ETHERSCAN_API_KEY`; environment `tank-analysis` (`ETHERSCAN_API_KEY`) |
 | Password of the read-only role `tank_agent` (PostgreSQL and ClickHouse) | `.env` `TANK_AGENT_DB_PASSWORD`; environment `tank-analysis` (`TANK_DB_URL`) |
 
@@ -1932,7 +1956,7 @@ CREATE TABLE evt.ems_assessments (
   UNIQUE (event_id, version)
 );
 
-CREATE TABLE mkt.hot_tokens (                          -- hot set; read on start to subscribe again
+CREATE TABLE mkt.hot_tokens (                          -- hot set; tank-capture subscribes it, also after a restart
   token_id    text NOT NULL,
   event_id    text NOT NULL,
   priority    smallint NOT NULL,                       -- EMS class rank
@@ -2007,11 +2031,19 @@ CREATE TABLE out.alerts (                              -- append-only, one row p
 
 CREATE TABLE out.ops_notices (                         -- append-only
   notice_id   text PRIMARY KEY,
-  kind        text NOT NULL CHECK (kind IN ('DELIVERY_FAILED','HEARTBEAT')),
-  subject_id  text,
+  kind        text NOT NULL CHECK (kind IN ('ITEM_PROGRESS','ENTRY_ERRORS','ENTRY_ERROR',
+                                            'DELIVERY_FAILED','HEARTBEAT')),
+  subject_id  text,                                    -- item_id / source_id / alert_id
   text        text NOT NULL,
   created_at  timestamptz NOT NULL,
-  created_by  text NOT NULL
+  created_by  text NOT NULL                            -- ops-progress | source-poller | delivery | scheduler
+);
+
+CREATE TABLE out.ops_cards (                           -- mutable: the Ops card of one material
+  item_id      text NOT NULL,
+  chat_id      text NOT NULL,
+  message_ref  text,                                   -- Telegram message edited in place
+  UNIQUE (chat_id, item_id)
 );
 
 CREATE TABLE out.deliveries (                          -- append-only ledger, one row per transition
@@ -2045,18 +2077,20 @@ CREATE TABLE ops.jobs (
 );
 CREATE INDEX ON ops.jobs (status, priority, run_after);
 
+-- A column without NOT NULL is null only with its reason in document.missing_fields.<column>;
+-- an unknown cost is never stored as 0.
 CREATE TABLE ops.llm_usage (
   id                  bigserial PRIMARY KEY,
   at                  timestamptz NOT NULL,
-  call                text NOT NULL,                   -- FILTER | ROUTE (Jev) | SESSION | SCOUT
+  call                text NOT NULL,                   -- FILTER | ROUTE (Decision-1) | SESSION | SCOUT
   subject_id          text NOT NULL,                   -- item_id / event_id / alert_id / prp_id
   model               text NOT NULL,
-  effort              text NOT NULL,
-  input_tokens        int NOT NULL,
-  cache_read_tokens   int NOT NULL,
-  cache_write_tokens  int NOT NULL,
-  output_tokens       int NOT NULL,
-  cost_usd            numeric(10,6) NOT NULL,
+  effort              text,                            -- null for Decision-1
+  input_tokens        int,
+  cache_read_tokens   int,                             -- null for Decision-1
+  cache_write_tokens  int,                             -- null for Decision-1
+  output_tokens       int,
+  cost_usd            numeric(10,6),                   -- null for Decision-1: Azure reports no cost
   web_searches        int NOT NULL DEFAULT 0,
   stop_reason         text NOT NULL
 );

@@ -3145,7 +3145,7 @@ class EventToolService:
             policy=policy,
         )
         text = compose_card(card_inputs)
-        rich_message = card_rich_message(text, assessment, max_chars=policy.card_max_chars)
+        rich_message = card_rich_message(text, assessment)
         previous_failed = previous and bool(
             await self.repo.list_latest(
                 "out.deliveries",

@@ -2595,6 +2595,44 @@
         "test_new_running_observation_does_not_reuse_an_earlier_end_turn_as_completion",
         "test_send_telegram_file_replies_with_the_session_output_once"
       ]
+    },
+    {
+      "sites": [
+        {
+          "path": "src/tank/contracts/jobs.py",
+          "symbol": "JobMetadata",
+          "line": 13
+        }
+      ],
+      "kind": "unreported historical admission-wait metadata",
+      "reason": "The real AdmissionDeferred writer emits canonical slot_waiting_since precision/reason/bucket-anchor facets. These fields are optional only because retained scalar-only/all-null-facet rows genuinely did not report precision. Any non-null facet uses Timestamp coherence validation; otherwise a present scalar must be an aware timestamp. Absence does not gain a precision/reason. Unknown fields remain forbidden.",
+      "validation": [
+        "test_real_admission_defer_then_wake_preserves_typed_queue_contract",
+        "test_scalar_or_null_wait_metadata_roundtrips_without_invented_precision",
+        "test_incoherent_wait_clock_rejects_before_any_queue_write"
+      ]
+    },
+    {
+      "sites": [
+        {
+          "path": "src/tank/runtime_retry.py",
+          "symbol": "worker_retry_schedule",
+          "line": 34
+        },
+        {
+          "path": "src/tank/runtime_retry.py",
+          "symbol": "ApplicationBackoff",
+          "line": 12
+        }
+      ],
+      "kind": "explicit application backoff versus provider absence",
+      "reason": "TelegramResponseError.retry_after=None is genuine unreported optional provider metadata and remains None on the exception. A reported positive Telegram delay is used directly; DeliveryError carries its actual delivery directive, including known zero. Errors without a usable reported Telegram delay use the declared existing exponential application policy from the validated actual attempt count, saturated at 60 without unbounded exponentiation. No arbitrary getattr retry field, default attempt 1, or fabricated provider retry_after is used. This is application scheduling policy, not recovered wire evidence.",
+      "validation": [
+        "test_real_answer_error_requeues_or_finishes_using_reported_or_application_delay",
+        "test_backoff_uses_actual_count_and_saturates_without_exponentiating_unbounded_input",
+        "test_reported_delay_and_delivery_zero_are_not_treated_as_absence",
+        "test_invalid_attempt_cannot_acquire_a_default_counter"
+      ]
     }
   ]
 }

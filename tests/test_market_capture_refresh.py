@@ -24,6 +24,7 @@ from test_event_tools import complete_assessment_fixture, complete_event_fixture
 from test_session_binding_concurrency import fixture_repo
 from test_session_binding_concurrency import seed as seed_typed_session
 from test_truth_start_fixture import compact_start_snapshot
+from truth_support import fixture_truth_config
 
 from tank.agents import SessionService
 from tank.analysis.decision_codec import decision_inputs_from_records
@@ -706,7 +707,7 @@ def test_authored_current_minute_retains_estimable_hourly_benchmark_history() ->
 
     end = parse_time("2026-10-16T12:37:00Z")
     snapshot = shifted_snapshot(end)
-    result = compute_market_truth(snapshot)
+    result = compute_market_truth(snapshot, config=fixture_truth_config())
     assert result["cutoff"] == iso(end)
     assert result["relative"]["beta_btc"] is not None
     assert result["relative"]["beta_flags"]["btc"] is None

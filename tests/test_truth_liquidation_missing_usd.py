@@ -5,6 +5,7 @@ from pathlib import Path
 from runpy import run_path
 
 import pytest
+from truth_support import fixture_truth_config
 
 from tank.analysis.truth import compute_market_truth
 
@@ -50,7 +51,7 @@ def test_actual_truth_keeps_liquidation_sides_independent_when_fx_missing(missin
             notional_usd="700.0000000000000000001",
         ),
     ]
-    truth = compute_market_truth(snapshot)
+    truth = compute_market_truth(snapshot, config=fixture_truth_config())
     perp = truth["derivatives"]["per_venue"][0]
     missing = "long" if missing_side == "LONG_LIQ" else "short"
     other = "short" if missing == "long" else "long"
@@ -82,7 +83,7 @@ def test_missing_oi_does_not_drop_independent_funding_and_liquidation_observatio
             notional_usd="700.01",
         )
     ]
-    truth = compute_market_truth(snapshot)
+    truth = compute_market_truth(snapshot, config=fixture_truth_config())
     derivatives = truth["derivatives"]
     assert derivatives["synchronized"] is None
     perp = derivatives["per_venue"][0]

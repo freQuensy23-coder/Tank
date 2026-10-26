@@ -1280,3 +1280,54 @@ execution-barrier/tool/usage/event orchestration, remaining Telegram/file
 presentation coupling and the assigned vendor implementation backlog remain
 open. Earlier 19e0dc59 was an inactive contract checkpoint, not qualified
 caller activation; the final source and real caller proofs supersede it.
+
+Standalone public queue repair on clean main49 parent
+
+This companion starts from canonical 5b77f741 (normal 8f/main49 ancestry),
+without the held worker/native/retirement streams. Immutable negative
+checkpoint 047e21df reproduces three actual workflow failures and one passing
+provided-delay control in 5.36 seconds: an omitted Telegram retry_after leaves
+a real answer job RUNNING for both retryable and terminal attempts, and an
+actual admission cap defer writes clock facets rejected by typed queue reads.
+Evidence public-5b-before-unit is external. No caller/assertion was weakened.
+
+runtime_retry now makes the existing application backoff explicit through
+closed models. TelegramResponseError keeps genuine provider retry_after=None;
+only the scheduling decision supplies application backoff from actual
+JobRetryState.attempts. Reported Telegram delays and actual DeliveryError
+directives remain distinct (including known delivery zero). Exponential
+backoff saturates at 60 without exponentiating unbounded counts, preserving
+the existing numeric policy. No default attempt 1 or arbitrary getattr error
+field remains at this worker call site. This does not claim the rest of the
+still-untyped worker body is migrated.
+
+The approved/reviewed slot-wait schema logic from held checkpoint 8840 is reimplemented
+narrowly here, not merged with its inactive ancestry. JobMetadata recognizes
+only the three actual optional clock facets already written by production.
+Any reported non-null facet uses Timestamp coherence validation; scalar-only/
+all-null metadata remains unreported and strictly aware, without invented
+precision/reason. The actual Runtime→SessionAdmission cap defer/wake path now
+survives JobRepository get, idempotent enqueue and next claim on both Memory
+and PostgreSQL. Malformed copied models refuse before writes; canonical JSON
+roundtrip checks preserve original scalar/nullable-facet representation.
+
+All 68 connected unit cases pass in 5.56 seconds, zero skips, p90 .404 seconds
+and maximum 1.005 seconds. All twelve selected actual PostgreSQL Runtime/
+precision/public-repair cases pass in 35.63 seconds, zero skips, complete
+collected set and source/service guards. Three answer controls use actual
+build_runtime, Inbox, HTTP response admission, worker and queue: omitted delay
+requeues at the declared 2 seconds, reported 7 remains 7, and the final attempt
+reaches FAILED/DELIVERY_FAILED without replacing the authoritative answer.
+Every service is real; the fixture preserves only pytest logging and rejects
+all undeclared external HTTP. Actual integration evidence is
+public-047-runtime-pg; units are public-047-connected-unit. Independent strict
+five policy/jobs/helper/pure-test targets and Ruff/check-format pass. Selected
+default mypy exposes existing outside-owner truth.py:5890 _condition_cache and
+deployment_postgres_helpers.py:65 nullable-row errors; no new target errors or
+suppressions were added. Whole Runtime/Session migration and assigned vendor
+backlog remain open; the clean public repair does not activate those cohorts.
+
+These owner gates ran on the frozen owned work-in-progress source above
+047e21df before the report/commit; product source did not change after the
+passing checks. The immutable wrapper fingerprints remain the exact proof
+identity; parent final-head integration qualification is still required.

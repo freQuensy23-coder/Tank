@@ -1,4 +1,4 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="1800" height="2045" viewBox="0 0 1800 2045" font-family="'Helvetica Neue', Helvetica, Arial, sans-serif">
+<svg xmlns="http://www.w3.org/2000/svg" width="1800" height="2294" viewBox="0 0 1800 2294" font-family="'Helvetica Neue', Helvetica, Arial, sans-serif">
 <defs>
 <marker id="ah-g" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0 L10 5 L0 10 z" fill="#52606D"/></marker>
 <marker id="as-g" viewBox="0 0 10 10" refX="1" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M10 0 L0 5 L10 10 z" fill="#52606D"/></marker>
@@ -15,15 +15,15 @@
 <marker id="ah-l" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0 L10 5 L0 10 z" fill="#9AA5B1"/></marker>
 <marker id="as-l" viewBox="0 0 10 10" refX="1" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M10 0 L0 5 L10 10 z" fill="#9AA5B1"/></marker>
 </defs>
-<rect x="0" y="0" width="1800" height="2045" fill="#FFFFFF"/>
-<rect x="378" y="150" width="1016" height="1865.0" rx="12" fill="#FBFCFD" stroke="#9FB3C8" stroke-width="1.2" stroke-dasharray="6 4"/>
+<rect x="0" y="0" width="1800" height="2294" fill="#FFFFFF"/>
+<rect x="378" y="150" width="1016" height="2114.0" rx="12" fill="#FBFCFD" stroke="#9FB3C8" stroke-width="1.2" stroke-dasharray="6 4"/>
 <text x="32.0" y="46.0" font-size="22" fill="#1F2933" text-anchor="start" xml:space="preserve"><tspan font-weight="700">Tank V0 — how it works: technical view</tspan></text>
-<text x="32.0" y="70.0" font-size="13" fill="#52606D" text-anchor="start" xml:space="preserve">One Tank service, PostgreSQL, ClickHouse and OpenMA in Docker on one Linux host. The service only reads; the agent sandboxes have open internet. Tank holds no exchange keys and cannot trade.</text>
-<text x="32.0" y="92.0" font-size="11.5" fill="#7B8794" text-anchor="start" xml:space="preserve">Source: 02 HLD v2.2 and 03 TDD (16 Oct 2026). Tank is one asyncio process built from modules; durable work is a job in <tspan font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace">ops.jobs</tspan>; only <tspan font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace">sessions</tspan> talks to OpenMA.</text>
+<text x="32.0" y="70.0" font-size="13" fill="#52606D" text-anchor="start" xml:space="preserve">Tank, tank-capture, ClickHouse, PostgreSQL and OpenMA in Docker on one Linux host. Tank and tank-capture only read; the agent sandboxes have open internet. Tank holds no exchange keys and cannot trade.</text>
+<text x="32.0" y="92.0" font-size="11.5" fill="#7B8794" text-anchor="start" xml:space="preserve">Source: 02 HLD v2.2 and 03 TDD (16 Oct 2026). Tank is one asyncio process built from modules; tank-capture is the only exchange client; durable work is a job in <tspan font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace">ops.jobs</tspan>; only <tspan font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace">sessions</tspan> talks to OpenMA.</text>
 <rect x="1422.0" y="26.0" width="22.0" height="12.0" rx="3" fill="#F5F7FA" stroke="#9AA5B1" stroke-width="1.0"/>
 <text x="1452.0" y="36.5" font-size="11.5" fill="#52606D" text-anchor="start" xml:space="preserve">External source</text>
 <rect x="1422.0" y="44.0" width="22.0" height="12.0" rx="3" fill="#FFFFFF" stroke="#334E68" stroke-width="1.3"/>
-<text x="1452.0" y="54.5" font-size="11.5" fill="#52606D" text-anchor="start" xml:space="preserve">Module of the Tank service · OpenMA</text>
+<text x="1452.0" y="54.5" font-size="11.5" fill="#52606D" text-anchor="start" xml:space="preserve">Tank module · tank-capture · OpenMA</text>
 <rect x="1422.0" y="62.0" width="22.0" height="12.0" rx="3" fill="#F6F3FC" stroke="#805AD5" stroke-width="1.2"/>
 <text x="1452.0" y="72.5" font-size="11.5" fill="#52606D" text-anchor="start" xml:space="preserve">Storage</text>
 <rect x="1422.0" y="80.0" width="22.0" height="12.0" rx="3" fill="#EEF5FC" stroke="#3182CE" stroke-width="1.3"/>
@@ -43,7 +43,7 @@
 <text x="433.0" y="328.0" font-size="11.5" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="370.0">Raw payload + SHA-256 → <tspan font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace">raw/items</tspan>; new item → <tspan font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace">source_items</tspan></text>
 <text x="433.0" y="343.0" font-size="11.5" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="370.0">+ FILTER_ITEM or ROUTE_ITEM job</text>
 <text x="422.0" y="361.5" font-size="11.5" fill="#7B8794" text-anchor="start" xml:space="preserve">•</text>
-<text x="433.0" y="361.0" font-size="11.5" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="370.0">S14: diff of the venues' instrument lists</text>
+<text x="433.0" y="361.0" font-size="11.5" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="370.0">Exchange hosts (S09–S11, S14 diffs) through tank-capture</text>
 <rect x="410.0" y="388.0" width="404.0" height="124.0" rx="8" fill="#FFFFFF" stroke="#334E68" stroke-width="1.3"/>
 <text x="421.0" y="411.0" font-size="13" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="382.0"><tspan font-weight="700" font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace">xsensor</tspan></text>
 <text x="422.0" y="433.5" font-size="11.5" fill="#7B8794" text-anchor="start" xml:space="preserve">•</text>
@@ -57,19 +57,17 @@
 <rect x="410.0" y="526.0" width="404.0" height="202.0" rx="8" fill="#FFFFFF" stroke="#334E68" stroke-width="1.3"/>
 <text x="421.0" y="549.0" font-size="13" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="382.0"><tspan font-weight="700" font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace">market</tspan></text>
 <text x="422.0" y="571.5" font-size="11.5" fill="#7B8794" text-anchor="start" xml:space="preserve">•</text>
-<text x="433.0" y="571.0" font-size="11.5" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="370.0">Hot tier ≤ 15 tokens: one task per venue WebSocket, ≤ 135</text>
-<text x="433.0" y="586.0" font-size="11.5" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="370.0">subscriptions on ≈ 10 connections — trades, books, mark/funding,</text>
-<text x="433.0" y="601.0" font-size="11.5" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="370.0">liquidations; a trade-ID gap is backfilled over REST</text>
-<text x="422.0" y="619.5" font-size="11.5" fill="#7B8794" text-anchor="start" xml:space="preserve">•</text>
-<text x="433.0" y="619.0" font-size="11.5" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="370.0">In the same module: 1-min flow bars per venue (aggressor side, size</text>
-<text x="433.0" y="634.0" font-size="11.5" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="370.0">buckets, completeness), 10 s book summaries; series and every print</text>
-<text x="433.0" y="649.0" font-size="11.5" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="370.0">written to ClickHouse</text>
-<text x="422.0" y="667.5" font-size="11.5" fill="#7B8794" text-anchor="start" xml:space="preserve">•</text>
-<text x="433.0" y="667.0" font-size="11.5" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="370.0">Base tier: 22 tokens, 181 series — klines every 60 s, OI + funding every</text>
-<text x="433.0" y="682.0" font-size="11.5" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="370.0">300 s</text>
-<text x="422.0" y="700.5" font-size="11.5" fill="#7B8794" text-anchor="start" xml:space="preserve">•</text>
-<text x="433.0" y="700.0" font-size="11.5" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="370.0">A token turns hot → subscribed on every venue + backfill −24 h, −4 h,</text>
-<text x="433.0" y="715.0" font-size="11.5" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="370.0">−1 h · Binance archive files · DefiLlama daily · Etherscan balances</text>
+<text x="433.0" y="571.0" font-size="11.5" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="370.0">No exchange connection: tank-capture holds the venue</text>
+<text x="433.0" y="586.0" font-size="11.5" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="370.0">streams and pollers and writes ClickHouse</text>
+<text x="422.0" y="604.5" font-size="11.5" fill="#7B8794" text-anchor="start" xml:space="preserve">•</text>
+<text x="433.0" y="604.0" font-size="11.5" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="370.0">Hot set ≤ 15 tokens in <tspan font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace">mkt.hot_tokens</tspan>: escalation, expiry,</text>
+<text x="433.0" y="619.0" font-size="11.5" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="370.0">demotion; pre-event backfill (−24 h, −4 h, −1 h) and</text>
+<text x="433.0" y="634.0" font-size="11.5" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="370.0">window repairs as obligations for tank-capture</text>
+<text x="422.0" y="652.5" font-size="11.5" fill="#7B8794" text-anchor="start" xml:space="preserve">•</text>
+<text x="433.0" y="652.0" font-size="11.5" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="370.0">Market snapshots for Market Truth read from ClickHouse</text>
+<text x="422.0" y="670.5" font-size="11.5" fill="#7B8794" text-anchor="start" xml:space="preserve">•</text>
+<text x="433.0" y="670.0" font-size="11.5" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="370.0">Supply: DefiLlama (unlocks daily, fees, lending,</text>
+<text x="433.0" y="685.0" font-size="11.5" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="370.0">stablecoins) · Etherscan balances</text>
 <rect x="410.0" y="742.0" width="404.0" height="139.0" rx="8" fill="#FFFFFF" stroke="#334E68" stroke-width="1.3"/>
 <text x="421.0" y="765.0" font-size="13" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="382.0"><tspan font-weight="700" font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace">scheduler</tspan></text>
 <text x="422.0" y="787.5" font-size="11.5" fill="#7B8794" text-anchor="start" xml:space="preserve">•</text>
@@ -114,26 +112,26 @@
 <text x="842.0" y="395.0" font-size="11.5" fill="#52606D" text-anchor="start" xml:space="preserve" data-maxw="508.0">Jobs FILTER_ITEM and ROUTE_ITEM:</text>
 <rect x="842.0" y="410.0" width="508.0" height="77.0" rx="6" fill="#F7FAFC" stroke="#9AA5B1" stroke-width="1.0"/>
 <text x="850.0" y="430.0" font-size="12" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="492.0"><tspan font-weight="700" font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace">FILTER_ITEM</tspan></text>
-<text x="850.0" y="450.0" font-size="11" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="492.0">Asks Jev one yes/no question about each news item, GitHub commit and post of founders, C-level</text>
-<text x="850.0" y="464.0" font-size="11" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="492.0">and other accounts: is it about crypto? Above the cutoff (set at V0-B) → ROUTE_ITEM; below →</text>
-<text x="850.0" y="478.0" font-size="11" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="492.0">SKIPPED with its score</text>
-<rect x="1312.7" y="416.0" width="29.3" height="17" rx="8.5" fill="#EEF5FC" stroke="#3182CE" stroke-width="1"/>
-<text x="1318.7" y="428.5" font-size="10.5" fill="#2B6CB0" text-anchor="start" xml:space="preserve"><tspan font-weight="700">Jev</tspan></text>
+<text x="850.0" y="450.0" font-size="11" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="492.0">Asks Decision-1 one yes/no question about each news item, GitHub commit and post of founders,</text>
+<text x="850.0" y="464.0" font-size="11" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="492.0">C-level and other accounts: is it about crypto? At or above the cutoff (0.5 until V0-B) →</text>
+<text x="850.0" y="478.0" font-size="11" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="492.0">ROUTE_ITEM; below → SKIPPED with its score</text>
+<rect x="1279.0" y="416.0" width="63.0" height="17" rx="8.5" fill="#EEF5FC" stroke="#3182CE" stroke-width="1"/>
+<text x="1285.0" y="428.5" font-size="10.5" fill="#2B6CB0" text-anchor="start" xml:space="preserve"><tspan font-weight="700">Decision-1</tspan></text>
 <rect x="842.0" y="499.0" width="508.0" height="77.0" rx="6" fill="#F7FAFC" stroke="#9AA5B1" stroke-width="1.0"/>
 <text x="850.0" y="519.0" font-size="12" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="492.0"><tspan font-weight="700" font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace">ROUTE_ITEM</tspan></text>
 <text x="850.0" y="539.0" font-size="11" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="492.0">One event, one session. For each event with news in the last 3 days that shares an entity with the</text>
-<text x="850.0" y="553.0" font-size="11" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="492.0">item, Jev answers: the same event or a development of it? Best match above the cutoff →</text>
+<text x="850.0" y="553.0" font-size="11" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="492.0">item, Decision-1 answers: the same event or a development of it? Best match above the cutoff →</text>
 <text x="850.0" y="567.0" font-size="11" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="492.0">ITEM_ADDED into that session; none → NEW_ITEM opens a new one (AGENT_MESSAGE job)</text>
-<rect x="1312.7" y="505.0" width="29.3" height="17" rx="8.5" fill="#EEF5FC" stroke="#3182CE" stroke-width="1"/>
-<text x="1318.7" y="517.5" font-size="10.5" fill="#2B6CB0" text-anchor="start" xml:space="preserve"><tspan font-weight="700">Jev</tspan></text>
+<rect x="1279.0" y="505.0" width="63.0" height="17" rx="8.5" fill="#EEF5FC" stroke="#3182CE" stroke-width="1"/>
+<text x="1285.0" y="517.5" font-size="10.5" fill="#2B6CB0" text-anchor="start" xml:space="preserve"><tspan font-weight="700">Decision-1</tspan></text>
 <path d="M 882.0 488.0 L 882.0 498.0" fill="none" stroke="#334E68" stroke-width="1.2" marker-end="url(#ah-s)" stroke-linejoin="round"/>
 <rect x="830.0" y="604.0" width="532.0" height="91.0" rx="8" fill="#FFFFFF" stroke="#334E68" stroke-width="1.3"/>
 <text x="841.0" y="627.0" font-size="13" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="510.0"><tspan font-weight="700" font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace">delivery</tspan></text>
 <text x="842.0" y="649.5" font-size="11.5" fill="#7B8794" text-anchor="start" xml:space="preserve">•</text>
-<text x="853.0" y="649.0" font-size="11.5" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="498.0">DELIVER jobs: Telegram <tspan font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace">sendMessage</tspan> (HTML); updates as replies to the first card</text>
+<text x="853.0" y="649.0" font-size="11.5" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="498.0">DELIVER jobs: Alerts via <tspan font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace">sendRichMessage</tspan>, Ops via <tspan font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace">sendMessage</tspan> (HTML)</text>
 <text x="842.0" y="667.5" font-size="11.5" fill="#7B8794" text-anchor="start" xml:space="preserve">•</text>
-<text x="853.0" y="667.0" font-size="11.5" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="498.0">Ledger <tspan font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace">out.deliveries</tspan>: one row per transition; 5 attempts (1–16 s backoff), then FAILED +</text>
-<text x="853.0" y="682.0" font-size="11.5" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="498.0">DELIVERY_FAILED notice</text>
+<text x="853.0" y="667.0" font-size="11.5" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="498.0">Updates reply to the first card; ledger <tspan font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace">out.deliveries</tspan>: one row per transition;</text>
+<text x="853.0" y="682.0" font-size="11.5" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="498.0">5 attempts (1–16 s backoff), then FAILED + DELIVERY_FAILED notice</text>
 <rect x="830.0" y="709.0" width="532.0" height="515.0" rx="8" fill="#FFFFFF" stroke="#334E68" stroke-width="1.3"/>
 <text x="842.0" y="731.0" font-size="13" fill="#1F2933" text-anchor="start" xml:space="preserve"><tspan font-weight="700" font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace">sessions</tspan></text>
 <text x="842.0" y="749.0" font-size="11.5" fill="#52606D" text-anchor="start" xml:space="preserve" data-maxw="508.0">The only module that talks to OpenMA. AGENT_MESSAGE jobs: NEW_ITEM opens a session;</text>
@@ -176,9 +174,9 @@
 <text x="1032.0" y="1316.5" font-size="11.5" fill="#7B8794" text-anchor="start" xml:space="preserve">•</text>
 <text x="1043.0" y="1316.0" font-size="11.5" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="308.0">Signs each call with the ChatGPT (Codex) token from the</text>
 <text x="1043.0" y="1331.0" font-size="11.5" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="308.0">volume <tspan font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace">codex-auth</tspan>, refreshes it, forwards to OpenAI</text>
-<text x="410.0" y="213.0" font-size="14.5" fill="#1F2933" text-anchor="start" xml:space="preserve"><tspan font-weight="700">Tank service — container </tspan><tspan font-weight="700" font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace">tank</tspan><tspan font-weight="700">: one Python 3.12 asyncio process (</tspan><tspan font-weight="700" font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace">tank serve</tspan><tspan font-weight="700">), a modular monolith</tspan></text>
-<text x="410.0" y="233.0" font-size="11.5" fill="#52606D" text-anchor="start" xml:space="preserve">Modules call each other directly · loops and stream tasks keep sources and markets read · work that must survive a restart is a job in <tspan font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace">ops.jobs</tspan>, run by the service's own workers</text>
-<rect x="410.0" y="1400.0" width="340.0" height="395.0" rx="8" fill="#F6F3FC" stroke="#805AD5" stroke-width="1.2"/>
+<text x="410.0" y="213.0" font-size="14.5" fill="#1F2933" text-anchor="start" xml:space="preserve"><tspan font-weight="700">Tank service — container </tspan><tspan font-weight="700" font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace">tank</tspan><tspan font-weight="700">: one Python 3.13 asyncio process (</tspan><tspan font-weight="700" font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace">tank serve</tspan><tspan font-weight="700">), a modular monolith</tspan></text>
+<text x="410.0" y="233.0" font-size="11.5" fill="#52606D" text-anchor="start" xml:space="preserve">Modules call each other directly · loops keep the sources read; market data comes from ClickHouse · durable work is a job in <tspan font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace">ops.jobs</tspan>, run by the service's own workers</text>
+<rect x="410.0" y="1400.0" width="340.0" height="380.0" rx="8" fill="#F6F3FC" stroke="#805AD5" stroke-width="1.2"/>
 <text x="421.0" y="1423.0" font-size="13" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="318.0"><tspan font-weight="700">PostgreSQL 16 — container </tspan><tspan font-weight="700" font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace">postgres</tspan><tspan font-weight="700">, database</tspan></text>
 <text x="421.0" y="1440.0" font-size="13" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="318.0"><tspan font-weight="700" font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace">tank</tspan></text>
 <text x="422.0" y="1462.5" font-size="11.5" fill="#7B8794" text-anchor="start" xml:space="preserve">•</text>
@@ -193,24 +191,23 @@
 <text x="433.0" y="1552.0" font-size="11.5" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="306.0"><tspan font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace">evt</tspan> — events, claims, state changes, EMS, beneficiary</text>
 <text x="433.0" y="1567.0" font-size="11.5" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="306.0">maps</text>
 <text x="422.0" y="1587.5" font-size="11.5" fill="#7B8794" text-anchor="start" xml:space="preserve">•</text>
-<text x="433.0" y="1587.0" font-size="11.5" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="306.0"><tspan font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace">mkt</tspan> — unlocks, <tspan font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace">hot_tokens</tspan>, capture requests, gaps</text>
-<text x="433.0" y="1602.0" font-size="11.5" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="306.0">and streams (market series and prints: ClickHouse)</text>
+<text x="433.0" y="1587.0" font-size="11.5" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="306.0"><tspan font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace">mkt</tspan> — unlocks, <tspan font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace">hot_tokens</tspan> and the capture</text>
+<text x="433.0" y="1602.0" font-size="11.5" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="306.0">tables shared with tank-capture</text>
 <text x="422.0" y="1622.5" font-size="11.5" fill="#7B8794" text-anchor="start" xml:space="preserve">•</text>
 <text x="433.0" y="1622.0" font-size="11.5" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="306.0"><tspan font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace">ana</tspan> — market truth, outlooks, decisions, open calls</text>
 <text x="422.0" y="1642.5" font-size="11.5" fill="#7B8794" text-anchor="start" xml:space="preserve">•</text>
-<text x="433.0" y="1642.0" font-size="11.5" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="306.0"><tspan font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace">out</tspan> — alerts, deliveries, ops notices, evidence bundles,</text>
-<text x="433.0" y="1657.0" font-size="11.5" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="306.0">reaction checkpoints (append-only)</text>
+<text x="433.0" y="1642.0" font-size="11.5" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="306.0"><tspan font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace">out</tspan> — alerts, deliveries, ops notices and cards,</text>
+<text x="433.0" y="1657.0" font-size="11.5" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="306.0">evidence bundles, reaction checkpoints</text>
 <text x="422.0" y="1677.5" font-size="11.5" fill="#7B8794" text-anchor="start" xml:space="preserve">•</text>
-<text x="433.0" y="1677.0" font-size="11.5" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="306.0"><tspan font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace">ops</tspan> — agent sessions, tool calls, llm_usage</text>
+<text x="433.0" y="1677.0" font-size="11.5" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="306.0"><tspan font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace">ops</tspan> — sessions, tool calls, llm_usage, request budget</text>
 <text x="422.0" y="1697.5" font-size="11.5" fill="#7B8794" text-anchor="start" xml:space="preserve">•</text>
 <text x="433.0" y="1697.0" font-size="11.5" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="306.0"><tspan font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace">scout</tspan> — proposals · <tspan font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace">qa</tspan> — reviews, fixtures, replays</text>
 <text x="422.0" y="1717.5" font-size="11.5" fill="#7B8794" text-anchor="start" xml:space="preserve">•</text>
-<text x="433.0" y="1717.0" font-size="11.5" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="306.0">Domain and audit tables permanent; ClickHouse mkt:</text>
-<text x="433.0" y="1732.0" font-size="11.5" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="306.0">base tier 90 days, prints 30 days; volumes <tspan font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace">pg-data</tspan>,</text>
-<text x="433.0" y="1747.0" font-size="11.5" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="306.0"><tspan font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace">clickhouse-data</tspan>; Compose network only</text>
-<text x="422.0" y="1767.5" font-size="11.5" fill="#7B8794" text-anchor="start" xml:space="preserve">•</text>
-<text x="433.0" y="1767.0" font-size="11.5" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="306.0">Also hosts OpenMA's own database <tspan font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace">oma</tspan>: agents, skills,</text>
-<text x="433.0" y="1782.0" font-size="11.5" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="306.0">sessions, event logs</text>
+<text x="433.0" y="1717.0" font-size="11.5" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="306.0">Domain and audit tables permanent; volume</text>
+<text x="433.0" y="1732.0" font-size="11.5" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="306.0"><tspan font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace">pg-data</tspan>; Compose network only</text>
+<text x="422.0" y="1752.5" font-size="11.5" fill="#7B8794" text-anchor="start" xml:space="preserve">•</text>
+<text x="433.0" y="1752.0" font-size="11.5" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="306.0">Also hosts OpenMA's own database <tspan font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace">oma</tspan>: agents, skills,</text>
+<text x="433.0" y="1767.0" font-size="11.5" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="306.0">sessions, event logs</text>
 <rect x="830.0" y="1400.0" width="532.0" height="190.0" rx="8" fill="#FFFFFF" stroke="#334E68" stroke-width="1.3"/>
 <text x="841.0" y="1423.0" font-size="13" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="510.0"><tspan font-weight="700">OpenMA server — container </tspan><tspan font-weight="700" font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace">openma</tspan><tspan font-weight="700"> (Node)</tspan></text>
 <text x="842.0" y="1445.5" font-size="11.5" fill="#7B8794" text-anchor="start" xml:space="preserve">•</text>
@@ -232,7 +229,7 @@
 <text x="842.0" y="1669.5" font-size="11.5" fill="#7B8794" text-anchor="start" xml:space="preserve">•</text>
 <text x="853.0" y="1669.0" font-size="11.5" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="498.0">One microVM per session: the agent creates files and runs any command and script</text>
 <text x="842.0" y="1687.5" font-size="11.5" fill="#7B8794" text-anchor="start" xml:space="preserve">•</text>
-<text x="853.0" y="1687.0" font-size="11.5" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="498.0">Python 3.12 · pandas, numpy, scipy, statsmodels, duckdb, psycopg, httpx</text>
+<text x="853.0" y="1687.0" font-size="11.5" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="498.0">Python 3.13 · pandas, numpy, scipy, statsmodels, duckdb, psycopg, httpx</text>
 <text x="842.0" y="1705.5" font-size="11.5" fill="#7B8794" text-anchor="start" xml:space="preserve">•</text>
 <text x="853.0" y="1705.0" font-size="11.5" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="498.0">Internet: unrestricted</text>
 <text x="842.0" y="1723.5" font-size="11.5" fill="#7B8794" text-anchor="start" xml:space="preserve">•</text>
@@ -263,105 +260,98 @@
 <text x="44.0" y="544.5" font-size="11.5" fill="#7B8794" text-anchor="start" xml:space="preserve">•</text>
 <text x="55.0" y="544.0" font-size="11.5" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="284.0">86 public X profiles; one run-sync call every</text>
 <text x="55.0" y="559.0" font-size="11.5" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="284.0">120 s; no X account or session</text>
-<rect x="32.0" y="586.0" width="318.0" height="73.0" rx="8" fill="#F5F7FA" stroke="#9AA5B1" stroke-width="1.0"/>
-<text x="43.0" y="609.0" font-size="13" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="296.0"><tspan font-weight="700">Venue WebSockets — hot tier</tspan></text>
+<rect x="32.0" y="586.0" width="318.0" height="76.0" rx="8" fill="#F5F7FA" stroke="#9AA5B1" stroke-width="1.0"/>
+<text x="43.0" y="609.0" font-size="13" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="296.0"><tspan font-weight="700">Fundamentals and supply</tspan></text>
 <text x="44.0" y="631.5" font-size="11.5" fill="#7B8794" text-anchor="start" xml:space="preserve">•</text>
-<text x="55.0" y="631.0" font-size="11.5" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="284.0">Binance spot + USDⓈ-M · Coinbase · OKX · Bybit spot</text>
-<text x="55.0" y="646.0" font-size="11.5" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="284.0">+ linear · Kraken v2 · Hyperliquid</text>
-<rect x="32.0" y="673.0" width="318.0" height="142.0" rx="8" fill="#F5F7FA" stroke="#9AA5B1" stroke-width="1.0"/>
-<text x="43.0" y="696.0" font-size="13" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="296.0"><tspan font-weight="700">Venue REST, history, fundamentals</tspan></text>
-<text x="44.0" y="718.5" font-size="11.5" fill="#7B8794" text-anchor="start" xml:space="preserve">•</text>
-<text x="55.0" y="718.0" font-size="11.5" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="284.0">Same 6 venues: klines, OI, funding, 24 h tickers, trade</text>
-<text x="55.0" y="733.0" font-size="11.5" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="284.0">history</text>
-<text x="44.0" y="751.5" font-size="11.5" fill="#7B8794" text-anchor="start" xml:space="preserve">•</text>
-<text x="55.0" y="751.0" font-size="11.5" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="284.0"><tspan font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace">data.binance.vision</tspan> archive, checked against</text>
-<text x="55.0" y="766.0" font-size="11.5" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="284.0"><tspan font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace">.CHECKSUM</tspan></text>
-<text x="44.0" y="784.5" font-size="11.5" fill="#7B8794" text-anchor="start" xml:space="preserve">•</text>
-<text x="55.0" y="784.0" font-size="11.5" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="284.0">DefiLlama API + unlock datasets</text>
-<text x="44.0" y="802.5" font-size="11.5" fill="#7B8794" text-anchor="start" xml:space="preserve">•</text>
-<text x="55.0" y="802.0" font-size="11.5" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="284.0">Etherscan API v2: 17 Binance and 323 OKX wallets</text>
-<text x="394.0" y="174.0" font-size="11.5" fill="#52606D" text-anchor="start" xml:space="preserve">Any Linux host with Docker Compose and KVM · 32 GB RAM · 1 TB SSD · services <tspan font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace">tank</tspan>, <tspan font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace">openma</tspan>, <tspan font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace">postgres</tspan>, <tspan font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace">clickhouse</tspan>, each restart: unless-stopped · secrets as Docker secrets</text>
-<rect x="394.0" y="1823.0" width="235.5" height="176.0" rx="8" fill="#F6F3FC" stroke="#805AD5" stroke-width="1.2"/>
-<text x="404.0" y="1845.0" font-size="12.5" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="215.5"><tspan font-weight="700">Volume </tspan><tspan font-weight="700" font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace">tank-data</tspan></text>
-<text x="405.0" y="1867.5" font-size="11" fill="#7B8794" text-anchor="start" xml:space="preserve">•</text>
-<text x="416.0" y="1867.0" font-size="11" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="203.5"><tspan font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace">raw/items</tspan> — raw payloads from</text>
-<text x="416.0" y="1881.0" font-size="11" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="203.5"><tspan font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace">sources</tspan> and <tspan font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace">xsensor</tspan>; permanent</text>
-<text x="405.0" y="1898.5" font-size="11" fill="#7B8794" text-anchor="start" xml:space="preserve">•</text>
-<text x="416.0" y="1898.0" font-size="11" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="203.5"><tspan font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace">replay/evidence</tspan> — sealed JSONL</text>
-<text x="416.0" y="1912.0" font-size="11" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="203.5">prints from ClickHouse, one per</text>
-<text x="416.0" y="1926.0" font-size="11" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="203.5">replay run</text>
-<text x="405.0" y="1943.5" font-size="11" fill="#7B8794" text-anchor="start" xml:space="preserve">•</text>
-<text x="416.0" y="1943.0" font-size="11" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="203.5"><tspan font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace">archive/binance</tspan> — from <tspan font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace">market</tspan>;</text>
-<text x="416.0" y="1957.0" font-size="11" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="203.5">180 days</text>
-<text x="405.0" y="1974.5" font-size="11" fill="#7B8794" text-anchor="start" xml:space="preserve">•</text>
-<text x="416.0" y="1974.0" font-size="11" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="203.5"><tspan font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace">bundles/{sha256}</tspan> — evidence from</text>
-<text x="416.0" y="1988.0" font-size="11" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="203.5"><tspan font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace">publish_card</tspan>; permanent</text>
-<rect x="643.5" y="1823.0" width="235.5" height="97.0" rx="8" fill="#FFFFFF" stroke="#334E68" stroke-width="1.3"/>
-<text x="653.5" y="1845.0" font-size="12.5" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="215.5"><tspan font-weight="700" font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace">tank</tspan><tspan font-weight="700"> CLI</tspan></text>
-<text x="654.5" y="1867.5" font-size="11" fill="#7B8794" text-anchor="start" xml:space="preserve">•</text>
-<text x="665.5" y="1867.0" font-size="11" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="203.5">Short commands of the same program:</text>
-<text x="665.5" y="1881.0" font-size="11" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="203.5">review list / show / label · reaction · scout</text>
-<text x="665.5" y="1895.0" font-size="11" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="203.5">list / decide · sources check · coverage ·</text>
-<text x="665.5" y="1909.0" font-size="11" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="203.5">archive fetch · replay · bundle reproduce</text>
-<rect x="893.0" y="1823.0" width="235.5" height="131.0" rx="8" fill="#F6F3FC" stroke="#805AD5" stroke-width="1.2"/>
-<text x="903.0" y="1845.0" font-size="12.5" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="215.5"><tspan font-weight="700">Config repository (git, read-only</tspan></text>
-<text x="903.0" y="1862.0" font-size="12.5" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="215.5"><tspan font-weight="700">mount)</tspan></text>
-<text x="904.0" y="1884.5" font-size="11" fill="#7B8794" text-anchor="start" xml:space="preserve">•</text>
-<text x="915.0" y="1884.0" font-size="11" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="203.5">sources · registry · semantics ·</text>
-<text x="915.0" y="1898.0" font-size="11" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="203.5">dependency_map · exchange_addresses</text>
-<text x="915.0" y="1912.0" font-size="11" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="203.5">· thresholds (<tspan font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace">.yaml</tspan>) · skills/ · templates/</text>
-<text x="904.0" y="1929.5" font-size="11" fill="#7B8794" text-anchor="start" xml:space="preserve">•</text>
-<text x="915.0" y="1929.0" font-size="11" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="203.5">Commit hash = <tspan font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace">config_version</tspan> on</text>
-<text x="915.0" y="1943.0" font-size="11" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="203.5">every output; reload on SIGHUP</text>
-<rect x="1142.5" y="1823.0" width="235.5" height="170.0" rx="8" fill="#F6F3FC" stroke="#805AD5" stroke-width="1.2"/>
-<text x="1152.5" y="1845.0" font-size="12.5" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="215.5"><tspan font-weight="700">Docker secrets</tspan></text>
-<text x="1153.5" y="1867.5" font-size="11" fill="#7B8794" text-anchor="start" xml:space="preserve">•</text>
-<text x="1164.5" y="1867.0" font-size="11" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="203.5"><tspan font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace">oma_api_key</tspan> · <tspan font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace">oma_root_secret</tspan> ·</text>
-<text x="1164.5" y="1881.0" font-size="11" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="203.5"><tspan font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace">openrouter_api_key</tspan> ·</text>
-<text x="1164.5" y="1895.0" font-size="11" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="203.5"><tspan font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace">telegram_bot_token</tspan> ·</text>
-<text x="1164.5" y="1909.0" font-size="11" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="203.5"><tspan font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace">etherscan_api_key</tspan> ·</text>
-<text x="1164.5" y="1923.0" font-size="11" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="203.5"><tspan font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace">tank_agent_db_password</tspan> ·</text>
-<text x="1164.5" y="1937.0" font-size="11" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="203.5"><tspan font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace">apify_api_token</tspan> · <tspan font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace">codex_gateway_key</tspan></text>
-<text x="1153.5" y="1954.5" font-size="11" fill="#7B8794" text-anchor="start" xml:space="preserve">•</text>
-<text x="1164.5" y="1954.0" font-size="11" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="203.5">The ChatGPT sign-in (<tspan font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace">auth.json</tspan> from</text>
-<text x="1164.5" y="1968.0" font-size="11" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="203.5"><tspan font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace">codex</tspan> <tspan font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace">login</tspan>) sits in the <tspan font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace">tank</tspan> volume</text>
-<text x="1164.5" y="1982.0" font-size="11" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="203.5"><tspan font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace">codex-auth</tspan></text>
+<text x="55.0" y="631.0" font-size="11.5" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="284.0">DefiLlama API + unlock datasets</text>
+<text x="44.0" y="649.5" font-size="11.5" fill="#7B8794" text-anchor="start" xml:space="preserve">•</text>
+<text x="55.0" y="649.0" font-size="11.5" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="284.0">Etherscan API v2: 17 Binance and 323 OKX wallets</text>
+<text x="394.0" y="174.0" font-size="11.5" fill="#52606D" text-anchor="start" xml:space="preserve">Any Linux host with Docker Compose and KVM · 32 GB RAM · 1 TB SSD · services <tspan font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace">tank</tspan>, <tspan font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace">tank-capture</tspan>, <tspan font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace">clickhouse</tspan>, <tspan font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace">postgres</tspan>, <tspan font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace">openma</tspan>, restart: unless-stopped · secrets in one <tspan font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace">.env</tspan></text>
+<rect x="394.0" y="2060.0" width="235.5" height="176.0" rx="8" fill="#F6F3FC" stroke="#805AD5" stroke-width="1.2"/>
+<text x="404.0" y="2082.0" font-size="12.5" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="215.5"><tspan font-weight="700">Volume </tspan><tspan font-weight="700" font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace">tank-data</tspan></text>
+<text x="405.0" y="2104.5" font-size="11" fill="#7B8794" text-anchor="start" xml:space="preserve">•</text>
+<text x="416.0" y="2104.0" font-size="11" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="203.5"><tspan font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace">raw/items</tspan> — raw payloads from</text>
+<text x="416.0" y="2118.0" font-size="11" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="203.5"><tspan font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace">sources</tspan> and <tspan font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace">xsensor</tspan>; permanent</text>
+<text x="405.0" y="2135.5" font-size="11" fill="#7B8794" text-anchor="start" xml:space="preserve">•</text>
+<text x="416.0" y="2135.0" font-size="11" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="203.5"><tspan font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace">replay/evidence</tspan> — sealed JSONL</text>
+<text x="416.0" y="2149.0" font-size="11" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="203.5">prints from ClickHouse, one per</text>
+<text x="416.0" y="2163.0" font-size="11" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="203.5">replay run</text>
+<text x="405.0" y="2180.5" font-size="11" fill="#7B8794" text-anchor="start" xml:space="preserve">•</text>
+<text x="416.0" y="2180.0" font-size="11" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="203.5"><tspan font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace">archive/binance</tspan> — from <tspan font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace">market</tspan>;</text>
+<text x="416.0" y="2194.0" font-size="11" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="203.5">180 days</text>
+<text x="405.0" y="2211.5" font-size="11" fill="#7B8794" text-anchor="start" xml:space="preserve">•</text>
+<text x="416.0" y="2211.0" font-size="11" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="203.5"><tspan font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace">bundles/{sha256}</tspan> — evidence from</text>
+<text x="416.0" y="2225.0" font-size="11" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="203.5"><tspan font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace">publish_card</tspan>; permanent</text>
+<rect x="643.5" y="2060.0" width="235.5" height="97.0" rx="8" fill="#FFFFFF" stroke="#334E68" stroke-width="1.3"/>
+<text x="653.5" y="2082.0" font-size="12.5" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="215.5"><tspan font-weight="700" font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace">tank</tspan><tspan font-weight="700"> CLI</tspan></text>
+<text x="654.5" y="2104.5" font-size="11" fill="#7B8794" text-anchor="start" xml:space="preserve">•</text>
+<text x="665.5" y="2104.0" font-size="11" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="203.5">Short commands of the same program:</text>
+<text x="665.5" y="2118.0" font-size="11" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="203.5">review list / show / label · reaction · scout</text>
+<text x="665.5" y="2132.0" font-size="11" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="203.5">list / decide · sources check · coverage ·</text>
+<text x="665.5" y="2146.0" font-size="11" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="203.5">archive fetch · replay · bundle reproduce</text>
+<rect x="893.0" y="2060.0" width="235.5" height="131.0" rx="8" fill="#F6F3FC" stroke="#805AD5" stroke-width="1.2"/>
+<text x="903.0" y="2082.0" font-size="12.5" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="215.5"><tspan font-weight="700">Config repository (git, read-only</tspan></text>
+<text x="903.0" y="2099.0" font-size="12.5" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="215.5"><tspan font-weight="700">mount)</tspan></text>
+<text x="904.0" y="2121.5" font-size="11" fill="#7B8794" text-anchor="start" xml:space="preserve">•</text>
+<text x="915.0" y="2121.0" font-size="11" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="203.5">sources · registry · semantics ·</text>
+<text x="915.0" y="2135.0" font-size="11" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="203.5">dependency_map · exchange_addresses</text>
+<text x="915.0" y="2149.0" font-size="11" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="203.5">· thresholds (<tspan font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace">.yaml</tspan>) · skills/ · templates/</text>
+<text x="904.0" y="2166.5" font-size="11" fill="#7B8794" text-anchor="start" xml:space="preserve">•</text>
+<text x="915.0" y="2166.0" font-size="11" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="203.5">Commit hash = <tspan font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace">config_version</tspan> on</text>
+<text x="915.0" y="2180.0" font-size="11" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="203.5">every output; reload on SIGHUP</text>
+<rect x="1142.5" y="2060.0" width="235.5" height="188.0" rx="8" fill="#F6F3FC" stroke="#805AD5" stroke-width="1.2"/>
+<text x="1152.5" y="2082.0" font-size="12.5" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="215.5"><tspan font-weight="700">One </tspan><tspan font-weight="700" font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace">.env</tspan><tspan font-weight="700"> on the host</tspan></text>
+<text x="1153.5" y="2104.5" font-size="11" fill="#7B8794" text-anchor="start" xml:space="preserve">•</text>
+<text x="1164.5" y="2104.0" font-size="11" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="203.5"><tspan font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace">/srv/tank-deploy/.env</tspan></text>
+<text x="1164.5" y="2118.0" font-size="11" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="203.5">root-only, 0600; no Docker secrets</text>
+<text x="1153.5" y="2135.5" font-size="11" fill="#7B8794" text-anchor="start" xml:space="preserve">•</text>
+<text x="1164.5" y="2135.0" font-size="11" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="203.5">Compose passes each container only</text>
+<text x="1164.5" y="2149.0" font-size="11" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="203.5">its own variables, e.g.</text>
+<text x="1164.5" y="2163.0" font-size="11" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="203.5"><tspan font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace">TANK_FOUNDRY_API_KEY</tspan>,</text>
+<text x="1164.5" y="2177.0" font-size="11" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="203.5"><tspan font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace">APIFY_API_TOKEN</tspan>;</text>
+<text x="1164.5" y="2191.0" font-size="11" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="203.5">tank-capture: <tspan font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace">TANK_DB_PASSWORD</tspan> only</text>
+<text x="1153.5" y="2208.5" font-size="11" fill="#7B8794" text-anchor="start" xml:space="preserve">•</text>
+<text x="1164.5" y="2208.0" font-size="11" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="203.5">ChatGPT sign-in (<tspan font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace">auth.json</tspan> from</text>
+<text x="1164.5" y="2222.0" font-size="11" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="203.5"><tspan font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace">codex login</tspan>) in the <tspan font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace">tank</tspan> volume</text>
+<text x="1164.5" y="2236.0" font-size="11" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="203.5"><tspan font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace">codex-auth</tspan></text>
 <rect x="1422.0" y="410.0" width="346.0" height="124.0" rx="8" fill="#EEF5FC" stroke="#3182CE" stroke-width="1.3"/>
-<text x="1433.0" y="433.0" font-size="13" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="324.0"><tspan font-weight="700">Jev via OpenRouter</tspan></text>
+<text x="1433.0" y="433.0" font-size="13" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="324.0"><tspan font-weight="700">Decision-1 via Azure Foundry</tspan></text>
 <text x="1434.0" y="455.5" font-size="11.5" fill="#7B8794" text-anchor="start" xml:space="preserve">•</text>
-<text x="1445.0" y="455.0" font-size="11.5" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="312.0"><tspan font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace">POST</tspan> <tspan font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace">https://openrouter.ai/api/v1/systemone</tspan> ·</text>
-<text x="1445.0" y="470.0" font-size="11.5" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="312.0">model <tspan font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace">typesafe/jev-1.13</tspan></text>
+<text x="1445.0" y="455.0" font-size="11.5" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="312.0"><tspan font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace">POST …/providers/microsoft/v1/systemone</tspan> ·</text>
+<text x="1445.0" y="470.0" font-size="11.5" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="312.0">header <tspan font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace">api-key</tspan> · deployment <tspan font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace">decision-1</tspan></text>
 <text x="1434.0" y="488.5" font-size="11.5" fill="#7B8794" text-anchor="start" xml:space="preserve">•</text>
 <text x="1445.0" y="488.0" font-size="11.5" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="312.0">FILTER_ITEM: one yes/no question per item · ROUTE_ITEM:</text>
 <text x="1445.0" y="503.0" font-size="11.5" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="312.0">one per item and candidate event; answer = probability</text>
 <text x="1434.0" y="521.5" font-size="11.5" fill="#7B8794" text-anchor="start" xml:space="preserve">•</text>
-<text x="1445.0" y="521.0" font-size="11.5" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="312.0">≈ 1,890 calls/day, ≈ $0.07/day</text>
-<rect x="1422.0" y="604.0" width="346.0" height="109.0" rx="8" fill="#EEF8F1" stroke="#38A169" stroke-width="1.5"/>
+<text x="1445.0" y="521.0" font-size="11.5" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="312.0">≈ 1,890 calls/day; Azure reports no cost (unknown)</text>
+<rect x="1422.0" y="604.0" width="346.0" height="139.0" rx="8" fill="#EEF8F1" stroke="#38A169" stroke-width="1.5"/>
 <text x="1433.0" y="627.0" font-size="13" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="324.0"><tspan font-weight="700">Telegram Bot API</tspan></text>
 <text x="1434.0" y="649.5" font-size="11.5" fill="#7B8794" text-anchor="start" xml:space="preserve">•</text>
 <text x="1445.0" y="649.0" font-size="11.5" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="312.0">«Tank Alerts» — cards and threaded updates</text>
 <text x="1445.0" y="664.0" font-size="11.5" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="312.0">(<tspan font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace">reply_parameters.message_id</tspan>)</text>
 <text x="1434.0" y="682.5" font-size="11.5" fill="#7B8794" text-anchor="start" xml:space="preserve">•</text>
-<text x="1445.0" y="682.0" font-size="11.5" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="312.0">«Tank Ops» — failed deliveries and the 08:00 UTC heartbeat</text>
-<text x="1434.0" y="700.5" font-size="11.5" fill="#7B8794" text-anchor="start" xml:space="preserve">•</text>
-<text x="1445.0" y="700.0" font-size="11.5" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="312.0">Card ≤ 3,500 characters (API limit 4,096)</text>
-<rect x="1422.0" y="743.0" width="346.0" height="88.0" rx="8" fill="#FFFFFF" stroke="#CBD2D9" stroke-width="1.0"/>
-<text x="1433.0" y="766.0" font-size="13" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="324.0"><tspan font-weight="700">Operator</tspan></text>
-<text x="1434.0" y="788.5" font-size="11.5" fill="#7B8794" text-anchor="start" xml:space="preserve">•</text>
-<text x="1445.0" y="788.0" font-size="11.5" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="312.0">Reads «Tank Alerts» and «Tank Ops»; reviews cards and</text>
-<text x="1445.0" y="803.0" font-size="11.5" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="312.0">decides on scout proposals with the <tspan font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace">tank</tspan> CLI (<tspan font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace">docker</tspan></text>
-<text x="1445.0" y="818.0" font-size="11.5" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="312.0"><tspan font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace">compose</tspan> <tspan font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace">exec</tspan> <tspan font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace">tank</tspan> <tspan font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace">tank</tspan> <tspan font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace">…</tspan>)</text>
-<rect x="1422.0" y="855.0" width="346.0" height="88.0" rx="8" fill="#EEF5FC" stroke="#3182CE" stroke-width="1.3"/>
-<text x="1433.0" y="878.0" font-size="13" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="324.0"><tspan font-weight="700">DuckDuckGo search</tspan></text>
-<text x="1434.0" y="900.5" font-size="11.5" fill="#7B8794" text-anchor="start" xml:space="preserve">•</text>
-<text x="1445.0" y="900.0" font-size="11.5" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="312.0">The <tspan font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace">web_search</tspan> tool: <tspan font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace">ddgs</tspan> library, DuckDuckGo only; no</text>
-<text x="1445.0" y="915.0" font-size="11.5" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="312.0">key, no cost; at most one search every 2 s; results stored as</text>
-<text x="1445.0" y="930.0" font-size="11.5" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="312.0">evidence</text>
-<rect x="1422.0" y="957.0" width="346.0" height="73.0" rx="8" fill="#F5F7FA" stroke="#9AA5B1" stroke-width="1.0"/>
-<text x="1433.0" y="980.0" font-size="13" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="324.0"><tspan font-weight="700">Public web pages</tspan></text>
-<text x="1434.0" y="1002.5" font-size="11.5" fill="#7B8794" text-anchor="start" xml:space="preserve">•</text>
-<text x="1445.0" y="1002.0" font-size="11.5" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="312.0">Read by the <tspan font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace">fetch_page</tspan> tool: HTTPS GET, 20 s timeout,</text>
-<text x="1445.0" y="1017.0" font-size="11.5" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="312.0">≤ 2 MB; stored as evidence</text>
+<text x="1445.0" y="682.0" font-size="11.5" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="312.0">«Tank Ops» — a processing card per material, edited in</text>
+<text x="1445.0" y="697.0" font-size="11.5" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="312.0">place; unreadable source entries (X responses as</text>
+<text x="1445.0" y="712.0" font-size="11.5" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="312.0">documents); failed deliveries; the 08:00 UTC heartbeat</text>
+<text x="1434.0" y="730.5" font-size="11.5" fill="#7B8794" text-anchor="start" xml:space="preserve">•</text>
+<text x="1445.0" y="730.0" font-size="11.5" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="312.0">Only Telegram's length limit: 32,768 characters</text>
+<rect x="1422.0" y="773.0" width="346.0" height="88.0" rx="8" fill="#FFFFFF" stroke="#CBD2D9" stroke-width="1.0"/>
+<text x="1433.0" y="796.0" font-size="13" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="324.0"><tspan font-weight="700">Operator</tspan></text>
+<text x="1434.0" y="818.5" font-size="11.5" fill="#7B8794" text-anchor="start" xml:space="preserve">•</text>
+<text x="1445.0" y="818.0" font-size="11.5" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="312.0">Reads «Tank Alerts» and «Tank Ops»; reviews cards and</text>
+<text x="1445.0" y="833.0" font-size="11.5" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="312.0">decides on scout proposals with the <tspan font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace">tank</tspan> CLI (<tspan font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace">docker</tspan></text>
+<text x="1445.0" y="848.0" font-size="11.5" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="312.0"><tspan font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace">compose</tspan> <tspan font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace">exec</tspan> <tspan font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace">tank</tspan> <tspan font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace">tank</tspan> <tspan font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace">…</tspan>)</text>
+<rect x="1422.0" y="885.0" width="346.0" height="88.0" rx="8" fill="#EEF5FC" stroke="#3182CE" stroke-width="1.3"/>
+<text x="1433.0" y="908.0" font-size="13" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="324.0"><tspan font-weight="700">DuckDuckGo search</tspan></text>
+<text x="1434.0" y="930.5" font-size="11.5" fill="#7B8794" text-anchor="start" xml:space="preserve">•</text>
+<text x="1445.0" y="930.0" font-size="11.5" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="312.0">The <tspan font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace">web_search</tspan> tool: <tspan font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace">ddgs</tspan> library, DuckDuckGo only; no</text>
+<text x="1445.0" y="945.0" font-size="11.5" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="312.0">key, no cost; at most one search every 2 s; results stored as</text>
+<text x="1445.0" y="960.0" font-size="11.5" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="312.0">evidence</text>
+<rect x="1422.0" y="987.0" width="346.0" height="73.0" rx="8" fill="#F5F7FA" stroke="#9AA5B1" stroke-width="1.0"/>
+<text x="1433.0" y="1010.0" font-size="13" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="324.0"><tspan font-weight="700">Public web pages</tspan></text>
+<text x="1434.0" y="1032.5" font-size="11.5" fill="#7B8794" text-anchor="start" xml:space="preserve">•</text>
+<text x="1445.0" y="1032.0" font-size="11.5" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="312.0">Read by the <tspan font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace">fetch_page</tspan> tool: HTTPS GET, 20 s timeout,</text>
+<text x="1445.0" y="1047.0" font-size="11.5" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="312.0">≤ 2 MB; stored as evidence</text>
 <rect x="1422.0" y="1238.0" width="346.0" height="154.0" rx="8" fill="#EEF5FC" stroke="#3182CE" stroke-width="1.3"/>
 <text x="1433.0" y="1261.0" font-size="13" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="324.0"><tspan font-weight="700">OpenAI — ChatGPT subscription</tspan></text>
 <text x="1434.0" y="1283.5" font-size="11.5" fill="#7B8794" text-anchor="start" xml:space="preserve">•</text>
@@ -372,8 +362,8 @@
 <text x="1445.0" y="1331.0" font-size="11.5" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="312.0"><tspan font-weight="700">Per day (est.):</tspan> ≈ 385 new sessions · ≈ 255 added items · ≈ 5</text>
 <text x="1445.0" y="1346.0" font-size="11.5" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="312.0">full MAJOR+ analyses</text>
 <text x="1434.0" y="1364.5" font-size="11.5" fill="#7B8794" text-anchor="start" xml:space="preserve">•</text>
-<text x="1445.0" y="1364.0" font-size="11.5" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="312.0">≈ 12 M tokens a day on the subscription; the only paid call,</text>
-<text x="1445.0" y="1379.0" font-size="11.5" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="312.0">Jev, ≈ $0.07 a day</text>
+<text x="1445.0" y="1364.0" font-size="11.5" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="312.0">≈ 12 M tokens a day on the subscription; paid elsewhere:</text>
+<text x="1445.0" y="1379.0" font-size="11.5" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="312.0">Decision-1 (cost not reported) and Apify runs</text>
 <rect x="1422.0" y="1624.0" width="346.0" height="91.0" rx="8" fill="#F5F7FA" stroke="#9AA5B1" stroke-width="1.0"/>
 <text x="1433.0" y="1647.0" font-size="13" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="324.0"><tspan font-weight="700">Internet — unrestricted</tspan></text>
 <text x="1434.0" y="1669.5" font-size="11.5" fill="#7B8794" text-anchor="start" xml:space="preserve">•</text>
@@ -384,12 +374,11 @@
 <path d="M 350.0 312.0 L 410.0 312.0" fill="none" stroke="#334E68" stroke-width="1.5" marker-end="url(#ah-s)" stroke-linejoin="round"/>
 <path d="M 350.0 505.5 L 410.0 505.5" fill="none" stroke="#334E68" stroke-width="1.5" marker-end="url(#ah-s)" stroke-linejoin="round"/>
 <path d="M 350.0 622.5 L 410.0 622.5" fill="none" stroke="#334E68" stroke-width="1.5" marker-end="url(#ah-s)" stroke-linejoin="round"/>
-<path d="M 350.0 700.5 L 410.0 700.5" fill="none" stroke="#334E68" stroke-width="1.5" marker-end="url(#ah-s)" stroke-linejoin="round"/>
-<path d="M 1595.0 713.0 L 1595.0 743.0" fill="none" stroke="#2F855A" stroke-width="1.5" marker-end="url(#ah-gr)" stroke-linejoin="round"/>
+<path d="M 1595.0 743.0 L 1595.0 773.0" fill="none" stroke="#2F855A" stroke-width="1.5" marker-end="url(#ah-gr)" stroke-linejoin="round"/>
 <path d="M 1362.0 472.0 L 1422.0 472.0" fill="none" stroke="#2B6CB0" stroke-width="1.5" marker-end="url(#ah-b)" marker-start="url(#as-b)" stroke-linejoin="round"/>
 <path d="M 1362.0 658.5 L 1422.0 658.5" fill="none" stroke="#2F855A" stroke-width="1.5" marker-end="url(#ah-gr)" stroke-linejoin="round"/>
-<path d="M 1362.0 899.0 L 1422.0 899.0" fill="none" stroke="#2B6CB0" stroke-width="1.5" marker-end="url(#ah-b)" marker-start="url(#as-b)" stroke-linejoin="round"/>
-<path d="M 1362.0 993.5 L 1422.0 993.5" fill="none" stroke="#334E68" stroke-width="1.3" marker-end="url(#ah-s)" stroke-linejoin="round"/>
+<path d="M 1362.0 929.0 L 1422.0 929.0" fill="none" stroke="#2B6CB0" stroke-width="1.5" marker-end="url(#ah-b)" marker-start="url(#as-b)" stroke-linejoin="round"/>
+<path d="M 1362.0 1023.5 L 1422.0 1023.5" fill="none" stroke="#334E68" stroke-width="1.3" marker-end="url(#ah-s)" stroke-linejoin="round"/>
 <path d="M 1362.0 1315.0 L 1422.0 1315.0" fill="none" stroke="#2B6CB0" stroke-width="1.5" marker-end="url(#ah-b)" marker-start="url(#as-b)" stroke-linejoin="round"/>
 <path d="M 1160.0 1400.0 L 1160.0 1344.0" fill="none" stroke="#2B6CB0" stroke-width="1.5" marker-end="url(#ah-b)" marker-start="url(#as-b)" stroke-linejoin="round"/>
 <text x="1170.0" y="1384.0" font-size="10.5" fill="#52606D" text-anchor="start" xml:space="preserve">model calls</text>
@@ -403,5 +392,58 @@
 <rect x="765.9" y="1673.0" width="48.2" height="14.0" fill="#FFFFFF" opacity="0.92"/>
 <text x="790.0" y="1682.0" font-size="10" fill="#52606D" text-anchor="middle" xml:space="preserve">read-only</text>
 <path d="M 1362.0 1669.5 L 1422.0 1669.5" fill="none" stroke="#334E68" stroke-width="1.3" marker-end="url(#ah-s)" marker-start="url(#as-s)" stroke-linejoin="round"/>
-<path d="M 673.5 1823.0 L 673.5 1795.0" fill="none" stroke="#6B46C1" stroke-width="1.3" marker-end="url(#ah-p)" marker-start="url(#as-p)" stroke-linejoin="round"/>
+<rect x="410.0" y="1830.0" width="340.0" height="210.0" rx="8" fill="#F6F3FC" stroke="#805AD5" stroke-width="1.2"/>
+<text x="421.0" y="1853.0" font-size="13" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="318.0"><tspan font-weight="700">ClickHouse 25.8 — container </tspan><tspan font-weight="700" font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace">clickhouse</tspan><tspan font-weight="700">,</tspan></text>
+<text x="421.0" y="1870.0" font-size="13" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="318.0"><tspan font-weight="700">database </tspan><tspan font-weight="700" font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace">mkt</tspan></text>
+<text x="422.0" y="1892.5" font-size="11.5" fill="#7B8794" text-anchor="start" xml:space="preserve">•</text>
+<text x="433.0" y="1892.0" font-size="11.5" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="306.0"><tspan font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace">klines_1m</tspan>, <tspan font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace">flow_bars_1m</tspan>, <tspan font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace">book_summaries</tspan>,</text>
+<text x="433.0" y="1907.0" font-size="11.5" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="306.0"><tspan font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace">oi_obs</tspan>, <tspan font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace">funding_obs</tspan>, <tspan font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace">liq_obs</tspan>, <tspan font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace">tickers_24h</tspan>;</text>
+<text x="433.0" y="1922.0" font-size="11.5" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="306.0">every print in <tspan font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace">trades</tspan></text>
+<text x="422.0" y="1940.5" font-size="11.5" fill="#7B8794" text-anchor="start" xml:space="preserve">•</text>
+<text x="433.0" y="1940.0" font-size="11.5" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="306.0">Written only by tank-capture; Tank reads its market</text>
+<text x="433.0" y="1955.0" font-size="11.5" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="306.0">data only here (<tspan font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace">FINAL</tspan>); the sandboxes read it as</text>
+<text x="433.0" y="1970.0" font-size="11.5" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="306.0"><tspan font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace">tank_agent</tspan> (read-only)</text>
+<text x="422.0" y="1988.5" font-size="11.5" fill="#7B8794" text-anchor="start" xml:space="preserve">•</text>
+<text x="433.0" y="1988.0" font-size="11.5" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="306.0">Base tier 90 days, prints 30 days, book summaries</text>
+<text x="433.0" y="2003.0" font-size="11.5" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="306.0">72 h; days of MAJOR+ event windows kept</text>
+<text x="422.0" y="2021.5" font-size="11.5" fill="#7B8794" text-anchor="start" xml:space="preserve">•</text>
+<text x="433.0" y="2021.0" font-size="11.5" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="306.0">Volume <tspan font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace">clickhouse-data</tspan>; Compose network only</text>
+<rect x="830.0" y="1830.0" width="532.0" height="172.0" rx="8" fill="#FFFFFF" stroke="#334E68" stroke-width="1.3"/>
+<text x="841.0" y="1853.0" font-size="13" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="510.0"><tspan font-weight="700">tank-capture — container </tspan><tspan font-weight="700" font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace">tank-capture</tspan><tspan font-weight="700"> (Go)</tspan></text>
+<text x="842.0" y="1875.5" font-size="11.5" fill="#7B8794" text-anchor="start" xml:space="preserve">•</text>
+<text x="853.0" y="1875.0" font-size="11.5" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="498.0">The only process that talks to the exchanges: hot-tier WebSockets (≤ 15 tokens, ≤ 135</text>
+<text x="853.0" y="1890.0" font-size="11.5" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="498.0">subscriptions on ≈ 10 connections); base-tier REST pollers (22 tokens, 181 series)</text>
+<text x="842.0" y="1908.5" font-size="11.5" fill="#7B8794" text-anchor="start" xml:space="preserve">•</text>
+<text x="853.0" y="1908.0" font-size="11.5" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="498.0">1-min flow bars sealed only when the prints form a proven chain; trade-ID gaps repaired</text>
+<text x="853.0" y="1923.0" font-size="11.5" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="498.0">over REST; 10 s book summaries; series and every print → ClickHouse</text>
+<text x="842.0" y="1941.5" font-size="11.5" fill="#7B8794" text-anchor="start" xml:space="preserve">•</text>
+<text x="853.0" y="1941.0" font-size="11.5" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="498.0">Follows <tspan font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace">mkt.hot_tokens</tspan>; runs <tspan font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace">backfill_runs</tspan> and <tspan font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace">capture_requests</tspan> (window repairs,</text>
+<text x="853.0" y="1956.0" font-size="11.5" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="498.0"><tspan font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace">HTTP_FETCH</tspan> of exchange sources); writes <tspan font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace">capture_streams</tspan>, <tspan font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace">capture_gaps</tspan></text>
+<text x="842.0" y="1974.5" font-size="11.5" fill="#7B8794" text-anchor="start" xml:space="preserve">•</text>
+<text x="853.0" y="1974.0" font-size="11.5" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="498.0">Single writer (advisory lock); one request budget with Tank; <tspan font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace">/healthz</tspan> on <tspan font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace">:8791</tspan>; gets</text>
+<text x="853.0" y="1989.0" font-size="11.5" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="498.0">only <tspan font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace">TANK_DB_PASSWORD</tspan> from <tspan font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace">.env</tspan></text>
+<rect x="1422.0" y="1830.0" width="346.0" height="73.0" rx="8" fill="#F5F7FA" stroke="#9AA5B1" stroke-width="1.0"/>
+<text x="1433.0" y="1853.0" font-size="13" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="324.0"><tspan font-weight="700">Venue WebSockets — hot tier</tspan></text>
+<text x="1434.0" y="1875.5" font-size="11.5" fill="#7B8794" text-anchor="start" xml:space="preserve">•</text>
+<text x="1445.0" y="1875.0" font-size="11.5" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="312.0">Binance spot + USDⓈ-M · Coinbase · OKX · Bybit spot</text>
+<text x="1445.0" y="1890.0" font-size="11.5" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="312.0">+ linear · Kraken v2 · Hyperliquid</text>
+<rect x="1422.0" y="1917.0" width="346.0" height="124.0" rx="8" fill="#F5F7FA" stroke="#9AA5B1" stroke-width="1.0"/>
+<text x="1433.0" y="1940.0" font-size="13" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="324.0"><tspan font-weight="700">Venue REST and exchange hosts</tspan></text>
+<text x="1434.0" y="1962.5" font-size="11.5" fill="#7B8794" text-anchor="start" xml:space="preserve">•</text>
+<text x="1445.0" y="1962.0" font-size="11.5" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="312.0">Same 6 venues: klines, OI, funding, 24 h tickers, trade</text>
+<text x="1445.0" y="1977.0" font-size="11.5" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="312.0">history</text>
+<text x="1434.0" y="1995.5" font-size="11.5" fill="#7B8794" text-anchor="start" xml:space="preserve">•</text>
+<text x="1445.0" y="1995.0" font-size="11.5" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="312.0">Announcement APIs (S09–S11) and instrument lists</text>
+<text x="1445.0" y="2010.0" font-size="11.5" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="312.0">(S14) that <tspan font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace">sources</tspan> requests through tank-capture</text>
+<text x="1434.0" y="2028.5" font-size="11.5" fill="#7B8794" text-anchor="start" xml:space="preserve">•</text>
+<text x="1445.0" y="2028.0" font-size="11.5" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="312.0"><tspan font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace">data.binance.vision</tspan> archive</text>
+<path d="M 394.0 1330.0 L 383.0 1330.0 L 383.0 1912.0 L 410.0 1912.0" fill="none" stroke="#6B46C1" stroke-width="1.5" marker-end="url(#ah-p)" stroke-linejoin="round"/>
+<text x="398.0" y="1590.0" transform="rotate(-90 398.0 1590.0)" font-size="10" fill="#52606D" text-anchor="middle" xml:space="preserve">Tank reads market data</text>
+<path d="M 830.0 1900.0 L 750.0 1900.0" fill="none" stroke="#6B46C1" stroke-width="1.5" marker-end="url(#ah-p)" stroke-linejoin="round"/>
+<rect x="773.8" y="1884.0" width="32.4" height="14.0" fill="#FFFFFF" opacity="0.92"/>
+<text x="790.0" y="1893.0" font-size="10" fill="#52606D" text-anchor="middle" xml:space="preserve">writes</text>
+<path d="M 850.0 1830.0 L 850.0 1805.0 L 700.0 1805.0 L 700.0 1780.0" fill="none" stroke="#6B46C1" stroke-width="1.3" marker-end="url(#ah-p)" marker-start="url(#as-p)" stroke-linejoin="round"/>
+<text x="862.0" y="1822.0" font-size="10" fill="#52606D" text-anchor="start" xml:space="preserve">hot set · obligations · capture state · request budget</text>
+<path d="M 1422.0 1866.5 L 1362.0 1866.5" fill="none" stroke="#334E68" stroke-width="1.5" marker-end="url(#ah-s)" stroke-linejoin="round"/>
+<path d="M 1422.0 1960.0 L 1362.0 1960.0" fill="none" stroke="#334E68" stroke-width="1.5" marker-end="url(#ah-s)" stroke-linejoin="round"/>
 </svg>
