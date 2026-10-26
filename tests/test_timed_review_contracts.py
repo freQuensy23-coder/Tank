@@ -1,6 +1,5 @@
 from pathlib import Path
 
-import jsonschema
 import pytest
 from pydantic import JsonValue, ValidationError
 
@@ -15,6 +14,7 @@ from tank.analysis.watch_contracts import (
 )
 from tank.analysis.watch_policy import evaluate_timed_review
 from tank.contracts.json import decode_unique_json
+from tank.contracts.tool_schema import validate_schema
 from tank.time_precision import Timestamp
 
 
@@ -166,18 +166,19 @@ def test_watch_tool_schema_rejects_mixed_actions_and_uses_written_expiry_policy(
     )
     schema = decode_unique_json(path.read_bytes())
     assert isinstance(schema, dict)
-    validator = jsonschema.Draft202012Validator(schema, format_checker=jsonschema.FormatChecker())
     timed: dict[str, JsonValue] = {
         "action": "ARM",
         "review_at": "2026-10-26T13:00:00Z",
         "review_question": "Has the counterparty confirmed?",
     }
-    assert not list(validator.iter_errors(timed))
-    assert list(validator.iter_errors({**timed, "token_id": "token"}))
-    assert list(
-        validator.iter_errors({"action": "DISARM", "cond_id": "CND-review", "review_at": timed["review_at"]})
-    )
-    assert not list(validator.iter_errors({"action": "DISARM", "cond_id": "CND-review"}))
+    validate_schema(timed, schema)
+    with pytest.raises(ValueError):
+        validate_schema({**timed, "token_id": "token"}, schema)
+    with pytest.raises(ValueError):
+        validate_schema(
+            {"action": "DISARM", "cond_id": "CND-review", "review_at": timed["review_at"]}, schema
+        )
+    validate_schema({"action": "DISARM", "cond_id": "CND-review"}, schema)
     properties = schema["properties"]
     assert isinstance(properties, dict) and isinstance(properties["expires_in_hours"], dict)
     assert properties["expires_in_hours"]["default"] == 72
