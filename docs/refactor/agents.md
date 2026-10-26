@@ -2234,3 +2234,11 @@ selected functional proof, not a global p90 claim. An earlier command named a
 nonexistent test_runtime_worker_queue.py and collected zero; its exit-5 setup
 receipt remains separate, and the corrected selection uses the actual
  test_runtime_dispatch_contracts.py module.
+
+Consolidated actual caller/fencing/lifecycle proof now passes all 33 collected cases
+in 68.87 seconds, zero skips/source guards (worker-owned-callers-actual). Independent
+strict eight targets pass, including complete Runtime and its wire/dispatch/queue
+contracts plus the actual helper/refusal/controlled-claim targets. Scoped six-file
+Ruff and formatting pass. Tested functional prefix b6a681c0 is unchanged except
+this report. Complete peer reaction/X/market-refresh/E2E producer qualification and
+full default-unit timing remain outstanding; this checkpoint is not global release.
