@@ -214,6 +214,19 @@ class NativeExecutionBarrier(DomainModel):
             self.pending_input_ids
         ):
             raise ValueError("Native completion references an unrelated pending input")
+        expected_pending = {
+            identity
+            for identity in accepted
+            if identity not in self.execution_states or self.execution_states[identity].state != "COMPLETED"
+        }
+        expected_failed = {
+            identity
+            for identity in accepted
+            if identity in self.execution_states
+            and self.execution_states[identity].state in {"FAILED", "CANCELLED"}
+        }
+        if set(self.pending_input_ids) != expected_pending or set(self.failed_input_ids) != expected_failed:
+            raise ValueError("Native completion pending facts contradict its observed states")
         if any(key != receipt.id for key, receipt in self.terminal_receipts.items()):
             raise ValueError("Native completion receipt identity differs from its key")
         if any(key != state.execution_id for key, state in self.execution_states.items()):

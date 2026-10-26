@@ -2327,3 +2327,10 @@ exhausted inodes. Its complete setup log is preserved, quality owns diagnosis,
 and all new qualifiers are held as instructed. No retry, cleanup, environment or
 service change was made here. Worker14a and completion523 remain immutable and
 separate, and financial/E2E/global worker qualification remains outstanding.
+Caller inventory additionally reserves ingestion's two Telegram barrier sites and
+analysis's replay consumer plus its old empty-success completion mock. The actual
+native-retry completion assertions now use the typed result properties, retaining
+all old/new exhausted input, restart and no-repeat effects. Barrier validation
+also requires pending/failed lists to match the actual admitted queue states.
+These changes remain unqualified under the shared inode hold; no tests were
+silently skipped or reclassified and no compatibility map was restored.
