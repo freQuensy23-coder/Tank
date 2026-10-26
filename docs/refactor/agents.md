@@ -1388,3 +1388,30 @@ Independent whole Session strict remains incomplete: actual untyped
 reopening/follower/attachment/presentation dependencies and constructor
 repository inference are open; this does not claim the send result port is
 complete or activate the new worker dispatcher.
+
+Typed question reopening dependency
+
+SessionService.reopen_for_question now consumes UserQuestionMessage and a
+real owner key, using the strict session_reopening policy/adapter. The
+actual session ID must match the question target; duplicate journal owners,
+reported-null retired indexes and a failed-session reopening without an
+observed controller clock refuse before mutation. Only actual unfinished
+owners are retired, completed/current owners survive, and only their
+USER_QUESTION rows receive the existing local FAILED turn status. This is
+local controller lifecycle, not a fabricated native termination. The raw
+session/history dictionaries remain at the explicit sparse persistence
+mutation boundary and preserve unrelated bytes. ReopenState.retired=None
+means no retired index was recorded; creating the first index adds only
+actual observed owners. session.get("reopened", []) initializes the existing
+lazy append-only controller history on the first real reopening; reported
+null/non-array history rejects and old entries are not reconstructed.
+Missing historical turn_status/payload-kind remain explicit and do not gain
+invented native facts or unused retry/body requirements.
+
+All 105 connected reopening/Telegram/outbound units pass in 8.82 seconds,
+zero skips, with independent source/test strict two targets and Ruff clean
+(worker-0dd-reopening-unit). The one direct authored Telegram helper test now
+declares its actual synthetic session ID and typed question request while
+retaining its old/current/retired/status assertions. This closes that helper
+dependency, not the still-untyped follower/attachment/presentation portions
+of SessionService or the inactive worker activation.

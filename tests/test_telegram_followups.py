@@ -1158,7 +1158,10 @@ async def test_numeric_watch_comparisons_need_numbers() -> None:
 def test_reopening_fails_queued_follow_ups_of_the_failed_session() -> None:
     service = object.__new__(SessionService)
     service.clock_timestamp = lambda: __import__("tank.time_precision", fromlist=["x"]).collection_clock()
+    from tank.runtime_contracts import UserQuestionMessage
+
     session = {
+        "session_id": "session",
         "status": "FAILED",
         "message_log": [
             {
@@ -1173,7 +1176,9 @@ def test_reopening_fails_queued_follow_ups_of_the_failed_session() -> None:
             },
         ],
     }
-    service.reopen_for_question(session, {"question_id": "q1"}, "new_q")
+    service.reopen_for_question(
+        session, UserQuestionMessage(kind="USER_QUESTION", session_id="session", question_id="q1"), "new_q"
+    )
     assert session["message_log"][0]["turn_status"] == "FAILED"
     assert session["message_log"][1]["turn_status"] == "ACCEPTING"
     assert session["retired_message_ids"] == ["old_q"] and session["status"] == "OPEN"

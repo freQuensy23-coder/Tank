@@ -112,6 +112,7 @@ from tank.agents.session_contracts import (
     SessionToolBoundaryState,
 )
 from tank.agents.session_ownership import put_owned_session, require_owned_session_identity
+from tank.agents.session_reopening import reopen_question_session
 from tank.agents.tool_contracts import (
     CapturedToolResult,
     FailedToolResponse,
@@ -498,29 +499,14 @@ class SessionService:
             return False
         return True
 
-    def reopen_for_question(self, session, payload, key):
-        """Under the session lock: reopen a FAILED session and retire its unfinished turns, never this one."""
-        retired = set(session.get("retired_message_ids", []))
-        if session.get("status") == "FAILED":
-            for row in session.get("message_log", []):
-                if row.get("turn_status") == "DONE" or row["message_id"] == key:
-                    continue
-                retired.add(row["message_id"])
-                if row.get("payload", {}).get("kind") == "USER_QUESTION":
-                    row["turn_status"] = "FAILED"
-            session.setdefault("reopened", []).append(
-                {
-                    "question_id": payload["question_id"],
-                    "previous_status": session["status"],
-                    **self.clock_timestamp().fields("at"),
-                }
-            )
-            session.update(
-                status="OPEN", runtime_status="IDLE", active_message_id=None, pending_retry_event=None
-            )
-        retired.discard(key)
-        if retired or "retired_message_ids" in session:
-            session["retired_message_ids"] = sorted(retired)
+    def reopen_for_question(
+        self,
+        session: dict[str, JsonValue],
+        request: UserQuestionMessage,
+        message_id: str,
+    ) -> None:
+        """Apply the typed reopening policy while the caller owns the session lock."""
+        reopen_question_session(session, request, message_id, self.clock_timestamp())
 
     def analyst_tools(self, *, scout: bool) -> ManagedToolManifest:
         name: ManagedAgentName = "tank-scout-reviewer" if scout else "tank-event-analyst"
@@ -725,7 +711,7 @@ class SessionService:
                             eligibility,
                         )
                         return None
-                    self.reopen_for_question(session, payload, key)
+                    self.reopen_for_question(session, message, key)
                 if key in session.get("messages", []):
                     self.start_stream(sid)
                     return session
