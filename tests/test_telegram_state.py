@@ -63,7 +63,8 @@ async def test_foreign_or_invalid_sent_receipt_never_settles_question(field: str
     assert await repo.get("out.deliveries", "d") == receipt
 
 
-async def test_matching_sent_receipt_settles_without_new_http_or_credential() -> None:
+@pytest.mark.parametrize("other_purpose", ["ATTACHMENT", "NOTICE", "PROMPT"])
+async def test_matching_sent_receipt_settles_without_new_http_or_credential(other_purpose: str) -> None:
     repo = MemoryRepository()
     await subject(repo)
     await repo.put(
@@ -79,6 +80,20 @@ async def test_matching_sent_receipt_settles_without_new_http_or_credential() ->
             "attempt": 1,
             "status": "SENT",
             "message_ref": 17,
+        },
+    )
+
+    await repo.put(
+        "out.deliveries",
+        "separate-purpose",
+        {
+            "question_id": "q",
+            "session_id": "s",
+            "chat_id": "42",
+            "channel": "telegram:answer",
+            "purpose": other_purpose,
+            "status": "GENERATED",
+            "attempt": 1,
         },
     )
 
@@ -135,3 +150,84 @@ async def test_postgres_foreign_receipt_refuses_then_actual_receipt_reconciles(
         assert question is not None and question["status"] == "DELIVERED"
         assert await repo.get("out.deliveries", "d") == receipt
         assert await repo.get("out.user_questions", "q") == before
+
+
+@pytest.mark.parametrize("status", ["GENERATED", "SENT"])
+@pytest.mark.parametrize("missing_fact", ["chunk", "null_chunk", "purpose", "null_purpose"])
+async def test_ambiguous_answer_history_refuses_before_new_post(status: str, missing_fact: str) -> None:
+    repo = MemoryRepository()
+    await subject(repo)
+    receipt: dict[str, JsonValue] = {
+        "question_id": "q",
+        "session_id": "s",
+        "chat_id": "42",
+        "purpose": "ANSWER",
+        "channel": "telegram:answer",
+        "chunk": 0,
+        "attempt": 1,
+        "status": status,
+        "message_ref": "17",
+    }
+    if missing_fact.startswith("null_"):
+        receipt[missing_fact.removeprefix("null_")] = None
+    else:
+        del receipt[missing_fact]
+    await repo.put("out.deliveries", "d", receipt)
+    before = await repo.get("out.user_questions", "q")
+    calls = 0
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        nonlocal calls
+        calls += 1
+        return httpx.Response(200, json={"ok": True, "result": {"message_id": 18}})
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(respond)) as http:
+        inbox = TelegramInbox(repo, StateSettings(telegram_token="synthetic-test-token"), http=http)
+        with pytest.raises(ValueError):
+            await inbox.answer({"question_id": "q"})
+    assert calls == 0
+    assert await repo.get("out.user_questions", "q") == before
+    assert await repo.list("out.deliveries") == [receipt]
+
+
+@pytest.mark.integration
+@pytest.mark.postgres
+@pytest.mark.parametrize("missing_fact", ["chunk", "null_chunk", "purpose", "null_purpose"])
+async def test_postgres_ambiguous_attempt_preserves_history_and_refuses_new_send(
+    postgres_template: PostgresTemplate, tmp_path: Path, missing_fact: str
+) -> None:
+    async with postgres_template.repository(os.environ["TANK_SOURCE_TEST_DATABASE_URL"]) as repo:
+        await subject(repo)
+        receipt: dict[str, JsonValue] = {
+            "question_id": "q",
+            "session_id": "s",
+            "chat_id": "42",
+            "purpose": "ANSWER",
+            "channel": "telegram:answer",
+            "chunk": 0,
+            "attempt": 1,
+            "status": "GENERATED",
+            **collection_clock(utcnow()).fields("at"),
+        }
+        if missing_fact.startswith("null_"):
+            receipt[missing_fact.removeprefix("null_")] = None
+        else:
+            del receipt[missing_fact]
+        await repo.put("out.deliveries", "d", receipt)
+        before = await repo.get("out.user_questions", "q")
+        calls = 0
+
+        def respond(request: httpx.Request) -> httpx.Response:
+            nonlocal calls
+            calls += 1
+            return httpx.Response(200, json={"ok": True, "result": {"message_id": 18}})
+
+        async with httpx.AsyncClient(transport=httpx.MockTransport(respond)) as http:
+            inbox = TelegramInbox(
+                repo, StateSettings(data_dir=tmp_path, telegram_token="synthetic-test-token"), http=http
+            )
+            with pytest.raises(ValueError):
+                await inbox.answer({"question_id": "q"})
+        assert calls == 0
+        assert await repo.get("out.user_questions", "q") == before
+        assert await repo.list("out.deliveries") == [receipt]

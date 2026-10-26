@@ -1314,7 +1314,7 @@ class TelegramInbox:
             async for row in self.repo.iter_all(
                 "out.deliveries", filters={"question_id": subject.question_id, "channel": ANSWER_CHANNEL}
             )
-            if row.get("purpose") == "ANSWER" and row.get("chunk") is not None
+            if row.get("purpose") not in ("ATTACHMENT", "NOTICE", "PROMPT")
         ]
         previous = subject.reply_to_message_id
         unresolved = False
