@@ -54,6 +54,12 @@ class DeclinedQuestionDispatch(DomainModel):
     target: FollowupRefusalTarget
 
 
+type RecordedMessageDispatch = Annotated[
+    AcceptedMessageDispatch | PendingMessageDispatch | IndexedMessageDispatch,
+    Field(discriminator="phase"),
+]
+
+
 type MessageDispatchOutcome = Annotated[
     AcceptedMessageDispatch | PendingMessageDispatch | IndexedMessageDispatch | DeclinedQuestionDispatch,
     Field(discriminator="phase"),
@@ -68,7 +74,7 @@ class _StoredMessageIndex(DomainModel):
     messages: list[Annotated[str, Field(min_length=1, pattern=r"\S")]]
 
 
-def observe_message_dispatch(session: dict[str, JsonValue], message_id: str) -> MessageDispatchOutcome:
+def find_message_dispatch(session: dict[str, JsonValue], message_id: str) -> RecordedMessageDispatch | None:
     identity = MessageDispatchIdentity.model_validate(
         {"session_id": session["session_id"], "message_id": message_id}
     )
@@ -117,4 +123,11 @@ def observe_message_dispatch(session: dict[str, JsonValue], message_id: str) -> 
             message_id=identity.message_id,
             intent=pending,
         )
-    raise ValueError("Session has no actual recorded message or acceptance index")
+    return None
+
+
+def observe_message_dispatch(session: dict[str, JsonValue], message_id: str) -> RecordedMessageDispatch:
+    result = find_message_dispatch(session, message_id)
+    if result is None:
+        raise ValueError("Session has no actual recorded message or acceptance index")
+    return result

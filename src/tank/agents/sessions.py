@@ -46,6 +46,7 @@ from tank.agents.input_ownership import (
     ToolInputLineage,
     UnprovedInputOwnership,
 )
+from tank.agents.message_dispatch import PendingMessageDispatch, find_message_dispatch
 from tank.agents.native_inputs import (
     AcceptedNativeInput,
     NativeInput,
@@ -166,9 +167,11 @@ from tank.contracts.source_items import (
     SkippedExtraction,
 )
 from tank.contracts.source_repository import SourceExtractionRepository
+from tank.contracts.telegram_state import QuestionPrompt
 from tank.delivery import DeliveryDeferred
 from tank.ops_progress import session_progress
 from tank.question_answers import record_answer, validate_question_identity
+from tank.question_prompts import question_message, question_prompt
 from tank.runtime_contracts import (
     ScoutMessage,
     ScoutReviewJob,
@@ -176,7 +179,7 @@ from tank.runtime_contracts import (
     UserQuestionMessage,
     parse_agent_message,
 )
-from tank.telegram_inbox import DOCUMENT_LIMIT, question_message
+from tank.telegram_inbox import DOCUMENT_LIMIT
 from tank.time_precision import Timestamp, collection_clock, offset_schedule, propagate_timestamp
 from tank.util import canonical_json, jsonable, parse_time, sha256, utcnow
 
@@ -593,7 +596,8 @@ class SessionService:
             await put_owned_session(self.repo, sid, current)
         return CONTEXT_TRANSITION[state.proposal_id is not None]
 
-    async def prepare_attachments(self, session, question):
+    async def prepare_attachments(self, session, question) -> QuestionPrompt:
+        question_prompt(question)
         question = copy.deepcopy(question)
         for index, item in enumerate(question.get("attachments") or [], 1):
             key = item["file_key"]
@@ -611,7 +615,6 @@ class SessionService:
                         "file": (item["filename"], content, item.get("mime") or "application/octet-stream")
                     },
                 )
-                uploaded = uploaded.get("data", uploaded)
                 stamp = str(
                     question.get("created_at")
                     or question.get("received_at")
@@ -629,7 +632,7 @@ class SessionService:
                 metadata.setdefault("model_mounts", {})[session["session_id"]] = mount
                 await self.repo.put("ops.telegram_files", key, metadata)
             item["path"] = mount["path"]
-        return question
+        return question_prompt(question)
 
     async def send_file(self, session, arguments, call_id):
         """send_telegram_file: read an output of this session and reply with it to the active follow-up."""
@@ -675,10 +678,51 @@ class SessionService:
             payload["question_id"], call_id, filename, content, arguments.get("caption")
         )
 
+    async def validate_new_question_input(self, request: UserQuestionMessage, message_id: str) -> None:
+        """Admit actual question scope before any native read or fresh text/file effect."""
+        target = FollowupRefusalTarget(question_id=request.question_id, session_id=request.session_id)
+        async with self.send_locks.setdefault(request.session_id, asyncio.Lock()):
+            async with self.repo.lock("session:" + request.session_id):
+                current: dict[str, JsonValue] | None = await self.repo.get(
+                    "ops.agent_sessions", request.session_id
+                )
+                if current is not None:
+                    require_owned_session_identity(request.session_id, current)
+                    ContextBinding.from_session(current)
+                    retained = find_message_dispatch(current, message_id)
+                    if retained is not None:
+                        if isinstance(retained, PendingMessageDispatch):
+                            row = outbound_message_record(current, message_id)
+                            original = row["payload"]
+                            if not isinstance(original, dict):
+                                raise ValueError(
+                                    "Retained question input requires its actual structured target"
+                                )
+                            owner = UserQuestionMessage.model_validate(original)
+                            if (
+                                owner.session_id != request.session_id
+                                or owner.question_id != request.question_id
+                                or sha256(original) != message_id
+                            ):
+                                raise ValueError(
+                                    "Retained question input differs from its actual requested owner"
+                                )
+                        return
+            async with self.repo.lock("question:" + request.question_id):
+                question: dict[str, JsonValue] | None = await self.repo.get(
+                    "out.user_questions", request.question_id
+                )
+                if question is None:
+                    raise KeyError(request.question_id)
+                validate_question_identity(question, target)
+                question_prompt(question)
+
     async def send_message(self, payload: dict[str, JsonValue]) -> dict[str, JsonValue] | None:
         message = parse_agent_message(payload)
-        if isinstance(message, UserQuestionMessage) and not await self.continuable(message):
-            return None
+        if isinstance(message, UserQuestionMessage):
+            await self.validate_new_question_input(message, sha256(payload))
+            if not await self.continuable(message):
+                return None
         item = (
             await self.repo.get("ingest.source_items", message.item_id)
             if isinstance(message, SourceMessage)
@@ -728,11 +772,16 @@ class SessionService:
                 )
                 if intent is None:
                     text = canonical_json(content)
-                    if payload.get("question_id"):
-                        question = await self.repo.get("out.user_questions", payload["question_id"])
-                        if question is None:
-                            raise KeyError(payload["question_id"])
-                        text = question_message(await self.prepare_attachments(session, question))
+                    if isinstance(message, UserQuestionMessage):
+                        async with self.repo.lock("question:" + message.question_id):
+                            question = await self.repo.get("out.user_questions", message.question_id)
+                            if question is None:
+                                raise KeyError(message.question_id)
+                            validate_question_identity(
+                                question,
+                                FollowupRefusalTarget(question_id=message.question_id, session_id=sid),
+                            )
+                            text = question_message(await self.prepare_attachments(session, question))
                         if migrating:
                             text = note + "\n\n" + text
                     body = {

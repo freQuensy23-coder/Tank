@@ -1528,3 +1528,33 @@ is retained; the final extra case specifically proves zero-attempt quarantine.
 These are inactive queue transitions; concrete worker dispatch/results and
 remaining send/follower/attachment dependencies still require activation and
 whole caller proof. Retirement 4a remains separate and immutable.
+
+Held question-scope preflight candidate
+
+Immutable negative checkpoint fbc2e5d1 reproduces a real boundary breach: an
+actual UserQuestionMessage aimed at live session s reads a stored question
+bound to foreign and posts its synthetic private text after native GET.
+The matching-session control is idempotent. The negative gate is one fail/
+one pass in 1.60 seconds (worker-8840-question-binding-before), not a product
+qualification. The candidate now checks both actual question/session IDs under
+the question lock before native reads for a fresh input, and rechecks before
+fresh text/attachment effects. Existing retained acceptance/indexed inputs and
+known-zero pending bodies do not reconstruct an unused deleted question or
+retry budget; pending ownership still requires its actual original payload/
+idempotency key. The lock order remains controller send lock, session lock,
+then question lock for the actual body phase; the early read does not hold a
+question lock while waiting for a session lock.
+
+The branch normally joins prompt370. Session imports the typed pure prompt
+formatter inward and pre-admits required prompt facts before attachment
+work; prepare_attachments returns QuestionPrompt. This return is only an
+intermediate caller alignment: its input/body and native file lifecycle are
+explicitly still open and are not signed as a complete typed port. The
+unsupported generic data-wrapped upload response fallback was removed after
+reading the pinned direct file route. Twenty-five connected question/output/
+initial-post cases pass in 1.87 seconds, zero skips, including exact original
+pending idempotency key, accepted opaque historical body/no budget, and a
+binding-change race refusing a native POST. Default Session mypy passes;
+whole independent strict remains incomplete. Evidence
+worker-fbc-question-phase-unit is external. This candidate remains held with
+the worker/native producer cohort; it is not a parent-ready activation.
