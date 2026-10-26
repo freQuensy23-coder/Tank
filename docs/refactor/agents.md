@@ -2388,3 +2388,9 @@ no partial write for wrong/missing/order/extra/outcome or second-page failures,
 and actual ownership refusal before recovery/native effects. This adds real
 boundary proof to the earlier pure contracts and four PG races; replay, Telegram
 and full completion/E2E cohort closure remain pending.
+
+### Scoped completion caller integration
+
+The reserved replay consumer now uses the barrier's typed complete fact and explicit storage_record at singular/plural report and checkpoint boundaries, enforcing actual session identity. Its synthetic completed-turn boundary uses actual accepted-input and terminal state/cache facts rather than an empty successful mock. The delegated two Telegram callers admit CompletionSessionSnapshot and consume accepted_input_ids directly, retaining all answer, retired-message, POST count and idempotence assertions. The abort fixture now reports the required nullable settled_outcome field for RUNNING, matching the pinned three-field status endpoint; no production relaxation or retained payload change was made.
+
+Frozen combined de47267b passed all 361 selected units in 19.19 seconds, with zero skips/source guards. Its connected actual set passed 81 of 82 cases in 28.97 seconds: the sole failure was the previously qualified autonomous E2E CapturedMarket fixture's missing instruments forwarding, because this separate completion branch had not yet joined the current parent/worker peer. Status correlation/64+1, stale/ABA/input-change PostgreSQL races, completion/retry/retention/binding, replay/reference/abort and Telegram cases passed. That diagnostic remains in external completion-callers-de472 receipts; no product attribution or whole-cohort green claim is made. Current-parent normal integration and affected caller proof remain required. Independent strict checking of the four precise completion contract/test targets passes.
