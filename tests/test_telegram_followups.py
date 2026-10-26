@@ -102,7 +102,15 @@ class FakeTelegram:
             return httpx.Response(200, json={"ok": True, "result": ready})
         if method == "getChatMember":
             if self.member_error:
-                return httpx.Response(self.member_error, json={"ok": False, "parameters": {"retry_after": 1}})
+                return httpx.Response(
+                    self.member_error,
+                    json={
+                        "ok": False,
+                        "error_code": self.member_error,
+                        "description": "Synthetic membership request rejected",
+                        "parameters": {"retry_after": 1},
+                    },
+                )
             result = {"status": self.member}
             if self.is_member is not None:
                 result["is_member"] = self.is_member
@@ -1484,7 +1492,15 @@ async def test_prompt_is_resent_after_a_definite_telegram_rejection() -> None:
     def flaky(request: httpx.Request):
         if request.url.path.endswith("/sendMessage") and outage["left"]:
             outage["left"] -= 1
-            return httpx.Response(429, json={"ok": False, "parameters": {"retry_after": 1}})
+            return httpx.Response(
+                429,
+                json={
+                    "ok": False,
+                    "error_code": 429,
+                    "description": "Too Many Requests",
+                    "parameters": {"retry_after": 1},
+                },
+            )
         return original(request)
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(flaky)) as http:
@@ -1871,7 +1887,9 @@ async def test_notice_is_retried_after_a_transient_failure_and_sent_once() -> No
     def flaky(request: httpx.Request):
         if request.url.path.endswith("/sendMessage") and outage["left"]:
             outage["left"] -= 1
-            return httpx.Response(503, json={"ok": False})
+            return httpx.Response(
+                503, json={"ok": False, "error_code": 503, "description": "Synthetic API rejection"}
+            )
         return original(request)
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(flaky)) as http:
@@ -1972,7 +1990,12 @@ async def test_one_permanently_failing_message_never_blocks_the_others() -> None
     def blocked(request: httpx.Request):
         if request.url.path.endswith("/sendMessage") and json.loads(request.content)["chat_id"] == str(USER):
             return httpx.Response(
-                403, json={"ok": False, "description": "Forbidden: bot was blocked by the user"}
+                403,
+                json={
+                    "ok": False,
+                    "error_code": 403,
+                    "description": "Forbidden: bot was blocked by the user",
+                },
             )
         return original(request)
 
@@ -2106,7 +2129,9 @@ async def test_paired_size_notice_failure_keeps_both_messages_retryable() -> Non
     def flaky(request: httpx.Request):
         if request.url.path.endswith("/sendMessage") and outage["left"]:
             outage["left"] -= 1
-            return httpx.Response(502, json={"ok": False})
+            return httpx.Response(
+                502, json={"ok": False, "error_code": 502, "description": "Synthetic API rejection"}
+            )
         return original(request)
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(flaky)) as http:

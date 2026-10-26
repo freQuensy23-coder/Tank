@@ -88,3 +88,16 @@ class TelegramFailure(DomainModel):
 class TelegramUpdateCursor(DomainModel):
     source_id: Literal["telegram:bot-updates"]
     cursor: Annotated[str, Field(pattern=r"^(0|[1-9][0-9]*)$")]
+
+
+class TelegramSentMessageReceipt(DomainModel):
+    """Only returned identity authorizes SENT; an omitted ancillary date stays unreported."""
+
+    message_id: PositiveId
+    date: PositiveId | None = None
+
+    @model_validator(mode="after")
+    def reported_date_is_positive(self) -> Self:
+        if "date" in self.model_fields_set and self.date is None:
+            raise ValueError("A reported Telegram sent-message date requires an integer")
+        return self
