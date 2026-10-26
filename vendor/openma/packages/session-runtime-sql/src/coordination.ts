@@ -1156,7 +1156,7 @@ export class SqlSessionExecutionStore
               ${cursor ? 'AND (workspace_id > ? OR (workspace_id = ? AND id > ?))' : ''}
             ORDER BY workspace_id, id LIMIT 100`).bind(now, now,
               ...(cursor ? [cursor.workspaceId, cursor.workspaceId, cursor.executionId] : [])).all<ExecutionRow>();
-          const rows = recoveries.results ?? [];
+          const rows = requiredContinuationRows(recoveries.results);
           for (const row of rows) {
             const recovery = await this.retryImagePreflight({ fence: toFence(row) }, now, true);
             if (recovery === null) await this.terminalizeMatching(now, 'execution attempt limit exhausted',

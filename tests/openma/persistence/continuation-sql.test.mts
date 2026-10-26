@@ -192,6 +192,29 @@ test('a missing required driver SELECT result refuses instead of reporting an em
   assert.equal((await f.store.claim({ ...f.scope, ownerId: 'real-worker', attemptId: 'real-attempt', claimedAt: '2026-10-26T00:00:01Z', leaseTtlMs: 10000 })).type, 'claimed');
 });
 
+test('actual PG missing recovery SELECT result refuses before a later claim', async (t: TestContext): Promise<void> => {
+  const f = await fixture(t);
+  let faults = 0;
+  const client: SqlClient = {
+    prepare(query: string): SqlStatement {
+      const statement = f.sql.prepare(query);
+      if (query.includes("WHERE state = 'running' AND lease_expires_at_ms <= ?") && query.includes('managed_session_image_recoveries')) {
+        faults++;
+        return missingCandidateResult(statement);
+      }
+      return statement;
+    },
+    batch<T = unknown>(statements: SqlStatement[]): Promise<SqlRunResult<T>[]> { return f.sql.batch<T>(statements); },
+    exec(query: string): Promise<void> { return f.sql.exec(query); },
+  };
+  const store = new SqlSessionExecutionStore(client, {callbackContinuations: true, serializeSessionClaims: true});
+  const before = await persisted(f.sql);
+  await assert.rejects(store.claim({...f.scope, ownerId: 'worker', attemptId: 'attempt', claimedAt: '2026-10-26T00:00:01Z', leaseTtlMs: 10000}), /Missing continuation SELECT result/);
+  assert.equal(faults, 1);
+  assert.deepEqual(await persisted(f.sql), before);
+  assert.equal((await f.store.claim({...f.scope, ownerId: 'real-worker', attemptId: 'real-attempt', claimedAt: '2026-10-26T00:00:01Z', leaseTtlMs: 10000})).type, 'claimed');
+});
+
 
 test('actual PG malformed reported history source refuses before execution claim or write', async (t: TestContext): Promise<void> => {
   const f = await fixture(t);
