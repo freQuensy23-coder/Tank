@@ -46,6 +46,18 @@ func TestPhysicalProjectionMatchesEveryActualSchemaColumn(t *testing.T) {
 	}
 }
 
+func TestUnrepresentableClockTextRemainsExactRawSemanticEvidence(t *testing.T) {
+	row := Record{StorageKey: "BF-record", BackfillID: "BF-record", Anchor: stamp("2026-10-01T12:00:00.123456789+02:00")}
+	decoded, err := DecodeRecord(physicalDocument(t, row))
+	if err != nil {
+		t.Fatal(err)
+	}
+	document, err := decoded.SemanticDocument()
+	if err != nil || !bytes.Contains(document, []byte("2026-10-01T12:00:00.123456789+02:00")) {
+		t.Fatal("unrepresentable historical clock text was rounded in its evidence fingerprint")
+	}
+}
+
 func TestEveryNullableProjectionKeyIsRequired(t *testing.T) {
 	for _, name := range physicalFields {
 		t.Run(name, func(t *testing.T) {

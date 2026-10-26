@@ -182,6 +182,9 @@ func decodePre24Reference(rows []map[string]any, boundary time.Time) (backfillst
 			if err != nil {
 				return backfillstate.Pre24Reference{}, err
 			}
+			if !ts.Before(boundary) {
+				return backfillstate.Pre24Reference{}, errors.New("pre24 reference trade must precede its declared boundary")
+			}
 			if len(candidates) == 0 || ts.After(latest) {
 				latest, candidates = ts, []map[string]any{trade}
 			} else if ts.Equal(latest) {

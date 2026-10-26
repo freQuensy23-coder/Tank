@@ -122,7 +122,7 @@ func clockText(value *TimestampText) *string {
 		return nil
 	}
 	text := string(*value)
-	if parsed, err := time.Parse(time.RFC3339Nano, text); err == nil {
+	if parsed, err := time.Parse(time.RFC3339Nano, text); err == nil && parsed.Nanosecond()%1000 == 0 {
 		text = pytime.ISO(parsed)
 	}
 	return &text

@@ -104,6 +104,31 @@ func TestNamedBackfillWireCannotSilentlyTruncateObservedNanoseconds(t *testing.T
 	}
 }
 
+func TestSpotReferenceMustActuallyPrecedeItsDeclaredPre24Origin(t *testing.T) {
+	anchor := time.Date(2026, 10, 26, 1, 0, 0, 0, time.UTC)
+	identity, err := TextTradeIdentity("observed-predecessor")
+	if err != nil {
+		t.Fatal(err)
+	}
+	boundary := anchor.Add(-24 * time.Hour)
+	for _, at := range []time.Time{boundary, boundary.Add(time.Microsecond)} {
+		reference, err := AvailablePre24Reference(identity, pytime.ISO(at), nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := SpotInstrumentCoverage("SPOT-fixture", observedWindows(t, anchor), reference); err == nil {
+			t.Fatal("equal-boundary or future trade became a valid pre24 predecessor")
+		}
+	}
+	reference, err := AvailablePre24Reference(identity, pytime.ISO(boundary.Add(-time.Microsecond)), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := SpotInstrumentCoverage("SPOT-fixture", observedWindows(t, anchor), reference); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestSpotMissingReferenceAndUnresolvedBoundaryNeverBecomeComplete(t *testing.T) {
 	aligned := time.Date(2026, 10, 26, 1, 0, 0, 0, time.UTC)
 	for _, anchor := range []time.Time{aligned, aligned.Add(17 * time.Second)} {

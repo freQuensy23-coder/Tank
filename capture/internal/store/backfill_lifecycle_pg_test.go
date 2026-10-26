@@ -72,6 +72,26 @@ func TestBackfillSparseRefusalPreservesMalformedNullableEvidenceAndExactPriorRes
 	id := "backfill-refusal-" + suffix()
 	cleanup(t, s, "backfill_id", id, backfillRuns)
 	seedBackfill(t, s, id, nil, nil, nil)
+	legacy, err := s.Get(ctx, backfillRuns, id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, original := actualBackfill(t, s, id)
+	document, err := original.SemanticDocument()
+	if err != nil {
+		t.Fatal(err)
+	}
+	exactFingerprint, err := schema.FingerprintDocument(document, backfillRuns)
+	if err != nil {
+		t.Fatal(err)
+	}
+	legacyFingerprint := schema.Fingerprint(legacy, backfillRuns)
+	if exactFingerprint == legacyFingerprint {
+		t.Fatal("fixture did not establish actual legacy rounded-number fingerprint evidence")
+	}
+	if _, err := s.Pool.Exec(ctx, "UPDATE "+liveTable(backfillRuns)+" SET semantic_fingerprint=$2 WHERE storage_key=$1", id, legacyFingerprint); err != nil {
+		t.Fatal(err)
+	}
 	observation, before := actualBackfill(t, s, id)
 	refusal, ok := observation.Selection().(backfillstate.Refused)
 	if !ok {

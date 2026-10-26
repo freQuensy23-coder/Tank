@@ -21,6 +21,16 @@ func TestMalformedStoredKlineCompletionRefusesBeforeAnyProviderFetch(t *testing.
 	}
 }
 
+func TestMalformedBenchmarkSymbolCannotBecomeAnEmptySuccessfulObservation(t *testing.T) {
+	for _, raw := range []any{nil, 123, true, "", " "} {
+		r := newRESTRig(t, "coinbase")
+		r.s.opt.Tokens = map[string]map[string]any{r.inst.TokenID: {"symbol": raw}}
+		if _, err := r.s.backfillBenchmarkKlines(context.Background(), r.base); err == nil || !strings.Contains(err.Error(), "requires actual nonblank") || r.v.klineCalls.Load() != 0 {
+			t.Fatalf("malformed symbol was converted to an absent benchmark: %v", err)
+		}
+	}
+}
+
 func TestStoredKlineUnknownCompletionRemainsUnreportedAndConflictsRefuse(t *testing.T) {
 	at := time.Date(2026, 10, 26, 1, 0, 0, 0, time.UTC)
 	unknown := map[string]any{"open_time": pytime.ISO(at), "complete": nil}
@@ -93,6 +103,11 @@ func TestPre24LatestClockRequiresConsistentActualTradeEvidence(t *testing.T) {
 		}}
 	}
 	a, b := point("trade-a", boundary.Add(-time.Second)), point("trade-b", boundary.Add(-time.Second))
+	for _, at := range []time.Time{boundary, boundary.Add(time.Microsecond)} {
+		if _, err := decodePre24Reference([]map[string]any{{"reference_points": []any{point("invalid-predecessor", at)}}}, boundary); err == nil {
+			t.Fatal("equal-boundary or future trade became a retained pre24 predecessor")
+		}
+	}
 	if _, err := decodePre24Reference([]map[string]any{{"reference_points": []any{a, b}}}, boundary); err == nil {
 		t.Fatal("equal-clock conflicting identities acquired an invented ordering")
 	}
@@ -104,7 +119,7 @@ func TestPre24LatestClockRequiresConsistentActualTradeEvidence(t *testing.T) {
 	if err != nil || !strings.Contains(string(wire), `"trade_id":"trade-a"`) || !strings.Contains(string(wire), `"ts_prec":null`) {
 		t.Fatal("equivalent observed witness changed or acquired invented precision")
 	}
-	latest := point("observed-latest", boundary)
+	latest := point("observed-latest", boundary.Add(-500*time.Millisecond))
 	reference, err = decodePre24Reference([]map[string]any{{"reference_points": []any{a, b, latest}}}, boundary)
 	if err != nil {
 		t.Fatal(err)

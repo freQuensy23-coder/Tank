@@ -9,6 +9,7 @@ import (
 	"sort"
 	"sync"
 	"time"
+	"unicode/utf8"
 
 	"github.com/freQuensy23-coder/Tank/capture/internal/flow"
 	"github.com/freQuensy23-coder/Tank/capture/internal/normalize"
@@ -559,17 +560,23 @@ func (s *Service) backfillKlines(ctx context.Context, inst *venue.Instrument, st
 
 func (s *Service) backfillBenchmarkKlines(ctx context.Context, anchor time.Time) ([]backfillstate.BenchmarkCoverage, error) {
 	var result []backfillstate.BenchmarkCoverage
-	for _, symbol := range []string{"BTC", "ETH"} {
-		tokens := map[string]bool{}
-		for id, token := range s.opt.Tokens {
-			if text(token["symbol"]) == symbol {
-				tokens[id] = true
-			}
+	symbols := make(map[string]string, len(s.opt.Tokens))
+	for tokenID, token := range s.opt.Tokens {
+		symbol, reported := token["symbol"].(string)
+		if !reported || strings.TrimSpace(symbol) == "" || strings.TrimSpace(tokenID) == "" || !utf8.ValidString(symbol) || !utf8.ValidString(tokenID) {
+			return nil, errors.New("benchmark token registry requires actual nonblank token identities and symbols")
 		}
+		symbols[tokenID] = symbol
+	}
+	for _, symbol := range []string{"BTC", "ETH"} {
 		var best *venue.Instrument
 		for _, iid := range s.opt.Order {
 			inst := s.opt.Instruments[iid]
-			if inst == nil || !tokens[inst.TokenID] || !inst.Active || !inst.Spot() {
+			if inst == nil {
+				continue
+			}
+			reported, present := symbols[inst.TokenID]
+			if !present || reported != symbol || !inst.Active || !inst.Spot() {
 				continue
 			}
 			if best == nil || benchmarkLess(inst, best) {

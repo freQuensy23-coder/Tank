@@ -292,6 +292,9 @@ func SpotInstrumentCoverage(id string, windows CaptureWindows, pre24 Pre24Refere
 		return InstrumentCoverage{}, err
 	}
 	value.pre24 = &pre24
+	if err := value.Validate(); err != nil {
+		return InstrumentCoverage{}, err
+	}
 	return value, nil
 }
 func (r InstrumentCoverage) Complete() bool {
@@ -305,7 +308,18 @@ func (r InstrumentCoverage) Validate() error {
 		return err
 	}
 	if r.pre24 != nil {
-		return r.pre24.Validate()
+		if err := r.pre24.Validate(); err != nil {
+			return err
+		}
+		if r.pre24.available {
+			at, err := time.Parse(time.RFC3339Nano, *r.pre24.stamp)
+			if err != nil {
+				return err
+			}
+			if !at.Before(r.windows.day.start) {
+				return errors.New("pre24 reference trade must precede its declared boundary")
+			}
+		}
 	}
 	return nil
 }
