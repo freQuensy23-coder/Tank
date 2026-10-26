@@ -1,6 +1,6 @@
 """Actual Runtime composition with owned resources and refused unrelated HTTP."""
 
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager
 from pathlib import Path
 from shutil import copytree
@@ -86,7 +86,11 @@ def runtime_failure_config(root: Path) -> Path:
 
 @asynccontextmanager
 async def runtime_failure_fixture(
-    repo: MemoryRepository | PostgresRepository, tmp_path: Path, *, ops_progress_enabled: bool
+    repo: MemoryRepository | PostgresRepository,
+    tmp_path: Path,
+    *,
+    ops_progress_enabled: bool,
+    http_routes: Callable[[respx.MockRouter], None] | None = None,
 ) -> AsyncIterator[Runtime]:
     settings = resolve_versions(
         RuntimeFailureFixtureSettings(
@@ -105,7 +109,12 @@ async def runtime_failure_fixture(
             ops_progress_enabled=ops_progress_enabled,
         )
     )
-    with pytest.MonkeyPatch.context() as patch, respx.mock(assert_all_mocked=True, assert_all_called=False):
+    with (
+        pytest.MonkeyPatch.context() as patch,
+        respx.mock(assert_all_mocked=True, assert_all_called=False) as router,
+    ):
+        if http_routes is not None:
+            http_routes(router)
         patch.setattr(runtime_composition, "configure_logging", keep_fixture_logging)
         runtime = runtime_composition.build_runtime(repo, settings)
         try:

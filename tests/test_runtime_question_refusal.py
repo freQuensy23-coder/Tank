@@ -211,12 +211,20 @@ async def test_actual_missing_native_observation_reconciles_changed_facts_withou
 ) -> None:
     repo = MemoryRepository()
     job_id = await seed_unproved_question(repo)
-    async with runtime_failure_fixture(repo, tmp_path, ops_progress_enabled=False) as runtime:
+    routes: list[respx.Route] = []
+
+    def native_missing(router: respx.MockRouter) -> None:
+        routes.append(
+            router.get("http://native.invalid/v1/sessions/session").mock(return_value=httpx.Response(404))
+        )
+
+    async with runtime_failure_fixture(
+        repo, tmp_path, ops_progress_enabled=False, http_routes=native_missing
+    ) as runtime:
         await runtime.reconcile_delivery_failures()
         first = await repo.get("ops.jobs", job_id)
         assert first is not None
         old_refusals = first["host_question_failure_refusals"]
-        route = respx.get("http://native.invalid/v1/sessions/session").mock(return_value=httpx.Response(404))
         assert not await runtime.sessions.continuable(
             UserQuestionMessage(kind="USER_QUESTION", session_id="session", question_id="question")
         )
@@ -225,7 +233,7 @@ async def test_actual_missing_native_observation_reconciles_changed_facts_withou
         stored = await repo.get("ops.jobs", job_id)
         assert stored is not None and stored["followup_failure_recorded_at_prec"] == "COLLECTION_ONLY"
         assert stored["host_question_failure_refusals"] == old_refusals
-        assert route.call_count == 1
+        assert len(routes) == 1 and routes[0].call_count == 1
     question = await repo.get("out.user_questions", "question")
     assert question is not None and question["answer_status"] == "NO_SESSION"
     assert len(await repo.list("ops.jobs", filters={"type": "TELEGRAM_ANSWER"})) == 1
@@ -346,3 +354,55 @@ async def test_invalid_persistence_is_not_relabelled_as_retryable_availability_o
     assert "private-token" not in str(rejected.value)
     assert await repo.get("ops.jobs", job_id) == original
     assert await repo.list("ops.jobs", filters={"type": "TELEGRAM_ANSWER"}) == []
+
+
+def test_terminal_failure_keeps_wire_alias_admission_and_revalidates_typed_payload() -> None:
+    from tank.runtime_contracts import (
+        AlertDeliveryJob,
+        FailedDeliveryNotification,
+        TerminalJobFailure,
+    )
+
+    record: dict[str, JsonValue] = {
+        "job_id": "delivery",
+        "type": "DELIVER",
+        "status": "FAILED",
+        "attempts": 1,
+        "payload": {
+            "alert_id": "alert",
+            "version": 1,
+            "channel": "telegram:alerts",
+            "_depends_on": ["prior"],
+        },
+    }
+    command = TerminalJobFailure.from_record(
+        record,
+        reason=SuppliedFailureReason(kind="SUPPLIED", value="DeliveryFailure"),
+        progress_requested=False,
+        notifications_requested=True,
+    )
+    assert isinstance(command.notification, FailedDeliveryNotification)
+    assert command.notification.payload.depends_on == ["prior"]
+    assert TerminalJobFailure.model_validate(command, by_name=True) == command
+    wrong_wire = {
+        **record,
+        "payload": {"alert_id": "alert", "version": 1, "channel": "telegram:alerts", "depends_on": ["prior"]},
+    }
+    with pytest.raises(ValidationError):
+        TerminalJobFailure.from_record(
+            wrong_wire,
+            reason=command.reason,
+            progress_requested=False,
+            notifications_requested=True,
+        )
+    corrupted = AlertDeliveryJob.model_construct(
+        alert_id="alert",
+        version=True,
+        channel="telegram:alerts",
+        depends_on=[],
+    )
+    with pytest.raises(ValidationError):
+        FailedDeliveryNotification.model_validate(
+            {"kind": "DELIVERY", "payload": corrupted, "attempt": 1},
+            by_name=True,
+        )
