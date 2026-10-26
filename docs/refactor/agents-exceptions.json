@@ -3135,6 +3135,37 @@
         "test_independently_completed_input_settles_without_unused_retry_or_body",
         "test_failed_tool_input_requires_observed_older_attempt_before_supersession"
       ]
+    },
+    {
+      "sites": [
+        {
+          "path": "src/tank/contracts/native_usage.py",
+          "symbol": "NativeUsageSpan.from_wire"
+        },
+        {
+          "path": "src/tank/contracts/native_usage.py",
+          "symbol": "NativeUsageCounters"
+        },
+        {
+          "path": "src/tank/contracts/native_usage.py",
+          "symbol": "NativeUsageSession.from_record"
+        },
+        {
+          "path": "src/tank/agents/native_usage.py",
+          "symbol": "record_native_usage"
+        }
+      ],
+      "kind": "partial observed native measurements and explicit subscription ledger serialization",
+      "reason": "Node api-types span model_usage is optional and its cache counters optional; Node harness usage interfaces accept partial reported counters, while the managed span endpoint declares four counters. No source mode is inferred from absent fields and no universal inclusion/exclusion of cache in input tokens is asserted. The application retains reported counters independently without arithmetic; missing measurements remain None with existing named missing-field reasons, distinct from known0. Missing versus observed empty usage objects are distinct no-ledger phases. Optional event model uses the actual resolved session model only when unreported, never a made-up model. Retained session prompt/effort/provenance can genuinely be unreported and remain None. Nested raw native_usage_evidence preserves the original provider measurement object including extension/estimate facts; usage contains only admitted counter fields because the storage codec otherwise promotes several raw alias keys into physical SQL measurements. Raw extensions cannot overwrite usage/session identity or become billing authority. Existing cost_usd0/SUBSCRIPTION charge remains the explicit agent gateway application policy declared by config/openma.yaml model_access/pricing_basis, not a provider token-price estimate; no price or total is calculated. Fixed ledger/missing_fields maps exist only at the immutable storage serialization boundary; no I/O occurs in inward models.",
+      "validation": [
+        "test_actual_partial_usage_preserves_observations_and_declared_subscription_policy",
+        "test_invalid_reported_counter_refuses_before_any_usage_write",
+        "test_unreported_and_explicit_empty_spans_have_distinct_no_ledger_effects",
+        "test_mutated_measurement_cannot_replace_retained_span_evidence",
+        "test_reported_search_zero_and_model_are_not_replaced_by_other_sources",
+        "test_usage_propagates_provider_processed_precision_without_inference",
+        "test_usage_keeps_effort_stop_reason_and_search_count"
+      ]
     }
   ]
 }
