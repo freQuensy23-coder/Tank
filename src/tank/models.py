@@ -46,12 +46,10 @@ TABLE_COLUMNS = {
         "certainty": "text",
         "timing_confidence": "text",
         "best_source_class": "text",
-        "next_milestone": "jsonb",
         "lifecycle": "text",
         "merged_into": "text",
         "current_ems_id": "text",
     },
-    "evt.event_entities": {"event_id": "text", "entity_id": "text", "role": "text"},
     "evt.event_observations": {
         "obs_id": "text",
         "event_id": "text",
@@ -94,12 +92,9 @@ TABLE_COLUMNS = {
         "event_id": "text",
         "version": "int",
         "cutoff": "timestamptz",
-        "dims": "jsonb",
-        "gates": "jsonb",
         "class": "text",
         "criterion": "text",
         "class_reasons": "text[]",
-        "impact_horizon": "jsonb",
         "config_version": "text",
         "model_id": "text",
         "prompt_version": "text",
@@ -173,12 +168,9 @@ TABLE_COLUMNS = {
         "move_class": "text",
         "support": "int",
         "alternatives": "text[]",
-        "divergence": "jsonb",
         "flags": "text[]",
         "decisive_facts": "text[]",
-        "data_confidence": "jsonb",
         "class_confidence": "text",
-        "detail": "jsonb",
         "config_version": "text",
         "code_version": "text",
     },
@@ -195,7 +187,6 @@ TABLE_COLUMNS = {
         "tactical": "boolean",
         "investigate": "boolean",
         "call_id": "text",
-        "outlook": "jsonb",
         "conditions": "text[]",
         "thesis_rule": "text",
         "trade_reasons": "text[]",
@@ -220,7 +211,6 @@ TABLE_COLUMNS = {
         "event_id": "text",
         "generated_at": "timestamptz",
         "card_text": "text",
-        "card_struct": "jsonb",
         "decisions": "text[]",
         "evidence_bundle_id": "char(64)",
         "supersedes_version": "int",
@@ -255,7 +245,6 @@ TABLE_COLUMNS = {
         "type": "text",
         "priority": "smallint",
         "idem_key": "text",
-        "payload": "jsonb",
         "status": "text",
         "attempts": "int",
         "max_attempts": "int",
@@ -293,8 +282,6 @@ TABLE_COLUMNS = {
         "call_id": "text",
         "session_id": "text",
         "tool": "text",
-        "input": "jsonb",
-        "result": "jsonb",
         "status": "text",
         "requested_at": "timestamptz",
         "answered_at": "timestamptz",
@@ -311,12 +298,6 @@ TABLE_COLUMNS = {
         "venue_symbol": "text",
     },
     "reg.sector_baskets": {"basket_id": "text"},
-    "reg.dependency_map": {"edge_id": "text", "entity_id": "text", "token_id": "text"},
-    "reg.metric_semantics": {
-        "metric_key": "text",
-        "venue": "text",
-        "market_type": "text",
-    },
     "reg.exchange_addresses": {"address": "text", "chain": "text", "entity_id": "text"},
     "evt.capture_chains": {"event_id": "text", "token_id": "text", "version": "int", "capture_class": "text"},
     "evt.beneficiary_maps": {"event_id": "text", "map_version": "int", "cutoff": "timestamptz"},
@@ -353,8 +334,6 @@ TABLE_COLUMNS = {
     "mkt.tickers_24h": {"instrument_id": "text", "ts": "timestamptz"},
     "mkt.unlocks": {"token_id": "text", "date": "timestamptz", "qty": "numeric"},
     "mkt.supply_obs": {"token_id": "text", "ts": "timestamptz", "kind": "text"},
-    "mkt.supply": {"token_id": "text", "ts": "timestamptz", "kind": "text"},
-    "ana.outlooks": {"out_id": "text", "event_id": "text", "token_id": "text", "cutoff": "timestamptz"},
     "ana.contradictions": {
         "contradiction_id": "text",
         "event_id": "text",
@@ -381,8 +360,6 @@ TABLE_COLUMNS = {
     "ops.source_checkpoints": {"source_id": "text", "cursor": "text", "updated_at": "timestamptz"},
     "ops.source_escalations": {"source_id": "text", "expires_at": "timestamptz"},
     "qa.reviews": {"review_id": "text", "subject": "text", "label": "text", "at": "timestamptz"},
-    "qa.fixtures": {"fixture_id": "text", "cutoff": "timestamptz"},
-    "qa.replay_runs": {"run_id": "text", "fixture_id": "text", "at": "timestamptz"},
     "scout.expansion_proposals": {
         "prp_id": "text",
         "hook": "text",
@@ -427,7 +404,7 @@ TABLE_COLUMNS["mkt.backfill_runs"] = {
 }
 
 TABLE_COLUMNS.pop("ops.budget_state", None)
-TABLE_COLUMNS["ops.scheduler_checkpoints"] = {"checkpoint_id": "text", "at": "timestamptz", "state": "jsonb"}
+TABLE_COLUMNS["ops.scheduler_checkpoints"] = {"checkpoint_id": "text", "at": "timestamptz"}
 
 REQUIRED_FIELDS = {
     "ingest.source_items": [
@@ -458,7 +435,6 @@ REQUIRED_FIELDS = {
         "best_source_class",
         "lifecycle",
     ],
-    "evt.event_entities": ["event_id", "entity_id", "role"],
     "evt.event_observations": [
         "event_id",
         "item_id",
@@ -620,7 +596,6 @@ MARKET_TIME_FIELDS = {
     "mkt.liq_obs": "ts",
     "mkt.tickers_24h": "ts",
     "mkt.supply_obs": "ts",
-    "mkt.supply": "ts",
 }
 for _table_name in MARKET_TIME_FIELDS:
     TABLE_COLUMNS[_table_name].update(recorded_at="timestamptz", received_ts="timestamptz")
@@ -695,8 +670,6 @@ TIMESTAMP_PRECISION_FIELDS = {
     },
     "mkt.unlocks": {"date": "date_prec"},
     "mkt.supply_obs": {"ts": "ts_prec", "recorded_at": "recorded_at_prec", "received_ts": "received_ts_prec"},
-    "mkt.supply": {"ts": "ts_prec", "recorded_at": "recorded_at_prec", "received_ts": "received_ts_prec"},
-    "ana.outlooks": {"cutoff": "cutoff_prec"},
     "ana.contradictions": {"detected_at": "detected_at_prec", "resolved_at": "resolved_at_prec"},
     "ana.watch_conditions": {"expires_at": "expires_at_prec", "fired_at": "fired_at_prec"},
     "out.evidence_bundles": {"cutoff": "cutoff_prec"},
@@ -704,8 +677,6 @@ TIMESTAMP_PRECISION_FIELDS = {
     "ops.source_checkpoints": {"updated_at": "updated_at_prec"},
     "ops.source_escalations": {"expires_at": "expires_at_prec"},
     "qa.reviews": {"at": "at_prec"},
-    "qa.fixtures": {"cutoff": "cutoff_prec"},
-    "qa.replay_runs": {"at": "at_prec"},
     "scout.expansion_proposals": {"decided_at": "decided_at_prec"},
     "mkt.capture_gaps": {"start": "start_prec", "end": "end_prec", "observed_at": "observed_at_prec"},
     "mkt.backfill_runs": {

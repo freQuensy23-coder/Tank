@@ -6,8 +6,10 @@ through the repository methods; every collection of MARKET_TABLES is served here
 ClickHouse client keeps them only in memory (tests and replay).
 
 Tables are ReplacingMergeTree on the collection's identity, the newest `_version` wins, and
-every read selects FINAL, so a row reads as its last write. Numbers are stored as their
-exact decimal text (some carry 100 digits), timestamps as DateTime64(6, UTC), JSON as text.
+every read of row values selects FINAL, so a row reads as its last write. FINAL disables the
+skip indexes, so lookups by storage_key or recorded_at first bound the instruments and times
+without FINAL (_narrow). Numbers are stored as their exact decimal text (some carry 100
+digits), timestamps as DateTime64(6, UTC), JSON as text.
 """
 
 import asyncio
@@ -301,9 +303,34 @@ async def _select(ch, collection, q, order, tail="", selected="*"):
     )
 
 
+async def _narrow(ch, collection, q, time_field):
+    """Bound q to each instrument's time span among the stored rows that match it.
+
+    Reads without FINAL, so skip indexes prune by storage_key and recorded_at; the FINAL read
+    that follows then prunes by partition and sort key. Every row FINAL returns is one of the
+    stored versions matching q, so the bounds keep all of them. False when nothing matches."""
+    found = await ch.rows(
+        f"SELECT instrument_id, min(`{time_field}`) AS lo, max(`{time_field}`) AS hi "
+        f"FROM {collection} WHERE {q.predicate()} GROUP BY instrument_id ORDER BY instrument_id",
+        q.params,
+    )
+    if not found:
+        return False
+    spans = [
+        f"(instrument_id = {q.param(row['instrument_id'], 'String')}"
+        f" AND `{time_field}` >= {q.param(parse_time(row['lo']), DT)}"
+        f" AND `{time_field}` <= {q.param(parse_time(row['hi']), DT)})"
+        for row in found
+    ]
+    q.where("(" + " OR ".join(spans) + ")")
+    return True
+
+
 async def get(ch, collection, key):
     q = Query()
     q.where(f"storage_key = {q.param(str(key), 'String')}")
+    if not await _narrow(ch, collection, q, MARKET_TABLES[collection]):
+        return None
     rows = await _select(ch, collection, q, "storage_key", "LIMIT 1")
     return _record(collection, rows[0]) if rows else None
 
@@ -371,6 +398,8 @@ async def late_page(
         q.where(f"`{arrival_field}` < {q.param(end, DT)}")
     if after is not None:
         _after(q, (f"`{arrival_field}`", after[0], DT), ("storage_key", str(after[1]), "String"))
+    if not await _narrow(ch, collection, q, MARKET_TABLES[collection]):
+        return []
     rows = await _select(ch, collection, q, f"`{arrival_field}`, storage_key", f"LIMIT {int(limit)}")
     records = await _decode(collection, rows)
     return [
@@ -568,11 +597,16 @@ def _day(text):
 
 
 async def market_kline_days_recorded_since(ch, since, end):
+    """Instrument days with a kline recorded since `since`, read without FINAL.
+
+    Every version of a kline shares its instrument and day, so a replaced version can at most
+    name a day once more, which only evicts one cached count. Without FINAL the recorded_at
+    skip index prunes the scan to recent writes instead of merging every partition."""
     q = Query()
     q.where(f"recorded_at >= {q.param(since, DT)}")
     q.where(f"open_time < {q.param(end, DT)}")
     rows = await ch.rows(
-        f"SELECT DISTINCT instrument_id, toString(toDate(open_time)) AS day FROM {_table('mkt.klines_1m')} "
+        "SELECT DISTINCT instrument_id, toString(toDate(open_time)) AS day FROM mkt.klines_1m "
         f"WHERE {q.predicate()}",
         q.params,
     )

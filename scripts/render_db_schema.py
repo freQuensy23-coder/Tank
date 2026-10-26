@@ -7,6 +7,7 @@ commit diagrams/tank_postgres_schema.{svg,png} and diagrams/tank_clickhouse_sche
 
 import argparse
 import ast
+import copy
 import html
 import re
 import subprocess
@@ -140,12 +141,29 @@ def parse_constraint(t, text, name=None):
         t.constraints[name or f"check_{len(t.constraints)}"] = ("CK", used, valid)
 
 
-def parse_pg(paths):
-    tables, schemas = {}, []
-    for path in paths:
-        for s in statements(Path(path).read_text()):
+def drop_column(t, name):
+    """Remove a column with the constraints and indexes that use it, as PostgreSQL does."""
+    t.cols = [c for c in t.cols if c["name"] != name]
+    t.constraints = {k: v for k, v in t.constraints.items() if name not in v[1]}
+    kept = [u for u in t.unique_indexes if name not in u[1]]
+    t.indexes -= len(t.unique_indexes) - len(kept)
+    t.unique_indexes = kept
+
+
+def parse_pg(sources):
+    tables, schemas, owners = {}, [], {}
+    for source in sources:
+        for s in statements(source):
             if m := re.match(r"CREATE SCHEMA (IF NOT EXISTS )?(\w+)", s):
                 schemas.append(m.group(2))
+            elif m := re.match(r"DROP TABLE (IF EXISTS )?(\w+\.\w+)$", s):
+                tables.pop(m.group(2), None)
+            elif m := re.match(r"DROP INDEX (IF EXISTS )?(\w+)\.(\w+)$", s):
+                owner = owners.pop((m.group(2), m.group(3)), None)
+                if owner in tables:
+                    t = tables[owner]
+                    t.indexes -= 1
+                    t.unique_indexes = [u for u in t.unique_indexes if u[0] != m.group(3)]
             elif m := re.match(
                 r"CREATE (UNLOGGED )?TABLE (IF NOT EXISTS )?(\w+\.\w+) \((.*?)\)( WITH \((.*)\))?$", s
             ):
@@ -157,6 +175,12 @@ def parse_pg(paths):
                         parse_constraint(t, part)
                     else:
                         parse_col_def(t, part)
+            elif (m := re.match(r"ALTER TABLE (ONLY )?(\w+\.\w+) (DROP COLUMN .*)$", s)) and m.group(
+                2
+            ) in tables:
+                for action in split_top(m.group(3)):
+                    if a := re.match(r"DROP COLUMN (IF EXISTS )?(\w+)$", action):
+                        drop_column(tables[m.group(2)], a.group(2))
             elif m := re.match(r"ALTER TABLE (ONLY )?(\w+\.\w+) (.*)$", s):
                 t, action = tables[m.group(2)], m.group(3)
                 if a := re.match(r"ADD CONSTRAINT (.*)$", action):
@@ -173,6 +197,7 @@ def parse_pg(paths):
             ):
                 t = tables[m.group(4)]
                 t.indexes += 1
+                owners[(m.group(4).split(".")[0], m.group(3))] = m.group(4)
                 if m.group(1):
                     t.unique_indexes.append((m.group(3), cols_of(m.group(7)), bool(m.group(8))))
             elif m := re.match(r"CREATE TRIGGER (\w+) .* ON (\w+\.\w+) .* FUNCTION ([\w.]+)\(", s):
@@ -206,7 +231,6 @@ LOGICAL = {
     "current_ems_id": "evt.ems_assessments",
     "opened_by_alert": "out.alerts",
     "evidence_bundle_id": "out.evidence_bundles",
-    "fixture_id": "qa.fixtures",
     "question_id": "out.user_questions",
 }
 SPECIFIC = {
@@ -276,6 +300,61 @@ def finish_pg(tables):
         if not any(v[0] == "PK" for v in t.constraints.values()):
             t.flags.append("no PK")
     return tables
+
+
+def pg_model_at(root, ref):
+    """The finished PostgreSQL model of the migrations committed at a git ref."""
+
+    def git(*args):
+        return subprocess.run(
+            ["git", "-C", str(root), *args], check=True, capture_output=True, text=True
+        ).stdout
+
+    names = sorted(
+        n for n in git("ls-tree", "--name-only", ref, "src/tank/migrations/").split() if n.endswith(".sql")
+    )
+    tables, _ = parse_pg(git("show", f"{ref}:{n}") for n in names)
+    return finish_pg(tables)
+
+
+def diff_tables(base, tables):
+    """The tables to draw for a schema diff against base, each with its change.
+
+    A removed column or table stays in place struck through, an added or altered one is marked;
+    change is None for a table that did not change."""
+    drawn = {}
+    for name, t in tables.items():
+        d = copy.copy(t)
+        old = base.get(name)
+        if old is None:
+            d.cols = [dict(c, change="added") for c in t.cols]
+            d.change, d.idx_was = "added", None
+            drawn[name] = d
+            continue
+        now = {c["name"]: c for c in t.cols}
+        was = {c["name"]: c for c in old.cols}
+        cols = []
+        for c in old.cols:
+            if c["name"] not in now:
+                cols.append(dict(c, change="removed", ref=None))
+            elif (c["type"], c["nn"]) != (now[c["name"]]["type"], now[c["name"]]["nn"]):
+                cols.append(dict(now[c["name"]], change="altered"))
+            else:
+                cols.append(now[c["name"]])
+        cols += [dict(c, change="added") for c in t.cols if c["name"] not in was]
+        d.cols = cols
+        d.idx_was = index_count(old) if index_count(old) != index_count(t) else None
+        altered = d.idx_was is not None or old.flags != t.flags or any(c.get("change") for c in cols)
+        d.change = "altered" if altered else None
+        drawn[name] = d
+    removed = {}
+    for name, old in base.items():
+        if name not in tables:
+            d = copy.copy(old)
+            d.cols = [dict(c, change="removed", ref=None) for c in old.cols]
+            d.change, d.idx_was = "removed", None
+            removed[name] = d
+    return drawn, removed
 
 
 def foreign_keys(tables):
@@ -376,6 +455,8 @@ def ch_model(root):
 
 
 MONO = "Menlo, 'DejaVu Sans Mono', monospace"
+DIFF_RED = "#E00000"
+DIFF_WASH = "#FDE3E3"
 SANS = "'Helvetica Neue', Helvetica, Arial, sans-serif"
 CW = 0.602
 ROW = 17
@@ -510,9 +591,13 @@ def pg_metrics(tables):
 
 def pg_table(t, x, y, w, mx):
     fill, tint, _ = SCHEMA[t.schema]
+    change = getattr(t, "change", "")
+    if change == "removed":
+        fill, tint = DIFF_RED, DIFF_WASH
     schema, short = t.name.split(".")
     box = Box(t.name, x, y, w, t.cols, HEAD + SUB)
-    out = [f'<g id="{esc(t.name)}">']
+    fade = ' opacity="0.3"' if change is None else ""
+    out = [f'<g id="{esc(t.name)}"{fade}>']
     out.append(
         f'<rect x="{x + 2}" y="{y + 3}" width="{w}" height="{box.h}" rx="5" fill="#000" opacity="0.07"/>'
     )
@@ -528,20 +613,28 @@ def pg_table(t, x, y, w, mx):
     )
     out.append(f'<rect x="{x + 0.6}" y="{y + HEAD}" width="{w - 1.2}" height="{SUB}" fill="{tint}"/>')
     flags = " · ".join(t.flags) if t.flags else ""
-    note = t.note or ""
+    note = "removed" if change == "removed" else "added" if change == "added" else t.note or ""
+    if change in ("removed", "added"):
+        flags = ""
     out.append(
         f'<text x="{x + 9}" y="{y + HEAD + 10.6}" font-family="{SANS}" font-size="8.6" fill="{fill}" font-weight="600">'
         f"{esc(flags or note)}</text>"
     )
     n_idx = index_count(t)
     idx = f"{n_idx} idx" if n_idx else "no idx"
+    idx_ink = MUTED
+    if getattr(t, "idx_was", None) is not None:
+        idx, idx_ink = f"{t.idx_was} → {n_idx} idx", DIFF_RED
     out.append(
-        f'<text x="{x + w - 8}" y="{y + HEAD + 10.6}" font-family="{SANS}" font-size="8.6" fill="{MUTED}" '
-        f'text-anchor="end">{idx}</text>'
+        f'<text x="{x + w - 8}" y="{y + HEAD + 10.6}" font-family="{SANS}" font-size="8.6" fill="{idx_ink}" '
+        f'{'font-weight="700" ' if idx_ink == DIFF_RED else ""}text-anchor="end">{idx}</text>'
     )
     for i, c in enumerate(t.cols):
         ry = y + HEAD + SUB + i * ROW
-        if i % 2:
+        row_change = c.get("change")
+        if row_change:
+            out.append(f'<rect x="{x + 0.6}" y="{ry}" width="{w - 1.2}" height="{ROW}" fill="{DIFF_WASH}"/>')
+        elif i % 2:
             out.append(f'<rect x="{x + 0.6}" y="{ry}" width="{w - 1.2}" height="{ROW}" fill="#F7FAFC"/>')
         bx = x + 6
         labels = []
@@ -560,7 +653,7 @@ def pg_table(t, x, y, w, mx):
             out.append(g)
             bx += bw + 2
         envelope = c["name"] in ("document", "immutable") and t.cols[0]["name"] == "storage_key"
-        ink = FAINT if envelope else INK
+        ink = DIFF_RED if row_change else FAINT if envelope else INK
         weight = ' font-weight="700"' if c["pk"] else ""
         nx = max(x + mx["name_x"], bx + 3)
         out.append(
@@ -568,8 +661,13 @@ def pg_table(t, x, y, w, mx):
         )
         out.append(
             f'<text x="{x + mx["type_x"]:.1f}" y="{ry + 12.2}" font-family="{MONO}" font-size="10" '
-            f'fill="{FAINT if envelope else MUTED}">{esc(c["type"])}</text>'
+            f'fill="{DIFF_RED if row_change else FAINT if envelope else MUTED}">{esc(c["type"])}</text>'
         )
+        if row_change == "removed":
+            end = x + mx["type_x"] + tw(c["type"], 10)
+            out.append(
+                f'<path d="M{nx - 2:.1f},{ry + 8.5} H{end + 2:.1f}" stroke="{DIFF_RED}" stroke-width="1.2"/>'
+            )
         if c["prec"]:
             px = x + mx["type_x"] + tw(c["type"], 10) + 4
             out.append(
@@ -601,11 +699,9 @@ PG_COLUMNS = [
         "reg.entities",
         "reg.entity_aliases",
         "reg.exchange_addresses",
-        "reg.dependency_map",
-        "reg.metric_semantics",
         "reg.sector_baskets",
     ],
-    ["ingest.source_items", "qa.fixtures", "qa.replay_runs", "qa.reviews", "scout.expansion_proposals"],
+    ["ingest.source_items", "qa.reviews", "scout.expansion_proposals"],
     [
         "evt.event_observations",
         "evt.claims",
@@ -621,14 +717,12 @@ PG_COLUMNS = [
         "evt.state_changes",
         "evt.beneficiary_maps",
         "evt.beneficiary_edges",
-        "evt.event_entities",
         "evt.capture_chains",
     ],
     [
         "ana.market_truth",
         "ana.decisions",
         "ana.calls",
-        "ana.outlooks",
         "ana.contradictions",
         "ana.watch_conditions",
     ],
@@ -653,7 +747,7 @@ PG_COLUMNS = [
         "ops.schema_migrations",
     ],
     ["mkt.hot_tokens", "mkt.capture_requests", "mkt.capture_streams", "mkt.capture_gaps"],
-    ["mkt.backfill_runs", "mkt.unlocks", "mkt.supply", "mkt.supply_obs"],
+    ["mkt.backfill_runs", "mkt.unlocks", "mkt.supply_obs"],
 ]
 
 PG_GUTTERS = {0: 46, 1: 84, 2: 96, 3: 84, 4: 64, 5: 64, 6: 46, 7: 46}
@@ -759,7 +853,6 @@ REF_TARGET = {
     "evt.ems_assessments": "ems_id",
     "out.alerts": "alert_id",
     "out.evidence_bundles": "bundle_id",
-    "qa.fixtures": "fixture_id",
     "out.user_questions": "question_id",
     "ana.calls": "call_id",
     "evt.beneficiary_edges": "edge_id",
@@ -780,7 +873,7 @@ COMPOSITE = {
         ["event_id", "map_version"],
     ),
 }
-DESIGN_FKS = [("evt.event_entities", "event_id", "evt.events")]
+DESIGN_FKS = []
 DESIGN_SERIAL_PKS = [("evt.state_changes", "id"), ("out.deliveries", "id"), ("ops.llm_usage", "id")]
 
 
@@ -851,35 +944,54 @@ def integrity_gaps(tables, fks):
     ]
 
 
-def render_pg(root):
+def render_pg(root, base_ref=None):
     mig = sorted((root / "src/tank/migrations").glob("*.sql"))
     span = f"{mig[0].name[:3]}–{mig[-1].name[:3]}"
-    tables, schemas = parse_pg(mig)
+    tables, schemas = parse_pg(p.read_text() for p in mig)
     tables = finish_pg(tables)
     fks = foreign_keys(tables)
     placed = {n for col in PG_COLUMNS for n in col}
     missing = set(tables) - placed
     assert not missing, missing
+    drawn, layout, diff_line = tables, PG_COLUMNS, None
+    if base_ref is not None:
+        base = pg_model_at(root, base_ref)
+        drawn, removed = diff_tables(base, tables)
+        layout = [list(names) for names in PG_COLUMNS]
+        for n in sorted(removed):
+            same = [sum(m.split(".")[0] == n.split(".")[0] for m in names) for names in layout]
+            layout[same.index(max(same))].append(n)
+            drawn[n] = removed[n]
+        rows = [c for t in drawn.values() for c in t.cols]
+        before = sum(index_count(t) for t in base.values())
+        after = sum(index_count(t) for t in tables.values())
+        diff_line = (
+            f"Diff {base_ref} → working tree: tables {len(base)} → {len(tables)}, "
+            f"columns removed {sum(c.get('change') == 'removed' for c in rows)}, "
+            f"added {sum(c.get('change') == 'added' for c in rows)}, "
+            f"altered {sum(c.get('change') == 'altered' for c in rows)}, indexes {before} → {after}. "
+            "Red: removed (struck through), added or altered; unchanged tables are faded."
+        )
 
     margin, top = 40, 330
     channel_y = top - 22
     col_x, col_w, mxs = {}, {}, {}
     x = margin
-    for i, names in enumerate(PG_COLUMNS):
-        mx = pg_metrics([tables[n] for n in names])
+    for i, names in enumerate(layout):
+        mx = pg_metrics([drawn[n] for n in names])
         title = max(tw(n, 12.5) * 1.05 + 70 for n in names)
         col_w[i] = max(mx["w"], title)
         col_x[i] = x
         mxs[i] = mx
         x += col_w[i] + PG_GUTTERS.get(i, 46)
-    width = x - PG_GUTTERS.get(len(PG_COLUMNS) - 1, 46) + margin
+    width = x - PG_GUTTERS.get(len(layout) - 1, 46) + margin
 
     boxes, col_of, body = {}, {}, []
     bottoms = {}
-    for i, names in enumerate(PG_COLUMNS):
+    for i, names in enumerate(layout):
         y = top
         for n in names:
-            box, svg = pg_table(tables[n], col_x[i], y, col_w[i], mxs[i])
+            box, svg = pg_table(drawn[n], col_x[i], y, col_w[i], mxs[i])
             boxes[n] = box
             col_of[n] = i
             body.append(svg)
@@ -1095,6 +1207,10 @@ def render_pg(root):
         hdr.append(f'<circle cx="{lx5 + 19}" cy="{ly + 40 + i * 18.5}" r="2.2" fill="#C53030"/>')
         hdr.append(text(lx5 + 28, ly + 44 + i * 18.5, line, 10.2))
 
+    if diff_line:
+        hdr = [f'<g opacity="0.3">{"".join(hdr)}</g>', text(margin, 100, esc(diff_line), 14, DIFF_RED, 700)]
+        edges = [f'<g opacity="0.3">{"".join(edges)}</g>']
+        panel = [f'<g opacity="0.3">{"".join(panel)}</g>']
     svg = [
         f'<svg xmlns="http://www.w3.org/2000/svg" width="{width:.0f}" height="{height:.0f}" viewBox="0 0 {width:.0f} {height:.0f}">',
         '<rect width="100%" height="100%" fill="#FFFFFF"/>',
@@ -1425,7 +1541,23 @@ def main():
     parser.add_argument(
         "--png", action="store_true", help="also export each SVG as a 2x PNG with rsvg-convert"
     )
+    parser.add_argument(
+        "--diff",
+        metavar=("BASE_REF", "OUT_DIR"),
+        nargs=2,
+        help="write OUT_DIR/tank_postgres_schema.diff.{svg,png}: the schema against BASE_REF, changes in red",
+    )
     args = parser.parse_args()
+    if args.diff:
+        ref, out = args.diff[0], Path(args.diff[1])
+        out.mkdir(parents=True, exist_ok=True)
+        path = out / "tank_postgres_schema.diff.svg"
+        path.write_text(render_pg(args.root, ref))
+        subprocess.run(
+            ["rsvg-convert", "-z", "2", str(path), "-o", str(path.with_suffix(".png"))], check=True
+        )
+        print(path.with_suffix(".png"))
+        return 0
     stale = []
     for name, svg in (
         ("tank_postgres_schema", render_pg(args.root)),

@@ -43,8 +43,6 @@ async def test_canonical_registry_bootstrap_and_idempotence():
             len(set(entity.get("aliases", []))) + len(entity.get("qualified_aliases", []))
             for entity in registry["entities"]
         ),
-        "reg.dependency_map": len(settings.load_config("dependency_map")["edges"]),
-        "reg.metric_semantics": len(settings.load_config("semantics")["metrics"]),
         "reg.exchange_addresses": sum(
             len(wallet["addresses"]) for wallet in settings.load_config("exchange_addresses")["wallet_lists"]
         ),

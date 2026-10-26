@@ -1463,6 +1463,7 @@ async def test_long_history_uses_bounded_current_snapshots_and_exact_refs(
     import os
 
     from tank.analysis.decisions import DecisionEngine
+    from tank.models import REQUIRED_FIELDS
     from tank.storage import TABLE_COLUMNS
     from tank.util import new_id
 
@@ -1538,12 +1539,16 @@ async def test_long_history_uses_bounded_current_snapshots_and_exact_refs(
         )
 
         historic_truth = {
-            key: value for key, value in historic_truth.items() if key in TABLE_COLUMNS["ana.market_truth"]
+            key: value
+            for key, value in historic_truth.items()
+            if key in TABLE_COLUMNS["ana.market_truth"] or key in REQUIRED_FIELDS["ana.market_truth"]
         }
         historic_decision = {
             key: value
             for key, value in historic_decision.items()
-            if key in TABLE_COLUMNS["ana.decisions"] or key == "market_truth_id"
+            if key in TABLE_COLUMNS["ana.decisions"]
+            or key in REQUIRED_FIELDS["ana.decisions"]
+            or key == "market_truth_id"
         }
         async with base.transaction():
             for index in range(1001):
