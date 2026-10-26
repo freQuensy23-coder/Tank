@@ -3,12 +3,14 @@
 import copy
 import json
 from pathlib import Path
-from unittest.mock import AsyncMock
 
 import httpx
 import pytest
+from pydantic import JsonValue
+from replay_completion_fixtures import accept_actor_input, completed_from_actor_cache, finish_actor_input
 from source_support import fixture_versions
 
+from tank.agents.message_dispatch import MessageDispatchRequest
 from tank.agents.sessions import SessionService
 from tank.analysis.decisions import DecisionEngine
 from tank.analysis.truth import MarketTruthService
@@ -90,8 +92,8 @@ async def test_explicit_replay_session_boundaries(
     )
     sent, archived = [], []
 
-    async def send(service, payload):
-
+    async def send(service: SessionService, payload: dict[str, JsonValue]) -> dict[str, JsonValue]:
+        request = MessageDispatchRequest.from_wire(payload)
         sid = payload.get("session_id")
         if sid is None:
             sid = "native-" + str(len(await repo.list("ops.agent_sessions")) + 1)
@@ -106,8 +108,13 @@ async def test_explicit_replay_session_boundaries(
                     "message_log": [],
                 },
             )
+        assert isinstance(sid, str)
         session = await repo.get("ops.agent_sessions", sid)
+        assert session is not None
         item = payload["item_id"]
+        assert isinstance(item, str)
+        native_input_id = "accepted:" + item
+        await accept_actor_input(service, session_id=sid, request=request, native_input_id=native_input_id)
         stamp = {"value": at, "precision": "EXACT", "quote": None}
         if payload["kind"] == "NEW_ITEM":
             result = await tools.dispatch(
@@ -144,9 +151,15 @@ async def test_explicit_replay_session_boundaries(
             )
         assert not result.get("error"), result
         source = await repo.get("ingest.source_items", item)
+        assert source is not None
         await repo.put("ingest.source_items", item, dict(source, extraction_status="DONE"))
+        await finish_actor_input(
+            service, session_id=sid, message_id=request.message_id, native_input_id=native_input_id
+        )
         sent.append((item, sid))
-        return await repo.get("ops.agent_sessions", sid)
+        final = await repo.get("ops.agent_sessions", sid)
+        assert final is not None
+        return final
 
     async def request(service, method, path, **kwargs):
         assert method == "POST" and path.endswith("/archive")
@@ -154,7 +167,7 @@ async def test_explicit_replay_session_boundaries(
         return {}
 
     monkeypatch.setattr(SessionService, "send_message", send)
-    monkeypatch.setattr(SessionService, "completed_turn", AsyncMock(return_value={"complete": True}))
+    monkeypatch.setattr(SessionService, "completed_turn", completed_from_actor_cache)
     monkeypatch.setattr(SessionService, "request", request)
     async with httpx.AsyncClient() as http:
         report = await replay_agent_session(
@@ -168,6 +181,10 @@ async def test_explicit_replay_session_boundaries(
             timeout=2,
         )
     assert report["status"] == "COMPLETED"
+    for barrier in report["execution_barriers"].values():
+        assert barrier["complete"] is True
+        assert barrier["accepted_input_ids"] and barrier["terminal_receipts"]
+        assert "session_id" not in barrier
     assert len(report["output"]["events"]) == event_count
     assert len({sid for _, sid in sent}) == event_count
     assert set(archived) == {sid for _, sid in sent}
