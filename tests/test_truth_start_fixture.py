@@ -441,7 +441,7 @@ def test_insufficient_beta_history_preserves_raw_move_without_adjusted_conclusio
     snapshot["klines"] = [
         row for row in snapshot["klines"] if parse_time(row["open_time"]) >= anchor - timedelta(days=6)
     ]
-    result = compute_market_truth(snapshot)
+    result = compute_market_truth(snapshot, config=SPOT_POLICY)
     relative = result["relative"]
     assert relative["beta_btc"] is None
     assert relative["beta_flags"]["btc"] == "INSUFFICIENT_HISTORY"
