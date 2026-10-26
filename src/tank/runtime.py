@@ -43,6 +43,7 @@ from tank.runtime_contracts import (
     replace_job_clock,
 )
 from tank.runtime_evaluation import evaluate_condition_job
+from tank.runtime_milestone import check_milestone_job
 from tank.runtime_retry import worker_retry_schedule
 from tank.scheduler import Scheduler
 from tank.settings import Settings
@@ -150,7 +151,7 @@ class Runtime:
             "RUN_MARKET_TRUTH": self.assess_wire,
             "DELIVER": self.delivery.deliver,
             "EVAL_CONDITIONS": self.eval_conditions_wire,
-            "MILESTONE_CHECK": self.scheduler.milestone_check,
+            "MILESTONE_CHECK": self.milestone_check_wire,
             "REACTION_CAPTURE": self.scheduler.reaction_capture,
             "SCOUT_REVIEW": self.scout_review,
             "TELEGRAM_ANSWER": self.inbox.answer,
@@ -205,6 +206,9 @@ class Runtime:
 
     async def eval_conditions_wire(self, payload: dict[str, JsonValue]) -> dict[str, JsonValue]:
         return await evaluate_condition_job(self.scheduler, payload)
+
+    async def milestone_check_wire(self, payload: dict[str, JsonValue]) -> None:
+        await check_milestone_job(self.scheduler, payload)
 
     async def scout_review(self, payload: dict[str, JsonValue]) -> dict[str, JsonValue]:
         reference = await self.sessions.scout_review(ScoutReviewJob.model_validate(payload))

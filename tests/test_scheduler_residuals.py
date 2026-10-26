@@ -8,6 +8,7 @@ from unittest.mock import AsyncMock
 import pytest
 from source_support import fixture_versions
 
+from tank.contracts.milestone_checks import MilestoneExpiryCommand
 from tank.scheduler import Scheduler
 from tank.settings import Settings
 from tank.storage import MemoryRepository
@@ -131,8 +132,9 @@ async def test_expired_milestone_is_timer_missed_not_failed_source_outcome() -> 
             },
         },
     )
-    await scheduler.expire_milestone("e", NOW)
-    await scheduler.expire_milestone("e", NOW)
+    command = MilestoneExpiryCommand(event_id="e", milestone="launch", due_at=iso(NOW - timedelta(hours=3)))
+    await scheduler.expire_milestone(command, NOW)
+    await scheduler.expire_milestone(command, NOW)
     event = await repo.get("evt.events", "e")
     assert event["next_milestone"]["status"] == "MISSED"
     assert event["next_milestone"]["due_at_prec"] == "BUCKET(1h)"

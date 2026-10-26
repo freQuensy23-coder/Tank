@@ -10,6 +10,7 @@ from source_support import fixture_request_budgets, fixture_versions
 
 from tank.analysis.page_access import LivePageAccess
 from tank.analysis.watch_contracts import WatchCondition, WatchLeaf
+from tank.contracts.milestone_checks import MilestoneCheckCommand
 from tank.models import Record
 from tank.runtime_contracts import ConditionFiredMessage, parse_agent_message
 from tank.scheduler import Scheduler
@@ -1063,7 +1064,9 @@ async def test_milestone_payload_contains_only_verified_outcome_and_quotes() -> 
         ],
     }
     await repo.put("evt.events", "e", event)
-    await scheduler.milestone_check({"event_id": "e", "milestone": "VOTE", "due_at": "2026-01-01T00:00:00Z"})
+    await scheduler.milestone_check(
+        MilestoneCheckCommand(event_id="e", milestone="VOTE", due_at="2026-01-01T00:00:00Z")
+    )
     jobs = await repo.list("ops.jobs")
     payload = jobs[0]["payload"]
     assert (
@@ -1071,7 +1074,9 @@ async def test_milestone_payload_contains_only_verified_outcome_and_quotes() -> 
         and payload["quotes"] == ["Official vote passed"]
         and not payload["verification_required"]
     )
-    await scheduler.milestone_check({"event_id": "e", "milestone": "VOTE", "due_at": "2026-02-01T00:00:00Z"})
+    await scheduler.milestone_check(
+        MilestoneCheckCommand(event_id="e", milestone="VOTE", due_at="2026-02-01T00:00:00Z")
+    )
     jobs = await repo.list("ops.jobs")
     pending = next(j["payload"] for j in jobs if j["payload"]["verification_required"])
     assert pending["outcome"] is None and pending["quotes"] == []
