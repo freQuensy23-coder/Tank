@@ -89,6 +89,8 @@ class ReactionRecoveryEvidence(DomainModel):
 
 
 class ReactionRecoveryEligible(DomainModel):
+    """Eligibility only; a writer must retain the original locked queue payload bytes."""
+
     kind: Literal["ELIGIBLE"]
     original_job_id: RecoveryStorageKey
     peer_job_id: RecoveryStorageKey
