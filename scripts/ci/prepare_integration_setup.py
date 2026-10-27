@@ -114,7 +114,6 @@ def run(context: SetupContext, state: SignalState) -> SetupReport:
         | {
             "GITHUB_ENV": str(context.github_env),
             "TANK_CI_SCHEMA_TEMPLATE": allocated.name,
-            "PYTHONPATH": os.pathsep.join(str(context.root / name) for name in ("scripts/ci", "tests")),
         }
     )
     specifications: tuple[tuple[TaskName, list[str], Path], ...] = (
@@ -161,7 +160,17 @@ def run(context: SetupContext, state: SignalState) -> SetupReport:
                     stdout=log,
                     stderr=subprocess.STDOUT,
                     start_new_session=True,
-                    env=environment,
+                    env=environment
+                    | {
+                        "PYTHONPATH": os.pathsep.join(
+                            [
+                                *(str(context.root / part) for part in ("scripts/ci", "tests")),
+                                *([environment["PYTHONPATH"]] if "PYTHONPATH" in environment else []),
+                            ]
+                        )
+                    }
+                    if name == "collection"
+                    else environment,
                 )
             except BaseException:
                 log.close()
