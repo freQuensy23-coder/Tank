@@ -19,6 +19,7 @@ from postgres_helpers import PostgresTemplate
 from psycopg import AsyncConnection
 from psycopg_pool import AsyncConnectionPool
 from pydantic import JsonValue
+from pydantic_settings import SettingsConfigDict
 from source_support import source_configuration
 
 import tank.cli as cli
@@ -30,6 +31,10 @@ from tank.settings import Settings
 from tank.sources import SourceService
 
 type CliSourcePool = AsyncConnectionPool[AsyncConnection[StoredRow]]
+
+
+class CliSourceSettings(Settings):
+    model_config = SettingsConfigDict(env_file=None)
 
 
 @pytest.mark.integration
@@ -104,8 +109,7 @@ async def test_actual_source_check_cli_preserves_flat_wire_and_drains_owned_reso
             }
             await fixture_repo.put("ops.source_checkpoints", "S30:0", checkpoint)
             settings = captured_fixture_settings(
-                Settings(
-                    _env_file=None,
+                CliSourceSettings(
                     database_url=fixture_repo.database_url,
                     clickhouse_url=None,
                     data_dir=tmp_path,
