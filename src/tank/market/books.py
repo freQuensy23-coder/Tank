@@ -300,7 +300,7 @@ class OrderBook:
             "integrity_ok": self.integrity_ok,
             "integrity_method": self.integrity_method,
             "gap_reason": self.gap_reason,
+            "bids": [(str(p), str(q)) for p, q in levels["bid"]],
+            "asks": [(str(p), str(q)) for p, q in levels["ask"]],
         }
-        row["bids"] = [(str(p), str(q)) for p, q in levels["bid"]]
-        row["asks"] = [(str(p), str(q)) for p, q in levels["ask"]]
         return _JSON.validate_python(BookSummary.model_validate(row).model_dump(mode="json"))

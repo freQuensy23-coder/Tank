@@ -1,21 +1,25 @@
 """Strict exchange normalization. Missing semantic fields are errors, never estimates."""
 
 from bisect import bisect_right
-from collections.abc import Mapping
+from collections.abc import Iterable, Mapping, Sequence
 from datetime import datetime, timedelta
 from decimal import Decimal
+from typing import Literal
 
 from pydantic import JsonValue
 
 from tank.market.errors import SemanticError
 from tank.market.funding import FundingObservation
+from tank.market.normalization_contracts import NormalizationInstrument, NormalizationMarket
 from tank.market.numbers import decimal
 from tank.market.precision import precise
 from tank.market.trade_contracts import FlowInstrument, NormalizedTrade, QuoteUsdValuation, TradeCaptureSource
 from tank.market.trade_wire import TradeWire, decode_trade
-from tank.time_precision import Timestamp, collection_clock, propagate_timestamp
+from tank.time_precision import BucketSize, Timestamp, collection_clock, propagate_timestamp
 from tank.util import (
     EpochUnit,
+    JsonInput,
+    TimeInput,
     canonical_json,
     iso,
     jsonable,
@@ -60,7 +64,74 @@ def _current_receipt(value: datetime | None) -> datetime:
     return value
 
 
-def timestamp_fields(field, value, precision, *, bucket_size=None):
+def _reported_count(value: JsonValue) -> int:
+    if not isinstance(value, (str, int, float)):
+        raise SemanticError("Candle trade count requires a numeric scalar")
+    return int(value)
+
+
+def _wire_decimal(value: JsonInput) -> Decimal:
+    if isinstance(value, bool) or not isinstance(value, (str, int, float, Decimal)):
+        raise SemanticError("missing or invalid decimal")
+    return decimal(value)
+
+
+def _sequence_candle_fields(
+    key: str, row: Sequence[JsonValue]
+) -> tuple[JsonValue, JsonValue, JsonValue, JsonValue, JsonValue, JsonValue]:
+    if key.startswith("coinbase"):
+        ts, low, high, opened, closed, volume = row[:6]
+        return ts, opened, high, low, closed, volume
+    if key.startswith("kraken"):
+        ts, opened, high, low, closed, _vwap, volume, _count = row[:8]
+        return ts, opened, high, low, closed, volume
+    if key.startswith(("binance", "okx", "bybit")):
+        ts, opened, high, low, closed, volume = row[:6]
+        return ts, opened, high, low, closed, volume
+    raise SemanticError("unsupported kline")
+
+
+def _sequence_candle_metadata(
+    key: str, row: Sequence[JsonValue], observed: datetime
+) -> tuple[bool, dict[str, JsonInput]]:
+    if key.startswith("binance"):
+        _ts, _o, _h, _l, _c, _v, closed, quote, count, buy, buy_quote = row[:11]
+        return _provider_epoch(closed, unit="ms") < observed, {
+            "quote_volume": quote,
+            "n_trades": _reported_count(count),
+            "taker_buy_native": buy,
+            "taker_buy_quote": buy_quote,
+        }
+    if key.startswith("okx"):
+        return str(row[8]) == "1" if len(row) > 8 else False, {
+            "quote_volume": row[7] if len(row) > 7 else None,
+            "n_trades": None,
+            "taker_buy_native": None,
+            "taker_buy_quote": None,
+        }
+    if key.startswith("bybit"):
+        ts, _o, _h, _l, _c, _v, quote = row[:7]
+        return _provider_epoch(ts, unit="ms") + timedelta(minutes=1) <= observed, {
+            "quote_volume": quote,
+            "n_trades": None,
+            "taker_buy_native": None,
+            "taker_buy_quote": None,
+        }
+    if key.startswith("coinbase"):
+        return _provider_epoch(row[0], unit="s") + timedelta(minutes=1) <= observed, {}
+    if key.startswith("kraken"):
+        ts, _o, _h, _l, _c, vwap, volume, count = row[:8]
+        return _provider_epoch(ts, unit="s") + timedelta(minutes=1) <= observed, {
+            "n_trades": _reported_count(count),
+            "quote_volume": decimal(vwap) * decimal(volume),
+            "quote_volume_method": "REPORTED_VWAP_X_NATIVE_VOLUME",
+        }
+    raise SemanticError("unsupported kline")
+
+
+def timestamp_fields(
+    field: str, value: TimeInput | None, precision: str | None, *, bucket_size: BucketSize | None = None
+) -> dict[str, str | int | None]:
     """Emit caller-declared source precision through the shared time contract."""
     return propagate_timestamp(
         {field: iso(parse_iso_time(value)) if value is not None else None, field + "_prec": precision},
@@ -74,7 +145,7 @@ QUOTE_USD_REACH = timedelta(days=4)
 QUOTE_USD_MAX_AGE = timedelta(hours=6)
 
 
-def remember_quote_usd(quote, samples):
+def remember_quote_usd(quote: str, samples: Iterable[tuple[TimeInput, str | int | float | Decimal]]) -> None:
     """Add (as_of, rate) samples; those older than QUOTE_USD_REACH before the newest drop."""
     merged = dict(QUOTE_USD_HISTORY.get(quote, ()))
     merged.update((parse_iso_time(as_of), str(rate)) for as_of, rate in samples)
@@ -87,9 +158,14 @@ def remember_quote_usd(quote, samples):
     )
 
 
-def quote_usd_rate(instrument, at):
+def quote_usd_rate(
+    instrument: Mapping[str, JsonValue], at: TimeInput
+) -> tuple[str | int | float | None, str | None]:
     """(rate, as_of) valuing quote units at time `at`, or (None, None)."""
-    quote = instrument.get("quote_asset", "").upper()
+    quote_value = instrument.get("quote_asset", "")
+    if not isinstance(quote_value, str):
+        raise SemanticError("Quote asset requires text")
+    quote = quote_value.upper()
     if quote == "USD":
         return "1", None
     at = parse_iso_time(at)
@@ -100,14 +176,21 @@ def quote_usd_rate(instrument, at):
             return history[index - 1][1], iso(history[index - 1][0])
         return None, None
     rate, as_of = instrument.get("quote_usd_rate"), instrument.get("quote_usd_rate_as_of")
-    if rate is None or as_of is not None and parse_iso_time(as_of) > at:
+    if rate is None:
+        return None, None
+    if isinstance(rate, bool) or not isinstance(rate, (str, int, float)):
+        raise SemanticError("Quote rate requires a numeric scalar")
+    if as_of is not None and not isinstance(as_of, str):
+        raise SemanticError("Quote rate clock requires ISO timestamp text")
+    if as_of is not None and parse_iso_time(as_of) > at:
         return None, None
     return rate, as_of
 
 
-def venue_key(instrument):
-    venue = instrument["venue"].lower()
-    perp = instrument.get("market_type", "SPOT").lower() not in ("spot",)
+def venue_key(instrument: Mapping[str, JsonValue]) -> str:
+    scope = NormalizationMarket.from_wire(instrument)
+    venue = scope.venue
+    perp = scope.market_type != "SPOT"
     if venue.startswith("binance"):
         return "binance.usdm" if perp or venue.endswith("usdm") else "binance.spot"
     if venue.startswith("bybit"):
@@ -203,53 +286,37 @@ def trade(
 
 
 @precise
-def kline(instrument, row, *, now=None):
+def kline(
+    instrument: Mapping[str, JsonValue],
+    row: Sequence[JsonValue] | Mapping[str, JsonValue],
+    *,
+    now: TimeInput | None = None,
+) -> dict[str, JsonValue]:
+    identity = NormalizationInstrument.from_wire(instrument)
     key = venue_key(instrument)
     observed = utcnow() if now is None else parse_iso_time(now)
-    extra = {}
-    if key.startswith("binance"):
-        ts, o, h, low, c, v, closed, q, n, b, bq = row[:11]
-        extra = {"quote_volume": q, "n_trades": int(n), "taker_buy_native": b, "taker_buy_quote": bq}
-        complete = _provider_epoch(closed, unit="ms") < observed
-    elif key.startswith("okx"):
-        ts, o, h, low, c, v = row[:6]
-        if key == "okx.swap":
-            if instrument.get("contract_multiplier") is None:
-                raise SemanticError("OKX multiplier absent")
-            v = decimal(v) * decimal(instrument["contract_multiplier"])
-        extra = {
-            "quote_volume": row[7] if len(row) > 7 else None,
-            "n_trades": None,
-            "taker_buy_native": None,
-            "taker_buy_quote": None,
-        }
-        complete = str(row[8]) == "1" if len(row) > 8 else False
-    elif key.startswith("bybit"):
-        ts, o, h, low, c, v, q = row[:7]
-        complete = _provider_epoch(ts, unit="ms") + timedelta(minutes=1) <= observed
-        extra = {"quote_volume": q, "n_trades": None, "taker_buy_native": None, "taker_buy_quote": None}
-    elif key.startswith("coinbase"):
-        ts, low, h, o, c, v = row[:6]
-        complete = _provider_epoch(ts, unit="s") + timedelta(minutes=1) <= observed
-    elif key.startswith("kraken"):
-        ts, o, h, low, c, vwap, v, n = row[:8]
-        complete = _provider_epoch(ts, unit="s") + timedelta(minutes=1) <= observed
-        extra = {
-            "n_trades": int(n),
-            "quote_volume": decimal(vwap) * decimal(v),
-            "quote_volume_method": "REPORTED_VWAP_X_NATIVE_VOLUME",
-        }
-    elif key.startswith("hyperliquid"):
+    extra: dict[str, JsonInput] = {}
+    v: JsonValue | Decimal
+    if key.startswith("hyperliquid"):
+        if not isinstance(row, Mapping):
+            raise SemanticError("Hyperliquid candle requires an object")
         ts, o, h, low, c, v = (row[x] for x in ("t", "o", "h", "l", "c", "v"))
         complete = _provider_epoch(row["T"], unit="ms") < observed
-        extra = {"n_trades": int(row["n"])}
+        extra = {"n_trades": _reported_count(row["n"])}
     else:
-        raise SemanticError("unsupported kline")
-    ts = _provider_epoch(ts, unit="s" if key.startswith(("coinbase", "kraken")) else "ms")
-    result = {
-        "instrument_id": instrument["instrument_id"],
-        "token_id": instrument["token_id"],
-        **timestamp_fields("open_time", ts, "BUCKET(60s)"),
+        if isinstance(row, (Mapping, str, bytes)):
+            raise SemanticError("Candle requires a provider field sequence")
+        ts, o, h, low, c, v = _sequence_candle_fields(key, row)
+        complete, extra = _sequence_candle_metadata(key, row, observed)
+    if key == "okx.swap":
+        if instrument.get("contract_multiplier") is None:
+            raise SemanticError("OKX multiplier absent")
+        v = decimal(v) * decimal(instrument["contract_multiplier"])
+    opened_at = _provider_epoch(ts, unit="s" if key.startswith(("coinbase", "kraken")) else "ms")
+    result: dict[str, JsonInput] = {
+        "instrument_id": identity.instrument_id,
+        "token_id": identity.token_id,
+        **timestamp_fields("open_time", opened_at, "BUCKET(60s)"),
         "o": str(decimal(o)),
         "h": str(decimal(h)),
         "l": str(decimal(low)),
@@ -263,11 +330,11 @@ def kline(instrument, row, *, now=None):
         result[name] = extra.get(name)
     quote = result.get("quote_volume")
 
-    fx, fx_asof = quote_usd_rate(instrument, ts + timedelta(minutes=1))
+    fx, fx_asof = quote_usd_rate(instrument, opened_at + timedelta(minutes=1))
     result.update(
         quote_asset=instrument.get("quote_asset"),
         quote_volume_method=extra.get("quote_volume_method", "REPORTED" if quote is not None else None),
-        quote_volume_usd=decimal(quote) * decimal(fx) if quote is not None and fx is not None else None,
+        quote_volume_usd=_wire_decimal(quote) * decimal(fx) if quote is not None and fx is not None else None,
         quote_volume_usd_reason="QUOTE_VOLUME_NOT_REPORTED"
         if quote is None
         else "HISTORICAL_QUOTE_USD_RATE_UNAVAILABLE"
@@ -280,37 +347,48 @@ def kline(instrument, row, *, now=None):
 
 
 @precise
-def oi(instrument, raw, *, mark=None, mark_ts=None, mark_ts_prec=None, received_ts=None, bucket_size_s=300):
+def oi(
+    instrument: Mapping[str, JsonValue],
+    raw: Mapping[str, JsonValue],
+    *,
+    mark: str | int | float | Decimal | None = None,
+    mark_ts: TimeInput | None = None,
+    mark_ts_prec: str | None = None,
+    received_ts: TimeInput | None = None,
+    bucket_size_s: str | int | float | Decimal = 300,
+) -> dict[str, JsonValue]:
+    identity = NormalizationInstrument.from_wire(instrument)
     received_ts = _receipt(received_ts, raw)
     key = venue_key(instrument)
+    source_ts: JsonValue | datetime
     sidedness = "SINGLE_SIDED"
     reason = None
     if key == "binance.usdm":
         field = "sumOpenInterest" if "sumOpenInterest" in raw else "openInterest"
         value = raw[field]
-        ts = raw.get("time", raw.get("timestamp"))
+        source_ts = raw.get("time", raw.get("timestamp"))
         metric = key + "." + ("openInterestHist" if field == "sumOpenInterest" else "openInterest")
     elif key == "okx.swap":
         value = raw["oiCcy"]
-        ts = raw["ts"]
+        source_ts = raw["ts"]
         metric = key + ".open-interest"
     elif key == "bybit.linear":
         if "singleOpenInterest" not in raw:
             raise SemanticError("Bybit singleOpenInterest absent; openInterest cannot substitute")
         value = raw["singleOpenInterest"]
-        ts = raw.get("timestamp")
+        source_ts = raw.get("timestamp")
         metric = key + ".open-interest"
     elif key == "hyperliquid.perp":
         value = raw["openInterest"]
-        ts = _current_receipt(received_ts)
+        source_ts = _current_receipt(received_ts)
         metric = key + ".ctx"
         sidedness = "UNKNOWN"
         reason = "SIDEDNESS_UNPUBLISHED"
     else:
         raise SemanticError("spot has no OI")
-    if ts is None:
+    if source_ts is None:
         raise SemanticError("OI source timestamp absent")
-    ts = parse_iso_time(ts) if key == "hyperliquid.perp" else _provider_epoch(ts, unit="ms")
+    ts = source_ts if isinstance(source_ts, datetime) else _provider_epoch(source_ts, unit="ms")
     bucketed = "Hist" in metric
 
     if bucketed or key == "bybit.linear":
@@ -329,8 +407,8 @@ def oi(instrument, raw, *, mark=None, mark_ts=None, mark_ts_prec=None, received_
         if bucketed
         else "EXACT"
     )
-    value = decimal(value)
-    if value < 0:
+    native = decimal(value)
+    if native < 0:
         raise SemanticError("negative open interest")
     mark_aligned = (
         mark is not None and mark_ts is not None and abs((parse_iso_time(mark_ts) - ts).total_seconds()) <= 60
@@ -341,38 +419,45 @@ def oi(instrument, raw, *, mark=None, mark_ts=None, mark_ts_prec=None, received_
         if raw.get("sumOpenInterestValue") is not None
         else decimal(raw["oiUsd"])
         if raw.get("oiUsd") is not None
-        else value * decimal(mark) * decimal(fx)
+        else native * decimal(mark) * decimal(fx)
         if mark_aligned and fx is not None
         else None
     )
-    return jsonable(
-        {
-            "instrument_id": instrument["instrument_id"],
-            "token_id": instrument["token_id"],
-            **timestamp_fields("ts", ts, precision),
-            **_received_fields(received_ts),
-            "ts_bucket_size_s": bucket_size_s if bucketed else None,
-            **({"ts_bucket_anchor": "END" if key == "binance.usdm" else "UNSPECIFIED"} if bucketed else {}),
-            "raw_value": str(value),
-            "raw_unit": "BASE_QTY",
-            "sidedness": sidedness,
-            "metric_key": metric,
-            "oi_native": value,
-            "oi_usd": usd,
-            "oi_usd_reason": None if usd is not None else "SYNCHRONIZED_MARK_OR_QUOTE_RATE_UNAVAILABLE",
-            "mark_price": str(mark) if mark_aligned else None,
-            **timestamp_fields(
-                "mark_as_of", mark_ts if mark_aligned else None, mark_ts_prec if mark_aligned else None
-            ),
-            "synchronized_eligible": sidedness == "SINGLE_SIDED",
-            "gap_reason": reason,
-            "timestamp_precision": precision,
-        }
-    )
+    result: dict[str, JsonInput] = {
+        "instrument_id": identity.instrument_id,
+        "token_id": identity.token_id,
+        **timestamp_fields("ts", ts, precision),
+        **_received_fields(received_ts),
+        "ts_bucket_size_s": int(decimal(bucket_size_s)) if bucketed else None,
+        **({"ts_bucket_anchor": "END" if key == "binance.usdm" else "UNSPECIFIED"} if bucketed else {}),
+        "raw_value": str(native),
+        "raw_unit": "BASE_QTY",
+        "sidedness": sidedness,
+        "metric_key": metric,
+        "oi_native": native,
+        "oi_usd": usd,
+        "oi_usd_reason": None if usd is not None else "SYNCHRONIZED_MARK_OR_QUOTE_RATE_UNAVAILABLE",
+        "mark_price": str(mark) if mark_aligned else None,
+        **timestamp_fields(
+            "mark_as_of", mark_ts if mark_aligned else None, mark_ts_prec if mark_aligned else None
+        ),
+        "synchronized_eligible": sidedness == "SINGLE_SIDED",
+        "gap_reason": reason,
+        "timestamp_precision": precision,
+    }
+    return jsonable(result)
 
 
 @precise
-def funding(instrument, raw, *, kind, interval_h, received_ts=None):
+def funding(
+    instrument: Mapping[str, JsonValue],
+    raw: Mapping[str, JsonValue],
+    *,
+    kind: Literal["SETTLED", "CURRENT_ESTIMATE"],
+    interval_h: str | int | float | Decimal,
+    received_ts: TimeInput | None = None,
+) -> dict[str, JsonValue]:
+    identity = NormalizationInstrument.from_wire(instrument)
     received_ts = _receipt(received_ts, raw)
     key = venue_key(instrument)
     interval = decimal(interval_h)
@@ -411,8 +496,8 @@ def funding(instrument, raw, *, kind, interval_h, received_ts=None):
     source_clock = reported is not None
     timestamp = _current_receipt(received_ts) if reported is None else reported
     observation = FundingObservation(
-        instrument_id=instrument["instrument_id"],
-        token_id=instrument["token_id"],
+        instrument_id=identity.instrument_id,
+        token_id=identity.token_id,
         kind=kind,
         rate=decimal(rate),
         interval_h=interval,
@@ -444,11 +529,20 @@ def funding(instrument, raw, *, kind, interval_h, received_ts=None):
 
 
 @precise
-def liquidation(instrument, raw, *, received_ts=None):
+def liquidation(
+    instrument: Mapping[str, JsonValue], raw: Mapping[str, JsonValue], *, received_ts: TimeInput | None = None
+) -> dict[str, JsonValue]:
+    identity = NormalizationInstrument.from_wire(instrument)
     received_ts = _receipt(received_ts, raw)
     key = venue_key(instrument)
+    qty: JsonValue | Decimal
     if key == "binance.usdm":
-        x = raw.get("o", raw)
+        x = raw
+        if "o" in raw:
+            nested = raw["o"]
+            if not isinstance(nested, dict):
+                raise SemanticError("liquidation order is not an object")
+            x = nested
         if x.get("S") not in ("BUY", "SELL"):
             raise SemanticError("unknown Binance liquidation order side")
         side = "LONG_LIQ" if x["S"] == "SELL" else "SHORT_LIQ"
@@ -465,9 +559,10 @@ def liquidation(instrument, raw, *, received_ts=None):
         ts = raw["T"]
         coverage = "COMPLETE"
     elif key == "okx.swap":
-        side = "LONG_LIQ" if raw["posSide"] == "long" else "SHORT_LIQ" if raw["posSide"] == "short" else None
-        if side is None:
+        position_side = raw["posSide"]
+        if position_side not in ("long", "short"):
             raise SemanticError("OKX liquidation position side absent")
+        side = "LONG_LIQ" if position_side == "long" else "SHORT_LIQ"
         if instrument.get("contract_multiplier") is None:
             raise SemanticError("OKX multiplier absent")
         qty = decimal(raw["sz"]) * decimal(instrument["contract_multiplier"])
@@ -476,24 +571,23 @@ def liquidation(instrument, raw, *, received_ts=None):
         coverage = "SAMPLED"
     else:
         raise SemanticError("liquidations unsupported")
-    ts = _provider_epoch(ts, unit="ms")
-    qty, price = decimal(qty), decimal(price)
-    if qty < 0 or price <= 0:
+    occurred_at = _provider_epoch(ts, unit="ms")
+    quantity, unit_price = decimal(qty), decimal(price)
+    if quantity < 0 or unit_price <= 0:
         raise SemanticError("invalid liquidation quantity/price")
     fx = "1" if instrument.get("quote_asset") == "USD" else instrument.get("quote_usd_rate")
-    return jsonable(
-        {
-            "instrument_id": instrument["instrument_id"],
-            "token_id": instrument["token_id"],
-            **timestamp_fields("ts", ts, "EXACT"),
-            **_received_fields(received_ts),
-            "side": side,
-            "qty_native": qty,
-            "price": price,
-            "notional_usd": qty * price * decimal(fx) if fx is not None else None,
-            "null_reasons": {} if fx is not None else {"notional_usd": "INCOMPLETE"},
-            "usd_reason": None if fx is not None else "QUOTE_USD_RATE_UNAVAILABLE",
-            "coverage": coverage,
-            "price_kind": "BANKRUPTCY" if key in ("okx.swap", "bybit.linear") else "EXECUTION_AVERAGE",
-        }
-    )
+    result: dict[str, JsonInput] = {
+        "instrument_id": identity.instrument_id,
+        "token_id": identity.token_id,
+        **timestamp_fields("ts", occurred_at, "EXACT"),
+        **_received_fields(received_ts),
+        "side": side,
+        "qty_native": quantity,
+        "price": unit_price,
+        "notional_usd": quantity * unit_price * decimal(fx) if fx is not None else None,
+        "null_reasons": {} if fx is not None else {"notional_usd": "INCOMPLETE"},
+        "usd_reason": None if fx is not None else "QUOTE_USD_RATE_UNAVAILABLE",
+        "coverage": coverage,
+        "price_kind": "BANKRUPTCY" if key in ("okx.swap", "bybit.linear") else "EXECUTION_AVERAGE",
+    }
+    return jsonable(result)
