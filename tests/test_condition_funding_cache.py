@@ -3,12 +3,9 @@
 from copy import deepcopy
 
 import pytest
-from funding_history_fixtures import rows
-from funding_input_fixtures import funding_scope_fixture
-from pydantic import JsonValue
-from truth_support import fixture_truth_config
+from funding_condition_fixtures import evaluate, packet
 
-from tank.analysis import funding_history_cache, truth
+from tank.analysis import funding_history_cache
 from tank.analysis.baseline_cache import BaselineCaches
 from tank.analysis.condition_derivative_inputs import DerivativeInstrument
 from tank.analysis.condition_funding_codec import FundingConditionLookup
@@ -19,52 +16,6 @@ from tank.analysis.funding_history import (
     funding_historical_population,
 )
 from tank.analysis.funding_selection import FundingCalculator, FundingWindowRequest
-from tank.contracts.json import JsonDocument
-
-
-def packet() -> dict[str, JsonValue]:
-    captured_rows: list[JsonValue] = list(rows())
-    return {
-        "token_id": "T",
-        "cutoff": "2026-10-16T12:00:00Z",
-        "cutoff_prec": "EXACT",
-        "assembled_at": "2026-10-16T12:05:00Z",
-        "assembled_at_prec": "COLLECTION_ONLY",
-        "instruments": [funding_scope_fixture()],
-        "funding": captured_rows,
-        "capture_metadata": {"collections": {"funding": {"cadence_s": 300}}},
-        "domain_dependency_fingerprints": {"funding": "same-authored-source-head"},
-    }
-
-
-def evaluate(
-    snapshot: dict[str, JsonValue],
-    cache: dict[ConditionTopCacheKey, FundingConditionLookup],
-    baseline: BaselineCaches,
-) -> tuple[dict[str, JsonValue], dict[str, JsonValue]]:
-    value = JsonDocument.validate_value(
-        truth.compute_condition_values(
-            snapshot,
-            [{"metric": "deriv.funding_vs_normal", "window": "W1H"}],
-            config=fixture_truth_config(),
-            cache=cache,
-            baseline_cache=baseline,
-        )
-    )
-    assert isinstance(value, dict)
-    evaluation = value["_condition_evaluation"]
-    assert isinstance(evaluation, dict)
-    proofs = evaluation["proofs"]
-    assert isinstance(proofs, list) and len(proofs) == 1 and isinstance(proofs[0], dict)
-    derivatives = value["derivatives"]
-    assert isinstance(derivatives, dict)
-    windows = derivatives["windows"]
-    assert isinstance(windows, dict)
-    window = windows["W1H"]
-    assert isinstance(window, dict)
-    venues = window["per_venue"]
-    assert isinstance(venues, list) and len(venues) == 1 and isinstance(venues[0], dict)
-    return venues[0], proofs[0]
 
 
 def test_live_assembly_reuses_facts_with_fresh_proof_and_original_source_clock() -> None:
