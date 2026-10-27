@@ -16,6 +16,7 @@ from tank.analysis.condition_graph_contracts import (
     ConditionWindow,
     RecordedConditionFundingObservation,
     UnavailableConditionFunding,
+    UnnormalizedConditionFundingObservation,
     UnrequestedConditionBasis,
     UnrequestedConditionFundingDispersion,
     UnrequestedConditionIncrementalVolumes,
@@ -25,7 +26,7 @@ from tank.analysis.condition_graph_contracts import (
 )
 from tank.analysis.funding_history import FundingHistoryPolicy
 from tank.analysis.funding_history_cache import FundingHistoryCache
-from tank.analysis.funding_normalization_math import FundingRateOperands, normalize_funding_rate
+from tank.analysis.funding_normalization_math import normalize_funding_components
 from tank.analysis.funding_rate import (
     CalculatedFundingEquivalent,
     FundingEquivalent,
@@ -140,17 +141,27 @@ def _observation(fact: FundingSelectedObservationFacts | None) -> ConditionFundi
             equivalent_eight_hour_rate=equivalent.value,
             observed_at=source.clock.timestamp,
         )
-    if isinstance(equivalent, CalculatedFundingEquivalent):
-        rate, interval = source.rate.value, source.interval_h.value
-        if rate is None or interval is None or interval <= 0:
-            raise ValueError("Calculated funding requires its actual consumed operands")
+    normalization = normalize_funding_components(
+        rate=source.rate,
+        interval=source.interval_h,
+        request=FundingNormalizationRequest(mode="CALCULATE_FROM_RAW")
+        if isinstance(equivalent, CalculatedFundingEquivalent)
+        else equivalent.request,
+    )
+    if normalization.calculation is not None:
         return ComputedConditionFundingObservation(
-            basis=equivalent.basis,
+            basis="CURRENT_ANALYSIS_RATE_INTERVAL",
             kind=source.kind,
-            calculation=normalize_funding_rate(FundingRateOperands(rate=rate, interval_h=interval)),
+            calculation=normalization.calculation,
             observed_at=source.clock.timestamp,
         )
-    return None
+    return UnnormalizedConditionFundingObservation(
+        phase="RAW_COMPONENTS_ONLY",
+        kind=source.kind,
+        normalization=normalization,
+        recorded_eight_hour_rate=source.recorded_eight_hour_rate,
+        observed_at=source.clock.timestamp,
+    )
 
 
 def condition_funding_family(
@@ -180,7 +191,13 @@ def condition_funding_family(
         baseline = history_cache.baseline(
             calculator, request, instrument=selection.instrument, policy=history_policy
         ).normal_range
-        current = estimate if estimate is not None else settled
+        current = (
+            estimate
+            if estimate is not None and estimate.equivalent_eight_hour_rate is not None
+            else settled
+            if settled is not None and settled.equivalent_eight_hour_rate is not None
+            else None
+        )
         funding: ConditionFunding
         if current is None:
             funding = UnavailableConditionFunding(

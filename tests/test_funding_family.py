@@ -8,7 +8,11 @@ from pydantic import ValidationError
 
 from tank.analysis.baseline_cache import BaselineCaches
 from tank.analysis.condition_graph_codec import encode_condition_funding
-from tank.analysis.condition_graph_contracts import AvailableConditionFunding, UnavailableConditionFunding
+from tank.analysis.condition_graph_contracts import (
+    AvailableConditionFunding,
+    UnavailableConditionFunding,
+    UnnormalizedConditionFundingObservation,
+)
 from tank.analysis.funding_family import FundingConditionCalculation, condition_funding_family
 
 
@@ -54,7 +58,9 @@ def test_unavailable_partial_components_are_retained_without_manufactured_normal
     funding = calculation.result.per_venue[0].funding
     assert isinstance(funding, AvailableConditionFunding)
     assert funding.selected_kind == "SETTLED"
-    assert funding.estimate is None
+    assert isinstance(funding.estimate, UnnormalizedConditionFundingObservation)
+    assert funding.estimate.raw_interval_h.value == -4
+    assert funding.estimate.raw_rate.status == "NOT_CAPTURED"
 
 
 def test_invalid_copied_selected_source_facts_cannot_admit_an_observed_graph() -> None:
