@@ -60,7 +60,7 @@ def answer_body(text, reply_to, entities=()):
 
 
 async def test_legacy_partial_answer_resumes_the_old_plain_chunks_without_losing_words():
-    markdown = "**x** " * 1000
+    markdown = ("**" + "x" * 40 + "** ") * 90
     repo = MemoryRepository()
     question_id = await answered_question(repo, markdown)
     old_parts = chunks(markdown)
@@ -75,8 +75,8 @@ async def test_legacy_partial_answer_resumes_the_old_plain_chunks_without_losing
         await TelegramInbox(repo, inbox_settings(), http=http).answer({"question_id": question_id})
 
     assert telegram.sent == [answer_body(old_parts[1], 900)]
-    delivered = old_sent["text"] + " " + " ".join(body["text"] for body in telegram.sent)
-    assert delivered.split() == markdown.split()
+    delivered = old_sent["text"] + "".join(body["text"] for body in telegram.sent)
+    assert delivered == markdown.strip()
     question = await repo.get("out.user_questions", question_id)
     assert question["status"] == "DELIVERED"
     assert question["answer_text"] == markdown
@@ -95,7 +95,7 @@ async def test_legacy_partial_answer_resumes_the_old_plain_chunks_without_losing
 
 
 async def test_legacy_rejected_first_chunk_retries_the_entire_old_plain_plan():
-    markdown = "**x** " * 1000
+    markdown = ("**" + "x" * 40 + "** ") * 90
     repo = MemoryRepository()
     question_id = await answered_question(repo, markdown)
     old_parts = chunks(markdown)
@@ -110,7 +110,7 @@ async def test_legacy_rejected_first_chunk_retries_the_entire_old_plain_plan():
         await TelegramInbox(repo, inbox_settings(), http=http).answer({"question_id": question_id})
 
     assert telegram.sent == expected
-    assert " ".join(body["text"] for body in telegram.sent).split() == markdown.split()
+    assert "".join(body["text"] for body in telegram.sent) == markdown.strip()
     assert (await repo.get("out.user_questions", question_id))["status"] == "DELIVERED"
     assert await repo.get("out.deliveries", "legacy-outcome") == old_failed
     ledger = await repo.list("out.deliveries", filters={"question_id": question_id})
@@ -125,7 +125,7 @@ async def test_legacy_rejected_first_chunk_retries_the_entire_old_plain_plan():
 
 
 async def test_legacy_ambiguous_generated_chunk_is_not_resent_or_recorded_as_sent():
-    markdown = "**x** " * 1000
+    markdown = ("**" + "x" * 40 + "** ") * 90
     repo = MemoryRepository()
     question_id = await answered_question(repo, markdown)
     old_parts = chunks(markdown)
