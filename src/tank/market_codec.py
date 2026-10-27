@@ -55,6 +55,70 @@ FINGERPRINT_EXCLUDED = {"mkt.book_summaries": frozenset({"bids", "asks"})}
 UNPROVEN = "STREAM_COVERAGE_UNPROVEN"
 
 
+def _typed_value(collection: str, name: str, value: StoredValue) -> StoredValue:
+    if value is None:
+        return None
+    kind = MARKET_COLUMNS[collection][name]
+    if kind == "timestamptz":
+        return _timestamp(value)
+    if kind == "numeric":
+        if isinstance(value, bool) or not isinstance(value, (str, int, float, Decimal)):
+            raise ValueError(f"{collection}.{name} requires a decimal")
+        try:
+            return Decimal(str(value))
+        except InvalidOperation as exc:
+            raise ValueError(f"{collection}.{name} requires a decimal") from exc
+    if kind == "text" and not isinstance(value, str):
+        raise ValueError(f"{collection}.{name} requires text")
+    if kind == "boolean" and not isinstance(value, bool):
+        raise ValueError(f"{collection}.{name} requires a boolean")
+    if kind == "bigint" and (isinstance(value, bool) or not isinstance(value, int)):
+        raise ValueError(f"{collection}.{name} requires an integer")
+    if kind == "text[]" and (not isinstance(value, list) or any(not isinstance(item, str) for item in value)):
+        raise ValueError(f"{collection}.{name} requires a list of text")
+    return value
+
+
+def _generated_key(identity: tuple[IdentityValue, ...]) -> str:
+    return ":".join(str(value) for value in identity)
+
+
+def _remember_generated_key(
+    owners: dict[str, tuple[IdentityValue, ...]], key: str, identity: tuple[IdentityValue, ...]
+) -> None:
+    previous = owners.get(key)
+    if previous is not None and previous != identity:
+        raise ValueError("Conflicting generated market storage key")
+    owners[key] = identity
+
+
+def _validate_generated_market_keys(collection: str, records: Sequence[Mapping[str, JsonInput]]) -> None:
+    """Check the complete dispatch's native identity coordinates before chunk I/O."""
+    fields = MARKET_IDENTITIES[collection]
+    if "storage_key" in fields:
+        return
+    columns = MARKET_COLUMNS[collection]
+    aliases = MARKET_ALIASES.get(collection, {})
+    owners: dict[str, tuple[IdentityValue, ...]] = {}
+    for record in records:
+        coordinates: StoredRow = {}
+        for name, raw in record.items():
+            field = aliases.get(name, name)
+            if field not in fields:
+                continue
+            value = jsonable(raw)
+            if columns[field] == "timestamptz" and isinstance(value, dict):
+                if "value" not in value and "ts" not in value:
+                    raise ValueError("Timestamp evidence requires a declared value or ts field")
+                value = value.get("value", value.get("ts"))
+            normalized = _typed_value(collection, field, value)
+            if field in coordinates and coordinates[field] != normalized:
+                raise ValueError(f"Conflicting market aliases {collection}.{name}")
+            coordinates[field] = normalized
+        identity = tuple(_identity(coordinates.get(field), collection) for field in fields)
+        _remember_generated_key(owners, _generated_key(identity), identity)
+
+
 def encode(collection: str, record: Mapping[str, JsonInput]) -> StoredRow:
     from tank.time_precision import propagate_timestamp
 
@@ -117,29 +181,7 @@ def encode(collection: str, record: Mapping[str, JsonInput]) -> StoredRow:
             stamp = propagate_timestamp(selected, field, precision_aliases=precision_aliases)
             result.update(stamp.fields(field))
     for name, value in list(result.items()):
-        if value is None:
-            continue
-        kind = columns[name]
-        if kind == "timestamptz":
-            result[name] = _timestamp(value)
-        elif kind == "numeric":
-            if isinstance(value, bool) or not isinstance(value, (str, int, float, Decimal)):
-                raise ValueError(f"{collection}.{name} requires a decimal")
-            try:
-                number = Decimal(str(value))
-            except InvalidOperation as exc:
-                raise ValueError(f"{collection}.{name} requires a decimal") from exc
-            result[name] = number
-        elif kind == "text" and not isinstance(value, str):
-            raise ValueError(f"{collection}.{name} requires text")
-        elif kind == "boolean" and not isinstance(value, bool):
-            raise ValueError(f"{collection}.{name} requires a boolean")
-        elif kind == "bigint" and (isinstance(value, bool) or not isinstance(value, int)):
-            raise ValueError(f"{collection}.{name} requires an integer")
-        elif kind == "text[]" and (
-            not isinstance(value, list) or any(not isinstance(item, str) for item in value)
-        ):
-            raise ValueError(f"{collection}.{name} requires a list of text")
+        result[name] = _typed_value(collection, name, value)
     return result
 
 
@@ -298,11 +340,14 @@ def _prepare_records(
 ) -> dict[str, StoredRow]:
     """Encoded, de-duplicated and fingerprinted batch records by storage key (no I/O)."""
     encoded = [encode(collection, r) for r in records]
+    generated = keys is None
     if keys is None:
         if "storage_key" in MARKET_IDENTITIES[collection]:
             raise ValueError(f"{collection} requires explicit storage keys")
         keys = [
-            ":".join(str(_identity(row.get(field), collection)) for field in MARKET_IDENTITIES[collection])
+            _generated_key(
+                tuple(_identity(row.get(field), collection) for field in MARKET_IDENTITIES[collection])
+            )
             for row in encoded
         ]
     keys = list(keys)
@@ -310,6 +355,7 @@ def _prepare_records(
         raise ValueError("keys and records must have equal lengths")
     unique: dict[str, StoredRow] = {}
     identity_keys: dict[tuple[IdentityValue, ...], str] = {}
+    generated_owners: dict[str, tuple[IdentityValue, ...]] = {}
     for key, record in zip(keys, encoded, strict=True):
         identity = tuple(
             str(key) if name == "storage_key" else _identity(record.get(name), collection)
@@ -317,6 +363,8 @@ def _prepare_records(
         )
         if any(value is None or value == "" for value in identity):
             raise ValueError(f"Missing typed market identity {collection}: {MARKET_IDENTITIES[collection]}")
+        if generated:
+            _remember_generated_key(generated_owners, key, identity)
         previous_key = identity_keys.get(identity)
         if previous_key is not None:
             previous_record = unique.pop(previous_key)
