@@ -2419,7 +2419,7 @@
     },
     {
       "path": "src/tank/agents/sessions.py",
-      "lines": 2582,
+      "lines": 2584,
       "functions": [
         {
           "symbol": "seen_key",
@@ -2822,7 +2822,7 @@
         },
         {
           "symbol": "SessionService.observe_native_event",
-          "line": 2189,
+          "line": 2191,
           "missing_parameters": [],
           "missing_return": false,
           "dict_nodes": 1,
@@ -2830,7 +2830,7 @@
         },
         {
           "symbol": "SessionService.catch_up",
-          "line": 2214,
+          "line": 2216,
           "missing_parameters": [],
           "missing_return": false,
           "dict_nodes": 1,
@@ -2838,7 +2838,7 @@
         },
         {
           "symbol": "SessionService.stream",
-          "line": 2238,
+          "line": 2240,
           "missing_parameters": [],
           "missing_return": false,
           "dict_nodes": 1,
@@ -2846,7 +2846,7 @@
         },
         {
           "symbol": "SessionService.can_archive",
-          "line": 2264,
+          "line": 2266,
           "missing_parameters": [
             "session",
             "event"
@@ -2857,7 +2857,7 @@
         },
         {
           "symbol": "SessionService.finish_if_idle",
-          "line": 2330,
+          "line": 2332,
           "missing_parameters": [
             "sid"
           ],
@@ -2867,7 +2867,7 @@
         },
         {
           "symbol": "SessionService.last_message_at",
-          "line": 2392,
+          "line": 2394,
           "missing_parameters": [
             "session"
           ],
@@ -2877,7 +2877,7 @@
         },
         {
           "symbol": "SessionService.followable",
-          "line": 2410,
+          "line": 2412,
           "missing_parameters": [
             "session"
           ],
@@ -2887,7 +2887,7 @@
         },
         {
           "symbol": "SessionService.follower_state",
-          "line": 2426,
+          "line": 2428,
           "missing_parameters": [],
           "missing_return": false,
           "dict_nodes": 2,
@@ -2895,7 +2895,7 @@
         },
         {
           "symbol": "SessionService.follow",
-          "line": 2463,
+          "line": 2465,
           "missing_parameters": [],
           "missing_return": false,
           "dict_nodes": 0,
@@ -2903,7 +2903,7 @@
         },
         {
           "symbol": "SessionService.admission",
-          "line": 2502,
+          "line": 2504,
           "missing_parameters": [],
           "missing_return": false,
           "dict_nodes": 0,
@@ -2911,7 +2911,7 @@
         },
         {
           "symbol": "SessionService.running_session_cap",
-          "line": 2510,
+          "line": 2512,
           "missing_parameters": [],
           "missing_return": false,
           "dict_nodes": 0,
@@ -2919,7 +2919,7 @@
         },
         {
           "symbol": "SessionService.admit",
-          "line": 2513,
+          "line": 2515,
           "missing_parameters": [],
           "missing_return": false,
           "dict_nodes": 0,
@@ -2927,7 +2927,7 @@
         },
         {
           "symbol": "SessionService.admit_candidate",
-          "line": 2516,
+          "line": 2518,
           "missing_parameters": [],
           "missing_return": false,
           "dict_nodes": 0,
@@ -2935,7 +2935,7 @@
         },
         {
           "symbol": "SessionService.wake_waiting",
-          "line": 2519,
+          "line": 2521,
           "missing_parameters": [],
           "missing_return": false,
           "dict_nodes": 0,
@@ -2943,7 +2943,7 @@
         },
         {
           "symbol": "SessionService.scout_review",
-          "line": 2522,
+          "line": 2524,
           "missing_parameters": [],
           "missing_return": false,
           "dict_nodes": 2,
@@ -2951,7 +2951,7 @@
         },
         {
           "symbol": "SessionService.run",
-          "line": 2550,
+          "line": 2552,
           "missing_parameters": [
             "stop"
           ],
@@ -2961,7 +2961,7 @@
         },
         {
           "symbol": "SessionService.close",
-          "line": 2576,
+          "line": 2578,
           "missing_parameters": [],
           "missing_return": false,
           "dict_nodes": 0,
@@ -5885,7 +5885,7 @@
     },
     {
       "path": "src/tank/contracts/native_usage.py",
-      "lines": 106,
+      "lines": 142,
       "functions": [
         {
           "symbol": "NativeUsageCounters.from_wire",
@@ -5921,17 +5921,33 @@
         },
         {
           "symbol": "NativeUsageSession.from_record",
-          "line": 103,
+          "line": 105,
           "missing_parameters": [],
           "missing_return": false,
           "dict_nodes": 3,
           "get_calls": 1
+        },
+        {
+          "symbol": "SelectedNativeUsageModel.actual_selected_model_source",
+          "line": 118,
+          "missing_parameters": [],
+          "missing_return": false,
+          "dict_nodes": 0,
+          "get_calls": 0
+        },
+        {
+          "symbol": "select_native_usage_model",
+          "line": 131,
+          "missing_parameters": [],
+          "missing_return": false,
+          "dict_nodes": 0,
+          "get_calls": 0
         }
       ]
     },
     {
       "path": "src/tank/agents/native_usage.py",
-      "lines": 85,
+      "lines": 90,
       "functions": [
         {
           "symbol": "NativeUsageStore.put",
