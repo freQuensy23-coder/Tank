@@ -18,7 +18,7 @@ type FundingClockAbsence = Literal[
     "CLOCK_BOUNDS_NOT_ESTIMABLE",
 ]
 type FundingClockBasis = Literal[
-    "REPORTED_SCALAR", "COLLECTION_OBSERVATION", "DECLARED_EXACT", "DECLARED_BUCKET"
+    "REPORTED_SCALAR", "COLLECTION_OBSERVATION", "REPORTED_BOUNDARY", "DECLARED_EXACT", "DECLARED_BUCKET"
 ]
 
 
@@ -48,6 +48,8 @@ def _bounds(clock: Timestamp, role: FundingClockRole) -> _ClockValue:
     basis: FundingClockBasis = (
         "DECLARED_EXACT"
         if clock.precision == "EXACT"
+        else "REPORTED_BOUNDARY"
+        if clock.precision == "COLLECTION_ONLY" and role == "CALCULATION_BOUNDARY"
         else "COLLECTION_OBSERVATION"
         if clock.precision == "COLLECTION_ONLY"
         else "REPORTED_SCALAR"
