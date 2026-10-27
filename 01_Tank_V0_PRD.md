@@ -360,8 +360,8 @@ Each requirement describes behavior the operator can observe or a test can check
 |---|---|
 | FR-P-01 | Tank MUST notify "Tank Ops" when a card cannot be delivered (§7.2). |
 | FR-P-02 | Tank MUST send a daily heartbeat to "Tank Ops" at 08:00 UTC: cards delivered in the last 24 h, tokens under close market watch, the analysis backlog (queued and running) and how long the oldest queued work has waited, LLM spending since 00:00 UTC (calls without a reported cost counted separately, never as zero), and the number of processing cards that could not be delivered or updated. |
-| FR-P-03 | A reply in "Tank Alerts" or "Tank Ops" to a Tank message about an event or a material that an agent handled MUST continue that agent's session, with all its messages, files and history; the agent's answer MUST come back as a reply in the same chat. When no session can be continued (the material never reached an agent, or the session is closed), Tank MUST reply only with the reason; Tank never answers in the agent's place. |
-| FR-P-04 | An agent session MUST stay open for at least 7 days after its last message, and longer while something keeps it alive: an open call, an armed watch condition, unfinished work, a delivered card or a reader's question. |
+| FR-P-03 | A reply in "Tank Alerts" or "Tank Ops" to a Tank message about an event or a material that an agent handled MUST continue that agent's session, with all its messages, files and history; the agent's answer MUST come back as a reply in the same chat. Durable acknowledgment damage MUST recover without duplicate input or tool effects; acknowledgment alone never proves completed work. When no session can be continued (the material never reached an agent, or the session is closed), Tank MUST reply only with the reason; Tank never answers in the agent's place. |
+| FR-P-04 | An agent session MUST stay open for at least 7 days after its last message, and longer while something keeps it alive: an open call, an armed watch condition, unfinished work, a delivered card or a reader's question. A handled historical terminal failure MUST NOT block valid later work, including an ordinary milestone, but pending/running inputs and required tool results MUST NOT be discarded to declare completion. |
 
 ---
 
@@ -415,6 +415,8 @@ WHAT TO DO: DON'T CHASE
 
 A reply in "Tank Ops" to the card of a material reaches the agent that handled it (FR-P-03); a reply to a notice that concerns no material, such as the heartbeat, gets a short explanation.
 
+Persisted X diagnostic documents MUST retain their saved filenames, sizes and hashes across restart. Eligible unexpired attachment-only failures recover automatically into the original notice's thread without another parent message or duplicate successful documents. Recovery preserves the original failure audit and each document's five real transport-attempt limit; unverifiable legacy evidence, expired work and terminal documents are not revived (03 §7.6).
+
 ### 7.3 Evidence
 
 Every card version can be reproduced from what Tank stored with it: the source items and quotes, the market data per venue and window, what was excluded and why, the scores and their inputs, and the settings and analysis versions used.
@@ -451,14 +453,14 @@ The reviewer can: list cards and updates for a period; open a card with its vers
 
 | Area | Requirement |
 |---|---|
-| Availability | Tank runs continuously, ≥ 99% of each month; nothing it has read is lost on restart. |
+| Availability | Tank runs continuously, ≥ 99% of each month; nothing it has read is lost on restart. Ordinary reconciliation repairs recoverable persisted acknowledgment and handled-failure blockers, settles completed sessions and resumes queued work without a fresh user message or operator replay. |
 | Speed | New item → event within 7 min (95% of items); STRUCTURAL SHOCK first card ≤ 3 min after Tank learns of it; MAJOR full card ≤ 8 min; update ≤ 60 s after a decisive condition fires (after the event's current analysis step, if one is running); delivery ≤ 10 s. When analysis falls behind, official sources and work on MAJOR+ events go first; news, GitHub commits and posts of the other X accounts wait. |
 | Time | All times in UTC. |
 | Cost | Data sources free, except the Apify runs that read X (D3, billed per run); the analysis model runs on the operator's ChatGPT subscription; web search (DuckDuckGo, D9) is free; the only other paid call is the filter and routing model, whose provider reports no cost, so Tank records its usage with the cost unknown (03 §3.1). Token and spending limits are out of V0 scope. |
 | Safety | Tank only reads data; it holds no exchange credentials and cannot trade or move funds. |
 | History kept | Events, cards, delivery records and evidence: permanently. Detailed market data around major events: permanently. Other detailed market data: 30 days. Order-book summaries: 72 hours. Minute-level market history of the universe: 90 days. |
-| Auditability | Cards, delivery records, evidence, state changes, reaction records and reviews are never edited, only appended. |
-| Failures | No silent fallbacks: when something Tank depends on fails, it waits and retries; it never switches on its own to a broader, cheaper or rougher way of working. Missing data is shown as n/a with the reason. |
+| Auditability | Cards, delivery records, evidence, state changes, reaction records and reviews are never edited, only appended. Recovery preserves original failure history and immutable diagnostic manifests. |
+| Failures | No silent fallbacks: when something Tank depends on fails, it waits and retries within the step's expiry and genuine attempt limits; it never switches on its own to a broader, cheaper or rougher way of working. Missing data is shown as n/a with the reason. |
 
 ---
 
@@ -472,7 +474,7 @@ The reviewer can: list cards and updates for a period; open a card with its vers
 | V0-D Beneficiaries | The CoW case names CoW as a secondary beneficiary on liquidity/execution; the World and Ondo cases show capture no stronger than indirect; the Quant case names credible secondaries or explains per layer why none qualifies. |
 | V0-E Market truth | The formula checks of 03 §11.4 pass; the QNT 26 Sep window is recognized as price markup without new positions; the ONDO 24 Sep window as new positions and never spot-led; the WLD 16 Oct case reproduces: spot selling in 1 h and 4 h with buy share < 50%, sell side carrying most volume with Kraken as a small buying venue, open positions +8.18% ± 0.5 pp in 4 h on Binance + Bybit, perp-led with absorption unresolved. |
 | V0-F Market truth extended | Depth and price impact on ≥ 3 venues for ≥ 10 tokens; bid refill and price-per-flow measured on the first three selling bursts recorded for universe tokens; venue lead-lag on all major test cases; supply context shown or "n/a" with reason. |
-| V0-G End to end | A live event goes from source to Telegram card with no manual step, within §9 speed limits, and the delivery is recorded. |
+| V0-G End to end | A live event goes from source to Telegram card with no manual step, within §9 speed limits, and the delivery is recorded. Permanent automatic restart/incident regressions additionally prove session settlement and queued-work admission without lost/duplicate effects, and bounded diagnostic attachment recovery through real persistence and HTTP transport (03 §11.7). These regressions do not establish live-event or 14-day qualification. |
 | V0-H Shadow operation | 14 days continuous; every card frozen and reviewed daily; weekly miss review; S1–S9 measured. |
 
 Shadow-mode success criteria (V0-H):

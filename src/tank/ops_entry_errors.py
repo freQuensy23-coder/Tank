@@ -15,7 +15,7 @@ from datetime import timedelta
 
 from tank.ops_cards import plain
 from tank.ops_progress import enabled
-from tank.sources.x_diagnostics import documents, evidence_identity, sanitize
+from tank.sources.x_diagnostics import DOCUMENT_SERIALIZATION_VERSION, documents, evidence_identity, sanitize
 from tank.time_precision import collection_clock, offset_schedule
 from tank.util import parse_time, sha256
 
@@ -195,6 +195,7 @@ async def report_entry_errors(repo, settings, source, feed, errors, seen_at):
         }
         notice["text"] = render(notice)
         if attachments := documents(notice["entry_errors"]):
+            notice["document_serialization_version"] = DOCUMENT_SERIALIZATION_VERSION
             notice["document_manifest"] = [
                 {"filename": row["filename"], "sha256": row["sha256"], "bytes": len(row["content"])}
                 for row in attachments

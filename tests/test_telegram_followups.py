@@ -351,7 +351,7 @@ async def test_question_goes_into_the_same_session_and_final_turn_text_becomes_t
 
 
 @pytest.mark.asyncio
-async def test_failed_session_reopens_and_retires_its_failed_turn_from_the_barrier():
+async def test_failed_session_reopens_without_retiring_its_unproven_failed_turn():
     repo = MemoryRepository()
     question_id = await ask(repo, session_status="FAILED")
     posts = []
@@ -363,8 +363,11 @@ async def test_failed_session_reopens_and_retires_its_failed_turn_from_the_barri
         )
         session = await repo.get("ops.agent_sessions", "ses_1")
         barrier = await service.execution_barrier(session)
-    assert session["status"] == "OPEN" and session["retired_message_ids"] == ["m0"]
-    assert barrier["accepted_input_ids"] == ["in_q"]
+    assert session["status"] == "OPEN"
+    assert "m0" not in session.get("retired_message_ids", [])
+    assert session["message_log"][0]["turn_status"] == "FAILED"
+    assert barrier["accepted_input_ids"] == ["in_0", "in_q"]
+    assert not barrier["complete"]
     assert len(posts) == 1
 
 
@@ -444,8 +447,14 @@ async def test_retried_question_is_never_retired_by_a_concurrent_failure():
         await service.send_message(payload)
         session = await repo.get("ops.agent_sessions", "ses_1")
         barrier = await service.execution_barrier(session)
-    assert session["status"] == "OPEN" and session["retired_message_ids"] == ["m0"]
-    assert barrier["accepted_input_ids"] == ["in_q"] and len(posts) == 1
+    assert session["status"] == "OPEN"
+    assert not session.get("retired_message_ids")
+    assert session["message_log"][0]["turn_status"] == "FAILED"
+    assert session["message_log"][1]["turn_status"] == "PENDING"
+    assert session["message_log"][1]["remote_event_id"] == "in_q"
+    assert barrier["accepted_input_ids"] == ["in_0", "in_q"]
+    assert not barrier["complete"]
+    assert len(posts) == 1
 
 
 @pytest.mark.asyncio
@@ -951,11 +960,16 @@ async def test_numeric_watch_comparisons_need_numbers():
         )
 
 
-def test_reopening_fails_queued_follow_ups_of_the_failed_session():
+def test_reopening_preserves_queued_follow_ups_and_pending_retry_of_the_failed_session():
     service = object.__new__(SessionService)
     service.clock_timestamp = lambda: __import__("tank.time_precision", fromlist=["x"]).collection_clock()
+    retry = {"id": "pending-retry", "type": "session.error", "execution_id": "input-old-q"}
     session = {
         "status": "FAILED",
+        "runtime_status": "RUNNING",
+        "active_message_id": "old_q",
+        "pending_retry_event": retry,
+        "retired_message_ids": ["abandoned"],
         "message_log": [
             {
                 "message_id": "old_q",
@@ -969,10 +983,14 @@ def test_reopening_fails_queued_follow_ups_of_the_failed_session():
             },
         ],
     }
-    service.reopen_for_question(session, {"question_id": "q1"}, "new_q")
-    assert session["message_log"][0]["turn_status"] == "FAILED"
+    service.reopen_for_question(session, {"question_id": "q1"})
+    assert session["message_log"][0]["turn_status"] == "PENDING"
     assert session["message_log"][1]["turn_status"] == "ACCEPTING"
-    assert session["retired_message_ids"] == ["old_q"] and session["status"] == "OPEN"
+    assert session["retired_message_ids"] == ["abandoned"]
+    assert session["status"] == "OPEN"
+    assert session["runtime_status"] == "RUNNING"
+    assert session["active_message_id"] == "old_q"
+    assert session["pending_retry_event"] == retry
 
 
 @pytest.mark.asyncio
