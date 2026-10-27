@@ -259,6 +259,17 @@ class EntryErrorMarker(DomainModel):
         return record
 
 
+class EntryErrorRenderContent(DomainModel):
+    """Actual report content consumed before the final notice text exists."""
+
+    notice_id: str
+    source_id: str
+    source_name: str = Field(min_length=1)
+    feed_url: str
+    seen_at: str
+    entry_errors: list[SourceEntryError] = Field(min_length=1)
+
+
 class EntryErrorNotice(DomainModel):
     notice_id: str
     kind: Literal["ENTRY_ERRORS"] = "ENTRY_ERRORS"
@@ -277,10 +288,11 @@ class EntryErrorNotice(DomainModel):
     text: str
 
     def storage_record(self) -> dict[str, JsonValue]:
-        record: dict[str, JsonValue] = self.model_dump(mode="json")
+        notice = EntryErrorNotice.model_validate(self)
+        record: dict[str, JsonValue] = notice.model_dump(mode="json")
         record["entry_errors"] = [
-            error.model_dump(mode="json", exclude_unset=True) for error in self.entry_errors
+            error.model_dump(mode="json", exclude_unset=True) for error in notice.entry_errors
         ]
-        if self.document_manifest is None:
+        if notice.document_manifest is None:
             record.pop("document_manifest")
         return record

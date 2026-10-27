@@ -3238,6 +3238,65 @@
         "test_actual_no_report_frame_progresses_without_unused_session_metadata",
         "test_reported_usage_requires_one_actual_model_before_any_ledger_write"
       ]
+    },
+    {
+      "sites": [
+        {
+          "path": "src/tank/contracts/native_usage.py",
+          "symbol": "validate_native_usage_receipt"
+        },
+        {
+          "path": "src/tank/contracts/native_usage.py",
+          "symbol": "NativeUsageReceiptIdentity"
+        },
+        {
+          "path": "src/tank/contracts/native_usage.py",
+          "symbol": "LegacyNativeUsageReceipt"
+        },
+        {
+          "path": "src/tank/agents/native_usage.py",
+          "symbol": "record_native_usage"
+        }
+      ],
+      "kind": "immutable native usage receipt reconciliation after actual partial persistence",
+      "reason": "Actual session/native-event key, AGENT/subscription marker, matching recorded model fields, admitted counters/search/finish facts and exact typed/raw span evidence bind the first immutable receipt. New native_usage_observation stores only admitted observed facts, not an invented raw-byte revision. Prior producer2f3d389a wrote original model_usage under usage plus top-level counters/processed metadata; typed33fa352b separated native_usage_evidence; attributed27351ab8 added actual model-source labels. Their explicit receipt decoder validates those actually stored facts and does not reconstruct absent historical model-source attestation or rewrite clocks/controller/prompt provenance. An exact matching receipt is acknowledged before a new row is built. An actual concurrent ImmutableRecordError causes a fresh read and the same validation; missing/contradictory data is re-raised/refused, never generically swallowed or overwritten. No-row failures remain failures and cannot become a receipt; no clock is frozen or reused as fabricated new processing. Original reported usage is immutable even when later session/controller metadata differs. This fixes billing write/frame acknowledgment partial persistence without a new billing policy, provider/model inference or generalized event transaction.",
+      "validation": [
+        "test_actual_usage_commit_recovers_without_second_row_or_changed_first_receipt",
+        "test_actual_concurrent_usage_writes_reconcile_only_the_matching_first_receipt",
+        "test_existing_usage_contradiction_never_overwrites_or_claims_a_retry",
+        "test_definite_prewrite_failure_does_not_invent_an_existing_usage_receipt",
+        "test_actual_prior_usage_formats_preserve_their_first_recorded_provenance"
+      ]
+    },
+    {
+      "sites": [
+        {
+          "path": "src/tank/contracts/session_completion.py",
+          "symbol": "ReplayAbortTarget"
+        },
+        {
+          "path": "src/tank/contracts/session_completion.py",
+          "symbol": "ReplayAbortJournal"
+        },
+        {
+          "path": "src/tank/contracts/session_completion.py",
+          "symbol": "ReplayAbortFailure"
+        },
+        {
+          "path": "src/tank/agents/sessions.py",
+          "symbol": "SessionService.finalize_replay_abort"
+        }
+      ],
+      "kind": "actual host replay abort ownership with unused data excluded by phase",
+      "reason": "The sole production replay cleanup supplies actual session/run scope and actual error_type/reason from its caught exception. Explicit unknown run None and foreign run cannot authorize writes and do not require unused failure details or journal/body facts; matching scope requires observed failure before mutation. Journal absence remains unreported versus knownempty, never backfilled; only actual unique message IDs and turn phases are consumed, with every non-null active pointer naming one actual row. Unreported turn phase may be locally retired by the owned host-abort decision without claiming native failure; DONE/FAILED/native receipts/source outputs remain unchanged and no retry count or old native body is required. Real str(RuntimeError()) can be empty, so reason is preserved as an actual string rather than repaired to UNKNOWN. Recorded clock is the actual injected controller/replay Timestamp, with no provider occurrence/event/execution ID invented. Outcomes use strict bool flags and immutable ID tuples internally; JSON-mode reporting retains the external list shape. Repository and host bookkeeping I/O remain in Sessions, not inward models.",
+      "validation": [
+        "test_actual_owned_abort_preserves_terminal_native_and_completed_message_facts",
+        "test_actual_unowned_abort_needs_no_failure_or_unused_journal_body",
+        "test_owned_abort_missing_required_facts_refuses_before_any_persisted_mutation",
+        "test_abort_message_phase_needs_no_unused_body_counter_or_native_acceptance",
+        "test_unreported_journal_and_actual_empty_journal_remain_distinct",
+        "test_actual_empty_exception_text_stays_empty_and_receipt_is_host_not_native"
+      ]
     }
   ]
 }
