@@ -102,9 +102,7 @@ async def test_legacy_rejected_first_chunk_retries_the_entire_old_plain_plan():
     await legacy_first_chunk(repo, question_id, old_parts, "FAILED")
     old_failed = await repo.get("out.deliveries", "legacy-outcome")
     telegram = FakeTelegram()
-    expected = [
-        answer_body(part, 9 if index == 0 else 1000 + index) for index, part in enumerate(old_parts)
-    ]
+    expected = [answer_body(part, 9 if index == 0 else 1000 + index) for index, part in enumerate(old_parts)]
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(telegram)) as http:
         await TelegramInbox(repo, inbox_settings(), http=http).answer({"question_id": question_id})
