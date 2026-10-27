@@ -1705,3 +1705,83 @@ baseline 43 errors falls to 32, with both logs retained. Whole SourcePoller is
 explicitly not strict-qualified: JSON/history/article adapters, stored error-report
 backlog and remaining helpers still need their real named wire/result contracts;
 untyped bodies are not waived or hidden by a cast/suppression.
+
+## Activation disposition and durable source-report intent — 2026-10-27
+
+The pending-demand repair is active through the parent's integrated
+Scheduler.detect_late_data → ReactionDemandCoordinator path (`2e0d2eae`, joined by
+the parent at `bd232`). Historical coalesced reaction recovery is a qualified
+reusable API only. It has no automatic repair or CLI/admin invocation yet; that
+explicit caller and the pure eligibility-policy relocation remain the next
+reserved recovery tranche. No production history has been repaired by these
+qualification runs.
+
+Source-report reproduction `37023a8b` used actual SourceService, a failed report
+sink, and restart with the same index but a different configured feed/name. The
+old diagnostic was incorrectly emitted with the new feed URL. Its actual legacy
+backlog (only seen_at and entry_errors) is retained in the external red-run JUnit;
+no historical subject can be reconstructed from that representation.
+
+The new `entry_error_reporting` namespace stores operation-specific intents. Each
+requested intent binds the actual source ID, source name, configured logical-feed
+URL, seen_at, admitted errors, captured versions and a distinct new operational
+intent ID. Intent plus acquisition/pending/coverage progress commit together;
+there is no capture, delivery or reporter wait inside that commit. Existing
+`entry_error_reports` legacy values remain unchanged, including malformed/null/
+empty-text/object values. A digest reference records their unresolved shape and
+missing subject, not a guessed original report identity. An actual empty legacy
+list remains distinct from malformed reported values.
+
+The source adapter drains outside acquisition commit, including empty later
+batches and acquisition failures. Reporting consumes the stored narrow subject,
+never the current feed/index. The existing application reporter returns RECORDED,
+DEDUPLICATED or NOT_REQUESTED. A model-valid confirmation without actual stored
+witnesses, a foreign scope, missing/mismatching marker/group body, or a changed raw
+intent revision cannot remove pending intent. Acknowledgement re-reads the actual
+marker/group documents under their record keys through checkpoint commit. Hashes
+refer to original stored JSON documents, not normalized DTO serialization.
+Current production notice writers use those generic record locks; no advisory
+claim is made about arbitrary uncoordinated SQL writers. Queue idempotency is
+acquired before the Memory transaction mutex. Marker/notice/delivery-work commit
+is independently visible before acknowledgement in the actual PostgreSQL proof.
+
+Source/feed/error-wide dedup hashes and grouped notice IDs are unchanged. A later
+same-feed/name/version reload can deduplicate, but preserves the prior immutable
+notice, name, seen_at and creation clocks exactly. Pending intent retains its
+original versions. After removal, disposition explicitly retains source_versions
+from that intent separately from execution_versions of the acknowledgement actor;
+current configuration is not substituted for the source's provenance. Existing
+notice/marker and DELIVER payload shapes are unchanged. No confirmation claims
+Telegram SENT. Fresh disabled/replay work records explicit NOT_REQUESTED without
+a queued request; an already requested pending intent is not acknowledged merely
+because reporting becomes disabled, and resumes when reporting is enabled.
+
+Actual fault controls cover sink outage/restart, same-index scope change, failure
+before intent commit, cancellation after intent commit, committed report before
+ack, ack rollback and after-ack cancellation. They preserve old notice bodies,
+prevent duplicate DELIVER work, and retain legacy evidence while independent new
+reports proceed. All direct report callers use the named request/outcome boundary;
+there is no compatibility branch or generic queue framework and no new table.
+
+Pre-provenance-follow-up exact source `6bf606b2` passed all 590 selected source
+units in 12.47s, zero skips, p90 0.191s/max 1.596s, and all 45 corresponding actual
+cases in 17.48s, zero skips. Final exact source `38598e913def1d3526351372fca04a4861c75c69`
+passes all 57 changed reporting/ops/X units in 10.86s, zero skips, p90 0.442s/max
+1.554s; all 17 corresponding actual cases pass in 13.94s, zero skips. Both phases
+used the approved read-only-dependency runner/heavy.lock and pytest -n auto,
+normal resources and unchanged deadlines, with immutable source guards. External
+prefixes are `source-report-{6bf6,3859}-linux-{unit,actual}`. Initial30a smoke
+(41 pass/one obsolete None-result assertion) and the3702 reproduction remain
+retained and attributed. The corrected caller tests actual DEDUPLICATED references
+rather than weakening its dedup/no-extra-effect oracle.
+
+Independent strict targets: contracts/source_reports.py, sources/reporting.py,
+ops_entry_errors.py, tests/source_report_support.py and
+tests/test_source_error_report_scope.py. Default SourceService/poller checking and
+all nine changed Python paths' Ruff/format/comment/whitespace checks pass. No
+whole-module closure is claimed for the remaining source family. Exact current
+AST signature evidence `source-report-3859-signatures.json` still lists
+SourceService 4, probe 2, parsers 22 and polling 7 missing signatures; new reporting
+adapter, reporter and contracts have none. Those inventories include actual body/
+required-fact/layer work, not permission for opaque mapping annotations or blanket
+waivers. The report head is held immutable for the parent's next coherent batch.
