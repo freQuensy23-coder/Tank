@@ -5,13 +5,21 @@ from typing import Protocol
 
 from pydantic import JsonValue
 
-from tank.contracts.native_usage import NativeUsageSession, NativeUsageSpan, select_native_usage_model
+from tank.contracts.native_usage import (
+    NativeUsageSession,
+    NativeUsageSpan,
+    select_native_usage_model,
+    validate_native_usage_receipt,
+)
 from tank.contracts.provenance import ResolvedVersionIdentity
+from tank.storage import ImmutableRecordError
 from tank.time_precision import Timestamp
 from tank.util import JsonInput
 
 
 class NativeUsageStore(Protocol):
+    async def get(self, collection: str, key: str) -> dict[str, JsonValue] | None: ...
+
     async def put(
         self, collection: str, key: str, record: Mapping[str, JsonInput], *, immutable: bool = False
     ) -> dict[str, JsonValue]: ...
@@ -31,9 +39,13 @@ async def record_native_usage(
     collected_at = Timestamp.model_validate(collected_at)
     if span.counters is None:
         return
+    key = session.session_id + ":" + span.native_event_id
+    existing = await store.get("ops.llm_usage", key)
+    if existing is not None:
+        validate_native_usage_receipt(existing, session.session_id, span)
+        return
     measured_at = span.processed_at if span.processed_at.value is not None else collected_at
     model = select_native_usage_model(session, span)
-    key = session.session_id + ":" + span.native_event_id
     searches = span.web_searches()
     measurements = {
         "input_tokens": span.counters.input_tokens,
@@ -72,6 +84,7 @@ async def record_native_usage(
         "web_searches": searches,
         "usage": span.counters.model_dump(mode="json", exclude_none=True),
         "native_usage_evidence": span.raw_usage,
+        "native_usage_observation": span.model_dump(mode="json"),
         "missing_fields": missing,
         **span.counters.model_dump(mode="json", exclude_none=True),
         "cost_usd": "0",
@@ -87,4 +100,10 @@ async def record_native_usage(
         "session_config_version": session.config_version,
         "session_code_version": session.code_version,
     }
-    await store.put("ops.llm_usage", key, record, immutable=True)
+    try:
+        await store.put("ops.llm_usage", key, record, immutable=True)
+    except ImmutableRecordError:
+        concurrent = await store.get("ops.llm_usage", key)
+        if concurrent is None:
+            raise
+        validate_native_usage_receipt(concurrent, session.session_id, span)
