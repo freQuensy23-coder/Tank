@@ -7,7 +7,7 @@ from pydantic import BeforeValidator, Field, JsonValue, model_validator
 
 from tank.contracts import DomainModel
 from tank.contracts.provenance import ResolvedVersionIdentity
-from tank.contracts.scalars import require_integer
+from tank.contracts.scalars import FalseFlag, TrueFlag, require_integer
 from tank.contracts.source_items import ExtractionStatus
 from tank.time_precision import Timestamp
 from tank.util import parse_time
@@ -473,3 +473,118 @@ class SessionCompletionStatus(DomainModel):
     @classmethod
     def from_record(cls, record: Mapping[str, JsonValue]) -> Self:
         return cls.model_validate({"session_id": record.get("session_id"), "status": record.get("status")})
+
+
+class ReplayAbortTarget(DomainModel):
+    session_id: CompletionIdentity
+    replay_run_id: CompletionIdentity | None
+
+
+class ReplayAbortFailure(DomainModel):
+    error_type: CompletionIdentity
+    reason: str
+
+
+class ReplayAbortOwnership(DomainModel):
+    session_id: CompletionIdentity
+    replay_run_id: CompletionIdentity | None
+
+    @classmethod
+    def from_record(cls, record: Mapping[str, JsonValue], session_id: str) -> Self:
+        result = cls.model_validate(
+            {"session_id": record["session_id"], "replay_run_id": record.get("replay_run_id")}
+        )
+        if result.session_id != session_id:
+            raise ValueError("Replay abort session identity differs from its actual storage key")
+        return result
+
+    def matches(self, target: ReplayAbortTarget) -> bool:
+        target = ReplayAbortTarget.model_validate(target)
+        return (
+            target.replay_run_id is not None
+            and self.session_id == target.session_id
+            and self.replay_run_id == target.replay_run_id
+        )
+
+
+class ReplayAbortMessage(DomainModel):
+    message_id: CompletionIdentity
+    turn_status: Literal["ACCEPTING", "PENDING", "RUNNING", "DONE", "FAILED"] | None
+
+    @property
+    def unfinished(self) -> bool:
+        return self.turn_status not in {"DONE", "FAILED"}
+
+
+class ReplayAbortJournal(DomainModel):
+    messages: tuple[ReplayAbortMessage, ...] | None
+    active_message_id: CompletionIdentity | None
+
+    @classmethod
+    def from_record(cls, record: Mapping[str, JsonValue]) -> Self:
+        messages: list[ReplayAbortMessage] | None = None
+        if "message_log" in record:
+            raw = record["message_log"]
+            if not isinstance(raw, list):
+                raise ValueError("Replay abort journal must be an actual array")
+            messages = []
+            for row in raw:
+                if not isinstance(row, dict):
+                    raise ValueError("Replay abort message must be an actual object")
+                messages.append(
+                    ReplayAbortMessage.model_validate(
+                        {"message_id": row["message_id"], "turn_status": row.get("turn_status")}
+                    )
+                )
+        return cls.model_validate(
+            {
+                "messages": tuple(messages) if messages is not None else None,
+                "active_message_id": record.get("active_message_id"),
+            }
+        )
+
+    @model_validator(mode="after")
+    def actual_message_ownership(self) -> Self:
+        identities = [row.message_id for row in self.messages] if self.messages is not None else []
+        if len(identities) != len(set(identities)):
+            raise ValueError("Replay abort journal contains duplicate message identities")
+        if self.active_message_id is not None and self.active_message_id not in identities:
+            raise ValueError("Replay abort active pointer has no actual journal owner")
+        return self
+
+
+class HostReplayAbortReceipt(ReplayAbortFailure):
+    origin: Literal["HOST_REPLAY_ABORT"] = "HOST_REPLAY_ABORT"
+    replay_run_id: CompletionIdentity
+    recorded_at: Timestamp
+
+    @model_validator(mode="after")
+    def actual_controller_clock(self) -> Self:
+        if self.recorded_at.value is None:
+            raise ValueError("Replay abort requires its actual controller clock")
+        return self
+
+    def storage_record(self) -> dict[str, JsonValue]:
+        result: dict[str, JsonValue] = {
+            "origin": self.origin,
+            "replay_run_id": self.replay_run_id,
+            "error_type": self.error_type,
+            "reason": self.reason,
+            **self.recorded_at.fields("recorded_at"),
+        }
+        return result
+
+
+class ReplayAbortRefused(DomainModel):
+    session_id: CompletionIdentity
+    finalized: FalseFlag = False
+    reason: Literal["NOT_OWNED_REPLAY_RUN"] = "NOT_OWNED_REPLAY_RUN"
+
+
+class ReplayAbortFinalized(DomainModel):
+    session_id: CompletionIdentity
+    finalized: TrueFlag = True
+    failed_message_ids: list[CompletionIdentity]
+
+
+type ReplayAbortOutcome = ReplayAbortRefused | ReplayAbortFinalized
