@@ -5931,15 +5931,7 @@ def compute_condition_values(snapshot, requirements, *, config=None, cache=None,
                         value["repricing_band"] = None
                         value["windows"]["EVENT"]["r_raw"] = None
                 else:
-                    history_head = (snapshot.get("history_dependency_fingerprints") or {}).get(domain, {})
-                    history_head = history_head.get(window) if isinstance(history_head, dict) else None
-                    if history_head is not None and not isinstance(history_head, str):
-                        history_head = fingerprint(history_head)
-                    history_token = _BASELINE_DEPENDENCY.set(history_head)
-                    try:
-                        value = derivatives_truth(selected, start, end)
-                    finally:
-                        _BASELINE_DEPENDENCY.reset(history_token)
+                    raise ValueError("Unsupported condition calculation domain")
                 cache[key] = value
                 if len(cache) > 128:
                     cache.pop(next(iter(cache)))
