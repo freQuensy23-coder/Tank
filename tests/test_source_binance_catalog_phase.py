@@ -1,4 +1,5 @@
 import json
+from collections.abc import Callable
 from pathlib import Path
 from typing import Literal
 
@@ -8,6 +9,7 @@ import zstandard
 from pydantic import JsonValue
 from pydantic_settings import SettingsConfigDict
 from source_support import fixture_request_budgets, fixture_versions, source_definition
+from test_sources import collector_http as collector_http
 from test_storage import repo as repo
 
 from tank.contracts.source_items import BinanceCatalogListing, PendingBinanceCatalog, pending_source_item
@@ -52,7 +54,10 @@ def test_catalog_admission_preserves_reported_summary_without_inventing_detail(s
 
 @pytest.mark.parametrize("summary", ["ABSENT", "NULL", "EMPTY", "REPORTED"])
 async def test_catalog_pending_restart_requires_detail_and_keeps_exact_listing_facts(
-    repo: StorageBackend, tmp_path: Path, summary: Summary
+    repo: StorageBackend,
+    tmp_path: Path,
+    summary: Summary,
+    collector_http: Callable[[httpx.AsyncClient], None],
 ) -> None:
     listing_payload = catalog(summary)
     detail_payload = json.dumps(
@@ -85,6 +90,7 @@ async def test_catalog_pending_restart_requires_detail_and_keeps_exact_listing_f
     budgets = fixture_request_budgets()
     try:
         async with httpx.AsyncClient(transport=httpx.MockTransport(respond)) as http:
+            collector_http(http)
             first = SourceService(repo, settings, http=http, budgets=budgets, versions=fixture_versions())
             first.sources = {"S09": source}
             try:
