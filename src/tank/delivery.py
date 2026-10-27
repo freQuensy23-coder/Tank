@@ -9,9 +9,10 @@ from contextlib import AsyncExitStack
 from datetime import datetime, timedelta
 
 import httpx
-from pydantic import JsonValue
+from pydantic import Field, JsonValue
 
 from tank.analysis.cards import telegram_card_html
+from tank.contracts import DomainModel
 from tank.contracts.delivery import (
     CardDeliveryHeader,
     CardDeliveryText,
@@ -27,8 +28,10 @@ from tank.contracts.delivery import (
     DeliveryTelegramReceipt,
     DeliveryTelegramRejection,
     DeliveryText,
-    DocumentDeliveryAttempt,
     DocumentDeliveryNotice,
+    DocumentLedgerEntry,
+    DocumentParentReceipt,
+    DocumentRetryAttempt,
     ExitCallDecision,
     FrozenDeliveryAssessment,
     FrozenDeliveryInterval,
@@ -43,7 +46,7 @@ from tank.contracts.delivery import (
     call_activation_decision,
 )
 from tank.contracts.json import decode_unique_json
-from tank.diagnostic_documents import documents
+from tank.diagnostic_documents import DiagnosticAttachment, documents
 from tank.ops_progress import event_progress
 from tank.runtime_contracts import AlertDeliveryJob, DeliveryJob, NoticeDeliveryJob, parse_delivery_job
 from tank.telegram_api import response_result, sent_message_receipt
@@ -59,6 +62,12 @@ class DeliveryError(RuntimeError):
         super().__init__(message)
         self.retry_after = retry_after
         self.terminal = False
+
+
+class DocumentDeliveryWork(DomainModel):
+    document: DiagnosticAttachment
+    document_id: str = Field(pattern=r"^[a-f0-9]{64}$")
+    attempt: int = Field(ge=1)
 
 
 class DeliveryDeferred(DeliveryError):
@@ -260,34 +269,53 @@ class DeliveryService:
 
     async def _deliver_documents(self, notice: DocumentDeliveryNotice) -> DeliveryError | None:
         deadline = time.monotonic() + 30
-        chat = str(self.settings.telegram_ops_chat or "")
-        ledger = [
-            DocumentDeliveryAttempt.from_record(row)
-            for row in await self._all(
-                "out.deliveries", filters={"notice_id": notice.notice_id, "channel": "telegram:ops"}
-            )
-        ]
-        messages = [row for row in ledger if row.status == "SENT" and row.method != "sendDocument"]
-        if not messages:
-            raise DeliveryError("Ops diagnostic parent message was not delivered")
-        parent = messages[0].message_ref
-        if parent is None:
-            raise DeliveryError("Ops diagnostic parent lacks its actual message receipt")
+        rows = await self._all(
+            "out.deliveries", filters={"notice_id": notice.notice_id, "channel": "telegram:ops"}
+        )
+        ledger = [(DocumentLedgerEntry.from_record(row, notice.notice_id), row) for row in rows]
         attachments = documents(notice.entry_errors)
-        manifest = tuple(row.reference() for row in attachments)
-        if manifest != notice.document_manifest:
+        if tuple(row.reference() for row in attachments) != notice.document_manifest:
             raise DeliveryError("Ops diagnostic document manifest mismatch")
-        terminal_failure = None
+        terminal_failure: DeliveryError | None = None
+        pending: list[DocumentDeliveryWork] = []
         for document in attachments:
             document_id = sha256({"filename": document.filename, "sha256": document.sha256})
-            history = [row for row in ledger if row.document_id == document_id]
-            if any(row.status == "SENT" for row in history):
+            history = [(entry, raw) for entry, raw in ledger if entry.document_id == document_id]
+            if any(entry.status == "SENT" for entry, _ in history):
                 continue
-            attempt = max((row.attempt for row in history), default=0) + 1
-            if attempt > 5 or any(row.terminal for row in history):
+            retries = [DocumentRetryAttempt.from_record(raw) for _, raw in history]
+            attempt = max((row.attempt for row in retries), default=0) + 1
+            if attempt > 5 or any(row.terminal is True for row in retries):
                 terminal_failure = DeliveryError("Ops document delivery exhausted five attempts")
                 terminal_failure.terminal = True
                 continue
+            pending.append(DocumentDeliveryWork(document=document, document_id=document_id, attempt=attempt))
+        if not pending:
+            return terminal_failure
+        token, chat = self.settings.telegram_token, self.settings.telegram_ops_chat
+        if token is None or not token.strip() or chat is None or not chat.strip():
+            raise ValueError("Telegram token and destination must be configured")
+        parent: DocumentParentReceipt | None = None
+        for entry, _ in ledger:
+            if (
+                entry.status == "SENT"
+                and entry.document_id is None
+                and entry.chat_id is not None
+                and entry.chat_id == chat
+                and entry.message_ref is not None
+            ):
+                parent = DocumentParentReceipt(
+                    notice_id=entry.notice_id,
+                    channel=entry.channel,
+                    message_ref=entry.message_ref,
+                    chat_id=entry.chat_id,
+                )
+                break
+        if parent is None:
+            raise ValueError("Ops diagnostic parent receipt is not bound to the configured destination")
+        parent_ref = str(parent.message_ref)
+        for work in pending:
+            document, document_id, attempt = work.document, work.document_id, work.attempt
             if time.monotonic() >= deadline:
                 return DeliveryDeferred(offset_schedule(collection_clock(utcnow()), timedelta(seconds=1)))
             transition = {
@@ -299,7 +327,7 @@ class DeliveryService:
                 "document_bytes": len(document.content),
                 "filename": document.filename,
                 "attempt": attempt,
-                "request_reply_to_message_ref": parent,
+                "request_reply_to_message_ref": parent_ref,
                 **collection_clock(utcnow()).fields("at"),
             }
             await self.repo.put(
@@ -307,10 +335,10 @@ class DeliveryService:
             )
             try:
                 response = await self.http.post(
-                    f"https://api.telegram.org/bot{self.settings.telegram_token}/sendDocument",
+                    f"https://api.telegram.org/bot{token}/sendDocument",
                     data={
                         "chat_id": chat,
-                        "reply_parameters": json.dumps({"message_id": int(parent)}),
+                        "reply_parameters": json.dumps({"message_id": int(parent_ref)}),
                         "caption": f"{notice.notice_id} · {document.filename}\nsha256={document.sha256} · {len(document.content)} bytes",
                         "disable_content_type_detection": "true",
                     },

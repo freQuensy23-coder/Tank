@@ -441,20 +441,46 @@ class DocumentDeliveryNotice(DomainModel):
         )
 
 
-class DocumentDeliveryAttempt(DomainModel):
+class DocumentLedgerEntry(DomainModel):
+    notice_id: DeliveryIdentity
+    channel: Literal["telegram:ops"]
     status: Literal["GENERATED", "FAILED", "SENT"]
-    attempt: int = Field(ge=1)
     document_id: DeliveryIdentity | None = None
     method: str | None = None
-    terminal: bool = False
     message_ref: MessageReference | None = None
+    chat_id: DeliveryIdentity | None = None
+
+    @model_validator(mode="after")
+    def document_identity(self) -> Self:
+        if self.method == "sendDocument" and self.document_id is None:
+            raise ValueError("Document delivery requires its recorded document identity")
+        if self.document_id is not None and self.method not in (None, "sendDocument"):
+            raise ValueError("Document identity conflicts with its reported delivery method")
+        return self
+
+    @classmethod
+    def from_record(cls, record: Mapping[str, JsonValue], notice_id: str) -> Self:
+        result = cls.model_validate({name: record[name] for name in cls.model_fields if name in record})
+        if result.notice_id != notice_id:
+            raise ValueError("Document history differs from its actual notice")
+        return result
+
+
+class DocumentRetryAttempt(DomainModel):
+    method: Literal["sendDocument"]
+    attempt: int = Field(ge=1)
+    terminal: bool | None = None
 
     @classmethod
     def from_record(cls, record: Mapping[str, JsonValue]) -> Self:
-        result = cls.model_validate({name: record[name] for name in cls.model_fields if name in record})
-        if result.status == "SENT" and result.message_ref is None:
-            raise ValueError("Sent delivery requires its actual message receipt")
-        return result
+        return cls.model_validate({name: record[name] for name in cls.model_fields if name in record})
+
+
+class DocumentParentReceipt(DomainModel):
+    notice_id: DeliveryIdentity
+    channel: Literal["telegram:ops"]
+    message_ref: MessageReference
+    chat_id: DeliveryIdentity
 
 
 class DeliveryTelegramRejection(DomainModel):
