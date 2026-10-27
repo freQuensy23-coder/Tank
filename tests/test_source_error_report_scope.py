@@ -1,7 +1,7 @@
 """A retained report must keep the subject of the acquisition that produced it."""
 
-from collections.abc import Sequence
 from pathlib import Path
+from typing import Never
 
 import httpx
 import pytest
@@ -10,8 +10,7 @@ from source_support import fixture_request_budgets, source_definition
 from test_storage import repo as repo
 
 from tank.contracts.provenance import ResolvedVersionIdentity
-from tank.contracts.source_errors import SourceEntryError
-from tank.contracts.sources import SourceDefinition, SourceFeed
+from tank.contracts.source_reports import SourceReportIntent, SourceReportLedger
 from tank.settings import Settings
 from tank.sources import SourceService
 from tank.storage import StorageBackend
@@ -44,9 +43,7 @@ async def test_failed_report_restart_retains_original_feed_subject(
         requests.append(url)
         return httpx.Response(200, content=BROKEN if url == OLD else EMPTY)
 
-    async def unavailable(
-        source: SourceDefinition, feed: SourceFeed, errors: Sequence[SourceEntryError], seen_at: str
-    ) -> None:
+    async def unavailable(intent: SourceReportIntent) -> Never:
         raise OSError("Authored report sink outage")
 
     settings = ReportSettings(data_dir=tmp_path, ops_progress_enabled=True)
@@ -62,12 +59,16 @@ async def test_failed_report_restart_retains_original_feed_subject(
             )
             bind(original, OLD, "Original test publisher")
             with monkeypatch.context() as outage:
-                outage.setattr(original, "report_errors", unavailable)
+                outage.setattr(original, "report_error_intent", unavailable)
                 assert (await original.poll_once("S30")).items == 0
             checkpoint = await repo.get("ops.source_checkpoints", "S30:0")
             assert checkpoint is not None
-            backlog = checkpoint["entry_error_reports"]
-            assert isinstance(backlog, list) and len(backlog) == 1
+            backlog = checkpoint["entry_error_reporting"]
+            ledger = SourceReportLedger.model_validate(backlog)
+            assert len(ledger.pending) == 1
+            [intent] = ledger.pending.values()
+            assert intent.subject.feed_url == OLD and intent.subject.source_name == "Original test publisher"
+            assert intent.versions.config_version == "scope-old"
             request.node.user_properties.append(("source_error_backlog", canonical_json(backlog)))
             assert await repo.list("out.ops_notices") == []
             await original.close()
@@ -85,6 +86,12 @@ async def test_failed_report_restart_retains_original_feed_subject(
             assert notice["source_name"] == "Original test publisher"
             assert notice["source_id"] == "S30"
             assert requests == [OLD, NEW]
+            settled = await repo.get("ops.source_checkpoints", "S30:0")
+            assert settled is not None
+            ledger = SourceReportLedger.model_validate(settled["entry_error_reporting"])
+            assert ledger.pending == {} and ledger.last_outcome is not None
+            assert ledger.last_outcome.outcome.kind == "RECORDED"
+            assert ledger.last_outcome.outcome.scope.feed_url == OLD
             await restarted.close()
     finally:
         await budgets.shutdown()

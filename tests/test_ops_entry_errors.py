@@ -7,12 +7,14 @@ from types import SimpleNamespace
 import httpx
 import pytest
 from delivery_support import delivery_job
+from source_report_support import report_request
 from source_support import fixture_request_budgets, fixture_versions, source_definition, source_feed
 from test_session_binding_concurrency import fixture_repo
 from test_sources import RSS
 from test_sources import settings as source_settings
 
 from tank import ops_entry_errors
+from tank.contracts.source_reports import SourceReportLedger
 from tank.delivery import DeliveryService
 from tank.ops_entry_errors import MESSAGE_LIMIT, report_entry_errors, units
 from tank.sources import SourceService
@@ -129,10 +131,12 @@ async def test_restart_and_concurrent_reports_are_idempotent(tmp_path: Path) -> 
             await report_entry_errors(
                 repo,
                 settings,
-                source_definition(source),
-                source_feed(feed),
-                admit_source_errors(errors, None),
-                "2026-10-24T12:00:00Z",
+                report_request(
+                    source_definition(source),
+                    source_feed(feed),
+                    admit_source_errors(errors, None),
+                    "2026-10-24T12:00:00Z",
+                ),
             )
             raise ValueError("rollback")
     assert len(await entry_notices(repo)) == 1
@@ -141,15 +145,18 @@ async def test_restart_and_concurrent_reports_are_idempotent(tmp_path: Path) -> 
             report_entry_errors(
                 repo,
                 settings,
-                source_definition(source),
-                source_feed(feed),
-                admit_source_errors(errors, None),
-                "2026-10-24T12:00:00Z",
+                report_request(
+                    source_definition(source),
+                    source_feed(feed),
+                    admit_source_errors(errors, None),
+                    "2026-10-24T12:00:00Z",
+                ),
             )
             for _ in range(4)
         )
     )
-    assert len([notice_id for notice_id in ids if notice_id]) == 1
+    assert [outcome.kind for outcome in ids].count("RECORDED") == 1
+    assert all(outcome.kind in {"RECORDED", "DEDUPLICATED"} for outcome in ids)
     assert len(await entry_notices(repo)) == 2 and len(await entry_jobs(repo)) == 2
     [snapshot] = [row for row in await entry_notices(repo) if row["source_id"] == "S24"]
     assert "предложение 0xabc" in snapshot["text"]
@@ -216,10 +223,12 @@ async def test_x_account_failures_are_keyed_by_account() -> None:
     await report_entry_errors(
         repo,
         settings,
-        source_definition(source),
-        source_feed(feed),
-        admit_source_errors(first, None),
-        "2026-10-24T12:00:00Z",
+        report_request(
+            source_definition(source),
+            source_feed(feed),
+            admit_source_errors(first, None),
+            "2026-10-24T12:00:00Z",
+        ),
     )
     [notice] = await entry_notices(repo)
     assert len(notice["entry_errors"]) == 3
@@ -229,10 +238,12 @@ async def test_x_account_failures_are_keyed_by_account() -> None:
     await report_entry_errors(
         repo,
         settings,
-        source_definition(source),
-        source_feed(feed),
-        admit_source_errors(again, None),
-        "2026-10-24T12:05:00Z",
+        report_request(
+            source_definition(source),
+            source_feed(feed),
+            admit_source_errors(again, None),
+            "2026-10-24T12:05:00Z",
+        ),
     )
     latest = [row for row in await entry_notices(repo) if row["notice_id"] != notice["notice_id"]]
     assert [row["entry_errors"] for row in latest] == [[{"account": "carol", "reason": "MISSING_FROM_RUN"}]]
@@ -258,7 +269,8 @@ async def test_failed_report_does_not_fail_acquisition_and_is_retried_next_poll(
     [notice] = await entry_notices(repo)
     assert "«Bad»" in notice["text"] and len(await entry_jobs(repo)) == 1
     checkpoint = await repo.get("ops.source_checkpoints", "S30:0")
-    assert checkpoint["entry_error_reports"] == [] and not checkpoint.get("acquisition_error")
+    ledger = SourceReportLedger.model_validate(checkpoint["entry_error_reporting"])
+    assert ledger.pending == {} and not checkpoint.get("acquisition_error")
     assert bool(checkpoint["entry_errors"]) == (second == "broken")
     await poll(repo, tmp_path, [RSS])
     assert len(await entry_notices(repo)) == 1
@@ -277,15 +289,18 @@ async def test_entry_error_notices_persist_and_deduplicate_in_storage(backend, p
                 report_entry_errors(
                     repo,
                     settings,
-                    source_definition(source),
-                    source_feed({"url": FEED_URL}),
-                    admit_source_errors(errors, None),
-                    "2026-10-24T12:00:00Z",
+                    report_request(
+                        source_definition(source),
+                        source_feed({"url": FEED_URL}),
+                        admit_source_errors(errors, None),
+                        "2026-10-24T12:00:00Z",
+                    ),
                 )
                 for _ in range(3)
             )
         )
-        assert len([notice_id for notice_id in ids if notice_id]) == 1
+        assert [outcome.kind for outcome in ids].count("RECORDED") == 1
+        assert all(outcome.kind in {"RECORDED", "DEDUPLICATED"} for outcome in ids)
         assert len(await entry_notices(repo)) == 1
         assert len(await repo.list("out.ops_notices", filters={"kind": "ENTRY_ERROR"})) == 1
         assert len(await entry_jobs(repo)) == 1

@@ -13,6 +13,7 @@ import pytest
 from foundation_helpers import present
 from pydantic import JsonValue
 from pydantic_settings import SettingsConfigDict
+from source_report_support import report_request
 from source_support import (
     fixture_http_admission,
     fixture_request_budgets,
@@ -161,17 +162,21 @@ def multipart(request: httpx.Request) -> dict[str, tuple[str | None, bytes]]:
 
 
 async def notice_for(repo, evidence, tmp_path: Path):
-    notice_id = await report_entry_errors(
+    report_outcome = await report_entry_errors(
         repo,
         telegram_settings(tmp_path),
-        diagnostic_source(),
-        diagnostic_source().feeds[0],
-        admit_source_errors(
-            [{"account": "alice", "reason": "PUBLIC_PROFILE_HTTP_503", "diagnostics": evidence}],
-            "apify-secret",
+        report_request(
+            diagnostic_source(),
+            diagnostic_source().feeds[0],
+            admit_source_errors(
+                [{"account": "alice", "reason": "PUBLIC_PROFILE_HTTP_503", "diagnostics": evidence}],
+                "apify-secret",
+            ),
+            "2026-10-24T12:00:00Z",
         ),
-        "2026-10-24T12:00:00Z",
     )
+    assert report_outcome.kind == "RECORDED"
+    notice_id = report_outcome.notice_id
     return await repo.get("out.ops_notices", notice_id)
 
 
@@ -257,7 +262,11 @@ async def test_same_body_deduplicates_despite_new_attempt_time_and_request_id_bu
     }
     assert (
         await report_entry_errors(
-            repo, settings, source, feed, admit_source_errors([error], "apify-secret"), "2026-10-24T12:05:00Z"
+            repo,
+            settings,
+            report_request(
+                source, feed, admit_source_errors([error], "apify-secret"), "2026-10-24T12:05:00Z"
+            ),
         )
         is None
     )
@@ -554,24 +563,28 @@ async def test_job_runner_defers_large_successful_document_batches_without_spend
     monkeypatch.setattr(tank.runtime, "collection_clock", observed_clock)
     monkeypatch.setattr(tank.delivery, "time", SimpleNamespace(monotonic=lambda: elapsed))
     repo = MemoryRepository()
-    notice_id = await report_entry_errors(
+    report_outcome = await report_entry_errors(
         repo,
         telegram_settings(tmp_path),
-        diagnostic_source(),
-        diagnostic_source().feeds[0],
-        admit_source_errors(
-            [
-                {
-                    "account": f"account{index}",
-                    "reason": "PUBLIC_PROFILE_HTTP_503",
-                    "diagnostics": diagnostics(),
-                }
-                for index in range(86)
-            ],
-            "apify-secret",
+        report_request(
+            diagnostic_source(),
+            diagnostic_source().feeds[0],
+            admit_source_errors(
+                [
+                    {
+                        "account": f"account{index}",
+                        "reason": "PUBLIC_PROFILE_HTTP_503",
+                        "diagnostics": diagnostics(),
+                    }
+                    for index in range(86)
+                ],
+                "apify-secret",
+            ),
+            "2026-10-24T12:00:00Z",
         ),
-        "2026-10-24T12:00:00Z",
     )
+    assert report_outcome.kind == "RECORDED"
+    notice_id = report_outcome.notice_id
     assert notice_id is not None
     notice = EntryErrorNotice.model_validate(present(await repo.get("out.ops_notices", notice_id)))
     [job_wire] = await repo.list("ops.jobs", filters={"type": "DELIVER"})
