@@ -73,6 +73,9 @@ def test_actual_anchorage_payload_has_authored_body_not_form_label(index, retain
     assert "Institution Type" not in parsed.text
     assert parsed.title == item["title"]
     assert parsed.publication.value == item["published_at"]
+    assert parsed.anchorage_binding is not None
+    assert parsed.anchorage_binding.canonical_url == item["url"]
+    assert parsed.anchorage_binding.response_url is None
     assert item["text"] == "Institution Type"
 
 

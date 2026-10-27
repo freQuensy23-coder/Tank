@@ -243,3 +243,50 @@ async def test_pending_article_restart_retains_scope_and_admits_only_its_own_pub
         assert final is not None and final["pending_batches"] == [] and final["etag"] == '"actual-index"'
     finally:
         await budgets.shutdown()
+
+
+async def test_link_only_filing_cannot_bypass_the_required_reported_text_filter(
+    repo: StorageBackend, tmp_path: Path
+) -> None:
+    index = b'<a href="/filing">Actual filing link without reported filing text</a>'
+    calls: list[str] = []
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        calls.append(str(request.url))
+        assert str(request.url) == "https://source.example/index"
+        return httpx.Response(200, content=index, headers={"etag": '"unapplied-index"'})
+
+    source = source_definition(
+        {
+            "source_id": "S02",
+            "name": "Authored filing source",
+            "feeds": [
+                {"url": "https://source.example/index", "kind": "html", "article_pattern": "^/filing$"}
+            ],
+        }
+    )
+    budgets = fixture_request_budgets()
+    try:
+        async with httpx.AsyncClient(transport=httpx.MockTransport(respond)) as http:
+            service = SourceService(
+                repo,
+                ArticleSettings(data_dir=tmp_path / "data", ops_progress_enabled=False),
+                http=http,
+                budgets=budgets,
+                versions=fixture_versions(),
+            )
+            service.sources = {source.source_id: source}
+            try:
+                outcome = await service.poll_once(source.source_id)
+            finally:
+                await service.close()
+        assert outcome.status == "DEGRADED" and outcome.items == 0
+        assert any("requires the reported filing text" in reason for reason in outcome.errors)
+        assert calls == ["https://source.example/index"]
+        assert await repo.list("ingest.source_items") == [] and await repo.list("ops.jobs") == []
+        checkpoint = await repo.get("ops.source_checkpoints", "S02:0")
+        assert checkpoint is not None and checkpoint["payload_sha256"] == sha256(index)
+        assert "etag" not in checkpoint and not checkpoint.get("pending_batches")
+        assert list((tmp_path / "data").rglob("*.zst")) == []
+    finally:
+        await budgets.shutdown()

@@ -1,8 +1,10 @@
 """Publisher parser results retain admitted discoveries before acquisition effects."""
 
-from typing import Annotated
+import re
+from typing import Annotated, Literal, Self
+from urllib.parse import urlsplit
 
-from pydantic import BeforeValidator, ConfigDict, Field, JsonValue
+from pydantic import BeforeValidator, ConfigDict, Field, JsonValue, model_validator
 
 from tank.contracts import DomainModel
 from tank.contracts.scalars import require_number
@@ -18,12 +20,49 @@ from tank.contracts.source_items import (
 from tank.time_precision import Timestamp
 
 
+class S28PressRoomArticleBinding(DomainModel):
+    kind: Literal["S28_PRESS_ROOM_INSIGHTS"]
+    canonical_url: str
+    known_document_url: str | None
+    response_url: str | None
+    heading: str = Field(min_length=1, pattern=r"\S")
+    headline: str = Field(min_length=1, pattern=r"\S")
+    article_url: str
+    main_entity_url: str
+
+    @model_validator(mode="after")
+    def captured_provider_route(self) -> Self:
+        canonical = urlsplit(self.canonical_url)
+        slug = re.fullmatch(r"/press-room/([A-Za-z0-9-]+)", canonical.path)
+        if (
+            canonical.scheme != "https"
+            or canonical.netloc != "www.anchorage.com"
+            or canonical.query
+            or canonical.fragment
+            or slug is None
+            or self.heading != self.headline
+        ):
+            raise ValueError("Anchorage article requires its exact captured canonical and heading binding")
+        if self.canonical_url != "https://www.anchorage.com/press-room/" + slug.group(1):
+            raise ValueError("Anchorage article canonical identity must use the exact captured URL form")
+        alternate = "https://www.anchorage.com/insights/" + slug.group(1)
+        if self.article_url != alternate or self.main_entity_url not in {alternate, alternate + "#webpage"}:
+            raise ValueError("Anchorage article requires one consistent captured insights identity")
+        if any(
+            value is not None and value != self.canonical_url
+            for value in (self.known_document_url, self.response_url)
+        ):
+            raise ValueError("Anchorage article document observation conflicts with its canonical identity")
+        return self
+
+
 class ParsedArticle(DomainModel):
     title: str
     text: str
     publication: Timestamp
     publication_basis: str | None
     publication_missing_reason: str | None
+    anchorage_binding: S28PressRoomArticleBinding | None
 
     def storage_record(self) -> dict[str, str | int | None]:
         record = self.publication.fields("published_at")
@@ -135,7 +174,7 @@ class PressReleaseEntry(DomainModel):
     url: str = Field(min_length=1, pattern=r"\S")
     title: str
     contentString: str
-    referenceDate: ReportedPublication
+    referenceDate: ReportedPublication = None
 
 
 class PressReleaseHit(DomainModel):

@@ -1058,7 +1058,11 @@ class SourcePoller:
                     item["publisher_url_aliases"] = [recovery.canonical_url, recovery.resolved_url]
                     item["url"] = recovery.resolved_url
                 detail = await asyncio.to_thread(
-                    parsers.article, payload, source_id=sid, page_url=_http_read.receipt.response_url
+                    parsers.article,
+                    payload,
+                    source_id=sid,
+                    page_url=material.url,
+                    response_url=_http_read.receipt.response_url,
                 )
                 if not detail.text.strip():
                     return self._empty_body(material.url, _http_read.receipt)

@@ -51,6 +51,7 @@ from tank.contracts.source_parsing import (
     ParsedDiscoveryBatch,
     PressReleaseHit,
     PublisherEntryIdentity,
+    S28PressRoomArticleBinding,
     SnapshotProposalEntry,
 )
 from tank.contracts.sources import FeedParsingSpec
@@ -60,9 +61,11 @@ from tank.util import EpochUnit, iso, parse_epoch, parse_utc_time, sha256
 
 
 def text(html: str | bytes | None) -> str:
+    if html is None:
+        return ""
     if isinstance(html, bytes):
         html = html.decode("utf-8", errors="replace")
-    tree = HTMLParser(str(html or ""))
+    tree = HTMLParser(html)
     for node in tree.css("script,style,nav,footer,header,noscript"):
         node.decompose()
     return " ".join(tree.text(separator=" ").split())
@@ -453,26 +456,21 @@ def contentful_text(node: JsonValue) -> str:
     return ""
 
 
-def _publication_nodes(value: JsonValue) -> Iterator[dict[str, JsonValue]]:
+def _article_nodes(value: JsonValue) -> Iterator[dict[str, JsonValue]]:
     if isinstance(value, list):
         for child in value:
-            yield from _publication_nodes(child)
+            yield from _article_nodes(child)
     elif isinstance(value, dict):
         types = value.get("@type")
         declared_types = [types] if isinstance(types, str) else types if isinstance(types, list) else []
-        publication = value.get("datePublished")
-        if (
-            any(
-                kind in {"Article", "NewsArticle", "BlogPosting", "ReportageNewsArticle"}
-                for kind in declared_types
-                if isinstance(kind, str)
-            )
-            and isinstance(publication, str)
-            and published(publication) is not None
+        if any(
+            kind in {"Article", "NewsArticle", "BlogPosting", "ReportageNewsArticle"}
+            for kind in declared_types
+            if isinstance(kind, str)
         ):
             yield value
         if "@graph" in value:
-            yield from _publication_nodes(value["@graph"])
+            yield from _article_nodes(value["@graph"])
 
 
 def _article_urls(value: JsonValue) -> Iterator[str]:
@@ -513,8 +511,51 @@ def _article_owns_page(node: dict[str, JsonValue], title: str, page_url: str | N
     return isinstance(headline, str) and bool(title) and text(headline).casefold() == title.casefold()
 
 
+def _s28_article_binding(
+    tree: HTMLParser,
+    node: dict[str, JsonValue],
+    title: str,
+    page_url: str | None,
+    response_url: str | None,
+) -> S28PressRoomArticleBinding | None:
+    canonical = tree.css('link[rel="canonical"]')
+    headlines = tree.css("h1")
+    headline = node.get("headline")
+    urls = list(_article_urls(node.get("url")))
+    main_entities = list(_article_urls(node.get("mainEntityOfPage")))
+    if (
+        node.get("@type") != "BlogPosting"
+        or len(canonical) != 1
+        or len(headlines) != 1
+        or not isinstance(headline, str)
+        or len(urls) != 1
+        or len(main_entities) != 1
+    ):
+        return None
+    declared_canonical = canonical[0].attributes.get("href")
+    if not isinstance(declared_canonical, str):
+        return None
+    try:
+        return S28PressRoomArticleBinding(
+            kind="S28_PRESS_ROOM_INSIGHTS",
+            canonical_url=declared_canonical,
+            known_document_url=page_url,
+            response_url=response_url,
+            heading=title,
+            headline=headline,
+            article_url=urls[0],
+            main_entity_url=main_entities[0],
+        )
+    except ValueError:
+        return None
+
+
 def article(
-    payload: str | bytes, *, source_id: str | None = None, page_url: str | None = None
+    payload: str | bytes,
+    *,
+    source_id: str | None = None,
+    page_url: str | None = None,
+    response_url: str | None = None,
 ) -> ParsedArticle:
     tree = HTMLParser(payload)
     title_node = tree.css_first("h1")
@@ -538,9 +579,15 @@ def article(
             reported_title = entry.fields.title
     elif source_id == "S08":
         authored = tree.css("main .content-item--richtextblock .rtf")
-        if not authored or any(not text(node.html) or len(node.css(".rtf")) > 1 for node in authored):
+        if not authored:
             raise ValueError("DTCC release requires nonempty unambiguous authored rich-text blocks")
-        body = HTMLParser("<div>" + "\n".join(node.html or "" for node in authored) + "</div>").body
+        markup: list[str] = []
+        for node in authored:
+            block = node.html
+            if block is None or not text(block) or len(node.css(".rtf")) > 1:
+                raise ValueError("DTCC release requires nonempty unambiguous authored rich-text blocks")
+            markup.append(block)
+        body = HTMLParser("<div>" + "\n".join(markup) + "</div>").body
     elif source_id == "S28":
         authored = tree.css(".insight-rich-text.w-richtext")
         if len(authored) != 1 or not text(authored[0].html):
@@ -560,14 +607,38 @@ def article(
     else:
         body = tree.css_first("article") or tree.css_first("main") or tree.body
     title = text(title_node.text()) if title_node else text(reported_title)
-    candidates: list[dict[str, JsonValue]] = []
+    structured_articles: list[dict[str, JsonValue]] = []
 
     for node in tree.css('script[type="application/ld+json"]'):
         try:
-            candidates.extend(_publication_nodes(decode_unique_json(node.text())))
+            structured_articles.extend(_article_nodes(decode_unique_json(node.text())))
         except (ValueError, TypeError):
             continue
-    selected = [node for node in candidates if _article_owns_page(node, title, page_url)]
+    candidates: list[dict[str, JsonValue]] = []
+    for structured in structured_articles:
+        declared_publication = structured.get("datePublished")
+        if isinstance(declared_publication, str) and published(declared_publication) is not None:
+            candidates.append(structured)
+    observed_page = response_url if response_url is not None else page_url
+    selected = [node for node in candidates if _article_owns_page(node, title, observed_page)]
+    if source_id == "S28" and response_url is not None and page_url is not None and response_url != page_url:
+        selected = []
+    anchorage_binding = None
+    postings = [node for node in structured_articles if node.get("@type") == "BlogPosting"]
+    if source_id == "S28":
+        canonical_links = tree.css('link[rel="canonical"]')
+        for posting in postings:
+            posting_urls = list(_article_urls(posting.get("url")))
+            if canonical_links and (
+                len(canonical_links) != 1
+                or len(posting_urls) != 1
+                or canonical_links[0].attributes.get("href") != posting_urls[0]
+            ):
+                selected = [candidate for candidate in selected if candidate is not posting]
+    if source_id == "S28" and len(postings) == 1 and postings[0] in candidates:
+        anchorage_binding = _s28_article_binding(tree, postings[0], title, page_url, response_url)
+        if anchorage_binding is not None and postings[0] not in selected:
+            selected.append(postings[0])
     values = {str(node["datePublished"]) for node in selected}
     timestamp = next(iter(values)) if len(values) == 1 else None
     basis = "ARTICLE_JSON_LD_DATE_PUBLISHED" if timestamp else None
@@ -627,6 +698,7 @@ def article(
         publication=publication,
         publication_basis=basis,
         publication_missing_reason=publication.precision_reason if publication.value is None else None,
+        anchorage_binding=anchorage_binding,
     )
 
 
