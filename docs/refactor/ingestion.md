@@ -1705,3 +1705,51 @@ baseline 43 errors falls to 32, with both logs retained. Whole SourcePoller is
 explicitly not strict-qualified: JSON/history/article adapters, stored error-report
 backlog and remaining helpers still need their real named wire/result contracts;
 untyped bodies are not waived or hidden by a cast/suppression.
+
+## Bybit announcement envelope and unique raw JSON admission — 2026-10-27
+
+Owned source `6f8caa49` normally descends from the qualified polling slice and
+canonical parent `33d1c3fd`; it includes no completion/usage/reaction API. The actual
+S11 SourceService reproduction `0139acf6` admitted missing/boolean success facts
+and duplicate keys as HEALTHY source items. That six-red run is retained. Its
+FLOAT negative oracle was incorrect: the official common response contract calls
+retCode a number, so rejection of numeric 0.0 is not justified. It is explicitly
+reclassified as an oracle error, not a repaired product defect.
+
+Primary evidence: [Bybit common response parameters](https://bybit-exchange.github.io/docs/v5/guide#common-response-parameters)
+and [announcement response](https://bybit-exchange.github.io/docs/v5/announcement).
+The new consumed status/success/result-list models require reported finite numeric
+success zero and the actual result list. Canonical require_number rejects booleans
+without imposing an undocumented integer-only restriction. Valid nonzero failure
+codes stay visible in diagnostics. Missing/wrong result facts refuse rather than
+becoming successful emptiness. RetMsg, total, time and other unconsumed metadata
+are not fabricated or forced merely to construct the consumed projection.
+
+Both actual S11 parser entry points run decode_unique_json on original bytes/text
+before any projection. Top-level, escaped-equivalent and ignored nested duplicate
+keys refuse. Opaque JSON-looking strings remain ordinary text. Unknown structured
+fields are checked for key uniqueness but remain in original response bytes;
+these models are admission projections, not serializers replacing the source
+response. Successful raw-item evidence and SHA use the original payload, including
+numeric kinds and ignored fields. Refused responses retain their actual HTTP200
+and original payload digest as diagnostic facts, with no successful item, raw-item
+file, ETag or discovery cursor. A provider failure is not relabeled as valid empty.
+
+Only one existing authored S11 dictionary fixture gains its reported success code;
+frozen payloads are untouched. Publication-clock semantics are unchanged. In
+particular, the separately documented distinction between author-filled
+dateTimestamp and publishTime remains a queued timestamp audit; the unverified
+OKX announcement shape is not guessed or tightened in this slice.
+
+Immutable exact source `6f8caa4951424ffa885cf0e2d3b1b1d64cc04e6f` passes all90
+selected units in 7.72s, zero skips, p90 0.155s and maximum 0.534s including fixtures.
+All11 actual PostgreSQL source cases pass in 8.91s, zero skips. They prove missing,
+boolean/string/nonzero and missing/wrong result/list refusals, raw duplicate-key
+refusal, original HTTP/hash evidence, valid numeric0.0 with opaque JSON text and
+byte-identical raw storage, plus valid integer-zero emptiness. Earlier625 source
+also passed90 units/all11 actual; the final follow-up restores observed failure
+codes without weakening admission. External logs/XML are
+`announcement-wire-{0139,625d,6f8c}-linux-{unit,actual}` where applicable. New
+contract and actual-caller test are independently strict-clean; all four changed
+Python paths pass Ruff/format/comment and whitespace checks. Whole legacy parsers
+are not claimed strict-qualified or fully protocol-modeled.
