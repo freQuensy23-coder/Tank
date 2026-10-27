@@ -3,11 +3,13 @@ from decimal import Decimal
 
 import pytest
 from pydantic import JsonValue, ValidationError
+from test_storage import repo as repo
 
 from tank.market import normalize
 from tank.market.errors import SemanticError
 from tank.market.normalization_contracts import NormalizationInstrument, NormalizationMarket
-from tank.util import iso, parse_epoch
+from tank.storage import StorageBackend
+from tank.util import iso, parse_epoch, utcnow
 
 SOURCE_MS = 1781654400000
 SOURCE_TIME = parse_epoch(SOURCE_MS, unit="ms")
@@ -167,3 +169,45 @@ def test_provider_candle_fields_reach_normalized_native_values_with_actual_decla
     assert (row["open_time"], row["open_time_prec"]) == (iso(SOURCE_TIME), "BUCKET(60s)")
     assert (row["received_ts"], row["received_ts_prec"]) == (iso(receipt), "COLLECTION_ONLY")
     assert row["quote_usd_rate"] is row["quote_volume_usd"] is None
+
+
+async def test_normalized_provider_records_reach_the_real_market_storage_reader(repo: StorageBackend) -> None:
+    wire = instrument()
+    at = (utcnow() - timedelta(minutes=2)).replace(second=0, microsecond=0)
+    source_ms = int(at.timestamp() * 1000)
+    receipt = at + timedelta(minutes=1)
+    candle = normalize.kline(
+        wire,
+        [source_ms, "1", "3", ".5", "2", "4", source_ms + 59999, "8", 2, "1", "2"],
+        now=receipt,
+    )
+    oi = normalize.oi(wire, {"openInterest": "2", "oiUsd": "0", "time": source_ms}, received_ts=receipt)
+    funding = normalize.funding(
+        wire,
+        {"fundingRate": "0", "fundingTime": source_ms},
+        kind="SETTLED",
+        interval_h=8,
+        received_ts=receipt,
+    )
+    liquidation = normalize.liquidation(
+        wire, {"S": "SELL", "z": "0", "q": "3", "ap": "2", "T": source_ms}, received_ts=receipt
+    )
+    records = (
+        ("mkt.klines_1m", "open_time", candle, "c", "2"),
+        ("mkt.oi_obs", "ts", oi, "oi_usd", "0"),
+        ("mkt.funding_obs", "as_of", funding, "rate_8h_eq", "0"),
+        ("mkt.liq_obs", "ts", liquidation, "qty_native", "0"),
+    )
+    for collection, clock_field, record, financial_field, expected in records:
+        changed = await repo.put_market_batch(collection, [record])
+        assert len(changed) == 1
+        stored = await repo.latest_before(
+            collection, clock_field, receipt, filters={"instrument_id": wire["instrument_id"]}
+        )
+        assert stored is not None
+        assert stored[financial_field] == expected
+        assert (stored["instrument_id"], stored["token_id"]) == (wire["instrument_id"], wire["token_id"])
+        assert stored[clock_field] == iso(at)
+        assert (stored["received_ts"], stored["received_ts_prec"]) == (iso(receipt), "COLLECTION_ONLY")
+    assert candle["quote_usd_rate"] is candle["quote_volume_usd"] is None
+    assert liquidation["notional_usd"] is None
