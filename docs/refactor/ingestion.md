@@ -1675,3 +1675,33 @@ Immutable `273d7319` normally contains parent `1519805b` and worker `9a9adfc7`. 
 Strict checking passes nine core/new targets; default checking of the two existing X/late-capture consumer files now passes, after replacing raw stored-record use with named records or explicit required-field assertions. Ruff/format, source-comment and diff checks pass. This is a bounded functional/performance checkpoint, not global completion or permission to activate while historical recovery/caller coordination is held.
 
 The separate producer-cursor diagnostic is confirmed through actual MarketService.capture_changes, Scheduler and MemoryRepository: two canonical failed-capture source records produce one queued reconsideration; actual expiry terminalizes it; the real-reader rescan cannot reconsider the skipped second record because the cursor already advanced. Exact evidence is retained as reaction-skipped-source-before.json. Records are synthetic negative capture outcomes with no invented prices/provider responses. No producer policy change is in this checkpoint.
+
+## Polling lifecycle and fetched instrument receipt projection — 2026-10-27
+
+Independent source `a299bc8d` starts from canonical parent `33d1c3fd`, with no
+held completion or reaction-demand API. The actual FetchedContent / NotModified
+phase is narrowed before using bytes. InstrumentPage gets its actual collection
+clock from FetchReceipt rather than an unvalidated checkpoint dictionary lookup.
+The instrument branch returns its own typed discovery rows; it no longer causes
+RSS rows to inherit an unrelated instrument-list type during checking. Payloads,
+raw evidence, catalog comparison and snapshot/pending transaction semantics are
+unchanged. There is no new generic acquisition/state wrapper or provider default.
+
+SourcePoller.needs_detail, loop and run now declare their actual input/output
+contracts. The loop consumes the existing validated SourceCadence calculation,
+already used by acquire, instead of repeating raw-clock truthiness arithmetic.
+Task ownership, stop handling, exception propagation and cancellation/drain remain
+intact. No quotas, cadence intervals, deadlines or worker counts changed.
+
+All 411 selected source/instrument units pass in 7.45s, zero skips, p90 0.049s and
+maximum 0.831s including fixtures. All nine actual cases pass in 8.32s, zero skips,
+covering catalog scope/restart, raw/pending durability, malformed envelope
+refusal, mixed actual instrument kinds and snapshots. The complete selected files
+are test_sources plus source_instrument_{durability,envelopes,scope,rows,snapshots}.
+External evidence is `polling-receipts-linux-{unit,actual}.{log,xml}`. Exact tested
+source SHA is `a299bc8dc21b84794060f999541b1df6a326ec4a`; source was immutable.
+Default mypy, Ruff, formatting/comment and whitespace policy pass. Strict source
+baseline 43 errors falls to 32, with both logs retained. Whole SourcePoller is
+explicitly not strict-qualified: JSON/history/article adapters, stored error-report
+backlog and remaining helpers still need their real named wire/result contracts;
+untyped bodies are not waived or hidden by a cast/suppression.
