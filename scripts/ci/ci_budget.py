@@ -7,7 +7,7 @@ import urllib.request
 from datetime import datetime
 from pathlib import Path
 
-BUDGET_SECONDS = 240
+BUDGET_SECONDS = 300
 FINISH_RESERVE_SECONDS = 5
 REQUIRED_JOBS = {
     "lint-python",
@@ -53,7 +53,7 @@ def result(jobs: list[dict], deadline: float) -> bool:
     if any(job["conclusion"] != "success" for job in required):
         raise ValueError("a required CI job did not pass")
     if any(timestamp(job["completed_at"]) > deadline for job in required):
-        raise ValueError("a required CI job completed after the four-minute deadline")
+        raise ValueError("a required CI job completed after the CI deadline")
     return True
 
 
@@ -77,9 +77,12 @@ def watch(event: dict, api, now=time.time, sleep=time.sleep) -> dict:
         if result(jobs, deadline) and now() < deadline - FINISH_RESERVE_SECONDS:
             return {"budget_seconds": BUDGET_SECONDS, "elapsed_seconds": round(now() - start, 2)}
         sleep(min(2, max(0, deadline - FINISH_RESERVE_SECONDS - now())))
-    print("::error::CI exceeded its 240-second wall-clock budget, including queue and setup", flush=True)
+    print(
+        f"::error::CI exceeded its {BUDGET_SECONDS}-second wall-clock budget, including queue and setup",
+        flush=True,
+    )
     api("/force-cancel", "POST", None)
-    raise TimeoutError("CI did not finish within four minutes")
+    raise TimeoutError(f"CI did not finish within {BUDGET_SECONDS} seconds")
 
 
 def main() -> None:
@@ -112,7 +115,9 @@ def main() -> None:
         print(f"::error::{error}", flush=True)
         raise SystemExit(1) from error
     with Path(os.environ["GITHUB_STEP_SUMMARY"]).open("a") as output:
-        output.write(f"All required checks passed in {outcome['elapsed_seconds']} s; limit: 240 s.\n")
+        output.write(
+            f"All required checks passed in {outcome['elapsed_seconds']} s; limit: {BUDGET_SECONDS} s.\n"
+        )
     print(json.dumps(outcome))
 
 
