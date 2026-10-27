@@ -41,3 +41,10 @@ async def test_valid_parallel_keys_preserve_same_identity_coalescing(repo: Stora
     changed = await repo.put_market_batch("mkt.flow_bars_1m", [point] * count, keys=["point"] * count)
     assert len(changed) == 1
     assert present(await repo.get("mkt.flow_bars_1m", "point"))["buy_qty"] == point["buy_qty"]
+
+
+async def test_empty_batch_requires_parallel_key_cardinality(repo: StorageBackend) -> None:
+    with pytest.raises(ValueError, match="keys and records must have equal lengths"):
+        await repo.put_market_batch("mkt.flow_bars_1m", [], keys=["unmatched"])
+    assert await repo.put_market_batch("mkt.flow_bars_1m", [], keys=[]) == []
+    assert await repo.put_market_batch("mkt.flow_bars_1m", []) == []

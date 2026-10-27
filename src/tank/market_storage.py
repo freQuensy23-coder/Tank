@@ -131,6 +131,8 @@ async def put_market_batch(
 ) -> list[Record]:
     records = list(records)
     keys = None if keys is None else list(keys)
+    if keys is not None and len(keys) != len(records):
+        raise ValueError("keys and records must have equal lengths")
     if keys is None and len(records) > WRITE_CHUNK:
         _validate_generated_market_keys(collection, records)
 
