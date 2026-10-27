@@ -1,9 +1,9 @@
 import httpx
 import pytest
+from test_telegram_answer_resume import FakeTelegram, answer_body, answered_question, inbox_settings
 
 from tank.storage import MemoryRepository
 from tank.telegram_inbox import TelegramInbox
-from test_telegram_answer_resume import FakeTelegram, answer_body, answered_question, inbox_settings
 
 
 @pytest.mark.parametrize(
@@ -13,7 +13,7 @@ from test_telegram_answer_resume import FakeTelegram, answer_body, answered_ques
         "🚀 Contact [**the incident owner**](mailto:ops@example.org?subject=NEAR).",
     ],
 )
-async def test_labelled_mailto_answer_preserves_the_complete_original_on_unsupported_conversion(markdown):
+async def test_labelled_mailto_delivery_preserves_original_answer_and_deduplicates(markdown):
     repo = MemoryRepository()
     question_id = await answered_question(repo, markdown)
     telegram = FakeTelegram()
