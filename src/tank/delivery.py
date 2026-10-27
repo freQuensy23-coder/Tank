@@ -49,7 +49,7 @@ from tank.contracts.json import decode_unique_json
 from tank.diagnostic_documents import DiagnosticAttachment, documents
 from tank.ops_progress import event_progress
 from tank.runtime_contracts import AlertDeliveryJob, DeliveryJob, NoticeDeliveryJob, parse_delivery_job
-from tank.telegram_api import response_result, sent_message_receipt
+from tank.telegram_api import TelegramResponseError, response_result, sent_message_receipt
 from tank.telegram_rich import RichMessage
 from tank.time_precision import Timestamp, collection_clock, offset_schedule, propagate_timestamp
 from tank.util import new_id, parse_time, sha256, utcnow
@@ -62,6 +62,14 @@ class DeliveryError(RuntimeError):
         super().__init__(message)
         self.retry_after = retry_after
         self.terminal = False
+
+
+def delivery_retry_delay(error: Exception, attempt: int) -> float:
+    if isinstance(error, DeliveryError):
+        return error.retry_after
+    if isinstance(error, TelegramResponseError) and error.retry_after is not None:
+        return error.retry_after
+    return 2 ** (attempt - 1)
 
 
 class DocumentDeliveryWork(DomainModel):
@@ -375,7 +383,7 @@ class DeliveryService:
                 return DeliveryDeferred(
                     offset_schedule(
                         collection_clock(utcnow()),
-                        timedelta(seconds=getattr(exc, "retry_after", 2 ** (attempt - 1))),
+                        timedelta(seconds=delivery_retry_delay(exc, attempt)),
                     )
                 )
             await self.repo.put(
@@ -594,9 +602,7 @@ class DeliveryService:
                     },
                     immutable=True,
                 )
-                failure = DeliveryError(
-                    "Ops card delivery failed", getattr(exc, "retry_after", 2 ** (attempt - 1))
-                )
+                failure = DeliveryError("Ops card delivery failed", delivery_retry_delay(exc, attempt))
                 failure.terminal = terminal
                 return failure
             stamp = collection_clock(utcnow())
@@ -803,9 +809,7 @@ class DeliveryService:
                     },
                     immutable=True,
                 )
-                failure = DeliveryError(
-                    "Telegram delivery failed", getattr(exc, "retry_after", 2 ** (attempt - 1))
-                )
+                failure = DeliveryError("Telegram delivery failed", delivery_retry_delay(exc, attempt))
                 failure.terminal = attempt == 5
                 return failure
             async with (
