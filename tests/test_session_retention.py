@@ -8,6 +8,7 @@ from agent_source_fixtures import declared_versions_fixture
 from session_followup_fixtures import UnexpectedFollowupRefusals
 
 from tank.agents import SessionService
+from tank.contracts.session_retention import SessionActivity
 from tank.settings import Settings
 from tank.storage import MemoryRepository
 from tank.telegram_inbox import closed_reason
@@ -39,6 +40,15 @@ async def seed(repo, *, age_days, event=None, no_event=False) -> None:
     last = iso(utcnow() - timedelta(days=age_days))
     if event is not None:
         await repo.put("evt.events", "evt_1", {"event_id": "evt_1", "lifecycle": event})
+    receipts = {
+        "idle": {
+            "id": "idle",
+            "type": "session.status_idle",
+            "execution_id": "accepted",
+            "stop_reason": {"type": "end_turn"},
+        }
+    }
+    states = {"accepted": {"execution_id": "accepted", "state": "COMPLETED", "settled_outcome": "COMPLETED"}}
     await repo.put(
         "ops.agent_sessions",
         "ses_1",
@@ -52,9 +62,31 @@ async def seed(repo, *, age_days, event=None, no_event=False) -> None:
             "opened_at": iso(utcnow() - timedelta(days=age_days + 1)),
             "last_event_at": last,
             "messages": ["m0"],
+            "native_execution_receipts": receipts,
+            "native_execution_states": states,
+            "verified_native_completion": {
+                "complete": True,
+                "accepted_input_ids": ["accepted"],
+                "pending_input_ids": [],
+                "failed_input_ids": [],
+                "unidentified_inputs": [],
+                "pending_action_ids": [],
+                "terminal_receipts": receipts,
+                "execution_states": states,
+            },
+            "verified_source_completion": {
+                "m0": {
+                    "version": 4,
+                    "item_id": "itm_1",
+                    "native_input_id": "accepted",
+                    "retry_attempt": None,
+                    "outcome": "MISSING_SOURCE_ITEM",
+                }
+            },
             "message_log": [
                 {
                     "message_id": "m0",
+                    "remote_event_id": "accepted",
                     "payload": {"kind": "NEW_ITEM", "item_id": "itm_1"},
                     "requested_at": iso(utcnow() - timedelta(days=age_days + 1)),
                     "sent_at": iso(utcnow() - timedelta(days=age_days + 1)),
@@ -82,11 +114,6 @@ async def finish(repo, config=None):
             refusals=UnexpectedFollowupRefusals(),
         )
 
-        async def complete(*args, **kwargs):
-            return {"complete": True, "accepted_input_ids": []}
-
-        service.completed_turn = complete
-        service.execution_barrier = complete
         assert await service.finish_if_idle("ses_1")
     return posts, await repo.get("ops.agent_sessions", "ses_1")
 
@@ -150,9 +177,10 @@ async def test_a_reader_question_counts_as_the_last_message() -> None:
             versions=declared_versions_fixture(),
             refusals=UnexpectedFollowupRefusals(),
         )
-        assert await service.last_message_at(await repo.get("ops.agent_sessions", "ses_1")) == parse_time(
-            asked
-        )
+        stored = await repo.get("ops.agent_sessions", "ses_1")
+        assert stored is not None
+        last = await service.last_message_at(SessionActivity.from_record(stored))
+        assert parse_time(last.value) == parse_time(asked)
 
 
 @pytest.mark.parametrize("keeper", ["call", "watch", "job"])
@@ -239,3 +267,85 @@ async def test_sweep_skips_retained_sessions_until_their_retention_passes() -> N
         stop.clear()
         await service.run(stop)
     assert checked == ["ses_1"]
+
+
+@pytest.mark.parametrize("lifecycle_reported", [False, True])
+async def test_only_the_actual_event_lifecycle_can_authorize_native_archive(
+    lifecycle_reported: bool,
+) -> None:
+    repo = MemoryRepository()
+    await seed(repo, age_days=30, event="CLOSED")
+    event = {"event_id": "evt_1", "status": "CLOSED"}
+    if lifecycle_reported:
+        event["lifecycle"] = "CLOSED"
+    await repo.put("evt.events", "evt_1", event)
+    posts, session = await finish(repo)
+    assert bool(posts) is lifecycle_reported
+    assert session["status"] == ("ENDED" if lifecycle_reported else "OPEN")
+    assert "archived_at" in session if lifecycle_reported else "archived_at" not in session
+
+
+@pytest.mark.parametrize("precision", [None, "BUCKET(1s)"])
+async def test_retention_preserves_selected_activity_clock_without_relabeling_collection(
+    precision: str | None,
+) -> None:
+    repo = MemoryRepository()
+    await seed(repo, age_days=0, no_event=True)
+    record = await repo.get("ops.agent_sessions", "ses_1")
+    assert record is not None
+    if precision is not None:
+        record["last_event_at_prec"] = precision
+        record["last_event_at_bucket_anchor"] = "END"
+    await repo.put("ops.agent_sessions", "ses_1", record)
+    posts, session = await finish(repo)
+    assert posts == []
+    assert session["last_message_at"] == record["last_event_at"]
+    assert session["last_message_at_prec"] == session["archive_after_prec"] == precision
+    assert (
+        session["last_message_at_prec_reason"]
+        == session["archive_after_prec_reason"]
+        == ("INCOMPLETE" if precision is None else None)
+    )
+    if precision is not None:
+        assert session["last_message_at_bucket_anchor"] == session["archive_after_bucket_anchor"] == "END"
+
+
+async def test_no_recorded_activity_refuses_before_native_archive() -> None:
+    repo = MemoryRepository()
+
+    def forbidden(request: httpx.Request) -> httpx.Response:
+        raise AssertionError("Missing activity must not invoke native HTTP")
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(forbidden)) as http:
+        service = SessionService(
+            repo,
+            settings(),
+            None,
+            http=http,
+            versions=declared_versions_fixture(),
+            refusals=UnexpectedFollowupRefusals(),
+        )
+        with pytest.raises(ValueError, match="no recorded message time"):
+            await service.last_message_at(SessionActivity.from_record({"session_id": "session"}))
+    assert await repo.list("ops.agent_sessions") == []
+
+
+async def test_missing_owned_event_is_not_reinterpreted_as_an_eventless_negative() -> None:
+    repo = MemoryRepository()
+    await seed(repo, age_days=30, event="CLOSED", no_event=True)
+    await repo.delete("evt.events", "evt_1")
+    posts, session = await finish(repo)
+    assert posts == [] and session["status"] == "OPEN"
+    assert session["event_id"] == "evt_1" and "archived_at" not in session
+
+
+async def test_unreported_event_binding_does_not_authorize_eventless_archive() -> None:
+    repo = MemoryRepository()
+    await seed(repo, age_days=30, no_event=True)
+    record = await repo.get("ops.agent_sessions", "ses_1")
+    assert record is not None
+    record.pop("event_id")
+    await repo.put("ops.agent_sessions", "ses_1", record)
+    posts, session = await finish(repo)
+    assert posts == [] and session["status"] == "OPEN"
+    assert "event_id" not in session and "archived_at" not in session

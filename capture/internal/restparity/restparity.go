@@ -20,6 +20,8 @@ import (
 
 	"github.com/freQuensy23-coder/Tank/capture/internal/budget"
 	"github.com/freQuensy23-coder/Tank/capture/internal/capture"
+	"github.com/freQuensy23-coder/Tank/capture/internal/captureparams"
+	"github.com/freQuensy23-coder/Tank/capture/internal/coverage"
 	"github.com/freQuensy23-coder/Tank/capture/internal/normalize"
 	"github.com/freQuensy23-coder/Tank/capture/internal/parity"
 	"github.com/freQuensy23-coder/Tank/capture/internal/points"
@@ -150,6 +152,10 @@ func (s *sink) Flush(context.Context) error { return nil }
 type noStore struct{}
 
 func (noStore) Get(context.Context, string, string) (map[string]any, error) { return nil, nil }
+func (noStore) CoverageMinutes(context.Context, coverage.Query) ([]coverage.Minute, error) {
+	return nil, errors.New("recorded parity has no declared coverage history")
+}
+
 func (noStore) Range(context.Context, string, string, time.Time, time.Time, map[string]any) ([]map[string]any, error) {
 	return nil, nil
 }
@@ -208,9 +214,13 @@ func Run(p *Payload, policies budget.Policies) (*parity.Output, error) {
 		byID[inst.ID] = inst
 		order = append(order, inst.ID)
 	}
-	svc := capture.New(capture.Options{
+	svc, err := capture.New(capture.Options{
+		Parameters:  captureparams.Defaults(),
 		Instruments: byID, Order: order, ConfigVersion: parity.ConfigVersion, CodeVersion: parity.CodeVersion,
 	}, noStore{}, rows, venues, nil, clock)
+	if err != nil {
+		return nil, err
+	}
 	ctx := context.Background()
 	for _, inst := range instruments {
 		svc.PollOnce(ctx, inst.ID)

@@ -3,6 +3,7 @@ package capture
 import (
 	"context"
 	"encoding/json"
+	"github.com/freQuensy23-coder/Tank/capture/internal/captureparams"
 	"github.com/freQuensy23-coder/Tank/capture/internal/requeststate"
 	"os"
 	"path/filepath"
@@ -107,7 +108,7 @@ func TestKlineAuditsSpreadAcrossTheHour(t *testing.T) {
 	for i := range order {
 		order[i] = "venue:spot:I" + strconv.Itoa(i)
 	}
-	s := &Service{opt: Options{Order: order}}
+	s := &Service{opt: Options{Parameters: captureparams.Defaults(), Order: order}}
 	seen := map[time.Duration]bool{}
 	var last time.Duration
 	for _, iid := range order {

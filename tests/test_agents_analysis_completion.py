@@ -17,6 +17,7 @@ from test_session_binding_concurrency import fixture_repo, seed
 from tank.agents.context import CONTEXT_VERSION
 from tank.agents.sessions import SessionService
 from tank.analysis.page_access import LivePageAccess
+from tank.contracts.session_completion import CompletionSessionSnapshot
 from tank.openma_sync import agent_tools
 from tank.util import sha256
 
@@ -283,10 +284,12 @@ async def test_settled_turn_accepts_agent_choice_without_source_observation(
                 identity: {"execution_id": identity, "state": "COMPLETED", "settled_outcome": "COMPLETED"}
                 for identity in ["initial", *accepted]
             }
-            legacy["verified_native_completion"] = await service.execution_barrier(legacy)
+            legacy["verified_native_completion"] = (
+                await service.execution_barrier(CompletionSessionSnapshot.from_record(legacy))
+            ).storage_record()
             await repo.put("ops.agent_sessions", "s", legacy)
             result = await service.completed_turn("s")
-            assert result["complete"] and not posts
+            assert result.complete and not posts
             final = await repo.get("ops.agent_sessions", "s")
             assert final["status"] == "OPEN"
             proof = final["message_log"][0]["source_completion_verified"]

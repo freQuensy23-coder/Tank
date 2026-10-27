@@ -10,7 +10,7 @@ from tank.clickhouse_market import ClickHouse, _record, _response_timestamp
 from tank.contracts import DomainModel
 from tank.contracts.jobs import InvalidJobClaim, JobEnvelope
 from tank.contracts.registry import RegistryEntity
-from tank.contracts.repository import Collection, Repository
+from tank.contracts.repository import Collection
 from tank.contracts.score import ScoreAssessment, ScoreAssessmentView, ScoreDimension, ScoreDimensions
 from tank.job_repository import JobRepository
 from tank.market.trade_contracts import FlowInstrument, QuoteUsdValuation
@@ -18,6 +18,7 @@ from tank.market_codec import _prepare_records, encode, merge_point
 from tank.market_schema import MARKET_COLUMNS
 from tank.market_storage import market_range_by_instrument, market_rows_recorded_since
 from tank.models import Record
+from tank.repository import Repository
 from tank.retention import BenchmarkToken, RetentionEvidence, benchmark_token_ids, protected_windows
 from tank.settings import Settings
 from tank.storage import ImmutableRecordError, MemoryRepository

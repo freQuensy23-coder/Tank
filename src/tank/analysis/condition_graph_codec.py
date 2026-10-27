@@ -17,6 +17,7 @@ from tank.analysis.condition_graph_contracts import (
     CapturedConditionUnlocks,
     CapturedConditionWalletFlows,
     ComparableConditionExchangeInventory,
+    ComputedConditionFundingObservation,
     ComputedConditionPreDepth,
     ComputedConditionReplenishmentSummary,
     ConditionAggregateLiquidations,
@@ -42,7 +43,7 @@ from tank.analysis.condition_graph_contracts import (
     ConditionFlowCaptureWitness,
     ConditionFragmentationGraph,
     ConditionFunding,
-    ConditionFundingObservation,
+    ConditionFundingObservationValue,
     ConditionGeneratedEmptyFlowProjection,
     ConditionGeneratedEmptyFlowVisibility,
     ConditionHoldersRevenue,
@@ -98,6 +99,7 @@ from tank.analysis.condition_graph_contracts import (
     ObservedConditionReferencePrice,
     ObservedConditionSizeProfile,
     ObservedConditionVolatility,
+    RecordedConditionFundingObservation,
     SelectedConditionStablecoinPoint,
     SelectiveConditionConfidence,
     UnavailableConditionBasis,
@@ -493,9 +495,42 @@ def encode_condition_open_interest(value: ConditionOpenInterest) -> dict[str, Js
 
 
 def _funding_observed_clock(
-    observation: ConditionFundingObservation | None, prefix: str
+    observation: ConditionFundingObservationValue | None, prefix: str
 ) -> dict[str, JsonValue]:
     return {prefix: None} if observation is None else _clock_wire(observation.observed_at, prefix)
+
+
+def _recorded_funding_wire(
+    observation: ConditionFundingObservationValue | None, prefix: str
+) -> dict[str, JsonValue]:
+    if not isinstance(observation, RecordedConditionFundingObservation):
+        return {}
+    return {
+        prefix + "_8h_eq_basis": observation.basis,
+        prefix + "_8h_eq": _decimal_wire(observation.equivalent_eight_hour_rate),
+        prefix + "_raw_rate": {
+            "status": observation.raw_rate.status,
+            "value": _decimal_wire(observation.raw_rate.value),
+        },
+        prefix + "_raw_interval_h": {
+            "status": observation.raw_interval_h.status,
+            "value": _decimal_wire(observation.raw_interval_h.value),
+        },
+        prefix + "_interval_reason": observation.interval_reason,
+    }
+
+
+def _computed_funding_wire(
+    observation: ConditionFundingObservationValue | None, prefix: str
+) -> dict[str, JsonValue]:
+    if not isinstance(observation, ComputedConditionFundingObservation):
+        return {}
+    return {
+        prefix + "_8h_eq_basis": observation.basis,
+        prefix + "_8h_eq": _decimal_wire(observation.equivalent_eight_hour_rate),
+        prefix + "_8h_eq_reason": observation.equivalent_rate_reason,
+        prefix + "_calculation": _model_wire(observation.calculation),
+    }
 
 
 def encode_condition_funding(value: ConditionFunding) -> dict[str, JsonValue]:
@@ -503,23 +538,23 @@ def encode_condition_funding(value: ConditionFunding) -> dict[str, JsonValue]:
     if isinstance(validated, UnrequestedConditionFunding):
         return {}
     settled, estimate, start = validated.settled, validated.estimate, validated.start
-    selected: ConditionFundingObservation | None = None
+    selected: ConditionFundingObservationValue | None = None
     if isinstance(validated, AvailableConditionFunding):
         selected = estimate if validated.selected_kind == "CURRENT_ESTIMATE" else settled
         if selected is None:
             raise ValueError("Observed funding requires its actual selected observation")
     result: dict[str, JsonValue] = {
-        "funding_settled_last": None if settled is None else str(settled.rate),
+        "funding_settled_last": None if settled is None else _decimal_wire(settled.rate),
         "funding_settled_interval_h": None if settled is None else _decimal_wire(settled.interval_h),
         "funding_settled_8h_eq": None
         if settled is None
         else _decimal_wire(settled.equivalent_eight_hour_rate),
-        "funding_estimate": None if estimate is None else str(estimate.rate),
+        "funding_estimate": None if estimate is None else _decimal_wire(estimate.rate),
         "funding_estimate_interval_h": None if estimate is None else _decimal_wire(estimate.interval_h),
         "funding_estimate_8h_eq": None
         if estimate is None
         else _decimal_wire(estimate.equivalent_eight_hour_rate),
-        "funding_start": None if start is None else str(start.rate),
+        "funding_start": None if start is None else _decimal_wire(start.rate),
         "funding_start_interval_h": None if start is None else _decimal_wire(start.interval_h),
         "interval_h": None if selected is None else _decimal_wire(selected.interval_h),
         "funding_8h_eq": None if selected is None else _decimal_wire(selected.equivalent_eight_hour_rate),
@@ -533,6 +568,14 @@ def encode_condition_funding(value: ConditionFunding) -> dict[str, JsonValue]:
         "funding_normal_range_reason": validated.normal_range.reason,
         "funding_reason": None if isinstance(validated, AvailableConditionFunding) else validated.reason,
     }
+    result.update(_recorded_funding_wire(settled, "funding_settled"))
+    result.update(_recorded_funding_wire(estimate, "funding_estimate"))
+    result.update(_recorded_funding_wire(start, "funding_start"))
+    result.update(_computed_funding_wire(settled, "funding_settled"))
+    result.update(_computed_funding_wire(estimate, "funding_estimate"))
+    result.update(_computed_funding_wire(start, "funding_start"))
+    if isinstance(selected, (RecordedConditionFundingObservation, ComputedConditionFundingObservation)):
+        result["funding_8h_basis"] = selected.basis
     result.update(_funding_observed_clock(settled, "funding_settled_last_observed_at"))
     result.update(_funding_observed_clock(estimate, "funding_estimate_observed_at"))
     result.update(_funding_observed_clock(start, "funding_start_observed_at"))
@@ -2243,6 +2286,8 @@ def encode_requested_condition_derivatives(value: ConditionRequestedDerivativeVi
         row["state_membership"] = full is not None
         if funding_requested:
             if full is not None:
+                for field in encode_condition_funding(full.funding):
+                    row.pop(field, None)
                 row["state_funding_facts"] = _model_wire(full.funding)
             row.update(encode_condition_funding(requested.funding))
             row["funding_source_facts"] = _model_wire(requested.funding)

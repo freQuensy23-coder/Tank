@@ -17,6 +17,7 @@ from test_storage import repo as repo
 
 from tank.contracts.milestone_checks import MilestoneCheckCommand, MilestoneKind, MilestoneResolutionHistory
 from tank.job_repository import JobRepository
+from tank.models import Record
 from tank.replay import replay_milestone_timer
 from tank.runtime import Runtime
 from tank.sources.raw_store import write_raw_item
@@ -204,6 +205,15 @@ async def test_queue_missing_required_fact_fails_before_event_lookup_or_message(
         expires_at=offset_schedule(collection_clock(), timedelta(hours=2)),
     )
     async with public_runtime(repo, tmp_path, monkeypatch) as (runtime, router):
+        event_reads: list[str] = []
+        get = repo.get
+
+        async def tracked_get(collection: str, key: str) -> Record | None:
+            if collection == "evt.events":
+                event_reads.append(key)
+            return await get(collection, key)
+
+        monkeypatch.setattr(repo, "get", tracked_get)
         stop = asyncio.Event()
         worker = asyncio.create_task(runtime.worker(stop))
         try:
@@ -211,9 +221,10 @@ async def test_queue_missing_required_fact_fails_before_event_lookup_or_message(
         finally:
             stop.set()
             await asyncio.wait_for(worker, 2)
-        assert final["status"] == "FAILED" and final["last_error"] == "ValidationError"
+        assert final["status"] == "FAILED" and final["last_error"] == "INVALID_QUEUE_ENVELOPE"
+        assert final["attempts"] == 1
         assert final["payload"] == payload and "result" not in final
-        assert not router.calls
+        assert not router.calls and event_reads == []
     assert await repo.list("ops.jobs", filters={"type": "AGENT_MESSAGE"}) == []
 
 

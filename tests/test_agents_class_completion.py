@@ -17,6 +17,7 @@ from test_session_binding_concurrency import fixture_repo, seed
 
 from tank.agents.sessions import SessionService
 from tank.analysis.page_access import LivePageAccess
+from tank.contracts.session_completion import CompletionSessionSnapshot
 from tank.event_tools import EventToolService
 from tank.settings import Settings
 
@@ -189,23 +190,25 @@ async def test_legacy_origin_completion_does_not_require_class_or_card(
 
             legacy = await repo.get("ops.agent_sessions", "s")
             legacy["message_log"][0]["turn_status"] = "DONE"
-            legacy["verified_native_completion"] = await service.execution_barrier(legacy)
+            legacy["verified_native_completion"] = (
+                await service.execution_barrier(CompletionSessionSnapshot.from_record(legacy))
+            ).storage_record()
             legacy["verified_source_completion"] = {"m": {"version": 1, "item_id": "i", "outcome": "DONE"}}
             await repo.put("ops.agent_sessions", "s", legacy)
             result = await service.completed_turn("s")
-            assert result["complete"] and not posts
+            assert result.complete and not posts
             current = await repo.get("ops.agent_sessions", "s")
             assert current["status"] == "OPEN"
             assert current["message_log"][0]["turn_status"] == "DONE"
             before = copy.deepcopy(current["verified_source_completion"])
             requests.clear()
-            assert (await service.completed_turn("s"))["complete"] and not requests
+            assert (await service.completed_turn("s")).complete and not requests
             if case == "cache_revision":
                 await tools.dispatch(
                     "set_assessment",
                     {"event_id": eid, "assessment": unknown_assessment(klass="LOW")},
                     system_context,
                 )
-                assert (await service.completed_turn("s"))["complete"] and not requests
+                assert (await service.completed_turn("s")).complete and not requests
                 assert (await repo.get("ops.agent_sessions", "s"))["verified_source_completion"] == before
             assert await repo.list("out.alerts") == []

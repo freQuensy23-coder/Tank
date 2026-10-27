@@ -20,6 +20,7 @@ from tank.market_codec import (
     _prepare_records,
     _timestamp,
     _unproves,
+    _validate_generated_market_keys,
     decode,
     merge_point,
 )
@@ -130,6 +131,10 @@ async def put_market_batch(
 ) -> list[Record]:
     records = list(records)
     keys = None if keys is None else list(keys)
+    if keys is not None and len(keys) != len(records):
+        raise ValueError("keys and records must have equal lengths")
+    if keys is None and len(records) > WRITE_CHUNK:
+        _validate_generated_market_keys(collection, records)
 
     if (ch := chm.client(self, collection)) is not None:
         changed = []
@@ -246,7 +251,7 @@ async def _put_market_batch(
                     if previous is not None and previous != key:
                         memory_rows.pop(previous)
                     memory_rows[key] = value
-                    changed.append(value.copy())
+                    changed.append(copy.deepcopy(value))
         _note_writes(self, collection, changed)
         return changed
     names = ["storage_key", *columns]

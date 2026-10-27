@@ -270,7 +270,7 @@ OIObservation
   instrument_id, ts (+precision), received_ts
   raw_value, raw_unit, sidedness, metric_key
   oi_native: decimal?                # normalized via semantics (contracts × multiplier)
-  oi_usd: decimal?                   # reported, or oi_native × mark
+  oi_usd: decimal?                   # recorded normalized USD; missing conversion stays unavailable
 
 FundingObservation
   instrument_id

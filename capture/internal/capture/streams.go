@@ -207,7 +207,7 @@ func (g *group) session(ctx context.Context, desired *map[string]bool) (connecte
 		return false, err
 	}
 	connected = true
-	quiet := time.Duration(s.opt.Threshold("quiet_socket_s", 30) * float64(time.Second))
+	quiet := s.opt.Parameters.QuietSocket()
 	lastMessage := s.clock.Monotonic()
 	tick := time.NewTicker(100 * time.Millisecond)
 	defer tick.Stop()

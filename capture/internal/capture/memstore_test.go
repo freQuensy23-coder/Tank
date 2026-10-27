@@ -12,10 +12,12 @@ import (
 	"sync"
 	"time"
 
+	"github.com/freQuensy23-coder/Tank/capture/internal/coverage"
 	"github.com/freQuensy23-coder/Tank/capture/internal/points"
 	"github.com/freQuensy23-coder/Tank/capture/internal/pytime"
 	"github.com/freQuensy23-coder/Tank/capture/internal/pyval"
 	"github.com/freQuensy23-coder/Tank/capture/internal/schema"
+	"github.com/freQuensy23-coder/Tank/capture/internal/store"
 )
 
 type memStore struct {
@@ -86,6 +88,26 @@ func (m *memStore) Get(_ context.Context, collection, key string) (map[string]an
 		return copyRow(row), nil
 	}
 	return nil, nil
+}
+
+func (m *memStore) CoverageMinutes(ctx context.Context, q coverage.Query) ([]coverage.Minute, error) {
+	if err := q.Validate(); err != nil {
+		return nil, err
+	}
+	var collection, field string
+	switch q.Series() {
+	case coverage.Flow:
+		collection, field = "mkt.flow_bars_1m", "minute_start"
+	case coverage.Klines:
+		collection, field = "mkt.klines_1m", "open_time"
+	default:
+		return nil, coverage.ErrSeries
+	}
+	rows, err := m.Projection(ctx, collection, []string{"instrument_id", field, "complete"}, field, q.Start(), q.End(), []string{q.InstrumentID()})
+	if err != nil {
+		return nil, err
+	}
+	return store.AdmitCoverageProjection(q, rows)
 }
 
 func (m *memStore) Range(_ context.Context, collection, field string, start, end time.Time, filters map[string]any) ([]map[string]any, error) {

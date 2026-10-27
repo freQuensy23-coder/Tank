@@ -68,6 +68,9 @@ from tank.contracts.scheduler_results import (
     reaction_capture_result,
     recorded_reaction_receipt,
 )
+from tank.reaction_demands import ReactionDemandCoordinator
+from tank.reaction_timing import CAPTURE_EXPIRY_S
+from tank.reaction_timing import LATE_REVISION_DEFER_S as LATE_REVISION_DEFER_S
 from tank.runtime_contracts import TimedReviewFiredMessage
 from tank.settings import Settings
 from tank.time_precision import (
@@ -105,10 +108,7 @@ REACTION_RETRY_S = 30
 
 
 CAPTURE_YIELD_POLL_S, CAPTURE_YIELD_MAX_S = 2, 300
-CAPTURE_EXPIRY_S, CAPTURE_EXPIRY_SAFETY_S = 6 * 3600, 1200
-
-
-LATE_REVISION_DEFER_S = 1800
+CAPTURE_EXPIRY_SAFETY_S = 1200
 
 
 class _EvalBudgetSpent(Exception):
@@ -1158,75 +1158,8 @@ class Scheduler:
                     continue
                 return reaction_capture_result(await self._commit_reaction(current, measured))
 
-    async def detect_late_data(self, now):
-        marker = await self.repo.get("ops.scheduler_checkpoints", "reaction-capture-changes")
-        since = marker["at"] if marker else None
-
-        queued = {
-            (job["payload"].get("event_id"), job["payload"].get("token_id"), job["payload"].get("checkpoint"))
-            async for job in self.repo.iter_all(
-                "ops.jobs", filters={"type": "REACTION_CAPTURE", "status": "QUEUED"}
-            )
-            if job["payload"].get("automatic_revision")
-        }
-        async for change in self.market.capture_changes(
-            since=since, end=iso(now + timedelta(microseconds=1))
-        ):
-            changed_at = change.get("finished_at") or change["observed_at"]
-            change_id = change.get("change_id") or change["backfill_id"] + ":" + changed_at
-            source_id = change.get("backfill_id") or change_id
-            latest = {}
-            async for row in self.repo.iter_metadata(
-                "out.reaction_checkpoints",
-                ["checkpoint", "revision", "captured_at", "anchor", "window_end"],
-                filters={"event_id": change["event_id"], "token_id": change["token_id"]},
-            ):
-                label = row["checkpoint"]
-                if label not in latest or (row.get("revision") or 1) > (latest[label].get("revision") or 1):
-                    latest[label] = row
-            for label, row in latest.items():
-                if parse_time(changed_at) < parse_time(row["captured_at"]):
-                    continue
-                if parse_time(change["anchor"]) != parse_time(row["anchor"]["ts"]):
-                    continue
-                if (
-                    change.get("market_from")
-                    and row.get("window_end")
-                    and parse_time(row["window_end"]) < parse_time(change["market_from"])
-                ):
-                    continue
-                target = (change["event_id"], change["token_id"], label)
-                if target in queued:
-                    continue
-                queued.add(target)
-                key = f"{change_id}:{label}"
-                await self.repo.enqueue(
-                    "REACTION_CAPTURE",
-                    {
-                        "event_id": change["event_id"],
-                        "token_id": change["token_id"],
-                        "checkpoint": label,
-                        "automatic_revision": True,
-                        "change_id": key,
-                        "reason": "Late capture completed: "
-                        + source_id
-                        + " ("
-                        + change.get("status", change.get("kind", "CAPTURE_CHANGE"))
-                        + ")",
-                    },
-                    "reaction-late:" + key,
-                    priority=2,
-                    max_attempts=5,
-                    run_after=offset_schedule(
-                        collection_clock(now), timedelta(seconds=LATE_REVISION_DEFER_S)
-                    ),
-                    expires_at=offset_schedule(collection_clock(now), timedelta(hours=6)),
-                )
-        await self.repo.put(
-            "ops.scheduler_checkpoints",
-            "reaction-capture-changes",
-            {"checkpoint_id": "reaction-capture-changes", **collection_clock(now).fields("at"), "state": {}},
-        )
+    async def detect_late_data(self, now: datetime) -> None:
+        await ReactionDemandCoordinator(self.repo, self.market).detect(collection_clock(now))
 
     async def _existing_reaction_pack(self, subject: ReactionSubject) -> ReactionPackCheckpoint | None:
         key = f"reaction-pack:{subject.event_id}:{subject.token_id}"

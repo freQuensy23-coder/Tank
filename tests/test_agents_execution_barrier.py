@@ -11,6 +11,7 @@ from session_followup_fixtures import UnexpectedFollowupRefusals
 
 from tank.agents.context import CONTEXT_VERSION
 from tank.agents.sessions import SessionService
+from tank.contracts.session_completion import CompletionSessionSnapshot
 from tank.openma_sync import agent_tools
 from tank.replay import semantic_verdict_output
 from tank.settings import Settings
@@ -137,13 +138,13 @@ async def test_actual_r11_intermediate_idle_does_not_complete_tool_result_execut
         )
         wire = idle(first_idle["id"], first_idle["source_position"]["execution_id"])
         await service.process_event("s", wire)
-        assert not (await service.completed_turn("s"))["complete"]
+        assert not (await service.completed_turn("s")).complete
         assert (await repo.get("ops.agent_sessions", "s"))["active_message_id"] == "message"
         states[returned] = "COMPLETED"
         end = idle("after-tool-result-end", returned)
         history.append(end)
         await service.process_event("s", end)
-        assert (await service.completed_turn("s"))["complete"]
+        assert (await service.completed_turn("s")).complete
         assert dispatched == ["get_item"]
         assert (await repo.get("ops.tool_calls", "s:native-tool"))["remote_event_id"] == returned
         await service.close()
@@ -187,14 +188,14 @@ async def test_finalizer_failure_is_not_completed_and_retry_supersedes_only_fail
             refusals=UnexpectedFollowupRefusals(),
         )
         await service.process_event("s", idle("ended-before-afterExecution", "accepted-message"))
-        assert not (await service.completed_turn("s"))["complete"]
+        assert not (await service.completed_turn("s")).complete
         current = await repo.get("ops.agent_sessions", "s")
         assert current["message_log"][0]["retry_count"] == 1 and len(posts) == 1
         assert current["message_log"][0]["remote_event_id"] == "accepted-retry"
         assert "accepted-message" in current["superseded_native_inputs"]
         states["accepted-retry"] = "COMPLETED"
         await service.process_event("s", idle("retry-ended", "accepted-retry"))
-        assert (await service.completed_turn("s"))["complete"]
+        assert (await service.completed_turn("s")).complete
         assert (await repo.get("ops.agent_sessions", "s"))["status"] == "OPEN"
         await service.close()
 
@@ -231,7 +232,7 @@ async def test_restart_recovers_correlated_duplicate_idle_without_business_reexe
             refusals=UnexpectedFollowupRefusals(),
         )
         await service.catch_up("s")
-        assert (await service.completed_turn("s"))["complete"]
+        assert (await service.completed_turn("s")).complete
         current = await repo.get("ops.agent_sessions", "s")
         assert current["processed_events"] == ["old-idle"]
         assert current["native_execution_receipts"]["old-idle"]["execution_id"] == "accepted-message"
@@ -310,7 +311,7 @@ async def test_settled_snapshot_drains_all_pages_and_rechecks_new_tool_ack() -> 
             refusals=UnexpectedFollowupRefusals(),
         )
         await service.process_event("s", start)
-        assert not (await service.completed_turn("s"))["complete"]
+        assert not (await service.completed_turn("s")).complete
         assert pages == [None, "late-page"] and dispatched == [True]
         assert (await repo.get("ops.agent_sessions", "s"))["active_message_id"] == "message"
         await service.close()
@@ -354,7 +355,7 @@ async def test_message_lost_ack_reuses_durable_exact_body_after_source_changes()
             await service.send_message(payload)
         current = await repo.get("ops.agent_sessions", "s")
         assert current["message_log"][0]["turn_status"] == "ACCEPTING"
-        assert not (await service.execution_barrier(current))["complete"]
+        assert not (await service.execution_barrier(CompletionSessionSnapshot.from_record(current))).complete
         await repo.put(
             "ingest.source_items",
             "item",
@@ -579,7 +580,7 @@ async def test_equal_time_terminal_then_running_order_uses_committed_queue_not_l
         await service.process_event("s", ended)
         await service.process_event("s", running)
         assert (await repo.get("ops.agent_sessions", "s"))["runtime_status"] == "RUNNING"
-        assert (await service.completed_turn("s"))["complete"]
+        assert (await service.completed_turn("s")).complete
         assert reads == [True]
         assert (await repo.get("ops.agent_sessions", "s"))["runtime_status"] == "IDLE"
         await service.close()
@@ -638,7 +639,7 @@ async def test_settled_open_turn_reuses_proof_without_history_or_session_writes(
         )
         changed["runtime_status"] = "RUNNING"
         await original_put("ops.agent_sessions", "s", changed)
-        assert not (await service.execution_barrier(changed))["complete"]
+        assert not (await service.execution_barrier(CompletionSessionSnapshot.from_record(changed))).complete
         assert changed["status"] == "OPEN"
 
 
@@ -734,7 +735,9 @@ async def test_native_completion_preserves_source_failures_without_failing_sessi
         await service.process_event("s", idle("legacy-end", "accepted-message"))
         legacy = await repo.get("ops.agent_sessions", "s")
         legacy["message_log"][0]["turn_status"] = "DONE"
-        legacy["verified_native_completion"] = await service.execution_barrier(legacy)
+        legacy["verified_native_completion"] = (
+            await service.execution_barrier(CompletionSessionSnapshot.from_record(legacy))
+        ).storage_record()
         assert legacy["verified_native_completion"]["complete"]
         await repo.put("ops.agent_sessions", "s", legacy)
         if source_state == "MISSING":
@@ -751,7 +754,7 @@ async def test_native_completion_preserves_source_failures_without_failing_sessi
                     "retained_capture_prefix": "untouched",
                 },
             )
-        assert (await service.completed_turn("s"))["complete"]
+        assert (await service.completed_turn("s")).complete
         current = await repo.get("ops.agent_sessions", "s")
         assert current["status"] == "OPEN" and not posts
         assert current["message_log"][0]["retry_count"] == 0

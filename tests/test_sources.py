@@ -152,6 +152,7 @@ def test_html_patterns_and_article() -> None:
 def test_json_contracts() -> None:
     row = parsers.json_items(
         {
+            "retCode": 0,
             "result": {
                 "list": [
                     {
@@ -162,7 +163,7 @@ def test_json_contracts() -> None:
                         "dateTimestamp": 1679045608000,
                     }
                 ]
-            }
+            },
         },
         "S11",
     )[0]

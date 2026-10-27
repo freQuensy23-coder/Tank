@@ -9,6 +9,8 @@ import (
 	"log/slog"
 	"time"
 
+	"github.com/freQuensy23-coder/Tank/capture/internal/captureparams"
+	"github.com/freQuensy23-coder/Tank/capture/internal/coverage"
 	"github.com/freQuensy23-coder/Tank/capture/internal/normalize"
 	"github.com/freQuensy23-coder/Tank/capture/internal/points"
 	"github.com/freQuensy23-coder/Tank/capture/internal/pyval"
@@ -17,6 +19,7 @@ import (
 
 type Store interface {
 	Get(ctx context.Context, collection, key string) (map[string]any, error)
+	CoverageMinutes(context.Context, coverage.Query) ([]coverage.Minute, error)
 	Range(ctx context.Context, collection, field string, start, end time.Time, filters map[string]any) ([]map[string]any, error)
 	Projection(ctx context.Context, collection string, fields []string, field string, start, end time.Time, ids []string) ([]map[string]any, error)
 	Earliest(ctx context.Context, collection, field string, start, end time.Time, filters map[string]any) (time.Time, bool, error)
@@ -90,7 +93,7 @@ type Options struct {
 	Instruments   map[string]*venue.Instrument
 	Order         []string
 	Tokens        map[string]map[string]any
-	Thresholds    map[string]any
+	Parameters    captureparams.Parameters
 	ConfigVersion string
 	CodeVersion   string
 
@@ -114,18 +117,6 @@ type RawTrades interface {
 
 const rawFlushEvery = 5 * time.Second
 
-func (o *Options) Threshold(name string, def float64) float64 {
-	v, ok := o.Thresholds[name]
-	if !ok || v == nil {
-		return def
-	}
-	d, err := pyval.Decimal(v)
-	if err != nil {
-		return def
-	}
-	return d.Float64()
-}
-
 const (
 	WindowBefore     = 24 * time.Hour
 	WindowAfter      = 72 * time.Hour
@@ -136,8 +127,6 @@ const (
 	HandoffRetry     = 15 * time.Second
 	HandoffRetries   = 2
 	PagesPerFlush    = 25
-	HotPollS         = 30.0
-	HotTickerS       = 20.0
 	RepairSlots      = 3
 	CursorLookback   = 48 * time.Hour
 	streamStateEvery = 5 * time.Second

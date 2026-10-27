@@ -28,10 +28,12 @@ from tank.contracts.milestone_checks import (
     MissedMilestoneIdentity,
 )
 from tank.contracts.provenance import ResolvedVersionIdentity
+from tank.contracts.session_completion import ReplayAbortFailure, ReplayAbortTarget
 from tank.contracts.source_items import SourceRelevance
 from tank.fixture_reference_code import CURRENT_PROJECTION_CODE, ProjectionCodeEvidence
 from tank.fixture_reference_sources import FILESYSTEM_RETAINED_SOURCES, RetainedSourceReader
 from tank.market_schema import MARKET_COLUMNS
+from tank.replay_session import update_replay_session_evidence
 from tank.telegram_inbox import RepositoryFollowupRefusals
 from tank.time_precision import Timestamp, interval_bounds, propagate_timestamp
 from tank.util import canonical_json, iso, parse_time
@@ -1572,12 +1574,7 @@ async def replay_agent_session(
                         }
                     },
                 )
-                mapped = await repo.get("ops.agent_sessions", active_session_id)
-                mapped.update(
-                    replay_evidence_sha256=current.manifest_sha256,
-                    replay_cutoff=current.manifest.cutoff,
-                )
-                await repo.put("ops.agent_sessions", active_session_id, mapped)
+                await update_replay_session_evidence(repo, active_session_id, current)
 
     active_session_id = None
     imported = set()
@@ -2188,14 +2185,17 @@ async def replay_agent_session(
                         )
                     ]
                     execution = await service.completed_turn(sid)
+                    if execution.session_id != sid:
+                        raise ReplayError("Native execution barrier belongs to another replay session")
 
                     if (
-                        execution["complete"]
+                        execution.complete
                         and (inputs.fixture_reference or not queued_deliveries)
                         and all(call.get("returned_at") for call in calls)
                     ):
-                        execution_barriers[sid] = copy.deepcopy(execution)
-                        await checkpoint_phase(execution, calls)
+                        execution_record = execution.storage_record()
+                        execution_barriers[sid] = copy.deepcopy(execution_record)
+                        await checkpoint_phase(execution_record, calls)
                         message = next(pending_messages, None)
                         if message is None:
                             incomplete = []
@@ -2346,7 +2346,7 @@ async def replay_agent_session(
                 "causal_tool_receipts": causal_tool_receipts,
                 "delivery_receipts": delivery_receipts,
                 "timer_receipts": timer_receipts,
-                "execution_barrier": execution,
+                "execution_barrier": execution.storage_record(),
                 "execution_barriers": execution_barriers,
                 "tool_error_receipts": [
                     {
@@ -2421,9 +2421,11 @@ async def replay_agent_session(
                 receipt = {"session_id": row["session_id"], "archived": False}
                 if failure is not None:
                     try:
-                        receipt["local_finalization"] = await service.finalize_replay_abort(
-                            row["session_id"], run_id, failure
+                        finalized = await service.finalize_replay_abort(
+                            ReplayAbortTarget(session_id=row["session_id"], replay_run_id=run_id),
+                            ReplayAbortFailure.model_validate(failure),
                         )
+                        receipt["local_finalization"] = finalized.model_dump(mode="json")
                     except Exception as exc:
                         receipt["local_finalization_error_type"] = type(exc).__name__
                 try:

@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/freQuensy23-coder/Tank/capture/internal/captureparams"
 	"github.com/freQuensy23-coder/Tank/capture/internal/pyjson"
 	"github.com/freQuensy23-coder/Tank/capture/internal/testutil"
 )
@@ -120,7 +121,7 @@ print(json.dumps({"ids": ids, "tokens": list({t["token_id"]: t for t in r["token
 	if btc == nil || btc.Key() != "binance.spot" || btc.Symbol != "BTCUSDT" || btc.Quote() != "USDT" {
 		t.Fatalf("binance spot BTC: %+v", btc)
 	}
-	if c.Threshold("base_kline_interval_s", -1) <= 0 || c.Threshold("no_such_threshold", 7) != 7 {
+	if c.CaptureParameters.BaseKline() <= 0 {
 		t.Error("thresholds")
 	}
 	if len(c.APILimits.Rates) == 0 {
@@ -147,15 +148,6 @@ func canonical(t *testing.T, text string) string {
 	return pyjson.Canonical(value)
 }
 
-func TestThresholdForms(t *testing.T) {
-	c := &Config{Thresholds: map[string]any{"i": 60, "f": 0.5, "s": "12.5", "n": nil, "b": true}}
-	for name, want := range map[string]float64{"i": 60, "f": 0.5, "s": 12.5, "n": 3, "b": 1, "missing": 3} {
-		if got := c.Threshold(name, 3); got != want {
-			t.Errorf("%s: %v, want %v", name, got, want)
-		}
-	}
-}
-
 func TestInactiveInstrumentsAreSkipped(t *testing.T) {
 	dir := t.TempDir()
 	write(t, dir, "registry.yaml", `tokens: [{token_id: "a:A"}]
@@ -178,7 +170,7 @@ instruments:
 	if !reflect.DeepEqual(c.Order, []string{"one", "four"}) {
 		t.Fatalf("active instruments %v", c.Order)
 	}
-	if c.Instruments["four"].FundingIntervalH != 8 || c.UserAgent != DefaultUserAgent || len(c.Thresholds) != 0 {
+	if c.Instruments["four"].FundingIntervalH != 8 || c.UserAgent != DefaultUserAgent || c.CaptureParameters != captureparams.Defaults() {
 		t.Fatalf("instrument values, user agent or thresholds: %+v %q", c.Instruments["four"], c.UserAgent)
 	}
 }

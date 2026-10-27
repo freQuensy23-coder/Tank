@@ -19,6 +19,7 @@ from source_support import fixture_http_admission, fixture_versions
 
 from tank.contracts import DomainModel
 from tank.contracts.jobs import JobEnvelope
+from tank.contracts.reaction_demands import ReactionDemandLedger
 from tank.contracts.scheduler_commands import (
     ReactionCaptureCommand,
     RevisedReactionCommand,
@@ -104,9 +105,9 @@ async def test_backfill_changes_append_reaction_revision_once_and_preserve_origi
     *,
     capture_runner: ReactionRunner = run_claimed_reactions,
 ) -> None:
-    import tank.scheduler as scheduler_module
+    import tank.reaction_timing as reaction_timing
 
-    monkeypatch.setattr(scheduler_module, "LATE_REVISION_DEFER_S", 0)
+    monkeypatch.setattr(reaction_timing, "LATE_REVISION_DEFER_S", 0)
     anchor = utcnow().replace(second=0, microsecond=0) - timedelta(hours=2)
     inst: dict[str, JsonValue] = {
         "instrument_id": "binance:spot:TUSD",
@@ -353,6 +354,12 @@ async def test_backfill_changes_append_reaction_revision_once_and_preserve_origi
 
         first_change = reaction_command_from_wire(jobs[0].payload)
         assert isinstance(first_change, RevisedReactionCommand)
+        demand_checkpoint = present(await repo.get("ops.scheduler_checkpoints", "reaction-capture-changes"))
+        demand_state = demand_checkpoint["state"]
+        assert isinstance(demand_state, dict)
+        demand_rows = demand_state["demands"]
+        assert isinstance(demand_rows, dict)
+        assert first_change.change_id not in demand_rows
         unchanged = dict(
             jobs[0].payload,
             change_id=first_change.change_id + ":same",
@@ -425,13 +432,48 @@ async def test_backfill_changes_append_reaction_revision_once_and_preserve_origi
         assert await repo.get("out.reaction_checkpoints", "e:test:T:PRE_1H:1") == original
         assert await repo.get("out.reaction_checkpoints", "e:test:T:PRE_1H:2") == revised
 
+        before_duplicate = [
+            JobEnvelope.model_validate(row)
+            async for row in repo.iter_all("ops.jobs", filters={"type": "REACTION_CAPTURE"})
+        ]
+        assert len(before_duplicate) == len(jobs) + 1 + len(live_run.auxiliary_job_ids)
+        demand_record = present(await repo.get("ops.scheduler_checkpoints", "reaction-capture-changes"))
+        before_demand = ReactionDemandLedger.model_validate(demand_record["state"])
+        pending_ids = {key for key, demand in before_demand.demands.items() if demand.phase == "PENDING"}
+        assert pending_ids
         duplicate = await go_capture("duplicate", frames)
         assert duplicate == late
         await persist_capture(duplicate, observed=late_observed, minute=late_minute)
         await scheduler.detect_late_data(utcnow())
+        after_duplicate = [
+            JobEnvelope.model_validate(row)
+            async for row in repo.iter_all("ops.jobs", filters={"type": "REACTION_CAPTURE"})
+        ]
+        before_ids = {job.job_id for job in before_duplicate}
+        resumed_jobs = [job for job in after_duplicate if job.job_id not in before_ids]
+        assert len(resumed_jobs) == 1
+        for job in resumed_jobs:
+            resumed_command = reaction_command_from_wire(job.payload)
+            assert isinstance(resumed_command, RevisedReactionCommand)
+            assert resumed_command.change_id in pending_ids
+        after_record = present(await repo.get("ops.scheduler_checkpoints", "reaction-capture-changes"))
+        after_demand = ReactionDemandLedger.model_validate(after_record["state"])
+        assert set(after_demand.demands) <= set(before_demand.demands)
+        resumed_run = await run_claimed_reactions(
+            repo,
+            scheduler,
+            tuple(job.job_id for job in resumed_jobs),
+            tmp_path / "pending-runtime",
+            monkeypatch,
+        )
+        assert len(resumed_run.receipts) == 1
+        assert isinstance(resumed_run.receipts[0], UnchangedReaction)
+        assert resumed_run.receipts[0].revision == 3
+        assert len([row async for row in repo.iter_all("out.reaction_checkpoints")]) == 3
+        await scheduler.detect_late_data(utcnow())
         assert len(
-            [job async for job in repo.iter_all("ops.jobs", filters={"type": "REACTION_CAPTURE"})]
-        ) == len(jobs) + 1 + len(live_run.auxiliary_job_ids)
+            [row async for row in repo.iter_all("ops.jobs", filters={"type": "REACTION_CAPTURE"})]
+        ) == len(after_duplicate)
         request.node.user_properties.extend(
             [
                 ("revision2_r_raw", revised["r_raw"]),
@@ -459,6 +501,29 @@ async def run_after_failed_peer(
     command = reaction_command_from_wire(original.payload)
     assert isinstance(command, RevisedReactionCommand)
     source_payload = canonical_json(original.payload)
+    prior_peers: list[JobEnvelope] = []
+    async for record in repo.iter_all("ops.jobs", filters={"type": "REACTION_CAPTURE", "status": "DONE"}):
+        candidate = JobEnvelope.model_validate(record)
+        request = reaction_command_from_wire(candidate.payload)
+        if (
+            isinstance(request, RevisedReactionCommand)
+            and (request.event_id, request.token_id, request.checkpoint)
+            == (command.event_id, command.token_id, command.checkpoint)
+            and request.change_id != command.change_id
+        ):
+            assert candidate.expires_at is not None
+            prior_peers.append(candidate)
+    assert prior_peers
+    prior_peer = min(prior_peers, key=lambda job: job.job_id)
+    assert prior_peer.expires_at is not None and prior_peer.priority == original.priority
+    assert parse_time(prior_peer.expires_at) < parse_time(original.expires_at)
+    peer_source_payload = canonical_json(prior_peer.payload)
+    peer_expiry = Timestamp(
+        prior_peer.expires_at,
+        prior_peer.expires_at_prec,
+        prior_peer.expires_at_prec_reason,
+        prior_peer.expires_at_bucket_anchor,
+    )
     original_expiry = Timestamp(
         original.expires_at,
         original.expires_at_prec,
@@ -510,11 +575,11 @@ async def run_after_failed_peer(
                 await first_claimed.wait()
                 peer = await jobs.enqueue(
                     "REACTION_CAPTURE",
-                    original.payload,
+                    prior_peer.payload,
                     "reaction-fixture-peer:" + original.job_id,
-                    priority=1,
+                    priority=prior_peer.priority,
                     max_attempts=1,
-                    expires_at=original_expiry,
+                    expires_at=peer_expiry,
                 )
                 peer_id = peer.job_id
                 release_first.set()
@@ -622,6 +687,8 @@ async def run_after_failed_peer(
     assert peer_id is not None
     peer_state = await jobs.get(peer_id)
     assert peer_state is not None and peer_state.status == "FAILED" and peer_state.attempts == 1
+    assert canonical_json(peer_state.payload) == peer_source_payload
+    assert peer_state.expires_at == prior_peer.expires_at
     return ReactionWorkerRun(receipts=[receipt], auxiliary_job_ids=(peer_id,))
 
 
