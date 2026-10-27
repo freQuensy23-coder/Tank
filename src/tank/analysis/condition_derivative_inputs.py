@@ -2,12 +2,11 @@
 
 from collections.abc import Mapping
 from datetime import datetime
-from decimal import Decimal, InvalidOperation
 from typing import Literal, Self
 
 from pydantic import Field, JsonValue, model_validator
 
-from tank.contracts import DomainModel
+from tank.contracts import DomainModel, derivative_values
 from tank.contracts.configuration import Thresholds
 from tank.contracts.json import decode_unique_json
 from tank.time_precision import Timestamp, propagate_timestamp
@@ -41,32 +40,6 @@ class DerivativeInstrument(DomainModel):
         return cls.model_validate({name: row.get(name) for name in cls.model_fields})
 
 
-class ReportedDerivativeNumber(DomainModel):
-    status: Literal["OBSERVED", "NOT_CAPTURED", "NOT_ESTIMABLE"]
-    value: Decimal | None
-
-    @model_validator(mode="after")
-    def captured_value(self) -> Self:
-        if (self.status == "OBSERVED") != (self.value is not None):
-            raise ValueError("A reported derivative number must preserve its actual availability")
-        return self
-
-    @classmethod
-    def from_value(cls, value: JsonValue) -> Self:
-        if value is None:
-            return cls(status="NOT_CAPTURED", value=None)
-        if isinstance(value, bool) or not isinstance(value, (str, int, float)):
-            return cls(status="NOT_ESTIMABLE", value=None)
-        try:
-            parsed = Decimal(str(value))
-        except InvalidOperation:
-            return cls(status="NOT_ESTIMABLE", value=None)
-        return cls(
-            status="OBSERVED" if parsed.is_finite() else "NOT_ESTIMABLE",
-            value=parsed if parsed.is_finite() else None,
-        )
-
-
 class OISourceDescriptor(DomainModel):
     format: Literal["OI_INPUT_READ_V2"]
     collection: Literal["mkt.oi_obs"]
@@ -88,11 +61,11 @@ class OIObservation(DomainModel):
     quote_asset: str | None = Field(min_length=1, pattern=r"\S")
     observed_at: Timestamp
     received_at: Timestamp
-    native_quantity: ReportedDerivativeNumber
-    reported_usd: ReportedDerivativeNumber
-    mark_price: ReportedDerivativeNumber
+    native_quantity: derivative_values.ReportedDerivativeNumber
+    reported_usd: derivative_values.ReportedDerivativeNumber
+    mark_price: derivative_values.ReportedDerivativeNumber
     mark_observed_at: Timestamp
-    index_price: ReportedDerivativeNumber
+    index_price: derivative_values.ReportedDerivativeNumber
     metric_key: str | None = Field(min_length=1, pattern=r"\S")
     raw_unit: str | None
     sidedness: str | None
@@ -132,11 +105,11 @@ class OIObservation(DomainModel):
                 row, "ts", precision_aliases=("timestamp_precision", "precision")
             ),
             received_at=propagate_timestamp(row, "received_ts"),
-            native_quantity=ReportedDerivativeNumber.from_value(row.get("oi_native")),
-            reported_usd=ReportedDerivativeNumber.from_value(row.get("oi_usd")),
-            mark_price=ReportedDerivativeNumber.from_value(row.get("mark_price")),
+            native_quantity=derivative_values.ReportedDerivativeNumber.from_value(row.get("oi_native")),
+            reported_usd=derivative_values.ReportedDerivativeNumber.from_value(row.get("oi_usd")),
+            mark_price=derivative_values.ReportedDerivativeNumber.from_value(row.get("mark_price")),
             mark_observed_at=propagate_timestamp(row, "mark_as_of"),
-            index_price=ReportedDerivativeNumber.from_value(row.get("index_price")),
+            index_price=derivative_values.ReportedDerivativeNumber.from_value(row.get("index_price")),
             metric_key=_oi_text(row, "metric_key"),
             raw_unit=_oi_text(row, "raw_unit"),
             sidedness=_oi_text(row, "sidedness"),
