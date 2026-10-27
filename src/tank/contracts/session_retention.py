@@ -78,16 +78,49 @@ def archive_candidate(session: Mapping[str, JsonValue], event: Mapping[str, Json
     return TerminalArchiveCandidate.model_validate(scope)
 
 
+class UnreportedEventBinding(DomainModel):
+    kind: Literal["UNREPORTED"] = "UNREPORTED"
+
+
+class UnboundRetentionEvent(DomainModel):
+    kind: Literal["UNBOUND"] = "UNBOUND"
+
+
+class BoundRetentionEvent(DomainModel):
+    kind: Literal["BOUND"] = "BOUND"
+    event_id: RetentionIdentity
+
+
+type RetentionEventBinding = UnreportedEventBinding | UnboundRetentionEvent | BoundRetentionEvent
+
+
 class RetainedSession(DomainModel):
     session_id: RetentionIdentity
-    event_id: RetentionIdentity | None
+    event: RetentionEventBinding
     no_event: bool | None
     followups_only: bool | None
     archive_after: str | None
 
     @classmethod
     def from_record(cls, record: Mapping[str, JsonValue]) -> Self:
-        return cls.model_validate({name: record.get(name) for name in cls.model_fields})
+        event: RetentionEventBinding
+        if "event_id" not in record:
+            event = UnreportedEventBinding()
+        elif record["event_id"] is None:
+            event = UnboundRetentionEvent()
+        else:
+            event = BoundRetentionEvent.model_validate({"event_id": record["event_id"]})
+        return cls.model_validate(
+            {**{name: record.get(name) for name in cls.model_fields if name != "event"}, "event": event}
+        )
+
+    @property
+    def bound_event_id(self) -> str | None:
+        return self.event.event_id if isinstance(self.event, BoundRetentionEvent) else None
+
+    @property
+    def known_eventless(self) -> bool:
+        return isinstance(self.event, UnboundRetentionEvent) and self.no_event is True
 
     @field_validator("archive_after")
     @classmethod

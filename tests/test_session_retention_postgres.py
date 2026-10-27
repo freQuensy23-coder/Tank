@@ -23,6 +23,7 @@ async def test_actual_retention_write_preserves_source_clock_and_unknown_termina
     session = await seed_execution_inputs(repo, 1)
     now = utcnow().replace(microsecond=0)
     session.update(
+        event_id=None,
         no_event=True,
         opened_at=iso(now - timedelta(days=2)),
         last_event_at=iso(now - timedelta(days=1)),

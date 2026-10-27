@@ -337,3 +337,15 @@ async def test_missing_owned_event_is_not_reinterpreted_as_an_eventless_negative
     posts, session = await finish(repo)
     assert posts == [] and session["status"] == "OPEN"
     assert session["event_id"] == "evt_1" and "archived_at" not in session
+
+
+async def test_unreported_event_binding_does_not_authorize_eventless_archive() -> None:
+    repo = MemoryRepository()
+    await seed(repo, age_days=30, no_event=True)
+    record = await repo.get("ops.agent_sessions", "ses_1")
+    assert record is not None
+    record.pop("event_id")
+    await repo.put("ops.agent_sessions", "ses_1", record)
+    posts, session = await finish(repo)
+    assert posts == [] and session["status"] == "OPEN"
+    assert "event_id" not in session and "archived_at" not in session

@@ -10,6 +10,7 @@ from tank.contracts.session_retention import (
     PendingArchiveJob,
     PendingArchiveTool,
     QuestionActivity,
+    RetainedSession,
     RetentionPolicy,
     SessionActivity,
     SessionSweepEntry,
@@ -127,3 +128,13 @@ def test_sweep_admits_only_actual_idle_retention_without_guessed_runtime_state()
     assert entry.should_probe(following=True, periodic_probe=True, now=now)
     record["runtime_status"] = None
     assert SessionSweepEntry.from_record(record).should_probe(following=False, periodic_probe=False, now=now)
+
+
+def test_unreported_unbound_and_bound_event_scope_cannot_be_interchanged() -> None:
+    record: dict[str, JsonValue] = {"session_id": "session", "no_event": True}
+    assert not RetainedSession.from_record(record).known_eventless
+    record["event_id"] = None
+    assert RetainedSession.from_record(record).known_eventless
+    record["event_id"] = "actual-event"
+    state = RetainedSession.from_record(record)
+    assert not state.known_eventless and state.bound_event_id == "actual-event"

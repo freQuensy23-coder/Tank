@@ -2371,14 +2371,16 @@ class SessionService:
                 return False
             state = RetainedSession.from_record(session)
             event: dict[str, JsonValue] | None = (
-                await self.repo.get("evt.events", state.event_id) if state.event_id is not None else None
+                await self.repo.get("evt.events", state.bound_event_id)
+                if state.bound_event_id is not None
+                else None
             )
-            if event is not None and event.get("event_id") != state.event_id:
+            if event is not None and event.get("event_id") != state.bound_event_id:
                 raise ValueError("Archive event identity differs from its actual lookup")
             archive = (
                 await self.can_archive(archive_candidate(session, event)) if event is not None else False
             )
-            if event is None and state.no_event is True:
+            if event is None and state.known_eventless:
                 unfinished = [
                     archive_tool(row, sid)
                     async for row in self.repo.iter_all("ops.tool_calls", filters={"session_id": sid})
