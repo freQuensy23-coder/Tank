@@ -4,32 +4,19 @@ import signal
 import subprocess
 import sys
 import time
-from collections.abc import Iterator
-from contextlib import suppress
 from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Literal
 
 import pytest
 from publisher_docker_stand import ContainerLabels, ContainerState, DockerState, state
+from publisher_stand_protocol import read_endpoint
+from publisher_stand_support import OwnedBackend
 
 ROOT = Path(__file__).resolve().parents[1]
 
 
-@pytest.fixture(autouse=True)
-def finish_owned_stand_processes(tmp_path: Path) -> Iterator[None]:
-    yield
-    root = tmp_path / "stand"
-    if not (root / "state.json").exists():
-        return
-    with state(root) as observed:
-        for container in observed.containers.values():
-            if container.status != "running" or container.process_id is None:
-                continue
-            actual = int((root / "started").read_text())
-            assert actual == container.process_id
-            with suppress(ProcessLookupError):
-                os.kill(actual, signal.SIGTERM)
+pytestmark = [pytest.mark.integration, pytest.mark.process, pytest.mark.timeout(10)]
 
 
 @dataclass(frozen=True)
@@ -38,9 +25,10 @@ class WorkerStand:
     host: Path
     environment: dict[str, str]
     image: str
+    backend: OwnedBackend
 
     def launch(self) -> subprocess.Popen[bytes]:
-        return subprocess.Popen(
+        return self.backend.launch_frontend(
             [
                 "bash",
                 str(ROOT / "scripts/deploy/publisher_worker.sh"),
@@ -51,13 +39,13 @@ class WorkerStand:
                 "prepare",
                 str(self.host),
             ],
-            env=self.environment,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
+            self.environment,
         )
 
 
-def worker_stand(tmp_path: Path, fault: Literal["NORMAL", "BLOCK", "DRAIN_FAIL"]) -> WorkerStand:
+def worker_stand(
+    tmp_path: Path, fault: Literal["NORMAL", "BLOCK", "DRAIN_FAIL"], request: pytest.FixtureRequest
+) -> WorkerStand:
     host = tmp_path / "host"
     host.mkdir()
     directory = tmp_path / "stand"
@@ -65,6 +53,8 @@ def worker_stand(tmp_path: Path, fault: Literal["NORMAL", "BLOCK", "DRAIN_FAIL"]
     (directory / "state.json").write_text(
         DockerState(fault=fault, containers={}, calls=[], drain_attempts=0).model_dump_json()
     )
+    backend = OwnedBackend(directory)
+    request.addfinalizer(backend.close)
     binaries = tmp_path / "bin"
     binaries.mkdir()
     executable = binaries / "docker"
@@ -72,14 +62,16 @@ def worker_stand(tmp_path: Path, fault: Literal["NORMAL", "BLOCK", "DRAIN_FAIL"]
         "#!/bin/bash\nexec "
         + shlex.quote(sys.executable)
         + " "
-        + shlex.quote(str(ROOT / "tests/publisher_docker_stand.py"))
+        + shlex.quote(str(ROOT / "tests/publisher_docker_client.py"))
         + ' "$@"\n'
     )
     executable.chmod(0o755)
     environment = os.environ.copy()
     environment["PATH"] = str(binaries) + ":" + environment["PATH"]
     environment["TANK_PUBLISHER_DOCKER_STAND"] = str(directory)
-    return WorkerStand(directory, host, environment, "ghcr.io/frequensy23-coder/tank/tank:" + "a" * 40)
+    return WorkerStand(
+        directory, host, environment, "ghcr.io/frequensy23-coder/tank/tank:" + "a" * 40, backend
+    )
 
 
 def wait_for_effect(stand: WorkerStand) -> None:
@@ -92,8 +84,10 @@ def wait_for_effect(stand: WorkerStand) -> None:
     raise AssertionError("Owned worker did not begin its observed effect loop")
 
 
-def test_successful_worker_uses_known_owned_identity_and_leaves_no_active_lease(tmp_path: Path) -> None:
-    stand = worker_stand(tmp_path, "NORMAL")
+def test_successful_worker_uses_known_owned_identity_and_leaves_no_active_lease(
+    tmp_path: Path, request: pytest.FixtureRequest
+) -> None:
+    stand = worker_stand(tmp_path, "NORMAL", request)
     process = stand.launch()
     stdout, stderr = process.communicate(timeout=4)
     assert process.returncode == 0, stderr.decode()
@@ -120,9 +114,9 @@ def test_successful_worker_uses_known_owned_identity_and_leaves_no_active_lease(
     [(signal.SIGTERM, 143), (signal.SIGHUP, 129), (signal.SIGINT, 130)],
 )
 def test_interrupt_drains_actual_child_before_return_and_stops_further_effects(
-    tmp_path: Path, signal_number: signal.Signals, expected_status: int
+    tmp_path: Path, request: pytest.FixtureRequest, signal_number: signal.Signals, expected_status: int
 ) -> None:
-    stand = worker_stand(tmp_path, "BLOCK")
+    stand = worker_stand(tmp_path, "BLOCK", request)
     process = stand.launch()
     try:
         wait_for_effect(stand)
@@ -142,8 +136,10 @@ def test_interrupt_drains_actual_child_before_return_and_stops_further_effects(
             process.communicate(timeout=4)
 
 
-def test_failed_drain_keeps_lease_and_next_command_drains_before_starting(tmp_path: Path) -> None:
-    stand = worker_stand(tmp_path, "DRAIN_FAIL")
+def test_failed_drain_keeps_lease_and_next_command_drains_before_starting(
+    tmp_path: Path, request: pytest.FixtureRequest
+) -> None:
+    stand = worker_stand(tmp_path, "DRAIN_FAIL", request)
     process = stand.launch()
     wait_for_effect(stand)
     process.send_signal(signal.SIGTERM)
@@ -171,8 +167,10 @@ def test_failed_drain_keeps_lease_and_next_command_drains_before_starting(tmp_pa
     assert not (stand.host / "apify-state/.worker-active").exists()
 
 
-def test_unverified_prior_container_is_preserved_before_any_new_worker_effect(tmp_path: Path) -> None:
-    stand = worker_stand(tmp_path, "NORMAL")
+def test_unverified_prior_container_is_preserved_before_any_new_worker_effect(
+    tmp_path: Path, request: pytest.FixtureRequest
+) -> None:
+    stand = worker_stand(tmp_path, "NORMAL", request)
     state_directory = stand.host / "apify-state"
     state_directory.mkdir(mode=0o700)
     lease = state_directory / ".worker-active"
@@ -206,8 +204,10 @@ def test_unverified_prior_container_is_preserved_before_any_new_worker_effect(tm
         assert observed.drain_attempts == 0
 
 
-def test_unknown_image_repository_is_refused_before_any_docker_or_host_effect(tmp_path: Path) -> None:
-    stand = worker_stand(tmp_path, "NORMAL")
+def test_unknown_image_repository_is_refused_before_any_docker_or_host_effect(
+    tmp_path: Path, request: pytest.FixtureRequest
+) -> None:
+    stand = worker_stand(tmp_path, "NORMAL", request)
     unverified = replace(stand, image="ghcr.io/unverified/other/tank:" + "a" * 40)
     process = unverified.launch()
     _, stderr = process.communicate(timeout=4)
@@ -217,3 +217,113 @@ def test_unknown_image_repository_is_refused_before_any_docker_or_host_effect(tm
     with state(stand.root) as observed:
         assert observed.calls == []
         assert observed.containers == {}
+
+
+def client(stand: WorkerStand, *arguments: str) -> subprocess.CompletedProcess[bytes]:
+    return subprocess.run(
+        [sys.executable, str(ROOT / "tests/publisher_docker_client.py"), *arguments],
+        env=stand.environment,
+        capture_output=True,
+        timeout=4,
+        check=False,
+    )
+
+
+def control_container(stand: WorkerStand) -> str:
+    cid_file = stand.host / "control.cid"
+    arguments = ["create", "--cidfile", str(cid_file)]
+    for key, value in (
+        ("role", "worker-v1"),
+        ("owner", "synthetic-control"),
+        ("image", stand.image),
+        ("root", str(stand.host)),
+    ):
+        arguments.extend(["--label", "org.tank.publisher." + key + "=" + value])
+    created = client(stand, *arguments, stand.image)
+    assert created.returncode == 0, created.stderr.decode()
+    return cid_file.read_text().strip()
+
+
+def test_concurrent_inspect_and_stop_progress_while_actual_attach_waits(
+    tmp_path: Path, request: pytest.FixtureRequest
+) -> None:
+    stand = worker_stand(tmp_path, "BLOCK", request)
+    identifier = control_container(stand)
+    attached = stand.backend.launch_frontend(
+        [sys.executable, str(ROOT / "tests/publisher_docker_client.py"), "start", "--attach", identifier],
+        stand.environment,
+    )
+    wait_for_effect(stand)
+    assert attached.poll() is None
+    inspected = client(stand, "inspect", "--format", "{{.State.Status}}|{{.State.ExitCode}}", identifier)
+    assert inspected.returncode == 0 and inspected.stdout == b"running|0\n"
+    removed = client(stand, "rm", "--force", identifier)
+    assert removed.returncode == 0
+    attached.communicate(timeout=4)
+    assert attached.returncode == 1
+    before = (stand.root / "effects").read_bytes()
+    time.sleep(0.05)
+    assert (stand.root / "effects").read_bytes() == before
+    stand.backend.close()
+    assert stand.backend.receipt is not None and len(stand.backend.receipt.children) == 1
+    assert stand.backend.receipt.children[0].container_id == identifier
+    assert stand.backend.receipt.children[0].returncode == -signal.SIGTERM
+    assert stand.backend.process.poll() == 0
+
+
+@pytest.mark.parametrize("change", ["nonce", "process_id"])
+def test_fresh_backend_identity_refuses_before_business_command(
+    tmp_path: Path, request: pytest.FixtureRequest, change: str
+) -> None:
+    import json
+
+    stand = worker_stand(tmp_path, "NORMAL", request)
+    endpoint = read_endpoint(stand.root)
+    path = stand.root / "endpoint.json"
+    original = path.read_bytes()
+    values = {
+        "schema_version": "publisher-stand-v1",
+        "root": str(endpoint.root),
+        "socket_path": str(endpoint.socket_path),
+        "process_id": endpoint.process_id,
+        "nonce": endpoint.nonce,
+    }
+    values[change] = "f" * 32 if change == "nonce" else endpoint.process_id + 1
+    try:
+        path.write_text(json.dumps(values))
+        refused = client(stand, "inspect", "--format", "{{.State.Status}}|{{.State.ExitCode}}", "a" * 64)
+        assert refused.returncode == 1 and refused.stdout == b""
+        with state(stand.root) as observed:
+            assert observed.calls == [] and observed.containers == {}
+    finally:
+        path.write_bytes(original)
+
+
+@pytest.mark.parametrize("reported", ["foreign", "missing"])
+def test_unowned_state_pid_is_not_a_signal_capability(
+    tmp_path: Path, request: pytest.FixtureRequest, reported: str
+) -> None:
+    stand = worker_stand(tmp_path, "NORMAL", request)
+    foreign = subprocess.Popen([sys.executable, "-c", "import signal; signal.pause()"])
+    identifier = "d" * 64
+    try:
+        with state(stand.root) as observed:
+            observed.containers[identifier] = ContainerState(
+                labels=ContainerLabels(
+                    role="worker-v1", owner="synthetic", image=stand.image, root=str(stand.host)
+                ),
+                status="running",
+                exit_code=0,
+                process_id=foreign.pid if reported == "foreign" else None,
+            )
+        refused = client(stand, "rm", "--force", identifier)
+        assert refused.returncode == 1 and foreign.poll() is None
+        with state(stand.root) as observed:
+            assert observed.containers[identifier].process_id == (
+                foreign.pid if reported == "foreign" else None
+            )
+        stand.backend.close()
+        assert foreign.poll() is None
+    finally:
+        foreign.terminate()
+        foreign.wait(timeout=4)
