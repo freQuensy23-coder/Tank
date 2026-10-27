@@ -822,3 +822,8 @@ The repaired clean-environment module command also verifies the original retaine
 ### Scoped pre24 reference port final evidence (2026-10-27)
 
 Source bef942dc moves the actual spot pre24 read behind required Query/Candidate/Observation and a physical three-column FINAL adapter. The [per-symbol mapping/default/absence ledger](pre24-reference-port.md) records every retained raw transport map and phase-specific nullable fact. Original full Go/race634 outcomes retain633pass/1new fixture error; the corrected actual spot control separately passes with product bytes unchanged. Final vet, pinned lint and retained full-output parity pass with source guards; the exact prefix/changed-case limit remains explicit for next CI. No remaining REST/normalizer/Options or global Go closure is claimed.
+
+
+### Owned ClickHouse overlap ready (2026-10-27)
+
+The separate [owned setup ledger](ci-clickhouse-overlap.md) preserves the exact original25.8 protocol/settings/schema and Go/npm/PG commands while joining four owned setup tasks. Thirteen units, six real process controls, strict4 and one explicitly scoped offline-image ARM/native-HTTP physical smoke pass. Accepted CID is durable before start; unknown acceptance/foreign identity cannot succeed or authorize a retry. Container-only cleanup preserves data volumes. Full CI collection/case/worker/global240 policies and all other jobs are unchanged; actual x64 image pull/overlap and wall margin await changed CI.

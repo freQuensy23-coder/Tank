@@ -1,8 +1,10 @@
-"""Join the three fixed independent setup tasks without weakening their failures."""
+"""Join fixed independent setup tasks without weakening any owned child failure."""
 
+import argparse
 import os
 import signal
 import subprocess
+import sys
 import time
 from contextlib import suppress
 from dataclasses import dataclass
@@ -12,15 +14,14 @@ from typing import IO, Literal, Self
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from scripts.ci.managed_clickhouse import CIContext
+
 GO_SETUP = 'export GOENV=off GOTOOLCHAIN=local\nfor variable in GOMODCACHE GOCACHE GOPATH; do\n  value="$(go env "$variable")"\n  export "$variable=$value"\n  echo "$variable=$value" >> "$GITHUB_ENV"\ndone\nprintf \'%s\\n\' GOENV=off GOTOOLCHAIN=local GOPROXY=off GOSUMDB=off GOFLAGS=-mod=readonly >> "$GITHUB_ENV"\nGOPROXY=https://proxy.golang.org GOSUMDB=sum.golang.org go mod download\ngit diff --exit-code -- go.mod go.sum\nCGO_ENABLED=0 GOPROXY=off GOSUMDB=off go build -mod=readonly -o "$RUNNER_TEMP/capture-parity-prime" ./cmd/capture-parity\n'
 POSTGRES_SETUP = "mkdir -p .test-results\ncontainer_id=\"$(docker run --detach --name tank-test-ci \\\n  --label \"tank.ci-owner=$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT\" \\\n  --publish 127.0.0.1:5432:5432 \\\n  --tmpfs /var/lib/postgresql/data:rw --shm-size 1g \\\n  --env POSTGRES_DB=tank_test_ci_admin --env POSTGRES_USER=postgres \\\n  --env POSTGRES_PASSWORD=tank-ci-disposable \\\n  postgres:16-bookworm \\\n  -c max_locks_per_transaction=1024 -c max_connections=300 \\\n  -c fsync=on -c synchronous_commit=on)\"\necho \"$container_id\" > .test-results/postgres-container-id\ndeadline=$((SECONDS + 60))\nuntil docker exec \"$container_id\" pg_isready -h 127.0.0.1 -U postgres -d tank_test_ci_admin >/dev/null 2>&1; do\n  if (( SECONDS >= deadline )); then\n    docker logs \"$container_id\"\n    exit 1\n  fi\n  sleep 1\ndone\ndocker exec \"$container_id\" psql -U postgres -d tank_test_ci_admin -At \\\n  -c \"SELECT json_build_object('version', version(), 'max_locks_per_transaction', current_setting('max_locks_per_transaction'), 'max_connections', current_setting('max_connections'), 'fsync', current_setting('fsync'), 'synchronous_commit', current_setting('synchronous_commit'))\" \\\n  > .test-results/postgres-settings.json\n"
 
 
-class SetupContext(BaseModel):
+class SetupContext(CIContext):
     model_config = ConfigDict(strict=True, extra="forbid")
-    root: Path
-    run_id: int = Field(gt=0)
-    attempt: int = Field(gt=0)
     github_env: Path
 
     @model_validator(mode="after")
@@ -35,7 +36,7 @@ class SetupContext(BaseModel):
         return self
 
 
-type TaskName = Literal["go", "gateway", "postgres"]
+type TaskName = Literal["go", "gateway", "postgres", "clickhouse"]
 
 
 @dataclass
@@ -65,8 +66,8 @@ class SetupReport(BaseModel):
     def successful(self) -> bool:
         return (
             self.interrupted_signal is None
-            and len(self.results) == 3
-            and {r.name for r in self.results} == {"go", "gateway", "postgres"}
+            and len(self.results) == 4
+            and {r.name for r in self.results} == {"go", "gateway", "postgres", "clickhouse"}
             and all(r.code == 0 for r in self.results)
         )
 
@@ -102,6 +103,7 @@ def run(context: SetupContext, state: SignalState) -> SetupReport:
     directory.mkdir(parents=True, exist_ok=True)
     if directory.stat().st_uid != os.geteuid():
         raise ValueError("setup output is not owned")
+    environment = dict(os.environ) | context.environment() | {"GITHUB_ENV": str(context.github_env)}
     specifications: tuple[tuple[TaskName, list[str], Path], ...] = (
         ("go", ["bash", "-euo", "pipefail", "-c", GO_SETUP], context.root / "capture"),
         (
@@ -110,6 +112,11 @@ def run(context: SetupContext, state: SignalState) -> SetupReport:
             context.root,
         ),
         ("postgres", ["bash", "-euo", "pipefail", "-c", POSTGRES_SETUP], context.root),
+        (
+            "clickhouse",
+            [sys.executable, "-m", "scripts.ci.managed_clickhouse", "start"],
+            Path(__file__).resolve().parents[2],
+        ),
     )
     children: list[Child] = []
     try:
@@ -125,6 +132,7 @@ def run(context: SetupContext, state: SignalState) -> SetupReport:
                     stdout=log,
                     stderr=subprocess.STDOUT,
                     start_new_session=True,
+                    env=environment,
                 )
             except BaseException:
                 log.close()
@@ -153,13 +161,9 @@ def run(context: SetupContext, state: SignalState) -> SetupReport:
 
 
 def main() -> None:
-    if os.environ["GITHUB_ACTIONS"] != "true":
-        raise ValueError("this setup requires an explicit Actions context")
-    context = SetupContext(
-        root=Path(os.environ["GITHUB_WORKSPACE"]),
-        run_id=int(os.environ["GITHUB_RUN_ID"]),
-        attempt=int(os.environ["GITHUB_RUN_ATTEMPT"]),
-        github_env=Path(os.environ["GITHUB_ENV"]),
+    argparse.ArgumentParser(description=__doc__).parse_args()
+    context = SetupContext.model_validate(
+        CIContext.from_environment(os.environ).model_dump() | {"github_env": Path(os.environ["GITHUB_ENV"])}
     )
     state = SignalState()
     install_handlers(state)
