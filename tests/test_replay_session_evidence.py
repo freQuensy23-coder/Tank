@@ -67,9 +67,9 @@ async def test_replay_evidence_update_preserves_concurrent_actual_native_event(
         "session",
         {
             "session_id": "session",
+            "proposal_id": "authored-proposal",
             "status": "OPEN",
             "last_event_seq": 0,
-            "opened_by_item_reason": "This authored native outcome has no source item",
             "agent_version_reason": "This authored native outcome has no agent snapshot",
             "last_item_at_reason": "This authored native outcome has no source item",
             **collection_clock().fields("opened_at"),
