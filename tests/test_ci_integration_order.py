@@ -494,9 +494,11 @@ def test_collection_digest_binds_exact_admitted_bytes_during_retarget(tmp_path: 
     assert digest != hashlib.sha256(replacement).hexdigest()
 
 
-@pytest.mark.parametrize("output", [None, b"partial\xff", "partial text"])
+@pytest.mark.parametrize(
+    "output,expected", [(None, None), (b"partial\xff", b"partial\xff"), ("partial text", b"partial text")]
+)
 def test_probe_timeout_retains_actual_partial_evidence(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, output: str | bytes | None
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, output: str | bytes | None, expected: bytes | None
 ) -> None:
     monkeypatch.chdir(tmp_path)
     root = tmp_path / "synthetic-probe"
@@ -516,7 +518,11 @@ def test_probe_timeout_retains_actual_partial_evidence(
     assert actual.kind == "TIMED_OUT"
     assert actual.argv == tuple(command)
     assert actual.timeout_seconds == 8
-    assert actual.stdout_base64 == captured_timeout_stream(output)
+    if expected is None:
+        assert actual.stdout_base64 is None
+    else:
+        assert actual.stdout_base64 is not None
+        assert base64.b64decode(actual.stdout_base64) == expected
     assert actual.stderr_base64 is not None
     assert base64.b64decode(actual.stderr_base64) == b"stderr\x00"
     assert actual.dispatches_jsonl == partial["dispatch.jsonl"]
