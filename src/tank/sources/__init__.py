@@ -8,7 +8,7 @@ persists probability/model provenance; source ingestion never guesses relevance.
 import asyncio
 import re
 import ssl
-from collections.abc import Mapping, Sequence
+from collections.abc import Mapping
 from datetime import datetime
 from functools import cached_property
 from urllib.parse import urlsplit
@@ -22,6 +22,13 @@ from tank.contracts.http_policy import HttpRefused
 from tank.contracts.provenance import ResolvedVersionIdentity
 from tank.contracts.source_errors import SourceEntryError
 from tank.contracts.source_items import CapturedItem, SourceItem, SourceText, captured_item
+from tank.contracts.source_reports import (
+    SourceReportingPolicy,
+    SourceReportIntent,
+    SourceReportMode,
+    SourceReportOutcome,
+    SourceReportRequest,
+)
 from tank.contracts.sources import (
     AccountProbeFailure,
     AccountProbeResponse,
@@ -32,7 +39,6 @@ from tank.contracts.sources import (
     SourceConfiguration,
     SourceDefinition,
     SourceEscalationControlView,
-    SourceFeed,
     SourceFilingRegistryView,
     SourcePollOutcome,
 )
@@ -273,18 +279,33 @@ class SourceService:
     async def ingest_captured(self, source: SourceDefinition, item: CapturedItem) -> SourceItem:
         return await self._ingestion().ingest(source, item)
 
-    async def report_errors(
-        self,
-        source: SourceDefinition,
-        feed: SourceFeed,
-        errors: Sequence[SourceEntryError],
-        seen_at: str,
-    ) -> None:
-        from tank.ops_entry_errors import report_entry_errors
+    def admit_entry_errors(self, errors: JsonValue) -> list[SourceEntryError]:
         from tank.sources.x_diagnostics import admit_source_errors
 
-        admitted = admit_source_errors(errors, self.settings.apify_api_token)
-        await report_entry_errors(self.repo, self.settings, source, feed, admitted, seen_at)
+        if not isinstance(errors, list):
+            raise ValueError("Source entry error collection must be an array")
+        records: list[Mapping[str, JsonValue]] = []
+        for error in errors:
+            if not isinstance(error, dict):
+                raise ValueError("Source entry error must be an object")
+            records.append(error)
+        return admit_source_errors(records, self.settings.apify_api_token)
+
+    @property
+    def error_reporting_mode(self) -> SourceReportMode:
+        return SourceReportingPolicy(
+            ops_progress_enabled=self.settings.ops_progress_enabled, replay=self.settings.replay
+        ).mode
+
+    async def report_error_intent(self, intent: SourceReportIntent) -> SourceReportOutcome:
+        from tank.ops_entry_errors import report_entry_errors
+
+        intent = SourceReportIntent.model_validate(intent)
+        return await report_entry_errors(
+            self.repo,
+            self.settings,
+            SourceReportRequest(subject=intent.subject, seen_at=intent.seen_at, errors=intent.errors),
+        )
 
     async def poll_once(
         self, source_id: str, *, due_only: bool = False, escalated: bool = False

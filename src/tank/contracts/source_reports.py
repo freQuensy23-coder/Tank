@@ -1,14 +1,15 @@
 """Operation-bound source report intent and observed durable notice outcomes."""
 
 import re
+from collections.abc import Sequence
 from typing import Annotated, Literal, Self
 
-from pydantic import Field, model_validator
+from pydantic import Field, JsonValue, model_validator
 
 from tank.contracts import DomainModel
 from tank.contracts.provenance import ResolvedVersionIdentity
 from tank.contracts.scalars import OneInt
-from tank.contracts.source_errors import SourceEntryError
+from tank.contracts.source_errors import EntryErrorMarker, EntryErrorNotice, SourceEntryError
 from tank.contracts.source_items import SourceContextId
 from tank.time_precision import Timestamp
 from tank.util import parse_iso_time, sha256
@@ -62,6 +63,15 @@ def source_error_key(source_id: str, feed_url: str, error: SourceEntryError) -> 
     )
 
 
+def source_report_notice_id(scope: SourceReportScope, keys: Sequence[str]) -> str:
+    record: dict[str, JsonValue] = {
+        "source_id": scope.source_id,
+        "feed": scope.feed_url,
+        "keys": [key for key in sorted(keys)],
+    }
+    return "entry_errors_" + sha256(record)
+
+
 class SourceReportRequest(DomainModel):
     subject: SourceReportSubject
     seen_at: str
@@ -103,6 +113,54 @@ class SourceReportMarkerReference(DomainModel):
         if self.marker_id != "entry_error_" + self.error_key:
             raise ValueError("Source report marker identity conflicts with its error key")
         return self
+
+
+class SourceReportNoticeWitness(DomainModel):
+    scope: SourceReportScope
+    notice_id: SourceContextId
+    error_keys: list[ReportDigest] = Field(min_length=1)
+    notice_sha256: ReportDigest
+
+
+def source_report_notice_witness(
+    scope: SourceReportScope, raw: dict[str, JsonValue]
+) -> SourceReportNoticeWitness:
+    notice = EntryErrorNotice.model_validate(raw)
+    keys = sorted({source_error_key(scope.source_id, scope.feed_url, error) for error in notice.entry_errors})
+    if (
+        notice.notice_id != source_report_notice_id(scope, keys)
+        or notice.subject_id != scope.source_id
+        or notice.source_id != scope.source_id
+        or notice.feed_url != scope.feed_url
+        or sorted(notice.entry_error_keys) != keys
+    ):
+        raise ValueError("Stored source report notice conflicts with its actual scope")
+    return SourceReportNoticeWitness(
+        scope=scope, notice_id=notice.notice_id, error_keys=keys, notice_sha256=sha256(raw)
+    )
+
+
+def source_report_marker_reference(
+    scope: SourceReportScope, key: str, raw: dict[str, JsonValue], notice: SourceReportNoticeWitness
+) -> SourceReportMarkerReference:
+    marker = EntryErrorMarker.model_validate(raw)
+    if (
+        marker.notice_id != "entry_error_" + key
+        or marker.subject_id != scope.source_id
+        or marker.feed_url != scope.feed_url
+        or source_error_key(scope.source_id, scope.feed_url, marker.entry_error) != key
+        or marker.group_notice_id != notice.notice_id
+        or notice.scope != scope
+        or key not in notice.error_keys
+    ):
+        raise ValueError("Stored source report marker conflicts with its actual scope")
+    return SourceReportMarkerReference(
+        error_key=key,
+        marker_id=marker.notice_id,
+        notice_id=notice.notice_id,
+        marker_sha256=sha256(raw),
+        notice_sha256=notice.notice_sha256,
+    )
 
 
 class SourceReportConfirmation(DomainModel):
@@ -184,6 +242,6 @@ class SourceReportLedger(DomainModel):
         if any(
             key != intent.intent_id or intent.subject.source_id != self.source_id
             for key, intent in self.pending.items()
-        ):
+        ) or (self.last_outcome is not None and self.last_outcome.outcome.scope.source_id != self.source_id):
             raise ValueError("Source report ledger conflicts with its operation identity")
         return self

@@ -33,7 +33,7 @@ from tank.contracts.source_checkpoints import (
     ScopedInstrumentBaseline,
     SourcePendingBatch,
 )
-from tank.contracts.source_errors import SourceEntryError, parse_entry_error
+from tank.contracts.source_errors import SourceEntryError
 from tank.contracts.source_items import (
     DiscoveryEnvelope,
     PendingSourceItem,
@@ -42,6 +42,13 @@ from tank.contracts.source_items import (
     captured_item,
     discovered_item,
     parse_source_item,
+)
+from tank.contracts.source_reports import (
+    SourceReportIntent,
+    SourceReportMode,
+    SourceReportOutcome,
+    SourceReportRequest,
+    SourceReportSubject,
 )
 from tank.contracts.sources import (
     FeedKind,
@@ -73,7 +80,9 @@ from tank.sources.fetch import FetchedContent, FetchResult, NotModified
 from tank.sources.http_client import RequestStarted
 from tank.sources.instrument_adapters import parse_instrument_page
 from tank.sources.instruments import InstrumentPage, instrument_changes
+from tank.sources.reporting import SourceReportSpool
 from tank.sources.xsensor import XSensor
+from tank.time_precision import collection_clock
 from tank.util import new_id, parse_time, sha256
 
 log = logging.getLogger(__name__)
@@ -133,19 +142,17 @@ class SourcePollingPort(Protocol):
     async def ingest(
         self, source: SourceDefinition, item: Mapping[str, JsonValue]
     ) -> dict[str, JsonValue]: ...
-    async def report_errors(
-        self,
-        source: SourceDefinition,
-        feed: SourceFeed,
-        errors: Sequence[SourceEntryError],
-        seen_at: str,
-    ) -> None: ...
+    def admit_entry_errors(self, errors: JsonValue) -> list[SourceEntryError]: ...
+    @property
+    def error_reporting_mode(self) -> SourceReportMode: ...
+    async def report_error_intent(self, intent: SourceReportIntent) -> SourceReportOutcome: ...
 
 
 class SourcePoller:
     def __init__(self, service: SourcePollingPort) -> None:
         self.service = service
         self.archives = QuarantineArchiveRepository(service.repo, service.versions)
+        self.reports = SourceReportSpool(service.repo, service.versions, lambda: collection_clock(self.now()))
         self.acquisition_locks: dict[str, asyncio.Lock] = {}
         self.state_locks: dict[str, asyncio.Lock] = {}
         self.processing_locks: dict[str, asyncio.Lock] = {}
@@ -191,8 +198,6 @@ class SourcePoller:
         return await self.archives.reconcile(decoded)
 
     async def save(self, source: SourceDefinition, key: str, state: dict[str, JsonValue]) -> None:
-        from tank.time_precision import collection_clock
-
         async with self.service.repo.lock("source-checkpoint:" + key), self.service.repo.transaction():
             if "source_id" in state and state["source_id"] != source.source_id:
                 raise ValueError("Checkpoint owner conflicts with the actual source operation")
@@ -676,6 +681,13 @@ class SourcePoller:
                 await self.save(source, key, current)
             try:
                 rows, acquired, kind, snapshot_update = await self._fetch_rows(source, feed, key, state)
+                fresh_errors = (
+                    self.service.admit_entry_errors(acquired["entry_errors"]) if rows is not None else []
+                )
+                if rows is not None:
+                    acquired["entry_errors"] = [
+                        error.model_dump(mode="json", exclude_unset=True) for error in fresh_errors
+                    ]
                 async with self.state_change(key):
                     current = await self.state(key)
                     if rows is not None:
@@ -744,6 +756,19 @@ class SourcePoller:
                         current["last_success_at"] = self.stamp()
                     elif not current.get("last_success_at") and current["status"] == "HEALTHY":
                         current["status"] = "PENDING"
+                    self.reports.reconcile(current, sid)
+                    if fresh_errors:
+                        self.reports.stage(
+                            current,
+                            SourceReportRequest(
+                                subject=SourceReportSubject(
+                                    source_id=sid, source_name=source.name, feed_url=feed.url
+                                ),
+                                errors=fresh_errors,
+                                seen_at=acquired["fetched_at"],
+                            ),
+                            self.service.error_reporting_mode,
+                        )
                     async with self.service.repo.transaction():
                         await self.save(source, key, current)
                         if snapshot_update is not None:
@@ -776,42 +801,16 @@ class SourcePoller:
                         last_failure_at=self.stamp(),
                     )
                     await self.save(source, key, current)
+                await self.drain_reports(sid, key)
                 return FeedPollOutcome(items=0, errors=[str(exc)])
-            await self.report_entry_errors(
-                key, source, feed, acquired.get("entry_errors") or [], acquired.get("fetched_at") or attempted
-            )
+            await self.drain_reports(sid, key)
             return FeedPollOutcome(items=0, errors=[])
 
-    async def report_entry_errors(self, key, source, feed, errors, seen_at):
-        """Report this poll's entry errors and earlier polls whose report failed.
-
-        A failed report never fails acquisition. Its poll stays in the checkpoint's
-        ``entry_error_reports`` backlog and is retried on the next acquisition even if
-        the feed no longer returns the broken entry; markers make the retry idempotent.
-        """
-        svc = self.service
+    async def drain_reports(self, source_id: str, key: str) -> None:
         try:
-            backlog = (await self.state(key)).get("entry_error_reports") or []
-            polls = backlog + ([{"seen_at": seen_at, "entry_errors": errors}] if errors else [])
-            failed = []
-            for poll in polls:
-                try:
-                    await svc.report_errors(
-                        source,
-                        feed,
-                        [parse_entry_error(error) for error in poll["entry_errors"]],
-                        poll["seen_at"],
-                    )
-                except Exception:
-                    log.exception("Entry error report for %s is kept for the next poll", key)
-                    failed.append(poll)
-            if failed or backlog:
-                async with self.state_change(key):
-                    current = await self.state(key)
-                    current["entry_error_reports"] = failed
-                    await self.save(source, key, current)
-        except Exception:
-            log.exception("Entry error report backlog for %s could not be saved", key)
+            await self.reports.drain(source_id, key, self.service.report_error_intent)
+        except Exception as error:
+            log.error("Source report checkpoint %s remains unresolved after %s", key, type(error).__name__)
 
     def _empty_body(self, url, detail_state):
         return {
