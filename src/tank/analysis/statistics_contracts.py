@@ -110,7 +110,7 @@ class FloatRange(DomainModel):
 
 class DecimalRange(DomainModel):
     bounds: DecimalBounds | None
-    reason: Literal["INCOMPLETE", "INSUFFICIENT_HISTORY"] | None
+    reason: Literal["INCOMPLETE", "INSUFFICIENT_HISTORY", "NOT_ESTIMABLE"] | None
 
     @model_validator(mode="after")
     def availability(self) -> Self:

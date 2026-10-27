@@ -191,6 +191,6 @@ def test_float_baseline_not_estimable_never_supplies_numeric_or_infinite_bounds(
     with pytest.raises(ValidationError):
         FloatRange.model_validate({"bounds": None, "reason": "UNKNOWN"})
     with pytest.raises(ValidationError):
-        DecimalRange.model_validate({"bounds": None, "reason": "NOT_ESTIMABLE"})
+        DecimalRange.model_validate({"bounds": None, "reason": "UNKNOWN"})
     with pytest.raises(ValueError, match="finite real"):
         StatisticalPopulation([float("inf")])
