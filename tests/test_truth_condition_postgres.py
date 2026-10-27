@@ -14,7 +14,15 @@ import pytest
 from source_support import fixture_http_admission, fixture_versions
 from truth_support import fixture_truth_config
 
+from tank.analysis import funding_history_cache
+from tank.analysis.condition_derivative_inputs import DerivativeInstrument
 from tank.analysis.condition_graph_contracts import ConditionWindow
+from tank.analysis.funding_history import (
+    FundingHistoricalPopulation,
+    FundingHistoryPolicy,
+    funding_historical_population,
+)
+from tank.analysis.funding_selection import FundingCalculator, FundingWindowRequest
 from tank.analysis.open_interest import OINativeHistoryBaseline, OIWindowRequest, OpenInterestCalculator
 from tank.analysis.truth import MarketTruthService, compute_market_truth
 from tank.market.cadences import supply_cadences
@@ -404,6 +412,114 @@ async def test_disposable_postgres_selective_condition_inputs_and_sql_footprint(
             oi_invisible = await truth.condition_values(event, "T", packet["cutoff"], oi_requirements)
             assert oi_invisible["derivatives"]["windows"]["W1H"]["synchronized"] is None
             assert not any(point["available"] for point in oi_invisible["_condition_evaluation"]["proofs"])
+            assert not any(
+                query.lstrip().upper().startswith(("INSERT", "UPDATE", "DELETE")) for query in statements
+            )
+            funding_population_calls: list[str] = []
+            original_funding_population = funding_historical_population
+
+            def counted_funding_population(
+                calculator: FundingCalculator,
+                request: FundingWindowRequest,
+                *,
+                instrument: DerivativeInstrument,
+                policy: FundingHistoryPolicy,
+            ) -> FundingHistoricalPopulation:
+                population = original_funding_population(
+                    calculator, request, instrument=instrument, policy=policy
+                )
+                funding_population_calls.append(population.identity())
+                return population
+
+            monkeypatch.setattr(
+                funding_history_cache, "funding_historical_population", counted_funding_population
+            )
+            funding_requirements = [{"metric": "deriv.funding_vs_normal", "window": "W1H"}]
+            reads.clear()
+            statements.clear()
+            funding_first = await truth.condition_values(event, "T", packet["cutoff"], funding_requirements)
+            first_funding_row = funding_first["derivatives"]["windows"]["W1H"]["per_venue"][0]
+            first_funding_proof = funding_first["_condition_evaluation"]["proofs"][0]
+            assert first_funding_row["funding_8h_kind"] == "SETTLED"
+            assert Decimal(first_funding_row["funding_8h_eq"]) == 0
+            assert first_funding_row["funding_vs_normal"] == "WITHIN"
+            assert first_funding_proof["available"] is True
+            assert len(funding_population_calls) == 1
+            assert {table for table, _ in reads} == {"mkt.funding_obs"}
+            assert not any(
+                query.lstrip().upper().startswith(("INSERT", "UPDATE", "DELETE")) for query in statements
+            )
+            funding_repeat = await truth.condition_values(event, "T", packet["cutoff"], funding_requirements)
+            repeat_funding_proof = funding_repeat["_condition_evaluation"]["proofs"][0]
+            assert repeat_funding_proof["reused"] is True
+            assert repeat_funding_proof["assembled_at"] != first_funding_proof["assembled_at"]
+            assert funding_repeat["derivatives"] == funding_first["derivatives"]
+            assert len(funding_population_calls) == 1
+
+            current_funding = dict(
+                packet["funding"][-1],
+                kind="CURRENT_ESTIMATE",
+                rate="0.001",
+                rate_8h_eq="0.001",
+                as_of=packet["cutoff"],
+                received_ts=clock_iso(),
+                recorded_at=clock_iso(),
+            )
+            current_funding.pop("funding_time", None)
+            current_funding.pop("funding_time_prec", None)
+            current_funding.pop("settlement_time", None)
+            await original_market_batch("mkt.funding_obs", [current_funding])
+            statements.clear()
+            funding_current = await truth.condition_values(event, "T", packet["cutoff"], funding_requirements)
+            current_funding_row = funding_current["derivatives"]["windows"]["W1H"]["per_venue"][0]
+            assert current_funding_row["funding_8h_kind"] == "CURRENT_ESTIMATE"
+            assert Decimal(current_funding_row["funding_8h_eq"]) == Decimal("0.001")
+            assert current_funding_row["funding_vs_normal"] == "ABOVE"
+            assert (
+                current_funding_row["funding_normal_range_8h"] == first_funding_row["funding_normal_range_8h"]
+            )
+            assert len(funding_population_calls) == 1
+            assert funding_current["_condition_evaluation"]["proofs"][0]["reused"] is False
+            assert not any(
+                query.lstrip().upper().startswith(("INSERT", "UPDATE", "DELETE")) for query in statements
+            )
+
+            historical_funding = dict(
+                packet["funding"][0],
+                rate="-0.0001",
+                rate_8h_eq="-0.0001",
+                received_ts=clock_iso(),
+                recorded_at=clock_iso(),
+            )
+            await original_market_batch("mkt.funding_obs", [historical_funding])
+            statements.clear()
+            funding_historical = await truth.condition_values(
+                event, "T", packet["cutoff"], funding_requirements
+            )
+            assert len(funding_population_calls) == 2
+            assert funding_population_calls[0] != funding_population_calls[1]
+            assert (
+                funding_historical["derivatives"]["windows"]["W1H"]["per_venue"][0]["funding_vs_normal"]
+                == "ABOVE"
+            )
+            assert not any(
+                query.lstrip().upper().startswith(("INSERT", "UPDATE", "DELETE")) for query in statements
+            )
+
+            future_funding = dict(
+                current_funding,
+                received_ts=iso(parse_time(clock_iso()) + timedelta(days=1)),
+                recorded_at=clock_iso(),
+            )
+            await original_market_batch("mkt.funding_obs", [future_funding])
+            statements.clear()
+            funding_invisible = await truth.condition_values(
+                event, "T", packet["cutoff"], funding_requirements
+            )
+            invisible_funding_row = funding_invisible["derivatives"]["windows"]["W1H"]["per_venue"][0]
+            assert invisible_funding_row["funding_estimate_8h_eq"] is None
+            assert invisible_funding_row["funding_8h_kind"] == "SETTLED"
+            assert Decimal(invisible_funding_row["funding_8h_eq"]) == 0
             assert not any(
                 query.lstrip().upper().startswith(("INSERT", "UPDATE", "DELETE")) for query in statements
             )
