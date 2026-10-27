@@ -5880,11 +5880,11 @@
     },
     {
       "path": "src/tank/contracts/native_usage.py",
-      "lines": 142,
+      "lines": 257,
       "functions": [
         {
           "symbol": "NativeUsageCounters.from_wire",
-          "line": 25,
+          "line": 26,
           "missing_parameters": [],
           "missing_return": false,
           "dict_nodes": 1,
@@ -5892,7 +5892,7 @@
         },
         {
           "symbol": "NativeUsageSpan.measurement_phase",
-          "line": 46,
+          "line": 47,
           "missing_parameters": [],
           "missing_return": false,
           "dict_nodes": 1,
@@ -5900,7 +5900,7 @@
         },
         {
           "symbol": "NativeUsageSpan.from_wire",
-          "line": 61,
+          "line": 62,
           "missing_parameters": [],
           "missing_return": false,
           "dict_nodes": 1,
@@ -5908,7 +5908,7 @@
         },
         {
           "symbol": "NativeUsageSpan.web_searches",
-          "line": 81,
+          "line": 82,
           "missing_parameters": [],
           "missing_return": false,
           "dict_nodes": 0,
@@ -5916,7 +5916,7 @@
         },
         {
           "symbol": "NativeUsageSession.from_record",
-          "line": 105,
+          "line": 106,
           "missing_parameters": [],
           "missing_return": false,
           "dict_nodes": 3,
@@ -5924,7 +5924,7 @@
         },
         {
           "symbol": "SelectedNativeUsageModel.actual_selected_model_source",
-          "line": 118,
+          "line": 119,
           "missing_parameters": [],
           "missing_return": false,
           "dict_nodes": 0,
@@ -5932,21 +5932,53 @@
         },
         {
           "symbol": "select_native_usage_model",
-          "line": 131,
+          "line": 132,
           "missing_parameters": [],
           "missing_return": false,
           "dict_nodes": 0,
           "get_calls": 0
+        },
+        {
+          "symbol": "NativeUsageReceiptIdentity.one_actual_model",
+          "line": 160,
+          "missing_parameters": [],
+          "missing_return": false,
+          "dict_nodes": 0,
+          "get_calls": 0
+        },
+        {
+          "symbol": "LegacyNativeUsageReceipt.admitted_observed_counters",
+          "line": 188,
+          "missing_parameters": [],
+          "missing_return": false,
+          "dict_nodes": 0,
+          "get_calls": 0
+        },
+        {
+          "symbol": "validate_native_usage_receipt",
+          "line": 195,
+          "missing_parameters": [],
+          "missing_return": false,
+          "dict_nodes": 4,
+          "get_calls": 1
         }
       ]
     },
     {
       "path": "src/tank/agents/native_usage.py",
-      "lines": 90,
+      "lines": 109,
       "functions": [
         {
+          "symbol": "NativeUsageStore.get",
+          "line": 21,
+          "missing_parameters": [],
+          "missing_return": false,
+          "dict_nodes": 0,
+          "get_calls": 0
+        },
+        {
           "symbol": "NativeUsageStore.put",
-          "line": 15,
+          "line": 23,
           "missing_parameters": [],
           "missing_return": false,
           "dict_nodes": 0,
@@ -5954,11 +5986,11 @@
         },
         {
           "symbol": "record_native_usage",
-          "line": 20,
+          "line": 28,
           "missing_parameters": [],
           "missing_return": false,
           "dict_nodes": 3,
-          "get_calls": 0
+          "get_calls": 2
         }
       ]
     },

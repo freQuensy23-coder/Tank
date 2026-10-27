@@ -7,6 +7,7 @@ from pydantic import Field, JsonValue, model_validator
 
 from tank.contracts import DomainModel
 from tank.time_precision import Timestamp, propagate_timestamp
+from tank.util import canonical_json
 
 
 class NativeServerToolUsage(DomainModel):
@@ -140,3 +141,117 @@ def select_native_usage_model(session: NativeUsageSession, span: NativeUsageSpan
         reported_model_id=span.reported_model,
         session_model_id=session.model_id,
     )
+
+
+class NativeUsageReceiptMismatch(ValueError):
+    """An existing immutable usage row contradicts the actual scoped observation."""
+
+
+class NativeUsageReceiptIdentity(DomainModel):
+    usage_id: str = Field(min_length=1, pattern=r"\S")
+    session_id: str = Field(min_length=1, pattern=r"\S")
+    call: Literal["AGENT"]
+    model_id: str = Field(min_length=1, pattern=r"\S")
+    model: str = Field(min_length=1, pattern=r"\S")
+    billing_basis: Literal["SUBSCRIPTION"]
+    cost_usd: Literal["0"]
+
+    @model_validator(mode="after")
+    def one_actual_model(self) -> Self:
+        if self.model_id != self.model:
+            raise NativeUsageReceiptMismatch("Stored usage model observations disagree")
+        return self
+
+
+class StoredNativeUsageMeasurements(DomainModel):
+    input_tokens: int | None = Field(ge=0)
+    output_tokens: int | None = Field(ge=0)
+    cache_read_tokens: int | None = Field(ge=0)
+    cache_write_tokens: int | None = Field(ge=0)
+    web_searches: int | None = Field(ge=0)
+    stop_reason: str | None
+
+
+class NativeUsageReceipt(DomainModel):
+    identity: NativeUsageReceiptIdentity
+    observation: NativeUsageSpan
+
+
+class LegacyNativeUsageReceipt(DomainModel):
+    identity: NativeUsageReceiptIdentity
+    raw_usage: dict[str, JsonValue]
+    stop_reason: str | None
+    web_searches: int | None = Field(ge=0)
+    processed_at: Timestamp
+
+    @model_validator(mode="after")
+    def admitted_observed_counters(self) -> Self:
+        if not self.raw_usage:
+            raise NativeUsageReceiptMismatch("Stored native usage has no observed measurement object")
+        NativeUsageCounters.from_wire(self.raw_usage)
+        return self
+
+
+def validate_native_usage_receipt(
+    record: Mapping[str, JsonValue], session_id: str, span: NativeUsageSpan
+) -> None:
+    """Check actual stored facts without replacing original collection/provenance fields."""
+    span = NativeUsageSpan.model_validate(span)
+    identity = NativeUsageReceiptIdentity.model_validate(
+        {name: record[name] for name in NativeUsageReceiptIdentity.model_fields}
+    )
+    expected = session_id + ":" + span.native_event_id
+    if identity.usage_id != expected or identity.session_id != session_id:
+        raise NativeUsageReceiptMismatch("Stored usage belongs to a different native span scope")
+    if span.counters is None:
+        raise NativeUsageReceiptMismatch("A stored usage receipt requires an actual reported span")
+    measurements = StoredNativeUsageMeasurements.model_validate(
+        {name: record.get(name) for name in StoredNativeUsageMeasurements.model_fields}
+    )
+    expected_measurements = StoredNativeUsageMeasurements(
+        input_tokens=span.counters.input_tokens,
+        output_tokens=span.counters.output_tokens,
+        cache_read_tokens=span.counters.cache_read_input_tokens,
+        cache_write_tokens=span.counters.cache_creation_input_tokens,
+        web_searches=span.web_searches(),
+        stop_reason=span.finish_reason,
+    )
+    if measurements != expected_measurements:
+        raise NativeUsageReceiptMismatch("Stored usage measurements contradict the actual span")
+    if "native_usage_observation" in record:
+        observed = NativeUsageReceipt.model_validate(
+            {"identity": identity, "observation": record["native_usage_observation"]}
+        )
+        if (
+            canonical_json(observed.observation.model_dump(mode="json"))
+            != canonical_json(span.model_dump(mode="json"))
+            or canonical_json(record["native_usage_evidence"]) != canonical_json(span.raw_usage)
+            or canonical_json(record["usage"])
+            != canonical_json(span.counters.model_dump(mode="json", exclude_none=True))
+        ):
+            raise NativeUsageReceiptMismatch("Stored native usage observation changed")
+        if (
+            observed.observation.reported_model is not None
+            and identity.model_id != observed.observation.reported_model
+        ):
+            raise NativeUsageReceiptMismatch("Stored usage differs from its reported model")
+        return
+    raw = record["native_usage_evidence"] if "native_usage_evidence" in record else record["usage"]
+    legacy = LegacyNativeUsageReceipt.model_validate(
+        {
+            "identity": identity,
+            "raw_usage": raw,
+            "stop_reason": record["stop_reason"],
+            "web_searches": record["web_searches"],
+            "processed_at": propagate_timestamp(record, "processed_at"),
+        }
+    )
+    if (
+        canonical_json(legacy.raw_usage) != canonical_json(span.raw_usage)
+        or legacy.stop_reason != span.finish_reason
+        or legacy.web_searches != span.web_searches()
+        or legacy.processed_at != span.processed_at
+        or span.reported_model is not None
+        and identity.model_id != span.reported_model
+    ):
+        raise NativeUsageReceiptMismatch("Stored legacy usage contradicts the actual span observation")

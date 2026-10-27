@@ -3238,6 +3238,35 @@
         "test_actual_no_report_frame_progresses_without_unused_session_metadata",
         "test_reported_usage_requires_one_actual_model_before_any_ledger_write"
       ]
+    },
+    {
+      "sites": [
+        {
+          "path": "src/tank/contracts/native_usage.py",
+          "symbol": "validate_native_usage_receipt"
+        },
+        {
+          "path": "src/tank/contracts/native_usage.py",
+          "symbol": "NativeUsageReceiptIdentity"
+        },
+        {
+          "path": "src/tank/contracts/native_usage.py",
+          "symbol": "LegacyNativeUsageReceipt"
+        },
+        {
+          "path": "src/tank/agents/native_usage.py",
+          "symbol": "record_native_usage"
+        }
+      ],
+      "kind": "immutable native usage receipt reconciliation after actual partial persistence",
+      "reason": "Actual session/native-event key, AGENT/subscription marker, matching recorded model fields, admitted counters/search/finish facts and exact typed/raw span evidence bind the first immutable receipt. New native_usage_observation stores only admitted observed facts, not an invented raw-byte revision. Prior producer2f3d389a wrote original model_usage under usage plus top-level counters/processed metadata; typed33fa352b separated native_usage_evidence; attributed27351ab8 added actual model-source labels. Their explicit receipt decoder validates those actually stored facts and does not reconstruct absent historical model-source attestation or rewrite clocks/controller/prompt provenance. An exact matching receipt is acknowledged before a new row is built. An actual concurrent ImmutableRecordError causes a fresh read and the same validation; missing/contradictory data is re-raised/refused, never generically swallowed or overwritten. No-row failures remain failures and cannot become a receipt; no clock is frozen or reused as fabricated new processing. Original reported usage is immutable even when later session/controller metadata differs. This fixes billing write/frame acknowledgment partial persistence without a new billing policy, provider/model inference or generalized event transaction.",
+      "validation": [
+        "test_actual_usage_commit_recovers_without_second_row_or_changed_first_receipt",
+        "test_actual_concurrent_usage_writes_reconcile_only_the_matching_first_receipt",
+        "test_existing_usage_contradiction_never_overwrites_or_claims_a_retry",
+        "test_definite_prewrite_failure_does_not_invent_an_existing_usage_receipt",
+        "test_actual_prior_usage_formats_preserve_their_first_recorded_provenance"
+      ]
     }
   ]
 }
