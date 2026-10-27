@@ -468,15 +468,16 @@ def scout_decide(prp_id, action):
 
 
 @main.group()
-def sources():
+def sources() -> None:
     """Check configured source coverage."""
 
 
 @sources.command("check")
 @click.option("--probe", is_flag=True, help="Probe configured feed endpoints without ingestion.")
 @click.option("--accounts", is_flag=True, help="Check configured X account identities.")
-def sources_check(probe, accounts):
-    async def command(repo, settings):
+def sources_check(probe: bool, accounts: bool) -> None:
+    async def command(repo: "PostgresRepository", settings: Settings) -> JsonValue:
+        from tank.contracts.source_checks import source_check_record
         from tank.request_budget import build_budget_backend, shared_request_budgets
         from tank.sources import SourceService
 
@@ -486,7 +487,11 @@ def sources_check(probe, accounts):
                 repo, settings, versions=settings.require_versions(), budgets=shared_request_budgets
             )
             try:
-                return await service.check(probe=probe, check_accounts=accounts)
+                records: list[JsonValue] = [
+                    source_check_record(row)
+                    for row in await service.check(probe=probe, check_accounts=accounts)
+                ]
+                return records
             finally:
                 await service.close()
         finally:
