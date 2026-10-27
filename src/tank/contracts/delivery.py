@@ -203,8 +203,12 @@ class OpsDeliveryView(OpsPresentationClocks):
 
     @model_validator(mode="after")
     def actual_receipt_phase(self) -> Self:
-        if self.attempt == 0 and (self.status != "FAILED" or self.suppressed is not True):
-            raise ValueError("Zero delivery attempts require the recorded suppression phase")
+        if self.attempt == 0 and not (
+            self.status == "GENERATED"
+            or self.status == "FAILED"
+            and (self.suppressed is True or self.terminal is True)
+        ):
+            raise ValueError("Zero delivery attempts require a recorded pre-send phase")
         if self.status == "SENT" and self.message_ref is None:
             raise ValueError("Sent Ops publication requires its actual message receipt")
         return self
@@ -509,11 +513,16 @@ class DeliveryAttemptOrdinal(DomainModel):
     attempt: int = Field(ge=0)
     status: Literal["GENERATED", "FAILED", "SENT"] | None = None
     suppressed: bool | None = None
+    terminal: bool | None = None
 
     @model_validator(mode="after")
     def declared_zero_phase(self) -> Self:
-        if self.attempt == 0 and (self.status != "FAILED" or self.suppressed is not True):
-            raise ValueError("Zero delivery attempts require the recorded suppression phase")
+        if self.attempt == 0 and not (
+            self.status == "GENERATED"
+            or self.status == "FAILED"
+            and (self.suppressed is True or self.terminal is True)
+        ):
+            raise ValueError("Zero delivery attempts require a recorded pre-send phase")
         return self
 
     @classmethod
