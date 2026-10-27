@@ -32,6 +32,7 @@ from tank.contracts.source_items import SourceRelevance
 from tank.fixture_reference_code import CURRENT_PROJECTION_CODE, ProjectionCodeEvidence
 from tank.fixture_reference_sources import FILESYSTEM_RETAINED_SOURCES, RetainedSourceReader
 from tank.market_schema import MARKET_COLUMNS
+from tank.replay_session import update_replay_session_evidence
 from tank.telegram_inbox import RepositoryFollowupRefusals
 from tank.time_precision import Timestamp, interval_bounds, propagate_timestamp
 from tank.util import canonical_json, iso, parse_time
@@ -1572,12 +1573,7 @@ async def replay_agent_session(
                         }
                     },
                 )
-                mapped = await repo.get("ops.agent_sessions", active_session_id)
-                mapped.update(
-                    replay_evidence_sha256=current.manifest_sha256,
-                    replay_cutoff=current.manifest.cutoff,
-                )
-                await repo.put("ops.agent_sessions", active_session_id, mapped)
+                await update_replay_session_evidence(repo, active_session_id, current)
 
     active_session_id = None
     imported = set()
