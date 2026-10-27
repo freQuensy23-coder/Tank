@@ -6118,11 +6118,11 @@
     },
     {
       "path": "src/tank/delivery.py",
-      "lines": 1109,
+      "lines": 1124,
       "functions": [
         {
           "symbol": "DeliveryError.__init__",
-          "line": 74,
+          "line": 75,
           "missing_parameters": [],
           "missing_return": false,
           "dict_nodes": 0,
@@ -6130,7 +6130,7 @@
         },
         {
           "symbol": "delivery_retry_delay",
-          "line": 80,
+          "line": 81,
           "missing_parameters": [],
           "missing_return": false,
           "dict_nodes": 0,
@@ -6138,7 +6138,7 @@
         },
         {
           "symbol": "DeliveryDeferred.__init__",
-          "line": 97,
+          "line": 98,
           "missing_parameters": [],
           "missing_return": false,
           "dict_nodes": 0,
@@ -6146,7 +6146,7 @@
         },
         {
           "symbol": "delivery_moment",
-          "line": 107,
+          "line": 108,
           "missing_parameters": [],
           "missing_return": false,
           "dict_nodes": 0,
@@ -6154,7 +6154,7 @@
         },
         {
           "symbol": "delivery_payload",
-          "line": 113,
+          "line": 114,
           "missing_parameters": [],
           "missing_return": false,
           "dict_nodes": 0,
@@ -6162,7 +6162,7 @@
         },
         {
           "symbol": "delivery_subject",
-          "line": 121,
+          "line": 122,
           "missing_parameters": [],
           "missing_return": false,
           "dict_nodes": 0,
@@ -6170,7 +6170,7 @@
         },
         {
           "symbol": "delivery_filters",
-          "line": 129,
+          "line": 130,
           "missing_parameters": [],
           "missing_return": false,
           "dict_nodes": 2,
@@ -6178,7 +6178,7 @@
         },
         {
           "symbol": "DeliveryService.__init__",
-          "line": 136,
+          "line": 137,
           "missing_parameters": [],
           "missing_return": false,
           "dict_nodes": 0,
@@ -6186,7 +6186,7 @@
         },
         {
           "symbol": "DeliveryService.close",
-          "line": 143,
+          "line": 144,
           "missing_parameters": [],
           "missing_return": false,
           "dict_nodes": 0,
@@ -6194,7 +6194,7 @@
         },
         {
           "symbol": "DeliveryService._all",
-          "line": 147,
+          "line": 148,
           "missing_parameters": [],
           "missing_return": false,
           "dict_nodes": 0,
@@ -6202,7 +6202,7 @@
         },
         {
           "symbol": "DeliveryService.terminal_failure",
-          "line": 152,
+          "line": 153,
           "missing_parameters": [],
           "missing_return": false,
           "dict_nodes": 4,
@@ -6210,7 +6210,7 @@
         },
         {
           "symbol": "DeliveryService._enter_delivery_lock",
-          "line": 244,
+          "line": 245,
           "missing_parameters": [],
           "missing_return": false,
           "dict_nodes": 0,
@@ -6218,7 +6218,7 @@
         },
         {
           "symbol": "DeliveryService.deliver",
-          "line": 253,
+          "line": 254,
           "missing_parameters": [],
           "missing_return": false,
           "dict_nodes": 1,
@@ -6226,7 +6226,7 @@
         },
         {
           "symbol": "DeliveryService._deliver_documents",
-          "line": 291,
+          "line": 292,
           "missing_parameters": [],
           "missing_return": false,
           "dict_nodes": 9,
@@ -6234,7 +6234,7 @@
         },
         {
           "symbol": "DeliveryService._ops_receipts",
-          "line": 416,
+          "line": 417,
           "missing_parameters": [],
           "missing_return": false,
           "dict_nodes": 3,
@@ -6242,7 +6242,7 @@
         },
         {
           "symbol": "DeliveryService._ops_schedule",
-          "line": 459,
+          "line": 460,
           "missing_parameters": [],
           "missing_return": false,
           "dict_nodes": 1,
@@ -6250,7 +6250,7 @@
         },
         {
           "symbol": "DeliveryService._deliver_progress",
-          "line": 507,
+          "line": 508,
           "missing_parameters": [],
           "missing_return": false,
           "dict_nodes": 14,
@@ -6258,7 +6258,7 @@
         },
         {
           "symbol": "DeliveryService._deliver",
-          "line": 743,
+          "line": 744,
           "missing_parameters": [],
           "missing_return": false,
           "dict_nodes": 13,
@@ -6266,15 +6266,23 @@
         },
         {
           "symbol": "DeliveryService._finalize_invalidated",
-          "line": 1038,
+          "line": 1041,
           "missing_parameters": [],
           "missing_return": false,
           "dict_nodes": 1,
           "get_calls": 0
         },
         {
+          "symbol": "DeliveryService._validate_activation_decisions",
+          "line": 1062,
+          "missing_parameters": [],
+          "missing_return": false,
+          "dict_nodes": 0,
+          "get_calls": 1
+        },
+        {
           "symbol": "DeliveryService._activate_calls",
-          "line": 1059,
+          "line": 1072,
           "missing_parameters": [],
           "missing_return": false,
           "dict_nodes": 3,
@@ -6386,7 +6394,7 @@
     },
     {
       "path": "src/tank/contracts/delivery.py",
-      "lines": 783,
+      "lines": 799,
       "functions": [
         {
           "symbol": "DeliverySettings.telegram_token",
@@ -6758,7 +6766,7 @@
         },
         {
           "symbol": "StartCallPrices.observed_price",
-          "line": 745,
+          "line": 750,
           "missing_parameters": [],
           "missing_return": false,
           "dict_nodes": 0,
@@ -6766,11 +6774,11 @@
         },
         {
           "symbol": "call_activation_decision",
-          "line": 770,
+          "line": 775,
           "missing_parameters": [],
           "missing_return": false,
           "dict_nodes": 0,
-          "get_calls": 2
+          "get_calls": 1
         }
       ]
     },
