@@ -112,11 +112,28 @@ class Dispatch(UnitRecord):
     scheduler: str
     loadscope_reorder: FalseFlag
     automatic_nodes: int
+    autoload_disabled: bool
+    required_xdist: bool
+    unrelated_plugins: tuple[str, ...]
 
 
 class Execution(UnitRecord):
     nodeid: str
     worker: str
+
+
+class WorkerState(UnitRecord):
+    worker: str
+    exitstatus: int
+    testscollected: int
+    testsfailed: int
+    collect_only: bool
+    shouldstop: bool | str
+    shouldfail: bool | str
+    items: tuple[str, ...]
+    autoload_disabled: bool
+    required_xdist: bool
+    unrelated_plugins: tuple[str, ...]
 
 
 class ProbeAttempt(UnitRecord):
@@ -145,6 +162,9 @@ class Dispatch(BaseModel):
     scheduler: str
     loadscope_reorder: bool
     automatic_nodes: int
+    autoload_disabled: bool
+    required_xdist: bool
+    unrelated_plugins: tuple[str, ...]
 
 class Execution(BaseModel):
     model_config = ConfigDict(strict=True, extra="forbid")
@@ -161,11 +181,17 @@ class WorkerState(BaseModel):
     shouldstop: bool | str
     shouldfail: bool | str
     items: tuple[str, ...]
+    autoload_disabled: bool
+    required_xdist: bool
+    unrelated_plugins: tuple[str, ...]
+
+def unrelated_plugins(config: pytest.Config) -> tuple[str, ...]:
+    return tuple(name for name in ("asyncio", "anyio", "timeout", "respx", "xdist.looponfail", "pytest_asyncio.plugin", "anyio.pytest_plugin", "pytest_timeout", "respx.plugin") if config.pluginmanager.hasplugin(name))
 
 def pytest_sessionfinish(session: pytest.Session, exitstatus: int) -> None:
     if "PYTEST_XDIST_WORKER" not in os.environ:
         return
-    record = WorkerState(worker=os.environ["PYTEST_XDIST_WORKER"], exitstatus=int(exitstatus), testscollected=session.testscollected, testsfailed=session.testsfailed, collect_only=session.config.getoption("collectonly"), shouldstop=session.shouldstop, shouldfail=session.shouldfail, items=tuple(item.nodeid for item in session.items))
+    record = WorkerState(worker=os.environ["PYTEST_XDIST_WORKER"], exitstatus=int(exitstatus), testscollected=session.testscollected, testsfailed=session.testsfailed, collect_only=session.config.getoption("collectonly"), shouldstop=session.shouldstop, shouldfail=session.shouldfail, items=tuple(item.nodeid for item in session.items), autoload_disabled=os.environ.get("PYTEST_DISABLE_PLUGIN_AUTOLOAD")=="1", required_xdist=session.config.pluginmanager.hasplugin("xdist.plugin"), unrelated_plugins=unrelated_plugins(session.config))
     with Path(os.environ["WORKER_LOG"]).open("a") as stream:
         stream.write(record.model_dump_json()+"\\n")
 
@@ -179,7 +205,7 @@ def pytest_xdist_make_scheduler(config: pytest.Config, log: Producer) -> Generat
     original = scheduler._assign_work_unit
     def observed(node: WorkerController) -> None:
         file = next(iter(scheduler.workqueue))
-        record = Dispatch(file=file, node=node.gateway.id, scheduler=type(scheduler).__module__+"."+type(scheduler).__name__, loadscope_reorder=config.getoption("loadscopereorder"), automatic_nodes=scheduler.numnodes)
+        record = Dispatch(file=file, node=node.gateway.id, scheduler=type(scheduler).__module__+"."+type(scheduler).__name__, loadscope_reorder=config.getoption("loadscopereorder"), automatic_nodes=scheduler.numnodes, autoload_disabled=os.environ.get("PYTEST_DISABLE_PLUGIN_AUTOLOAD")=="1", required_xdist=config.pluginmanager.hasplugin("xdist.plugin"), unrelated_plugins=unrelated_plugins(config))
         with Path(os.environ["DISPATCH_LOG"]).open("a") as stream:
             stream.write(record.model_dump_json()+"\\n")
         original(node)
@@ -255,6 +281,9 @@ def test_actual_console_native_loadfile_scheduler_honors_measured_order(
     environment = dict(os.environ)
     environment.pop("PYTEST_XDIST_WORKER", None)
     environment.pop("PYTEST_CURRENT_TEST", None)
+    environment.pop("PYTEST_PLUGINS", None)
+    environment.pop("PYTEST_ADDOPTS", None)
+    environment["PYTEST_DISABLE_PLUGIN_AUTOLOAD"] = "1"
     environment["PYTHONPATH"] = str(source / "scripts/ci")
     environment["DISPATCH_LOG"] = str(root / "dispatch.jsonl")
     environment["EXECUTION_LOG"] = str(root / "execution.jsonl")
@@ -267,6 +296,8 @@ def test_actual_console_native_loadfile_scheduler_honors_measured_order(
         "--confcutdir",
         str(root),
         "-q",
+        "-p",
+        "xdist.plugin",
         "-m",
         "integration",
     ]
@@ -328,13 +359,34 @@ def test_actual_console_native_loadfile_scheduler_honors_measured_order(
     ]
     assert [record.file for record in dispatches] == [costly, numerous]
     assert all(
-        record.scheduler == "xdist.scheduler.loadfile.LoadFileScheduling" and record.automatic_nodes > 0
+        record.scheduler == "xdist.scheduler.loadfile.LoadFileScheduling"
+        and record.automatic_nodes > 0
+        and record.autoload_disabled
+        and record.required_xdist
+        and not record.unrelated_plugins
         for record in dispatches
     )
     expected = {
         f"{file}::test_case_{index}" for file, count in [(costly, 1), (numerous, 3)] for index in range(count)
     }
     assert Counter(record.nodeid for record in executions) == Counter(expected)
+    workers = [
+        WorkerState.model_validate_json(line) for line in (root / "workers.jsonl").read_text().splitlines()
+    ]
+    assert len({worker.worker for worker in workers}) == dispatches[0].automatic_nodes == len(workers)
+    assert all(
+        worker.exitstatus == 0
+        and worker.testscollected == 4
+        and worker.testsfailed == 0
+        and worker.collect_only is False
+        and worker.shouldstop is False
+        and worker.shouldfail is False
+        and Counter(worker.items) == Counter(expected)
+        and worker.autoload_disabled
+        and worker.required_xdist
+        and not worker.unrelated_plugins
+        for worker in workers
+    )
     assert verify_integration_results([root / "actual.xml"], [captured]) == {
         "cases": 4,
         "passed": 4,
@@ -351,6 +403,9 @@ def test_actual_console_native_loadfile_scheduler_honors_measured_order(
     )
     request.node.user_properties.append(("native_scheduler_argv", json.dumps(command)))
     request.node.user_properties.append(("complete_collection_sha256", signature))
+    request.node.user_properties.append(
+        ("native_worker_admission", json.dumps([worker.model_dump() for worker in workers]))
+    )
     output = Path(".test-results/integration-order-probe.json")
     output.parent.mkdir(parents=True, exist_ok=True)
     output.write_text(
