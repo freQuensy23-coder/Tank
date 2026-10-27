@@ -1,6 +1,6 @@
 """Consumed delivery activation facts independent of transport and persistence."""
 
-from collections.abc import AsyncIterator, Mapping
+from collections.abc import AsyncIterator, Mapping, Sequence
 from contextlib import AbstractAsyncContextManager
 from decimal import Decimal, InvalidOperation
 from typing import Annotated, Literal, Protocol, Self
@@ -179,6 +179,29 @@ class OpsAssessmentView(OpsPresentationClocks):
 class OpsMapView(OpsPresentationClocks):
     map_version: int | None = Field(default=None, ge=1)
     analysis_set: list[DeliveryIdentity] | None = None
+
+
+class SelectedOpsMap(DomainModel):
+    map_version: int = Field(ge=1)
+    analysis_set: tuple[DeliveryIdentity, ...]
+
+
+class UnknownOpsMap(DomainModel):
+    reason: Literal["MAP_VERSION_UNREPORTED", "ANALYSIS_SET_UNREPORTED"]
+
+
+def select_ops_map(maps: Sequence[OpsMapView]) -> SelectedOpsMap | UnknownOpsMap:
+    candidates: list[tuple[int, OpsMapView]] = []
+    for record in maps:
+        if record.map_version is None:
+            return UnknownOpsMap(reason="MAP_VERSION_UNREPORTED")
+        candidates.append((record.map_version, record))
+    if not candidates:
+        raise ValueError("Ops map selection requires a recorded map")
+    version, selected = max(candidates, key=lambda candidate: candidate[0])
+    if selected.analysis_set is None:
+        return UnknownOpsMap(reason="ANALYSIS_SET_UNREPORTED")
+    return SelectedOpsMap(map_version=version, analysis_set=tuple(selected.analysis_set))
 
 
 class OpsTokenView(OpsPresentationClocks):

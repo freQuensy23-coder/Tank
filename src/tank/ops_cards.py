@@ -27,6 +27,8 @@ from tank.contracts.delivery import (
     OpsSourceItem,
     OpsTokenView,
     RenderedOpsCard,
+    UnknownOpsMap,
+    select_ops_map,
 )
 from tank.contracts.json import decode_unique_json
 from tank.ops_progress import clipped
@@ -434,7 +436,13 @@ def outcome(data: OpsCardSnapshot) -> OpsCardOutcome:
         last_error = max(errors, key=lambda row: time_of(row, "at"), default=None)
         reason = ""
         if failed:
-            reason = f"Доставка не выполнена; попыток: {max((row.attempt if row.attempt is not None else 0 for row in errors), default=0)}"
+            reported_attempts = [row.attempt for row in errors if row.attempt is not None]
+            if any(row.attempt is None for row in errors):
+                reason = "Доставка не выполнена; число попыток не полностью записано"
+                if reported_attempts:
+                    reason += f"; известный максимум: {max(reported_attempts)}"
+            else:
+                reason = f"Доставка не выполнена; попыток: {max(reported_attempts)}"
             http_status = next((row.http_status for row in reversed(errors) if row.http_status), None)
             if http_status:
                 reason += f"; Telegram HTTP {http_status}"
@@ -575,31 +583,39 @@ def outcome(data: OpsCardSnapshot) -> OpsCardOutcome:
         missing.append("определение затронутых токенов")
         reached = "определение затронутых токенов"
     else:
-        mapping = max(data.maps, key=lambda row: row.map_version if row.map_version is not None else 0)
-        tokens = set(mapping.analysis_set if mapping.analysis_set is not None else [])
-        truth_tokens = {row.token_id for row in data.truths}
-        decision_tokens = {row.token_id for row in data.decisions}
-        fields.append(
-            (
-                "Рынок",
-                f"данные: {len(tokens & truth_tokens)}/{len(tokens)} токенов; решения: {len(tokens & decision_tokens)}/{len(tokens)}",
-            )
-        )
-        if tokens - truth_tokens:
+        mapping = select_ops_map(data.maps)
+        if isinstance(mapping, UnknownOpsMap):
             missing.append(
-                "рыночный анализ: "
-                + ", ".join(token.rsplit(":", 1)[-1] for token in sorted(tokens - truth_tokens))
+                "версия карты не записана"
+                if mapping.reason == "MAP_VERSION_UNREPORTED"
+                else "состав токенов не записан"
             )
-            reached = "рыночный анализ"
-        elif tokens - decision_tokens:
-            missing.append(
-                "решение по токенам: "
-                + ", ".join(token.rsplit(":", 1)[-1] for token in sorted(tokens - decision_tokens))
-            )
-            reached = "решение по токенам"
+            reached = "определение затронутых токенов"
         else:
-            missing.append("решение о публикации")
-            reached = "решение о публикации"
+            tokens = set(mapping.analysis_set)
+            truth_tokens = {row.token_id for row in data.truths}
+            decision_tokens = {row.token_id for row in data.decisions}
+            fields.append(
+                (
+                    "Рынок",
+                    f"данные: {len(tokens & truth_tokens)}/{len(tokens)} токенов; решения: {len(tokens & decision_tokens)}/{len(tokens)}",
+                )
+            )
+            if tokens - truth_tokens:
+                missing.append(
+                    "рыночный анализ: "
+                    + ", ".join(token.rsplit(":", 1)[-1] for token in sorted(tokens - truth_tokens))
+                )
+                reached = "рыночный анализ"
+            elif tokens - decision_tokens:
+                missing.append(
+                    "решение по токенам: "
+                    + ", ".join(token.rsplit(":", 1)[-1] for token in sorted(tokens - decision_tokens))
+                )
+                reached = "решение по токенам"
+            else:
+                missing.append("решение о публикации")
+                reached = "решение о публикации"
     fields.append(("Alerts", "публикация не запрошена"))
     if finished:
         return OpsCardOutcome(
