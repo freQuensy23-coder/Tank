@@ -1,0 +1,120 @@
+{
+  "checkpoint": {
+    "entry_error_reporting": {
+      "contract_version": 1,
+      "last_outcome": null,
+      "pending": {},
+      "source_id": "S01",
+      "unresolved_legacy": null
+    },
+    "entry_errors": [],
+    "error": null,
+    "fetched_at": "2026-10-27T08:40:38.286038Z",
+    "fetched_at_prec": "COLLECTION_ONLY",
+    "fetched_at_prec_reason": null,
+    "fetched_at_precision": "COLLECTION_ONLY",
+    "http_status": 200,
+    "last_attempt_at": "2026-10-27T08:40:38.285691Z",
+    "last_attempt_at_prec": "COLLECTION_ONLY",
+    "last_attempt_at_prec_reason": null,
+    "last_attempt_at_precision": "COLLECTION_ONLY",
+    "payload_sha256": "52a125d2e821a78448b9d8c1a88090854cb7f90790755671b2a237eed1670b66",
+    "pending_batches": [
+      {
+        "acquired_at": "2026-10-27T08:40:38.286038Z",
+        "acquired_at_prec": null,
+        "acquired_at_prec_reason": null,
+        "acquired_at_precision": "COLLECTION_ONLY",
+        "batch_id": "BATCH-01M5Y89H4KNPER5NK65PN6WT51",
+        "coverage": {
+          "etag": "\"actual-index\"",
+          "last_modified": null
+        },
+        "kind": "rss",
+        "quarantines": [],
+        "rows": [
+          {
+            "categories": [],
+            "discovery_code_version": "test",
+            "discovery_config_version": "test",
+            "external_id": "legacy-publication",
+            "feed": "https://source.example/index",
+            "item_id": "ITM-01M5Y89H4KH4RDRDTSKNZ6B64P",
+            "observed_at": "2026-10-27T08:40:38.286038Z",
+            "observed_at_prec": "COLLECTION_ONLY",
+            "observed_at_prec_reason": null,
+            "published_at": "2026-10-16T12:00:00Z",
+            "published_at_bucket_size_s": null,
+            "published_at_precision": "EXACT",
+            "published_prec": "EXACT",
+            "published_prec_reason": null,
+            "source_id": "S01",
+            "subtype": "releases",
+            "text": "Actual reported summary",
+            "title": "Actual release",
+            "url": "https://source.example/article"
+          }
+        ],
+        "source_id": "S01"
+      }
+    ],
+    "reads": {
+      "failed": 0,
+      "ok": 1
+    },
+    "response_url": "https://source.example/index",
+    "source_id": "S01",
+    "status": "PENDING",
+    "updated_at": "2026-10-27T08:40:38.291982Z",
+    "updated_at_prec": "COLLECTION_ONLY",
+    "updated_at_prec_reason": null
+  },
+  "index_sha256": "52a125d2e821a78448b9d8c1a88090854cb7f90790755671b2a237eed1670b66",
+  "producer_commit": "d17a24f80b98d0286861701f693a3b1b7dcb3e01",
+  "source": {
+    "adapter_status": "NOT_TESTED",
+    "adapter_status_basis": "Offline parser tests and historical public smoke exist; no unattended acceptance claimed.",
+    "auth": "NONE",
+    "author_organization": null,
+    "bucket": "REGULATOR_MARKET_STRUCTURE",
+    "cost_class": "FREE_OPEN",
+    "detail_url": null,
+    "endpoint_verification": null,
+    "feeds": [
+      {
+        "article_pattern": null,
+        "author_organization": null,
+        "body": null,
+        "embedded_json_fields": [],
+        "form": null,
+        "headers": {},
+        "interval_s": 60,
+        "kind": "rss",
+        "market_type": null,
+        "method": "GET",
+        "official_index_url": null,
+        "request_weight": 1,
+        "requests_per_minute": null,
+        "subtype": null,
+        "url": "https://source.example/index",
+        "venue": null
+      }
+    ],
+    "interval_s": 60,
+    "limits": {
+      "budget_fraction": 0.5,
+      "documented_rate_per_s": 10,
+      "rate_per_min": 300,
+      "requires_contact_user_agent": true,
+      "shared_host": "sec.gov",
+      "unknown_limit_policy": "Honor Retry-After and endpoint cadence; verify before production acceptance."
+    },
+    "mode": "REST",
+    "name": "Authored legacy release",
+    "paid_gap_ref": null,
+    "priority": "CORE",
+    "source_class": "PRIMARY",
+    "source_id": "S01",
+    "terms_notes": "Read-only public content; honor publisher terms and Retry-After."
+  }
+}
