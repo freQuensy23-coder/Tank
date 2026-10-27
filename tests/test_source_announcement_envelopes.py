@@ -10,11 +10,12 @@ from pydantic import JsonValue
 from pydantic_settings import SettingsConfigDict
 from source_support import fixture_request_budgets, fixture_versions, source_definition
 from test_sources import collector_http as collector_http
+from test_storage import repo as repo
 
 from tank.contracts.json import encode_json
 from tank.settings import Settings
 from tank.sources import SourceService
-from tank.storage import MemoryRepository
+from tank.storage import StorageBackend
 from tank.util import parse_time, sha256
 
 URL = "https://api.bybit.com/v5/announcements/index?locale=en-US&limit=20"
@@ -100,7 +101,7 @@ def malformed(kind: InvalidAnnouncement) -> bytes:
     ],
 )
 async def test_invalid_announcement_envelope_cannot_author_item_raw_or_etag(
-    tmp_path: Path, collector_http: CollectorBinder, invalid: InvalidAnnouncement
+    repo: StorageBackend, tmp_path: Path, collector_http: CollectorBinder, invalid: InvalidAnnouncement
 ) -> None:
     body = malformed(invalid)
     etag = "invalid"
@@ -111,7 +112,6 @@ async def test_invalid_announcement_envelope_cannot_author_item_raw_or_etag(
         observed.append(body)
         return httpx.Response(200, content=body, headers={"etag": etag})
 
-    repo = MemoryRepository()
     budgets = fixture_request_budgets()
     try:
         async with httpx.AsyncClient(transport=httpx.MockTransport(respond)) as http:
@@ -157,4 +157,3 @@ async def test_invalid_announcement_envelope_cannot_author_item_raw_or_etag(
         ]
     finally:
         await budgets.shutdown()
-        await repo.close()
