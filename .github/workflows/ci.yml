@@ -232,6 +232,17 @@ jobs:
           src/tank/sources/reporting.py src/tank/ops_entry_errors.py
           tests/test_source_announcement_envelopes.py tests/source_report_support.py
           tests/test_source_error_report_scope.py tests/test_source_feed_input.py
+      - name: Check completed source admission and service family strictly
+        env:
+          MYPYPATH: src:tests
+        run: >-
+          uv run --frozen --extra dev mypy --config-file scripts/ci/mypy-foundation-tests.ini
+          src/tank/sources/checkpoints.py src/tank/sources/parsers.py
+          src/tank/sources/polling.py src/tank/sources/probe.py src/tank/sources/__init__.py
+          tests/test_source_article_binding.py tests/test_source_article_identity.py
+          tests/test_source_checks.py tests/test_source_parser_admission.py tests/test_source_service.py
+          tests/test_cli_source_check.py tests/test_source_binance_catalog_phase.py
+          tests/test_source_contentful_admission.py tests/test_source_detail_publication.py
       - name: Check completed funding normalization and history family strictly
         env:
           MYPYPATH: src:tests

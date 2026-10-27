@@ -1,5 +1,6 @@
 """Measured slots preserve unknown work and the actual configured native scheduler."""
 
+import base64
 import hashlib
 import json
 import os
@@ -8,6 +9,7 @@ import sys
 from collections import Counter
 from decimal import Decimal
 from pathlib import Path, PosixPath
+from typing import Literal
 
 import pytest
 from pydantic import ValidationError
@@ -144,6 +146,46 @@ class ProbeAttempt(UnitRecord):
     dispatches_jsonl: str | None
     executions_jsonl: str | None
     workers_jsonl: str | None
+
+
+class TimedOutProbeAttempt(UnitRecord):
+    kind: Literal["TIMED_OUT"] = "TIMED_OUT"
+    argv: tuple[str, ...]
+    timeout_seconds: float
+    stdout_base64: str | None
+    stderr_base64: str | None
+    dispatches_jsonl: str | None
+    executions_jsonl: str | None
+    workers_jsonl: str | None
+    actual_xml: str | None
+
+
+def captured_timeout_stream(value: str | bytes | None) -> str | None:
+    if value is None:
+        return None
+    raw = value.encode("utf-8", errors="surrogatepass") if isinstance(value, str) else value
+    return base64.b64encode(raw).decode("ascii")
+
+
+def persist_probe_timeout(root: Path, command: list[str], error: subprocess.TimeoutExpired) -> Path:
+    def retained(name: str) -> str | None:
+        path = root / name
+        return path.read_text() if path.exists() else None
+
+    attempt = TimedOutProbeAttempt(
+        argv=tuple(command),
+        timeout_seconds=float(error.timeout),
+        stdout_base64=captured_timeout_stream(error.stdout),
+        stderr_base64=captured_timeout_stream(error.stderr),
+        dispatches_jsonl=retained("dispatch.jsonl"),
+        executions_jsonl=retained("execution.jsonl"),
+        workers_jsonl=retained("workers.jsonl"),
+        actual_xml=retained("actual.xml"),
+    )
+    target = Path(".test-results/integration-order-probe-timeout.json")
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(attempt.model_dump_json(indent=2) + "\n")
+    return target
 
 
 PROBE = """from collections.abc import Generator, Iterator
@@ -331,9 +373,20 @@ def test_actual_console_native_loadfile_scheduler_honors_measured_order(
         "--no-loadscope-reorder",
         "--junitxml=" + str(root / "actual.xml"),
     ]
-    result = subprocess.run(
-        command, cwd=root, env=environment, capture_output=True, text=True, timeout=8, check=False
-    )
+    try:
+        result = subprocess.run(
+            command, cwd=root, env=environment, capture_output=True, text=True, timeout=8, check=False
+        )
+    except subprocess.TimeoutExpired as error:
+        assert isinstance(request.node, pytest.Item)
+        try:
+            retained_timeout = persist_probe_timeout(root, command, error)
+            request.node.user_properties.append(("native_scheduler_timeout", retained_timeout.read_text()))
+        except (OSError, UnicodeError, ValidationError) as retention_error:
+            request.node.user_properties.append(
+                ("native_scheduler_timeout_retention_error", type(retention_error).__name__)
+            )
+        raise
     attempt = ProbeAttempt(
         argv=tuple(command),
         returncode=result.returncode,
@@ -439,3 +492,57 @@ def test_collection_digest_binds_exact_admitted_bytes_during_retarget(tmp_path: 
     assert digest == hashlib.sha256(first).hexdigest()
     assert target.read_bytes() == replacement
     assert digest != hashlib.sha256(replacement).hexdigest()
+
+
+@pytest.mark.parametrize(
+    "output,expected", [(None, None), (b"partial\xff", b"partial\xff"), ("partial text", b"partial text")]
+)
+def test_probe_timeout_retains_actual_partial_evidence(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, output: str | bytes | None, expected: bytes | None
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    root = tmp_path / "synthetic-probe"
+    root.mkdir()
+    partial = {
+        "dispatch.jsonl": '{"file":"tests/test_one.py"}\n',
+        "execution.jsonl": "",
+        "workers.jsonl": '{"worker":"gw0"}\n',
+        "actual.xml": "<testsuites>",
+    }
+    for name, text in partial.items():
+        (root / name).write_text(text)
+    command = ["pytest", "-n", "auto"]
+    error = subprocess.TimeoutExpired(command, 8, output=output, stderr=b"stderr\x00")
+    path = persist_probe_timeout(root, command, error)
+    actual = TimedOutProbeAttempt.model_validate_json(path.read_bytes())
+    assert actual.kind == "TIMED_OUT"
+    assert actual.argv == tuple(command)
+    assert actual.timeout_seconds == 8
+    if expected is None:
+        assert actual.stdout_base64 is None
+    else:
+        assert actual.stdout_base64 is not None
+        assert base64.b64decode(actual.stdout_base64) == expected
+    assert actual.stderr_base64 is not None
+    assert base64.b64decode(actual.stderr_base64) == b"stderr\x00"
+    assert actual.dispatches_jsonl == partial["dispatch.jsonl"]
+    assert actual.executions_jsonl == ""
+    assert actual.workers_jsonl == partial["workers.jsonl"]
+    assert actual.actual_xml == "<testsuites>"
+    assert error.output is output
+    assert error.timeout == 8
+
+
+def test_probe_timeout_preserves_absent_partial_files(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    error = subprocess.TimeoutExpired(["pytest"], 8)
+    actual = TimedOutProbeAttempt.model_validate_json(
+        persist_probe_timeout(tmp_path, ["pytest"], error).read_bytes()
+    )
+    assert actual.dispatches_jsonl is None
+    assert actual.executions_jsonl is None
+    assert actual.workers_jsonl is None
+    assert actual.actual_xml is None
+    assert actual.stdout_base64 is actual.stderr_base64 is None
