@@ -88,7 +88,9 @@ class NativeUsageSpan(DomainModel):
 
 class NativeUsageSession(DomainModel):
     session_id: str = Field(min_length=1, pattern=r"\S")
-    model_id: str = Field(min_length=1, pattern=r"\S")
+    model_id: str | None = Field(min_length=1, pattern=r"\S")
+    model_id_basis: str | None
+    model_id_reason: str | None
     prompt_version: str | None
     event_id: str | None = Field(min_length=1, pattern=r"\S")
     prompt_version_basis: str | None
@@ -101,6 +103,40 @@ class NativeUsageSession(DomainModel):
 
     @classmethod
     def from_record(cls, record: Mapping[str, JsonValue]) -> Self:
-        required = {name: record[name] for name in ("session_id", "model_id", "prompt_version")}
+        required = {"session_id": record["session_id"]}
         optional = {name: record.get(name) for name in cls.model_fields if name not in required}
         return cls.model_validate({**required, **optional})
+
+
+class SelectedNativeUsageModel(DomainModel):
+    model_id: str = Field(min_length=1, pattern=r"\S")
+    basis: Literal["NATIVE_SPAN_MODEL", "RECORDED_SESSION_MODEL"]
+    reported_model_id: str | None
+    session_model_id: str | None
+
+    @model_validator(mode="after")
+    def actual_selected_model_source(self) -> Self:
+        if self.basis == "NATIVE_SPAN_MODEL":
+            if self.reported_model_id is None or self.model_id != self.reported_model_id:
+                raise ValueError("Selected model differs from its actual span report")
+        elif (
+            self.reported_model_id is not None
+            or self.session_model_id is None
+            or self.model_id != self.session_model_id
+        ):
+            raise ValueError("Selected model differs from its actual recorded session model")
+        return self
+
+
+def select_native_usage_model(session: NativeUsageSession, span: NativeUsageSpan) -> SelectedNativeUsageModel:
+    session = NativeUsageSession.model_validate(session)
+    span = NativeUsageSpan.model_validate(span)
+    model = span.reported_model if span.reported_model is not None else session.model_id
+    if model is None:
+        raise ValueError("Native usage requires an actual reported or recorded session model")
+    return SelectedNativeUsageModel(
+        model_id=model,
+        basis="NATIVE_SPAN_MODEL" if span.reported_model is not None else "RECORDED_SESSION_MODEL",
+        reported_model_id=span.reported_model,
+        session_model_id=session.model_id,
+    )

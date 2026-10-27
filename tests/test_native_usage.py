@@ -61,6 +61,8 @@ async def test_actual_partial_usage_preserves_observations_and_declared_subscrip
     parsed = NativeUsageCounters.from_wire(measurements)
     assert row["usage"] == parsed.model_dump(mode="json", exclude_none=True)
     assert row["model_id"] == "resolved-session-model" and row["subject_id"] == "usage-session"
+    assert row["model_id_basis"] == "RECORDED_SESSION_MODEL" and row["reported_model_id"] is None
+    assert row["session_model_id"] == "resolved-session-model"
     assert row["cost_usd"] == "0" and row["billing_basis"] == "SUBSCRIPTION"
     assert row["cache_read_tokens"] == measurements.get("cache_read_input_tokens")
     assert row["cache_write_tokens"] is None and "cache_creation_input_tokens" not in row
