@@ -75,7 +75,7 @@ def test_ineligible_duplicate_cannot_supply_or_ambiguate_selected_funding(visibi
 def test_equal_time_different_source_evidence_does_not_become_false_agreement() -> None:
     first = funding_record_fixture("CURRENT_ESTIMATE")
     second: dict[str, JsonValue] = dict(first)
-    second["provider_extension"] = {"retained": False}
+    second["source_path"] = "fixture:normalized-funding:second"
     owned = calculator([first, second])
     result = owned.select(window())[0]
     assert isinstance(result.estimate, UnavailableFundingSelection)

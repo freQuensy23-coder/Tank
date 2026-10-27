@@ -21,7 +21,7 @@ def funding_record_fixture(kind: FundingKind) -> dict[str, JsonValue]:
         "as_of_prec": "COLLECTION_ONLY",
         "received_ts": "2026-10-16T12:01:00Z",
         "received_ts_prec": "COLLECTION_ONLY",
-        "provider_extension": {"retained": True},
+        "source_path": "fixture:normalized-funding:first",
     }
     if kind == "SETTLED":
         row.update(
