@@ -1,6 +1,6 @@
 """Recorded funding units and requested current calculations preserve independent facts."""
 
-from decimal import Decimal, localcontext
+from decimal import ROUND_UP, Decimal, Inexact, localcontext
 
 import pytest
 from funding_input_fixtures import funding_record_fixture, funding_scope_fixture
@@ -8,6 +8,11 @@ from pydantic import JsonValue, ValidationError
 
 from tank.analysis.condition_funding_input_codec import decode_funding_inputs
 from tank.analysis.condition_funding_inputs import FundingInputObservation
+from tank.analysis.funding_normalization_math import (
+    FundingRateCalculation,
+    FundingRateOperands,
+    normalize_funding_rate,
+)
 from tank.analysis.funding_rate import (
     CalculatedFundingEquivalent,
     FundingNormalizationRequest,
@@ -96,6 +101,20 @@ def test_current_normalization_is_independent_of_ambient_decimal_context() -> No
     assert value.value == Decimal("0.00246913578")
 
 
+def test_current_normalization_uses_its_own_rounding_and_traps_for_repeating_rates() -> None:
+    operands = FundingRateOperands(rate=Decimal(1), interval_h=Decimal(3))
+    expected = normalize_funding_rate(operands)
+    with localcontext() as context:
+        context.prec = 2
+        context.rounding = ROUND_UP
+        context.traps[Inexact] = True
+        actual = normalize_funding_rate(operands)
+    assert actual == expected
+    assert actual.value is not None
+    assert actual.reason is None
+    assert len(actual.value.as_tuple().digits) == 128
+
+
 @pytest.mark.parametrize(
     "rate,interval,expected",
     [("1E1000000000", "1E1000000000", "8"), ("1E-1000000000", "1", "8E-1000000000")],
@@ -139,3 +158,12 @@ def test_public_calculated_funding_admission_refuses_forged_value_and_float_prec
         CalculatedFundingEquivalent.model_validate(
             value.model_copy(update={"calculation_precision_digits": 128.0})
         )
+
+
+def test_public_pure_normalization_refuses_copied_bad_operands_and_changed_result() -> None:
+    operands = FundingRateOperands(rate=Decimal("0.001"), interval_h=Decimal(4))
+    with pytest.raises(ValidationError):
+        normalize_funding_rate(operands.model_copy(update={"interval_h": Decimal(0)}))
+    result = normalize_funding_rate(operands)
+    with pytest.raises(ValidationError, match="actual rate and positive duration"):
+        FundingRateCalculation.model_validate(result.model_copy(update={"value": Decimal(1)}))

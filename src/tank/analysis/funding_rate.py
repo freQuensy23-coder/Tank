@@ -1,11 +1,12 @@
 """Recorded eight-hour funding and explicitly requested current normalization are distinct."""
 
-from decimal import MAX_EMAX, MIN_EMIN, Decimal, DecimalException, localcontext
+from decimal import Decimal
 from typing import Annotated, Literal, Self
 
 from pydantic import BeforeValidator, model_validator
 
 from tank.analysis.condition_funding_inputs import FundingInputObservation
+from tank.analysis.funding_normalization_math import FundingRateOperands, normalize_funding_rate
 from tank.contracts import DomainModel
 from tank.contracts.scalars import require_integer
 
@@ -44,29 +45,8 @@ def _calculate(source: FundingInputObservation) -> _FundingArithmetic:
         )
     if interval.value <= 0:
         return _FundingArithmetic(value=None, reason="NONPOSITIVE_INTERVAL")
-    initial, duration = rate.value.as_tuple(), interval.value.as_tuple()
-    if not isinstance(initial.exponent, int) or not isinstance(duration.exponent, int):
-        return _FundingArithmetic(value=None, reason="NOT_ESTIMABLE")
-    try:
-        with localcontext() as context:
-            context.prec, context.Emax, context.Emin = 128, MAX_EMAX, MIN_EMIN
-            numerator = Decimal((initial.sign, initial.digits, 0))
-            denominator = Decimal((duration.sign, duration.digits, 0))
-            normalized = (numerator * 8 / denominator).as_tuple()
-        if not isinstance(normalized.exponent, int):
-            return _FundingArithmetic(value=None, reason="NOT_ESTIMABLE")
-        value = Decimal(
-            (
-                normalized.sign,
-                normalized.digits,
-                normalized.exponent + initial.exponent - duration.exponent,
-            )
-        )
-    except (DecimalException, OverflowError):
-        return _FundingArithmetic(value=None, reason="NOT_ESTIMABLE")
-    if not value.is_finite() or value == 0 and rate.value != 0:
-        return _FundingArithmetic(value=None, reason="NOT_ESTIMABLE")
-    return _FundingArithmetic(value=value, reason=None)
+    result = normalize_funding_rate(FundingRateOperands(rate=rate.value, interval_h=interval.value))
+    return _FundingArithmetic(value=result.value, reason=result.reason)
 
 
 class RecordedFundingEquivalent(DomainModel):
