@@ -1998,7 +1998,9 @@ class SessionService:
                     else "REQUIRES_ACTION"
                 )
             elif kind == "span.model_request_end":
-                await self.usage(NativeUsageSession.from_record(session), NativeUsageSpan.from_wire(event))
+                span = NativeUsageSpan.from_wire(event)
+                if span.counters is not None:
+                    await self.usage(NativeUsageSession.from_record(session), span)
             superseded_failure = bool(
                 event.get("_host_turn_retry_count", 0)
                 < next(

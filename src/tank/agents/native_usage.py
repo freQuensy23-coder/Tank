@@ -5,7 +5,7 @@ from typing import Protocol
 
 from pydantic import JsonValue
 
-from tank.contracts.native_usage import NativeUsageSession, NativeUsageSpan
+from tank.contracts.native_usage import NativeUsageSession, NativeUsageSpan, select_native_usage_model
 from tank.contracts.provenance import ResolvedVersionIdentity
 from tank.time_precision import Timestamp
 from tank.util import JsonInput
@@ -32,7 +32,7 @@ async def record_native_usage(
     if span.counters is None:
         return
     measured_at = span.processed_at if span.processed_at.value is not None else collected_at
-    model = span.reported_model if span.reported_model is not None else session.model_id
+    model = select_native_usage_model(session, span)
     key = session.session_id + ":" + span.native_event_id
     searches = span.web_searches()
     measurements = {
@@ -54,7 +54,12 @@ async def record_native_usage(
         "session_id": session.session_id,
         "event_id": session.event_id,
         "call": "AGENT",
-        "model_id": model,
+        "model_id": model.model_id,
+        "model_id_basis": model.basis,
+        "reported_model_id": model.reported_model_id,
+        "session_model_id": model.session_model_id,
+        "session_model_id_basis": session.model_id_basis,
+        "session_model_id_reason": session.model_id_reason,
         "prompt_version": session.prompt_version,
         "prompt_version_basis": session.prompt_version_basis,
         "prompt_version_reason": session.prompt_version_reason,
@@ -72,7 +77,7 @@ async def record_native_usage(
         "cost_usd": "0",
         "billing_basis": "SUBSCRIPTION",
         "cost_reason": "ChatGPT subscription: no per-token charge",
-        "model": model,
+        "model": model.model_id,
         "subject_id": session.event_id if session.event_id is not None else session.session_id,
         **measured_at.fields("at"),
         **collected_at.fields("created_at"),

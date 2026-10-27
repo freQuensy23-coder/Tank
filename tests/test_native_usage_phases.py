@@ -42,6 +42,8 @@ async def test_reported_span_model_does_not_require_an_unused_session_model_or_p
     current = await repo.get("ops.llm_usage", "session:actual-span")
     assert current is not None
     assert current["model_id"] == current["model"] == "actual-reported-model"
+    assert current["model_id_basis"] == "NATIVE_SPAN_MODEL"
+    assert current["reported_model_id"] == "actual-reported-model" and current["session_model_id"] is None
     assert current["prompt_version"] is None and current["session_config_version"] is None
     assert current["billing_basis"] == "SUBSCRIPTION" and current["cost_usd"] == "0"
     assert record == (
@@ -90,7 +92,7 @@ async def test_actual_no_report_frame_progresses_without_unused_session_metadata
 async def test_reported_usage_requires_one_actual_model_before_any_ledger_write(repo: StorageBackend) -> None:
     session = NativeUsageSession.from_record({"session_id": "session", "prompt_version": None})
     span = NativeUsageSpan.from_wire({"id": "span", "model_usage": {"input_tokens": 1}})
-    with pytest.raises(ValueError, match="actual reported or resolved model"):
+    with pytest.raises(ValueError, match="actual reported or recorded session model"):
         await record_native_usage(
             repo,
             session,
