@@ -221,10 +221,20 @@ class PublicationProgressResult(DomainModel):
         return self
 
 
+class SourceAttemptProgressIdentity(DomainModel):
+    session_id: SourceContextId
+    message_id: SourceContextId
+    retry_count: int = Field(ge=0)
+
+    @property
+    def key(self) -> str:
+        return f"{self.session_id}:{self.message_id}:{self.retry_count}"
+
+
 class SourceMessageProgress(DomainModel):
     message_id: SourceContextId
     payload: SourceRoutingMessage
-    retry_count: int = Field(ge=0)
+    retry_count: int | None = Field(default=None, ge=0)
     turn_status: Literal["ACCEPTING", "PENDING", "RUNNING", "DONE", "FAILED"]
     sent_at: str | None = None
 
