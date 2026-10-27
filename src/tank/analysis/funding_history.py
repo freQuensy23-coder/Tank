@@ -14,6 +14,7 @@ from tank.analysis.funding_rate import (
     funding_equivalent,
 )
 from tank.analysis.funding_selection import FundingCalculator, FundingWindowRequest
+from tank.analysis.funding_time import funding_clock_bounds, funding_history_time_eligible
 from tank.analysis.statistics_contracts import DecimalBounds, DecimalRange
 from tank.contracts import DomainModel
 from tank.contracts.configuration import Thresholds
@@ -86,6 +87,10 @@ class FundingHistoricalPopulation(DomainModel):
                 or source.kind != "SETTLED"
                 or at is None
                 or not lower <= parse_iso_time(at) < end
+                or funding_history_time_eligible(
+                    source.clock.timestamp, before=self.before, lookback_days=self.policy.lookback_days
+                )
+                is not True
             ):
                 raise ValueError("Funding history must retain its actual settled scope and interval")
             instant = parse_iso_time(at)
@@ -95,15 +100,25 @@ class FundingHistoricalPopulation(DomainModel):
         return self
 
     def normal_range(self) -> DecimalRange:
+        before_bounds = funding_clock_bounds(self.before, role="CALCULATION_BOUNDARY")
+        if before_bounds.lower is None or before_bounds.upper is None:
+            return DecimalRange(bounds=None, reason="INCOMPLETE")
         if self.ambiguous_clocks:
             return DecimalRange(bounds=None, reason="INCOMPLETE")
         unavailable = tuple(value for value in self.values if isinstance(value, UnavailableFundingEquivalent))
         if any(value.reason == "NOT_ESTIMABLE" for value in unavailable):
             return DecimalRange(bounds=None, reason="NOT_ESTIMABLE")
         known = tuple(value for value in self.values if not isinstance(value, UnavailableFundingEquivalent))
+        known_bounds = tuple(
+            funding_clock_bounds(point.source.clock.timestamp, role="SETTLEMENT_EVENT") for point in known
+        )
+        lower_bounds = tuple(point.lower for point in known_bounds if point.lower is not None)
+        upper_bounds = tuple(point.upper for point in known_bounds if point.upper is not None)
         if (
             not known
-            or (_historical_time(known[-1].source) - _historical_time(known[0].source)).total_seconds()
+            or len(lower_bounds) != len(known)
+            or len(upper_bounds) != len(known)
+            or (max(lower_bounds) - min(upper_bounds)).total_seconds()
             < self.policy.minimum_history_days * 86400
         ):
             return DecimalRange(bounds=None, reason="INSUFFICIENT_HISTORY")
@@ -150,6 +165,10 @@ def funding_historical_sources(
                 and point.kind == "SETTLED"
                 and point.clock.timestamp.value is not None
                 and lower <= parse_iso_time(point.clock.timestamp.value) < end
+                and funding_history_time_eligible(
+                    point.clock.timestamp, before=request.start, lookback_days=policy.lookback_days
+                )
+                is True
                 and point.visible_at(request.assembled_at) is True
             ),
             key=_historical_time,

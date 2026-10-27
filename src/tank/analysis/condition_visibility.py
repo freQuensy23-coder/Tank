@@ -5,6 +5,7 @@ from typing import Literal
 
 from pydantic import Field
 
+from tank.analysis.funding_time import funding_receipt_visible
 from tank.contracts import DomainModel
 from tank.contracts.json import JsonDocument
 from tank.time_precision import Timestamp, propagate_timestamp, timestamp_owned_fields
@@ -20,6 +21,7 @@ type AssemblyRelation = Literal[
     "SOURCE_CLOCK_UNCAPTURED",
     "ASSEMBLY_UNCAPTURED",
     "INVALID_SOURCE_CLOCK",
+    "ORDER_UNCERTAIN",
 ]
 
 
@@ -114,6 +116,15 @@ def condition_visibility(
             relation = "SOURCE_CLOCK_UNCAPTURED"
         elif assembly.value is None:
             relation = "ASSEMBLY_UNCAPTURED"
+        elif domain == "funding":
+            visible = funding_receipt_visible(clock, assembly)
+            relation = (
+                "AT_OR_BEFORE_ASSEMBLY"
+                if visible is True
+                else "AFTER_ASSEMBLY"
+                if visible is False
+                else "ORDER_UNCERTAIN"
+            )
         else:
             relation = (
                 "AT_OR_BEFORE_ASSEMBLY"

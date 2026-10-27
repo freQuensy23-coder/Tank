@@ -6,6 +6,7 @@ from typing import Literal, Self
 from pydantic import Field, JsonValue, model_validator
 
 from tank.analysis.condition_derivative_inputs import DerivativeInstrument
+from tank.analysis.funding_time import funding_receipt_visible
 from tank.contracts import DomainModel
 from tank.contracts.derivative_values import ReportedDerivativeNumber
 from tank.contracts.json import decode_unique_json
@@ -114,9 +115,7 @@ class FundingInputObservation(DomainModel):
         )
 
     def visible_at(self, assembled_at: Timestamp) -> bool | None:
-        if self.received_at.value is None or assembled_at.value is None:
-            return None
-        return parse_iso_time(self.received_at.value) <= parse_iso_time(assembled_at.value)
+        return funding_receipt_visible(self.received_at, assembled_at)
 
 
 class FundingSourceDescriptor(DomainModel):

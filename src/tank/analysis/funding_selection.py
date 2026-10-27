@@ -13,6 +13,7 @@ from tank.analysis.condition_funding_inputs import (
     FundingInputObservation,
     FundingReadSnapshot,
 )
+from tank.analysis.funding_time import funding_clock_bounds, funding_source_before
 from tank.contracts import DomainModel
 from tank.time_precision import Timestamp
 from tank.util import JsonInput, parse_iso_time
@@ -23,6 +24,8 @@ type FundingExclusionReason = Literal[
     "SOURCE_AFTER_CUTOFF",
     "RECEIPT_NOT_CAPTURED",
     "RECEIPT_AFTER_ASSEMBLY",
+    "RECEIPT_ORDER_UNCERTAIN",
+    "SOURCE_CLOCK_NOT_ORDERABLE",
 ]
 type FundingSelectionRole = Literal["LATEST_SETTLED", "LATEST_ESTIMATE", "SETTLED_START"]
 
@@ -100,12 +103,12 @@ class FundingInstrumentSelection(DomainModel):
                 continue
             point = selection.observation
             at = point.clock.timestamp.value
-            bound = self.request.start.value if role == "SETTLED_START" else self.request.cutoff.value
+            bound = self.request.start if role == "SETTLED_START" else self.request.cutoff
             if (
                 point.instrument != self.instrument
                 or at is None
-                or bound is None
-                or parse_iso_time(at) > parse_iso_time(bound)
+                or funding_source_before(point.clock.timestamp, kind=point.kind, boundary=bound, strict=False)
+                is not True
                 or point.visible_at(self.request.assembled_at) is not True
             ):
                 raise ValueError(
@@ -131,8 +134,16 @@ def _latest(
         return UnavailableFundingSelection(
             status="UNAVAILABLE", role=role, reason="NO_ELIGIBLE_OBSERVATION", candidates=()
         )
-    at = max(time for time, _ in points)
-    latest = tuple(point for time, point in points if time == at)
+    bounded: list[tuple[datetime, datetime, FundingInputObservation]] = []
+    for _, point in points:
+        bounds = funding_clock_bounds(
+            point.clock.timestamp, role="SETTLEMENT_EVENT" if point.kind == "SETTLED" else "ESTIMATE_SAMPLE"
+        )
+        if bounds.lower is None or bounds.upper is None:
+            raise ValueError("Eligible funding selection requires orderable source bounds")
+        bounded.append((bounds.lower, bounds.upper, point))
+    latest_lower = max(lower for lower, _, _ in bounded)
+    latest = tuple(point for _, upper, point in bounded if upper >= latest_lower)
     identities = {(point.evidence.source_projection_sha256, scopes[point.evidence]) for point in latest}
     if len(identities) > 1:
         return UnavailableFundingSelection(
@@ -185,7 +196,6 @@ class FundingCalculator:
         request = FundingWindowRequest.model_validate(request)
         if request.start.value is None or request.cutoff.value is None:
             raise ValueError("Funding selection requires actual request bounds")
-        start, cutoff = parse_iso_time(request.start.value), parse_iso_time(request.cutoff.value)
         selected: list[FundingInstrumentSelection] = []
         for instrument in self._source.instruments:
             settled: list[tuple[datetime, FundingInputObservation]] = []
@@ -197,12 +207,26 @@ class FundingCalculator:
                     reason = "ASSEMBLY_CLOCK_NOT_CAPTURED"
                 elif point.clock.timestamp.value is None:
                     reason = "SOURCE_CLOCK_NOT_CAPTURED"
-                elif parse_iso_time(point.clock.timestamp.value) > cutoff:
+                elif (
+                    funding_source_before(
+                        point.clock.timestamp, kind=point.kind, boundary=request.cutoff, strict=False
+                    )
+                    is False
+                ):
                     reason = "SOURCE_AFTER_CUTOFF"
+                elif (
+                    funding_source_before(
+                        point.clock.timestamp, kind=point.kind, boundary=request.cutoff, strict=False
+                    )
+                    is not True
+                ):
+                    reason = "SOURCE_CLOCK_NOT_ORDERABLE"
                 elif point.received_at.value is None:
                     reason = "RECEIPT_NOT_CAPTURED"
-                elif point.visible_at(request.assembled_at) is not True:
+                elif point.visible_at(request.assembled_at) is False:
                     reason = "RECEIPT_AFTER_ASSEMBLY"
+                elif point.visible_at(request.assembled_at) is not True:
+                    reason = "RECEIPT_ORDER_UNCERTAIN"
                 else:
                     reason = None
                 if reason is not None:
@@ -219,7 +243,14 @@ class FundingCalculator:
                     settled=_latest(settled, role="LATEST_SETTLED", scopes=self._scopes),
                     estimate=_latest(estimates, role="LATEST_ESTIMATE", scopes=self._scopes),
                     start=_latest(
-                        tuple(point for point in settled if point[0] <= start),
+                        tuple(
+                            point
+                            for point in settled
+                            if funding_source_before(
+                                point[1].clock.timestamp, kind="SETTLED", boundary=request.start, strict=False
+                            )
+                            is True
+                        ),
                         role="SETTLED_START",
                         scopes=self._scopes,
                     ),

@@ -53,6 +53,7 @@ from tank.analysis.condition_inputs import (
 from tank.analysis.condition_oi_codec import OIConditionLookup, captured_oi_selection_policy
 from tank.analysis.execution import ExecutionLevelWire, ExecutionSide, execute_book_walk, execution_request
 from tank.analysis.funding_selection import FundingWindowRequest
+from tank.analysis.funding_time import funding_observation_fresh
 from tank.analysis.oi_ratio import native_oi_change, usd_oi_change
 from tank.analysis.oi_synchronization import OISynchronizationPolicy
 from tank.analysis.open_interest import OIWindowRequest
@@ -5727,6 +5728,8 @@ def compute_condition_values(snapshot, requirements, *, config=None, cache=None,
                             "Requested " + label + " snapshot requires captured " + ", ".join(missing)
                         )
                 fields = (domain, "instruments", "semantics", "capture_metadata", "capture_tier")
+                if domain == "funding" and window == "EVENT":
+                    fields = (*fields, "anchor")
             elif metric == "price.close_vs_level":
                 domain = "close"
                 fields = ("flow_bars", "flow_segments", "flow_parent_bars", "klines", "instruments")
@@ -5899,7 +5902,9 @@ def compute_condition_values(snapshot, requirements, *, config=None, cache=None,
                         instruments=selected["instruments"],
                         observations=selected["funding"],
                         request=FundingWindowRequest(
-                            start=offset_schedule(
+                            start=propagate_timestamp(snapshot["anchor"], "ts")
+                            if window == "EVENT"
+                            else offset_schedule(
                                 propagate_timestamp(snapshot, "cutoff"), timedelta(seconds=-seconds)
                             ),
                             cutoff=propagate_timestamp(snapshot, "cutoff"),
@@ -6014,9 +6019,14 @@ def compute_condition_values(snapshot, requirements, *, config=None, cache=None,
                         )
                     )
                     if (
-                        observed.value is None
-                        or cadence is None
-                        or (end - parse_time(observed.value)).total_seconds() > cadence
+                        cadence is None
+                        or funding_observation_fresh(
+                            observed,
+                            kind=point.kind,
+                            cutoff=propagate_timestamp(snapshot, "cutoff"),
+                            cadence_s=cadence,
+                        )
+                        is not True
                     ):
                         fresh = False
                     else:

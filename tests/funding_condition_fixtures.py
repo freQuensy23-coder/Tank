@@ -8,7 +8,7 @@ from truth_support import fixture_truth_config
 from tank.analysis import truth
 from tank.analysis.baseline_cache import BaselineCaches
 from tank.analysis.condition_funding_codec import FundingConditionLookup
-from tank.analysis.condition_graph_contracts import ConditionTopCacheKey
+from tank.analysis.condition_graph_contracts import ConditionTopCacheKey, ConditionWindow
 from tank.contracts.json import JsonDocument
 
 
@@ -27,15 +27,17 @@ def packet() -> dict[str, JsonValue]:
     }
 
 
-def evaluate(
+def evaluate_window(
     snapshot: dict[str, JsonValue],
     cache: dict[ConditionTopCacheKey, FundingConditionLookup],
     baseline: BaselineCaches,
+    *,
+    window: ConditionWindow,
 ) -> tuple[dict[str, JsonValue], dict[str, JsonValue]]:
     value = JsonDocument.validate_value(
         truth.compute_condition_values(
             snapshot,
-            [{"metric": "deriv.funding_vs_normal", "window": "W1H"}],
+            [{"metric": "deriv.funding_vs_normal", "window": window}],
             config=fixture_truth_config(),
             cache=cache,
             baseline_cache=baseline,
@@ -50,8 +52,16 @@ def evaluate(
     assert isinstance(derivatives, dict)
     windows = derivatives["windows"]
     assert isinstance(windows, dict)
-    window = windows["W1H"]
-    assert isinstance(window, dict)
-    venues = window["per_venue"]
+    selected = windows[window]
+    assert isinstance(selected, dict)
+    venues = selected["per_venue"]
     assert isinstance(venues, list) and len(venues) == 1 and isinstance(venues[0], dict)
     return venues[0], proofs[0]
+
+
+def evaluate(
+    snapshot: dict[str, JsonValue],
+    cache: dict[ConditionTopCacheKey, FundingConditionLookup],
+    baseline: BaselineCaches,
+) -> tuple[dict[str, JsonValue], dict[str, JsonValue]]:
+    return evaluate_window(snapshot, cache, baseline, window="W1H")

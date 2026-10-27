@@ -208,3 +208,36 @@ def test_unmaterializable_finite_contribution_cannot_be_filtered_from_known_popu
     assert sum(point.value is not None for point in history.values) == 2
     assert history.normal_range().reason == "NOT_ESTIMABLE"
     assert history.normal_range().bounds is None
+
+
+@pytest.mark.parametrize("last_hour,expected", [(8, "INSUFFICIENT_HISTORY"), (9, None)])
+def test_declared_paid_buckets_require_a_guaranteed_historical_span(
+    last_hour: int, expected: str | None
+) -> None:
+    records = []
+    for at, normalized in (("2026-10-01T08:00:00Z", "1"), (f"2026-10-08T{last_hour:02d}:00:00Z", "3")):
+        row = funding_record_fixture("SETTLED")
+        row.update(
+            settlement_time=at,
+            settlement_time_prec="BUCKET(1h)",
+            settlement_time_bucket_anchor="START",
+            funding_time=at,
+            funding_time_prec="BUCKET(1h)",
+            funding_time_bucket_anchor="START",
+            rate_8h_eq=normalized,
+        )
+        records.append(row)
+    owned = calculator(records)
+    history = funding_historical_population(
+        owned,
+        request(),
+        instrument=owned.source.instruments[0],
+        policy=policy(),
+    )
+    assert len(history.sources) == len(history.values) == 2
+    assert history.normal_range().reason == expected
+    if expected is None:
+        bounds = history.normal_range().bounds
+        assert bounds is not None
+        assert bounds.lower == Decimal("1.05")
+        assert bounds.upper == Decimal("2.95")
