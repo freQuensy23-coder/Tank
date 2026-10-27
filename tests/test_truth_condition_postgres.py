@@ -511,6 +511,8 @@ async def test_disposable_postgres_selective_condition_inputs_and_sql_footprint(
 
             future_funding = dict(
                 current_funding,
+                rate="0.002",
+                rate_8h_eq="0.002",
                 received_ts=iso(parse_time(clock_iso()) + timedelta(days=1)),
                 recorded_at=clock_iso(),
             )
