@@ -28,6 +28,7 @@ from tank.contracts.milestone_checks import (
     MissedMilestoneIdentity,
 )
 from tank.contracts.provenance import ResolvedVersionIdentity
+from tank.contracts.session_completion import ReplayAbortFailure, ReplayAbortTarget
 from tank.contracts.source_items import SourceRelevance
 from tank.fixture_reference_code import CURRENT_PROJECTION_CODE, ProjectionCodeEvidence
 from tank.fixture_reference_sources import FILESYSTEM_RETAINED_SOURCES, RetainedSourceReader
@@ -2420,9 +2421,11 @@ async def replay_agent_session(
                 receipt = {"session_id": row["session_id"], "archived": False}
                 if failure is not None:
                     try:
-                        receipt["local_finalization"] = await service.finalize_replay_abort(
-                            row["session_id"], run_id, failure
+                        finalized = await service.finalize_replay_abort(
+                            ReplayAbortTarget(session_id=row["session_id"], replay_run_id=run_id),
+                            ReplayAbortFailure.model_validate(failure),
                         )
+                        receipt["local_finalization"] = finalized.model_dump(mode="json")
                     except Exception as exc:
                         receipt["local_finalization_error_type"] = type(exc).__name__
                 try:

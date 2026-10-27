@@ -173,11 +173,19 @@ from tank.contracts.session_completion import (
     CompletionToolInput,
     FailedToolAttempt,
     HostExecutionObservation,
+    HostReplayAbortReceipt,
     NativeExecutionBarrier,
     NativeExecutionPage,
     NativeExecutionQuery,
     NativeExecutionState,
     PriorToolInputReceipt,
+    ReplayAbortFailure,
+    ReplayAbortFinalized,
+    ReplayAbortJournal,
+    ReplayAbortOutcome,
+    ReplayAbortOwnership,
+    ReplayAbortRefused,
+    ReplayAbortTarget,
     SessionCompletionStatus,
     SourceCompletionEntry,
     SourceCompletionSnapshot,
@@ -1426,24 +1434,40 @@ class SessionService:
         await asyncio.gather(*tasks, return_exceptions=True)
         self.tasks.clear()
 
-    async def finalize_replay_abort(self, sid, replay_run_id, failure):
-        """Record a host replay abort without inventing domain or source outcomes."""
+    async def finalize_replay_abort(
+        self, target: ReplayAbortTarget, failure: ReplayAbortFailure | None
+    ) -> ReplayAbortOutcome:
+        """Record an owned host replay abort without inventing native or source outcomes."""
+        target = ReplayAbortTarget.model_validate(target)
+        sid, run_id = target.session_id, target.replay_run_id
+        if run_id is None:
+            return ReplayAbortRefused(session_id=sid)
         async with self.event_locks.setdefault(sid, asyncio.Lock()), self.repo.lock("session:" + sid):
-            session = await self.repo.get("ops.agent_sessions", sid)
-            if not replay_run_id or not session or session.get("replay_run_id") != replay_run_id:
-                return {"session_id": sid, "finalized": False, "reason": "NOT_OWNED_REPLAY_RUN"}
-            receipt = dict(
-                origin="HOST_REPLAY_ABORT",
-                replay_run_id=replay_run_id,
-                **copy.deepcopy(failure),
-                **self.clock_timestamp().fields("recorded_at"),
-            )
-            unfinished = []
-            for message in session.get("message_log", []):
-                if message.get("turn_status") not in {"DONE", "FAILED"}:
-                    message["turn_status"] = "FAILED"
-                    message["replay_abort"] = copy.deepcopy(receipt)
-                    unfinished.append(message["message_id"])
+            session: dict[str, JsonValue] | None = await self.repo.get("ops.agent_sessions", sid)
+            if session is None:
+                return ReplayAbortRefused(session_id=sid)
+            ownership = ReplayAbortOwnership.from_record(session, sid)
+            if not ownership.matches(target):
+                return ReplayAbortRefused(session_id=sid)
+            if failure is None:
+                raise ValueError("Owned replay abort requires its actual observed failure")
+            failure = ReplayAbortFailure.model_validate(failure)
+            journal = ReplayAbortJournal.from_record(session)
+            receipt = HostReplayAbortReceipt(
+                replay_run_id=run_id,
+                error_type=failure.error_type,
+                reason=failure.reason,
+                recorded_at=self.clock_timestamp(),
+            ).storage_record()
+            unfinished: list[str] = []
+            if journal.messages is not None:
+                for message in journal.messages:
+                    if not message.unfinished:
+                        continue
+                    row = outbound_message_record(session, message.message_id)
+                    row["turn_status"] = "FAILED"
+                    row["replay_abort"] = copy.deepcopy(receipt)
+                    unfinished.append(message.message_id)
             session.setdefault("terminal_failure", copy.deepcopy(receipt))
             session["replay_abort"] = copy.deepcopy(receipt)
             session["status"] = "FAILED"
@@ -1451,7 +1475,7 @@ class SessionService:
             session["active_message_id"] = None
             session["pending_retry_event"] = None
             await put_owned_session(self.repo, sid, session)
-            return {"session_id": sid, "finalized": True, "failed_message_ids": unfinished}
+            return ReplayAbortFinalized(session_id=sid, failed_message_ids=tuple(unfinished))
 
     def tool_context(self, session, call_id):
         """Every dispatch/recovery is attributed to the immutable agent session."""

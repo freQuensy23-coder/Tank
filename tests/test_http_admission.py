@@ -2,10 +2,11 @@
 
 import asyncio
 import os
-from datetime import timedelta
+from datetime import datetime, timedelta
 from hashlib import sha256
 from pathlib import Path
 from types import SimpleNamespace
+from typing import Literal
 
 import httpx
 import pytest
@@ -272,10 +273,10 @@ async def test_memory_backend_enforces_provider_host_block_without_spending_othe
 
 @pytest.mark.asyncio
 async def test_invalid_constructed_constraint_cannot_bypass_required_capacity() -> None:
-    from pydantic import JsonValue, ValidationError
+    from pydantic import ValidationError
 
-    wire: dict[str, JsonValue] = {"key": "configured", "capacity": None, "window_s": 60, "weight": 1}
-    invalid = BudgetConstraint.model_construct(set(wire), **wire)
+    seed = BudgetConstraint.model_construct(key="configured", capacity=1, window_s=60, weight=1)
+    invalid = seed.model_copy(update={"capacity": None})
     backend = MemoryBudgetBackend(FixtureBudgetClock())
     engine = SharedRequestBudgets(backend)
     with pytest.raises(ValidationError):
@@ -302,8 +303,10 @@ async def test_unregistered_public_host_waits_for_empirical_block_without_invent
 @pytest.mark.integration
 @pytest.mark.postgres
 @pytest.mark.asyncio
+@pytest.mark.parametrize("clock_origin", ["APPLICATION", "DATABASE"])
 async def test_postgres_host_block_is_visible_without_any_provider_quota(
     postgres_template: PostgresTemplate,
+    clock_origin: Literal["APPLICATION", "DATABASE"],
 ) -> None:
     from tank.util import utcnow
 
@@ -313,14 +316,38 @@ async def test_postgres_host_block_is_visible_without_any_provider_quota(
         reader = RequestLedger(repo.database_url, owner="synthetic-host-reader")
         try:
             assert await reader.host_delay("public.example") == 0
-            await writer.block("public.example", utcnow() + timedelta(seconds=60), "observed Retry-After")
-            assert 0 < await reader.host_delay("public.example") <= 60
-            assert await reader.host_delay("other.example") == 0
             async with await AsyncConnection.connect(repo.database_url) as connection:
+                origin_row = await (await connection.execute("SELECT clock_timestamp()")).fetchone()
+                assert origin_row is not None and isinstance(origin_row[0], datetime)
+                origin = origin_row[0]
+                until = (utcnow() if clock_origin == "APPLICATION" else origin) + timedelta(seconds=60)
+                await writer.block("public.example", until, "observed Retry-After")
+                stored = await (
+                    await connection.execute(
+                        "SELECT host, until, reason, owner FROM ops.request_budget_blocks WHERE host = %s",
+                        ("public.example",),
+                    )
+                ).fetchone()
+                assert stored == ("public.example", until, "observed Retry-After", "synthetic-host-writer")
+                before_row = await (await connection.execute("SELECT clock_timestamp()")).fetchone()
+                assert before_row is not None and isinstance(before_row[0], datetime)
+                before = before_row[0]
+                delay = await reader.host_delay("public.example")
+                after_row = await (await connection.execute("SELECT clock_timestamp()")).fetchone()
+                assert after_row is not None and isinstance(after_row[0], datetime)
+                after = after_row[0]
+                assert origin <= before <= after, "Physical database wall clock regressed during observation"
+                lower = (until - after).total_seconds() if until > after else 0.0
+                upper = (until - before).total_seconds() if until > before else 0.0
+                assert lower <= delay <= upper
+                if clock_origin == "DATABASE":
+                    assert after < until, "Database-clock future control expired before observation"
+                    assert delay > 0
+                assert await reader.host_delay("other.example") == 0
                 row = await (
                     await connection.execute("SELECT count(*) FROM ops.request_budget_ledger")
                 ).fetchone()
-            assert row == (0,)
+                assert row == (0,)
         finally:
             await writer.shutdown()
             await reader.shutdown()

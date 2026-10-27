@@ -13,6 +13,7 @@ from source_support import fixture_versions
 from tank.agents import SessionService
 from tank.analysis.decisions import DecisionEngine
 from tank.analysis.truth import MarketTruthService
+from tank.contracts.session_completion import ReplayAbortFailure, ReplayAbortTarget
 from tank.event_tools import EventToolService
 from tank.replay import (
     ReplayError,
@@ -359,12 +360,14 @@ async def test_replay_abort_preserves_completed_state_and_refuses_other_ownershi
         service = SessionService(
             repo, cfg, None, http=http, versions=fixture_versions(), refusals=RepositoryFollowupRefusals(repo)
         )
-        refusal = await service.finalize_replay_abort("foreign", "current", {"reason": "fixture unavailable"})
-        assert refusal["finalized"] is False
+        refusal = await service.finalize_replay_abort(
+            ReplayAbortTarget(session_id="foreign", replay_run_id="current"), None
+        )
+        assert refusal.finalized is False
+        failure = ReplayError("insufficient_fixture: missing exact market snapshot")
         await service.finalize_replay_abort(
-            "own",
-            "current",
-            {"error_type": "ReplayError", "reason": "insufficient_fixture: missing exact market snapshot"},
+            ReplayAbortTarget(session_id="own", replay_run_id="current"),
+            ReplayAbortFailure(error_type=type(failure).__name__, reason=str(failure)),
         )
         after = await repo.get("ops.agent_sessions", "own")
         assert after["message_log"][0] == done
@@ -442,9 +445,10 @@ async def test_native_terminal_failure_clears_runtime_but_preserves_done_message
             "native", {"id": "late", "type": "session.status_running", "execution_id": "accepted-retry"}
         )
         assert await repo.get("ops.agent_sessions", "native") == actual
-        assert (await service.finalize_replay_abort("native", None, {"reason": "not owned"}))[
-            "finalized"
-        ] is False
+        refusal = await service.finalize_replay_abort(
+            ReplayAbortTarget(session_id="native", replay_run_id=None), None
+        )
+        assert refusal.finalized is False
         assert await repo.get("ops.agent_sessions", "native") == actual
         await service.close()
 
