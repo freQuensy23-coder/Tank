@@ -128,6 +128,7 @@ def test_restart_keeps_original_budget_and_remote_success_fact(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, elapsed: int
 ) -> None:
     fixture = rig(tmp_path, fault="NONE")
+    publisher = restart(fixture, collection_clock("2026-10-27T00:00:00Z"))
     key = BuildCacheKey(source_digest=fixture.selected.release.source_digest)
 
     def interrupted_cache(build: BuildProvenance) -> None:
@@ -135,7 +136,7 @@ def test_restart_keeps_original_budget_and_remote_success_fact(
 
     monkeypatch.setattr(fixture.journal, "write_cached_build", interrupted_cache)
     with pytest.raises(OSError):
-        fixture.publisher.prepare()
+        publisher.prepare()
     receipt = fixture.journal.read_submission(key)
     assert isinstance(receipt, ReceivedBuildSubmission)
     value = receipt.requested_at.value
