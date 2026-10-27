@@ -2,13 +2,14 @@
 
 import os
 from collections.abc import AsyncIterator
-from contextlib import AbstractAsyncContextManager, AsyncExitStack, asynccontextmanager
+from contextlib import AsyncExitStack, asynccontextmanager
 from pathlib import Path
-from typing import Literal, Protocol
+from typing import Literal
 
 import httpx
 import pytest
 from delivery_support import delivery_job
+from postgres_helpers import PostgresTemplate
 from pydantic_settings import SettingsConfigDict
 from source_support import source_definition
 
@@ -30,12 +31,8 @@ type ResumeStore = MemoryRepository | PostgresRepository
 type ResumeBackend = Literal["memory", "postgres"]
 
 
-class ResumePostgresTemplate(Protocol):
-    def repository(self, url: str) -> AbstractAsyncContextManager[PostgresRepository]: ...
-
-
 @asynccontextmanager
-async def repository(backend: ResumeBackend, template: ResumePostgresTemplate) -> AsyncIterator[ResumeStore]:
+async def repository(backend: ResumeBackend, template: PostgresTemplate) -> AsyncIterator[ResumeStore]:
     if backend == "memory":
         yield MemoryRepository()
         return
@@ -151,7 +148,7 @@ async def restore_without_parent_fact(
 )
 @pytest.mark.parametrize("mode", ["TOKEN", "CHAT", "BOTH", "CHANGED_CHAT", "UNREPORTED_PARENT_CHAT"])
 async def test_pending_document_resume_refuses_before_new_attempt(
-    mode: str, tmp_path: Path, backend: ResumeBackend, postgres_template: ResumePostgresTemplate
+    mode: str, tmp_path: Path, backend: ResumeBackend, postgres_template: PostgresTemplate
 ) -> None:
     async with AsyncExitStack() as lifetime:
         repo = await lifetime.enter_async_context(repository(backend, postgres_template))
@@ -188,7 +185,7 @@ async def test_pending_document_resume_refuses_before_new_attempt(
     "backend", ["memory", pytest.param("postgres", marks=[pytest.mark.integration, pytest.mark.postgres])]
 )
 async def test_all_documents_sent_needs_no_unused_parent_or_credentials(
-    tmp_path: Path, backend: ResumeBackend, postgres_template: ResumePostgresTemplate
+    tmp_path: Path, backend: ResumeBackend, postgres_template: PostgresTemplate
 ) -> None:
     async with AsyncExitStack() as lifetime:
         original = await lifetime.enter_async_context(repository(backend, postgres_template))
