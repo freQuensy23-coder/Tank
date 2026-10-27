@@ -90,10 +90,12 @@ def plain(value: str | int | float | bool | None, limit: int = 400) -> str:
 def source_summary(item: OpsSourceItem) -> tuple[str, str]:
     title = plain(item.title, 180)
     raw = item.text or item.body or item.quoted or ""
-    try:
-        data = decode_unique_json(raw)
-    except (TypeError, ValueError):
-        data = None
+    data = None
+    if item.source_id == "S14":
+        try:
+            data = decode_unique_json(raw)
+        except (TypeError, ValueError):
+            data = None
     if isinstance(data, dict):
         before, after = data.get("before"), data.get("after")
         if isinstance(before, dict) or isinstance(after, dict):
@@ -110,8 +112,12 @@ def source_summary(item: OpsSourceItem) -> tuple[str, str]:
             if current is None:
                 raise ValueError("Instrument presentation lacks an observed revision")
             symbol = current.symbol or title
-            venue = str(current.venue or "Биржа").upper()
-            market = {"SPOT": "спот", "PERP": "бессрочный контракт"}.get(str(current.market_type).upper(), "")
+            venue = (current.venue or "Биржа").upper()
+            market = {
+                "SPOT": "спот",
+                "PERP": "бессрочный контракт",
+                "PERP_LINEAR": "бессрочный контракт",
+            }.get((current.reported_market_type or "").upper(), "")
             title = plain(f"{venue} · {symbol}" + (f" · {market}" if market else ""), 180)
             if before is None:
                 return title, "Инструмент добавлен в список биржи"

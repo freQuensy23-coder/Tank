@@ -109,3 +109,21 @@ async def test_whitespace_destination_credentials_refuse_before_delivery_intent(
     assert requests == []
     assert await repo.list("out.deliveries") == []
     assert await repo.list("out.ops_cards") == []
+
+
+def test_instrument_market_aliases_cannot_select_contradictory_markets() -> None:
+    raw = json.dumps(
+        {
+            "before": {"symbol": "X-USDT", "market_type": "SPOT", "status": "preopen"},
+            "after": {
+                "symbol": "X-USDT",
+                "market_type": "SPOT",
+                "acquisition_market_type": "PERP_LINEAR",
+                "status": "live",
+            },
+        }
+    )
+    item = OpsSourceItem(item_id="instrument", source_id="S14", title="Instrument", text=raw)
+    with pytest.raises(ValueError):
+        source_summary(item)
+    assert item.text == raw
