@@ -22,6 +22,7 @@ from tank.analysis.card_policy import preliminary_gate
 from tank.analysis.decisions import DecisionEngine
 from tank.analysis.page_access import LivePageAccess
 from tank.contracts.json import JsonDocument
+from tank.contracts.session_retention import archive_candidate
 from tank.delivery import DeliveryService
 from tank.event_tools import EventToolService
 from tank.models import Record
@@ -621,7 +622,7 @@ async def test_denied_preliminary_gets_one_immediate_correction_in_its_thread(
         )
         for job in await service.repo.list("ops.jobs"):
             await service.repo.put("ops.jobs", job["job_id"], {**job, "status": "DONE"})
-        assert not await sessions.can_archive(session, event)
+        assert not await sessions.can_archive(archive_candidate(session, event))
         update = await service.dispatch(
             "publish_card",
             {**{key: value for key, value in args.items() if key != "unconfirmed"}, "kind": "UPDATE"},
@@ -647,7 +648,7 @@ async def test_denied_preliminary_gets_one_immediate_correction_in_its_thread(
         assert event["session_finalized_at"]
         for job in await service.repo.list("ops.jobs"):
             await service.repo.put("ops.jobs", job["job_id"], {**job, "status": "DONE"})
-        assert await sessions.can_archive(session, event)
+        assert await sessions.can_archive(archive_candidate(session, event))
     assert len(requests) == 2
     assert requests[1]["reply_parameters"]["message_id"] == 41
 

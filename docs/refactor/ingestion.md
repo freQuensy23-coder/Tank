@@ -1675,3 +1675,41 @@ Immutable `273d7319` normally contains parent `1519805b` and worker `9a9adfc7`. 
 Strict checking passes nine core/new targets; default checking of the two existing X/late-capture consumer files now passes, after replacing raw stored-record use with named records or explicit required-field assertions. Ruff/format, source-comment and diff checks pass. This is a bounded functional/performance checkpoint, not global completion or permission to activate while historical recovery/caller coordination is held.
 
 The separate producer-cursor diagnostic is confirmed through actual MarketService.capture_changes, Scheduler and MemoryRepository: two canonical failed-capture source records produce one queued reconsideration; actual expiry terminalizes it; the real-reader rescan cannot reconsider the skipped second record because the cursor already advanced. Exact evidence is retained as reaction-skipped-source-before.json. Records are synthetic negative capture outcomes with no invented prices/provider responses. No producer policy change is in this checkpoint.
+
+## Source progress requires attempt facts only when consumed — 2026-10-27
+
+This isolated companion starts from held completion `e94f6603`; it does not join
+reaction demands, usage or another inactive source API. Reproduction `2d92e2ad`
+uses actual Runtime/Session, an admitted S30 source in PENDING extraction state,
+ops progress enabled, and an actual accepted/end-turn native receipt. The same
+case with reported attempt zero passes; genuine count absence fails before native
+history is read in `SourceMessageProgress`. The original red run is retained as
+`source-progress-2d92-linux-unit` (one pass, one failure).
+
+Source body `0fb80566` keeps missing historical retry count unreported in the
+read-only reporting projection. It selects the actual notice phase first.
+Unstaged RUNNING with no reported send clock produces no notice, as before;
+actual terminal completion changes the source through the real extraction writer
+to SKIPPED. AGENT_REJECTED already uses its reason-based identity and consumes no
+retry count. Both phases can therefore complete without inventing a zero count,
+Python None text in a key, a send clock or an acceptance response.
+
+`SourceAttemptProgressIdentity` requires the real session, message and integer
+attempt only for attempt-specific accepted/completed/failed notice keys. Their
+existing serialized key remains unchanged. The existing missing-attempt guard
+still refuses before notice/enqueue effects; its synthetic item now declares the
+actual DONE extraction phase used by that guard instead of omitting the field.
+No speculative unknown-attempt key namespace or native-input identity migration
+is introduced. Historical attempt-specific stages with genuinely missing identity
+remain an explicit reporting-policy question, not silently skipped progress or a
+claim that the entire legacy Session/reporting family is closed.
+
+Immutable source `0fb80566` passes all 29 selected units in 8.58s, zero skips,
+p90 0.470s and maximum 0.641s including fixtures; both actual PostgreSQL cases pass
+in 6.32s, zero skips. The real caller and restart prove one history GET, one
+AGENT_REJECTED notice and one DELIVER job, actual SKIPPED completion, IDLE session,
+and unchanged presence/absence of retry count for both unknown and reported-zero
+controls. Strict mypy covers the two reporting sources and new actual-caller test;
+Ruff/format/comment policy and whitespace checks pass. Evidence is external
+`source-progress-0fb8-linux-{unit,actual}.{log,xml}`. Parent activation of completion
+and any broader unreported-attempt reporting policy remain separately reviewed.

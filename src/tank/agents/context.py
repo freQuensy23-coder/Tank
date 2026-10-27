@@ -77,6 +77,7 @@ PRIVATE_FIELDS = {
     "prompt_version_reason",
     "fixture_reference_provenance",
     "native_execution_states",
+    "native_execution_observation",
     "sessions",
     "parameters",
     "collection",

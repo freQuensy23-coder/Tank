@@ -32,6 +32,7 @@ from tank.contracts.source_items import SourceRelevance
 from tank.fixture_reference_code import CURRENT_PROJECTION_CODE, ProjectionCodeEvidence
 from tank.fixture_reference_sources import FILESYSTEM_RETAINED_SOURCES, RetainedSourceReader
 from tank.market_schema import MARKET_COLUMNS
+from tank.replay_session import update_replay_session_evidence
 from tank.telegram_inbox import RepositoryFollowupRefusals
 from tank.time_precision import Timestamp, interval_bounds, propagate_timestamp
 from tank.util import canonical_json, iso, parse_time
@@ -1572,12 +1573,7 @@ async def replay_agent_session(
                         }
                     },
                 )
-                mapped = await repo.get("ops.agent_sessions", active_session_id)
-                mapped.update(
-                    replay_evidence_sha256=current.manifest_sha256,
-                    replay_cutoff=current.manifest.cutoff,
-                )
-                await repo.put("ops.agent_sessions", active_session_id, mapped)
+                await update_replay_session_evidence(repo, active_session_id, current)
 
     active_session_id = None
     imported = set()
@@ -2188,14 +2184,17 @@ async def replay_agent_session(
                         )
                     ]
                     execution = await service.completed_turn(sid)
+                    if execution.session_id != sid:
+                        raise ReplayError("Native execution barrier belongs to another replay session")
 
                     if (
-                        execution["complete"]
+                        execution.complete
                         and (inputs.fixture_reference or not queued_deliveries)
                         and all(call.get("returned_at") for call in calls)
                     ):
-                        execution_barriers[sid] = copy.deepcopy(execution)
-                        await checkpoint_phase(execution, calls)
+                        execution_record = execution.storage_record()
+                        execution_barriers[sid] = copy.deepcopy(execution_record)
+                        await checkpoint_phase(execution_record, calls)
                         message = next(pending_messages, None)
                         if message is None:
                             incomplete = []
@@ -2346,7 +2345,7 @@ async def replay_agent_session(
                 "causal_tool_receipts": causal_tool_receipts,
                 "delivery_receipts": delivery_receipts,
                 "timer_receipts": timer_receipts,
-                "execution_barrier": execution,
+                "execution_barrier": execution.storage_record(),
                 "execution_barriers": execution_barriers,
                 "tool_error_receipts": [
                     {

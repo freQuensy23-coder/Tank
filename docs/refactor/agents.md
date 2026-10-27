@@ -2243,6 +2243,157 @@ Ruff and formatting pass. Tested functional prefix b6a681c0 is unchanged except
 this report. Complete peer reaction/X/market-refresh/E2E producer qualification and
 full default-unit timing remain outstanding; this checkpoint is not global release.
 
+### Completion-lineage correction (separate held tranche)
+
+The before checkpoint b9416450 reproduces two actual issues: a missing retry count
+is reported as zero in source-completion diagnostics, and a failed tool input with
+no retained attempt is retired as if it were known attempt zero under a current
+attempt-one owner. The corrected-/v1 supersession before control fails only the
+unknown case while known zero passes; original negative evidence is preserved.
+Fresh dispatch writes explicit zero and retry writes increment an admitted count;
+existing outbound and input-ownership models already preserve missing counts as
+unknown. No counter/body is reconstructed from list position or another message.
+
+The inward session_completion contracts carry the consumed message/attempt facts,
+source-completion records and pure older-attempt policy. Actual settled-turn
+callers use typed entries and serialize only at the persisted diagnostic/cache
+boundary. Missing counter is None; known zero stays zero. Supersession requires
+the actual same owner, both observed ordered counters and a distinct actual
+replacement input. Unknown facts cannot authorize retirement. Native queue facts
+are still retained, and independently proven terminal completion remains free of
+unused retry/body requirements: count None/0/1, exhausted partial body, cached
+repeat, one history GET/no POST/no retry rewrite all pass on Memory and PostgreSQL.
+The remaining raw execution receipt/barrier/settled orchestration is still open,
+not hidden behind a generic DTO or claimed whole-module completion.
+
+All 79 connected units pass in 18.47 seconds and all 32 actual completion/workflow
+cases pass in 20.36 seconds, zero skips/source guards. Independent strict contract
+and pure-test targets pass; scoped Ruff/format pass. Configured 200-source mypy has
+only the separately owned analysis _condition_cache error. The new actual test
+module still calls the existing untyped barrier/completed-turn methods; no strict
+whole-caller claim or suppression is made. Inventory now records 16 remaining
+Session signatures, zero Runtime signatures; body/caller/vendor scope stays open.
+
+Initial actual failures exposed incomplete newly authored PostgreSQL fixture rows,
+not product permission to weaken schema: five lacked required session metadata;
+then two lacked the declared source-origin FK, and the default synthetic source
+helper had nullable publication precision rejected by the current SQL constraint.
+The new source origin now explicitly authors its publication/time precision and
+full request metadata. Unreported agent version/last-item time use explicit
+absence reasons, opened_at is the actual fixture construction clock, and the new
+local cursor is declared zero. Existing/frozen payloads and original attempt/body
+controls are unchanged; no missing retry count was padded. All setup receipts stay
+separate from the final green complete case set. Scalar version admission also
+uses the canonical strict integer guard, rejecting float/string/bool lookalikes.
+
+### Inactive native barrier result closure checkpoint
+
+On separate cd4fca7f review ancestry, execution_barrier now requires a named
+CompletionSessionSnapshot and returns NativeExecutionBarrier; settled_turn and
+completed_turn return the same session-bound closed result. There is no raw-map
+compatibility union or indexing facade. Actual orchestration consumes named
+journal/tool/receipt/queue-state facts, correlates every requested response before
+any persistence, and rechecks the locked current session before settlement.
+The pinned managed API session-executions.ts declares exactly execution_id/state/
+settled_outcome, unique ordered ids[] of length 1–64 and IDs at most 191 characters.
+Those constraints and state/outcome agreement are admitted explicitly; UNKNOWN is
+preserved, never changed to RUNNING/ENDED. Only queried state observations are
+merged onto the fresh locked state, preserving unrelated current entries.
+
+storage_record is the actual persisted/captured report boundary and excludes the
+internal session_id while keeping all original external keys and actual optional
+receipt-field presence. incomplete() revalidates a conservative false result without
+fabricating a native pending/failed state. Missing retry counters and partial unused
+bodies remain valid. Known superseded-input receipts retain their original two
+writer variants and reported optional fields; no failure or replacement identity
+is guessed for old declared markers. Empty associative indexes mean no recorded
+authorizing fact, not invented history. Actual return/receipt clock strings must
+be aware; absent unused receipt clocks remain unreported. Provider states and
+actual call/session identity must agree with their index/query scope.
+
+Owned caller assertions now use typed properties and explicit persisted-proof
+serialization. The retention fixture no longer mocks both completion methods to
+return true with zero accepted inputs: it authors the completed native input,
+terminal receipt/state and independent cached proof that its idle-session premise
+requires, preserving unknown retry count and all original archive/no-I/O/time
+assertions. Actual execution-page tests are authored for 64+1 batching, wrong
+order/missing rows/contradictory outcome/extra fields and second-batch failure with
+no partial write. Replay's sole completed_turn consumer is reserved to analysis.
+
+This is API synchronization only, NOT a qualified activation. Source Session mypy
+and independent pure-contract targets passed before the first functional gate;
+that Linux gate exited during dependency copy before pytest because the owned VM
+exhausted inodes. Its complete setup log is preserved, quality owns diagnosis,
+and all new qualifiers are held as instructed. No retry, cleanup, environment or
+service change was made here. Worker14a and completion523 remain immutable and
+separate, and financial/E2E/global worker qualification remains outstanding.
+Caller inventory additionally reserves ingestion's two Telegram barrier sites and
+analysis's replay consumer plus its old empty-success completion mock. The actual
+native-retry completion assertions now use the typed result properties, retaining
+all old/new exhausted input, restart and no-repeat effects. Barrier validation
+also requires pending/failed lists to match the actual admitted queue states.
+These changes remain unqualified under the shared inode hold; no tests were
+silently skipped or reclassified and no compatibility map was restored.
+Static review during the explicit qualifier hold added consistency refusal for a
+reported prior-tool retirement whose queue state is not FAILED, whose execution
+identity differs from its index, or whose replacement equals the retired input.
+Genuinely omitted old receipt metadata remains unreported; no unused body/counter
+was added. Independent strict four targets now pass (contract plus new pure,
+actual-boundary and lineage caller modules); default checking of sessions.py and
+scoped Ruff/format pass. These are static results only; functional qualification
+still waits for the parent's actual retry and quality's seed checkpoint.
+The completion snapshot also enforces the already established active-owner invariant:
+a non-null active pointer must name one actual distinct journal row. Settlement
+admits the current record before recovery can post anything, retaining valid
+origin-only/pre-input absence. New pure and actual-boundary controls cover wrong,
+empty and absent journals and zero native/recovery effects; these remain pending
+functional qualification. This is enforcement of the existing ownership contract,
+not a claim of a newly reproduced public defect. Static four-target/source checks
+continue to pass; heavy qualifiers remain explicitly held by the parent.
+
+### Scoped native observation compare-and-set
+
+Checkpoint 4a242c32 reproduced both stale-write cases on Memory and PostgreSQL:
+late RUNNING overwrote newer COMPLETED, and late FAILED overwrote newer QUEUED
+from supported image recovery. Each before run had two failures and a passing
+concurrent accepted-input completion control. The pinned coordinator explicitly
+permits retained-configuration FAILED to queued recovery for the same execution;
+a terminal-state priority rule is not a valid substitute for coordination.
+
+The reader now captures its admitted state/host receipt before HTTP, admits every
+three-field page/order first, and compares both under the existing session lock.
+Only a matching actual observation is committed. Every applied nonempty status
+read records a fresh HostExecutionObservation identity, actual scoped queried IDs,
+controller collection clock and captured controller versions. This is host
+coordination provenance, not a provider revision or invented historical generation;
+old absence remains unreported, and explicit null/mismatched scope refuses. There
+is no pre-network write or network wait inside the session transaction. Current
+accepted tool inputs are re-read before the locked decision. A rejected stale
+write derives the result from fresh admitted state, without regressing records or
+claiming that its own response was committed. Cached reads without HTTP mint no
+new observation. The new private namespace is excluded from agent projection.
+
+All 27 bounded unit/pure controls pass in 6.77 s and all four actual PostgreSQL
+races pass in 7.98 s, zero skips/source guards. The same original races are green;
+added ABA proof returns cached values to the original RUNNING state but still
+rejects the late response using genuinely new observed receipt identities. The
+fresh accepted-input control still prevents old-input-set completion. Static
+contract/test targets and Session source checking pass; scoped Ruff/format pass.
+Actual 64+1, correlation/second-page no-write, full caller/replay/Telegram/E2E and
+whole-cohort proof remain required before activation. No parent files changed.
+The actual status-boundary pair on unchanged observation source19 now passes all
+seven Memory units in 6.86 s and all seven PostgreSQL cases in 7.59 s, zero skips
+and source guards. It proves exactly 64+1 queried IDs, correlated ordered states,
+no partial write for wrong/missing/order/extra/outcome or second-page failures,
+and actual ownership refusal before recovery/native effects. This adds real
+boundary proof to the earlier pure contracts and four PG races; replay, Telegram
+and full completion/E2E cohort closure remain pending.
+
+### Scoped completion caller integration
+
+The reserved replay consumer now uses the barrier's typed complete fact and explicit storage_record at singular/plural report and checkpoint boundaries, enforcing actual session identity. Its synthetic completed-turn boundary uses actual accepted-input and terminal state/cache facts rather than an empty successful mock. The delegated two Telegram callers admit CompletionSessionSnapshot and consume accepted_input_ids directly, retaining all answer, retired-message, POST count and idempotence assertions. The abort fixture now reports the required nullable settled_outcome field for RUNNING, matching the pinned three-field status endpoint; no production relaxation or retained payload change was made.
+
+Frozen combined de47267b passed all 361 selected units in 19.19 seconds, with zero skips/source guards. Its connected actual set passed 81 of 82 cases in 28.97 seconds: the sole failure was the previously qualified autonomous E2E CapturedMarket fixture's missing instruments forwarding, because this separate completion branch had not yet joined the current parent/worker peer. Status correlation/64+1, stale/ABA/input-change PostgreSQL races, completion/retry/retention/binding, replay/reference/abort and Telegram cases passed. That diagnostic remains in external completion-callers-de472 receipts; no product attribution or whole-cohort green claim is made. Current-parent normal integration and affected caller proof remain required. Independent strict checking of the four precise completion contract/test targets passes.
 ### Concrete queue adapter moved outward
 
 From caller-qualified worker 0d5bc86e, the concrete JobRepository now lives in
@@ -2297,3 +2448,51 @@ quality owns explicit strict CI/global inventory addition while retaining the
 pure contract target. Generic Repository relocation is independently foundation
 owned. The observation-CAS behavior branch is separate and remains held for its
 full caller/boundary cohort; no parent files or immutable evidence changed here.
+### Current-parent completion cohort qualification
+
+Normal join of public b026dd0e into the completion/replay/Telegram cohort is 32433c62. Product and callers auto-merged; the three owned report conflicts preserve both cohorts, and the signature inventory is regenerated against the actual merged sources. The previously qualified E2E instruments forwarding is inherited through that normal join, with no copied fixture or assertion changes.
+
+On this exact coherent source, all 361 selected units pass in 19.16 seconds and all 82 connected actual integrations pass in 30.51 seconds, zero skips and source guards. This includes native 64+1/correlation/no-partial-write admission, Memory/PostgreSQL stale observation/ABA/accepted-input races, original unknown-vs-zero and exhausted unused-body controls, workflow/retention/ownership, replay/reference/abort, the delegated Telegram consumers, all four actual E2Es and preliminary archive integration. Earlier de472's sole stale E2E fixture diagnostic remains preserved separately. Independent strict four precise completion targets and scoped Ruff/format13 pass. Configured mypy checks232 sources and retains only analysis.truth._condition_cache's existing missing annotation; untyped bodies elsewhere remain explicit work, not a green whole-application claim.
+
+This qualifies the bounded completion/caller behavior cohort for lead review, not all remaining Session body/tool/usage/event typing, historical recovery/pending-demand, vendor implementation, or the whole application. No parent files were edited.
+
+### Admitted native usage and immutable ledger writer
+
+SessionService.usage now consumes NativeUsageSession and NativeUsageSpan, and actual process_event plus both direct usage tests and the concurrent-change hook use those projections. Pure native_usage contracts distinguish an absent usage report, observed empty report, partial measurements and reported zero. Counters are strict nonnegative integers; reported null, boolean, string and fractional counts refuse. Reported facts are checked against retained raw evidence again before writing. Unknown cache/search/effort/finish facts remain unknown, with the existing missing-field descriptions. Native input/cache counters remain independent: the managed span mapper copies all four, while Node span/cache interfaces permit omitted counters; no provider mode, total, or cache subtraction is inferred.
+
+The concrete writer lives outward in agents/native_usage.py behind a narrow actual put port. Existing subscription charge fields are retained as the declared gateway application policy from config/openma.yaml, separate from observed provider estimates. This does not interpret an estimated/list cost as billing authority or compute token prices. Exact provider measurement evidence now stays in native_usage_evidence, while usage serializes only admitted counters. This deliberate split prevents the storage codec's raw-usage alias fallback from converting an unreported cache/search fact into a physical SQL measurement; actual PostgreSQL column controls cover that case. Unsupported extension keys remain retained as evidence and cannot overwrite the actual usage/session identity or billing fields. Historical stored rows are unchanged.
+
+Frozen source44ce0e5c passed all82 connected units in8.02s and all15 actual PostgreSQL cases in6.81s, zero skips/source guards. These include existing real SSE/direct/concurrent usage callers and real partial/cache0/cache-greater-than-input, extension/estimate, invalid-counter/no-write, unreported/empty, mutation and immutable-ledger controls. Independent strict contracts/writer/newtest3 passes; scoped Ruff/format passes. This removes one more unchecked Session method signature, leaving12 actual Session methods (including constructor, event timestamp, tool/context/invoke, process_event, archive/follow/run and replay-abort) explicitly open. This bounded usage tranche does not claim those bodies or all Session dependencies are strict-complete.
+
+### Retention phase migration checkpoint
+
+Inactive source0f18ea06 migrates can_archive, finish_if_idle, last_message_at, followable and the follower sweep to consumed named phase facts, keeping repository/native I/O outward. Archive denials do not require unused identities, card versions or historical return bodies; terminal eligible phases require their actual scope. Actual call/watch/tool/job/publication/delivery readers check the requested ownership and phase. The actual last-activity Timestamp is retained through a fixed offset rather than relabelled as a collection clock; owned clock-family replacement also removes stale aliases and bucket edges. No activity becomes current time, no absent runtime state becomes RUNNING, and unknown retry/body facts remain unused for independently proven completion.
+
+Before source changes, the status-only event archive control failed with an actual POST while its real lifecycle positive passed (ce0e9cb2,1red/1positive4.63s); unknown and BUCKET(1s)/END activity clock controls both failed because the old writer declared COLLECTION_ONLY (2a551537,2reds4.66s). On0f18 all260 selected units pass23.21s and all59 connected actual integrations pass29.30s, zero skips/source guards. This includes real PostgreSQL retention replacement with unknown terminal attempts/partial body, the original denial/EXIT/preliminary/card ownership controls, Telegram and replay/reference/E2E callers. Independent strict3 new contract/tests and default Sessions checks pass; Ruff/format8 pass. Further single missing-event ownership refusal coverage is being added before declaring this tranche ready.
+
+### Retention phase caller closure
+
+Final behavior sourcebc8d5a8b passes all263 selected units47.23s and all59 connected actual integrations33.39s, zero skips/source guards. The exact single missing-owned-event Memory red was preserved before the fix (4c73c8f2,1fail4.48s with an actual archive POST). It models incomplete captured state; PostgreSQL normally protects committed event references with its FK, so this is not presented as a PostgreSQL missing-parent production defect. The new explicit UNREPORTED/UNBOUND/BOUND binding model prevents both missing resources and absent binding keys from becoming an eventless negative. Fresh resolve's actual explicit null is the known-unbound contract, and the new authored PostgreSQL positive fixture declares that fact directly. No retained row is backfilled or normalized from absence to null.
+
+The final tiny denial-model refinement9f13c650 distinguishes unreported lifecycle/runtime from known nonterminal/not-idle denial; all20 pure phase controls pass3.96s. Session actions/booleans and all actual I/O remain byte-identical to the fully qualifiedbc8d behavior. Independent strict3 new contract/tests, default Sessions and Ruff/format pass. The initial malformed historical deadline hypothesis3eca was withdrawn after finding no writer/captured contract supporting that text; its newly authored test was removed at4c73, history preserved, and actual reported retention clocks still validate. No malformed-clock fallback or blanket exception handling was introduced.
+
+Whole-session observation writer audit is recorded externally in agents/session-observation-whole-writer-audit.json: all24 put_owned_session sites were reviewed against actual shared session locks/rereads or changed-field merging. Initial resolve is under actual dispatch mapping lock before follower start, EventTools association uses the shared session lock, and nested finish/settled barriers use verify_remote=False and cannot write observations. put_owned_session itself remains identity/journal validation plus full put; PRIVATE_FIELDS is only presentation protection. The unlocked replay clock update was not assumed quiescent: the sole replay owner reproduced a real interleave and supplied separate qualified789fd2c3 for normal integration. No all-writer/distributed guarantee is inferred before that peer joins.
+
+This tranche types five more actual Session methods and leaves seven signatures/bodies explicitly open: constructor, event_timestamp, finalize_replay_abort, tool_context, invoke_tool, tool and process_event. The approved usage no-report/selected-model follow-up and coherent replay/progress peer joins remain required before whole activation. Existing ready usage33fa, completione94 and source-adapter876 checkpoints remain immutable; there is no whole-application completion claim.
+### Usage phase metadata dependency follow-up
+
+Separate source1f2a8502 follows immutable33fa. The actual process_event consumer recognizes UNREPORTED/EMPTY spans before constructing session usage metadata, so those no-ledger phases preserve genuinely absent model/prompt fields and still commit/deduplicate the real observed frame. Reported spans independently select their actual model before needing a recorded session model; absent historical model/prompt observations remain None, never current configuration defaults. A real write with neither observed model source refuses before storage. SelectedNativeUsageModel records the factual NATIVE_SPAN_MODEL or RECORDED_SESSION_MODEL basis and both source labels; recorded session basis/reason stay separate, without asserting provider resolution or changing the declared subscription policy. Raw measurement evidence/counter separation and billing fields are unchanged.
+
+All five new Memory regressions failed on prior33fa in5.82s (unused missing/nullable model admission), preserved at13e93b8d. On changed source1f2a, all87 connected units pass9.61s (observed p90 .083/max2.474s), and all20 actual PostgreSQL cases pass9.43s, zero skips/source guards. Real Runtime no-report frames with missing metadata progress once and do not invent retry/model/prompt fields or usage rows; observed-model rows retain unknown historical metadata and actual attribution; both-models-unreported refuses before effects. Independent strict4, default Sessions and Ruff/format5 pass. This is distinct from prior33fa's82/15 proof and does not claim a new chronology policy for unattributed reported frames or complete process_event typing.
+
+The separate ready retentioncba branch remains immutable with its five-method closure; this isolated usage branch intentionally retains the older archive source until normal coherent integration. Replay writer789fd2c3 and ops-progress2dac1bf8 remain separate qualified peers for the lead-selected join. Whole Session constructor/tool/context/event and native vendor work remains active.
+
+### Coherent Session caller integration on lead-selected91e
+
+Canonical source60fbe71e normally joins exactly91e49dc4, retentioncba8f6cb, usage-phase27351ab8, replay-writer789fd2c3 and source-progress2dac1bf8. Product files auto-merged. Only append reports conflicted; both complete evidence streams were preserved, active exception paths follow the actual outward facades, semantic duplicate entries were reconciled, and the owned signature inventory is regenerated from merged source. No dependency file was copied, no parent checkout changed, and prior qualified prefixes remain immutable.
+
+The changed-source connected unit selection passes555/555 in26.34s; the separate actual integration selection passes108/108 in33.89s, zero skips/source guards. It covers Session completion/status correlation and real stale/ABA/accepted-input PostgreSQL races, retry/exhausted-body/unknown provenance, activity/retention/archive and clock replacement, actual no-report/selected-model usage, real replay metadata writer interleave, source-progress unknown/zero cases, outward extraction callers, retained replay/reference/abort, Telegram, all four E2Es and preliminary archival. Original effects, deadlines, captured data and financial assertions remain. Independent strict10 selected source/test targets pass, and scoped21-file Ruff/format pass. Configured mypy across238 source files retains only the separately owned analysis.truth._condition_cache annotation error; untyped bodies elsewhere are not claimed checked. These selected receipts are not the full default suite or whole-source timing/architecture proof.
+
+The known unlocked replay whole-session writer is now closed by its real same-session lock+reread helper in this coherent source, rather than by presentation filtering or an assumption of quiescence. The source-progress peer selects actual non-attempt phases before needing an attempt key; it does not invent a retry count, broaden unsupported attempt identities or alter recorded source outcomes. Current host-observation guarantees remain bounded to the audited cooperative writers and proved receipt/state compare-and-set, not arbitrary stale full puts or a distributed external-effect lease.
+
+Seven actual Session methods remain explicitly open: constructor, event_timestamp, finalize_replay_abort, tool_context, invoke_tool, tool and process_event. Broader unknown-attempt reporting identities, historical recovery/pending-demand, vendor bodies and the whole application remain active. A separate usage immutable-write/lost-ack observation is only a queued read-only candidate until reproduced; no hypothetical fix or global completion is implied by this integration.

@@ -493,7 +493,9 @@ async def test_source_session_reporting_requires_retry_ownership() -> None:
     from tank.contracts.progress import ProgressPreferences
 
     repo = MemoryRepository()
-    await repo.put("ingest.source_items", "item", {"item_id": "item", "source_id": "S30"})
+    await repo.put(
+        "ingest.source_items", "item", {"item_id": "item", "source_id": "S30", "extraction_status": "DONE"}
+    )
     with pytest.raises(ValidationError, match="retry_count"):
         await session_progress(
             repo,

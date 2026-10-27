@@ -2869,22 +2869,6 @@
     {
       "sites": [
         {
-          "path": "src/tank/contracts/jobs.py",
-          "symbol": "JobMetadata",
-          "line": 13
-        }
-      ],
-      "kind": "unreported historical admission-wait metadata",
-      "reason": "The real AdmissionDeferred writer emits canonical slot_waiting_since precision/reason/bucket-anchor facets. These fields are optional only because retained scalar-only/all-null-facet rows genuinely did not report precision. Any non-null facet uses Timestamp coherence validation; otherwise a present scalar must be an aware timestamp. Absence does not gain a precision/reason. Unknown fields remain forbidden.",
-      "validation": [
-        "test_real_admission_defer_then_wake_preserves_typed_queue_contract",
-        "test_scalar_or_null_wait_metadata_roundtrips_without_invented_precision",
-        "test_incoherent_wait_clock_rejects_before_any_queue_write"
-      ]
-    },
-    {
-      "sites": [
-        {
           "path": "src/tank/runtime.py",
           "symbol": "Runtime.eval_conditions_wire",
           "line": 206
@@ -3096,6 +3080,163 @@
         "test_terminal_guard_and_missing_record_do_not_manufacture_updates",
         "test_historical_transition_requires_owned_identity",
         "test_transition_reloads_under_capture_lock_and_preserves_concurrent_metadata"
+      ]
+    },
+    {
+      "sites": [
+        {
+          "path": "src/tank/contracts/session_completion.py",
+          "symbol": "CompletionMessage"
+        },
+        {
+          "path": "src/tank/contracts/session_completion.py",
+          "symbol": "SourceCompletionEntry"
+        },
+        {
+          "path": "src/tank/contracts/session_completion.py",
+          "symbol": "FailedToolAttempt.is_prior_to"
+        },
+        {
+          "path": "src/tank/agents/sessions.py",
+          "symbol": "SessionService.source_completion_snapshot"
+        }
+      ],
+      "kind": "observed completion index and genuinely unreported retry provenance",
+      "reason": "Fresh journal intents explicitly write retry_count=0; retained journal/tool records can genuinely omit it, as existing MessageAttempt and JournalInputLineage already permit. Completion models preserve that absence as None, never zero. Missing kind/source extraction metadata remains unreported rather than NOT_APPLICABLE; source messages require their actual item identity. item_id/native_input_id remain nullable for non-source messages or genuinely unreported accepted input identity. The per-message dictionary is an associative diagnostic index keyed by actual distinct journal message IDs; no entries for an absent journal invent no source outcomes and do not grant native completion. storage_record is solely the persisted proof/cache comparison boundary. A failed tool input can be superseded only with the same actual owner, observed strictly ordered integer attempts, and a distinct actual replacement ID; unknown owner/count/replacement produces no supersession. Independently proven terminal inputs do not consume unused retry counters or full historical bodies.",
+      "validation": [
+        "test_source_completion_preserves_unknown_and_known_retry_attempts",
+        "test_failed_tool_input_requires_observed_older_attempt_before_supersession",
+        "test_independently_completed_input_settles_without_unused_retry_or_body",
+        "test_failed_attempt_requires_actual_order_and_replacement",
+        "test_reported_attempt_requires_strict_nonnegative_integer"
+      ]
+    },
+    {
+      "sites": [
+        {
+          "path": "src/tank/contracts/session_completion.py",
+          "symbol": "CompletionSessionSnapshot"
+        },
+        {
+          "path": "src/tank/contracts/session_completion.py",
+          "symbol": "HostExecutionObservation"
+        },
+        {
+          "path": "src/tank/contracts/session_completion.py",
+          "symbol": "NativeExecutionBarrier.storage_record"
+        },
+        {
+          "path": "src/tank/agents/sessions.py",
+          "symbol": "SessionService.execution_barrier"
+        }
+      ],
+      "kind": "scoped native completion evidence and host observation compare-and-set",
+      "reason": "The pinned execution-status endpoint reports exactly execution_id/state/nullable settled_outcome, with ordered unique batches of at most64 actual IDs. Snapshot fields are phase-specific consumed journal/tool/terminal facts: unknown attempts stay None and cannot supersede failed inputs, while independently proven terminal inputs need no unused historical body/count. Execution state and journal dictionaries are indexes keyed by actual identities, not opaque business maps. An absent historical host observation remains unreported; explicit null or contradictory reported scope refuses. A real successful status read writes a new host observation identity, actual queried IDs, actual controller collection Timestamp and captured versions only after locked expected-state/receipt comparison; this is coordination provenance, never an invented provider revision or historical0. Rejected stale observations return fresh admitted state without overwriting or claiming their network result committed. The required internal session_id guards caller ownership; storage_record emits only the original external barrier fields and preserves optional receipt omissions at report/proof boundaries.",
+      "validation": [
+        "test_real_execution_queries_batch_sixty_four_and_preserve_input_ownership",
+        "test_unadmitted_execution_page_cannot_partially_persist_or_finalize",
+        "test_invalid_current_owner_refuses_before_recovery_or_native_effects",
+        "test_independently_completed_input_settles_without_unused_retry_or_body",
+        "test_failed_tool_input_requires_observed_older_attempt_before_supersession"
+      ]
+    },
+    {
+      "sites": [
+        {
+          "path": "src/tank/contracts/native_usage.py",
+          "symbol": "NativeUsageSpan.from_wire"
+        },
+        {
+          "path": "src/tank/contracts/native_usage.py",
+          "symbol": "NativeUsageCounters"
+        },
+        {
+          "path": "src/tank/contracts/native_usage.py",
+          "symbol": "NativeUsageSession.from_record"
+        },
+        {
+          "path": "src/tank/agents/native_usage.py",
+          "symbol": "record_native_usage"
+        }
+      ],
+      "kind": "partial observed native measurements and explicit subscription ledger serialization",
+      "reason": "Node api-types span model_usage is optional and its cache counters optional; Node harness usage interfaces accept partial reported counters, while the managed span endpoint declares four counters. No source mode is inferred from absent fields and no universal inclusion/exclusion of cache in input tokens is asserted. The application retains reported counters independently without arithmetic; missing measurements remain None with existing named missing-field reasons, distinct from known0. Missing versus observed empty usage objects are distinct no-ledger phases. A reported span selects its actual model independently; only when that observation is absent may an actual recorded session model supply attribution. If both are unreported, the writer refuses before any ledger write. No model or historical prompt label is invented. No-report/empty spans are recognized before unused session model/prompt metadata is admitted. Retained session prompt/effort/provenance can genuinely be unreported and remain None. Nested raw native_usage_evidence preserves the original provider measurement object including extension/estimate facts; usage contains only admitted counter fields because the storage codec otherwise promotes several raw alias keys into physical SQL measurements. Raw extensions cannot overwrite usage/session identity or become billing authority. Existing cost_usd0/SUBSCRIPTION charge remains the explicit agent gateway application policy declared by config/openma.yaml model_access/pricing_basis, not a provider token-price estimate; no price or total is calculated. Fixed ledger/missing_fields maps exist only at the immutable storage serialization boundary; no I/O occurs in inward models.",
+      "validation": [
+        "test_actual_partial_usage_preserves_observations_and_declared_subscription_policy",
+        "test_invalid_reported_counter_refuses_before_any_usage_write",
+        "test_unreported_and_explicit_empty_spans_have_distinct_no_ledger_effects",
+        "test_mutated_measurement_cannot_replace_retained_span_evidence",
+        "test_reported_search_zero_and_model_are_not_replaced_by_other_sources",
+        "test_usage_propagates_provider_processed_precision_without_inference",
+        "test_usage_keeps_effort_stop_reason_and_search_count"
+      ]
+    },
+    {
+      "sites": [
+        {
+          "path": "src/tank/contracts/session_retention.py",
+          "symbol": "archive_candidate"
+        },
+        {
+          "path": "src/tank/contracts/session_retention.py",
+          "symbol": "RetainedSession.from_record"
+        },
+        {
+          "path": "src/tank/contracts/session_retention.py",
+          "symbol": "SessionActivity.from_record"
+        },
+        {
+          "path": "src/tank/contracts/session_retention.py",
+          "symbol": "archive_tool"
+        },
+        {
+          "path": "src/tank/agents/sessions.py",
+          "symbol": "SessionService.finish_if_idle"
+        },
+        {
+          "path": "src/tank/agents/sessions.py",
+          "symbol": "SessionService.followable"
+        }
+      ],
+      "kind": "consumed archive phases and actual activity without inferred lifecycle or binding",
+      "reason": "Actual event writers and technical design report lifecycle; the initial reader-only status fallback had no corresponding event writer and is removed. Unknown lifecycle/runtime has an explicit unreported denial, not a guessed terminal/nonterminal claim. Scope IDs/card versions/denial finalization clocks are required only in eligible phases that consume them; CLOSED/MERGED do not require unused denial card history, and PENDING tools deny without requiring historical return metadata. Missing journal/counter/body facts do not defeat independently proved terminal inputs. Fresh resolve writes event_id explicitly null before association; a missing historical key is UNREPORTED, explicit null is UNBOUND, a non-null identity is BOUND. Only UNBOUND plus the actual negative-event flag may authorize the eventless path; missing a BOUND resource cannot become a negative. Nullable no_event/followups/runtime flags preserve unreported values and are never coerced to an authoritative default. Actual recorded activity sources are session opening/event/input and same-session question clocks; absent occurrences remain absent, and no recorded clock raises rather than becoming now. Selected Timestamp uncertainty/bucket edge survives offset_schedule. Follow-up eligibility uses an actual session-bound question or matching event/publication/Telegram SENT evidence; unrelated queue jobs have explicitly unreported scope and do not acquire invented ownership. Raw mappings remain only at storage admission/serialization and actual identity-keyed indexes, with shared session lock+reread before full writes. This does not turn put_owned_session into a CAS or validate arbitrary uncooperative snapshot writers.",
+      "validation": [
+        "test_only_the_actual_event_lifecycle_can_authorize_native_archive",
+        "test_retention_preserves_selected_activity_clock_without_relabeling_collection",
+        "test_missing_owned_event_is_not_reinterpreted_as_an_eventless_negative",
+        "test_unreported_event_binding_does_not_authorize_eventless_archive",
+        "test_no_recorded_activity_refuses_before_native_archive",
+        "test_actual_retention_write_preserves_source_clock_and_unknown_terminal_attempt",
+        "test_archive_denial_requires_no_unconsumed_identity_or_publication_history",
+        "test_session_with_a_delivered_card_stays_open_for_follow_ups_past_the_retention",
+        "test_pending_jobs_keep_event_session_and_publication_scope_separate"
+      ]
+    },
+    {
+      "sites": [
+        {
+          "path": "src/tank/contracts/native_usage.py",
+          "symbol": "NativeUsageSession.from_record"
+        },
+        {
+          "path": "src/tank/contracts/native_usage.py",
+          "symbol": "SelectedNativeUsageModel"
+        },
+        {
+          "path": "src/tank/contracts/native_usage.py",
+          "symbol": "select_native_usage_model"
+        },
+        {
+          "path": "src/tank/agents/sessions.py",
+          "symbol": "SessionService.process_event"
+        }
+      ],
+      "kind": "native usage phase-specific metadata dependencies and actual model attribution",
+      "reason": "Node span model is optional and can independently report its actual model; historical session prompt/model observations may genuinely be unreported, as the existing LegacyPromptDescriptor and nullable provenance fields already model. UNREPORTED/EMPTY spans have no ledger operation and now bypass unused session metadata admission, preserving original absent keys and processing actual frame identity once. Reported spans select the actual reported model before recorded session metadata, with factual NATIVE_SPAN_MODEL/RECORDED_SESSION_MODEL attribution and separate observed labels/basis/reason; no provider type, model name or current prompt is guessed. A reported write with neither actual model refuses before effects; this does not claim a new chronology/refusal policy for unattributed reported frames, since full process_event migration remains open. Historical missing prompt/model fields project to unreported None without mutating/backfilling the source session. Current controller versions and existing subscription charge policy remain explicit and unchanged; raw measurement evidence stays separate from admitted counters.",
+      "validation": [
+        "test_reported_span_model_does_not_require_an_unused_session_model_or_prompt",
+        "test_actual_no_report_frame_progresses_without_unused_session_metadata",
+        "test_reported_usage_requires_one_actual_model_before_any_ledger_write"
       ]
     }
   ]

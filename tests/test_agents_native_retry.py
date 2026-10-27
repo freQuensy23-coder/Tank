@@ -171,7 +171,7 @@ async def test_retained_old_exhausted_new_retrying_sequence_waits_for_actual_out
         assert current["message_log"][0]["retry_count"] == 1
         assert "terminal_failure" not in current and not current.get("pending_retry_event")
         assert len(posts) == 1
-        assert not (await service.completed_turn("s"))["complete"]
+        assert not (await service.completed_turn("s")).complete
 
         await service.process_event("s", error("late-old-exhausted", CALLBACK, "exhausted"))
         assert (await repo.get("ops.agent_sessions", "s"))["status"] == "OPEN"
@@ -180,7 +180,7 @@ async def test_retained_old_exhausted_new_retrying_sequence_waits_for_actual_out
             ended = event("new-ended", "session.status_idle", RETRY, stop_reason={"type": "end_turn"})
             history.append(ended)
             await service.process_event("s", ended)
-            assert (await service.completed_turn("s"))["complete"]
+            assert (await service.completed_turn("s")).complete
             current = await repo.get("ops.agent_sessions", "s")
             assert current["status"] == "OPEN" and current["message_log"][0]["turn_status"] == "DONE"
         elif outcome == "EXHAUSTED":
@@ -194,7 +194,7 @@ async def test_retained_old_exhausted_new_retrying_sequence_waits_for_actual_out
             states[RETRY] = "FAILED"
             service.execution_polls.pop("s", None)
             service.history_polls.pop("s", None)
-            assert not (await service.completed_turn("s"))["complete"]
+            assert not (await service.completed_turn("s")).complete
             current = await repo.get("ops.agent_sessions", "s")
             assert current["status"] == "FAILED"
             assert current["terminal_failure"]["execution_id"] == RETRY
@@ -226,7 +226,7 @@ async def test_restart_keeps_native_retry_execution_and_does_not_post_again() ->
             refusals=UnexpectedFollowupRefusals(),
         )
         await service.process_event("s", error("native-retrying", RETRY, "retrying"))
-        assert not (await service.completed_turn("s"))["complete"]
+        assert not (await service.completed_turn("s")).complete
         current = await repo.get("ops.agent_sessions", "s")
         assert current["status"] == "OPEN" and current["message_log"][0]["retry_count"] == 1
         assert len(posts) == 1
@@ -234,7 +234,7 @@ async def test_restart_keeps_native_retry_execution_and_does_not_post_again() ->
         ended = event("new-ended", "session.status_idle", RETRY, stop_reason={"type": "end_turn"})
         history.append(ended)
         await service.process_event("s", ended)
-        assert (await service.completed_turn("s"))["complete"]
+        assert (await service.completed_turn("s")).complete
         assert len(posts) == 1
     finally:
         await service.close()

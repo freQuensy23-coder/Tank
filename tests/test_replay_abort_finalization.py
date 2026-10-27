@@ -187,7 +187,13 @@ async def test_actual_replay_abort_finalizes_owned_turn_after_stopping_follower(
             ids = request.url.params.get_list("ids[]")
             assert set(ids) <= set(accepted)
             return httpx.Response(
-                200, json={"data": [{"execution_id": identity, "state": "RUNNING"} for identity in ids]}
+                200,
+                json={
+                    "data": [
+                        {"execution_id": identity, "state": "RUNNING", "settled_outcome": None}
+                        for identity in ids
+                    ]
+                },
             )
         if path.endswith("/events/stream"):
             return httpx.Response(200, headers={"content-type": "text/event-stream"}, stream=Stream())
