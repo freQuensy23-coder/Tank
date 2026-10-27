@@ -3303,7 +3303,7 @@
         {
           "path": "src/tank/delivery.py",
           "symbol": "DeliveryService._all",
-          "line": 126
+          "line": 148
         },
         {
           "path": "src/tank/ops_cards.py",
@@ -3339,7 +3339,7 @@
         {
           "path": "src/tank/delivery.py",
           "symbol": "DeliveryService.__init__",
-          "line": 61
+          "line": 137
         }
       ],
       "kind": "actual delivery ordinal and consumed activation phases",
@@ -3371,7 +3371,7 @@
         {
           "path": "src/tank/delivery.py",
           "symbol": "DeliveryService._deliver_documents",
-          "line": 270
+          "line": 292
         }
       ],
       "kind": "pending diagnostic effect requires an observed parent destination",
@@ -3407,7 +3407,7 @@
         }
       ],
       "kind": "operator unreported facts and preserved display-only defaults",
-      "reason": "Unknown attempt/map facts have explicit display/selection phases and are never0 or an empty universe. Nullable ancillary source/provider facts remain absent. The prior presentation-only EPOCH rationale was disproved by root: first-send due consumes time_of. Operational admission is held pending actual-clock proof; neither empty history nor missing update time may become current time. Display ordering is a separate review disposition. Missing frozen interval uses the existing declared900-second update policy from config/thresholds.yaml, not inferred historical configuration. Typed assessment instances allow their domain field name during nested revalidation; raw admission still projects only the actual class wire key.",
+      "reason": "Unknown attempt/map facts remain explicit, never zero or an empty universe. Operational scheduling requires an actual consumed clock for positive spacing; explicit zero spacing and covered/unchanged phases require no unused clock. Nonempty item-bound history is required. Pending adoption captures actual scoped parent receipt time and digest; missing historical clocks never become current time. The presentation sentinel remains only for display/no-session explanation ordering. Wholly unreported frozen policy uses normative 900 seconds; a reported policy requires its actual scalar. Omitted normal decision flags remain unreported, never actionable=True. Assessment domain-name revalidation preserves raw class-key admission.",
       "validation": [
         "test_failed_delivery_does_not_display_unknown_attempt_as_zero",
         "test_analysis_map_unknown_is_not_an_empty_completed_universe",
@@ -3420,7 +3420,7 @@
         {
           "path": "src/tank/contracts/tool_dispatch.py",
           "symbol": "ToolCallOwner.retry_count",
-          "line": 23
+          "line": 39
         }
       ],
       "kind": "unreported attempt is not required for input-trigger selection",
