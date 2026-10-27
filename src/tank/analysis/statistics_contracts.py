@@ -262,6 +262,7 @@ type BaselineFamily = Literal[
     "oi_individual_history",
     "oi_composite_history",
     "funding",
+    "funding_history",
     "hourly_returns",
     "beta",
     "relative_history",

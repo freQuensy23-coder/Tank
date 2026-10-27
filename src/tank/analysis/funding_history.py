@@ -131,13 +131,13 @@ def _historical_time(point: FundingInputObservation) -> datetime:
     return parse_iso_time(value)
 
 
-def funding_historical_population(
+def funding_historical_sources(
     calculator: FundingCalculator,
     request: FundingWindowRequest,
     *,
     instrument: DerivativeInstrument,
     policy: FundingHistoryPolicy,
-) -> FundingHistoricalPopulation:
+) -> tuple[FundingInputObservation, ...]:
     request = FundingWindowRequest.model_validate(request)
     instrument = DerivativeInstrument.model_validate(instrument)
     policy = FundingHistoryPolicy.model_validate(policy)
@@ -161,6 +161,17 @@ def funding_historical_population(
             key=_historical_time,
         )
     )
+    return selected
+
+
+def funding_historical_population(
+    calculator: FundingCalculator,
+    request: FundingWindowRequest,
+    *,
+    instrument: DerivativeInstrument,
+    policy: FundingHistoryPolicy,
+) -> FundingHistoricalPopulation:
+    selected = funding_historical_sources(calculator, request, instrument=instrument, policy=policy)
     groups: dict[datetime, list[FundingInputObservation]] = {}
     for point in selected:
         groups.setdefault(_historical_time(point), []).append(point)
