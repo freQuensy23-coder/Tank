@@ -1,5 +1,7 @@
 """Persisted call activation phases use only their actual consumed facts."""
 
+import json
+
 import httpx
 import pytest
 from delivery_support import delivery_job
@@ -8,6 +10,7 @@ from pydantic import JsonValue
 from tank.delivery import DeliveryService
 from tank.settings import Settings
 from tank.storage import MemoryRepository
+from tank.telegram_api import TelegramResponseError, response_result
 from tank.time_precision import Timestamp
 
 
@@ -143,3 +146,42 @@ async def test_document_manifest_contradiction_refuses_before_parent_send() -> N
             await service.deliver(delivery_job({"notice_id": "n"}))
     assert await repo.get("out.ops_notices", "n") == notice
     assert await repo.list("out.deliveries") == []
+
+
+@pytest.mark.parametrize("retry_after", [None, 7])
+async def test_typed_telegram_failure_keeps_unreported_delay_distinct(retry_after: int | None) -> None:
+    wire: dict[str, JsonValue] = {"ok": False, "error_code": 503, "description": "Unavailable"}
+    if retry_after is not None:
+        wire["parameters"] = {"retry_after": retry_after}
+    with pytest.raises(TelegramResponseError) as admitted:
+        response_result(json.dumps(wire).encode(), method="sendMessage", status=503)
+    rejection = admitted.value
+    assert rejection.retry_after == retry_after
+    repo = MemoryRepository()
+    await repo.put(
+        "out.alerts",
+        "a:1",
+        {
+            "alert_id": "a",
+            "version": 1,
+            "event_id": "e",
+            "kind": "FULL",
+            "card_text": "Accepted card",
+            "decisions": [],
+        },
+        immutable=True,
+    )
+
+    def send(request: httpx.Request) -> httpx.Response:
+        raise rejection
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(send)) as http:
+        service = DeliveryService(repo, Settings(telegram_token="test", telegram_alerts_chat="1"), http=http)
+        from tank.delivery import DeliveryError
+
+        with pytest.raises(DeliveryError) as failed:
+            await service.deliver(delivery_job({"alert_id": "a", "version": 1}))
+    assert failed.value.retry_after == (retry_after if retry_after is not None else 1)
+    assert rejection.retry_after == retry_after
+    assert [row["status"] for row in await repo.list("out.deliveries")] == ["GENERATED", "FAILED"]
+    assert await repo.list("ana.calls") == []
