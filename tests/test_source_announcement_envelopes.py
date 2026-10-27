@@ -128,6 +128,8 @@ async def test_invalid_announcement_envelope_cannot_author_item_raw_or_etag(
             }
             refused = await service.poll_once("S11")
             assert refused.status == "DEGRADED" and refused.items == 0
+            if invalid == "FAILED":
+                assert any("Bybit API error: 10016" in error for error in refused.errors)
             assert await repo.list("ingest.source_items") == []
             assert not list((tmp_path / "raw").rglob("*.zst"))
             checkpoint = await repo.get("ops.source_checkpoints", "S11:0")
