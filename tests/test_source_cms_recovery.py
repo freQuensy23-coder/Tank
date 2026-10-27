@@ -7,6 +7,7 @@ import zstandard
 from source_support import fixture_request_budgets, fixture_versions, source_definition, source_feed
 from test_sources import Repo, settings
 
+from tank.contracts.source_items import ArticleLinkListing, BoundArticleLink, PendingArticleLink
 from tank.sources import SourceService, parsers
 from tank.util import sha256
 
@@ -24,17 +25,31 @@ def retained(name):
     return zstandard.ZstdDecompressor().decompress((FIXTURES / (name + ".html.zst")).read_bytes())
 
 
-def original():
-    row = next(r for r in parsers.article_links(retained("index"), FEED) if r["url"] == OLD)
-    return dict(row, item_id="item-s13-recovery")
+def original() -> ArticleLinkListing:
+    return next(r for r in parsers.article_links(retained("index"), FEED) if r.url == OLD)
+
+
+def pending_article(fallback: str) -> PendingArticleLink:
+    link = original()
+    return PendingArticleLink(
+        discovery=BoundArticleLink.model_validate(
+            {"source_id": "S13", **link.model_dump(mode="json"), "publisher_cms_slug_url": fallback}
+        ),
+        item_id="item-s13-recovery",
+        feed=source_feed(FEED).url,
+        discovery_config_version="test",
+        discovery_code_version="test",
+        observed_at="2026-10-19T07:59:02.218121Z",
+    )
 
 
 def test_retained_cms_entry_declares_slug_without_replacing_canonical_identity() -> None:
     row = original()
-    assert row["publisher_cms_identity"]["entry_id"] == "59JVkSSAyZoVoQP8zH3Wkn"
-    assert row["publisher_cms_slug_url"] == NEW
-    assert row["url"] == row["external_id"] == OLD
-    assert row["publisher_cms_identity"] in parsers.publisher_cms_entries(retained("detail"))
+    assert row.publisher_cms_identity is not None
+    assert row.publisher_cms_identity.entry_id == "59JVkSSAyZoVoQP8zH3Wkn"
+    assert row.publisher_cms_slug_url == NEW
+    assert row.url == row.external_id == OLD
+    assert row.publisher_cms_identity in parsers.publisher_cms_entries(retained("detail"))
 
 
 @pytest.mark.asyncio
@@ -87,11 +102,7 @@ async def test_retained_canonical_404_recovers_only_exact_same_cms_entry(tmp_pat
             versions=fixture_versions(),
             budgets=fixture_request_budgets(),
         )
-        row = original()
-        row["feed"] = FEED["url"]
-        row["discovery_config_version"] = "test"
-        row["discovery_code_version"] = "test"
-        row["observed_at"] = "2026-10-19T07:59:02.218121Z"
+        row = pending_article(NEW)
         batch = {"kind": "html"}
         if mismatch:
             with pytest.raises(ValueError, match="identity/content mismatch"):
@@ -105,7 +116,7 @@ async def test_retained_canonical_404_recovers_only_exact_same_cms_entry(tmp_pat
             assert item["external_id"] == OLD
             assert item["url"] == NEW
             assert item["publisher_url_aliases"] == [OLD, NEW]
-            assert item["observed_at"] == row["observed_at"]
+            assert item["observed_at"] == row.observed_at
             recovery = item["publisher_cms_recovery"]
             assert recovery["status"] == "VERIFIED_SAME_CMS_ENTRY"
             assert recovery["original_payload_sha256"] == sha256(retained("not-found"))
@@ -152,11 +163,7 @@ async def test_cms_fallback_is_not_used_for_non404_failure(
             versions=fixture_versions(),
             budgets=fixture_request_budgets(),
         )
-        row = original()
-        row["feed"] = FEED["url"]
-        row["discovery_config_version"] = "test"
-        row["discovery_code_version"] = "test"
-        row["observed_at"] = "2026-10-19T07:59:02.218121Z"
+        row = pending_article(NEW)
         with pytest.raises(httpx.HTTPStatusError) as error:
             await svc.poller._item(source_definition(source), source_feed(FEED), "S13:0", "html", row)
         assert error.value.response.status_code == 403
@@ -186,11 +193,7 @@ async def test_checkpoint_fallback_must_match_same_host_and_declared_slug(tmp_pa
             versions=fixture_versions(),
             budgets=fixture_request_budgets(),
         )
-        row = original()
-        row["feed"] = FEED["url"]
-        row["discovery_config_version"] = "test"
-        row["discovery_code_version"] = "test"
-        row.update(observed_at="2026-10-19T07:59:02.218121Z", publisher_cms_slug_url=fallback)
+        row = pending_article(fallback)
         with pytest.raises(httpx.HTTPStatusError):
             await svc.poller._item(source_definition(source), source_feed(FEED), "S13:0", "html", row)
     assert calls == [OLD]

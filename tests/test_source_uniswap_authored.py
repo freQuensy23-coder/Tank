@@ -60,15 +60,15 @@ def test_all_seventeen_retained_uniswap_articles_preserve_authored_facts_and_clo
         nodes = tree.css("main .ArticleContent")
         assert len(nodes) == 1
         expected = parsers.text(nodes[0].html)
-        parsed = parsers.article(payload, source_id="S15")
-        assert parsed["text"] == expected
-        assert parsed["title"] == row["title"]
-        ordinary = parsers.article(payload, source_id="S27")
-        for key in ("published_at", "published_at_precision", "published_at_basis"):
-            assert parsed.get(key) == ordinary.get(key)
+        parsed = parsers.article(payload, source_id="S15", page_url=row["url"])
+        assert parsed.text == expected
+        assert parsed.title == row["title"]
+        ordinary = parsers.article(payload, source_id="S27", page_url=row["url"])
+        assert parsed.publication == ordinary.publication
+        assert parsed.publication_basis == ordinary.publication_basis
         changed = payload.decode().replace("</main>", f"<aside><p>{canary}</p></aside></main>", 1)
-        assert parsers.article(changed, source_id="S15")["text"] == expected
-        assert canary in parsers.article(changed, source_id="S27")["text"]
+        assert parsers.article(changed, source_id="S15").text == expected
+        assert canary in parsers.article(changed, source_id="S27").text
         assert json.dumps(row, sort_keys=True) == original
         if index == 206:
             assert "Governance holds upgrade and configuration rights after launch." in expected
@@ -99,7 +99,7 @@ def test_uniswap_missing_empty_or_ambiguous_body_refuses_without_fallback(author
     payload = "<h1>Article</h1><main><article>Unrelated current card</article>" + authored + "</main>"
     with pytest.raises(ValueError, match="Uniswap article"):
         parsers.article(payload, source_id="S15")
-    assert "Unrelated current card" in parsers.article(payload, source_id="S27")["text"]
+    assert "Unrelated current card" in parsers.article(payload, source_id="S27").text
 
 
 def test_uniswap_discovery_excludes_navigation_but_preserves_real_article_links(tmp_path: Path) -> None:
@@ -109,7 +109,7 @@ def test_uniswap_discovery_excludes_navigation_but_preserves_real_article_links(
     payload = """<a href="/latest-updates">Latest Updates</a>
     <a href="/category/protocols">Category</a>
     <a href="/keeping-value-in-the-pool-how-stablepair-hook-works">Real article</a>"""
-    assert [x["url"] for x in parsers.article_links(payload, feed)] == [
+    assert [x.url for x in parsers.article_links(payload, feed)] == [
         "https://blog.uniswap.org/keeping-value-in-the-pool-how-stablepair-hook-works"
     ]
 
@@ -165,7 +165,7 @@ async def test_normal_uniswap_poll_uses_retained_authored_body_and_never_fetches
             assert len(stored) == 2
             for _, original, payload in fixtures:
                 item = next(x for x in stored if x["url"] == original["url"])
-                assert item["text"] == parsers.article(payload, source_id="S15")["text"]
+                assert item["text"] == parsers.article(payload, source_id="S15").text
                 assert item["raw_sha256"] == original["raw_sha256"]
                 assert item["observed_at"] != original["observed_at"]
             assert all("latest-updates" not in url for url in seen)

@@ -282,12 +282,11 @@ class SourcePoller:
                 or await svc.observe_known(sid, external, feed.url)
             ):
                 continue
-            if (
-                sid == "S02"
-                and not isinstance(material, BoundArticleLink)
-                and not svc.filing_matches(material)
-            ):
-                continue
+            if sid == "S02":
+                if isinstance(material, BoundArticleLink):
+                    raise ValueError("SEC filing admission requires the reported filing text")
+                if not svc.filing_matches(material):
+                    continue
             item_id = new_id("item")
             observed_at = (
                 envelope.observation.observed_at

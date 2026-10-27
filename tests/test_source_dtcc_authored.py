@@ -49,16 +49,17 @@ def retained():
 def test_all_actual_dtcc_pages_use_ordered_authored_blocks_without_rewriting_capture() -> None:
     for index, row, payload in retained():
         original = json.dumps(row, sort_keys=True)
-        parsed = parsers.article(payload, source_id="S08")
+        parsed = parsers.article(payload, source_id="S08", page_url=row["url"])
         tree = HTMLParser(payload)
         blocks = tree.css("main .content-item--richtextblock .rtf")
         expected = parsers.text("<div>" + "\n".join(node.html for node in blocks) + "</div>")
-        assert parsed["text"] == expected and len(expected) >= 1600
-        assert parsed["title"] == row["title"]
-        assert parsed["published_at_precision"] == "BUCKET(1d)"
-        assert parsed["published_at_basis"] == "DTCC_CALENDAR_MASTHEAD"
+        assert parsed.text == expected and len(expected) >= 1600
+        assert parsed.title == row["title"]
+        assert parsed.publication.precision == "BUCKET(1d)"
+        assert parsed.publication_basis == "DTCC_CALENDAR_MASTHEAD"
+        assert parsed.publication.value is not None
         assert (
-            parsed["published_at"][:10]
+            parsed.publication.value[:10]
             == __import__("datetime")
             .datetime.strptime(
                 tree.css_first("main .page-detail-masthead__meta .paragraph-small").text(strip=True),
@@ -86,7 +87,7 @@ def test_dtcc_missing_empty_nested_authored_nodes_refuse_without_nav_fallback(bo
     html = "<main><article>Unrelated sidebar</article>" + body + "</main>"
     with pytest.raises(ValueError, match="DTCC release"):
         parsers.article(html, source_id="S08")
-    assert "Unrelated sidebar" in parsers.article(html, source_id="S27")["text"]
+    assert "Unrelated sidebar" in parsers.article(html, source_id="S27").text
 
 
 @pytest.mark.historical
@@ -136,9 +137,9 @@ async def test_normal_dtcc_poll_uses_actual_retained_release_bodies(tmp_path: Pa
             rows = await repo.list("ingest.source_items")
             for _, original, payload in fixtures:
                 row = next(x for x in rows if x["external_id"] == original["external_id"])
-                assert row["text"] == parsers.article(payload, source_id="S08")["text"]
+                assert row["text"] == parsers.article(payload, source_id="S08").text
                 assert row["raw_sha256"] == original["raw_sha256"]
-                assert row["published_at"] == parsers.article(payload, source_id="S08")["published_at"]
+                assert row["published_at"] == parsers.article(payload, source_id="S08").publication.value
                 assert row["published_at_precision"] == "BUCKET(1d)"
                 assert row["observed_at"] != original["observed_at"]
             jobs, items = await repo.list("ops.jobs"), await repo.list("ingest.source_items")

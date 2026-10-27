@@ -612,16 +612,15 @@ def article(
         date_only=basis == "BLACKROCK_CALENDAR_PUBLICATION_META",
         epoch_unit="ms" if basis == "BLACKROCK_CALENDAR_PUBLICATION_META" else None,
     )
+    publication = propagate_timestamp(fields, "published_at")
+    if publication.value is None and (len(values) > 1 or (candidates and not selected)):
+        publication = Timestamp(None, "COLLECTION_ONLY", "UNVERIFIED_SEMANTICS")
     return ParsedArticle(
         title=title,
         text=body_text if body_text is not None else text(body.html if body else payload),
-        publication=propagate_timestamp(fields, "published_at"),
+        publication=publication,
         publication_basis=basis,
-        publication_missing_reason=None
-        if fields["published_at"]
-        else "UNVERIFIED_SEMANTICS"
-        if len(values) > 1 or (candidates and not selected)
-        else "INCOMPLETE",
+        publication_missing_reason=publication.precision_reason if publication.value is None else None,
     )
 
 
