@@ -47,10 +47,10 @@ from tank.reaction_recovery import (
     RecoveryWitnessIndex,
     admit_recovery_witnesses,
     recovery_backfill_from_record,
-    recovery_eligibility,
     recovery_idempotency_key,
     recovery_link_key,
 )
+from tank.reaction_recovery_policy import recovery_eligibility
 from tank.reaction_timing import late_reaction_schedule
 from tank.runtime import Runtime
 from tank.scheduler import ReactionEventIdentity
