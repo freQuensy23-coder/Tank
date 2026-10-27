@@ -144,11 +144,6 @@ def chunks(text, limit=MESSAGE_LIMIT):
 
 
 def formatted_chunks(markdown, limit=MESSAGE_LIMIT):
-    """Agent Markdown as (text, entities) messages; the plain text when it cannot be converted.
-
-    Entities carry explicit offsets, so Telegram parses no markup and cannot reject malformed
-    Markdown; markup that forms no complete span stays literal.
-    """
     try:
         text, entities = telegramify_markdown.convert(markdown)
         parts = telegramify_markdown.split_entities(text, entities, limit)
