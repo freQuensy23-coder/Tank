@@ -42,7 +42,8 @@ async def test_disposable_postgres_selective_condition_inputs_and_sql_footprint(
     dsn = os.getenv("TANK_TEST_DATABASE_URL")
     if not dsn:
         pytest.skip("Requires an isolated tank_test* PostgreSQL database with CREATEDB")
-    if not conninfo_to_dict(dsn).get("dbname", "").startswith("tank_test"):
+    database_name = conninfo_to_dict(dsn).get("dbname")
+    if not isinstance(database_name, str) or not database_name.startswith("tank_test"):
         pytest.fail("TANK_TEST_DATABASE_URL must select an isolated tank_test* database")
     async with postgres_template.repository(dsn) as repo:
         packet = run_path(str(Path(__file__).with_name("test_truth_start_fixture.py")))[
@@ -55,7 +56,9 @@ async def test_disposable_postgres_selective_condition_inputs_and_sql_footprint(
             for row in values:
                 if not isinstance(row, dict):
                     continue
-                row["instrument_id"] = rename.get(row.get("instrument_id"), row.get("instrument_id"))
+                instrument_id = row.get("instrument_id")
+                if isinstance(instrument_id, str):
+                    row["instrument_id"] = rename.get(instrument_id, instrument_id)
                 if row.get("venue") == "A":
                     row["venue"] = "binance"
                 if row.get("venue") == "B":
@@ -256,13 +259,13 @@ async def test_disposable_postgres_selective_condition_inputs_and_sql_footprint(
         monkeypatch.setattr(repo, "put", forbidden)
         monkeypatch.setattr(repo, "put_market_batch", forbidden)
         async with httpx.AsyncClient() as http:
-            market = MarketService(
+            market_service = MarketService(
                 repo, settings, http=http, versions=fixture_versions(), admission=fixture_http_admission()
             )
-            monkeypatch.setattr(market, "snapshot", forbidden)
-            monkeypatch.setattr(market, "_put", forbidden)
-            monkeypatch.setattr(market, "flush_market", forbidden)
-            truth = MarketTruthService(repo, settings, market, versions=fixture_versions())
+            monkeypatch.setattr(market_service, "snapshot", forbidden)
+            monkeypatch.setattr(market_service, "_put", forbidden)
+            monkeypatch.setattr(market_service, "flush_market", forbidden)
+            truth = MarketTruthService(repo, settings, market_service, versions=fixture_versions())
             ordinary = [
                 dict(metric=m, window="W1H") for m in ("spot.cohort.direction", "price.close_vs_level")
             ]
@@ -280,7 +283,7 @@ async def test_disposable_postgres_selective_condition_inputs_and_sql_footprint(
             statements.clear()
             requirements = [dict(metric=m, window="W1H") for m in ("dc.class", "liq.depth_p1_vs_pre")]
             selective = await truth.condition_values(event, "T", packet["cutoff"], requirements)
-            loaded = await market.condition_snapshot(
+            loaded = await market_service.condition_snapshot(
                 "T",
                 packet["cutoff"],
                 anchor={"type": "T1", "ts": packet["anchor"]["ts"], "ts_prec": "EXACT"},
