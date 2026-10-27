@@ -41,7 +41,9 @@ def test_repeating_dollar_terms_keep_exact_majority_and_sparse_source() -> None:
     assert result.source == source
     assert result.source.native_majority is False
     assert result.source.pos_share == 0.5
-    for term in (result.position, result.markup, result.interaction):
+    assert result.markup.value == Decimal("-0.25")
+    assert result.markup.reason is None
+    for term in (result.position, result.interaction):
         assert term.value is None
         assert term.reason == "NON_TERMINATING_DECIMAL"
 

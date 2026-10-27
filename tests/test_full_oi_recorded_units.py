@@ -6,7 +6,7 @@ from decimal import Decimal
 import pytest
 from pydantic import JsonValue
 
-from tank.analysis.truth import derivatives_truth
+from tank.analysis.truth import derivatives_truth, measurement_metadata
 from tank.util import iso
 
 
@@ -121,3 +121,17 @@ def test_full_oi_known_zero_usd_baseline_remains_observed() -> None:
     assert result["oi_usd_detail"] is None
     assert result["oi_usd_chg_pct"] is None
     assert result["oi_usd_chg_pct_reason"] == "ZERO_BASELINE"
+
+
+def test_full_oi_repeating_dollar_term_metadata_preserves_exact_cause() -> None:
+    snapshot, start, end = recorded_snapshot(native_start=3, native_end=4, recorded=True, source_label=None)
+    derivatives = derivatives_truth(snapshot, start, end)
+    metadata = measurement_metadata({"cutoff": iso(end), "derivatives": derivatives}, spot_measurements=())
+    term = metadata["derivatives.per_venue[0].decomposition.position"]
+    assert term["value"] is None
+    assert term["unit"] == "USD"
+    assert term["reason"] == "NOT_ESTIMABLE"
+    assert term["reason_detail"] == "NON_TERMINATING_DECIMAL"
+    markup = metadata["derivatives.per_venue[0].decomposition.markup"]
+    assert markup["value"] == Decimal("-0.25")
+    assert markup["reason"] is None

@@ -1028,12 +1028,14 @@ def test_derivatives_oi_classifies_with_recorded_normalized_usd() -> None:
         "oi": oi,
         "tickers": tickers,
     }
+    original = deepcopy(snapshot)
     stats = derivatives_truth(snapshot, start, end)["per_venue"][0]
     assert stats["oi_usd_chg_pct"] == pytest.approx(0.08)
     assert stats["native_normal_range"] == [0, 0]
     assert stats["decomposition"]["pos_share"] is not None
     assert stats["oi_class"] == "REAL_NATIVE"
-    assert oi[0]["oi_usd"] is None
+    assert oi[0]["oi_usd"] == 1000
+    assert snapshot == original
 
 
 def test_freshness_counts_only_the_assessed_tokens_fields_not_peer_closes() -> None:

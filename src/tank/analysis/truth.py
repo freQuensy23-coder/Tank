@@ -4762,6 +4762,18 @@ def measurement_metadata(result, *, spot_measurements: Sequence[SpotNativeMeasur
                             "observed_through"
                         )
                     reason = value.get(key + "_reason")
+                    dollar_display_reason = (
+                        reason
+                        if key in ("position", "markup", "interaction")
+                        and value.get("basis") == "RECORDED_USD_IMPLIED_PRICE"
+                        else None
+                    )
+                    if dollar_display_reason in (
+                        "NON_TERMINATING_DECIMAL",
+                        "DISPLAY_NOT_MATERIALIZED",
+                        "NATIVE_ENDPOINT_ZERO",
+                    ):
+                        reason = "NOT_ESTIMABLE"
                     if key == "r_sector_adj":
                         reason = reason or value.get("sector_reason")
                     reason = (
@@ -4815,6 +4827,8 @@ def measurement_metadata(result, *, spot_measurements: Sequence[SpotNativeMeasur
                         else None,
                         evidence_scope={k: local[k] for k in ("instrument_id", "venue") if k in local},
                     )
+                    if dollar_display_reason is not None:
+                        missing_fields[p]["reason_detail"] = dollar_display_reason
                 else:
                     if isinstance(child, list):
                         local = dict(local, unit_hint=value.get("unit") or unit(key, p))
