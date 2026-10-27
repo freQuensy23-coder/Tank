@@ -243,6 +243,8 @@ jobs:
           tests/test_source_checks.py tests/test_source_parser_admission.py tests/test_source_service.py
           tests/test_cli_source_check.py tests/test_source_binance_catalog_phase.py
           tests/test_source_contentful_admission.py tests/test_source_detail_publication.py
+          tests/test_source_bybit_publication.py tests/test_source_snapshot_publication.py
+          tests/test_source_federal_pagination.py
       - name: Check completed funding normalization and history family strictly
         env:
           MYPYPATH: src:tests
