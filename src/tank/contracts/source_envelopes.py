@@ -52,6 +52,7 @@ class FederalRegisterResults(DomainModel):
     model_config = ConfigDict(extra="ignore")
 
     results: list[JsonValue]
+    next_page_url: str | None = Field(default=None, min_length=1, pattern=r"^\S+$")
 
 
 class BinanceCmsCatalog(DomainModel):
