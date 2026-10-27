@@ -19,7 +19,7 @@ from collections.abc import Callable, Iterable, Mapping, Sequence
 from contextvars import ContextVar
 from copy import deepcopy
 from datetime import datetime, timedelta
-from decimal import Decimal, getcontext, localcontext
+from decimal import Decimal, InvalidOperation, getcontext, localcontext
 from functools import wraps
 from math import isfinite, log
 from statistics import mean, median, stdev
@@ -29,12 +29,17 @@ from pydantic import JsonValue
 
 from tank.analysis.baseline_cache import BaselineCaches
 from tank.analysis.condition_fingerprints import condition_input_fingerprints
-from tank.analysis.condition_graph_codec import encode_condition_derivatives, encode_scoped_condition_spot
+from tank.analysis.condition_graph_codec import (
+    encode_condition_derivatives,
+    encode_recorded_oi_decomposition,
+    encode_scoped_condition_spot,
+)
 from tank.analysis.condition_graph_contracts import (
     ConditionStateNodeKey,
     ConditionTopCacheKey,
     ConditionTopVenueSignHistory,
     ConditionWireClocks,
+    sum_condition_native,
 )
 from tank.analysis.condition_input_codec import (
     SpotDirectEvidenceLookup,
@@ -46,10 +51,12 @@ from tank.analysis.condition_inputs import (
 )
 from tank.analysis.condition_oi_codec import OIConditionLookup, captured_oi_selection_policy
 from tank.analysis.execution import ExecutionLevelWire, ExecutionSide, execute_book_walk, execution_request
+from tank.analysis.oi_ratio import native_oi_change, usd_oi_change
 from tank.analysis.oi_synchronization import OISynchronizationPolicy
 from tank.analysis.open_interest import OIWindowRequest
 from tank.analysis.positioning import (
     MissingOIDecomposition,
+    oi_class_from_comparisons,
 )
 from tank.analysis.positioning import (
     decomposition as decomposition,
@@ -64,6 +71,8 @@ from tank.analysis.price_reference import (
     ReferencePriceSeries,
     decode_price_cadence,
 )
+from tank.analysis.recorded_oi_decomposition import RecordedOiEndpoints, recorded_oi_decomposition
+from tank.analysis.recorded_oi_display import recorded_oi_dollar_terms
 from tank.analysis.spot import (
     SpotNativeMeasurement,
     spot_native_measurements,
@@ -94,7 +103,7 @@ from tank.analysis.truth_contracts import MarketTruthAssessmentRef
 from tank.contracts.provenance import ResolvedVersionIdentity
 from tank.market.capture import event_anchor
 from tank.time_precision import Timestamp, chosen_boundary, offset_schedule, propagate_timestamp
-from tank.util import iso, jsonable, new_id, parse_epoch, parse_time, utcnow
+from tank.util import JsonInput, iso, jsonable, new_id, parse_epoch, parse_time, utcnow
 
 WINDOWS = {"W15M": 900, "W1H": 3600, "W4H": 14400, "W24H": 86400}
 RISK_ORDER = [
@@ -885,55 +894,26 @@ def oi_temporally_admissible(row):
     return value
 
 
-@precise
-def _oi_rows(snapshot, instrument_id):
-    """The instrument's OI rows; a row without oi_usd gets oi_native x mark (03 §5.4 table:
-    Binance oi_native x mark, Bybit singleOpenInterest x markPrice) from its own mark or the
-    nearest ticker mark of the instrument within the sync tolerance, marked with
-    oi_usd_source. A derived USD value serves only the window endpoints a decomposition uses;
-    normal-range history uses stored oi_usd only (_stored_usd). Input rows are not modified;
-    the derived list is built once per assessment and shared by all windows."""
-    rows = _instrument_rows(snapshot, "oi", instrument_id)
-    inputs = _ASSESSMENT_INPUTS.get()
-    memo = inputs.setdefault("oi_rows", {}) if inputs is not None else None
-    if memo is not None and memo.get(id(rows), (None,))[0] is rows:
-        return memo[id(rows)][1]
-    tolerance = float(parameter("oi_sync_tolerance_s", 60))
-    marks = sorted(
-        (_time(t), decimal(t["mark_price"]))
-        for t in _instrument_rows(snapshot, "tickers", instrument_id)
-        if t.get("mark_price") is not None and _time(t) is not None and decimal(t["mark_price"])
-    )
-    mark_times = [t for t, _ in marks]
-    out = []
+def _stored_usd(row: Mapping[str, JsonInput]) -> Decimal | None:
+    """Read the actual normalized USD component, independently of raw extension labels."""
+    raw = row.get("oi_usd")
+    if isinstance(raw, bool) or not isinstance(raw, (str, int, float, Decimal)):
+        return None
+    try:
+        value = raw if isinstance(raw, Decimal) else Decimal(str(raw))
+    except InvalidOperation:
+        return None
+    return value if value.is_finite() and value >= 0 else None
+
+
+def _stored_usd_total(rows: Sequence[Mapping[str, JsonInput]]) -> Decimal | None:
+    values: list[Decimal] = []
     for row in rows:
-        native = decimal(row.get("oi_native"))
-        if row.get("oi_usd") is not None or native is None:
-            out.append(row)
-            continue
-        mark, source = decimal(row.get("mark_price")), "OI_NATIVE_X_ROW_MARK"
-        if not mark:
-            t = _time(row)
-            i = bisect_left(mark_times, t)
-            near = [
-                (abs((mark_times[j] - t).total_seconds()), j)
-                for j in (i - 1, i)
-                if 0 <= j < len(marks) and abs((mark_times[j] - t).total_seconds()) <= tolerance
-            ]
-            mark, source = (marks[min(near)[1]][1], "OI_NATIVE_X_TICKER_MARK") if near else (None, None)
-        if not mark:
-            out.append(row)
-            continue
-        exact_context(native, mark)
-        out.append(dict(row, oi_usd=native * mark, oi_usd_reason=None, oi_usd_source=source))
-    if memo is not None:
-        memo[id(rows)] = (rows, out)
-    return out
-
-
-def _stored_usd(row):
-    """oi_usd as stored by capture; None for a value derived from a mark at assessment time."""
-    return None if row.get("oi_usd_source") else decimal(row.get("oi_usd"))
+        value = _stored_usd(row)
+        if value is None:
+            return None
+        values.append(value)
+    return sum_condition_native(values) if values else None
 
 
 def _oi_split(rows):
@@ -972,16 +952,36 @@ def _oi_stats(rows, start, end, *, history_identity=None, venue_history=None):
     a, z = nearest(start), nearest(end)
     if not a or not z:
         return None
-    n0, n1, u0, u1 = (
-        decimal(r.get(k)) for r, k in [(a, "oi_native"), (z, "oi_native"), (a, "oi_usd"), (z, "oi_usd")]
-    )
-    if n0 is None or n1 is None or n0 <= 0 or n1 < 0:
+    n0, n1 = decimal(a.get("oi_native")), decimal(z.get("oi_native"))
+    u0, u1 = _stored_usd(a), _stored_usd(z)
+    if n0 is None or n1 is None or not n0.is_finite() or not n1.is_finite() or n0 < 0 or n1 < 0:
         return None
-    exact_context(n0, n1, u0, u1)
-    p0 = u0 / n0 if u0 is not None else None
-    p1 = u1 / n1 if u1 is not None and n1 else decimal(z.get("mark_price", z.get("mark")))
-    usd_ready = u0 is not None and u1 is not None and u0 > 0
-    dec = decomposition(n0, n1, p0, p1) if p0 is not None and p1 is not None else MissingOIDecomposition()
+    usd_detail = (
+        None
+        if u0 is not None and u1 is not None
+        else "RECORDED_USD_COMPONENT_UNAVAILABLE"
+        if venue_history is not None
+        else "REPORTED_USD_INVALID"
+        if (u0 is None and a.get("oi_usd") is not None) or (u1 is None and z.get("oi_usd") is not None)
+        else "RECORDED_USD_NOT_CAPTURED"
+    )
+    if u0 is not None and u1 is not None:
+        dec = recorded_oi_decomposition(
+            RecordedOiEndpoints(native_start=n0, native_end=n1, usd_start=u0, usd_end=u1)
+        )
+        dollar_terms = recorded_oi_dollar_terms(dec)
+        decomposition_wire = dict(
+            encode_recorded_oi_decomposition(dec),
+            position=dollar_terms.position.value,
+            position_reason=dollar_terms.position.reason,
+            markup=dollar_terms.markup.value,
+            markup_reason=dollar_terms.markup.reason,
+            interaction=dollar_terms.interaction.value,
+            interaction_reason=dollar_terms.interaction.reason,
+        )
+    else:
+        dec = MissingOIDecomposition(detail=usd_detail)
+        decomposition_wire = dec.model_dump(mode="python")
     length = _time(z) - _time(a)
 
     window = end - start
@@ -1056,29 +1056,37 @@ def _oi_stats(rows, start, end, *, history_identity=None, venue_history=None):
         if cache is not None:
             cache.open_interest.put(fingerprint(history_key), ranges)
     nr, ur = _float_range_values(ranges.native), _float_range_values(ranges.usd)
-    dn, du = float(n1 / n0 - 1), float(u1 / u0 - 1) if usd_ready else None
+    native_change = native_oi_change(n0, n1, normal_range=ranges.native)
+    usd_change = usd_oi_change(u0, u1, normal_range=ranges.usd)
+    classification = oi_class_from_comparisons(native_change.beyond, usd_change.beyond, dec)
     return dict(
         requested_window_duration_s=(end - start).total_seconds(),
         observed_window_duration_s=length.total_seconds(),
-        native_oi_vs_normal=("ABOVE" if dn > nr[1] else "BELOW" if dn < nr[0] else "WITHIN") if nr else None,
+        native_oi_vs_normal=native_change.position,
         precision=propagate_timestamp(
             z, "ts", precision_aliases=("timestamp_precision", "precision")
         ).precision,
         oi_native_start=n0,
         oi_native_end=n1,
-        oi_native_chg_pct=dn,
+        oi_native_chg_pct=native_change.value,
+        oi_native_chg_pct_reason=native_change.reason,
         oi_usd_start=u0,
         oi_usd_end=u1,
-        oi_usd_chg_pct=du,
-        oi_usd_reason=None if usd_ready else "INCOMPLETE",
-        oi_usd_detail=None if usd_ready else "SYNCHRONIZED_MARK_OR_QUOTE_RATE_UNAVAILABLE",
-        decomposition=dec.model_dump(mode="python"),
-        oi_class=oi_class(dn, du, dec, nr, ur),
-        classification_ready=oi_class(dn, du, dec, nr, ur) is not None,
+        oi_usd_chg_pct=usd_change.value,
+        oi_usd_chg_pct_reason=usd_change.reason,
+        oi_usd_reason=None
+        if usd_detail is None
+        else "NOT_ESTIMABLE"
+        if usd_detail == "REPORTED_USD_INVALID"
+        else "INCOMPLETE",
+        oi_usd_detail=usd_detail,
+        decomposition=decomposition_wire,
+        oi_class=classification,
+        classification_ready=classification is not None,
         native_normal_range=nr,
         usd_normal_range=ur,
-        native_beyond=beyond(dn, nr),
-        usd_beyond=beyond(du, ur),
+        native_beyond=native_change.beyond,
+        usd_beyond=usd_change.beyond,
         start_observed_at=iso(_time(a)),
         end_observed_at=iso(_time(z)),
     )
@@ -1240,7 +1248,7 @@ def synchronized_oi(sync, start, end):
                 selected.append(min(candidates, key=lambda r: abs((_time(r) - t).total_seconds())))
             if len(selected) == len(sync) and all(decimal(r.get("oi_native")) is not None for r in selected):
                 combined.append(
-                    dict(ts=iso(t), oi_native=_sum(selected, "oi_native"), oi_usd=_sum(selected, "oi_usd"))
+                    dict(ts=iso(t), oi_native=_sum(selected, "oi_native"), oi_usd=_stored_usd_total(selected))
                 )
         synchronized = _oi_stats(
             combined,
@@ -1266,7 +1274,7 @@ def derivatives_truth(snapshot, start, end):
                 instruments.setdefault(iid, row)
                 groups.setdefault(iid, [])
     for iid in groups:
-        groups[iid] = _oi_rows(snapshot, iid)
+        groups[iid] = _instrument_rows(snapshot, "oi", iid)
     sem = {(s.get("instrument_id"), s["metric_key"]): s for s in snapshot.get("semantics", [])}
     per = []
     sync = []
@@ -4770,6 +4778,18 @@ def measurement_metadata(result, *, spot_measurements: Sequence[SpotNativeMeasur
                             "observed_through"
                         )
                     reason = value.get(key + "_reason")
+                    dollar_display_reason = (
+                        reason
+                        if key in ("position", "markup", "interaction")
+                        and value.get("basis") == "RECORDED_USD_IMPLIED_PRICE"
+                        else None
+                    )
+                    if dollar_display_reason in (
+                        "NON_TERMINATING_DECIMAL",
+                        "DISPLAY_NOT_MATERIALIZED",
+                        "NATIVE_ENDPOINT_ZERO",
+                    ):
+                        reason = "NOT_ESTIMABLE"
                     if key == "r_sector_adj":
                         reason = reason or value.get("sector_reason")
                     reason = (
@@ -4823,6 +4843,8 @@ def measurement_metadata(result, *, spot_measurements: Sequence[SpotNativeMeasur
                         else None,
                         evidence_scope={k: local[k] for k in ("instrument_id", "venue") if k in local},
                     )
+                    if dollar_display_reason is not None:
+                        missing_fields[p]["reason_detail"] = dollar_display_reason
                 else:
                     if isinstance(child, list):
                         local = dict(local, unit_hint=value.get("unit") or unit(key, p))

@@ -361,6 +361,60 @@ def test_absent_recorded_usd_does_not_claim_an_unconsumed_mark_or_fx_source() ->
         )
 
 
+def test_unavailable_recorded_aggregate_component_preserves_known_native_and_usd_endpoint() -> None:
+    original = observed_oi_without_usd()
+    native = native_oi_change(Decimal(6), Decimal(8), normal_range=original.native_normal_range)
+    value = ObservedConditionOpenInterest.model_validate(
+        original.model_copy(
+            update={
+                "oi_native_start": Decimal(6),
+                "oi_native_end": Decimal(8),
+                "oi_native_chg_pct": native.value,
+                "oi_native_chg_pct_reason": native.reason,
+                "native_oi_vs_normal": native.position,
+                "native_beyond": native.beyond,
+                "oi_usd_start": Decimal(11),
+                "oi_usd_end": None,
+                "oi_usd_chg_pct_reason": "INCOMPLETE",
+                "oi_usd_reason": "INCOMPLETE",
+                "oi_usd_detail": "RECORDED_USD_COMPONENT_UNAVAILABLE",
+                "decomposition": MissingOIDecomposition(detail="RECORDED_USD_COMPONENT_UNAVAILABLE"),
+            }
+        )
+    )
+    wire = encode_condition_open_interest(value)
+    assert wire["oi_native_start"] == "6" and wire["oi_native_end"] == "8"
+    assert wire["oi_native_chg_pct"] == native.value and wire["native_beyond"] is True
+    assert wire["oi_usd_start"] == "11" and wire["oi_usd_end"] is None
+    assert wire["oi_usd_reason"] == "INCOMPLETE"
+    assert wire["oi_usd_detail"] == "RECORDED_USD_COMPONENT_UNAVAILABLE"
+    assert wire["oi_usd_chg_pct"] is None and wire["oi_usd_chg_pct_reason"] == "INCOMPLETE"
+    missing = wire["decomposition"]
+    assert isinstance(missing, dict)
+    assert missing["reason"] == "INCOMPLETE" and missing["detail"] == wire["oi_usd_detail"]
+    assert wire["oi_class"] is None and wire["classification_ready"] is False
+    with pytest.raises(ValidationError, match="explicit qualification cause"):
+        ObservedConditionOpenInterest.model_validate(
+            value.model_copy(update={"oi_usd_reason": "NOT_ESTIMABLE"})
+        )
+
+
+def test_component_absence_cannot_replace_actually_known_zero_usd_endpoints() -> None:
+    known_zero = observed_oi_without_usd()
+    with pytest.raises(ValidationError, match="missing-conversion gap"):
+        ObservedConditionOpenInterest.model_validate(
+            known_zero.model_copy(
+                update={
+                    "oi_usd_reason": "INCOMPLETE",
+                    "oi_usd_detail": "RECORDED_USD_COMPONENT_UNAVAILABLE",
+                    "decomposition": MissingOIDecomposition(detail="RECORDED_USD_COMPONENT_UNAVAILABLE"),
+                }
+            )
+        )
+    assert known_zero.oi_usd_start == known_zero.oi_usd_end == Decimal(0)
+    assert known_zero.oi_usd_chg_pct_reason == "ZERO_BASELINE"
+
+
 def test_classification_helper_retains_existing_api_and_three_valued_predicates() -> None:
     dec = decomposition(Decimal(10), Decimal(20), Decimal(2), Decimal(2))
     assert oi_class(1.0, 1.0, dec, [-0.1, 0.1], [-0.1, 0.1]) == "REAL_NATIVE"

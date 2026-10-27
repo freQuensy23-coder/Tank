@@ -330,7 +330,7 @@ OIObservation
   instrument_id, ts (+precision), received_ts
   raw_value, raw_unit, sidedness, metric_key
   oi_native: decimal?                # normalized via semantics (contracts × multiplier)
-  oi_usd: decimal?                   # reported, or oi_native × mark
+  oi_usd: decimal?                   # recorded normalized USD, or absent when valuation is unqualified
 
 FundingObservation
   instrument_id
@@ -1288,10 +1288,12 @@ Venue-count breadth is always shown next to capital-weighted breadth. When they 
 
 | Venue | `oi_native` | `oi_usd` |
 |---|---|---|
-| Binance USDⓈ-M | `openInterest` (REST) or `sumOpenInterest` (5m history) | `oi_native × mark` (or `sumOpenInterestValue`) |
+| Binance USDⓈ-M | `openInterest` (REST) or `sumOpenInterest` (5m history) | normalized `oi_native × mark_USD` (or `sumOpenInterestValue`) |
 | OKX SWAP | `oiCcy` (= `oi × ctVal`) | `oiUsd` |
-| Bybit linear | `singleOpenInterest` — never `openInterest`, which counts both sides | `singleOpenInterest × markPrice` |
+| Bybit linear | `singleOpenInterest` — never `openInterest`, which counts both sides | normalized `singleOpenInterest × markPrice_USD` |
 | Hyperliquid | `openInterest` — per-venue % change only (sidedness not published) | not summed |
+
+A mark is a price in its declared quote currency. New USD derivation requires actual quote identity, mark source time and receipt, and either the actual USD unit or captured eligible quote/USD rate with its own as-of and receipt clocks under the current valuation policy. USDT/USDC parity, current configuration, and an unconverted ticker mark do not establish historical USD. Canonical normalization stores the resulting `oi_usd`, or preserves its absence. Assessment consumes finite nonnegative stored `oi_usd` as **RECORDED_USD** without asserting whether the original collector received it or derived it; arbitrary retained `oi_usd_source` extensions do not change that amount's admission. Missing/invalid USD remains unavailable while native OI and native history remain independently available. An assessment must not bypass a missing normalized conversion by multiplying native OI by a raw mark.
 
 Synchronized (summed) OI uses Binance, OKX and Bybit only, each by the field and unit of §2.10. Example of the error this prevents: summing Binance `openInterest` (203,999,216 WLD) with Bybit `openInterest` (171,034,871) instead of `singleOpenInterest` (85,517,436) overstates combined WLD OI by 85.5M WLD (≈ 30%).
 
@@ -1308,6 +1310,8 @@ oi_class = REAL_NATIVE   if Δn is beyond its normal range and the position term
          = PRICE_MARKUP  if Δn is within its normal range and ΔUSD is beyond its normal range
          = MIXED         otherwise                (normal range and "most": §0)
 ```
+
+For recorded normalized USD endpoints, implied price is the exact rational `u/n`, not an independently captured mark. The decomposition declares basis **RECORDED_USD_IMPLIED_PRICE** and binds all four native/USD endpoints. Exact sparse rational terms determine the strict native-majority predicate; rounded implied marks or rounded display shares must not decide it. Terminating dollar terms retain exact decimal values. Nonterminating decimal terms or terms beyond the bounded display-materialization policy expose null scalar displays with explicit reasons while retaining their exact sparse terms and known classification predicates. Zero native endpoints make implied-price decomposition explicitly undefined; known zero amounts are preserved.
 
 A synchronized composite includes only venues whose OI observations fall within ⚙60 s of both window bounds and share an aggregation class. USD OI is always displayed with its decomposition, never alone.
 
