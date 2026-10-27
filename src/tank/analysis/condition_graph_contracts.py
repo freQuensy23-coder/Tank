@@ -10,7 +10,7 @@ from typing import Annotated, Literal, Protocol, Self
 from pydantic import BeforeValidator, Field, field_validator, model_validator
 
 from tank.analysis.execution import BookWalkRequest, BookWalkResult, execute_book_walk
-from tank.analysis.funding_normalization_math import FundingRateCalculation
+from tank.analysis.funding_normalization_math import FundingComponentNormalization, FundingRateCalculation
 from tank.analysis.oi_ratio import NativeOiChangeFailure, UsdOiChangeFailure, native_oi_change, usd_oi_change
 from tank.analysis.positioning import (
     MissingOIUsdDetail,
@@ -33,6 +33,7 @@ from tank.analysis.statistics_contracts import (
 )
 from tank.contracts import DomainModel
 from tank.contracts.derivative_values import ReportedDerivativeNumber
+from tank.contracts.funding import FundingNormalizationFailure
 from tank.contracts.market_classification import (
     DirectMarketMoveClass,
     KnownMarketDivergenceState,
@@ -1568,8 +1569,67 @@ class ComputedConditionFundingObservation(DomainModel):
         return self.calculation.reason
 
 
+class UnnormalizedConditionFundingObservation(DomainModel):
+    phase: Literal["RAW_COMPONENTS_ONLY"]
+    kind: Literal["SETTLED", "CURRENT_ESTIMATE"]
+    normalization: FundingComponentNormalization
+    recorded_eight_hour_rate: ReportedDerivativeNumber
+    observed_at: Timestamp
+
+    @model_validator(mode="after")
+    def actual_unnormalized_components(self) -> Self:
+        if self.observed_at.value is None:
+            raise ValueError("An unnormalized funding observation requires its actual source clock")
+        if self.recorded_eight_hour_rate.status == "OBSERVED":
+            raise ValueError("A known recorded funding equivalent requires its recorded observation phase")
+        if self.normalization.value is not None or self.normalization.reason is None:
+            raise ValueError("Raw funding components require an actual absent normalized value and cause")
+        if self.normalization.calculation is not None:
+            raise ValueError("An attempted funding calculation requires its computed observation phase")
+        return self
+
+    @property
+    def raw_rate(self) -> ReportedDerivativeNumber:
+        return self.normalization.rate
+
+    @property
+    def raw_interval_h(self) -> ReportedDerivativeNumber:
+        return self.normalization.interval
+
+    @property
+    def rate(self) -> Decimal | None:
+        return self.raw_rate.value
+
+    @property
+    def interval_h(self) -> Decimal | None:
+        value = self.raw_interval_h.value
+        return value if value is not None and value > 0 else None
+
+    @property
+    def interval_reason(self) -> Literal["NOT_CAPTURED", "NOT_ESTIMABLE", "NON_POSITIVE"] | None:
+        if self.raw_interval_h.status == "NOT_CAPTURED":
+            return "NOT_CAPTURED"
+        if self.raw_interval_h.status == "NOT_ESTIMABLE":
+            return "NOT_ESTIMABLE"
+        return "NON_POSITIVE" if self.interval_h is None else None
+
+    @property
+    def equivalent_eight_hour_rate(self) -> None:
+        return None
+
+    @property
+    def equivalent_rate_reason(self) -> FundingNormalizationFailure:
+        reason = self.normalization.reason
+        if reason is None:
+            raise ValueError("Unnormalized funding requires its actual normalization cause")
+        return reason
+
+
 type ConditionFundingObservationValue = (
-    ConditionFundingObservation | RecordedConditionFundingObservation | ComputedConditionFundingObservation
+    ConditionFundingObservation
+    | RecordedConditionFundingObservation
+    | ComputedConditionFundingObservation
+    | UnnormalizedConditionFundingObservation
 )
 
 
@@ -7697,12 +7757,16 @@ def _condition_observed_derivative_consistency(
                 raise ValueError("Shared funding observations cannot contradict a known eight-hour rate")
             old_interval = (
                 old_point.raw_interval_h.value
-                if isinstance(old_point, RecordedConditionFundingObservation)
+                if isinstance(
+                    old_point, (RecordedConditionFundingObservation, UnnormalizedConditionFundingObservation)
+                )
                 else old_point.interval_h
             )
             interval = (
                 point.raw_interval_h.value
-                if isinstance(point, RecordedConditionFundingObservation)
+                if isinstance(
+                    point, (RecordedConditionFundingObservation, UnnormalizedConditionFundingObservation)
+                )
                 else point.interval_h
             )
             if old_interval is not None and interval is not None and old_interval != interval:
