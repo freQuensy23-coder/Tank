@@ -102,8 +102,8 @@ async def test_source_ingests_only_literal_http_feed_bytes(
             raw_ref = record["raw_ref"]
             assert isinstance(raw_ref, str)
             assert zstandard.ZstdDecompressor().decompress(Path(raw_ref).read_bytes()) == wire
-            jobs = await repo.list("ops.jobs", filters={"type": "NEW_ITEM"})
-            assert len(jobs) == 1
+            jobs = await repo.list("ops.jobs")
+            assert len(jobs) == 1 and jobs[0]["type"] == "FILTER_ITEM"
             payload = jobs[0]["payload"]
             assert isinstance(payload, dict) and payload["item_id"] == record["item_id"]
         else:
