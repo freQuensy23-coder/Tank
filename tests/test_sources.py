@@ -163,7 +163,7 @@ def test_json_contracts() -> None:
                         "dateTimestamp": 1679045608000,
                     }
                 ]
-            }
+            },
         },
         "S11",
     )[0]
