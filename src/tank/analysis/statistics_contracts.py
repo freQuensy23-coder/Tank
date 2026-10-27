@@ -110,7 +110,7 @@ class FloatRange(DomainModel):
 
 class DecimalRange(DomainModel):
     bounds: DecimalBounds | None
-    reason: Literal["INCOMPLETE", "INSUFFICIENT_HISTORY"] | None
+    reason: Literal["INCOMPLETE", "INSUFFICIENT_HISTORY", "NOT_ESTIMABLE"] | None
 
     @model_validator(mode="after")
     def availability(self) -> Self:
@@ -262,6 +262,7 @@ type BaselineFamily = Literal[
     "oi_individual_history",
     "oi_composite_history",
     "funding",
+    "funding_history",
     "hourly_returns",
     "beta",
     "relative_history",

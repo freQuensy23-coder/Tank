@@ -12,12 +12,20 @@ from truth_support import fixture_truth_config
 
 import tank.analysis.truth as module
 from tank.analysis import condition_input_codec as read_codec
+from tank.analysis import funding_history_cache
+from tank.analysis.condition_derivative_inputs import DerivativeInstrument
 from tank.analysis.condition_graph_contracts import ConditionWindow, DirectWindowConditionSpot
 from tank.analysis.condition_inputs import SpotCalculationFacts
+from tank.analysis.funding_history import (
+    FundingHistoricalPopulation,
+    FundingHistoryPolicy,
+    funding_historical_population,
+)
+from tank.analysis.funding_selection import FundingCalculator, FundingWindowRequest
 from tank.analysis.open_interest import OINativeHistoryBaseline, OIWindowRequest, OpenInterestCalculator
 from tank.scheduler import metric_value
 from tank.settings import Settings
-from tank.time_precision import Timestamp
+from tank.time_precision import Timestamp, collection_clock
 from tank.util import iso, parse_time
 
 
@@ -217,22 +225,32 @@ def test_completed_close_uses_actual_largest_complete_reference_venue() -> None:
 def test_funding_baseline_reused_when_only_current_estimate_changes(monkeypatch: pytest.MonkeyPatch) -> None:
     packet = snapshot()
     baseline = module.baseline_caches()
-    original = module.normal
-    calls = []
+    original = funding_historical_population
+    calls: list[str] = []
 
-    def counted(values):
-        calls.append(1)
-        return original(values)
+    def counted(
+        calculator: FundingCalculator,
+        request: FundingWindowRequest,
+        *,
+        instrument: DerivativeInstrument,
+        policy: FundingHistoryPolicy,
+    ) -> FundingHistoricalPopulation:
+        result = original(calculator, request, instrument=instrument, policy=policy)
+        calls.append(result.identity())
+        return result
 
-    monkeypatch.setattr(module, "normal", counted)
+    monkeypatch.setattr(funding_history_cache, "funding_historical_population", counted)
     req = [dict(metric="deriv.funding_vs_normal", window="W1H")]
     module.compute_condition_values(packet, req, baseline_cache=baseline, config=fixture_truth_config())
     count = len(calls)
+    assert count > 0
     packet["funding"].append(
         dict(
             instrument_id="binance:perp:T",
             kind="CURRENT_ESTIMATE",
-            ts=packet["cutoff"],
+            metric_key="binance.perp.funding",
+            as_of=packet["cutoff"],
+            **collection_clock(parse_time(packet["assembled_at"])).fields("received_ts"),
             rate=".001",
             interval_h=8,
         )

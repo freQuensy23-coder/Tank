@@ -29,6 +29,7 @@ from pydantic import JsonValue
 
 from tank.analysis.baseline_cache import BaselineCaches
 from tank.analysis.condition_fingerprints import condition_input_fingerprints
+from tank.analysis.condition_funding_codec import FundingConditionLookup, captured_funding_history_policy
 from tank.analysis.condition_graph_codec import (
     encode_condition_derivatives,
     encode_recorded_oi_decomposition,
@@ -51,6 +52,8 @@ from tank.analysis.condition_inputs import (
 )
 from tank.analysis.condition_oi_codec import OIConditionLookup, captured_oi_selection_policy
 from tank.analysis.execution import ExecutionLevelWire, ExecutionSide, execute_book_walk, execution_request
+from tank.analysis.funding_selection import FundingWindowRequest
+from tank.analysis.funding_time import funding_observation_fresh
 from tank.analysis.oi_ratio import native_oi_change, usd_oi_change
 from tank.analysis.oi_synchronization import OISynchronizationPolicy
 from tank.analysis.open_interest import OIWindowRequest
@@ -100,6 +103,7 @@ from tank.analysis.statistics_contracts import (
 )
 from tank.analysis.statistics_contracts import StatisticalPopulation as StatisticalPopulation
 from tank.analysis.truth_contracts import MarketTruthAssessmentRef
+from tank.contracts.funding import FundingNormalizationRequest
 from tank.contracts.provenance import ResolvedVersionIdentity
 from tank.market.capture import event_anchor
 from tank.time_precision import Timestamp, chosen_boundary, offset_schedule, propagate_timestamp
@@ -5714,13 +5718,18 @@ def compute_condition_values(snapshot, requirements, *, config=None, cache=None,
                 fields = ("flow_bars", "flow_segments", "flow_parent_bars", "tickers", "instruments")
             elif metric in DERIVATIVE_CONDITION_METRICS:
                 domain = "funding" if metric == "deriv.funding_vs_normal" else "oi"
-                if domain == "oi":
+                if domain in ("oi", "funding"):
                     missing = tuple(
-                        name for name in ("instruments", "oi") if name not in captured_read_collections
+                        name for name in ("instruments", domain) if name not in captured_read_collections
                     )
                     if missing:
-                        raise ValueError("Requested OI snapshot requires captured " + ", ".join(missing))
+                        label = "OI" if domain == "oi" else "funding"
+                        raise ValueError(
+                            "Requested " + label + " snapshot requires captured " + ", ".join(missing)
+                        )
                 fields = (domain, "instruments", "semantics", "capture_metadata", "capture_tier")
+                if domain == "funding" and window == "EVENT":
+                    fields = (*fields, "anchor")
             elif metric == "price.close_vs_level":
                 domain = "close"
                 fields = ("flow_bars", "flow_segments", "flow_parent_bars", "klines", "instruments")
@@ -5829,6 +5838,12 @@ def compute_condition_values(snapshot, requirements, *, config=None, cache=None,
                     propagate_timestamp(snapshot, "assembled_at")
                 ):
                     hit = False
+            if domain == "funding" and hit:
+                previous_funding = cache[key]
+                if isinstance(
+                    previous_funding, FundingConditionLookup
+                ) and not previous_funding.matches_visibility(propagate_timestamp(snapshot, "assembled_at")):
+                    hit = False
             if not hit:
                 selected = {field: snapshot[field] for field in fields if field in snapshot}
                 selected.update(
@@ -5881,6 +5896,26 @@ def compute_condition_values(snapshot, requirements, *, config=None, cache=None,
                         ),
                         window=window,
                     )
+                elif domain == "funding":
+                    value = FundingConditionLookup(
+                        token_id=selected["token_id"],
+                        instruments=selected["instruments"],
+                        observations=selected["funding"],
+                        request=FundingWindowRequest(
+                            start=propagate_timestamp(snapshot["anchor"], "ts")
+                            if window == "EVENT"
+                            else offset_schedule(
+                                propagate_timestamp(snapshot, "cutoff"), timedelta(seconds=-seconds)
+                            ),
+                            cutoff=propagate_timestamp(snapshot, "cutoff"),
+                            assembled_at=propagate_timestamp(snapshot, "assembled_at"),
+                        ),
+                        policy=captured_funding_history_policy(
+                            config, normalization=FundingNormalizationRequest(mode="CALCULATE_FROM_RAW")
+                        ),
+                        history_cache=baseline_cache.funding_history,
+                        window=window,
+                    )
                 elif domain == "close":
                     value = condition_reference_close(selected, end)
                 elif domain == "dc":
@@ -5901,15 +5936,7 @@ def compute_condition_values(snapshot, requirements, *, config=None, cache=None,
                         value["repricing_band"] = None
                         value["windows"]["EVENT"]["r_raw"] = None
                 else:
-                    history_head = (snapshot.get("history_dependency_fingerprints") or {}).get(domain, {})
-                    history_head = history_head.get(window) if isinstance(history_head, dict) else None
-                    if history_head is not None and not isinstance(history_head, str):
-                        history_head = fingerprint(history_head)
-                    history_token = _BASELINE_DEPENDENCY.set(history_head)
-                    try:
-                        value = derivatives_truth(selected, start, end)
-                    finally:
-                        _BASELINE_DEPENDENCY.reset(history_token)
+                    raise ValueError("Unsupported condition calculation domain")
                 cache[key] = value
                 if len(cache) > 128:
                     cache.pop(next(iter(cache)))
@@ -5930,6 +5957,10 @@ def compute_condition_values(snapshot, requirements, *, config=None, cache=None,
                 if not isinstance(cached, OIConditionLookup):
                     raise TypeError("OI condition cache requires its actual typed facts and owned read")
                 value = encode_condition_derivatives(cached.result)
+            elif domain == "funding":
+                if not isinstance(cached, FundingConditionLookup):
+                    raise TypeError("Funding condition cache requires its actual typed facts and owned read")
+                value = encode_condition_derivatives(cached.facts.result)
             else:
                 value = deepcopy(cached)
             fresh = True
@@ -5963,46 +5994,46 @@ def compute_condition_values(snapshot, requirements, *, config=None, cache=None,
                 if not fresh:
                     value["synchronized"] = None
             if domain == "funding":
-                for instrument in value.get("per_venue", []):
-                    rows = [
-                        r
-                        for r in snapshot.get(domain, [])
-                        if r.get("instrument_id") == instrument["instrument_id"]
-                    ]
-                    latest = max(rows, key=_time) if rows else None
-                    cadence, source = capture_cadence(snapshot, domain, latest)
-                    field = next(
-                        (
-                            name
-                            for name in (
-                                "minute_start",
-                                "open_time",
-                                "exchange_ts",
-                                "ts",
-                                "as_of",
-                                "settlement_time",
-                                "funding_time",
-                                "observed_at",
-                            )
-                            if latest and latest.get(name) is not None
-                        ),
-                        "ts",
+                if not isinstance(cached, FundingConditionLookup):
+                    raise TypeError("Funding freshness requires its actual selected source witnesses")
+                closing_funding = cached.selected_observations()
+                fresh = bool(closing_funding) and len(closing_funding) == len(cached.facts.result.per_venue)
+                fresh_instruments: set[str] = set()
+                for point in closing_funding:
+                    cadence, source = capture_cadence(
+                        snapshot,
+                        "funding",
+                        {
+                            "instrument_id": point.instrument.instrument_id,
+                            "metric_key": point.metric_key,
+                            "kind": point.kind,
+                        },
                     )
-                    observed = propagate_timestamp(
-                        latest or {}, field, precision_aliases=("timestamp_precision", "precision")
-                    )
+                    observed = point.clock.timestamp
                     observations.append(
                         dict(
-                            instrument_id=instrument["instrument_id"],
+                            instrument_id=point.instrument.instrument_id,
                             **observed.fields("observed_at"),
                             cadence_s=cadence,
                             cadence_source=source,
                         )
                     )
-                    if latest is None or cadence is None or (end - _time(latest)).total_seconds() > cadence:
+                    if (
+                        cadence is None
+                        or funding_observation_fresh(
+                            observed,
+                            kind=point.kind,
+                            cutoff=propagate_timestamp(snapshot, "cutoff"),
+                            cadence_s=cadence,
+                        )
+                        is not True
+                    ):
                         fresh = False
-                        if domain == "funding":
-                            instrument["funding_vs_normal"] = None
+                    else:
+                        fresh_instruments.add(point.instrument.instrument_id)
+                for instrument in value["per_venue"]:
+                    if instrument["instrument_id"] not in fresh_instruments:
+                        instrument["funding_vs_normal"] = None
             if domain == "depth":
                 observations = value.pop("observations")
                 fresh = bool(observations) and all(row["fresh"] for row in observations)

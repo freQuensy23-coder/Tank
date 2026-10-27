@@ -3,6 +3,7 @@
 from dataclasses import dataclass
 from typing import Self
 
+from tank.analysis.funding_history_cache import FundingHistoryCache
 from tank.analysis.oi_history_cache import OIHistoryCache
 from tank.analysis.statistics_contracts import (
     BaselineCache,
@@ -22,6 +23,7 @@ from tank.analysis.statistics_contracts import (
 class BaselineCaches:
     open_interest: BaselineCache[OpenInterestBaseline]
     oi_history: OIHistoryCache
+    funding_history: FundingHistoryCache
     funding: BaselineCache[FundingBaseline]
     hourly_returns: BaselineCache[HourlyReturns]
     beta: BaselineCache[BetaEstimate]
@@ -36,6 +38,7 @@ class BaselineCaches:
         return cls(
             open_interest=BaselineCache("open_interest", retention),
             oi_history=OIHistoryCache(retention),
+            funding_history=FundingHistoryCache(retention),
             funding=BaselineCache("funding", retention),
             hourly_returns=BaselineCache("hourly_returns", retention),
             beta=BaselineCache("beta", retention),

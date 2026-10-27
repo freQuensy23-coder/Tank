@@ -9,6 +9,7 @@ import pytest
 from source_support import fixture_versions
 
 from tank.analysis.truth import compute_market_truth
+from tank.time_precision import collection_clock
 from tank.util import iso, parse_time
 
 SPOT_POLICY = {"significant_flow_sigma": 2, "min_spot_venues": 2}
@@ -203,6 +204,7 @@ def synthetic_start_snapshot(*, end: datetime = SYNTHETIC_END, event_window_h: i
                 "instrument_id": iid,
                 "token_id": "T",
                 "kind": "SETTLED",
+                **collection_clock(end).fields("received_ts"),
                 "settlement_time": iso(t),
                 "rate": 0,
                 "interval_h": 8,
