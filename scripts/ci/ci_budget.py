@@ -18,6 +18,7 @@ REQUIRED_JOBS = {
     "mypy",
     "test / Python unit (0)",
     "test / Python unit (1)",
+    "test / Python unit (2)",
     "test / Python unit complete",
     "test / Python integration complete",
     "test / Node local units and contracts",

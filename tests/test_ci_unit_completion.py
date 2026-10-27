@@ -69,7 +69,7 @@ def artifacts(context: Context) -> list[Artifact]:
                 "workflow_run": {"id": context.run_id, "head_sha": context.source_head},
             }
         )
-        for i in range(2)
+        for i in range(3)
     ]
 
 
@@ -109,6 +109,7 @@ def test_completed_unsuccessful_job_refuses(context: Context, conclusion: str | 
 def test_missing_pending_and_duplicate_are_not_success(context: Context) -> None:
     rows = jobs(context)
     assert successful_jobs(context, list(rows[:1])) is None
+    assert successful_jobs(context, list(rows[:2])) is None
     pending = MatrixJob.model_validate(rows[0].model_dump() | {"status": "in_progress", "conclusion": None})
     assert successful_jobs(context, [pending, *rows[1:]]) is None
     with pytest.raises(ValueError, match="duplicate"):
@@ -135,6 +136,7 @@ def test_unusable_artifact_refuses(context: Context, change: dict[str, JsonValue
 
 def test_artifacts_require_current_attempt_unique_ids(context: Context) -> None:
     rows = artifacts(context)
+    assert usable_artifacts(context, rows[:2]) is None
     old = Artifact.model_validate(rows[0].model_dump() | {"name": artifact_name(1, 0)})
     assert usable_artifacts(context, [old, *rows[1:]]) is None
     with pytest.raises(ValueError, match="duplicate"):
@@ -156,10 +158,10 @@ class SyntheticApi:
         if suffix == "/actions/workflows/ci.yml":
             return {"id": 31, "path": self.context.workflow_path}
         if suffix.endswith("/jobs?per_page=100&page=1"):
-            return {"total_count": 2, "jobs": [row.model_dump(mode="json") for row in jobs(self.context)]}
+            return {"total_count": 3, "jobs": [row.model_dump(mode="json") for row in jobs(self.context)]}
         if suffix.endswith("/artifacts?per_page=100&page=1"):
             return {
-                "total_count": 2,
+                "total_count": 3,
                 "artifacts": [row.model_dump(mode="json") for row in artifacts(self.context)],
             }
         self.run_reads += 1
@@ -178,7 +180,7 @@ class SyntheticApi:
 def test_readiness_rechecks_attempt_after_artifact_publication(context: Context) -> None:
     api = SyntheticApi(context)
     ready = wait(context, api, monotonic_ns=lambda: 1_000_000_000)
-    assert [a.id for a in ready.artifacts] == [101, 102]
+    assert [a.id for a in ready.artifacts] == [101, 102, 103]
     assert api.run_reads == 4
     assert any("/attempts/2/jobs" in path for path in api.paths)
     with pytest.raises(ValueError, match="identity changed"):
@@ -272,7 +274,7 @@ def test_actual_unit_checker_binds_checkout_plan_and_complete_downloads(
     plan_path = Path(__file__).resolve().parents[1] / "scripts/ci/unit_shards.json"
     plan = read_model(plan_path, UnitPlan)
     measured = measured_assignments(plan.files)
-    files = [next(path for path, assigned in measured.items() if assigned == index) for index in range(2)]
+    files = [next(path for path, assigned in measured.items() if assigned == index) for index in range(3)]
     collection = UnitCollection(
         schema_version="tank-unit-collection-v1",
         source_head=context.checkout_sha,
@@ -286,9 +288,9 @@ def test_actual_unit_checker_binds_checkout_plan_and_complete_downloads(
         directory.mkdir(parents=True)
         (directory / "unit-collection.json").write_text(collection.model_dump_json())
         declaration = UnitDeclaration(
-            schema_version="tank-unit-declaration-v1",
+            schema_version="tank-unit-declaration-v2",
             source_head=context.checkout_sha,
-            shard=UnitShard(index=index, count=2),
+            shard=UnitShard(index=index, count=3),
             collection_sha256=collection.signature,
             plan_sha256=hashlib.sha256(plan_path.read_bytes()).hexdigest(),
             coverage=weight_coverage(collection, plan),
@@ -422,4 +424,4 @@ def test_missing_artifact_waits_without_admitting_partial_result(context: Contex
     sleeps: list[float] = []
     ready = wait(context, api, sleep=sleeps.append, monotonic_ns=lambda: 1_000_000_000)
     assert sleeps == [2]
-    assert len(ready.artifacts) == 2
+    assert len(ready.artifacts) == 3

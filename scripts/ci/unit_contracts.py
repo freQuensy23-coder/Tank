@@ -22,7 +22,7 @@ def relative_file(value: str) -> str:
 type UnitFile = Annotated[str, AfterValidator(relative_file)]
 type Digest = Annotated[str, Field(pattern=r"^[0-9a-f]{64}$")]
 type SourceHead = Annotated[str, Field(pattern=r"^[0-9a-f]{40}$")]
-type ShardIndex = Annotated[int, Field(ge=0, le=1)]
+type ShardIndex = Annotated[int, Field(ge=0, le=2)]
 
 
 class UnitRecord(BaseModel):
@@ -66,11 +66,11 @@ class FileTiming(UnitRecord):
 
 
 def measured_assignments(files: list[FileTiming]) -> dict[str, int]:
-    duration = [Decimal(0), Decimal(0)]
-    counts = [0, 0]
+    duration = [Decimal(0), Decimal(0), Decimal(0)]
+    counts = [0, 0, 0]
     result: dict[str, int] = {}
     for item in sorted(files, key=lambda item: (-item.seconds, item.file)):
-        index = min(range(2), key=lambda index: (duration[index], counts[index], index))
+        index = min(range(3), key=lambda index: (duration[index], counts[index], index))
         result[item.file] = index
         duration[index] += item.seconds
         counts[index] += item.cases
@@ -78,7 +78,8 @@ def measured_assignments(files: list[FileTiming]) -> dict[str, int]:
 
 
 class UnitPlan(UnitRecord):
-    schema_version: Literal["tank-unit-plan-v1"]
+    schema_version: Literal["tank-unit-plan-v2"]
+    shard_count: Literal[3]
     source_head: SourceHead
     collection_sha256: Digest
     reports_sha256: list[Digest] = Field(min_length=1)
@@ -95,18 +96,18 @@ class UnitPlan(UnitRecord):
 def shard_for(file: str, measured: dict[str, int]) -> int:
     if file in measured:
         return measured[file]
-    return int.from_bytes(hashlib.sha256(file.encode()).digest()[:8]) % 2
+    return int.from_bytes(hashlib.sha256(file.encode()).digest()[:8]) % 3
 
 
 class UnitShard(UnitRecord):
     index: ShardIndex
-    count: int = Field(ge=2, le=2)
+    count: int = Field(ge=3, le=3)
 
 
 def parse_shard(value: str) -> UnitShard:
-    if value not in {"0/2", "1/2"}:
-        raise ValueError("Unit shard must be 0/2 or 1/2")
-    return UnitShard(index=int(value[0]), count=2)
+    if value not in {"0/3", "1/3", "2/3"}:
+        raise ValueError("Unit shard must be 0/3, 1/3 or 2/3")
+    return UnitShard(index=int(value[0]), count=3)
 
 
 class WeightCoverage(UnitRecord):
@@ -126,7 +127,7 @@ def weight_coverage(collection: UnitCollection, plan: UnitPlan) -> WeightCoverag
 
 
 class UnitDeclaration(UnitRecord):
-    schema_version: Literal["tank-unit-declaration-v1"]
+    schema_version: Literal["tank-unit-declaration-v2"]
     source_head: SourceHead
     shard: UnitShard
     collection_sha256: Digest

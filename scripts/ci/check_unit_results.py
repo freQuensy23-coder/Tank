@@ -1,4 +1,4 @@
-"""Require both full unit partitions exactly once with the original timing policy."""
+"""Require all three full unit partitions exactly once with the original timing policy."""
 
 import argparse
 import hashlib
@@ -61,8 +61,8 @@ def verify(
         if len(declarations) != 1 or declarations[0].shard != shard:
             raise ValueError("A unit shard check requires exactly its declared lane")
     else:
-        if len(declarations) != 2 or {declaration.shard.index for declaration in declarations} != {0, 1}:
-            raise ValueError("Unit aggregate requires both distinct lanes")
+        if len(declarations) != 3 or {declaration.shard.index for declaration in declarations} != {0, 1, 2}:
+            raise ValueError("Unit aggregate requires all three distinct lanes")
         expected = Counter(case.identity for case in collections[0].cases)
         if Counter(case.identity for case in all_cases) != expected:
             raise ValueError("Unit aggregate does not match the full case union exactly once")
