@@ -58,6 +58,7 @@ def funding_observation_clock(row: Mapping[str, JsonValue], kind: FundingKind) -
 class FundingInputObservation(DomainModel):
     instrument: DerivativeInstrument
     kind: FundingKind
+    metric_key: str | None = Field(min_length=1, pattern=r"\S")
     clock: FundingObservationClock
     received_at: Timestamp
     rate: ReportedDerivativeNumber
@@ -97,9 +98,13 @@ class FundingInputObservation(DomainModel):
             kind = "CURRENT_ESTIMATE"
         else:
             raise ValueError("Funding source requires its actual settled or current-estimate kind")
+        metric_key = row.get("metric_key")
+        if metric_key is not None and not isinstance(metric_key, str):
+            raise ValueError("Funding source metric identity must retain its actual string or absence")
         return cls(
             instrument=instrument,
             kind=kind,
+            metric_key=metric_key,
             clock=funding_observation_clock(row, kind),
             received_at=propagate_timestamp(row, "received_ts"),
             rate=ReportedDerivativeNumber.from_value(row.get("rate")),
