@@ -1729,3 +1729,72 @@ At `283f2725`, both actual PostgreSQL races passed in 8.93 seconds with zero ski
 The first race run `d61058c7` correctly refused the real owned ClickHouse POST under the fixture's external-I/O guard. The next `64b3ac36` run reached ClickHouse and correctly refused close-only bars at required_o. Both diagnostics are retained. The fixture now permits POST only to the guarded owned ClickHouse origin/path, preserving external refusal, and declares complete authored flat OHLC/native-volume/reported-USD observations. These are newly authored temporary vectors, not inferred fields on real or retained observations; all original closes, clocks, row count and return oracles remain. Memory's earlier acceptance of the close-only projection is not relabeled as native schema parity. No backend validation was relaxed.
 
 This qualifies the bounded recovery writer/effects; final reaction activation remains held for the exact durable pending-demand/cursor transaction and coherent current-worker integration.
+
+## Durable late-reaction demand and cursor transaction — 2026-10-27
+
+The qualified recovery writer remains attributed to `372dd8c9` / source `283f2725`.
+The pending-demand implementation is source `8647528f`, with actual-caller and
+failure controls through `8fdb0d9f`. Normal parent `33d1c3fd` joins at `9b9e3675`;
+the tested coherent head is `f558c610`. This is a reviewable reaction/worker cohort,
+not global completion, a deployment, or permission to repair production history.
+
+`Scheduler.detect_late_data(datetime)` now uses `ReactionDemandCoordinator`.
+Actual MarketService source batches are read and validated before the commit.
+The cursor's original stored revision is rechecked under the checkpoint record
+lock, and exact source demands plus the cursor are committed together. A stale
+revision retries the actual read instead of overwriting another commit. A stored
+legacy empty state remains explicitly `LEGACY_DEMANDS_UNREPORTED`; it does not
+certify that historical skipped work was applied. New source observation clocks,
+frozen comparison scope, source digests and operational scheduling are distinct.
+
+Per-target draining runs even when the next source batch is empty. It takes the
+reaction and change writer scopes, queue idempotency scopes, then the checkpoint
+record lock before the Memory transaction mutex / PostgreSQL transaction. Only
+local queue and checkpoint writes occur in that commit; capture and network waits
+do not. Owned target tasks are drained on cancellation, and a failed target does
+not cancel successful independent targets. Each checkpoint has one newly queued
+automatic revision at a time. Remaining exact demands persist as PENDING;
+known terminal or missing linked work becomes explicitly BLOCKED rather than
+receiving an infinite fresh retry budget. Existing delay 1800 seconds, six-hour
+TTL, priority and maximum-attempt policy are preserved.
+
+Only the existing validated owner-bound applied-marker receipt retires a demand.
+DONE, FAILED, EXPIRED, later checkpoint clocks and an unbound marker do not prove
+coverage. A malformed/partial marker is retained and blocks its demand. Historical
+one-generation recovery remains the separately qualified evidence-gated path;
+its actual successful marker can resolve a blocked demand without rewriting the
+old job. No marker is invented merely because measured evidence may overlap.
+
+Boundary exceptions are specific. Source changes are the two actual producer
+variants, not arbitrary JSON. Dynamic demand and observation dictionaries are
+indexes of closed records whose keys must match their actual identities. Original
+source wire is hashed before projection; retained raw source rows are unchanged.
+The frozen checkpoint projection consumes only actual identity, revision, anchor
+and collection/window clocks, not a fabricated full Truth model. Nullable
+historical anchors produce an explicit non-applicable observation. Queued work is
+read through a minimal stored identity/status projection plus the existing closed
+reaction command admission; no historical claim token or applied receipt is
+manufactured. These projections do not close the remaining whole-Scheduler,
+MarketService reader, condition-Truth or SourcePoller typing debt.
+
+The original five-second late-capture deadline and real failed-peer policy wait
+remain unchanged. The fixture's zero-delay setting moved to the extracted timing
+policy module. Its original duplicate-source job-count oracle is checked before
+drain; any additional job must belong to a previously durable PENDING source.
+Actual Runtime execution must return UNCHANGED and leave exactly three immutable
+financial checkpoints, preserving all original return, revision, benchmark and
+Go-capture assertions. Duplicate input creates no new source demand.
+
+Coherent immutable Linux proof at `f558c610`: all 60 affected units pass in 8.60s,
+zero skips, p90 0.242s and maximum 0.904s including fixtures; all seven actual cases
+pass in 48.80s, zero skips. Actual PostgreSQL controls cover empty-batch restart,
+after-enqueue failure/cancellation rollback, cursor CAS/rollback, independent
+progress and unbound-marker refusal. Both original Go/Runtime cases pass, including
+same-ID retry with a fresh token and real financial measurements. Evidence is
+`reaction-demands-f558-linux-{unit,actual}.{log,xml}` in the external local evidence
+root. Earlier `8647`, `c04a`, `ae70`, `0570` and `8fdb` logs remain retained; the
+`c04a` timing-seam and `ae70` lost-work-assumption failures are not relabeled green.
+New coordinator/contracts/tests pass independent strict mypy; Scheduler and those
+sources pass default mypy. All seven changed Python paths pass Ruff, formatting,
+comment policy and whitespace checks. The broader late-capture test file retains
+its pre-existing untyped Go/market helper debt; no suppression was introduced.
