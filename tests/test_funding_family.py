@@ -23,7 +23,7 @@ def test_recorded_funding_family_uses_actual_selected_witness_and_historical_ran
         request(),
         history_policy=policy(),
         history_cache=BaselineCaches.with_capacity(128).funding_history,
-        window="W15M",
+        window="W1H",
     )
     funding = calculation.result.per_venue[0].funding
     assert isinstance(funding, AvailableConditionFunding)
@@ -49,7 +49,7 @@ def test_unavailable_partial_components_are_retained_without_manufactured_normal
         request(),
         history_policy=policy(),
         history_cache=BaselineCaches.with_capacity(128).funding_history,
-        window="W15M",
+        window="W1H",
     )
     source = next(point for point in calculation.selected if point.role == "LATEST_ESTIMATE")
     assert source.equivalent.source.rate.status == "NOT_CAPTURED"
@@ -70,7 +70,7 @@ def test_invalid_copied_selected_source_facts_cannot_admit_an_observed_graph() -
         request(),
         history_policy=policy(),
         history_cache=BaselineCaches.with_capacity(128).funding_history,
-        window="W15M",
+        window="W1H",
     )
     with pytest.raises(ValidationError):
         FundingConditionCalculation.model_validate(calculation.model_copy(update={"selected": ()}))
@@ -85,7 +85,7 @@ def test_known_zero_current_rate_survives_unavailable_historical_range() -> None
         request(),
         history_policy=policy(),
         history_cache=BaselineCaches.with_capacity(128).funding_history,
-        window="W15M",
+        window="W1H",
     )
     funding = calculation.result.per_venue[0].funding
     assert isinstance(funding, AvailableConditionFunding)
@@ -105,7 +105,7 @@ def test_missing_receipt_cannot_supply_current_funding_or_freshness_witness() ->
         request(),
         history_policy=policy(),
         history_cache=BaselineCaches.with_capacity(128).funding_history,
-        window="W15M",
+        window="W1H",
     )
     assert isinstance(calculation.result.per_venue[0].funding, UnavailableConditionFunding)
     assert calculation.selected_reference(owned.source.instruments[0].instrument_id) is None

@@ -11,7 +11,7 @@ from tank.time_precision import Timestamp
 
 def request() -> FundingWindowRequest:
     return FundingWindowRequest(
-        start=Timestamp(value="2026-10-16T06:00:00Z", precision="EXACT", precision_reason=None),
+        start=Timestamp(value="2026-10-16T11:00:00Z", precision="EXACT", precision_reason=None),
         cutoff=Timestamp(value="2026-10-16T12:00:00Z", precision="EXACT", precision_reason=None),
         assembled_at=Timestamp(
             value="2026-10-16T12:05:00Z", precision="COLLECTION_ONLY", precision_reason=None

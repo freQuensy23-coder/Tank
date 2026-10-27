@@ -25,7 +25,7 @@ def test_partial_estimate_does_not_hide_raw_facts_or_relabel_settled_as_current(
         request(),
         history_policy=actual_policy,
         history_cache=BaselineCaches.with_capacity(128).funding_history,
-        window="W15M",
+        window="W1H",
     )
     wire = encode_condition_funding(calculation.result.per_venue[0].funding)
     assert wire["funding_8h_kind"] == "SETTLED"

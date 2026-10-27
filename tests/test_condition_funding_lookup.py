@@ -18,7 +18,7 @@ def test_unavailable_current_cannot_upgrade_selected_settled_age_or_identity() -
         request=request(),
         policy=policy(),
         history_cache=BaselineCaches.with_capacity(128).funding_history,
-        window="W15M",
+        window="W1H",
     )
     observations = lookup.selected_observations()
     assert len(observations) == 1
@@ -47,7 +47,7 @@ def test_visibility_signature_changes_only_when_actual_source_eligibility_change
         request=request(),
         policy=policy(),
         history_cache=BaselineCaches.with_capacity(128).funding_history,
-        window="W15M",
+        window="W1H",
     )
     later_same = Timestamp(value="2026-10-16T12:10:00Z", precision="COLLECTION_ONLY", precision_reason=None)
     later_eligible = Timestamp(
