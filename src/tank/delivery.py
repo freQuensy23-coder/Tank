@@ -11,7 +11,7 @@ import httpx
 
 from tank.analysis.cards import telegram_card_html
 from tank.ops_progress import event_progress
-from tank.sources.x_diagnostics import documents
+from tank.sources.x_diagnostics import verified_documents
 from tank.time_precision import collection_clock, offset_schedule, propagate_timestamp
 from tank.util import new_id, parse_time, sha256, utcnow
 
@@ -141,7 +141,13 @@ class DeliveryService:
             notice = await self.repo.get("out.ops_notices", payload["notice_id"])
             if notice and notice.get("kind") == "ITEM_PROGRESS":
                 error = await self._deliver_progress(payload, notice)
-            elif notice and notice.get("document_manifest"):
+            elif notice and (
+                "document_manifest" in notice
+                or (
+                    notice.get("kind") == "ENTRY_ERRORS"
+                    and any("diagnostics" in error for error in notice.get("entry_errors", []))
+                )
+            ):
                 async with AsyncExitStack() as locks:
                     await self._enter_delivery_lock(locks, "ops-documents:" + notice["notice_id"])
                     error = await self._deliver(payload)
@@ -174,13 +180,10 @@ class DeliveryService:
         if not messages:
             raise DeliveryError("Ops diagnostic parent message was not delivered")
         parent = messages[0]["message_ref"]
-        attachments = documents(notice["entry_errors"])
-        manifest = [
-            {"filename": row["filename"], "sha256": row["sha256"], "bytes": len(row["content"])}
-            for row in attachments
-        ]
-        if manifest != notice["document_manifest"]:
-            raise DeliveryError("Ops diagnostic document manifest mismatch")
+        try:
+            attachments = verified_documents(notice)
+        except (ValueError, TypeError, KeyError) as exc:
+            raise DeliveryError("Ops diagnostic document manifest mismatch") from exc
         terminal_failure = None
         for document in attachments:
             document_id = sha256({"filename": document["filename"], "sha256": document["sha256"]})

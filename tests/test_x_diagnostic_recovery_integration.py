@@ -36,7 +36,13 @@ async def diagnostic_clock(diagnostic_repo, monkeypatch):
             await diagnostic_repo._conn().execute("SELECT clock_timestamp() AS clock")
         ).fetchone()
     clock = row["clock"]
-    for module in ("tank.runtime", "tank.delivery", "tank.storage", "tank.util"):
+    for module in (
+        "tank.runtime",
+        "tank.delivery",
+        "tank.diagnostic_recovery",
+        "tank.storage",
+        "tank.util",
+    ):
         monkeypatch.setattr(module + ".utcnow", lambda: clock)
     return collection_clock(clock)
 
@@ -141,6 +147,17 @@ async def recovery_job(repo, original):
     for field in ("expires_at", "expires_at_prec", "expires_at_prec_reason"):
         assert recovery[field] == original[field]
     assert original["job_id"] in json.dumps(recovery)
+    proof = recovery["payload"]["_diagnostic_recovery"]
+    assert proof["version"] == 1
+    assert proof["source_job_id"] == original["job_id"]
+    assert proof["source_idem_key"] == original["idem_key"]
+    notice = await repo.get("out.ops_notices", original["payload"]["notice_id"])
+    assert proof["notice_sha256"] == sha256(notice)
+    assert proof["manifest_sha256"] == sha256(notice["document_manifest"])
+    assert proof["parent_message_ref"] == "77"
+    assert proof["chat_id"] == "ops"
+    assert recovery["priority"] == original["priority"]
+    assert recovery["max_attempts"] == original["max_attempts"]
     return recovery
 
 
@@ -208,15 +225,14 @@ async def test_canonical_producer_jsonb_reload_real_http_delivery_is_repeatable(
 
 
 @pytest.mark.parametrize("failure_recorded", [False, True])
+@pytest.mark.parametrize("kind", ["missing", "empty", "text", "binary"])
 async def test_failed_legacy_job_reconciles_once_then_worker_attaches_exact_original_bytes(
-    diagnostic_repo, diagnostic_clock, wire_server, failure_recorded
+    diagnostic_repo, diagnostic_clock, wire_server, failure_recorded, kind
 ):
     repo = diagnostic_repo
     origin, state = wire_server
-    notice, expected = legacy_notice("missing")
-    original = await seed_failed_job(
-        repo, notice, diagnostic_clock, failure_recorded=failure_recorded
-    )
+    notice, expected = legacy_notice(kind)
+    original = await seed_failed_job(repo, notice, diagnostic_clock, failure_recorded=failure_recorded)
     previous = {"original_parent": parent_receipt(notice["notice_id"])}
     await repo.put("out.deliveries", "original_parent", previous["original_parent"], immutable=True)
     async with httpx.AsyncClient(transport=LoopbackTelegramTransport(origin)) as http:
@@ -326,8 +342,8 @@ async def test_recovery_preserves_successful_document_and_real_failed_network_at
         previous = await historical_network_attempts(notice, http, 2)
         assert state["remaining_failures"] == 0
         assert len(state["telegram"]) == 3
-        await persist_receipts(repo, previous)
         original = await seed_failed_job(repo, notice, diagnostic_clock)
+        await persist_receipts(repo, previous)
         await reconcile_concurrently(repo, http)
         async with reopen(repo) as reloaded:
             await recovery_job(reloaded, original)
@@ -373,8 +389,8 @@ async def test_terminal_document_with_five_real_http_failures_is_not_given_a_rec
     notice, attachments = legacy_notice("missing")
     async with httpx.AsyncClient(transport=LoopbackTelegramTransport(origin)) as http:
         previous = await historical_network_attempts(notice, http, 5)
-        await persist_receipts(repo, previous)
         original = await seed_failed_job(repo, notice, diagnostic_clock)
+        await persist_receipts(repo, previous)
         for _ in range(2):
             async with reopen(repo) as reloaded:
                 await reloaded.recover_jobs()
@@ -403,6 +419,14 @@ async def test_terminal_document_with_five_real_http_failures_is_not_given_a_rec
         "wrong_channel",
         "no_parent",
         "terminal_parent",
+        "wrong_destination",
+        "invalid_parent",
+        "ambiguous_parent",
+        "canonical_version",
+        "unknown_version",
+        "recovery_chain",
+        "nonexhausted_job",
+        "unrelated_error",
         "corrupt_digest",
         "corrupt_size",
         "corrupt_filename",
@@ -421,7 +445,11 @@ async def test_reconciliation_does_not_revive_ineligible_or_unproven_diagnostic_
         "text" if exclusion in {"corrupt_body", "unknown_response_evidence"} else "missing"
     )
     if exclusion == "unrelated_kind":
-        notice["kind"] = "SOURCE_FAILED"
+        notice["kind"] = "HEARTBEAT"
+    elif exclusion == "canonical_version":
+        notice["document_serialization_version"] = 2
+    elif exclusion == "unknown_version":
+        notice["document_serialization_version"] = 99
     elif exclusion == "corrupt_digest":
         notice["document_manifest"][0]["sha256"] = "0" * 64
     elif exclusion == "corrupt_size":
@@ -444,11 +472,24 @@ async def test_reconciliation_does_not_revive_ineligible_or_unproven_diagnostic_
         status="EXPIRED" if exclusion == "expired_status" else "FAILED",
         channel="telegram:alerts" if exclusion == "wrong_channel" else "telegram:ops",
     )
+    if exclusion == "recovery_chain":
+        original["payload"]["_diagnostic_recovery"] = {"version": 1, "source_job_id": "older_job"}
+    elif exclusion == "nonexhausted_job":
+        original["attempts"] = 4
+    elif exclusion == "unrelated_error":
+        original["last_error"] = "RuntimeError"
+    await repo.put("ops.jobs", original["job_id"], original)
     previous = {}
     if exclusion != "no_parent":
         parent = parent_receipt(notice["notice_id"])
         if exclusion == "terminal_parent":
             parent.update(status="FAILED", terminal=True, attempt=5, message_ref=None, error="DeliveryError")
+        elif exclusion == "wrong_destination":
+            parent["chat_id"] = "previous-ops-destination"
+        elif exclusion == "invalid_parent":
+            parent["message_ref"] = "not-a-telegram-message"
+        elif exclusion == "ambiguous_parent":
+            previous["other_parent"] = {**parent, "message_ref": "78"}
         previous["original_parent"] = parent
         await persist_receipts(repo, previous)
     async with httpx.AsyncClient(transport=LoopbackTelegramTransport(origin)) as http:
@@ -464,3 +505,210 @@ async def test_reconciliation_does_not_revive_ineligible_or_unproven_diagnostic_
                     "out.deliveries", filters={"notice_id": notice["notice_id"], "method": "sendDocument"}
                 )
     assert state["telegram"] == []
+
+
+def document_receipt(notice, document, *, status="SENT", attempt=1, terminal=False):
+    return {
+        "notice_id": notice["notice_id"],
+        "channel": "telegram:ops",
+        "method": "sendDocument",
+        "document_id": sha256({"filename": document["filename"], "sha256": document["sha256"]}),
+        "document_sha256": document["sha256"],
+        "document_bytes": len(document["content"]),
+        "filename": document["filename"],
+        "status": status,
+        "attempt": attempt,
+        "terminal": terminal,
+        "message_ref": "88" if status == "SENT" else None,
+        "chat_id": "ops" if status == "SENT" else None,
+        "request_reply_to_message_ref": "77",
+        "at": "2026-10-24T12:00:00Z",
+        "at_prec": "COLLECTION_ONLY",
+        "at_prec_reason": None,
+    }
+
+
+async def test_recovery_skips_previously_sent_metadata_and_retains_generated_attempt_budget(
+    diagnostic_repo, diagnostic_clock, wire_server
+):
+    repo = diagnostic_repo
+    origin, state = wire_server
+    notice, attachments = legacy_notice("binary")
+    original = await seed_failed_job(repo, notice, diagnostic_clock)
+    previous = {
+        "original_parent": parent_receipt(notice["notice_id"]),
+        "sent_metadata": document_receipt(notice, attachments[-1]),
+        **{
+            f"body_attempt_{attempt}": document_receipt(
+                notice, attachments[0], status="GENERATED", attempt=attempt
+            )
+            for attempt in range(1, 5)
+        },
+    }
+    await persist_receipts(repo, previous)
+    async with httpx.AsyncClient(transport=LoopbackTelegramTransport(origin)) as http:
+        await reconcile_concurrently(repo, http)
+        async with reopen(repo) as reloaded:
+            await drain_worker(runtime_for(reloaded, http))
+            completed = await recovery_job(reloaded, original)
+            assert completed["status"] == "DONE"
+            await assert_original_preserved(reloaded, original, notice, previous)
+            receipts = await reloaded.list(
+                "out.deliveries", filters={"notice_id": notice["notice_id"], "method": "sendDocument"}
+            )
+            [sent_body] = [
+                row for row in receipts if row["status"] == "SENT" and row["filename"].endswith(".bin")
+            ]
+            assert sent_body["attempt"] == 5
+            assert len(receipts) == len(previous) + 1
+        await reconcile_concurrently(repo, http)
+        async with reopen(repo) as reloaded:
+            await drain_worker(runtime_for(reloaded, http))
+            assert await recovery_job(reloaded, original) == completed
+    assert_uploads(uploads_from(origin, state), attachments[:1], 77)
+    assert len(state["telegram"]) == 1
+
+
+@pytest.mark.parametrize("state_kind", ["all_sent", "generated_exhausted", "early_terminal"])
+async def test_resolved_or_terminal_document_ledgers_do_not_gain_a_recovery_generation(
+    diagnostic_repo, diagnostic_clock, wire_server, state_kind
+):
+    repo = diagnostic_repo
+    origin, state = wire_server
+    notice, attachments = legacy_notice("missing")
+    original = await seed_failed_job(repo, notice, diagnostic_clock)
+    document_status = {
+        "all_sent": "SENT",
+        "early_terminal": "FAILED",
+        "generated_exhausted": "GENERATED",
+    }[state_kind]
+    previous = {
+        "original_parent": parent_receipt(notice["notice_id"]),
+        "original_document": document_receipt(
+            notice,
+            attachments[0],
+            status=document_status,
+            attempt=5 if state_kind == "generated_exhausted" else 1,
+            terminal=state_kind == "early_terminal",
+        ),
+    }
+    await persist_receipts(repo, previous)
+    async with httpx.AsyncClient(transport=LoopbackTelegramTransport(origin)) as http:
+        for _ in range(2):
+            await reconcile_concurrently(repo, http)
+            async with reopen(repo) as reloaded:
+                await drain_worker(runtime_for(reloaded, http))
+                assert await reloaded.list("ops.jobs", filters={"type": "DELIVER"}) == [original]
+                await assert_original_preserved(reloaded, original, notice, previous)
+    assert state["telegram"] == []
+
+
+async def test_recovery_job_refuses_destination_drift_after_enqueue_and_restart(
+    diagnostic_repo, diagnostic_clock, wire_server
+):
+    repo = diagnostic_repo
+    origin, state = wire_server
+    notice, _ = legacy_notice("missing")
+    original = await seed_failed_job(repo, notice, diagnostic_clock)
+    previous = {"original_parent": parent_receipt(notice["notice_id"])}
+    await persist_receipts(repo, previous)
+    async with httpx.AsyncClient(transport=LoopbackTelegramTransport(origin)) as http:
+        await reconcile_concurrently(repo, http)
+        async with reopen(repo) as reloaded:
+            runtime = runtime_for(reloaded, http)
+            runtime.settings.telegram_ops_chat = "different-ops"
+            await drain_worker(runtime)
+            recovery = await recovery_job(reloaded, original)
+            assert recovery["status"] == "QUEUED"
+            assert recovery["attempts"] == 1
+            assert recovery["last_error"] == "ValueError"
+            await assert_original_preserved(reloaded, original, notice, previous)
+            assert not await reloaded.list(
+                "out.deliveries", filters={"notice_id": notice["notice_id"], "method": "sendDocument"}
+            )
+    assert state["telegram"] == []
+
+
+async def test_recovery_keeps_terminal_body_while_delivering_eligible_metadata(
+    diagnostic_repo, diagnostic_clock, wire_server
+):
+    repo = diagnostic_repo
+    origin, state = wire_server
+    notice, attachments = legacy_notice("text")
+    original = await seed_failed_job(repo, notice, diagnostic_clock)
+    previous = {
+        "original_parent": parent_receipt(notice["notice_id"]),
+        "terminal_body": document_receipt(notice, attachments[0], status="FAILED", attempt=2, terminal=True),
+    }
+    await persist_receipts(repo, previous)
+    async with httpx.AsyncClient(transport=LoopbackTelegramTransport(origin)) as http:
+        await reconcile_concurrently(repo, http)
+        async with reopen(repo) as reloaded:
+            await drain_worker(runtime_for(reloaded, http))
+            recovery = await recovery_job(reloaded, original)
+            assert recovery["status"] == "QUEUED"
+            assert recovery["attempts"] == 1
+            await assert_original_preserved(reloaded, original, notice, previous)
+            receipts = await reloaded.list(
+                "out.deliveries", filters={"notice_id": notice["notice_id"], "method": "sendDocument"}
+            )
+            assert len(receipts) == 3
+            [sent] = [row for row in receipts if row["status"] == "SENT"]
+            assert sent["filename"] == attachments[-1]["filename"]
+            assert sent["attempt"] == 1
+        await reconcile_concurrently(repo, http)
+        async with reopen(repo) as reloaded:
+            await drain_worker(runtime_for(reloaded, http))
+            assert await recovery_job(reloaded, original) == recovery
+            await assert_original_preserved(reloaded, original, notice, previous)
+    assert_uploads(uploads_from(origin, state), attachments[-1:], 77)
+    assert len(state["telegram"]) == 1
+
+
+@pytest.mark.parametrize("memory", [False, True])
+async def test_idle_worker_recovers_multiple_notices_without_mutating_iteration_or_parent_receipts(
+    diagnostic_repo, diagnostic_clock, wire_server, memory
+):
+    repo = MemoryRepository() if memory else diagnostic_repo
+    origin, state = wire_server
+    originals = []
+    expected = []
+    parents = {}
+    for kind in ("missing", "binary"):
+        notice, attachments = legacy_notice(kind)
+        originals.append(await seed_failed_job(repo, notice, diagnostic_clock))
+        expected.extend(attachments)
+        parents[notice["notice_id"] + "_parent"] = parent_receipt(notice["notice_id"])
+    await persist_receipts(repo, parents)
+    async with httpx.AsyncClient(transport=LoopbackTelegramTransport(origin)) as http:
+        runtime = runtime_for(repo, http)
+        stop = asyncio.Event()
+
+        async def stop_after_recovery(stop, seconds):
+            queued = await repo.list("ops.jobs", filters={"type": "DELIVER", "status": "QUEUED"})
+            if not queued:
+                stop.set()
+
+        runtime.pause = stop_after_recovery
+        await asyncio.wait_for(runtime.worker(stop), timeout=5)
+    jobs = await repo.list("ops.jobs", filters={"type": "DELIVER"})
+    assert len(jobs) == 4
+    recoveries = [job for job in jobs if job["status"] == "DONE"]
+    assert len(recoveries) == 2
+    assert {job["payload"]["_diagnostic_recovery"]["source_job_id"] for job in recoveries} == {
+        job["job_id"] for job in originals
+    }
+    for original in originals:
+        assert await repo.get("ops.jobs", original["job_id"]) == original
+    for key, parent in parents.items():
+        assert await repo.get("out.deliveries", key) == parent
+    uploads = uploads_from(origin, state)
+    assert sorted(upload["document"] for upload in uploads) == sorted(
+        (document["filename"], document["content"]) for document in expected
+    )
+    assert len(state["telegram"]) == len(expected)
+    assert all(path.endswith("/sendDocument") for path, _, _ in state["telegram"])
+    for upload in uploads:
+        reply = upload["reply_parameters"][1]
+        assert isinstance(reply, bytes)
+        assert json.loads(reply) == {"message_id": 77}

@@ -10,7 +10,7 @@ import pytest
 from test_x_diagnostics import diagnostics, multipart, notice_for, telegram_settings
 
 from tank.delivery import DeliveryError, DeliveryService
-from tank.sources.x_diagnostics import documents, sanitize
+from tank.sources.x_diagnostics import DOCUMENT_SERIALIZATION_VERSION, documents, sanitize, verified_documents
 from tank.storage import MemoryRepository, PostgresRepository
 
 
@@ -130,11 +130,7 @@ class TelegramRecorder:
 
     @property
     def uploads(self):
-        return [
-            multipart(request)
-            for request in self.requests
-            if request.url.path.endswith("/sendDocument")
-        ]
+        return [multipart(request) for request in self.requests if request.url.path.endswith("/sendDocument")]
 
 
 @pytest.fixture
@@ -183,9 +179,132 @@ def test_diagnostic_document_bytes_are_canonical_under_nested_object_reordering(
     for row in first:
         assert row["sha256"] == digest(row["content"])
         if row["filename"].endswith(".json"):
-            assert row["content"] == json.dumps(
-                json.loads(row["content"]), ensure_ascii=False, indent=2, sort_keys=True
+            assert row["content"] == (
+                json.dumps(json.loads(row["content"]), ensure_ascii=False, indent=2, sort_keys=True).encode()
+            )
+
+
+@pytest.mark.parametrize("kind", ["missing", "empty", "text", "binary"])
+def test_verified_legacy_documents_reconstruct_exact_bytes_without_mutating_notice(kind):
+    notice, expected = legacy_notice(kind)
+    saved = reverse_objects(notice)
+    original = copy.deepcopy(saved)
+    assert verified_documents(saved) == expected
+    assert saved == original
+
+
+def legacy_header_notice(count):
+    notice, attachments = legacy_notice("text")
+    names = ("server", "retry-after", "content-type", "date", "cf-ray", "x-request-id", "content-length")
+    headers = {name: str(index) for index, name in enumerate(names[:count])}
+    notice["entry_errors"][0]["diagnostics"]["attempts"][0]["response"]["headers"] = headers
+    metadata = json.loads(attachments[-1]["content"])
+    metadata["attempts"][0]["response"]["headers"] = headers
+    content = json.dumps(metadata, ensure_ascii=False, indent=2).encode()
+    attachments[-1] = {**attachments[-1], "content": content, "sha256": digest(content)}
+    notice["document_manifest"] = manifest(attachments)
+    return notice, attachments
+
+
+@pytest.mark.parametrize("count", [0, 1, 2, 4, 6])
+def test_legacy_header_permutations_require_saved_exact_digest_and_size(count):
+    notice, expected = legacy_header_notice(count)
+    saved = reverse_objects(notice)
+    original = copy.deepcopy(saved)
+    assert verified_documents(saved) == expected
+    assert saved == original
+    saved["document_manifest"][-1]["sha256"] = "0" * 64
+    with pytest.raises(ValueError, match="manifest"):
+        verified_documents(saved)
+
+
+def test_legacy_header_reconstruction_fails_closed_beyond_bounded_search():
+    notice, _ = legacy_header_notice(7)
+    with pytest.raises(ValueError, match="reconstruction bound"):
+        verified_documents(notice)
+
+
+def test_legacy_header_reconstruction_has_notice_wide_work_budget(monkeypatch):
+    notice, _ = legacy_header_notice(2)
+    monkeypatch.setattr("tank.sources.x_diagnostics.LEGACY_NOTICE_CANDIDATE_LIMIT", 1)
+    with pytest.raises(ValueError, match="reconstruction bound"):
+        verified_documents(notice)
+
+
+@pytest.mark.parametrize("kind", ["missing", "empty", "text", "binary"])
+def test_canonical_manifest_requires_its_explicit_serialization_version(kind):
+    notice, legacy = legacy_notice(kind)
+    attachments = []
+    for document in legacy:
+        if document["filename"].endswith(".json"):
+            content = json.dumps(
+                json.loads(document["content"]), ensure_ascii=False, indent=2, sort_keys=True
             ).encode()
+            document = {**document, "content": content, "sha256": digest(content)}
+        attachments.append(document)
+    notice["document_manifest"] = manifest(attachments)
+    notice["document_serialization_version"] = DOCUMENT_SERIALIZATION_VERSION
+    saved = reverse_objects(notice)
+    original = copy.deepcopy(saved)
+    assert verified_documents(saved) == attachments
+    assert saved == original
+    saved.pop("document_serialization_version")
+    with pytest.raises(ValueError, match="manifest"):
+        verified_documents(saved)
+
+
+@pytest.mark.parametrize("version", [None, True, "2", 0, 3])
+def test_unknown_serialization_versions_are_rejected_even_for_matching_legacy_bytes(version):
+    notice, _ = legacy_notice("missing")
+    notice["document_serialization_version"] = version
+    with pytest.raises(ValueError, match="serialization version"):
+        verified_documents(notice)
+
+
+@pytest.mark.parametrize(
+    "path,value",
+    [
+        (("request", "method"), "POST"),
+        (("request", "body"), "unproven"),
+        (("request", "unknown"), "unproven"),
+        (("attemptCount",), 2),
+        (("unknown",), "unproven"),
+        (("attempts", 0, "unknown"), "unproven"),
+        (("attempts", 0, "response", "unknown"), "unproven"),
+        (("attempts", 0, "response", "body"), "tampered"),
+        (("attempts", 0, "response", "bodyBytes"), True),
+        (("attempts", 0, "response", "bodySha256"), "0" * 64),
+        (("attempts", 0, "response", "bodyEncoding"), "unknown"),
+        (("attempts", 0, "response", "headers", "authorization"), "unproven"),
+    ],
+)
+def test_legacy_validation_never_silently_discards_or_rewrites_unproven_metadata(path, value):
+    notice, _ = legacy_notice("text")
+    target = notice["entry_errors"][0]["diagnostics"]
+    for key in path[:-1]:
+        target = target[key]
+    target[path[-1]] = value
+    original = copy.deepcopy(notice)
+    with pytest.raises(ValueError, match="manifest"):
+        verified_documents(notice)
+    assert notice == original
+
+
+@pytest.mark.parametrize("change", ["missing", "empty", "extra_field", "boolean_bytes", "reordered"])
+def test_saved_manifest_shape_and_document_order_are_authoritative(change):
+    notice, _ = legacy_notice("text")
+    if change == "missing":
+        notice.pop("document_manifest")
+    elif change == "empty":
+        notice["document_manifest"] = []
+    elif change == "extra_field":
+        notice["document_manifest"][0]["unproven"] = True
+    elif change == "boolean_bytes":
+        notice["document_manifest"][0]["bytes"] = True
+    else:
+        notice["document_manifest"].reverse()
+    with pytest.raises(ValueError, match="manifest"):
+        verified_documents(notice)
 
 
 @pytest.mark.integration
@@ -195,6 +314,7 @@ async def test_producer_manifest_survives_jsonb_reload_and_multipart_delivery(di
     repo = diagnostic_repo
     notice = await notice_for(repo, evidence(kind))
     notice_id = notice["notice_id"]
+    assert notice["document_serialization_version"] == DOCUMENT_SERIALIZATION_VERSION
     assert manifest(documents(notice["entry_errors"])) == notice["document_manifest"]
     [job] = await repo.list("ops.jobs", filters={"type": "DELIVER"})
     assert job["payload"] == {"notice_id": notice_id, "channel": "telegram:ops"}
@@ -311,14 +431,7 @@ async def test_existing_manifest_is_verified_before_legacy_delivery_or_upgrade(
     assert len(recorder.requests) == len(filenames) + int(not metadata_already_sent)
     for upload in recorder.uploads:
         filename, content = upload["document"]
-        if filename.endswith(".json"):
-            canonical = json.dumps(
-                json.loads(expected[filename]), ensure_ascii=False, indent=2, sort_keys=True
-            ).encode()
-            assert content in (expected[filename], canonical)
-        else:
-            assert content == expected[filename]
-        expected[filename] = content
+        assert content == expected[filename]
         assert upload["chat_id"][1] == b"ops"
         assert json.loads(upload["reply_parameters"][1]) == {
             "message_id": 77 if metadata_already_sent else 101
@@ -343,6 +456,9 @@ async def test_existing_manifest_is_verified_before_legacy_delivery_or_upgrade(
         "body",
         "missing_document",
         "extra_document",
+        "missing_manifest",
+        "empty_manifest",
+        "unknown_version",
     ],
 )
 async def test_jsonb_manifest_compatibility_rejects_tampered_evidence(diagnostic_repo, legacy, tamper):
@@ -367,6 +483,12 @@ async def test_jsonb_manifest_compatibility_rejects_tampered_evidence(diagnostic
         response["body"] = response["body"].replace("upstream", "tampered")
     elif tamper == "missing_document":
         notice["document_manifest"].pop(0)
+    elif tamper == "missing_manifest":
+        notice.pop("document_manifest")
+    elif tamper == "empty_manifest":
+        notice["document_manifest"] = []
+    elif tamper == "unknown_version":
+        notice["document_serialization_version"] = 999
     else:
         notice["document_manifest"].append(
             {"filename": "unproven.txt", "sha256": digest(b"extra"), "bytes": 5}
