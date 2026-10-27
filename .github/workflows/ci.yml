@@ -232,6 +232,44 @@ jobs:
           src/tank/sources/reporting.py src/tank/ops_entry_errors.py
           tests/test_source_announcement_envelopes.py tests/source_report_support.py
           tests/test_source_error_report_scope.py tests/test_source_feed_input.py
+      - name: Check completed funding normalization and history family strictly
+        env:
+          MYPYPATH: src:tests
+        run: >-
+          uv run --frozen --extra dev mypy --config-file scripts/ci/mypy-foundation-tests.ini
+          src/tank/analysis/funding_time.py
+          src/tank/analysis/observation_clock.py
+          src/tank/analysis/funding_history_cache.py
+          src/tank/analysis/funding_selection.py
+          src/tank/analysis/condition_funding_input_codec.py
+          src/tank/analysis/funding_family.py
+          src/tank/analysis/funding_rate.py
+          src/tank/analysis/funding_quantile.py
+          src/tank/analysis/condition_funding_codec.py
+          src/tank/analysis/funding_normalization_math.py
+          src/tank/analysis/condition_funding_inputs.py
+          src/tank/analysis/funding_history.py
+          src/tank/analysis/condition_visibility.py
+          tests/test_condition_funding_phases.py
+          tests/test_condition_funding_inputs.py
+          tests/funding_history_fixtures.py
+          tests/test_condition_funding_cache.py
+          tests/test_funding_history.py
+          tests/test_funding_quantile.py
+          tests/test_condition_funding_clocks.py
+          tests/test_condition_funding_raw.py
+          tests/funding_input_fixtures.py
+          tests/test_condition_funding_computation.py
+          tests/test_funding_time.py
+          tests/funding_condition_fixtures.py
+          tests/test_funding_components.py
+          tests/test_funding_selection.py
+          tests/test_funding_family.py
+          tests/test_funding_range_absence.py
+          tests/test_condition_funding_lookup.py
+          tests/test_funding_rate.py
+          tests/test_funding_history_cache.py
+          tests/test_funding_unavailable_wire.py
       - name: Check completed quality module families strictly
         env:
           MYPYPATH: src:tests
