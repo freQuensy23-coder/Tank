@@ -17,7 +17,7 @@ from tank.time_precision import Timestamp
 @pytest.mark.parametrize("phase", ["EXISTING_START", "EXIT", "INACTIVE", "OTHER"])
 async def test_delivery_activation_without_unused_prices(phase: str) -> None:
     repo = MemoryRepository()
-    decision: dict[str, JsonValue] = {"token_id": "t", "action": "START"}
+    decision: dict[str, JsonValue] = {"dec_id": "d", "event_id": "e", "token_id": "t", "action": "START"}
     if phase == "EXIT":
         decision["action"] = "EXIT"
     elif phase == "INACTIVE":
@@ -60,6 +60,8 @@ async def test_new_start_requires_real_prices_before_call_write(invalid: JsonVal
         "ana.decisions",
         "d",
         {
+            "dec_id": "d",
+            "event_id": "e",
             "token_id": "t",
             "action": "START",
             "entry_ref_price": invalid,

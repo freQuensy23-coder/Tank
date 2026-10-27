@@ -731,7 +731,12 @@ class DeliveryDecisionPhase(DomainModel):
     actionable: bool | None = None
 
 
-class StartCallDecision(DomainModel):
+class DeliveredDecisionReference(DomainModel):
+    dec_id: DeliveryIdentity
+    event_id: DeliveryIdentity
+
+
+class StartCallDecision(DeliveredDecisionReference):
     token_id: DeliveryIdentity
     action: Literal["START"]
 
@@ -754,7 +759,7 @@ class StartCallPrices(DomainModel):
         return value
 
 
-class ExitCallDecision(DomainModel):
+class ExitCallDecision(DeliveredDecisionReference):
     token_id: DeliveryIdentity
     action: Literal["EXIT"]
 
@@ -767,17 +772,28 @@ class OtherCallDecision(DomainModel):
 type CallActivationDecision = StartCallDecision | ExitCallDecision | OtherCallDecision
 
 
-def call_activation_decision(record: Mapping[str, JsonValue]) -> CallActivationDecision | None:
+def call_activation_decision(
+    record: Mapping[str, JsonValue], *, expected: DeliveredDecisionReference
+) -> CallActivationDecision | None:
     """Admit only facts consumed after the stored decision's inactive phase."""
     phase = DeliveryDecisionPhase.model_validate(
         {name: record[name] for name in ("tracking_ended", "actionable") if name in record}
     )
     if phase.tracking_ended is True or phase.actionable is False:
         return None
-    fields = ("token_id", "action")
-    if record.get("action") == "START":
-        return StartCallDecision.model_validate({name: record[name] for name in fields if name in record})
-    values = {name: record[name] for name in fields if name in record}
-    if record.get("action") == "EXIT":
-        return ExitCallDecision.model_validate(values)
-    return OtherCallDecision.model_validate(values)
+    if record.get("action") in {"START", "EXIT"}:
+        owner = DeliveredDecisionReference.model_validate(
+            {name: record[name] for name in DeliveredDecisionReference.model_fields if name in record}
+        )
+        if owner != expected:
+            raise ValueError("Delivered decision differs from its selected identity and event")
+        fields = ("token_id", "action", "dec_id", "event_id")
+        values = {name: record[name] for name in fields if name in record}
+        return (
+            StartCallDecision.model_validate(values)
+            if record["action"] == "START"
+            else ExitCallDecision.model_validate(values)
+        )
+    return OtherCallDecision.model_validate(
+        {name: record[name] for name in ("token_id", "action") if name in record}
+    )

@@ -18,6 +18,7 @@ from tank.contracts.delivery import (
     CardDeliveryText,
     DeliveredCardActivation,
     DeliveredCorrection,
+    DeliveredDecisionReference,
     DeliveredEventView,
     DeliveryAttemptOrdinal,
     DeliveryEventBinding,
@@ -820,6 +821,8 @@ class DeliveryService:
                     due = max(boundaries, key=delivery_moment)
                     if utcnow() < delivery_moment(due):
                         return DeliveryDeferred(due)
+            if card is not None and card.kind != "PRELIMINARY":
+                await self._validate_activation_decisions(record)
             chat = self.settings.telegram_ops_chat if notice else self.settings.telegram_alerts_chat
             if not self.settings.telegram_token or not chat:
                 raise ValueError("Telegram token and destination must be configured")
@@ -1056,6 +1059,16 @@ class DeliveryService:
             },
         )
 
+    async def _validate_activation_decisions(self, record: Mapping[str, JsonValue]) -> None:
+        alert = DeliveredCardActivation.from_record(record)
+        for dec_id in alert.decisions:
+            stored = await self.repo.get("ana.decisions", dec_id)
+            if stored is None:
+                raise ValueError("Delivered card references missing decision")
+            call_activation_decision(
+                stored, expected=DeliveredDecisionReference(dec_id=dec_id, event_id=alert.event_id)
+            )
+
     async def _activate_calls(self, record: Mapping[str, JsonValue], sent_at: Timestamp) -> None:
         alert = DeliveredCardActivation.from_record(record)
         delivery_moment(sent_at)
@@ -1063,7 +1076,9 @@ class DeliveryService:
             stored = await self.repo.get("ana.decisions", dec_id)
             if stored is None:
                 raise ValueError("Delivered card references missing decision")
-            decision = call_activation_decision(stored)
+            decision = call_activation_decision(
+                stored, expected=DeliveredDecisionReference(dec_id=dec_id, event_id=alert.event_id)
+            )
             if decision is None:
                 continue
             calls = await self._all(
