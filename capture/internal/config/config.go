@@ -5,10 +5,9 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"strconv"
 	"strings"
 
-	"github.com/freQuensy23-coder/Tank/capture/internal/pydec"
+	"github.com/freQuensy23-coder/Tank/capture/internal/captureparams"
 	"github.com/freQuensy23-coder/Tank/capture/internal/pyval"
 	"github.com/freQuensy23-coder/Tank/capture/internal/venue"
 )
@@ -77,15 +76,15 @@ func LoadSettings() (Settings, error) {
 
 type Config struct {
 	Settings
-	Tokens        map[string]map[string]any
-	TokenOrder    []string
-	Instruments   map[string]*venue.Instrument
-	Order         []string
-	Registry      map[string]map[string]any
-	SectorBaskets []map[string]any
-	Semantics     []map[string]any
-	Thresholds    map[string]any
-	APILimits     validatedBudgetDocument
+	Tokens            map[string]map[string]any
+	TokenOrder        []string
+	Instruments       map[string]*venue.Instrument
+	Order             []string
+	Registry          map[string]map[string]any
+	SectorBaskets     []map[string]any
+	Semantics         []map[string]any
+	CaptureParameters captureparams.Parameters
+	APILimits         validatedBudgetDocument
 }
 
 func ReadYAML(dir, name string) (map[string]any, error) {
@@ -174,9 +173,13 @@ func Load(s Settings) (*Config, error) {
 	if c.Semantics, err = mappings(semantics["metrics"], "semantics metrics"); err != nil {
 		return nil, err
 	}
-	if c.Thresholds, err = ReadYAML(s.ConfigDir, "thresholds"); errors.Is(err, os.ErrNotExist) {
-		c.Thresholds = map[string]any{}
+	thresholds, err := ReadYAML(s.ConfigDir, "thresholds")
+	if errors.Is(err, os.ErrNotExist) {
+		thresholds = map[string]any{}
 	} else if err != nil {
+		return nil, err
+	}
+	if c.CaptureParameters, err = captureparams.Decode(thresholds); err != nil {
 		return nil, err
 	}
 	limitBytes, err := os.ReadFile(filepath.Join(s.ConfigDir, "api_limits.yaml"))
@@ -194,34 +197,6 @@ func Load(s Settings) (*Config, error) {
 		return nil, err
 	}
 	return c, nil
-}
-
-func (c *Config) Threshold(name string, def float64) float64 {
-	v, ok := c.Thresholds[name]
-	if !ok || v == nil {
-		return def
-	}
-	switch x := v.(type) {
-	case float64:
-		return x
-	case int:
-		return float64(x)
-	case int64:
-		return float64(x)
-	case bool:
-		if x {
-			return 1
-		}
-		return 0
-	case string:
-		if f, err := strconv.ParseFloat(strings.TrimSpace(x), 64); err == nil {
-			return f
-		}
-	}
-	if d, err := pydec.Parse(pyval.Str(v)); err == nil {
-		return d.Float64()
-	}
-	return def
 }
 
 func (c *Config) LockKey() string { return "tank:capture:writer" }

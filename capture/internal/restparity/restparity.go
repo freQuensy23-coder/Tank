@@ -20,6 +20,7 @@ import (
 
 	"github.com/freQuensy23-coder/Tank/capture/internal/budget"
 	"github.com/freQuensy23-coder/Tank/capture/internal/capture"
+	"github.com/freQuensy23-coder/Tank/capture/internal/captureparams"
 	"github.com/freQuensy23-coder/Tank/capture/internal/normalize"
 	"github.com/freQuensy23-coder/Tank/capture/internal/parity"
 	"github.com/freQuensy23-coder/Tank/capture/internal/points"
@@ -208,9 +209,13 @@ func Run(p *Payload, policies budget.Policies) (*parity.Output, error) {
 		byID[inst.ID] = inst
 		order = append(order, inst.ID)
 	}
-	svc := capture.New(capture.Options{
+	svc, err := capture.New(capture.Options{
+		Parameters:  captureparams.Defaults(),
 		Instruments: byID, Order: order, ConfigVersion: parity.ConfigVersion, CodeVersion: parity.CodeVersion,
 	}, noStore{}, rows, venues, nil, clock)
+	if err != nil {
+		return nil, err
+	}
 	ctx := context.Background()
 	for _, inst := range instruments {
 		svc.PollOnce(ctx, inst.ID)

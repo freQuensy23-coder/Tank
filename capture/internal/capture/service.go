@@ -77,7 +77,10 @@ type memberState struct {
 	message   time.Time
 }
 
-func New(opt Options, store Store, writer Writer, venues Venues, dial Dialer, clock Clock) *Service {
+func New(opt Options, store Store, writer Writer, venues Venues, dial Dialer, clock Clock) (*Service, error) {
+	if err := opt.Parameters.Validate(); err != nil {
+		return nil, err
+	}
 	if opt.Log == nil {
 		opt.Log = slog.Default()
 	}
@@ -93,7 +96,7 @@ func New(opt Options, store Store, writer Writer, venues Venues, dial Dialer, cl
 		frames: map[string]int{},
 	}
 	s.points = points.New(clock, writer.Sink, opt.ConfigVersion, opt.CodeVersion, s.fx)
-	headDelay := time.Duration(opt.Threshold("head_check_delay_s", 45) * float64(time.Second))
+	headDelay := opt.Parameters.HeadCheckDelay()
 	s.seal = NewSealer(clock, s.points.Put, headDelay)
 	s.seal.Repair = func(inst *venue.Instrument, start, end time.Time, reason string) {
 		s.queueRepair(inst, span{start, end}, reason, nil)
@@ -106,9 +109,9 @@ func New(opt Options, store Store, writer Writer, venues Venues, dial Dialer, cl
 		s.raw(t)
 		s.seal.Trade(inst, t, s.mainConn(inst.ID))
 	}, s.confirm)
-	s.pipe.BookSaveS = opt.Threshold("book_save_interval_s", pipeline.BookSaveS)
+	s.pipe.BookSaveS = opt.Parameters.BookSaveSeconds()
 	s.pipe.Async = func(f func()) { go f() }
-	return s
+	return s, nil
 }
 
 func (s *Service) leading() bool {
@@ -222,12 +225,12 @@ func (s *Service) Run(ctx context.Context) error {
 		}
 		s.spawn(func(ctx context.Context) { s.instrumentLoop(ctx, inst) })
 		if !inst.Spot() {
-			interval := s.opt.Threshold("hot_poll_interval_s", HotPollS)
+			interval := s.opt.Parameters.HotPollSeconds()
 			s.spawn(func(ctx context.Context) {
 				s.hotGrid(ctx, inst, interval, interval/2, pollKinds{derivatives: true})
 			})
 		}
-		interval := s.opt.Threshold("hot_ticker_interval_s", HotTickerS)
+		interval := s.opt.Parameters.HotTickerSeconds()
 		s.spawn(func(ctx context.Context) { s.hotGrid(ctx, inst, interval, 0, pollKinds{ticker: true}) })
 	}
 	s.spawn(func(ctx context.Context) {

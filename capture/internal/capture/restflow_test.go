@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/freQuensy23-coder/Tank/capture/internal/captureparams"
 	"sort"
 	"strconv"
 	"sync/atomic"
@@ -176,7 +177,10 @@ func newRESTRig(t *testing.T, venueName string) *restRig {
 	v := &fakeVenue{inst: inst}
 	mem := newMemStore()
 	clock := &testClock{base.Add(40 * time.Minute)}
-	s := New(Options{Instruments: map[string]*venue.Instrument{inst.ID: inst}, Order: []string{inst.ID}, ConfigVersion: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", CodeVersion: "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"}, mem, mem, fakeVenues{v}, nil, clock)
+	s, err := New(Options{Parameters: captureparams.Defaults(), Instruments: map[string]*venue.Instrument{inst.ID: inst}, Order: []string{inst.ID}, ConfigVersion: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", CodeVersion: "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"}, mem, mem, fakeVenues{v}, nil, clock)
+	if err != nil {
+		t.Fatal(err)
+	}
 	s.ctx = context.Background()
 	return &restRig{t: t, clock: clock, mem: mem, v: v, s: s, inst: inst, base: base}
 }
@@ -358,7 +362,11 @@ func TestSweepRepairsOKXSwapWithDiscoveredContractMultiplier(t *testing.T) {
 	r := newRESTRig(t, "okx")
 	swap := &venue.Instrument{ID: "okx:perp_linear:TEST-USD-SWAP", TokenID: r.inst.TokenID, Venue: "okx", MarketType: "PERP_LINEAR", Symbol: "TEST-USD-SWAP", QuoteAsset: "USD", Active: true}
 	r.inst, r.v.inst, r.v.multiplier = swap, swap, "0.01"
-	r.s = New(Options{Instruments: map[string]*venue.Instrument{swap.ID: swap}, Order: []string{swap.ID}}, r.mem, r.mem, fakeVenues{r.v}, nil, r.clock)
+	var err error
+	r.s, err = New(Options{Parameters: captureparams.Defaults(), Instruments: map[string]*venue.Instrument{swap.ID: swap}, Order: []string{swap.ID}}, r.mem, r.mem, fakeVenues{r.v}, nil, r.clock)
+	if err != nil {
+		t.Fatal(err)
+	}
 	r.s.ctx = context.Background()
 	r.prints(1, r.base.Add(-2*time.Minute), r.base.Add(12*time.Minute), time.Second)
 	r.s.repairUnrepaired(context.Background(), swap.TokenID, r.base, r.base.Add(10*time.Minute), true)
