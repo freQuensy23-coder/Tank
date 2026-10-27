@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/freQuensy23-coder/Tank/capture/internal/captureparams"
+	"github.com/freQuensy23-coder/Tank/capture/internal/coverage"
 	"github.com/freQuensy23-coder/Tank/capture/internal/normalize"
 	"github.com/freQuensy23-coder/Tank/capture/internal/points"
 	"github.com/freQuensy23-coder/Tank/capture/internal/pyval"
@@ -18,6 +19,7 @@ import (
 
 type Store interface {
 	Get(ctx context.Context, collection, key string) (map[string]any, error)
+	CoverageMinutes(context.Context, coverage.Query) ([]coverage.Minute, error)
 	Range(ctx context.Context, collection, field string, start, end time.Time, filters map[string]any) ([]map[string]any, error)
 	Projection(ctx context.Context, collection string, fields []string, field string, start, end time.Time, ids []string) ([]map[string]any, error)
 	Earliest(ctx context.Context, collection, field string, start, end time.Time, filters map[string]any) (time.Time, bool, error)

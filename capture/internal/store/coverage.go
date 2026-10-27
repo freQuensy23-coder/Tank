@@ -44,6 +44,19 @@ func (e *CoverageProjectionError) Error() string {
 	}
 }
 
+func (e *CoverageProjectionError) Unwrap() error {
+	switch e.problem {
+	case MissingCoverageInstrument, NullCoverageInstrument, MalformedCoverageInstrument:
+		return coverage.ErrInstrument
+	case MissingCoverageBucket, NullCoverageBucket, MalformedCoverageBucket:
+		return coverage.ErrBucket
+	case MissingCoverageCompletion, NullCoverageCompletion, MalformedCoverageCompletion:
+		return coverage.ErrCompletion
+	default:
+		return nil
+	}
+}
+
 func coverageColumns(q coverage.Query) (string, string, error) {
 	switch q.Series() {
 	case coverage.Flow:
@@ -51,7 +64,7 @@ func coverageColumns(q coverage.Query) (string, string, error) {
 	case coverage.Klines:
 		return "mkt.klines_1m", "open_time", nil
 	default:
-		return "", "", errors.New("capture coverage requires a supported minute series")
+		return "", "", coverage.ErrSeries
 	}
 }
 

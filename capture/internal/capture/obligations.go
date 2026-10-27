@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"github.com/freQuensy23-coder/Tank/capture/internal/backfillstate"
+	"github.com/freQuensy23-coder/Tank/capture/internal/coverage"
 	"github.com/freQuensy23-coder/Tank/capture/internal/requeststate"
 	"sort"
 	"strings"
@@ -621,12 +622,22 @@ func (s *Service) captureWindowCoverage(ctx context.Context, inst *venue.Instrum
 			return backfillstate.InstrumentCoverage{}, errors.New("capture coverage interval end precedes start")
 		}
 		var metrics [2]backfillstate.MinuteCoverage
-		for metricIndex, spec := range [][3]string{{"flow", "mkt.flow_bars_1m", "minute_start"}, {"klines", "mkt.klines_1m", "open_time"}} {
-			rows, err := s.store.Range(ctx, spec[1], spec[2], lo, hi, map[string]any{"instrument_id": inst.ID})
+		for metricIndex, spec := range []struct {
+			name   string
+			series coverage.Series
+		}{{"flow", coverage.Flow}, {"klines", coverage.Klines}} {
+			query, err := coverage.NewQuery(spec.series, inst.ID, lo, hi)
 			if err != nil {
-				return backfillstate.InstrumentCoverage{}, fmt.Errorf("%s %s coverage unavailable: %w", inst.ID, spec[0], err)
+				return backfillstate.InstrumentCoverage{}, err
 			}
-			metric, err := decodeCoverageMinutes(rows, spec[2], lo, hi)
+			rows, err := s.store.CoverageMinutes(ctx, query)
+			if err != nil {
+				if errors.Is(err, coverage.ErrInstrument) || errors.Is(err, coverage.ErrBucket) || errors.Is(err, coverage.ErrCompletion) {
+					return backfillstate.InstrumentCoverage{}, err
+				}
+				return backfillstate.InstrumentCoverage{}, fmt.Errorf("%s %s coverage unavailable: %w", inst.ID, spec.name, err)
+			}
+			metric, err := coverage.Count(query, rows)
 			if err != nil {
 				return backfillstate.InstrumentCoverage{}, err
 			}

@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/freQuensy23-coder/Tank/capture/internal/coverage"
 	"github.com/freQuensy23-coder/Tank/capture/internal/pytime"
 )
 
@@ -82,6 +83,13 @@ type unavailableCoverageStore struct {
 	reads           atomic.Int32
 	benchmark       bool
 	projectionReads atomic.Int32
+}
+
+func (s *unavailableCoverageStore) CoverageMinutes(ctx context.Context, q coverage.Query) ([]coverage.Minute, error) {
+	if s.reads.Add(1) >= s.failAt {
+		return nil, errors.New("range backend unavailable")
+	}
+	return s.Store.CoverageMinutes(ctx, q)
 }
 
 func (s *unavailableCoverageStore) Range(ctx context.Context, collection, field string, start, end time.Time, filters map[string]any) ([]map[string]any, error) {

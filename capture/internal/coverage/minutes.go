@@ -10,6 +10,18 @@ import (
 	"github.com/freQuensy23-coder/Tank/capture/internal/pytime"
 )
 
+var (
+	ErrSeries               = errors.New("capture coverage requires a supported minute series")
+	ErrInstrument           = errors.New("capture coverage requires its actual instrument scope")
+	ErrWindow               = errors.New("capture coverage requires its actual bounded interval")
+	ErrInvertedWindow       = errors.New("capture coverage interval end precedes start")
+	ErrBucket               = errors.New("capture coverage requires an aligned bucket within its declared interval")
+	ErrWindowRepresentation = errors.New("capture coverage interval cannot be represented")
+	ErrObservedSeries       = errors.New("capture coverage requires its actual minute series")
+	ErrConflict             = errors.New("capture coverage contains conflicting observations for one bucket")
+	ErrCompletion           = errors.New("capture coverage requires boolean completion flags")
+)
+
 type Series uint8
 
 const (
@@ -36,22 +48,22 @@ func (q Query) End() time.Time       { return q.end }
 
 func (q Query) Validate() error {
 	if q.series != Flow && q.series != Klines {
-		return errors.New("capture coverage requires a supported minute series")
+		return ErrSeries
 	}
 	if strings.TrimSpace(q.instrument) == "" || !utf8.ValidString(q.instrument) || strings.IndexByte(q.instrument, 0) >= 0 {
-		return errors.New("capture coverage requires its actual instrument scope")
+		return ErrInstrument
 	}
 	if q.start.IsZero() || q.end.IsZero() {
-		return errors.New("capture coverage requires its actual bounded interval")
+		return ErrWindow
 	}
 	if q.end.Before(q.start) {
-		return errors.New("capture coverage interval end precedes start")
+		return ErrInvertedWindow
 	}
 	if !q.start.Equal(pytime.MinuteFloor(q.start)) || !q.end.Equal(pytime.MinuteFloor(q.end)) {
-		return errors.New("capture coverage requires an aligned bucket within its declared interval")
+		return ErrBucket
 	}
 	if !q.start.Add(q.end.Sub(q.start)).Equal(q.end) {
-		return errors.New("capture coverage interval cannot be represented")
+		return ErrWindowRepresentation
 	}
 	return nil
 }
@@ -68,10 +80,10 @@ func NewMinute(q Query, instrument string, at time.Time, complete bool) (Minute,
 		return Minute{}, err
 	}
 	if instrument != q.instrument {
-		return Minute{}, errors.New("capture coverage requires its actual instrument scope")
+		return Minute{}, ErrInstrument
 	}
 	if !at.Equal(pytime.MinuteFloor(at)) || at.Before(q.start) || !at.Before(q.end) {
-		return Minute{}, errors.New("capture coverage requires an aligned bucket within its declared interval")
+		return Minute{}, ErrBucket
 	}
 	return Minute{q.series, instrument, at.UTC(), complete}, nil
 }
@@ -88,14 +100,14 @@ func Count(q Query, rows []Minute) (backfillstate.MinuteCoverage, error) {
 	buckets := make(map[int64]bool, len(rows))
 	for _, row := range rows {
 		if row.series != q.series {
-			return backfillstate.MinuteCoverage{}, errors.New("capture coverage requires its actual minute series")
+			return backfillstate.MinuteCoverage{}, ErrObservedSeries
 		}
 		if _, err := NewMinute(q, row.instrument, row.at, row.complete); err != nil {
 			return backfillstate.MinuteCoverage{}, err
 		}
 		key := row.at.Unix()
 		if prior, exists := buckets[key]; exists && prior != row.complete {
-			return backfillstate.MinuteCoverage{}, errors.New("capture coverage contains conflicting observations for one bucket")
+			return backfillstate.MinuteCoverage{}, ErrConflict
 		}
 		buckets[key] = row.complete
 	}
