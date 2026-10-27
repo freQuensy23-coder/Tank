@@ -230,11 +230,25 @@ class ContainerSettings(Projection):
 
 
 class CleanupReport(Record):
-    kind: Literal["REMOVED", "ALREADY_ABSENT", "NOT_STARTED", "UNOBSERVED_ACCEPTANCE"]
+    kind: Literal["REMOVED", "UNCONFIRMED_REMOVAL", "ALREADY_ABSENT", "NOT_STARTED", "UNOBSERVED_ACCEPTANCE"]
     context: CIContext
     container_id: CID | None
     logs_exit: int | None
     removal_exit: int | None
+
+    @model_validator(mode="after")
+    def observed_phase(self) -> Self:
+        if self.kind in {"REMOVED", "UNCONFIRMED_REMOVAL"}:
+            if self.container_id is None or self.logs_exit is None or self.removal_exit is None:
+                raise ValueError("removal reports require their actual container and command outcomes")
+            if (self.removal_exit == 0) != (self.kind == "REMOVED"):
+                raise ValueError("removal phase must preserve the observed command outcome")
+        else:
+            if self.logs_exit is not None or self.removal_exit is not None:
+                raise ValueError("an unexecuted cleanup cannot report command outcomes")
+            if (self.container_id is not None) != (self.kind == "ALREADY_ABSENT"):
+                raise ValueError("only an observed accepted-CID absence retains its identity")
+        return self
 
 
 def write_owned(path: Path, record: BaseModel) -> None:
@@ -416,7 +430,7 @@ def cleanup(context: CIContext) -> CleanupReport:
     owned_again.require_owner(intent, owned.identifier)
     removal = docker(["rm", "--force", owned.identifier])
     return CleanupReport(
-        kind="REMOVED",
+        kind="REMOVED" if removal.returncode == 0 else "UNCONFIRMED_REMOVAL",
         context=context,
         container_id=owned.identifier,
         logs_exit=logs.returncode,

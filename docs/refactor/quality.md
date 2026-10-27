@@ -827,3 +827,6 @@ Source bef942dc moves the actual spot pre24 read behind required Query/Candidate
 ### Owned ClickHouse overlap ready (2026-10-27)
 
 The separate [owned setup ledger](ci-clickhouse-overlap.md) preserves the exact original25.8 protocol/settings/schema and Go/npm/PG commands while joining four owned setup tasks. Thirteen units, six real process controls, strict4 and one explicitly scoped offline-image ARM/native-HTTP physical smoke pass. Accepted CID is durable before start; unknown acceptance/foreign identity cannot succeed or authorize a retry. Container-only cleanup preserves data volumes. Full CI collection/case/worker/global240 policies and all other jobs are unchanged; actual x64 image pull/overlap and wall margin await changed CI.
+
+
+CH report review correction: a nonzero Docker rm now persists UNCONFIRMED_REMOVAL with actual CID/status/log facts, and phase validation forbids contradictory REMOVED claims. The real subprocess-adapter negative control passes1/1 with original10s; main fails1. Container argv/ownership behavior is unchanged, so the physical success is retained without another smoke. See managed-ch-removal-phase-proof.json.

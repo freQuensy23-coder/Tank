@@ -1,7 +1,9 @@
 """Exact launch identity and uncertainty controls for disposable CI ClickHouse."""
 
 import json
+import os
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -211,3 +213,45 @@ def test_identity_change_after_logs_refuses_removal(tmp_path: Path, monkeypatch:
     with pytest.raises(ValueError, match="foreign"):
         ch.cleanup(launch.owner)
     assert [arguments[0] for arguments in calls] == ["container", "inspect", "logs", "inspect"]
+
+
+@pytest.mark.integration
+@pytest.mark.process
+@pytest.mark.timeout(10)
+def test_actual_adapter_failed_removal_persists_unconfirmed_phase_and_fails(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    launch = intent(tmp_path)
+    directory = launch.owner.directory()
+    ch.write_owned(directory / ch.INTENT, launch)
+    (tmp_path / "inspection.json").write_text(json.dumps(owned(launch)))
+    binaries = tmp_path / "bin"
+    binaries.mkdir()
+    executable = binaries / "docker"
+    executable.write_text(
+        "#!" + sys.executable + "\n"
+        "import os,sys,pathlib\n"
+        "root=pathlib.Path(os.environ['CH_REMOVAL_CONTROL'])\n"
+        "command=sys.argv[1]\n"
+        "with (root/'calls').open('a') as stream: stream.write(command+'\\n')\n"
+        "if command=='container': print('b'*64)\n"
+        "elif command=='inspect': print((root/'inspection.json').read_text())\n"
+        "elif command=='logs': print('actual owned adapter log')\n"
+        "elif command=='rm': raise SystemExit(7)\n"
+        "else: raise SystemExit(9)\n"
+    )
+    executable.chmod(0o700)
+    monkeypatch.setenv("PATH", str(binaries) + os.pathsep + os.environ["PATH"])
+    monkeypatch.setenv("CH_REMOVAL_CONTROL", str(tmp_path))
+    for key, value in launch.owner.environment().items():
+        monkeypatch.setenv(key, value)
+    monkeypatch.setattr(sys, "argv", ["managed_clickhouse", "cleanup"])
+    with pytest.raises(SystemExit) as failed:
+        ch.main()
+    assert failed.value.code == 1
+    report = ch.read_owned(directory / "clickhouse-cleanup.json", ch.CleanupReport)
+    assert report.kind == "UNCONFIRMED_REMOVAL"
+    assert report.container_id == "b" * 64 and report.logs_exit == 0 and report.removal_exit == 7
+    assert (tmp_path / "calls").read_text().splitlines() == ["container", "inspect", "logs", "inspect", "rm"]
+    with pytest.raises(ValidationError, match="removal phase"):
+        ch.CleanupReport.model_validate(report.model_dump() | {"kind": "REMOVED"})
