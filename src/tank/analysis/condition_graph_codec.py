@@ -17,6 +17,7 @@ from tank.analysis.condition_graph_contracts import (
     CapturedConditionUnlocks,
     CapturedConditionWalletFlows,
     ComparableConditionExchangeInventory,
+    ComputedConditionFundingObservation,
     ComputedConditionPreDepth,
     ComputedConditionReplenishmentSummary,
     ConditionAggregateLiquidations,
@@ -519,6 +520,19 @@ def _recorded_funding_wire(
     }
 
 
+def _computed_funding_wire(
+    observation: ConditionFundingObservationValue | None, prefix: str
+) -> dict[str, JsonValue]:
+    if not isinstance(observation, ComputedConditionFundingObservation):
+        return {}
+    return {
+        prefix + "_8h_eq_basis": observation.basis,
+        prefix + "_8h_eq": _decimal_wire(observation.equivalent_eight_hour_rate),
+        prefix + "_8h_eq_reason": observation.equivalent_rate_reason,
+        prefix + "_calculation": _model_wire(observation.calculation),
+    }
+
+
 def encode_condition_funding(value: ConditionFunding) -> dict[str, JsonValue]:
     validated = type(value).model_validate(value)
     if isinstance(validated, UnrequestedConditionFunding):
@@ -557,7 +571,10 @@ def encode_condition_funding(value: ConditionFunding) -> dict[str, JsonValue]:
     result.update(_recorded_funding_wire(settled, "funding_settled"))
     result.update(_recorded_funding_wire(estimate, "funding_estimate"))
     result.update(_recorded_funding_wire(start, "funding_start"))
-    if isinstance(selected, RecordedConditionFundingObservation):
+    result.update(_computed_funding_wire(settled, "funding_settled"))
+    result.update(_computed_funding_wire(estimate, "funding_estimate"))
+    result.update(_computed_funding_wire(start, "funding_start"))
+    if isinstance(selected, (RecordedConditionFundingObservation, ComputedConditionFundingObservation)):
         result["funding_8h_basis"] = selected.basis
     result.update(_funding_observed_clock(settled, "funding_settled_last_observed_at"))
     result.update(_funding_observed_clock(estimate, "funding_estimate_observed_at"))

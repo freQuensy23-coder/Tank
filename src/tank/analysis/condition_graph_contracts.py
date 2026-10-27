@@ -10,6 +10,7 @@ from typing import Annotated, Literal, Protocol, Self
 from pydantic import BeforeValidator, Field, field_validator, model_validator
 
 from tank.analysis.execution import BookWalkRequest, BookWalkResult, execute_book_walk
+from tank.analysis.funding_normalization_math import FundingRateCalculation
 from tank.analysis.oi_ratio import NativeOiChangeFailure, UsdOiChangeFailure, native_oi_change, usd_oi_change
 from tank.analysis.positioning import (
     MissingOIUsdDetail,
@@ -1538,7 +1539,38 @@ class RecordedConditionFundingObservation(DomainModel):
         return "NON_POSITIVE" if self.interval_h is None else None
 
 
-type ConditionFundingObservationValue = ConditionFundingObservation | RecordedConditionFundingObservation
+class ComputedConditionFundingObservation(DomainModel):
+    basis: Literal["CURRENT_ANALYSIS_RATE_INTERVAL"]
+    kind: Literal["SETTLED", "CURRENT_ESTIMATE"]
+    calculation: FundingRateCalculation
+    observed_at: Timestamp
+
+    @model_validator(mode="after")
+    def actual_computed_observation(self) -> Self:
+        if self.observed_at.value is None:
+            raise ValueError("A computed funding observation requires its actual source observation clock")
+        return self
+
+    @property
+    def rate(self) -> Decimal:
+        return self.calculation.operands.rate
+
+    @property
+    def interval_h(self) -> Decimal:
+        return self.calculation.operands.interval_h
+
+    @property
+    def equivalent_eight_hour_rate(self) -> Decimal | None:
+        return self.calculation.value
+
+    @property
+    def equivalent_rate_reason(self) -> Literal["NOT_ESTIMABLE"] | None:
+        return self.calculation.reason
+
+
+type ConditionFundingObservationValue = (
+    ConditionFundingObservation | RecordedConditionFundingObservation | ComputedConditionFundingObservation
+)
 
 
 class AvailableConditionFunding(DomainModel):
@@ -7655,6 +7687,12 @@ def _condition_observed_derivative_consistency(
                 old_point.equivalent_eight_hour_rate is not None
                 and point.equivalent_eight_hour_rate is not None
                 and old_point.equivalent_eight_hour_rate != point.equivalent_eight_hour_rate
+                and not (
+                    isinstance(old_point, RecordedConditionFundingObservation)
+                    and isinstance(point, ComputedConditionFundingObservation)
+                    or isinstance(old_point, ComputedConditionFundingObservation)
+                    and isinstance(point, RecordedConditionFundingObservation)
+                )
             ):
                 raise ValueError("Shared funding observations cannot contradict a known eight-hour rate")
             old_interval = (
