@@ -2,6 +2,9 @@ import base64
 import binascii
 import json
 import re
+from copy import deepcopy
+from itertools import permutations, product
+from math import factorial
 
 from tank.logging import redact_text
 from tank.util import sha256
@@ -125,22 +128,146 @@ def evidence_identity(diagnostics):
     }
 
 
-def documents(errors):
+DOCUMENT_SERIALIZATION_VERSION = 2
+LEGACY_CANDIDATE_LIMIT = 720
+LEGACY_NOTICE_CANDIDATE_LIMIT = 4096
+RESPONSE_FIELDS = (
+    "status",
+    "headers",
+    "body",
+    "bodyEncoding",
+    "bodyBytes",
+    "bodySha256",
+    "bodyTruncated",
+    "omittedWireBytes",
+    "wireBytes",
+    "captureLimitBytes",
+    "serializedBodyLimitBytes",
+    "readError",
+    "decodeError",
+    "redacted",
+)
+
+
+def _ordered_fields(value, fields, required=None):
+    if (
+        not isinstance(value, dict)
+        or set(value) - set(fields)
+        or set(fields if required is None else required) - set(value)
+    ):
+        raise ValueError("Unsupported diagnostic manifest schema")
+    return {key: value[key] for key in fields if key in value}
+
+
+def _integer(value, minimum=0):
+    return type(value) is int and value >= minimum
+
+
+def _validated_metadata(value):
+    metadata = _ordered_fields(value, ("request", "outcome", "attempts", "attemptCount"))
+    request = _ordered_fields(metadata["request"], ("method", "url", "body"))
+    if request["method"] != "GET" or request["body"] is not None or not isinstance(request["url"], str):
+        raise ValueError("Unsupported diagnostic manifest request")
+    metadata["request"] = request
+    attempts = metadata["attempts"]
+    if (
+        not isinstance(metadata["outcome"], str)
+        or not isinstance(attempts, list)
+        or len(attempts) > 3
+        or not _integer(metadata["attemptCount"])
+        or metadata["attemptCount"] != len(attempts)
+    ):
+        raise ValueError("Invalid diagnostic manifest attempts")
+    metadata["attempts"] = []
+    seen = set()
+    for original in attempts:
+        attempt = _ordered_fields(
+            original,
+            ("attempt", "at", "status", "retryable", "error", "response"),
+            ("attempt", "error"),
+        )
+        if (
+            not _integer(attempt["attempt"], 1)
+            or attempt["attempt"] in seen
+            or not isinstance(attempt["error"], str)
+            or ("at" in attempt and not isinstance(attempt["at"], str))
+            or ("status" in attempt and not _integer(attempt["status"]))
+            or ("retryable" in attempt and type(attempt["retryable"]) is not bool)
+        ):
+            raise ValueError("Invalid diagnostic manifest attempt")
+        seen.add(attempt["attempt"])
+        if "response" in attempt:
+            response = _ordered_fields(attempt["response"], RESPONSE_FIELDS)
+            headers = response["headers"]
+            if (
+                not isinstance(headers, dict)
+                or any(key not in HEADERS or not isinstance(val, str) for key, val in headers.items())
+                or not isinstance(response["bodyEncoding"], str)
+                or response["bodyEncoding"] not in {"utf-8", "base64"}
+                or not isinstance(response["body"], str)
+                or not _integer(response["bodyBytes"])
+                or not isinstance(response["bodySha256"], str)
+                or type(response["bodyTruncated"]) is not bool
+                or type(response["redacted"]) is not bool
+                or (response["status"] is not None and not _integer(response["status"]))
+                or any(
+                    response[key] is not None and not _integer(response[key])
+                    for key in (
+                        "omittedWireBytes",
+                        "wireBytes",
+                        "captureLimitBytes",
+                        "serializedBodyLimitBytes",
+                    )
+                )
+                or any(
+                    response[key] is not None and not isinstance(response[key], str)
+                    for key in ("readError", "decodeError")
+                )
+            ):
+                raise ValueError("Invalid diagnostic manifest response")
+            raw = (
+                base64.b64decode(response["body"], validate=True)
+                if response["bodyEncoding"] == "base64"
+                else response["body"].encode("utf-8")
+            )
+            if len(raw) != response["bodyBytes"] or sha256(raw) != response["bodySha256"]:
+                raise ValueError("Diagnostic manifest body integrity mismatch")
+            response["headers"] = dict(headers)
+            attempt["response"] = response
+        metadata["attempts"].append(attempt)
+    return metadata
+
+
+def _metadata_bytes(metadata, version):
+    return json.dumps(
+        metadata, ensure_ascii=False, indent=2, sort_keys=version == DOCUMENT_SERIALIZATION_VERSION
+    ).encode("utf-8")
+
+
+def _documents(errors, version, *, preserve_order=False):
+    if type(version) is not int or version not in {1, DOCUMENT_SERIALIZATION_VERSION}:
+        raise ValueError("Unsupported diagnostic manifest serialization version")
+    if not isinstance(errors, list):
+        raise ValueError("Invalid diagnostic manifest entry errors")
     result = []
     for index, error in enumerate(errors, 1):
+        if not isinstance(error, dict):
+            raise ValueError("Invalid diagnostic manifest entry error")
         diagnostics = error.get("diagnostics")
-        if not diagnostics:
+        if diagnostics is None:
             continue
         account = re.sub(r"[^a-z0-9_]", "_", str(error.get("account") or "run").lower())[:30]
-        metadata = json.loads(json.dumps(diagnostics))
+        metadata = _validated_metadata(diagnostics)
+        if preserve_order:
+            metadata = deepcopy(diagnostics)
         for attempt in metadata["attempts"]:
             response = attempt.get("response")
             if response is None:
                 continue
             content = (
-                base64.b64decode(response.pop("body"))
+                base64.b64decode(response.pop("body"), validate=True)
                 if response["bodyEncoding"] == "base64"
-                else response.pop("body").encode()
+                else response.pop("body").encode("utf-8")
             )
             if not content:
                 response["body"] = ""
@@ -150,7 +277,7 @@ def documents(errors):
             filename = f"x-{account}-{index}-attempt-{attempt['attempt']}-{sha256(content)[:12]}.{suffix}"
             response["bodyDocument"] = filename
             result.append({"filename": filename, "content": content, "sha256": sha256(content)})
-        content = json.dumps(metadata, ensure_ascii=False, indent=2).encode()
+        content = _metadata_bytes(metadata, version)
         result.append(
             {
                 "filename": f"x-{account}-{index}-diagnostics.json",
@@ -159,3 +286,73 @@ def documents(errors):
             }
         )
     return result
+
+
+def documents(errors, version=DOCUMENT_SERIALIZATION_VERSION):
+    return _documents(errors, version)
+
+
+def _matches_manifest(document, saved):
+    return (
+        document["filename"] == saved["filename"]
+        and len(document["content"]) == saved["bytes"]
+        and sha256(document["content"]) == saved["sha256"]
+    )
+
+
+def legacy_serialization_mismatch(notice):
+    attachments = _documents(notice["entry_errors"], 1, preserve_order=True)
+    manifest = notice["document_manifest"]
+    return len(attachments) != len(manifest) or any(
+        not _matches_manifest(document, saved) for document, saved in zip(attachments, manifest, strict=True)
+    )
+
+
+def verified_documents(notice):
+    if not isinstance(notice, dict) or notice.get("kind") != "ENTRY_ERRORS":
+        raise ValueError("Unsupported diagnostic manifest notice")
+    version = notice.get("document_serialization_version", 1)
+    attachments = documents(notice.get("entry_errors"), version=version)
+    manifest = notice.get("document_manifest")
+    if not isinstance(manifest, list) or not manifest or len(attachments) != len(manifest):
+        raise ValueError("Diagnostic document manifest count mismatch")
+    filenames = set()
+    for saved in manifest:
+        _ordered_fields(saved, ("filename", "sha256", "bytes"))
+        if (
+            not isinstance(saved["filename"], str)
+            or saved["filename"] in filenames
+            or not isinstance(saved["sha256"], str)
+            or re.fullmatch(r"[0-9a-f]{64}", saved["sha256"]) is None
+            or not _integer(saved["bytes"], 1)
+        ):
+            raise ValueError("Invalid diagnostic document manifest entry")
+        filenames.add(saved["filename"])
+    candidate_budget = LEGACY_NOTICE_CANDIDATE_LIMIT
+    for document, saved in zip(attachments, manifest, strict=True):
+        if version == DOCUMENT_SERIALIZATION_VERSION or not document["filename"].endswith(".json"):
+            if not _matches_manifest(document, saved):
+                raise ValueError("Diagnostic document manifest mismatch")
+            continue
+        if document["filename"] != saved["filename"] or len(document["content"]) != saved["bytes"]:
+            raise ValueError("Legacy diagnostic document manifest mismatch")
+        metadata = json.loads(document["content"])
+        responses = [attempt["response"] for attempt in metadata["attempts"] if "response" in attempt]
+        candidates = 1
+        for response in responses:
+            candidates *= factorial(len(response["headers"]))
+        if candidates > LEGACY_CANDIDATE_LIMIT or candidates > candidate_budget:
+            raise ValueError("Legacy diagnostic manifest header order exceeds reconstruction bound")
+        candidate_budget -= candidates
+        orders = [permutations(response["headers"].items()) for response in responses]
+        for combination in product(*orders):
+            for response, headers in zip(responses, combination, strict=True):
+                response["headers"] = dict(headers)
+            content = _metadata_bytes(metadata, 1)
+            if len(content) == saved["bytes"] and sha256(content) == saved["sha256"]:
+                document["content"] = content
+                document["sha256"] = saved["sha256"]
+                break
+        else:
+            raise ValueError("Legacy diagnostic document manifest mismatch")
+    return attachments

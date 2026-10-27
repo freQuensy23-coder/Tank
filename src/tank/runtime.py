@@ -8,6 +8,7 @@ from datetime import timedelta
 
 from tank.agents.sessions import ADMITTED_JOB_TYPES, AdmissionDeferred
 from tank.delivery import DeliveryDeferred, DeliveryService
+from tank.diagnostic_recovery import recover_legacy_diagnostic_job, validate_recovery_destination
 from tank.ops_progress import job_failure_progress
 from tank.scheduler import Scheduler
 from tank.time_precision import collection_clock, offset_schedule, propagate_timestamp
@@ -234,6 +235,8 @@ class Runtime:
                 kind = job["type"]
                 if kind not in self.handlers:
                     raise ValueError(f"Unregistered durable job kind: {kind}")
+                if kind == "DELIVER":
+                    validate_recovery_destination(job["payload"], getattr(self, "settings", None))
                 if kind in ADMITTED_JOB_TYPES and hasattr(getattr(self, "sessions", None), "admit"):
                     try:
                         async with asyncio.timeout(ADMISSION_TIMEOUT_S):
@@ -340,13 +343,21 @@ class Runtime:
                             {**job, **collection_clock(utcnow()).fields("ops_progress_recorded_at")},
                         )
             async for job in self.repo.iter_all("ops.jobs", filters={"type": "DELIVER", "status": status}):
+                if status == "FAILED":
+                    await recover_legacy_diagnostic_job(self.repo, getattr(self, "settings", None), job)
                 if not job.get("delivery_failure_recorded_at"):
                     await self.terminal_delivery_failure(job, status)
-                    await self.repo.put(
-                        "ops.jobs",
-                        job["job_id"],
-                        {**job, **collection_clock(utcnow()).fields("delivery_failure_recorded_at")},
-                    )
+                    async with self.repo.lock("job:" + job["job_id"]), self.repo.transaction():
+                        current = await self.repo.get("ops.jobs", job["job_id"])
+                        if current and not current.get("delivery_failure_recorded_at"):
+                            await self.repo.put(
+                                "ops.jobs",
+                                current["job_id"],
+                                {
+                                    **current,
+                                    **collection_clock(utcnow()).fields("delivery_failure_recorded_at"),
+                                },
+                            )
             for kind in ("AGENT_MESSAGE", "TELEGRAM_ANSWER"):
                 async for job in self.repo.iter_all("ops.jobs", filters={"type": kind, "status": status}):
                     if job.get("followup_failure_recorded_at"):

@@ -483,6 +483,8 @@ DeliveryRecord                       # append-only ledger; one row per transitio
   subject: (alert_id, version) | notice_id    # exactly one of the two
   channel, status: DeliveryStatus
   message_ref: str?; attempt: int; at: ts; error: str?
+  method?, document_id?, filename?, document_sha256?, document_bytes?
+  request_reply_to_message_ref?, chat_id?, terminal?
 
 OpsNotice                            # append-only; one "Tank Ops" message (§7.6)
   notice_id, kind: OpsNoticeKind
@@ -516,6 +518,8 @@ ReactionWindowPack
                  funding: [{venue, settled, estimate}],
                  liquidations: {long, short, coverage}}]
 ```
+
+Diagnostic notices durably identify their metadata serialization version; a missing marker denotes legacy serialization, not permission to rewrite the manifest. The ordered saved `document_manifest` is authoritative. Document receipts identify the method, exact file/hash/size, parent reply and real transport attempt; a parent SENT receipt is not attachment completion (§7.6).
 
 ### 2.8 Control, sidecar, QA
 
@@ -783,6 +787,8 @@ Keep the Apify actor source and its dependency/build manifest in the Tank reposi
 
 Acceptance covers transient failure followed by success on attempts 2 and 3, exactly three exhausted attempts with waits of 1 and 5 seconds, permanent errors without retry, deadline exhaustion, unchanged cursors, text/binary/oversized diagnostic delivery, secret exclusion, repeated reason/account with changed response evidence, and delivery retry without duplicate documents. Deployment checks cover changed and unchanged source digests, build/API errors, failed activation and rollback. Existing CI automation provides unit/integration evidence; real isolated worker and Telegram-delivery qualification must precede final ready-for-review handoff. No production mutation is part of this specification-only PR.
 
+Diagnostic delivery additionally requires the JSONB-stable serialization, immutable legacy validation and bounded FAILED-job recovery of §7.6, exercised by the permanent composed regressions in §11.7.
+
 ### 3.2 Agent sessions (OpenMA)
 
 One event, one agent session. The first item of an event opens a session on Tank's self-hosted OpenMA server (open-managed-agents, 02 §5), and the session lives as long as the event (§3.7) and at least ⚙7 days after its last message (`session_keep_days`), so a reader can continue it from Telegram. Everything that later concerns the event arrives in the same session as a message: a repeat, a development, a fired condition, a milestone, an expiring call. The agent does the steps that used to be separate jobs: facts with quotes, certainty and the check of official sources, freshness, stage, class, scores, beneficiaries, and the wording of the card. It changes Tank's state only through Tank's tools. Every tool validates its input with the rules of §3–§7 and refuses what breaks them. Market Truth, Outlook, the grades, the action and the alert gate are code behind the tools.
@@ -798,6 +804,15 @@ One event, one agent session. The first item of an event opens a session on Tank
 | Failures | A turn that ends in `session.error` or a refusal is sent again once; then the event is marked FAILED. |
 | Follow-ups | A reply in "Tank Alerts" to a card, an update or an agent answer, or a reply in "Tank Ops" to a notice about a material, is posted as a `user.message` into the session that handled that event or material, whether or not a card was published; the agent's final text is sent back as a reply in the same chat. Reader files up to 20 MB are passed to the agent. If the material never reached a session (filtered by Jev, still queued, stopped earlier) or the session can no longer be continued, Tank replies only with that reason and asks the agent nothing; there is no reply composed from stored records. |
 | Record and replay | Every tool call and result is also stored in `ops.tool_calls`; pages and search results are stored as evidence. A replay runs a fresh session on the same messages and answers the tools from the stored results instead of live sources; the verdicts come from the tools' code, so they reproduce. Commands in the sandbox run again in a replay, without internet and against the replay database (§11.1), so the agent's own analysis may differ |
+
+**Durable completion and incident recovery.** These rules apply in ordinary settlement/follower catch-up, including already persisted OPEN sessions, not only while posting new input:
+
+- **Acceptance is not completion.** Recover a lost `remote_event_id` only from the unique accepted ID recorded for this exact durable message's current `retry_count` in `native_input_attempts`, excluding retired/superseded lineage. Missing, malformed, ambiguous, wrong-attempt or conflicting proof never establishes success. Under the session lock, reread/revalidate the current attempt, preserve `sent_at` and provenance, restore ACCEPTING to PENDING only, maintain the acknowledgment list, and never regress RUNNING/DONE/FAILED. If proof is absent, any permitted resend uses the saved exact body and original attempt-specific idempotency key; native payload equality is mandatory. Never infer an ID from timestamps or its hash shape, repost retired terminal work or revive archived/ENDED sessions.
+- **Monotonic event merge.** After an awaited tool/network operation, merge only this event's changes against their actual baseline into the latest locked document. A row first seen on reload is not event-owned. Preserve concurrent appended messages, acknowledgments, attempt maps, timestamps, receipts, superseded lineage and later status/retry transitions, including collection additions. Do not hold the database lock across slow tool/network awaits.
+- **Handled failure retirement.** At an ordinary valid reopening and during reconciliation of already-OPEN sessions, retire only an exact historical message/attempt whose terminal failure is durably handled and whose failure event is processed, with no pending retry. Legacy session-level failure metadata additionally needs proven execution ownership. Native FAILED alone or a session-level failure flag is insufficient; verify the exact native terminal execution and its owned continuation boundary. Whole-message retirement requires no owned QUEUED/RUNNING/UNKNOWN accepted continuation and no required unreturned tool/action; otherwise those obligations remain barriers. Preserve diagnostics, retry lineage and original failure status; do not relabel FAILED as DONE or repeat its effects.
+- **Native completion remains authoritative.** Read exact accepted input/continuation executions, drain paginated history and process outstanding failures/tools. Settlement requires all current required inputs COMPLETED, no unidentified input or pending action, a correlated final `end_turn` receipt and a final lock-held recheck of the identical input set. Only then clear `active_message_id`, mark idle and release admission. Normal reconciliation wakes waiting jobs with their existing priority, attempts and expiry; expired work stays expired.
+
+This repair consumes existing native retained-session upgrade results without changing the sandbox upgrade/security contract below or event routing.
 
 Messages into a session:
 
@@ -1042,6 +1057,8 @@ PRELIMINARY delivery leaves a MATERIAL event TRACKED and does not set ordinary f
 | MILESTONE_CHECK | Scheduler, at the milestone's time (`schedule_milestone`) | 1 | `event:milestone` | — | — | Milestone window |
 | REACTION_CAPTURE | Scheduler, at each checkpoint | 2 | `event:token:checkpoint` | 120 s | 5 | Checkpoint + 6 h |
 | SCOUT_REVIEW | Proposal created | 4 | `proposal_id` | 300 s | 2 | 7 d |
+
+FAILED diagnostic attachment jobs have only the narrow permanent recovery path in §7.6: under the notice/recovery lock and transaction, reread eligibility and enqueue one deterministic version-specific generation through the existing queue. Its payload durably references the original job/notice and validated compatibility proof; retain original expiry, priority, failure audit and per-document attempt history. Re-enqueueing the original idempotency key does not revive a FAILED job. Restarts, concurrent reconcilers and an existing failure-reporting marker must neither suppress this eligible generation nor create another. No table or SQL schema change is required.
 
 ### 3.9 Latency budget (targets, verified at V0-G)
 
@@ -1611,6 +1628,13 @@ Wording rules. They are written in the skill: the agent follows them in the verd
 | DELIVERY_FAILED | `delivery` | A card or update for "Tank Alerts" reached its terminal failure (5 attempts); the material's card also shows the failed stage. A failed Ops notice creates no further notice | Priority 0, 5 attempts, 1-day expiry |
 | HEARTBEAT | `scheduler` | The first scheduler tick at or after ⚙08:00 UTC each day: cards delivered in the last 24 h, tokens in the hot set, the analysis backlog (queued, running) and the oldest queued job's lag, LLM spending since 00:00 UTC (the known subtotal plus the number of usage records without a cost), and the number of Ops cards that failed to deliver or update | Priority 0, 5 attempts, 1-day expiry |
 
+**Diagnostic document integrity and recovery:**
+
+- New metadata persists `document_serialization_version=2`: recursively sorted JSON object keys, UTF-8 with unescaped Unicode, two-space indentation and no trailing newline, independent of JSONB object order. Freeze the ordered filenames, SHA-256 hashes and byte counts before enqueueing; delivery compares regenerated bytes against that saved manifest after reload, never a newly generated self-comparison. Preserve raw text/binary body bytes, redaction, size bounds, empty-body metadata and existing document identities/receipts.
+- Legacy notices/manifests are immutable; an absent serialization marker denotes version 1. Reconstruct only supported legacy serializer layouts, with at most 720 header-order candidates per metadata document and 4096 per notice, then validate the complete ordered file set, every filename, byte count and hash before any attachment upload. Lost dynamic header order must not be guessed into acceptance: a layout that cannot reproduce the saved bytes, unknown versions, corrupt bodies or any mismatch fail closed. Do not canonicalize an old manifest in place, bypass the hash guard or claim every historical failed notice is recoverable; no derivative rendition migration is introduced.
+- Permanent Runtime reconciliation selects only unexpired FAILED DELIVER jobs in `telegram:ops` for immutable ENTRY_ERRORS with fully validated legacy evidence, missing deliverable attachments and a usable original parent SENT receipt for the configured destination. Require the exact saved-manifest mismatch to be resolved by the verified compatibility path, not merely an old `DeliveryError` class string. Leave EXPIRED/RUNNING/unrelated jobs and unverified evidence untouched. Persist one version-specific recovery generation and compatibility proof under the existing locks/transaction (§3.8), including `_diagnostic_recovery.classification="legacy_serialization_mismatch"`, source job identity, notice/manifest hashes and original parent/destination, preserving the original FAILED job/audit. Run attachment-only recovery through the ordinary worker and DeliveryService; never publish/reset the parent or create another visible notice.
+- The recovery generation refunds only the local serialization blockage, not real transport attempts. Preserve all per-document GENERATED/FAILED/SENT rows; SENT deduplicates by the unchanged document identity, terminal/exhausted documents remain terminal and every document retains its five real-attempt budget across generations/restarts. Recovery never extends expiry or recursively reports Ops failures. Completion means every eligible document is already SENT or has one successful receipt in the original thread; a SENT parent alone is insufficient.
+
 ITEM_PROGRESS and ENTRY_ERRORS are not written in replay or when `ops_progress_enabled` is off. A reader's reply to the card of a material goes to the agent session that handled it (01 FR-P-03).
 
 ---
@@ -1765,6 +1789,18 @@ The following findings remain open in MR #42 and were deferred for separate disc
 | P-05 | No model-level scenario evaluation of early-lead selection has been performed for this change. | Passing tool/CI tests does not demonstrate useful selection or an acceptable notification noise rate. |
 
 ---
+
+### 11.7 Durable incident-recovery regressions
+
+Permanent tests run through existing automatic PR/main CI, without manual tests/probes, production mutation or a one-off workflow:
+
+- Persist ACCEPTING + `sent_at` + exact current-attempt acceptance, restart, and exercise ordinary session reconciliation through settlement, admission release and waiting-worker progress without new input/tool effects. Ambiguous/conflicting/wrong-attempt proof and UNKNOWN/RUNNING execution remain blocked.
+- Persist an already-OPEN session with a processed historical terminal failure and a later completed ordinary milestone; also cover ordinary reopening. Neither path retries the old failure or retires pending retries, unprocessed failures, concurrent accepted work or running/unreturned continuations.
+- Coordinate tool-await/reload/acknowledgment races deterministically against durable persistence, including concurrent collection and same-row status/retry updates; fresh reads must retain body, acceptance, lineage, receipts and monotonic status.
+- Exercise producer → real PostgreSQL JSONB → fresh delivery instance → actual owned loopback HTTP multipart receiver. Compare uploaded bytes independently with the saved ordered manifest and original-parent reply receipts; include metadata-only/no-response, nested headers, text/binary and empty bodies, restart/repeat dedupe and tamper rejection.
+- Seed immutable reconstructable legacy evidence and an exhausted FAILED job with a SENT parent; run permanent reconciliation and the worker, reopen persistence and repeat. Require one recovery generation, original failure/expiry preserved, no duplicate SENT documents or reset genuine transport budgets, and exclusion of expired, unrelated, corrupt, unsupported-layout and terminal-document cases.
+
+These composed SQL/HTTP regressions qualify incident recovery only, not real native-model/KVM upgrade execution (§3.2), live production recovery or V0-H's 14-day acceptance.
 
 ## 12. Configuration baseline (⚙)
 
