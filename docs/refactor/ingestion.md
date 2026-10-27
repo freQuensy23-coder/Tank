@@ -2053,3 +2053,15 @@ admitted notice refuses storage without changing the original. Existing report
 restart/acknowledgement/version/dedup and X document assertions remain intact.
 Strict three-target source/new-test checking, Ruff, formatting, source comment
 policy and diff checks pass. Evidence prefix: notice-phase-d066-linux.
+
+The required-content follow-up at tested 79ee1c10 traces the sole real render
+caller to SourceReportSubject/SourceDefinition's nonempty source name and
+SourceReportRequest's nonempty error list, after fresh-key dedup has retained
+at least one error. EntryErrorRenderContent now requires those same facts;
+render no longer substitutes an empty source name or branches around an empty
+error list. A per-error missing payload digest remains genuinely optional.
+All 61 affected units passed in 10.29 seconds (zero skips, p90 0.308 seconds,
+maximum 1.453 seconds), and all 19 selected actual cases passed with zero skips.
+The original report text, dedup, document and rollback assertions remain.
+Evidence prefix: notice-required-linux. Strict three-target, Ruff/format,
+source comment and diff checks pass; no parent or production operations.
