@@ -328,3 +328,12 @@ async def test_no_recorded_activity_refuses_before_native_archive() -> None:
         with pytest.raises(ValueError, match="no recorded message time"):
             await service.last_message_at(SessionActivity.from_record({"session_id": "session"}))
     assert await repo.list("ops.agent_sessions") == []
+
+
+async def test_missing_owned_event_is_not_reinterpreted_as_an_eventless_negative() -> None:
+    repo = MemoryRepository()
+    await seed(repo, age_days=30, event="CLOSED", no_event=True)
+    await repo.delete("evt.events", "evt_1")
+    posts, session = await finish(repo)
+    assert posts == [] and session["status"] == "OPEN"
+    assert session["event_id"] == "evt_1" and "archived_at" not in session
