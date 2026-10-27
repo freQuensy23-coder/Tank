@@ -19,6 +19,9 @@ async def assert_returned_flow_isolated(repository: StorageBackend) -> None:
     object_field(returned[0], "first_trade")["price"] = "999"
     later = present(await repository.get("mkt.flow_bars_1m", "point"))
     assert object_field(later, "first_trade") == expected_trade
+    object_field(later, "first_trade")["price"] = "777"
+    final = present(await repository.get("mkt.flow_bars_1m", "point"))
+    assert object_field(final, "first_trade") == expected_trade
 
 
 async def test_market_batch_return_cannot_mutate_persisted_native_trade(repo: StorageBackend) -> None:

@@ -249,7 +249,7 @@ async def _put_market_batch(
                     if previous is not None and previous != key:
                         memory_rows.pop(previous)
                     memory_rows[key] = value
-                    changed.append(value.copy())
+                    changed.append(copy.deepcopy(value))
         _note_writes(self, collection, changed)
         return changed
     names = ["storage_key", *columns]
