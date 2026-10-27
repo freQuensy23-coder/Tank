@@ -1022,7 +1022,6 @@ class SourcePoller:
         item = original.storage_record()
         item.pop("pending_phase", None)
         material = original.discovery
-        article_link = isinstance(original, PendingArticleLink)
         if self.needs_detail(sid, kind):
             if sid == "S09":
                 _http_read = await svc.fetch(
@@ -1067,22 +1066,26 @@ class SourcePoller:
                 if not detail.text.strip():
                     return self._empty_body(material.url, _http_read.receipt)
 
-                detail_record = detail.storage_record()
-                if article_link:
-                    item.update(detail_record)
+                if isinstance(original, PendingArticleLink):
+                    item.update(detail.storage_record())
                 else:
-                    item.update(
-                        {
-                            k: v
-                            for k, v in detail_record.items()
-                            if v
-                            and not (
-                                k.startswith("published_")
-                                and detail.publication.value is None
-                                and item.get("published_at")
-                            )
-                        }
-                    )
+                    if detail.title != "":
+                        item["title"] = detail.title
+                    item["text"] = detail.text
+                    if detail.publication.value is not None or original.discovery.published_at is None:
+                        for field in (
+                            "published_at",
+                            "published_prec",
+                            "published_at_precision",
+                            "published_prec_reason",
+                            "published_at_reason",
+                            "published_at_missing_reason",
+                            "published_at_bucket_size_s",
+                            "published_at_bucket_anchor",
+                            "published_at_basis",
+                        ):
+                            item.pop(field, None)
+                        item.update(detail.publication_record())
             item["raw_ref"], item["raw_sha256"] = svc.raw(
                 payload, source_id=sid, item_id=original.item_id, observed_at=original.observed_at
             )
