@@ -248,6 +248,7 @@ def test_funding_baseline_reused_when_only_current_estimate_changes(monkeypatch:
         dict(
             instrument_id="binance:perp:T",
             kind="CURRENT_ESTIMATE",
+            metric_key="binance.perp.funding",
             as_of=packet["cutoff"],
             **collection_clock(parse_time(packet["assembled_at"])).fields("received_ts"),
             rate=".001",
