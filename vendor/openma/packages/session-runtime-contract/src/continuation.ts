@@ -195,13 +195,15 @@ function groups(snapshot: ContinuationSnapshot, laneId: string): Group[] {
     if (eventLaneId(e) !== laneId || e.type !== 'session.status_idle' || e.stopReason.type !== 'requires_action')
       continue;
     const ids = e.stopReason.eventIds;
-    const output = snapshot.orderedEvents.slice(phase.start, phase.end + 1).filter(x => x.executionId === phase.owner);
+    const position = snapshot.orderedEvents.indexOf(phase.terminal);
+    const output = snapshot.orderedEvents.slice(phase.start, position + 1).filter(x => x.executionId === phase.owner);
     if (!output.some(x => x.event.type === 'agent.custom_tool_use'))
       continue;
     const uses = pendingCustomUses(output);
     if (!sameUniqueIds(ids, uses.map(x => x.event.id)))
       throw new ContinuationProtocolError('Invalid custom-tool group declaration');
-    const position = snapshot.orderedEvents.indexOf(phase.terminal);
+    if (uses.length === 0)
+      continue;
     const interruptPosition = snapshot.orderedEvents.findIndex((x, i) => i > position && x.event.type === 'user.interrupt' &&
       (x.event.sessionThreadId == null || x.event.sessionThreadId === laneId));
     const interrupted = interruptPosition >= 0;
