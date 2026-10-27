@@ -1197,3 +1197,10 @@ Consumer source `e712e4d0` normally follows agents' qualified `fb8ff7e7` / `e230
 All three direct abort-test calls use the same actual API. Matching ownership supplies a real authored ReplayError's class name and unchanged reason. Foreign and unreported-run refusal supply None failure, preserving the source policy that unused error details must not be fabricated or validated before refusal. Original DONE/native terminal/source/event preservation, late-event exclusion, stopped followers, cancellation, lost acknowledgement, counter, body and deadline assertions remain unchanged. No retained payload or clock was changed.
 
 On immutable `e712e4d0`, all 142 affected unit cases passed in 6.37 s (zero skips/sourceguards, max 0.315 s, p90 0.0248 s). All 28 connected actual replay/reference/session-writer PostgreSQL cases passed in 25.57 s with zero skips/sourceguards. Evidence is `analysis/replay-abort-e712e4d0-{unit,actual}.{log,xml}`. Ruff/format/diff checks pass. This is consumer compatibility/effect closure for the new abort API, not a claim that the remaining untyped replay body or all owned analysis modules are closed.
+
+
+### Funding selected-interpolation admission
+
+Source03a8d946 preserves the actual population count, selected indices, legacy float-grid interpolation weight and exact Decimal operands. It materializes only a selected dense sum within an explicit4096-digit base budget or work proportional to existing coefficient digits. Wide populations remain admissible when selected endpoints/equal bounds or exact shared-scale cancellation are compact; unavailable dense interpolation carries NOT_ESTIMABLE without dropping observations or inventing finite bounds. This is a safe representability control, not a reproduction of an old allocation failure.
+
+The unchanged pinned Linux console qualifier collected32 normalization/interpolation cases, all passed in4.15seconds with zero skips and source guards; strict two-target checks and Ruff pass. Evidence funding-quantile-03a8-unit.log/XML. This does not close historical cache identity, actual funding producer or live SQL/read-only effects; those remain the next activation tranche.
