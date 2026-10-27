@@ -12,7 +12,7 @@ from tank.contracts.repository import Collection
 from tank.contracts.scalars import require_integer
 from tank.contracts.source_items import (
     CapturedItem,
-    PendingSourceItem,
+    PendingSourceRow,
     SourceContextId,
     SourceItem,
     SourceLifecycle,
@@ -659,7 +659,7 @@ class PendingBatchMetadata(DomainModel):
 
 class SourcePendingBatch(PendingBatchMetadata):
     source_id: SourceContextId
-    rows: list[PendingSourceItem]
+    rows: list[PendingSourceRow]
     coverage: PendingCoverage
     quarantines: list[PendingBatchQuarantine] = Field(default_factory=list)
 
@@ -738,7 +738,7 @@ class MaterializedSourceObservation(DomainModel):
 
 
 class CompletedPendingRow(DomainModel):
-    original: PendingSourceItem
+    original: PendingSourceRow
     observation: MaterializedSourceObservation
 
     @model_validator(mode="after")

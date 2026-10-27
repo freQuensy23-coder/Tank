@@ -2103,3 +2103,11 @@ Ruff, formatting, source-comment policy and diff checks pass. Whole parser
 contract migration remains separate and held at becdfa7e; it is not part of
 this narrow fix. Evidence prefixes are feed-stream-5675-linux and
 feed-stream-corrected-linux. No production operation occurred.
+
+### Held connected source parser/checkpoint migration: article subject admission
+
+This checkpoint is not an activation or qualification claim. Parser batches retain admitted discoveries; fresh article links now have a distinct recorded ARTICLE_LINK pending phase containing only observed link identity, first-seen clock and discovery versions. Untagged historical pending rows retain their existing decoder and evidence; current feed configuration does not assign their phase. Detail acquisition admits ParsedArticle before materialization. SourcePoller, parser, probe and the six connected source contract/checkpoint modules pass independent strict checking; their broader caller/runtime gate remains open.
+
+Structured article publication dates require a bound subject. A declared URL, mainEntityOfPage or nonlocal @id must identify the actual fetched response document, preserving query scope and allowing headline variation. A known foreign document cannot be overridden by a matching headline. Without a declared URL, an actual nonblank matching page heading may establish the subject; unmatched candidates no longer supply a fallback date. Nested duplicate-key JSON-LD is unavailable enrichment rather than publication authority. Original HTML and opaque text are unchanged. Publication metadata and designated document time elements retain their existing independent meanings; provider publication-clock policies remain separate audit items.
+
+The new actual Memory/PostgreSQL controls exercise acquisition, durable link-only storage, HTTP failure, restart/detail retry, subject refusal or success, exact raw HTML digest/bytes, first-seen preservation and coverage advancement only after resolution. These controls are authored at this checkpoint and are not yet reported green. Historical/read-only API consumers are being migrated to the precise models without altering frozen payloads.

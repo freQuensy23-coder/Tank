@@ -12,6 +12,7 @@ import tank.sources.parsers as parsers
 from tank.contracts import DomainModel
 from tank.contracts.provenance import ResolvedVersionIdentity
 from tank.contracts.source_checks import (
+    SourceHttpProbeContext,
     SourceProbeContext,
     SourceProbeFailure,
     SourceProbeResponse,
@@ -58,23 +59,31 @@ async def probe_feeds(service: ProbeService) -> list[SourceProbeResult]:
     secrets = tuple(service.settings.configured_secrets())
 
     async def probe(source: SourceDefinition, index: int, feed: SourceFeed) -> SourceProbeResult:
-        context = SourceProbeContext(
-            source_id=source.source_id,
-            feed_index=index,
-            url=feed.url,
-            kind=feed.kind,
-            method=feed.method,
-            started_at=collection_clock(),
-            versions=service.versions,
-        )
+        started_at = collection_clock()
         if source.source_id == "S29":
             return SourceProbeUnavailable(
-                context=context,
+                context=SourceProbeContext(
+                    source_id=source.source_id,
+                    feed_index=index,
+                    url=feed.url,
+                    kind=feed.kind,
+                    started_at=started_at,
+                    versions=service.versions,
+                ),
                 finished_at=collection_clock(),
                 status="UNAVAILABLE",
                 item_count=None,
                 reason="X runs through a paid Apify actor run; excluded from the HTTP smoke",
             )
+        context = SourceHttpProbeContext(
+            source_id=source.source_id,
+            feed_index=index,
+            url=feed.url,
+            kind=feed.kind,
+            method=feed.method,
+            started_at=started_at,
+            versions=service.versions,
+        )
         host = urlsplit(feed.url).netloc
         lock = host_locks.setdefault(host, asyncio.Lock())
         response_observation: SourceProbeResponse | None = None
@@ -120,9 +129,9 @@ async def probe_feeds(service: ProbeService) -> list[SourceProbeResult]:
                     item_count = len(snapshot)
                 else:
                     parsed = parsers.json_items(payload, source.source_id)
-                    item_count = len(parsed)
+                    item_count = len(parsed.discoveries)
                     if parsed.errors:
-                        entry_errors = service.admit_entry_errors(parsed.errors)
+                        entry_errors = list(parsed.errors)
                         raise ValueError("Publisher entries contain parser errors; valid siblings retained")
             except httpx.HTTPStatusError as exc:
                 failure = ProbeFailureCause(status="HTTP_ERROR", reason=f"HTTP {exc.response.status_code}")

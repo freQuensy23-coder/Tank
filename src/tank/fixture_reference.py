@@ -7,6 +7,7 @@ from datetime import UTC, date, datetime, timedelta
 from importlib.resources import files
 from pathlib import Path
 
+from tank.contracts.source_items import FederalRegisterDiscovery
 from tank.fixture_reference_code import CURRENT_PROJECTION_CODE, ProjectionCodeEvidence
 from tank.fixture_reference_sources import FILESYSTEM_RETAINED_SOURCES, RetainedSourceReader
 from tank.time_precision import Timestamp, interval_bounds, propagate_timestamp
@@ -669,21 +670,26 @@ def verify_derivation(record, proof, raw, *, signed_original=None):
                 if not module_hash or record.get("source_id") != "S03":
                     raise ValueError("Federal Register derivation requires S03 and the exact parser version")
                 matches = [
-                    r for r in parsers.json_items(raw, "S03") if r["external_id"] == record["external_id"]
+                    r
+                    for r in parsers.json_items(raw, "S03").discoveries
+                    if r.discovery.external_id == record["external_id"]
                 ]
                 if len(matches) != 1:
                     raise ValueError("Federal Register derivation requires one matching document")
-                item = matches[0]
+                item = matches[0].discovery
+                if not isinstance(item, FederalRegisterDiscovery):
+                    raise ValueError("Federal Register derivation requires its admitted discovery variant")
+                item_wire = item.model_dump(mode="json", exclude_unset=True)
                 if any(
-                    item.get(k) != record.get(k)
+                    item_wire.get(k) != record.get(k)
                     for k in ("title", "url", "document_type", "pdf_url", "agencies")
                 ):
                     raise ValueError("Federal Register source metadata differs from the retained API item")
-                if interval_bounds(propagate_timestamp(item, "published_at")) != interval_bounds(
+                if interval_bounds(item.publication) != interval_bounds(
                     propagate_timestamp(record, "published_at")
                 ):
                     raise ValueError("Federal Register publication date or precision differs")
-                derived = item["text"]
+                derived = item.text
             elif kind == "WEB_DATED_CORE_FACTS_V1":
                 derived = payload["text"]
             elif kind == "BYBIT_LIST_SELECTED_V1":

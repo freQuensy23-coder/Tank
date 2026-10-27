@@ -12,13 +12,58 @@ from tank.contracts.sources import AccountProbeFailure, AccountProbeResponse, Fe
 from tank.time_precision import Timestamp
 
 
+class SourceCheckpointAddress(DomainModel):
+    source_id: SourceContextId
+    feed_index: int = Field(ge=0)
+
+    @property
+    def key(self) -> str:
+        return f"{self.source_id}:{self.feed_index}"
+
+
+class SavedSourceCheckpoint(DomainModel):
+    """A read at an explicit address; the document is original administrative wire evidence."""
+
+    address: SourceCheckpointAddress
+    document: dict[str, JsonValue] | None
+
+    @property
+    def health_status(self) -> Literal["HEALTHY", "DEGRADED"] | None:
+        if self.document is None or self.document.get("source_id") != self.address.source_id:
+            return None
+        match self.document.get("status"):
+            case "HEALTHY":
+                return "HEALTHY"
+            case "DEGRADED":
+                return "DEGRADED"
+            case _:
+                return None
+
+
 class SavedSourceHealth(DomainModel):
-    """Administrative raw checkpoint evidence, separate from its narrow health verdict."""
+    """Aggregate saved owned verdicts without claiming a current endpoint observation."""
 
     source_id: SourceContextId
     configured: bool
-    states: list[dict[str, JsonValue] | None]
-    status: Literal["DEGRADED", "HEALTHY", "UNVERIFIED"]
+    checkpoints: list[SavedSourceCheckpoint]
+
+    @model_validator(mode="after")
+    def actual_requested_addresses(self) -> Self:
+        if self.configured != bool(self.checkpoints):
+            raise ValueError("Saved health configuration conflicts with its requested feed addresses")
+        for index, checkpoint in enumerate(self.checkpoints):
+            if checkpoint.address.source_id != self.source_id or checkpoint.address.feed_index != index:
+                raise ValueError("Saved health contains another requested source/feed address")
+        return self
+
+    @property
+    def status(self) -> Literal["DEGRADED", "HEALTHY", "UNVERIFIED"]:
+        statuses = [checkpoint.health_status for checkpoint in self.checkpoints]
+        if "DEGRADED" in statuses:
+            return "DEGRADED"
+        if statuses and all(status == "HEALTHY" for status in statuses):
+            return "HEALTHY"
+        return "UNVERIFIED"
 
 
 class SourceProbeContext(DomainModel):
@@ -26,7 +71,6 @@ class SourceProbeContext(DomainModel):
     feed_index: int = Field(ge=0)
     url: str = Field(min_length=1)
     kind: FeedKind
-    method: Literal["GET", "POST"]
     started_at: Timestamp
     versions: ResolvedVersionIdentity
 
@@ -35,6 +79,10 @@ class SourceProbeContext(DomainModel):
         if self.started_at.value is None or self.started_at.precision != "COLLECTION_ONLY":
             raise ValueError("Source probe requires its actual collection start clock")
         return self
+
+
+class SourceHttpProbeContext(SourceProbeContext):
+    method: Literal["GET", "POST"]
 
 
 class SourceProbeResponse(DomainModel):
@@ -62,6 +110,7 @@ class SourceProbeUnavailable(SourceProbeObservation):
 
 
 class SourceProbeSuccess(SourceProbeObservation):
+    context: SourceHttpProbeContext
     response: SourceProbeResponse
     status: Literal["PASS", "PASS_EMPTY"]
     item_count: int = Field(ge=0)
@@ -77,6 +126,7 @@ class SourceProbeSuccess(SourceProbeObservation):
 
 
 class SourceProbeFailure(SourceProbeObservation):
+    context: SourceHttpProbeContext
     response: SourceProbeResponse | None
     status: Literal["HTTP_ERROR", "NETWORK_ERROR", "PARSE_ERROR"]
     item_count: int | None = Field(ge=0)
@@ -85,9 +135,7 @@ class SourceProbeFailure(SourceProbeObservation):
 
     @model_validator(mode="after")
     def actual_failure_evidence(self) -> Self:
-        if self.status == "HTTP_ERROR" and (
-            self.response is None or 200 <= self.response.http_status < 300
-        ):
+        if self.status == "HTTP_ERROR" and (self.response is None or 200 <= self.response.http_status < 300):
             raise ValueError("HTTP probe failure requires its actual unsuccessful response")
         if self.parser_entry_errors is not None and (
             self.status != "PARSE_ERROR" or self.item_count is None or self.response is None
@@ -107,7 +155,6 @@ def probe_record(result: SourceProbeResult) -> dict[str, JsonValue]:
         "feed_index": context.feed_index,
         "url": context.url,
         "kind": context.kind,
-        "method": context.method,
         "config_version": context.versions.config_version,
         "code_version": context.versions.code_version,
         **context.started_at.fields("started_at"),
@@ -118,6 +165,7 @@ def probe_record(result: SourceProbeResult) -> dict[str, JsonValue]:
     if isinstance(result, SourceProbeUnavailable):
         wire["reason"] = result.reason
         return wire
+    wire["method"] = result.context.method
     response = result.response
     if response is not None:
         wire.update(response.model_dump(mode="json"))
@@ -139,4 +187,11 @@ def source_check_record(result: SourceCheckResult) -> dict[str, JsonValue]:
     """Project the closed check result at its administrative output boundary."""
     if isinstance(result, (SourceProbeUnavailable, SourceProbeSuccess, SourceProbeFailure)):
         return probe_record(result)
+    if isinstance(result, SavedSourceHealth):
+        return {
+            "source_id": result.source_id,
+            "configured": result.configured,
+            "states": [checkpoint.document for checkpoint in result.checkpoints],
+            "status": result.status,
+        }
     return result.model_dump(mode="json")

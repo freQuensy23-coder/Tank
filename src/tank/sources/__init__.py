@@ -20,7 +20,12 @@ from pydantic import JsonValue
 from tank.contracts.configuration import Thresholds
 from tank.contracts.http_policy import HttpRefused
 from tank.contracts.provenance import ResolvedVersionIdentity
-from tank.contracts.source_checks import SavedSourceHealth, SourceCheckResult
+from tank.contracts.source_checks import (
+    SavedSourceCheckpoint,
+    SavedSourceHealth,
+    SourceCheckpointAddress,
+    SourceCheckResult,
+)
 from tank.contracts.source_errors import AccountEntryError, SourceEntryError, parse_entry_error
 from tank.contracts.source_items import CapturedItem, SourceItem, SourceText, captured_item
 from tank.contracts.source_reports import (
@@ -387,22 +392,17 @@ class SourceService:
     async def _saved_health(self) -> list[SavedSourceHealth]:
         results: list[SavedSourceHealth] = []
         for sid, source in self.sources.items():
-            states = [
-                await self.repo.get("ops.source_checkpoints", f"{sid}:{i}")
-                for i, _ in enumerate(source.feeds)
-            ]
-            results.append(
-                SavedSourceHealth(
-                    source_id=sid,
-                    configured=bool(source.feeds),
-                    states=states,
-                    status="DEGRADED"
-                    if any(state is not None and state.get("status") == "DEGRADED" for state in states)
-                    else "HEALTHY"
-                    if states
-                    and all(state is not None and state.get("status") == "HEALTHY" for state in states)
-                    else "UNVERIFIED",
+            checkpoints: list[SavedSourceCheckpoint] = []
+            for index, _ in enumerate(source.feeds):
+                address = SourceCheckpointAddress(source_id=sid, feed_index=index)
+                checkpoints.append(
+                    SavedSourceCheckpoint(
+                        address=address,
+                        document=await self.repo.get("ops.source_checkpoints", address.key),
+                    )
                 )
+            results.append(
+                SavedSourceHealth(source_id=sid, configured=bool(source.feeds), checkpoints=checkpoints)
             )
         return results
 

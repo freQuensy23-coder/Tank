@@ -230,10 +230,14 @@ def test_invalid_normalized_publisher_metadata_preserves_valid_sibling_and_ident
         },
         "S03",
     )
-    assert [row["external_id"] for row in rows] == ["valid"]
-    assert len(rows.errors) == 1 and rows.errors[0]["entry_index"] == 0
-    assert rows.errors[0]["entry"]["id"] == "bad"
-    assert len(rows.errors[0]["entry_sha256"]) == 64
+    from tank.contracts.source_errors import DigestEntryError
+
+    assert [row.discovery.external_id for row in rows.discoveries] == ["valid"]
+    assert len(rows.errors) == 1 and rows.errors[0].entry_index == 0
+    error = rows.errors[0]
+    assert isinstance(error, DigestEntryError) and error.entry is not None
+    assert error.entry.id == "bad"
+    assert len(error.entry_sha256) == 64
 
 
 def test_source_discovery_cannot_replace_configured_identity_or_invent_missing_publication() -> None:
