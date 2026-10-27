@@ -109,6 +109,8 @@ async def test_failed_report_restart_retains_original_feed_subject(
             assert ledger.pending == {} and ledger.last_outcome is not None
             assert ledger.last_outcome.outcome.kind == "RECORDED"
             assert ledger.last_outcome.outcome.scope.feed_url == OLD
+            assert ledger.last_outcome.source_versions.config_version == "scope-old"
+            assert ledger.last_outcome.execution_versions.config_version == "scope-new"
             await restarted.close()
     finally:
         await budgets.shutdown()
@@ -336,6 +338,8 @@ async def test_requested_report_waits_through_disabled_mode_and_resumes_original
             assert ledger.pending == {pending.intent_id: pending}
             assert ledger.last_outcome is not None and ledger.last_outcome.outcome.kind == "NOT_REQUESTED"
             assert ledger.last_outcome.intent_id == pending.intent_id
+            assert ledger.last_outcome.source_versions == pending.versions
+            assert ledger.last_outcome.execution_versions == versions("disabled")
             assert await repo.list("out.ops_notices") == []
             enabled = SourceService(
                 repo,

@@ -211,7 +211,8 @@ class SourceReportDisposition(DomainModel):
     intent_revision: ReportDigest | None
     outcome: SourceReportOutcome
     recorded_at: Timestamp
-    versions: ResolvedVersionIdentity
+    source_versions: ResolvedVersionIdentity
+    execution_versions: ResolvedVersionIdentity
 
     @model_validator(mode="after")
     def actual_observation(self) -> Self:

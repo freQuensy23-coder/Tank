@@ -128,7 +128,8 @@ class SourceReportSpool:
                     kind="NOT_REQUESTED", scope=request.subject.scope, reason=mode
                 ),
                 recorded_at=self.clock(),
-                versions=self.versions,
+                source_versions=self.versions,
+                execution_versions=self.versions,
             )
             wire["last_outcome"] = disposition.model_dump(mode="json", exclude_unset=True)
         SourceReportLedger.model_validate(wire)
@@ -207,7 +208,8 @@ class SourceReportSpool:
                     intent_revision=revision,
                     outcome=outcome,
                     recorded_at=self.clock(),
-                    versions=self.versions,
+                    source_versions=intent.versions,
+                    execution_versions=self.versions,
                 )
                 wire["last_outcome"] = disposition.model_dump(mode="json", exclude_unset=True)
                 SourceReportLedger.model_validate(wire)
