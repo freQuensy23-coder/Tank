@@ -6214,11 +6214,19 @@
     },
     {
       "path": "src/tank/contracts/tool_dispatch.py",
-      "lines": 70,
+      "lines": 86,
       "functions": [
         {
+          "symbol": "ToolJournalTrigger.source_trigger_requires_item",
+          "line": 28,
+          "missing_parameters": [],
+          "missing_return": false,
+          "dict_nodes": 0,
+          "get_calls": 0
+        },
+        {
           "symbol": "ToolCallOwner.from_record",
-          "line": 26,
+          "line": 42,
           "missing_parameters": [],
           "missing_return": false,
           "dict_nodes": 1,
@@ -6226,7 +6234,7 @@
         },
         {
           "symbol": "ToolCallOwner.trigger",
-          "line": 37,
+          "line": 53,
           "missing_parameters": [],
           "missing_return": false,
           "dict_nodes": 2,

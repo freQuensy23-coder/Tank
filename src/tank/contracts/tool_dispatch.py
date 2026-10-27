@@ -3,7 +3,7 @@
 from collections.abc import Mapping
 from typing import Annotated, Literal, Self
 
-from pydantic import Field, JsonValue
+from pydantic import Field, JsonValue, model_validator
 
 from tank.contracts import DomainModel
 
@@ -23,6 +23,12 @@ type ToolDispatchIdentity = Annotated[str, Field(min_length=1, pattern=r"\S")]
 class ToolJournalTrigger(DomainModel):
     kind: AgentJournalInputKind
     item_id: ToolDispatchIdentity | None
+
+    @model_validator(mode="after")
+    def source_trigger_requires_item(self) -> Self:
+        if self.kind in {"NEW_ITEM", "ITEM_ADDED"} and self.item_id is None:
+            raise ValueError("Source publication trigger requires its owning input item")
+        return self
 
 
 class ToolCallOwner(DomainModel):
