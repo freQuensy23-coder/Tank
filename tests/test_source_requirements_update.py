@@ -2,41 +2,30 @@
 
 import asyncio
 import json
+from collections.abc import Mapping, Sequence
 from copy import deepcopy
 from pathlib import Path
-from types import SimpleNamespace
 
 import httpx
 import pytest
 import yaml
+from pydantic import JsonValue
 from source_support import (
     fixture_request_budgets,
     fixture_versions,
-    operational_configuration,
-    source_configuration,
     source_definition,
 )
+from test_sources import SourceFixtureSettings
+from test_sources import settings as source_settings
 
 from tank.sources import SourceService, parsers
 from tank.storage import MemoryRepository
 
 
-def config(tmp_path: Path, sources):
-    return SimpleNamespace(
-        data_dir=tmp_path,
-        user_agent="Tank source regression",
-        config_version="test",
-        code_version="test",
-        load_config=lambda name: (
-            source_configuration({"sources": sources})
-            if name == "sources"
-            else {"x_accounts": []}
-            if name == "registry"
-            else operational_configuration(name)
-        ),
-        ops_progress_enabled=False,
-        replay=False,
-    )
+def config(tmp_path: Path, sources: Sequence[Mapping[str, JsonValue]]) -> SourceFixtureSettings:
+    configured = source_settings(tmp_path, sources)
+    configured.user_agent = "Tank source regression"
+    return configured
 
 
 @pytest.mark.asyncio
