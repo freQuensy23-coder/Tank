@@ -969,10 +969,9 @@ def test_oi_history_pairs_use_requested_window_on_300s_grid_with_live_end_point(
     assert result["oi_class"] is not None
 
 
-def test_oi_rows_derive_usd_from_ticker_mark_without_mutating_inputs() -> None:
-    """03 §5.4: Bybit singleOpenInterest x markPrice, Binance oi_native x mark; Bybit OI rows carry
-    no mark, the instrument's ticker within the sync tolerance does."""
-    from tank.analysis.truth import _oi_rows
+def test_full_oi_does_not_rederive_missing_usd_from_unqualified_ticker_mark() -> None:
+    """A quote mark without captured conversion evidence cannot replace normalized USD."""
+    from tank.analysis.truth import derivatives_truth
 
     iid = "bybit:perp_linear:BTCUSDT"
     oi = [
@@ -986,15 +985,20 @@ def test_oi_rows_derive_usd_from_ticker_mark_without_mutating_inputs() -> None:
         {"instrument_id": "other", "ts": "2026-10-16T12:05:00Z", "mark_price": "7"},
     ]
     snapshot = {"oi": oi, "tickers": tickers}
-    rows = _oi_rows(snapshot, iid)
-    assert rows[0]["oi_usd"] == Decimal("20")
-    assert rows[0]["oi_usd_source"] == "OI_NATIVE_X_TICKER_MARK"
-    assert rows[1]["oi_usd"] is None
-    assert rows[2] is oi[2]
+    original = deepcopy(snapshot)
+    result = derivatives_truth(
+        snapshot, parse_time("2026-10-16T12:00:00Z"), parse_time("2026-10-16T12:10:00Z")
+    )["per_venue"][0]
+    assert result["oi_native_start"] == Decimal(10)
+    assert result["oi_native_end"] == Decimal(12)
+    assert result["oi_usd_start"] is None
+    assert result["oi_usd_end"] == Decimal(999)
+    assert result["oi_usd_chg_pct"] is None
+    assert snapshot == original
     assert oi[0]["oi_usd"] is None and "oi_usd_source" not in oi[0]
 
 
-def test_derivatives_oi_classifies_with_usd_from_ticker_mark() -> None:
+def test_derivatives_oi_classifies_with_recorded_normalized_usd() -> None:
     from tank.analysis.truth import derivatives_truth
 
     iid = "bybit:perp_linear:BTCUSDT"
@@ -1007,7 +1011,7 @@ def test_derivatives_oi_classifies_with_usd_from_ticker_mark() -> None:
             "venue": "bybit",
             "ts": iso(t),
             "oi_native": 100 if t < end else 108,
-            "oi_usd": None,
+            "oi_usd": (100 if t < end else 108) * 10,
         }
         for t in times
     ]
@@ -1220,10 +1224,11 @@ def test_liquidation_freshness_comes_from_stream_watermark_not_last_event() -> N
     assert check["detail"] == "STREAM_CONNECTION_UNPROVEN"
 
 
-def test_derived_oi_usd_serves_window_endpoints_only_and_usd_range_needs_seven_days_of_usd_pairs() -> None:
-    """Lead ruling 2026-10-21 (03 §0, §5.4): a ticker-mark USD value is derived only for the
-    window endpoints; history uses stored oi_usd, so Bybit (no stored USD) has no USD normal
-    range, and stored USD covering < 7 days gives none either. Native is unaffected."""
+def test_recorded_endpoint_usd_does_not_create_seven_days_of_usd_pairs() -> None:
+    """Authored normalized endpoint amounts do not backfill missing historical USD pairs.
+
+    Native populations remain available independently of the captured USD population.
+    """
     from tank.analysis.truth import derivatives_truth
 
     end = parse_time("2026-10-16T12:00:00Z")
@@ -1244,6 +1249,9 @@ def test_derived_oi_usd_serves_window_endpoints_only_and_usd_range_needs_seven_d
             }
             for i, t in enumerate(times)
         ]
+        for row in oi:
+            if parse_time(row["ts"]) in (start, end) and row["oi_usd"] is None:
+                row["oi_usd"] = row["oi_native"] * 10
         tickers = [{"instrument_id": iid, "venue": name, "ts": iso(t), "mark_price": 10} for t in times]
         instrument = {
             "instrument_id": iid,
@@ -1263,12 +1271,8 @@ def test_derived_oi_usd_serves_window_endpoints_only_and_usd_range_needs_seven_d
         endpoint_usd = []
         for at in (start, end):
             row = next(row for row in oi if parse_time(row["ts"]) == at)
-            mark = next(row["mark_price"] for row in tickers if parse_time(row["ts"]) == at)
-            endpoint_usd.append(
-                Decimal(str(row["oi_usd"]))
-                if row["oi_usd"] is not None
-                else Decimal(str(row["oi_native"])) * Decimal(str(mark))
-            )
+            assert row["oi_usd"] is not None
+            endpoint_usd.append(Decimal(str(row["oi_usd"])))
         expected_usd_change = endpoint_usd[1] / endpoint_usd[0] - 1
         assert stats["oi_usd_chg_pct"] == pytest.approx(float(expected_usd_change))
         assert stats["decomposition"]["pos_share"] is not None
@@ -1279,7 +1283,7 @@ def test_derived_oi_usd_serves_window_endpoints_only_and_usd_range_needs_seven_d
     assert stats["usd_normal_range"] is not None
 
 
-def test_synchronized_composite_keeps_native_range_and_endpoint_usd_with_endpoint_only_derivation() -> None:
+def test_synchronized_composite_keeps_native_range_with_recorded_endpoint_usd() -> None:
     from tank.analysis.truth import derivatives_truth
 
     end = parse_time("2026-10-16T12:00:00Z")
@@ -1309,7 +1313,7 @@ def test_synchronized_composite_keeps_native_range_and_endpoint_usd_with_endpoin
                     "metric_key": f"{name}.oi",
                     "ts": iso(t),
                     "oi_native": native,
-                    "oi_usd": native * 10 if stored else None,
+                    "oi_usd": native * 10 if stored or t in (start, end) else None,
                 }
             )
             snapshot["tickers"].append({"instrument_id": iid, "venue": name, "ts": iso(t), "mark_price": 10})

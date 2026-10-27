@@ -83,3 +83,41 @@ def test_full_oi_recorded_implied_price_classification_preserves_exact_half() ->
     assert result["oi_native_chg_pct"] == pytest.approx(1 / 3)
     assert result["decomposition"]["pos_share"] == 0.5
     assert result["oi_class"] == "MIXED"
+
+
+@pytest.mark.parametrize("raw", [None, "NaN", "-1", "0"])
+def test_full_oi_usd_component_availability_does_not_erase_native(raw: str | None) -> None:
+    snapshot, start, end = recorded_snapshot(native_start=3, native_end=4, recorded=True, source_label=None)
+    rows = snapshot["oi"]
+    assert isinstance(rows, list) and isinstance(rows[-1], dict)
+    rows[-1]["oi_usd"] = raw
+    result = derivatives_truth(snapshot, start, end)["per_venue"][0]
+    assert result["oi_native_start"] == Decimal(3)
+    assert result["oi_native_end"] == Decimal(4)
+    assert result["native_normal_range"] == [0, 0]
+    if raw == "0":
+        assert result["oi_usd_end"] == 0
+        assert result["oi_usd_chg_pct"] == -1
+        assert result["oi_usd_reason"] is None
+        assert result["oi_usd_detail"] is None
+    else:
+        assert result["oi_usd_end"] is None
+        assert result["oi_usd_chg_pct"] is None
+        assert result["oi_usd_detail"] == (
+            "RECORDED_USD_NOT_CAPTURED" if raw is None else "REPORTED_USD_INVALID"
+        )
+
+
+def test_full_oi_known_zero_usd_baseline_remains_observed() -> None:
+    snapshot, start, end = recorded_snapshot(native_start=3, native_end=4, recorded=True, source_label=None)
+    rows = snapshot["oi"]
+    assert isinstance(rows, list)
+    for row in rows:
+        assert isinstance(row, dict)
+        row["oi_usd"] = "0"
+    result = derivatives_truth(snapshot, start, end)["per_venue"][0]
+    assert result["oi_usd_start"] == result["oi_usd_end"] == 0
+    assert result["oi_usd_reason"] is None
+    assert result["oi_usd_detail"] is None
+    assert result["oi_usd_chg_pct"] is None
+    assert result["oi_usd_chg_pct_reason"] == "ZERO_BASELINE"
