@@ -11,6 +11,7 @@ import ssl
 from collections.abc import Mapping
 from datetime import datetime
 from functools import cached_property
+from typing import Protocol
 from urllib.parse import urlsplit
 
 import certifi
@@ -51,6 +52,7 @@ from tank.contracts.sources import (
 from tank.http_admission import ConfiguredHttpAdmission
 from tank.ops_progress import RepositorySourceProgress
 from tank.request_budget import BudgetConstraint, RequestBudgets
+from tank.settings import Settings
 from tank.sources.capture_fetch import capture_fetch, is_exchange_url
 from tank.sources.fetch import (
     FetchEvidence,
@@ -60,9 +62,10 @@ from tank.sources.fetch import (
     SourceHttpReader,
 )
 from tank.sources.http_client import RequestStarted, SourceHttpTransport
-from tank.sources.ingestion import SourceIngestion
+from tank.sources.ingestion import IngestionStore, SourceIngestion
 from tank.sources.raw_store import RawItemStorage
 from tank.sources.xsensor import XSensor
+from tank.time_precision import Timestamp
 from tank.util import iso, parse_iso_time, utcnow
 
 
@@ -77,9 +80,29 @@ def tls_context() -> ssl.SSLContext:
     return context
 
 
+class SourceRepository(IngestionStore, Protocol):
+    async def enqueue(
+        self,
+        kind: str,
+        payload: dict[str, JsonValue],
+        idem_key: str,
+        *,
+        priority: int,
+        max_attempts: int,
+        run_after: Timestamp | None = None,
+        expires_at: Timestamp | None = None,
+    ) -> dict[str, JsonValue]: ...
+
+
 class SourceService:
     def __init__(
-        self, repo, settings, *, versions: ResolvedVersionIdentity, budgets: RequestBudgets, http=None
+        self,
+        repo: SourceRepository,
+        settings: Settings,
+        *,
+        versions: ResolvedVersionIdentity,
+        budgets: RequestBudgets,
+        http: httpx.AsyncClient | None = None,
     ) -> None:
         self.versions = ResolvedVersionIdentity.model_validate(versions)
         self.budgets = budgets
@@ -106,9 +129,7 @@ class SourceService:
         )
         self.transport = SourceHttpTransport(self.http, self._admit_request)
         self.owns_http = http is None
-        self.xsensor = XSensor(
-            self.http, getattr(settings, "apify_api_token", None), admission=self.http_admission
-        )
+        self.xsensor = XSensor(self.http, settings.apify_api_token, admission=self.http_admission)
         self.configuration = cfg
         self.sources = {source.source_id: source for source in cfg.sources}
         self.source_host_limits: dict[str, int] = {}
@@ -438,7 +459,7 @@ class SourceService:
         """Re-read durable controls independently of the normal HTTP poll cadence."""
         return await self.poll_once(source_id, due_only=True, escalated=await self.is_escalated(source_id))
 
-    async def run(self, stop):
+    async def run(self, stop: asyncio.Event) -> None:
         tasks = [asyncio.create_task(self.poller.run(stop))]
         try:
             await asyncio.gather(*tasks)
