@@ -74,3 +74,22 @@ def test_later_receipt_eligibility_changes_population_without_relabeling_prior_a
     assert len(second.population.sources) == 2
     assert first.population.before == second.population.before == earlier.start
     assert second.population.sources[0].received_at.value == "2026-10-16T13:00:00Z"
+
+
+def test_new_history_cache_shares_existing_128_entry_fifo_budget() -> None:
+    from tank.analysis.statistics_contracts import FundingBaseline
+
+    composed = BaselineCaches.with_capacity(128)
+    owned = calculator(rows())
+    first = composed.funding_history.baseline(
+        owned, request(), instrument=owned.source.instruments[0], policy=policy()
+    )
+    for index in range(128):
+        composed.funding.put(str(index), FundingBaseline(equivalent_eight_hour_rate=first.normal_range))
+    second = composed.funding_history.baseline(
+        owned, request(), instrument=owned.source.instruments[0], policy=policy()
+    )
+    assert second is not first
+    assert second.normal_range == first.normal_range
+    assert composed.funding.get("0") is None
+    assert composed.funding.get("127") is not None
