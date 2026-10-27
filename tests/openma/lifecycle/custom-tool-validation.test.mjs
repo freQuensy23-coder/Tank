@@ -242,23 +242,52 @@ test('an all-locally-settled phase cannot declare a foreign callback', () => {
   assertFailure(snapshot, 'reply', /Invalid custom-tool group declaration/);
 });
 
-test('a verified progress phase resolves local calls without consuming the execution remaining input', () => {
-  const snapshot = waiting();
+function yieldPhase(snapshot) {
   const original = snapshot.executions[0];
   original.state = 'running';
   original.events.push(append(snapshot, undefined, message('remaining-prompt')));
-  append(snapshot, 'original', idle('progress', requires(['corrected'])));
+  const stopReason = snapshot.orderedEvents.find(entry => entry.event.id === 'declaration').event.stopReason;
+  append(snapshot, 'original', idle('progress', structuredClone(stopReason)));
   snapshot.orderedEvents.at(-1).executionMetadata.progress = {
     version: 1, laneId: 'sthr_primary', attemptId: 'original-attempt-1', generation: 1,
     phaseStartEventId: 'running', terminalEventId: 'declaration', previousReceiptId: null,
     phaseInputIds: ['prompt'], consumedInputIds: ['prompt'], remainingInputIds: ['remaining-prompt'],
   };
+}
+
+test('a verified progress phase resolves local calls without consuming the execution remaining input', () => {
+  const snapshot = waiting();
+  yieldPhase(snapshot);
   admit(snapshot, 'reply', callback('reply', 'corrected'));
   const plan = planSessionContinuation(snapshot, 'reply');
   assert.equal(plan.mode, 'model');
   assert.deepEqual(plan.phaseInputIds, ['reply']);
   assert.deepEqual(plan.historyEvents.filter(event => event.type === 'user.message').map(event => event.id), ['prompt']);
   assert.deepEqual(plan.historyEvents.filter(event => event.type.startsWith('agent.')).map(event => event.id), ['invalid', 'invalid-result', 'corrected']);
+});
+
+for (const yielded of [false, true]) test(`an all-locally-settled empty declaration does not block ${yielded ? 'remaining yielded' : 'new'} input`, () => {
+  const snapshot = journal([
+    ...span('model', [custom('invalid', 'MINUTE')], [localResult('invalid-result', 'invalid')]),
+    idle('declaration', requires([])),
+  ]);
+  if (yielded) yieldPhase(snapshot);
+  else admit(snapshot, 'next', message('next'));
+  const plan = planSessionContinuation(snapshot, yielded ? 'original' : 'next');
+  assert.equal(plan.mode, 'model');
+  assert.deepEqual(plan.phaseInputIds, [yielded ? 'remaining-prompt' : 'next']);
+  assert.deepEqual(plan.remaining, []);
+  assert.deepEqual(plan.historyEvents.filter(event => event.type.startsWith('agent.')).map(event => event.id), ['invalid', 'invalid-result']);
+});
+
+test('a result after the original terminal cannot discharge a call before the progress receipt', () => {
+  const snapshot = waiting();
+  const index = snapshot.orderedEvents.findIndex(entry => entry.event.id === 'invalid-result');
+  const [late] = snapshot.orderedEvents.splice(index, 1);
+  append(snapshot, 'original', late.event);
+  yieldPhase(snapshot);
+  admit(snapshot, 'reply', callback('reply', 'corrected'));
+  assertFailure(snapshot, 'reply', /Invalid custom-tool group declaration/);
 });
 
 for (const boundary of ['missing', 'failed']) test(`local results cannot recover a ${boundary} model boundary`, () => {
