@@ -6211,6 +6211,28 @@
           "get_calls": 0
         }
       ]
+    },
+    {
+      "path": "src/tank/contracts/tool_dispatch.py",
+      "lines": 70,
+      "functions": [
+        {
+          "symbol": "ToolCallOwner.from_record",
+          "line": 26,
+          "missing_parameters": [],
+          "missing_return": false,
+          "dict_nodes": 1,
+          "get_calls": 5
+        },
+        {
+          "symbol": "ToolCallOwner.trigger",
+          "line": 37,
+          "missing_parameters": [],
+          "missing_return": false,
+          "dict_nodes": 2,
+          "get_calls": 7
+        }
+      ]
     }
   ]
 }

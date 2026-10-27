@@ -3297,6 +3297,20 @@
         "test_unreported_journal_and_actual_empty_journal_remain_distinct",
         "test_actual_empty_exception_text_stays_empty_and_receipt_is_host_not_native"
       ]
+    },
+    {
+      "sites": [
+        {
+          "path": "src/tank/contracts/tool_dispatch.py",
+          "symbol": "ToolCallOwner.retry_count",
+          "line": 23
+        }
+      ],
+      "kind": "unreported attempt is not required for input-trigger selection",
+      "reason": "Actual persisted call/session/tool/message identity binds one original journal input. Trigger selection consumes payload kind/item, not a retry budget or supersession authorization. Missing retry facts remain None, never zero; contradictory reported counters refuse. Retry and failed-attempt policies stay at their existing owning boundaries. Non-publication tools do not acquire unused trigger requirements.",
+      "validation": [
+        "test_publication_dispatch_retains_persisted_call_trigger_after_active_input_changes"
+      ]
     }
   ]
 }

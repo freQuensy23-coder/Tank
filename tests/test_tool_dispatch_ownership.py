@@ -1,13 +1,52 @@
+import os
+
+import pytest
+from agent_source_fixtures import source_record_fixture
+from test_event_tools import complete_assessment_fixture, extraction
+from test_event_tools import repository_lifetime as repository_lifetime
 from test_event_tools import service as service
 
-from test_event_tools import complete_assessment_fixture, seed
+from tank.event_tools import LAYERS, EventToolService
+from tank.time_precision import collection_clock
 
-from tank.event_tools import LAYERS
 
-
-async def test_publication_dispatch_retains_persisted_call_trigger_after_active_input_changes(service):
+@pytest.mark.parametrize(
+    "backend", ["memory", pytest.param("postgres", marks=[pytest.mark.integration, pytest.mark.postgres])]
+)
+@pytest.mark.parametrize(
+    "ownership",
+    ["matching", "missing", "ambiguous", "foreign_session", "foreign_call", "attempt_mismatch"],
+)
+async def test_publication_dispatch_retains_persisted_call_trigger_after_active_input_changes(
+    service, ownership, backend, postgres_template, repository_lifetime
+):
     """A recovered call owns its journal input even after a later timer is active."""
-    extracted = await seed(service)
+    if backend == "postgres":
+        url = os.environ["TANK_TEST_DATABASE_URL"]
+        repo = await repository_lifetime.enter_async_context(postgres_template.repository(url))
+        service = EventToolService(
+            repo,
+            service.settings,
+            service.truth,
+            service.engine,
+            versions=service.versions,
+            scheduler=service.scheduler,
+            pages=service.pages,
+        )
+    extracted = extraction()
+    await service.repo.put(
+        "ingest.source_items",
+        "i",
+        source_record_fixture(
+            {
+                "item_id": "i",
+                "source_id": "S01",
+                "text": "Product announced",
+                "source_class": "PRIMARY",
+                "published_prec": "COLLECTION_ONLY",
+            }
+        ),
+    )
     created = await service.dispatch("record_event", extracted, {})
     eid = created["event_id"]
     ems = eid + "-ems"
@@ -23,12 +62,28 @@ async def test_publication_dispatch_retains_persisted_call_trigger_after_active_
         },
         {},
     )
+    publication_arguments = {
+        "event_id": eid,
+        "kind": "FULL",
+        "what": "Product announced",
+        "verdict": "Official announcement",
+        "why": ["Official fact", "Defined access"],
+    }
+    stamp = collection_clock()
     await service.repo.put(
         "ops.agent_sessions",
         "owned-session",
         {
             "session_id": "owned-session",
             "event_id": eid,
+            "opened_by_item": "i",
+            "agent_version": None,
+            "agent_version_reason": "Synthetic scope does not report a native agent version",
+            "status": "OPEN",
+            "last_event_seq": 0,
+            "last_item_at": None,
+            "last_item_at_reason": "Synthetic scope has no recorded accepted-input occurrence",
+            **stamp.fields("opened_at"),
             "active_message_id": "later-timer",
             "message_log": [
                 {
@@ -48,10 +103,48 @@ async def test_publication_dispatch_retains_persisted_call_trigger_after_active_
             "call_id": "publication-call",
             "tool": "publish_card",
             "status": "PENDING",
+            "input": publication_arguments,
+            **stamp.fields("requested_at"),
             "native_turn_message_id": "original-input",
             "native_turn_retry_count": 0,
         },
     )
+    prior_deliveries = await service.repo.list("ops.jobs", filters={"type": "DELIVER"})
+    if ownership != "matching":
+        session = await service.repo.get("ops.agent_sessions", "owned-session")
+        call = await service.repo.get("ops.tool_calls", "owned-session:publication-call")
+        if ownership == "missing":
+            call.pop("native_turn_message_id")
+        elif ownership == "ambiguous":
+            session["message_log"].append(session["message_log"][0])
+        elif ownership == "foreign_session":
+            await service.repo.put(
+                "ops.agent_sessions",
+                "foreign-session",
+                {**session, "session_id": "foreign-session", "event_id": None},
+            )
+            call["session_id"] = "foreign-session"
+        elif ownership == "foreign_call":
+            call["call_id"] = "foreign-call"
+        else:
+            session["message_log"][0]["retry_count"] = 1
+        await service.repo.put("ops.agent_sessions", "owned-session", session)
+        await service.repo.put("ops.tool_calls", "owned-session:publication-call", call)
+        with pytest.raises(ValueError):
+            await service.dispatch(
+                "publish_card",
+                {
+                    "event_id": eid,
+                    "kind": "FULL",
+                    "what": "Product announced",
+                    "verdict": "Official announcement",
+                    "why": ["Official fact", "Defined access"],
+                },
+                {"session_id": "owned-session", "call_id": "publication-call", "role": "analyst"},
+            )
+        assert await service.repo.list("out.alerts", filters={"event_id": eid}) == []
+        assert await service.repo.list("ops.jobs", filters={"type": "DELIVER"}) == prior_deliveries
+        return
     result = await service.dispatch(
         "publish_card",
         {
@@ -69,4 +162,5 @@ async def test_publication_dispatch_retains_persisted_call_trigger_after_active_
     alerts = await service.repo.list("out.alerts", filters={"event_id": eid})
     assert len(alerts) == 1
     assert alerts[0]["session_id"] == "owned-session"
-    assert alerts[0]["tool_call_ids"] == ["publication-call"]
+    deliveries = await service.repo.list("ops.jobs", filters={"type": "DELIVER"})
+    assert sum(row["payload"].get("alert_id") == result["alert_id"] for row in deliveries) == 1
