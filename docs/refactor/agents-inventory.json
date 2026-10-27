@@ -6118,7 +6118,7 @@
     },
     {
       "path": "src/tank/delivery.py",
-      "lines": 1124,
+      "lines": 1121,
       "functions": [
         {
           "symbol": "DeliveryError.__init__",
@@ -6258,7 +6258,7 @@
         },
         {
           "symbol": "DeliveryService._deliver",
-          "line": 744,
+          "line": 742,
           "missing_parameters": [],
           "missing_return": false,
           "dict_nodes": 13,
@@ -6266,7 +6266,7 @@
         },
         {
           "symbol": "DeliveryService._finalize_invalidated",
-          "line": 1041,
+          "line": 1038,
           "missing_parameters": [],
           "missing_return": false,
           "dict_nodes": 1,
@@ -6274,7 +6274,7 @@
         },
         {
           "symbol": "DeliveryService._validate_activation_decisions",
-          "line": 1062,
+          "line": 1059,
           "missing_parameters": [],
           "missing_return": false,
           "dict_nodes": 0,
@@ -6282,7 +6282,7 @@
         },
         {
           "symbol": "DeliveryService._activate_calls",
-          "line": 1072,
+          "line": 1069,
           "missing_parameters": [],
           "missing_return": false,
           "dict_nodes": 3,
@@ -6292,7 +6292,7 @@
     },
     {
       "path": "src/tank/ops_cards.py",
-      "lines": 706,
+      "lines": 712,
       "functions": [
         {
           "symbol": "plain",
@@ -6312,7 +6312,7 @@
         },
         {
           "symbol": "time_of",
-          "line": 141,
+          "line": 147,
           "missing_parameters": [],
           "missing_return": false,
           "dict_nodes": 0,
@@ -6320,7 +6320,7 @@
         },
         {
           "symbol": "recorded_time_of",
-          "line": 160,
+          "line": 166,
           "missing_parameters": [],
           "missing_return": false,
           "dict_nodes": 0,
@@ -6328,7 +6328,7 @@
         },
         {
           "symbol": "reason_text",
-          "line": 164,
+          "line": 170,
           "missing_parameters": [],
           "missing_return": false,
           "dict_nodes": 0,
@@ -6336,7 +6336,7 @@
         },
         {
           "symbol": "telegram_link",
-          "line": 168,
+          "line": 174,
           "missing_parameters": [],
           "missing_return": false,
           "dict_nodes": 0,
@@ -6344,7 +6344,7 @@
         },
         {
           "symbol": "safe_link",
-          "line": 177,
+          "line": 183,
           "missing_parameters": [],
           "missing_return": false,
           "dict_nodes": 0,
@@ -6352,7 +6352,7 @@
         },
         {
           "symbol": "presentation_view",
-          "line": 194,
+          "line": 200,
           "missing_parameters": [],
           "missing_return": false,
           "dict_nodes": 0,
@@ -6360,7 +6360,7 @@
         },
         {
           "symbol": "progress_view",
-          "line": 206,
+          "line": 212,
           "missing_parameters": [],
           "missing_return": false,
           "dict_nodes": 3,
@@ -6368,7 +6368,7 @@
         },
         {
           "symbol": "snapshot",
-          "line": 229,
+          "line": 235,
           "missing_parameters": [],
           "missing_return": false,
           "dict_nodes": 10,
@@ -6376,7 +6376,7 @@
         },
         {
           "symbol": "outcome",
-          "line": 359,
+          "line": 365,
           "missing_parameters": [],
           "missing_return": false,
           "dict_nodes": 3,
@@ -6384,7 +6384,7 @@
         },
         {
           "symbol": "render",
-          "line": 661,
+          "line": 667,
           "missing_parameters": [],
           "missing_return": false,
           "dict_nodes": 0,
@@ -6394,7 +6394,7 @@
     },
     {
       "path": "src/tank/contracts/delivery.py",
-      "lines": 799,
+      "lines": 811,
       "functions": [
         {
           "symbol": "DeliverySettings.telegram_token",
@@ -6517,8 +6517,24 @@
           "get_calls": 0
         },
         {
+          "symbol": "OpsInstrumentView.market_declarations_agree",
+          "line": 123,
+          "missing_parameters": [],
+          "missing_return": false,
+          "dict_nodes": 0,
+          "get_calls": 0
+        },
+        {
+          "symbol": "OpsInstrumentView.reported_market_type",
+          "line": 133,
+          "missing_parameters": [],
+          "missing_return": false,
+          "dict_nodes": 0,
+          "get_calls": 0
+        },
+        {
           "symbol": "OpsInstrumentView.displayed_fields",
-          "line": 124,
+          "line": 136,
           "missing_parameters": [],
           "missing_return": false,
           "dict_nodes": 1,
@@ -6526,7 +6542,7 @@
         },
         {
           "symbol": "OpsProgressNotice.creation_clock",
-          "line": 171,
+          "line": 183,
           "missing_parameters": [],
           "missing_return": false,
           "dict_nodes": 0,
@@ -6534,7 +6550,7 @@
         },
         {
           "symbol": "select_ops_map",
-          "line": 209,
+          "line": 221,
           "missing_parameters": [],
           "missing_return": false,
           "dict_nodes": 0,
@@ -6542,7 +6558,7 @@
         },
         {
           "symbol": "OpsDeliveryView.actual_receipt_phase",
-          "line": 256,
+          "line": 268,
           "missing_parameters": [],
           "missing_return": false,
           "dict_nodes": 0,
@@ -6550,7 +6566,7 @@
         },
         {
           "symbol": "OpsAdoptedClockBasis.actual_parent_clock",
-          "line": 298,
+          "line": 310,
           "missing_parameters": [],
           "missing_return": false,
           "dict_nodes": 0,
@@ -6558,7 +6574,7 @@
         },
         {
           "symbol": "absent_adopted_basis",
-          "line": 304,
+          "line": 316,
           "missing_parameters": [],
           "missing_return": false,
           "dict_nodes": 0,
@@ -6566,7 +6582,7 @@
         },
         {
           "symbol": "DeliveredCardActivation.from_record",
-          "line": 315,
+          "line": 327,
           "missing_parameters": [],
           "missing_return": false,
           "dict_nodes": 1,
@@ -6574,7 +6590,7 @@
         },
         {
           "symbol": "DeliveredCorrection.from_record",
-          "line": 329,
+          "line": 341,
           "missing_parameters": [],
           "missing_return": false,
           "dict_nodes": 0,
@@ -6582,7 +6598,7 @@
         },
         {
           "symbol": "CardDeliveryHeader.from_record",
-          "line": 343,
+          "line": 355,
           "missing_parameters": [],
           "missing_return": false,
           "dict_nodes": 0,
@@ -6590,7 +6606,7 @@
         },
         {
           "symbol": "SentDeliveryReceipt.from_record",
-          "line": 365,
+          "line": 377,
           "missing_parameters": [],
           "missing_return": false,
           "dict_nodes": 1,
@@ -6598,7 +6614,7 @@
         },
         {
           "symbol": "DeliveredEventView.from_record",
-          "line": 393,
+          "line": 405,
           "missing_parameters": [],
           "missing_return": false,
           "dict_nodes": 0,
@@ -6606,7 +6622,7 @@
         },
         {
           "symbol": "delivery_snapshot_object",
-          "line": 400,
+          "line": 412,
           "missing_parameters": [],
           "missing_return": false,
           "dict_nodes": 0,
@@ -6614,7 +6630,7 @@
         },
         {
           "symbol": "FrozenDeliveryInterval.from_card",
-          "line": 422,
+          "line": 434,
           "missing_parameters": [],
           "missing_return": false,
           "dict_nodes": 0,
@@ -6622,7 +6638,7 @@
         },
         {
           "symbol": "FrozenDeliveryAssessment.from_card",
-          "line": 433,
+          "line": 445,
           "missing_parameters": [],
           "missing_return": false,
           "dict_nodes": 2,
@@ -6630,7 +6646,7 @@
         },
         {
           "symbol": "DeliveryExpiryReferences.from_card",
-          "line": 444,
+          "line": 456,
           "missing_parameters": [],
           "missing_return": false,
           "dict_nodes": 3,
@@ -6638,7 +6654,7 @@
         },
         {
           "symbol": "DeliveryExpiryReferences.delivered_ids",
-          "line": 457,
+          "line": 469,
           "missing_parameters": [],
           "missing_return": false,
           "dict_nodes": 0,
@@ -6646,7 +6662,7 @@
         },
         {
           "symbol": "DocumentDeliveryNotice.from_record",
-          "line": 475,
+          "line": 487,
           "missing_parameters": [],
           "missing_return": false,
           "dict_nodes": 1,
@@ -6654,7 +6670,7 @@
         },
         {
           "symbol": "DocumentLedgerEntry.document_identity",
-          "line": 506,
+          "line": 518,
           "missing_parameters": [],
           "missing_return": false,
           "dict_nodes": 0,
@@ -6662,7 +6678,7 @@
         },
         {
           "symbol": "DocumentLedgerEntry.from_record",
-          "line": 514,
+          "line": 526,
           "missing_parameters": [],
           "missing_return": false,
           "dict_nodes": 0,
@@ -6670,7 +6686,7 @@
         },
         {
           "symbol": "DocumentRetryAttempt.from_record",
-          "line": 527,
+          "line": 539,
           "missing_parameters": [],
           "missing_return": false,
           "dict_nodes": 0,
@@ -6678,7 +6694,7 @@
         },
         {
           "symbol": "DeliveryTelegramReceipt.from_result",
-          "line": 552,
+          "line": 564,
           "missing_parameters": [],
           "missing_return": false,
           "dict_nodes": 1,
@@ -6686,7 +6702,7 @@
         },
         {
           "symbol": "ProgressDeliveryNotice.from_record",
-          "line": 577,
+          "line": 589,
           "missing_parameters": [],
           "missing_return": false,
           "dict_nodes": 0,
@@ -6694,7 +6710,7 @@
         },
         {
           "symbol": "OpsCardDeliveryState.reported_adoption",
-          "line": 593,
+          "line": 605,
           "missing_parameters": [],
           "missing_return": false,
           "dict_nodes": 0,
@@ -6702,7 +6718,7 @@
         },
         {
           "symbol": "OpsCardDeliveryState.actual_update_clock",
-          "line": 606,
+          "line": 618,
           "missing_parameters": [],
           "missing_return": false,
           "dict_nodes": 0,
@@ -6710,7 +6726,7 @@
         },
         {
           "symbol": "OpsCardDeliveryState.from_record",
-          "line": 612,
+          "line": 624,
           "missing_parameters": [],
           "missing_return": false,
           "dict_nodes": 1,
@@ -6718,7 +6734,7 @@
         },
         {
           "symbol": "OpsDueSchedule.actual_due",
-          "line": 641,
+          "line": 653,
           "missing_parameters": [],
           "missing_return": false,
           "dict_nodes": 0,
@@ -6726,7 +6742,7 @@
         },
         {
           "symbol": "OpsSentReceipt.from_record",
-          "line": 660,
+          "line": 672,
           "missing_parameters": [],
           "missing_return": false,
           "dict_nodes": 1,
@@ -6734,7 +6750,7 @@
         },
         {
           "symbol": "select_ops_receipt",
-          "line": 674,
+          "line": 686,
           "missing_parameters": [],
           "missing_return": false,
           "dict_nodes": 0,
@@ -6742,7 +6758,7 @@
         },
         {
           "symbol": "DeliveryAttemptOrdinal.declared_zero_phase",
-          "line": 698,
+          "line": 710,
           "missing_parameters": [],
           "missing_return": false,
           "dict_nodes": 0,
@@ -6750,7 +6766,7 @@
         },
         {
           "symbol": "DeliveryAttemptOrdinal.from_record",
-          "line": 708,
+          "line": 720,
           "missing_parameters": [],
           "missing_return": false,
           "dict_nodes": 0,
@@ -6758,7 +6774,7 @@
         },
         {
           "symbol": "OpsBackoffState.actual_backoff_clock",
-          "line": 717,
+          "line": 729,
           "missing_parameters": [],
           "missing_return": false,
           "dict_nodes": 0,
@@ -6766,7 +6782,7 @@
         },
         {
           "symbol": "StartCallPrices.observed_price",
-          "line": 750,
+          "line": 762,
           "missing_parameters": [],
           "missing_return": false,
           "dict_nodes": 0,
@@ -6774,7 +6790,7 @@
         },
         {
           "symbol": "call_activation_decision",
-          "line": 775,
+          "line": 787,
           "missing_parameters": [],
           "missing_return": false,
           "dict_nodes": 0,
