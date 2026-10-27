@@ -12,7 +12,7 @@ from pydantic import JsonValue
 
 import tank.cli as cli
 from tank.contracts.json import decode_unique_json
-from tank.settings import Settings
+from tank.settings import Settings, resolve_versions
 from tank.storage import PostgresRepository
 from tank.util import JsonInput
 
@@ -59,7 +59,6 @@ async def test_run_db_captures_once_and_closes_actual_owned_repository(
         created: list[Settings] = []
         resolved: list[Settings] = []
         events: list[str] = []
-        real_resolve = cli.resolve_versions
         real_open = PostgresRepository.open
         real_close = PostgresRepository.close
 
@@ -68,7 +67,7 @@ async def test_run_db_captures_once_and_closes_actual_owned_repository(
             return configured
 
         def resolve(settings: Settings) -> Settings:
-            actual = real_resolve(settings)
+            actual = resolve_versions(settings)
             resolved.append(actual)
             return actual
 
