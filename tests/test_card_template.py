@@ -569,7 +569,6 @@ async def test_current_full_publication_uses_literal_render_and_excludes_undecid
             http=market_http,
         )
 
-        await repo.put("ops.agent_sessions", "card-session", {"session_id": "card-session", "event_id": eid})
         result: WireRecord = await service.dispatch(
             "publish_card",
             {
@@ -579,7 +578,7 @@ async def test_current_full_publication_uses_literal_render_and_excludes_undecid
                 "verdict": verdict,
                 "why": why,
             },
-            {"role": "analyst", "session_id": "card-session", "event_id": eid, "call_id": "current-render"},
+            {"role": "system", "event_id": eid, "call_id": "current-render"},
         )
         assert result["published"] is True, result
         alert = present(await repo.get("out.alerts", text_field(result, "alert_id") + ":1"))
