@@ -20,7 +20,7 @@ from pydantic import JsonValue
 from tank.contracts.configuration import Thresholds
 from tank.contracts.http_policy import HttpRefused
 from tank.contracts.provenance import ResolvedVersionIdentity
-from tank.contracts.source_errors import SourceEntryError
+from tank.contracts.source_errors import AccountEntryError, SourceEntryError, parse_entry_error
 from tank.contracts.source_items import CapturedItem, SourceItem, SourceText, captured_item
 from tank.contracts.source_reports import (
     SourceReportingPolicy,
@@ -289,7 +289,10 @@ class SourceService:
             if not isinstance(error, dict):
                 raise ValueError("Source entry error must be an object")
             records.append(error)
-        return admit_source_errors(records, self.settings.apify_api_token)
+        admitted = [parse_entry_error(record) for record in records]
+        if any(isinstance(error, AccountEntryError) and error.diagnostics is not None for error in admitted):
+            return admit_source_errors(admitted, self.settings.apify_api_token)
+        return admitted
 
     @property
     def error_reporting_mode(self) -> SourceReportMode:
