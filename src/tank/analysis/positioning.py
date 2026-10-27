@@ -15,7 +15,10 @@ from tank.contracts import DomainModel
 
 type Scalar = Decimal | str | int | float
 type MissingOIUsdDetail = Literal[
-    "SYNCHRONIZED_MARK_OR_QUOTE_RATE_UNAVAILABLE", "REPORTED_USD_INVALID", "RECORDED_USD_NOT_CAPTURED"
+    "SYNCHRONIZED_MARK_OR_QUOTE_RATE_UNAVAILABLE",
+    "REPORTED_USD_INVALID",
+    "RECORDED_USD_NOT_CAPTURED",
+    "RECORDED_USD_COMPONENT_UNAVAILABLE",
 ]
 
 
