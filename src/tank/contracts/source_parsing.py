@@ -64,16 +64,17 @@ class ParsedArticle(DomainModel):
     publication_missing_reason: str | None
     anchorage_binding: S28PressRoomArticleBinding | None
 
-    def storage_record(self) -> dict[str, str | int | None]:
+    def publication_record(self) -> dict[str, str | int | None]:
         record = self.publication.fields("published_at")
         return {
-            "title": self.title,
-            "text": self.text,
             **record,
             "published_at_precision": self.publication.precision,
             "published_at_basis": self.publication_basis,
             "published_at_missing_reason": self.publication_missing_reason,
         }
+
+    def storage_record(self) -> dict[str, str | int | None]:
+        return {"title": self.title, "text": self.text, **self.publication_record()}
 
 
 class ContentfulTextNode(DomainModel):
