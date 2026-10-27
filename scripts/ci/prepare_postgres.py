@@ -4,7 +4,6 @@ import asyncio
 import json
 import os
 from pathlib import Path
-from uuid import uuid4
 
 import psycopg
 import pytest
@@ -13,8 +12,14 @@ from psycopg import sql
 from psycopg.conninfo import conninfo_to_dict, make_conninfo
 from xdist.plugin import pytest_xdist_auto_num_workers
 
+from scripts.ci.managed_clickhouse import CIContext
+from scripts.ci.schema_template import read_template
+
 
 def main() -> None:
+    allocation = read_template(CIContext.from_environment(os.environ))
+    if os.environ["TANK_CI_SCHEMA_TEMPLATE"] != allocation.name:
+        raise ValueError("Prepared schema must match its actual allocated collection identity")
     dsn = os.environ["CI_POSTGRES_DSN"]
     fields = conninfo_to_dict(dsn)
     if fields.get("dbname") != "tank_test_ci_admin" or fields.get("host") != "127.0.0.1":
@@ -43,7 +48,7 @@ def main() -> None:
             for index in range(workers):
                 database = template.replace("{worker}", f"gw{index}")
                 connection.execute(sql.SQL("CREATE DATABASE {}").format(sql.Identifier(database)))
-    seed_name = f"tank_test_ci_schema_{uuid4().hex}"
+    seed_name = allocation.name
     schema_template = asyncio.run(prepare_schema_template(make_conninfo(dsn), seed_name))
     if schema_template != seed_name:
         raise ValueError("schema preparation returned an unexpected database name")

@@ -11,7 +11,9 @@ from pathlib import Path
 
 import pytest
 
+from scripts.ci.managed_clickhouse import CIContext
 from scripts.ci.prepare_integration_setup import SetupContext, SignalState, run
+from scripts.ci.schema_template import read_template
 
 pytestmark = [pytest.mark.integration, pytest.mark.process, pytest.mark.timeout(10)]
 
@@ -58,6 +60,38 @@ def setup_context(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> SetupConte
         path = tmp_path / relative
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text("synthetic frozen-input stand")
+    tests = tmp_path / "tests"
+    tests.mkdir(exist_ok=True)
+    (tests / "test_collection_only.py").write_text(
+        "import pytest\npytestmark=pytest.mark.integration\ndef test_never_execute():\n    raise AssertionError('collection executed a test')\n"
+    )
+    script_root = tmp_path / "scripts/ci"
+    script_root.mkdir(parents=True)
+    original = Path(__file__).resolve().parents[1] / "scripts/ci/collect_integration.py"
+    (script_root / "collect_integration.py").write_bytes(original.read_bytes())
+    (tmp_path / "pyproject.toml").write_text('[tool.pytest.ini_options]\nmarkers=["integration"]\n')
+    (tmp_path / "conftest.py").write_text("""import os
+from pathlib import Path
+import pytest
+
+def pytest_addoption(parser):
+    parser.addoption('--postgres-schema-template')
+
+def pytest_configure(config):
+    value=config.getoption('postgres_schema_template')
+    assert value==os.environ['TANK_CI_SCHEMA_TEMPLATE']
+    Path('observed-schema-name').write_text(value)
+    with Path('events').open('a') as stream:
+        stream.write('collection:start\\n')
+
+def pytest_sessionfinish(session, exitstatus):
+    with Path('events').open('a') as stream:
+        stream.write('collection:done\\n')
+    code=int(os.environ['SETUP_STAND_COLLECTION_CODE'])
+    if code:
+        pytest.exit('synthetic collector refusal', returncode=code)
+""")
+    monkeypatch.setenv("SETUP_STAND_COLLECTION_CODE", "0")
     environment = tmp_path / "github-env"
     environment.touch()
     binary = tmp_path / "bin"
@@ -99,8 +133,9 @@ def test_actual_children_all_join_even_when_one_fails(
         "gateway": 7,
         "postgres": 0,
         "clickhouse": 0,
+        "collection": 0,
     }
-    assert len({row.pid for row in result.results}) == 4
+    assert len({row.pid for row in result.results}) == 5
     assert not result.successful()
     assert (setup_context.root / ".test-results/postgres-container-id").read_text() == "synthetic-owned-cid\n"
     assert "go:done" in (setup_context.root / "events").read_text()
@@ -149,6 +184,7 @@ def test_success_requires_every_actual_task(setup_context: SetupContext) -> None
         "gateway": 0,
         "postgres": 0,
         "clickhouse": 0,
+        "collection": 0,
     }
 
 
@@ -199,7 +235,67 @@ def test_clickhouse_failure_still_joins_other_fixed_children(
         "gateway": 0,
         "postgres": 0,
         "clickhouse": 1,
+        "collection": 0,
     }
     assert not result.successful()
     assert "go:done" in (setup_context.root / "events").read_text()
     assert not (setup_context.root / ".test-results/clickhouse-container.json").exists()
+
+
+def test_actual_collector_failure_is_joined_and_cannot_admit_execution(
+    setup_context: SetupContext, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("SETUP_STAND_COLLECTION_CODE", "8")
+    result = run(setup_context, SignalState())
+    assert {row.name for row in result.results} == {"go", "gateway", "postgres", "clickhouse", "collection"}
+    assert next(row.code for row in result.results if row.name == "collection") == 8
+    assert not result.successful()
+    assert "go:done" in (setup_context.root / "events").read_text()
+    assert "AssertionError" not in (setup_context.root / ".test-results/setup/collection.log").read_text()
+
+
+def test_actual_collection_uses_the_owned_future_template_without_claiming_seal(
+    setup_context: SetupContext,
+) -> None:
+    result = run(setup_context, SignalState())
+    owner = CIContext.model_validate(setup_context.model_dump(exclude={"github_env"}))
+    allocation = read_template(owner)
+    assert allocation.phase == "ALLOCATED_NOT_PREPARED"
+    assert allocation.name == (setup_context.root / "observed-schema-name").read_text()
+    assert "TANK_CI_SCHEMA_TEMPLATE=" + allocation.name + "\n" in setup_context.github_env.read_text()
+    collection = json.loads((setup_context.root / ".test-results/integration-collection.json").read_text())
+    assert collection == [
+        {
+            "classname": "tests.test_collection_only",
+            "name": "test_never_execute",
+            "file": "tests/test_collection_only.py",
+        }
+    ]
+    assert result.successful()
+    with pytest.raises(FileExistsError):
+        run(setup_context, SignalState())
+
+
+def test_actual_postgres_module_refuses_foreign_template_before_database_access(
+    setup_context: SetupContext,
+) -> None:
+    result = run(setup_context, SignalState())
+    assert result.successful()
+    source = Path(__file__).resolve().parents[1]
+    environment = dict(os.environ) | setup_context.environment()
+    environment["TANK_CI_SCHEMA_TEMPLATE"] = "tank_test_ci_schema_" + "f" * 32
+    environment["PYTHONPATH"] = os.pathsep.join(str(source / name) for name in ("src", "tests"))
+    environment.pop("CI_POSTGRES_DSN", None)
+    child = subprocess.run(
+        [sys.executable, "-m", "scripts.ci.prepare_postgres"],
+        cwd=source,
+        env=environment,
+        capture_output=True,
+        text=True,
+        timeout=8,
+        check=False,
+    )
+    assert child.returncode == 1
+    assert "Prepared schema must match its actual allocated collection identity" in child.stderr
+    assert "ModuleNotFoundError" not in child.stderr
+    assert "CI_POSTGRES_DSN" not in child.stderr
