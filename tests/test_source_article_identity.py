@@ -133,7 +133,7 @@ async def test_pending_article_restart_retains_scope_and_admits_only_its_own_pub
         assert str(request.url) == PAGE
         detail_calls += 1
         return (
-            httpx.Response(503, content=b"actual temporary refusal")
+            httpx.Response(404, content=b"actual initially unavailable article")
             if detail_calls == 1
             else httpx.Response(200, content=body)
         )

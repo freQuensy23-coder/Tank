@@ -620,7 +620,7 @@ def article(
         publication_missing_reason=None
         if fields["published_at"]
         else "UNVERIFIED_SEMANTICS"
-        if len(values) > 1
+        if len(values) > 1 or (candidates and not selected)
         else "INCOMPLETE",
     )
 
