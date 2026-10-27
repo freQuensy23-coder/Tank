@@ -161,7 +161,7 @@ def remember_quote_usd(quote: str, samples: Iterable[tuple[TimeInput, str | int 
 def quote_usd_rate(
     instrument: Mapping[str, JsonValue], at: TimeInput
 ) -> tuple[str | int | float | None, str | None]:
-    """(rate, as_of) valuing quote units at time `at`, or (None, None)."""
+    """Return a captured rate candidate, without proving receipt or historical valuation origin."""
     quote_value = instrument.get("quote_asset", "")
     if not isinstance(quote_value, str):
         raise SemanticError("Quote asset requires text")
