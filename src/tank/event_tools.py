@@ -73,6 +73,7 @@ from tank.contracts.page_evidence import (
 )
 from tank.contracts.progress import PublicationReceipt
 from tank.contracts.provenance import GenerationProvenance, ResolvedVersionIdentity
+from tank.contracts.tool_dispatch import ToolCallOwner
 from tank.contracts.tool_schema import SCOPED_TOOLS as SCOPED_TOOLS
 from tank.contracts.tool_schema import validate_schema as validate_schema
 from tank.ops_progress import event_progress, item_progress, tool_progress
@@ -503,17 +504,22 @@ class EventToolService:
             stored_session = await self.repo.get("ops.agent_sessions", context["session_id"])
             if stored_session:
                 context["event_id"] = stored_session.get("event_id")
-                active = next(
-                    (
-                        row
-                        for row in stored_session.get("message_log", [])
-                        if row.get("message_id") == stored_session.get("active_message_id")
-                    ),
-                    {},
-                )
-                trigger = active.get("payload") or stored_session.get("last_payload") or {}
-                context["trigger_kind"] = trigger.get("kind")
-                context["trigger_item_id"] = trigger.get("item_id")
+                call_id = context.get("call_id")
+                if call_id is not None and tool in {"publish_card", "publish_update"}:
+                    if not isinstance(call_id, str) or not call_id:
+                        raise ValueError("Tool dispatch requires an actual call identity")
+                    stored_call = await self.repo.get("ops.tool_calls", context["session_id"] + ":" + call_id)
+                    if stored_call is None and tool in {"publish_card", "publish_update"}:
+                        raise ValueError("Publication requires its actual persisted tool call")
+                    if stored_call is not None:
+                        trigger = ToolCallOwner.from_record(stored_call).trigger(
+                            stored_session,
+                            session_id=context["session_id"],
+                            call_id=call_id,
+                            tool=tool,
+                        )
+                        context["trigger_kind"] = trigger.kind
+                        context["trigger_item_id"] = trigger.item_id
         analyst = context.get("role") == "analyst" or (
             context.get("session_id") and context.get("role") not in {"system", "scout"}
         )

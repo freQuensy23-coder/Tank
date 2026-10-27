@@ -1,0 +1,233 @@
+{
+  "schema_version": "tank-integration-order-v1",
+  "source_head": "baef64615844e63e172952d9cb0298c1ea135459",
+  "checkout_sha": "bfc5446cc8de7c7adf00f5bc578474a98e99a882",
+  "source_tree": "a00abbdee185bb57b92baa81bd1427e09700ecee",
+  "collection_sha256": "41cbacf5bd698adcb53455a064a7a9d6b68a3a8b7706c6b5fc6c1269089fd2ed",
+  "report_sha256": "3318ccc7158c84a209d867c3f9c5327c4c62294420b5cf9ad05ff0343baf4bf5",
+  "shard_index": 2,
+  "shard_count": 3,
+  "cases": 339,
+  "files": [
+    {
+      "file": "tests/test_agents_openma_codec.py",
+      "cases": 2,
+      "seconds": "0.748"
+    },
+    {
+      "file": "tests/test_agents_workflow.py",
+      "cases": 8,
+      "seconds": "24.514"
+    },
+    {
+      "file": "tests/test_apify_deploy.py",
+      "cases": 45,
+      "seconds": "58.298"
+    },
+    {
+      "file": "tests/test_calibration.py",
+      "cases": 1,
+      "seconds": "0.066"
+    },
+    {
+      "file": "tests/test_certainty_postgres.py",
+      "cases": 1,
+      "seconds": "0.455"
+    },
+    {
+      "file": "tests/test_clickhouse_market.py",
+      "cases": 12,
+      "seconds": "1.180"
+    },
+    {
+      "file": "tests/test_codex_gateway.py",
+      "cases": 50,
+      "seconds": "0.912"
+    },
+    {
+      "file": "tests/test_condition_evaluation_results.py",
+      "cases": 2,
+      "seconds": "2.487"
+    },
+    {
+      "file": "tests/test_delivery.py",
+      "cases": 2,
+      "seconds": "0.256"
+    },
+    {
+      "file": "tests/test_deploy.py",
+      "cases": 2,
+      "seconds": "0.231"
+    },
+    {
+      "file": "tests/test_e2e.py",
+      "cases": 4,
+      "seconds": "12.045"
+    },
+    {
+      "file": "tests/test_fixture_clock_postgres.py",
+      "cases": 1,
+      "seconds": "0.833"
+    },
+    {
+      "file": "tests/test_gateway_audit.py",
+      "cases": 19,
+      "seconds": "0.481"
+    },
+    {
+      "file": "tests/test_native_file_preparation_postgres.py",
+      "cases": 7,
+      "seconds": "1.265"
+    },
+    {
+      "file": "tests/test_native_usage.py",
+      "cases": 15,
+      "seconds": "2.180"
+    },
+    {
+      "file": "tests/test_preliminary_cards.py",
+      "cases": 1,
+      "seconds": "2.676"
+    },
+    {
+      "file": "tests/test_publication_history_producer.py",
+      "cases": 2,
+      "seconds": "5.868"
+    },
+    {
+      "file": "tests/test_publisher_api.py",
+      "cases": 33,
+      "seconds": "17.138"
+    },
+    {
+      "file": "tests/test_publisher_submission.py",
+      "cases": 2,
+      "seconds": "1.919"
+    },
+    {
+      "file": "tests/test_recovery_witness_store.py",
+      "cases": 7,
+      "seconds": "1.194"
+    },
+    {
+      "file": "tests/test_refactor_capture_repository.py",
+      "cases": 1,
+      "seconds": "0.158"
+    },
+    {
+      "file": "tests/test_replay_abort_lifecycle.py",
+      "cases": 7,
+      "seconds": "2.120"
+    },
+    {
+      "file": "tests/test_replay_ingest_policy.py",
+      "cases": 2,
+      "seconds": "0.307"
+    },
+    {
+      "file": "tests/test_replay_session_evidence.py",
+      "cases": 1,
+      "seconds": "0.190"
+    },
+    {
+      "file": "tests/test_request_budget_policy_transition.py",
+      "cases": 8,
+      "seconds": "1.352"
+    },
+    {
+      "file": "tests/test_runtime.py",
+      "cases": 8,
+      "seconds": "37.922"
+    },
+    {
+      "file": "tests/test_runtime_condition_evaluation.py",
+      "cases": 4,
+      "seconds": "4.538"
+    },
+    {
+      "file": "tests/test_runtime_dispatch_contracts.py",
+      "cases": 14,
+      "seconds": "2.352"
+    },
+    {
+      "file": "tests/test_runtime_failure_commands.py",
+      "cases": 4,
+      "seconds": "0.677"
+    },
+    {
+      "file": "tests/test_runtime_failure_markers.py",
+      "cases": 1,
+      "seconds": "0.201"
+    },
+    {
+      "file": "tests/test_runtime_public_repairs.py",
+      "cases": 4,
+      "seconds": "4.336"
+    },
+    {
+      "file": "tests/test_session_admission.py",
+      "cases": 3,
+      "seconds": "2.239"
+    },
+    {
+      "file": "tests/test_session_completion_lineage.py",
+      "cases": 8,
+      "seconds": "2.610"
+    },
+    {
+      "file": "tests/test_session_message_dispatch.py",
+      "cases": 6,
+      "seconds": "4.510"
+    },
+    {
+      "file": "tests/test_source_instrument_rows.py",
+      "cases": 1,
+      "seconds": "1.332"
+    },
+    {
+      "file": "tests/test_source_progress_completion.py",
+      "cases": 2,
+      "seconds": "0.883"
+    },
+    {
+      "file": "tests/test_source_uniswap_authored.py",
+      "cases": 3,
+      "seconds": "1.271"
+    },
+    {
+      "file": "tests/test_storage_lifecycle.py",
+      "cases": 7,
+      "seconds": "0.814"
+    },
+    {
+      "file": "tests/test_storage_native_flow.py",
+      "cases": 23,
+      "seconds": "3.998"
+    },
+    {
+      "file": "tests/test_telegram_files.py",
+      "cases": 1,
+      "seconds": "0.181"
+    },
+    {
+      "file": "tests/test_telegram_membership.py",
+      "cases": 2,
+      "seconds": "0.345"
+    },
+    {
+      "file": "tests/test_telegram_notice_state.py",
+      "cases": 11,
+      "seconds": "1.983"
+    },
+    {
+      "file": "tests/test_telegram_question_bindings.py",
+      "cases": 1,
+      "seconds": "0.199"
+    },
+    {
+      "file": "tests/test_truth_condition_postgres.py",
+      "cases": 1,
+      "seconds": "33.367"
+    }
+  ]
+}

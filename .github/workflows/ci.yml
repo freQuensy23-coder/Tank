@@ -133,6 +133,15 @@ jobs:
           tests/test_foundation_contracts.py tests/test_flow_contracts.py tests/test_storage_native_flow.py
           tests/test_market_identity_keys.py tests/test_flow_batch_proof.py
           tests/test_market_return_isolation.py tests/test_market_batch_keys.py tests/test_cli_composition.py
+      - name: Check completed normalization and delivery families strictly
+        env:
+          MYPYPATH: src:tests
+        run: >-
+          uv run --frozen --extra dev mypy --config-file scripts/ci/mypy-foundation-tests.ini
+          src/tank/market/normalize.py src/tank/market/normalization_contracts.py src/tank/market/books.py
+          tests/test_normalization_contracts.py
+          src/tank/delivery.py src/tank/ops_cards.py tests/test_delivery_activation.py
+          tests/test_delivery_document_resume.py tests/test_ops_card_schedule.py tests/test_ops_card_unknown_facts.py
       - name: Check completed scheduling and ownership protocols strictly
         env:
           MYPYPATH: src:tests
@@ -230,7 +239,7 @@ jobs:
           uv run --frozen --extra dev mypy --strict --follow-imports=silent --explicit-package-bases
           scripts/ci scripts/capture/gen_schema.py scripts/capture/gen_pyvectors.py scripts/capture/parity.py
           deploy/openma_lifecycle/native_network_probe.py
-          tests/test_ci_integration_completion.py tests/test_ci_integration_setup.py
+          tests/test_ci_integration_completion.py tests/test_ci_integration_setup.py tests/test_ci_integration_order.py
           tests/test_ci_budget.py tests/test_ci_go_results.py tests/test_capture_parity.py tests/test_capture_parity_contracts.py tests/test_native_network_probe.py tests/test_deploy.py
           tests/bootstrap_support.py tests/test_bootstrap_support.py tests/test_refactor_inventory.py
           tests/test_actor_package_closure.py
