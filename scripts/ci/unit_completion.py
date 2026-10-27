@@ -39,9 +39,11 @@ from tank.contracts.json import decode_unique_json
 MATRIX_NAMES: tuple[
     Literal["test / Python unit (0)"],
     Literal["test / Python unit (1)"],
+    Literal["test / Python unit (2)"],
 ] = (
     "test / Python unit (0)",
     "test / Python unit (1)",
+    "test / Python unit (2)",
 )
 POST_READY_SECONDS = 60
 POLL_SECONDS = 2
@@ -52,6 +54,7 @@ class MatrixJob(ApiRecord):
     name: Literal[
         "test / Python unit (0)",
         "test / Python unit (1)",
+        "test / Python unit (2)",
     ]
     run_id: Positive
     run_attempt: Positive
@@ -85,29 +88,29 @@ class SuccessfulJob(MatrixJob):
 class Receipt(StrictModel):
     context: Context
     workflow_id: Positive
-    jobs: tuple[SuccessfulJob, SuccessfulJob]
-    artifacts: tuple[UsableArtifact, UsableArtifact]
+    jobs: tuple[SuccessfulJob, SuccessfulJob, SuccessfulJob]
+    artifacts: tuple[UsableArtifact, UsableArtifact, UsableArtifact]
     verification_started_ns: Positive
 
     @model_validator(mode="after")
     def bound(self) -> Self:
         context = self.context
-        if {job.name for job in self.jobs} != set(MATRIX_NAMES) or len({job.id for job in self.jobs}) != 2:
-            raise ValueError("exactly two distinct successful matrix jobs are required")
+        if {job.name for job in self.jobs} != set(MATRIX_NAMES) or len({job.id for job in self.jobs}) != 3:
+            raise ValueError("exactly three distinct successful matrix jobs are required")
         for job in self.jobs:
             bind_job(context, job)
-        names = {artifact_name(context.attempt, index) for index in range(2)}
+        names = {artifact_name(context.attempt, index) for index in range(3)}
         if {artifact.name for artifact in self.artifacts} != names or len(
             {a.id for a in self.artifacts}
-        ) != 2:
-            raise ValueError("exactly two distinct current-attempt artifacts are required")
+        ) != 3:
+            raise ValueError("exactly three distinct current-attempt artifacts are required")
         for artifact in self.artifacts:
             bind_artifact(context, artifact)
         return self
 
 
 def artifact_name(attempt: int, index: int) -> str:
-    if attempt < 1 or index not in range(2):
+    if attempt < 1 or index not in range(3):
         raise ValueError("invalid unit artifact scope")
     return f"python-unit-results-attempt-{attempt}-{index}"
 
@@ -144,7 +147,7 @@ def all_jobs(context: Context, api: ReadApi) -> list[MatrixJob | OtherJob]:
 
 def successful_jobs(
     context: Context, jobs: list[MatrixJob | OtherJob]
-) -> tuple[SuccessfulJob, SuccessfulJob] | None:
+) -> tuple[SuccessfulJob, SuccessfulJob, SuccessfulJob] | None:
     selected: dict[str, MatrixJob] = {}
     for job in jobs:
         if not isinstance(job, MatrixJob):
@@ -160,13 +163,13 @@ def successful_jobs(
     if set(selected) != set(MATRIX_NAMES) or any(job.status != "completed" for job in selected.values()):
         return None
     values = [SuccessfulJob.model_validate(selected[name].model_dump()) for name in MATRIX_NAMES]
-    return values[0], values[1]
+    return values[0], values[1], values[2]
 
 
 def usable_artifacts(
     context: Context, artifacts: list[Artifact]
-) -> tuple[UsableArtifact, UsableArtifact] | None:
-    expected = tuple(artifact_name(context.attempt, index) for index in range(2))
+) -> tuple[UsableArtifact, UsableArtifact, UsableArtifact] | None:
+    expected = tuple(artifact_name(context.attempt, index) for index in range(3))
     selected: dict[str, UsableArtifact] = {}
     for artifact in artifacts:
         if artifact.name not in expected:
@@ -179,9 +182,9 @@ def usable_artifacts(
     if set(selected) != set(expected):
         return None
     values = [selected[name] for name in expected]
-    if len({artifact.id for artifact in values}) != 2:
+    if len({artifact.id for artifact in values}) != 3:
         raise ValueError("unit artifact identities are not distinct")
-    return values[0], values[1]
+    return values[0], values[1], values[2]
 
 
 def wait(
@@ -227,12 +230,12 @@ def verify(
     if {path.name for path in artifacts.iterdir()} != expected:
         raise ValueError("downloaded artifact directories do not match admitted identities")
     bundles = sorted(path.resolve() for path in artifacts.iterdir())
-    if len(bundles) != 2 or any(
+    if len(bundles) != 3 or any(
         not (bundle / name).is_file()
         for bundle in bundles
         for name in ("unit.xml", "unit-collection.json", "unit-run.json")
     ):
-        raise ValueError("exactly two complete unit result bundles are required")
+        raise ValueError("exactly three complete unit result bundles are required")
     remaining = remaining_seconds(receipt, now_ns())
     root = Path(__file__).resolve().parents[2]
     command = [

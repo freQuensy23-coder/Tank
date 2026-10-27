@@ -51,32 +51,34 @@ def gate_fixture(root: Path) -> GateFixture:
         source_head=SOURCE,
         cases=[
             UnitCase(classname=f"tests.test_{letter}", name=f"test_{index}", file=f"tests/test_{letter}.py")
-            for letter in "ab"
-            for index in range(2)
+            for letter in "abc"
+            for index in range(3)
         ],
     )
     plan = UnitPlan(
-        schema_version="tank-unit-plan-v1",
+        schema_version="tank-unit-plan-v2",
+        shard_count=3,
         source_head=SOURCE,
         collection_sha256="c" * 64,
         reports_sha256=["d" * 64],
         files=[
-            FileTiming(file="tests/test_a.py", cases=2, seconds=Decimal(10)),
-            FileTiming(file="tests/test_b.py", cases=2, seconds=Decimal(5)),
+            FileTiming(file="tests/test_a.py", cases=3, seconds=Decimal(10)),
+            FileTiming(file="tests/test_b.py", cases=3, seconds=Decimal(5)),
+            FileTiming(file="tests/test_c.py", cases=3, seconds=Decimal(2)),
         ],
     )
     path = root / "plan.json"
     path.write_text(plan.model_dump_json())
     measured = measured_assignments(plan.files)
     bundles: list[Path] = []
-    for index in range(2):
+    for index in range(3):
         bundle = root / f"shard-{index}"
         bundle.mkdir()
         (bundle / "unit-collection.json").write_text(collection.model_dump_json())
         declaration = UnitDeclaration(
-            schema_version="tank-unit-declaration-v1",
+            schema_version="tank-unit-declaration-v2",
             source_head=SOURCE,
-            shard=UnitShard(index=index, count=2),
+            shard=UnitShard(index=index, count=3),
             collection_sha256=collection.signature,
             plan_sha256=hashlib.sha256(path.read_bytes()).hexdigest(),
             coverage=weight_coverage(collection, plan),
@@ -97,8 +99,8 @@ def test_actual_calibration_rejects_missing_cases_and_balances_whole_files(tmp_p
     collection = tmp_path / "baseline.json"
     collection.write_text(json.dumps([case.model_dump() for case in fixture.collection.cases]))
     plan = build_plan([report], collection, SOURCE)
-    assert sum(file.cases for file in plan.files) == 4
-    assert sum((file.seconds for file in plan.files), Decimal(0)) == Decimal("0.4")
+    assert sum(file.cases for file in plan.files) == 9
+    assert sum((file.seconds for file in plan.files), Decimal(0)) == Decimal("0.9")
     assignments = measured_assignments(plan.files)
     assert assignments["tests/test_a.py"] != assignments["tests/test_b.py"]
     write_report(report, fixture.collection.cases[:-1])
@@ -112,10 +114,10 @@ def test_partition_uses_measured_zero_and_explicit_unmeasured_hash_without_guess
     fixture = gate_fixture(tmp_path)
     zero = [FileTiming(file=file.file, cases=file.cases, seconds=Decimal(0)) for file in fixture.plan.files]
     before = measured_assignments(zero)
-    assert set(before.values()) == {0, 1}
+    assert set(before.values()) == {0, 1, 2}
     unknown = "tests/test_future.py"
     index = shard_for(unknown, before)
-    assert index in {0, 1}
+    assert index in {0, 1, 2}
     assert unknown not in before
     assert measured_assignments(list(reversed(zero))) == before
     expanded = UnitCollection(
@@ -130,15 +132,15 @@ def test_partition_uses_measured_zero_and_explicit_unmeasured_hash_without_guess
     assert shard_for(unknown, before) == index
 
 
-def test_both_actual_lane_reports_and_full_union_are_required(tmp_path: Path) -> None:
+def test_all_three_actual_lane_reports_and_full_union_are_required(tmp_path: Path) -> None:
     fixture = gate_fixture(tmp_path)
     result = verify(fixture.bundles, fixture.plan_path, SOURCE, None)
-    assert result.cases == result.passed == 4 and result.skipped == 0
+    assert result.cases == result.passed == 9 and result.skipped == 0
     assert result.p90_seconds == result.max_seconds == Decimal("0.1")
     for index, bundle in enumerate(fixture.bundles):
-        assert verify([bundle], fixture.plan_path, SOURCE, UnitShard(index=index, count=2)).cases == 2
+        assert verify([bundle], fixture.plan_path, SOURCE, UnitShard(index=index, count=3)).cases == 3
     for invalid in (fixture.bundles[:1], [fixture.bundles[0], fixture.bundles[0]]):
-        with pytest.raises(ValueError, match="both distinct lanes"):
+        with pytest.raises(ValueError, match="all three distinct lanes"):
             verify(invalid, fixture.plan_path, SOURCE, None)
 
 
@@ -207,9 +209,9 @@ def test_distinct_full_collections_cannot_hide_unexecuted_cases(tmp_path: Path) 
     )
     (bundle / "unit-collection.json").write_text(expanded.model_dump_json())
     declaration = UnitDeclaration(
-        schema_version="tank-unit-declaration-v1",
+        schema_version="tank-unit-declaration-v2",
         source_head=SOURCE,
-        shard=UnitShard(index=1, count=2),
+        shard=UnitShard(index=1, count=3),
         collection_sha256=expanded.signature,
         plan_sha256=hashlib.sha256(fixture.plan_path.read_bytes()).hexdigest(),
         coverage=weight_coverage(expanded, fixture.plan),
@@ -228,17 +230,17 @@ def test_json_duplicate_facts_and_scalar_coercions_are_refused(tmp_path: Path) -
     with pytest.raises(DuplicateJsonKeyError):
         read_model(path, UnitDeclaration)
     with pytest.raises(ValidationError):
-        UnitShard.model_validate({"index": False, "count": 2})
+        UnitShard.model_validate({"index": False, "count": 3})
     with pytest.raises(ValidationError):
-        UnitShard.model_validate_json('{"index":0,"count":2.0}')
+        UnitShard.model_validate_json('{"index":0,"count":3.0}')
     with pytest.raises(ValidationError):
         UnitSummary.model_validate(
             {"cases": 1, "passed": 1, "skipped": False, "p90_seconds": Decimal(0), "max_seconds": Decimal(0)}
         )
 
 
-@pytest.mark.parametrize("value", ["0", "0/1", "0/3", "2/2", "01/2", "a/2"])
-def test_only_the_declared_two_unit_lanes_are_admitted(value: str) -> None:
+@pytest.mark.parametrize("value", ["0", "0/1", "0/2", "1/2", "2/2", "3/3", "01/3", "a/3"])
+def test_only_the_declared_three_unit_lanes_are_admitted(value: str) -> None:
     with pytest.raises(ValueError):
         parse_shard(value)
 
@@ -285,12 +287,26 @@ def test_pinned_xdist_crash_marker_is_preserved_without_invented_zero_duration()
     assert "duration_seconds" not in observed.model_dump()
 
 
-def test_current_collection_binds_recalibration_source_and_combines_both_reports(tmp_path: Path) -> None:
+def test_current_collection_binds_recalibration_source_and_combines_all_three_reports(tmp_path: Path) -> None:
     fixture = gate_fixture(tmp_path)
     collection = fixture.bundles[0] / "unit-collection.json"
     reports = [bundle / "unit.xml" for bundle in fixture.bundles]
     plan = build_plan(reports, collection, SOURCE)
-    assert sum(file.cases for file in plan.files) == 4
-    assert len(plan.reports_sha256) == 2
+    assert sum(file.cases for file in plan.files) == 9
+    assert len(plan.reports_sha256) == 3
     with pytest.raises(ValueError, match="Calibration source"):
         build_plan(reports, collection, "b" * 40)
+
+
+@pytest.mark.parametrize("schema,count", [("tank-unit-plan-v1", None), ("tank-unit-plan-v2", 2)])
+def test_historical_two_lane_plan_is_not_reinterpreted(
+    tmp_path: Path, schema: str, count: int | None
+) -> None:
+    payload = gate_fixture(tmp_path).plan.model_dump()
+    payload["schema_version"] = schema
+    if count is None:
+        payload.pop("shard_count")
+    else:
+        payload["shard_count"] = count
+    with pytest.raises(ValidationError):
+        UnitPlan.model_validate(payload)

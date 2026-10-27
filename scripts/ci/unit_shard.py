@@ -1,4 +1,4 @@
-"""Partition complete units into two measured whole-file lanes without dropping cases."""
+"""Partition complete units into three measured whole-file lanes without dropping cases."""
 
 import hashlib
 import json
@@ -72,7 +72,7 @@ def declaration(config: pytest.Config) -> tuple[UnitDeclaration, UnitCollection,
     if collection.source_head != actual_head:
         raise ValueError("Unit collection belongs to a different source commit")
     record = UnitDeclaration(
-        schema_version="tank-unit-declaration-v1",
+        schema_version="tank-unit-declaration-v2",
         source_head=actual_head,
         shard=shard,
         collection_sha256=collection.signature,
@@ -89,7 +89,7 @@ def pytest_sessionstart(session: pytest.Session) -> None:
     measured = measured_assignments(plan.files)
     selected = sum(shard_for(case.file, measured) == record.shard.index for case in collection.cases)
     print(
-        f"UNIT_SELECTION shard={record.shard.index}/2 selected={selected} full={len(collection.cases)} calibration={plan.source_head} unmeasured={len(record.coverage.unmeasured_files)}",
+        f"UNIT_SELECTION shard={record.shard.index}/3 selected={selected} full={len(collection.cases)} calibration={plan.source_head} unmeasured={len(record.coverage.unmeasured_files)}",
         flush=True,
     )
     target = option_path(session.config, "--unit-declaration-output")

@@ -1,4 +1,4 @@
-"""Calibrate two whole-file unit lanes from an actual complete successful run."""
+"""Calibrate three whole-file unit lanes from an actual complete successful run."""
 
 import argparse
 import hashlib
@@ -38,7 +38,8 @@ def build_plan(reports: list[Path], collection: Path, source_head: str) -> UnitP
         seconds[file] += case.seconds
         counts[file] += 1
     return UnitPlan(
-        schema_version="tank-unit-plan-v1",
+        schema_version="tank-unit-plan-v2",
+        shard_count=3,
         source_head=source_head,
         collection_sha256=hashlib.sha256(collection.read_bytes()).hexdigest(),
         reports_sha256=sorted(hashlib.sha256(report.read_bytes()).hexdigest() for report in reports),
