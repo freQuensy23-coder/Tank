@@ -18,6 +18,10 @@ from datetime import UTC, datetime, timedelta
 from difflib import SequenceMatcher
 
 import httpx
+import mistune
+from mistune_telegram import TelegramHTMLRenderer
+from telethon import utils as telegram_utils
+from telethon.extensions import html as telegram_html
 
 from tank import ops_cards
 from tank.analysis.cards import telegram_card_html
@@ -140,6 +144,58 @@ def chunks(text, limit=MESSAGE_LIMIT):
     if rest:
         parts.append(rest)
     return parts or [EMPTY_TEXT]
+
+
+def formatted_chunks(markdown, limit=MESSAGE_LIMIT):
+    try:
+        renderer = mistune.create_markdown(renderer=TelegramHTMLRenderer(escape=True))
+        rendered = renderer(markdown)
+        if "<img " in rendered or "<p>" in rendered:
+            return [(part, []) for part in chunks(markdown, limit)]
+        text, entities = telegram_html.parse("\ufffc" + rendered)
+        if any(type(entity).__name__ == "MessageEntityEmail" for entity in entities):
+            return [(part, []) for part in chunks(markdown, limit)]
+        text = text[1:]
+        for entity in entities:
+            entity.offset -= 1
+        entity_types = {
+            "MessageEntityBold": "bold",
+            "MessageEntityItalic": "italic",
+            "MessageEntityUnderline": "underline",
+            "MessageEntityStrike": "strikethrough",
+            "MessageEntityCode": "code",
+            "MessageEntityPre": "pre",
+            "MessageEntityTextUrl": "text_link",
+            "MessageEntityUrl": "url",
+            "MessageEntityEmail": "email",
+            "MessageEntityBlockquote": "blockquote",
+        }
+        parts = [
+            (
+                part,
+                [
+                    {
+                        "type": entity_types[type(entity).__name__],
+                        "offset": entity.offset,
+                        "length": entity.length,
+                        **{
+                            field: getattr(entity, field)
+                            for field in ("url", "language")
+                            if hasattr(entity, field)
+                        },
+                    }
+                    for entity in found
+                ],
+            )
+            for part, found in telegram_utils.split_text(
+                text, entities, limit=limit, split_at=(r"\n", r"\s", r".(?=[^\udc00-\udfff]|$)")
+            )
+        ]
+        if "".join(part for part, _ in parts).strip():
+            return parts
+    except Exception:
+        log.exception("Agent answer Markdown could not be converted; sending it as plain text")
+    return [(part, []) for part in chunks(markdown, limit)]
 
 
 REFERENCE_LIMIT = 1024
@@ -843,11 +899,19 @@ class TelegramInbox:
         candidates.sort(key=lambda row: (row[0], row[1]), reverse=True)
         return candidates[0][2] if candidates[0][0] >= 0.5 or len(candidates) == 1 else None
 
-    async def send(self, chat_id, text, reply_to=None):
+    async def send(self, chat_id, text, reply_to=None, *, entities=None):
         body = {"chat_id": chat_id, "text": text, "link_preview_options": {"is_disabled": True}}
         if reply_to is not None:
             body["reply_parameters"] = {"message_id": int(reply_to), "allow_sending_without_reply": True}
-        return await self.call("sendMessage", body)
+        if not entities:
+            return await self.call("sendMessage", body)
+        try:
+            return await self.call("sendMessage", {**body, "entities": entities})
+        except RuntimeError as error:
+            if getattr(error, "status", None) != 400:
+                raise
+            log.warning("Telegram rejected answer formatting; sending it as plain text")
+            return await self.call("sendMessage", body)
 
     async def send_document(self, chat_id, filename, content, *, caption=None, reply_to=None):
         data = {"chat_id": str(chat_id)}
@@ -1189,7 +1253,6 @@ class TelegramInbox:
                 "TERMINATED": TERMINATED_TEXT,
                 "ARCHIVED": ARCHIVED_TEXT,
             }.get(status, FAILED_TEXT)
-        parts = chunks(text)
         ledger = [
             row
             async for row in self.repo.iter_all(
@@ -1197,8 +1260,21 @@ class TelegramInbox:
             )
             if row.get("purpose") == "ANSWER" and row.get("chunk") is not None
         ]
+        async with self.repo.lock("question:" + question["question_id"]):
+            question = await self.repo.get("out.user_questions", question["question_id"])
+            plan = question.get("answer_delivery_plan")
+            if plan is None:
+                parts = (
+                    formatted_chunks(text)
+                    if status == "ANSWERED" and not ledger
+                    else [(part, []) for part in chunks(text)]
+                )
+                plan = [{"text": part, "entities": entities} for part, entities in parts]
+                question["answer_delivery_plan"] = plan
+                await self.repo.put("out.user_questions", question["question_id"], question)
+        parts = [(part["text"], part["entities"]) for part in plan]
         previous = question.get("reply_to_message_id")
-        for index, part in enumerate(parts):
+        for index, (part, entities) in enumerate(parts):
             rows = [row for row in ledger if row["chunk"] == index]
             sent = next((row for row in rows if row["status"] == "SENT"), None)
             if sent:
@@ -1226,7 +1302,7 @@ class TelegramInbox:
                 immutable=True,
             )
             try:
-                result = await self.send(question["chat_id"], part, previous)
+                result = await self.send(question["chat_id"], part, previous, entities=entities)
             except NOT_SENT:
                 await self.repo.put(
                     "out.deliveries",

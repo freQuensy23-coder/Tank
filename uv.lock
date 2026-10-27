@@ -322,6 +322,27 @@ wheels = [
 ]
 
 [[package]]
+name = "mistune"
+version = "3.4.0"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/96/eb/749a4e69bf7396e751ae37444abe997eff2254e695a8095b84d1c89c1181/mistune-3.4.0.tar.gz", hash = "sha256:2eaf7952af928ca8d33b779762effc1da517b62c6ad85ec8ca957e3b07b9782a", size = 136772, upload-time = "2026-10-19T10:44:28.172Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/2c/f7/021d590d52c1ac28e3290311776854c6a1c927fa3fb4b25ce74caf937a3d/mistune-3.4.0-py3-none-any.whl", hash = "sha256:d03cec4c8620f21517a996d82d14f3b59c30d79bda2cc6c56bd32b839f18ce6b", size = 70398, upload-time = "2026-10-19T10:44:26.751Z" },
+]
+
+[[package]]
+name = "mistune-telegram"
+version = "0.5.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "mistune" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/50/69/e66a39c53706cfe0aba513bed18b815664a4b6b53be7ab58b8dbc559b782/mistune_telegram-0.5.0.tar.gz", hash = "sha256:fbbf0dc6eff436ce363afcbc8552512ac3e2246cd93418de90663993624058b3", size = 3096, upload-time = "2025-06-28T07:22:51.907Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/57/32/231baa72f84e8f817533aea1dec82dded42d48232eae07c48f11e9791961/mistune_telegram-0.5.0-py3-none-any.whl", hash = "sha256:eff36a38df1d30c4d180a5129d6025206a81f99ffd504c31421e13fecfff1925", size = 4347, upload-time = "2025-06-28T07:22:50.804Z" },
+]
+
+[[package]]
 name = "multidict"
 version = "7.1.0"
 source = { registry = "https://pypi.org/simple" }
@@ -557,6 +578,21 @@ wheels = [
 ]
 
 [[package]]
+name = "pyaes"
+version = "1.6.1"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/44/66/2c17bae31c906613795711fc78045c285048168919ace2220daa372c7d72/pyaes-1.6.1.tar.gz", hash = "sha256:02c1b1405c38d3c370b085fb952dd8bea3fadcee6411ad99f312cc129c536d8f", size = 28536, upload-time = "2017-09-20T21:17:54.23Z" }
+
+[[package]]
+name = "pyasn1"
+version = "0.6.5"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/88/7e/3c0da41061a2021cac7cd524fd57092adbe5b515e8bf9005702e366802e2/pyasn1-0.6.5.tar.gz", hash = "sha256:6b11616a6bcf3a40e635f082bb232fa57b5e0dd7f517bd7ddd69ec3794508a47", size = 155152, upload-time = "2026-10-27T06:32:49.125Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/19/1f/3eefd5c84c35cae44549ce1c7f7e58f7945b34f5a6bce07a135438522073/pyasn1-0.6.5-py3-none-any.whl", hash = "sha256:4017b0fce125096b8573b39c989fdb1a4b19cf761e683398184550fea0e66587", size = 84807, upload-time = "2026-10-27T06:32:48.045Z" },
+]
+
+[[package]]
 name = "pydantic"
 version = "2.14.1"
 source = { registry = "https://pypi.org/simple" }
@@ -735,6 +771,18 @@ wheels = [
 ]
 
 [[package]]
+name = "rsa"
+version = "4.9.1"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "pyasn1" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/da/8a/22b7beea3ee0d44b1916c0c1cb0ee3af23b700b6da9f04991899d0c555d4/rsa-4.9.1.tar.gz", hash = "sha256:e7bdbfdb5497da4c07dfd35530e1a902659db6ff241e39d9953cad06ebd0ae75", size = 29034, upload-time = "2025-04-16T09:51:18.218Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/64/8d/0133e4eb4beed9e425d9a98ed6e081a55d195481b7632472be1af08d2f6b/rsa-4.9.1-py3-none-any.whl", hash = "sha256:68635866661c6836b8d39430f97a996acbd61bfa49406748ea243539fe239762", size = 34696, upload-time = "2025-04-16T09:51:17.142Z" },
+]
+
+[[package]]
 name = "ruff"
 version = "0.17.1"
 source = { registry = "https://pypi.org/simple" }
@@ -805,6 +853,8 @@ dependencies = [
     { name = "feedparser" },
     { name = "httpx" },
     { name = "httpx-sse" },
+    { name = "mistune" },
+    { name = "mistune-telegram" },
     { name = "numpy" },
     { name = "pandas" },
     { name = "psycopg", extra = ["binary", "pool"] },
@@ -813,6 +863,7 @@ dependencies = [
     { name = "pyyaml" },
     { name = "selectolax" },
     { name = "sniffio" },
+    { name = "telethon" },
     { name = "websockets" },
     { name = "zstandard" },
 ]
@@ -837,6 +888,8 @@ requires-dist = [
     { name = "feedparser", specifier = ">=6,<7" },
     { name = "httpx", specifier = ">=0.28,<1" },
     { name = "httpx-sse", specifier = ">=0.4,<1" },
+    { name = "mistune", specifier = "==3.4.0" },
+    { name = "mistune-telegram", specifier = "==0.5.0" },
     { name = "mypy", marker = "extra == 'dev'", specifier = "==1.20.2" },
     { name = "numpy", specifier = ">=2,<3" },
     { name = "pandas", specifier = ">=2.2,<3" },
@@ -852,11 +905,25 @@ requires-dist = [
     { name = "ruff", marker = "extra == 'dev'", specifier = "==0.17.1" },
     { name = "selectolax", specifier = ">=0.3,<1" },
     { name = "sniffio", specifier = ">=1.3,<2" },
+    { name = "telethon", specifier = "==1.45.0" },
     { name = "types-pyyaml", marker = "extra == 'dev'", specifier = "==6.0.12.20260906" },
     { name = "websockets", specifier = ">=14,<17" },
     { name = "zstandard", specifier = ">=0.23,<1" },
 ]
 provides-extras = ["dev"]
+
+[[package]]
+name = "telethon"
+version = "1.45.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "pyaes" },
+    { name = "rsa" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/d5/07/b23b6cc73cd994763fbd641d196904f56cc966035eda841275b5689c6e5f/telethon-1.45.0.tar.gz", hash = "sha256:4cb7ae269b8ab9dad9fc490b859f0bc2f885121e990f5b20407b1faa0db2a1d9", size = 728057, upload-time = "2026-09-10T14:28:04.739Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/92/ac/241c09e6905215f225d8088438ceb1f32cc4b4865f3f49068cb402debfd7/telethon-1.45.0-py3-none-any.whl", hash = "sha256:339e24c83aedc9f12cbe389264627edc49779e4289c535aa90aafc4ce62f7972", size = 804098, upload-time = "2026-09-10T14:28:03.115Z" },
+]
 
 [[package]]
 name = "types-pyyaml"

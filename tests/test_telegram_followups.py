@@ -2160,3 +2160,85 @@ async def test_question_text_keeps_user_filenames_and_literal_hashes():
     text = posts[0][1]["events"][0]["content"][0]["text"]
     assert question["text"] in text
     assert question_id not in text and "session_id" not in text
+
+
+@pytest.mark.asyncio
+async def test_answer_is_sent_with_entities_and_falls_back_to_plain_text_on_rejection():
+    repo = MemoryRepository()
+    question_id = await ask(repo)
+    question = await repo.get("out.user_questions", question_id)
+    question.update(answer_status="ANSWERED", answer_text="Result: **keep watching**, don’t enter yet.")
+    await repo.put("out.user_questions", question_id, question)
+    telegram = FakeTelegram()
+    attempts = []
+
+    def handler(request):
+        body = json.loads(request.content)
+        attempts.append(body)
+        if "entities" in body:
+            return httpx.Response(400, json={"ok": False, "description": "Bad Request: can't parse entities"})
+        return telegram(request)
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http:
+        await TelegramInbox(repo, inbox_settings(), http=http).answer({"question_id": question_id})
+    assert attempts[0]["entities"] == [{"type": "bold", "offset": 8, "length": 13}]
+    assert telegram.sent == [
+        {
+            "chat_id": str(USER),
+            "text": "Result: keep watching, don’t enter yet.",
+            "link_preview_options": {"is_disabled": True},
+            "reply_parameters": {"message_id": 9, "allow_sending_without_reply": True},
+        }
+    ]
+    assert (await repo.get("out.user_questions", question_id))["status"] == "DELIVERED"
+
+
+@pytest.mark.asyncio
+async def test_answer_with_markdown_is_delivered_formatted():
+    repo = MemoryRepository()
+    question_id = await ask(repo)
+    question = await repo.get("out.user_questions", question_id)
+    question.update(answer_status="ANSWERED", answer_text="**Да**, но *осторожно*")
+    await repo.put("out.user_questions", question_id, question)
+    telegram = FakeTelegram()
+    async with httpx.AsyncClient(transport=httpx.MockTransport(telegram)) as http:
+        await TelegramInbox(repo, inbox_settings(), http=http).answer({"question_id": question_id})
+    assert telegram.sent[0]["text"] == "Да, но осторожно"
+    assert telegram.sent[0]["entities"] == [
+        {"type": "bold", "offset": 0, "length": 2},
+        {"type": "italic", "offset": 7, "length": 9},
+    ]
+
+
+@pytest.mark.parametrize(
+    "answer",
+    [
+        "unclosed **bold and `tick snake_case 2 * 3",
+        "Fees went from $5 to $10 for $UNI",
+        "```\nunclosed fence",
+    ],
+)
+def test_malformed_or_dollar_markdown_keeps_the_whole_answer(answer):
+    from tank.telegram_inbox import formatted_chunks
+
+    [(text, _)] = formatted_chunks(answer)
+    assert text.replace("```\n", "") == answer.replace("```\n", "")
+
+
+def test_unconvertible_markdown_is_sent_as_plain_chunks(monkeypatch):
+    from tank import telegram_inbox
+    from tank.telegram_inbox import formatted_chunks
+
+    def broken(markdown):
+        raise ValueError("parser failure")
+
+    monkeypatch.setattr(telegram_inbox.telegram_html, "parse", broken)
+    assert formatted_chunks("**keep** watching") == [("**keep** watching", [])]
+
+
+def test_long_formatted_answers_split_below_telegram_limit():
+    from tank.telegram_inbox import formatted_chunks, utf16_length
+
+    parts = formatted_chunks("```python\n" + "value = '**literal**'\n" * 400 + "```")
+    assert len(parts) > 1 and all(utf16_length(text) <= 4000 for text, _ in parts)
+    assert all(entities[0]["type"] == "pre" and "**literal**" in text for text, entities in parts)
