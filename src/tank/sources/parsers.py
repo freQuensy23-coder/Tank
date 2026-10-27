@@ -55,7 +55,7 @@ from tank.contracts.source_parsing import (
 )
 from tank.contracts.sources import FeedParsingSpec
 from tank.sources.instrument_adapters import parse_instrument_page
-from tank.time_precision import Timestamp, propagate_timestamp
+from tank.time_precision import Timestamp
 from tank.util import EpochUnit, iso, parse_epoch, parse_utc_time, sha256
 
 
@@ -499,7 +499,7 @@ def _document_url(value: str, page_url: str) -> tuple[str, str | None, int | Non
 
 def _article_owns_page(node: dict[str, JsonValue], title: str, page_url: str | None) -> bool:
     declared_urls = [
-        url for key in ("url", "mainEntityOfPage", "@id") if key in node for url in _article_urls(node[key])
+        url for key in ("url", "mainEntityOfPage") if key in node for url in _article_urls(node[key])
     ]
     if declared_urls:
         if page_url is None:
@@ -612,7 +612,13 @@ def article(
         date_only=basis == "BLACKROCK_CALENDAR_PUBLICATION_META",
         epoch_unit="ms" if basis == "BLACKROCK_CALENDAR_PUBLICATION_META" else None,
     )
-    publication = propagate_timestamp(fields, "published_at")
+    publication = Timestamp.model_validate(
+        {
+            "value": fields["published_at"],
+            "precision": fields["published_at_precision"],
+            "precision_reason": fields["published_prec_reason"],
+        }
+    )
     if publication.value is None and (len(values) > 1 or (candidates and not selected)):
         publication = Timestamp(None, "COLLECTION_ONLY", "UNVERIFIED_SEMANTICS")
     return ParsedArticle(

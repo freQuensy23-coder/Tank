@@ -771,7 +771,7 @@ async def test_probe_reads_current_payload_without_ingestion_jobs(tmp_path: Path
         ).discoveries
     ]
     assert item.text == "Fund launch en-US New York – Fund launched today."
-    assert item.external_id == release["url"] and item.publication.precision == "BUCKET(1d)"
+    assert item.external_id == release["url"] and item.published_at_precision == "BUCKET(1d)"
     assert results[3]["reason"] == "X runs through a paid Apify actor run; excluded from the HTTP smoke"
     assert results[0]["payload_sha256"] == sha256(RSS) and not list(tmp_path.rglob("*.zst"))
 
@@ -1188,7 +1188,7 @@ def test_sec_filing_identity_boundaries_and_date_only_precision(tmp_path: Path) 
         .discoveries[0]
         .discovery
     )
-    assert row.publication.precision == "BUCKET(1d)"
+    assert row.published_at_precision == "BUCKET(1d)"
 
 
 @pytest.mark.asyncio
@@ -1204,11 +1204,13 @@ async def test_s09_seen_articles_do_not_refetch_detail(tmp_path: Path, collector
         return httpx.Response(
             200,
             json={
+                "success": True,
+                "code": "000000",
                 "data": {
                     "catalogs": [
                         {"articles": [{"code": "article1", "title": "Release", "releaseDate": 1792238400000}]}
                     ]
-                }
+                },
             },
         )
 
@@ -1577,13 +1579,13 @@ def test_wire_timestamp_precision_survives_normalization() -> None:
     assert (
         parsers.feeds(dated, "S01", {"url": "https://example.org"})
         .discoveries[0]
-        .discovery.publication.precision
+        .discovery.published_at_precision
         == "BUCKET(1d)"
     )
     assert (
         parsers.feeds(RSS, "S01", {"url": "https://example.org"})
         .discoveries[0]
-        .discovery.publication.precision
+        .discovery.published_at_precision
         == "EXACT"
     )
     assert parsers.timestamp_fields(None)["published_at_precision"] == "COLLECTION_ONLY"
@@ -1871,13 +1873,23 @@ async def test_json_discovery_burst_reads_every_page_until_durable_boundary(
             return httpx.Response(
                 200,
                 json={
+                    "success": True,
+                    "code": "000000",
                     "data": {
-                        "total": len(all_ids),
-                        "articles": [
-                            {"code": str(i), "title": "Release " + str(i), "releaseDate": 1792238400000 + i}
-                            for i in ids
-                        ],
-                    }
+                        "catalogs": [
+                            {
+                                "total": len(all_ids),
+                                "articles": [
+                                    {
+                                        "code": str(i),
+                                        "title": "Release " + str(i),
+                                        "releaseDate": 1792238400000 + i,
+                                    }
+                                    for i in ids
+                                ],
+                            }
+                        ]
+                    },
                 },
             )
         return httpx.Response(
@@ -2811,12 +2823,22 @@ async def test_binance_empty_body_pending_recovers_after_restart(
         return httpx.Response(
             200,
             json={
+                "success": True,
+                "code": "000000",
                 "data": {
-                    "total": 1,
-                    "articles": [
-                        {"code": "actual-code", "title": "Actual release", "releaseDate": 1791948608368}
-                    ],
-                }
+                    "catalogs": [
+                        {
+                            "total": 1,
+                            "articles": [
+                                {
+                                    "code": "actual-code",
+                                    "title": "Actual release",
+                                    "releaseDate": 1791948608368,
+                                }
+                            ],
+                        }
+                    ]
+                },
             },
         )
 

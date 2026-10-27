@@ -340,7 +340,7 @@ class SourcePoller:
         source: SourceDefinition,
         feed: SourceFeed,
         rows: Sequence[DiscoveryEnvelope],
-        page_state: Mapping[str, JsonValue],
+        receipt: FetchEvidence,
         *,
         kind: FeedKind = "json",
     ) -> None:
@@ -355,7 +355,7 @@ class SourcePoller:
                 rows,
                 kind,
                 {},
-                FetchEvidence.model_validate(page_state).fetched_at,
+                receipt.fetched_at,
             )
             await self.save(source, key, current)
 
@@ -529,7 +529,7 @@ class SourcePoller:
             links = await asyncio.to_thread(parsers.article_links, payload, feed)
             return links, state, kind, snapshot_update
         else:
-            json_rows, state = await self._json_history(source, feed, key, payload, state)
+            json_rows, state = await self._json_history(source, feed, key, payload, state, _http_read.receipt)
             return json_rows, state, kind, snapshot_update
         return rows, state, kind, snapshot_update
 
@@ -540,6 +540,7 @@ class SourcePoller:
         key: str,
         payload: bytes,
         state: dict[str, JsonValue],
+        receipt: FetchEvidence,
     ) -> tuple[list[DiscoveryEnvelope], dict[str, JsonValue]]:
         """Read newest-first windows back to the last completed identity.
 
@@ -559,7 +560,7 @@ class SourcePoller:
         found = False
         exhausted = False
         page_number = int(dict(parse_qsl(urlsplit(feed.url).query)).get("pageNo", 1))
-        last_head_check = parse_time(FetchEvidence.model_validate(state).fetched_at)
+        last_head_check = parse_time(receipt.fetched_at)
         while True:
             parsed = await asyncio.to_thread(parsers.json_items, page, sid)
             entry_errors.extend(
@@ -582,9 +583,7 @@ class SourcePoller:
                 row = DiscoveryEnvelope(
                     discovery=entry.discovery,
                     observation=DiscoveryObservation.model_validate(
-                        collection_clock(FetchEvidence.model_validate(page_state).fetched_at).fields(
-                            "observed_at"
-                        )
+                        collection_clock(receipt.fetched_at).fields("observed_at")
                     ),
                     payload=page,
                 )
@@ -597,7 +596,7 @@ class SourcePoller:
                 rows.append(row)
                 retained.append(row)
             if sid in {"S03", "S09", "S24"}:
-                await self.retain_page(key, source, feed, retained, page_state)
+                await self.retain_page(key, source, feed, retained, receipt)
             if not checkpoint or found or sid not in {"S03", "S09", "S24"}:
                 break
             data = json.loads(page)
@@ -686,7 +685,7 @@ class SourcePoller:
                         )
                         for entry in head_rows.discoveries
                     ]
-                    await self.retain_page(key, source, feed, captured_head, head_state)
+                    await self.retain_page(key, source, feed, captured_head, _http_read.receipt)
             _http_read = await svc.fetch(
                 source,
                 page_feed.request_plan(source.limits),
@@ -698,6 +697,7 @@ class SourcePoller:
             if isinstance(_http_read, NotModified):
                 raise ValueError("Source detail/history returned 304 without retained content") from None
             page = _http_read.payload
+            receipt = _http_read.receipt.evidence()
             page_state = _http_read.receipt.storage_record()
             if page is None:
                 raise ValueError(f"{sid} history returned 304 without retained page replay")

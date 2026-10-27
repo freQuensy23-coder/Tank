@@ -117,16 +117,17 @@ class DiscoveryBase(SourceText):
 
     @property
     def publication(self) -> Timestamp:
+        clocks: dict[str, JsonValue] = {
+            "published_at": self.published_at,
+            "published_prec": self.published_prec,
+            "published_at_precision": self.published_at_precision,
+            "published_prec_reason": self.published_prec_reason,
+            "published_at_reason": self.published_at_reason,
+            "published_at_bucket_size_s": self.published_at_bucket_size_s,
+            "published_at_bucket_anchor": self.published_at_bucket_anchor,
+        }
         return propagate_timestamp(
-            {
-                "published_at": self.published_at,
-                "published_prec": self.published_prec,
-                "published_at_precision": self.published_at_precision,
-                "published_prec_reason": self.published_prec_reason,
-                "published_at_reason": self.published_at_reason,
-                "published_at_bucket_size_s": self.published_at_bucket_size_s,
-                "published_at_bucket_anchor": self.published_at_bucket_anchor,
-            },
+            {name: value for name, value in clocks.items() if name in self.model_fields_set},
             "published_at",
         )
 

@@ -1,4 +1,5 @@
 import json
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Literal
 
@@ -10,9 +11,11 @@ from pydantic_settings import SettingsConfigDict
 from source_support import fixture_request_budgets, fixture_versions, source_definition
 from test_storage import repo as repo
 
+from tank.contracts.source_items import PendingSourceItem, discovered_item, pending_source_item
 from tank.settings import Settings
 from tank.sources import SourceService, parsers
 from tank.storage import StorageBackend
+from tank.time_precision import interval_bounds
 from tank.util import sha256
 
 PAGE = "https://publisher.example/releases/current?edition=one"
@@ -36,6 +39,7 @@ def page(structured: str) -> bytes:
         {"url": "https://publisher.example/releases/foreign"},
         {"mainEntityOfPage": {"@id": "https://publisher.example/releases/foreign"}},
         {"@id": "https://publisher.example/releases/foreign#article"},
+        {"@id": PAGE + "#article"},
         {"url": "https://publisher.example/releases/current?edition=two"},
     ],
 )
@@ -56,7 +60,7 @@ def test_unowned_structured_article_cannot_supply_publication(identity: dict[str
     assert "Actual authored body." in result.text
 
 
-@pytest.mark.parametrize("field", ["url", "mainEntityOfPage", "@id"])
+@pytest.mark.parametrize("field", ["url", "mainEntityOfPage"])
 def test_actual_page_identity_allows_reported_headline_variation(field: str) -> None:
     result = parsers.article(
         page(
@@ -99,6 +103,38 @@ def test_ambiguous_json_ld_cannot_author_clock_but_unique_headline_can() -> None
         '"Actual main release"', '"Unrelated release","headline":"Actual main release"'
     )
     assert parsers.article(page(ambiguous), page_url=PAGE).publication.value is None
+
+
+def test_discovery_publication_projection_preserves_absent_and_explicitly_unknown_bucket_edge() -> None:
+    wire: dict[str, JsonValue] = {
+        "external_id": "authored-day",
+        "url": "https://publisher.example/authored-day",
+        "title": "Authored calendar-day observation",
+        "text": "Actual authored source content",
+        **parsers.timestamp_fields("2026-10-01"),
+    }
+    material = discovered_item("S03", wire).discovery
+    expected = datetime(2026, 10, 1, tzinfo=UTC), datetime(2026, 10, 2, tzinfo=UTC)
+    assert interval_bounds(material.publication) == expected
+    assert material.published_at_precision == "BUCKET(1d)"
+    pending = PendingSourceItem(
+        discovery=material,
+        item_id="authored-day-item",
+        feed="https://publisher.example/feed",
+        observed_at="2026-10-02T12:00:00Z",
+        discovery_config_version="authored-config",
+        discovery_code_version="authored-code",
+        raw=None,
+    )
+    stored = pending.storage_record()
+    assert "published_at_bucket_anchor" not in stored
+    restored = pending_source_item("S03", stored)
+    assert isinstance(restored, PendingSourceItem)
+    assert restored.storage_record() == stored
+    assert interval_bounds(restored.discovery.publication) == expected
+    explicitly_unknown = discovered_item("S03", {**wire, "published_at_bucket_anchor": None}).discovery
+    assert explicitly_unknown.publication.bucket_anchor == "UNSPECIFIED"
+    assert interval_bounds(explicitly_unknown.publication) == (None, None)
 
 
 @pytest.mark.parametrize("ownership", ["SAME_PAGE", "FOREIGN", "DUPLICATE"])
