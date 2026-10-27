@@ -1741,13 +1741,13 @@ particular, the separately documented distinction between author-filled
 dateTimestamp and publishTime remains a queued timestamp audit; the unverified
 OKX announcement shape is not guessed or tightened in this slice.
 
-Immutable exact source `6f8caa4951424ffa885cf0e2d3b1b1d64cc04e6f` passes all90
+Immutable exact source `6f8caa4951424ffa885cf0e2d3b1b1d64cc04e6f` passes all 90
 selected units in 7.72s, zero skips, p90 0.155s and maximum 0.534s including fixtures.
-All11 actual PostgreSQL source cases pass in 8.91s, zero skips. They prove missing,
+All 11 actual PostgreSQL source cases pass in 8.91s, zero skips. They prove missing,
 boolean/string/nonzero and missing/wrong result/list refusals, raw duplicate-key
-refusal, original HTTP/hash evidence, valid numeric0.0 with opaque JSON text and
-byte-identical raw storage, plus valid integer-zero emptiness. Earlier625 source
-also passed90 units/all11 actual; the final follow-up restores observed failure
+refusal, original HTTP/hash evidence, valid numeric 0.0 with opaque JSON text and
+byte-identical raw storage, plus valid integer-zero emptiness. Earlier 625d source
+also passed 90 units/all 11 actual; the final follow-up restores observed failure
 codes without weakening admission. External logs/XML are
 `announcement-wire-{0139,625d,6f8c}-linux-{unit,actual}` where applicable. New
 contract and actual-caller test are independently strict-clean; all four changed
