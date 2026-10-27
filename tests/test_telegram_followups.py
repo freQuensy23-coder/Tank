@@ -2226,14 +2226,13 @@ def test_malformed_or_dollar_markdown_keeps_the_whole_answer(answer):
 
 
 def test_unconvertible_markdown_is_sent_as_plain_chunks(monkeypatch):
-    import telegramify_markdown
-
+    from tank import telegram_inbox
     from tank.telegram_inbox import formatted_chunks
 
     def broken(markdown):
         raise ValueError("parser failure")
 
-    monkeypatch.setattr(telegramify_markdown, "convert", broken)
+    monkeypatch.setattr(telegram_inbox.telegram_html, "parse", broken)
     assert formatted_chunks("**keep** watching") == [("**keep** watching", [])]
 
 

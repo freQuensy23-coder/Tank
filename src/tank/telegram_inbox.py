@@ -18,7 +18,10 @@ from datetime import UTC, datetime, timedelta
 from difflib import SequenceMatcher
 
 import httpx
-import telegramify_markdown
+import mistune
+from mistune_telegram import TelegramHTMLRenderer
+from telethon import utils as telegram_utils
+from telethon.extensions import html as telegram_html
 
 from tank import ops_cards
 from tank.analysis.cards import telegram_card_html
@@ -145,14 +148,52 @@ def chunks(text, limit=MESSAGE_LIMIT):
 
 def formatted_chunks(markdown, limit=MESSAGE_LIMIT):
     try:
-        text, entities = telegramify_markdown.convert(markdown)
-        parts = telegramify_markdown.split_entities(text, entities, limit)
+        renderer = mistune.create_markdown(renderer=TelegramHTMLRenderer(escape=True))
+        rendered = renderer(markdown)
+        if "<img " in rendered or "<p>" in rendered:
+            return [(part, []) for part in chunks(markdown, limit)]
+        text, entities = telegram_html.parse("\ufffc" + rendered)
+        text = text[1:]
+        for entity in entities:
+            entity.offset -= 1
+        entity_types = {
+            "MessageEntityBold": "bold",
+            "MessageEntityItalic": "italic",
+            "MessageEntityUnderline": "underline",
+            "MessageEntityStrike": "strikethrough",
+            "MessageEntityCode": "code",
+            "MessageEntityPre": "pre",
+            "MessageEntityTextUrl": "text_link",
+            "MessageEntityUrl": "url",
+            "MessageEntityEmail": "email",
+            "MessageEntityBlockquote": "blockquote",
+        }
+        parts = [
+            (
+                part,
+                [
+                    {
+                        "type": entity_types[type(entity).__name__],
+                        "offset": entity.offset,
+                        "length": entity.length,
+                        **{
+                            field: getattr(entity, field)
+                            for field in ("url", "language")
+                            if hasattr(entity, field)
+                        },
+                    }
+                    for entity in found
+                ],
+            )
+            for part, found in telegram_utils.split_text(
+                text, entities, limit=limit, split_at=(r"\n", r"\s", r".(?=[^\udc00-\udfff]|$)")
+            )
+        ]
+        if "".join(part for part, _ in parts).strip():
+            return parts
     except Exception:
         log.exception("Agent answer Markdown could not be converted; sending it as plain text")
-        parts = []
-    if not "".join(part for part, _ in parts).strip():
-        return [(part, []) for part in chunks(markdown, limit)]
-    return [(part, [entity.to_dict() for entity in found]) for part, found in parts]
+    return [(part, []) for part in chunks(markdown, limit)]
 
 
 REFERENCE_LIMIT = 1024
