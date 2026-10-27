@@ -12,14 +12,16 @@ from pathlib import Path, PosixPath
 import pytest
 from pydantic import ValidationError
 
+from scripts.ci.check_integration_results import verify as verify_integration_results
 from scripts.ci.integration_order import (
+    IntegrationCollection,
     IntegrationOrderPlan,
     measured_file_order,
     native_file_order,
     read_collection,
 )
 from scripts.ci.integration_partition import shard_for
-from scripts.ci.unit_contracts import FileTiming, UnitRecord
+from scripts.ci.unit_contracts import FileTiming, UnitCase, UnitRecord
 from tank.contracts.scalars import FalseFlag
 
 
@@ -268,17 +270,20 @@ def test_actual_console_native_loadfile_scheduler_honors_measured_order(
         "-m",
         "integration",
     ]
-    collection = subprocess.run(
-        [*common, "-p", "collect_integration", "--collect-only"],
-        cwd=root,
-        env=environment,
-        capture_output=True,
-        text=True,
-        timeout=8,
-        check=False,
+    declared = IntegrationCollection(
+        root=[
+            UnitCase(
+                classname=file.removesuffix(".py").replace("/", "."),
+                name=f"test_case_{index}",
+                file=file,
+            )
+            for file, count in sorted([(costly, 1), (numerous, 3)])
+            for index in range(count)
+        ]
     )
-    assert collection.returncode == 0, collection.stdout + collection.stderr
     captured = root / ".test-results/integration-collection.json"
+    captured.parent.mkdir()
+    captured.write_text(declared.model_dump_json())
     signature = hashlib.sha256(captured.read_bytes()).hexdigest()
     command = [
         *common,
@@ -330,6 +335,11 @@ def test_actual_console_native_loadfile_scheduler_honors_measured_order(
         f"{file}::test_case_{index}" for file, count in [(costly, 1), (numerous, 3)] for index in range(count)
     }
     assert Counter(record.nodeid for record in executions) == Counter(expected)
+    assert verify_integration_results([root / "actual.xml"], [captured]) == {
+        "cases": 4,
+        "passed": 4,
+        "skipped": 0,
+    }
     assert len({record.worker for record in executions if record.nodeid.startswith(numerous + "::")}) == 1
     assert hashlib.sha256(captured.read_bytes()).hexdigest() == signature
     assert isinstance(request.node, pytest.Item)
