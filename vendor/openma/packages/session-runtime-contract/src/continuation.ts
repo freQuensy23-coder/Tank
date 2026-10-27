@@ -168,6 +168,22 @@ interface Group {
   closed: boolean;
   interruptPosition?: number;
 }
+function pendingCustomUses(entries: OrderedSessionEvent[]): OrderedSessionEvent[] {
+  const pending = new Map<string, OrderedSessionEvent>();
+  for (const entry of entries) {
+    const event = entry.event;
+    if (event.type === 'agent.custom_tool_use') {
+      pending.set(event.id, entry);
+    } else if (event.type === 'agent.tool_result') {
+      const use = pending.get(event.toolUseId);
+      if (use && use.executionId === entry.executionId && eventLaneId(use.event) === eventLaneId(event) &&
+          use.executionMetadata?.attemptId === entry.executionMetadata?.attemptId &&
+          use.executionMetadata?.generation === entry.executionMetadata?.generation)
+        pending.delete(event.toolUseId);
+    }
+  }
+  return [...pending.values()];
+}
 function groups(snapshot: ContinuationSnapshot, laneId: string): Group[] {
   const cached = snapshotDerivedState(snapshot).groups.get(laneId);
   if (cached)
@@ -179,9 +195,10 @@ function groups(snapshot: ContinuationSnapshot, laneId: string): Group[] {
     if (eventLaneId(e) !== laneId || e.type !== 'session.status_idle' || e.stopReason.type !== 'requires_action')
       continue;
     const ids = e.stopReason.eventIds;
-    const uses = snapshot.orderedEvents.slice(phase.start, phase.end + 1).filter(x => x.executionId === phase.owner && x.event.type === 'agent.custom_tool_use');
-    if (uses.length === 0)
-      continue;  
+    const output = snapshot.orderedEvents.slice(phase.start, phase.end + 1).filter(x => x.executionId === phase.owner);
+    if (!output.some(x => x.event.type === 'agent.custom_tool_use'))
+      continue;
+    const uses = pendingCustomUses(output);
     if (!sameUniqueIds(ids, uses.map(x => x.event.id)))
       throw new ContinuationProtocolError('Invalid custom-tool group declaration');
     const position = snapshot.orderedEvents.indexOf(phase.terminal);
@@ -414,8 +431,9 @@ function planContinuation(snapshot: ContinuationSnapshot, currentId: string): Co
       const latestLocalUses = latestSpan.filter(e => e.event.type === 'agent.tool_use' || e.event.type === 'agent.mcp_tool_use');
       const localComplete = localUses.every(use => output.some(e => (e.event.type === 'agent.tool_result' && e.event.toolUseId === use.event.id) || (e.event.type === 'agent.mcp_tool_result' && e.event.mcpToolUseId === use.event.id)));
       if (end?.event.type === 'span.model_request_end' && end.event.isError === false && localComplete) {
-        const custom = latestSpan.filter(e => e.event.type === 'agent.custom_tool_use').map(e => e.event.id);
-        if (custom.length || latestLocalUses.length === 0) {
+        const custom = pendingCustomUses(latestSpan).map(e => e.event.id);
+        const latestHasTools = latestLocalUses.length > 0 || latestSpan.some(e => e.event.type === 'agent.custom_tool_use');
+        if (custom.length || !latestHasTools) {
           plan.mode = 'finalize';
           plan.recoveredStopReason = custom.length ? { type: 'requires_action', eventIds: custom } : { type: 'end_turn' };
         }
