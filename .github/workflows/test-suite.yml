@@ -59,22 +59,19 @@ jobs:
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         if: always()
         with:
-          name: python-unit-results-${{ matrix.shard }}
+          name: python-unit-results-attempt-${{ github.run_attempt }}-${{ matrix.shard }}
           path: .test-results/
           include-hidden-files: true
           if-no-files-found: error
 
   python-unit-complete:
     name: Python unit complete
-    needs: python-unit
-    if: always()
     runs-on: ubuntu-24.04
-    timeout-minutes: 1
+    timeout-minutes: ${{ github.event_name == 'pull_request' && 4 || 16 }}
+    permissions:
+      contents: read
+      actions: read
     steps:
-      - name: Require every unit lane
-        env:
-          SHARD_RESULT: ${{ needs.python-unit.result }}
-        run: test "$SHARD_RESULT" = success
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           persist-credentials: false
@@ -84,16 +81,19 @@ jobs:
           python-version: "3.13.13"
           enable-cache: true
       - run: uv sync --python 3.13.13 --frozen --extra dev
+      - name: Require this workflow attempt's two successful unit jobs
+        id: unit-ready
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: uv run --frozen --extra dev python -m scripts.ci.unit_completion wait --receipt .test-results/unit-ready.json
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        timeout-minutes: 1
         with:
-          pattern: python-unit-results-*
+          artifact-ids: ${{ steps.unit-ready.outputs.artifact_ids }}
           path: .test-results/unit-shards
-      - name: Require the unique full unit union and aggregate timing
-        run: |
-          test "$(find .test-results/unit-shards -name unit.xml | wc -l)" -eq 2
-          uv run --frozen --extra dev python -m scripts.ci.check_unit_results \
-            --bundle .test-results/unit-shards/* --plan scripts/ci/unit_shards.json \
-            --source-sha "$GITHUB_SHA"
+      - name: Require the full unit union and timing within the total post-readiness minute
+        timeout-minutes: 1
+        run: uv run --frozen --extra dev python -m scripts.ci.unit_completion verify --receipt .test-results/unit-ready.json --artifacts .test-results/unit-shards
 
   python-integration:
     name: Python integration
