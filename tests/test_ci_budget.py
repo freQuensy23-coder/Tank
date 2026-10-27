@@ -127,11 +127,11 @@ def test_rerun_uses_its_attempt_creation_before_queue_and_setup(action):
         sleep=lambda _: pytest.fail("the current attempt is complete"),
     )
 
-    assert outcome == {"budget_seconds": 240, "elapsed_seconds": 101}
+    assert outcome == {"budget_seconds": 300, "elapsed_seconds": 101}
     assert calls == [
         ("", "GET", None),
         ("/attempts/2", "GET", None),
-        ("/attempts/2/jobs?per_page=100&page=1", "GET", BUDGET["timestamp"]("2026-10-23T12:14:00Z")),
+        ("/attempts/2/jobs?per_page=100&page=1", "GET", BUDGET["timestamp"]("2026-10-23T12:15:00Z")),
     ]
 
 
@@ -155,7 +155,7 @@ def test_rerun_queued_past_its_own_budget_is_cancelled():
         BUDGET["watch"](
             {},
             api,
-            now=lambda: BUDGET["timestamp"]("2026-10-23T12:14:01Z"),
+            now=lambda: BUDGET["timestamp"]("2026-10-23T12:15:01Z"),
             sleep=lambda _: pytest.fail("queue and setup must count"),
         )
 
@@ -204,7 +204,7 @@ def test_queued_past_deadline_is_cancelled_without_accepting_results():
         return {"created_at": "2026-10-23T12:00:00Z"} if not suffix else {}
 
     def now():
-        return BUDGET["timestamp"]("2026-10-23T12:04:01Z")
+        return BUDGET["timestamp"]("2026-10-23T12:05:01Z")
 
     with pytest.raises(TimeoutError):
         BUDGET["watch"]({}, api, now=now, sleep=lambda _: pytest.fail("must not wait"))
@@ -216,10 +216,13 @@ def test_watcher_accepts_only_complete_results_within_budget():
         if not suffix:
             return {"created_at": "2026-10-23T12:00:00Z"}
         assert method == "GET"
-        return {"jobs": passed_jobs(), "total_count": len(passed_jobs())}
+        return {
+            "jobs": passed_jobs("2026-10-23T12:04:30Z"),
+            "total_count": len(passed_jobs()),
+        }
 
     def now():
-        return BUDGET["timestamp"]("2026-10-23T12:03:21Z")
+        return BUDGET["timestamp"]("2026-10-23T12:04:31Z")
 
     outcome = BUDGET["watch"]({}, api, now=now, sleep=lambda _: pytest.fail("already complete"))
-    assert outcome["elapsed_seconds"] == 201
+    assert outcome["elapsed_seconds"] == 271

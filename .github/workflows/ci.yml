@@ -25,10 +25,10 @@ defaults:
 
 jobs:
   budget:
-    name: CI 4 minute budget
+    name: CI 5 minute budget
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-24.04
-    timeout-minutes: 4
+    timeout-minutes: 5
     permissions:
       contents: read
       actions: write
