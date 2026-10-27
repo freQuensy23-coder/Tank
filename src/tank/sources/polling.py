@@ -623,7 +623,7 @@ class SourcePoller:
                     break
                 if urlsplit(next_url).hostname != urlsplit(feed.url).hostname:
                     raise ValueError("Federal Register next_page_url changed publisher")
-                page_feed = feed.model_copy(update={"url": next_url})
+                page_feed = SourceFeed.model_validate(feed.model_copy(update={"url": next_url}))
             elif sid == "S09":
                 data = json.loads(page)
                 params = dict(parse_qsl(urlsplit(feed.url).query))
