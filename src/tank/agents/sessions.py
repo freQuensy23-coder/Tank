@@ -658,10 +658,24 @@ class SessionService:
         self.start_stream(sid)
         return session
 
-    async def post_message_intent(self, sid, key):
+    async def post_message_intent(self, sid, key, *, recovering=False):
         session = await self.repo.get("ops.agent_sessions", sid)
         intent = next(row for row in session["message_log"] if row["message_id"] == key)
-        if intent.get("remote_event_id"):
+        initial_status = session.get("status")
+        remote = session.get("remote_state") or {}
+        if (
+            intent.get("remote_event_id")
+            or intent.get("turn_status") in {"DONE", "FAILED"}
+            or key in session.get("retired_message_ids", [])
+            or intent.get("native_input_attempts", {}) != {}
+            or type(intent.get("retry_count", 0)) is not int
+            or intent.get("retry_count", 0) != 0
+            or initial_status not in {"OPEN", "FAILED"}
+            or session.get("archived_at")
+            or remote.get("status") == "terminated"
+            or remote.get("archived_at")
+            or (recovering and not self.recoverable_session(session))
+        ):
             return session
         accepted = await self.request(
             "POST",
@@ -686,7 +700,16 @@ class SessionService:
             )
             if key not in session.setdefault("messages", []):
                 session["messages"].append(key)
-            session["status"] = "OPEN"
+            remote = session.get("remote_state") or {}
+            if (
+                session.get("status") == initial_status
+                and intent.get("turn_status") not in {"DONE", "FAILED"}
+                and key not in session.get("retired_message_ids", [])
+                and not session.get("archived_at")
+                and remote.get("status") != "terminated"
+                and not remote.get("archived_at")
+            ):
+                session["status"] = "OPEN"
             if intent["payload"].get("item_id"):
                 session.update(accepted_at.fields("last_item_at"))
                 session.update(
@@ -698,12 +721,106 @@ class SessionService:
             await session_progress(self.repo, self.settings, session)
             return session
 
+    @staticmethod
+    def recoverable_session(session):
+        remote = session.get("remote_state") or {}
+        return (
+            session.get("status") == "OPEN"
+            and not session.get("archived_at")
+            and remote.get("status") != "terminated"
+            and not remote.get("archived_at")
+        )
+
+    @staticmethod
+    def recorded_message_input(session, message, calls):
+        attempts = message.get("native_input_attempts")
+        attempt = message.get("retry_count", 0)
+        if (
+            not isinstance(attempts, dict)
+            or type(attempt) is not int
+            or attempt < 0
+            or any(
+                not isinstance(identity, str)
+                or not identity.strip()
+                or identity != identity.strip()
+                or type(ordinal) is not int
+                or ordinal < 0
+                for identity, ordinal in attempts.items()
+            )
+        ):
+            return None
+        candidates = [identity for identity, ordinal in attempts.items() if ordinal == attempt]
+        if len(candidates) != 1:
+            return None
+        identity = candidates[0]
+        if (
+            message.get("remote_event_id") not in (None, identity)
+            or identity in message.get("superseded_native_input_ids", [])
+            or identity in session.get("superseded_native_inputs", {})
+        ):
+            return None
+        for other in session.get("message_log", []):
+            if other is message:
+                continue
+            if other.get("message_id") == message["message_id"]:
+                return None
+            other_attempts = other.get("native_input_attempts", {})
+            if not isinstance(other_attempts, dict):
+                return None
+            if (
+                other.get("remote_event_id") == identity
+                or identity in other_attempts
+                or identity in other.get("superseded_native_input_ids", [])
+            ):
+                return None
+        if any(call.get("remote_event_id") == identity for call in calls):
+            return None
+        return identity
+
+    async def repair_accepted_inputs(self, sid):
+        async with self.repo.lock("session:" + sid):
+            session = await self.repo.get("ops.agent_sessions", sid)
+            if session is None or not self.recoverable_session(session):
+                return
+            calls = [row async for row in self.repo.iter_all("ops.tool_calls", filters={"session_id": sid})]
+            changed = False
+            for message in session.get("message_log", []):
+                if (
+                    message["message_id"] in session.get("retired_message_ids", [])
+                    or message.get("turn_status") not in {"ACCEPTING", "PENDING", "RUNNING"}
+                ):
+                    continue
+                identity = self.recorded_message_input(session, message, calls)
+                if not identity:
+                    continue
+                if not message.get("remote_event_id"):
+                    message["remote_event_id"] = identity
+                    changed = True
+                if message.get("turn_status") == "ACCEPTING":
+                    message["turn_status"] = "PENDING"
+                    changed = True
+                if message["message_id"] not in session.setdefault("messages", []):
+                    session["messages"].append(message["message_id"])
+                    changed = True
+            if changed:
+                await self.repo.put("ops.agent_sessions", sid, session)
+
     async def recover_outbound_inputs(self, sid):
         async with self.send_locks.setdefault(sid, asyncio.Lock()):
+            await self.repair_accepted_inputs(sid)
             session = await self.repo.get("ops.agent_sessions", sid)
+            if session is None or not self.recoverable_session(session):
+                return
             for message in session.get("message_log", []):
-                if message.get("turn_status") == "ACCEPTING" and not message.get("sent_at"):
-                    await self.post_message_intent(sid, message["message_id"])
+                if (
+                    message.get("turn_status") == "ACCEPTING"
+                    and not message.get("sent_at")
+                    and message.get("native_input_attempts", {}) == {}
+                    and type(message.get("retry_count", 0)) is int
+                    and message.get("retry_count", 0) == 0
+                    and message["message_id"] not in session.get("retired_message_ids", [])
+                ):
+                    await self.post_message_intent(sid, message["message_id"], recovering=True)
         session = await self.repo.get("ops.agent_sessions", sid)
         await session_progress(self.repo, self.settings, session)
         if session.get("pending_retry_event"):
@@ -723,27 +840,123 @@ class SessionService:
             return events[0]["id"]
         return None
 
-    async def native_input_owner(self, session, execution_id):
+    async def native_input_owner(self, session, execution_id, calls=None):
         """Resolve exact accepted-input lineage, including tool-result continuations."""
-        if not execution_id:
+        if not isinstance(execution_id, str) or not execution_id.strip() or execution_id != execution_id.strip():
             return None
         messages = {row["message_id"]: row for row in session.get("message_log", [])}
+        calls = (
+            calls
+            if calls is not None
+            else [
+                row
+                async for row in self.repo.iter_all(
+                    "ops.tool_calls", filters={"session_id": session["session_id"]}
+                )
+            ]
+        )
+        claims = []
         for message in messages.values():
-            if execution_id == message.get("remote_event_id") or execution_id in message.get(
-                "superseded_native_input_ids", []
+            attempts = message.get("native_input_attempts", {})
+            if not isinstance(attempts, dict):
+                return None
+            if (
+                execution_id == message.get("remote_event_id")
+                or execution_id in message.get("superseded_native_input_ids", [])
+                or execution_id in attempts
             ):
-                attempt = message.get("native_input_attempts", {}).get(execution_id)
-                if attempt is None:
-                    attempt = (
-                        message.get("retry_count", 0)
-                        if execution_id == message.get("remote_event_id")
-                        else message.get("superseded_native_input_ids", []).index(execution_id)
-                    )
-                return message["message_id"], attempt
-        async for call in self.repo.iter_all("ops.tool_calls", filters={"session_id": session["session_id"]}):
+                recorded = self.recorded_message_input(session, message, calls)
+                if execution_id in attempts:
+                    attempt = attempts[execution_id]
+                    if type(attempt) is not int or attempt < 0:
+                        return None
+                    if attempt == message.get("retry_count", 0) and recorded != execution_id:
+                        return None
+                elif execution_id == message.get("remote_event_id"):
+                    if attempts:
+                        return None
+                    attempt = message.get("retry_count", 0)
+                elif execution_id in message.get("superseded_native_input_ids", []):
+                    attempt = message["superseded_native_input_ids"].index(execution_id)
+                else:
+                    return None
+                if type(attempt) is not int or attempt < 0:
+                    return None
+                claims.append((message["message_id"], attempt))
+        for call in calls:
             if call.get("remote_event_id") == execution_id and call.get("native_turn_message_id") in messages:
-                return call["native_turn_message_id"], call.get("native_turn_retry_count", 0)
-        return None
+                attempt = call.get("native_turn_retry_count", 0)
+                if type(attempt) is not int or attempt < 0:
+                    return None
+                claims.append((call["native_turn_message_id"], attempt))
+        return claims[0] if len(claims) == 1 else None
+
+    async def handled_terminal_inputs(self, session, calls, states):
+        if not self.recoverable_session(session) or session.get("pending_retry_event"):
+            return set()
+        handled = set()
+        messages = session.get("message_log", [])
+        retired = set(session.get("retired_message_ids", []))
+        for index, message in enumerate(messages):
+            if message.get("turn_status") != "FAILED" or message["message_id"] in retired:
+                continue
+            failure = message.get("terminal_failure", session.get("terminal_failure"))
+            if not isinstance(failure, dict):
+                continue
+            identity = failure.get("execution_id")
+            attempt = message.get("retry_count", 0)
+            if (
+                not isinstance(identity, str)
+                or not identity
+                or not isinstance(failure.get("event_id"), str)
+                or not failure["event_id"]
+                or failure["event_id"] not in session.get("processed_events", [])
+                or (
+                    failure.get("event_type") == "execution.status_failed"
+                    and failure["event_id"] != "execution-status-failed:" + identity
+                )
+                or failure.get("event_type") not in {"execution.status_failed", "session.error", "agent.refusal"}
+                or states.get(identity, {}).get("state") != "FAILED"
+                or await self.native_input_owner(session, identity, calls) != (message["message_id"], attempt)
+            ):
+                continue
+            continuation = False
+            for later in messages[index + 1 :]:
+                if (
+                    later["message_id"] not in retired
+                    and later.get("turn_status") in {"PENDING", "RUNNING", "DONE"}
+                    and later.get("remote_event_id")
+                    and await self.native_input_owner(session, later["remote_event_id"], calls)
+                    == (later["message_id"], later.get("retry_count", 0))
+                ):
+                    continuation = True
+                    break
+            if not continuation:
+                continue
+            owned = [call for call in calls if call.get("native_turn_message_id") == message["message_id"]]
+            if any(
+                not call.get("returned_at")
+                or not call.get("remote_event_id")
+                or states.get(call["remote_event_id"], {}).get("state")
+                != ("FAILED" if call["remote_event_id"] == identity else "COMPLETED")
+                for call in owned
+            ):
+                continue
+            message_input = message.get("remote_event_id")
+            if not message_input or states.get(message_input, {}).get("state") != (
+                "FAILED" if message_input == identity else "COMPLETED"
+            ):
+                continue
+            returned = {call["call_id"] for call in owned}
+            if any(
+                receipt.get("execution_id") == identity
+                and (receipt.get("stop_reason") or {}).get("type") == "requires_action"
+                and any(call_id not in returned for call_id in receipt["stop_reason"].get("event_ids", []))
+                for receipt in session.get("native_execution_receipts", {}).values()
+            ):
+                continue
+            handled.add(identity)
+        return handled
 
     async def execution_barrier(self, session, calls=None, *, verify_remote=False):
         """Correlate accepted inputs with native execution receipts, never idle timing."""
@@ -765,7 +978,8 @@ class SessionService:
             if message["message_id"] in retired:
                 continue
             identity = message.get("remote_event_id")
-            if identity:
+            owner = await self.native_input_owner(session, identity, calls) if identity else None
+            if identity and owner == (message["message_id"], message.get("retry_count", 0)):
                 required.add(identity)
             else:
                 unknown.append("message:" + message["message_id"])
@@ -791,12 +1005,6 @@ class SessionService:
                 for identity in receipt["stop_reason"].get("event_ids", [])
                 if identity not in returned_tools
             }
-        )
-        final_receipt = any(
-            receipt.get("execution_id") in required
-            and receipt.get("type") == "session.status_idle"
-            and receipt.get("stop_reason", {}).get("type") == "end_turn"
-            for identity, receipt in receipts.items()
         )
         states = copy.deepcopy(session.get("native_execution_states", {}))
         signature = tuple(sorted(required))
@@ -831,7 +1039,12 @@ class SessionService:
                     states[row["execution_id"]] = copy.deepcopy(row)
             async with self.repo.lock("session:" + session["session_id"]):
                 current = await self.repo.get("ops.agent_sessions", session["session_id"])
-                current.setdefault("native_execution_states", {}).update(states)
+                self.merge_event_changes(
+                    current.setdefault("native_execution_states", {}),
+                    session.get("native_execution_states", {}),
+                    states,
+                )
+                states = copy.deepcopy(current["native_execution_states"])
                 owners = {row["message_id"]: row for row in current.get("message_log", [])}
                 for call in calls:
                     identity = call.get("remote_event_id")
@@ -852,6 +1065,13 @@ class SessionService:
                 await self.repo.put("ops.agent_sessions", session["session_id"], current)
             delay = min(poll[1] * 2, 1.0) if poll[2] == signature else 0.05
             self.execution_polls[session["session_id"]] = (time.monotonic() + delay, delay, signature)
+        required.difference_update(await self.handled_terminal_inputs(session, calls, states))
+        final_receipt = any(
+            receipt.get("execution_id") in required
+            and receipt.get("type") == "session.status_idle"
+            and receipt.get("stop_reason", {}).get("type") == "end_turn"
+            for receipt in receipts.values()
+        )
         failed = sorted(
             identity
             for identity in required
@@ -1045,7 +1265,7 @@ class SessionService:
         session = await self.repo.get("ops.agent_sessions", sid)
         local = await self.execution_barrier(session)
         source_outcomes = await self.source_completion_snapshot(session)
-        if session.get("status") == "FAILED":
+        if not self.recoverable_session(session):
             return dict(local, complete=False)
         if (
             local["complete"]
@@ -1090,7 +1310,11 @@ class SessionService:
         async with self.repo.lock("session:" + sid):
             current = await self.repo.get("ops.agent_sessions", sid)
             after = await self.execution_barrier(current)
-            if not after["complete"] or after["accepted_input_ids"] != before["accepted_input_ids"]:
+            if (
+                not self.recoverable_session(current)
+                or not after["complete"]
+                or after["accepted_input_ids"] != before["accepted_input_ids"]
+            ):
                 return dict(after, complete=False)
             for message in current.get("message_log", []):
                 if message.get("turn_status") != "FAILED":
@@ -1616,6 +1840,24 @@ class SessionService:
             immutable=True,
         )
 
+    @staticmethod
+    def merge_event_changes(current, before, after):
+        missing = object()
+        for key, value in after.items():
+            old = before.get(key, missing)
+            if value == old:
+                continue
+            live = current.get(key, missing)
+            if isinstance(value, dict) and isinstance(live, dict):
+                SessionService.merge_event_changes(live, old if isinstance(old, dict) else {}, value)
+            elif isinstance(value, list) and isinstance(old, list) and isinstance(live, list):
+                if live == old:
+                    current[key] = copy.deepcopy(value)
+                else:
+                    live.extend(copy.deepcopy(item) for item in value if item not in old and item not in live)
+            elif live == old:
+                current[key] = copy.deepcopy(value)
+
     async def process_event(self, sid, event, seq=None):
         if event.get("type") in ("event_start", "event_delta") or not event.get("id"):
             return
@@ -1709,8 +1951,10 @@ class SessionService:
                 if session != before:
                     async with self.repo.lock("session:" + sid):
                         current = await self.repo.get("ops.agent_sessions", sid)
-                        current.setdefault("native_execution_receipts", {}).update(
-                            session.get("native_execution_receipts", {})
+                        self.merge_event_changes(
+                            current.setdefault("native_execution_receipts", {}),
+                            before.get("native_execution_receipts", {}),
+                            session.get("native_execution_receipts", {}),
                         )
                         if current.get("native_idle_receipt", {}).get("id") == event["id"]:
                             current["native_idle_receipt"].update(
@@ -1746,6 +1990,7 @@ class SessionService:
             if kind == "agent.custom_tool_use":
                 await self.tool(session, event)
                 session = await self.repo.get("ops.agent_sessions", sid)
+                before = copy.deepcopy(session)
                 call = await self.repo.get("ops.tool_calls", key)
                 if (
                     event["name"] == "record_event"
@@ -1831,6 +2076,7 @@ class SessionService:
                         )
                         durable["pending_retry_event"] = copy.deepcopy(event)
                         await self.repo.put("ops.agent_sessions", sid, durable)
+                        before["pending_retry_event"] = copy.deepcopy(event)
                     accepted = await self.request(
                         "POST",
                         f"sessions/{sid}/events",
@@ -1915,22 +2161,20 @@ class SessionService:
                         message["terminal_failure"] = copy.deepcopy(termination)
             async with self.repo.lock("session:" + sid):
                 current = await self.repo.get("ops.agent_sessions", sid)
-                current.update(
-                    {
-                        k: v
-                        for k, v in session.items()
-                        if k != "message_log" and (k not in before or v != before[k])
-                    }
+                self.merge_event_changes(
+                    current,
+                    {key: value for key, value in before.items() if key != "message_log"},
+                    {key: value for key, value in session.items() if key != "message_log"},
                 )
                 prior_messages = {row["message_id"]: row for row in before.get("message_log", [])}
                 live_messages = {row["message_id"]: row for row in current.get("message_log", [])}
                 for row in session.get("message_log", []):
-                    if row["message_id"] in live_messages:
-                        old = prior_messages.get(row["message_id"], {})
-                        live_messages[row["message_id"]].update(
-                            {key: value for key, value in row.items() if key not in old or old[key] != value}
+                    if row["message_id"] in live_messages and row["message_id"] in prior_messages:
+                        self.merge_event_changes(
+                            live_messages[row["message_id"]], prior_messages[row["message_id"]], row
                         )
-                current.setdefault("processed_events", []).append(event["id"])
+                if event["id"] not in current.setdefault("processed_events", []):
+                    current["processed_events"].append(event["id"])
                 cursor = max(int(seq) if seq is not None else 0, self.pending_seq.pop(sid, 0))
                 if cursor:
                     current["last_event_seq"] = max(int(current.get("last_event_seq", 0)), cursor)

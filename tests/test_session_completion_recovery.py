@@ -263,6 +263,7 @@ async def test_recovered_ack_settles_all_inputs_before_releasing_admission(
                 "session_id": "s",
                 "call_id": "continuation",
                 "tool": "get_item",
+                "input": {"item_id": "i"},
                 "status": "DONE",
                 "native_turn_message_id": "lost",
                 "native_turn_retry_count": 0,
@@ -308,8 +309,9 @@ async def test_recovered_ack_settles_all_inputs_before_releasing_admission(
 
 @pytest.mark.integration
 @pytest.mark.parametrize("backend", ["memory", pytest.param("postgres", marks=pytest.mark.postgres)])
+@pytest.mark.parametrize("ack_before_reload", [False, True])
 async def test_event_reload_cannot_overwrite_ack_of_message_absent_from_initial_snapshot(
-    backend, postgres_template, monkeypatch
+    backend, postgres_template, monkeypatch, ack_before_reload
 ):
     async with fixture_repo(backend, postgres_template) as repo:
         await seed(repo)
@@ -382,10 +384,30 @@ async def test_event_reload_cannot_overwrite_ack_of_message_absent_from_initial_
                     await tool_started.wait()
                     send_task = asyncio.create_task(service.send_message(payload))
                     await message_posted.wait()
+                    if ack_before_reload:
+                        release_ack.set()
+                        await send_task
                     release_tool.set()
                     await stale_reload.wait()
                     release_ack.set()
                     await send_task
+                    async with repo.lock("session:s"):
+                        concurrent = await original_get("ops.agent_sessions", "s")
+                        concurrent["message_log"][0].update(
+                            retry_count=1,
+                            turn_status="DONE",
+                            remote_event_id="input-root-retry",
+                            native_input_attempts={"input-root": 0, "input-root-retry": 1},
+                        )
+                        concurrent["native_execution_receipts"] = {
+                            "concurrent-end": idle("concurrent-end", "input-root-retry")
+                        }
+                        concurrent["superseded_native_inputs"] = {
+                            "input-root": {"reason": "TURN_FAILED_AND_RETRIED"}
+                        }
+                        concurrent["processed_events"] = ["concurrent-event"]
+                        concurrent["runtime_status"] = "IDLE"
+                        await repo.put("ops.agent_sessions", "s", concurrent)
                     acknowledged = await original_get("ops.agent_sessions", "s")
                     accepted = next(
                         row for row in acknowledged["message_log"] if row["message_id"] == sha256(payload)
@@ -401,7 +423,11 @@ async def test_event_reload_cannot_overwrite_ack_of_message_absent_from_initial_
                 assert row["sent_at"] == accepted["sent_at"]
                 assert row["native_input_attempts"] == {"input-new": 0}
                 assert current["messages"] == ["root", sha256(payload)]
-                assert current["processed_events"] == ["old-tool"]
+                assert current["processed_events"] == ["concurrent-event", "old-tool"]
+                assert current["message_log"][0] == acknowledged["message_log"][0]
+                assert current["native_execution_receipts"] == acknowledged["native_execution_receipts"]
+                assert current["superseded_native_inputs"] == acknowledged["superseded_native_inputs"]
+                assert current["runtime_status"] == "IDLE"
                 assert current["last_event_seq"] == 17
                 assert (await original_get("ops.tool_calls", "s:old-tool"))["remote_event_id"] == "input-tool"
                 assert [json.loads(request.content)["events"][0]["type"] for request in requests] == [
