@@ -20,6 +20,7 @@ from pydantic import JsonValue
 from tank.contracts.configuration import Thresholds
 from tank.contracts.http_policy import HttpRefused
 from tank.contracts.provenance import ResolvedVersionIdentity
+from tank.contracts.source_checks import SavedSourceHealth, SourceCheckResult
 from tank.contracts.source_errors import AccountEntryError, SourceEntryError, parse_entry_error
 from tank.contracts.source_items import CapturedItem, SourceItem, SourceText, captured_item
 from tank.contracts.source_reports import (
@@ -371,35 +372,37 @@ class SourceService:
         )
         return bool(re.search(r"\b(?:trust|etf)\b", value)) and bool(crypto_context)
 
-    async def check(self, *, probe=False, check_accounts=False):
+    async def check(self, *, probe: bool = False, check_accounts: bool = False) -> list[SourceCheckResult]:
+        results: list[SourceCheckResult] = []
         if probe:
             from tank.sources.probe import probe_feeds
 
-            results = await probe_feeds(self)
+            results.extend(await probe_feeds(self))
         else:
-            results = await self._saved_health()
+            results.extend(await self._saved_health())
         if check_accounts:
             results.extend(await self._account_checks())
         return results
 
-    async def _saved_health(self):
-        results = []
+    async def _saved_health(self) -> list[SavedSourceHealth]:
+        results: list[SavedSourceHealth] = []
         for sid, source in self.sources.items():
             states = [
                 await self.repo.get("ops.source_checkpoints", f"{sid}:{i}")
                 for i, _ in enumerate(source.feeds)
             ]
             results.append(
-                {
-                    "source_id": sid,
-                    "configured": bool(source.feeds),
-                    "states": states,
-                    "status": "DEGRADED"
-                    if any(s and s.get("status") == "DEGRADED" for s in states)
+                SavedSourceHealth(
+                    source_id=sid,
+                    configured=bool(source.feeds),
+                    states=states,
+                    status="DEGRADED"
+                    if any(state is not None and state.get("status") == "DEGRADED" for state in states)
                     else "HEALTHY"
-                    if states and all(state and state.get("status") == "HEALTHY" for state in states)
+                    if states
+                    and all(state is not None and state.get("status") == "HEALTHY" for state in states)
                     else "UNVERIFIED",
-                }
+                )
             )
         return results
 

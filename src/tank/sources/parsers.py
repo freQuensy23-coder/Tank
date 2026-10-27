@@ -5,22 +5,28 @@ import re
 from collections.abc import Mapping
 from datetime import UTC, datetime
 from email.utils import parsedate_to_datetime
+from math import isfinite
+from typing import Self
 from urllib.parse import urljoin, urlsplit
 
 import feedparser
-from pydantic import JsonValue
+from pydantic import ConfigDict, Field, JsonValue, field_validator, model_validator
 from selectolax.parser import HTMLParser
 
+from tank.contracts import DomainModel
 from tank.contracts.json import decode_unique_json
+from tank.contracts.scalars import FalseFlag, OneInt, TrueFlag, ZeroInt
 from tank.contracts.source_envelopes import bybit_announcement_success
-from tank.contracts.source_items import discovered_item
+from tank.contracts.source_errors import DigestEntryError, DocumentEntryError, EntryIdentity
+from tank.contracts.source_items import DiscoveryEnvelope, discovered_item
+from tank.contracts.source_parsing import ParsedDiscoveryBatch, PublisherEntryIdentity
 from tank.contracts.sources import FeedParsingSpec
 from tank.sources.instrument_adapters import parse_instrument_page
 from tank.time_precision import Timestamp
 from tank.util import EpochUnit, iso, parse_epoch, parse_utc_time, sha256
 
 
-def text(html):
+def text(html: str | bytes | None) -> str:
     if isinstance(html, bytes):
         html = html.decode("utf-8", errors="replace")
     tree = HTMLParser(str(html or ""))
@@ -103,14 +109,14 @@ ENTRY_IDENTITY_FIELDS = {
 }
 
 
-def entry_identity(entry):
-    """Stable digest and a short readable identity of a wire entry that did not become an item."""
+def entry_identity(entry: JsonValue) -> PublisherEntryIdentity:
+    """Keep the actual wire-entry digest separate from short presentation labels."""
     fields = (
-        {str(k): v for k, v in dict(entry).items() if not str(k).endswith("_parsed")}
+        {key: value for key, value in entry.items() if not key.endswith("_parsed")}
         if isinstance(entry, dict)
         else entry
     )
-    identity = {}
+    identity: dict[str, JsonValue] = {}
     if isinstance(fields, dict):
         for label, names in ENTRY_IDENTITY_FIELDS.items():
             for name in names:
@@ -118,7 +124,7 @@ def entry_identity(entry):
                 if isinstance(value, (str, int)) and not isinstance(value, bool) and str(value).strip():
                     identity[label] = " ".join(str(value).split())[:300]
                     break
-    return {"entry_sha256": sha256(fields), "entry": identity}
+    return PublisherEntryIdentity(entry_sha256=sha256(fields), entry=EntryIdentity.model_validate(identity))
 
 
 def _feed_spec(feed: FeedParsingSpec | Mapping[str, JsonValue]) -> FeedParsingSpec:
@@ -130,49 +136,135 @@ def _feed_spec(feed: FeedParsingSpec | Mapping[str, JsonValue]) -> FeedParsingSp
     )
 
 
-def feeds(payload, source_id, feed):
+def _feed_sdk_metadata(value: object) -> JsonValue:
+    """Preserve SDK tuple metadata in the same JSON form used by existing entry digests."""
+    if value is None or isinstance(value, (str, bool, int)):
+        return value
+    if isinstance(value, float):
+        if not isfinite(value):
+            raise ValueError("Feed SDK metadata contains a nonfinite number")
+        return value
+    if isinstance(value, (list, tuple)):
+        return [_feed_sdk_metadata(child) for child in value]
+    if isinstance(value, dict):
+        record: dict[str, JsonValue] = {}
+        for key, child in value.items():
+            if not isinstance(key, str):
+                raise ValueError("Feed SDK metadata requires string keys")
+            record[key] = _feed_sdk_metadata(child)
+        return record
+    raise ValueError("Feed SDK metadata contains an unsupported value")
+
+
+class _FeedSdkDocument(DomainModel):
+    model_config = ConfigDict(extra="ignore")
+
+    version: str | None
+    bozo: FalseFlag | TrueFlag | ZeroInt | OneInt
+    bozo_exception: str | None = None
+    entries: list[dict[str, JsonValue]]
+
+    @model_validator(mode="after")
+    def actual_malformed_diagnostic(self) -> Self:
+        if self.bozo and self.bozo_exception is None:
+            raise ValueError("Malformed feed SDK result lacks its actual exception diagnostic")
+        return self
+
+    @field_validator("bozo_exception", mode="before")
+    @classmethod
+    def actual_sdk_exception(cls, value: object) -> object:
+        return str(value) if isinstance(value, BaseException) else value
+
+    @field_validator("entries", mode="before")
+    @classmethod
+    def exclude_derived_sdk_time_structs(cls, value: object) -> object:
+        if not isinstance(value, list):
+            return value
+        return [
+            _feed_sdk_metadata({key: item for key, item in row.items() if not str(key).endswith("_parsed")})
+            if isinstance(row, dict)
+            else row
+            for row in value
+        ]
+
+
+class _FeedContent(DomainModel):
+    model_config = ConfigDict(extra="ignore")
+
+    value: str
+
+
+class _FeedTag(DomainModel):
+    model_config = ConfigDict(extra="ignore")
+
+    term: str | None = None
+
+
+class _FeedEntry(DomainModel):
+    model_config = ConfigDict(extra="ignore")
+
+    id: str | None = None
+    guid: str | None = None
+    link: str = ""
+    title: str = ""
+    summary: str = ""
+    content: list[_FeedContent] = Field(default_factory=list)
+    published: str | None = None
+    updated: str | None = None
+    tags: list[_FeedTag] = Field(default_factory=list)
+
+
+def feeds(
+    payload: bytes | str, source_id: str, feed: FeedParsingSpec | Mapping[str, JsonValue]
+) -> ParsedDiscoveryBatch:
     feed = _feed_spec(feed)
-    parsed = feedparser.parse(payload)
+    parsed = _FeedSdkDocument.model_validate(feedparser.parse(payload))
     if not parsed.version:
         raise ValueError("Invalid feed: no RSS or Atom document")
     if parsed.bozo and not parsed.entries:
         raise ValueError(f"Invalid feed: {parsed.bozo_exception}")
-    result = ParsedRows(wire_count=len(parsed.entries))
+    discoveries: list[DiscoveryEnvelope] = []
+    errors: list[DigestEntryError | DocumentEntryError] = []
     if parsed.bozo:
-        result.errors.append({"reason": "MALFORMED_FEED_DOCUMENT", "error": str(parsed.bozo_exception)})
-    for index, e in enumerate(parsed.entries):
-        link = e.get("link", "")
-        body = "\n".join(c.get("value", "") for c in e.get("content", [])) or e.get("summary", "")
-        key = link if source_id == "S23" else e.get("id") or e.get("guid") or link
-        if not key:
-            result.errors.append(
-                {"entry_index": index, "reason": "ENTRY_WITHOUT_ID_OR_URL", **entry_identity(e)}
-            )
-            continue
-        row = {
-            "external_id": key,
-            "title": text(e.get("title", "")),
-            "text": text(body),
-            "url": link,
-            **timestamp_fields(dict(e).get("published")),
-            **(timestamp_fields(dict(e)["updated"], "source_updated_at") if dict(e).get("updated") else {}),
-            "categories": [t.get("term") for t in e.get("tags", [])],
-            "subtype": feed.subtype or ("commits" if "/commits/" in feed.url else "releases"),
-        }
+        errors.append(DocumentEntryError(reason="MALFORMED_FEED_DOCUMENT", error=parsed.bozo_exception))
+    for index, original in enumerate(parsed.entries):
+        identity = entry_identity(original)
         try:
-            discovered_item(source_id, row)
+            entry = _FeedEntry.model_validate(original)
+            key = entry.link if source_id == "S23" else entry.id or entry.guid or entry.link
+            if not key:
+                errors.append(
+                    DigestEntryError(
+                        entry_index=index,
+                        reason="ENTRY_WITHOUT_ID_OR_URL",
+                        entry_sha256=identity.entry_sha256,
+                        entry=identity.entry,
+                    )
+                )
+                continue
+            body = "\n".join(content.value for content in entry.content) or entry.summary
+            row: dict[str, JsonValue] = {
+                "external_id": key,
+                "title": text(entry.title),
+                "text": text(body),
+                "url": entry.link,
+                **timestamp_fields(entry.published),
+                **(timestamp_fields(entry.updated, "source_updated_at") if entry.updated else {}),
+                "categories": [tag.term for tag in entry.tags],
+                "subtype": feed.subtype or ("commits" if "/commits/" in feed.url else "releases"),
+            }
+            discoveries.append(discovered_item(source_id, row))
         except ValueError as exc:
-            result.errors.append(
-                {
-                    "entry_index": index,
-                    "reason": "INVALID_PUBLISHER_ENTRY",
-                    "error": str(exc),
-                    **entry_identity(e),
-                }
+            errors.append(
+                DigestEntryError(
+                    entry_index=index,
+                    reason="INVALID_PUBLISHER_ENTRY",
+                    error=str(exc),
+                    entry_sha256=identity.entry_sha256,
+                    entry=identity.entry,
+                )
             )
-            continue
-        result.append(row)
-    return result
+    return ParsedDiscoveryBatch(discoveries=discoveries, errors=errors, wire_count=len(parsed.entries))
 
 
 def publisher_cms_entries(payload):
