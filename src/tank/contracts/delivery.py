@@ -5,7 +5,7 @@ from contextlib import AbstractAsyncContextManager
 from decimal import Decimal, InvalidOperation
 from typing import Annotated, Literal, Protocol, Self
 
-from pydantic import Field, JsonValue, field_validator
+from pydantic import ConfigDict, Field, JsonValue, field_validator, model_validator
 
 from tank.contracts import DomainModel
 from tank.contracts.progress import ProgressStage
@@ -170,6 +170,8 @@ class OpsEventView(DomainModel):
 
 
 class OpsAssessmentView(OpsPresentationClocks):
+    model_config = ConfigDict(**DomainModel.model_config, validate_by_name=True)
+
     classification: str | None = Field(default=None, alias="class")
     class_reasons: list[str] | None = None
 
@@ -192,11 +194,20 @@ class OpsAlertView(OpsPresentationClocks):
 class OpsDeliveryView(OpsPresentationClocks):
     status: Literal["GENERATED", "FAILED", "SENT"]
     terminal: bool | None = None
-    attempt: int | None = Field(default=None, ge=1)
+    attempt: int | None = Field(default=None, ge=0)
+    suppressed: bool | None = None
     http_status: int | None = Field(default=None, ge=100, le=599)
     error: str | None = None
     chat_id: str | None = None
     message_ref: MessageReference | None = None
+
+    @model_validator(mode="after")
+    def actual_receipt_phase(self) -> Self:
+        if self.attempt == 0 and (self.status != "FAILED" or self.suppressed is not True):
+            raise ValueError("Zero delivery attempts require the recorded suppression phase")
+        if self.status == "SENT" and self.message_ref is None:
+            raise ValueError("Sent Ops publication requires its actual message receipt")
+        return self
 
 
 class OpsObservationView(DomainModel):
@@ -495,7 +506,19 @@ class OpsCardDeliveryState(DomainModel):
 
 
 class DeliveryAttemptOrdinal(DomainModel):
-    attempt: int = Field(ge=1)
+    attempt: int = Field(ge=0)
+    status: Literal["GENERATED", "FAILED", "SENT"] | None = None
+    suppressed: bool | None = None
+
+    @model_validator(mode="after")
+    def declared_zero_phase(self) -> Self:
+        if self.attempt == 0 and (self.status != "FAILED" or self.suppressed is not True):
+            raise ValueError("Zero delivery attempts require the recorded suppression phase")
+        return self
+
+    @classmethod
+    def from_record(cls, record: Mapping[str, JsonValue]) -> Self:
+        return cls.model_validate({name: record[name] for name in cls.model_fields if name in record})
 
 
 class OpsBackoffState(DomainModel):

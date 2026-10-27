@@ -164,12 +164,7 @@ class DeliveryService:
                         "attempt": attempt
                         if attempt is not None
                         else max(
-                            (
-                                DeliveryAttemptOrdinal.model_validate(
-                                    {name: row[name] for name in ("attempt",) if name in row}
-                                ).attempt
-                                for row in ledger
-                            ),
+                            (DeliveryAttemptOrdinal.from_record(row).attempt for row in ledger),
                             default=0,
                         ),
                         **failed_at.fields("at"),
@@ -458,12 +453,7 @@ class DeliveryService:
             )
             attempt = (
                 max(
-                    (
-                        DeliveryAttemptOrdinal.model_validate(
-                            {name: row[name] for name in ("attempt",) if name in row}
-                        ).attempt
-                        for row in ledger
-                    ),
+                    (DeliveryAttemptOrdinal.from_record(row).attempt for row in ledger),
                     default=0,
                 )
                 + 1
@@ -629,12 +619,7 @@ class DeliveryService:
                 return None
             attempt = (
                 max(
-                    (
-                        DeliveryAttemptOrdinal.model_validate(
-                            {name: row[name] for name in ("attempt",) if name in row}
-                        ).attempt
-                        for row in ledger
-                    ),
+                    (DeliveryAttemptOrdinal.from_record(row).attempt for row in ledger),
                     default=0,
                 )
                 + 1
