@@ -13,7 +13,15 @@ from source_support import fixture_request_budgets, source_definition
 from test_storage import repo as repo
 
 from tank.contracts.provenance import ResolvedVersionIdentity
-from tank.contracts.source_reports import SourceReportIntent, SourceReportLedger, SourceReportOutcome
+from tank.contracts.source_reports import (
+    SourceReportIntent,
+    SourceReportLedger,
+    SourceReportMarkerReference,
+    SourceReportOutcome,
+    SourceReportRecorded,
+    SourceReportScope,
+    source_report_notice_id,
+)
 from tank.models import Record
 from tank.settings import Settings
 from tank.sources import SourceService
@@ -381,5 +389,62 @@ async def test_concurrent_acquisitions_commit_intents_and_one_actual_report(
             assert requests == [OLD, OLD]
             await first.close()
             await second.close()
+    finally:
+        await budgets.shutdown()
+
+
+@pytest.mark.parametrize("invalid", ["UNBACKED", "FOREIGN_SCOPE"])
+async def test_model_only_or_foreign_confirmation_cannot_acknowledge_report_intent(
+    repo: StorageBackend,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    invalid: Literal["UNBACKED", "FOREIGN_SCOPE"],
+) -> None:
+    budgets = fixture_request_budgets()
+    settings = ReportSettings(data_dir=tmp_path, ops_progress_enabled=True)
+
+    async def unsupported_confirmation(intent: SourceReportIntent) -> SourceReportOutcome:
+        scope = intent.subject.scope
+        if invalid == "FOREIGN_SCOPE":
+            scope = SourceReportScope(source_id="S15", feed_url=scope.feed_url)
+        notice_id = source_report_notice_id(scope, intent.error_keys)
+        return SourceReportRecorded(
+            kind="RECORDED",
+            scope=scope,
+            notice_id=notice_id,
+            markers=[
+                SourceReportMarkerReference(
+                    error_key=key,
+                    marker_id="entry_error_" + key,
+                    notice_id=notice_id,
+                    marker_sha256="a" * 64,
+                    notice_sha256="b" * 64,
+                )
+                for key in intent.error_keys
+            ],
+        )
+
+    try:
+        async with httpx.AsyncClient(
+            transport=httpx.MockTransport(lambda request: httpx.Response(200, content=BROKEN))
+        ) as http:
+            service = SourceService(repo, settings, http=http, budgets=budgets, versions=versions("unbacked"))
+            bind(service, OLD, "Original publisher")
+            with monkeypatch.context() as invalid_sink:
+                invalid_sink.setattr(service, "report_error_intent", unsupported_confirmation)
+                await service.poll_once("S30")
+            state = await repo.get("ops.source_checkpoints", "S30:0")
+            assert state is not None
+            ledger = SourceReportLedger.model_validate(state["entry_error_reporting"])
+            assert len(ledger.pending) == 1 and ledger.last_outcome is None
+            assert await repo.list("out.ops_notices") == []
+            assert await repo.list("ops.jobs", filters={"type": "DELIVER"}) == []
+            await service.poll_once("S30")
+            state = await repo.get("ops.source_checkpoints", "S30:0")
+            assert state is not None
+            assert SourceReportLedger.model_validate(state["entry_error_reporting"]).pending == {}
+            assert len(await repo.list("out.ops_notices", filters={"kind": "ENTRY_ERRORS"})) == 1
+            assert len(await repo.list("ops.jobs", filters={"type": "DELIVER"})) == 1
+            await service.close()
     finally:
         await budgets.shutdown()
