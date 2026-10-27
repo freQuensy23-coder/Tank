@@ -111,7 +111,9 @@ async def seed_failed_delivery(repo, notice, clock):
         **clock.fields("finished_at"),
         **clock.fields("delivery_failure_recorded_at"),
     )
-    original = await repo.put("ops.jobs", original["job_id"], original)
+    await repo.put("ops.jobs", original["job_id"], original)
+    original = await repo.get("ops.jobs", original["job_id"])
+    assert original is not None
     await repo.put("out.deliveries", "original_parent", parent_receipt(notice_id), immutable=True)
     return original
 
