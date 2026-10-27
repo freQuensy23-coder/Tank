@@ -187,9 +187,7 @@ def test_unresolved_launch_cannot_create_a_second_container(
         ch.start(launch.owner)
 
 
-def test_identity_change_after_logs_refuses_removal(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_identity_change_after_logs_refuses_removal(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     launch = intent(tmp_path)
     ch.write_owned(launch.owner.directory() / ch.INTENT, launch)
     calls: list[list[str]] = []
