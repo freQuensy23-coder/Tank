@@ -1251,7 +1251,6 @@ class TelegramInbox:
                 "TERMINATED": TERMINATED_TEXT,
                 "ARCHIVED": ARCHIVED_TEXT,
             }.get(status, FAILED_TEXT)
-        parts = formatted_chunks(text) if status == "ANSWERED" else [(part, []) for part in chunks(text)]
         ledger = [
             row
             async for row in self.repo.iter_all(
@@ -1259,6 +1258,19 @@ class TelegramInbox:
             )
             if row.get("purpose") == "ANSWER" and row.get("chunk") is not None
         ]
+        async with self.repo.lock("question:" + question["question_id"]):
+            question = await self.repo.get("out.user_questions", question["question_id"])
+            plan = question.get("answer_delivery_plan")
+            if plan is None:
+                parts = (
+                    formatted_chunks(text)
+                    if status == "ANSWERED" and not ledger
+                    else [(part, []) for part in chunks(text)]
+                )
+                plan = [{"text": part, "entities": entities} for part, entities in parts]
+                question["answer_delivery_plan"] = plan
+                await self.repo.put("out.user_questions", question["question_id"], question)
+        parts = [(part["text"], part["entities"]) for part in plan]
         previous = question.get("reply_to_message_id")
         for index, (part, entities) in enumerate(parts):
             rows = [row for row in ledger if row["chunk"] == index]
