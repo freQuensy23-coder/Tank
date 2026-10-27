@@ -61,8 +61,10 @@ async def test_cli_failure_closes_actual_owned_pool_and_constructed_http_client(
                 clients = array_field(report, "client_closed")
                 assert len(pools) == len(clients) == 1
                 assert pools[0] is True and clients[0] is True, {
-                    "resources": report,
+                    "pool_closed": pools,
+                    "constructed_http_client_closed": clients,
                     "owned_pg_sessions": remaining,
+                    "callback_count": callbacks,
                 }
                 async with asyncio.timeout(5):
                     while remaining:
