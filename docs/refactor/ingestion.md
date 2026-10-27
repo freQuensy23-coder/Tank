@@ -1994,3 +1994,112 @@ SourceService 4, probe 2, parsers 22 and polling 7 missing signatures; new repor
 adapter, reporter and contracts have none. Those inventories include actual body/
 required-fact/layer work, not permission for opaque mapping annotations or blanket
 waivers. The report head is held immutable for the parent's next coherent batch.
+
+## Explicit historical recovery command and pure eligibility — 2026-10-27
+
+The historical recovery writer now has an explicit operator entry point:
+`reaction-recover ORIGINAL_JOB_ID --source-backfill-id SOURCE_BACKFILL_ID`.
+It performs no scan or automatic repair. Both actual witness identities are
+required before resource creation; captured configuration versions, the actual
+replay mode and current collection clock are passed through the existing owned
+CLI resource composition. Unsupported replay remains UNRESOLVED. Only the
+closed writer outcome is serialized at the CLI boundary. No production command
+was invoked.
+
+Pure recovery eligibility moved unchanged into reaction_recovery_policy.py;
+transactional witness admission, locking, enqueue and immutable linking remain
+in the application adapter. External AST equality records the relocation;
+fresh-process behavioral controls execute actual refusal decisions while
+physical/runtime modules are unavailable. No infrastructure import-only test
+is used as behavioral evidence.
+
+Immutable 4e59411a normally includes the qualified CLI helper 4e2855b5.
+All 107 selected units passed in 7.39 seconds (zero skips, p90 0.005 seconds,
+maximum 1.297 seconds). All 14 selected integration cases passed in 13.24
+seconds, including actual CLI resource ownership, PostgreSQL queue/link
+creation and repeat-call idempotence, original bytes unchanged, and actual
+1800-second delay/six-hour TTL. Strict new caller/policy targets and direct
+CLI default checking with silent followed imports pass, as do Ruff and source
+comment policy. Whole CLI closure remains foundation-owned; ordinary recursive
+checking still exposes the existing Truth cache annotation dependency.
+
+The earlier bab11 integration attempt never reached pytest: its exact owned
+Docker init process was absent despite daemon RUNNING state. The full inspect,
+labels, argv and wrapper ancestry are retained in
+recovery-policy-bab1-setup-refusal.json. Only that verified wrapper and stale
+container were ended; no volume, service or peer process changed. This setup
+failure is preserved separately from the qualified new caller gate.
+
+## Validated final source-report notice phase — 2026-10-27
+
+Entry-error rendering now consumes EntryErrorRenderContent, containing only
+actual notice identity/source/feed/observation/errors. It has no placeholder
+text or later-phase delivery fields. The final EntryErrorNotice is constructed
+once from actual rendered text and actual optional document references;
+production no longer uses unchecked model_copy to fill text or manifest.
+EntryErrorNotice.storage_record revalidates the admitted instance before
+serialization, retaining the existing error field-presence serialization and
+omitted manifest semantics. Public notice/readback fields, marker keys,
+deduplication, raw evidence and Delivery's consumed document projection stay
+unchanged.
+
+Tested immutable d06641c7 normally follows the qualified recovery caller.
+All 63 selected units passed in 11.49 seconds (zero skips, p90 0.345 seconds,
+maximum 1.444 seconds); all 21 selected actual integration cases passed in
+15.73 seconds, zero skips. New actual Memory/PostgreSQL controls show invalid
+rendered output rolls back marker/notice/job writes, then a real successful
+retry and duplicate retain the same notice and single delivery job. A tampered
+admitted notice refuses storage without changing the original. Existing report
+restart/acknowledgement/version/dedup and X document assertions remain intact.
+Strict three-target source/new-test checking, Ruff, formatting, source comment
+policy and diff checks pass. Evidence prefix: notice-phase-d066-linux.
+
+The required-content follow-up at tested 79ee1c10 traces the sole real render
+caller to SourceReportSubject/SourceDefinition's nonempty source name and
+SourceReportRequest's nonempty error list, after fresh-key dedup has retained
+at least one error. EntryErrorRenderContent now requires those same facts;
+render no longer substitutes an empty source name or branches around an empty
+error list. A per-error missing payload digest remains genuinely optional.
+All 61 affected units passed in 10.29 seconds (zero skips, p90 0.308 seconds,
+maximum 1.453 seconds), and all 19 selected actual cases passed with zero skips.
+The original report text, dedup, document and rollback assertions remain.
+Evidence prefix: notice-required-linux. Strict three-target, Ruff/format,
+source comment and diff checks pass; no parent or production operations.
+
+## Literal HTTP feed admission — 2026-10-27
+
+An actual SourceService/MemoryRepository/MockTransport reproduction confirmed a
+provenance defect: an HTTP 200 body containing only an owned temporary RSS
+filename was interpreted by feedparser as a local resource. The service emitted
+HEALTHY/items=1 with a local-only title, while raw_sha256 identified the pathname
+HTTP bytes rather than the XML used to produce that title. Only an authored
+temporary file was read; no personal/system file, credential or live URL was
+used. Original failure evidence remains source-feed-file-repro.py/.log.
+
+The pinned feedparser 6.0.14 input contract accepts resource names as well as
+literal data; its [official API source](https://github.com/kurtmckee/feedparser/blob/main/feedparser/api.py)
+warns callers to wrap untrusted data in memory streams. The installed module
+hash and dispatch coordinates are retained in
+feedparser-6.0.14-input-contract.json. The production fix is exactly BytesIO
+admission around existing str/bytes payloads before calling that SDK. Captured
+bytes remain unchanged, and existing text inputs keep their prior UTF-8
+encoding. No publication clock, provider envelope, fallback/default, schema or
+source policy was changed.
+
+Tested immutable 747d4ff1 passes all 115 selected units in 8.09 seconds (zero
+skips, p90 0.150 seconds, maximum 0.516 seconds) and all 22 selected actual
+integration cases in 10.71 seconds, zero skips. New actual Memory/PostgreSQL
+caller controls forbid SDK-only file/network reads, preserve the observed
+HTTP status/hash and owned file, and require zero items/jobs/raw item archives
+for pathname/URL bodies. A genuine XML response still creates its source item,
+exact archived HTTP bytes and one bound FILTER_ITEM job. The initial new test
+incorrectly expected retired NEW_ITEM; its 114-pass/one-failure run is retained,
+and only that authored queue-kind oracle was corrected from the actual writer.
+The unchanged original application reproduction now passes with DEGRADED,
+items=0 and no retained item (source-feed-file-fixed.log).
+
+The new caller test is independently strict-clean; direct default parser mypy,
+Ruff, formatting, source-comment policy and diff checks pass. Whole parser
+contract migration remains separate and held at becdfa7e; it is not part of
+this narrow fix. Evidence prefixes are feed-stream-5675-linux and
+feed-stream-corrected-linux. No production operation occurred.

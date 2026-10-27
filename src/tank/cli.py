@@ -4,7 +4,7 @@ import asyncio
 import json
 import signal
 import sys
-from collections.abc import Awaitable
+from collections.abc import Awaitable, Callable
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -24,21 +24,26 @@ from tank.contracts.sources import SourceApiLimitsConfiguration, SourceConfigura
 from tank.logging import configure_logging
 from tank.settings import Settings, configured_values, resolve_versions
 from tank.time_precision import collection_clock
-from tank.util import iso, jsonable, new_id
+from tank.util import JsonInput, iso, jsonable, new_id
 
 if TYPE_CHECKING:
-    from tank.storage import Repository
+    from tank.storage import PostgresRepository, Repository
 
 
 GIL_SWITCH_INTERVAL_S = 0.0005
 
 
-def output(value):
+def output(value: JsonInput) -> None:
     click.echo(json.dumps(jsonable(value), ensure_ascii=False, indent=2))
 
 
-def run_db(fn, *, database_url=None, replay=False):
-    async def execute():
+def run_db[T: JsonInput](
+    fn: Callable[["PostgresRepository", Settings], Awaitable[T]],
+    *,
+    database_url: str | None = None,
+    replay: bool = False,
+) -> None:
+    async def execute() -> T:
         from tank.storage import PostgresRepository
 
         settings = resolve_versions(Settings())
@@ -331,6 +336,33 @@ def review_label(subject, label, miss_reason, notes, reviewer, version):
             },
             immutable=True,
         )
+
+    run_db(command)
+
+
+@main.command("reaction-recover")
+@click.argument("original_job_id")
+@click.option("--source-backfill-id", required=True)
+def reaction_recover(original_job_id: str, source_backfill_id: str) -> None:
+    """Request one evidence-gated recovery generation for an explicit historical job."""
+    from tank.contracts.reaction_recovery import ReactionRecoveryCommand, ReactionRecoveryExecution
+    from tank.reaction_recovery import ReactionRecovery
+
+    try:
+        request = ReactionRecoveryCommand(
+            original_job_id=original_job_id, source_backfill_id=source_backfill_id
+        )
+    except ValueError:
+        raise click.UsageError("Recovery requires nonblank job and source backfill identities") from None
+
+    async def command(repo: "PostgresRepository", settings: Settings) -> JsonValue:
+        recovery = ReactionRecovery(
+            repo,
+            execution=ReactionRecoveryExecution(versions=settings.require_versions(), replay=settings.replay),
+            clock=collection_clock,
+        )
+        outcome = await recovery.recover(request)
+        return outcome.model_dump(mode="json")
 
     run_db(command)
 
