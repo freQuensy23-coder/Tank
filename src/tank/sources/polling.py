@@ -19,6 +19,7 @@ import httpx
 from pydantic import JsonValue
 
 import tank.sources.parsers as parsers
+from tank.contracts.json import decode_unique_json
 from tank.contracts.provenance import ResolvedVersionIdentity
 from tank.contracts.source_checkpoints import (
     INSTRUMENT_BASELINE_ARCHIVES,
@@ -35,14 +36,24 @@ from tank.contracts.source_checkpoints import (
 )
 from tank.contracts.source_errors import SourceEntryError
 from tank.contracts.source_items import (
+    ArticleDiscovery,
+    ArticleLinkListing,
+    BoundArticleLink,
+    DiscoveredItem,
     DiscoveryEnvelope,
+    DiscoveryObservation,
+    GovernanceDiscovery,
+    PendingArticleLink,
     PendingSourceItem,
+    PendingSourceRow,
+    PublisherCMSRecovery,
     RawSourceReference,
     SourceText,
     captured_item,
     discovered_item,
     parse_source_item,
 )
+from tank.contracts.source_parsing import BinanceArticleDetailReply
 from tank.contracts.source_reports import (
     SourceReportIntent,
     SourceReportMode,
@@ -76,7 +87,7 @@ from tank.sources.checkpoints import (
     decode_pending_checkpoint,
     pending_coverage,
 )
-from tank.sources.fetch import FetchedContent, FetchResult, NotModified
+from tank.sources.fetch import FetchedContent, FetchEvidence, FetchResult, NotModified
 from tank.sources.http_client import RequestStarted
 from tank.sources.instrument_adapters import parse_instrument_page
 from tank.sources.instruments import InstrumentPage, instrument_changes
@@ -234,7 +245,7 @@ class SourcePoller:
         key: str,
         source: SourceDefinition,
         feed: SourceFeed,
-        rows: Sequence[DiscoveryEnvelope | Mapping[str, JsonValue | bytes]],
+        rows: Sequence[DiscoveryEnvelope | ArticleLinkListing | Mapping[str, JsonValue | bytes]],
         kind: FeedKind,
         coverage: Mapping[str, JsonValue],
         acquired_at: str,
@@ -244,10 +255,24 @@ class SourcePoller:
         checkpoint = await self.pending(source, key, current)
         pending = checkpoint.pending_external_ids()
         duplicates = SourceDuplicateCache.from_document(current)
-        fresh: list[PendingSourceItem] = []
+        fresh: list[PendingSourceRow] = []
         for original in rows:
-            envelope = original if isinstance(original, DiscoveryEnvelope) else discovered_item(sid, original)
-            material = envelope.discovery
+            material: DiscoveredItem | BoundArticleLink
+            if isinstance(original, ArticleLinkListing):
+                envelope = None
+                material = BoundArticleLink(
+                    source_id=sid,
+                    external_id=original.external_id,
+                    url=original.url,
+                    title=original.title,
+                    publisher_cms_identity=original.publisher_cms_identity,
+                    publisher_cms_slug_url=original.publisher_cms_slug_url,
+                )
+            else:
+                envelope = (
+                    original if isinstance(original, DiscoveryEnvelope) else discovered_item(sid, original)
+                )
+                material = envelope.discovery
             if material.source_id != sid:
                 raise ValueError("Discovery source identity conflicts with its configured source")
             external = material.external_id
@@ -257,31 +282,45 @@ class SourcePoller:
                 or await svc.observe_known(sid, external, feed.url)
             ):
                 continue
-            if sid == "S02" and not svc.filing_matches(material):
-                continue
+            if sid == "S02":
+                if isinstance(material, BoundArticleLink):
+                    raise ValueError("SEC filing admission requires the reported filing text")
+                if not svc.filing_matches(material):
+                    continue
             item_id = new_id("item")
             observed_at = (
                 envelope.observation.observed_at
-                if envelope.observation.observed_at is not None
+                if envelope is not None and envelope.observation.observed_at is not None
                 else acquired_at
             )
             raw = None
             if not self.needs_detail(sid, kind):
-                if envelope.payload is None:
+                if envelope is None or envelope.payload is None:
                     raise ValueError("Source discovery has no raw response bytes")
                 raw_ref, raw_sha256 = svc.raw(
                     envelope.payload, source_id=sid, item_id=item_id, observed_at=observed_at
                 )
                 raw = RawSourceReference(raw_ref=raw_ref, raw_sha256=raw_sha256)
-            row = PendingSourceItem(
-                discovery=material,
-                item_id=item_id,
-                feed=feed.url,
-                observed_at=observed_at,
-                discovery_config_version=svc.versions.config_version,
-                discovery_code_version=svc.versions.code_version,
-                raw=raw,
-            )
+            row: PendingSourceRow
+            if isinstance(material, BoundArticleLink):
+                row = PendingArticleLink(
+                    discovery=material,
+                    item_id=item_id,
+                    feed=feed.url,
+                    observed_at=observed_at,
+                    discovery_config_version=svc.versions.config_version,
+                    discovery_code_version=svc.versions.code_version,
+                )
+            else:
+                row = PendingSourceItem(
+                    discovery=material,
+                    item_id=item_id,
+                    feed=feed.url,
+                    observed_at=observed_at,
+                    discovery_config_version=svc.versions.config_version,
+                    discovery_code_version=svc.versions.code_version,
+                    raw=raw,
+                )
             pending.add(external)
             fresh.append(row)
         batch = SourcePendingBatch(
@@ -295,7 +334,16 @@ class SourcePoller:
         )
         current["pending_batches"] = [*checkpoint.storage_records(), batch.storage_record()]
 
-    async def retain_page(self, key, source, feed, rows, page_state, *, kind="json"):
+    async def retain_page(
+        self,
+        key: str,
+        source: SourceDefinition,
+        feed: SourceFeed,
+        rows: Sequence[DiscoveryEnvelope],
+        receipt: FetchEvidence,
+        *,
+        kind: FeedKind = "json",
+    ) -> None:
 
         async with self.state_change(key):
             current = await self.state(key)
@@ -307,7 +355,7 @@ class SourcePoller:
                 rows,
                 kind,
                 {},
-                page_state["fetched_at"],
+                receipt.fetched_at,
             )
             await self.save(source, key, current)
 
@@ -317,7 +365,14 @@ class SourcePoller:
             current["last_attempt_at"] = self.stamp()
             await self.save(source, key, current)
 
-    async def _fetch_rows(self, source, feed, key, state):
+    async def _fetch_rows(
+        self, source: SourceDefinition, feed: SourceFeed, key: str, state: dict[str, JsonValue]
+    ) -> tuple[
+        list[DiscoveryEnvelope] | list[ArticleLinkListing] | None,
+        dict[str, JsonValue],
+        FeedKind,
+        InstrumentSnapshotUpdate | None,
+    ]:
         svc = self.service
         sid = source.source_id
         kind = feed.kind
@@ -326,19 +381,26 @@ class SourcePoller:
         original_state = deepcopy(state) if sid == "S14" else None
         if sid == "S29":
             accounts = [account.handle.lstrip("@") for account in svc.accounts.values()]
+            cursor_wire = state.get("account_cursors", {})
+            if not isinstance(cursor_wire, dict) or any(
+                not isinstance(value, str) for value in cursor_wire.values()
+            ):
+                raise ValueError("Stored X account cursors require actual string cursor values")
+            x_cursors = {name: value for name, value in cursor_wire.items() if isinstance(value, str)}
             result = await svc.xsensor.posts(
                 feed.url,
                 accounts,
-                state.get("account_cursors", {}),
+                x_cursors,
                 on_start=lambda: self.mark_request_start(source, key),
             )
             state.update(
                 fetched_at=self.stamp(),
-                account_cursors=result.cursors,
+                account_cursors={name: value for name, value in result.cursors.items()},
                 entry_errors=[failure.model_dump(mode="json") for failure in result.failures],
-                history_gap=result.gaps,
+                history_gap=[value for value in result.gaps],
             )
-            return result.rows, state, kind, None
+            x_rows: list[DiscoveryEnvelope] = list(result.rows)
+            return x_rows, state, kind, None
         _http_read = await svc.fetch(
             source,
             feed.request_plan(source.limits),
@@ -448,21 +510,38 @@ class SourcePoller:
                     sha256=digest,
                     versions=svc.versions,
                 )
-            return instrument_rows, state, kind, snapshot_update
+            instrument_discoveries: list[DiscoveryEnvelope] = list(instrument_rows)
+            return instrument_discoveries, state, kind, snapshot_update
         elif kind in {"rss", "atom", "feed"}:
-            rows = await asyncio.to_thread(parsers.feeds, payload, sid, feed)
+            parsed = await asyncio.to_thread(parsers.feeds, payload, sid, feed)
             state["entry_errors"] = [
-                {**error, "payload_sha256": state["payload_sha256"]} for error in rows.errors
+                {
+                    **error.model_dump(mode="json", exclude_unset=True),
+                    "payload_sha256": state["payload_sha256"],
+                }
+                for error in parsed.errors
             ]
-            for row in rows:
-                row["_payload"] = payload
+            rows = [
+                DiscoveryEnvelope(discovery=entry.discovery, observation=entry.observation, payload=payload)
+                for entry in parsed.discoveries
+            ]
         elif kind in ARTICLE_KINDS:
-            rows = await asyncio.to_thread(parsers.article_links, payload, feed)
+            links = await asyncio.to_thread(parsers.article_links, payload, feed)
+            return links, state, kind, snapshot_update
         else:
-            rows, state = await self._json_history(source, feed, key, payload, state)
+            json_rows, state = await self._json_history(source, feed, key, payload, state, _http_read.receipt)
+            return json_rows, state, kind, snapshot_update
         return rows, state, kind, snapshot_update
 
-    async def _json_history(self, source, feed, key, payload, state):
+    async def _json_history(
+        self,
+        source: SourceDefinition,
+        feed: SourceFeed,
+        key: str,
+        payload: bytes,
+        state: dict[str, JsonValue],
+        receipt: FetchEvidence,
+    ) -> tuple[list[DiscoveryEnvelope], dict[str, JsonValue]]:
         """Read newest-first windows back to the last completed identity.
 
         Bootstrap deliberately establishes the configured head window. Later polls
@@ -470,31 +549,44 @@ class SourcePoller:
         exhaustion before a formerly known boundary are explicit gaps.
         """
         svc, sid = self.service, source.source_id
-        rows = []
+        rows: list[DiscoveryEnvelope] = []
         checkpoint = state.get("discovery_checkpoint")
         page_feed = deepcopy(feed)
         page = payload
         page_state = state
         page_fingerprints = set()
-        entry_errors = []
+        entry_errors: list[JsonValue] = []
         offset = 0
         found = False
         exhausted = False
         page_number = int(dict(parse_qsl(urlsplit(feed.url).query)).get("pageNo", 1))
-        last_head_check = parse_time(state["fetched_at"])
+        last_head_check = parse_time(receipt.fetched_at)
         while True:
             parsed = await asyncio.to_thread(parsers.json_items, page, sid)
             entry_errors.extend(
-                {**error, "payload_sha256": page_state["payload_sha256"]} for error in parsed.errors
+                {
+                    **error.model_dump(mode="json", exclude_unset=True),
+                    "payload_sha256": page_state["payload_sha256"],
+                }
+                for error in parsed.errors
             )
 
-            def identity(row):
-                return row.get("proposal_id") if sid == "S24" else row["external_id"]
+            def identity(row: DiscoveryEnvelope) -> str:
+                if sid == "S24":
+                    if not isinstance(row.discovery, GovernanceDiscovery):
+                        raise ValueError("Snapshot acquisition requires a governance discovery")
+                    return row.discovery.proposal_id
+                return row.discovery.external_id
 
             retained = []
-            for row in parsed:
-                row.setdefault("observed_at", page_state["fetched_at"])
-                row["_payload"] = page
+            for entry in parsed.discoveries:
+                row = DiscoveryEnvelope(
+                    discovery=entry.discovery,
+                    observation=DiscoveryObservation.model_validate(
+                        collection_clock(receipt.fetched_at).fields("observed_at")
+                    ),
+                    payload=page,
+                )
                 if identity(row) == checkpoint:
                     found = True
 
@@ -504,11 +596,12 @@ class SourcePoller:
                 rows.append(row)
                 retained.append(row)
             if sid in {"S03", "S09", "S24"}:
-                await self.retain_page(key, source, feed, retained, page_state)
+                await self.retain_page(key, source, feed, retained, receipt)
             if not checkpoint or found or sid not in {"S03", "S09", "S24"}:
                 break
             data = json.loads(page)
-            signature = sha256([identity(row) for row in parsed])
+            signature_values: list[JsonValue] = [identity(row) for row in parsed.discoveries]
+            signature = sha256(signature_values)
             if signature in page_fingerprints:
                 raise ValueError(f"{sid} pagination repeated a page before discovery checkpoint")
             page_fingerprints.add(signature)
@@ -574,14 +667,25 @@ class SourcePoller:
                 last_head_check = self.now()
                 if isinstance(_http_read, FetchedContent):
                     head_state = _http_read.receipt.storage_record()
-                    head_rows = await asyncio.to_thread(parsers.json_items, head, sid)
+                    head_rows = await asyncio.to_thread(parsers.json_items, _http_read.payload, sid)
                     entry_errors.extend(
-                        {**error, "payload_sha256": head_state["payload_sha256"]}
+                        {
+                            **error.model_dump(mode="json", exclude_unset=True),
+                            "payload_sha256": head_state["payload_sha256"],
+                        }
                         for error in head_rows.errors
                     )
-                    for row in head_rows:
-                        row.update(observed_at=head_state["fetched_at"], _payload=head)
-                    await self.retain_page(key, source, feed, head_rows, head_state)
+                    captured_head = [
+                        DiscoveryEnvelope(
+                            discovery=entry.discovery,
+                            observation=DiscoveryObservation.model_validate(
+                                collection_clock(_http_read.receipt.fetched_at).fields("observed_at")
+                            ),
+                            payload=head,
+                        )
+                        for entry in head_rows.discoveries
+                    ]
+                    await self.retain_page(key, source, feed, captured_head, _http_read.receipt)
             _http_read = await svc.fetch(
                 source,
                 page_feed.request_plan(source.limits),
@@ -590,9 +694,10 @@ class SourcePoller:
                 + str(page_number if sid == "S09" else offset if sid == "S24" else sha256(page_feed.url)),
                 persist_http_evidence=False,
             )
-            page = _http_read.payload
             if isinstance(_http_read, NotModified):
                 raise ValueError("Source detail/history returned 304 without retained content") from None
+            page = _http_read.payload
+            receipt = _http_read.receipt.evidence()
             page_state = _http_read.receipt.storage_record()
             if page is None:
                 raise ValueError(f"{sid} history returned 304 without retained page replay")
@@ -607,12 +712,15 @@ class SourcePoller:
         elif found:
             state["history_gap"] = None
         if sid in {"S03", "S09", "S24"} and rows and not (checkpoint and not found and exhausted):
-            state["discovery_checkpoint"] = (
-                rows[0].get("proposal_id") if sid == "S24" else rows[0]["external_id"]
-            )
+            state["discovery_checkpoint"] = identity(rows[0])
         if sid == "S24":
-            pending = state.get("pending_proposals", [])
-            returned_ids = {row["proposal_id"] for row in rows}
+            pending_wire = state.get("pending_proposals", [])
+            if not isinstance(pending_wire, list) or any(
+                not isinstance(value, str) or not value for value in pending_wire
+            ):
+                raise ValueError("Snapshot pending identities require actual nonempty proposal IDs")
+            pending = [value for value in pending_wire if isinstance(value, str)]
+            returned_ids = {identity(row) for row in rows}
             pending_evidence = {}
 
             for start in range(0, len(pending), 1000):
@@ -635,19 +743,29 @@ class SourcePoller:
                 for proposal_id in ids:
                     pending_evidence[proposal_id] = extra_state
                 if extra:
-                    existing = {r["external_id"] for r in rows}
+                    existing = {r.discovery.external_id for r in rows}
                     extra_rows = await asyncio.to_thread(parsers.json_items, extra, sid)
-                    state["entry_errors"].extend(
-                        {**error, "payload_sha256": extra_state["payload_sha256"]}
+                    entry_errors.extend(
+                        {
+                            **error.model_dump(mode="json", exclude_unset=True),
+                            "payload_sha256": extra_state["payload_sha256"],
+                        }
                         for error in extra_rows.errors
                     )
-                    returned_ids.update(row["proposal_id"] for row in extra_rows)
-                    for row in extra_rows:
-                        if row["external_id"] not in existing:
-                            row.update(observed_at=extra_state["fetched_at"], _payload=extra)
-                            rows.append(row)
+                    returned_ids.update(identity(row) for row in extra_rows.discoveries)
+                    for entry in extra_rows.discoveries:
+                        if entry.discovery.external_id not in existing:
+                            rows.append(
+                                DiscoveryEnvelope(
+                                    discovery=entry.discovery,
+                                    observation=DiscoveryObservation.model_validate(
+                                        collection_clock(_http_read.receipt.fetched_at).fields("observed_at")
+                                    ),
+                                    payload=extra,
+                                )
+                            )
             missing = set(pending) - returned_ids
-            state["entry_errors"].extend(
+            entry_errors.extend(
                 {
                     "reason": "PENDING_PROPOSAL_UNAVAILABLE",
                     "proposal_id": proposal_id,
@@ -655,9 +773,16 @@ class SourcePoller:
                 }
                 for proposal_id in sorted(missing)
             )
-            state["pending_proposals"] = sorted(
-                {r["proposal_id"] for r in rows if r["state"] != "closed"} | missing
+            pending_ids = sorted(
+                {
+                    r.discovery.proposal_id
+                    for r in rows
+                    if isinstance(r.discovery, GovernanceDiscovery) and r.discovery.state != "closed"
+                }
+                | missing
             )
+            state["pending_proposals"] = [identity for identity in pending_ids]
+        state["entry_errors"] = entry_errors
         return rows, state
 
     async def acquire(
@@ -681,6 +806,9 @@ class SourcePoller:
                 await self.save(source, key, current)
             try:
                 rows, acquired, kind, snapshot_update = await self._fetch_rows(source, feed, key, state)
+                acquired_clock = acquired.get("fetched_at")
+                if rows is not None and not isinstance(acquired_clock, str):
+                    raise ValueError("Acquired source rows require their actual collection clock")
                 fresh_errors = (
                     self.service.admit_entry_errors(acquired["entry_errors"]) if rows is not None else []
                 )
@@ -691,6 +819,8 @@ class SourcePoller:
                 async with self.state_change(key):
                     current = await self.state(key)
                     if rows is not None:
+                        if not isinstance(acquired_clock, str):
+                            raise ValueError("Acquired source rows have no collection clock")
                         coverage = {
                             field: acquired[field]
                             for field in (
@@ -721,7 +851,7 @@ class SourcePoller:
                             rows,
                             kind,
                             coverage,
-                            acquired.get("fetched_at") or self.stamp(),
+                            acquired_clock,
                         )
                     for field in (
                         "payload_sha256",
@@ -758,6 +888,8 @@ class SourcePoller:
                         current["status"] = "PENDING"
                     self.reports.reconcile(current, sid)
                     if fresh_errors:
+                        if not isinstance(acquired_clock, str):
+                            raise ValueError("Source entry errors have no collection clock")
                         self.reports.stage(
                             current,
                             SourceReportRequest(
@@ -765,7 +897,7 @@ class SourcePoller:
                                     source_id=sid, source_name=source.name, feed_url=feed.url
                                 ),
                                 errors=fresh_errors,
-                                seen_at=acquired["fetched_at"],
+                                seen_at=acquired_clock,
                             ),
                             self.service.error_reporting_mode,
                         )
@@ -812,128 +944,147 @@ class SourcePoller:
         except Exception as error:
             log.error("Source report checkpoint %s remains unresolved after %s", key, type(error).__name__)
 
-    def _empty_body(self, url, detail_state):
-        return {
-            "url": url,
-            "http_status": detail_state["http_status"],
-            "payload_sha256": detail_state["payload_sha256"],
-            "observed_at": self.stamp(),
-            "observed_at_precision": "COLLECTION_ONLY",
-            "reason": "EMPTY_ARTICLE_BODY",
-        }
+    def _empty_body(self, url: str, receipt: FetchEvidence) -> ArticleFailure:
+        return ArticleFailure(
+            url=url,
+            http_status=receipt.http_status,
+            payload_sha256=receipt.payload_sha256,
+            observed_at=self.stamp(),
+            observed_at_precision="COLLECTION_ONLY",
+            reason="EMPTY_ARTICLE_BODY",
+        )
 
-    async def _article(self, source, feed, key, item):
-        """Fetch the article page; S13 may fall back to the publisher's own CMS slug URL."""
+    async def _article(
+        self,
+        source: SourceDefinition,
+        feed: SourceFeed,
+        key: str,
+        material: ArticleDiscovery | BoundArticleLink,
+    ) -> tuple[FetchedContent, PublisherCMSRecovery | None]:
+        """Fetch a page and admit an observed same-entry CMS recovery separately."""
         svc, sid = self.service, source.source_id
         try:
-            return await svc.fetch(
+            result = await svc.fetch(
                 source,
-                HttpFetchPlan(url=item["url"], source_limits=source.limits),
-                key + ":" + sha256(item["url"]),
+                HttpFetchPlan(url=material.url, source_limits=source.limits),
+                key + ":" + sha256(material.url),
                 persist_http_evidence=False,
             )
+            if isinstance(result, NotModified):
+                raise ValueError("Source detail/history returned 304 without retained content")
+            return result, None
         except httpx.HTTPStatusError as exc:
-            binding = item.get("publisher_cms_identity")
-            fallback = item.get("publisher_cms_slug_url")
+            binding = material.publisher_cms_identity
+            fallback = material.publisher_cms_slug_url
             origin = urlsplit(feed.url)
-            candidate = urlsplit(fallback or "")
+            candidate = urlsplit(fallback) if fallback is not None else None
             if not (
                 sid == "S13"
                 and exc.response.status_code == 404
-                and isinstance(binding, dict)
-                and re.fullmatch(r"[A-Za-z0-9-]+", binding.get("slug", ""))
+                and binding is not None
+                and fallback is not None
+                and candidate is not None
                 and candidate.scheme == origin.scheme
                 and candidate.netloc == origin.netloc
-                and candidate.path == origin.path.rstrip("/") + "/" + binding["slug"] + "/"
+                and candidate.path == origin.path.rstrip("/") + "/" + binding.slug + "/"
                 and not candidate.query
                 and not candidate.fragment
-                and fallback != item["url"]
+                and fallback != material.url
             ):
                 raise
-            _http_read = await svc.fetch(
+            result = await svc.fetch(
                 source,
                 HttpFetchPlan(url=fallback, source_limits=source.limits),
                 key + ":" + sha256(fallback),
                 persist_http_evidence=False,
             )
-            article = _http_read.payload
-            if isinstance(_http_read, NotModified):
+            if isinstance(result, NotModified):
                 raise ValueError("Source detail/history returned 304 without retained content") from None
-            detail_state = _http_read.receipt.storage_record()
-            if article is None or binding not in parsers.publisher_cms_entries(article):
+            if binding not in parsers.publisher_cms_entries(result.payload):
                 raise ValueError("Publisher CMS fallback identity/content mismatch") from None
-            if urlsplit(detail_state["response_url"]).netloc != origin.netloc:
+            if urlsplit(result.receipt.response_url).netloc != origin.netloc:
                 raise ValueError("Publisher CMS fallback left official host") from None
-            item["publisher_cms_recovery"] = {
-                "status": "VERIFIED_SAME_CMS_ENTRY",
-                "canonical_url": item["url"],
-                "resolved_url": fallback,
-                "original_http_status": 404,
-                "original_response_url": str(exc.response.url),
-                "original_payload_sha256": sha256(exc.response.content),
-                "observed_at": self.stamp(),
-                "publisher_cms_identity": binding,
-            }
-            item["publisher_url_aliases"] = [item["url"], fallback]
-            item["url"] = fallback
-            return _http_read
+            return result, PublisherCMSRecovery(
+                status="VERIFIED_SAME_CMS_ENTRY",
+                canonical_url=material.url,
+                resolved_url=fallback,
+                original_http_status=404,
+                original_response_url=str(exc.response.url),
+                original_payload_sha256=sha256(exc.response.content),
+                observed_at=self.stamp(),
+                publisher_cms_identity=binding,
+            )
 
-    async def _item(self, source, feed, key, kind, original):
+    async def _item(
+        self, source: SourceDefinition, feed: SourceFeed, key: str, kind: FeedKind, original: PendingSourceRow
+    ) -> MaterializedSourceObservation | ArticleFailure:
         svc, sid = self.service, source.source_id
-        item = deepcopy(original)
+        item = original.storage_record()
+        item.pop("pending_phase", None)
+        material = original.discovery
+        article_link = isinstance(original, PendingArticleLink)
         if self.needs_detail(sid, kind):
             if sid == "S09":
                 _http_read = await svc.fetch(
                     source,
                     HttpFetchPlan(
                         url="https://www.binance.com/bapi/composite/v1/public/cms/article/detail/query?articleCode="
-                        + item["external_id"],
+                        + material.external_id,
                         source_limits=source.limits,
                     ),
-                    key + ":detail:" + item["external_id"],
+                    key + ":detail:" + material.external_id,
                     persist_http_evidence=False,
                 )
-                payload = _http_read.payload
                 if isinstance(_http_read, NotModified):
                     raise ValueError("Source detail/history returned 304 without retained content") from None
-                detail_state = _http_read.receipt.storage_record()
-                if payload is None:
-                    raise ValueError("Binance article returned 304 without a durable source item")
-                detail_object = json.loads(payload)["data"]
-                if item.get("published_at") is None and detail_object.get("publishDate") is not None:
+                payload = _http_read.payload
+                detail_object = BinanceArticleDetailReply.model_validate(decode_unique_json(payload)).data
+                if item.get("published_at") is None and detail_object.publishDate is not None:
                     item.update(
-                        parsers.timestamp_fields(detail_object["publishDate"], epoch_unit="ms"),
+                        parsers.timestamp_fields(detail_object.publishDate, epoch_unit="ms"),
                         published_at_basis="BINANCE_CMS_DETAIL_PUBLISH_DATE",
                     )
-                item["text"] = parsers.binance_body(detail_object.get("body", ""))
-                if not item["text"].strip():
-                    return ArticleFailure.model_validate(self._empty_body(item["url"], detail_state))
+                body = parsers.binance_body(detail_object.body)
+                item["text"] = body
+                if not body.strip():
+                    return self._empty_body(material.url, _http_read.receipt)
             else:
-                _http_read = await self._article(source, feed, key, item)
+                if not isinstance(material, (ArticleDiscovery, BoundArticleLink)):
+                    raise ValueError("Article enrichment requires an admitted article discovery")
+                _http_read, recovery = await self._article(source, feed, key, material)
                 payload = _http_read.payload
-                if isinstance(_http_read, NotModified):
-                    raise ValueError("Source detail/history returned 304 without retained content") from None
-                detail_state = _http_read.receipt.storage_record()
-                if payload is None:
-                    raise ValueError("Article returned 304 without a durable source item")
-                detail = await asyncio.to_thread(parsers.article, payload, source_id=sid)
-                if not detail["text"].strip():
-                    return ArticleFailure.model_validate(self._empty_body(item["url"], detail_state))
-
-                item.update(
-                    {
-                        k: v
-                        for k, v in detail.items()
-                        if v
-                        and not (
-                            k.startswith("published_")
-                            and not detail.get("published_at")
-                            and item.get("published_at")
-                        )
-                    }
+                if recovery is not None:
+                    item["publisher_cms_recovery"] = recovery.model_dump(mode="json", exclude_unset=True)
+                    item["publisher_url_aliases"] = [recovery.canonical_url, recovery.resolved_url]
+                    item["url"] = recovery.resolved_url
+                detail = await asyncio.to_thread(
+                    parsers.article,
+                    payload,
+                    source_id=sid,
+                    page_url=material.url,
+                    response_url=_http_read.receipt.response_url,
                 )
+                if not detail.text.strip():
+                    return self._empty_body(material.url, _http_read.receipt)
+
+                detail_record = detail.storage_record()
+                if article_link:
+                    item.update(detail_record)
+                else:
+                    item.update(
+                        {
+                            k: v
+                            for k, v in detail_record.items()
+                            if v
+                            and not (
+                                k.startswith("published_")
+                                and detail.publication.value is None
+                                and item.get("published_at")
+                            )
+                        }
+                    )
             item["raw_ref"], item["raw_sha256"] = svc.raw(
-                payload, source_id=sid, item_id=item["item_id"], observed_at=item["observed_at"]
+                payload, source_id=sid, item_id=original.item_id, observed_at=original.observed_at
             )
         stored = await svc.ingest(source, item)
 
@@ -948,11 +1099,11 @@ class SourcePoller:
         feed: SourceFeed,
         key: str,
         batch: SourcePendingBatch,
-        row: PendingSourceItem,
+        row: PendingSourceRow,
     ) -> SourceRowResult:
         async with self.details:
             try:
-                result = await self._item(source, feed, key, batch.kind, row.storage_record())
+                result = await self._item(source, feed, key, batch.kind, row)
                 if isinstance(result, ArticleFailure):
                     return FailedSourceRow(
                         original=row,

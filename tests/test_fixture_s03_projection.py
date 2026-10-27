@@ -29,7 +29,11 @@ def inputs():
     later = {**article, "document_number": "2026-99999", "publication_date": "2026-11-01"}
     raw = json.dumps({"results": [article, later]}).encode()
     projected = project_original_source(KIND, raw, {"document_number": "2026-12345"})
-    item = {**parsers.json_items(projected, "S03")[0], "source_id": "S03"}
+    item = (
+        parsers.json_items(projected, "S03")
+        .discoveries[0]
+        .discovery.model_dump(mode="json", exclude_unset=True)
+    )
     proof = {"derivation": {"kind": KIND, "module_sha256": sha256(Path(parsers.__file__).read_bytes())}}
     return raw, projected, item, proof
 

@@ -29,7 +29,7 @@ from tank.contracts.source_checkpoints import (
     observed_identifier as declaration,
 )
 from tank.contracts.source_errors import SourceEntryError
-from tank.contracts.source_items import PendingSourceItem, SourceContextId, pending_source_item
+from tank.contracts.source_items import PendingSourceRow, SourceContextId, pending_source_item
 from tank.contracts.sources import SourceDefinition
 from tank.repository import Repository
 from tank.util import iso, parse_iso_time, sha256
@@ -278,7 +278,7 @@ def decode_pending_batch(
         )
         return QuarantinedSourceBatch(quarantines=[evidence])
 
-    rows: list[PendingSourceItem] = []
+    rows: list[PendingSourceRow] = []
     issues: list[PendingQuarantineIssue] = []
     for index, row in enumerate(wire.rows):
         try:
@@ -595,7 +595,7 @@ class CompletedSourceRow(DomainModel):
 
 
 class FailedSourceRow(DomainModel):
-    original: PendingSourceItem
+    original: PendingSourceRow
     error: str
     article_failure: ArticleFailure | None
 
