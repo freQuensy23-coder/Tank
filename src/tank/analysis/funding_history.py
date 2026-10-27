@@ -10,7 +10,6 @@ from tank.analysis.condition_funding_inputs import FundingInputObservation
 from tank.analysis.funding_quantile import funding_quantile
 from tank.analysis.funding_rate import (
     FundingEquivalent,
-    FundingNormalizationRequest,
     UnavailableFundingEquivalent,
     funding_equivalent,
 )
@@ -18,6 +17,7 @@ from tank.analysis.funding_selection import FundingCalculator, FundingWindowRequ
 from tank.analysis.statistics_contracts import DecimalBounds, DecimalRange
 from tank.contracts import DomainModel
 from tank.contracts.configuration import Thresholds
+from tank.contracts.funding import FundingNormalizationRequest
 from tank.time_precision import Timestamp
 from tank.util import parse_iso_time, sha256
 

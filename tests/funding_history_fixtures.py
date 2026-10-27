@@ -4,8 +4,8 @@ from funding_input_fixtures import funding_record_fixture, funding_scope_fixture
 from pydantic import JsonValue
 
 from tank.analysis.funding_history import FundingHistoryPolicy
-from tank.analysis.funding_rate import FundingNormalizationRequest
 from tank.analysis.funding_selection import FundingCalculator, FundingWindowRequest
+from tank.contracts.funding import FundingNormalizationRequest
 from tank.time_precision import Timestamp
 
 

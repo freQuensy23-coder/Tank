@@ -29,7 +29,6 @@ from tank.analysis.funding_normalization_math import FundingRateOperands, normal
 from tank.analysis.funding_rate import (
     CalculatedFundingEquivalent,
     FundingEquivalent,
-    FundingNormalizationRequest,
     RecordedFundingEquivalent,
     funding_equivalent,
 )
@@ -41,6 +40,7 @@ from tank.analysis.funding_selection import (
     SelectedFundingObservation,
 )
 from tank.contracts import DomainModel
+from tank.contracts.funding import FundingNormalizationRequest
 from tank.util import parse_iso_time
 
 

@@ -10,9 +10,9 @@ from tank.analysis.condition_graph_contracts import ConditionWindow
 from tank.analysis.funding_family import FundingConditionCalculation, condition_funding_family
 from tank.analysis.funding_history import FundingHistoryPolicy
 from tank.analysis.funding_history_cache import FundingHistoryCache
-from tank.analysis.funding_rate import FundingNormalizationRequest
 from tank.analysis.funding_selection import FundingCalculator, FundingWindowRequest
 from tank.contracts import DomainModel
+from tank.contracts.funding import FundingNormalizationRequest
 from tank.time_precision import Timestamp
 from tank.util import JsonInput, sha256
 
