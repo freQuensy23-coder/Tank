@@ -1,4 +1,4 @@
-from tank.sources.x_diagnostics import verified_documents
+from tank.sources.x_diagnostics import legacy_serialization_mismatch, verified_documents
 from tank.time_precision import collection_clock, propagate_timestamp
 from tank.util import parse_time, sha256, utcnow
 
@@ -125,6 +125,8 @@ async def recover_legacy_diagnostic_job(repo, settings, candidate):
             return None
         try:
             attachments = verified_documents(notice)
+            if not legacy_serialization_mismatch(notice):
+                return None
         except ValueError:
             return None
         ledger = [
@@ -143,6 +145,7 @@ async def recover_legacy_diagnostic_job(repo, settings, candidate):
                 **job["payload"],
                 "_diagnostic_recovery": {
                     "version": 1,
+                    "classification": "legacy_serialization_mismatch",
                     "source_job_id": job["job_id"],
                     "source_idem_key": job["idem_key"],
                     "notice_sha256": sha256(notice),

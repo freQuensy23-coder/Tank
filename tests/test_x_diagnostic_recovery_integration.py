@@ -14,6 +14,7 @@ from test_x_diagnostic_manifests import (
     legacy_notice,
     manifest,
     reopen,
+    reverse_objects,
 )
 from test_x_diagnostic_manifests import diagnostic_repo as diagnostic_repo
 from test_x_diagnostics import multipart, notice_for, telegram_settings
@@ -672,6 +673,9 @@ async def test_idle_worker_recovers_multiple_notices_without_mutating_iteration_
     parents = {}
     for kind in ("missing", "binary"):
         notice, attachments = legacy_notice(kind)
+        if memory:
+            notice = reverse_objects(notice)
+            assert isinstance(notice, dict)
         originals.append(await seed_failed_job(repo, notice, diagnostic_clock))
         expected.extend(attachments)
         parents[notice["notice_id"] + "_parent"] = parent_receipt(notice["notice_id"])

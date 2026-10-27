@@ -2,6 +2,7 @@ import base64
 import binascii
 import json
 import re
+from copy import deepcopy
 from itertools import permutations, product
 from math import factorial
 
@@ -243,7 +244,7 @@ def _metadata_bytes(metadata, version):
     ).encode("utf-8")
 
 
-def documents(errors, version=DOCUMENT_SERIALIZATION_VERSION):
+def _documents(errors, version, *, preserve_order=False):
     if type(version) is not int or version not in {1, DOCUMENT_SERIALIZATION_VERSION}:
         raise ValueError("Unsupported diagnostic manifest serialization version")
     if not isinstance(errors, list):
@@ -257,6 +258,8 @@ def documents(errors, version=DOCUMENT_SERIALIZATION_VERSION):
             continue
         account = re.sub(r"[^a-z0-9_]", "_", str(error.get("account") or "run").lower())[:30]
         metadata = _validated_metadata(diagnostics)
+        if preserve_order:
+            metadata = deepcopy(diagnostics)
         for attempt in metadata["attempts"]:
             response = attempt.get("response")
             if response is None:
@@ -285,11 +288,24 @@ def documents(errors, version=DOCUMENT_SERIALIZATION_VERSION):
     return result
 
 
+def documents(errors, version=DOCUMENT_SERIALIZATION_VERSION):
+    return _documents(errors, version)
+
+
 def _matches_manifest(document, saved):
     return (
         document["filename"] == saved["filename"]
         and len(document["content"]) == saved["bytes"]
         and sha256(document["content"]) == saved["sha256"]
+    )
+
+
+def legacy_serialization_mismatch(notice):
+    attachments = _documents(notice["entry_errors"], 1, preserve_order=True)
+    manifest = notice["document_manifest"]
+    return len(attachments) != len(manifest) or any(
+        not _matches_manifest(document, saved)
+        for document, saved in zip(attachments, manifest, strict=True)
     )
 
 

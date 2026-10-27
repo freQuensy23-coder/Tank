@@ -6,8 +6,8 @@ import re
 from datetime import UTC, datetime, timedelta
 
 import pytest
-from test_x_diagnostic_manifests import digest, legacy_notice, manifest, reopen, reverse_objects
 from test_x_diagnostic_manifests import diagnostic_repo as diagnostic_repo
+from test_x_diagnostic_manifests import digest, legacy_notice, manifest, reopen, reverse_objects
 from test_x_diagnostics import telegram_settings
 
 from tank.diagnostic_recovery import recover_legacy_diagnostic_job
@@ -228,7 +228,9 @@ async def test_jsonb_mismatch_recovery_persists_classification_without_refunding
 @pytest.mark.parametrize(
     "corruption", ["manifest_hash", "manifest_size", "body", "unknown_metadata", "unknown_version"]
 )
-async def test_raw_mismatch_without_verified_compatibility_never_creates_recovery(recovery_clock, corruption):
+async def test_raw_mismatch_without_verified_compatibility_never_creates_recovery(
+    recovery_clock, corruption
+):
     repo = MemoryRepository()
     notice, _ = legacy_notice("text")
     notice = reverse_objects(notice)
@@ -263,7 +265,9 @@ async def test_raw_mismatch_without_verified_compatibility_never_creates_recover
 
 
 @pytest.mark.parametrize("document_state", ["sent", "generated_exhausted", "terminal"])
-async def test_proven_legacy_mismatch_does_not_override_closed_document_budget(recovery_clock, document_state):
+async def test_proven_legacy_mismatch_does_not_override_closed_document_budget(
+    recovery_clock, document_state
+):
     repo = MemoryRepository()
     notice, expected = legacy_notice("missing")
     original = await seed_failed_delivery(repo, reverse_objects(notice), recovery_clock)

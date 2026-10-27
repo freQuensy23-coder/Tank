@@ -396,16 +396,8 @@ class SessionService:
             return False
         return True
 
-    def reopen_for_question(self, session, payload, key):
-        """Under the session lock: reopen a FAILED session and retire its unfinished turns, never this one."""
-        retired = set(session.get("retired_message_ids", []))
+    def reopen_for_question(self, session, payload):
         if session.get("status") == "FAILED":
-            for row in session.get("message_log", []):
-                if row.get("turn_status") == "DONE" or row["message_id"] == key:
-                    continue
-                retired.add(row["message_id"])
-                if row.get("payload", {}).get("kind") == "USER_QUESTION":
-                    row["turn_status"] = "FAILED"
             session.setdefault("reopened", []).append(
                 {
                     "question_id": payload["question_id"],
@@ -413,12 +405,7 @@ class SessionService:
                     **self.clock_timestamp().fields("at"),
                 }
             )
-            session.update(
-                status="OPEN", runtime_status="IDLE", active_message_id=None, pending_retry_event=None
-            )
-        retired.discard(key)
-        if retired or "retired_message_ids" in session:
-            session["retired_message_ids"] = sorted(retired)
+            session["status"] = "OPEN"
 
     def analyst_tools(self, *, scout=False):
         """The current analyst toolset: built-ins plus the custom tools of config/skills."""
@@ -608,7 +595,7 @@ class SessionService:
                     if closed is not None:
                         await record_answer(self.repo, payload["question_id"], closed[1], status=closed[0])
                         return None
-                    self.reopen_for_question(session, payload, key)
+                    self.reopen_for_question(session, payload)
                 if key in session.get("messages", []):
                     self.start_stream(sid)
                     return session
@@ -894,7 +881,7 @@ class SessionService:
                 claims.append((call["native_turn_message_id"], attempt))
         return claims[0] if len(claims) == 1 else None
 
-    async def handled_terminal_inputs(self, session, calls, states):
+    async def handled_terminal_inputs(self, session, calls, states, superseded):
         if not self.recoverable_session(session) or session.get("pending_retry_event"):
             return set()
         handled = set()
@@ -938,11 +925,27 @@ class SessionService:
             if not continuation:
                 continue
             owned = [call for call in calls if call.get("native_turn_message_id") == message["message_id"]]
+            superseded_tools = {
+                input_id
+                for input_id, proof in superseded.items()
+                if isinstance(proof, dict)
+                and proof.get("reason") == "FAILED_PRIOR_TURN_ATTEMPT"
+                and proof.get("message_id") == message["message_id"]
+                and proof.get("replacement_input_id") == message.get("remote_event_id")
+                and states.get(input_id, {}).get("state") == "FAILED"
+                and proof.get("queue_state") == states[input_id]
+                and (owner := await self.native_input_owner(session, input_id, calls)) is not None
+                and owner[0] == message["message_id"]
+                and owner[1] < attempt
+            }
             if any(
                 not call.get("returned_at")
                 or not call.get("remote_event_id")
-                or states.get(call["remote_event_id"], {}).get("state")
-                != ("FAILED" if call["remote_event_id"] == identity else "COMPLETED")
+                or (
+                    states.get(call["remote_event_id"], {}).get("state")
+                    != ("FAILED" if call["remote_event_id"] == identity else "COMPLETED")
+                    and call["remote_event_id"] not in superseded_tools
+                )
                 for call in owned
             ):
                 continue
@@ -1065,11 +1068,14 @@ class SessionService:
                             "replacement_input_id": owner.get("remote_event_id"),
                             "message_id": owner["message_id"],
                         }
-                required.difference_update(current.get("superseded_native_inputs", {}))
+                superseded = current.get("superseded_native_inputs", {})
+                required.difference_update(superseded)
                 await self.repo.put("ops.agent_sessions", session["session_id"], current)
             delay = min(poll[1] * 2, 1.0) if poll[2] == signature else 0.05
             self.execution_polls[session["session_id"]] = (time.monotonic() + delay, delay, signature)
-        required.difference_update(await self.handled_terminal_inputs(session, calls, states))
+        required.difference_update(
+            await self.handled_terminal_inputs(session, calls, states, superseded)
+        )
         final_receipt = any(
             receipt.get("execution_id") in required
             and receipt.get("type") == "session.status_idle"
