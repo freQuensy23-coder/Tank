@@ -109,23 +109,35 @@ class OpsRelevance(DomainModel):
     cutoff: float | None = None
 
 
-type OpsInstrumentValue = str | int | float | bool | None
-
-
 class OpsInstrumentView(DomainModel):
-    symbol: OpsInstrumentValue = None
-    venue: OpsInstrumentValue = None
-    market_type: OpsInstrumentValue = None
-    status: OpsInstrumentValue = None
-    base: OpsInstrumentValue = None
-    quote: OpsInstrumentValue = None
-    contract_type: OpsInstrumentValue = None
+    symbol: str | None = None
+    venue: str | None = None
+    market_type: str | None = None
+    acquisition_market_type: str | None = None
+    status: str | None = None
+    base: str | None = None
+    quote: str | None = None
+    contract_type: str | None = None
 
-    def displayed_fields(self) -> dict[str, OpsInstrumentValue]:
+    @model_validator(mode="after")
+    def market_declarations_agree(self) -> Self:
+        if (
+            self.market_type is not None
+            and self.acquisition_market_type is not None
+            and self.market_type != self.acquisition_market_type
+        ):
+            raise ValueError("Instrument market declarations contradict each other")
+        return self
+
+    @property
+    def reported_market_type(self) -> str | None:
+        return self.acquisition_market_type if self.acquisition_market_type is not None else self.market_type
+
+    def displayed_fields(self) -> dict[str, str | None]:
         return {
             "symbol": self.symbol,
             "venue": self.venue,
-            "market_type": self.market_type,
+            "market_type": self.reported_market_type,
             "status": self.status,
             "base": self.base,
             "quote": self.quote,

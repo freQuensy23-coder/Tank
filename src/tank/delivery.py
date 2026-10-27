@@ -509,8 +509,8 @@ class DeliveryService:
         from tank.ops_cards import render, snapshot
 
         item_id = notice.subject_id
-        chat = str(self.settings.telegram_ops_chat or "")
-        if not self.settings.telegram_token or not chat:
+        token, chat = self.settings.telegram_token, self.settings.telegram_ops_chat
+        if token is None or not token.strip() or chat is None or not chat.strip():
             raise ValueError("Telegram token and destination must be configured")
         key = sha256({"item_id": item_id, "chat_id": chat})
         async with AsyncExitStack() as locks:
@@ -622,9 +622,7 @@ class DeliveryService:
             await self.repo.put("out.deliveries", new_id("delivery"), transition, immutable=True)
             code = None
             try:
-                response = await self.http.post(
-                    f"https://api.telegram.org/bot{self.settings.telegram_token}/{method}", json=body
-                )
+                response = await self.http.post(f"https://api.telegram.org/bot{token}/{method}", json=body)
                 observed = decode_unique_json(response.content)
                 rejection = (
                     DeliveryTelegramRejection.model_validate(
@@ -823,8 +821,9 @@ class DeliveryService:
                         return DeliveryDeferred(due)
             if card is not None and card.kind != "PRELIMINARY":
                 await self._validate_activation_decisions(record)
+            token = self.settings.telegram_token
             chat = self.settings.telegram_ops_chat if notice else self.settings.telegram_alerts_chat
-            if not self.settings.telegram_token or not chat:
+            if token is None or not token.strip() or chat is None or not chat.strip():
                 raise ValueError("Telegram token and destination must be configured")
             raw_rich_message = record.get("rich_message") if card is not None else None
             rich_message = RichMessage.model_validate(raw_rich_message) if raw_rich_message else None
@@ -873,9 +872,7 @@ class DeliveryService:
             await self.repo.put("out.deliveries", new_id("delivery"), transition, immutable=True)
             response_status = None
             try:
-                response = await self.http.post(
-                    f"https://api.telegram.org/bot{self.settings.telegram_token}/{method}", json=body
-                )
+                response = await self.http.post(f"https://api.telegram.org/bot{token}/{method}", json=body)
                 response_status = response.status_code
                 observed = decode_unique_json(response.content)
                 if isinstance(observed, dict) and observed.get("ok") is False:
