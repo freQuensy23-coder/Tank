@@ -35,7 +35,9 @@ class ObservedArchiveRuntime(DomainModel):
 
 
 class ArchiveDenied(DomainModel):
-    reason: Literal["EVENT_NOT_TERMINAL", "SESSION_NOT_IDLE"]
+    reason: Literal[
+        "UNREPORTED_EVENT_LIFECYCLE", "EVENT_NOT_TERMINAL", "UNREPORTED_SESSION_RUNTIME", "SESSION_NOT_IDLE"
+    ]
 
 
 class TerminalArchiveCandidate(DomainModel):
@@ -63,9 +65,13 @@ type ArchiveCandidate = ArchiveDenied | TerminalArchiveCandidate | InvalidatedAr
 
 def archive_candidate(session: Mapping[str, JsonValue], event: Mapping[str, JsonValue]) -> ArchiveCandidate:
     state = ObservedArchiveLifecycle.model_validate({"lifecycle": event.get("lifecycle")})
+    if state.lifecycle is None:
+        return ArchiveDenied(reason="UNREPORTED_EVENT_LIFECYCLE")
     if state.lifecycle not in ("CLOSED", "MERGED", "INVALIDATED"):
         return ArchiveDenied(reason="EVENT_NOT_TERMINAL")
     runtime = ObservedArchiveRuntime.model_validate({"runtime_status": session.get("runtime_status")})
+    if runtime.runtime_status is None:
+        return ArchiveDenied(reason="UNREPORTED_SESSION_RUNTIME")
     if runtime.runtime_status != "IDLE":
         return ArchiveDenied(reason="SESSION_NOT_IDLE")
     scope = {"session_id": session["session_id"], "event_id": event["event_id"], "lifecycle": state.lifecycle}

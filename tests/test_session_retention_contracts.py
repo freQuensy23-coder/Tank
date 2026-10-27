@@ -26,9 +26,9 @@ from tank.util import parse_time
     "session,event,reason",
     [
         ({}, {"lifecycle": "MONITORING"}, "EVENT_NOT_TERMINAL"),
-        ({}, {"status": "CLOSED"}, "EVENT_NOT_TERMINAL"),
+        ({}, {"status": "CLOSED"}, "UNREPORTED_EVENT_LIFECYCLE"),
         ({"runtime_status": "RUNNING"}, {"lifecycle": "CLOSED"}, "SESSION_NOT_IDLE"),
-        ({}, {"lifecycle": "INVALIDATED"}, "SESSION_NOT_IDLE"),
+        ({}, {"lifecycle": "INVALIDATED"}, "UNREPORTED_SESSION_RUNTIME"),
     ],
 )
 def test_archive_denial_requires_no_unconsumed_identity_or_publication_history(
