@@ -111,6 +111,9 @@ class FundingConditionLookup:
     def matches_visibility(self, assembled_at: Timestamp) -> bool:
         return self.visibility_fingerprint(assembled_at) == self._facts.visibility_sha256
 
+    def owns_facts(self, facts: FundingConditionFacts) -> bool:
+        return facts is self._facts
+
     @property
     def facts(self) -> FundingConditionFacts:
         return self._facts
