@@ -805,6 +805,12 @@ async def test_slow_denial_turn_remains_until_exit_update_delivered(
             },
         )
         original = (await repo.get("ops.tool_calls", "ses_1:publish_original"))["result"]
+        original_call = await repo.get("ops.tool_calls", "ses_1:publish_original")
+        assert "published" in original, {
+            "result": original,
+            "native_turn_message_id": original_call.get("native_turn_message_id"),
+            "native_turn_retry_count": original_call.get("native_turn_retry_count"),
+        }
         assert original["published"]
         original_alert = await repo.get("out.alerts", f"{original['alert_id']}:{original['version']}")
         assert original_alert["shown_tokens"] == ["world:WLD"]
