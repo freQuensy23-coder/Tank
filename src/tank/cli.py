@@ -340,6 +340,33 @@ def review_label(subject, label, miss_reason, notes, reviewer, version):
     run_db(command)
 
 
+@main.command("reaction-recover")
+@click.argument("original_job_id")
+@click.option("--source-backfill-id", required=True)
+def reaction_recover(original_job_id: str, source_backfill_id: str) -> None:
+    """Request one evidence-gated recovery generation for an explicit historical job."""
+    from tank.contracts.reaction_recovery import ReactionRecoveryCommand, ReactionRecoveryExecution
+    from tank.reaction_recovery import ReactionRecovery
+
+    try:
+        request = ReactionRecoveryCommand(
+            original_job_id=original_job_id, source_backfill_id=source_backfill_id
+        )
+    except ValueError:
+        raise click.UsageError("Recovery requires nonblank job and source backfill identities") from None
+
+    async def command(repo: "PostgresRepository", settings: Settings) -> JsonValue:
+        recovery = ReactionRecovery(
+            repo,
+            execution=ReactionRecoveryExecution(versions=settings.require_versions(), replay=settings.replay),
+            clock=collection_clock,
+        )
+        outcome = await recovery.recover(request)
+        return outcome.model_dump(mode="json")
+
+    run_db(command)
+
+
 @main.command()
 @click.argument("event_id")
 @click.option("--token-id")
