@@ -1994,3 +1994,38 @@ SourceService 4, probe 2, parsers 22 and polling 7 missing signatures; new repor
 adapter, reporter and contracts have none. Those inventories include actual body/
 required-fact/layer work, not permission for opaque mapping annotations or blanket
 waivers. The report head is held immutable for the parent's next coherent batch.
+
+## Explicit historical recovery command and pure eligibility — 2026-10-27
+
+The historical recovery writer now has an explicit operator entry point:
+`reaction-recover ORIGINAL_JOB_ID --source-backfill-id SOURCE_BACKFILL_ID`.
+It performs no scan or automatic repair. Both actual witness identities are
+required before resource creation; captured configuration versions, the actual
+replay mode and current collection clock are passed through the existing owned
+CLI resource composition. Unsupported replay remains UNRESOLVED. Only the
+closed writer outcome is serialized at the CLI boundary. No production command
+was invoked.
+
+Pure recovery eligibility moved unchanged into reaction_recovery_policy.py;
+transactional witness admission, locking, enqueue and immutable linking remain
+in the application adapter. External AST equality records the relocation;
+fresh-process behavioral controls execute actual refusal decisions while
+physical/runtime modules are unavailable. No infrastructure import-only test
+is used as behavioral evidence.
+
+Immutable 4e59411a normally includes the qualified CLI helper 4e2855b5.
+All 107 selected units passed in 7.39 seconds (zero skips, p90 0.005 seconds,
+maximum 1.297 seconds). All 14 selected integration cases passed in 13.24
+seconds, including actual CLI resource ownership, PostgreSQL queue/link
+creation and repeat-call idempotence, original bytes unchanged, and actual
+1800-second delay/six-hour TTL. Strict new caller/policy targets and direct
+CLI default checking with silent followed imports pass, as do Ruff and source
+comment policy. Whole CLI closure remains foundation-owned; ordinary recursive
+checking still exposes the existing Truth cache annotation dependency.
+
+The earlier bab11 integration attempt never reached pytest: its exact owned
+Docker init process was absent despite daemon RUNNING state. The full inspect,
+labels, argv and wrapper ancestry are retained in
+recovery-policy-bab1-setup-refusal.json. Only that verified wrapper and stale
+container were ended; no volume, service or peer process changed. This setup
+failure is preserved separately from the qualified new caller gate.
