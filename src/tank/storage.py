@@ -1500,7 +1500,7 @@ class PostgresRepository(QueueMixin):
 
         class CancellationSafeConnection(AsyncConnection[StoredRow]):
             async def wait[T](
-                connection, gen: PQGen[T], interval: float = 0.1, timeout: float | None = None
+                connection: Self, gen: PQGen[T], interval: float = 0.1, timeout: float | None = None
             ) -> T:
 
                 operation = asyncio.create_task(super().wait(gen, interval=interval, timeout=timeout))

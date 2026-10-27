@@ -1,4 +1,5 @@
 import json
+from contextlib import AsyncExitStack
 from datetime import timedelta
 from pathlib import Path
 from typing import Literal
@@ -581,6 +582,9 @@ async def test_stream_processing_preserves_concurrent_added_message() -> None:
 async def test_slow_denial_turn_remains_until_exit_update_delivered(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
+    from native_session_fixtures import native_session_record
+
+    from tank.agents.native_inputs import NativeInputRequest
     from tank.analysis import cards
     from tank.analysis.card_contracts import CardInputs
     from tank.analysis.decisions import DecisionEngine
@@ -753,6 +757,19 @@ async def test_slow_denial_turn_remains_until_exit_update_delivered(
             }
         ),
     )
+    await repo.put(
+        "ingest.source_items",
+        "itm_1",
+        source_record_fixture(
+            {
+                "item_id": "itm_1",
+                "source_id": "S01",
+                "text": "Product announced",
+                "source_class": "PRIMARY",
+                "observed_at": now,
+            }
+        ),
+    )
     await seed_session(repo, runtime_status="RUNNING")
     claim = {
         "type": "STATE",
@@ -765,9 +782,42 @@ async def test_slow_denial_turn_remains_until_exit_update_delivered(
         "evidence_class": "PRIMARY_FACT",
         "quote": "Official cancellation",
     }
-    async with httpx.AsyncClient(
-        transport=httpx.MockTransport(lambda r: httpx.Response(200, json={}))
-    ) as http:
+    accepted_inputs: list[dict[str, JsonValue]] = []
+
+    def native(request: httpx.Request) -> httpx.Response:
+        if request.method == "POST" and request.url.path.endswith("/sessions/ses_1/events"):
+            admitted = NativeInputRequest.model_validate_json(request.content).events[0]
+            wire = admitted.model_dump(mode="json", exclude_none=True)
+            if admitted.type == "user.message":
+                accepted_inputs.append(wire)
+            return httpx.Response(
+                200,
+                json={
+                    "data": [
+                        {"id": "accepted-" + sha256({"key": request.headers["Idempotency-Key"]}), **wire}
+                    ]
+                },
+            )
+        if request.method == "GET" and request.url.path.endswith("/events/stream"):
+            return httpx.Response(200, content=b"", headers={"content-type": "text/event-stream"})
+        if request.method == "GET" and request.url.path.endswith("/events"):
+            return httpx.Response(200, json={"data": [], "next_page": None})
+        if request.method == "GET" and request.url.path.endswith("/sessions/ses_1"):
+            observed = native_session_record(
+                "ses_1",
+                agent_id="fixture-denial-agent",
+                environment_id="fixture-denial-environment",
+                metadata={},
+                model_id="gpt-6.1-sol",
+            )
+            observed["status"] = "running"
+            return httpx.Response(200, json=observed)
+        raise AssertionError("Unexpected native request in controlled denial flow")
+
+    async with (
+        httpx.AsyncClient(transport=httpx.MockTransport(native)) as http,
+        AsyncExitStack() as owned,
+    ):
         service = SessionService(
             repo,
             opts,
@@ -776,6 +826,12 @@ async def test_slow_denial_turn_remains_until_exit_update_delivered(
             versions=declared_versions_fixture(),
             refusals=UnexpectedFollowupRefusals(),
         )
+        owned.push_async_callback(service.close)
+
+        await service.send_message(
+            {"kind": "ITEM_ADDED", "event_id": "evt_1", "item_id": "itm_1", "session_id": "ses_1"}
+        )
+        await service.stop_followers()
 
         def original_card(inputs: CardInputs) -> str:
             return "Original product card" + "\n" + score_summary(inputs.assessment.scores)
@@ -805,15 +861,27 @@ async def test_slow_denial_turn_remains_until_exit_update_delivered(
             },
         )
         original = (await repo.get("ops.tool_calls", "ses_1:publish_original"))["result"]
+        original_call = await repo.get("ops.tool_calls", "ses_1:publish_original")
+        assert "published" in original, {
+            "result": original,
+            "native_turn_message_id": original_call.get("native_turn_message_id"),
+            "native_turn_retry_count": original_call.get("native_turn_retry_count"),
+        }
         assert original["published"]
         original_alert = await repo.get("out.alerts", f"{original['alert_id']}:{original['version']}")
         assert original_alert["shown_tokens"] == ["world:WLD"]
         assert original_alert["decisions"] == [
             (await repo.get("ops.tool_calls", "ses_1:decision_original"))["result"]["dec_id"]
         ]
-        stored_session = await repo.get("ops.agent_sessions", "ses_1")
-        stored_session["last_payload"] = {"kind": "ITEM_ADDED", "item_id": "denial"}
-        await repo.put("ops.agent_sessions", "ses_1", stored_session)
+        await service.process_event(
+            "ses_1",
+            {"id": "original-idle", "type": "session.status_idle", "stop_reason": {"type": "end_turn"}},
+        )
+        await service.send_message(
+            {"kind": "ITEM_ADDED", "event_id": "evt_1", "item_id": "denial", "session_id": "ses_1"}
+        )
+        await service.stop_followers()
+        assert len(accepted_inputs) == 2
         await service.process_event(
             "ses_1",
             {

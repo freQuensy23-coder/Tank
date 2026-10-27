@@ -383,7 +383,8 @@ def test_extreme_magnitude_gap_keeps_every_actual_pair_without_integer_expansion
 
 
 def test_valid_scalar_copy_cannot_relabel_an_original_oi_quantity() -> None:
-    from tank.analysis.condition_derivative_inputs import OISelectionPolicy, ReportedDerivativeNumber
+    from tank.analysis.condition_derivative_inputs import OISelectionPolicy
+    from tank.contracts.derivative_values import ReportedDerivativeNumber
 
     value = decode_oi_inputs(token_id="T", instruments=[instrument()], observations=[observation()])
     point = value.observations[0].model_copy(
@@ -422,7 +423,8 @@ def test_self_consistent_hashes_cannot_change_the_actual_scope_record() -> None:
 
 
 def test_oi_sidecar_duplicate_keys_refuse_even_when_all_hashes_match() -> None:
-    from tank.analysis.condition_derivative_inputs import OISelectionPolicy, ReportedDerivativeNumber
+    from tank.analysis.condition_derivative_inputs import OISelectionPolicy
+    from tank.contracts.derivative_values import ReportedDerivativeNumber
     from tank.util import sha256
 
     value = decode_oi_inputs(token_id="T", instruments=[instrument()], observations=[observation()])

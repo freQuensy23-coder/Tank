@@ -131,6 +131,17 @@ jobs:
           tests/test_config.py tests/test_config_version.py tests/test_logging.py tests/test_backup_retention.py
           tests/test_time_precision.py tests/test_search.py tests/test_offline_settings_defaults.py
           tests/test_foundation_contracts.py tests/test_flow_contracts.py tests/test_storage_native_flow.py
+          tests/test_market_identity_keys.py tests/test_flow_batch_proof.py
+          tests/test_market_return_isolation.py tests/test_market_batch_keys.py tests/test_cli_composition.py
+      - name: Check completed normalization and delivery families strictly
+        env:
+          MYPYPATH: src:tests
+        run: >-
+          uv run --frozen --extra dev mypy --config-file scripts/ci/mypy-foundation-tests.ini
+          src/tank/market/normalize.py src/tank/market/normalization_contracts.py src/tank/market/books.py
+          tests/test_normalization_contracts.py
+          src/tank/delivery.py src/tank/ops_cards.py tests/test_delivery_activation.py
+          tests/test_delivery_document_resume.py tests/test_ops_card_schedule.py tests/test_ops_card_unknown_facts.py
       - name: Check completed scheduling and ownership protocols strictly
         env:
           MYPYPATH: src:tests
@@ -218,6 +229,9 @@ jobs:
           src/tank/contracts/source_errors.py src/tank/diagnostic_documents.py
           src/tank/sources/x_diagnostics.py tests/test_x_diagnostic_admission.py
           tests/test_source_error_layering.py
+          src/tank/sources/reporting.py src/tank/ops_entry_errors.py
+          tests/test_source_announcement_envelopes.py tests/source_report_support.py
+          tests/test_source_error_report_scope.py tests/test_source_feed_input.py
       - name: Check completed quality module families strictly
         env:
           MYPYPATH: src:tests
@@ -225,6 +239,8 @@ jobs:
           uv run --frozen --extra dev mypy --strict --follow-imports=silent --explicit-package-bases
           scripts/ci scripts/capture/gen_schema.py scripts/capture/gen_pyvectors.py scripts/capture/parity.py
           deploy/openma_lifecycle/native_network_probe.py
+          tests/test_ci_integration_completion.py tests/test_ci_unit_completion.py tests/test_ci_integration_setup.py tests/test_ci_integration_order.py
+          tests/test_ci_managed_clickhouse.py
           tests/test_ci_budget.py tests/test_ci_go_results.py tests/test_capture_parity.py tests/test_capture_parity_contracts.py tests/test_native_network_probe.py tests/test_deploy.py
           tests/bootstrap_support.py tests/test_bootstrap_support.py tests/test_refactor_inventory.py
           tests/test_actor_package_closure.py
@@ -264,6 +280,9 @@ jobs:
           tests/test_apify_deploy.py tests/test_actor_package_closure.py
 
   test:
+    permissions:
+      contents: read
+      actions: read
     uses: ./.github/workflows/test-suite.yml
 
   capture:

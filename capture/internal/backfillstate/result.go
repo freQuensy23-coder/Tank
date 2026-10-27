@@ -249,6 +249,16 @@ func (r Pre24Reference) Validate() error {
 	}
 	return nil
 }
+func (r Pre24Reference) ObservationClock() (time.Time, bool, error) {
+	if err := r.Validate(); err != nil {
+		return time.Time{}, false, err
+	}
+	if !r.available {
+		return time.Time{}, false, nil
+	}
+	at, err := time.Parse(time.RFC3339Nano, *r.stamp)
+	return at, true, err
+}
 func (r Pre24Reference) MarshalJSON() ([]byte, error) {
 	if err := r.Validate(); err != nil {
 		return nil, err

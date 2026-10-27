@@ -5,13 +5,10 @@ import json
 import xml.etree.ElementTree as ET
 from collections import Counter
 from pathlib import Path
-from typing import TYPE_CHECKING
 
-if TYPE_CHECKING:
-    from scripts.ci.integration_shard import parse_shard, shard_for
-else:
-    from integration_shard import parse_shard, shard_for
 from pydantic import BaseModel, ConfigDict, RootModel
+
+from scripts.ci.integration_partition import parse_shard, shard_for
 
 
 class CollectedCase(BaseModel):

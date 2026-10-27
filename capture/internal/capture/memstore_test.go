@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"github.com/freQuensy23-coder/Tank/capture/internal/hotstate"
+	"github.com/freQuensy23-coder/Tank/capture/internal/pre24ref"
 	"github.com/freQuensy23-coder/Tank/capture/internal/requeststate"
 	"sort"
 	"strings"
@@ -108,6 +109,29 @@ func (m *memStore) CoverageMinutes(ctx context.Context, q coverage.Query) ([]cov
 		return nil, err
 	}
 	return store.AdmitCoverageProjection(q, rows)
+}
+
+func (m *memStore) Pre24References(ctx context.Context, q pre24ref.Query) (pre24ref.Observation, error) {
+	if err := q.Validate(); err != nil {
+		return pre24ref.Observation{}, err
+	}
+	rows, err := m.Range(ctx, "mkt.flow_bars_1m", "minute_start", q.Start(), q.End(), map[string]any{"instrument_id": q.InstrumentID()})
+	if err != nil {
+		return pre24ref.Observation{}, pre24ref.FailedRead(err)
+	}
+	projection := make([]map[string]any, 0, len(rows))
+	for _, row := range rows {
+		var points any
+		if row["reference_points"] != nil {
+			wire, err := json.Marshal(row["reference_points"])
+			if err != nil {
+				return pre24ref.Observation{}, err
+			}
+			points = string(wire)
+		}
+		projection = append(projection, map[string]any{"instrument_id": row["instrument_id"], "minute_start": row["minute_start"], "reference_points": points})
+	}
+	return store.AdmitPre24Projection(q, projection)
 }
 
 func (m *memStore) Range(_ context.Context, collection, field string, start, end time.Time, filters map[string]any) ([]map[string]any, error) {

@@ -1,36 +1,19 @@
-import importlib
-import importlib.util
 import json
-import sys
 import xml.etree.ElementTree as ET
 from pathlib import Path
-from types import ModuleType
-from typing import TYPE_CHECKING, Literal
+from typing import Literal
 
 import pytest
 from pydantic import JsonValue
 
+from scripts.ci import check_integration_results as check
+from scripts.ci import ci_budget as budget
+from scripts.ci import integration_partition as shard
+
 CI_ROOT = Path(__file__).resolve().parents[1] / "scripts/ci"
 
-if TYPE_CHECKING:
-    from scripts.ci import ci_budget as budget
-else:
-    spec = importlib.util.spec_from_file_location("ci_budget", CI_ROOT / "ci_budget.py")
-    assert spec is not None
-    assert spec.loader is not None
-    budget = importlib.util.module_from_spec(spec)
-    sys.modules[spec.name] = budget
-    spec.loader.exec_module(budget)
 
-
-@pytest.fixture
-def integration_checks(monkeypatch: pytest.MonkeyPatch) -> tuple[ModuleType, ModuleType]:
-    monkeypatch.syspath_prepend(str(CI_ROOT))
-    return importlib.import_module("integration_shard"), importlib.import_module("check_integration_results")
-
-
-def test_shards_preserve_every_file_and_are_stable(integration_checks: tuple[ModuleType, ModuleType]) -> None:
-    shard, _ = integration_checks
+def test_shards_preserve_every_file_and_are_stable() -> None:
     paths = [
         *(f"tests/test_integration_{index}.py" for index in range(500)),
         "tests/test_fixture_reference.py",
@@ -62,17 +45,13 @@ def test_shards_preserve_every_file_and_are_stable(integration_checks: tuple[Mod
         ("tests/test_storage.py", 1),
     ],
 )
-def test_measured_slow_files_keep_whole_file_assignments(
-    integration_checks: tuple[ModuleType, ModuleType], path: str, index: int
-) -> None:
-    shard, _ = integration_checks
+def test_measured_slow_files_keep_whole_file_assignments(path: str, index: int) -> None:
     assert shard.shard_for(path, 3) == index
     assert 0 <= shard.shard_for(path, 2) < 2
 
 
 @pytest.mark.parametrize("value", ["-1/3", "3/3", "0/0", "0", "a/3", "0/1/2"])
-def test_invalid_shard_is_rejected(integration_checks: tuple[ModuleType, ModuleType], value: str) -> None:
-    shard, _ = integration_checks
+def test_invalid_shard_is_rejected(value: str) -> None:
     with pytest.raises(ValueError):
         shard.parse_shard(value)
 
@@ -94,10 +73,7 @@ def reports(tmp_path: Path) -> tuple[Path, list[Path]]:
     return manifest, paths
 
 
-def test_full_union_requires_every_case_once(
-    integration_checks: tuple[ModuleType, ModuleType], tmp_path: Path
-) -> None:
-    _, check = integration_checks
+def test_full_union_requires_every_case_once(tmp_path: Path) -> None:
     manifest, paths = reports(tmp_path)
     assert check.verify(paths, [manifest]) == {"cases": 2, "passed": 2, "skipped": 0}
     for invalid in (paths[:1], paths + paths[:1]):
@@ -106,10 +82,7 @@ def test_full_union_requires_every_case_once(
 
 
 @pytest.mark.parametrize("outcome", ["failure", "error", "skipped"])
-def test_union_rejects_unsuccessful_tests(
-    integration_checks: tuple[ModuleType, ModuleType], tmp_path: Path, outcome: str
-) -> None:
-    _, check = integration_checks
+def test_union_rejects_unsuccessful_tests(tmp_path: Path, outcome: str) -> None:
     manifest, paths = reports(tmp_path)
     root = ET.parse(paths[0])
     case = root.getroot().find("testcase")
@@ -120,10 +93,7 @@ def test_union_rejects_unsuccessful_tests(
         check.verify(paths, [manifest])
 
 
-def test_union_rejects_different_collections(
-    integration_checks: tuple[ModuleType, ModuleType], tmp_path: Path
-) -> None:
-    _, check = integration_checks
+def test_union_rejects_different_collections(tmp_path: Path) -> None:
     manifest, paths = reports(tmp_path)
     other = tmp_path / "other.json"
     other.write_text("[]")

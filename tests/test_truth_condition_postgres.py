@@ -14,7 +14,15 @@ import pytest
 from source_support import fixture_http_admission, fixture_versions
 from truth_support import fixture_truth_config
 
+from tank.analysis import funding_history_cache
+from tank.analysis.condition_derivative_inputs import DerivativeInstrument
 from tank.analysis.condition_graph_contracts import ConditionWindow
+from tank.analysis.funding_history import (
+    FundingHistoricalPopulation,
+    FundingHistoryPolicy,
+    funding_historical_population,
+)
+from tank.analysis.funding_selection import FundingCalculator, FundingWindowRequest
 from tank.analysis.open_interest import OINativeHistoryBaseline, OIWindowRequest, OpenInterestCalculator
 from tank.analysis.truth import MarketTruthService, compute_market_truth
 from tank.market.cadences import supply_cadences
@@ -34,7 +42,8 @@ async def test_disposable_postgres_selective_condition_inputs_and_sql_footprint(
     dsn = os.getenv("TANK_TEST_DATABASE_URL")
     if not dsn:
         pytest.skip("Requires an isolated tank_test* PostgreSQL database with CREATEDB")
-    if not conninfo_to_dict(dsn).get("dbname", "").startswith("tank_test"):
+    database_name = conninfo_to_dict(dsn).get("dbname")
+    if not isinstance(database_name, str) or not database_name.startswith("tank_test"):
         pytest.fail("TANK_TEST_DATABASE_URL must select an isolated tank_test* database")
     async with postgres_template.repository(dsn) as repo:
         packet = run_path(str(Path(__file__).with_name("test_truth_start_fixture.py")))[
@@ -47,7 +56,9 @@ async def test_disposable_postgres_selective_condition_inputs_and_sql_footprint(
             for row in values:
                 if not isinstance(row, dict):
                     continue
-                row["instrument_id"] = rename.get(row.get("instrument_id"), row.get("instrument_id"))
+                instrument_id = row.get("instrument_id")
+                if isinstance(instrument_id, str):
+                    row["instrument_id"] = rename.get(instrument_id, instrument_id)
                 if row.get("venue") == "A":
                     row["venue"] = "binance"
                 if row.get("venue") == "B":
@@ -248,13 +259,13 @@ async def test_disposable_postgres_selective_condition_inputs_and_sql_footprint(
         monkeypatch.setattr(repo, "put", forbidden)
         monkeypatch.setattr(repo, "put_market_batch", forbidden)
         async with httpx.AsyncClient() as http:
-            market = MarketService(
+            market_service = MarketService(
                 repo, settings, http=http, versions=fixture_versions(), admission=fixture_http_admission()
             )
-            monkeypatch.setattr(market, "snapshot", forbidden)
-            monkeypatch.setattr(market, "_put", forbidden)
-            monkeypatch.setattr(market, "flush_market", forbidden)
-            truth = MarketTruthService(repo, settings, market, versions=fixture_versions())
+            monkeypatch.setattr(market_service, "snapshot", forbidden)
+            monkeypatch.setattr(market_service, "_put", forbidden)
+            monkeypatch.setattr(market_service, "flush_market", forbidden)
+            truth = MarketTruthService(repo, settings, market_service, versions=fixture_versions())
             ordinary = [
                 dict(metric=m, window="W1H") for m in ("spot.cohort.direction", "price.close_vs_level")
             ]
@@ -272,7 +283,7 @@ async def test_disposable_postgres_selective_condition_inputs_and_sql_footprint(
             statements.clear()
             requirements = [dict(metric=m, window="W1H") for m in ("dc.class", "liq.depth_p1_vs_pre")]
             selective = await truth.condition_values(event, "T", packet["cutoff"], requirements)
-            loaded = await market.condition_snapshot(
+            loaded = await market_service.condition_snapshot(
                 "T",
                 packet["cutoff"],
                 anchor={"type": "T1", "ts": packet["anchor"]["ts"], "ts_prec": "EXACT"},
@@ -404,6 +415,116 @@ async def test_disposable_postgres_selective_condition_inputs_and_sql_footprint(
             oi_invisible = await truth.condition_values(event, "T", packet["cutoff"], oi_requirements)
             assert oi_invisible["derivatives"]["windows"]["W1H"]["synchronized"] is None
             assert not any(point["available"] for point in oi_invisible["_condition_evaluation"]["proofs"])
+            assert not any(
+                query.lstrip().upper().startswith(("INSERT", "UPDATE", "DELETE")) for query in statements
+            )
+            funding_population_calls: list[str] = []
+            original_funding_population = funding_historical_population
+
+            def counted_funding_population(
+                calculator: FundingCalculator,
+                request: FundingWindowRequest,
+                *,
+                instrument: DerivativeInstrument,
+                policy: FundingHistoryPolicy,
+            ) -> FundingHistoricalPopulation:
+                population = original_funding_population(
+                    calculator, request, instrument=instrument, policy=policy
+                )
+                funding_population_calls.append(population.identity())
+                return population
+
+            monkeypatch.setattr(
+                funding_history_cache, "funding_historical_population", counted_funding_population
+            )
+            funding_requirements = [{"metric": "deriv.funding_vs_normal", "window": "W1H"}]
+            reads.clear()
+            statements.clear()
+            funding_first = await truth.condition_values(event, "T", packet["cutoff"], funding_requirements)
+            first_funding_row = funding_first["derivatives"]["windows"]["W1H"]["per_venue"][0]
+            first_funding_proof = funding_first["_condition_evaluation"]["proofs"][0]
+            assert first_funding_row["funding_8h_kind"] == "SETTLED"
+            assert Decimal(first_funding_row["funding_8h_eq"]) == 0
+            assert first_funding_row["funding_vs_normal"] == "WITHIN"
+            assert first_funding_proof["available"] is True
+            assert len(funding_population_calls) == 1
+            assert {table for table, _ in reads} == {"mkt.funding_obs"}
+            assert not any(
+                query.lstrip().upper().startswith(("INSERT", "UPDATE", "DELETE")) for query in statements
+            )
+            funding_repeat = await truth.condition_values(event, "T", packet["cutoff"], funding_requirements)
+            repeat_funding_proof = funding_repeat["_condition_evaluation"]["proofs"][0]
+            assert repeat_funding_proof["reused"] is True
+            assert repeat_funding_proof["assembled_at"] != first_funding_proof["assembled_at"]
+            assert funding_repeat["derivatives"] == funding_first["derivatives"]
+            assert len(funding_population_calls) == 1
+
+            current_funding = dict(
+                packet["funding"][-1],
+                kind="CURRENT_ESTIMATE",
+                rate="0.001",
+                rate_8h_eq="0.001",
+                as_of=packet["cutoff"],
+                received_ts=clock_iso(),
+                recorded_at=clock_iso(),
+            )
+            current_funding.pop("funding_time", None)
+            current_funding.pop("funding_time_prec", None)
+            current_funding.pop("settlement_time", None)
+            await original_market_batch("mkt.funding_obs", [current_funding])
+            statements.clear()
+            funding_current = await truth.condition_values(event, "T", packet["cutoff"], funding_requirements)
+            current_funding_row = funding_current["derivatives"]["windows"]["W1H"]["per_venue"][0]
+            assert current_funding_row["funding_8h_kind"] == "CURRENT_ESTIMATE"
+            assert Decimal(current_funding_row["funding_8h_eq"]) == Decimal("0.001")
+            assert current_funding_row["funding_vs_normal"] == "ABOVE"
+            assert (
+                current_funding_row["funding_normal_range_8h"] == first_funding_row["funding_normal_range_8h"]
+            )
+            assert len(funding_population_calls) == 1
+            assert funding_current["_condition_evaluation"]["proofs"][0]["reused"] is False
+            assert not any(
+                query.lstrip().upper().startswith(("INSERT", "UPDATE", "DELETE")) for query in statements
+            )
+
+            historical_funding = dict(
+                packet["funding"][0],
+                rate="-0.0001",
+                rate_8h_eq="-0.0001",
+                received_ts=clock_iso(),
+                recorded_at=clock_iso(),
+            )
+            await original_market_batch("mkt.funding_obs", [historical_funding])
+            statements.clear()
+            funding_historical = await truth.condition_values(
+                event, "T", packet["cutoff"], funding_requirements
+            )
+            assert len(funding_population_calls) == 2
+            assert funding_population_calls[0] != funding_population_calls[1]
+            assert (
+                funding_historical["derivatives"]["windows"]["W1H"]["per_venue"][0]["funding_vs_normal"]
+                == "ABOVE"
+            )
+            assert not any(
+                query.lstrip().upper().startswith(("INSERT", "UPDATE", "DELETE")) for query in statements
+            )
+
+            future_funding = dict(
+                current_funding,
+                rate="0.002",
+                rate_8h_eq="0.002",
+                received_ts=iso(parse_time(clock_iso()) + timedelta(days=1)),
+                recorded_at=clock_iso(),
+            )
+            await original_market_batch("mkt.funding_obs", [future_funding])
+            statements.clear()
+            funding_invisible = await truth.condition_values(
+                event, "T", packet["cutoff"], funding_requirements
+            )
+            invisible_funding_row = funding_invisible["derivatives"]["windows"]["W1H"]["per_venue"][0]
+            assert invisible_funding_row["funding_estimate_8h_eq"] is None
+            assert invisible_funding_row["funding_8h_kind"] == "SETTLED"
+            assert Decimal(invisible_funding_row["funding_8h_eq"]) == 0
             assert not any(
                 query.lstrip().upper().startswith(("INSERT", "UPDATE", "DELETE")) for query in statements
             )

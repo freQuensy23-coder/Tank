@@ -5,6 +5,7 @@ import (
 	"errors"
 	"github.com/freQuensy23-coder/Tank/capture/internal/backfillstate"
 	"github.com/freQuensy23-coder/Tank/capture/internal/hotstate"
+	"github.com/freQuensy23-coder/Tank/capture/internal/pre24ref"
 	"github.com/freQuensy23-coder/Tank/capture/internal/requeststate"
 	"log/slog"
 	"time"
@@ -20,6 +21,7 @@ import (
 type Store interface {
 	Get(ctx context.Context, collection, key string) (map[string]any, error)
 	CoverageMinutes(context.Context, coverage.Query) ([]coverage.Minute, error)
+	Pre24References(context.Context, pre24ref.Query) (pre24ref.Observation, error)
 	Range(ctx context.Context, collection, field string, start, end time.Time, filters map[string]any) ([]map[string]any, error)
 	Projection(ctx context.Context, collection string, fields []string, field string, start, end time.Time, ids []string) ([]map[string]any, error)
 	Earliest(ctx context.Context, collection, field string, start, end time.Time, filters map[string]any) (time.Time, bool, error)

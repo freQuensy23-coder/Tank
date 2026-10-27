@@ -3267,6 +3267,167 @@
         "test_definite_prewrite_failure_does_not_invent_an_existing_usage_receipt",
         "test_actual_prior_usage_formats_preserve_their_first_recorded_provenance"
       ]
+    },
+    {
+      "sites": [
+        {
+          "path": "src/tank/contracts/session_completion.py",
+          "symbol": "ReplayAbortTarget"
+        },
+        {
+          "path": "src/tank/contracts/session_completion.py",
+          "symbol": "ReplayAbortJournal"
+        },
+        {
+          "path": "src/tank/contracts/session_completion.py",
+          "symbol": "ReplayAbortFailure"
+        },
+        {
+          "path": "src/tank/agents/sessions.py",
+          "symbol": "SessionService.finalize_replay_abort"
+        }
+      ],
+      "kind": "actual host replay abort ownership with unused data excluded by phase",
+      "reason": "The sole production replay cleanup supplies actual session/run scope and actual error_type/reason from its caught exception. Explicit unknown run None and foreign run cannot authorize writes and do not require unused failure details or journal/body facts; matching scope requires observed failure before mutation. Journal absence remains unreported versus knownempty, never backfilled; only actual unique message IDs and turn phases are consumed, with every non-null active pointer naming one actual row. Unreported turn phase may be locally retired by the owned host-abort decision without claiming native failure; DONE/FAILED/native receipts/source outputs remain unchanged and no retry count or old native body is required. Real str(RuntimeError()) can be empty, so reason is preserved as an actual string rather than repaired to UNKNOWN. Recorded clock is the actual injected controller/replay Timestamp, with no provider occurrence/event/execution ID invented. Outcomes use strict bool flags and immutable ID tuples internally; JSON-mode reporting retains the external list shape. Repository and host bookkeeping I/O remain in Sessions, not inward models.",
+      "validation": [
+        "test_actual_owned_abort_preserves_terminal_native_and_completed_message_facts",
+        "test_actual_unowned_abort_needs_no_failure_or_unused_journal_body",
+        "test_owned_abort_missing_required_facts_refuses_before_any_persisted_mutation",
+        "test_abort_message_phase_needs_no_unused_body_counter_or_native_acceptance",
+        "test_unreported_journal_and_actual_empty_journal_remain_distinct",
+        "test_actual_empty_exception_text_stays_empty_and_receipt_is_host_not_native"
+      ]
+    },
+    {
+      "sites": [
+        {
+          "path": "src/tank/delivery.py",
+          "symbol": "DeliveryService._all",
+          "line": 148
+        },
+        {
+          "path": "src/tank/ops_cards.py",
+          "symbol": "presentation_view",
+          "line": 193
+        },
+        {
+          "path": "src/tank/ops_cards.py",
+          "symbol": "snapshot",
+          "line": 219
+        }
+      ],
+      "kind": "consumed delivery and operator-view boundary mappings",
+      "reason": "Raw JSON remains at actual repository admission, query/HTTP serialization, timestamp-codec projection and guarded original-row writes. Business data is admitted into named views and consumed through attributes; stage/document indexes use actual reported identities. RichMessage uses its existing named schema. The three modules contain113 dictionary nodes and47 get calls in these stated roles; the inventory is not permission for an opaque domain payload.",
+      "validation": [
+        "test_delivery_sent_opens_once_and_escapes_html",
+        "test_burst_is_one_message_and_later_change_edits_it_across_restart",
+        "test_progress_delivery_refuses_foreign_stored_card_before_http"
+      ]
+    },
+    {
+      "sites": [
+        {
+          "path": "src/tank/contracts/delivery.py",
+          "symbol": "DeliveryAttemptOrdinal",
+          "line": 561
+        },
+        {
+          "path": "src/tank/contracts/delivery.py",
+          "symbol": "StartCallPrices",
+          "line": 609
+        },
+        {
+          "path": "src/tank/delivery.py",
+          "symbol": "DeliveryService.__init__",
+          "line": 137
+        }
+      ],
+      "kind": "actual delivery ordinal and consumed activation phases",
+      "reason": "Publication GENERATED0, retired FAILED/suppressed0 and explicit terminal queue0 are factual writer phases, distinct from positive transport attempts or missing counters. Fresh empty owned history initializes the next actual attempt; absent retained count refuses when consumed. START prices are needed only for a new call; existing START/EXIT/inactive phases do not require unused price fields. HTTP None means construct and own a real client, while supplied clients remain borrowed.",
+      "validation": [
+        "test_historical_suppression_is_preserved_without_censoring_explicit_retry",
+        "test_delivery_activation_without_unused_prices",
+        "test_new_start_requires_real_prices_before_call_write",
+        "test_full_sse_pipeline_postgres"
+      ]
+    },
+    {
+      "sites": [
+        {
+          "path": "src/tank/contracts/delivery.py",
+          "symbol": "DocumentLedgerEntry",
+          "line": 444
+        },
+        {
+          "path": "src/tank/contracts/delivery.py",
+          "symbol": "DocumentRetryAttempt",
+          "line": 469
+        },
+        {
+          "path": "src/tank/contracts/delivery.py",
+          "symbol": "DocumentParentReceipt",
+          "line": 479
+        },
+        {
+          "path": "src/tank/delivery.py",
+          "symbol": "DeliveryService._deliver_documents",
+          "line": 292
+        }
+      ],
+      "kind": "pending diagnostic effect requires an observed parent destination",
+      "reason": "Actual main-notice receipts omit method/document_id; document receipts report sendDocument and content-derived document_id. Already completed/exhausted work does not consume credentials or historical parent facts. A new upload requires captured nonblank credentials and an actual same-notice/channel parent message with matching recorded destination before any attempt write or HTTP. Missing parent chat stays unreported and cannot be supplied from current settings. A restored snapshot is authored independently; original immutable records remain. Existing ambiguous-attempt policy is preserved without a new provider-idempotency claim.",
+      "validation": [
+        "test_pending_document_resume_refuses_before_new_attempt",
+        "test_all_documents_sent_needs_no_unused_parent_or_credentials",
+        "test_partial_document_delivery_retry_does_not_duplicate_successful_message_or_documents",
+        "test_job_runner_defers_large_successful_document_batches_without_spending_attempts"
+      ]
+    },
+    {
+      "sites": [
+        {
+          "path": "src/tank/contracts/delivery.py",
+          "symbol": "UnknownOpsMap",
+          "line": 189
+        },
+        {
+          "path": "src/tank/contracts/delivery.py",
+          "symbol": "OpsPresentationClocks",
+          "line": 90
+        },
+        {
+          "path": "src/tank/ops_cards.py",
+          "symbol": "time_of",
+          "line": 140
+        },
+        {
+          "path": "src/tank/ops_cards.py",
+          "symbol": "outcome",
+          "line": 347
+        }
+      ],
+      "kind": "operator unreported facts and preserved display-only defaults",
+      "reason": "Unknown attempt/map facts remain explicit, never zero or an empty universe. Operational scheduling requires an actual consumed clock for positive spacing; explicit zero spacing and covered/unchanged phases require no unused clock. Nonempty item-bound history is required. Pending adoption captures actual scoped parent receipt time and digest; missing historical clocks never become current time. The presentation sentinel remains only for display/no-session explanation ordering. Wholly unreported frozen policy uses normative 900 seconds; a reported policy requires its actual scalar. Omitted normal decision flags remain unreported, never actionable=True. Assessment domain-name revalidation preserves raw class-key admission.",
+      "validation": [
+        "test_failed_delivery_does_not_display_unknown_attempt_as_zero",
+        "test_analysis_map_unknown_is_not_an_empty_completed_universe",
+        "test_completion_preserves_the_actual_assessment_outcome",
+        "test_delivery_due_guard_preserves_sent_anchor_and_records_no_attempt"
+      ]
+    },
+    {
+      "sites": [
+        {
+          "path": "src/tank/contracts/tool_dispatch.py",
+          "symbol": "ToolCallOwner.retry_count",
+          "line": 39
+        }
+      ],
+      "kind": "unreported attempt is not required for input-trigger selection",
+      "reason": "Actual persisted call/session/tool/message identity binds one original journal input. Trigger selection consumes payload kind/item, not a retry budget or supersession authorization. Missing retry facts remain None, never zero; contradictory reported counters refuse. Retry and failed-attempt policies stay at their existing owning boundaries. Non-publication tools do not acquire unused trigger requirements.",
+      "validation": [
+        "test_publication_dispatch_retains_persisted_call_trigger_after_active_input_changes"
+      ]
     }
   ]
 }

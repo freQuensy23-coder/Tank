@@ -57,14 +57,17 @@ def run_db[T: JsonInput](
         repo = PostgresRepository(settings.database_url)
         from tank import clickhouse_market
 
-        clickhouse = clickhouse_market.install(repo, settings)
-        await repo.open()
+        clickhouse: clickhouse_market.ClickHouse | None = None
         try:
+            clickhouse = clickhouse_market.install(repo, settings)
+            await repo.open()
             return await fn(repo, settings)
         finally:
-            await repo.close()
-            if clickhouse is not None:
-                await clickhouse.close()
+            try:
+                await repo.close()
+            finally:
+                if clickhouse is not None:
+                    await clickhouse.close()
 
     try:
         output(asyncio.run(execute()))
