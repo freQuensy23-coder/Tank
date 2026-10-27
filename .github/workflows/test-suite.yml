@@ -140,7 +140,7 @@ jobs:
       - name: Prepare the isolated ClickHouse schema
         run: uv run --frozen --extra dev python scripts/ci/prepare_clickhouse.py
       - name: Provision disposable worker databases and read-only role
-        run: uv run --frozen --extra dev python scripts/ci/prepare_postgres.py
+        run: uv run --frozen --extra dev python -m scripts.ci.prepare_postgres
         env:
           CI_POSTGRES_DSN: postgresql://postgres:tank-ci-disposable@127.0.0.1:5432/tank_test_ci_admin
           PYTHONPATH: tests

@@ -4,11 +4,11 @@ import os
 from pathlib import Path
 
 import pytest
+from test_ci_managed_clickhouse import context
 
 from scripts.ci import prepare_postgres
 from scripts.ci.managed_clickhouse import CIContext
 from scripts.ci.schema_template import allocate_template, read_template, template_path
-from test_ci_managed_clickhouse import context
 
 
 def allocated_context(tmp_path: Path) -> CIContext:

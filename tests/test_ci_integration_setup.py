@@ -268,3 +268,28 @@ def test_actual_collection_uses_the_owned_future_template_without_claiming_seal(
     assert result.successful()
     with pytest.raises(FileExistsError):
         run(setup_context, SignalState())
+
+
+def test_actual_postgres_module_refuses_foreign_template_before_database_access(
+    setup_context: SetupContext,
+) -> None:
+    result = run(setup_context, SignalState())
+    assert result.successful()
+    source = Path(__file__).resolve().parents[1]
+    environment = dict(os.environ) | setup_context.environment()
+    environment["TANK_CI_SCHEMA_TEMPLATE"] = "tank_test_ci_schema_" + "f" * 32
+    environment["PYTHONPATH"] = os.pathsep.join(str(source / name) for name in ("src", "tests"))
+    environment.pop("CI_POSTGRES_DSN", None)
+    child = subprocess.run(
+        [sys.executable, "-m", "scripts.ci.prepare_postgres"],
+        cwd=source,
+        env=environment,
+        capture_output=True,
+        text=True,
+        timeout=8,
+        check=False,
+    )
+    assert child.returncode == 1
+    assert "Prepared schema must match its actual allocated collection identity" in child.stderr
+    assert "ModuleNotFoundError" not in child.stderr
+    assert "CI_POSTGRES_DSN" not in child.stderr
