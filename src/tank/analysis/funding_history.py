@@ -98,22 +98,16 @@ class FundingHistoricalPopulation(DomainModel):
         if self.ambiguous_clocks:
             return DecimalRange(bounds=None, reason="INCOMPLETE")
         unavailable = tuple(value for value in self.values if isinstance(value, UnavailableFundingEquivalent))
-        if unavailable:
-            return DecimalRange(
-                bounds=None,
-                reason="NOT_ESTIMABLE"
-                if any(value.reason == "NOT_ESTIMABLE" for value in unavailable)
-                else "INCOMPLETE",
-            )
+        if any(value.reason == "NOT_ESTIMABLE" for value in unavailable):
+            return DecimalRange(bounds=None, reason="NOT_ESTIMABLE")
+        known = tuple(value for value in self.values if not isinstance(value, UnavailableFundingEquivalent))
         if (
-            not self.values
-            or (
-                _historical_time(self.values[-1].source) - _historical_time(self.values[0].source)
-            ).total_seconds()
+            not known
+            or (_historical_time(known[-1].source) - _historical_time(known[0].source)).total_seconds()
             < self.policy.minimum_history_days * 86400
         ):
             return DecimalRange(bounds=None, reason="INSUFFICIENT_HISTORY")
-        rates = tuple(value.value for value in self.values if value.value is not None)
+        rates = tuple(value.value for value in known)
         lower = funding_quantile(rates, self.policy.quantiles[0])
         upper = funding_quantile(rates, self.policy.quantiles[1])
         if lower.value is None or upper.value is None:
