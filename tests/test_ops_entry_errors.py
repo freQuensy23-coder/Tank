@@ -115,6 +115,11 @@ async def test_disabled_or_replay_reports_nothing(tmp_path: Path, enabled, repla
     assert await entry_notices(repo) == [] and await entry_jobs(repo) == []
     checkpoint = await repo.get("ops.source_checkpoints", "S30:0")
     assert checkpoint["entry_errors"]
+    ledger = SourceReportLedger.model_validate(checkpoint["entry_error_reporting"])
+    assert ledger.pending == {} and ledger.last_outcome is not None
+    assert ledger.last_outcome.outcome.kind == "NOT_REQUESTED"
+    assert ledger.last_outcome.outcome.reason == ("REPLAY" if replay else "DISABLED")
+    assert ledger.last_outcome.intent_id is None
 
 
 async def test_restart_and_concurrent_reports_are_idempotent(tmp_path: Path) -> None:
