@@ -264,10 +264,10 @@ class EntryErrorRenderContent(DomainModel):
 
     notice_id: str
     source_id: str
-    source_name: str
+    source_name: str = Field(min_length=1)
     feed_url: str
     seen_at: str
-    entry_errors: list[SourceEntryError]
+    entry_errors: list[SourceEntryError] = Field(min_length=1)
 
 
 class EntryErrorNotice(DomainModel):

@@ -133,9 +133,9 @@ def entry_block(number: int, error: SourceEntryError, payload_shown: bool) -> st
 
 
 def render(notice: EntryErrorRenderContent) -> str:
-    source = notice.source_id + (f" · {notice.source_name}" if notice.source_name else "")
+    source = notice.source_id + f" · {notice.source_name}"
     errors = notice.entry_errors
-    shared_payload = errors[0].payload_sha256 if errors else None
+    shared_payload = errors[0].payload_sha256
     shared = shared_payload is not None and all(error.payload_sha256 == shared_payload for error in errors)
     head = [
         "TANK OPS · Ошибка HTTP-сбора X"

@@ -80,3 +80,22 @@ async def test_storage_record_revalidates_a_tampered_admitted_notice(
     with pytest.raises(ValidationError):
         tampered.storage_record()
     assert await repo.get("out.ops_notices", outcome.notice_id) == stored
+
+
+@pytest.mark.parametrize("missing_fact", ["source_name", "entry_errors"])
+def test_render_content_requires_actual_nonempty_source_name_and_errors(missing_fact: str) -> None:
+    actual = request()
+    fields = {
+        "notice_id": "entry_errors_declared",
+        "source_id": actual.subject.source_id,
+        "source_name": actual.subject.source_name,
+        "feed_url": actual.subject.feed_url,
+        "seen_at": actual.seen_at,
+        "entry_errors": [error.model_dump(mode="json") for error in actual.errors],
+    }
+    if missing_fact == "source_name":
+        fields[missing_fact] = ""
+    else:
+        fields[missing_fact] = []
+    with pytest.raises(ValidationError):
+        EntryErrorRenderContent.model_validate(fields)
