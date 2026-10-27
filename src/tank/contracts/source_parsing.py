@@ -76,11 +76,61 @@ class ParsedArticle(DomainModel):
         }
 
 
+class ContentfulTextNode(DomainModel):
+    model_config = ConfigDict(extra="ignore")
+
+    nodeType: Literal["text"]
+    value: str
+
+
+class ContentfulContainerNode(DomainModel):
+    model_config = ConfigDict(extra="ignore")
+
+    nodeType: Literal[
+        "paragraph",
+        "heading-1",
+        "heading-2",
+        "heading-3",
+        "heading-4",
+        "heading-5",
+        "heading-6",
+        "ordered-list",
+        "unordered-list",
+        "list-item",
+        "hr",
+        "blockquote",
+        "embedded-entry-block",
+        "embedded-asset-block",
+        "embedded-resource-block",
+        "table",
+        "table-row",
+        "table-cell",
+        "table-header-cell",
+        "asset-hyperlink",
+        "embedded-entry-inline",
+        "embedded-resource-inline",
+        "entry-hyperlink",
+        "hyperlink",
+        "resource-hyperlink",
+    ]
+    content: list["ContentfulNode"]
+
+
+type ContentfulNode = Annotated[ContentfulTextNode | ContentfulContainerNode, Field(discriminator="nodeType")]
+
+
+class ContentfulRichTextDocument(DomainModel):
+    model_config = ConfigDict(extra="ignore")
+
+    nodeType: Literal["document"]
+    content: list[ContentfulNode]
+
+
 class ContentfulArticleFields(DomainModel):
     model_config = ConfigDict(extra="ignore")
 
     title: str | None = None
-    content: JsonValue
+    content: ContentfulRichTextDocument
 
 
 class ContentfulArticle(DomainModel):

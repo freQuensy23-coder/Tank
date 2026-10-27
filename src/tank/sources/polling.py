@@ -1057,13 +1057,23 @@ class SourcePoller:
                     item["publisher_cms_recovery"] = recovery.model_dump(mode="json", exclude_unset=True)
                     item["publisher_url_aliases"] = [recovery.canonical_url, recovery.resolved_url]
                     item["url"] = recovery.resolved_url
-                detail = await asyncio.to_thread(
-                    parsers.article,
-                    payload,
-                    source_id=sid,
-                    page_url=material.url,
-                    response_url=_http_read.receipt.response_url,
-                )
+                try:
+                    detail = await asyncio.to_thread(
+                        parsers.article,
+                        payload,
+                        source_id=sid,
+                        page_url=material.url,
+                        response_url=_http_read.receipt.response_url,
+                    )
+                except parsers.ContentfulStructureError:
+                    return ArticleFailure(
+                        url=material.url,
+                        http_status=_http_read.receipt.http_status,
+                        payload_sha256=_http_read.receipt.payload_sha256,
+                        observed_at=_http_read.receipt.fetched_at,
+                        observed_at_precision="COLLECTION_ONLY",
+                        reason="INVALID_CONTENTFUL_STRUCTURE",
+                    )
                 if not detail.text.strip():
                     return self._empty_body(material.url, _http_read.receipt)
 
@@ -1107,7 +1117,12 @@ class SourcePoller:
                 if isinstance(result, ArticleFailure):
                     return FailedSourceRow(
                         original=row,
-                        error="Article parse failure (empty visible text): " + row.discovery.url,
+                        error=(
+                            "Article parse failure (invalid Contentful structure): "
+                            if result.reason == "INVALID_CONTENTFUL_STRUCTURE"
+                            else "Article parse failure (empty visible text): "
+                        )
+                        + row.discovery.url,
                         article_failure=result,
                     )
                 observation = MaterializedSourceObservation.model_validate(result)
