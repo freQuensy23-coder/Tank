@@ -2065,3 +2065,41 @@ maximum 1.453 seconds), and all 19 selected actual cases passed with zero skips.
 The original report text, dedup, document and rollback assertions remain.
 Evidence prefix: notice-required-linux. Strict three-target, Ruff/format,
 source comment and diff checks pass; no parent or production operations.
+
+## Literal HTTP feed admission — 2026-10-27
+
+An actual SourceService/MemoryRepository/MockTransport reproduction confirmed a
+provenance defect: an HTTP 200 body containing only an owned temporary RSS
+filename was interpreted by feedparser as a local resource. The service emitted
+HEALTHY/items=1 with a local-only title, while raw_sha256 identified the pathname
+HTTP bytes rather than the XML used to produce that title. Only an authored
+temporary file was read; no personal/system file, credential or live URL was
+used. Original failure evidence remains source-feed-file-repro.py/.log.
+
+The pinned feedparser 6.0.14 input contract accepts resource names as well as
+literal data; its [official API source](https://github.com/kurtmckee/feedparser/blob/main/feedparser/api.py)
+warns callers to wrap untrusted data in memory streams. The installed module
+hash and dispatch coordinates are retained in
+feedparser-6.0.14-input-contract.json. The production fix is exactly BytesIO
+admission around existing str/bytes payloads before calling that SDK. Captured
+bytes remain unchanged, and existing text inputs keep their prior UTF-8
+encoding. No publication clock, provider envelope, fallback/default, schema or
+source policy was changed.
+
+Tested immutable 747d4ff1 passes all 115 selected units in 8.09 seconds (zero
+skips, p90 0.150 seconds, maximum 0.516 seconds) and all 22 selected actual
+integration cases in 10.71 seconds, zero skips. New actual Memory/PostgreSQL
+caller controls forbid SDK-only file/network reads, preserve the observed
+HTTP status/hash and owned file, and require zero items/jobs/raw item archives
+for pathname/URL bodies. A genuine XML response still creates its source item,
+exact archived HTTP bytes and one bound FILTER_ITEM job. The initial new test
+incorrectly expected retired NEW_ITEM; its 114-pass/one-failure run is retained,
+and only that authored queue-kind oracle was corrected from the actual writer.
+The unchanged original application reproduction now passes with DEGRADED,
+items=0 and no retained item (source-feed-file-fixed.log).
+
+The new caller test is independently strict-clean; direct default parser mypy,
+Ruff, formatting, source-comment policy and diff checks pass. Whole parser
+contract migration remains separate and held at becdfa7e; it is not part of
+this narrow fix. Evidence prefixes are feed-stream-5675-linux and
+feed-stream-corrected-linux. No production operation occurred.
