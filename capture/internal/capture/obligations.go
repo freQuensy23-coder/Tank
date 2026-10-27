@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"github.com/freQuensy23-coder/Tank/capture/internal/backfillstate"
 	"github.com/freQuensy23-coder/Tank/capture/internal/coverage"
+	"github.com/freQuensy23-coder/Tank/capture/internal/pre24ref"
 	"github.com/freQuensy23-coder/Tank/capture/internal/requeststate"
 	"sort"
 	"strings"
@@ -658,11 +659,19 @@ func (s *Service) captureWindowCoverage(ctx context.Context, inst *venue.Instrum
 		return backfillstate.NonSpotInstrumentCoverage(inst.ID, coverage)
 	}
 	boundary := end.Add(-24 * time.Hour)
-	bars, err := s.store.Range(ctx, "mkt.flow_bars_1m", "minute_start", pytime.MinuteFloor(boundary).Add(-time.Minute), pytime.MinuteFloor(boundary).Add(time.Minute), map[string]any{"instrument_id": inst.ID})
+	query, err := pre24ref.NewQuery(inst.ID, boundary)
 	if err != nil {
-		return backfillstate.InstrumentCoverage{}, fmt.Errorf("%s pre24 reference unavailable: %w", inst.ID, err)
+		return backfillstate.InstrumentCoverage{}, err
 	}
-	pre, err := decodePre24Reference(bars, boundary)
+	observation, err := s.store.Pre24References(ctx, query)
+	if err != nil {
+		var readError pre24ref.ReadError
+		if errors.As(err, &readError) {
+			return backfillstate.InstrumentCoverage{}, fmt.Errorf("%s pre24 reference unavailable: %w", inst.ID, err)
+		}
+		return backfillstate.InstrumentCoverage{}, err
+	}
+	pre, err := observation.Reference(query)
 	if err != nil {
 		return backfillstate.InstrumentCoverage{}, err
 	}
