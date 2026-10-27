@@ -13,6 +13,7 @@ from tank.contracts.source_errors import (
     AccountEntryError,
     EntryErrorMarker,
     EntryErrorNotice,
+    EntryErrorRenderContent,
     EntryIdentity,
     SourceEntryError,
     SourceErrorIdentity,
@@ -131,10 +132,10 @@ def entry_block(number: int, error: SourceEntryError, payload_shown: bool) -> st
     return "\n".join(lines)
 
 
-def render(notice: EntryErrorNotice) -> str:
-    source = notice.source_id + (f" · {notice.source_name}" if notice.source_name else "")
+def render(notice: EntryErrorRenderContent) -> str:
+    source = notice.source_id + f" · {notice.source_name}"
     errors = notice.entry_errors
-    shared_payload = errors[0].payload_sha256 if errors else None
+    shared_payload = errors[0].payload_sha256
     shared = shared_payload is not None and all(error.payload_sha256 == shared_payload for error in errors)
     head = [
         "TANK OPS · Ошибка HTTP-сбора X"
@@ -241,25 +242,28 @@ async def report_entry_errors(
                     await repo.put(
                         "out.ops_notices", marker.notice_id, marker.storage_record(), immutable=True
                     )
-                notice = EntryErrorNotice(
+                content = EntryErrorRenderContent(
                     notice_id=notice_id,
-                    subject_id=subject.source_id,
                     source_id=subject.source_id,
                     source_name=subject.source_name,
                     feed_url=subject.feed_url,
                     seen_at=request.seen_at,
-                    entry_error_keys=sorted(fresh),
                     entry_errors=list(fresh.values()),
-                    created_at=created_at,
-                    text="",
                 )
-                notice = notice.model_copy(update={"text": render(notice)})
-                if attachments := documents(notice.entry_errors):
-                    notice = EntryErrorNotice.model_validate(
-                        notice.model_copy(
-                            update={"document_manifest": [row.reference() for row in attachments]}
-                        )
-                    )
+                attachments = documents(content.entry_errors)
+                notice = EntryErrorNotice(
+                    notice_id=content.notice_id,
+                    subject_id=subject.source_id,
+                    source_id=content.source_id,
+                    source_name=content.source_name,
+                    feed_url=content.feed_url,
+                    seen_at=content.seen_at,
+                    entry_error_keys=sorted(fresh),
+                    entry_errors=content.entry_errors,
+                    created_at=created_at,
+                    text=render(content),
+                    document_manifest=[row.reference() for row in attachments] if attachments else None,
+                )
                 await repo.put("out.ops_notices", notice_id, notice.storage_record(), immutable=True)
                 await repo.enqueue(
                     "DELIVER",
