@@ -264,6 +264,8 @@ async def test_recovered_ack_settles_all_inputs_before_releasing_admission(
                 "call_id": "continuation",
                 "tool": "get_item",
                 "input": {"item_id": "i"},
+                "requested_at": AT,
+                "requested_at_prec": "COLLECTION_ONLY",
                 "status": "DONE",
                 "native_turn_message_id": "lost",
                 "native_turn_retry_count": 0,

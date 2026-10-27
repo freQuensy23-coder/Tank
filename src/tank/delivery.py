@@ -145,7 +145,7 @@ class DeliveryService:
                 "document_manifest" in notice
                 or (
                     notice.get("kind") == "ENTRY_ERRORS"
-                    and any("diagnostics" in error for error in notice.get("entry_errors", []))
+                    and any(error.get("diagnostics") is not None for error in notice.get("entry_errors", []))
                 )
             ):
                 async with AsyncExitStack() as locks:

@@ -785,10 +785,9 @@ class SessionService:
             calls = [row async for row in self.repo.iter_all("ops.tool_calls", filters={"session_id": sid})]
             changed = False
             for message in session.get("message_log", []):
-                if (
-                    message["message_id"] in session.get("retired_message_ids", [])
-                    or message.get("turn_status") not in {"ACCEPTING", "PENDING", "RUNNING"}
-                ):
+                if message["message_id"] in session.get("retired_message_ids", []) or message.get(
+                    "turn_status"
+                ) not in {"ACCEPTING", "PENDING", "RUNNING"}:
                     continue
                 identity = self.recorded_message_input(session, message, calls)
                 if not identity:
@@ -842,7 +841,11 @@ class SessionService:
 
     async def native_input_owner(self, session, execution_id, calls=None):
         """Resolve exact accepted-input lineage, including tool-result continuations."""
-        if not isinstance(execution_id, str) or not execution_id.strip() or execution_id != execution_id.strip():
+        if (
+            not isinstance(execution_id, str)
+            or not execution_id.strip()
+            or execution_id != execution_id.strip()
+        ):
             return None
         messages = {row["message_id"]: row for row in session.get("message_log", [])}
         calls = (
@@ -915,7 +918,8 @@ class SessionService:
                     failure.get("event_type") == "execution.status_failed"
                     and failure["event_id"] != "execution-status-failed:" + identity
                 )
-                or failure.get("event_type") not in {"execution.status_failed", "session.error", "agent.refusal"}
+                or failure.get("event_type")
+                not in {"execution.status_failed", "session.error", "agent.refusal"}
                 or states.get(identity, {}).get("state") != "FAILED"
                 or await self.native_input_owner(session, identity, calls) != (message["message_id"], attempt)
             ):
