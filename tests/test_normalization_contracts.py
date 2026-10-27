@@ -199,7 +199,8 @@ async def test_normalized_provider_records_reach_the_real_market_storage_reader(
         ("mkt.liq_obs", "ts", liquidation, "qty_native", "0"),
     )
     for collection, clock_field, record, financial_field, expected in records:
-        changed = await repo.put_market_batch(collection, [record])
+        keys = [f"normalization-liquidation:{source_ms}"] if collection == "mkt.liq_obs" else None
+        changed = await repo.put_market_batch(collection, [record], keys=keys)
         assert len(changed) == 1
         stored = await repo.latest_before(
             collection, clock_field, receipt, filters={"instrument_id": wire["instrument_id"]}
