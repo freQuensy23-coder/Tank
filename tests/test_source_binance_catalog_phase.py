@@ -124,8 +124,9 @@ async def test_catalog_pending_restart_requires_detail_and_keeps_exact_listing_f
                 checkpoint = await repo.get("ops.source_checkpoints", "S09:0")
                 assert checkpoint is not None
                 batches = checkpoint["pending_batches"]
-                assert isinstance(batches, list) and len(batches) == 1
-                batch = batches[0]
+                assert isinstance(batches, list) and len(batches) == 2
+                batch, coverage_batch = batches
+                assert isinstance(coverage_batch, dict) and coverage_batch["rows"] == []
                 assert isinstance(batch, dict)
                 rows = batch["rows"]
                 assert isinstance(rows, list) and len(rows) == 1

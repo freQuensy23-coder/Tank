@@ -6,6 +6,7 @@ from pydantic_settings import SettingsConfigDict
 from source_support import fixture_request_budgets, fixture_versions, source_definition
 from test_storage import repo as repo
 
+from tank.contracts.source_items import ArticleDiscovery
 from tank.settings import Settings
 from tank.sources import SourceService, parsers
 from tank.storage import StorageBackend
@@ -39,6 +40,7 @@ def test_press_release_without_reported_reference_date_keeps_publication_unknown
     parsed = parsers.json_items(payload, "S19")
     assert parsed.errors == [] and len(parsed.discoveries) == 1
     [entry] = parsed.discoveries
+    assert isinstance(entry.discovery, ArticleDiscovery)
     assert entry.discovery.external_id == "https://publisher.example/release"
     assert entry.discovery.text == "Actual source release body"
     assert entry.discovery.published_at is None
