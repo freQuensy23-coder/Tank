@@ -67,9 +67,14 @@ func TestPre24BackendFailurePreservesUnavailablePublicPhase(t *testing.T) {
 }
 
 func TestPre24MalformedSelectedWitnessCannotFinalizeCoverage(t *testing.T) {
-	r := newRESTRig(t, "hyperliquid")
+	r := newRESTRig(t, "coinbase")
+	if !r.inst.Spot() {
+		t.Fatal("the fixture must exercise actual spot pre24 reference consumption")
+	}
+	var reads atomic.Int32
 	boundary := r.base.Add(-24 * time.Hour)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		reads.Add(1)
 		points := fmt.Sprintf(`[{"complete":true,"boundary":%q,"last_trade":{"trade_id":false,"ts":%q}}]`, pytime.ISO(boundary), pytime.ISO(boundary.Add(-time.Second)))
 		_, _ = fmt.Fprintf(w, `{"instrument_id":%q,"minute_start":%q,"reference_points":%q}`, r.inst.ID, pytime.ISO(pytime.MinuteFloor(boundary)), points)
 	}))
@@ -82,7 +87,7 @@ func TestPre24MalformedSelectedWitnessCannotFinalizeCoverage(t *testing.T) {
 	obligation := queuedBackfill(t, r.mem, "BF-pre24-invalid", map[string]any{"backfill_id": "BF-pre24-invalid", "event_id": "EVT-pre24-invalid", "token_id": r.inst.TokenID, "anchor": pytime.ISO(r.base), "status": "PENDING"})
 	r.s.runObligation(context.Background(), obligation)
 	row := r.mem.rows["mkt.backfill_runs"]["BF-pre24-invalid"]
-	if row["status"] != "FAILED" || row["reason"] != "COVERAGE_READ_FAILED" || row["result"] != nil || row["finished_at"] == nil {
+	if row["status"] != "FAILED" || row["reason"] != "COVERAGE_READ_FAILED" || row["result"] != nil || row["finished_at"] == nil || reads.Load() != 1 {
 		t.Fatalf("malformed selected witness acquired a terminal result: %v", row)
 	}
 }
