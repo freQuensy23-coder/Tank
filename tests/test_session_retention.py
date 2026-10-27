@@ -337,3 +337,15 @@ async def test_missing_owned_event_is_not_reinterpreted_as_an_eventless_negative
     posts, session = await finish(repo)
     assert posts == [] and session["status"] == "OPEN"
     assert session["event_id"] == "evt_1" and "archived_at" not in session
+
+
+async def test_replay_archive_does_not_consume_unused_historical_retention_deadline() -> None:
+    repo = MemoryRepository()
+    await seed(repo, age_days=0, no_event=True)
+    record = await repo.get("ops.agent_sessions", "ses_1")
+    assert record is not None
+    record["archive_after"] = "unused historical retention text"
+    await repo.put("ops.agent_sessions", "ses_1", record)
+    posts, session = await finish(repo, settings(replay=True))
+    assert posts == [("POST", "/v1/sessions/ses_1/archive")]
+    assert session["status"] == "ENDED" and session["archive_reason"] == "REPLAY"
