@@ -856,12 +856,8 @@ async def test_milestone_producer_drives_source_cadence_and_cancellation(
     settings_obj = Settings(data_dir=tmp_path)
     original_load = settings_obj.load_config
 
-    class SourceSettings:
-        data_dir = tmp_path
-        user_agent = "Tank test"
-        config_version = "test"
-        code_version = "test"
-        x_list_id = None
+    class SourceSettings(Settings):
+        model_config = SettingsConfigDict(env_file=None)
 
         def load_config(self, name: str) -> dict[str, JsonValue]:
             return source_configuration({"sources": [source]}) if name == "sources" else original_load(name)
@@ -874,7 +870,11 @@ async def test_milestone_producer_drives_source_cadence_and_cancellation(
 
     http = httpx.AsyncClient(transport=httpx.MockTransport(response))
     service = SourceService(
-        repo, SourceSettings(), http=http, versions=fixture_versions(), budgets=fixture_request_budgets()
+        repo,
+        SourceSettings(data_dir=tmp_path, user_agent="Tank test", ops_progress_enabled=False),
+        http=http,
+        versions=fixture_versions(),
+        budgets=fixture_request_budgets(),
     )
     reaction_settings = settings_obj
     reaction_versions = fixture_versions()
