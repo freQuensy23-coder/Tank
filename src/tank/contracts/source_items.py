@@ -28,9 +28,9 @@ type SourceContextId = Annotated[str, Field(min_length=1, pattern=r"^\S+$")]
 
 
 class PublisherCMSIdentity(DomainModel):
-    entry_id: str = Field(min_length=1)
+    entry_id: str = Field(min_length=1, pattern=r"\S")
     slug: str = Field(pattern=r"^[A-Za-z0-9-]+$")
-    title: str = Field(min_length=1)
+    title: str = Field(min_length=1, pattern=r"\S")
     content_sha256: str = Field(pattern=r"^[a-f0-9]{64}$")
 
 
@@ -117,16 +117,17 @@ class DiscoveryBase(SourceText):
 
     @property
     def publication(self) -> Timestamp:
+        clocks: dict[str, JsonValue] = {
+            "published_at": self.published_at,
+            "published_prec": self.published_prec,
+            "published_at_precision": self.published_at_precision,
+            "published_prec_reason": self.published_prec_reason,
+            "published_at_reason": self.published_at_reason,
+            "published_at_bucket_size_s": self.published_at_bucket_size_s,
+            "published_at_bucket_anchor": self.published_at_bucket_anchor,
+        }
         return propagate_timestamp(
-            {
-                "published_at": self.published_at,
-                "published_prec": self.published_prec,
-                "published_at_precision": self.published_at_precision,
-                "published_prec_reason": self.published_prec_reason,
-                "published_at_reason": self.published_at_reason,
-                "published_at_bucket_size_s": self.published_at_bucket_size_s,
-                "published_at_bucket_anchor": self.published_at_bucket_anchor,
-            },
+            {name: value for name, value in clocks.items() if name in self.model_fields_set},
             "published_at",
         )
 
@@ -336,13 +337,36 @@ class RawSourceReference(DomainModel):
     raw_sha256: str = Field(pattern=r"^[a-f0-9]{64}$")
 
 
-class PendingSourceItem(SourceObservedClock):
-    discovery: DiscoveredItem
+class ArticleLinkListing(DomainModel):
+    """A discovered link before detail acquisition reports any body or publication clock."""
+
+    external_id: str = Field(min_length=1)
+    url: str = Field(min_length=1)
+    title: str | None
+    publisher_cms_identity: PublisherCMSIdentity | None = None
+    publisher_cms_slug_url: str | None = Field(default=None, min_length=1)
+
+    @model_validator(mode="after")
+    def actual_cms_binding(self) -> Self:
+        if (self.publisher_cms_identity is None) != (self.publisher_cms_slug_url is None):
+            raise ValueError("Article listing requires both observed CMS identity and its bound slug URL")
+        return self
+
+
+class BoundArticleLink(ArticleLinkListing):
+    source_id: SourceContextId
+
+
+class PendingSourceMetadata(SourceObservedClock):
     item_id: str = Field(min_length=1)
     feed: str = Field(min_length=1)
     observed_at: str
     discovery_config_version: str
     discovery_code_version: str
+
+
+class PendingSourceItem(PendingSourceMetadata):
+    discovery: DiscoveredItem
     raw: RawSourceReference | None
 
     def storage_record(self) -> dict[str, JsonValue]:
@@ -375,6 +399,24 @@ class PendingSourceItem(SourceObservedClock):
         )
 
 
+class PendingArticleLink(PendingSourceMetadata):
+    discovery: BoundArticleLink
+
+    def storage_record(self) -> dict[str, JsonValue]:
+        return {
+            **self.discovery.model_dump(mode="json", exclude_unset=True),
+            "pending_phase": "ARTICLE_LINK",
+            "item_id": self.item_id,
+            "feed": self.feed,
+            **collection_clock(self.observed_at).fields("observed_at"),
+            "discovery_config_version": self.discovery_config_version,
+            "discovery_code_version": self.discovery_code_version,
+        }
+
+
+type PendingSourceRow = PendingSourceItem | PendingArticleLink
+
+
 class PendingCaptureMetadata(SourceObservedClock):
     item_id: str = Field(min_length=1)
     feed: str = Field(min_length=1)
@@ -399,11 +441,33 @@ class PendingCaptureMetadata(SourceObservedClock):
         return self
 
 
-def pending_source_item(source_id: str, wire: Mapping[str, JsonValue]) -> PendingSourceItem:
+def pending_source_item(source_id: str, wire: Mapping[str, JsonValue]) -> PendingSourceRow:
     """Validate a flat durable pending row before any enrichment or ingestion."""
     metadata = PendingCaptureMetadata.model_validate(
         {name: wire[name] for name in PendingCaptureMetadata.model_fields if name in wire}
     )
+    if "pending_phase" in wire:
+        if wire["pending_phase"] != "ARTICLE_LINK":
+            raise ValueError("Unsupported recorded pending source phase")
+        if metadata.raw_ref is not None:
+            raise ValueError("Pending article link cannot claim a captured detail body")
+        link = BoundArticleLink.model_validate(
+            {
+                name: value
+                for name, value in wire.items()
+                if name not in PendingCaptureMetadata.model_fields and name != "pending_phase"
+            }
+        )
+        if link.source_id != source_id:
+            raise ValueError("Pending article link conflicts with its actual source operation")
+        return PendingArticleLink(
+            discovery=link,
+            item_id=metadata.item_id,
+            feed=metadata.feed,
+            observed_at=metadata.observed_at,
+            discovery_config_version=metadata.discovery_config_version,
+            discovery_code_version=metadata.discovery_code_version,
+        )
     material = discovered_item(
         source_id,
         {name: value for name, value in wire.items() if name not in PendingCaptureMetadata.model_fields},

@@ -1,11 +1,13 @@
 import json
+from collections.abc import Mapping, Sequence
 from contextlib import asynccontextmanager
 from pathlib import Path
-from types import SimpleNamespace
 
 import httpx
 import pytest
 import zstandard
+from pydantic import JsonValue
+from pydantic_settings import SettingsConfigDict
 from scheduler_support import operational_reaction_services
 from source_support import (
     fetch_plan,
@@ -18,7 +20,10 @@ from source_support import (
 )
 
 from tank.analysis.page_access import LivePageAccess
-from tank.contracts.source_items import SourceText, parse_feed_source_item
+from tank.contracts.source_checks import source_check_record
+from tank.contracts.source_items import AnnouncementLabel, SourceText, parse_feed_source_item
+from tank.contracts.sources import SourceConfiguration
+from tank.settings import Settings
 from tank.sources import SourceService, parsers
 from tank.util import clock_iso, new_id, sha256
 
@@ -105,34 +110,42 @@ class Repo:
         yield
 
 
-def settings(tmp_path: Path, sources):
-    return SimpleNamespace(
+class SourceFixtureSettings(Settings):
+    model_config = SettingsConfigDict(env_file=None)
+
+    fixture_sources: SourceConfiguration
+
+    def load_config(self, name: str) -> dict[str, JsonValue]:
+        if name == "sources":
+            return self.fixture_sources.model_dump(mode="json")
+        if name == "registry":
+            return {"x_accounts": [], "tokens": [], "entities": []}
+        return operational_configuration(name)
+
+
+def settings(tmp_path: Path, sources: Sequence[Mapping[str, JsonValue]]) -> SourceFixtureSettings:
+    source_rows: list[JsonValue] = [dict(source) for source in sources]
+    return SourceFixtureSettings(
         data_dir=tmp_path,
         user_agent="Tank test",
-        config_version="test",
-        code_version="test",
-        x_list_id=None,
-        apify_api_token=None,
-        load_config=lambda name: (
-            source_configuration({"sources": sources})
-            if name == "sources"
-            else {"x_accounts": [], "tokens": [], "entities": []}
-            if name == "registry"
-            else operational_configuration(name)
-        ),
+        fixture_sources=SourceConfiguration.model_validate(source_configuration({"sources": source_rows})),
         ops_progress_enabled=False,
         replay=False,
     )
 
 
 def test_rss_atom() -> None:
-    row = parsers.feeds(RSS, "S30", {"url": "https://example.org/rss"})[0]
-    assert row["external_id"] == "release-42"
-    assert row["published_at"] == "2026-10-16T12:00:00Z"
-    assert row["text"] == "Protocol deployment & vote"
+    row = parsers.feeds(RSS, "S30", {"url": "https://example.org/rss"}).discoveries[0].discovery
+    assert row.external_id == "release-42"
+    assert row.publication.value == "2026-10-16T12:00:00Z"
+    assert row.text == "Protocol deployment & vote"
     atom = b'<feed xmlns="http://www.w3.org/2005/Atom"><title>Commits</title><entry><id>tag:github.com,2008:Grit::Commit/abc</id><title>Fix swap</title><updated>2026-10-16T12:00:00Z</updated><link href="https://github.com/org/repo/commit/abc"/><content type="html">&lt;p&gt;Fix routing&lt;/p&gt;</content></entry></feed>'
-    row = parsers.feeds(atom, "S25", {"url": "https://github.com/org/repo/commits/main.atom"})[0]
-    assert row["subtype"] == "commits" and row["text"] == "Fix routing"
+    row = (
+        parsers.feeds(atom, "S25", {"url": "https://github.com/org/repo/commits/main.atom"})
+        .discoveries[0]
+        .discovery
+    )
+    assert row.subtype == "commits" and row.text == "Fix routing"
 
 
 def test_html_patterns_and_article() -> None:
@@ -140,70 +153,98 @@ def test_html_patterns_and_article() -> None:
     rows = parsers.article_links(
         '<a href="/news/test">Test</a><a href="https://evil.org/news/test">Bad</a>', feed
     )
-    assert len(rows) == 1 and rows[0]["url"] == "https://example.org/news/test"
+    assert len(rows) == 1 and rows[0].url == "https://example.org/news/test"
     with pytest.raises(ValueError, match="layout"):
         parsers.article_links('<a href="/">Home</a>', feed)
     row = parsers.article(
         '<nav>Ignore</nav><article><h1>Title</h1><time datetime="2026-10-16T12:00:00Z"></time><p>Evidence</p><script>bad()</script></article>'
     )
-    assert row["text"] == "Title Evidence"
+    assert row.text == "Title Evidence"
 
 
 def test_json_contracts() -> None:
-    row = parsers.json_items(
-        {
-            "retCode": 0,
-            "result": {
-                "list": [
-                    {
-                        "url": "https://bybit.com/a",
-                        "title": "Listing",
-                        "description": "<p>ARB</p>",
-                        "type": {"key": "new_crypto"},
-                        "dateTimestamp": 1679045608000,
-                    }
-                ]
+    row = (
+        parsers.json_items(
+            {
+                "retCode": 0,
+                "result": {
+                    "list": [
+                        {
+                            "url": "https://bybit.com/a",
+                            "title": "Listing",
+                            "description": "<p>ARB</p>",
+                            "type": {"key": "new_crypto"},
+                            "dateTimestamp": 1679045608000,
+                        }
+                    ]
+                },
             },
-        },
-        "S11",
-    )[0]
-    assert row["text"] == "ARB" and row["announcement_type"]["key"] == "new_crypto"
-    row = parsers.json_items(
-        {"data": [{"url": "https://okx.com/a", "title": "New", "pTime": "1679045608000"}]}, "S10"
-    )[0]
-    assert row["external_id"].endswith("|1679045608000")
-    row = parsers.json_items(
-        {
-            "data": {
-                "catalogs": [
-                    {"articles": [{"code": "abc", "title": "Release", "releaseDate": 1679045608000}]}
-                ]
-            }
-        },
-        "S09",
-    )[0]
-    assert row["external_id"] == "abc"
-    row = parsers.json_items(
-        {
-            "data": {
-                "proposals": [
-                    {
-                        "id": "0xabc",
-                        "title": "Vote",
-                        "body": "Proposal",
-                        "state": "closed",
-                        "start": 1679045608,
-                        "end": 1679046608,
-                        "scores": [1, 2],
-                        "scores_total": 3,
-                        "space": {"id": "cow.eth"},
-                    }
-                ]
-            }
-        },
-        "S24",
-    )[0]
-    assert row["external_id"] == "0xabc|closed" and row["scores_total"] == 3
+            "S11",
+        )
+        .discoveries[0]
+        .discovery
+    )
+    assert (
+        row.text == "ARB"
+        and isinstance(row.announcement_type, AnnouncementLabel)
+        and row.announcement_type.key == "new_crypto"
+    )
+    row = (
+        parsers.json_items(
+            {
+                "code": "0",
+                "data": [
+                    {"details": [{"url": "https://okx.com/a", "title": "New", "pTime": "1679045608000"}]}
+                ],
+            },
+            "S10",
+        )
+        .discoveries[0]
+        .discovery
+    )
+    assert row.external_id.endswith("|1679045608000")
+    row = (
+        parsers.json_items(
+            {
+                "success": True,
+                "code": "000000",
+                "data": {
+                    "catalogs": [
+                        {"articles": [{"code": "abc", "title": "Release", "releaseDate": 1679045608000}]}
+                    ]
+                },
+            },
+            "S09",
+        )
+        .discoveries[0]
+        .discovery
+    )
+    assert row.external_id == "abc"
+    row = (
+        parsers.json_items(
+            {
+                "data": {
+                    "proposals": [
+                        {
+                            "id": "0xabc",
+                            "title": "Vote",
+                            "body": "Proposal",
+                            "state": "closed",
+                            "start": 1679045608,
+                            "end": 1679046608,
+                            "scores": [1, 2],
+                            "scores_total": 3,
+                            "space": {"id": "cow.eth"},
+                        }
+                    ]
+                }
+            },
+            "S24",
+        )
+        .discoveries[0]
+        .discovery
+    )
+    assert row.external_id == "0xabc|closed" and row.scores_total == 3
 
 
 @pytest.mark.parametrize(
@@ -717,17 +758,20 @@ async def test_probe_reads_current_payload_without_ingestion_jobs(tmp_path: Path
         versions=fixture_versions(),
         budgets=fixture_request_budgets(),
     )
-    results = await svc.check(probe=True)
+    results = [source_check_record(result) for result in await svc.check(probe=True)]
     assert [r["status"] for r in results] == ["PASS", "HTTP_ERROR", "PASS", "UNAVAILABLE"]
     assert (
         results[0]["item_count"] == 1 and results[1]["http_status"] == 403 and results[2]["item_count"] == 1
     )
     assert len(calls) == 3 and not repo.jobs and not repo.rows
-    [item] = parsers.json_items(
-        json.dumps({"results": {"response": {"hits": {"hits": [{"_source": release}]}}}}), "S19"
-    )
-    assert item["text"] == "Fund launch en-US New York – Fund launched today."
-    assert item["external_id"] == release["url"] and item["published_at_precision"] == "BUCKET(1d)"
+    [item] = [
+        entry.discovery
+        for entry in parsers.json_items(
+            json.dumps({"results": {"response": {"hits": {"hits": [{"_source": release}]}}}}), "S19"
+        ).discoveries
+    ]
+    assert item.text == "Fund launch en-US New York – Fund launched today."
+    assert item.external_id == release["url"] and item.published_at_precision == "BUCKET(1d)"
     assert results[3]["reason"] == "X runs through a paid Apify actor run; excluded from the HTTP smoke"
     assert results[0]["payload_sha256"] == sha256(RSS) and not list(tmp_path.rglob("*.zst"))
 
@@ -753,8 +797,8 @@ def test_okx_live_observed_nested_details_schema() -> None:
             }
         ],
     }
-    row = parsers.json_items(payload, "S10")[0]
-    assert row["external_id"] == "https://www.okx.com/help/okx-to-list-dnausd-x-perp|1792152012457"
+    row = parsers.json_items(payload, "S10").discoveries[0].discovery
+    assert row.external_id == "https://www.okx.com/help/okx-to-list-dnausd-x-perp|1792152012457"
 
 
 def test_robinhood_canonical_article_metadata_same_origin_only() -> None:
@@ -781,8 +825,8 @@ def test_robinhood_canonical_article_metadata_same_origin_only() -> None:
     }
     html = '<script id="__NEXT_DATA__" type="application/json">' + json.dumps(data) + "</script>"
     rows = parsers.article_links(html, feed)
-    assert len(rows) == 1 and rows[0]["title"] == "Protocol release"
-    assert rows[0]["url"] == "https://robinhood.com/us/en/newsroom/protocol-release"
+    assert len(rows) == 1 and rows[0].title == "Protocol release"
+    assert rows[0].url == "https://robinhood.com/us/en/newsroom/protocol-release"
 
 
 @pytest.mark.integration
@@ -819,7 +863,7 @@ async def test_milestone_producer_drives_source_cadence_and_cancellation(
         code_version = "test"
         x_list_id = None
 
-        def load_config(self, name):
+        def load_config(self, name: str) -> dict[str, JsonValue]:
             return source_configuration({"sources": [source]}) if name == "sources" else original_load(name)
 
     calls = []
@@ -1126,21 +1170,25 @@ def test_sec_filing_identity_boundaries_and_date_only_precision(tmp_path: Path) 
     assert svc.filing_matches(SourceText.model_validate({"title": "Uniswap protocol filing", "text": ""}))
     assert svc.filing_matches(SourceText.model_validate({"title": "Bitcoin Trust ETF", "text": ""}))
     assert svc.filing_matches(SourceText.model_validate({"title": "Digital Asset Trust", "text": ""}))
-    row = parsers.json_items(
-        {
-            "results": [
-                {
-                    "document_number": "2026-1",
-                    "title": "Rule",
-                    "abstract": "Digital assets",
-                    "html_url": "https://www.federalregister.gov/rule",
-                    "publication_date": "2026-10-17",
-                }
-            ]
-        },
-        "S03",
-    )[0]
-    assert row["published_at_precision"] == "BUCKET(1d)"
+    row = (
+        parsers.json_items(
+            {
+                "results": [
+                    {
+                        "document_number": "2026-1",
+                        "title": "Rule",
+                        "abstract": "Digital assets",
+                        "html_url": "https://www.federalregister.gov/rule",
+                        "publication_date": "2026-10-17",
+                    }
+                ]
+            },
+            "S03",
+        )
+        .discoveries[0]
+        .discovery
+    )
+    assert row.published_at_precision == "BUCKET(1d)"
 
 
 @pytest.mark.asyncio
@@ -1156,11 +1204,13 @@ async def test_s09_seen_articles_do_not_refetch_detail(tmp_path: Path, collector
         return httpx.Response(
             200,
             json={
+                "success": True,
+                "code": "000000",
                 "data": {
                     "catalogs": [
                         {"articles": [{"code": "article1", "title": "Release", "releaseDate": 1792238400000}]}
                     ]
-                }
+                },
             },
         )
 
@@ -1524,13 +1574,20 @@ def test_wire_timestamp_precision_survives_normalization() -> None:
     row = parsers.article(
         b'<article><h1>Release</h1><time datetime="2026-10-18"></time><p>Body</p></article>'
     )
-    assert row["published_at_precision"] == "BUCKET(1d)"
+    assert row.publication.precision == "BUCKET(1d)"
     dated = RSS.replace(b"Fri, 16 Oct 2026 12:00:00 GMT", b"2026-10-16")
     assert (
-        parsers.feeds(dated, "S01", {"url": "https://example.org"})[0]["published_at_precision"]
+        parsers.feeds(dated, "S01", {"url": "https://example.org"})
+        .discoveries[0]
+        .discovery.published_at_precision
         == "BUCKET(1d)"
     )
-    assert parsers.feeds(RSS, "S01", {"url": "https://example.org"})[0]["published_at_precision"] == "EXACT"
+    assert (
+        parsers.feeds(RSS, "S01", {"url": "https://example.org"})
+        .discoveries[0]
+        .discovery.published_at_precision
+        == "EXACT"
+    )
     assert parsers.timestamp_fields(None)["published_at_precision"] == "COLLECTION_ONLY"
 
 
@@ -1816,13 +1873,23 @@ async def test_json_discovery_burst_reads_every_page_until_durable_boundary(
             return httpx.Response(
                 200,
                 json={
+                    "success": True,
+                    "code": "000000",
                     "data": {
-                        "total": len(all_ids),
-                        "articles": [
-                            {"code": str(i), "title": "Release " + str(i), "releaseDate": 1792238400000 + i}
-                            for i in ids
-                        ],
-                    }
+                        "catalogs": [
+                            {
+                                "total": len(all_ids),
+                                "articles": [
+                                    {
+                                        "code": str(i),
+                                        "title": "Release " + str(i),
+                                        "releaseDate": 1792238400000 + i,
+                                    }
+                                    for i in ids
+                                ],
+                            }
+                        ]
+                    },
                 },
             )
         return httpx.Response(
@@ -1953,21 +2020,21 @@ def test_publication_metadata_extracts_actual_publication_not_modification(schem
         + "</script>"
     )
     row = parsers.article(payload)
-    assert row["published_at"] == "2026-10-17T00:00:00Z"
-    assert row["published_at_precision"] == "BUCKET(1d)"
-    assert row["published_at_basis"] == "ARTICLE_JSON_LD_DATE_PUBLISHED"
+    assert row.publication.value == "2026-10-17T00:00:00Z"
+    assert row.publication.precision == "BUCKET(1d)"
+    assert row.publication_basis == "ARTICLE_JSON_LD_DATE_PUBLISHED"
     conflicting = payload.replace("</script>", ", invalid json</script>")
-    assert parsers.article(conflicting)["published_at"] is None
+    assert parsers.article(conflicting).publication.value is None
 
 
 def test_publication_meta_and_ambiguous_articles_preserve_precision() -> None:
     row = parsers.article(
         '<article>Release</article><meta property="article:published_time" content="2026-10-17">'
     )
-    assert row["published_at_precision"] == "BUCKET(1d)"
+    assert row.publication.precision == "BUCKET(1d)"
     blackrock = '<article>Release</article><meta name="publicationDate" content="1791936000000">'
-    assert parsers.article(blackrock, source_id="S18")["published_at_precision"] == "BUCKET(1d)"
-    assert parsers.article(blackrock, source_id="S20")["published_at"] is None
+    assert parsers.article(blackrock, source_id="S18").publication.precision == "BUCKET(1d)"
+    assert parsers.article(blackrock, source_id="S20").publication.value is None
     competing = (
         '<article><h1>Release</h1></article><script type="application/ld+json">'
         + json.dumps(
@@ -1979,7 +2046,7 @@ def test_publication_meta_and_ambiguous_articles_preserve_precision() -> None:
         + "</script>"
     )
     row = parsers.article(competing)
-    assert row["published_at"] is None and row["published_at_missing_reason"] == "UNVERIFIED_SEMANTICS"
+    assert row.publication.value is None and row.publication_missing_reason == "UNVERIFIED_SEMANTICS"
 
 
 @pytest.mark.asyncio
@@ -2194,21 +2261,29 @@ def test_atom_update_time_is_not_fabricated_original_publication() -> None:
     updated = "<updated>2026-10-18T12:00:00Z</updated>"
     prefix = '<feed xmlns="http://www.w3.org/2005/Atom"><title>Activity</title><entry><id>entry1</id><title>Release</title><link href="https://example.org/entry1"/>'
     suffix = "<content>Actual body</content></entry></feed>"
-    row = parsers.feeds(
-        (prefix + updated + suffix).encode(), "S25", {"url": "https://example.org/commits/main.atom"}
-    )[0]
-    assert row["published_at"] is None
-    assert row["published_prec"] == "COLLECTION_ONLY"
-    assert row["published_at_reason"] == "INCOMPLETE"
-    assert row["source_updated_at"] == "2026-10-18T12:00:00Z"
-    assert row["source_updated_at_prec"] == "EXACT"
-    both = parsers.feeds(
-        (prefix + "<published>2026-10-17T10:00:00Z</published>" + updated + suffix).encode(),
-        "S25",
-        {"url": "https://example.org/releases.atom"},
-    )[0]
-    assert both["published_at"] == "2026-10-17T10:00:00Z"
-    assert both["source_updated_at"] == "2026-10-18T12:00:00Z"
+    row = (
+        parsers.feeds(
+            (prefix + updated + suffix).encode(), "S25", {"url": "https://example.org/commits/main.atom"}
+        )
+        .discoveries[0]
+        .discovery
+    )
+    assert row.publication.value is None
+    assert row.publication.precision == "COLLECTION_ONLY"
+    assert row.publication.precision_reason == "INCOMPLETE"
+    assert row.source_updated_at == "2026-10-18T12:00:00Z"
+    assert row.source_updated_at_prec == "EXACT"
+    both = (
+        parsers.feeds(
+            (prefix + "<published>2026-10-17T10:00:00Z</published>" + updated + suffix).encode(),
+            "S25",
+            {"url": "https://example.org/releases.atom"},
+        )
+        .discoveries[0]
+        .discovery
+    )
+    assert both.publication.value == "2026-10-17T10:00:00Z"
+    assert both.source_updated_at == "2026-10-18T12:00:00Z"
 
 
 @pytest.mark.asyncio
@@ -2517,11 +2592,11 @@ async def test_new_coinbase_flag_observation_does_not_fabricate_historical_statu
 def test_treasury_duplicate_designated_publication_elements_are_one_source_timestamp() -> None:
     payload = '<main><h1>Official release</h1><div class="field--name-field-news-publication-date"><time datetime="2026-10-16T20:00:00Z">October 16, 2026</time></div><div class="field--name-field-news-publication-date"><time datetime="2026-10-16T20:00:00Z">October 16, 2026</time></div></main>'
     row = parsers.article(payload, source_id="S07")
-    assert row["published_at"] == "2026-10-16T20:00:00Z"
-    assert row["published_prec"] == "EXACT"
-    assert row["published_at_basis"] == "DESIGNATED_PUBLICATION_TIME_ELEMENT"
+    assert row.publication.value == "2026-10-16T20:00:00Z"
+    assert row.publication.precision == "EXACT"
+    assert row.publication_basis == "DESIGNATED_PUBLICATION_TIME_ELEMENT"
     conflicting = payload.replace("2026-10-16T20:00:00Z", "2026-10-15T20:00:00Z", 1)
-    assert parsers.article(conflicting, source_id="S07")["published_at"] is None
+    assert parsers.article(conflicting, source_id="S07").publication.value is None
 
 
 @pytest.mark.asyncio
@@ -2583,7 +2658,7 @@ def test_null_publisher_identity_is_not_stringified_into_fabricated_item() -> No
         },
         "S03",
     )
-    assert len(rows) == 1 and rows[0]["external_id"] == "real-id"
+    assert len(rows.discoveries) == 1 and rows.discoveries[0].discovery.external_id == "real-id"
     assert len(rows.errors) == 1
 
 
@@ -2702,8 +2777,8 @@ def test_dtcc_retained_public_release_slugs_preserve_case_dots_and_document_boun
         "article_pattern": r"^/press-releases/\d{4}/[A-Za-z0-9][A-Za-z0-9._~-]*$",
     }
     parsed = parsers.article_links(page, feed)
-    assert [row["url"] for row in parsed] == urls
-    assert all(row["external_id"] == row["url"] for row in parsed)
+    assert [row.url for row in parsed] == urls
+    assert all(row.external_id == row.url for row in parsed)
 
 
 def test_binance_observed_child_tree_preserves_text_not_metadata() -> None:
@@ -2748,12 +2823,22 @@ async def test_binance_empty_body_pending_recovers_after_restart(
         return httpx.Response(
             200,
             json={
+                "success": True,
+                "code": "000000",
                 "data": {
-                    "total": 1,
-                    "articles": [
-                        {"code": "actual-code", "title": "Actual release", "releaseDate": 1791948608368}
-                    ],
-                }
+                    "catalogs": [
+                        {
+                            "total": 1,
+                            "articles": [
+                                {
+                                    "code": "actual-code",
+                                    "title": "Actual release",
+                                    "releaseDate": 1791948608368,
+                                }
+                            ],
+                        }
+                    ]
+                },
             },
         )
 
@@ -2871,7 +2956,7 @@ def test_article_text_without_site_boilerplate() -> None:
         b'<div class="field--name-body"><p>The Commission today charged a firm.</p></div>'
         b"<p>Last Reviewed or Updated: Oct. 20, 2026</p></div></main>"
     )
-    assert parsers.article(sec, source_id="S01")["text"] == "The Commission today charged a firm."
+    assert parsers.article(sec, source_id="S01").text == "The Commission today charged a firm."
     entry = {
         "fields": {
             "title": "Robinhood launches X",
@@ -2894,7 +2979,7 @@ def test_article_text_without_site_boilerplate() -> None:
         + "</script>"
     ).encode()
     row = parsers.article(robinhood, source_id="S13")
-    assert row["text"] == "First paragraph. Second paragraph." and row["title"] == "Robinhood launches X"
+    assert row.text == "First paragraph. Second paragraph." and row.title == "Robinhood launches X"
     bybit = {
         "retCode": 0,
         "result": {
@@ -2914,7 +2999,7 @@ def test_article_text_without_site_boilerplate() -> None:
             ]
         },
     }
-    assert [row["text"] for row in parsers.json_items(bybit, "S11")] == [
+    assert [row.discovery.text for row in parsers.json_items(bybit, "S11").discoveries] == [
         "Delisting of ABC",
         "New listing DEF",
     ]
@@ -3140,21 +3225,27 @@ def test_publication_epoch_units_are_declared_instead_of_guessed() -> None:
 def test_binance_zero_epoch_precedes_alternate_publication_field() -> None:
     payload = json.dumps(
         {
+            "success": True,
+            "code": "000000",
             "data": {
-                "articles": [
+                "catalogs": [
                     {
-                        "code": "epoch-zero",
-                        "title": "Declared source publication",
-                        "releaseDate": 0,
-                        "publishDate": 1792238400000,
+                        "articles": [
+                            {
+                                "code": "epoch-zero",
+                                "title": "Declared source publication",
+                                "releaseDate": 0,
+                                "publishDate": 1792238400000,
+                            }
+                        ]
                     }
                 ]
             },
         }
     ).encode()
-    [record] = parsers.json_items(payload, "S09")
-    assert record["published_at"] == "1970-01-01T00:00:00Z"
-    assert record["published_prec"] == "EXACT"
+    [record] = [entry.discovery for entry in parsers.json_items(payload, "S09").discoveries]
+    assert record.publication.value == "1970-01-01T00:00:00Z"
+    assert record.publication.precision == "EXACT"
 
 
 def test_coinbase_missing_prior_flags_remain_unknown_in_real_status_change_evidence() -> None:

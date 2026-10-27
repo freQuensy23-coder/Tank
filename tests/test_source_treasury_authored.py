@@ -19,11 +19,11 @@ def retained():
 
 def test_treasury_release_excludes_navigation_and_uses_authored_title() -> None:
     result = parsers.article(retained(), source_id="S07")
-    assert result["title"] == "Treasury International Capital Data for August 2026"
-    assert "today released Treasury International Capital" in result["text"]
-    assert "Treasury Hunt" not in result["text"]
-    assert "GENERAL INFORMATION" not in result["text"]
-    assert result["published_at"] == "2026-10-16T20:00:00Z"
+    assert result.title == "Treasury International Capital Data for August 2026"
+    assert "today released Treasury International Capital" in result.text
+    assert "Treasury Hunt" not in result.text
+    assert "GENERAL INFORMATION" not in result.text
+    assert result.publication.value == "2026-10-16T20:00:00Z"
 
 
 @pytest.mark.parametrize("change", ["missing", "ambiguous"])

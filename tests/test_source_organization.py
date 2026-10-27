@@ -57,10 +57,18 @@ def retained(sid):
                 ]
             }
         ).encode()
-        item = parsers.json_items(payload, sid)[0]
+        item = (
+            parsers.json_items(payload, sid)
+            .discoveries[0]
+            .discovery.model_dump(mode="json", exclude_unset=True)
+        )
     else:
         payload = ATOM
-        item = parsers.feeds(payload, sid, src["feeds"][0])[0]
+        item = (
+            parsers.feeds(payload, sid, src["feeds"][0])
+            .discoveries[0]
+            .discovery.model_dump(mode="json", exclude_unset=True)
+        )
     item.update(
         source_id=sid,
         feed=src["feeds"][0]["url"],
