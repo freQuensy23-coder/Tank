@@ -15,6 +15,7 @@ from typing import IO, Literal, Self
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from scripts.ci.managed_clickhouse import CIContext
+from scripts.ci.schema_template import allocate_template
 
 GO_SETUP = 'export GOENV=off GOTOOLCHAIN=local\nfor variable in GOMODCACHE GOCACHE GOPATH; do\n  value="$(go env "$variable")"\n  export "$variable=$value"\n  echo "$variable=$value" >> "$GITHUB_ENV"\ndone\nprintf \'%s\\n\' GOENV=off GOTOOLCHAIN=local GOPROXY=off GOSUMDB=off GOFLAGS=-mod=readonly >> "$GITHUB_ENV"\nGOPROXY=https://proxy.golang.org GOSUMDB=sum.golang.org go mod download\ngit diff --exit-code -- go.mod go.sum\nCGO_ENABLED=0 GOPROXY=off GOSUMDB=off go build -mod=readonly -o "$RUNNER_TEMP/capture-parity-prime" ./cmd/capture-parity\n'
 POSTGRES_SETUP = "mkdir -p .test-results\ncontainer_id=\"$(docker run --detach --name tank-test-ci \\\n  --label \"tank.ci-owner=$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT\" \\\n  --publish 127.0.0.1:5432:5432 \\\n  --tmpfs /var/lib/postgresql/data:rw --shm-size 1g \\\n  --env POSTGRES_DB=tank_test_ci_admin --env POSTGRES_USER=postgres \\\n  --env POSTGRES_PASSWORD=tank-ci-disposable \\\n  postgres:16-bookworm \\\n  -c max_locks_per_transaction=1024 -c max_connections=300 \\\n  -c fsync=on -c synchronous_commit=on)\"\necho \"$container_id\" > .test-results/postgres-container-id\ndeadline=$((SECONDS + 60))\nuntil docker exec \"$container_id\" pg_isready -h 127.0.0.1 -U postgres -d tank_test_ci_admin >/dev/null 2>&1; do\n  if (( SECONDS >= deadline )); then\n    docker logs \"$container_id\"\n    exit 1\n  fi\n  sleep 1\ndone\ndocker exec \"$container_id\" psql -U postgres -d tank_test_ci_admin -At \\\n  -c \"SELECT json_build_object('version', version(), 'max_locks_per_transaction', current_setting('max_locks_per_transaction'), 'max_connections', current_setting('max_connections'), 'fsync', current_setting('fsync'), 'synchronous_commit', current_setting('synchronous_commit'))\" \\\n  > .test-results/postgres-settings.json\n"
@@ -36,7 +37,7 @@ class SetupContext(CIContext):
         return self
 
 
-type TaskName = Literal["go", "gateway", "postgres", "clickhouse"]
+type TaskName = Literal["go", "gateway", "postgres", "clickhouse", "collection"]
 
 
 @dataclass
@@ -66,8 +67,8 @@ class SetupReport(BaseModel):
     def successful(self) -> bool:
         return (
             self.interrupted_signal is None
-            and len(self.results) == 4
-            and {r.name for r in self.results} == {"go", "gateway", "postgres", "clickhouse"}
+            and len(self.results) == 5
+            and {r.name for r in self.results} == {"go", "gateway", "postgres", "clickhouse", "collection"}
             and all(r.code == 0 for r in self.results)
         )
 
@@ -103,7 +104,19 @@ def run(context: SetupContext, state: SignalState) -> SetupReport:
     directory.mkdir(parents=True, exist_ok=True)
     if directory.stat().st_uid != os.geteuid():
         raise ValueError("setup output is not owned")
-    environment = dict(os.environ) | context.environment() | {"GITHUB_ENV": str(context.github_env)}
+    owner = CIContext.model_validate(context.model_dump(exclude={"github_env"}))
+    allocated = allocate_template(owner)
+    with context.github_env.open("a") as stream:
+        stream.write("TANK_CI_SCHEMA_TEMPLATE=" + allocated.name + "\n")
+    environment = (
+        dict(os.environ)
+        | context.environment()
+        | {
+            "GITHUB_ENV": str(context.github_env),
+            "TANK_CI_SCHEMA_TEMPLATE": allocated.name,
+            "PYTHONPATH": os.pathsep.join(str(context.root / name) for name in ("scripts/ci", "tests")),
+        }
+    )
     specifications: tuple[tuple[TaskName, list[str], Path], ...] = (
         ("go", ["bash", "-euo", "pipefail", "-c", GO_SETUP], context.root / "capture"),
         (
@@ -116,6 +129,22 @@ def run(context: SetupContext, state: SignalState) -> SetupReport:
             "clickhouse",
             [sys.executable, "-m", "scripts.ci.managed_clickhouse", "start"],
             Path(__file__).resolve().parents[2],
+        ),
+        (
+            "collection",
+            [
+                sys.executable,
+                str(Path(sys.executable).with_name("pytest")),
+                "-p",
+                "collect_integration",
+                "-q",
+                "--collect-only",
+                "-m",
+                "integration",
+                "--postgres-schema-template",
+                allocated.name,
+            ],
+            context.root,
         ),
     )
     children: list[Child] = []
