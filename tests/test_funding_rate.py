@@ -15,11 +15,11 @@ from tank.analysis.funding_normalization_math import (
 )
 from tank.analysis.funding_rate import (
     CalculatedFundingEquivalent,
-    FundingNormalizationRequest,
     RecordedFundingEquivalent,
     UnavailableFundingEquivalent,
     funding_equivalent,
 )
+from tank.contracts.funding import FundingNormalizationRequest
 
 
 def observation(rate: JsonValue, interval: JsonValue, recorded: JsonValue) -> FundingInputObservation:

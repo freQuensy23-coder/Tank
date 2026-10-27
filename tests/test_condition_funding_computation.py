@@ -27,11 +27,11 @@ from tank.analysis.funding_normalization_math import (
 )
 from tank.analysis.funding_rate import (
     CalculatedFundingEquivalent,
-    FundingNormalizationRequest,
     funding_equivalent,
 )
 from tank.analysis.statistics_contracts import DecimalRange
 from tank.contracts.derivative_values import ReportedDerivativeNumber
+from tank.contracts.funding import FundingNormalizationRequest
 from tank.storage import StorageBackend
 from tank.time_precision import Timestamp
 
