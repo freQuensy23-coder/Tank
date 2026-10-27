@@ -208,7 +208,9 @@ async def test_jsonb_mismatch_recovery_persists_classification_without_refunding
             assert recovery[field] == original[field]
         recovery.update(status="FAILED", attempts=recovery["max_attempts"], last_error="DeliveryError")
         recovery.update(recovery_clock.fields("finished_at"))
-        exhausted = await reloaded.put("ops.jobs", recovery_id, recovery)
+        await reloaded.put("ops.jobs", recovery_id, recovery)
+        exhausted = await reloaded.get("ops.jobs", recovery_id)
+        assert exhausted is not None
 
     for _ in range(2):
         async with reopen(repo) as first, reopen(repo) as second:
@@ -228,9 +230,7 @@ async def test_jsonb_mismatch_recovery_persists_classification_without_refunding
 @pytest.mark.parametrize(
     "corruption", ["manifest_hash", "manifest_size", "body", "unknown_metadata", "unknown_version"]
 )
-async def test_raw_mismatch_without_verified_compatibility_never_creates_recovery(
-    recovery_clock, corruption
-):
+async def test_raw_mismatch_without_verified_compatibility_never_creates_recovery(recovery_clock, corruption):
     repo = MemoryRepository()
     notice, _ = legacy_notice("text")
     notice = reverse_objects(notice)

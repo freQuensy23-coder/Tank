@@ -304,8 +304,7 @@ def legacy_serialization_mismatch(notice):
     attachments = _documents(notice["entry_errors"], 1, preserve_order=True)
     manifest = notice["document_manifest"]
     return len(attachments) != len(manifest) or any(
-        not _matches_manifest(document, saved)
-        for document, saved in zip(attachments, manifest, strict=True)
+        not _matches_manifest(document, saved) for document, saved in zip(attachments, manifest, strict=True)
     )
 
 

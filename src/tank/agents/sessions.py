@@ -1073,9 +1073,7 @@ class SessionService:
                 await self.repo.put("ops.agent_sessions", session["session_id"], current)
             delay = min(poll[1] * 2, 1.0) if poll[2] == signature else 0.05
             self.execution_polls[session["session_id"]] = (time.monotonic() + delay, delay, signature)
-        required.difference_update(
-            await self.handled_terminal_inputs(session, calls, states, superseded)
-        )
+        required.difference_update(await self.handled_terminal_inputs(session, calls, states, superseded))
         final_receipt = any(
             receipt.get("execution_id") in required
             and receipt.get("type") == "session.status_idle"
