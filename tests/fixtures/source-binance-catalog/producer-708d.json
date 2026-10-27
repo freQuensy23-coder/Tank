@@ -1,0 +1,133 @@
+{
+  "producer_commit": "708d113442f29395655d9abf6ac0a29026f1f44c",
+  "source": {
+    "source_id": "S09",
+    "name": "Binance",
+    "author_organization": null,
+    "mode": "REST",
+    "interval_s": 30,
+    "feeds": [
+      {
+        "url": "https://www.binance.com/list?pageNo=1&pageSize=20",
+        "subtype": null,
+        "article_pattern": null,
+        "embedded_json_fields": [],
+        "venue": null,
+        "market_type": null,
+        "kind": "json",
+        "interval_s": 30,
+        "method": "GET",
+        "author_organization": null,
+        "headers": {},
+        "body": null,
+        "form": null,
+        "official_index_url": null,
+        "request_weight": 1,
+        "requests_per_minute": null
+      }
+    ],
+    "priority": "CORE",
+    "terms_notes": "Read-only public content; honor publisher terms and Retry-After.",
+    "limits": {
+      "rate_per_min": null,
+      "budget_fraction": 0.5,
+      "unknown_limit_policy": "Honor Retry-After and endpoint cadence; verify before production acceptance.",
+      "documented_rate_per_s": null,
+      "shared_host": null,
+      "requires_contact_user_agent": false
+    },
+    "bucket": "EXCHANGE_BROKER",
+    "source_class": "PRIMARY",
+    "cost_class": "FREE_OPEN",
+    "auth": "NONE",
+    "adapter_status": "NOT_TESTED",
+    "adapter_status_basis": "Offline parser tests and historical public smoke exist; no unattended acceptance claimed.",
+    "detail_url": null,
+    "endpoint_verification": null,
+    "paid_gap_ref": null
+  },
+  "checkpoint": {
+    "last_attempt_at": "2026-10-27T09:09:13.776446Z",
+    "source_id": "S09",
+    "updated_at": "2026-10-27T09:09:13.779376Z",
+    "updated_at_prec": "COLLECTION_ONLY",
+    "updated_at_prec_reason": null,
+    "last_attempt_at_prec": "COLLECTION_ONLY",
+    "last_attempt_at_prec_reason": null,
+    "last_attempt_at_precision": "COLLECTION_ONLY",
+    "payload_sha256": "2e483cdab05190e0b9d287467ef01020b223f72c925637f4ef06bc8eaad01dd3",
+    "fetched_at": "2026-10-27T09:09:13.776802Z",
+    "fetched_at_prec": "COLLECTION_ONLY",
+    "fetched_at_prec_reason": null,
+    "http_status": 200,
+    "response_url": "https://www.binance.com/list?pageNo=1&pageSize=20",
+    "fetched_at_precision": "COLLECTION_ONLY",
+    "pending_batches": [
+      {
+        "batch_id": "BATCH-01M5Y9XWDJ4Q127G2006D3HJBY",
+        "acquired_at": "2026-10-27T09:09:13.776802Z",
+        "acquired_at_precision": "COLLECTION_ONLY",
+        "acquired_at_prec": null,
+        "acquired_at_prec_reason": null,
+        "kind": "json",
+        "source_id": "S09",
+        "coverage": {},
+        "quarantines": [],
+        "rows": [
+          {
+            "title": "Actual release",
+            "text": "",
+            "source_id": "S09",
+            "external_id": "actual-code",
+            "url": "https://www.binance.com/en/support/announcement/actual-code",
+            "published_at": "2026-10-14T03:30:08.368000Z",
+            "published_prec": "EXACT",
+            "published_at_precision": "EXACT",
+            "published_prec_reason": null,
+            "published_at_bucket_size_s": null,
+            "item_id": "ITM-01M5Y9XWDJQ2W8YFD3ZKC3FT6A",
+            "feed": "https://www.binance.com/list?pageNo=1&pageSize=20",
+            "observed_at": "2026-10-27T09:09:13.776802Z",
+            "observed_at_prec": "COLLECTION_ONLY",
+            "observed_at_prec_reason": null,
+            "discovery_config_version": "test",
+            "discovery_code_version": "test"
+          }
+        ]
+      },
+      {
+        "batch_id": "BATCH-01M5Y9XWDJGNQY513RC2TXH4XG",
+        "acquired_at": "2026-10-27T09:09:13.776802Z",
+        "acquired_at_precision": "COLLECTION_ONLY",
+        "acquired_at_prec": null,
+        "acquired_at_prec_reason": null,
+        "kind": "json",
+        "source_id": "S09",
+        "coverage": {
+          "etag": null,
+          "last_modified": null,
+          "discovery_checkpoint": "actual-code"
+        },
+        "quarantines": [],
+        "rows": []
+      }
+    ],
+    "entry_errors": [],
+    "reads": {
+      "ok": 1,
+      "failed": 0
+    },
+    "status": "PENDING",
+    "error": null,
+    "entry_error_reporting": {
+      "contract_version": 1,
+      "source_id": "S09",
+      "pending": {},
+      "last_outcome": null,
+      "unresolved_legacy": null
+    }
+  },
+  "calls": [
+    "https://www.binance.com/list?pageNo=1&pageSize=20"
+  ]
+}

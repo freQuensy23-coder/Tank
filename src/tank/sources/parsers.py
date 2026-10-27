@@ -31,6 +31,7 @@ from tank.contracts.source_envelopes import (
 from tank.contracts.source_errors import DigestEntryError, DocumentEntryError, EntryIdentity
 from tank.contracts.source_items import (
     ArticleDiscovery,
+    BinanceCatalogListing,
     DiscoveredItem,
     DiscoveryEnvelope,
     DiscoveryObservation,
@@ -59,7 +60,7 @@ from tank.contracts.source_parsing import (
 )
 from tank.contracts.sources import FeedParsingSpec
 from tank.sources.instrument_adapters import parse_instrument_page
-from tank.time_precision import Timestamp
+from tank.time_precision import Timestamp, propagate_timestamp
 from tank.util import EpochUnit, iso, parse_epoch, parse_utc_time, sha256
 
 
@@ -751,18 +752,26 @@ def _json_discovery(source_id: str, original: JsonValue) -> DiscoveryEnvelope:
         )
     elif source_id == "S09":
         catalog = BinanceCmsEntry.model_validate(original)
-        material = ExchangeAnnouncementDiscovery.model_validate(
+        listing = BinanceCatalogListing.model_validate(
             {
                 "source_id": "S09",
                 "external_id": catalog.code,
                 "title": catalog.title,
-                "text": text(catalog.body),
                 "url": "https://www.binance.com/en/support/announcement/" + catalog.code,
-                **timestamp_fields(
-                    preferred_publication(catalog.releaseDate, catalog.publishDate), epoch_unit="ms"
+                "publication": propagate_timestamp(
+                    timestamp_fields(
+                        preferred_publication(catalog.releaseDate, catalog.publishDate), epoch_unit="ms"
+                    ),
+                    "published_at",
+                ),
+                **(
+                    {"summary": text(catalog.body) if catalog.body is not None else None}
+                    if "body" in catalog.model_fields_set
+                    else {}
                 ),
             }
         )
+        return DiscoveryEnvelope(discovery=listing, observation=DiscoveryObservation(), payload=None)
     elif source_id == "S10":
         okx = OkxAnnouncementEntry.model_validate(original)
         material = ExchangeAnnouncementDiscovery.model_validate(
