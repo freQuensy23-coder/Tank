@@ -5,6 +5,7 @@ import re
 from collections.abc import Mapping
 from datetime import UTC, datetime
 from email.utils import parsedate_to_datetime
+from io import BytesIO
 from urllib.parse import urljoin, urlsplit
 
 import feedparser
@@ -132,7 +133,7 @@ def _feed_spec(feed: FeedParsingSpec | Mapping[str, JsonValue]) -> FeedParsingSp
 
 def feeds(payload, source_id, feed):
     feed = _feed_spec(feed)
-    parsed = feedparser.parse(payload)
+    parsed = feedparser.parse(BytesIO(payload.encode("utf-8") if isinstance(payload, str) else payload))
     if not parsed.version:
         raise ValueError("Invalid feed: no RSS or Atom document")
     if parsed.bozo and not parsed.entries:
