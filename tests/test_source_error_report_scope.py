@@ -102,6 +102,7 @@ async def test_failed_report_restart_retains_original_feed_subject(
             assert notice["feed_url"] == OLD
             assert notice["source_name"] == "Original test publisher"
             assert notice["source_id"] == "S30"
+            assert notice["seen_at"] == intent.seen_at
             assert requests == [OLD, NEW]
             settled = await repo.get("ops.source_checkpoints", "S30:0")
             assert settled is not None
@@ -211,9 +212,18 @@ async def test_report_intent_crash_boundaries_resume_without_duplicate_notice(
             await restarted.poll_once("S30")
             final = await repo.get("ops.source_checkpoints", "S30:0")
             assert final is not None
-            assert SourceReportLedger.model_validate(final["entry_error_reporting"]).pending == {}
+            final_ledger = SourceReportLedger.model_validate(final["entry_error_reporting"])
+            assert final_ledger.pending == {} and final_ledger.last_outcome is not None
+            assert final_ledger.last_outcome.source_versions == versions(
+                "new" if boundary == "BEFORE_INTENT" else "old"
+            )
+            assert final_ledger.last_outcome.execution_versions == versions(
+                "old" if boundary == "AFTER_ACK" else "new"
+            )
             [notice] = await repo.list("out.ops_notices", filters={"kind": "ENTRY_ERRORS"})
             assert notice["feed_url"] == OLD
+            if notices:
+                assert notice == notices[0]
             assert len(await repo.list("ops.jobs", filters={"type": "DELIVER"})) == 1
             assert requested == [OLD, OLD if boundary == "BEFORE_INTENT" else NEW]
             await restarted.close()
@@ -450,5 +460,39 @@ async def test_model_only_or_foreign_confirmation_cannot_acknowledge_report_inte
             assert len(await repo.list("out.ops_notices", filters={"kind": "ENTRY_ERRORS"})) == 1
             assert len(await repo.list("ops.jobs", filters={"type": "DELIVER"})) == 1
             await service.close()
+    finally:
+        await budgets.shutdown()
+
+
+async def test_new_duplicate_intent_preserves_original_notice_name_and_clocks(
+    repo: StorageBackend, tmp_path: Path
+) -> None:
+    budgets = fixture_request_budgets()
+    settings = ReportSettings(data_dir=tmp_path, ops_progress_enabled=True)
+    try:
+        async with httpx.AsyncClient(
+            transport=httpx.MockTransport(lambda request: httpx.Response(200, content=BROKEN))
+        ) as http:
+            first = SourceService(repo, settings, http=http, budgets=budgets, versions=versions("first"))
+            bind(first, OLD, "Original publisher")
+            await first.poll_once("S30")
+            [original] = await repo.list("out.ops_notices", filters={"kind": "ENTRY_ERRORS"})
+            [marker] = await repo.list("out.ops_notices", filters={"kind": "ENTRY_ERROR"})
+            second = SourceService(repo, settings, http=http, budgets=budgets, versions=versions("second"))
+            bind(second, OLD, "Renamed publisher")
+            await second.poll_once("S30")
+            assert await repo.list("out.ops_notices", filters={"kind": "ENTRY_ERRORS"}) == [original]
+            assert await repo.list("out.ops_notices", filters={"kind": "ENTRY_ERROR"}) == [marker]
+            current = await repo.get("ops.source_checkpoints", "S30:0")
+            assert current is not None
+            ledger = SourceReportLedger.model_validate(current["entry_error_reporting"])
+            assert ledger.pending == {} and ledger.last_outcome is not None
+            assert ledger.last_outcome.outcome.kind == "DEDUPLICATED"
+            assert ledger.last_outcome.source_versions == versions("second")
+            assert ledger.last_outcome.execution_versions == versions("second")
+            assert {ref.notice_id for ref in ledger.last_outcome.outcome.markers} == {original["notice_id"]}
+            assert len(await repo.list("ops.jobs", filters={"type": "DELIVER"})) == 1
+            await first.close()
+            await second.close()
     finally:
         await budgets.shutdown()
