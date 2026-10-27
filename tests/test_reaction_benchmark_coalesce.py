@@ -10,7 +10,7 @@ from tank.contracts.scheduler_commands import InitialReactionCommand, reaction_c
 from tank.scheduler import Scheduler
 from tank.settings import Settings
 from tank.storage import MemoryRepository
-from tank.util import iso, parse_time, utcnow
+from tank.util import iso, parse_time, sha256, utcnow
 
 
 def klines(token, iid, end, minutes=180):
@@ -135,6 +135,10 @@ async def test_late_changes_keep_one_queued_revision_per_checkpoint(
                 "observed_at": iso(end + timedelta(minutes=n)),
                 "change_id": f"CAP-LIVE-{n}",
                 "status": "AVAILABLE",
+                "kind": "LATE_NORMALIZED_DATA",
+                "source_count": 1,
+                "market_from": iso(anchor),
+                "semantic_fingerprint": sha256({"authored_observation": n}),
             }
         ]
         await scheduler.detect_late_data(end + timedelta(minutes=n))

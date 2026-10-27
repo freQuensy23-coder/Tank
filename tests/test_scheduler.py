@@ -1738,7 +1738,7 @@ async def test_late_data_revisions_coalesce_to_one_queued_job_per_checkpoint() -
                 "checkpoint": label,
                 "revision": 1,
                 "captured_at": iso(now - timedelta(hours=1)),
-                "anchor": {"ts": anchor},
+                "anchor": {"type": "T0", "ts": anchor, "ts_prec": "EXACT"},
             },
         )
 
@@ -1754,6 +1754,11 @@ async def test_late_data_revisions_coalesce_to_one_queued_job_per_checkpoint() -
                 "token_id": "t",
                 "anchor": anchor,
                 "observed_at": iso(now),
+                "kind": "LATE_NORMALIZED_DATA",
+                "status": "AVAILABLE",
+                "source_count": 1,
+                "market_from": anchor,
+                "semantic_fingerprint": sha256({"authored_observation": iso(now)}),
             }
 
     scheduler = Scheduler(
@@ -1790,7 +1795,7 @@ async def test_late_revision_is_deferred_so_following_late_completions_fold_into
             "checkpoint": "POST_15M",
             "revision": 1,
             "captured_at": iso(now - timedelta(hours=1)),
-            "anchor": {"ts": anchor},
+            "anchor": {"type": "T0", "ts": anchor, "ts_prec": "EXACT"},
         },
     )
 
@@ -1805,6 +1810,11 @@ async def test_late_revision_is_deferred_so_following_late_completions_fold_into
                 "token_id": "t",
                 "anchor": anchor,
                 "observed_at": iso(now),
+                "kind": "LATE_NORMALIZED_DATA",
+                "status": "AVAILABLE",
+                "source_count": 1,
+                "market_from": anchor,
+                "semantic_fingerprint": sha256({"authored_observation": iso(now)}),
             }
 
     scheduler = Scheduler(
@@ -2014,7 +2024,7 @@ async def test_late_data_after_a_window_end_does_not_revise_that_window() -> Non
                 "revision": 1,
                 "captured_at": iso(now - timedelta(minutes=30)),
                 "window_end": iso(end),
-                "anchor": {"ts": iso(anchor)},
+                "anchor": {"type": "T0", "ts": iso(anchor), "ts_prec": "EXACT"},
             },
         )
 
@@ -2026,6 +2036,10 @@ async def test_late_data_after_a_window_end_does_not_revise_that_window() -> Non
                 "token_id": "t",
                 "anchor": iso(anchor),
                 "observed_at": iso(now),
+                "kind": "LATE_NORMALIZED_DATA",
+                "status": "AVAILABLE",
+                "source_count": 1,
+                "semantic_fingerprint": sha256({"authored_observation": iso(now)}),
                 "market_from": iso(anchor + timedelta(minutes=20)),
             }
 

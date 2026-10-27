@@ -19,11 +19,12 @@ from collections.abc import (
     Mapping,
     Sequence,
 )
-from contextlib import AbstractAsyncContextManager, asynccontextmanager, suppress
+from contextlib import AbstractAsyncContextManager, AsyncExitStack, asynccontextmanager, suppress
 from contextvars import ContextVar
 from datetime import datetime, timedelta
 from decimal import Decimal
 from pathlib import Path
+from types import MappingProxyType
 from typing import Literal, Protocol, Self, overload
 from uuid import uuid4
 
@@ -45,6 +46,13 @@ from tank.contracts.jobs import (
     JobRetryState,
 )
 from tank.contracts.json import JsonDocument
+from tank.contracts.reaction_recovery import (
+    ReactionRecoveryWitnessAddress,
+    ReactionRecoveryWitnessRequest,
+    RecoveryWitnessCollection,
+)
+from tank.contracts.stored_documents import ImmutableDocument as ImmutableDocument
+from tank.contracts.stored_documents import NativeBackfillWitness
 from tank.market_codec import StoredRow, StoredValue
 from tank.market_codec import decode as decode_market
 from tank.market_schema import MARKET_ALIASES, MARKET_COLUMNS
@@ -113,11 +121,6 @@ class ClaimResult(DomainModel):
     analysis_busy: bool
     fresh_event: bool
     deferred: int
-
-
-class ImmutableDocument(DomainModel):
-    document: Record
-    immutable: bool
 
 
 def _same_jsonb_value(left: JsonValue, right: JsonValue) -> bool:
@@ -220,6 +223,9 @@ type RangePage = list[tuple[Record, tuple[str, str]]]
 type RetainedWindow = tuple[str, datetime, datetime]
 type RetainedWindows = list[RetainedWindow]
 type HeadMap = dict[str, Record | None]
+type RecoveryWitnessIndex = Mapping[
+    tuple[RecoveryWitnessCollection, str], ImmutableDocument | NativeBackfillWitness | None
+]
 type MarketPruneCounts = dict[str, int | dict[str, int]]
 type Predicate = tuple[list[sql.Composable], list[SQLParameter]]
 type StorageBackend = MemoryRepository | PostgresRepository
@@ -306,6 +312,9 @@ class Repository(Protocol):
     async def delete(self, collection: str, key: str) -> None: ...
     def transaction(self) -> AbstractAsyncContextManager[Self]: ...
     def lock(self, key: str) -> AbstractAsyncContextManager[Self]: ...
+    def reaction_recovery_witnesses(
+        self, request: ReactionRecoveryWitnessRequest
+    ) -> AbstractAsyncContextManager[RecoveryWitnessIndex]: ...
     async def enqueue(
         self,
         kind: str,
@@ -557,6 +566,35 @@ def _job(
 class RepositoryQueries(ABC):
     @abstractmethod
     def _backend(self) -> StorageBackend: ...
+
+    @asynccontextmanager
+    async def reaction_recovery_witnesses(
+        self, request: ReactionRecoveryWitnessRequest
+    ) -> AsyncIterator[RecoveryWitnessIndex]:
+        request = ReactionRecoveryWitnessRequest.model_validate(request)
+        addresses = request.addresses()
+        backend = self._backend()
+        task = asyncio.current_task()
+        if isinstance(backend, MemoryRepository) and task is not None and backend._owner is task:
+            raise RuntimeError("Recovery enqueue locks must be acquired before Memory transactions")
+        async with (
+            backend.lock(f"queue:REACTION_CAPTURE:{request.enqueue_idempotency_key}"),
+            AsyncExitStack() as locks,
+        ):
+            for address in addresses:
+                await locks.enter_async_context(
+                    backend.lock(f"record:{address.collection}:{address.storage_key}")
+                )
+            async with backend.transaction():
+                witnesses: dict[
+                    tuple[RecoveryWitnessCollection, str],
+                    ImmutableDocument | NativeBackfillWitness | None,
+                ] = {}
+                for address in addresses:
+                    witnesses[
+                        (address.collection, address.storage_key)
+                    ] = await backend._read_recovery_witness(address)
+                yield MappingProxyType(witnesses)
 
     async def prune_market(
         self,
@@ -997,6 +1035,20 @@ class MemoryRepository(QueueMixin):
 
     async def migrate(self) -> None:
         pass
+
+    async def _read_recovery_witness(
+        self, address: ReactionRecoveryWitnessAddress
+    ) -> ImmutableDocument | NativeBackfillWitness | None:
+        if self._owner is not asyncio.current_task():
+            raise RuntimeError("Recovery witness reads require their active transaction")
+        record = self._data.get(address.collection, {}).get(address.storage_key)
+        if record is None:
+            return None
+        if address.collection == "mkt.backfill_runs":
+            return NativeBackfillWitness(record=record)
+        return ImmutableDocument(
+            document=record, immutable=(address.collection, address.storage_key) in self._immutable
+        )
 
     @asynccontextmanager
     async def transaction(self) -> AsyncIterator[Self]:
@@ -1672,6 +1724,22 @@ class PostgresRepository(QueueMixin):
             ).format(table, columns, sql.SQL(",").join(sql.Placeholder() for _ in names), assignments)
             await conn.execute(query, values)
             return copy.deepcopy(document)
+
+    async def _read_recovery_witness(
+        self, address: ReactionRecoveryWitnessAddress
+    ) -> ImmutableDocument | NativeBackfillWitness | None:
+        native = address.collection == "mkt.backfill_runs"
+        query = sql.SQL(
+            "SELECT * FROM {} WHERE storage_key=%s FOR UPDATE"
+            if native
+            else "SELECT document,immutable FROM {} WHERE storage_key=%s FOR UPDATE"
+        ).format(sql.Identifier(*address.collection.split(".")))
+        row = await (await self._conn().execute(query, (address.storage_key,))).fetchone()
+        if row is None:
+            return None
+        if native:
+            return NativeBackfillWitness(record=decode_market(address.collection, row))
+        return ImmutableDocument.model_validate(row)
 
     async def get(self, collection: str, key: str) -> Record | None:
         from psycopg import sql

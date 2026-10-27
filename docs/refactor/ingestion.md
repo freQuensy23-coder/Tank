@@ -1664,6 +1664,13 @@ The first subject-boundary actual run passed10/14, with all four new controls re
 
 The complete material-scope companion at immutable `2e26fbc3` passes all 132 connected Linux units in 29.09 s, zero skips (p90 0.330 s/max 1.419 s including fixtures), and all 14 collected actual PostgreSQL cases in 23.76 s, zero skips. Wrong/absent/null material history is refused by the real Ops caller with unchanged input, source record, exact raw bytes, existing queue rows and delivery ledger; the matching real-producer material receipt is reused without a new token/HTTP call. Ordinary material-free positive/uncertain cases still pass. Default connected three targets, strict contract/newtest two targets, Ruff, formatting, source-comment policy and diff checks pass. Original three direct red controls and the first 10/14 publication-fixture diagnostic remain retained and attributed. This qualifies the bounded notice authority seam, not all remaining Inbox policy/typing or global gates.
 
+## Recovery witness request prerequisite
+
+The inward `ReactionRecoveryWitnessRequest` names the actual enqueue idempotency key and seven exact witness addresses: two jobs, one durable backfill, one bound checkpoint, and the change marker, owner and recovery link. Every identity is supplied and nonblank. Distinct roles in the same collection cannot alias. `addresses()` sorts only for storage lock order; it does not infer evidence freshness or select a checkpoint.
+
+This prerequisite is a mechanical request, not recovery authority. The physical context manager must retain locks through enqueue/link commit. The application first holds the shared reaction target and change writer locks, then storage acquires the enqueue idempotency lock and sorted record locks before entering the transaction and taking row locks. A missing row stays absent. Native backfill updates require real row locking; advisory locks alone do not fence those writers. Raw witness documents remain at the storage admission boundary and must be narrowed into actual phase facts before policy evaluation. No old job, source payload or marker is rewritten by this contract.
+
+The distinct-source refinement at `74870748` also passed both actual Linux late-capture cases in 48.60 seconds with zero skips. It retains the original five-second positive case and proves the failure/restart case with a different real source payload, EDF-selected peer and same-ID fresh-token retry. Earlier qualified 145-unit and 21-actual evidence remains attributed to `273d7319`; the refinement is not a historical recovery qualification.
 
 The interrupted consumer snapshot is preserved before qualification. The two owned diagnostic/late-capture test files now pass default checking using actual JobEnvelope/EntryErrorNotice records and explicit storage-field guards rather than casts or broad mapping escapes. A strict, input-hiding ReactionCaptureResultDocument admits only actual completion phases at the durable result reader; legacy pending/coalesced references remain rejected as completion. Existing malformed-command worker tests now expect the canonical permanent INVALID_QUEUE_ENVELOPE quarantine code and retain FAILED/attempt/payload/no-effects assertions. The former coalescing regression cases now use real claims and actual worker transitions: the original stays QUEUED with its attempt refunded when the real peer capture fails or defers. Collected behavior, financial Go/retry proof and historical recovery remain pending.
 
@@ -1791,3 +1798,119 @@ codes without weakening admission. External logs/XML are
 contract and actual-caller test are independently strict-clean; all four changed
 Python paths pass Ruff/format/comment and whitespace checks. Whole legacy parsers
 are not claimed strict-qualified or fully protocol-modeled.
+
+
+The next financial proof refinement uses a different actual source-change payload already produced by the historical stage, with its original priority and original earlier operational expiry. The legacy implementation explicitly ignored same-change duplicates, so the previous duplicate-payload Go proof is retained with that precise limit; distinct-change unit/PostgreSQL controls already passed. The refined peer carries no invented change ID or priority/freshness inference. Only its explicitly declared one-attempt fault budget is test-specific; A's source payload, original TTL and normal retry budget remain unchanged. Financial and original five-second assertions are unchanged. The refined actual Go rerun is pending.
+
+### Held recovery policy and source admission
+
+The mechanical prerequisite `7e856997` passed all 43 Linux units in 4.10 seconds with zero skips; p90 was 0.001 seconds and maximum 0.004 seconds including fixtures. Strict two-target checking and Ruff passed. The later result-admission qualifier `4423238a` stopped in wrapper setup before pytest because the owned Linux filesystem could not create dependency directories. That diagnostic is retained in `reaction-recovery-results-4423-linux-unit.log`; no retry, cleanup or runtime change was performed. Later eligibility/source-admission work is static-checked but remains unqualified.
+
+`RetainedCoalescedReaction` recognizes exactly the original result containing only `coalesced_into` and the later explicit COALESCED result. It preserves the original discriminator absence through serialization. It rejects mixed capture/result fields and unknown phases; a pending peer reference never becomes a successful measured receipt.
+
+The held `recovery_eligibility` policy consumes named facts projected from locked witnesses. A known matching owner-validated applied marker settles the obligation. A failed peer plus missing marker alone does not authorize a new job: the durable terminal backfill must match the exact source change and subject, and an immutable bound checkpoint must have a matching anchor and actual collection time strictly before the terminal source observation. Missing witnesses, unknown clock precision, mismatched identities, an unbound/conflicting marker, or a same-or-later checkpoint remain UNRESOLVED. This result is eligibility only; no old job, source or checkpoint is changed, and no enqueue/link writer is activated here.
+
+`RecoveryBackfillProjection` is a narrow native-row admission projection. Its required backfill/event/token/status/finish facts do not receive defaults. `anchor=None` preserves the actual failed-backfill variant without an anchor and cannot authorize recovery. The optional `anchor_prec`, `anchor_prec_reason`, `finished_at_prec` and `finished_at_prec_reason` preserve genuinely unreported historical clock facets; canonical propagation retains unknown precision, which eligibility refuses. Source change identity is computed from the actual decoded backfill ID, status and original finish string before clock normalization, matching the real MarketService writer. The original row and unrelated result/reason data are untouched; the native table has no fabricated document immutability flag. The source adapter does not require unrelated instrument coverage or financial outputs merely to admit these consumed source facts.
+
+The subsequent locked-index admission accepts exactly the seven requested coordinates and verifies each actual storage identity. It hashes the actual stored queue payload, including legal `_depends_on` metadata, then uses the canonical queue decoder for its business command. Document and native rows are distinct phases: a native backfill cannot borrow an immutable-document flag. A valid applied marker is checked before unrelated historical peer/source fields; an unadmitted existing recovery link remains unresolved until the enqueue/link phase is implemented. The current adapter performs no writes and is not a substitute for holding the physical witness context through the later commit.
+
+`RecoveryBackfillProjection.anchor_bucket_anchor` is genuinely optional historical clock metadata. It is retained when reported, never filled from the current checkpoint. For a bucket precision, missing or UNSPECIFIED orientation cannot establish a recovery scope; conflicting known orientations also refuse. Exact point timestamps do not require a bucket orientation. Equivalent declared bucket durations use the canonical precision reconciler, so 60 minutes and one hour with the same known orientation remain the same scope. These refinements are static-checked and authored as separate negative and positive controls; qualification remains pending the explicitly assigned runtime slot.
+
+The next read-only Inbox inventory is the stored RECEIVED-message boundary used by `sweep`, `handle` and `companion`, plus delivery-reference resolution. Live intake now supplies a required message date, but retained rows still pass through zero/current-clock substitutions in those consumers. Their actual historical admissibility must be established before replacing those paths with named consumed projections. `legacy_chat`, `card_target` and `answer_target` also need producer-specific scope and identity evidence; no new policy or generic full-session facade is introduced by this inventory.
+
+### Planned recovery commit boundary, not yet activated
+
+The physical witness capability is a context manager, not a read whose locks end before mutation. The application will first admit the original actual queue body, then hold its reaction target and change writer scopes, select the latest actual revision under that target scope, and enter the exact witness request. Storage acquires the queue idempotency lock before sorted record advisory locks and the transaction/global Memory mutex; native PostgreSQL rows use FOR UPDATE. Missing rows remain absent. These scopes protect different things: the target/change locks protect latest-revision and marker insertion predicates, while the row locks fence native updates of the known backfill and queue witnesses.
+
+The commit will contain only a deterministic fresh enqueue and an immutable recovery link. It will not call measured capture or wait for HTTP/native work inside the transaction. The original payload, source cutoff, priority and declared retry budget will be retained; new operational schedule clocks must come from the current operation. Existing late-change timing is 1800 seconds of deferral and six hours of TTL, distinct from the coordinator's 30-second contention retry. Reusing that policy must not backdate the new operational attempt or overwrite the old DONE result.
+
+Before creating the job, the writer must check the deterministic idempotency key while its queue lock is held. A preexisting matching job without the new immutable link is not permission to adopt an unproven partial history or allocate another budget. A valid existing link is checked against the actual original payload revision, target/source identity and referenced job; missing or malformed linked work stays unresolved. Link identity is independent of the current clock, so restart cannot allocate a second recovery budget. Actual enqueue/link rollback, concurrent recovery, source mutation, latest-revision races and eventual corrected-worker effects remain required qualification before activation.
+
+The admission checkpoint at immutable `c2aeb7ae` passed all 86 collected recovery and stored-document Linux unit cases in 4.00 seconds with zero skips, using the approved read-only dependency runner. Timings including fixtures were p90 0.002 seconds and maximum 0.005 seconds. This includes the canonical four stored-document/native-envelope tests from `48c43e9e`. Strict three-target and connected default three-target mypy, Ruff/format, source-comment policy and diff checks pass. The approved worktree source/HEAD remained unchanged. The earlier `4423238a` setup failure remains retained; this successful run followed the runtime owner's explicit slot confirmation and does not relabel that failure. No enqueue/link writer or PostgreSQL recovery-effect claim is made by this unit/admission checkpoint.
+
+### One-generation recovery writer and actual effect proof
+
+The held writer normally joins foundation's qualified physical witness context `18b2d238` at `9935bed5`. The application requires explicit execution mode, captured versions and an actual operational clock. Replay-tagged or unsupported source modes remain unresolved. Historical DONE/FAILED witnesses are projected only into facts consumed by their phases; unused historical lifecycle clocks or claim tokens are not manufactured. The retry budget is required separately before creating new work, never defaulted from an unknown old row.
+
+The immutable link is owned by original job ID, while enqueue idempotency separately includes the actual original payload revision, peer and policy. A changed later payload, peer, source or policy cannot allocate another generation or overwrite that link. Existing linked work must match the full recorded witnesses and current known policy; its observed status is not an assertion that source coverage was applied. Only the canonical matching immutable marker/owner receipt provides that disposition. New work preserves the actual original queue payload, priority and declared retry limit. It receives a new operational budget: 1800 seconds of fresh deferral and six hours of expiry from this operation, even though the old job may already have waited. The source cutoff and old DONE/result remain separate and unchanged.
+
+At `b1401a18`, all 90 unit cases passed in 4.08 seconds with zero skips (p90 0.003 seconds/max 0.008 seconds including fixtures), followed by all eight actual PostgreSQL cases in 6.18 seconds with zero skips. This proves persisted clocks, immutable link, concurrent same-original creation, restart reuse, changed witnesses, rollback and replay refusal. The initial `4936ef98` run retained 89/90 passes: its only failure was the test indexing a fresh job's genuinely omitted result field. The corrected assertion preserves absence; production was unchanged.
+
+The real Runtime/registry/benchmark/worker controlled-clock case at `4d446550` passed with actual measured return 0.1 then 0.2, revision 2 and one matching owner-bound marker. It preserves the old DONE/result and earlier checkpoint and observes ALREADY_APPLIED on repetition. Its individual fixture-inclusive duration was 1.379 seconds, below the ten-second per-case limit; the focused one-case p90 is not a complete-unit timing gate. That original proof is retained.
+
+The PostgreSQL race fixture uses the actual record_event wire dispatch with a complete authored SOCIAL_LEAD source, LOW certainty, LOW timing confidence, no verified claims, and a validated returned event identity. It asserts the producer's actual RUMOR/unverified state; it adds no APPROVED/HIGH or unrelated financial facts. The dispatch implementation remains untyped production debt; its narrow test wire protocol and validated consumed receipt do not claim to close all EventTools typing.
+
+At `283f2725`, both actual PostgreSQL races passed in 8.93 seconds with zero skips. Recovery pauses after its real latest-header read while holding its target scope. The actual manual/latest or automatic/marker Scheduler writer attempts that same scope and cannot enter, while another actual target completes recovery. After recovery commits, the real writer produces revision 2. Original DONE remains unchanged, and a subsequent marker or differing witness cannot create a second generation. The same commit's changed complete-bar Memory execution case also passed in 6.28 seconds with zero skips.
+
+The first race run `d61058c7` correctly refused the real owned ClickHouse POST under the fixture's external-I/O guard. The next `64b3ac36` run reached ClickHouse and correctly refused close-only bars at required_o. Both diagnostics are retained. The fixture now permits POST only to the guarded owned ClickHouse origin/path, preserving external refusal, and declares complete authored flat OHLC/native-volume/reported-USD observations. These are newly authored temporary vectors, not inferred fields on real or retained observations; all original closes, clocks, row count and return oracles remain. Memory's earlier acceptance of the close-only projection is not relabeled as native schema parity. No backend validation was relaxed.
+
+This qualifies the bounded recovery writer/effects; final reaction activation remains held for the exact durable pending-demand/cursor transaction and coherent current-worker integration.
+
+## Durable late-reaction demand and cursor transaction — 2026-10-27
+
+The qualified recovery writer remains attributed to `372dd8c9` / source `283f2725`.
+The pending-demand implementation is source `8647528f`, with actual-caller and
+failure controls through `8fdb0d9f`. Normal parent `33d1c3fd` joins at `9b9e3675`;
+the tested coherent head is `f558c610`. This is a reviewable reaction/worker cohort,
+not global completion, a deployment, or permission to repair production history.
+
+`Scheduler.detect_late_data(datetime)` now uses `ReactionDemandCoordinator`.
+Actual MarketService source batches are read and validated before the commit.
+The cursor's original stored revision is rechecked under the checkpoint record
+lock, and exact source demands plus the cursor are committed together. A stale
+revision retries the actual read instead of overwriting another commit. A stored
+legacy empty state remains explicitly `LEGACY_DEMANDS_UNREPORTED`; it does not
+certify that historical skipped work was applied. New source observation clocks,
+frozen comparison scope, source digests and operational scheduling are distinct.
+
+Per-target draining runs even when the next source batch is empty. It takes the
+reaction and change writer scopes, queue idempotency scopes, then the checkpoint
+record lock before the Memory transaction mutex / PostgreSQL transaction. Only
+local queue and checkpoint writes occur in that commit; capture and network waits
+do not. Owned target tasks are drained on cancellation, and a failed target does
+not cancel successful independent targets. Each checkpoint has one newly queued
+automatic revision at a time. Remaining exact demands persist as PENDING;
+known terminal or missing linked work becomes explicitly BLOCKED rather than
+receiving an infinite fresh retry budget. Existing delay 1800 seconds, six-hour
+TTL, priority and maximum-attempt policy are preserved.
+
+Only the existing validated owner-bound applied-marker receipt retires a demand.
+DONE, FAILED, EXPIRED, later checkpoint clocks and an unbound marker do not prove
+coverage. A malformed/partial marker is retained and blocks its demand. Historical
+one-generation recovery remains the separately qualified evidence-gated path;
+its actual successful marker can resolve a blocked demand without rewriting the
+old job. No marker is invented merely because measured evidence may overlap.
+
+Boundary exceptions are specific. Source changes are the two actual producer
+variants, not arbitrary JSON. Dynamic demand and observation dictionaries are
+indexes of closed records whose keys must match their actual identities. Original
+source wire is hashed before projection; retained raw source rows are unchanged.
+The frozen checkpoint projection consumes only actual identity, revision, anchor
+and collection/window clocks, not a fabricated full Truth model. Nullable
+historical anchors produce an explicit non-applicable observation. Queued work is
+read through a minimal stored identity/status projection plus the existing closed
+reaction command admission; no historical claim token or applied receipt is
+manufactured. These projections do not close the remaining whole-Scheduler,
+MarketService reader, condition-Truth or SourcePoller typing debt.
+
+The original five-second late-capture deadline and real failed-peer policy wait
+remain unchanged. The fixture's zero-delay setting moved to the extracted timing
+policy module. Its original duplicate-source job-count oracle is checked before
+drain; any additional job must belong to a previously durable PENDING source.
+Actual Runtime execution must return UNCHANGED and leave exactly three immutable
+financial checkpoints, preserving all original return, revision, benchmark and
+Go-capture assertions. Duplicate input creates no new source demand.
+
+Coherent immutable Linux proof at `f558c610`: all 60 affected units pass in 8.60s,
+zero skips, p90 0.242s and maximum 0.904s including fixtures; all seven actual cases
+pass in 48.80s, zero skips. Actual PostgreSQL controls cover empty-batch restart,
+after-enqueue failure/cancellation rollback, cursor CAS/rollback, independent
+progress and unbound-marker refusal. Both original Go/Runtime cases pass, including
+same-ID retry with a fresh token and real financial measurements. Evidence is
+`reaction-demands-f558-linux-{unit,actual}.{log,xml}` in the external local evidence
+root. Earlier `8647`, `c04a`, `ae70`, `0570` and `8fdb` logs remain retained; the
+`c04a` timing-seam and `ae70` lost-work-assumption failures are not relabeled green.
+New coordinator/contracts/tests pass independent strict mypy; Scheduler and those
+sources pass default mypy. All seven changed Python paths pass Ruff, formatting,
+comment policy and whitespace checks. The broader late-capture test file retains
+its pre-existing untyped Go/market helper debt; no suppression was introduced.
