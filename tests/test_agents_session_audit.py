@@ -17,6 +17,7 @@ from tank.agents import SessionService
 from tank.agents.context import CONTEXT_VERSION
 from tank.agents.native_sessions import NativeSessionResolution
 from tank.contracts.json import decode_unique_json
+from tank.contracts.native_usage import NativeUsageSession, NativeUsageSpan
 from tank.openma_sync import agent_tools
 from tank.settings import Settings
 from tank.storage import MemoryRepository
@@ -351,18 +352,20 @@ async def test_usage_keeps_effort_stop_reason_and_search_count() -> None:
             versions=declared_versions_fixture(),
             refusals=UnexpectedFollowupRefusals(),
         ).usage(
-            session,
-            {
-                "id": "span",
-                "type": "span.model_request_end",
-                "finish_reason": "tool-calls",
-                "model_usage": {
-                    "input_tokens": 5,
-                    "output_tokens": 2,
-                    "server_tool_use": {"web_search_requests": 3},
-                },
-                "processed_at": clock_iso(),
-            },
+            NativeUsageSession.from_record(session),
+            NativeUsageSpan.from_wire(
+                {
+                    "id": "span",
+                    "type": "span.model_request_end",
+                    "finish_reason": "tool-calls",
+                    "model_usage": {
+                        "input_tokens": 5,
+                        "output_tokens": 2,
+                        "server_tool_use": {"web_search_requests": 3},
+                    },
+                    "processed_at": clock_iso(),
+                }
+            ),
         )
     usage = await repo.get("ops.llm_usage", "s:span")
     assert (usage["effort"], usage["stop_reason"], usage["web_searches"]) == ("medium", "tool-calls", 3)

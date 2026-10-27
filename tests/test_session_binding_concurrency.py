@@ -18,6 +18,7 @@ from test_agents_execution_barrier import config
 from tank.agents.context import CONTEXT_VERSION
 from tank.agents.sessions import SessionService
 from tank.analysis.page_access import LivePageAccess
+from tank.contracts.session_completion import CompletionSessionSnapshot
 from tank.event_tools import EventToolService
 from tank.openma_sync import agent_tools
 from tank.settings import Settings
@@ -192,7 +193,9 @@ async def test_controller_snapshot_cannot_erase_domain_binding(
                 versions=declared_versions_fixture(),
                 refusals=UnexpectedFollowupRefusals(),
             )
-            poll_task = asyncio.create_task(service.execution_barrier(session, verify_remote=True))
+            poll_task = asyncio.create_task(
+                service.execution_barrier(CompletionSessionSnapshot.from_record(session), verify_remote=True)
+            )
             await writer_ready.wait()
             domain_task = asyncio.create_task(
                 tools.dispatch("record_event", args, {"session_id": "s", "role": "analyst"})

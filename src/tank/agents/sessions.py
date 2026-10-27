@@ -30,9 +30,7 @@ from tank.agents.answer_settlement import (
     collect_turn_answers,
 )
 from tank.agents.archive_contracts import (
-    ArchiveAlertIdentity,
     ArchiveDelivery,
-    ArchiveFinalization,
     archive_card,
     terminal_archive_card,
 )
@@ -101,6 +99,7 @@ from tank.agents.native_transport import (
     native_event_sequence,
     next_native_cursor,
 )
+from tank.agents.native_usage import record_native_usage
 from tank.agents.outbound_inputs import (
     AcceptedOutboundInput,
     MessageIdentity,
@@ -148,6 +147,7 @@ from tank.agents.wire import tool_wire_result
 from tank.agents.workflow import SOURCE_COMPLETION_VERSION
 from tank.contracts.json import decode_json, decode_unique_json
 from tank.contracts.native_readback import NativeSessionReference
+from tank.contracts.native_usage import NativeUsageSession, NativeUsageSpan
 from tank.contracts.openma import (
     ManagedAgentName,
     ManagedToolManifest,
@@ -166,6 +166,25 @@ from tank.contracts.question_retirement import (
     UnretainedQuestionJournal,
 )
 from tank.contracts.session_admission import AdmissionCandidate
+from tank.contracts.session_completion import (
+    CompletionAttemptOwner,
+    CompletionMessage,
+    CompletionSessionSnapshot,
+    CompletionToolInput,
+    FailedToolAttempt,
+    HostExecutionObservation,
+    NativeExecutionBarrier,
+    NativeExecutionPage,
+    NativeExecutionQuery,
+    NativeExecutionState,
+    PriorToolInputReceipt,
+    SessionCompletionStatus,
+    SourceCompletionEntry,
+    SourceCompletionSnapshot,
+)
+from tank.contracts.session_completion import (
+    execution_barrier as derive_execution_barrier,
+)
 from tank.contracts.session_followups import (
     FollowupCandidate,
     FollowupEligibility,
@@ -174,6 +193,27 @@ from tank.contracts.session_followups import (
     FollowupSession,
     NoSession,
     followup_eligibility,
+)
+from tank.contracts.session_retention import (
+    ArchiveCandidate,
+    ArchiveDenied,
+    ArchiveEventBlocker,
+    FollowupAlertScope,
+    FollowupDeliveryScope,
+    FollowupPublicationScope,
+    FollowupQuestionScope,
+    InvalidatedArchiveCandidate,
+    PendingArchiveJob,
+    QuestionActivity,
+    RecordedActivity,
+    RetainedSession,
+    RetentionPolicy,
+    SessionActivity,
+    SessionSweepEntry,
+    TerminalArchiveCandidate,
+    archive_candidate,
+    archive_tool,
+    latest_activity,
 )
 from tank.contracts.source_items import (
     FailedExtraction,
@@ -192,8 +232,14 @@ from tank.runtime_contracts import (
 )
 from tank.source_repository import SourceExtractionRepository
 from tank.telegram_inbox import DOCUMENT_LIMIT
-from tank.time_precision import Timestamp, collection_clock, offset_schedule, propagate_timestamp
-from tank.util import canonical_json, jsonable, parse_time, sha256, utcnow
+from tank.time_precision import (
+    Timestamp,
+    collection_clock,
+    offset_schedule,
+    propagate_timestamp,
+    timestamp_owned_fields,
+)
+from tank.util import canonical_json, jsonable, new_id, parse_time, sha256, utcnow
 
 log = logging.getLogger(__name__)
 
@@ -918,161 +964,146 @@ class SessionService:
             raise ValueError("Native input has conflicting journal ownership")
         return next(iter(owners)) if owners else None
 
-    async def execution_barrier(self, session, calls=None, *, verify_remote=False):
-        """Correlate accepted inputs with native execution receipts, never idle timing."""
-        calls = (
-            calls
-            if calls is not None
-            else [
-                row
-                async for row in self.repo.iter_all(
-                    "ops.tool_calls", filters={"session_id": session["session_id"]}
-                )
-            ]
-        )
-        required = set()
-        unknown = []
-        retired = set(session.get("retired_message_ids", []))
-        calls = [call for call in calls if call.get("native_turn_message_id") not in retired]
-        for message in session.get("message_log", []):
-            if message["message_id"] in retired:
-                continue
-            identity = message.get("remote_event_id")
-            if identity:
-                required.add(identity)
-            else:
-                unknown.append("message:" + message["message_id"])
-        for call in calls:
-            if call.get("returned_at"):
-                identity = call.get("remote_event_id")
-                if identity:
-                    required.add(identity)
-                else:
-                    unknown.append("tool:" + call["call_id"])
-            else:
-                unknown.append("unreturned-tool:" + call["call_id"])
-        receipts = session.get("native_execution_receipts", {})
-        superseded = session.get("superseded_native_inputs", {})
-        required.difference_update(superseded)
-        returned_tools = {call["call_id"] for call in calls if call.get("returned_at")}
-        pending_actions = sorted(
-            {
-                identity
-                for receipt in receipts.values()
-                if receipt.get("execution_id") in required
-                and receipt.get("stop_reason", {}).get("type") == "requires_action"
-                for identity in receipt["stop_reason"].get("event_ids", [])
-                if identity not in returned_tools
-            }
-        )
-        final_receipt = any(
-            receipt.get("execution_id") in required
-            and receipt.get("type") == "session.status_idle"
-            and receipt.get("stop_reason", {}).get("type") == "end_turn"
-            for identity, receipt in receipts.items()
-        )
-        states = copy.deepcopy(session.get("native_execution_states", {}))
-        signature = tuple(sorted(required))
-        poll = self.execution_polls.get(session["session_id"])
+    async def completion_record(self, sid: str) -> dict[str, JsonValue]:
+        identity = NativeSessionReference(session_id=sid)
+        current: dict[str, JsonValue] | None = await self.repo.get("ops.agent_sessions", identity.session_id)
+        if current is None:
+            raise KeyError(identity.session_id)
+        require_owned_session_identity(identity.session_id, current)
+        CompletionSessionSnapshot.from_record(current)
+        return current
+
+    async def execution_barrier(
+        self, session: CompletionSessionSnapshot, *, verify_remote: bool = False
+    ) -> NativeExecutionBarrier:
+        """Correlate accepted inputs with admitted native execution receipts."""
+        snapshot = CompletionSessionSnapshot.model_validate(session)
+        calls = [
+            CompletionToolInput.from_record(row)
+            async for row in self.repo.iter_all("ops.tool_calls", filters={"session_id": snapshot.session_id})
+        ]
+        observed = derive_execution_barrier(snapshot, calls)
+        signature = tuple(observed.accepted_input_ids)
+        poll = self.execution_polls.get(snapshot.session_id)
         should_read = poll is None or poll.signature != signature or time.monotonic() >= poll.deadline
-        if verify_remote and required and not unknown and should_read:
-            pending_read = sorted(
-                identity for identity in required if states.get(identity, {}).get("state") != "COMPLETED"
-            )
+        if verify_remote and observed.accepted_input_ids and not observed.unidentified_inputs and should_read:
+            states: dict[str, NativeExecutionState] = {}
+            pending_read = observed.pending_input_ids
             for offset in range(0, len(pending_read), 64):
-                requested = pending_read[offset : offset + 64]
+                query = NativeExecutionQuery(execution_ids=pending_read[offset : offset + 64])
                 response = await self.request(
                     "GET",
-                    f"sessions/{session['session_id']}/executions",
-                    params=[("ids[]", identity) for identity in requested],
+                    f"sessions/{quote(snapshot.session_id, safe='')}/executions",
+                    params=[("ids[]", identity) for identity in query.execution_ids],
                 )
-                rows = response.get("data") if isinstance(response, dict) else None
-                if (
-                    not isinstance(rows, list)
-                    or len(rows) != len(requested)
-                    or [row.get("execution_id") for row in rows] != requested
-                ):
-                    raise ValueError("Invalid native execution status correlation")
-                for row in rows:
-                    state = row.get("state")
-                    expected = state if state in {"COMPLETED", "FAILED", "CANCELLED"} else None
-                    if (
-                        state not in {"QUEUED", "RUNNING", "COMPLETED", "FAILED", "CANCELLED", "UNKNOWN"}
-                        or row.get("settled_outcome") != expected
-                    ):
-                        raise ValueError("Invalid native execution settlement projection")
-                    states[row["execution_id"]] = copy.deepcopy(row)
-            async with self.repo.lock("session:" + session["session_id"]):
-                current = await self.repo.get("ops.agent_sessions", session["session_id"])
-                current.setdefault("native_execution_states", {}).update(states)
-                owners = {row["message_id"]: row for row in current.get("message_log", [])}
-                for call in calls:
-                    identity = call.get("remote_event_id")
-                    owner = owners.get(call.get("native_turn_message_id"))
-                    if (
-                        identity
-                        and states.get(identity, {}).get("state") == "FAILED"
-                        and owner
-                        and call.get("native_turn_retry_count", 0) < owner.get("retry_count", 0)
-                    ):
-                        current.setdefault("superseded_native_inputs", {})[identity] = {
-                            "reason": "FAILED_PRIOR_TURN_ATTEMPT",
-                            "queue_state": copy.deepcopy(states[identity]),
-                            "replacement_input_id": owner.get("remote_event_id"),
-                            "message_id": owner["message_id"],
+                page = NativeExecutionPage.model_validate(response)
+                for observed_state in page.correlate(query):
+                    states[observed_state.execution_id] = observed_state
+            async with self.repo.lock("session:" + snapshot.session_id):
+                current = await self.completion_record(snapshot.session_id)
+                fresh = CompletionSessionSnapshot.from_record(current)
+                calls = [
+                    CompletionToolInput.from_record(row)
+                    async for row in self.repo.iter_all(
+                        "ops.tool_calls", filters={"session_id": snapshot.session_id}
+                    )
+                ]
+                derive_execution_barrier(fresh, calls)
+                matches = (
+                    fresh.execution_observation == snapshot.execution_observation
+                    and fresh.execution_states == snapshot.execution_states
+                )
+                if states and matches:
+                    merged = {**fresh.execution_states, **states}
+                    current["native_execution_states"] = {
+                        key: state.model_dump(mode="json") for key, state in merged.items()
+                    }
+                    owners = {message.message_id: message for message in fresh.journal}
+                    retired = dict(fresh.superseded_inputs)
+                    for call in calls:
+                        identity = call.input_id
+                        state = merged.get(identity) if identity is not None else None
+                        owner = owners.get(call.message_id) if call.message_id is not None else None
+                        if identity is None or state is None or state.state != "FAILED" or owner is None:
+                            continue
+                        previous = FailedToolAttempt(
+                            input_id=identity, message_id=call.message_id, attempt=call.attempt
+                        )
+                        replacement = CompletionAttemptOwner(
+                            message_id=owner.message_id,
+                            attempt=owner.retry_attempt,
+                            replacement_input_id=owner.native_input_id,
+                        )
+                        if previous.is_prior_to(replacement):
+                            retired[identity] = PriorToolInputReceipt(
+                                reason="FAILED_PRIOR_TURN_ATTEMPT",
+                                queue_state=state,
+                                replacement_input_id=owner.native_input_id,
+                                message_id=owner.message_id,
+                            )
+                    if retired != fresh.superseded_inputs:
+                        current["superseded_native_inputs"] = {
+                            key: receipt.model_dump(mode="json", exclude_unset=True)
+                            for key, receipt in retired.items()
                         }
-                required.difference_update(current.get("superseded_native_inputs", {}))
-                await put_owned_session(self.repo, session["session_id"], current)
+                    observation = HostExecutionObservation(
+                        source="HOST_MANAGED_EXECUTION_STATUS",
+                        observation_id=new_id("native_status_observation"),
+                        session_id=snapshot.session_id,
+                        execution_ids=list(states),
+                        recorded_at=self.clock_timestamp(),
+                        versions=self.versions,
+                    )
+                    current["native_execution_observation"] = observation.model_dump(mode="json")
+                    await put_owned_session(self.repo, snapshot.session_id, current)
+                    snapshot = CompletionSessionSnapshot.from_record(current)
+                else:
+                    snapshot = fresh
             delay = min(poll.delay * 2, 1.0) if poll is not None and poll.signature == signature else 0.05
-            self.execution_polls[session["session_id"]] = ExecutionPoll(
+            self.execution_polls[snapshot.session_id] = ExecutionPoll(
                 deadline=time.monotonic() + delay, delay=delay, signature=signature
             )
-        failed = sorted(
-            identity
-            for identity in required
-            if states.get(identity, {}).get("state") in {"FAILED", "CANCELLED"}
-        )
-        pending = sorted(
-            identity for identity in required if states.get(identity, {}).get("state") != "COMPLETED"
-        )
-        return {
-            "complete": bool(required)
-            and not unknown
-            and not pending
-            and not pending_actions
-            and final_receipt,
-            "accepted_input_ids": sorted(required),
-            "pending_input_ids": pending,
-            "failed_input_ids": failed,
-            "unidentified_inputs": unknown,
-            "pending_action_ids": pending_actions,
-            "terminal_receipts": receipts,
-            "execution_states": states,
-        }
+        return derive_execution_barrier(snapshot, calls)
 
-    async def source_completion_snapshot(self, session):
-        outcomes = {}
-        for message in session.get("message_log", []):
-            payload = message.get("payload", {})
-            item_id = payload.get("item_id")
-            source_message = payload.get("kind") in {"NEW_ITEM", "ITEM_ADDED"}
-            item = await self.repo.get("ingest.source_items", item_id) if source_message and item_id else None
-            outcomes[message["message_id"]] = {
-                "version": SOURCE_COMPLETION_VERSION,
-                "item_id": item_id,
-                "native_input_id": message.get("remote_event_id"),
-                "retry_attempt": message.get("retry_count", 0),
-                "outcome": item.get("extraction_status")
-                if item
+    async def source_completion_snapshot(self, session: dict[str, JsonValue]) -> SourceCompletionSnapshot:
+        journal = session.get("message_log", [])
+        if not isinstance(journal, list):
+            raise ValueError("Completion message journal must be an array")
+        outcomes: dict[str, SourceCompletionEntry] = {}
+        for raw in journal:
+            if not isinstance(raw, dict):
+                raise ValueError("Completion journal message must be an object")
+            message = CompletionMessage.from_record(raw)
+            if message.message_id in outcomes:
+                raise ValueError("Completion journal repeats a message identity")
+            item = (
+                await self.repo.get("ingest.source_items", message.item_id)
+                if message.source_message is True and message.item_id is not None
+                else None
+            )
+            outcome = (
+                item.get("extraction_status")
+                if item is not None
                 else "MISSING_SOURCE_ITEM"
-                if source_message
-                else "NOT_APPLICABLE",
-            }
-        return outcomes
+                if message.source_message is True
+                else "NOT_APPLICABLE"
+                if message.source_message is False
+                else None
+            )
+            outcomes[message.message_id] = SourceCompletionEntry.model_validate(
+                {
+                    "version": SOURCE_COMPLETION_VERSION,
+                    "item_id": message.item_id,
+                    "native_input_id": message.native_input_id,
+                    "retry_attempt": message.retry_attempt,
+                    "outcome": outcome,
+                }
+            )
+        return SourceCompletionSnapshot(entries=outcomes)
 
-    async def completed_turn(self, sid):
+    async def completed_turn(self, sid: str) -> NativeExecutionBarrier:
         result = await self.settled_turn(sid)
-        if result["complete"]:
+        if result.complete:
             await self.deliver_answers(sid)
         return result
 
@@ -1295,38 +1326,42 @@ class SessionService:
             except (httpx.HTTPError, ValueError, KeyError):
                 continue
 
-    async def settled_turn(self, sid):
-        """Read committed queue states, drain every history page, then recheck inputs."""
+    async def settled_turn(self, sid: str) -> NativeExecutionBarrier:
+        """Read committed queue states, drain history, and recheck actual accepted inputs."""
+        await self.completion_record(sid)
         await self.recover_outbound_inputs(sid)
-        session = await self.repo.get("ops.agent_sessions", sid)
-        local = await self.execution_barrier(session)
+        session = await self.completion_record(sid)
+        local = await self.execution_barrier(CompletionSessionSnapshot.from_record(session))
         source_outcomes = await self.source_completion_snapshot(session)
-        if session.get("status") == "FAILED":
-            return dict(local, complete=False)
+        if SessionCompletionStatus.from_record(session).status == "FAILED":
+            return local.incomplete()
         if (
-            local["complete"]
-            and session.get("verified_native_completion") == local
-            and session.get("verified_source_completion") == source_outcomes
+            local.complete
+            and session.get("verified_native_completion") == local.storage_record()
+            and session.get("verified_source_completion") == source_outcomes.storage_record()
         ):
             return local
-        if not local["accepted_input_ids"] and not local["unidentified_inputs"]:
+        if not local.accepted_input_ids and not local.unidentified_inputs:
             return local
-        if local["unidentified_inputs"] or not any(
-            receipt.get("type") == "session.status_idle" for receipt in local["terminal_receipts"].values()
+        if local.unidentified_inputs or not any(
+            receipt.type == "session.status_idle" for receipt in local.terminal_receipts.values()
         ):
             poll = self.history_polls.get(sid)
             if poll is not None and time.monotonic() < poll.deadline:
-                return dict(local, complete=False)
+                return local.incomplete()
             delay = poll.delay if poll is not None else 0.05
             await self.catch_up(sid)
             self.history_polls[sid] = HistoryPoll(
                 deadline=time.monotonic() + delay, delay=min(delay * 2, 1.0)
             )
-            session = await self.repo.get("ops.agent_sessions", sid)
-        before = await self.execution_barrier(session, verify_remote=True)
-        if not before["complete"]:
-            for identity in before.get("failed_input_ids", []):
-                if before["execution_states"][identity]["state"] == "FAILED":
+            session = await self.completion_record(sid)
+        before = await self.execution_barrier(
+            CompletionSessionSnapshot.from_record(session), verify_remote=True
+        )
+        if not before.complete:
+            for identity in before.failed_input_ids:
+                state = before.execution_states[identity]
+                if state.state == "FAILED":
                     await self.process_event(
                         sid,
                         {
@@ -1334,30 +1369,29 @@ class SessionService:
                             "type": "execution.status_failed",
                             "execution_id": identity,
                             "source": "MANAGED_EXECUTION_STATUS",
-                            "queue_status": before["execution_states"][identity],
+                            "queue_status": state.model_dump(mode="json"),
                             **self.clock_timestamp().fields("processed_at"),
                         },
                     )
             return before
-
         await self.catch_up(sid)
-
-        current = await self.repo.get("ops.agent_sessions", sid)
-        drained = await self.execution_barrier(current)
-        if not drained["complete"] or drained["accepted_input_ids"] != before["accepted_input_ids"]:
-            return dict(drained, complete=False)
+        current = await self.completion_record(sid)
+        drained = await self.execution_barrier(CompletionSessionSnapshot.from_record(current))
+        if not drained.complete or drained.accepted_input_ids != before.accepted_input_ids:
+            return drained.incomplete()
         async with self.repo.lock("session:" + sid):
-            current = await self.repo.get("ops.agent_sessions", sid)
-            after = await self.execution_barrier(current)
-            if not after["complete"] or after["accepted_input_ids"] != before["accepted_input_ids"]:
-                return dict(after, complete=False)
-            for message in current.get("message_log", []):
-                if message.get("turn_status") != "FAILED":
-                    message["turn_status"] = "DONE"
-                payload = message.get("payload", {})
-                if payload.get("kind") in {"NEW_ITEM", "ITEM_ADDED"} and payload.get("item_id"):
+            current = await self.completion_record(sid)
+            snapshot = CompletionSessionSnapshot.from_record(current)
+            after = await self.execution_barrier(snapshot)
+            if not after.complete or after.accepted_input_ids != before.accepted_input_ids:
+                return after.incomplete()
+            for message in snapshot.journal:
+                record = outbound_message_record(current, message.message_id)
+                if message.turn_status != "FAILED":
+                    record["turn_status"] = "DONE"
+                if message.source_message is True and message.item_id is not None:
                     await self.source_extraction.transition(
-                        payload["item_id"],
+                        message.item_id,
                         frozenset({"PENDING", "RUNNING"}),
                         SkippedExtraction(
                             status="SKIPPED",
@@ -1368,16 +1402,13 @@ class SessionService:
             current["active_message_id"] = None
             current["runtime_status"] = "IDLE"
             outcomes = await self.source_completion_snapshot(current)
-            for message in current.get("message_log", []):
-                if message["message_id"] in outcomes:
-                    message["source_completion_verified"] = copy.deepcopy(outcomes[message["message_id"]])
-
-                    if "workflow_completion_verified" in message:
-                        message["legacy_workflow_completion_verified"] = message.pop(
-                            "workflow_completion_verified"
-                        )
-            current["verified_source_completion"] = outcomes
-            current["verified_native_completion"] = copy.deepcopy(after)
+            for identity, outcome in outcomes.entries.items():
+                record = outbound_message_record(current, identity)
+                record["source_completion_verified"] = outcome.model_dump(mode="json")
+                if "workflow_completion_verified" in record:
+                    record["legacy_workflow_completion_verified"] = record.pop("workflow_completion_verified")
+            current["verified_source_completion"] = outcomes.storage_record()
+            current["verified_native_completion"] = after.storage_record()
             await put_owned_session(self.repo, sid, current)
             await session_progress(self.repo, self.settings, current)
             return after
@@ -1817,67 +1848,13 @@ class SessionService:
             )
             await self.repo.put("ops.tool_calls", key, stored)
 
-    async def usage(self, session, event):
-        usage = event.get("model_usage")
-        if not usage:
-            return
-        model = event.get("model") or session["model_id"]
-        key = session["session_id"] + ":" + event["id"]
-        optional = {
-            "input_tokens": usage.get("input_tokens"),
-            "output_tokens": usage.get("output_tokens"),
-            "cache_read_tokens": usage.get("cache_read_input_tokens"),
-            "cache_write_tokens": usage.get("cache_creation_input_tokens"),
-            "effort": session.get("effort"),
-            "stop_reason": event.get("finish_reason"),
-            "web_searches": usage.get("server_tool_use", {}).get(
-                "web_search_requests", event.get("web_searches")
-            ),
-        }
-        missing_fields = {
-            key: "Provider span or deployed configuration did not supply this measurement"
-            for key, value in optional.items()
-            if value is None
-        }
-        measured_at = self.event_timestamp(event)
-        await self.repo.put(
-            "ops.llm_usage",
-            key,
-            {
-                "usage_id": key,
-                "session_id": session["session_id"],
-                "event_id": session.get("event_id"),
-                "call": "AGENT",
-                "model_id": model,
-                "prompt_version": session["prompt_version"],
-                "prompt_version_basis": session.get("prompt_version_basis"),
-                "prompt_version_reason": session.get("prompt_version_reason"),
-                "prompt_label": session.get("prompt_label"),
-                "agent_version": session.get("agent_version"),
-                "cache_read_tokens": usage.get("cache_read_input_tokens"),
-                "cache_write_tokens": usage.get("cache_creation_input_tokens"),
-                "effort": session.get("effort"),
-                "stop_reason": event.get("finish_reason"),
-                "web_searches": usage.get("server_tool_use", {}).get(
-                    "web_search_requests", event.get("web_searches")
-                ),
-                "usage": usage,
-                "missing_fields": missing_fields,
-                **usage,
-                "cost_usd": "0",
-                "billing_basis": "SUBSCRIPTION",
-                "cost_reason": "ChatGPT subscription: no per-token charge",
-                "model": model,
-                "subject_id": session.get("event_id") or session["session_id"],
-                **measured_at.fields("at"),
-                **self.clock_timestamp().fields("created_at"),
-                **propagate_timestamp(event, "processed_at").fields("processed_at"),
-                "config_version": self.versions.config_version,
-                "code_version": self.versions.code_version,
-                "session_config_version": session.get("config_version"),
-                "session_code_version": session.get("code_version"),
-            },
-            immutable=True,
+    async def usage(self, session: NativeUsageSession, span: NativeUsageSpan) -> None:
+        await record_native_usage(
+            self.repo,
+            session,
+            span,
+            versions=self.versions,
+            collected_at=self.clock_timestamp(),
         )
 
     async def process_event(self, sid, event, seq=None):
@@ -2046,7 +2023,7 @@ class SessionService:
                     else "REQUIRES_ACTION"
                 )
             elif kind == "span.model_request_end":
-                await self.usage(session, event)
+                await self.usage(NativeUsageSession.from_record(session), NativeUsageSpan.from_wire(event))
             superseded_failure = bool(
                 event.get("_host_turn_retry_count", 0)
                 < next(
@@ -2309,124 +2286,146 @@ class SessionService:
                 frame = decode_native_stream(message.data, message.id)
                 await self.observe_native_event(sid, frame.event, frame.sequence)
 
-    async def can_archive(self, session, event):
+    async def can_archive(self, candidate: ArchiveCandidate) -> bool:
         """Terminal domain state cannot preempt a pending denial/EXIT turn."""
-        state = event.get("lifecycle", event.get("status"))
-        if state not in ("CLOSED", "INVALIDATED", "MERGED"):
+        if isinstance(candidate, ArchiveDenied):
+            ArchiveDenied.model_validate(candidate)
             return False
-        if session.get("runtime_status") != "IDLE":
+        if isinstance(candidate, InvalidatedArchiveCandidate):
+            candidate = InvalidatedArchiveCandidate.model_validate(candidate)
+        else:
+            candidate = TerminalArchiveCandidate.model_validate(candidate)
+        eid, sid = candidate.event_id, candidate.session_id
+        async for row in self.repo.iter_all("ana.calls", filters={"event_id": eid, "status": "OPEN"}):
+            blocker = ArchiveEventBlocker.model_validate(
+                {"event_id": row["event_id"], "status": row["status"]}
+            )
+            if blocker.event_id != eid or blocker.status != "OPEN":
+                raise ValueError("Archive call differs from the requested event or phase")
             return False
-        eid, sid = event["event_id"], session["session_id"]
-        calls = [
-            row async for row in self.repo.iter_all("ana.calls", filters={"event_id": eid, "status": "OPEN"})
-        ]
-        if any(call.get("status") == "OPEN" for call in calls):
-            return False
-        async for _ in self.repo.iter_all(
+        async for row in self.repo.iter_all(
             "ana.watch_conditions", filters={"event_id": eid, "status": "ARMED"}
         ):
-            return False
-        tools = [row async for row in self.repo.iter_all("ops.tool_calls", filters={"session_id": sid})]
-        if any(tool.get("status") == "PENDING" or not tool.get("returned_at") for tool in tools):
-            return False
-        alerts = [row async for row in self.repo.iter_all("out.alerts", filters={"event_id": eid})]
-        alert_ids = {
-            ArchiveAlertIdentity.model_validate({"alert_id": alert["alert_id"]}).alert_id for alert in alerts
-        }
-        jobs = []
-        for status in ("QUEUED", "RUNNING"):
-            jobs.extend([row async for row in self.repo.iter_all("ops.jobs", filters={"status": status})])
-        for job in jobs:
-            if job.get("status") not in ("QUEUED", "RUNNING"):
-                continue
-            payload = job.get("payload", {})
-            if (
-                payload.get("event_id") == eid
-                or payload.get("session_id") == sid
-                or payload.get("alert_id") in alert_ids
-            ):
-                return False
-        if state == "INVALIDATED" and alerts:
-            finalization = ArchiveFinalization.model_validate(
-                {"session_finalized_at": event.get("session_finalized_at")}
+            blocker = ArchiveEventBlocker.model_validate(
+                {"event_id": row["event_id"], "status": row["status"]}
             )
-            if finalization.session_finalized_at is None:
+            if blocker.event_id != eid or blocker.status != "ARMED":
+                raise ValueError("Archive watch differs from the requested event or phase")
+            return False
+        async for row in self.repo.iter_all("ops.tool_calls", filters={"session_id": sid}):
+            if archive_tool(row, sid).pending:
+                return False
+        alerts: list[dict[str, JsonValue]] = [
+            row async for row in self.repo.iter_all("out.alerts", filters={"event_id": eid})
+        ]
+        alert_ids: set[str] = set()
+        for row in alerts:
+            alert = FollowupAlertScope.model_validate(
+                {"alert_id": row["alert_id"], "event_id": row["event_id"]}
+            )
+            if alert.event_id != eid:
+                raise ValueError("Archive publication belongs to another event")
+            alert_ids.add(alert.alert_id)
+        for status in ("QUEUED", "RUNNING"):
+            async for row in self.repo.iter_all("ops.jobs", filters={"status": status}):
+                job = PendingArchiveJob.from_record(row)
+                if job.status != status:
+                    raise ValueError("Archive queue read differs from its requested phase")
+                if job.blocks(session_id=sid, event_id=eid, alert_ids=alert_ids):
+                    return False
+        if isinstance(candidate, InvalidatedArchiveCandidate) and alerts:
+            if candidate.session_finalized_at is None:
                 return False
             latest = terminal_archive_card([archive_card(alert) for alert in alerts])
             if latest is None:
                 return False
-            deliveries = [
-                ArchiveDelivery.model_validate(
+            async for row in self.repo.iter_all(
+                "out.deliveries",
+                filters={"alert_id": latest.alert_id, "version": latest.version, "status": "SENT"},
+            ):
+                delivery = ArchiveDelivery.model_validate(
                     {"alert_id": row["alert_id"], "version": row["version"], "status": row["status"]}
                 )
-                async for row in self.repo.iter_all(
-                    "out.deliveries",
-                    filters={
-                        "alert_id": latest.alert_id,
-                        "version": latest.version,
-                        "status": "SENT",
-                    },
-                )
-            ]
-            if not any(
-                row.alert_id == latest.alert_id and row.version == latest.version and row.status == "SENT"
-                for row in deliveries
-            ):
-                return False
+                if delivery.alert_id != latest.alert_id or delivery.version != latest.version:
+                    raise ValueError("Archive delivery differs from the actual final publication")
+                return True
+            return False
         return True
 
-    async def finish_if_idle(self, sid):
+    async def finish_if_idle(self, sid: str) -> bool:
+        """Return owned turn completion even when policy keeps the session unarchived."""
         verified = await self.completed_turn(sid)
-        if not verified["complete"]:
+        if not verified.complete:
             return False
         async with self.repo.lock("session:" + sid):
-            session = await self.repo.get("ops.agent_sessions", sid)
-            current_barrier = await self.execution_barrier(session)
+            session: dict[str, JsonValue] | None = await self.repo.get("ops.agent_sessions", sid)
+            if session is None:
+                return False
+            require_owned_session_identity(sid, session)
+            snapshot = CompletionSessionSnapshot.from_record(session)
+            current_barrier = await self.execution_barrier(snapshot)
             if (
-                not current_barrier["complete"]
-                or current_barrier["accepted_input_ids"] != verified["accepted_input_ids"]
+                not current_barrier.complete
+                or current_barrier.accepted_input_ids != verified.accepted_input_ids
             ):
                 return False
-            event = (
-                await self.repo.get("evt.events", session["event_id"]) if session.get("event_id") else None
+            state = RetainedSession.from_record(session)
+            event: dict[str, JsonValue] | None = (
+                await self.repo.get("evt.events", state.bound_event_id)
+                if state.bound_event_id is not None
+                else None
             )
-            archive = bool(event and await self.can_archive(session, event))
-            if not event and session.get("no_event"):
+            if event is not None and event.get("event_id") != state.bound_event_id:
+                raise ValueError("Archive event identity differs from its actual lookup")
+            archive = (
+                await self.can_archive(archive_candidate(session, event)) if event is not None else False
+            )
+            if event is None and state.known_eventless:
                 unfinished = [
-                    row
+                    archive_tool(row, sid)
                     async for row in self.repo.iter_all("ops.tool_calls", filters={"session_id": sid})
-                    if not row.get("returned_at")
                 ]
-                archive = not unfinished and not any(
-                    row.get("turn_status") == "PENDING" for row in session.get("message_log", [])
+                archive = not any(tool.pending for tool in unfinished) and not any(
+                    row.turn_status == "PENDING" for row in snapshot.journal
                 )
-            replay = getattr(self.settings, "replay", False)
-            if archive and not replay and await self.followable(session):
+            replay = self.settings.replay
+            if (
+                archive
+                and not replay
+                and await self.followable(FollowupPublicationScope.from_record(session))
+            ):
                 archive = False
-                if not session.get("followups_only"):
+                if state.followups_only is not True:
                     session["followups_only"] = True
                     await put_owned_session(self.repo, sid, session)
             elif archive and not replay:
-                keep = self.settings.thresholds().session_keep_days
-                last = await self.last_message_at(session)
-                due = last + timedelta(days=keep)
-                if utcnow() < due:
+                policy = RetentionPolicy(keep_days=self.settings.thresholds().session_keep_days)
+                last = await self.last_message_at(SessionActivity.from_record(session))
+                due = policy.deadline(last)
+                if utcnow() < parse_time(due.value):
                     archive = False
-                    retained = {
-                        **collection_clock(last).fields("last_message_at"),
-                        **collection_clock(due).fields("archive_after"),
+                    retained: dict[str, JsonValue] = {
+                        **last.fields("last_message_at"),
+                        **due.fields("archive_after"),
                     }
-                    if any(session.get(key) != value for key, value in retained.items()):
+                    owned = timestamp_owned_fields("last_message_at") | timestamp_owned_fields(
+                        "archive_after"
+                    )
+                    if any(session.get(key) != value for key, value in retained.items()) or any(
+                        key in session for key in owned if key not in retained
+                    ):
+                        for key in owned:
+                            session.pop(key, None)
                         session.update(retained)
                         await put_owned_session(self.repo, sid, session)
                 else:
-                    session.update(
-                        archive_reason="RETENTION",
-                        archive_keep_days=keep,
-                        **collection_clock(last).fields("last_message_at"),
-                    )
-            elif not archive and session.get("archive_after"):
-                for key in ("archive_after", "archive_after_prec", "archive_after_prec_reason"):
+                    session["archive_reason"] = "RETENTION"
+                    session["archive_keep_days"] = policy.keep_days
+                    for key in timestamp_owned_fields("last_message_at"):
+                        session.pop(key, None)
+                    session.update(last.fields("last_message_at"))
+            elif not archive and state.archive_after is not None:
+                for key in timestamp_owned_fields("archive_after"):
                     session.pop(key, None)
                 await put_owned_session(self.repo, sid, session)
             if archive:
@@ -2434,40 +2433,44 @@ class SessionService:
                 session.update(status="ENDED", **self.clock_timestamp().fields("archived_at"))
                 session.setdefault("archive_reason", "REPLAY" if replay else "RETENTION")
                 await put_owned_session(self.repo, sid, session)
-
             return True
 
-    async def last_message_at(self, session):
-        """When the session last had a message: Tank's input, the agent's output or a reader's question.
+    async def last_message_at(self, session: SessionActivity) -> RecordedActivity:
+        """Select the latest actual session, input, native event or question clock."""
+        session = SessionActivity.model_validate(session)
+        questions = [
+            QuestionActivity.from_record(row, session.session_id)
+            async for row in self.repo.iter_all(
+                "out.user_questions", filters={"session_id": session.session_id}
+            )
+        ]
+        return latest_activity(session, questions)
 
-        The latest of the session opening, every message_log input (requested and sent), the last
-        stream event from the agent, and each follow-up question (asked, answered, delivered).
-        """
-        stamps = [session.get("opened_at"), session.get("last_event_at")]
-        for row in session.get("message_log", []):
-            stamps += [row.get("requested_at"), row.get("sent_at")]
-        async for question in self.repo.iter_all(
-            "out.user_questions", filters={"session_id": session["session_id"]}
-        ):
-            stamps += [question.get("asked_at"), question.get("answered_at"), question.get("delivered_at")]
-        known = [parse_time(value) for value in stamps if value]
-        if not known:
-            raise ValueError("Session has no recorded message time")
-        return max(known)
-
-    async def followable(self, session):
+    async def followable(self, scope: FollowupPublicationScope) -> bool:
         """A session whose card or answer reached Telegram stays open for reader follow-ups."""
-        async for _ in self.repo.iter_all(
-            "out.user_questions", filters={"session_id": session["session_id"]}
-        ):
+        scope = FollowupPublicationScope.model_validate(scope)
+        async for row in self.repo.iter_all("out.user_questions", filters={"session_id": scope.session_id}):
+            question = FollowupQuestionScope.model_validate({"session_id": row["session_id"]})
+            if question.session_id != scope.session_id:
+                raise ValueError("Follow-up question belongs to another session")
             return True
-        if not session.get("event_id"):
+        if scope.event_id is None:
             return False
-        async for alert in self.repo.iter_all("out.alerts", filters={"event_id": session["event_id"]}):
-            async for _ in self.repo.iter_all(
+        async for row in self.repo.iter_all("out.alerts", filters={"event_id": scope.event_id}):
+            alert = FollowupAlertScope.model_validate(
+                {"alert_id": row["alert_id"], "event_id": row["event_id"]}
+            )
+            if alert.event_id != scope.event_id:
+                raise ValueError("Follow-up publication belongs to another event")
+            async for row in self.repo.iter_all(
                 "out.deliveries",
-                filters={"alert_id": alert["alert_id"], "channel": "telegram:alerts", "status": "SENT"},
+                filters={"alert_id": alert.alert_id, "channel": "telegram:alerts", "status": "SENT"},
             ):
+                delivery = FollowupDeliveryScope.model_validate(
+                    {name: row[name] for name in FollowupDeliveryScope.model_fields}
+                )
+                if delivery.alert_id != alert.alert_id:
+                    raise ValueError("Follow-up delivery belongs to another publication")
                 return True
         return False
 
@@ -2595,20 +2598,17 @@ class SessionService:
             raise ValueError("Scout session belongs to another proposal")
         return reference
 
-    async def run(self, stop):
+    async def run(self, stop: asyncio.Event) -> None:
         tick = 0
         while not stop.is_set() and not self.closed:
-            async for session in self.repo.iter_metadata(
+            async for record in self.repo.iter_metadata(
                 "ops.agent_sessions", SESSION_FOLLOW_FIELDS, filters={"status": "OPEN"}
             ):
-                sid = session["session_id"]
-                settled = session.get("runtime_status") == "IDLE" and not session.get("active_message_id")
+                session = SessionSweepEntry.from_record(record)
+                sid = session.session_id
                 following = sid in self.tasks and not self.tasks[sid].done()
-                kept = bool(session.get("archive_after")) and parse_time(session["archive_after"]) > utcnow()
-                if (
-                    settled
-                    and not following
-                    and (session.get("followups_only") or kept or tick % IDLE_RECHECK_TICKS)
+                if not session.should_probe(
+                    following=following, periodic_probe=tick % IDLE_RECHECK_TICKS == 0, now=utcnow()
                 ):
                     continue
                 if await self.finish_if_idle(sid):
