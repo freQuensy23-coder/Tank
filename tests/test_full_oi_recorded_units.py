@@ -1,5 +1,6 @@
 """Full derivative conclusions consume normalized USD, never an unvalued quote mark."""
 
+from copy import deepcopy
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 
@@ -137,3 +138,42 @@ def test_full_oi_repeating_dollar_term_metadata_preserves_exact_cause() -> None:
     markup = metadata["derivatives.per_venue[0].decomposition.markup"]
     assert markup["value"] == Decimal("-0.25")
     assert markup["reason"] is None
+
+
+def test_full_synchronized_oi_cannot_hide_invalid_usd_inside_a_positive_sum() -> None:
+    snapshot, start, end = recorded_snapshot(native_start=3, native_end=4, recorded=True, source_label=None)
+    points = snapshot["oi"]
+    assert isinstance(points, list)
+    all_points: list[JsonValue] = []
+    instruments: list[JsonValue] = []
+    semantics: list[JsonValue] = []
+    for venue in ("binance", "bybit"):
+        iid = venue + ":perp:T"
+        instruments.append({"instrument_id": iid, "venue": venue, "market_type": "PERP_LINEAR"})
+        semantics.append(
+            {
+                "instrument_id": iid,
+                "metric_key": venue + ".oi",
+                "sidedness": "SINGLE_SIDED",
+                "aggregation_class": "oi_native_single_sided",
+            }
+        )
+        for point in points:
+            assert isinstance(point, dict)
+            row = deepcopy(point)
+            row.update(instrument_id=iid, venue=venue, metric_key=venue + ".oi")
+            row["oi_usd"] = "10" if venue == "binance" else "-1" if row["ts"] == iso(end) else "1"
+            all_points.append(row)
+    result = derivatives_truth(
+        {"instruments": instruments, "oi": all_points, "semantics": semantics}, start, end
+    )
+    invalid = next(row for row in result["per_venue"] if row["venue"] == "bybit")
+    assert invalid["oi_native_end"] == 4
+    assert invalid["oi_usd_end"] is None
+    assert invalid["oi_usd_detail"] == "REPORTED_USD_INVALID"
+    synchronized = result["synchronized"]
+    assert synchronized["oi_native_start"] == 6
+    assert synchronized["oi_native_end"] == 8
+    assert synchronized["oi_usd_start"] == 11
+    assert synchronized["oi_usd_end"] is None
+    assert synchronized["oi_usd_chg_pct"] is None
