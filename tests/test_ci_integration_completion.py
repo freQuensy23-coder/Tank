@@ -2,6 +2,7 @@
 
 import json
 import subprocess
+import sys
 import time
 from pathlib import Path
 
@@ -210,7 +211,12 @@ def test_checker_failure_and_late_success_refuse(
     prepare_downloads(downloads, ready)
     timeouts: list[float] = []
 
-    def failed(command: list[str], *, check: bool, timeout: float) -> subprocess.CompletedProcess[bytes]:
+    def failed(
+        command: list[str], *, cwd: Path, check: bool, timeout: float
+    ) -> subprocess.CompletedProcess[bytes]:
+        assert command[:3] == [sys.executable, "-m", "scripts.ci.check_integration_results"]
+        assert cwd == Path(__file__).resolve().parents[1]
+        assert all(Path(value).is_absolute() for value in command[3:] if value != "--collection")
         timeouts.append(timeout)
         return subprocess.CompletedProcess(command, 1)
 
@@ -219,7 +225,9 @@ def test_checker_failure_and_late_success_refuse(
         verify(ready, context, downloads, now_ns=lambda: 31_000_000_000)
     assert timeouts == [30.0]
 
-    def succeeded(command: list[str], *, check: bool, timeout: float) -> subprocess.CompletedProcess[bytes]:
+    def succeeded(
+        command: list[str], *, cwd: Path, check: bool, timeout: float
+    ) -> subprocess.CompletedProcess[bytes]:
         return subprocess.CompletedProcess(command, 0)
 
     monkeypatch.setattr(subprocess, "run", succeeded)
@@ -228,7 +236,14 @@ def test_checker_failure_and_late_success_refuse(
         verify(ready, context, downloads, now_ns=lambda: next(clocks))
 
 
-def test_actual_union_checker_preserves_complete_unique_cases(context: Context, tmp_path: Path) -> None:
+@pytest.mark.integration
+@pytest.mark.process
+@pytest.mark.timeout(10)
+def test_actual_union_checker_preserves_complete_unique_cases(
+    context: Context, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.delenv("PYTHONPATH", raising=False)
+    monkeypatch.chdir(tmp_path)
     payload = receipt(context).model_dump()
     payload["verification_started_ns"] = time.monotonic_ns()
     ready = Receipt.model_validate(payload)
@@ -251,11 +266,19 @@ def test_actual_union_checker_preserves_complete_unique_cases(context: Context, 
             + '"/></testsuite></testsuites>'
         )
     verify(ready, context, downloads)
+    downloads = downloads.relative_to(tmp_path)
+    verify(ready, context, downloads)
     last = downloads / ready.artifacts[2].name / "integration.xml"
     last.write_text(
         '<testsuites><testsuite><testcase classname="synthetic.actual_union" name="case_0"/></testsuite></testsuites>'
     )
     with pytest.raises(ValueError, match="union checker failed"):
+        verify(ready, context, downloads)
+    last.write_text("<testsuites><testsuite/></testsuites>")
+    with pytest.raises(ValueError, match="union checker failed"):
+        verify(ready, context, downloads)
+    last.unlink()
+    with pytest.raises(ValueError, match="exactly three"):
         verify(ready, context, downloads)
 
 

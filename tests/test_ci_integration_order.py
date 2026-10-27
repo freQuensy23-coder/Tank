@@ -18,7 +18,7 @@ from scripts.ci.integration_order import (
     native_file_order,
     read_collection,
 )
-from scripts.ci.integration_shard import shard_for
+from scripts.ci.integration_partition import shard_for
 from scripts.ci.unit_contracts import FileTiming, UnitRecord
 from tank.contracts.scalars import FalseFlag
 

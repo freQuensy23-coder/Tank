@@ -386,19 +386,20 @@ def verify(
     expected = {artifact.name for artifact in receipt.artifacts}
     if {path.name for path in artifacts.iterdir()} != expected:
         raise ValueError("downloaded artifact directories do not match admitted identities")
-    reports = sorted(artifacts.glob("*/integration.xml"))
-    collections = sorted(artifacts.glob("*/integration-collection.json"))
+    reports = sorted(path.resolve() for path in artifacts.glob("*/integration.xml"))
+    collections = sorted(path.resolve() for path in artifacts.glob("*/integration-collection.json"))
     if len(reports) != 3 or len(collections) != 3:
         raise ValueError("exactly three integration report/collection pairs are required")
     remaining = remaining_seconds(receipt, now_ns())
     command = [
         sys.executable,
-        str(Path(__file__).with_name("check_integration_results.py")),
+        "-m",
+        "scripts.ci.check_integration_results",
         *(str(path) for path in reports),
         "--collection",
         *(str(path) for path in collections),
     ]
-    result = subprocess.run(command, check=False, timeout=remaining)
+    result = subprocess.run(command, cwd=Path(__file__).resolve().parents[2], check=False, timeout=remaining)
     if result.returncode:
         raise ValueError("complete integration union checker failed")
     remaining_seconds(receipt, now_ns())
