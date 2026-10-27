@@ -51,10 +51,12 @@ from tank.analysis.condition_inputs import (
 )
 from tank.analysis.condition_oi_codec import OIConditionLookup, captured_oi_selection_policy
 from tank.analysis.execution import ExecutionLevelWire, ExecutionSide, execute_book_walk, execution_request
+from tank.analysis.oi_ratio import native_oi_change, usd_oi_change
 from tank.analysis.oi_synchronization import OISynchronizationPolicy
 from tank.analysis.open_interest import OIWindowRequest
 from tank.analysis.positioning import (
     MissingOIDecomposition,
+    oi_class_from_comparisons,
 )
 from tank.analysis.positioning import (
     decomposition as decomposition,
@@ -952,13 +954,13 @@ def _oi_stats(rows, start, end, *, history_identity=None, venue_history=None):
         return None
     n0, n1 = decimal(a.get("oi_native")), decimal(z.get("oi_native"))
     u0, u1 = _stored_usd(a), _stored_usd(z)
-    if n0 is None or n1 is None or n0 <= 0 or n1 < 0:
+    if n0 is None or n1 is None or not n0.is_finite() or not n1.is_finite() or n0 < 0 or n1 < 0:
         return None
-    exact_context(n0, n1, u0, u1)
-    usd_ready = u0 is not None and u1 is not None and u0 > 0
     usd_detail = (
         None
         if u0 is not None and u1 is not None
+        else "RECORDED_USD_COMPONENT_UNAVAILABLE"
+        if venue_history is not None
         else "REPORTED_USD_INVALID"
         if (u0 is None and a.get("oi_usd") is not None) or (u1 is None and z.get("oi_usd") is not None)
         else "RECORDED_USD_NOT_CAPTURED"
@@ -1054,21 +1056,24 @@ def _oi_stats(rows, start, end, *, history_identity=None, venue_history=None):
         if cache is not None:
             cache.open_interest.put(fingerprint(history_key), ranges)
     nr, ur = _float_range_values(ranges.native), _float_range_values(ranges.usd)
-    dn, du = float(n1 / n0 - 1), float(u1 / u0 - 1) if usd_ready else None
+    native_change = native_oi_change(n0, n1, normal_range=ranges.native)
+    usd_change = usd_oi_change(u0, u1, normal_range=ranges.usd)
+    classification = oi_class_from_comparisons(native_change.beyond, usd_change.beyond, dec)
     return dict(
         requested_window_duration_s=(end - start).total_seconds(),
         observed_window_duration_s=length.total_seconds(),
-        native_oi_vs_normal=("ABOVE" if dn > nr[1] else "BELOW" if dn < nr[0] else "WITHIN") if nr else None,
+        native_oi_vs_normal=native_change.position,
         precision=propagate_timestamp(
             z, "ts", precision_aliases=("timestamp_precision", "precision")
         ).precision,
         oi_native_start=n0,
         oi_native_end=n1,
-        oi_native_chg_pct=dn,
+        oi_native_chg_pct=native_change.value,
+        oi_native_chg_pct_reason=native_change.reason,
         oi_usd_start=u0,
         oi_usd_end=u1,
-        oi_usd_chg_pct=du,
-        oi_usd_chg_pct_reason=None if usd_ready else "ZERO_BASELINE" if u0 == 0 else "INCOMPLETE",
+        oi_usd_chg_pct=usd_change.value,
+        oi_usd_chg_pct_reason=usd_change.reason,
         oi_usd_reason=None
         if usd_detail is None
         else "NOT_ESTIMABLE"
@@ -1076,12 +1081,12 @@ def _oi_stats(rows, start, end, *, history_identity=None, venue_history=None):
         else "INCOMPLETE",
         oi_usd_detail=usd_detail,
         decomposition=decomposition_wire,
-        oi_class=oi_class(dn, du, dec, nr, ur),
-        classification_ready=oi_class(dn, du, dec, nr, ur) is not None,
+        oi_class=classification,
+        classification_ready=classification is not None,
         native_normal_range=nr,
         usd_normal_range=ur,
-        native_beyond=beyond(dn, nr),
-        usd_beyond=beyond(du, ur),
+        native_beyond=native_change.beyond,
+        usd_beyond=usd_change.beyond,
         start_observed_at=iso(_time(a)),
         end_observed_at=iso(_time(z)),
     )
