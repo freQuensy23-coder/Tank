@@ -34,6 +34,7 @@ from tank.contracts.source_checkpoints import (
     ScopedInstrumentBaseline,
     SourcePendingBatch,
 )
+from tank.contracts.source_envelopes import FederalRegisterResults
 from tank.contracts.source_errors import SourceEntryError
 from tank.contracts.source_items import (
     ArticleDiscovery,
@@ -610,21 +611,21 @@ class SourcePoller:
                 await self.retain_page(key, source, feed, retained, receipt)
             if not checkpoint or found or sid not in {"S03", "S09", "S24"}:
                 break
-            data = json.loads(page)
             signature_values: list[JsonValue] = [identity(row) for row in parsed.discoveries]
             signature = sha256(signature_values)
             if signature in page_fingerprints:
                 raise ValueError(f"{sid} pagination repeated a page before discovery checkpoint")
             page_fingerprints.add(signature)
             if sid == "S03":
-                next_url = data.get("next_page_url")
-                if not next_url:
+                next_url = FederalRegisterResults.model_validate(decode_unique_json(page)).next_page_url
+                if next_url is None:
                     exhausted = True
                     break
                 if urlsplit(next_url).hostname != urlsplit(feed.url).hostname:
                     raise ValueError("Federal Register next_page_url changed publisher")
                 page_feed = feed.model_copy(update={"url": next_url})
             elif sid == "S09":
+                data = json.loads(page)
                 params = dict(parse_qsl(urlsplit(feed.url).query))
                 size = int(params.get("pageSize", 20))
                 root = data.get("data", {})
