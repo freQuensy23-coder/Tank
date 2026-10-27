@@ -115,8 +115,8 @@ def source_summary(item: OpsSourceItem) -> tuple[str, str]:
             venue = (current.venue or "Биржа").upper()
             market = {
                 "SPOT": "спот",
-                "PERP": "бессрочный контракт",
-                "PERP_LINEAR": "бессрочный контракт",
+                "PERP": "рынок деривативов",
+                "PERP_LINEAR": "рынок деривативов",
             }.get((current.reported_market_type or "").upper(), "")
             title = plain(f"{venue} · {symbol}" + (f" · {market}" if market else ""), 180)
             if before is None:
