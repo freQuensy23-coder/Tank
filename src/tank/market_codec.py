@@ -367,7 +367,10 @@ def _prepare_records(
             _remember_generated_key(generated_owners, key, identity)
         previous_key = identity_keys.get(identity)
         if previous_key is not None:
-            previous_record = unique.pop(previous_key)
+            previous_record = unique[previous_key]
+            if _unproves(collection, previous_record, record):
+                continue
+            unique.pop(previous_key)
             if collection in ("mkt.funding_obs", "mkt.tickers_24h"):
                 record = encode(collection, merge_point(collection, previous_record, record))
         identity_keys[identity] = str(key)
