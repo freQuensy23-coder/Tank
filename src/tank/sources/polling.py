@@ -38,12 +38,14 @@ from tank.contracts.source_errors import SourceEntryError
 from tank.contracts.source_items import (
     ArticleDiscovery,
     ArticleLinkListing,
+    BinanceCatalogListing,
     BoundArticleLink,
     DiscoveredItem,
     DiscoveryEnvelope,
     DiscoveryObservation,
     GovernanceDiscovery,
     PendingArticleLink,
+    PendingBinanceCatalog,
     PendingSourceItem,
     PendingSourceRow,
     PublisherCMSRecovery,
@@ -257,7 +259,7 @@ class SourcePoller:
         duplicates = SourceDuplicateCache.from_document(current)
         fresh: list[PendingSourceRow] = []
         for original in rows:
-            material: DiscoveredItem | BoundArticleLink
+            material: DiscoveredItem | BoundArticleLink | BinanceCatalogListing
             if isinstance(original, ArticleLinkListing):
                 envelope = None
                 material = BoundArticleLink(
@@ -283,7 +285,7 @@ class SourcePoller:
             ):
                 continue
             if sid == "S02":
-                if isinstance(material, BoundArticleLink):
+                if isinstance(material, (BoundArticleLink, BinanceCatalogListing)):
                     raise ValueError("SEC filing admission requires the reported filing text")
                 if not svc.filing_matches(material):
                     continue
@@ -302,7 +304,16 @@ class SourcePoller:
                 )
                 raw = RawSourceReference(raw_ref=raw_ref, raw_sha256=raw_sha256)
             row: PendingSourceRow
-            if isinstance(material, BoundArticleLink):
+            if isinstance(material, BinanceCatalogListing):
+                row = PendingBinanceCatalog(
+                    discovery=material,
+                    item_id=item_id,
+                    feed=feed.url,
+                    observed_at=observed_at,
+                    discovery_config_version=svc.versions.config_version,
+                    discovery_code_version=svc.versions.code_version,
+                )
+            elif isinstance(material, BoundArticleLink):
                 row = PendingArticleLink(
                     discovery=material,
                     item_id=item_id,
@@ -1024,6 +1035,10 @@ class SourcePoller:
         material = original.discovery
         if self.needs_detail(sid, kind):
             if sid == "S09":
+                if isinstance(original, PendingBinanceCatalog):
+                    item.pop("summary", None)
+                    item.pop("publication", None)
+                    item.update(original.discovery.publication.fields("published_at"))
                 _http_read = await svc.fetch(
                     source,
                     HttpFetchPlan(
@@ -1082,6 +1097,8 @@ class SourcePoller:
                     if detail.title != "":
                         item["title"] = detail.title
                     item["text"] = detail.text
+                    if not isinstance(original, PendingSourceItem):
+                        raise ValueError("Article detail requires its recorded pending phase")
                     if detail.publication.value is not None or original.discovery.published_at is None:
                         for field in (
                             "published_at",

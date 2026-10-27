@@ -229,17 +229,32 @@ class DiscoveryObservation(DomainModel):
     observed_at_precision: Literal["COLLECTION_ONLY"] | None = None
 
 
+class BinanceCatalogListing(DomainModel):
+    """An announcement catalog observation before the required detail acquisition."""
+
+    source_id: Literal["S09"]
+    external_id: str = Field(min_length=1, pattern=r"\S")
+    url: str = Field(min_length=1)
+    title: str
+    summary: str | None = None
+    publication: Timestamp
+
+
 class DiscoveryEnvelope(DomainModel):
-    discovery: DiscoveredItem
+    discovery: DiscoveredItem | BinanceCatalogListing
     observation: DiscoveryObservation
     payload: bytes | None
+
+
+class ItemDiscoveryEnvelope(DiscoveryEnvelope):
+    discovery: DiscoveredItem
 
 
 class InstrumentDiscoveryEnvelope(DiscoveryEnvelope):
     discovery: InstrumentDiscovery
 
 
-def discovered_item(source_id: str, wire: Mapping[str, JsonValue | bytes]) -> DiscoveryEnvelope:
+def discovered_item(source_id: str, wire: Mapping[str, JsonValue | bytes]) -> ItemDiscoveryEnvelope:
     """Decode a publisher material separately from local clock and raw transport bytes."""
     if "source_id" in wire and wire["source_id"] != source_id:
         raise ValueError("Discovery source identity conflicts with its configured source")
@@ -267,7 +282,7 @@ def discovered_item(source_id: str, wire: Mapping[str, JsonValue | bytes]) -> Di
         material = SocialDiscovery.model_validate(record)
     else:
         material = ArticleDiscovery.model_validate(record)
-    return DiscoveryEnvelope.model_validate(
+    return ItemDiscoveryEnvelope.model_validate(
         {
             "discovery": material,
             "observation": {field: wire[field] for field in context if field in wire},
@@ -414,7 +429,22 @@ class PendingArticleLink(PendingSourceMetadata):
         }
 
 
-type PendingSourceRow = PendingSourceItem | PendingArticleLink
+class PendingBinanceCatalog(PendingSourceMetadata):
+    discovery: BinanceCatalogListing
+
+    def storage_record(self) -> dict[str, JsonValue]:
+        return {
+            **self.discovery.model_dump(mode="json", exclude_unset=True),
+            "pending_phase": "BINANCE_CATALOG",
+            "item_id": self.item_id,
+            "feed": self.feed,
+            **collection_clock(self.observed_at).fields("observed_at"),
+            "discovery_config_version": self.discovery_config_version,
+            "discovery_code_version": self.discovery_code_version,
+        }
+
+
+type PendingSourceRow = PendingSourceItem | PendingArticleLink | PendingBinanceCatalog
 
 
 class PendingCaptureMetadata(SourceObservedClock):
@@ -447,6 +477,26 @@ def pending_source_item(source_id: str, wire: Mapping[str, JsonValue]) -> Pendin
         {name: wire[name] for name in PendingCaptureMetadata.model_fields if name in wire}
     )
     if "pending_phase" in wire:
+        if wire["pending_phase"] == "BINANCE_CATALOG":
+            if metadata.raw_ref is not None:
+                raise ValueError("Pending Binance catalog cannot claim a captured detail body")
+            catalog = BinanceCatalogListing.model_validate(
+                {
+                    name: value
+                    for name, value in wire.items()
+                    if name not in PendingCaptureMetadata.model_fields and name != "pending_phase"
+                }
+            )
+            if catalog.source_id != source_id:
+                raise ValueError("Pending Binance catalog conflicts with its actual source operation")
+            return PendingBinanceCatalog(
+                discovery=catalog,
+                item_id=metadata.item_id,
+                feed=metadata.feed,
+                observed_at=metadata.observed_at,
+                discovery_config_version=metadata.discovery_config_version,
+                discovery_code_version=metadata.discovery_code_version,
+            )
         if wire["pending_phase"] != "ARTICLE_LINK":
             raise ValueError("Unsupported recorded pending source phase")
         if metadata.raw_ref is not None:
