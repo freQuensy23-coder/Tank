@@ -19,6 +19,7 @@ from tank.contracts.progress import (
     ProgressStage,
     PublicationProgressResult,
     SessionProgressView,
+    SourceAttemptProgressIdentity,
     SourceMessageProgress,
     ToolProgressContext,
     UncapturedProgressOrigin,
@@ -297,7 +298,6 @@ async def session_progress(
     )
     for message in view.source_messages:
         item_id = message.payload.item_id
-        key: str | None = f"{view.session_id}:{message.message_id}:{message.retry_count}"
         stage: ProgressStage
         if message.turn_status == "FAILED":
             stage, reason = "PROCESSING_FAILED", "AGENT_EXECUTION_FAILED"
@@ -313,13 +313,23 @@ async def session_progress(
             if extraction is not None and extraction.extraction_status == "SKIPPED":
                 stage = "AGENT_REJECTED"
                 reason = extraction.extraction_reason if extraction.extraction_reason is not None else ""
-                key = None
             else:
                 stage, reason = "AGENT_COMPLETED", ""
         elif message.sent_at is not None:
             stage, reason = "AGENT_ACCEPTED", "Ожидается результат анализа"
         else:
             continue
+        key: str | None
+        if stage == "AGENT_REJECTED":
+            key = None
+        else:
+            key = SourceAttemptProgressIdentity.model_validate(
+                {
+                    "session_id": view.session_id,
+                    "message_id": message.message_id,
+                    "retry_count": message.retry_count,
+                }
+            ).key
         await item_progress(repo, settings, item_id, stage, reason, event_id=view.event_id, key=key)
 
 
