@@ -17,7 +17,6 @@ from source_support import fixture_versions
 from test_storage import repo as repo
 
 from tank.contracts import DomainModel
-from tank.contracts.job_repository import JobRepository
 from tank.contracts.jobs import JobEnvelope
 from tank.contracts.reaction_recovery import (
     ReactionRecoveryCommand,
@@ -41,6 +40,7 @@ from tank.contracts.scheduler_results import (
     ReactionCaptureResultDocument,
 )
 from tank.contracts.stored_documents import ImmutableDocument, NativeBackfillWitness
+from tank.job_repository import JobRepository
 from tank.models import Record
 from tank.reaction_recovery import (
     ReactionRecovery,
