@@ -260,16 +260,13 @@ async def test_same_body_deduplicates_despite_new_attempt_time_and_request_id_bu
         "reason": "PUBLIC_PROFILE_HTTP_503",
         "diagnostics": diagnostics("first", at="2026-10-24T12:05:00Z", request_id="two"),
     }
-    assert (
-        await report_entry_errors(
-            repo,
-            settings,
-            report_request(
-                source, feed, admit_source_errors([error], "apify-secret"), "2026-10-24T12:05:00Z"
-            ),
-        )
-        is None
+    outcome = await report_entry_errors(
+        repo,
+        settings,
+        report_request(source, feed, admit_source_errors([error], "apify-secret"), "2026-10-24T12:05:00Z"),
     )
+    assert outcome.kind == "DEDUPLICATED"
+    assert {marker.notice_id for marker in outcome.markers} == {first["notice_id"]}
     second = await notice_for(repo, diagnostics("second"), tmp_path)
     assert second["notice_id"] != first["notice_id"]
     assert len(await repo.list("out.ops_notices", filters={"kind": "ENTRY_ERRORS"})) == 2
