@@ -526,7 +526,12 @@ class ArticleFailure(DomainModel):
     observed_at_precision: Literal["COLLECTION_ONLY"]
     observed_at_prec: Literal["COLLECTION_ONLY"] | None = None
     observed_at_prec_reason: None = None
-    reason: Literal["EMPTY_ARTICLE_BODY", "PUBLISHER_ARTICLE_NOT_FOUND", "PUBLISHER_HTTP_FAILURE"]
+    reason: Literal[
+        "EMPTY_ARTICLE_BODY",
+        "INVALID_CONTENTFUL_STRUCTURE",
+        "PUBLISHER_ARTICLE_NOT_FOUND",
+        "PUBLISHER_HTTP_FAILURE",
+    ]
 
     @model_validator(mode="after")
     def actual_clock(self) -> Self:

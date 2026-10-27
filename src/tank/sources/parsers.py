@@ -45,6 +45,9 @@ from tank.contracts.source_parsing import (
     BinanceCmsEntry,
     BybitAnnouncementEntry,
     ContentfulDocument,
+    ContentfulNode,
+    ContentfulRichTextDocument,
+    ContentfulTextNode,
     FederalRegisterEntry,
     OkxAnnouncementEntry,
     ParsedArticle,
@@ -439,21 +442,17 @@ BYBIT_BOILERPLATE = re.compile(
 )
 
 
-def contentful_text(node: JsonValue) -> str:
+class ContentfulStructureError(ValueError):
+    pass
+
+
+def contentful_text(node: ContentfulNode | ContentfulRichTextDocument) -> str:
     """Text of a Contentful rich-text document, one block per paragraph or heading."""
-    if isinstance(node, dict):
-        if node.get("nodeType") == "text":
-            value = node.get("value")
-            if not isinstance(value, str):
-                raise ValueError("Contentful text node requires its reported text value")
-            return value
-        children = node.get("content", [])
-        if not isinstance(children, list):
-            raise ValueError("Contentful child content must be an array")
-        parts = [contentful_text(child) for child in children]
-        joiner = " " if node.get("nodeType") in {"paragraph", "hyperlink", "list-item"} else "\n"
-        return joiner.join(part for part in parts if part.strip())
-    return ""
+    if isinstance(node, ContentfulTextNode):
+        return node.value
+    parts = [contentful_text(child) for child in node.content]
+    joiner = " " if node.nodeType in {"paragraph", "hyperlink", "list-item"} else "\n"
+    return joiner.join(part for part in parts if part.strip())
 
 
 def _article_nodes(value: JsonValue) -> Iterator[dict[str, JsonValue]]:
@@ -569,11 +568,16 @@ def article(
     elif source_id == "S13":
         script = tree.css_first('script#__NEXT_DATA__[type="application/json"]')
         if script is None:
-            raise ValueError("Robinhood article requires its Contentful document")
-        entry = ContentfulDocument.model_validate(decode_unique_json(script.text())).props.pageProps.article
+            raise ContentfulStructureError("Publisher article requires its Contentful document")
+        try:
+            entry = ContentfulDocument.model_validate(
+                decode_unique_json(script.text())
+            ).props.pageProps.article
+        except ValueError:
+            raise ContentfulStructureError(
+                "Publisher article contains invalid Contentful document structure"
+            ) from None
         body_text = " ".join(contentful_text(entry.fields.content).split())
-        if not body_text:
-            raise ValueError("Robinhood article requires its Contentful content")
         body = None
         if title_node is None:
             reported_title = entry.fields.title
