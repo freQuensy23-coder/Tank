@@ -8,10 +8,10 @@ The user requested a complete refactor across five requirements, with five GPT-6
 
 | Agent | Owned layers and modules |
 | --- | --- |
-| foundation | Domain model base, shared contracts, storage and repository ports, settings, utilities, time precision, logging, search, backup, market schemas/storage, ClickHouse |
-| analysis | Market/event domain, analysis, event tools, market application services, replay, review, calibration and fixture reference |
-| agents | Model/OpenMA adapters, agent sessions/context/tools, runtime orchestration, gateway, bootstrap, OpenMA sync and agent skills |
-| ingestion | Source adapters, polling, scheduler, delivery, Telegram inbox/rendering, Ops presentation/progress and CLI |
+| foundation | Domain model base, shared contracts, storage/repository ports, settings, utilities, time precision, logging, search, backup, market schemas/storage, ClickHouse, existing CLI, retained normalization and coordinated price-level/close contracts |
+| analysis | Market/event domain, analysis/Truth and financial cache families, EventTools except the delegated dispatch-context seam, replay, review, calibration and fixture reference |
+| agents | Model/OpenMA adapters, sessions/context/tools and the EventTools dispatch-context seam, runtime orchestration, gateway, bootstrap, OpenMA sync, agent skills, Delivery, Ops cards and remaining Telegram Inbox |
+| ingestion | Source adapters/checks/parsers, polling, Scheduler, MarketService/SupplyCapture, source progress/reporting and the explicit reaction-recovery CLI; coordinates actual price-level comparison with foundation/analysis |
 | quality | Existing test suite (specific files delegated explicitly), scripts, deployment tooling, Go capture, CI and exhaustive policy inventory |
 
 Each implementation agent owns a separate Git worktree and a report under `docs/refactor/`. Changes to another owner's interface are coordinated before integration. The parent reviews, integrates commits, validates, and manages the MR; it does not implement product fixes.
@@ -38,6 +38,6 @@ In progress. Initial models and adapter changes are incremental work, not comple
 
 ## Coordinated ownership additions
 
-Foundation owns market/flow.py and the new market/trade_contracts.py; analysis retains normalize.py and its adapter/callers. The active flow cohort must be integrated together. Quality owns the explicitly identified first-party vendor/openma/tank-deploy/openma_entrypoint.mjs boundary; additional Tank-authored vendor paths require provenance classification and exact ownership before edits. Actual upstream code, comments and licenses remain preserved.
+Foundation owns market/flow.py, market/trade_contracts.py and the retained normalize.py contracts; ingestion owns MarketService callers and analysis owns their financial consumers. The active flow cohort must be integrated together. Quality owns the explicitly identified first-party vendor/openma/tank-deploy/openma_entrypoint.mjs boundary; additional Tank-authored vendor paths require provenance classification and exact ownership before edits. Actual upstream code, comments and licenses remain preserved.
 
 Canonical v2 branches share the verified checkpoint ancestry and integrate through merges. Dependencies use exact canonical commits. Git stash is repository-wide across worktrees: use immutable recorded hashes, never moving stash indexes. The parent owns this plan, integration evidence and MR coordination; product changes remain with the five implementation agents.
