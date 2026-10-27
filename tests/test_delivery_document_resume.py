@@ -19,6 +19,7 @@ from tank.contracts.source_errors import (
     XDiagnosticResponse,
     XDiagnostics,
 )
+from tank.contracts.source_reports import SourceReportRequest, SourceReportSubject
 from tank.delivery import DeliveryError, DeliveryService
 from tank.ops_entry_errors import report_entry_errors
 from tank.settings import Settings
@@ -97,10 +98,19 @@ async def reported_delivery(repo: ResumeStore, tmp_path: Path, *, complete: bool
         ),
     )
     settings = configuration(tmp_path, "test", "10")
-    notice_id = await report_entry_errors(
-        repo, settings, source, source.feeds[0], [error], "2026-10-27T00:00:00Z"
+    outcome = await report_entry_errors(
+        repo,
+        settings,
+        SourceReportRequest(
+            subject=SourceReportSubject(
+                source_id=source.source_id, source_name=source.name, feed_url=source.feeds[0].url
+            ),
+            errors=[error],
+            seen_at="2026-10-27T00:00:00Z",
+        ),
     )
-    assert notice_id is not None
+    assert outcome.kind == "RECORDED"
+    notice_id = outcome.notice_id
     count = 0
 
     def send(request: httpx.Request) -> httpx.Response:
