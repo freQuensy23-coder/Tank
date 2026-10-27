@@ -1,8 +1,10 @@
 """Unreported presentation facts stay distinct from recorded zero and empty sets."""
 
 import pytest
+from pydantic import JsonValue
 
 from tank.contracts.delivery import (
+    FrozenDeliveryInterval,
     OpsAlertView,
     OpsAssessmentView,
     OpsCardSnapshot,
@@ -11,6 +13,8 @@ from tank.contracts.delivery import (
     OpsMapView,
     OpsProgressNotice,
     OpsSourceItem,
+    SelectedOpsMap,
+    select_ops_map,
 )
 from tank.ops_cards import render
 
@@ -73,3 +77,48 @@ def test_analysis_map_unknown_is_not_an_empty_completed_universe(
     else:
         assert "данные: 0/0 токенов; решения: 0/0" in card.text
         assert "решение о публикации" in card.reason
+
+
+@pytest.mark.parametrize("reverse", [False, True])
+def test_equal_max_map_version_does_not_choose_contradictory_sets(reverse: bool) -> None:
+    maps = [OpsMapView(map_version=2, analysis_set=["a"]), OpsMapView(map_version=2, analysis_set=["b"])]
+    if reverse:
+        maps.reverse()
+    with pytest.raises(ValueError, match="contradictory"):
+        select_ops_map(maps)
+
+
+def test_equal_version_equivalent_sets_and_actual_newer_version_remain_valid() -> None:
+    equivalent = select_ops_map(
+        [
+            OpsMapView(map_version=2, analysis_set=["b", "a"]),
+            OpsMapView(map_version=2, analysis_set=["a", "b"]),
+        ]
+    )
+    assert isinstance(equivalent, SelectedOpsMap)
+    assert equivalent.map_version == 2 and set(equivalent.analysis_set) == {"a", "b"}
+    newer = select_ops_map(
+        [
+            OpsMapView(map_version=2, analysis_set=["a"]),
+            OpsMapView(map_version=3, analysis_set=["b"]),
+        ]
+    )
+    assert isinstance(newer, SelectedOpsMap)
+    assert newer.map_version == 3 and newer.analysis_set == ("b",)
+
+
+@pytest.mark.parametrize("policy", [{}, {"update_rate_limit_s": None}])
+def test_reported_frozen_policy_requires_its_actual_interval(policy: dict[str, JsonValue]) -> None:
+    with pytest.raises(ValueError):
+        FrozenDeliveryInterval.from_card({"card_struct": {"event": {"thresholds": policy}}})
+
+
+@pytest.mark.parametrize("interval", [0, 1800])
+def test_reported_frozen_interval_preserves_known_zero_and_nondefault(interval: int) -> None:
+    result = FrozenDeliveryInterval.from_card(
+        {
+            "card_struct": {"event": {"thresholds": {"update_rate_limit_s": interval}}},
+        }
+    )
+    assert isinstance(result, FrozenDeliveryInterval)
+    assert result.update_rate_limit_s == interval
