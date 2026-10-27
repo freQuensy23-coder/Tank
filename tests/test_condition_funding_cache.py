@@ -163,3 +163,21 @@ def test_requested_collections_cannot_be_omitted_even_after_a_cache_hit(missing:
     del broken[missing]
     with pytest.raises(ValueError, match="Requested funding snapshot requires captured"):
         evaluate(broken, cache, baseline)
+
+
+def test_exact_selected_metric_identity_controls_capture_cadence() -> None:
+    snapshot = packet()
+    captured = snapshot["funding"]
+    assert isinstance(captured, list) and isinstance(captured[-1], dict)
+    captured[-1].update(metric_key="fixture.funding.actual", as_of="2026-10-16T11:58:00Z")
+    snapshot["capture_metadata"] = {
+        "collections": {"funding": {"cadence_s": 300, "cadence_s_by_metric": {"fixture.funding.actual": 60}}}
+    }
+    row, proof = evaluate(snapshot, {}, BaselineCaches.with_capacity(128))
+    assert row["funding_vs_normal"] is None
+    assert proof["available"] is False
+    observations = proof["observations"]
+    assert isinstance(observations, list) and len(observations) == 1 and isinstance(observations[0], dict)
+    assert observations[0]["cadence_s"] == 60
+    assert observations[0]["cadence_source"] == "CAPTURE_METADATA_BY_METRIC"
+    assert observations[0]["observed_at"] == "2026-10-16T11:58:00Z"
