@@ -108,6 +108,7 @@ from tank.analysis.condition_graph_contracts import (
     UnavailableConditionOpenInterest,
     UnavailableConditionSizeProfile,
     UnavailableConditionSupplyObservation,
+    UnnormalizedConditionFundingObservation,
     UnrequestedConditionFunding,
     UnrequestedConditionOpenInterest,
     WindowedConditionSpot,
@@ -533,6 +534,31 @@ def _computed_funding_wire(
     }
 
 
+def _unnormalized_funding_wire(
+    observation: ConditionFundingObservationValue | None, prefix: str
+) -> dict[str, JsonValue]:
+    if not isinstance(observation, UnnormalizedConditionFundingObservation):
+        return {}
+    return {
+        prefix + "_normalization_phase": observation.phase,
+        prefix + "_normalization_reason": observation.equivalent_rate_reason,
+        prefix + "_normalization_request": _model_wire(observation.normalization.request),
+        prefix + "_raw_rate": {
+            "status": observation.raw_rate.status,
+            "value": _decimal_wire(observation.raw_rate.value),
+        },
+        prefix + "_raw_interval_h": {
+            "status": observation.raw_interval_h.status,
+            "value": _decimal_wire(observation.raw_interval_h.value),
+        },
+        prefix + "_recorded_8h_eq": {
+            "status": observation.recorded_eight_hour_rate.status,
+            "value": _decimal_wire(observation.recorded_eight_hour_rate.value),
+        },
+        prefix + "_interval_reason": observation.interval_reason,
+    }
+
+
 def encode_condition_funding(value: ConditionFunding) -> dict[str, JsonValue]:
     validated = type(value).model_validate(value)
     if isinstance(validated, UnrequestedConditionFunding):
@@ -574,6 +600,9 @@ def encode_condition_funding(value: ConditionFunding) -> dict[str, JsonValue]:
     result.update(_computed_funding_wire(settled, "funding_settled"))
     result.update(_computed_funding_wire(estimate, "funding_estimate"))
     result.update(_computed_funding_wire(start, "funding_start"))
+    result.update(_unnormalized_funding_wire(settled, "funding_settled"))
+    result.update(_unnormalized_funding_wire(estimate, "funding_estimate"))
+    result.update(_unnormalized_funding_wire(start, "funding_start"))
     if isinstance(selected, (RecordedConditionFundingObservation, ComputedConditionFundingObservation)):
         result["funding_8h_basis"] = selected.basis
     result.update(_funding_observed_clock(settled, "funding_settled_last_observed_at"))
