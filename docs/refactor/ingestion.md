@@ -1770,8 +1770,8 @@ passes all 57 changed reporting/ops/X units in 10.86s, zero skips, p90 0.442s/ma
 1.554s; all 17 corresponding actual cases pass in 13.94s, zero skips. Both phases
 used the approved read-only-dependency runner/heavy.lock and pytest -n auto,
 normal resources and unchanged deadlines, with immutable source guards. External
-prefixes are `source-report-{6bf6,3859}-linux-{unit,actual}`. Initial30a smoke
-(41 pass/one obsolete None-result assertion) and the3702 reproduction remain
+prefixes are `source-report-{6bf6,3859}-linux-{unit,actual}`. Initial 30a smoke
+(41 pass/one obsolete None-result assertion) and the 3702 reproduction remain
 retained and attributed. The corrected caller tests actual DEDUPLICATED references
 rather than weakening its dedup/no-extra-effect oracle.
 
