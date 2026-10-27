@@ -194,6 +194,9 @@ def record_case(request: pytest.FixtureRequest) -> Iterator[None]:
 """
 
 
+@pytest.mark.integration(reason="Actual Git and pinned pytest-xdist console composition")
+@pytest.mark.process
+@pytest.mark.timeout(10)
 def test_actual_console_native_loadfile_scheduler_honors_measured_order(
     tmp_path: Path, request: pytest.FixtureRequest
 ) -> None:
