@@ -2,6 +2,7 @@
 
 import pytest
 from funding_history_fixtures import calculator, policy, request, rows
+from funding_input_fixtures import funding_record_fixture
 
 from tank.analysis import funding_history_cache
 from tank.analysis.baseline_cache import BaselineCaches
@@ -93,3 +94,53 @@ def test_new_history_cache_shares_existing_128_entry_fifo_budget() -> None:
     assert second.normal_range == first.normal_range
     assert composed.funding.get("0") is None
     assert composed.funding.get("127") is not None
+
+
+@pytest.mark.parametrize("change", ["INSERT_OLDER_CURRENT", "REORDER_READ"])
+def test_index_changed_reads_conservatively_rebuild_with_current_source_references(
+    change: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    cache = BaselineCaches.with_capacity(128).funding_history
+    actual = funding_historical_population
+    calls: list[tuple[int, ...]] = []
+
+    def observe(
+        owned: FundingCalculator,
+        window: FundingWindowRequest,
+        *,
+        instrument: DerivativeInstrument,
+        policy: FundingHistoryPolicy,
+    ) -> FundingHistoricalPopulation:
+        result = actual(owned, window, instrument=instrument, policy=policy)
+        calls.append(tuple(point.evidence.row_index for point in result.sources))
+        return result
+
+    monkeypatch.setattr(funding_history_cache, "funding_historical_population", observe)
+    records = rows()
+    first_read = calculator(records)
+    first = cache.baseline(
+        first_read, request(), instrument=first_read.source.instruments[0], policy=policy()
+    )
+    if change == "INSERT_OLDER_CURRENT":
+        inserted = funding_record_fixture("CURRENT_ESTIMATE")
+        inserted.update(as_of="2026-10-05T08:00:00Z", received_ts="2026-10-05T08:01:00Z")
+        records.insert(1, inserted)
+    else:
+        records.reverse()
+    changed_read = calculator(records)
+    second = cache.baseline(
+        changed_read, request(), instrument=changed_read.source.instruments[0], policy=policy()
+    )
+    assert len(calls) == 2
+    assert calls[0] != calls[1]
+    assert second is not first
+    assert second.normal_range == first.normal_range
+    assert tuple(point.evidence.source_projection_sha256 for point in second.population.sources) == tuple(
+        point.evidence.source_projection_sha256 for point in first.population.sources
+    )
+    actual_sources = tuple(point for point in changed_read.source.observations if point.kind == "SETTLED")
+    assert set(point.evidence for point in second.population.sources) == set(
+        point.evidence for point in actual_sources
+    )
+    assert tuple(point.evidence.row_index for point in first.population.sources) == calls[0]

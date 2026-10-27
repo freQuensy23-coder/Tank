@@ -29,7 +29,7 @@ class FundingHistoricalBaseline(DomainModel):
 
 
 class FundingHistoryCache:
-    """Cache immutable historical facts independently from current observations and assembly."""
+    """Cache historical facts without assembly; exact read descriptors remain binding."""
 
     __slots__ = ("_cache",)
 
