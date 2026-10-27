@@ -584,7 +584,7 @@ class ReplayAbortRefused(DomainModel):
 class ReplayAbortFinalized(DomainModel):
     session_id: CompletionIdentity
     finalized: TrueFlag = True
-    failed_message_ids: list[CompletionIdentity]
+    failed_message_ids: tuple[CompletionIdentity, ...]
 
 
 type ReplayAbortOutcome = ReplayAbortRefused | ReplayAbortFinalized

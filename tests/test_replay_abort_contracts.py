@@ -84,5 +84,5 @@ def test_abort_outcome_flags_do_not_coerce_wire_numbers(incorrect: JsonValue) ->
         ReplayAbortRefused.model_validate({"session_id": "session", "finalized": incorrect})
     with pytest.raises(ValidationError):
         ReplayAbortFinalized.model_validate(
-            {"session_id": "session", "finalized": incorrect, "failed_message_ids": []}
+            {"session_id": "session", "finalized": incorrect, "failed_message_ids": ()}
         )
