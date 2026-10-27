@@ -1,23 +1,32 @@
 import json
 from pathlib import Path
-from types import SimpleNamespace
 
 import httpx
 import pytest
+from pydantic import JsonValue
 from source_support import (
     fixture_request_budgets,
     fixture_versions,
-    operational_configuration,
     source_configuration,
 )
+from test_sources import SourceFixtureSettings
 
 from tank.agents.pipeline_contracts import RoutingRegistry
 from tank.agents.routing import RoutingItem, RoutingSelector
 from tank.contracts.source_items import parse_feed_source_item
+from tank.contracts.sources import SourceConfiguration
 from tank.settings import Settings
 from tank.sources import SourceService, parsers
 from tank.storage import MemoryRepository
 from tank.util import sha256
+
+
+class OrganizationSettings(SourceFixtureSettings):
+    def load_config(self, name: str) -> dict[str, JsonValue]:
+        if name == "registry":
+            return Settings.load_config(self, name)
+        return super().load_config(name)
+
 
 FR_URL = "https://www.federalregister.gov/api/v1/documents.json?per_page=20"
 FR_ITEM = "https://www.federalregister.gov/documents/2026/10/01/2026-10000/example"
@@ -86,20 +95,10 @@ async def test_normal_poll_preserves_actual_author_and_exposes_exact_pruner_orga
     tmp_path: Path, sid
 ) -> None:
     src, _, payload = retained(sid)
-    registry = Settings().load_config("registry")
-    config = SimpleNamespace(
+    config = OrganizationSettings(
         data_dir=tmp_path,
         user_agent="Tank offline source test",
-        config_version="test",
-        code_version="test",
-        x_list_id=None,
-        load_config=lambda name: (
-            source_configuration({"sources": [src]})
-            if name == "sources"
-            else registry
-            if name == "registry"
-            else operational_configuration(name)
-        ),
+        fixture_sources=SourceConfiguration.model_validate(source_configuration({"sources": [src]})),
         ops_progress_enabled=False,
         replay=False,
     )
