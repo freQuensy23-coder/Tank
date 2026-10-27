@@ -814,7 +814,7 @@ def _json_discovery(source_id: str, original: JsonValue) -> DiscoveryEnvelope:
         )
     elif source_id == "S24":
         proposal = SnapshotProposalEntry.model_validate(original)
-        publication = proposal.created if "created" in proposal.model_fields_set else proposal.start
+        publication = proposal.created
         material = GovernanceDiscovery.model_validate(
             {
                 "source_id": "S24",

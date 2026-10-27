@@ -163,6 +163,12 @@ The actual collection observation remains separately recorded in `observed_at`.
 This follows the [provider response contract](https://bybit-exchange.github.io/docs/v5/announcement),
 whose example also permits omission of `publishTime`.
 
+For S24 Snapshot proposals, reported `created` supplies proposal publication time;
+`start` and `end` describe the voting interval and cannot replace an unreported
+creation time. GraphQL queries may omit `created`; those observations retain
+unknown publication with an explicit reason and their separate collection clock.
+The original voting fields, proposal state and response bytes remain unchanged.
+
 ### 2.3 Events
 
 ```
