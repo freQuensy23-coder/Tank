@@ -15,10 +15,22 @@ from tank.contracts.json import encode_json
 from tank.settings import Settings
 from tank.sources import SourceService
 from tank.storage import MemoryRepository
-from tank.util import parse_time
+from tank.util import parse_time, sha256
 
 URL = "https://api.bybit.com/v5/announcements/index?locale=en-US&limit=20"
-type InvalidAnnouncement = Literal["MISSING", "FALSE", "FLOAT", "DUPLICATE", "ESCAPED", "NESTED"]
+type InvalidAnnouncement = Literal[
+    "MISSING",
+    "FALSE",
+    "STRING",
+    "FAILED",
+    "NO_RESULT",
+    "NO_LIST",
+    "NULL_LIST",
+    "WRONG_LIST",
+    "DUPLICATE",
+    "ESCAPED",
+    "NESTED",
+]
 
 
 class AnnouncementSettings(Settings):
@@ -38,12 +50,31 @@ def item() -> dict[str, JsonValue]:
     }
 
 
+def valid_announcement() -> bytes:
+    return encode_json(
+        {
+            "retCode": 0.0,
+            "result": {"list": [item()]},
+            "retMsg": "",
+            "ignored": {"opaque_json": '{"key":1,"key":2}'},
+        }
+    )
+
+
 def malformed(kind: InvalidAnnouncement) -> bytes:
     result: dict[str, JsonValue] = {"list": [item()]}
     if kind == "MISSING":
         return encode_json({"result": result})
-    if kind in {"FALSE", "FLOAT"}:
-        return encode_json({"retCode": False if kind == "FALSE" else 0.0, "result": result})
+    if kind in {"FALSE", "STRING"}:
+        return encode_json({"retCode": False if kind == "FALSE" else "0", "result": result})
+    if kind == "FAILED":
+        return encode_json({"retCode": 10016, "result": result})
+    if kind == "NO_RESULT":
+        return encode_json({"retCode": 0})
+    if kind == "NO_LIST":
+        return encode_json({"retCode": 0, "result": {}})
+    if kind in {"NULL_LIST", "WRONG_LIST"}:
+        return encode_json({"retCode": 0, "result": {"list": None if kind == "NULL_LIST" else {}}})
     suffix = b',"result":' + encode_json(result) + b"}"
     if kind == "DUPLICATE":
         return b'{"retCode":0,"retCode":0' + suffix
@@ -52,7 +83,22 @@ def malformed(kind: InvalidAnnouncement) -> bytes:
     return b'{"retCode":0,"telemetry":{"ignored":1,"ignored":2}' + suffix
 
 
-@pytest.mark.parametrize("invalid", ["MISSING", "FALSE", "FLOAT", "DUPLICATE", "ESCAPED", "NESTED"])
+@pytest.mark.parametrize(
+    "invalid",
+    [
+        "MISSING",
+        "FALSE",
+        "STRING",
+        "FAILED",
+        "NO_RESULT",
+        "NO_LIST",
+        "NULL_LIST",
+        "WRONG_LIST",
+        "DUPLICATE",
+        "ESCAPED",
+        "NESTED",
+    ],
+)
 async def test_invalid_announcement_envelope_cannot_author_item_raw_or_etag(
     tmp_path: Path, collector_http: CollectorBinder, invalid: InvalidAnnouncement
 ) -> None:
@@ -86,8 +132,10 @@ async def test_invalid_announcement_envelope_cannot_author_item_raw_or_etag(
             assert not list((tmp_path / "raw").rglob("*.zst"))
             checkpoint = await repo.get("ops.source_checkpoints", "S11:0")
             assert checkpoint is not None and "etag" not in checkpoint
+            assert checkpoint["http_status"] == 200 and checkpoint["payload_sha256"] == sha256(body)
+            assert "discovery_checkpoint" not in checkpoint
             assert not checkpoint.get("pending_batches")
-            body = encode_json({"retCode": 0, "result": {"list": [item()]}})
+            body = valid_announcement()
             etag = "valid"
             assert (await service.poll_once("S11")).items == 1
             [stored] = await repo.list("ingest.source_items")
@@ -104,7 +152,7 @@ async def test_invalid_announcement_envelope_cannot_author_item_raw_or_etag(
             await service.close()
         assert observed == [
             malformed(invalid),
-            encode_json({"retCode": 0, "result": {"list": [item()]}}),
+            valid_announcement(),
             body,
         ]
     finally:
