@@ -80,6 +80,7 @@ async def test_invalid_reported_cursor_cannot_claim_exhaustion_or_commit_new_pag
                     checkpoint_before is not None
                     and checkpoint_before["discovery_checkpoint"] == "old-boundary"
                 )
+                assert checkpoint_before["etag"] == "BASELINE"
                 phase = "INVALID"
                 refused = await first.poll_once("S03")
                 assert refused.status == "DEGRADED" and refused.items == 0 and refused.errors
@@ -88,7 +89,7 @@ async def test_invalid_reported_cursor_cannot_claim_exhaustion_or_commit_new_pag
                 assert checkpoint is not None and checkpoint["discovery_checkpoint"] == "old-boundary"
                 assert checkpoint["pending_batches"] == checkpoint_before["pending_batches"]
                 assert checkpoint.get("history_gap") == checkpoint_before.get("history_gap")
-                assert checkpoint["etag"] == "BASELINE"
+                assert "etag" not in checkpoint
                 assert checkpoint["http_status"] == 200 and checkpoint["payload_sha256"] == sha256(
                     invalid_payload
                 )
