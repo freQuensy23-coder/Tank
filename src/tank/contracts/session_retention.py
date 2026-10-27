@@ -1,13 +1,14 @@
 """Consumed session activity and archive eligibility facts without persistence I/O."""
 
 from collections.abc import Mapping, Sequence
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Annotated, Literal, Self
 
 from pydantic import Field, JsonValue, field_validator
 
 from tank.contracts import DomainModel
 from tank.contracts.session_admission import SessionRuntimeStatus
+from tank.time_precision import Timestamp, offset_schedule, propagate_timestamp, timestamp_owned_fields
 from tank.util import parse_time
 
 type RetentionIdentity = Annotated[str, Field(min_length=1, pattern=r"\S")]
@@ -107,21 +108,41 @@ class SessionSweepEntry(RetainedSession):
         return not (settled and not following and (self.followups_only is True or kept or not periodic_probe))
 
 
-def _recorded_activity(record: Mapping[str, JsonValue], names: Sequence[str]) -> tuple[datetime, ...]:
-    observed: list[datetime] = []
-    for name in names:
-        value = record.get(name)
-        if value is None:
-            continue
-        if not isinstance(value, str):
-            raise ValueError("Recorded session activity requires an aware clock")
-        observed.append(parse_time(value))
-    return tuple(observed)
+class RecordedActivity(Timestamp):
+    value: str
+
+    @classmethod
+    def from_timestamp(cls, timestamp: Timestamp) -> Self:
+        timestamp = Timestamp.model_validate(timestamp)
+        if timestamp.value is None:
+            raise ValueError("Recorded activity requires its actual clock")
+        return cls(
+            value=timestamp.value,
+            precision=timestamp.precision,
+            precision_reason=timestamp.precision_reason,
+            bucket_anchor=timestamp.bucket_anchor,
+        )
+
+
+class RetentionPolicy(DomainModel):
+    keep_days: int = Field(ge=1)
+
+    def deadline(self, activity: RecordedActivity) -> RecordedActivity:
+        activity = RecordedActivity.model_validate(activity)
+        return RecordedActivity.from_timestamp(offset_schedule(activity, timedelta(days=self.keep_days)))
+
+
+def _recorded_activity(record: Mapping[str, JsonValue], names: Sequence[str]) -> tuple[Timestamp, ...]:
+    return tuple(
+        propagate_timestamp(record, name)
+        for name in names
+        if any(record.get(field) is not None for field in timestamp_owned_fields(name))
+    )
 
 
 class SessionActivity(DomainModel):
     session_id: RetentionIdentity
-    clocks: tuple[datetime, ...]
+    clocks: tuple[Timestamp, ...]
 
     @classmethod
     def from_record(cls, record: Mapping[str, JsonValue]) -> Self:
@@ -139,7 +160,7 @@ class SessionActivity(DomainModel):
 
 class QuestionActivity(DomainModel):
     session_id: RetentionIdentity
-    clocks: tuple[datetime, ...]
+    clocks: tuple[Timestamp, ...]
 
     @classmethod
     def from_record(cls, record: Mapping[str, JsonValue], session_id: str) -> Self:
@@ -154,7 +175,7 @@ class QuestionActivity(DomainModel):
         return admitted
 
 
-def latest_activity(session: SessionActivity, questions: Sequence[QuestionActivity]) -> datetime:
+def latest_activity(session: SessionActivity, questions: Sequence[QuestionActivity]) -> RecordedActivity:
     session = SessionActivity.model_validate(session)
     clocks = list(session.clocks)
     for question in questions:
@@ -162,9 +183,10 @@ def latest_activity(session: SessionActivity, questions: Sequence[QuestionActivi
         if question.session_id != session.session_id:
             raise ValueError("Question activity belongs to a different session")
         clocks.extend(question.clocks)
-    if not clocks:
+    known = [RecordedActivity.from_timestamp(stamp) for stamp in clocks if stamp.value is not None]
+    if not known:
         raise ValueError("Session has no recorded message time")
-    return max(clocks)
+    return max(known, key=lambda stamp: parse_time(stamp.value))
 
 
 class FollowupPublicationScope(DomainModel):
@@ -191,17 +213,19 @@ class FollowupDeliveryScope(DomainModel):
     status: Literal["SENT"]
 
 
-class ArchiveToolState(DomainModel):
+class PendingArchiveTool(DomainModel):
     session_id: RetentionIdentity
-    status: Literal["PENDING", "DONE", "ERROR", "REFUSED", "SKIPPED"] | None
-    returned_at: str | None
+    status: Literal["PENDING"]
 
-    @classmethod
-    def from_record(cls, record: Mapping[str, JsonValue], session_id: str) -> Self:
-        admitted = cls.model_validate({name: record.get(name) for name in cls.model_fields})
-        if admitted.session_id != session_id:
-            raise ValueError("Archive tool belongs to a different session")
-        return admitted
+    @property
+    def pending(self) -> bool:
+        return True
+
+
+class ReturnedArchiveTool(DomainModel):
+    session_id: RetentionIdentity
+    status: Literal["DONE", "ERROR", "REFUSED", "SKIPPED"] | None
+    returned_at: str | None
 
     @field_validator("returned_at")
     @classmethod
@@ -212,7 +236,19 @@ class ArchiveToolState(DomainModel):
 
     @property
     def pending(self) -> bool:
-        return self.status == "PENDING" or self.returned_at is None
+        return self.returned_at is None
+
+
+type ArchiveTool = PendingArchiveTool | ReturnedArchiveTool
+
+
+def archive_tool(record: Mapping[str, JsonValue], session_id: str) -> ArchiveTool:
+    scope = {"session_id": record["session_id"], "status": record.get("status")}
+    if scope["session_id"] != session_id:
+        raise ValueError("Archive tool belongs to a different session")
+    if scope["status"] == "PENDING":
+        return PendingArchiveTool.model_validate(scope)
+    return ReturnedArchiveTool.model_validate({**scope, "returned_at": record.get("returned_at")})
 
 
 class ArchiveEventBlocker(DomainModel):

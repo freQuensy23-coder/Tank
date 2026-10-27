@@ -30,9 +30,7 @@ from tank.agents.answer_settlement import (
     collect_turn_answers,
 )
 from tank.agents.archive_contracts import (
-    ArchiveAlertIdentity,
     ArchiveDelivery,
-    ArchiveFinalization,
     archive_card,
     terminal_archive_card,
 )
@@ -196,6 +194,27 @@ from tank.contracts.session_followups import (
     NoSession,
     followup_eligibility,
 )
+from tank.contracts.session_retention import (
+    ArchiveCandidate,
+    ArchiveDenied,
+    ArchiveEventBlocker,
+    FollowupAlertScope,
+    FollowupDeliveryScope,
+    FollowupPublicationScope,
+    FollowupQuestionScope,
+    InvalidatedArchiveCandidate,
+    PendingArchiveJob,
+    QuestionActivity,
+    RecordedActivity,
+    RetainedSession,
+    RetentionPolicy,
+    SessionActivity,
+    SessionSweepEntry,
+    TerminalArchiveCandidate,
+    archive_candidate,
+    archive_tool,
+    latest_activity,
+)
 from tank.contracts.source_items import (
     FailedExtraction,
     SkippedExtraction,
@@ -213,7 +232,13 @@ from tank.runtime_contracts import (
     UserQuestionMessage,
 )
 from tank.telegram_inbox import DOCUMENT_LIMIT
-from tank.time_precision import Timestamp, collection_clock, offset_schedule, propagate_timestamp
+from tank.time_precision import (
+    Timestamp,
+    collection_clock,
+    offset_schedule,
+    propagate_timestamp,
+    timestamp_owned_fields,
+)
 from tank.util import canonical_json, jsonable, new_id, parse_time, sha256, utcnow
 
 log = logging.getLogger(__name__)
@@ -2261,124 +2286,144 @@ class SessionService:
                 frame = decode_native_stream(message.data, message.id)
                 await self.observe_native_event(sid, frame.event, frame.sequence)
 
-    async def can_archive(self, session, event):
+    async def can_archive(self, candidate: ArchiveCandidate) -> bool:
         """Terminal domain state cannot preempt a pending denial/EXIT turn."""
-        state = event.get("lifecycle", event.get("status"))
-        if state not in ("CLOSED", "INVALIDATED", "MERGED"):
+        if isinstance(candidate, ArchiveDenied):
+            ArchiveDenied.model_validate(candidate)
             return False
-        if session.get("runtime_status") != "IDLE":
+        if isinstance(candidate, InvalidatedArchiveCandidate):
+            candidate = InvalidatedArchiveCandidate.model_validate(candidate)
+        else:
+            candidate = TerminalArchiveCandidate.model_validate(candidate)
+        eid, sid = candidate.event_id, candidate.session_id
+        async for row in self.repo.iter_all("ana.calls", filters={"event_id": eid, "status": "OPEN"}):
+            blocker = ArchiveEventBlocker.model_validate(
+                {"event_id": row["event_id"], "status": row["status"]}
+            )
+            if blocker.event_id != eid or blocker.status != "OPEN":
+                raise ValueError("Archive call differs from the requested event or phase")
             return False
-        eid, sid = event["event_id"], session["session_id"]
-        calls = [
-            row async for row in self.repo.iter_all("ana.calls", filters={"event_id": eid, "status": "OPEN"})
-        ]
-        if any(call.get("status") == "OPEN" for call in calls):
-            return False
-        async for _ in self.repo.iter_all(
+        async for row in self.repo.iter_all(
             "ana.watch_conditions", filters={"event_id": eid, "status": "ARMED"}
         ):
-            return False
-        tools = [row async for row in self.repo.iter_all("ops.tool_calls", filters={"session_id": sid})]
-        if any(tool.get("status") == "PENDING" or not tool.get("returned_at") for tool in tools):
-            return False
-        alerts = [row async for row in self.repo.iter_all("out.alerts", filters={"event_id": eid})]
-        alert_ids = {
-            ArchiveAlertIdentity.model_validate({"alert_id": alert["alert_id"]}).alert_id for alert in alerts
-        }
-        jobs = []
-        for status in ("QUEUED", "RUNNING"):
-            jobs.extend([row async for row in self.repo.iter_all("ops.jobs", filters={"status": status})])
-        for job in jobs:
-            if job.get("status") not in ("QUEUED", "RUNNING"):
-                continue
-            payload = job.get("payload", {})
-            if (
-                payload.get("event_id") == eid
-                or payload.get("session_id") == sid
-                or payload.get("alert_id") in alert_ids
-            ):
-                return False
-        if state == "INVALIDATED" and alerts:
-            finalization = ArchiveFinalization.model_validate(
-                {"session_finalized_at": event.get("session_finalized_at")}
+            blocker = ArchiveEventBlocker.model_validate(
+                {"event_id": row["event_id"], "status": row["status"]}
             )
-            if finalization.session_finalized_at is None:
+            if blocker.event_id != eid or blocker.status != "ARMED":
+                raise ValueError("Archive watch differs from the requested event or phase")
+            return False
+        async for row in self.repo.iter_all("ops.tool_calls", filters={"session_id": sid}):
+            if archive_tool(row, sid).pending:
+                return False
+        alerts: list[dict[str, JsonValue]] = [
+            row async for row in self.repo.iter_all("out.alerts", filters={"event_id": eid})
+        ]
+        alert_ids: set[str] = set()
+        for row in alerts:
+            alert = FollowupAlertScope.model_validate(
+                {"alert_id": row["alert_id"], "event_id": row["event_id"]}
+            )
+            if alert.event_id != eid:
+                raise ValueError("Archive publication belongs to another event")
+            alert_ids.add(alert.alert_id)
+        for status in ("QUEUED", "RUNNING"):
+            async for row in self.repo.iter_all("ops.jobs", filters={"status": status}):
+                job = PendingArchiveJob.from_record(row)
+                if job.status != status:
+                    raise ValueError("Archive queue read differs from its requested phase")
+                if job.blocks(session_id=sid, event_id=eid, alert_ids=alert_ids):
+                    return False
+        if isinstance(candidate, InvalidatedArchiveCandidate) and alerts:
+            if candidate.session_finalized_at is None:
                 return False
             latest = terminal_archive_card([archive_card(alert) for alert in alerts])
             if latest is None:
                 return False
-            deliveries = [
-                ArchiveDelivery.model_validate(
+            async for row in self.repo.iter_all(
+                "out.deliveries",
+                filters={"alert_id": latest.alert_id, "version": latest.version, "status": "SENT"},
+            ):
+                delivery = ArchiveDelivery.model_validate(
                     {"alert_id": row["alert_id"], "version": row["version"], "status": row["status"]}
                 )
-                async for row in self.repo.iter_all(
-                    "out.deliveries",
-                    filters={
-                        "alert_id": latest.alert_id,
-                        "version": latest.version,
-                        "status": "SENT",
-                    },
-                )
-            ]
-            if not any(
-                row.alert_id == latest.alert_id and row.version == latest.version and row.status == "SENT"
-                for row in deliveries
-            ):
-                return False
+                if delivery.alert_id != latest.alert_id or delivery.version != latest.version:
+                    raise ValueError("Archive delivery differs from the actual final publication")
+                return True
+            return False
         return True
 
-    async def finish_if_idle(self, sid):
+    async def finish_if_idle(self, sid: str) -> bool:
+        """Return owned turn completion even when policy keeps the session unarchived."""
         verified = await self.completed_turn(sid)
         if not verified.complete:
             return False
         async with self.repo.lock("session:" + sid):
-            session = await self.repo.get("ops.agent_sessions", sid)
-            current_barrier = await self.execution_barrier(CompletionSessionSnapshot.from_record(session))
+            session: dict[str, JsonValue] | None = await self.repo.get("ops.agent_sessions", sid)
+            if session is None:
+                return False
+            require_owned_session_identity(sid, session)
+            snapshot = CompletionSessionSnapshot.from_record(session)
+            current_barrier = await self.execution_barrier(snapshot)
             if (
                 not current_barrier.complete
                 or current_barrier.accepted_input_ids != verified.accepted_input_ids
             ):
                 return False
-            event = (
-                await self.repo.get("evt.events", session["event_id"]) if session.get("event_id") else None
+            state = RetainedSession.from_record(session)
+            event: dict[str, JsonValue] | None = (
+                await self.repo.get("evt.events", state.event_id) if state.event_id is not None else None
             )
-            archive = bool(event and await self.can_archive(session, event))
-            if not event and session.get("no_event"):
+            if event is not None and event.get("event_id") != state.event_id:
+                raise ValueError("Archive event identity differs from its actual lookup")
+            archive = (
+                await self.can_archive(archive_candidate(session, event)) if event is not None else False
+            )
+            if event is None and state.no_event is True:
                 unfinished = [
-                    row
+                    archive_tool(row, sid)
                     async for row in self.repo.iter_all("ops.tool_calls", filters={"session_id": sid})
-                    if not row.get("returned_at")
                 ]
-                archive = not unfinished and not any(
-                    row.get("turn_status") == "PENDING" for row in session.get("message_log", [])
+                archive = not any(tool.pending for tool in unfinished) and not any(
+                    row.turn_status == "PENDING" for row in snapshot.journal
                 )
-            replay = getattr(self.settings, "replay", False)
-            if archive and not replay and await self.followable(session):
+            replay = self.settings.replay
+            if (
+                archive
+                and not replay
+                and await self.followable(FollowupPublicationScope.from_record(session))
+            ):
                 archive = False
-                if not session.get("followups_only"):
+                if state.followups_only is not True:
                     session["followups_only"] = True
                     await put_owned_session(self.repo, sid, session)
             elif archive and not replay:
-                keep = self.settings.thresholds().session_keep_days
-                last = await self.last_message_at(session)
-                due = last + timedelta(days=keep)
-                if utcnow() < due:
+                policy = RetentionPolicy(keep_days=self.settings.thresholds().session_keep_days)
+                last = await self.last_message_at(SessionActivity.from_record(session))
+                due = policy.deadline(last)
+                if utcnow() < parse_time(due.value):
                     archive = False
-                    retained = {
-                        **collection_clock(last).fields("last_message_at"),
-                        **collection_clock(due).fields("archive_after"),
+                    retained: dict[str, JsonValue] = {
+                        **last.fields("last_message_at"),
+                        **due.fields("archive_after"),
                     }
-                    if any(session.get(key) != value for key, value in retained.items()):
+                    owned = timestamp_owned_fields("last_message_at") | timestamp_owned_fields(
+                        "archive_after"
+                    )
+                    if any(session.get(key) != value for key, value in retained.items()) or any(
+                        key in session for key in owned if key not in retained
+                    ):
+                        for key in owned:
+                            session.pop(key, None)
                         session.update(retained)
                         await put_owned_session(self.repo, sid, session)
                 else:
-                    session.update(
-                        archive_reason="RETENTION",
-                        archive_keep_days=keep,
-                        **collection_clock(last).fields("last_message_at"),
-                    )
-            elif not archive and session.get("archive_after"):
-                for key in ("archive_after", "archive_after_prec", "archive_after_prec_reason"):
+                    session["archive_reason"] = "RETENTION"
+                    session["archive_keep_days"] = policy.keep_days
+                    for key in timestamp_owned_fields("last_message_at"):
+                        session.pop(key, None)
+                    session.update(last.fields("last_message_at"))
+            elif not archive and state.archive_after is not None:
+                for key in timestamp_owned_fields("archive_after"):
                     session.pop(key, None)
                 await put_owned_session(self.repo, sid, session)
             if archive:
@@ -2386,40 +2431,44 @@ class SessionService:
                 session.update(status="ENDED", **self.clock_timestamp().fields("archived_at"))
                 session.setdefault("archive_reason", "REPLAY" if replay else "RETENTION")
                 await put_owned_session(self.repo, sid, session)
-
             return True
 
-    async def last_message_at(self, session):
-        """When the session last had a message: Tank's input, the agent's output or a reader's question.
+    async def last_message_at(self, session: SessionActivity) -> RecordedActivity:
+        """Select the latest actual session, input, native event or question clock."""
+        session = SessionActivity.model_validate(session)
+        questions = [
+            QuestionActivity.from_record(row, session.session_id)
+            async for row in self.repo.iter_all(
+                "out.user_questions", filters={"session_id": session.session_id}
+            )
+        ]
+        return latest_activity(session, questions)
 
-        The latest of the session opening, every message_log input (requested and sent), the last
-        stream event from the agent, and each follow-up question (asked, answered, delivered).
-        """
-        stamps = [session.get("opened_at"), session.get("last_event_at")]
-        for row in session.get("message_log", []):
-            stamps += [row.get("requested_at"), row.get("sent_at")]
-        async for question in self.repo.iter_all(
-            "out.user_questions", filters={"session_id": session["session_id"]}
-        ):
-            stamps += [question.get("asked_at"), question.get("answered_at"), question.get("delivered_at")]
-        known = [parse_time(value) for value in stamps if value]
-        if not known:
-            raise ValueError("Session has no recorded message time")
-        return max(known)
-
-    async def followable(self, session):
+    async def followable(self, scope: FollowupPublicationScope) -> bool:
         """A session whose card or answer reached Telegram stays open for reader follow-ups."""
-        async for _ in self.repo.iter_all(
-            "out.user_questions", filters={"session_id": session["session_id"]}
-        ):
+        scope = FollowupPublicationScope.model_validate(scope)
+        async for row in self.repo.iter_all("out.user_questions", filters={"session_id": scope.session_id}):
+            question = FollowupQuestionScope.model_validate({"session_id": row["session_id"]})
+            if question.session_id != scope.session_id:
+                raise ValueError("Follow-up question belongs to another session")
             return True
-        if not session.get("event_id"):
+        if scope.event_id is None:
             return False
-        async for alert in self.repo.iter_all("out.alerts", filters={"event_id": session["event_id"]}):
-            async for _ in self.repo.iter_all(
+        async for row in self.repo.iter_all("out.alerts", filters={"event_id": scope.event_id}):
+            alert = FollowupAlertScope.model_validate(
+                {"alert_id": row["alert_id"], "event_id": row["event_id"]}
+            )
+            if alert.event_id != scope.event_id:
+                raise ValueError("Follow-up publication belongs to another event")
+            async for row in self.repo.iter_all(
                 "out.deliveries",
-                filters={"alert_id": alert["alert_id"], "channel": "telegram:alerts", "status": "SENT"},
+                filters={"alert_id": alert.alert_id, "channel": "telegram:alerts", "status": "SENT"},
             ):
+                delivery = FollowupDeliveryScope.model_validate(
+                    {name: row[name] for name in FollowupDeliveryScope.model_fields}
+                )
+                if delivery.alert_id != alert.alert_id:
+                    raise ValueError("Follow-up delivery belongs to another publication")
                 return True
         return False
 
@@ -2547,20 +2596,17 @@ class SessionService:
             raise ValueError("Scout session belongs to another proposal")
         return reference
 
-    async def run(self, stop):
+    async def run(self, stop: asyncio.Event) -> None:
         tick = 0
         while not stop.is_set() and not self.closed:
-            async for session in self.repo.iter_metadata(
+            async for record in self.repo.iter_metadata(
                 "ops.agent_sessions", SESSION_FOLLOW_FIELDS, filters={"status": "OPEN"}
             ):
-                sid = session["session_id"]
-                settled = session.get("runtime_status") == "IDLE" and not session.get("active_message_id")
+                session = SessionSweepEntry.from_record(record)
+                sid = session.session_id
                 following = sid in self.tasks and not self.tasks[sid].done()
-                kept = bool(session.get("archive_after")) and parse_time(session["archive_after"]) > utcnow()
-                if (
-                    settled
-                    and not following
-                    and (session.get("followups_only") or kept or tick % IDLE_RECHECK_TICKS)
+                if not session.should_probe(
+                    following=following, periodic_probe=tick % IDLE_RECHECK_TICKS == 0, now=utcnow()
                 ):
                     continue
                 if await self.finish_if_idle(sid):

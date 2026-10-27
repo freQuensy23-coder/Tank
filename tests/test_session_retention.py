@@ -8,6 +8,7 @@ from agent_source_fixtures import declared_versions_fixture
 from session_followup_fixtures import UnexpectedFollowupRefusals
 
 from tank.agents import SessionService
+from tank.contracts.session_retention import SessionActivity
 from tank.settings import Settings
 from tank.storage import MemoryRepository
 from tank.telegram_inbox import closed_reason
@@ -176,9 +177,10 @@ async def test_a_reader_question_counts_as_the_last_message() -> None:
             versions=declared_versions_fixture(),
             refusals=UnexpectedFollowupRefusals(),
         )
-        assert await service.last_message_at(await repo.get("ops.agent_sessions", "ses_1")) == parse_time(
-            asked
-        )
+        stored = await repo.get("ops.agent_sessions", "ses_1")
+        assert stored is not None
+        last = await service.last_message_at(SessionActivity.from_record(stored))
+        assert parse_time(last.value) == parse_time(asked)
 
 
 @pytest.mark.parametrize("keeper", ["call", "watch", "job"])
@@ -306,3 +308,23 @@ async def test_retention_preserves_selected_activity_clock_without_relabeling_co
     )
     if precision is not None:
         assert session["last_message_at_bucket_anchor"] == session["archive_after_bucket_anchor"] == "END"
+
+
+async def test_no_recorded_activity_refuses_before_native_archive() -> None:
+    repo = MemoryRepository()
+
+    def forbidden(request: httpx.Request) -> httpx.Response:
+        raise AssertionError("Missing activity must not invoke native HTTP")
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(forbidden)) as http:
+        service = SessionService(
+            repo,
+            settings(),
+            None,
+            http=http,
+            versions=declared_versions_fixture(),
+            refusals=UnexpectedFollowupRefusals(),
+        )
+        with pytest.raises(ValueError, match="no recorded message time"):
+            await service.last_message_at(SessionActivity.from_record({"session_id": "session"}))
+    assert await repo.list("ops.agent_sessions") == []

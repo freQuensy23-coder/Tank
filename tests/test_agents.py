@@ -23,6 +23,7 @@ from tank.agents.context import CONTEXT_VERSION
 from tank.agents.native_sessions import NativeSessionResolution
 from tank.analysis.page_access import LivePageAccess
 from tank.contracts.native_usage import NativeUsageSession, NativeUsageSpan
+from tank.contracts.session_retention import archive_candidate
 from tank.contracts.source_items import parse_feed_source_item
 from tank.ops_progress import DisabledSourceProgress
 from tank.runtime_contracts import ScoutReviewJob
@@ -837,7 +838,9 @@ async def test_slow_denial_turn_remains_until_exit_update_delivered(
         invalidated = await repo.get("evt.events", "evt_1")
         assert invalidated["lifecycle"] == "INVALIDATED"
 
-        assert not await service.can_archive(await repo.get("ops.agent_sessions", "ses_1"), invalidated)
+        assert not await service.can_archive(
+            archive_candidate(await repo.get("ops.agent_sessions", "ses_1"), invalidated)
+        )
         await service.process_event(
             "ses_1",
             {
@@ -879,7 +882,9 @@ async def test_slow_denial_turn_remains_until_exit_update_delivered(
         await service.process_event(
             "ses_1", {"id": "idle", "type": "session.status_idle", "stop_reason": {"type": "end_turn"}}
         )
-        assert not await service.can_archive(await repo.get("ops.agent_sessions", "ses_1"), invalidated)
+        assert not await service.can_archive(
+            archive_candidate(await repo.get("ops.agent_sessions", "ses_1"), invalidated)
+        )
         call = await repo.get("ana.calls", "call")
         call["status"] = "CLOSED"
         await repo.put("ana.calls", "call", call)
@@ -899,10 +904,14 @@ async def test_slow_denial_turn_remains_until_exit_update_delivered(
         )
         armed = await repo.list("ana.watch_conditions", filters={"event_id": "evt_1", "status": "ARMED"})
         assert armed
-        assert not await service.can_archive(await repo.get("ops.agent_sessions", "ses_1"), invalidated)
+        assert not await service.can_archive(
+            archive_candidate(await repo.get("ops.agent_sessions", "ses_1"), invalidated)
+        )
         for condition in armed:
             await repo.put("ana.watch_conditions", condition["cond_id"], {**condition, "status": "EXPIRED"})
-        assert await service.can_archive(await repo.get("ops.agent_sessions", "ses_1"), invalidated)
+        assert await service.can_archive(
+            archive_candidate(await repo.get("ops.agent_sessions", "ses_1"), invalidated)
+        )
 
 
 @pytest.mark.asyncio
@@ -922,14 +931,14 @@ async def test_unpublished_invalidated_event_can_end_when_idle_without_marker() 
             versions=declared_versions_fixture(),
             refusals=UnexpectedFollowupRefusals(),
         )
-        assert not await service.can_archive(session, event)
+        assert not await service.can_archive(archive_candidate(session, event))
         await service.process_event(
             "ses_1", {"id": "idle", "type": "session.status_idle", "stop_reason": {"type": "end_turn"}}
         )
         session = await repo.get("ops.agent_sessions", "ses_1")
-        assert await service.can_archive(session, event)
+        assert await service.can_archive(archive_candidate(session, event))
         await repo.put("ana.calls", "call", {"call_id": "call", "event_id": "evt_1", "status": "OPEN"})
-        assert not await service.can_archive(session, event)
+        assert not await service.can_archive(archive_candidate(session, event))
 
 
 @pytest.mark.asyncio
@@ -1854,9 +1863,9 @@ async def test_preliminary_denial_archive_requires_exact_corrected_revision_deli
             versions=declared_versions_fixture(),
             refusals=UnexpectedFollowupRefusals(),
         )
-        assert not await service.can_archive(session, event)
+        assert not await service.can_archive(archive_candidate(session, event))
         event["session_finalized_at"] = clock_iso()
-        assert not await service.can_archive(session, event)
+        assert not await service.can_archive(archive_candidate(session, event))
         await repo.put(
             "out.alerts",
             "preliminary:2",
@@ -1868,19 +1877,19 @@ async def test_preliminary_denial_archive_requires_exact_corrected_revision_deli
                 "terminal_correction": True,
             },
         )
-        assert not await service.can_archive(session, event)
+        assert not await service.can_archive(archive_candidate(session, event))
         await repo.put(
             "out.deliveries",
             "earlier",
             {"alert_id": "preliminary", "version": 1, "status": "SENT"},
         )
-        assert not await service.can_archive(session, event)
+        assert not await service.can_archive(archive_candidate(session, event))
         await repo.put(
             "out.deliveries",
             "correction",
             {"alert_id": "preliminary", "version": 2, "status": "SENT"},
         )
-        assert await service.can_archive(session, event)
+        assert await service.can_archive(archive_candidate(session, event))
 
 
 @pytest.mark.asyncio
@@ -1923,19 +1932,19 @@ async def test_preliminary_correction_cannot_finalize_an_existing_ordinary_chain
             versions=declared_versions_fixture(),
             refusals=UnexpectedFollowupRefusals(),
         )
-        assert not await service.can_archive(session, event)
+        assert not await service.can_archive(archive_candidate(session, event))
         await repo.put(
             "out.alerts",
             "ordinary:2",
             {"event_id": "event", "alert_id": "ordinary", "version": 2, "kind": "UPDATE"},
         )
-        assert not await service.can_archive(session, event)
+        assert not await service.can_archive(archive_candidate(session, event))
         await repo.put(
             "out.deliveries",
             "ordinary",
             {"alert_id": "ordinary", "version": 2, "status": "SENT"},
         )
-        assert await service.can_archive(session, event)
+        assert await service.can_archive(archive_candidate(session, event))
 
 
 @pytest.mark.asyncio
@@ -1953,8 +1962,10 @@ async def test_closed_event_does_not_require_unused_denial_card_metadata() -> No
             refusals=UnexpectedFollowupRefusals(),
         )
         assert await service.can_archive(
-            {"session_id": "session", "runtime_status": "IDLE"},
-            {"event_id": "event", "lifecycle": "CLOSED"},
+            archive_candidate(
+                {"session_id": "session", "runtime_status": "IDLE"},
+                {"event_id": "event", "lifecycle": "CLOSED"},
+            ),
         )
 
 
@@ -1988,8 +1999,10 @@ async def test_unknown_card_revision_cannot_be_ranked_below_a_sent_terminal_upda
         )
         with pytest.raises(KeyError, match="version"):
             await service.can_archive(
-                {"session_id": "session", "runtime_status": "IDLE"},
-                {"event_id": "event", "lifecycle": "INVALIDATED", "session_finalized_at": clock_iso()},
+                archive_candidate(
+                    {"session_id": "session", "runtime_status": "IDLE"},
+                    {"event_id": "event", "lifecycle": "INVALIDATED", "session_finalized_at": clock_iso()},
+                ),
             )
 
 

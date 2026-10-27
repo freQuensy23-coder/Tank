@@ -17,6 +17,7 @@ from tank.agents.input_ownership import NativeOwnershipSnapshot
 from tank.contracts.openma import NativeSessionToolUpdate
 from tank.contracts.session_completion import CompletionSessionSnapshot
 from tank.contracts.session_followups import FollowupRefusalTarget
+from tank.contracts.session_retention import FollowupPublicationScope
 from tank.settings import Settings
 from tank.storage import MemoryRepository
 from tank.telegram_inbox import (
@@ -493,7 +494,9 @@ async def test_session_with_delivered_card_is_kept_open_instead_of_archived() ->
             versions=fixture_versions(),
             refusals=RepositoryFollowupRefusals(repo),
         )
-        assert await service.followable(await repo.get("ops.agent_sessions", "ses_1"))
+        stored = await repo.get("ops.agent_sessions", "ses_1")
+        assert stored is not None
+        assert await service.followable(FollowupPublicationScope.from_record(stored))
 
 
 @pytest.mark.asyncio
