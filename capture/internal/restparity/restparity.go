@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"github.com/freQuensy23-coder/Tank/capture/internal/backfillstate"
 	"github.com/freQuensy23-coder/Tank/capture/internal/hotstate"
+	"github.com/freQuensy23-coder/Tank/capture/internal/pre24ref"
 	"github.com/freQuensy23-coder/Tank/capture/internal/requeststate"
 	"io"
 	"net/http"
@@ -154,6 +155,10 @@ type noStore struct{}
 func (noStore) Get(context.Context, string, string) (map[string]any, error) { return nil, nil }
 func (noStore) CoverageMinutes(context.Context, coverage.Query) ([]coverage.Minute, error) {
 	return nil, errors.New("recorded parity has no declared coverage history")
+}
+
+func (noStore) Pre24References(context.Context, pre24ref.Query) (pre24ref.Observation, error) {
+	return pre24ref.Observation{}, pre24ref.FailedRead(errors.New("recorded parity has no declared reference history"))
 }
 
 func (noStore) Range(context.Context, string, string, time.Time, time.Time, map[string]any) ([]map[string]any, error) {

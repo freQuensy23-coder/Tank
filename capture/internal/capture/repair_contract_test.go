@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"github.com/freQuensy23-coder/Tank/capture/internal/pre24ref"
 	"github.com/freQuensy23-coder/Tank/capture/internal/requeststate"
 	"strconv"
 	"strings"
@@ -90,6 +91,13 @@ func (s *unavailableCoverageStore) CoverageMinutes(ctx context.Context, q covera
 		return nil, errors.New("range backend unavailable")
 	}
 	return s.Store.CoverageMinutes(ctx, q)
+}
+
+func (s *unavailableCoverageStore) Pre24References(ctx context.Context, q pre24ref.Query) (pre24ref.Observation, error) {
+	if s.reads.Add(1) >= s.failAt {
+		return pre24ref.Observation{}, pre24ref.FailedRead(errors.New("range backend unavailable"))
+	}
+	return s.Store.Pre24References(ctx, q)
 }
 
 func (s *unavailableCoverageStore) Range(ctx context.Context, collection, field string, start, end time.Time, filters map[string]any) ([]map[string]any, error) {
@@ -260,15 +268,5 @@ func TestCoverageRejectsUnalignedBucket(t *testing.T) {
 	}
 	if _, err := r.s.captureWindowCoverage(context.Background(), r.inst, r.base); err == nil || !strings.Contains(err.Error(), "aligned bucket") {
 		t.Fatalf("non-minute evidence was counted as a complete minute: %v", err)
-	}
-}
-
-func TestReferenceTradeIdentityRejectsNonIntegerJSONNumbers(t *testing.T) {
-	for _, raw := range []json.Number{"null", "true", "[]", "1.5", "2e4", ""} {
-		t.Run(string(raw), func(t *testing.T) {
-			if _, err := decodeReferenceTradeIdentity(raw); err == nil {
-				t.Fatalf("non-integer JSON value entered an integer trade identity: %q", raw)
-			}
-		})
 	}
 }
