@@ -10,7 +10,8 @@ from pydantic import ValidationError
 from tank.agents.classification import DecisionClassifier
 from tank.agents.decision import DecisionItem, DecisionState
 from tank.agents.pipeline_contracts import DecisionScoreRecord
-from tank.contracts.repository import Collection, Repository
+from tank.contracts.repository import Collection
+from tank.repository import Repository
 from tank.storage import MemoryRepository
 
 

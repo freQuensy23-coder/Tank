@@ -8,9 +8,9 @@ import pytest
 from runtime_public_fixtures import public_runtime
 from test_storage import repo as repo
 
-from tank.contracts.job_repository import JobRepository
 from tank.contracts.jobs import JobClaimMutation, JobClaimScope, JobEnvelope
 from tank.contracts.scheduler_results import ConditionEvaluationResult
+from tank.job_repository import JobRepository
 from tank.runtime_dispatch_contracts import ClaimedWork
 from tank.runtime_worker_repository import RepositoryWorkerQueue
 from tank.storage import StorageBackend

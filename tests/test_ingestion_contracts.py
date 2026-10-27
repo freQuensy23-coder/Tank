@@ -301,8 +301,8 @@ async def test_real_source_record_roundtrips_and_validates_processing_transition
     )
     assert hinted.identity_hints is not None
     assert hinted.storage_record()["tokens_mentioned"] == ["test:T"]
-    from tank.contracts.repository import Repository as TypedRepository
     from tank.contracts.source_items import SOURCE_ITEMS, SourceItemDocument
+    from tank.repository import Repository as TypedRepository
 
     assert SourceItemDocument.model_validate(record).model_dump(mode="json") == record
     classified = item.classified(
@@ -594,8 +594,8 @@ async def test_source_repository_validation_logs_hide_complete_input_record(
 
     from agent_source_fixtures import source_item_fixture
 
-    from tank.contracts.repository import Repository as TypedRepository
     from tank.contracts.source_items import SOURCE_ITEMS
+    from tank.repository import Repository as TypedRepository
 
     repo = MemoryRepository()
     marker = "synthetic-private-source-text-that-must-not-enter-errors"

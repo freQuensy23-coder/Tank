@@ -105,7 +105,7 @@
     {
       "sites": [
         {
-          "path": "src/tank/contracts/source_repository.py",
+          "path": "src/tank/source_repository.py",
           "symbol": "_state",
           "line": 36
         }
@@ -120,17 +120,17 @@
     {
       "sites": [
         {
-          "path": "src/tank/contracts/source_repository.py",
+          "path": "src/tank/source_repository.py",
           "symbol": "SourceExtractionRepository.get",
           "line": 52
         },
         {
-          "path": "src/tank/contracts/source_repository.py",
+          "path": "src/tank/source_repository.py",
           "symbol": "SourceExtractionRepository.transition",
           "line": 56
         },
         {
-          "path": "src/tank/contracts/source_repository.py",
+          "path": "src/tank/source_repository.py",
           "symbol": "SourceExtractionRepository.complete",
           "line": 73
         }
@@ -145,7 +145,7 @@
     {
       "sites": [
         {
-          "path": "src/tank/contracts/source_repository.py",
+          "path": "src/tank/source_repository.py",
           "symbol": "SourceExtractionRepository._write",
           "line": 89
         }
@@ -3055,6 +3055,47 @@
         "test_lost_interruption_commit_ack_never_refunds_twice_or_claims_a_false_ack",
         "test_actual_tick_queue_worker_preserves_cutoff_and_stores_real_evaluation_result",
         "test_real_answer_error_requeues_or_finishes_using_reported_or_application_delay"
+      ]
+    },
+    {
+      "sites": [
+        {
+          "path": "src/tank/contracts/job_repository.py",
+          "symbol": "QueueStore"
+        },
+        {
+          "path": "src/tank/job_repository.py",
+          "symbol": "JobRepository"
+        }
+      ],
+      "kind": "queue port inward, concrete persistence adapter outward",
+      "reason": "QueueStore declares the actual ten storage capabilities and required records remain in contracts.jobs. Concrete async get/put/enqueue/claim/quarantine/finish/fail I/O now lives in tank.job_repository, with no compatibility re-export from contracts. Class AST is identical to caller-qualified0d; raw claim revision, fresh token, sparse mutation, original payload and nullable historical observations are unchanged. Wire JSON mappings remain only at actual queue/store admission and serialization boundaries, never substitutes for concrete application commands. Broader generic Repository/source adapter and whole-application architecture work remains open.",
+      "validation": [
+        "test_queue_port_runs_real_lifecycle_without_document_query_capabilities",
+        "test_queue_port_keeps_actual_transaction_rollback",
+        "test_command_quarantine_uses_original_claim_revision_despite_valid_model_normalization",
+        "test_reclaimed_same_attempt_refuses_completion_from_previous_controller",
+        "test_atomic_completion_serializes_recovery_until_real_write_commits"
+      ]
+    },
+    {
+      "sites": [
+        {
+          "path": "src/tank/contracts/source_repository.py",
+          "symbol": "SourceLifecycleStore"
+        },
+        {
+          "path": "src/tank/source_repository.py",
+          "symbol": "SourceExtractionRepository"
+        }
+      ],
+      "kind": "source lifecycle port inward and concrete I/O adapter outward",
+      "reason": "Pure source identity/state records and the four-method capability protocol stay inward. Concrete get/transition/complete/_write and two raw persisted-document admission helpers now live outward, with exact AST equivalence and no re-export. Genuine missing record stays None; terminal guards and authoritative complete preserve the existing phase policy without inventing prior state. Unrelated capture fields and original serialized facts remain untouched. This is a placement/import correction, not a new lifecycle behavior or blanket architecture waiver.",
+      "validation": [
+        "test_historical_transition_preserves_unrelated_serialized_data_and_clears_old_rejection",
+        "test_terminal_guard_and_missing_record_do_not_manufacture_updates",
+        "test_historical_transition_requires_owned_identity",
+        "test_transition_reloads_under_capture_lock_and_preserves_concurrent_metadata"
       ]
     }
   ]

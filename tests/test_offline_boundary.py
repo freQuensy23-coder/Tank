@@ -1,7 +1,9 @@
 """The boundary tests never attempt an actual external connection."""
 
 import socket
+from collections.abc import Buffer, Iterable
 from pathlib import Path
+from typing import Never
 
 import conftest as policy
 import pytest
@@ -50,7 +52,7 @@ def test_default_secret_and_auth_locations_are_synthetic(tmp_path: Path) -> None
 
 
 def test_external_connect_is_rejected_before_native_socket(monkeypatch: pytest.MonkeyPatch) -> None:
-    def forbidden_native(*args) -> None:
+    def forbidden_native(sock: socket.socket, address: policy.SocketAddress) -> Never:
         raise AssertionError("native external socket must never be called")
 
     monkeypatch.setattr(policy, "_ORIGINAL_CONNECT", forbidden_native)
@@ -63,7 +65,14 @@ def test_external_connect_is_rejected_before_native_socket(monkeypatch: pytest.M
 
 
 def test_external_dns_is_rejected_before_resolver(monkeypatch: pytest.MonkeyPatch) -> None:
-    def forbidden_native(*args, **kwargs) -> None:
+    def forbidden_native(
+        host: policy.Host | None,
+        port: str | bytes | int | None,
+        family: int = socket.AF_UNSPEC,
+        type: int = 0,
+        proto: int = 0,
+        flags: int = 0,
+    ) -> Never:
         raise AssertionError("native external DNS must never be called")
 
     monkeypatch.setattr(policy, "_ORIGINAL_GETADDRINFO", forbidden_native)
@@ -93,7 +102,7 @@ def test_explicit_database_host_allowlist_without_dns(monkeypatch: pytest.Monkey
 
 
 def test_external_udp_is_rejected_before_native_socket(monkeypatch: pytest.MonkeyPatch) -> None:
-    def forbidden_native(*args) -> None:
+    def forbidden_native(sock: socket.socket, data: Buffer, address: policy.SocketAddress) -> Never:
         raise AssertionError("native external UDP must never be called")
 
     monkeypatch.setattr(policy, "_ORIGINAL_SENDTO", forbidden_native)
@@ -110,7 +119,13 @@ def test_home_lookup_is_synthetic(monkeypatch: pytest.MonkeyPatch) -> None:
 
 @pytest.mark.skipif(not hasattr(socket.socket, "sendmsg"), reason="platform has no sendmsg")
 def test_external_sendmsg_is_rejected_before_native_socket(monkeypatch: pytest.MonkeyPatch) -> None:
-    def forbidden_native(*args) -> None:
+    def forbidden_native(
+        sock: socket.socket,
+        buffers: Iterable[Buffer],
+        ancdata: Iterable[policy.AncillaryData] = (),
+        flags: int = 0,
+        address: policy.SocketAddress | None = None,
+    ) -> Never:
         raise AssertionError("native external sendmsg must never be called")
 
     monkeypatch.setattr(policy, "_ORIGINAL_SENDMSG", forbidden_native)
@@ -119,7 +134,16 @@ def test_external_sendmsg_is_rejected_before_native_socket(monkeypatch: pytest.M
 
 
 def test_known_operator_auth_path_is_blocked_before_file_open(monkeypatch: pytest.MonkeyPatch) -> None:
-    def forbidden_native(*args, **kwargs) -> None:
+    def forbidden_native(
+        file: policy.FileReference,
+        mode: str = "r",
+        buffering: int = -1,
+        encoding: str | None = None,
+        errors: str | None = None,
+        newline: str | None = None,
+        closefd: bool = True,
+        opener: policy.FileOpener | None = None,
+    ) -> Never:
         raise AssertionError("operator file must never be opened")
 
     monkeypatch.setattr(policy, "_ORIGINAL_OPEN", forbidden_native)
@@ -136,7 +160,7 @@ def test_known_operator_auth_path_is_blocked_before_file_open(monkeypatch: pytes
         "postgresql://postgres:FAKE@172.30.60.2/",
     ],
 )
-def test_production_databases_are_refused(url) -> None:
+def test_production_databases_are_refused(url: str) -> None:
     with pytest.raises(pytest.UsageError):
         policy.check_test_databases({"TANK_TEST_DATABASE_URL": url})
 
@@ -163,7 +187,16 @@ def test_credential_alias_is_refused_before_open(
     monkeypatch.setattr(policy, "_PROTECTED_CREDENTIAL_FILES", {secret} if protected_file else set())
     monkeypatch.setattr(policy, "_PROTECTED_CREDENTIAL_ROOTS", () if protected_file else (target,))
 
-    def forbidden_native(*args: object, **kwargs: object) -> None:
+    def forbidden_native(
+        file: policy.FileReference,
+        mode: str = "r",
+        buffering: int = -1,
+        encoding: str | None = None,
+        errors: str | None = None,
+        newline: str | None = None,
+        closefd: bool = True,
+        opener: policy.FileOpener | None = None,
+    ) -> Never:
         raise AssertionError("protected alias reached native open")
 
     monkeypatch.setattr(policy, "_ORIGINAL_OPEN", forbidden_native)

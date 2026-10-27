@@ -31,7 +31,16 @@ def integration_checks(monkeypatch: pytest.MonkeyPatch) -> tuple[ModuleType, Mod
 
 def test_shards_preserve_every_file_and_are_stable(integration_checks: tuple[ModuleType, ModuleType]) -> None:
     shard, _ = integration_checks
-    paths = [f"tests/test_integration_{index}.py" for index in range(500)]
+    paths = [
+        *(f"tests/test_integration_{index}.py" for index in range(500)),
+        "tests/test_fixture_reference.py",
+        "tests/test_replay.py",
+        "tests/test_agents_workflow.py",
+        "tests/test_apify_deploy.py",
+        "tests/test_fetch_page_deadline.py",
+        "tests/test_milestone_checks.py",
+        "tests/test_storage.py",
+    ]
     partitions = [{path for path in paths if shard.shard_for(path, 3) == index} for index in range(3)]
     assert set.union(*partitions) == set(paths)
     assert sum(map(len, partitions)) == len(paths)
@@ -47,7 +56,10 @@ def test_shards_preserve_every_file_and_are_stable(integration_checks: tuple[Mod
         ("tests/test_fixture_reference.py", 1),
         ("tests/test_replay.py", 1),
         ("tests/test_agents_workflow.py", 2),
+        ("tests/test_apify_deploy.py", 2),
         ("tests/test_fetch_page_deadline.py", 0),
+        ("tests/test_milestone_checks.py", 1),
+        ("tests/test_storage.py", 1),
     ],
 )
 def test_measured_slow_files_keep_whole_file_assignments(
@@ -359,3 +371,13 @@ def test_both_unit_lanes_and_the_aggregate_are_required_before_ci_can_pass() -> 
 
 def test_active_persistence_contracts_are_required_before_ci_can_pass() -> None:
     assert "test / Node persistence contracts" in budget.REQUIRED_JOBS
+
+
+def test_public_history_contracts_are_required_without_replacing_existing_jobs() -> None:
+    required = {"test / Node persistence contracts", "test / Node public history contracts"}
+    assert required <= budget.REQUIRED_JOBS
+    jobs = passed_jobs()
+    deadline = budget.timestamp("2026-10-23T12:04:00Z")
+    assert budget.result(jobs, deadline)
+    for missing in required:
+        assert not budget.result([job for job in jobs if job.name != missing], deadline)

@@ -8,9 +8,9 @@ from pydantic import JsonValue
 from test_runtime_reaction_coalescing import revised_payload
 from test_storage import repo as repo
 
-from tank.contracts.job_repository import JobRepository
 from tank.contracts.jobs import JobEnvelope
 from tank.contracts.scheduler_commands import ReactionCaptureCommand
+from tank.job_repository import JobRepository
 from tank.runtime_reaction import (
     ReactionCoalescingDeferred,
     ReactionJobInvocation,

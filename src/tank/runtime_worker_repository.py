@@ -5,8 +5,9 @@ from typing import Literal
 
 from pydantic import JsonValue, ValidationError
 
-from tank.contracts.job_repository import JobRepository, QueueStore
+from tank.contracts.job_repository import QueueStore
 from tank.contracts.jobs import ClaimedJob, InvalidJobClaim, JobClaimMutation, JobEnvelope
+from tank.job_repository import JobRepository
 from tank.runtime_dispatch_contracts import (
     ClaimedWork,
     DependencyFailure,

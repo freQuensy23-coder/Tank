@@ -9,7 +9,7 @@ from pydantic import ConfigDict, Field, JsonValue, RootModel, ValidationError, m
 
 from tank.contracts import DomainModel
 from tank.contracts.provenance import ResolvedVersionIdentity
-from tank.contracts.repository import DocumentStore, Repository
+from tank.contracts.repository import DocumentStore
 from tank.contracts.source_checkpoints import (
     SOURCE_QUARANTINE_ARCHIVES,
     CompletedPendingRow,
@@ -31,6 +31,7 @@ from tank.contracts.source_checkpoints import (
 from tank.contracts.source_errors import SourceEntryError
 from tank.contracts.source_items import PendingSourceItem, SourceContextId, pending_source_item
 from tank.contracts.sources import SourceDefinition
+from tank.repository import Repository
 from tank.util import iso, parse_iso_time, sha256
 
 

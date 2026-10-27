@@ -1,11 +1,14 @@
 import subprocess
-import sys
 from pathlib import Path
 from typing import Annotated, Literal
 
 from pydantic import Field
 
 from tank.contracts import DomainModel
+from tank.deployment.artifact_contracts import PackageRequest, PublisherArtifactRuntime
+from tank.deployment.artifacts import package_release
+from tank.deployment.runtime import observe_runtime
+from tank.deployment.runtime_contracts import RuntimeInvocation
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -64,19 +67,21 @@ def commit(repository: Path) -> str:
 
 def package(repository: Path, destination: Path) -> PackagedActor:
     sha = git_text(repository, "rev-parse", "HEAD")
-    result = subprocess.run(
-        [
-            sys.executable,
-            str(ROOT / "scripts/deploy/apify_deploy.py"),
-            "package",
-            sha,
-            str(destination),
-        ],
-        cwd=repository,
-        check=False,
-        capture_output=True,
+    orchestrator = git_text(ROOT, "rev-parse", "HEAD")
+    runtime = observe_runtime(
+        RuntimeInvocation(orchestrator_sha=orchestrator, selected_release_sha=sha), ROOT
     )
-    assert result.returncode == 0, result.stderr.decode("utf-8")
+    package_release(
+        PackageRequest(
+            repository=repository,
+            destination=destination,
+            publisher=PublisherArtifactRuntime(
+                contract="tank-publisher-runtime-v1",
+                image_repository="ghcr.io/frequensy23-coder/tank/tank",
+                runtime=runtime,
+            ),
+        )
+    )
     return PackagedActor(
         root=destination,
         manifest=PackagedManifest.model_validate_json((destination / "manifest.json").read_bytes()),

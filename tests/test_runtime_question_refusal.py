@@ -15,10 +15,10 @@ from postgres_helpers import PostgresTemplate
 from pydantic import JsonValue, ValidationError
 from runtime_failure_fixtures import runtime_failure_fixture
 
-from tank.contracts.job_repository import JobRepository
 from tank.contracts.jobs import JobEnvelope
 from tank.contracts.question_retirement import QuestionFailureRefusalLedger
 from tank.contracts.scheduler_results import ConditionEvaluationResult
+from tank.job_repository import JobRepository
 from tank.runtime_contracts import FailureRecordIdentity, SuppliedFailureReason, UserQuestionMessage
 from tank.runtime_failure_repository import RepositoryRuntimeFailures
 from tank.storage import MemoryRepository, PostgresRepository, Repository

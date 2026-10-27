@@ -11,8 +11,8 @@ from pydantic import JsonValue
 from runtime_public_fixtures import public_runtime
 from test_storage import repo as repo
 
-from tank.contracts.job_repository import JobRepository
 from tank.contracts.jobs import JobEnvelope
+from tank.job_repository import JobRepository
 from tank.storage import StorageBackend
 from tank.time_precision import collection_clock
 from tank.util import parse_time, utcnow

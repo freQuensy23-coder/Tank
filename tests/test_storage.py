@@ -15,8 +15,8 @@ from postgres_helpers import PostgresTemplate
 from pydantic import JsonValue
 
 from tank.contracts import DomainModel
-from tank.contracts.job_repository import JobRepository
 from tank.contracts.jobs import InvalidJobClaim
+from tank.job_repository import JobRepository
 from tank.models import Record
 from tank.storage import ImmutableRecordError, MemoryRepository, PostgresRepository, StorageBackend
 from tank.util import JsonInput, canonical_json, clock_iso, iso, new_id, parse_time, sha256, utcnow

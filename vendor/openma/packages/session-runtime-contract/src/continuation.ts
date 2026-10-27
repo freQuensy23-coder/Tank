@@ -1,6 +1,7 @@
+import { decodeRuntimeJson, RuntimeJsonDocumentError } from "./json";
 import type { SentSessionEvent, SessionEventView, SessionStopReason, UserMessageContentBlock, ToolResultContentBlock, ImageSource, DocumentSource, TextContentBlock, OutcomeRubric } from '@open-managed-agents/domain/sessions';
-import type { OrderedSessionEvent, ExecutionProgressReceipt } from './history';
-import type { SessionExecutionState } from './coordination';
+import { encodeSessionEventDocument, type OrderedSessionEvent, type ExecutionProgressReceipt, type SessionEventSourcePosition, type SessionEventExecutionMetadata } from './history';
+import type { SessionExecutionFence, SessionExecutionState } from './coordination';
 export interface ContinuationExecution {
   id: string;
   laneId: string;
@@ -637,59 +638,13 @@ function continuationSentEvent(value: unknown): SentSessionEvent {
   }
 }
 function continuationJson(document: string): unknown {
-  let value: unknown;
-  try { value = JSON.parse(document); }
-  catch { return continuationDocumentError(); }
-  function whitespace(start: number): number {
-    let index = start;
-    while (index < document.length && /\s/.test(document[index])) index++;
-    return index;
+  try { return decodeRuntimeJson(document); }
+  catch (error) {
+    if (error instanceof RuntimeJsonDocumentError) return continuationDocumentError();
+    throw error;
   }
-  function stringEnd(start: number): number {
-    let index = start + 1;
-    while (index < document.length) {
-      if (document[index] === '"') return index + 1;
-      if (document[index] === '\\') index++;
-      index++;
-    }
-    return continuationDocumentError();
-  }
-  function visit(start: number): number {
-    let index = whitespace(start);
-    const kind = document[index];
-    if (kind === '"') return stringEnd(index);
-    if (kind === '{') {
-      index = whitespace(index + 1);
-      const keys = new Set<string>();
-      if (document[index] === '}') return index + 1;
-      while (index < document.length) {
-        const end = stringEnd(index);
-        const key: unknown = JSON.parse(document.slice(index, end));
-        if (typeof key !== 'string' || keys.has(key)) return continuationDocumentError();
-        keys.add(key);
-        index = whitespace(end);
-        index = whitespace(visit(index + 1));
-        if (document[index] === '}') return index + 1;
-        index = whitespace(index + 1);
-      }
-      return continuationDocumentError();
-    }
-    if (kind === '[') {
-      index = whitespace(index + 1);
-      if (document[index] === ']') return index + 1;
-      while (index < document.length) {
-        index = whitespace(visit(index));
-        if (document[index] === ']') return index + 1;
-        index = whitespace(index + 1);
-      }
-      return continuationDocumentError();
-    }
-    while (index < document.length && !/[\s,}\]]/.test(document[index])) index++;
-    return index;
-  }
-  if (whitespace(visit(0)) !== document.length) return continuationDocumentError();
-  return value;
 }
+
 export function validateContinuationExecutionEvents(value: unknown): SentSessionEvent[] {
   const events = continuationArray(value).map(continuationSentEvent);
   const ids = events.map(event => event.id);
@@ -716,4 +671,94 @@ export function decodeContinuationImageRecovery(document: string): ContinuationI
   const retryAfterEventId = row.retryAfterEventId === undefined ? undefined : continuationString(row.retryAfterEventId, true);
   return { afterEventId: continuationString(row.afterEventId, true), interruptRequestedAt,
     ...(retryAfterEventId === undefined ? {} : { retryAfterEventId }) };
+}
+
+export interface ContinuationHistorySource {
+  position?: SessionEventSourcePosition;
+  executionId?: string;
+  executionMetadata?: SessionEventExecutionMetadata;
+}
+function invalidSessionEventSource(): never { throw new ContinuationProtocolError('Invalid persisted continuation history source'); }
+function sourceObject(value: unknown, keys: readonly string[]): Record<string, unknown> {
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) return invalidSessionEventSource();
+  if (Object.keys(value).some(key => !keys.includes(key))) return invalidSessionEventSource();
+  return Object.fromEntries(Object.entries(value));
+}
+function sourceString(value: unknown): string {
+  if (typeof value !== 'string' || value.length === 0) return invalidSessionEventSource();
+  return value;
+}
+function sourceInteger(value: unknown, minimum: number): number {
+  if (typeof value !== 'number' || !Number.isSafeInteger(value) || value < minimum) return invalidSessionEventSource();
+  return value;
+}
+function sourceIds(value: unknown): string[] {
+  if (!Array.isArray(value)) return invalidSessionEventSource();
+  return value.map(sourceString);
+}
+function sourceProgress(value: unknown): ExecutionProgressReceipt {
+  const row = sourceObject(value, ['version', 'previousReceiptId', 'consumedInputIds', 'remainingInputIds', 'phaseInputIds', 'phaseStartEventId', 'terminalEventId', 'laneId', 'attemptId', 'generation']);
+  if (row.version !== 1) return invalidSessionEventSource();
+  return {
+    version: 1,
+    previousReceiptId: row.previousReceiptId === null ? null : sourceString(row.previousReceiptId),
+    consumedInputIds: sourceIds(row.consumedInputIds), remainingInputIds: sourceIds(row.remainingInputIds),
+    phaseInputIds: sourceIds(row.phaseInputIds), phaseStartEventId: sourceString(row.phaseStartEventId),
+    terminalEventId: sourceString(row.terminalEventId), laneId: sourceString(row.laneId),
+    attemptId: sourceString(row.attemptId), generation: sourceInteger(row.generation, 1),
+  };
+}
+function sourceExecution(value: unknown): SessionEventExecutionMetadata {
+  const row = sourceObject(value, ['attemptId', 'generation', 'progress']);
+  const attemptId = sourceString(row.attemptId), generation = sourceInteger(row.generation, 1);
+  const progress = row.progress === undefined ? undefined : sourceProgress(row.progress);
+  if (progress !== undefined && (progress.attemptId !== attemptId || progress.generation !== generation)) return invalidSessionEventSource();
+  return { attemptId, generation, ...(progress === undefined ? {} : { progress }) };
+}
+function decodeContinuationHistorySource(value: unknown): ContinuationHistorySource {
+  if (value === undefined) return {};
+  const row = sourceObject(value, ['revision', 'index', 'execution_id', 'execution_metadata']);
+  if (row.execution_metadata !== undefined && row.execution_id === undefined) return invalidSessionEventSource();
+  return {
+    position: { revision: sourceInteger(row.revision, 1), index: sourceInteger(row.index, 0) },
+    ...(row.execution_id === undefined ? {} : { executionId: sourceString(row.execution_id) }),
+    ...(row.execution_metadata === undefined ? {} : { executionMetadata: sourceExecution(row.execution_metadata) }),
+  };
+}
+
+export function decodeContinuationHistorySourceDocument(document: string): ContinuationHistorySource {
+  const value = continuationJson(document);
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) return invalidSessionEventSource();
+  const row: Record<string, unknown> = Object.fromEntries(Object.entries(value));
+  return decodeContinuationHistorySource(row.source_position);
+}
+export function encodeContinuationSessionEventDocument(
+  event: SessionEventView, position: SessionEventSourcePosition, executionId?: string,
+  executionMetadata?: SessionEventExecutionMetadata,
+): string {
+  const admitted = decodeContinuationHistorySource({ ...position,
+    ...(executionId === undefined ? {} : {execution_id: executionId}),
+    ...(executionMetadata === undefined ? {} : {execution_metadata: executionMetadata}),
+  });
+  if (admitted.position === undefined) return invalidSessionEventSource();
+  return encodeSessionEventDocument(event, admitted.position, admitted.executionId, admitted.executionMetadata);
+}
+
+export type RuntimeProjectionDocumentEncoder = (
+  event: SessionEventView, position: SessionEventSourcePosition, fence: SessionExecutionFence | undefined,
+) => string;
+
+export function encodeDefaultRuntimeProjectionDocument(
+  event: SessionEventView, position: SessionEventSourcePosition, fence: SessionExecutionFence | undefined,
+): string {
+  return encodeContinuationSessionEventDocument(event, position, fence?.executionId);
+}
+
+export function encodeTankContinuationProjectionDocument(
+  event: SessionEventView, position: SessionEventSourcePosition, fence: SessionExecutionFence | undefined,
+): string {
+  if (fence === undefined) throw new ContinuationProtocolError('Tank continuation projection requires an execution fence');
+  return encodeContinuationSessionEventDocument(event, position, fence.executionId, {
+    attemptId: fence.attemptId, generation: fence.generation,
+  });
 }
