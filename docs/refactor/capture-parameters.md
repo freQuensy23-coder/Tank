@@ -1,6 +1,6 @@
 # Capture timing parameters
 
-This is a bounded Options/configuration boundary, not completion of the Go Range, normalizer, generic Store or whole Options audits. OI/FX normalization and all retained rows/payloads are unchanged. Qualification is pending on this working checkpoint.
+This is a bounded Options/configuration boundary, not completion of the Go Range, normalizer, generic Store or whole Options audits. OI/FX normalization and all retained rows/payloads are unchanged. The qualified application/test source is `c7b3a6e95d51f284f62fa60f7884de23b65db45f`; the final ledger is a documentation-only descendant.
 
 ## Actual consumed configuration
 
@@ -34,4 +34,10 @@ The current YAML's `book_interval_s: 10`, `hot_oi_funding_interval_s: 60` and `b
 
 The before-fix actual `config.Load` diagnostic has five malformed-present reds (null, boolean, text, NaN and infinity) and one passing omitted-document control. The first changed-source focused attempt caught and corrected two mechanical compile errors; its log remains retained. A subsequent attempt executed zero tests: its owned pre-executor chown container had stale Docker Running state with an absent init PID. Only the exact verified owned wrapper and setup container were drained; its volume and all evidence were retained. This is separate setup evidence, not a source/test failure or a passing qualification.
 
-Final changed-source behavior, race, parity and static evidence will be recorded only after actual terminal runs. No timeout, worker, service, cache or image change is part of this source slice.
+The first full race run had 579 passing test/subtest events and one actual caller failure: `TestKlineAuditsSpreadAcrossTheHour` constructed a Service fragment directly, bypassing New and leaving its required Parameters uninitialized. The companion declares `captureparams.Defaults()` in that real runnable fixture, preserving all original distinct-within-hour and neighboring-minute assertions. No production fallback was added.
+
+Final immutable qualification is complete: full `go test -race -count=1 -json ./...` has 580 passing test/subtest events (269 top-level tests, 16 packages), zero failures/skips, maximum case 9.48 seconds. The checked-in Go result checker accepts the complete started/passed multiset. The actual Python parity consumer passes against all 18 immutable recorded WebSocket/REST fixtures (one actual pytest case, 18.35 seconds wall), and all 11 schema/parity refusal unit controls pass in 4.13 seconds, p90 0.346/max 0.377 including fixtures. The retired unconsumed generic Threshold accessor's old permissive helper test is replaced by the named numeric-form, omission and malformed-fact controls, rather than retaining a false live API.
+
+Go vet passes; pinned golangci-lint 2.5 reports zero issues; pinned gofmt, source-comment policy and diff checks pass. No existing `errors.New`/`fmt.Errorf` literal is removed from changed production Go modules. The entire store, normalizer, embedded schema, config YAML, retained testdata, goldens, Go module locks and lint exemptions are byte-identical to the base. Source guards bind each successful executor to the same source head with no patch. `capture-parameters-final-proof.json` records exact image/tool/run hashes, source hashes and setup/executor timings. The five malformed-config reds, mechanical compile error, stale setup interruption and first full race caller failure remain separately retained.
+
+No timeout, worker, service, cache or image change is part of this source slice. The operational source-configuration values are not historical market evidence. Other Options ports and the raw benchmark token registry remain open; Go Range/normalizer/global typing and responsibility audits are not completed by this checkpoint.
