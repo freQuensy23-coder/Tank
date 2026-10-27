@@ -1,4 +1,6 @@
 import os
+from contextlib import AsyncExitStack
+from typing import TYPE_CHECKING, Literal
 
 import pytest
 from agent_source_fixtures import source_record_fixture
@@ -9,17 +11,42 @@ from test_event_tools import service as service
 from tank.event_tools import LAYERS, EventToolService
 from tank.time_precision import collection_clock
 
+if TYPE_CHECKING:
+    from postgres_helpers import PostgresTemplate
+
 
 @pytest.mark.parametrize(
     "backend", ["memory", pytest.param("postgres", marks=[pytest.mark.integration, pytest.mark.postgres])]
 )
 @pytest.mark.parametrize(
     "ownership",
-    ["matching", "missing", "ambiguous", "foreign_session", "foreign_call", "attempt_mismatch"],
+    [
+        "matching",
+        "missing",
+        "ambiguous",
+        "foreign_session",
+        "foreign_call",
+        "attempt_mismatch",
+        "missing_item",
+        "non_source",
+    ],
 )
 async def test_publication_dispatch_retains_persisted_call_trigger_after_active_input_changes(
-    service, ownership, backend, postgres_template, repository_lifetime
-):
+    service: EventToolService,
+    ownership: Literal[
+        "matching",
+        "missing",
+        "ambiguous",
+        "foreign_session",
+        "foreign_call",
+        "attempt_mismatch",
+        "missing_item",
+        "non_source",
+    ],
+    backend: Literal["memory", "postgres"],
+    postgres_template: "PostgresTemplate",
+    repository_lifetime: AsyncExitStack,
+) -> None:
     """A recovered call owns its journal input even after a later timer is active."""
     if backend == "postgres":
         url = os.environ["TANK_TEST_DATABASE_URL"]
@@ -110,10 +137,16 @@ async def test_publication_dispatch_retains_persisted_call_trigger_after_active_
         },
     )
     prior_deliveries = await service.repo.list("ops.jobs", filters={"type": "DELIVER"})
-    if ownership != "matching":
+    if ownership == "non_source":
+        session = await service.repo.get("ops.agent_sessions", "owned-session")
+        session["message_log"][0]["payload"] = {"kind": "CONDITION_MET"}
+        await service.repo.put("ops.agent_sessions", "owned-session", session)
+    if ownership not in {"matching", "non_source"}:
         session = await service.repo.get("ops.agent_sessions", "owned-session")
         call = await service.repo.get("ops.tool_calls", "owned-session:publication-call")
-        if ownership == "missing":
+        if ownership == "missing_item":
+            session["message_log"][0]["payload"].pop("item_id")
+        elif ownership == "missing":
             call.pop("native_turn_message_id")
         elif ownership == "ambiguous":
             session["message_log"].append(session["message_log"][0])
@@ -157,8 +190,12 @@ async def test_publication_dispatch_retains_persisted_call_trigger_after_active_
         {"session_id": "owned-session", "call_id": "publication-call", "role": "analyst"},
     )
     assert result["published"] is True
-    assert result["publication_receipt"]["trigger_item_id"] == "i"
-    assert result["publication_receipt"]["trigger_freshness"] == "FRESH"
+    if ownership == "matching":
+        assert result["publication_receipt"]["trigger_item_id"] == "i"
+        assert result["publication_receipt"]["trigger_freshness"] == "FRESH"
+    else:
+        assert "trigger_item_id" not in result["publication_receipt"]
+        assert "trigger_freshness" not in result["publication_receipt"]
     alerts = await service.repo.list("out.alerts", filters={"event_id": eid})
     assert len(alerts) == 1
     assert alerts[0]["session_id"] == "owned-session"

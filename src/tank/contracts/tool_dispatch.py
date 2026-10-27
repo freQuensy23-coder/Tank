@@ -1,17 +1,27 @@
 """Consumed immutable native-call ownership and journal trigger admission."""
 
 from collections.abc import Mapping
-from typing import Annotated, Self
+from typing import Annotated, Literal, Self
 
 from pydantic import Field, JsonValue
 
 from tank.contracts import DomainModel
 
+type AgentJournalInputKind = Literal[
+    "NEW_ITEM",
+    "ITEM_ADDED",
+    "USER_QUESTION",
+    "SCOUT_REVIEW",
+    "CONDITION_FIRED",
+    "CALL_EXPIRED",
+    "MILESTONE",
+    "CONDITION_MET",
+]
 type ToolDispatchIdentity = Annotated[str, Field(min_length=1, pattern=r"\S")]
 
 
 class ToolJournalTrigger(DomainModel):
-    kind: ToolDispatchIdentity
+    kind: AgentJournalInputKind
     item_id: ToolDispatchIdentity | None
 
 
