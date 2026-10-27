@@ -3166,6 +3166,47 @@
         "test_usage_propagates_provider_processed_precision_without_inference",
         "test_usage_keeps_effort_stop_reason_and_search_count"
       ]
+    },
+    {
+      "sites": [
+        {
+          "path": "src/tank/contracts/session_retention.py",
+          "symbol": "archive_candidate"
+        },
+        {
+          "path": "src/tank/contracts/session_retention.py",
+          "symbol": "RetainedSession.from_record"
+        },
+        {
+          "path": "src/tank/contracts/session_retention.py",
+          "symbol": "SessionActivity.from_record"
+        },
+        {
+          "path": "src/tank/contracts/session_retention.py",
+          "symbol": "archive_tool"
+        },
+        {
+          "path": "src/tank/agents/sessions.py",
+          "symbol": "SessionService.finish_if_idle"
+        },
+        {
+          "path": "src/tank/agents/sessions.py",
+          "symbol": "SessionService.followable"
+        }
+      ],
+      "kind": "consumed archive phases and actual activity without inferred lifecycle or binding",
+      "reason": "Actual event writers and technical design report lifecycle; the initial reader-only status fallback had no corresponding event writer and is removed. Unknown lifecycle/runtime has an explicit unreported denial, not a guessed terminal/nonterminal claim. Scope IDs/card versions/denial finalization clocks are required only in eligible phases that consume them; CLOSED/MERGED do not require unused denial card history, and PENDING tools deny without requiring historical return metadata. Missing journal/counter/body facts do not defeat independently proved terminal inputs. Fresh resolve writes event_id explicitly null before association; a missing historical key is UNREPORTED, explicit null is UNBOUND, a non-null identity is BOUND. Only UNBOUND plus the actual negative-event flag may authorize the eventless path; missing a BOUND resource cannot become a negative. Nullable no_event/followups/runtime flags preserve unreported values and are never coerced to an authoritative default. Actual recorded activity sources are session opening/event/input and same-session question clocks; absent occurrences remain absent, and no recorded clock raises rather than becoming now. Selected Timestamp uncertainty/bucket edge survives offset_schedule. Follow-up eligibility uses an actual session-bound question or matching event/publication/Telegram SENT evidence; unrelated queue jobs have explicitly unreported scope and do not acquire invented ownership. Raw mappings remain only at storage admission/serialization and actual identity-keyed indexes, with shared session lock+reread before full writes. This does not turn put_owned_session into a CAS or validate arbitrary uncooperative snapshot writers.",
+      "validation": [
+        "test_only_the_actual_event_lifecycle_can_authorize_native_archive",
+        "test_retention_preserves_selected_activity_clock_without_relabeling_collection",
+        "test_missing_owned_event_is_not_reinterpreted_as_an_eventless_negative",
+        "test_unreported_event_binding_does_not_authorize_eventless_archive",
+        "test_no_recorded_activity_refuses_before_native_archive",
+        "test_actual_retention_write_preserves_source_clock_and_unknown_terminal_attempt",
+        "test_archive_denial_requires_no_unconsumed_identity_or_publication_history",
+        "test_session_with_a_delivered_card_stays_open_for_follow_ups_past_the_retention",
+        "test_pending_jobs_keep_event_session_and_publication_scope_separate"
+      ]
     }
   ]
 }
