@@ -134,7 +134,7 @@ async def test_source_jev_sse_validated_read_restart_and_delivery(tmp_path: Path
                 {
                     "instrument_id": "mock:spot:T",
                     "token_id": "T",
-                    "venue": "mock",
+                    "venue": "binance",
                     "market_type": "SPOT",
                     "venue_symbol": "TUSDT",
                 }
@@ -544,7 +544,7 @@ async def test_full_sse_pipeline_postgres(
                 {
                     "instrument_id": "mock:spot:T",
                     "token_id": "T",
-                    "venue": "mock",
+                    "venue": "binance",
                     "market_type": "SPOT",
                     "venue_symbol": "TUSDT",
                 }
