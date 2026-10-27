@@ -128,11 +128,15 @@ jobs:
         with:
           node-version: "24.22.0"
           package-manager-cache: false
+          cache: npm
+          cache-dependency-path: tests/node-gateway/package-lock.json
       - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884
         with:
           version: "0.11.7"
           python-version: "3.13.13"
           enable-cache: true
+          cache-python: true
+          cache-suffix: integration-frozen-dev-x-reader-v2
       - run: uv sync --python 3.13.13 --frozen --extra dev --group x-reader
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e
         with:
