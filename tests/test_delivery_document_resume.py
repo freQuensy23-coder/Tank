@@ -1,6 +1,10 @@
 """Real report delivery resumes only with the consumed recipient and credential facts."""
 
+import os
+from collections.abc import AsyncIterator
+from contextlib import AbstractAsyncContextManager, AsyncExitStack, asynccontextmanager
 from pathlib import Path
+from typing import Literal, Protocol
 
 import httpx
 import pytest
@@ -18,8 +22,27 @@ from tank.contracts.source_errors import (
 from tank.delivery import DeliveryError, DeliveryService
 from tank.ops_entry_errors import report_entry_errors
 from tank.settings import Settings
-from tank.storage import MemoryRepository
+from tank.storage import MemoryRepository, PostgresRepository
 from tank.util import new_id, sha256
+
+type ResumeStore = MemoryRepository | PostgresRepository
+type ResumeBackend = Literal["memory", "postgres"]
+
+
+class ResumePostgresTemplate(Protocol):
+    def repository(self, url: str) -> AbstractAsyncContextManager[PostgresRepository]: ...
+
+
+@asynccontextmanager
+async def repository(backend: ResumeBackend, template: ResumePostgresTemplate) -> AsyncIterator[ResumeStore]:
+    if backend == "memory":
+        yield MemoryRepository()
+        return
+    url = os.environ.get("TANK_TEST_DATABASE_URL")
+    if not url:
+        raise RuntimeError("Disposable PostgreSQL administrator DSN required")
+    async with template.repository(url) as repo:
+        yield repo
 
 
 class ResumeSettings(Settings):
@@ -36,7 +59,7 @@ def configuration(tmp_path: Path, token: str | None, chat: str | None) -> Settin
     )
 
 
-async def reported_delivery(repo: MemoryRepository, tmp_path: Path, *, complete: bool) -> str:
+async def reported_delivery(repo: ResumeStore, tmp_path: Path, *, complete: bool) -> str:
     source = source_definition(
         {
             "source_id": "S29",
@@ -99,9 +122,8 @@ async def reported_delivery(repo: MemoryRepository, tmp_path: Path, *, complete:
 
 
 async def restore_without_parent_fact(
-    original: MemoryRepository, notice_id: str, missing_field: str | None
-) -> MemoryRepository:
-    restored = MemoryRepository()
+    original: ResumeStore, restored: ResumeStore, notice_id: str, missing_field: str | None
+) -> None:
     notice = await original.get("out.ops_notices", notice_id)
     assert notice is not None
     await restored.put("out.ops_notices", notice_id, notice, immutable=True)
@@ -112,48 +134,65 @@ async def restore_without_parent_fact(
                 continue
             row.pop(missing_field, None)
         await restored.put("out.deliveries", new_id("delivery"), row, immutable=True)
-    return restored
 
 
+@pytest.mark.parametrize(
+    "backend", ["memory", pytest.param("postgres", marks=[pytest.mark.integration, pytest.mark.postgres])]
+)
 @pytest.mark.parametrize("mode", ["TOKEN", "CHAT", "BOTH", "CHANGED_CHAT", "UNREPORTED_PARENT_CHAT"])
-async def test_pending_document_resume_refuses_before_new_attempt(mode: str, tmp_path: Path) -> None:
-    repo = MemoryRepository()
-    notice_id = await reported_delivery(repo, tmp_path, complete=False)
-    if mode == "UNREPORTED_PARENT_CHAT":
-        repo = await restore_without_parent_fact(repo, notice_id, "chat_id")
-    before = await repo.list("out.deliveries")
-    token = None if mode in {"TOKEN", "BOTH"} else "test"
-    chat = None if mode in {"CHAT", "BOTH"} else "20" if mode == "CHANGED_CHAT" else "10"
-    requests: list[httpx.Request] = []
+async def test_pending_document_resume_refuses_before_new_attempt(
+    mode: str, tmp_path: Path, backend: ResumeBackend, postgres_template: ResumePostgresTemplate
+) -> None:
+    async with AsyncExitStack() as lifetime:
+        repo = await lifetime.enter_async_context(repository(backend, postgres_template))
+        notice_id = await reported_delivery(repo, tmp_path, complete=False)
+        if isinstance(repo, PostgresRepository):
+            await repo.close()
+            await repo.open()
+        if mode == "UNREPORTED_PARENT_CHAT":
+            restored = await lifetime.enter_async_context(repository(backend, postgres_template))
+            await restore_without_parent_fact(repo, restored, notice_id, "chat_id")
+            repo = restored
+        before = await repo.list("out.deliveries")
+        token = None if mode in {"TOKEN", "BOTH"} else "test"
+        chat = None if mode in {"CHAT", "BOTH"} else "20" if mode == "CHANGED_CHAT" else "10"
+        requests: list[httpx.Request] = []
 
-    def send(request: httpx.Request) -> httpx.Response:
-        requests.append(request)
-        return httpx.Response(200, json={"ok": True, "result": {"message_id": 20 + len(requests)}})
+        def send(request: httpx.Request) -> httpx.Response:
+            requests.append(request)
+            return httpx.Response(200, json={"ok": True, "result": {"message_id": 20 + len(requests)}})
 
-    captured: Exception | None = None
-    async with httpx.AsyncClient(transport=httpx.MockTransport(send)) as http:
-        service = DeliveryService(repo, configuration(tmp_path, token, chat), http=http)
-        try:
-            await service.deliver(delivery_job({"notice_id": notice_id}))
-        except Exception as error:
-            captured = error
-    assert requests == []
-    assert await repo.list("out.deliveries") == before
-    assert isinstance(captured, ValueError)
+        captured: Exception | None = None
+        async with httpx.AsyncClient(transport=httpx.MockTransport(send)) as http:
+            service = DeliveryService(repo, configuration(tmp_path, token, chat), http=http)
+            try:
+                await service.deliver(delivery_job({"notice_id": notice_id}))
+            except Exception as error:
+                captured = error
+        assert requests == []
+        assert await repo.list("out.deliveries") == before
+        assert isinstance(captured, ValueError)
 
 
-async def test_all_documents_sent_needs_no_unused_parent_or_credentials(tmp_path: Path) -> None:
-    original = MemoryRepository()
-    notice_id = await reported_delivery(original, tmp_path, complete=True)
-    repo = await restore_without_parent_fact(original, notice_id, None)
-    before = await repo.list("out.deliveries")
-    assert len(before) == 4
+@pytest.mark.parametrize(
+    "backend", ["memory", pytest.param("postgres", marks=[pytest.mark.integration, pytest.mark.postgres])]
+)
+async def test_all_documents_sent_needs_no_unused_parent_or_credentials(
+    tmp_path: Path, backend: ResumeBackend, postgres_template: ResumePostgresTemplate
+) -> None:
+    async with AsyncExitStack() as lifetime:
+        original = await lifetime.enter_async_context(repository(backend, postgres_template))
+        notice_id = await reported_delivery(original, tmp_path, complete=True)
+        repo = await lifetime.enter_async_context(repository(backend, postgres_template))
+        await restore_without_parent_fact(original, repo, notice_id, None)
+        before = await repo.list("out.deliveries")
+        assert len(before) == 4
 
-    def refuse(request: httpx.Request) -> httpx.Response:
-        raise AssertionError("Already completed document delivery must not use HTTP")
+        def refuse(request: httpx.Request) -> httpx.Response:
+            raise AssertionError("Already completed document delivery must not use HTTP")
 
-    async with httpx.AsyncClient(transport=httpx.MockTransport(refuse)) as http:
-        await DeliveryService(repo, configuration(tmp_path, None, None), http=http).deliver(
-            delivery_job({"notice_id": notice_id})
-        )
-    assert await repo.list("out.deliveries") == before
+        async with httpx.AsyncClient(transport=httpx.MockTransport(refuse)) as http:
+            await DeliveryService(repo, configuration(tmp_path, None, None), http=http).deliver(
+                delivery_job({"notice_id": notice_id})
+            )
+        assert await repo.list("out.deliveries") == before
