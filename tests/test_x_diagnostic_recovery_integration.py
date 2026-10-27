@@ -32,9 +32,7 @@ pytestmark = [pytest.mark.integration, pytest.mark.postgres]
 @pytest.fixture
 async def diagnostic_clock(diagnostic_repo, monkeypatch):
     async with diagnostic_repo.transaction():
-        row = await (
-            await diagnostic_repo._conn().execute("SELECT clock_timestamp() AS clock")
-        ).fetchone()
+        row = await (await diagnostic_repo._conn().execute("SELECT clock_timestamp() AS clock")).fetchone()
     clock = row["clock"]
     for module in (
         "tank.runtime",
@@ -212,9 +210,7 @@ async def test_canonical_producer_jsonb_reload_real_http_delivery_is_repeatable(
     assert len(state["telegram"]) == len(expected) + 1
     assert_uploads(uploads_from(origin, state), expected, 1)
     async with reopen(repo) as reloaded:
-        await assert_receipts(
-            reloaded, notice_id, {row["filename"]: row["content"] for row in expected}
-        )
+        await assert_receipts(reloaded, notice_id, {row["filename"]: row["content"] for row in expected})
         for receipt in await reloaded.list(
             "out.deliveries", filters={"notice_id": notice_id, "method": "sendDocument", "status": "SENT"}
         ):
