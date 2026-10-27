@@ -177,3 +177,15 @@ def test_full_synchronized_oi_cannot_hide_invalid_usd_inside_a_positive_sum() ->
     assert synchronized["oi_usd_start"] == 11
     assert synchronized["oi_usd_end"] is None
     assert synchronized["oi_usd_chg_pct"] is None
+
+
+def test_full_oi_zero_native_baseline_preserves_known_endpoint_quantities() -> None:
+    snapshot, start, end = recorded_snapshot(native_start=0, native_end=5, recorded=True, source_label=None)
+    result = derivatives_truth(snapshot, start, end)["per_venue"][0]
+    assert result["oi_native_start"] == 0
+    assert result["oi_native_end"] == 5
+    assert result["oi_native_chg_pct"] is None
+    assert result["oi_native_chg_pct_reason"] == "ZERO_BASELINE"
+    assert result["oi_usd_start"] == result["oi_usd_end"] == 1
+    assert result["oi_usd_reason"] is None
+    assert result["decomposition"]["reason"] == "NATIVE_ENDPOINT_ZERO"

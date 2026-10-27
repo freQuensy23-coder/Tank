@@ -39,6 +39,7 @@ from tank.analysis.condition_graph_contracts import (
     ConditionTopCacheKey,
     ConditionTopVenueSignHistory,
     ConditionWireClocks,
+    sum_condition_native,
 )
 from tank.analysis.condition_input_codec import (
     SpotDirectEvidenceLookup,
@@ -903,6 +904,16 @@ def _stored_usd(row: Mapping[str, JsonInput]) -> Decimal | None:
     return value if value.is_finite() and value >= 0 else None
 
 
+def _stored_usd_total(rows: Sequence[Mapping[str, JsonInput]]) -> Decimal | None:
+    values: list[Decimal] = []
+    for row in rows:
+        value = _stored_usd(row)
+        if value is None:
+            return None
+        values.append(value)
+    return sum_condition_native(values) if values else None
+
+
 def _oi_split(rows):
     """(admissible rows, inadmissible rows, admissible (time, index) order) of one row list,
     built once per assessment for a list shared across windows."""
@@ -1232,7 +1243,7 @@ def synchronized_oi(sync, start, end):
                 selected.append(min(candidates, key=lambda r: abs((_time(r) - t).total_seconds())))
             if len(selected) == len(sync) and all(decimal(r.get("oi_native")) is not None for r in selected):
                 combined.append(
-                    dict(ts=iso(t), oi_native=_sum(selected, "oi_native"), oi_usd=_sum(selected, "oi_usd"))
+                    dict(ts=iso(t), oi_native=_sum(selected, "oi_native"), oi_usd=_stored_usd_total(selected))
                 )
         synchronized = _oi_stats(
             combined,
