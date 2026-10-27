@@ -44,7 +44,7 @@ async def test_cli_failure_closes_actual_owned_pool_and_constructed_http_client(
             assert callbacks == (0 if mode == "OPEN" else 1)
             pids = [require_integer(pid) for pid in array_field(report, "owner_pids")]
             assert len(pids) == 1 and pids[0] > 0
-            async with await AsyncConnection.connect(repo.database_url) as observer:
+            async with await AsyncConnection.connect(repo.database_url, autocommit=True) as observer:
 
                 async def session_count() -> int:
                     row = await (
