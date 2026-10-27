@@ -36,7 +36,7 @@ jobs:
       - name: Verify the frozen actor-only dependency export
         run: uv run --frozen --extra dev --group x-reader python scripts/ci/check_actor_dependencies.py --root .
       - name: Record the complete offline unit collection
-        run: uv run --frozen --extra dev --group x-reader pytest -p scripts.ci.collect_units -q --collect-only -m 'not integration'
+        run: uv run --frozen --extra dev --group x-reader pytest -p scripts.ci.collect_units -q -n auto --collect-only -m 'not integration'
       - name: Run the selected complete unit partition
         run: uv run --frozen --extra dev --group x-reader pytest -p scripts.ci.unit_shard --ci-unit-shard "${{ matrix.shard }}/2" -q -n auto --dist loadfile -m 'not integration' --junitxml=.test-results/unit.xml
       - name: Package the exact selected X worker source

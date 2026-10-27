@@ -264,7 +264,13 @@ def test_actual_collection_uses_the_owned_future_template_without_claiming_seal(
     assert allocation.name == (setup_context.root / "observed-schema-name").read_text()
     assert "TANK_CI_SCHEMA_TEMPLATE=" + allocation.name + "\n" in setup_context.github_env.read_text()
     collection = json.loads((setup_context.root / ".test-results/integration-collection.json").read_text())
-    assert len(collection) == 1
+    assert collection == [
+        {
+            "classname": "tests.test_collection_only",
+            "name": "test_never_execute",
+            "file": "tests/test_collection_only.py",
+        }
+    ]
     assert result.successful()
     with pytest.raises(FileExistsError):
         run(setup_context, SignalState())

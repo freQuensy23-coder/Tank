@@ -137,6 +137,8 @@ def run(context: SetupContext, state: SignalState) -> SetupReport:
                 "-p",
                 "collect_integration",
                 "-q",
+                "-n",
+                "auto",
                 "--collect-only",
                 "-m",
                 "integration",
