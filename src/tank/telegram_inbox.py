@@ -153,6 +153,8 @@ def formatted_chunks(markdown, limit=MESSAGE_LIMIT):
         if "<img " in rendered or "<p>" in rendered:
             return [(part, []) for part in chunks(markdown, limit)]
         text, entities = telegram_html.parse("\ufffc" + rendered)
+        if any(type(entity).__name__ == "MessageEntityEmail" for entity in entities):
+            return [(part, []) for part in chunks(markdown, limit)]
         text = text[1:]
         for entity in entities:
             entity.offset -= 1
