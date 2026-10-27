@@ -830,7 +830,7 @@ class TelegramInbox:
                 "out.ops_notices", filters={"kind": "ITEM_PROGRESS", "subject_id": item_id}
             )
         ]
-        history.sort(key=lambda notice: (ops_cards.time_of(notice), notice["notice_id"]))
+        history.sort(key=lambda notice: (ops_cards.recorded_time_of(notice), notice["notice_id"]))
         reason, text = not_received_reason(item, history)
         await self.notice(
             row, text, "NO_SESSION", subject={"item_id": item_id}, reason=reason, item_id=item_id

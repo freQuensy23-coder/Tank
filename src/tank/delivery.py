@@ -4,17 +4,67 @@ import asyncio
 import html
 import json
 import time
+from collections.abc import Mapping
 from contextlib import AsyncExitStack
 from datetime import datetime, timedelta
 
 import httpx
-from pydantic import JsonValue
+from pydantic import Field, JsonValue
 
 from tank.analysis.cards import telegram_card_html
-from tank.diagnostic_documents import documents
+from tank.contracts import DomainModel
+from tank.contracts.delivery import (
+    CardDeliveryHeader,
+    CardDeliveryText,
+    DeliveredCardActivation,
+    DeliveredCorrection,
+    DeliveredEventView,
+    DeliveryAttemptOrdinal,
+    DeliveryEventBinding,
+    DeliveryExpiryReferences,
+    DeliveryLedgerPhase,
+    DeliverySettings,
+    DeliveryStore,
+    DeliveryTelegramReceipt,
+    DeliveryTelegramRejection,
+    DeliveryText,
+    DocumentDeliveryNotice,
+    DocumentLedgerEntry,
+    DocumentParentReceipt,
+    DocumentRetryAttempt,
+    ExitCallDecision,
+    FrozenDeliveryAssessment,
+    FrozenDeliveryInterval,
+    InvalidatedDeliveryEvent,
+    OpenDeliveryCall,
+    OpsAdoptedClockBasis,
+    OpsBackoffState,
+    OpsCardDeliveryState,
+    OpsCardSnapshot,
+    OpsDueSchedule,
+    OpsImmediateSchedule,
+    OpsSentReceipt,
+    OpsSpacingPolicy,
+    ProgressDeliveryNotice,
+    SentDeliveryReceipt,
+    StartCallDecision,
+    StartCallPrices,
+    call_activation_decision,
+    select_ops_receipt,
+)
+from tank.contracts.json import decode_unique_json
+from tank.diagnostic_documents import DiagnosticAttachment, documents
 from tank.ops_progress import event_progress
 from tank.runtime_contracts import AlertDeliveryJob, DeliveryJob, NoticeDeliveryJob, parse_delivery_job
-from tank.time_precision import Timestamp, collection_clock, offset_schedule, propagate_timestamp
+from tank.telegram_api import TelegramResponseError, response_result, sent_message_receipt
+from tank.telegram_rich import RichMessage
+from tank.time_precision import (
+    Timestamp,
+    collection_clock,
+    offset_schedule,
+    propagate_timestamp,
+    timestamp_owned_fields,
+)
 from tank.util import new_id, parse_time, sha256, utcnow
 
 DELIVERY_LOCK_WAIT_S = 6
@@ -25,6 +75,20 @@ class DeliveryError(RuntimeError):
         super().__init__(message)
         self.retry_after = retry_after
         self.terminal = False
+
+
+def delivery_retry_delay(error: Exception, attempt: int) -> float:
+    if isinstance(error, DeliveryError):
+        return error.retry_after
+    if isinstance(error, TelegramResponseError) and error.retry_after is not None:
+        return error.retry_after
+    return float(1 << (attempt - 1))
+
+
+class DocumentDeliveryWork(DomainModel):
+    document: DiagnosticAttachment
+    document_id: str = Field(pattern=r"^[a-f0-9]{64}$")
+    attempt: int = Field(ge=1)
 
 
 class DeliveryDeferred(DeliveryError):
@@ -47,8 +111,10 @@ def delivery_moment(timestamp: Timestamp) -> datetime:
 
 
 def delivery_payload(payload: DeliveryJob | dict[str, JsonValue]) -> DeliveryJob:
-    if isinstance(payload, (AlertDeliveryJob, NoticeDeliveryJob)):
-        return payload
+    if isinstance(payload, AlertDeliveryJob):
+        return AlertDeliveryJob.model_validate(payload, by_name=True)
+    if isinstance(payload, NoticeDeliveryJob):
+        return NoticeDeliveryJob.model_validate(payload, by_name=True)
     return parse_delivery_job(payload)
 
 
@@ -67,7 +133,9 @@ def delivery_filters(payload: DeliveryJob) -> dict[str, JsonValue]:
 
 
 class DeliveryService:
-    def __init__(self, repo, settings, *, http=None):
+    def __init__(
+        self, repo: DeliveryStore, settings: DeliverySettings, *, http: httpx.AsyncClient | None = None
+    ) -> None:
         self.repo, self.settings = repo, settings
         self.http = http if http is not None else httpx.AsyncClient(timeout=8)
         self.owns_http = http is None
@@ -76,7 +144,9 @@ class DeliveryService:
         if self.owns_http:
             await self.http.aclose()
 
-    async def _all(self, collection, *, filters=None):
+    async def _all(
+        self, collection: str, *, filters: dict[str, JsonValue] | None = None
+    ) -> list[dict[str, JsonValue]]:
         return [row async for row in self.repo.iter_all(collection, filters=filters)]
 
     async def terminal_failure(
@@ -91,7 +161,13 @@ class DeliveryService:
         filters = delivery_filters(payload)
         async with self.repo.lock("deliver:" + subject + ":" + channel), self.repo.transaction():
             ledger = await self._all("out.deliveries", filters=filters)
-            if any(row["status"] == "SENT" for row in ledger):
+            phases = [
+                DeliveryLedgerPhase.model_validate(
+                    {name: row[name] for name in DeliveryLedgerPhase.model_fields if name in row}
+                )
+                for row in ledger
+            ]
+            if any(row.status == "SENT" for row in phases):
                 return
             source = None
             if isinstance(payload, AlertDeliveryJob):
@@ -99,7 +175,7 @@ class DeliveryService:
                     "out.alerts", filters={"alert_id": payload.alert_id, "version": payload.version}
                 )
                 source = alerts[0] if alerts else None
-            if not any(row.get("terminal") for row in ledger):
+            if not any(row.terminal is True for row in phases):
                 source_times = {
                     key: value
                     for field in ("generated_at", "delivery_not_before")
@@ -117,7 +193,10 @@ class DeliveryService:
                         "terminal": True,
                         "attempt": attempt
                         if attempt is not None
-                        else max((r.get("attempt", 0) for r in ledger), default=0),
+                        else max(
+                            (DeliveryAttemptOrdinal.from_record(row).attempt for row in ledger),
+                            default=0,
+                        ),
                         **failed_at.fields("at"),
                         **failed_at.fields("failed_at"),
                         "error": type(error).__name__ if isinstance(error, BaseException) else str(error),
@@ -129,7 +208,11 @@ class DeliveryService:
             await event_progress(
                 self.repo,
                 self.settings,
-                source.get("event_id") if source is not None else None,
+                DeliveryEventBinding.model_validate(
+                    {name: source[name] for name in ("event_id",) if name in source}
+                ).event_id
+                if source is not None
+                else None,
                 "ALERT_FAILED",
                 f"Не доставлена карточка {subject}",
                 key=subject,
@@ -172,13 +255,19 @@ class DeliveryService:
         if isinstance(payload, NoticeDeliveryJob):
             notice = await self.repo.get("out.ops_notices", payload.notice_id)
             if notice and notice.get("kind") == "ITEM_PROGRESS":
-                error = await self._deliver_progress(notice)
+                error = await self._deliver_progress(ProgressDeliveryNotice.from_record(notice))
             elif notice and notice.get("document_manifest"):
+                document_notice = DocumentDeliveryNotice.from_record(notice)
+                if (
+                    tuple(row.reference() for row in documents(document_notice.entry_errors))
+                    != document_notice.document_manifest
+                ):
+                    raise DeliveryError("Ops diagnostic document manifest mismatch")
                 async with AsyncExitStack() as locks:
-                    await self._enter_delivery_lock(locks, "ops-documents:" + notice["notice_id"])
+                    await self._enter_delivery_lock(locks, "ops-documents:" + document_notice.notice_id)
                     error = await self._deliver(payload)
                     if error is None:
-                        error = await self._deliver_documents(notice)
+                        error = await self._deliver_documents(document_notice)
             else:
                 error = await self._deliver(payload)
         else:
@@ -188,45 +277,70 @@ class DeliveryService:
             if not rows:
                 raise ValueError("Delivery subject does not exist")
 
+            owner = CardDeliveryHeader.from_record(rows[0])
+            if owner.alert_id != payload.alert_id or owner.version != payload.version:
+                raise ValueError("Delivery publication differs from its actual queue target")
             async with AsyncExitStack() as locks:
-                await self._enter_delivery_lock(locks, "event:" + rows[0]["event_id"])
+                await self._enter_delivery_lock(locks, "event:" + owner.event_id)
                 error = await self._deliver(payload)
         if isinstance(error, DeliveryError):
             if error.terminal:
                 await self.terminal_failure(payload, error, 5)
             raise error
 
-    async def _deliver_documents(self, notice):
+    async def _deliver_documents(self, notice: DocumentDeliveryNotice) -> DeliveryError | None:
         deadline = time.monotonic() + 30
-        chat = str(self.settings.telegram_ops_chat or "")
-        ledger = await self._all(
-            "out.deliveries", filters={"notice_id": notice["notice_id"], "channel": "telegram:ops"}
+        rows = await self._all(
+            "out.deliveries", filters={"notice_id": notice.notice_id, "channel": "telegram:ops"}
         )
-        messages = [row for row in ledger if row["status"] == "SENT" and row.get("method") != "sendDocument"]
-        if not messages:
-            raise DeliveryError("Ops diagnostic parent message was not delivered")
-        parent = messages[0]["message_ref"]
-        attachments = documents(notice["entry_errors"])
-        manifest = [
-            {"filename": row.filename, "sha256": row.sha256, "bytes": len(row.content)} for row in attachments
-        ]
-        if manifest != notice["document_manifest"]:
+        ledger = [(DocumentLedgerEntry.from_record(row, notice.notice_id), row) for row in rows]
+        attachments = documents(notice.entry_errors)
+        if tuple(row.reference() for row in attachments) != notice.document_manifest:
             raise DeliveryError("Ops diagnostic document manifest mismatch")
-        terminal_failure = None
+        terminal_failure: DeliveryError | None = None
+        pending: list[DocumentDeliveryWork] = []
         for document in attachments:
             document_id = sha256({"filename": document.filename, "sha256": document.sha256})
-            history = [row for row in ledger if row.get("document_id") == document_id]
-            if any(row["status"] == "SENT" for row in history):
+            history = [(entry, raw) for entry, raw in ledger if entry.document_id == document_id]
+            if any(entry.status == "SENT" for entry, _ in history):
                 continue
-            attempt = max((row.get("attempt", 0) for row in history), default=0) + 1
-            if attempt > 5 or any(row.get("terminal") for row in history):
+            retries = [DocumentRetryAttempt.from_record(raw) for _, raw in history]
+            attempt = max((row.attempt for row in retries), default=0) + 1
+            if attempt > 5 or any(row.terminal is True for row in retries):
                 terminal_failure = DeliveryError("Ops document delivery exhausted five attempts")
                 terminal_failure.terminal = True
                 continue
+            pending.append(DocumentDeliveryWork(document=document, document_id=document_id, attempt=attempt))
+        if not pending:
+            return terminal_failure
+        token, chat = self.settings.telegram_token, self.settings.telegram_ops_chat
+        if token is None or not token.strip() or chat is None or not chat.strip():
+            raise ValueError("Telegram token and destination must be configured")
+        parent: DocumentParentReceipt | None = None
+        for entry, _ in ledger:
+            if (
+                entry.status == "SENT"
+                and entry.document_id is None
+                and entry.chat_id is not None
+                and entry.chat_id == chat
+                and entry.message_ref is not None
+            ):
+                parent = DocumentParentReceipt(
+                    notice_id=entry.notice_id,
+                    channel=entry.channel,
+                    message_ref=entry.message_ref,
+                    chat_id=entry.chat_id,
+                )
+                break
+        if parent is None:
+            raise ValueError("Ops diagnostic parent receipt is not bound to the configured destination")
+        parent_ref = str(parent.message_ref)
+        for work in pending:
+            document, document_id, attempt = work.document, work.document_id, work.attempt
             if time.monotonic() >= deadline:
                 return DeliveryDeferred(offset_schedule(collection_clock(utcnow()), timedelta(seconds=1)))
             transition = {
-                "notice_id": notice["notice_id"],
+                "notice_id": notice.notice_id,
                 "channel": "telegram:ops",
                 "method": "sendDocument",
                 "document_id": document_id,
@@ -234,7 +348,7 @@ class DeliveryService:
                 "document_bytes": len(document.content),
                 "filename": document.filename,
                 "attempt": attempt,
-                "request_reply_to_message_ref": parent,
+                "request_reply_to_message_ref": parent_ref,
                 **collection_clock(utcnow()).fields("at"),
             }
             await self.repo.put(
@@ -242,22 +356,26 @@ class DeliveryService:
             )
             try:
                 response = await self.http.post(
-                    f"https://api.telegram.org/bot{self.settings.telegram_token}/sendDocument",
+                    f"https://api.telegram.org/bot{token}/sendDocument",
                     data={
                         "chat_id": chat,
-                        "reply_parameters": json.dumps({"message_id": int(parent)}),
-                        "caption": f"{notice['notice_id']} · {document.filename}\nsha256={document.sha256} · {len(document.content)} bytes",
+                        "reply_parameters": json.dumps({"message_id": int(parent_ref)}),
+                        "caption": f"{notice.notice_id} · {document.filename}\nsha256={document.sha256} · {len(document.content)} bytes",
                         "disable_content_type_detection": "true",
                     },
                     files={"document": (document.filename, document.content, "application/octet-stream")},
                 )
-                data = response.json()
-                if response.status_code != 200 or not data.get("ok"):
-                    raise DeliveryError(
-                        "Telegram rejected Ops document",
-                        max(2 ** (attempt - 1), (data.get("parameters") or {}).get("retry_after", 0)),
+                observed = decode_unique_json(response.content)
+                if isinstance(observed, dict) and observed.get("ok") is False:
+                    rejected = DeliveryTelegramRejection.model_validate(
+                        {name: observed[name] for name in ("ok", "parameters") if name in observed}
                     )
-                message_ref = str(data["result"]["message_id"])
+                    delay = 2 ** (attempt - 1)
+                    if rejected.parameters is not None and rejected.parameters.retry_after is not None:
+                        delay = max(delay, rejected.parameters.retry_after)
+                    raise DeliveryError("Telegram rejected Ops document", delay)
+                result = response_result(response.content, method="sendDocument", status=response.status_code)
+                message_ref = str(sent_message_receipt(result).message_id)
             except Exception as exc:
                 await self.repo.put(
                     "out.deliveries",
@@ -278,7 +396,7 @@ class DeliveryService:
                 return DeliveryDeferred(
                     offset_schedule(
                         collection_clock(utcnow()),
-                        timedelta(seconds=getattr(exc, "retry_after", 2 ** (attempt - 1))),
+                        timedelta(seconds=delivery_retry_delay(exc, attempt)),
                     )
                 )
             await self.repo.put(
@@ -295,102 +413,207 @@ class DeliveryService:
             )
         return terminal_failure
 
-    async def _deliver_progress(self, notice):
-        from tank.ops_cards import render, snapshot, time_of
+    async def _ops_receipts(
+        self,
+        data: OpsCardSnapshot,
+        chat: str,
+        key: str,
+        message_ref: str | int | None,
+        *,
+        only_progress: bool,
+    ) -> list[OpsSentReceipt]:
+        found: dict[str, OpsSentReceipt] = {}
+        scopes: list[tuple[str | None, dict[str, JsonValue]]] = []
+        if not only_progress:
+            scopes.extend(
+                (
+                    notice.notice_id,
+                    {
+                        "notice_id": notice.notice_id,
+                        "channel": "telegram:ops",
+                        "status": "SENT",
+                        "chat_id": chat,
+                    },
+                )
+                for notice in data.history
+                if notice.format_version != 2
+            )
+        if only_progress:
+            scopes.append(
+                (None, {"progress_card": key, "channel": "telegram:ops", "status": "SENT", "chat_id": chat})
+            )
+        for notice_id, filters in scopes:
+            for raw in await self._all("out.deliveries", filters=filters):
+                receipt = OpsSentReceipt.from_record(raw)
+                if receipt.chat_id != chat or notice_id is not None and receipt.notice_id != notice_id:
+                    raise ValueError("Ops receipt differs from its actual notice and destination")
+                if only_progress and receipt.progress_card != key:
+                    raise ValueError("Ops receipt differs from its actual card")
+                if receipt.document_id is not None or receipt.method == "sendDocument":
+                    continue
+                if message_ref is not None and str(receipt.message_ref) != str(message_ref):
+                    continue
+                found[receipt.receipt_sha256] = receipt
+        return list(found.values())
 
-        item_id = notice["subject_id"]
+    async def _ops_schedule(
+        self,
+        data: OpsCardSnapshot,
+        card: OpsCardDeliveryState,
+        raw_card: dict[str, JsonValue],
+        policy: OpsSpacingPolicy,
+        key: str,
+    ) -> OpsImmediateSchedule | OpsDueSchedule:
+        if policy.delay_s == 0:
+            return OpsImmediateSchedule(kind="IMMEDIATE")
+        if card.message_ref is None:
+            clocks: list[Timestamp] = []
+            for notice in data.history:
+                clock = notice.creation_clock()
+                if clock is None or clock.value is None:
+                    raise ValueError("Initial Ops delivery requires its recorded notice clocks")
+                clocks.append(clock)
+            if not clocks:
+                raise ValueError("Initial Ops delivery requires its recorded notice history")
+            anchor = min(clocks, key=delivery_moment)
+            return OpsDueSchedule(
+                kind="NOT_BEFORE",
+                basis="FIRST_NOTICE",
+                not_before=offset_schedule(anchor, timedelta(seconds=policy.delay_s)),
+            )
+        if card.updated_at is not None:
+            anchor = propagate_timestamp(raw_card, "updated_at")
+            basis = "CARD_UPDATE"
+        elif card.adopted_clock_basis is not None:
+            anchor = card.adopted_clock_basis.at
+            basis = "ADOPTED_PARENT"
+        else:
+            receipt = select_ops_receipt(
+                await self._ops_receipts(data, card.chat_id, key, card.message_ref, only_progress=True),
+                clock_required=True,
+            )
+            if receipt is None:
+                raise ValueError("Ops card update clock is unreported")
+            anchor = receipt.at
+            basis = "RECORDED_PROGRESS_SENT"
+        return OpsDueSchedule.model_validate(
+            {
+                "kind": "NOT_BEFORE",
+                "basis": basis,
+                "not_before": offset_schedule(anchor, timedelta(seconds=min(policy.delay_s, 5))),
+            }
+        )
+
+    async def _deliver_progress(self, notice: ProgressDeliveryNotice) -> DeliveryError | None:
+        from tank.ops_cards import render, snapshot
+
+        item_id = notice.subject_id
         chat = str(self.settings.telegram_ops_chat or "")
         if not self.settings.telegram_token or not chat:
             raise ValueError("Telegram token and destination must be configured")
         key = sha256({"item_id": item_id, "chat_id": chat})
         async with AsyncExitStack() as locks:
             await self._enter_delivery_lock(locks, "ops-card:" + key)
-            card = await self.repo.get("out.ops_cards", key)
-            if card and notice["notice_id"] in card.get("covered_notice_ids", []):
+            card_record = await self.repo.get("out.ops_cards", key)
+            card = (
+                OpsCardDeliveryState.from_record(card_record, item_id=item_id, chat_id=chat)
+                if card_record is not None
+                else None
+            )
+            if (
+                card is not None
+                and card.covered_notice_ids is not None
+                and notice.notice_id in card.covered_notice_ids
+            ):
                 return None
             data = await snapshot(self.repo, item_id)
             if data is None:
                 return None
-            if data["item"].get("source_id") == "WEB" and data["item"].get("evidence_kind"):
+            if data.item.source_id == "WEB" and data.item.evidence_kind:
                 return None
+            policy = OpsSpacingPolicy(delay_s=self.settings.ops_progress_delay_s)
+            seed_needed = card is None
             if card is None:
-                card = {"item_id": item_id, "chat_id": chat, "message_ref": None}
-                for previous in reversed(data["history"]):
-                    if previous.get("format_version") == 2:
-                        continue
-                    receipts = await self.repo.list_latest(
-                        "out.deliveries",
-                        "at",
-                        filters={
-                            "notice_id": previous["notice_id"],
-                            "channel": "telegram:ops",
-                            "status": "SENT",
-                            "chat_id": chat,
-                        },
-                        limit=1,
-                    )
-                    if receipts:
-                        card["message_ref"] = receipts[0]["message_ref"]
-                        card["adopted_notice_id"] = previous["notice_id"]
-                        break
-                await self.repo.put("out.ops_cards", key, card)
-            result = render(data)
-            digest = sha256(result["html"])
-            covered = [row["notice_id"] for row in data["history"]]
-            if card.get("render_digest") == digest:
-                await self.repo.put("out.ops_cards", key, {**card, "covered_notice_ids": covered})
-                return None
-            if card.get("blocked"):
-                return None
-            delay = getattr(self.settings, "ops_progress_delay_s", 15)
-            first = time_of(data["history"][0]) if data["history"] else utcnow()
-            if not card.get("message_ref"):
-                due = first + timedelta(seconds=delay)
-            else:
-                due = (
-                    parse_time(card["updated_at"]) + timedelta(seconds=min(delay, 5))
-                    if card.get("updated_at")
-                    else utcnow()
+                card_record = {"item_id": item_id, "chat_id": chat, "message_ref": None}
+                parent = select_ops_receipt(
+                    await self._ops_receipts(data, chat, key, None, only_progress=False),
+                    clock_required=policy.delay_s > 0,
                 )
-            if utcnow() < due:
-                raise DeliveryDeferred(collection_clock(due))
+                if parent is not None:
+                    card_record["message_ref"] = str(parent.message_ref)
+                    card_record["adopted_notice_id"] = parent.notice_id
+                    if policy.delay_s > 0:
+                        captured_basis = OpsAdoptedClockBasis(
+                            kind="ADOPTED_PARENT_PENDING",
+                            item_id=item_id,
+                            chat_id=chat,
+                            notice_id=parent.notice_id,
+                            message_ref=parent.message_ref,
+                            parent_receipt_sha256=parent.receipt_sha256,
+                            at=parent.at,
+                        )
+                        card_record["adopted_clock_basis"] = captured_basis.model_dump(mode="json")
+                card = OpsCardDeliveryState.from_record(card_record, item_id=item_id, chat_id=chat)
+            if card_record is None:
+                raise ValueError("Ops card delivery lacks its stored state")
+            result = render(data)
+            digest = sha256(result.html)
+            covered: list[JsonValue] = [row.notice_id for row in data.history]
+            if card.render_digest == digest:
+                await self.repo.put("out.ops_cards", key, {**card_record, "covered_notice_ids": covered})
+                return None
+            if card.blocked:
+                return None
+            schedule = await self._ops_schedule(data, card, card_record, policy, key)
+            if isinstance(schedule, OpsDueSchedule) and utcnow() < delivery_moment(schedule.not_before):
+                raise DeliveryDeferred(schedule.not_before)
             await self._enter_delivery_lock(locks, "telegram-ops-progress")
             backoff = await self.repo.get("ops.scheduler_checkpoints", "ops-progress-backoff")
-            if backoff and utcnow() < parse_time(backoff["state"]["until"]):
-                raise DeliveryDeferred(collection_clock(backoff["state"]["until"]))
+            if backoff is not None:
+                state = OpsBackoffState.model_validate(backoff.get("state"))
+                if utcnow() < parse_time(state.until):
+                    raise DeliveryDeferred(collection_clock(state.until))
             latest = await self.repo.list_latest(
                 "out.deliveries", "at", filters={"channel": "telegram:ops", "status": "SENT"}, limit=1
             )
             if latest:
                 next_send = offset_schedule(propagate_timestamp(latest[0], "at"), timedelta(seconds=3.1))
-                if utcnow() < parse_time(next_send.value):
+                if utcnow() < delivery_moment(next_send):
                     raise DeliveryDeferred(next_send)
+            if seed_needed:
+                await self.repo.put("out.ops_cards", key, card_record)
             ledger = await self._all(
                 "out.deliveries", filters={"progress_card": key, "render_digest": digest}
             )
-            attempt = max((row.get("attempt", 0) for row in ledger), default=0) + 1
+            attempt = (
+                max(
+                    (DeliveryAttemptOrdinal.from_record(row).attempt for row in ledger),
+                    default=0,
+                )
+                + 1
+            )
             if attempt > 5:
                 failure = DeliveryError("Ops card delivery exhausted five attempts")
                 failure.terminal = True
                 return failure
-            method = "editMessageText" if card.get("message_ref") else "sendMessage"
-            body = {
+            method = "editMessageText" if card.message_ref else "sendMessage"
+            body: dict[str, JsonValue] = {
                 "chat_id": chat,
-                "text": result["html"],
+                "text": result.html,
                 "parse_mode": "HTML",
                 "link_preview_options": {"is_disabled": True},
             }
-            if card.get("message_ref"):
-                body["message_id"] = int(card["message_ref"])
+            if card.message_ref:
+                body["message_id"] = int(card.message_ref)
             else:
                 body["disable_notification"] = True
-            transition = {
-                "notice_id": notice["notice_id"],
+            transition: dict[str, JsonValue] = {
+                "notice_id": notice.notice_id,
                 "channel": "telegram:ops",
                 "attempt": attempt,
                 "render_digest": digest,
                 "progress_card": key,
-                "rendered_notice_id": data["history"][-1]["notice_id"],
+                "rendered_notice_id": data.history[-1].notice_id,
                 "method": method,
                 "status": "GENERATED",
                 **collection_clock(utcnow()).fields("at"),
@@ -401,17 +624,34 @@ class DeliveryService:
                 response = await self.http.post(
                     f"https://api.telegram.org/bot{self.settings.telegram_token}/{method}", json=body
                 )
-                response_data = response.json()
-                unchanged = (
-                    bool(card.get("message_ref"))
-                    and response.status_code == 400
-                    and "message is not modified" in str(response_data.get("description", "")).lower()
-                )
-                if not unchanged and (response.status_code != 200 or not response_data.get("ok")):
-                    code = response.status_code
-                    retry_after = max(
-                        2 ** (attempt - 1), (response_data.get("parameters") or {}).get("retry_after", 0)
+                observed = decode_unique_json(response.content)
+                rejection = (
+                    DeliveryTelegramRejection.model_validate(
+                        {
+                            name: observed[name]
+                            for name in ("ok", "description", "parameters")
+                            if name in observed
+                        }
                     )
+                    if isinstance(observed, dict) and observed.get("ok") is False
+                    else None
+                )
+                unchanged = (
+                    card.message_ref is not None
+                    and response.status_code == 400
+                    and rejection is not None
+                    and rejection.description is not None
+                    and "message is not modified" in rejection.description.lower()
+                )
+                if not unchanged and (response.status_code != 200 or rejection is not None):
+                    code = response.status_code
+                    retry_after = 2 ** (attempt - 1)
+                    if (
+                        rejection is not None
+                        and rejection.parameters is not None
+                        and rejection.parameters.retry_after is not None
+                    ):
+                        retry_after = max(retry_after, rejection.parameters.retry_after)
                     if code == 429:
                         stamp = collection_clock(utcnow())
                         await self.repo.put(
@@ -426,18 +666,23 @@ class DeliveryService:
                             },
                         )
                     raise DeliveryError(f"Telegram rejected Ops card (HTTP {code})", retry_after)
-                message_ref = (
-                    str(card["message_ref"])
-                    if card.get("message_ref")
-                    else str(response_data["result"]["message_id"])
-                )
+                if card.message_ref is not None:
+                    if not unchanged:
+                        response_result(response.content, method=method, status=response.status_code)
+                    message_ref = str(card.message_ref)
+                else:
+                    message_ref = str(
+                        sent_message_receipt(
+                            response_result(response.content, method=method, status=response.status_code)
+                        ).message_id
+                    )
             except Exception as exc:
                 terminal = attempt == 5 or code in {400, 403}
                 await self.repo.put(
                     "out.ops_cards",
                     key,
                     {
-                        **card,
+                        **card_record,
                         "delivery_status": "FAILED",
                         "delivery_error": f"HTTP {code}" if code else type(exc).__name__,
                         "blocked": code in {400, 403},
@@ -455,24 +700,27 @@ class DeliveryService:
                     },
                     immutable=True,
                 )
-                failure = DeliveryError(
-                    "Ops card delivery failed", getattr(exc, "retry_after", 2 ** (attempt - 1))
-                )
+                failure = DeliveryError("Ops card delivery failed", delivery_retry_delay(exc, attempt))
                 failure.terminal = terminal
                 return failure
             stamp = collection_clock(utcnow())
+            confirmed_card = {
+                name: value
+                for name, value in card_record.items()
+                if name not in timestamp_owned_fields("updated_at") and name != "adopted_clock_basis"
+            }
             async with self.repo.transaction():
                 await self.repo.put(
                     "out.ops_cards",
                     key,
                     {
-                        **card,
+                        **confirmed_card,
                         "message_ref": message_ref,
                         "render_digest": digest,
-                        "rendered_html": result["html"],
+                        "rendered_html": result.html,
                         "covered_notice_ids": covered,
-                        "outcome": result["code"],
-                        "notice_id": data["history"][-1]["notice_id"],
+                        "outcome": result.code,
+                        "notice_id": data.history[-1].notice_id,
                         "delivery_status": "SENT",
                         "delivery_error": None,
                         **stamp.fields("updated_at"),
@@ -498,9 +746,21 @@ class DeliveryService:
             await self._enter_delivery_lock(locks, "deliver:" + subject + ":" + channel)
             filters = delivery_filters(payload)
             ledger = await self._all("out.deliveries", filters=filters)
-            if any(row["status"] == "SENT" or row.get("terminal") for row in ledger):
+            phases = [
+                DeliveryLedgerPhase.model_validate(
+                    {name: row[name] for name in DeliveryLedgerPhase.model_fields if name in row}
+                )
+                for row in ledger
+            ]
+            if any(row.status == "SENT" or row.terminal is True for row in phases):
                 return None
-            attempt = max((r["attempt"] for r in ledger), default=0) + 1
+            attempt = (
+                max(
+                    (DeliveryAttemptOrdinal.from_record(row).attempt for row in ledger),
+                    default=0,
+                )
+                + 1
+            )
             if attempt > 5:
                 failure = DeliveryError("Delivery exhausted five attempts")
                 failure.terminal = True
@@ -515,37 +775,45 @@ class DeliveryService:
                 record = rows[0] if rows else None
             if record is None:
                 raise ValueError("Delivery subject does not exist")
-            if not notice:
-                prior = await self._all("out.alerts", filters={"event_id": record["event_id"]})
-                if record.get("kind") in {"UPDATE", "PRELIMINARY"} and any(
-                    row["alert_id"] == record["alert_id"] and row["version"] > record["version"]
-                    for row in prior
+            card = CardDeliveryHeader.from_record(record) if isinstance(payload, AlertDeliveryJob) else None
+            if card is not None:
+                if (
+                    not isinstance(payload, AlertDeliveryJob)
+                    or card.alert_id != payload.alert_id
+                    or card.version != payload.version
+                ):
+                    raise ValueError("Delivery publication differs from its actual queue target")
+                prior = await self._all("out.alerts", filters={"event_id": card.event_id})
+                revisions = [CardDeliveryHeader.from_record(row) for row in prior]
+                if card.kind in {"UPDATE", "PRELIMINARY"} and any(
+                    row.alert_id == card.alert_id and row.version > card.version for row in revisions
                 ):
                     return None
-                ids = {r["alert_id"] for r in prior}
-                sent = []
+                ids = {row.alert_id for row in revisions}
+                sent: list[SentDeliveryReceipt] = []
                 for alert_id in ids:
                     sent.extend(
-                        await self._all(
+                        SentDeliveryReceipt.from_record(row)
+                        for row in await self._all(
                             "out.deliveries",
                             filters={"alert_id": alert_id, "channel": channel, "status": "SENT"},
                         )
                     )
 
                 boundaries = []
-                if record.get("delivery_not_before"):
+                if card.delivery_not_before:
                     boundaries.append(propagate_timestamp(record, "delivery_not_before"))
-                if (
-                    record.get("kind") in {"UPDATE", "PRELIMINARY"}
-                    and not record.get("delivery_immediate", False)
-                    and sent
-                ):
-                    latest_sent = max(sent, key=lambda row: parse_time(row["at"]))
-                    limits = ((record.get("card_struct") or {}).get("event") or {}).get("thresholds") or {}
+                if card.kind in {"UPDATE", "PRELIMINARY"} and not card.delivery_immediate and sent:
+                    latest_sent = max(sent, key=lambda row: delivery_moment(row.at))
+                    limits = FrozenDeliveryInterval.from_card(record)
                     boundaries.append(
                         offset_schedule(
-                            propagate_timestamp(latest_sent, "at"),
-                            timedelta(seconds=limits.get("update_rate_limit_s", 900)),
+                            latest_sent.at,
+                            timedelta(
+                                seconds=limits.update_rate_limit_s
+                                if isinstance(limits, FrozenDeliveryInterval)
+                                else 900
+                            ),
                         )
                     )
                 if boundaries:
@@ -555,21 +823,34 @@ class DeliveryService:
             chat = self.settings.telegram_ops_chat if notice else self.settings.telegram_alerts_chat
             if not self.settings.telegram_token or not chat:
                 raise ValueError("Telegram token and destination must be configured")
-            rich_message = record.get("rich_message") if not notice else None
+            raw_rich_message = record.get("rich_message") if card is not None else None
+            rich_message = RichMessage.model_validate(raw_rich_message) if raw_rich_message else None
             method = "sendRichMessage" if rich_message else "sendMessage"
-            body = {"chat_id": chat}
+            body: dict[str, JsonValue] = {"chat_id": chat}
             if rich_message:
-                body["rich_message"] = rich_message
+                body["rich_message"] = rich_message.telegram_payload()
             else:
                 body.update(
-                    text=html.escape(record["text"]) if notice else telegram_card_html(record["card_text"]),
+                    text=html.escape(
+                        DeliveryText.model_validate(
+                            {name: record[name] for name in ("text",) if name in record}
+                        ).text
+                    )
+                    if card is None
+                    else telegram_card_html(
+                        CardDeliveryText.model_validate(
+                            {name: record[name] for name in ("card_text",) if name in record}
+                        ).card_text
+                    ),
                     parse_mode="HTML",
                     link_preview_options={"is_disabled": True},
                 )
-            if not notice:
-                sent = sorted(sent, key=lambda r: r["at"])
+            reply_ref: str | None = None
+            if card is not None:
+                sent = sorted(sent, key=lambda row: delivery_moment(row.at))
                 if sent:
-                    body["reply_parameters"] = {"message_id": int(sent[0]["message_ref"])}
+                    reply_ref = str(sent[0].message_ref)
+                    body["reply_parameters"] = {"message_id": int(sent[0].message_ref)}
             attempted = collection_clock(utcnow())
             source_times = {
                 key: value
@@ -577,16 +858,14 @@ class DeliveryService:
                 if field in record
                 for key, value in propagate_timestamp(record, field).fields(field).items()
             }
-            transition = {
+            transition: dict[str, JsonValue] = {
                 **filters,
                 **source_times,
                 "attempt": attempt,
                 **attempted.fields("at"),
                 **attempted.fields("attempted_at"),
                 "status": "GENERATED",
-                "request_reply_to_message_ref": (
-                    str(body["reply_parameters"]["message_id"]) if body.get("reply_parameters") else None
-                ),
+                "request_reply_to_message_ref": (reply_ref),
             }
             await self.repo.put("out.deliveries", new_id("delivery"), transition, immutable=True)
             response_status = None
@@ -595,19 +874,28 @@ class DeliveryService:
                     f"https://api.telegram.org/bot{self.settings.telegram_token}/{method}", json=body
                 )
                 response_status = response.status_code
-                data = response.json()
-                if response.status_code != 200 or not data.get("ok"):
-                    delay = max(2 ** (attempt - 1), data.get("parameters", {}).get("retry_after", 0))
+                observed = decode_unique_json(response.content)
+                if isinstance(observed, dict) and observed.get("ok") is False:
+                    rejected = DeliveryTelegramRejection.model_validate(
+                        {
+                            name: observed[name]
+                            for name in ("ok", "parameters", "description")
+                            if name in observed
+                        }
+                    )
+                    delay = 2 ** (attempt - 1)
+                    if rejected.parameters is not None and rejected.parameters.retry_after is not None:
+                        delay = max(delay, rejected.parameters.retry_after)
                     raise DeliveryError(
                         f"Telegram API rejected delivery (HTTP {response.status_code})", delay
                     )
-                message_ref = str(data["result"]["message_id"])
-                telegram_date = data["result"].get("date")
-                returned_reply = data["result"].get("reply_to_message") or {}
+                receipt = DeliveryTelegramReceipt.from_result(
+                    response_result(response.content, method=method, status=response.status_code)
+                )
+                message_ref = str(receipt.message_id)
+                telegram_date = receipt.date
                 response_reply_to_message_ref = (
-                    str(returned_reply["message_id"])
-                    if returned_reply.get("message_id") is not None
-                    else None
+                    str(receipt.reply_to_message.message_id) if receipt.reply_to_message is not None else None
                 )
             except Exception as exc:
                 failed_at = collection_clock(utcnow())
@@ -624,14 +912,12 @@ class DeliveryService:
                     },
                     immutable=True,
                 )
-                failure = DeliveryError(
-                    "Telegram delivery failed", getattr(exc, "retry_after", 2 ** (attempt - 1))
-                )
+                failure = DeliveryError("Telegram delivery failed", delivery_retry_delay(exc, attempt))
                 failure.terminal = attempt == 5
                 return failure
             async with (
                 self.repo.transaction(),
-                self.repo.lock("event:" + record["event_id"] if not notice else "notice:" + subject),
+                self.repo.lock("event:" + card.event_id if card is not None else "notice:" + subject),
             ):
                 sent_at = collection_clock(utcnow())
                 await self.repo.put(
@@ -649,157 +935,175 @@ class DeliveryService:
                     },
                     immutable=True,
                 )
-                if not notice:
+                if card is not None:
                     await event_progress(
                         self.repo,
                         self.settings,
-                        record["event_id"],
+                        card.event_id,
                         "ALERT_SENT",
                         f"Карточка {subject}; Telegram message_id={message_ref}",
                         key=subject,
                     )
-                    if record.get("kind") == "PRELIMINARY":
-                        event = await self.repo.get("evt.events", record["event_id"])
-                        if (
-                            event
-                            and event.get("lifecycle") == "INVALIDATED"
-                            and record.get("terminal_correction")
-                        ):
+                    if card.kind == "PRELIMINARY":
+                        event = await self.repo.get("evt.events", card.event_id)
+                        if event and event.get("lifecycle") == "INVALIDATED" and card.terminal_correction:
                             await self._finalize_invalidated(event, record)
                         return None
                     await self._activate_calls(record, sent_at)
-                    event = await self.repo.get("evt.events", record["event_id"])
-                    if event and not event.get("first_card_delivered_at"):
-                        delivered = utcnow()
-                        event.update(
-                            **collection_clock(delivered).fields("first_card_delivered_at"),
-                            first_card_latency_s=(
-                                delivered - parse_time(event["known_to_us_at"])
-                            ).total_seconds()
-                            if event.get("known_to_us_at")
-                            else None,
-                        )
-                        assessment = (record.get("card_struct") or {}).get("assessment") or {}
-                        if (
-                            assessment.get("class") == "STRUCTURAL_SHOCK"
-                            and event.get("known_to_us_at")
-                            and not event.get("first_card_deadline")
-                        ):
+                    event = await self.repo.get("evt.events", card.event_id)
+                    if event is not None:
+                        current = DeliveredEventView.from_record(event, event_id=card.event_id)
+                        if current.first_card_delivered_at is None:
+                            delivered = utcnow()
                             event.update(
-                                offset_schedule(
+                                **collection_clock(delivered).fields("first_card_delivered_at"),
+                                first_card_latency_s=(
+                                    delivered - parse_time(current.known_to_us_at)
+                                ).total_seconds()
+                                if current.known_to_us_at is not None
+                                else None,
+                            )
+                            assessment = FrozenDeliveryAssessment.from_card(record)
+                            deadline = current.first_card_deadline
+                            if (
+                                assessment.classification == "STRUCTURAL_SHOCK"
+                                and current.known_to_us_at is not None
+                                and deadline is None
+                            ):
+                                deadline_stamp = offset_schedule(
                                     propagate_timestamp(event, "known_to_us_at"), timedelta(minutes=3)
-                                ).fields("first_card_deadline")
+                                )
+                                deadline = deadline_stamp.value
+                                event.update(deadline_stamp.fields("first_card_deadline"))
+                            if deadline is not None:
+                                event["first_card_deadline_met"] = delivered <= parse_time(deadline)
+                            await self.repo.put("evt.events", current.event_id, event)
+                        if current.lifecycle in ("ANALYZING", "ALERTED"):
+                            await self.repo.put(
+                                "evt.events",
+                                current.event_id,
+                                {
+                                    **event,
+                                    "lifecycle": "ALERTED",
+                                    **collection_clock(utcnow()).fields("alerted_at"),
+                                },
                             )
-                        if event.get("first_card_deadline"):
-                            event["first_card_deadline_met"] = delivered <= parse_time(
-                                event["first_card_deadline"]
+                        if current.lifecycle == "INVALIDATED" and card.terminal_correction:
+                            open_calls = await self._all(
+                                "ana.calls", filters={"event_id": current.event_id, "status": "OPEN"}
                             )
-                        await self.repo.put("evt.events", event["event_id"], event)
-                    if event and event.get("lifecycle") in ("ANALYZING", "ALERTED"):
-                        await self.repo.put(
-                            "evt.events",
-                            event["event_id"],
-                            {
-                                **event,
-                                "lifecycle": "ALERTED",
-                                **collection_clock(utcnow()).fields("alerted_at"),
-                            },
-                        )
-                    if (
-                        event
-                        and event.get("lifecycle") == "INVALIDATED"
-                        and record.get("terminal_correction")
-                    ):
-                        open_calls = await self._all(
-                            "ana.calls", filters={"event_id": event["event_id"], "status": "OPEN"}
-                        )
-                        if not open_calls:
-                            await self._finalize_invalidated(event, record)
-                if not notice and record.get("milestone_resolution_id"):
-                    event = await self.repo.get("evt.events", record["event_id"])
-                    if event and event.get("milestone_resolution_id") == record["milestone_resolution_id"]:
-                        await self.repo.put(
-                            "evt.events", event["event_id"], {**event, "milestone_resolved": False}
-                        )
-                if not notice:
-                    expired_ids = (
-                        record.get("expired_call_ids")
-                        or record.get("call_expired_ids")
-                        or ((record.get("card_struct") or {}).get("event") or {}).get("call_expired_ids")
-                        or []
-                    )
+                            if not open_calls:
+                                await self._finalize_invalidated(event, record)
+                if card is not None and card.milestone_resolution_id:
+                    event = await self.repo.get("evt.events", card.event_id)
+                    if event is not None:
+                        current = DeliveredEventView.from_record(event, event_id=card.event_id)
+                        if current.milestone_resolution_id == card.milestone_resolution_id:
+                            await self.repo.put(
+                                "evt.events", current.event_id, {**event, "milestone_resolved": False}
+                            )
+                if card is not None:
+                    expired_ids = DeliveryExpiryReferences.from_card(record).delivered_ids()
                     if expired_ids:
-                        event = await self.repo.get("evt.events", record["event_id"])
-                        remaining = sorted(set(event.get("call_expired_ids", [])) - set(expired_ids))
+                        event = await self.repo.get("evt.events", card.event_id)
+                        if event is None:
+                            raise ValueError("Delivered expiry notice requires its actual event")
+                        current = DeliveredEventView.from_record(event, event_id=card.event_id)
+                        if current.call_expired_ids is None:
+                            raise ValueError(
+                                "Delivered expiry notice requires its recorded pending call identities"
+                            )
+                        remaining = sorted(set(current.call_expired_ids) - set(expired_ids))
+                        previously_recorded = (
+                            current.expiry_notices_sent if current.expiry_notices_sent is not None else []
+                        )
+                        remaining_wire: list[JsonValue] = list(remaining)
+                        delivered_wire: list[JsonValue] = [
+                            value for value in sorted(set(previously_recorded) | set(expired_ids))
+                        ]
                         await self.repo.put(
                             "evt.events",
-                            event["event_id"],
+                            current.event_id,
                             {
                                 **event,
                                 "call_expired": bool(remaining),
-                                "call_expired_ids": remaining,
-                                "expiry_notices_sent": sorted(
-                                    set(event.get("expiry_notices_sent", [])) | set(expired_ids)
-                                ),
+                                "call_expired_ids": remaining_wire,
+                                "expiry_notices_sent": delivered_wire,
                                 **collection_clock(utcnow()).fields("last_expiry_notice_at"),
                             },
                         )
 
         return None
 
-    async def _finalize_invalidated(self, event, record):
+    async def _finalize_invalidated(
+        self, event: Mapping[str, JsonValue], record: Mapping[str, JsonValue]
+    ) -> None:
         """The delivered denial correction lets the invalidated event's session finish."""
+        correction = DeliveredCorrection.from_record(record)
+        owner = InvalidatedDeliveryEvent.model_validate(
+            {name: event[name] for name in ("event_id", "lifecycle") if name in event}
+        )
+        if owner.event_id != correction.event_id:
+            raise ValueError("Delivered correction does not belong to the invalidated event")
         await self.repo.put(
             "evt.events",
-            event["event_id"],
+            owner.event_id,
             {
                 **event,
                 **collection_clock(utcnow()).fields("session_finalized_at"),
-                "terminal_alert_id": record["alert_id"],
-                "terminal_alert_version": record["version"],
+                "terminal_alert_id": correction.alert_id,
+                "terminal_alert_version": correction.version,
             },
         )
 
-    async def _activate_calls(self, alert, sent_at=None):
-        sent_at = sent_at or collection_clock(utcnow())
-        for dec_id in alert.get("decisions", []):
-            decision = await self.repo.get("ana.decisions", dec_id)
-            if not decision:
+    async def _activate_calls(self, record: Mapping[str, JsonValue], sent_at: Timestamp) -> None:
+        alert = DeliveredCardActivation.from_record(record)
+        delivery_moment(sent_at)
+        for dec_id in alert.decisions:
+            stored = await self.repo.get("ana.decisions", dec_id)
+            if stored is None:
                 raise ValueError("Delivered card references missing decision")
-            if decision.get("tracking_ended") or decision.get("actionable") is False:
+            decision = call_activation_decision(stored)
+            if decision is None:
                 continue
             calls = await self._all(
                 "ana.calls",
-                filters={"event_id": alert["event_id"], "token_id": decision["token_id"], "status": "OPEN"},
+                filters={"event_id": alert.event_id, "token_id": decision.token_id, "status": "OPEN"},
             )
-            if decision["action"] == "START" and not calls:
-                entry = decision.get("entry_ref_price")
-                invalidation = decision.get("invalidation_price")
-                if entry is None or invalidation is None:
-                    raise ValueError(
-                        "START decision must freeze entry_ref_price and invalidation_price before delivery"
-                    )
+            if isinstance(decision, StartCallDecision) and not calls:
+                prices = StartCallPrices.model_validate(
+                    {
+                        name: stored[name]
+                        for name in ("entry_ref_price", "invalidation_price")
+                        if name in stored
+                    }
+                )
                 call_id = new_id("call")
                 await self.repo.put(
                     "ana.calls",
                     call_id,
                     {
                         "call_id": call_id,
-                        "event_id": alert["event_id"],
-                        "token_id": decision["token_id"],
-                        "opened_by_alert": alert["alert_id"],
-                        "opened_by_version": alert["version"],
+                        "event_id": alert.event_id,
+                        "token_id": decision.token_id,
+                        "opened_by_alert": alert.alert_id,
+                        "opened_by_version": alert.version,
                         **sent_at.fields("opened_at"),
-                        **propagate_timestamp(alert, "generated_at").fields("alert_generated_at"),
-                        "entry_ref_price": entry,
-                        "invalidation_price": invalidation,
+                        **propagate_timestamp(record, "generated_at").fields("alert_generated_at"),
+                        "entry_ref_price": prices.entry_ref_price,
+                        "invalidation_price": prices.invalidation_price,
                         "status": "OPEN",
                     },
                 )
-            elif decision["action"] == "EXIT":
+            elif isinstance(decision, ExitCallDecision):
                 for call in calls:
+                    owner = OpenDeliveryCall.model_validate(
+                        {name: call[name] for name in OpenDeliveryCall.model_fields if name in call}
+                    )
+                    if owner.event_id != alert.event_id or owner.token_id != decision.token_id:
+                        raise ValueError("Delivered EXIT call differs from its requested event and token")
                     await self.repo.put(
                         "ana.calls",
-                        call["call_id"],
+                        owner.call_id,
                         {**call, "status": "CLOSED", "closed_by": "EXIT", **sent_at.fields("closed_at")},
                     )

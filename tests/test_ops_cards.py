@@ -81,11 +81,11 @@ async def test_robinhood_completion_without_assessment_reports_the_missing_resul
     repo = MemoryRepository()
     item, _ = await analysis(repo, settings)
     card = render(await snapshot(repo, item["item_id"]))
-    assert card["code"] == "INCOMPLETE"
-    assert "Анализ не завершён" in card["text"]
-    assert "Не выполнено: оценка значимости события" in card["text"]
-    assert "Alerts: публикация не запрошена" in card["text"]
-    assert "Robinhood получила разрешение DFSA" in card["text"]
+    assert card.code == "INCOMPLETE"
+    assert "Анализ не завершён" in card.text
+    assert "Не выполнено: оценка значимости события" in card.text
+    assert "Alerts: публикация не запрошена" in card.text
+    assert "Robinhood получила разрешение DFSA" in card.text
     for unwanted in (
         "это не подтверждение",
         "по политике источника",
@@ -94,8 +94,8 @@ async def test_robinhood_completion_without_assessment_reports_the_missing_resul
         "EVT-private",
         "A long quotation",
     ):
-        assert unwanted not in card["text"]
-    assert len(card["text"]) < 800
+        assert unwanted not in card.text
+    assert len(card.text) < 800
 
 
 @pytest.mark.parametrize("klass", ["LOW", "MATERIAL"])
@@ -103,10 +103,10 @@ async def test_completion_preserves_the_actual_assessment_outcome(settings, klas
     repo = MemoryRepository()
     item, _ = await analysis(repo, settings, klass=klass)
     card = render(await snapshot(repo, item["item_id"]))
-    assert card["code"] == "BELOW_MAJOR"
-    assert "Ниже порога Alerts" in card["text"] and klass in card["text"]
-    assert "не отправлено — ниже порога MAJOR" in card["text"]
-    assert "завершил обработку" not in card["text"]
+    assert card.code == "BELOW_MAJOR"
+    assert "Ниже порога Alerts" in card.text and klass in card.text
+    assert "не отправлено — ниже порога MAJOR" in card.text
+    assert "завершил обработку" not in card.text
 
 
 async def test_completed_major_analysis_names_missing_decisions(settings) -> None:
@@ -119,10 +119,10 @@ async def test_completed_major_analysis_names_missing_decisions(settings) -> Non
     )
     await repo.put("ana.market_truth", "truth", {"event_id": event["event_id"], "token_id": "robinhood:HOOD"})
     card = render(await snapshot(repo, item["item_id"]))
-    assert card["code"] == "INCOMPLETE"
-    assert "данные: 1/1 токенов; решения: 0/1" in card["text"]
-    assert "Не выполнено: решение по токенам: HOOD" in card["text"]
-    assert "robinhood:HOOD" not in card["text"]
+    assert card.code == "INCOMPLETE"
+    assert "данные: 1/1 токенов; решения: 0/1" in card.text
+    assert "Не выполнено: решение по токенам: HOOD" in card.text
+    assert "robinhood:HOOD" not in card.text
 
 
 async def test_running_major_analysis_shows_current_work_instead_of_completion(settings) -> None:
@@ -134,8 +134,8 @@ async def test_running_major_analysis_shows_current_work_instead_of_completion(s
         {"event_id": event["event_id"], "map_version": 1, "analysis_set": ["world:WLD"]},
     )
     card = render(await snapshot(repo, item["item_id"]))
-    assert card["status"] == "Ожидает рыночного анализа"
-    assert "данные: 0/1 токенов; решения: 0/1" in card["text"]
+    assert card.status == "Ожидает рыночного анализа"
+    assert "данные: 0/1 токенов; решения: 0/1" in card.text
 
 
 async def test_no_observation_is_missing_agent_decision_not_rejection(settings) -> None:
@@ -147,9 +147,9 @@ async def test_no_observation_is_missing_agent_decision_not_rejection(settings) 
         repo, settings, item["item_id"], "AGENT_REJECTED", "NATIVE_TURN_COMPLETED_WITHOUT_OBSERVATION"
     )
     card = render(await snapshot(repo, item["item_id"]))
-    assert card["status"] == "Агент не оставил решения"
-    assert "Агент не записал ни событие, ни решение об отклонении" in card["text"]
-    assert "Отклонено агентом" not in card["text"]
+    assert card.status == "Агент не оставил решения"
+    assert "Агент не записал ни событие, ни решение об отклонении" in card.text
+    assert "Отклонено агентом" not in card.text
 
 
 async def test_legacy_certainty_reason_is_not_presented_as_a_rejection_explanation(settings) -> None:
@@ -157,9 +157,9 @@ async def test_legacy_certainty_reason_is_not_presented_as_a_rejection_explanati
     item = await source(repo, extraction_status="SKIPPED", extraction_reason="Официальный источник")
     await item_progress(repo, settings, item["item_id"], "AGENT_REJECTED", "Официальный источник")
     card = render(await snapshot(repo, item["item_id"]))
-    assert card["code"] == "AGENT_REJECTED"
-    assert "Причина отказа не записана" in card["text"]
-    assert "Официальный источник" not in card["text"]
+    assert card.code == "AGENT_REJECTED"
+    assert "Причина отказа не записана" in card.text
+    assert "Официальный источник" not in card.text
 
 
 async def test_jev_rejection_shows_score_and_original_threshold(settings) -> None:
@@ -169,9 +169,9 @@ async def test_jev_rejection_shows_score_and_original_threshold(settings) -> Non
     )
     await item_progress(repo, settings, item["item_id"], "JEV_REJECTED")
     card = render(await snapshot(repo, item["item_id"]))
-    assert card["code"] == "JEV_REJECTED"
-    assert "релевантность 12%, порог 70%" in card["text"]
-    assert "Агент: ещё не получил материал" in card["text"]
+    assert card.code == "JEV_REJECTED"
+    assert "релевантность 12%, порог 70%" in card.text
+    assert "Агент: ещё не получил материал" in card.text
 
 
 async def test_instrument_change_is_readable_without_raw_json(settings) -> None:
@@ -187,9 +187,9 @@ async def test_instrument_change_is_readable_without_raw_json(settings) -> None:
     )
     await item_progress(repo, settings, item["item_id"], "RECEIVED")
     card = render(await snapshot(repo, item["item_id"]))
-    assert "OKX · XGS-USDT · спот" in card["text"]
-    assert "статус: до открытия торгов → торги открыты" in card["text"]
-    assert not any(value in card["text"] for value in ('{"', '"before"', '"after"', '"status"'))
+    assert "OKX · XGS-USDT · спот" in card.text
+    assert "статус: до открытия торгов → торги открыты" in card.text
+    assert not any(value in card.text for value in ('{"', '"before"', '"after"', '"status"'))
 
 
 async def test_snapshot_markdown_is_cleaned_and_title_is_not_repeated(settings) -> None:
@@ -204,10 +204,10 @@ async def test_snapshot_markdown_is_cleaned_and_title_is_not_repeated(settings) 
     )
     await item_progress(repo, settings, item["item_id"], "RECEIVED")
     card = render(await snapshot(repo, item["item_id"]))
-    assert card["text"].count(title) == 1
-    assert "This proposal adds mWIN as collateral in Aave Horizon." in card["text"]
-    assert "**" not in card["text"] and "##" not in card["text"]
-    assert "Motivation and source text" not in card["text"]
+    assert card.text.count(title) == 1
+    assert "This proposal adds mWIN as collateral in Aave Horizon." in card.text
+    assert "**" not in card.text and "##" not in card.text
+    assert "Motivation and source text" not in card.text
 
 
 async def test_delivery_receipt_beats_later_generic_completion(settings) -> None:
@@ -240,9 +240,9 @@ async def test_delivery_receipt_beats_later_generic_completion(settings) -> None
     )
     await item_progress(repo, settings, item["item_id"], "AGENT_COMPLETED", key="later")
     card = render(await snapshot(repo, item["item_id"]))
-    assert card["code"] == "ALERT_SENT"
-    assert "Alerts: доставлено" in card["text"]
-    assert "https://t.me/c/456/42" in card["html"]
+    assert card.code == "ALERT_SENT"
+    assert "Alerts: доставлено" in card.text
+    assert "https://t.me/c/456/42" in card.html
 
 
 async def test_publication_refusal_contains_exact_missing_analysis(settings) -> None:
@@ -258,8 +258,8 @@ async def test_publication_refusal_contains_exact_missing_analysis(settings) -> 
         details=ProgressDetails(missing_market_truth=["world:WLD"], missing_decisions=["world:WLD"]),
     )
     card = render(await snapshot(repo, item["item_id"]))
-    assert card["code"] == "PUBLICATION_BLOCKED"
-    assert "рыночные данные: WLD" in card["text"] and "решения: WLD" in card["text"]
+    assert card.code == "PUBLICATION_BLOCKED"
+    assert "рыночные данные: WLD" in card.text and "решения: WLD" in card.text
 
 
 @pytest.mark.parametrize(
@@ -412,8 +412,8 @@ async def test_unicode_markdown_and_source_html_fit_telegram_without_leaking_mar
     item = await source(repo, title="**A <b>title</b> & text**", text="😀" * 5000)
     await item_progress(repo, settings, item["item_id"], "RECEIVED")
     card = render(await snapshot(repo, item["item_id"]))
-    assert "**" not in card["html"] and "&amp;" in card["html"]
-    assert len(card["text"].encode("utf-16-le")) <= 4096 * 2
+    assert "**" not in card.html and "&amp;" in card.html
+    assert len(card.text.encode("utf-16-le")) <= 4096 * 2
 
 
 async def test_latest_refused_update_is_not_presented_as_a_new_success(settings) -> None:
@@ -454,10 +454,10 @@ async def test_latest_refused_update_is_not_presented_as_a_new_success(settings)
         event_id=event["event_id"],
     )
     card = render(await snapshot(repo, item["item_id"]))
-    assert card["code"] == "PUBLICATION_BLOCKED"
-    assert "Обновление не опубликовано" in card["text"]
-    assert "Нет существенных изменений" in card["text"]
-    assert "Предыдущая карточка в Alerts" in card["text"]
+    assert card.code == "PUBLICATION_BLOCKED"
+    assert "Обновление не опубликовано" in card.text
+    assert "Нет существенных изменений" in card.text
+    assert "Предыдущая карточка в Alerts" in card.text
 
 
 async def test_final_class_cap_is_explained_before_positive_agent_rationales(settings) -> None:
@@ -474,9 +474,9 @@ async def test_final_class_cap_is_explained_before_positive_agent_rationales(set
         },
     )
     card = render(await snapshot(repo, item["item_id"]))
-    assert "Событие не затрагивает токены из реестра Tank" in card["text"]
-    assert "NO_UNIVERSE_CONCERN" not in card["text"]
-    assert "Для публикации требуется" not in card["text"]
+    assert "Событие не затрагивает токены из реестра Tank" in card.text
+    assert "NO_UNIVERSE_CONCERN" not in card.text
+    assert "Для публикации требуется" not in card.text
 
 
 async def test_rate_limit_defers_other_items_without_extra_http_attempts(settings) -> None:
@@ -558,8 +558,8 @@ async def test_previous_alert_does_not_hide_new_incomplete_analysis(settings, de
             immutable=True,
         )
     card = render(await snapshot(repo, item["item_id"]))
-    assert card["code"] == "INCOMPLETE"
-    assert "Не выполнено: определение затронутых токенов" in card["text"]
+    assert card.code == "INCOMPLETE"
+    assert "Не выполнено: определение затронутых токенов" in card.text
 
 
 async def test_new_assessment_replaces_an_old_publication_refusal(settings) -> None:
@@ -579,9 +579,9 @@ async def test_new_assessment_replaces_an_old_publication_refusal(settings) -> N
         },
     )
     card = render(await snapshot(repo, item["item_id"]))
-    assert card["code"] == "ANALYZING"
-    assert card["status"] == "Ожидает определения затронутых токенов"
-    assert "Значимость ниже порога" not in card["text"]
+    assert card.code == "ANALYZING"
+    assert card.status == "Ожидает определения затронутых токенов"
+    assert "Значимость ниже порога" not in card.text
 
 
 async def test_followup_job_is_ready_without_another_initial_batch_delay(settings) -> None:
@@ -628,9 +628,9 @@ async def test_later_analysis_clears_an_obsolete_missing_data_refusal(settings, 
     if update_kind == "notice":
         await item_progress(repo, settings, item["item_id"], "ANALYSIS_UPDATED", event_id=event["event_id"])
     card = render(await snapshot(repo, item["item_id"]))
-    assert card["status"] == "Ожидает решения о публикации"
-    assert "данные: 1/1 токенов; решения: 1/1" in card["text"]
-    assert "Не завершён анализ" not in card["text"]
+    assert card.status == "Ожидает решения о публикации"
+    assert "данные: 1/1 токенов; решения: 1/1" in card.text
+    assert "Не завершён анализ" not in card.text
 
 
 @pytest.mark.parametrize("same_alert_id", [False, True])
@@ -692,9 +692,9 @@ async def test_latest_delivery_state_keeps_link_to_earlier_success(settings, sam
             immutable=True,
         )
     card = render(await snapshot(repo, item["item_id"]))
-    assert card["code"] == ("ALERT_FAILED" if failed else "ALERT_QUEUED")
-    assert "Предыдущая карточка в Alerts" in card["text"]
-    assert "https://t.me/c/456/42" in card["html"]
+    assert card.code == ("ALERT_FAILED" if failed else "ALERT_QUEUED")
+    assert "Предыдущая карточка в Alerts" in card.text
+    assert "https://t.me/c/456/42" in card.html
 
 
 async def test_historical_jev_scores_are_not_relabelled_as_decision_1(settings: SimpleNamespace) -> None:
@@ -712,5 +712,5 @@ async def test_historical_jev_scores_are_not_relabelled_as_decision_1(settings: 
     )
     await item_progress(repo, settings, item["item_id"], "JEV_REJECTED")
     card = render(await snapshot(repo, item["item_id"]))
-    assert "Decision-1" not in card["text"]
-    assert "релевантность 12%, порог 70%" in card["text"]
+    assert "Decision-1" not in card.text
+    assert "релевантность 12%, порог 70%" in card.text
