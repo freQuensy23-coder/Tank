@@ -92,7 +92,7 @@ def test_identical_overlapping_read_aliases_keep_both_records_and_one_determinis
     assert result.estimate.observation.evidence == owned.source.observations[0].evidence
 
 
-def test_latest_unusable_estimate_is_preserved_instead_of_silently_selecting_an_older_rate() -> None:
+def test_latest_unusable_raw_rate_is_preserved_instead_of_silently_selecting_an_older_source() -> None:
     older, latest = funding_record_fixture("CURRENT_ESTIMATE"), funding_record_fixture("CURRENT_ESTIMATE")
     older["as_of"] = "2026-10-16T10:00:00Z"
     latest.update(as_of="2026-10-16T11:00:00Z", rate="NaN")
