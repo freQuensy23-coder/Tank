@@ -69,7 +69,7 @@ def delivery_retry_delay(error: Exception, attempt: int) -> float:
         return error.retry_after
     if isinstance(error, TelegramResponseError) and error.retry_after is not None:
         return error.retry_after
-    return 2 ** (attempt - 1)
+    return float(1 << (attempt - 1))
 
 
 class DocumentDeliveryWork(DomainModel):
