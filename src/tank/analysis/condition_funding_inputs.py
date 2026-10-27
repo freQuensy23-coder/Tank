@@ -5,8 +5,9 @@ from typing import Literal, Self
 
 from pydantic import Field, JsonValue, model_validator
 
-from tank.analysis.condition_derivative_inputs import DerivativeInstrument, ReportedDerivativeNumber
+from tank.analysis.condition_derivative_inputs import DerivativeInstrument
 from tank.contracts import DomainModel
+from tank.contracts.derivative_values import ReportedDerivativeNumber
 from tank.contracts.json import decode_unique_json
 from tank.time_precision import Timestamp, propagate_timestamp
 from tank.util import parse_iso_time, sha256
