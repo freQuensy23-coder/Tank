@@ -1,6 +1,6 @@
 """Recorded funding units and requested current calculations preserve independent facts."""
 
-from decimal import ROUND_UP, Decimal, Inexact, localcontext
+from decimal import MAX_EMAX, ROUND_UP, Decimal, Inexact, localcontext
 
 import pytest
 from funding_input_fixtures import funding_record_fixture, funding_scope_fixture
@@ -167,3 +167,14 @@ def test_public_pure_normalization_refuses_copied_bad_operands_and_changed_resul
     result = normalize_funding_rate(operands)
     with pytest.raises(ValidationError, match="actual rate and positive duration"):
         FundingRateCalculation.model_validate(result.model_copy(update={"value": Decimal(1)}))
+
+
+def test_known_finite_operands_preserve_nonestimable_result_without_a_missing_data_cause() -> None:
+    result = normalize_funding_rate(
+        FundingRateOperands(rate=Decimal(f"1E{MAX_EMAX}"), interval_h=Decimal(f"1E-{MAX_EMAX}"))
+    )
+    assert result.operands.rate.is_finite()
+    assert result.operands.interval_h.is_finite()
+    assert result.operands.interval_h > 0
+    assert result.value is None
+    assert result.reason == "NOT_ESTIMABLE"
