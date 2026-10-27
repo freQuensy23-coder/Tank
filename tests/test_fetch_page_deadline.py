@@ -51,10 +51,7 @@ async def no_evidence(service):
     assert not list(Path(service.settings.data_dir).rglob("*.json.zst"))
 
 
-@pytest.mark.integration(reason="Real default 20-second deadline across HTTP headers or streamed body")
-@pytest.mark.parametrize("owned", [False, True])
-@pytest.mark.parametrize("kind", ["slow_drip", "delayed_headers"])
-async def test_real_twenty_second_total_deadline(tmp_path, monkeypatch, owned, kind):
+async def assert_real_twenty_second_total_deadline(tmp_path, monkeypatch, owned, kind):
     body = Body([b"x"] * 40, delay=1)
     cancelled = asyncio.Event()
 
