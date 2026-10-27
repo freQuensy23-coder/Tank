@@ -14,6 +14,7 @@ from runtime_public_fixtures import public_runtime
 from test_storage import repo as repo
 
 from tank.contracts.reaction_demands import ReactionDemandLedger
+from tank.market.service import MarketService
 from tank.models import Record
 from tank.reaction_demands import CHECKPOINT_KEY, ReactionDemandCoordinator
 from tank.storage import StorageBackend
@@ -112,7 +113,9 @@ async def test_actual_source_batch_retains_skipped_change_and_empty_batch_resume
         job_id = job["job_id"]
         assert isinstance(job_id, str)
         await repo.put("ops.jobs", job_id, job | {"status": "FAILED"})
-        coordinator = ReactionDemandCoordinator(repo, runtime.market)
+        market = runtime.market
+        assert isinstance(market, MarketService)
+        coordinator = ReactionDemandCoordinator(repo, market)
         cursor = await coordinator.snapshot()
         assert cursor.cursor is not None and cursor.cursor.value is not None
         assert [
@@ -142,7 +145,9 @@ async def test_cursor_revision_and_failed_commit_preserve_the_previous_batch(
     repo: StorageBackend, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     async with public_runtime(repo, tmp_path, monkeypatch) as (runtime, _):
-        coordinator = ReactionDemandCoordinator(repo, runtime.market)
+        market = runtime.market
+        assert isinstance(market, MarketService)
+        coordinator = ReactionDemandCoordinator(repo, market)
         original = await coordinator.snapshot()
         first = collection_clock(utcnow())
         assert await coordinator._commit_batch(original, first, {}, {})
