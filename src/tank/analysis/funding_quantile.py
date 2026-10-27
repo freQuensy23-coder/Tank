@@ -84,6 +84,11 @@ def _interpolate(operands: FundingInterpolationOperands) -> _InterpolationValue:
         return _InterpolationValue(value=lower, reason=None, required_dense_digits=0)
     if weight == 1:
         return _InterpolationValue(value=upper, reason=None, required_dense_digits=0)
+    if lower == 0:
+        coefficient, exponent = _weighted(upper, weight)
+        return _InterpolationValue(
+            value=_decimal(coefficient, exponent), reason=None, required_dense_digits=0
+        )
     weight_coefficient, weight_power = _normalized(*_coefficient(weight))
     weight_digits = len(Decimal(abs(weight_coefficient)).as_tuple().digits)
     source_digits = sum(len(value.as_tuple().digits) for value in (lower, upper))

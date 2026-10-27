@@ -66,3 +66,25 @@ def test_copied_wrong_result_refuses_public_admission() -> None:
     value = funding_quantile((Decimal(1), Decimal(3)), 0.5)
     with pytest.raises(ValidationError):
         FundingQuantileValue.model_validate(value.model_copy(update={"value": Decimal(9)}))
+
+
+def test_zero_lower_endpoint_does_not_materialize_unused_weight_complement() -> None:
+    from tank.analysis.funding_quantile import FundingInterpolationOperands, FundingQuantilePosition
+
+    point = FundingQuantileValue(
+        value=Decimal("1E-999999999"),
+        reason=None,
+        required_dense_digits=0,
+        position=FundingQuantilePosition(
+            lower_index=0,
+            upper_index=1,
+            source_count=2,
+            interpolation_weight=Decimal("1E-1000000000"),
+        ),
+        operands=FundingInterpolationOperands(
+            lower=Decimal(0),
+            upper=Decimal(10),
+            weight=Decimal("1E-1000000000"),
+        ),
+    )
+    assert point.value == Decimal("1E-999999999")
