@@ -13,7 +13,8 @@ from tank.analysis.condition_funding_inputs import (
     FundingInputObservation,
     FundingReadSnapshot,
 )
-from tank.analysis.funding_time import funding_clock_bounds, funding_source_before
+from tank.analysis.funding_time import funding_source_before
+from tank.analysis.observation_clock import clock_bounds
 from tank.contracts import DomainModel
 from tank.time_precision import Timestamp
 from tank.util import JsonInput, parse_iso_time
@@ -136,8 +137,8 @@ def _latest(
         )
     bounded: list[tuple[datetime, datetime, FundingInputObservation]] = []
     for _, point in points:
-        bounds = funding_clock_bounds(
-            point.clock.timestamp, role="SETTLEMENT_EVENT" if point.kind == "SETTLED" else "ESTIMATE_SAMPLE"
+        bounds = clock_bounds(
+            point.clock.timestamp, role="SOURCE_ENDPOINT" if point.kind == "SETTLED" else "SAMPLE_OBSERVATION"
         )
         if bounds.lower is None or bounds.upper is None:
             raise ValueError("Eligible funding selection requires orderable source bounds")

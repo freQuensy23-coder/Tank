@@ -1,97 +1,18 @@
-"""Funding clock roles keep reported scalars distinct from declared uncertainty bounds."""
+"""Funding-specific temporal requests delegate to the shared role-scoped clock authority."""
 
-from datetime import datetime, timedelta
-from math import isfinite
-from typing import Literal, Self
+from datetime import timedelta
+from typing import Literal
 
-from pydantic import model_validator
-
-from tank.contracts import DomainModel
-from tank.time_precision import Timestamp, interval_bounds
-from tank.util import parse_iso_time
-
-type FundingClockRole = Literal["OPERATIONAL", "ESTIMATE_SAMPLE", "SETTLEMENT_EVENT", "CALCULATION_BOUNDARY"]
-type FundingClockAbsence = Literal[
-    "CLOCK_NOT_CAPTURED",
-    "PAID_TIME_NOT_CAPTURED",
-    "BUCKET_ORIENTATION_NOT_CAPTURED",
-    "CLOCK_BOUNDS_NOT_ESTIMABLE",
-]
-type FundingClockBasis = Literal[
-    "REPORTED_SCALAR", "COLLECTION_OBSERVATION", "REPORTED_BOUNDARY", "DECLARED_EXACT", "DECLARED_BUCKET"
-]
+from tank.analysis.observation_clock import clock_bounds, clock_fresh, clock_precedes
+from tank.time_precision import Timestamp
 
 
-class _ClockValue(DomainModel):
-    lower: datetime | None
-    upper: datetime | None
-    basis: FundingClockBasis | None
-    reason: FundingClockAbsence | None
-
-
-def _bounds(clock: Timestamp, role: FundingClockRole) -> _ClockValue:
-    if clock.value is None:
-        return _ClockValue(lower=None, upper=None, basis=None, reason="CLOCK_NOT_CAPTURED")
-    if role == "SETTLEMENT_EVENT" and clock.precision == "COLLECTION_ONLY":
-        return _ClockValue(lower=None, upper=None, basis=None, reason="PAID_TIME_NOT_CAPTURED")
-    if clock.precision is not None and clock.precision.startswith("BUCKET("):
-        if clock.bucket_anchor not in ("START", "END"):
-            return _ClockValue(lower=None, upper=None, basis=None, reason="BUCKET_ORIENTATION_NOT_CAPTURED")
-        try:
-            lower, upper = interval_bounds(clock)
-        except (OverflowError, ValueError):
-            return _ClockValue(lower=None, upper=None, basis=None, reason="CLOCK_BOUNDS_NOT_ESTIMABLE")
-        if lower is None or upper is None:
-            return _ClockValue(lower=None, upper=None, basis=None, reason="CLOCK_BOUNDS_NOT_ESTIMABLE")
-        return _ClockValue(lower=lower, upper=upper, basis="DECLARED_BUCKET", reason=None)
-    point = parse_iso_time(clock.value)
-    basis: FundingClockBasis = (
-        "DECLARED_EXACT"
-        if clock.precision == "EXACT"
-        else "REPORTED_BOUNDARY"
-        if clock.precision == "COLLECTION_ONLY" and role == "CALCULATION_BOUNDARY"
-        else "COLLECTION_OBSERVATION"
-        if clock.precision == "COLLECTION_ONLY"
-        else "REPORTED_SCALAR"
-    )
-    return _ClockValue(lower=point, upper=point, basis=basis, reason=None)
-
-
-class FundingClockBounds(_ClockValue):
-    clock: Timestamp
-    role: FundingClockRole
-
-    @model_validator(mode="after")
-    def actual_reported_clock(self) -> Self:
-        expected = _bounds(self.clock, self.role)
-        if (
-            self.lower != expected.lower
-            or self.upper != expected.upper
-            or self.basis != expected.basis
-            or self.reason != expected.reason
-        ):
-            raise ValueError("Funding clock bounds must preserve their actual role and reported metadata")
-        return self
-
-
-def funding_clock_bounds(clock: Timestamp, *, role: FundingClockRole) -> FundingClockBounds:
-    clock = Timestamp.model_validate(clock)
-    value = _bounds(clock, role)
-    return FundingClockBounds(
-        clock=clock, role=role, lower=value.lower, upper=value.upper, basis=value.basis, reason=value.reason
-    )
-
-
-def funding_receipt_visible(received_at: Timestamp, assembled_at: Timestamp) -> bool | None:
-    received = funding_clock_bounds(received_at, role="OPERATIONAL")
-    assembly = funding_clock_bounds(assembled_at, role="OPERATIONAL")
-    if received.lower is None or received.upper is None or assembly.lower is None or assembly.upper is None:
-        return None
-    if received.upper <= assembly.lower:
-        return True
-    if received.lower > assembly.upper:
-        return False
-    return None
+def _source_role(
+    kind: Literal["SETTLED", "CURRENT_ESTIMATE"],
+) -> Literal["SOURCE_ENDPOINT", "SAMPLE_OBSERVATION"]:
+    if kind not in ("SETTLED", "CURRENT_ESTIMATE"):
+        raise ValueError("Funding clock policy requires its actual source kind")
+    return "SOURCE_ENDPOINT" if kind == "SETTLED" else "SAMPLE_OBSERVATION"
 
 
 def funding_source_before(
@@ -101,19 +22,7 @@ def funding_source_before(
     boundary: Timestamp,
     strict: bool,
 ) -> bool | None:
-    if kind not in ("SETTLED", "CURRENT_ESTIMATE") or not isinstance(strict, bool):
-        raise ValueError("Funding temporal comparison requires its actual kind and strictness")
-    source = funding_clock_bounds(
-        observed_at, role="SETTLEMENT_EVENT" if kind == "SETTLED" else "ESTIMATE_SAMPLE"
-    )
-    bound = funding_clock_bounds(boundary, role="CALCULATION_BOUNDARY")
-    if source.lower is None or source.upper is None or bound.lower is None or bound.upper is None:
-        return None
-    if source.upper < bound.lower or not strict and source.upper == bound.lower:
-        return True
-    if source.lower > bound.upper or strict and source.lower == bound.upper:
-        return False
-    return None
+    return clock_precedes(observed_at, role=_source_role(kind), boundary=boundary, strict=strict)
 
 
 def funding_history_time_eligible(
@@ -124,8 +33,8 @@ def funding_history_time_eligible(
 ) -> bool | None:
     if isinstance(lookback_days, bool) or not isinstance(lookback_days, int) or lookback_days <= 0:
         raise ValueError("Funding retention requires an actual positive day count")
-    source = funding_clock_bounds(observed_at, role="SETTLEMENT_EVENT")
-    bound = funding_clock_bounds(before, role="CALCULATION_BOUNDARY")
+    source = clock_bounds(observed_at, role="SOURCE_ENDPOINT")
+    bound = clock_bounds(before, role="CALCULATION_BOUNDARY")
     if source.lower is None or source.upper is None or bound.lower is None or bound.upper is None:
         return None
     try:
@@ -146,20 +55,4 @@ def funding_observation_fresh(
     cutoff: Timestamp,
     cadence_s: float,
 ) -> bool | None:
-    if (
-        isinstance(cadence_s, bool)
-        or not isinstance(cadence_s, (int, float))
-        or not isfinite(cadence_s)
-        or cadence_s <= 0
-    ):
-        raise ValueError("Funding freshness requires an actual positive finite cadence")
-    before = funding_source_before(observed_at, kind=kind, boundary=cutoff, strict=False)
-    if before is not True:
-        return before
-    source = funding_clock_bounds(
-        observed_at, role="SETTLEMENT_EVENT" if kind == "SETTLED" else "ESTIMATE_SAMPLE"
-    )
-    bound = funding_clock_bounds(cutoff, role="CALCULATION_BOUNDARY")
-    if source.lower is None or bound.upper is None:
-        return None
-    return (bound.upper - source.lower).total_seconds() <= cadence_s
+    return clock_fresh(observed_at, role=_source_role(kind), cutoff=cutoff, cadence_s=cadence_s)

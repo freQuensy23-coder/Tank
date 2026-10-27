@@ -14,7 +14,8 @@ from tank.analysis.funding_rate import (
     funding_equivalent,
 )
 from tank.analysis.funding_selection import FundingCalculator, FundingWindowRequest
-from tank.analysis.funding_time import funding_clock_bounds, funding_history_time_eligible
+from tank.analysis.funding_time import funding_history_time_eligible
+from tank.analysis.observation_clock import clock_bounds
 from tank.analysis.statistics_contracts import DecimalBounds, DecimalRange
 from tank.contracts import DomainModel
 from tank.contracts.configuration import Thresholds
@@ -100,7 +101,7 @@ class FundingHistoricalPopulation(DomainModel):
         return self
 
     def normal_range(self) -> DecimalRange:
-        before_bounds = funding_clock_bounds(self.before, role="CALCULATION_BOUNDARY")
+        before_bounds = clock_bounds(self.before, role="CALCULATION_BOUNDARY")
         if before_bounds.lower is None or before_bounds.upper is None:
             return DecimalRange(bounds=None, reason="INCOMPLETE")
         if self.ambiguous_clocks:
@@ -110,7 +111,7 @@ class FundingHistoricalPopulation(DomainModel):
             return DecimalRange(bounds=None, reason="NOT_ESTIMABLE")
         known = tuple(value for value in self.values if not isinstance(value, UnavailableFundingEquivalent))
         known_bounds = tuple(
-            funding_clock_bounds(point.source.clock.timestamp, role="SETTLEMENT_EVENT") for point in known
+            clock_bounds(point.source.clock.timestamp, role="SOURCE_ENDPOINT") for point in known
         )
         lower_bounds = tuple(point.lower for point in known_bounds if point.lower is not None)
         upper_bounds = tuple(point.upper for point in known_bounds if point.upper is not None)
