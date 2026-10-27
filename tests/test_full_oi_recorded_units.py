@@ -126,7 +126,9 @@ def test_full_oi_known_zero_usd_baseline_remains_observed() -> None:
 def test_full_oi_repeating_dollar_term_metadata_preserves_exact_cause() -> None:
     snapshot, start, end = recorded_snapshot(native_start=3, native_end=4, recorded=True, source_label=None)
     derivatives = derivatives_truth(snapshot, start, end)
-    metadata = measurement_metadata({"cutoff": iso(end), "derivatives": derivatives}, spot_measurements=())
+    metadata = measurement_metadata(
+        {"cutoff": iso(end), "primary_window": "W4H", "derivatives": derivatives}, spot_measurements=()
+    )
     term = metadata["derivatives.per_venue[0].decomposition.position"]
     assert term["value"] is None
     assert term["unit"] == "USD"
