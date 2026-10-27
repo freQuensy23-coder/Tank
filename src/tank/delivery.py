@@ -37,13 +37,20 @@ from tank.contracts.delivery import (
     FrozenDeliveryInterval,
     InvalidatedDeliveryEvent,
     OpenDeliveryCall,
+    OpsAdoptedClockBasis,
     OpsBackoffState,
     OpsCardDeliveryState,
+    OpsCardSnapshot,
+    OpsDueSchedule,
+    OpsImmediateSchedule,
+    OpsSentReceipt,
+    OpsSpacingPolicy,
     ProgressDeliveryNotice,
     SentDeliveryReceipt,
     StartCallDecision,
     StartCallPrices,
     call_activation_decision,
+    select_ops_receipt,
 )
 from tank.contracts.json import decode_unique_json
 from tank.diagnostic_documents import DiagnosticAttachment, documents
@@ -51,7 +58,13 @@ from tank.ops_progress import event_progress
 from tank.runtime_contracts import AlertDeliveryJob, DeliveryJob, NoticeDeliveryJob, parse_delivery_job
 from tank.telegram_api import TelegramResponseError, response_result, sent_message_receipt
 from tank.telegram_rich import RichMessage
-from tank.time_precision import Timestamp, collection_clock, offset_schedule, propagate_timestamp
+from tank.time_precision import (
+    Timestamp,
+    collection_clock,
+    offset_schedule,
+    propagate_timestamp,
+    timestamp_owned_fields,
+)
 from tank.util import new_id, parse_time, sha256, utcnow
 
 DELIVERY_LOCK_WAIT_S = 6
@@ -400,8 +413,99 @@ class DeliveryService:
             )
         return terminal_failure
 
+    async def _ops_receipts(
+        self,
+        data: OpsCardSnapshot,
+        chat: str,
+        key: str,
+        message_ref: str | int | None,
+        *,
+        only_progress: bool,
+    ) -> list[OpsSentReceipt]:
+        found: dict[str, OpsSentReceipt] = {}
+        scopes: list[tuple[str | None, dict[str, JsonValue]]] = []
+        if not only_progress:
+            scopes.extend(
+                (
+                    notice.notice_id,
+                    {
+                        "notice_id": notice.notice_id,
+                        "channel": "telegram:ops",
+                        "status": "SENT",
+                        "chat_id": chat,
+                    },
+                )
+                for notice in data.history
+                if notice.format_version != 2
+            )
+        if only_progress:
+            scopes.append(
+                (None, {"progress_card": key, "channel": "telegram:ops", "status": "SENT", "chat_id": chat})
+            )
+        for notice_id, filters in scopes:
+            for raw in await self._all("out.deliveries", filters=filters):
+                receipt = OpsSentReceipt.from_record(raw)
+                if receipt.chat_id != chat or notice_id is not None and receipt.notice_id != notice_id:
+                    raise ValueError("Ops receipt differs from its actual notice and destination")
+                if only_progress and receipt.progress_card != key:
+                    raise ValueError("Ops receipt differs from its actual card")
+                if receipt.document_id is not None or receipt.method == "sendDocument":
+                    continue
+                if message_ref is not None and str(receipt.message_ref) != str(message_ref):
+                    continue
+                found[receipt.receipt_sha256] = receipt
+        return list(found.values())
+
+    async def _ops_schedule(
+        self,
+        data: OpsCardSnapshot,
+        card: OpsCardDeliveryState,
+        raw_card: dict[str, JsonValue],
+        policy: OpsSpacingPolicy,
+        key: str,
+    ) -> OpsImmediateSchedule | OpsDueSchedule:
+        if policy.delay_s == 0:
+            return OpsImmediateSchedule(kind="IMMEDIATE")
+        if card.message_ref is None:
+            clocks: list[Timestamp] = []
+            for notice in data.history:
+                clock = notice.creation_clock()
+                if clock is None or clock.value is None:
+                    raise ValueError("Initial Ops delivery requires its recorded notice clocks")
+                clocks.append(clock)
+            if not clocks:
+                raise ValueError("Initial Ops delivery requires its recorded notice history")
+            anchor = min(clocks, key=delivery_moment)
+            return OpsDueSchedule(
+                kind="NOT_BEFORE",
+                basis="FIRST_NOTICE",
+                not_before=offset_schedule(anchor, timedelta(seconds=policy.delay_s)),
+            )
+        if card.updated_at is not None:
+            anchor = propagate_timestamp(raw_card, "updated_at")
+            basis = "CARD_UPDATE"
+        elif card.adopted_clock_basis is not None:
+            anchor = card.adopted_clock_basis.at
+            basis = "ADOPTED_PARENT"
+        else:
+            receipt = select_ops_receipt(
+                await self._ops_receipts(data, card.chat_id, key, card.message_ref, only_progress=True),
+                clock_required=True,
+            )
+            if receipt is None:
+                raise ValueError("Ops card update clock is unreported")
+            anchor = receipt.at
+            basis = "RECORDED_PROGRESS_SENT"
+        return OpsDueSchedule.model_validate(
+            {
+                "kind": "NOT_BEFORE",
+                "basis": basis,
+                "not_before": offset_schedule(anchor, timedelta(seconds=min(policy.delay_s, 5))),
+            }
+        )
+
     async def _deliver_progress(self, notice: ProgressDeliveryNotice) -> DeliveryError | None:
-        from tank.ops_cards import render, snapshot, time_of
+        from tank.ops_cards import render, snapshot
 
         item_id = notice.subject_id
         chat = str(self.settings.telegram_ops_chat or "")
@@ -427,27 +531,28 @@ class DeliveryService:
                 return None
             if data.item.source_id == "WEB" and data.item.evidence_kind:
                 return None
+            policy = OpsSpacingPolicy(delay_s=self.settings.ops_progress_delay_s)
+            seed_needed = card is None
             if card is None:
                 card_record = {"item_id": item_id, "chat_id": chat, "message_ref": None}
-                for previous in reversed(data.history):
-                    if previous.format_version == 2:
-                        continue
-                    receipts = await self.repo.list_latest(
-                        "out.deliveries",
-                        "at",
-                        filters={
-                            "notice_id": previous.notice_id,
-                            "channel": "telegram:ops",
-                            "status": "SENT",
-                            "chat_id": chat,
-                        },
-                        limit=1,
-                    )
-                    if receipts:
-                        card_record["message_ref"] = receipts[0]["message_ref"]
-                        card_record["adopted_notice_id"] = previous.notice_id
-                        break
-                await self.repo.put("out.ops_cards", key, card_record)
+                parent = select_ops_receipt(
+                    await self._ops_receipts(data, chat, key, None, only_progress=False),
+                    clock_required=policy.delay_s > 0,
+                )
+                if parent is not None:
+                    card_record["message_ref"] = str(parent.message_ref)
+                    card_record["adopted_notice_id"] = parent.notice_id
+                    if policy.delay_s > 0:
+                        captured_basis = OpsAdoptedClockBasis(
+                            kind="ADOPTED_PARENT_PENDING",
+                            item_id=item_id,
+                            chat_id=chat,
+                            notice_id=parent.notice_id,
+                            message_ref=parent.message_ref,
+                            parent_receipt_sha256=parent.receipt_sha256,
+                            at=parent.at,
+                        )
+                        card_record["adopted_clock_basis"] = captured_basis.model_dump(mode="json")
                 card = OpsCardDeliveryState.from_record(card_record, item_id=item_id, chat_id=chat)
             if card_record is None:
                 raise ValueError("Ops card delivery lacks its stored state")
@@ -459,18 +564,9 @@ class DeliveryService:
                 return None
             if card.blocked:
                 return None
-            delay = self.settings.ops_progress_delay_s
-            first = time_of(data.history[0]) if data.history else utcnow()
-            if not card.message_ref:
-                due = first + timedelta(seconds=delay)
-            else:
-                due = (
-                    parse_time(card.updated_at) + timedelta(seconds=min(delay, 5))
-                    if card.updated_at
-                    else utcnow()
-                )
-            if utcnow() < due:
-                raise DeliveryDeferred(collection_clock(due))
+            schedule = await self._ops_schedule(data, card, card_record, policy, key)
+            if isinstance(schedule, OpsDueSchedule) and utcnow() < delivery_moment(schedule.not_before):
+                raise DeliveryDeferred(schedule.not_before)
             await self._enter_delivery_lock(locks, "telegram-ops-progress")
             backoff = await self.repo.get("ops.scheduler_checkpoints", "ops-progress-backoff")
             if backoff is not None:
@@ -484,6 +580,8 @@ class DeliveryService:
                 next_send = offset_schedule(propagate_timestamp(latest[0], "at"), timedelta(seconds=3.1))
                 if utcnow() < delivery_moment(next_send):
                     raise DeliveryDeferred(next_send)
+            if seed_needed:
+                await self.repo.put("out.ops_cards", key, card_record)
             ledger = await self._all(
                 "out.deliveries", filters={"progress_card": key, "render_digest": digest}
             )
@@ -606,12 +704,17 @@ class DeliveryService:
                 failure.terminal = terminal
                 return failure
             stamp = collection_clock(utcnow())
+            confirmed_card = {
+                name: value
+                for name, value in card_record.items()
+                if name not in timestamp_owned_fields("updated_at") and name != "adopted_clock_basis"
+            }
             async with self.repo.transaction():
                 await self.repo.put(
                     "out.ops_cards",
                     key,
                     {
-                        **card_record,
+                        **confirmed_card,
                         "message_ref": message_ref,
                         "render_digest": digest,
                         "rendered_html": result.html,
@@ -708,7 +811,7 @@ class DeliveryService:
                             latest_sent.at,
                             timedelta(
                                 seconds=limits.update_rate_limit_s
-                                if limits.update_rate_limit_s is not None
+                                if isinstance(limits, FrozenDeliveryInterval)
                                 else 900
                             ),
                         )

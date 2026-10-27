@@ -2,6 +2,7 @@
 
 from collections.abc import AsyncIterator, Mapping, Sequence
 from contextlib import AbstractAsyncContextManager
+from datetime import datetime
 from decimal import Decimal, InvalidOperation
 from typing import Annotated, Literal, Protocol, Self
 
@@ -14,7 +15,7 @@ from tank.contracts.source_errors import DiagnosticDocumentReference, SourceEntr
 from tank.contracts.telegram_state import MessageReference
 from tank.contracts.telegram_wire import PositiveId, TelegramRetryParameters, TelegramSentMessageReceipt
 from tank.time_precision import Timestamp, propagate_timestamp
-from tank.util import JsonInput, TimeInput, parse_iso_time
+from tank.util import JsonInput, TimeInput, parse_iso_time, sha256
 
 type DeliveryIdentity = Annotated[str, Field(min_length=1, pattern=r"\S")]
 type DeliveredPrice = str | int | float
@@ -162,6 +163,21 @@ class OpsProgressNotice(OpsPresentationClocks):
     reason: str | None = None
     format_version: int | None = None
     details: OpsProgressDetails | None = None
+    subject_id: DeliveryIdentity | None = None
+    created_precision: str | None = None
+    created_precision_reason: str | None = None
+    created_bucket_anchor: Literal["START", "END", "UNSPECIFIED"] | None = None
+
+    def creation_clock(self) -> Timestamp | None:
+        if self.created_at is None and all(
+            value is None
+            for value in (self.created_precision, self.created_precision_reason, self.created_bucket_anchor)
+        ):
+            return None
+        reason = self.created_precision_reason
+        if reason is None and (self.created_at is None or self.created_precision is None):
+            reason = "INCOMPLETE"
+        return Timestamp(self.created_at, self.created_precision, reason, self.created_bucket_anchor)
 
 
 class OpsEventView(DomainModel):
@@ -198,10 +214,22 @@ def select_ops_map(maps: Sequence[OpsMapView]) -> SelectedOpsMap | UnknownOpsMap
         candidates.append((record.map_version, record))
     if not candidates:
         raise ValueError("Ops map selection requires a recorded map")
-    version, selected = max(candidates, key=lambda candidate: candidate[0])
-    if selected.analysis_set is None:
+    version = max(candidate[0] for candidate in candidates)
+    selected_sets: list[frozenset[str]] = []
+    unreported = False
+    for candidate_version, selected in candidates:
+        if candidate_version != version:
+            continue
+        if selected.analysis_set is None:
+            unreported = True
+            continue
+        members = frozenset(selected.analysis_set)
+        if selected_sets and members != selected_sets[0]:
+            raise ValueError("Ops map version has contradictory analysis sets")
+        selected_sets.append(members)
+    if unreported:
         return UnknownOpsMap(reason="ANALYSIS_SET_UNREPORTED")
-    return SelectedOpsMap(map_version=version, analysis_set=tuple(selected.analysis_set))
+    return SelectedOpsMap(map_version=version, analysis_set=tuple(sorted(selected_sets[0])))
 
 
 class OpsTokenView(OpsPresentationClocks):
@@ -244,7 +272,7 @@ class OpsObservationView(DomainModel):
 
 class OpsCardSnapshot(DomainModel):
     item: OpsSourceItem
-    history: list[OpsProgressNotice]
+    history: list[OpsProgressNotice] = Field(min_length=1)
     stages: dict[ProgressStage, OpsProgressNotice]
     event: OpsEventView | None
     assessment: OpsAssessmentView | None
@@ -255,6 +283,26 @@ class OpsCardSnapshot(DomainModel):
     deliveries: list[OpsDeliveryView]
     prior_receipt: OpsDeliveryView | None
     observations: list[OpsObservationView]
+
+
+class OpsAdoptedClockBasis(DomainModel):
+    kind: Literal["ADOPTED_PARENT_PENDING"]
+    item_id: DeliveryIdentity
+    chat_id: DeliveryIdentity
+    notice_id: DeliveryIdentity
+    message_ref: MessageReference
+    parent_receipt_sha256: str = Field(pattern=r"^[a-f0-9]{64}$")
+    at: Timestamp
+
+    @model_validator(mode="after")
+    def actual_parent_clock(self) -> Self:
+        if self.at.value is None:
+            raise ValueError("Adopted progress timing requires its observed parent clock")
+        return self
+
+
+def absent_adopted_basis(value: OpsAdoptedClockBasis | None) -> bool:
+    return value is None
 
 
 class DeliveredCardActivation(DomainModel):
@@ -363,15 +411,19 @@ def delivery_snapshot_object(
     return current
 
 
+class UnreportedDeliveryInterval(DomainModel):
+    kind: Literal["UNREPORTED"]
+
+
 class FrozenDeliveryInterval(DomainModel):
-    update_rate_limit_s: float | None = Field(default=None, ge=0)
+    update_rate_limit_s: float = Field(ge=0)
 
     @classmethod
-    def from_card(cls, record: Mapping[str, JsonValue]) -> Self:
+    def from_card(cls, record: Mapping[str, JsonValue]) -> Self | UnreportedDeliveryInterval:
         raw = delivery_snapshot_object(record, ("card_struct", "event", "thresholds"))
-        return cls.model_validate(
-            {name: raw[name] for name in cls.model_fields if raw is not None and name in raw}
-        )
+        if raw is None:
+            return UnreportedDeliveryInterval(kind="UNREPORTED")
+        return cls.model_validate({name: raw[name] for name in cls.model_fields if name in raw})
 
 
 class FrozenDeliveryAssessment(DomainModel):
@@ -534,6 +586,20 @@ class OpsCardDeliveryState(DomainModel):
     render_digest: str | None = None
     blocked: bool | None = None
     updated_at: str | None = None
+    adopted_notice_id: DeliveryIdentity | None = None
+    adopted_clock_basis: OpsAdoptedClockBasis | None = Field(default=None, exclude_if=absent_adopted_basis)
+
+    @model_validator(mode="after")
+    def reported_adoption(self) -> Self:
+        if "adopted_clock_basis" in self.model_fields_set and self.adopted_clock_basis is None:
+            raise ValueError("Reported adopted clock basis requires its observed receipt")
+        if self.adopted_clock_basis is not None and (
+            self.adopted_clock_basis.item_id != self.item_id
+            or self.adopted_clock_basis.chat_id != self.chat_id
+            or str(self.adopted_clock_basis.message_ref) != str(self.message_ref)
+        ):
+            raise ValueError("Adopted clock basis differs from its actual card target")
+        return self
 
     @field_validator("updated_at")
     @classmethod
@@ -556,6 +622,70 @@ class OpsCardDeliveryState(DomainModel):
         if result.item_id != item_id or result.chat_id != chat_id:
             raise ValueError("Stored Ops card does not belong to its delivery recipient and item")
         return result
+
+
+class OpsSpacingPolicy(DomainModel):
+    delay_s: float = Field(ge=0, le=60)
+
+
+class OpsImmediateSchedule(DomainModel):
+    kind: Literal["IMMEDIATE"]
+
+
+class OpsDueSchedule(DomainModel):
+    kind: Literal["NOT_BEFORE"]
+    basis: Literal["FIRST_NOTICE", "CARD_UPDATE", "ADOPTED_PARENT", "RECORDED_PROGRESS_SENT"]
+    not_before: Timestamp
+
+    @model_validator(mode="after")
+    def actual_due(self) -> Self:
+        if self.not_before.value is None:
+            raise ValueError("Progress scheduling requires its actual clock value")
+        return self
+
+
+class OpsSentReceipt(DomainModel):
+    notice_id: DeliveryIdentity
+    channel: Literal["telegram:ops"]
+    status: Literal["SENT"]
+    chat_id: DeliveryIdentity
+    message_ref: MessageReference
+    progress_card: str | None = None
+    method: str | None = None
+    document_id: str | None = None
+    receipt_sha256: str = Field(pattern=r"^[a-f0-9]{64}$")
+    at: Timestamp
+
+    @classmethod
+    def from_record(cls, record: Mapping[str, JsonValue]) -> Self:
+        return cls.model_validate(
+            {
+                **{
+                    name: record[name]
+                    for name in cls.model_fields
+                    if name not in {"at", "receipt_sha256"} and name in record
+                },
+                "at": propagate_timestamp(record, "at"),
+                "receipt_sha256": sha256(dict(record)),
+            }
+        )
+
+
+def select_ops_receipt(receipts: Sequence[OpsSentReceipt], *, clock_required: bool) -> OpsSentReceipt | None:
+    if not receipts:
+        return None
+    if not clock_required and len({str(receipt.message_ref) for receipt in receipts}) == 1:
+        return min(receipts, key=lambda receipt: receipt.receipt_sha256)
+    timed: list[tuple[datetime, OpsSentReceipt]] = []
+    for receipt in receipts:
+        if receipt.at.value is None:
+            raise ValueError("Ops parent receipt timing is unreported")
+        timed.append((parse_iso_time(receipt.at.value), receipt))
+    latest = max(instant for instant, _ in timed)
+    candidates = [receipt for instant, receipt in timed if instant == latest]
+    if len({str(receipt.message_ref) for receipt in candidates}) != 1:
+        raise ValueError("Ops parent receipts have ambiguous same-time targets")
+    return min(candidates, key=lambda receipt: receipt.receipt_sha256)
 
 
 class DeliveryAttemptOrdinal(DomainModel):
@@ -642,7 +772,7 @@ def call_activation_decision(record: Mapping[str, JsonValue]) -> CallActivationD
     phase = DeliveryDecisionPhase.model_validate(
         {name: record[name] for name in ("tracking_ended", "actionable") if name in record}
     )
-    if phase.tracking_ended or phase.actionable is False:
+    if phase.tracking_ended is True or phase.actionable is False:
         return None
     fields = ("token_id", "action")
     if record.get("action") == "START":

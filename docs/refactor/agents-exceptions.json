@@ -3297,6 +3297,123 @@
         "test_unreported_journal_and_actual_empty_journal_remain_distinct",
         "test_actual_empty_exception_text_stays_empty_and_receipt_is_host_not_native"
       ]
+    },
+    {
+      "sites": [
+        {
+          "path": "src/tank/delivery.py",
+          "symbol": "DeliveryService._all",
+          "line": 126
+        },
+        {
+          "path": "src/tank/ops_cards.py",
+          "symbol": "presentation_view",
+          "line": 193
+        },
+        {
+          "path": "src/tank/ops_cards.py",
+          "symbol": "snapshot",
+          "line": 219
+        }
+      ],
+      "kind": "consumed delivery and operator-view boundary mappings",
+      "reason": "Raw JSON remains at actual repository admission, query/HTTP serialization, timestamp-codec projection and guarded original-row writes. Business data is admitted into named views and consumed through attributes; stage/document indexes use actual reported identities. RichMessage uses its existing named schema. The three modules contain113 dictionary nodes and47 get calls in these stated roles; the inventory is not permission for an opaque domain payload.",
+      "validation": [
+        "test_delivery_sent_opens_once_and_escapes_html",
+        "test_burst_is_one_message_and_later_change_edits_it_across_restart",
+        "test_progress_delivery_refuses_foreign_stored_card_before_http"
+      ]
+    },
+    {
+      "sites": [
+        {
+          "path": "src/tank/contracts/delivery.py",
+          "symbol": "DeliveryAttemptOrdinal",
+          "line": 561
+        },
+        {
+          "path": "src/tank/contracts/delivery.py",
+          "symbol": "StartCallPrices",
+          "line": 609
+        },
+        {
+          "path": "src/tank/delivery.py",
+          "symbol": "DeliveryService.__init__",
+          "line": 61
+        }
+      ],
+      "kind": "actual delivery ordinal and consumed activation phases",
+      "reason": "Publication GENERATED0, retired FAILED/suppressed0 and explicit terminal queue0 are factual writer phases, distinct from positive transport attempts or missing counters. Fresh empty owned history initializes the next actual attempt; absent retained count refuses when consumed. START prices are needed only for a new call; existing START/EXIT/inactive phases do not require unused price fields. HTTP None means construct and own a real client, while supplied clients remain borrowed.",
+      "validation": [
+        "test_historical_suppression_is_preserved_without_censoring_explicit_retry",
+        "test_delivery_activation_without_unused_prices",
+        "test_new_start_requires_real_prices_before_call_write",
+        "test_full_sse_pipeline_postgres"
+      ]
+    },
+    {
+      "sites": [
+        {
+          "path": "src/tank/contracts/delivery.py",
+          "symbol": "DocumentLedgerEntry",
+          "line": 444
+        },
+        {
+          "path": "src/tank/contracts/delivery.py",
+          "symbol": "DocumentRetryAttempt",
+          "line": 469
+        },
+        {
+          "path": "src/tank/contracts/delivery.py",
+          "symbol": "DocumentParentReceipt",
+          "line": 479
+        },
+        {
+          "path": "src/tank/delivery.py",
+          "symbol": "DeliveryService._deliver_documents",
+          "line": 270
+        }
+      ],
+      "kind": "pending diagnostic effect requires an observed parent destination",
+      "reason": "Actual main-notice receipts omit method/document_id; document receipts report sendDocument and content-derived document_id. Already completed/exhausted work does not consume credentials or historical parent facts. A new upload requires captured nonblank credentials and an actual same-notice/channel parent message with matching recorded destination before any attempt write or HTTP. Missing parent chat stays unreported and cannot be supplied from current settings. A restored snapshot is authored independently; original immutable records remain. Existing ambiguous-attempt policy is preserved without a new provider-idempotency claim.",
+      "validation": [
+        "test_pending_document_resume_refuses_before_new_attempt",
+        "test_all_documents_sent_needs_no_unused_parent_or_credentials",
+        "test_partial_document_delivery_retry_does_not_duplicate_successful_message_or_documents",
+        "test_job_runner_defers_large_successful_document_batches_without_spending_attempts"
+      ]
+    },
+    {
+      "sites": [
+        {
+          "path": "src/tank/contracts/delivery.py",
+          "symbol": "UnknownOpsMap",
+          "line": 189
+        },
+        {
+          "path": "src/tank/contracts/delivery.py",
+          "symbol": "OpsPresentationClocks",
+          "line": 90
+        },
+        {
+          "path": "src/tank/ops_cards.py",
+          "symbol": "time_of",
+          "line": 140
+        },
+        {
+          "path": "src/tank/ops_cards.py",
+          "symbol": "outcome",
+          "line": 347
+        }
+      ],
+      "kind": "operator unreported facts and preserved display-only defaults",
+      "reason": "Unknown attempt/map facts have explicit display/selection phases and are never0 or an empty universe. Nullable ancillary source/provider facts remain absent. The prior presentation-only EPOCH rationale was disproved by root: first-send due consumes time_of. Operational admission is held pending actual-clock proof; neither empty history nor missing update time may become current time. Display ordering is a separate review disposition. Missing frozen interval uses the existing declared900-second update policy from config/thresholds.yaml, not inferred historical configuration. Typed assessment instances allow their domain field name during nested revalidation; raw admission still projects only the actual class wire key.",
+      "validation": [
+        "test_failed_delivery_does_not_display_unknown_attempt_as_zero",
+        "test_analysis_map_unknown_is_not_an_empty_completed_universe",
+        "test_completion_preserves_the_actual_assessment_outcome",
+        "test_delivery_due_guard_preserves_sent_anchor_and_records_no_attempt"
+      ]
     }
   ]
 }

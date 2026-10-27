@@ -32,6 +32,7 @@ from tank.contracts.delivery import (
 )
 from tank.contracts.json import decode_unique_json
 from tank.ops_progress import clipped
+from tank.time_precision import propagate_timestamp
 from tank.util import parse_time, utcnow
 
 REASONS = {
@@ -204,16 +205,25 @@ def presentation_view[T: DomainModel](schema: type[T], record: Mapping[str, Json
 
 def progress_view(record: Mapping[str, JsonValue]) -> OpsProgressNotice:
     values = {
-        name: record[name] for name in OpsProgressNotice.model_fields if name in record and name != "details"
+        name: record[name]
+        for name in OpsProgressNotice.model_fields
+        if name in record
+        and name not in {"details", "created_precision", "created_precision_reason", "created_bucket_anchor"}
+    }
+    clock = propagate_timestamp(record, "created_at")
+    clock_fields = {
+        "created_precision": clock.precision,
+        "created_precision_reason": clock.precision_reason,
+        "created_bucket_anchor": clock.bucket_anchor,
     }
     details = record.get("details")
     if details is not None:
         if not isinstance(details, dict):
             raise ValueError("Ops progress details require an object")
         return OpsProgressNotice.model_validate(
-            {**values, "details": presentation_view(OpsProgressDetails, details)}
+            {**values, **clock_fields, "details": presentation_view(OpsProgressDetails, details)}
         )
-    return OpsProgressNotice.model_validate(values)
+    return OpsProgressNotice.model_validate({**values, **clock_fields})
 
 
 async def snapshot(repo: DeliveryStore, item_id: str) -> OpsCardSnapshot | None:
@@ -242,6 +252,8 @@ async def snapshot(repo: DeliveryStore, item_id: str) -> OpsCardSnapshot | None:
             "out.ops_notices", filters={"kind": "ITEM_PROGRESS", "subject_id": item_id}
         )
     ]
+    if any(notice.subject_id != item_id for notice in history):
+        raise ValueError("Ops progress history differs from its actual source item")
     history.sort(key=lambda row: (time_of(row), row.notice_id))
     stages = {row.stage: row for row in history}
     observations = [

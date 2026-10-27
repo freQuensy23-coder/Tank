@@ -149,7 +149,7 @@
           "line": 79,
           "missing_parameters": [],
           "missing_return": false,
-          "dict_nodes": 1,
+          "dict_nodes": 0,
           "get_calls": 0
         },
         {
@@ -157,7 +157,7 @@
           "line": 85,
           "missing_parameters": [],
           "missing_return": false,
-          "dict_nodes": 1,
+          "dict_nodes": 0,
           "get_calls": 1
         },
         {
@@ -165,7 +165,7 @@
           "line": 91,
           "missing_parameters": [],
           "missing_return": false,
-          "dict_nodes": 2,
+          "dict_nodes": 0,
           "get_calls": 1
         },
         {
@@ -181,7 +181,7 @@
           "line": 105,
           "missing_parameters": [],
           "missing_return": false,
-          "dict_nodes": 3,
+          "dict_nodes": 1,
           "get_calls": 1
         },
         {
@@ -221,7 +221,7 @@
           "line": 165,
           "missing_parameters": [],
           "missing_return": false,
-          "dict_nodes": 2,
+          "dict_nodes": 1,
           "get_calls": 0
         },
         {
@@ -229,7 +229,7 @@
           "line": 181,
           "missing_parameters": [],
           "missing_return": false,
-          "dict_nodes": 2,
+          "dict_nodes": 1,
           "get_calls": 1
         },
         {
@@ -237,7 +237,7 @@
           "line": 203,
           "missing_parameters": [],
           "missing_return": false,
-          "dict_nodes": 2,
+          "dict_nodes": 1,
           "get_calls": 1
         },
         {
@@ -245,7 +245,7 @@
           "line": 214,
           "missing_parameters": [],
           "missing_return": false,
-          "dict_nodes": 1,
+          "dict_nodes": 0,
           "get_calls": 1
         },
         {
@@ -439,7 +439,7 @@
           "line": 75,
           "missing_parameters": [],
           "missing_return": false,
-          "dict_nodes": 4,
+          "dict_nodes": 3,
           "get_calls": 0
         },
         {
@@ -485,7 +485,7 @@
           "line": 275,
           "missing_parameters": [],
           "missing_return": false,
-          "dict_nodes": 1,
+          "dict_nodes": 0,
           "get_calls": 0
         },
         {
@@ -589,7 +589,7 @@
           "line": 422,
           "missing_parameters": [],
           "missing_return": false,
-          "dict_nodes": 2,
+          "dict_nodes": 1,
           "get_calls": 1
         },
         {
@@ -597,7 +597,7 @@
           "line": 436,
           "missing_parameters": [],
           "missing_return": false,
-          "dict_nodes": 1,
+          "dict_nodes": 0,
           "get_calls": 1
         },
         {
@@ -605,7 +605,7 @@
           "line": 440,
           "missing_parameters": [],
           "missing_return": false,
-          "dict_nodes": 2,
+          "dict_nodes": 1,
           "get_calls": 2
         },
         {
@@ -613,7 +613,7 @@
           "line": 448,
           "missing_parameters": [],
           "missing_return": false,
-          "dict_nodes": 10,
+          "dict_nodes": 2,
           "get_calls": 0
         },
         {
@@ -709,7 +709,7 @@
           "line": 674,
           "missing_parameters": [],
           "missing_return": false,
-          "dict_nodes": 1,
+          "dict_nodes": 0,
           "get_calls": 0
         },
         {
@@ -757,7 +757,7 @@
           "line": 832,
           "missing_parameters": [],
           "missing_return": false,
-          "dict_nodes": 4,
+          "dict_nodes": 1,
           "get_calls": 4
         },
         {
@@ -871,7 +871,7 @@
           "line": 86,
           "missing_parameters": [],
           "missing_return": false,
-          "dict_nodes": 4,
+          "dict_nodes": 2,
           "get_calls": 3
         }
       ]
@@ -909,7 +909,7 @@
           "line": 58,
           "missing_parameters": [],
           "missing_return": false,
-          "dict_nodes": 2,
+          "dict_nodes": 1,
           "get_calls": 0
         },
         {
@@ -965,7 +965,7 @@
           "line": 144,
           "missing_parameters": [],
           "missing_return": false,
-          "dict_nodes": 4,
+          "dict_nodes": 2,
           "get_calls": 0
         }
       ]
@@ -1161,7 +1161,7 @@
           "line": 267,
           "missing_parameters": [],
           "missing_return": false,
-          "dict_nodes": 2,
+          "dict_nodes": 1,
           "get_calls": 0
         },
         {
@@ -1401,7 +1401,7 @@
           "line": 105,
           "missing_parameters": [],
           "missing_return": false,
-          "dict_nodes": 2,
+          "dict_nodes": 1,
           "get_calls": 6
         },
         {
@@ -1457,7 +1457,7 @@
           "line": 242,
           "missing_parameters": [],
           "missing_return": false,
-          "dict_nodes": 1,
+          "dict_nodes": 0,
           "get_calls": 0
         },
         {
@@ -1513,7 +1513,7 @@
           "line": 354,
           "missing_parameters": [],
           "missing_return": false,
-          "dict_nodes": 2,
+          "dict_nodes": 1,
           "get_calls": 1
         },
         {
@@ -2033,7 +2033,7 @@
           "line": 155,
           "missing_parameters": [],
           "missing_return": false,
-          "dict_nodes": 2,
+          "dict_nodes": 1,
           "get_calls": 1
         },
         {
@@ -2079,7 +2079,7 @@
           "line": 40,
           "missing_parameters": [],
           "missing_return": false,
-          "dict_nodes": 2,
+          "dict_nodes": 1,
           "get_calls": 7
         },
         {
@@ -2103,7 +2103,7 @@
           "line": 163,
           "missing_parameters": [],
           "missing_return": false,
-          "dict_nodes": 1,
+          "dict_nodes": 0,
           "get_calls": 1
         },
         {
@@ -2111,7 +2111,7 @@
           "line": 188,
           "missing_parameters": [],
           "missing_return": false,
-          "dict_nodes": 8,
+          "dict_nodes": 7,
           "get_calls": 0
         }
       ]
@@ -2202,14 +2202,6 @@
           "line": 112,
           "missing_parameters": [],
           "missing_return": false,
-          "dict_nodes": 1,
-          "get_calls": 0
-        },
-        {
-          "symbol": "RoutingSelector.identities.matches",
-          "line": 135,
-          "missing_parameters": [],
-          "missing_return": false,
           "dict_nodes": 0,
           "get_calls": 0
         },
@@ -2218,15 +2210,7 @@
           "line": 166,
           "missing_parameters": [],
           "missing_return": false,
-          "dict_nodes": 2,
-          "get_calls": 0
-        },
-        {
-          "symbol": "RoutingSelector.event_view.label",
-          "line": 178,
-          "missing_parameters": [],
-          "missing_return": false,
-          "dict_nodes": 0,
+          "dict_nodes": 1,
           "get_calls": 0
         },
         {
@@ -2258,22 +2242,6 @@
           "missing_return": false,
           "dict_nodes": 2,
           "get_calls": 0
-        },
-        {
-          "symbol": "redact_tool_arguments.redact",
-          "line": 19,
-          "missing_parameters": [],
-          "missing_return": false,
-          "dict_nodes": 1,
-          "get_calls": 0
-        },
-        {
-          "symbol": "redact_tool_arguments.redact.hide_userinfo",
-          "line": 35,
-          "missing_parameters": [],
-          "missing_return": false,
-          "dict_nodes": 0,
-          "get_calls": 0
         }
       ]
     },
@@ -2286,7 +2254,7 @@
           "line": 45,
           "missing_parameters": [],
           "missing_return": false,
-          "dict_nodes": 1,
+          "dict_nodes": 0,
           "get_calls": 1
         },
         {
@@ -2514,7 +2482,7 @@
           "line": 413,
           "missing_parameters": [],
           "missing_return": false,
-          "dict_nodes": 11,
+          "dict_nodes": 10,
           "get_calls": 6
         },
         {
@@ -2658,7 +2626,7 @@
           "line": 984,
           "missing_parameters": [],
           "missing_return": false,
-          "dict_nodes": 7,
+          "dict_nodes": 4,
           "get_calls": 3
         },
         {
@@ -2690,7 +2658,7 @@
           "line": 1165,
           "missing_parameters": [],
           "missing_return": false,
-          "dict_nodes": 4,
+          "dict_nodes": 2,
           "get_calls": 4
         },
         {
@@ -2749,7 +2717,7 @@
             "call_id"
           ],
           "missing_return": true,
-          "dict_nodes": 1,
+          "dict_nodes": 0,
           "get_calls": 2
         },
         {
@@ -2793,7 +2761,7 @@
             "event"
           ],
           "missing_return": true,
-          "dict_nodes": 9,
+          "dict_nodes": 7,
           "get_calls": 25
         },
         {
@@ -2813,7 +2781,7 @@
             "seq"
           ],
           "missing_return": true,
-          "dict_nodes": 31,
+          "dict_nodes": 23,
           "get_calls": 75
         },
         {
@@ -2869,7 +2837,7 @@
           "line": 2475,
           "missing_parameters": [],
           "missing_return": false,
-          "dict_nodes": 6,
+          "dict_nodes": 5,
           "get_calls": 0
         },
         {
@@ -2933,7 +2901,7 @@
           "line": 2599,
           "missing_parameters": [],
           "missing_return": false,
-          "dict_nodes": 2,
+          "dict_nodes": 0,
           "get_calls": 2
         },
         {
@@ -3140,7 +3108,7 @@
           "line": 178,
           "missing_parameters": [],
           "missing_return": false,
-          "dict_nodes": 1,
+          "dict_nodes": 0,
           "get_calls": 0
         },
         {
@@ -3236,7 +3204,7 @@
           "line": 403,
           "missing_parameters": [],
           "missing_return": false,
-          "dict_nodes": 4,
+          "dict_nodes": 3,
           "get_calls": 1
         },
         {
@@ -3290,7 +3258,7 @@
           "line": 132,
           "missing_parameters": [],
           "missing_return": false,
-          "dict_nodes": 1,
+          "dict_nodes": 0,
           "get_calls": 1
         },
         {
@@ -3458,7 +3426,7 @@
           "line": 570,
           "missing_parameters": [],
           "missing_return": false,
-          "dict_nodes": 2,
+          "dict_nodes": 0,
           "get_calls": 3
         }
       ]
@@ -3905,7 +3873,7 @@
           "line": 84,
           "missing_parameters": [],
           "missing_return": false,
-          "dict_nodes": 2,
+          "dict_nodes": 1,
           "get_calls": 4
         },
         {
@@ -4243,7 +4211,7 @@
           "line": 194,
           "missing_parameters": [],
           "missing_return": false,
-          "dict_nodes": 3,
+          "dict_nodes": 1,
           "get_calls": 0
         },
         {
@@ -4275,7 +4243,7 @@
           "line": 264,
           "missing_parameters": [],
           "missing_return": false,
-          "dict_nodes": 2,
+          "dict_nodes": 1,
           "get_calls": 11
         },
         {
@@ -4355,7 +4323,7 @@
           "line": 448,
           "missing_parameters": [],
           "missing_return": false,
-          "dict_nodes": 2,
+          "dict_nodes": 0,
           "get_calls": 0
         },
         {
@@ -4387,7 +4355,7 @@
           "line": 517,
           "missing_parameters": [],
           "missing_return": false,
-          "dict_nodes": 5,
+          "dict_nodes": 3,
           "get_calls": 1
         },
         {
@@ -4629,14 +4597,6 @@
           "get_calls": 0
         },
         {
-          "symbol": "Runtime.terminal_delivery_failure.apply",
-          "line": 487,
-          "missing_parameters": [],
-          "missing_return": false,
-          "dict_nodes": 0,
-          "get_calls": 0
-        },
-        {
           "symbol": "Runtime.reconcile_delivery_failures",
           "line": 521,
           "missing_parameters": [],
@@ -4733,22 +4693,6 @@
         {
           "symbol": "build_runtime",
           "line": 72,
-          "missing_parameters": [],
-          "missing_return": false,
-          "dict_nodes": 0,
-          "get_calls": 0
-        },
-        {
-          "symbol": "build_runtime.bootstrap_registry",
-          "line": 102,
-          "missing_parameters": [],
-          "missing_return": false,
-          "dict_nodes": 0,
-          "get_calls": 0
-        },
-        {
-          "symbol": "build_runtime.validate_generation",
-          "line": 105,
           "missing_parameters": [],
           "missing_return": false,
           "dict_nodes": 0,
@@ -4885,7 +4829,7 @@
           "line": 292,
           "missing_parameters": [],
           "missing_return": false,
-          "dict_nodes": 1,
+          "dict_nodes": 0,
           "get_calls": 0
         },
         {
@@ -4941,7 +4885,7 @@
           "line": 412,
           "missing_parameters": [],
           "missing_return": false,
-          "dict_nodes": 2,
+          "dict_nodes": 1,
           "get_calls": 0
         },
         {
@@ -5255,19 +5199,11 @@
           "get_calls": 0
         },
         {
-          "symbol": "RepositoryWorkerQueue.interrupt.interrupted",
-          "line": 115,
-          "missing_parameters": [],
-          "missing_return": false,
-          "dict_nodes": 0,
-          "get_calls": 0
-        },
-        {
           "symbol": "RepositoryWorkerQueue.dependency",
           "line": 127,
           "missing_parameters": [],
           "missing_return": false,
-          "dict_nodes": 1,
+          "dict_nodes": 0,
           "get_calls": 1
         },
         {
@@ -5287,24 +5223,8 @@
           "get_calls": 0
         },
         {
-          "symbol": "RepositoryWorkerQueue.requeue.defer",
-          "line": 164,
-          "missing_parameters": [],
-          "missing_return": false,
-          "dict_nodes": 0,
-          "get_calls": 0
-        },
-        {
           "symbol": "RepositoryWorkerQueue.expire",
           "line": 188,
-          "missing_parameters": [],
-          "missing_return": false,
-          "dict_nodes": 0,
-          "get_calls": 0
-        },
-        {
-          "symbol": "RepositoryWorkerQueue.expire.expire_due",
-          "line": 195,
           "missing_parameters": [],
           "missing_return": false,
           "dict_nodes": 0,
@@ -5319,24 +5239,8 @@
           "get_calls": 0
         },
         {
-          "symbol": "RepositoryWorkerQueue.complete.complete_current",
-          "line": 216,
-          "missing_parameters": [],
-          "missing_return": false,
-          "dict_nodes": 0,
-          "get_calls": 0
-        },
-        {
           "symbol": "RepositoryWorkerQueue.fail",
           "line": 221,
-          "missing_parameters": [],
-          "missing_return": false,
-          "dict_nodes": 0,
-          "get_calls": 0
-        },
-        {
-          "symbol": "RepositoryWorkerQueue.fail.fail_current",
-          "line": 227,
           "missing_parameters": [],
           "missing_return": false,
           "dict_nodes": 0,
@@ -5709,7 +5613,7 @@
           "line": 68,
           "missing_parameters": [],
           "missing_return": false,
-          "dict_nodes": 1,
+          "dict_nodes": 0,
           "get_calls": 0
         },
         {
@@ -5939,7 +5843,7 @@
           "line": 26,
           "missing_parameters": [],
           "missing_return": false,
-          "dict_nodes": 1,
+          "dict_nodes": 0,
           "get_calls": 1
         },
         {
@@ -5971,7 +5875,7 @@
           "line": 106,
           "missing_parameters": [],
           "missing_return": false,
-          "dict_nodes": 3,
+          "dict_nodes": 2,
           "get_calls": 1
         },
         {
@@ -6011,7 +5915,7 @@
           "line": 195,
           "missing_parameters": [],
           "missing_return": false,
-          "dict_nodes": 4,
+          "dict_nodes": 2,
           "get_calls": 1
         }
       ]
@@ -6041,7 +5945,7 @@
           "line": 28,
           "missing_parameters": [],
           "missing_return": false,
-          "dict_nodes": 3,
+          "dict_nodes": 2,
           "get_calls": 2
         }
       ]
@@ -6071,7 +5975,7 @@
           "line": 111,
           "missing_parameters": [],
           "missing_return": false,
-          "dict_nodes": 3,
+          "dict_nodes": 2,
           "get_calls": 1
         },
         {
@@ -6199,7 +6103,7 @@
           "line": 305,
           "missing_parameters": [],
           "missing_return": false,
-          "dict_nodes": 2,
+          "dict_nodes": 1,
           "get_calls": 1
         },
         {
@@ -6209,6 +6113,664 @@
           "missing_return": false,
           "dict_nodes": 0,
           "get_calls": 0
+        }
+      ]
+    },
+    {
+      "path": "src/tank/delivery.py",
+      "lines": 1109,
+      "functions": [
+        {
+          "symbol": "DeliveryError.__init__",
+          "line": 74,
+          "missing_parameters": [],
+          "missing_return": false,
+          "dict_nodes": 0,
+          "get_calls": 0
+        },
+        {
+          "symbol": "delivery_retry_delay",
+          "line": 80,
+          "missing_parameters": [],
+          "missing_return": false,
+          "dict_nodes": 0,
+          "get_calls": 0
+        },
+        {
+          "symbol": "DeliveryDeferred.__init__",
+          "line": 97,
+          "missing_parameters": [],
+          "missing_return": false,
+          "dict_nodes": 0,
+          "get_calls": 0
+        },
+        {
+          "symbol": "delivery_moment",
+          "line": 107,
+          "missing_parameters": [],
+          "missing_return": false,
+          "dict_nodes": 0,
+          "get_calls": 0
+        },
+        {
+          "symbol": "delivery_payload",
+          "line": 113,
+          "missing_parameters": [],
+          "missing_return": false,
+          "dict_nodes": 0,
+          "get_calls": 0
+        },
+        {
+          "symbol": "delivery_subject",
+          "line": 121,
+          "missing_parameters": [],
+          "missing_return": false,
+          "dict_nodes": 0,
+          "get_calls": 0
+        },
+        {
+          "symbol": "delivery_filters",
+          "line": 129,
+          "missing_parameters": [],
+          "missing_return": false,
+          "dict_nodes": 2,
+          "get_calls": 0
+        },
+        {
+          "symbol": "DeliveryService.__init__",
+          "line": 136,
+          "missing_parameters": [],
+          "missing_return": false,
+          "dict_nodes": 0,
+          "get_calls": 0
+        },
+        {
+          "symbol": "DeliveryService.close",
+          "line": 143,
+          "missing_parameters": [],
+          "missing_return": false,
+          "dict_nodes": 0,
+          "get_calls": 0
+        },
+        {
+          "symbol": "DeliveryService._all",
+          "line": 147,
+          "missing_parameters": [],
+          "missing_return": false,
+          "dict_nodes": 0,
+          "get_calls": 0
+        },
+        {
+          "symbol": "DeliveryService.terminal_failure",
+          "line": 152,
+          "missing_parameters": [],
+          "missing_return": false,
+          "dict_nodes": 4,
+          "get_calls": 1
+        },
+        {
+          "symbol": "DeliveryService._enter_delivery_lock",
+          "line": 244,
+          "missing_parameters": [],
+          "missing_return": false,
+          "dict_nodes": 0,
+          "get_calls": 0
+        },
+        {
+          "symbol": "DeliveryService.deliver",
+          "line": 253,
+          "missing_parameters": [],
+          "missing_return": false,
+          "dict_nodes": 1,
+          "get_calls": 3
+        },
+        {
+          "symbol": "DeliveryService._deliver_documents",
+          "line": 291,
+          "missing_parameters": [],
+          "missing_return": false,
+          "dict_nodes": 9,
+          "get_calls": 1
+        },
+        {
+          "symbol": "DeliveryService._ops_receipts",
+          "line": 416,
+          "missing_parameters": [],
+          "missing_return": false,
+          "dict_nodes": 3,
+          "get_calls": 0
+        },
+        {
+          "symbol": "DeliveryService._ops_schedule",
+          "line": 459,
+          "missing_parameters": [],
+          "missing_return": false,
+          "dict_nodes": 1,
+          "get_calls": 0
+        },
+        {
+          "symbol": "DeliveryService._deliver_progress",
+          "line": 507,
+          "missing_parameters": [],
+          "missing_return": false,
+          "dict_nodes": 14,
+          "get_calls": 4
+        },
+        {
+          "symbol": "DeliveryService._deliver",
+          "line": 743,
+          "missing_parameters": [],
+          "missing_return": false,
+          "dict_nodes": 13,
+          "get_calls": 8
+        },
+        {
+          "symbol": "DeliveryService._finalize_invalidated",
+          "line": 1038,
+          "missing_parameters": [],
+          "missing_return": false,
+          "dict_nodes": 1,
+          "get_calls": 0
+        },
+        {
+          "symbol": "DeliveryService._activate_calls",
+          "line": 1059,
+          "missing_parameters": [],
+          "missing_return": false,
+          "dict_nodes": 3,
+          "get_calls": 1
+        }
+      ]
+    },
+    {
+      "path": "src/tank/ops_cards.py",
+      "lines": 706,
+      "functions": [
+        {
+          "symbol": "plain",
+          "line": 80,
+          "missing_parameters": [],
+          "missing_return": false,
+          "dict_nodes": 0,
+          "get_calls": 0
+        },
+        {
+          "symbol": "source_summary",
+          "line": 90,
+          "missing_parameters": [],
+          "missing_return": false,
+          "dict_nodes": 1,
+          "get_calls": 5
+        },
+        {
+          "symbol": "time_of",
+          "line": 141,
+          "missing_parameters": [],
+          "missing_return": false,
+          "dict_nodes": 0,
+          "get_calls": 0
+        },
+        {
+          "symbol": "recorded_time_of",
+          "line": 160,
+          "missing_parameters": [],
+          "missing_return": false,
+          "dict_nodes": 0,
+          "get_calls": 0
+        },
+        {
+          "symbol": "reason_text",
+          "line": 164,
+          "missing_parameters": [],
+          "missing_return": false,
+          "dict_nodes": 0,
+          "get_calls": 1
+        },
+        {
+          "symbol": "telegram_link",
+          "line": 168,
+          "missing_parameters": [],
+          "missing_return": false,
+          "dict_nodes": 0,
+          "get_calls": 0
+        },
+        {
+          "symbol": "safe_link",
+          "line": 177,
+          "missing_parameters": [],
+          "missing_return": false,
+          "dict_nodes": 0,
+          "get_calls": 0
+        },
+        {
+          "symbol": "presentation_view",
+          "line": 194,
+          "missing_parameters": [],
+          "missing_return": false,
+          "dict_nodes": 0,
+          "get_calls": 0
+        },
+        {
+          "symbol": "progress_view",
+          "line": 206,
+          "missing_parameters": [],
+          "missing_return": false,
+          "dict_nodes": 3,
+          "get_calls": 1
+        },
+        {
+          "symbol": "snapshot",
+          "line": 229,
+          "missing_parameters": [],
+          "missing_return": false,
+          "dict_nodes": 10,
+          "get_calls": 5
+        },
+        {
+          "symbol": "outcome",
+          "line": 359,
+          "missing_parameters": [],
+          "missing_return": false,
+          "dict_nodes": 3,
+          "get_calls": 10
+        },
+        {
+          "symbol": "render",
+          "line": 661,
+          "missing_parameters": [],
+          "missing_return": false,
+          "dict_nodes": 0,
+          "get_calls": 0
+        }
+      ]
+    },
+    {
+      "path": "src/tank/contracts/delivery.py",
+      "lines": 783,
+      "functions": [
+        {
+          "symbol": "DeliverySettings.telegram_token",
+          "line": 26,
+          "missing_parameters": [],
+          "missing_return": false,
+          "dict_nodes": 0,
+          "get_calls": 0
+        },
+        {
+          "symbol": "DeliverySettings.telegram_alerts_chat",
+          "line": 28,
+          "missing_parameters": [],
+          "missing_return": false,
+          "dict_nodes": 0,
+          "get_calls": 0
+        },
+        {
+          "symbol": "DeliverySettings.telegram_ops_chat",
+          "line": 30,
+          "missing_parameters": [],
+          "missing_return": false,
+          "dict_nodes": 0,
+          "get_calls": 0
+        },
+        {
+          "symbol": "DeliverySettings.ops_progress_enabled",
+          "line": 32,
+          "missing_parameters": [],
+          "missing_return": false,
+          "dict_nodes": 0,
+          "get_calls": 0
+        },
+        {
+          "symbol": "DeliverySettings.replay",
+          "line": 34,
+          "missing_parameters": [],
+          "missing_return": false,
+          "dict_nodes": 0,
+          "get_calls": 0
+        },
+        {
+          "symbol": "DeliverySettings.ops_progress_delay_s",
+          "line": 36,
+          "missing_parameters": [],
+          "missing_return": false,
+          "dict_nodes": 0,
+          "get_calls": 0
+        },
+        {
+          "symbol": "DeliveryStore.get",
+          "line": 40,
+          "missing_parameters": [],
+          "missing_return": false,
+          "dict_nodes": 0,
+          "get_calls": 0
+        },
+        {
+          "symbol": "DeliveryStore.put",
+          "line": 41,
+          "missing_parameters": [],
+          "missing_return": false,
+          "dict_nodes": 0,
+          "get_calls": 0
+        },
+        {
+          "symbol": "DeliveryStore.lock",
+          "line": 44,
+          "missing_parameters": [],
+          "missing_return": false,
+          "dict_nodes": 0,
+          "get_calls": 0
+        },
+        {
+          "symbol": "DeliveryStore.transaction",
+          "line": 45,
+          "missing_parameters": [],
+          "missing_return": false,
+          "dict_nodes": 0,
+          "get_calls": 0
+        },
+        {
+          "symbol": "DeliveryStore.iter_all",
+          "line": 46,
+          "missing_parameters": [],
+          "missing_return": false,
+          "dict_nodes": 0,
+          "get_calls": 0
+        },
+        {
+          "symbol": "DeliveryStore.iter_metadata",
+          "line": 49,
+          "missing_parameters": [],
+          "missing_return": false,
+          "dict_nodes": 0,
+          "get_calls": 0
+        },
+        {
+          "symbol": "DeliveryStore.list_latest",
+          "line": 57,
+          "missing_parameters": [],
+          "missing_return": false,
+          "dict_nodes": 0,
+          "get_calls": 0
+        },
+        {
+          "symbol": "DeliveryStore.enqueue",
+          "line": 65,
+          "missing_parameters": [],
+          "missing_return": false,
+          "dict_nodes": 0,
+          "get_calls": 0
+        },
+        {
+          "symbol": "OpsPresentationClocks.recorded_clock",
+          "line": 100,
+          "missing_parameters": [],
+          "missing_return": false,
+          "dict_nodes": 0,
+          "get_calls": 0
+        },
+        {
+          "symbol": "OpsInstrumentView.displayed_fields",
+          "line": 124,
+          "missing_parameters": [],
+          "missing_return": false,
+          "dict_nodes": 1,
+          "get_calls": 0
+        },
+        {
+          "symbol": "OpsProgressNotice.creation_clock",
+          "line": 171,
+          "missing_parameters": [],
+          "missing_return": false,
+          "dict_nodes": 0,
+          "get_calls": 0
+        },
+        {
+          "symbol": "select_ops_map",
+          "line": 209,
+          "missing_parameters": [],
+          "missing_return": false,
+          "dict_nodes": 0,
+          "get_calls": 0
+        },
+        {
+          "symbol": "OpsDeliveryView.actual_receipt_phase",
+          "line": 256,
+          "missing_parameters": [],
+          "missing_return": false,
+          "dict_nodes": 0,
+          "get_calls": 0
+        },
+        {
+          "symbol": "OpsAdoptedClockBasis.actual_parent_clock",
+          "line": 298,
+          "missing_parameters": [],
+          "missing_return": false,
+          "dict_nodes": 0,
+          "get_calls": 0
+        },
+        {
+          "symbol": "absent_adopted_basis",
+          "line": 304,
+          "missing_parameters": [],
+          "missing_return": false,
+          "dict_nodes": 0,
+          "get_calls": 0
+        },
+        {
+          "symbol": "DeliveredCardActivation.from_record",
+          "line": 315,
+          "missing_parameters": [],
+          "missing_return": false,
+          "dict_nodes": 1,
+          "get_calls": 1
+        },
+        {
+          "symbol": "DeliveredCorrection.from_record",
+          "line": 329,
+          "missing_parameters": [],
+          "missing_return": false,
+          "dict_nodes": 0,
+          "get_calls": 0
+        },
+        {
+          "symbol": "CardDeliveryHeader.from_record",
+          "line": 343,
+          "missing_parameters": [],
+          "missing_return": false,
+          "dict_nodes": 0,
+          "get_calls": 0
+        },
+        {
+          "symbol": "SentDeliveryReceipt.from_record",
+          "line": 365,
+          "missing_parameters": [],
+          "missing_return": false,
+          "dict_nodes": 1,
+          "get_calls": 0
+        },
+        {
+          "symbol": "DeliveredEventView.from_record",
+          "line": 393,
+          "missing_parameters": [],
+          "missing_return": false,
+          "dict_nodes": 0,
+          "get_calls": 0
+        },
+        {
+          "symbol": "delivery_snapshot_object",
+          "line": 400,
+          "missing_parameters": [],
+          "missing_return": false,
+          "dict_nodes": 0,
+          "get_calls": 1
+        },
+        {
+          "symbol": "FrozenDeliveryInterval.from_card",
+          "line": 422,
+          "missing_parameters": [],
+          "missing_return": false,
+          "dict_nodes": 0,
+          "get_calls": 0
+        },
+        {
+          "symbol": "FrozenDeliveryAssessment.from_card",
+          "line": 433,
+          "missing_parameters": [],
+          "missing_return": false,
+          "dict_nodes": 2,
+          "get_calls": 0
+        },
+        {
+          "symbol": "DeliveryExpiryReferences.from_card",
+          "line": 444,
+          "missing_parameters": [],
+          "missing_return": false,
+          "dict_nodes": 3,
+          "get_calls": 0
+        },
+        {
+          "symbol": "DeliveryExpiryReferences.delivered_ids",
+          "line": 457,
+          "missing_parameters": [],
+          "missing_return": false,
+          "dict_nodes": 0,
+          "get_calls": 0
+        },
+        {
+          "symbol": "DocumentDeliveryNotice.from_record",
+          "line": 475,
+          "missing_parameters": [],
+          "missing_return": false,
+          "dict_nodes": 1,
+          "get_calls": 2
+        },
+        {
+          "symbol": "DocumentLedgerEntry.document_identity",
+          "line": 506,
+          "missing_parameters": [],
+          "missing_return": false,
+          "dict_nodes": 0,
+          "get_calls": 0
+        },
+        {
+          "symbol": "DocumentLedgerEntry.from_record",
+          "line": 514,
+          "missing_parameters": [],
+          "missing_return": false,
+          "dict_nodes": 0,
+          "get_calls": 0
+        },
+        {
+          "symbol": "DocumentRetryAttempt.from_record",
+          "line": 527,
+          "missing_parameters": [],
+          "missing_return": false,
+          "dict_nodes": 0,
+          "get_calls": 0
+        },
+        {
+          "symbol": "DeliveryTelegramReceipt.from_result",
+          "line": 552,
+          "missing_parameters": [],
+          "missing_return": false,
+          "dict_nodes": 1,
+          "get_calls": 1
+        },
+        {
+          "symbol": "ProgressDeliveryNotice.from_record",
+          "line": 577,
+          "missing_parameters": [],
+          "missing_return": false,
+          "dict_nodes": 0,
+          "get_calls": 0
+        },
+        {
+          "symbol": "OpsCardDeliveryState.reported_adoption",
+          "line": 593,
+          "missing_parameters": [],
+          "missing_return": false,
+          "dict_nodes": 0,
+          "get_calls": 0
+        },
+        {
+          "symbol": "OpsCardDeliveryState.actual_update_clock",
+          "line": 606,
+          "missing_parameters": [],
+          "missing_return": false,
+          "dict_nodes": 0,
+          "get_calls": 0
+        },
+        {
+          "symbol": "OpsCardDeliveryState.from_record",
+          "line": 612,
+          "missing_parameters": [],
+          "missing_return": false,
+          "dict_nodes": 1,
+          "get_calls": 0
+        },
+        {
+          "symbol": "OpsDueSchedule.actual_due",
+          "line": 641,
+          "missing_parameters": [],
+          "missing_return": false,
+          "dict_nodes": 0,
+          "get_calls": 0
+        },
+        {
+          "symbol": "OpsSentReceipt.from_record",
+          "line": 660,
+          "missing_parameters": [],
+          "missing_return": false,
+          "dict_nodes": 1,
+          "get_calls": 0
+        },
+        {
+          "symbol": "select_ops_receipt",
+          "line": 674,
+          "missing_parameters": [],
+          "missing_return": false,
+          "dict_nodes": 0,
+          "get_calls": 0
+        },
+        {
+          "symbol": "DeliveryAttemptOrdinal.declared_zero_phase",
+          "line": 698,
+          "missing_parameters": [],
+          "missing_return": false,
+          "dict_nodes": 0,
+          "get_calls": 0
+        },
+        {
+          "symbol": "DeliveryAttemptOrdinal.from_record",
+          "line": 708,
+          "missing_parameters": [],
+          "missing_return": false,
+          "dict_nodes": 0,
+          "get_calls": 0
+        },
+        {
+          "symbol": "OpsBackoffState.actual_backoff_clock",
+          "line": 717,
+          "missing_parameters": [],
+          "missing_return": false,
+          "dict_nodes": 0,
+          "get_calls": 0
+        },
+        {
+          "symbol": "StartCallPrices.observed_price",
+          "line": 745,
+          "missing_parameters": [],
+          "missing_return": false,
+          "dict_nodes": 0,
+          "get_calls": 0
+        },
+        {
+          "symbol": "call_activation_decision",
+          "line": 770,
+          "missing_parameters": [],
+          "missing_return": false,
+          "dict_nodes": 0,
+          "get_calls": 2
         }
       ]
     }
