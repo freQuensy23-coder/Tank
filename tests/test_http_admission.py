@@ -273,10 +273,10 @@ async def test_memory_backend_enforces_provider_host_block_without_spending_othe
 
 @pytest.mark.asyncio
 async def test_invalid_constructed_constraint_cannot_bypass_required_capacity() -> None:
-    from pydantic import JsonValue, ValidationError
+    from pydantic import ValidationError
 
-    wire: dict[str, JsonValue] = {"key": "configured", "capacity": None, "window_s": 60, "weight": 1}
-    invalid = BudgetConstraint.model_construct(set(wire), **wire)
+    seed = BudgetConstraint.model_construct(key="configured", capacity=1, window_s=60, weight=1)
+    invalid = seed.model_copy(update={"capacity": None})
     backend = MemoryBudgetBackend(FixtureBudgetClock())
     engine = SharedRequestBudgets(backend)
     with pytest.raises(ValidationError):
