@@ -155,6 +155,14 @@ SourceItem
   extraction_status: PENDING | DONE | SKIPPED | FAILED
 ```
 
+For S11 Bybit announcements, `publishTime` is the reported publication timestamp.
+`dateTimestamp` is author-entered metadata and is preserved in the original raw
+response; it does not substitute for publication. A legitimately absent/null
+`publishTime` leaves `published_at` unknown with an explicit `INCOMPLETE` reason.
+The actual collection observation remains separately recorded in `observed_at`.
+This follows the [provider response contract](https://bybit-exchange.github.io/docs/v5/announcement),
+whose example also permits omission of `publishTime`.
+
 ### 2.3 Events
 
 ```

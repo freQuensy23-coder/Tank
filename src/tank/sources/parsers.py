@@ -795,9 +795,7 @@ def _json_discovery(source_id: str, original: JsonValue) -> DiscoveryEnvelope:
                 "title": bybit.title,
                 "text": BYBIT_BOILERPLATE.sub("", text(bybit.description)).strip() or bybit.title,
                 "url": bybit.url,
-                **timestamp_fields(
-                    preferred_publication(bybit.publishTime, bybit.dateTimestamp), epoch_unit="ms"
-                ),
+                **timestamp_fields(bybit.publishTime, epoch_unit="ms"),
                 "tags": bybit.tags,
                 "announcement_type": bybit.type,
             }
