@@ -11,6 +11,8 @@ import feedparser
 from pydantic import JsonValue
 from selectolax.parser import HTMLParser
 
+from tank.contracts.json import decode_unique_json
+from tank.contracts.source_envelopes import bybit_announcement_success
 from tank.contracts.source_items import discovered_item
 from tank.contracts.sources import FeedParsingSpec
 from tank.sources.instrument_adapters import parse_instrument_page
@@ -441,7 +443,13 @@ def article(payload, *, source_id=None):
 
 
 def json_items(payload, source_id):
-    data = json.loads(payload) if isinstance(payload, (str, bytes)) else payload
+    data = (
+        decode_unique_json(payload)
+        if source_id == "S11" and isinstance(payload, (str, bytes))
+        else json.loads(payload)
+        if isinstance(payload, (str, bytes))
+        else payload
+    )
     if source_id == "S03":
         rows = data["results"]
 
@@ -465,9 +473,7 @@ def json_items(payload, source_id):
         def single(row):
             return dict(data, data=[{"details": [row]}])
     elif source_id == "S11":
-        if data.get("retCode", 0) != 0:
-            raise ValueError("Bybit API error: " + str(data.get("retCode")))
-        rows = data["result"]["list"]
+        rows = bybit_announcement_success(data).result.list
 
         def single(row):
             return dict(data, result=dict(data["result"], list=[row]))
@@ -514,7 +520,13 @@ def json_items(payload, source_id):
 
 
 def _json_items(payload, source_id):
-    data = json.loads(payload) if isinstance(payload, (str, bytes)) else payload
+    data = (
+        decode_unique_json(payload)
+        if source_id == "S11" and isinstance(payload, (str, bytes))
+        else json.loads(payload)
+        if isinstance(payload, (str, bytes))
+        else payload
+    )
     if source_id == "S03":
         rows = data["results"]
         return [
@@ -566,8 +578,7 @@ def _json_items(payload, source_id):
             for r in rows
         ]
     if source_id == "S11":
-        if data.get("retCode", 0) != 0:
-            raise ValueError("Bybit API error: " + str(data.get("retCode")))
+        response = bybit_announcement_success(data)
         return [
             {
                 "external_id": r["url"],
@@ -580,7 +591,7 @@ def _json_items(payload, source_id):
                 "tags": r.get("tags"),
                 "announcement_type": r.get("type"),
             }
-            for r in data["result"]["list"]
+            for r in response.result.list
         ]
     if source_id == "S19":
         return [

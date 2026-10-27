@@ -219,7 +219,7 @@ class SourcePoller:
             await self.service.repo.put("ops.source_checkpoints", key, state)
 
     @staticmethod
-    def needs_detail(sid, kind):
+    def needs_detail(sid: str, kind: FeedKind) -> bool:
         """The item's raw payload is its article/detail page, fetched in the backlog."""
         return kind in ARTICLE_KINDS or sid in {"S01", "S09"}
 
@@ -342,15 +342,15 @@ class SourcePoller:
             on_start=lambda: self.mark_request_start(source, key),
             cache_scope=None if acquisition_scope is None else acquisition_scope.digest,
         )
-        payload = _http_read.payload
         if isinstance(_http_read, NotModified):
             return None, state, kind, None
+        payload = _http_read.payload
         state.update(_http_read.receipt.storage_record())
         state["entry_errors"] = []
         if sid == "S14":
             parsed_page = await asyncio.to_thread(parse_instrument_page, payload, feed)
             snapshot = parsed_page.snapshot
-            pages = [InstrumentPage(payload=payload, observed_at=state["fetched_at"])]
+            pages = [InstrumentPage(payload=payload, observed_at=_http_read.receipt.fetched_at)]
             found_on = dict.fromkeys(snapshot.root, 0)
             if feed.venue == "bybit":
                 cursor = parsed_page.next_cursor
@@ -379,19 +379,16 @@ class SourcePoller:
                         key + ":cursor:" + sha256(cursor),
                         persist_http_evidence=False,
                     )
-                    page = _http_read.payload
                     if isinstance(_http_read, NotModified):
                         raise ValueError(
                             "Source detail/history returned 304 without retained content"
                         ) from None
-                    page_state = _http_read.receipt.storage_record()
-                    if page is None:
-                        raise ValueError("Unexpected conditional paginated response")
+                    page = _http_read.payload
                     parsed_page = await asyncio.to_thread(parse_instrument_page, page, feed)
                     page_snapshot = parsed_page.snapshot
                     snapshot = InstrumentSnapshot(root={**snapshot.root, **page_snapshot.root})
                     found_on.update(dict.fromkeys(page_snapshot.root, len(pages)))
-                    pages.append(InstrumentPage(payload=page, observed_at=page_state["fetched_at"]))
+                    pages.append(InstrumentPage(payload=page, observed_at=_http_read.receipt.fetched_at))
                     cursor = parsed_page.next_cursor
 
             if acquisition_scope is None:
@@ -414,7 +411,7 @@ class SourcePoller:
                 raise ValueError("Instrument baseline key conflicts with its acquisition scope")
             state["instrument_snapshot_schema_version"] = 2
             state["cache_scope"] = acquisition_scope.digest
-            rows, digest = await asyncio.to_thread(
+            instrument_rows, digest = await asyncio.to_thread(
                 instrument_changes,
                 snapshot,
                 None if baseline is None else baseline.instruments,
@@ -446,6 +443,7 @@ class SourcePoller:
                     sha256=digest,
                     versions=svc.versions,
                 )
+            return instrument_rows, state, kind, snapshot_update
         elif kind in {"rss", "atom", "feed"}:
             rows = await asyncio.to_thread(parsers.feeds, payload, sid, feed)
             state["entry_errors"] = [
@@ -1103,7 +1101,7 @@ class SourcePoller:
             errors=errors,
         )
 
-    async def loop(self, source, stop):
+    async def loop(self, source: SourceDefinition, stop: asyncio.Event) -> None:
         sid = source.source_id
         while not stop.is_set():
             escalated = await self.service.is_escalated(sid)
@@ -1111,15 +1109,8 @@ class SourcePoller:
             for index in range(len(source.feeds)):
                 key, feed = f"{sid}:{index}", self.feed(source, index)
                 state = await self.state(key)
-                last = state.get("last_attempt_at") or state.get("last_success_at")
-                remaining = (
-                    0
-                    if not last
-                    else max(
-                        0,
-                        self.interval(source, feed, escalated)
-                        - (self.now() - parse_time(last)).total_seconds(),
-                    )
+                remaining = SourceCadence.from_document(state).poll_remaining(
+                    now=self.now(), interval_s=self.interval(source, feed, escalated)
                 )
                 task = self.active_acquisitions.get(key)
                 if (task is None or task.done()) and remaining <= 0:
@@ -1157,20 +1148,20 @@ class SourcePoller:
                 waiter.cancel()
                 await asyncio.gather(waiter, return_exceptions=True)
 
-    async def run(self, stop):
+    async def run(self, stop: asyncio.Event) -> None:
         loops = [asyncio.create_task(self.loop(source, stop)) for source in self.service.sources.values()]
         try:
             if loops:
                 await asyncio.gather(*loops)
         finally:
-            for task in loops:
-                if not task.done():
-                    task.cancel()
+            for loop_task in loops:
+                if not loop_task.done():
+                    loop_task.cancel()
             await asyncio.gather(*loops, return_exceptions=True)
             tasks = list(self.active_acquisitions.values()) + list(self.active_details.values())
-            for task in tasks:
-                if not task.done():
-                    task.cancel()
+            for work_task in tasks:
+                if not work_task.done():
+                    work_task.cancel()
             await asyncio.gather(*tasks, return_exceptions=True)
             self.active_acquisitions.clear()
             self.active_details.clear()
