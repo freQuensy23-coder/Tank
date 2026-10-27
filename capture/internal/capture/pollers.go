@@ -465,15 +465,15 @@ func (s *Service) instrumentLoop(ctx context.Context, inst *venue.Instrument) {
 		doTicker := started >= tickerDue && !hot
 		s.poll(ctx, iid, pollKinds{derivatives: doDeriv, klines: true, ticker: doTicker}, 0)
 		if s.clock.Monotonic() >= auditDue && s.auditKlines(ctx, inst) {
-			auditDue = s.clock.Monotonic() + time.Duration(s.opt.Threshold("kline_audit_interval_s", 3600)*float64(time.Second))
+			auditDue = s.clock.Monotonic() + time.Duration(s.opt.Parameters.KlineAuditSeconds()*float64(time.Second))
 		}
 		if doDeriv {
-			derivDue = s.clock.Monotonic() + time.Duration(s.opt.Threshold("base_oi_funding_interval_s", 300)*float64(time.Second))
+			derivDue = s.clock.Monotonic() + s.opt.Parameters.BaseOIFunding()
 		}
 		if doTicker {
-			tickerDue = s.clock.Monotonic() + time.Duration(s.opt.Threshold("base_ticker_interval_s", 300)*float64(time.Second))
+			tickerDue = s.clock.Monotonic() + s.opt.Parameters.BaseTicker()
 		}
-		wait := time.Duration(s.opt.Threshold("base_kline_interval_s", 60)*float64(time.Second)) - (s.clock.Monotonic() - started)
+		wait := s.opt.Parameters.BaseKline() - (s.clock.Monotonic() - started)
 		if wait < time.Second {
 			wait = time.Second
 		}
@@ -485,7 +485,7 @@ func (s *Service) instrumentLoop(ctx context.Context, inst *venue.Instrument) {
 }
 
 func (s *Service) auditOffset(iid string) time.Duration {
-	interval := s.opt.Threshold("kline_audit_interval_s", 3600)
+	interval := s.opt.Parameters.KlineAuditSeconds()
 	slot := 0
 	for i, id := range s.opt.Order {
 		if id == iid {
@@ -530,7 +530,7 @@ func (s *Service) hotGrid(ctx context.Context, inst *venue.Instrument, interval,
 }
 
 func (s *Service) oiHistoryLoop(ctx context.Context) {
-	days := int(s.opt.Threshold("historical_lookback_days", 90))
+	days := s.opt.Parameters.HistoricalDays()
 	for ctx.Err() == nil {
 		s.oiHistoryPass(ctx, days)
 		select {

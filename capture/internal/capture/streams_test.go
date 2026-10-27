@@ -3,6 +3,7 @@ package capture
 import (
 	"context"
 	"errors"
+	"github.com/freQuensy23-coder/Tank/capture/internal/captureparams"
 	"github.com/freQuensy23-coder/Tank/capture/internal/hotstate"
 	"sync"
 	"testing"
@@ -180,7 +181,10 @@ func replayFixture(t *testing.T, name string) {
 		mu.Unlock()
 		return c, nil
 	}
-	s = New(Options{Instruments: instruments, Order: order, Writer: "test"}, mem, mem, venues, dial, clock)
+	s, err = New(Options{Parameters: captureparams.Defaults(), Instruments: instruments, Order: order, Writer: "test"}, mem, mem, venues, dial, clock)
+	if err != nil {
+		t.Fatal(err)
+	}
 	s.fx.Remember("USDT", map[time.Time]string{start.Add(-time.Hour): parity.USDTRate})
 	ctx, cancel := context.WithCancel(context.Background())
 	s.ctx = ctx

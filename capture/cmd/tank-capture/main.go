@@ -120,14 +120,17 @@ func run(log *slog.Logger) error {
 	writer := store.NewWriter(st)
 	var held atomic.Pointer[store.Lock]
 	leading := make(chan struct{})
-	svc := capture.New(capture.Options{
-		Instruments: cfg.Instruments, Order: cfg.Order, Tokens: cfg.Tokens, Thresholds: cfg.Thresholds,
+	svc, err := capture.New(capture.Options{
+		Instruments: cfg.Instruments, Order: cfg.Order, Tokens: cfg.Tokens, Parameters: cfg.CaptureParameters,
 		ConfigVersion: cfg.ConfigVersion, CodeVersion: cfg.CodeVersion, Writer: config.Writer,
 		CanWrite: func() bool { l := held.Load(); return l != nil && l.Held() },
 		Leading:  leading,
 		Fetcher:  client, Log: log,
 		Raw: rawstore.New(ch, cfg.CodeVersion, cfg.ConfigVersion, log),
 	}, st, writer, capture.RESTVenues(client), dial(cfg.UserAgent), clock)
+	if err != nil {
+		return err
+	}
 	health.set(svc, nil)
 	runCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
