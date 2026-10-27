@@ -138,3 +138,20 @@ async def test_actual_captured_tool_import_preserves_complete_flow_revision(tmp_
     assert stored["complete"] is True
     assert stored["gap_reason"] is None
     assert stored["buy_qty"] == proven["buy_qty"] and stored["sell_qty"] == proven["sell_qty"]
+
+
+@pytest.mark.integration
+async def test_routed_clickhouse_proof_order_and_disconnect_match_sequential_policy(both: Both) -> None:
+    _, routed, _ = both
+    proven, unproven = flow_revisions("STREAM_COVERAGE_UNPROVEN")
+    disconnected = {**unproven, "gap_reason": "STREAM_DISCONNECTED: synthetic fixture"}
+    await routed.put_market_batch("mkt.flow_bars_1m", [proven], keys=["point"])
+    assert await routed.put_market_batch("mkt.flow_bars_1m", [unproven], keys=["point"]) == []
+    await routed.put_market_batch("mkt.flow_bars_1m", [proven, disconnected], keys=["point", "point"])
+    stored = present(await routed.get("mkt.flow_bars_1m", "point"))
+    assert stored["complete"] is False
+    assert stored["gap_reason"] == "STREAM_DISCONNECTED: synthetic fixture"
+    await routed.put_market_batch("mkt.flow_bars_1m", [unproven, proven], keys=["point", "point"])
+    restored = present(await routed.get("mkt.flow_bars_1m", "point"))
+    assert restored["complete"] is True
+    assert restored["gap_reason"] is None
