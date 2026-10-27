@@ -2029,3 +2029,27 @@ labels, argv and wrapper ancestry are retained in
 recovery-policy-bab1-setup-refusal.json. Only that verified wrapper and stale
 container were ended; no volume, service or peer process changed. This setup
 failure is preserved separately from the qualified new caller gate.
+
+## Validated final source-report notice phase — 2026-10-27
+
+Entry-error rendering now consumes EntryErrorRenderContent, containing only
+actual notice identity/source/feed/observation/errors. It has no placeholder
+text or later-phase delivery fields. The final EntryErrorNotice is constructed
+once from actual rendered text and actual optional document references;
+production no longer uses unchecked model_copy to fill text or manifest.
+EntryErrorNotice.storage_record revalidates the admitted instance before
+serialization, retaining the existing error field-presence serialization and
+omitted manifest semantics. Public notice/readback fields, marker keys,
+deduplication, raw evidence and Delivery's consumed document projection stay
+unchanged.
+
+Tested immutable d06641c7 normally follows the qualified recovery caller.
+All 63 selected units passed in 11.49 seconds (zero skips, p90 0.345 seconds,
+maximum 1.444 seconds); all 21 selected actual integration cases passed in
+15.73 seconds, zero skips. New actual Memory/PostgreSQL controls show invalid
+rendered output rolls back marker/notice/job writes, then a real successful
+retry and duplicate retain the same notice and single delivery job. A tampered
+admitted notice refuses storage without changing the original. Existing report
+restart/acknowledgement/version/dedup and X document assertions remain intact.
+Strict three-target source/new-test checking, Ruff, formatting, source comment
+policy and diff checks pass. Evidence prefix: notice-phase-d066-linux.
