@@ -1120,6 +1120,13 @@ async def test_native_fixture_copies_are_exact_independent_and_survive_source_re
         "interval_s": 60,
         "_version": 1,
     }
+    extra_row = {
+        **row,
+        "storage_key": "actual:tiny:second",
+        "open_time": "2026-10-28 12:02:00.123456",
+        "o": "0.25",
+    }
+    del extra_row["h"]
     try:
         for client in clients:
             for statement in ddl():
@@ -1132,6 +1139,13 @@ async def test_native_fixture_copies_are_exact_independent_and_survive_source_re
             "semantic_fingerprint": "literal mkt",
             "source_observations": '{"value":9007199254740993,"missing":null}',
         }
+        extra_funding = {
+            **funding,
+            "storage_key": "actual:funding:second",
+            "as_of": extra_row["open_time"],
+            "rate": "0.01",
+        }
+        del extra_funding["source_observations"]
         tickers = {
             "storage_key": "actual:ticker:key",
             "instrument_id": row["instrument_id"],
@@ -1141,12 +1155,15 @@ async def test_native_fixture_copies_are_exact_independent_and_survive_source_re
         fixtures = tmp_path / "tiny"
         fixtures.mkdir()
         entries = []
-        for collection, captured in (
-            (table, {key: value for key, value in row.items() if key != "_version"}),
-            ("mkt.funding_obs", funding),
-            ("mkt.tickers_24h", tickers),
+        for collection, captured_rows in (
+            (
+                table,
+                [{key: value for key, value in item.items() if key != "_version"} for item in (row, extra_row)],
+            ),
+            ("mkt.funding_obs", [funding, extra_funding]),
+            ("mkt.tickers_24h", [tickers]),
         ):
-            payload = json.dumps(captured).encode() + b"\n"
+            payload = b"".join(json.dumps(item).encode() + b"\n" for item in captured_rows)
             name = collection.split(".")[1] + ".gz"
             archive = gzip.compress(payload)
             (fixtures / name).write_bytes(archive)
@@ -1154,8 +1171,8 @@ async def test_native_fixture_copies_are_exact_independent_and_survive_source_re
                 {
                     "name": name,
                     "table": collection,
-                    "rows": 1,
-                    "columns": list(captured),
+                    "rows": len(captured_rows),
+                    "columns": sorted({key for item in captured_rows for key in item}),
                     "bytes": len(payload),
                     "compressed_bytes": len(archive),
                     "sha256": hashlib.sha256(payload).hexdigest(),
@@ -1230,6 +1247,23 @@ async def test_native_fixture_copies_are_exact_independent_and_survive_source_re
         setup = await full_inputs.seed_full(
             repository(source), settings("source"), fixtures, clickhouse_only=True
         )
+        expected_receipts = {
+            table: {"h": 1, "o": 1},
+            "mkt.funding_obs": {"rate": 1, "source_observations": 1},
+            "mkt.tickers_24h": {},
+        }
+        assert setup["inputs"] == [
+            {
+                "name": entry["name"],
+                "collection": entry["table"],
+                "rows": entry["rows"],
+                "by_instrument": {row["instrument_id"]: entry["rows"]},
+                "absent_captured_columns": expected_receipts[entry["table"]],
+                "sha256": entry["sha256"],
+                "archive_sha256": entry["archive_sha256"],
+            }
+            for entry in entries
+        ]
         seed = {
             "comparison_id": "c" * 32,
             "admission": full_inputs.fixture_admission(settings("source"), fixtures),
@@ -1239,23 +1273,34 @@ async def test_native_fixture_copies_are_exact_independent_and_survive_source_re
         }
         assert seed["copy_tables"] == {table: True, "mkt.funding_obs": False, "mkt.tickers_24h": True}
         for index, target in enumerate((first, second)):
-            await full_inputs.seed_full(
+            target_setup = await full_inputs.seed_full(
                 repository(target),
                 settings(str(index)),
                 fixtures,
                 clickhouse_seed=seed,
                 comparison_id="c" * 32,
             )
+            assert target_setup["inputs"] == setup["inputs"]
             assert await target.rows("SELECT capture_sources FROM mkt.tickers_24h FINAL") == [
                 {"capture_sources": ["PUBLIC_REST", "PUBLIC_WS"]}
             ]
-            assert await target.rows(
-                "SELECT semantic_fingerprint,source_observations FROM mkt.funding_obs FINAL"
+        for client in clients:
+            assert await client.rows(
+                "SELECT semantic_fingerprint,source_observations,rate,as_of "
+                "FROM mkt.funding_obs FINAL ORDER BY storage_key"
             ) == [
                 {
-                    "semantic_fingerprint": "literal " + target.database,
+                    "semantic_fingerprint": "literal " + client.database,
                     "source_observations": '{"value":9007199254740993,"missing":null}',
-                }
+                    "rate": None,
+                    "as_of": "2026-10-28T12:01:00.123456Z",
+                },
+                {
+                    "semantic_fingerprint": "literal " + client.database,
+                    "source_observations": None,
+                    "rate": "0.01",
+                    "as_of": "2026-10-28T12:02:00.123456Z",
+                },
             ]
         assert streams == [
             table,
@@ -1276,11 +1321,20 @@ async def test_native_fixture_copies_are_exact_independent_and_survive_source_re
             "recorded_at": "2026-10-28T12:02:00.654321Z",
             "o": None,
         }
+        expected_extra = {
+            **extra_row,
+            "open_time": "2026-10-28T12:02:00.123456Z",
+            "recorded_at": "2026-10-28T12:02:00.654321Z",
+            "h": None,
+        }
+        expected_rows = [expected, expected_extra]
         columns = ",".join(f"`{key}`" for key in expected)
         for client in clients:
-            assert await client.rows(f"SELECT {columns} FROM {table} FINAL") == [expected]
+            assert await client.rows(
+                f"SELECT {columns} FROM {table} FINAL ORDER BY storage_key"
+            ) == expected_rows
         with pytest.raises(ValueError, match="not empty"):
-            await full_inputs.copy_clickhouse(first, source.database, table, 1)
+            await full_inputs.copy_clickhouse(first, source.database, table, 2)
         await first.execute(f"TRUNCATE TABLE {table}")
         execute = first.execute
 
@@ -1293,7 +1347,7 @@ async def test_native_fixture_copies_are_exact_independent_and_survive_source_re
         with monkeypatch.context() as patch:
             patch.setattr(first, "execute", corrupt_copy)
             with pytest.raises(ValueError, match="full-column copy mismatch"):
-                await full_inputs.copy_clickhouse(first, source.database, table, 1)
+                await full_inputs.copy_clickhouse(first, source.database, table, 2)
         await source.execute("DROP DATABASE mkt SYNC")
         assert (
             await first.rows(
@@ -1304,9 +1358,11 @@ async def test_native_fixture_copies_are_exact_independent_and_survive_source_re
         )
         await first.execute(f"TRUNCATE TABLE {table}")
         assert await first.rows(f"SELECT count() AS n FROM {table} FINAL") == [{"n": 0}]
-        assert await second.rows(f"SELECT {columns} FROM {table} FINAL") == [expected]
+        assert await second.rows(
+            f"SELECT {columns} FROM {table} FINAL ORDER BY storage_key"
+        ) == expected_rows
         with pytest.raises(ValueError, match="physical market tables"):
-            await full_inputs.copy_clickhouse(first, source.database, table, 1)
+            await full_inputs.copy_clickhouse(first, source.database, table, 2)
     finally:
         for client in clients:
             try:

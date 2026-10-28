@@ -2,6 +2,7 @@ import gzip
 import hashlib
 import json
 import re
+from collections import Counter
 from decimal import Decimal
 
 import httpx
@@ -514,3 +515,127 @@ async def test_copy_admission_checks_decoded_escaped_database_token(tmp_path, na
     assert json.loads(requests[0].content.decode().split("\n", 1)[1])["semantic_fingerprint"] == (
         "escaped " + ch.database
     )
+
+
+@pytest.fixture
+def absence_counter():
+    updates = []
+
+    class AbsenceCounter(Counter):
+        def update(self, values=None, **counts):
+            if values is not None:
+                updates.append(dict(values) if isinstance(values, dict) else tuple(values))
+            super().update(values, **counts)
+
+    return AbsenceCounter(), updates
+
+
+def test_missing_columns_weights_repeated_validated_shapes(tmp_path, absence_counter):
+    lines = [
+        '{"instrument_id":"spot","c":"1"}',
+        '{"h":null,"c":"2","instrument_id":"spot"}',
+        '{"c":"3","instrument_id":"spot"}',
+        '{"instrument_id":"spot","c":null,"h":"4"}',
+        '{"instrument_id":"spot","c":"5","h":null,"o":null}',
+    ]
+    retained, entry, _ = retained_batch(tmp_path, lines)
+    missing, updates = absence_counter
+    observed = list(full_inputs.account_missing_columns(retained, entry["columns"], missing))
+    assert observed == [(json.loads(line), line) for line in lines]
+    assert dict(missing) == {"h": 2, "o": 4}
+    assert len(updates) == 3
+    assert sum(sum(update.values()) for update in updates) == 6
+
+
+@pytest.mark.parametrize(
+    ("columns", "rows", "expected"),
+    [
+        (["c", "h"], [{"c": None, "h": None}, {"h": "2", "c": "1"}], {}),
+        (["c", "h"], [{"c": None}, {"c": "1"}], {"h": 2}),
+        (["c", "h"], [], {}),
+    ],
+)
+def test_missing_columns_omits_zero_counts_and_isolates_collections(columns, rows, expected):
+    missing = Counter()
+    original = [(row, json.dumps(row)) for row in rows]
+    assert list(full_inputs.account_missing_columns(iter(original), columns, missing)) == original
+    assert dict(missing) == expected
+    next_missing = Counter()
+    following = [({"h": None}, "null-row")]
+    assert list(full_inputs.account_missing_columns(iter(following), ["h"], next_missing)) == following
+    assert dict(next_missing) == {}
+    assert dict(missing) == expected
+
+
+def test_missing_columns_caps_shapes_without_eviction_or_lost_overflow(absence_counter):
+    columns = [f"c{index}" for index in range(7)] + ["always_absent"]
+    masks = [*range(67), 0, 63, 64, 66, 1, 65, 64]
+    rows = [
+        {column: None for index, column in enumerate(columns[:7]) if mask & (1 << index)}
+        for mask in masks
+    ]
+    original = [(row, json.dumps(row)) for row in rows]
+    missing, updates = absence_counter
+    accounted = full_inputs.account_missing_columns(iter(original), columns, missing)
+    observed = []
+    for index in range(64):
+        observed.append(next(accounted))
+        assert updates == []
+    for index in range(64, 67):
+        observed.append(next(accounted))
+        assert len(updates) == index - 63
+    for expected_updates in (3, 3, 4, 5, 5, 6, 7):
+        observed.append(next(accounted))
+        assert len(updates) == expected_updates
+    assert list(accounted) == []
+    assert observed == original
+    expected = {column: sum(column not in row for row in rows) for column in columns}
+    assert dict(missing) == expected
+    assert len(updates) == 64 + 7
+
+
+@pytest.mark.parametrize(
+    ("changes", "duplicate", "message"),
+    [
+        ({"c": "NaN"}, False, "Nonfinite captured numeric"),
+        ({"open_time": "bad-timestamp"}, False, "Invalid isoformat string"),
+        ({"semantic_fingerprint": "https://private.invalid"}, False, "Private public-fixture value"),
+        ({}, True, "Duplicate JSON field"),
+    ],
+)
+def test_missing_columns_does_not_approve_values_on_repeated_shapes(
+    tmp_path, absence_counter, changes, duplicate, message
+):
+    valid = captured_line(semantic_fingerprint="public")
+    invalid = captured_line(**{"semantic_fingerprint": "public", **changes})
+    if duplicate:
+        invalid = invalid[:-1] + ',"c":"1"}'
+    retained, entry, _ = retained_batch(tmp_path, [valid, invalid])
+    missing, updates = absence_counter
+    accounted = full_inputs.account_missing_columns(retained, entry["columns"], missing)
+    assert next(accounted) == (json.loads(valid), valid)
+    with pytest.raises(ValueError, match=message):
+        list(accounted)
+    assert dict(missing) == {}
+    assert updates == []
+
+
+@pytest.mark.parametrize("corruption", ["hash", "rows", "bytes", "union"])
+def test_missing_columns_waits_for_complete_stream_validation(tmp_path, absence_counter, corruption):
+    lines = [captured_line(), captured_line(o=None)]
+    retained, entry, privacy = retained_batch(tmp_path, lines)
+    if corruption == "hash":
+        entry["sha256"] = "0" * 64
+    elif corruption in {"rows", "bytes"}:
+        entry[corruption] += 1
+    else:
+        entry["columns"].append("l")
+        privacy["top_level_allowlist"][entry["table"]] = entry["columns"]
+    missing, updates = absence_counter
+    accounted = full_inputs.account_missing_columns(retained, entry["columns"], missing)
+    assert next(accounted) == (json.loads(lines[0]), lines[0])
+    assert next(accounted) == (json.loads(lines[1]), lines[1])
+    with pytest.raises(ValueError):
+        next(accounted)
+    assert dict(missing) == {}
+    assert updates == []
