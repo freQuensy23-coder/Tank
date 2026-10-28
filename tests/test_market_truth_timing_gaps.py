@@ -98,9 +98,7 @@ async def test_compact_projection_owns_conversion_at_the_existing_offload_bounda
             result = await task
     assert result == [{key: row[key] for key in fields} for row in raw]
     assert len(conversions) == count * 2
-    assert {thread for _, thread in conversions} == (
-        {main_thread} if count <= 1000 else {conversions[0][1]}
-    )
+    assert {thread for _, thread in conversions} == ({main_thread} if count <= 1000 else {conversions[0][1]})
     if count > 1000:
         assert conversions[0][1] != main_thread
     ended = timing_events(caplog, "stage_end")
@@ -153,12 +151,8 @@ async def test_executor_queue_end_is_worker_entry_before_the_timing_sink(monkeyp
     with telemetry.timing_span("request", root=True):
         result = await telemetry.timing_thread(sum, [2, 3])
     assert result == 5
-    queue = next(
-        row for row in records if row["stage"] == "threadpool.wait" and row["event"] == "stage_end"
-    )
-    work = next(
-        row for row in records if row["stage"] == "threadpool.work" and row["event"] == "stage_end"
-    )
+    queue = next(row for row in records if row["stage"] == "threadpool.wait" and row["event"] == "stage_end")
+    work = next(row for row in records if row["stage"] == "threadpool.work" and row["event"] == "stage_end")
     assert queue["started_mono_ns"] == 1_000_000
     assert queue["ended_mono_ns"] == worker_entry[0] == 4_000_000
     assert queue["wall_ms"] == 3

@@ -75,23 +75,26 @@ async def test_independent_escalation_worker_reports_the_contended_hot_set_prere
     attempted = asyncio.Event()
     lock = repo.lock
     finish = repo.finish_job
-    put = repo.put
+    put_market_batch = repo.put_market_batch
 
-    async def capture_peer(collection, key, record, **kwargs):
-        stored = await put(collection, key, record, **kwargs)
-        if collection == "mkt.capture_requests" and record["status"] == "PENDING":
-            await put(
-                collection,
-                key,
+    async def capture_peer(collection, records, *, keys=None):
+        stored = await put_market_batch(collection, records, keys=keys)
+        if collection == "mkt.capture_requests":
+            completed = [
                 {
-                    **stored,
+                    **record,
                     "status": "COMPLETE",
                     "result": {"instruments": {}},
                     "started_at": "2026-10-28T12:00:00Z",
                     "started_at_prec": "COLLECTION_ONLY",
                     "finished_at": "2026-10-28T12:00:00Z",
                     "finished_at_prec": "COLLECTION_ONLY",
-                },
+                }
+                for record in stored
+                if record["status"] == "PENDING"
+            ]
+            await put_market_batch(
+                collection, completed, keys=[record["request_id"] for record in completed]
             )
         return stored
 
@@ -109,7 +112,7 @@ async def test_independent_escalation_worker_reports_the_contended_hot_set_prere
 
     monkeypatch.setattr(repo, "lock", observed_lock)
     monkeypatch.setattr(repo, "finish_job", finished)
-    monkeypatch.setattr(repo, "put", capture_peer)
+    monkeypatch.setattr(repo, "put_market_batch", capture_peer)
     async with httpx.AsyncClient(
         transport=httpx.MockTransport(lambda request: httpx.Response(200, json={}))
     ) as http:
@@ -156,9 +159,9 @@ async def test_independent_escalation_worker_reports_the_contended_hot_set_prere
                         row["stage"] == "capture.hot_set_lock_wait" and row["event"] == "stage_end"
                         for row in live
                     )
-                    assert any(
-                        row["stage"] == "job.link" and row["event"] == "stage_end" for row in live
-                    ), "caller did not link the blocking prerequisite"
+                    assert any(row["stage"] == "job.link" and row["event"] == "stage_end" for row in live), (
+                        "caller did not link the blocking prerequisite"
+                    )
                 result = await caller
                 await worker
         finally:
@@ -250,9 +253,7 @@ async def test_get_decision_refresh_keeps_session_identity_through_the_real_retu
     truth = MarketTruthService(repo, settings, market)
     tools = EventToolService(repo, settings, truth, DecisionEngine())
     await seed_domain(repo, settings, end)
-    first = await truth.assess(
-        "e", "T", chosen_boundary(end - timedelta(minutes=1), precision="BUCKET(1m)")
-    )
+    first = await truth.assess("e", "T", chosen_boundary(end - timedelta(minutes=1), precision="BUCKET(1m)"))
     initial = await tools.dispatch("get_decision", {"event_id": "e", "token_id": "T"}, {})
     condition = next(row for row in initial["conditions"] if row["role"] == "UPGRADE")
     condition = await repo.get("ana.watch_conditions", condition["cond_id"])
@@ -302,9 +303,9 @@ async def test_get_decision_refresh_keeps_session_identity_through_the_real_retu
     fresh = await repo.get("ana.market_truth", stored["result"]["mta_id"])
     assert fresh["cutoff"] == iso(end)
     assert fresh["cutoff_prec"] == "BUCKET(1m)"
-    assert (await repo.get("ana.watch_conditions", condition["cond_id"]))["consumed_by"] == stored[
-        "result"
-    ]["dec_id"]
+    assert (await repo.get("ana.watch_conditions", condition["cond_id"]))["consumed_by"] == stored["result"][
+        "dec_id"
+    ]
     assert len(sent) == 1
     assert sent[0]["events"][0]["custom_tool_use_id"] == "refresh-decision"
     ended = timing_events(caplog, "stage_end")
