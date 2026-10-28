@@ -148,7 +148,9 @@ class ClickHouse:
             response = await self.http.post(
                 self.base,
                 params=request,
-                content=(query if self.database == "mkt" else re.sub(r"\bmkt\b", self.database, query)).encode(),
+                content=(
+                    query if self.database == "mkt" else re.sub(r"\bmkt\b", self.database, query)
+                ).encode(),
                 headers={"X-ClickHouse-User": self.user, "X-ClickHouse-Key": self.password},
             )
             timing["bytes"] = len(response.content)

@@ -2640,7 +2640,14 @@ class MarketService:
                     fresh = {}
                     if end > entry["end"]:
                         fresh = await self._ranged_read(
-                            collection, field, ids, entry["end"], end, filters, books=books, keys_out=(keys := {})
+                            collection,
+                            field,
+                            ids,
+                            entry["end"],
+                            end,
+                            filters,
+                            books=books,
+                            keys_out=(keys := {}),
                         )
                     rows = entry["rows"]
 
@@ -2774,7 +2781,9 @@ class MarketService:
         and tickers only around the window bounds (see the scope branches below)."""
 
         with timing_span("snapshot.prepare"):
-            requested = cutoff if isinstance(cutoff, Timestamp) else chosen_boundary(cutoff, precision="EXACT")
+            requested = (
+                cutoff if isinstance(cutoff, Timestamp) else chosen_boundary(cutoff, precision="EXACT")
+            )
             if requested.value is None:
                 raise ValueError("Snapshot requires a cutoff value")
             cutoff = requested.value
@@ -2796,7 +2805,10 @@ class MarketService:
                 )
                 bounds = _merge_ranges(
                     [
-                        (anchor_dt - REACTION_BOUND_MARGIN, min(anchor_dt + REACTION_BOUND_MARGIN, snapshot_end)),
+                        (
+                            anchor_dt - REACTION_BOUND_MARGIN,
+                            min(anchor_dt + REACTION_BOUND_MARGIN, snapshot_end),
+                        ),
                         (cutoff_dt - REACTION_NEWEST_MARGIN, snapshot_end),
                     ]
                 )
@@ -2926,7 +2938,9 @@ class MarketService:
                             continue
                         if name == "books" and row.get("independent_rest"):
                             independent = row["independent_rest"]
-                            if any(parse_time(independent[f]) > cutoff_dt for f in ("ts",) if independent.get(f)):
+                            if any(
+                                parse_time(independent[f]) > cutoff_dt for f in ("ts",) if independent.get(f)
+                            ):
                                 row = dict(
                                     row,
                                     second_path_confirmed=False,
@@ -3016,7 +3030,9 @@ class MarketService:
                 if all_spot
                 else {}
             )
-            present_closes = {(row["instrument_id"], parse_time(row["open_time"])) for row in result["klines"]}
+            present_closes = {
+                (row["instrument_id"], parse_time(row["open_time"])) for row in result["klines"]
+            }
 
             async def retain_close(row):
                 if row is not None:
@@ -3198,7 +3214,9 @@ class MarketService:
                 observation
                 for point in result["funding"]
                 for observation in (
-                    list(point["source_observations"].values()) if point.get("source_observations") else [point]
+                    list(point["source_observations"].values())
+                    if point.get("source_observations")
+                    else [point]
                 )
             ]
             result["funding_confirmations"] = [

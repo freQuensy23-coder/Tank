@@ -4926,7 +4926,9 @@ def _compute_market_truth(snapshot, *, config=None):
         window_liquidity["replenishment"].update(window=name, start=iso(wstart), cutoff=iso(end))
         with timing_span("compute.evidence", cpu=True, window=name):
             enrich_evidence(scoped, wstart, end, spots, name, d, relative, window_liquidity)
-            d["support_features"] = support_features(scoped, wstart, end, spots[name], d, window_liquidity, su)
+            d["support_features"] = support_features(
+                scoped, wstart, end, spots[name], d, window_liquidity, su
+            )
         if name == "EVENT" and not av:
             d = derivatives_truth(dict(scoped, oi=[], funding=[], liquidations=[], klines=[]), wstart, end)
             d.update(window=name, start=None, cutoff=iso(end), reason="INCOMPLETE")
@@ -5756,13 +5758,17 @@ class MarketTruthService:
             with timing_span("assessment.beneficiaries"):
                 beneficiaries = (
                     await self.repo.list(
-                        "evt.beneficiary_edges", filters={"event_id": event_id, "token_id": token_id}, limit=10000
+                        "evt.beneficiary_edges",
+                        filters={"event_id": event_id, "token_id": token_id},
+                        limit=10000,
                     )
                     if event_id and hasattr(self.repo, "list")
                     else []
                 )
                 if beneficiaries:
-                    edge = max(beneficiaries, key=lambda b: (int(b.get("map_version", 0)), str(b.get("edge_id", ""))))
+                    edge = max(
+                        beneficiaries, key=lambda b: (int(b.get("map_version", 0)), str(b.get("edge_id", "")))
+                    )
                     snapshot["expected_direction"] = "LOSER" if edge.get("role") == "LOSER" else "BULLISH"
             with timing_span("assessment.config"):
                 knobs = (
@@ -5771,7 +5777,9 @@ class MarketTruthService:
                     else {}
                 )
                 knobs = dict(
-                    knobs, config_version=self.settings.config_version, code_version=self.settings.code_version
+                    knobs,
+                    config_version=self.settings.config_version,
+                    code_version=self.settings.code_version,
                 )
             lock = self._assessment_locks.setdefault(token_id, asyncio.Lock())
             with timing_span("assessment.lock_wait"):

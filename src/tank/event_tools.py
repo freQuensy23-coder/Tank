@@ -2229,7 +2229,10 @@ class EventToolService:
             event = await self.require("evt.events", eid)
             assessment = await self.require("evt.ems_assessments", event["current_ems_id"])
             managed = await self.managed_tokens(eid)
-            if assessment["class"] not in {"MAJOR", "STRUCTURAL_SHOCK"} and not set(a["token_ids"]) <= managed:
+            if (
+                assessment["class"] not in {"MAJOR", "STRUCTURAL_SHOCK"}
+                and not set(a["token_ids"]) <= managed
+            ):
                 raise ValueError("Market escalation requires MAJOR+ or existing call/shown-token management")
             maps = await self.rows("evt.beneficiary_maps", eid)
             allowed = set(
@@ -2292,7 +2295,9 @@ class EventToolService:
                             "Market truth job is terminally failed or expired; inspect its durable job record"
                         )
                     if asyncio.get_running_loop().time() >= deadline:
-                        raise TimeoutError("Market truth jobs are pending; retry this call with the same call_id")
+                        raise TimeoutError(
+                            "Market truth jobs are pending; retry this call with the same call_id"
+                        )
                     await asyncio.sleep(0.25)
         with timing_span("tool.beneficiary_update"):
             if maps:
@@ -2314,12 +2319,18 @@ class EventToolService:
                             latest[token] = stored
                 for edge in edges:
                     mt = latest.get(edge.get("token_id"))
-                    if edge.get("credible") and mt and mt.get("liquidity", {}).get("liquidity_state") == "NORMAL":
+                    if (
+                        edge.get("credible")
+                        and mt
+                        and mt.get("liquidity", {}).get("liquidity_state") == "NORMAL"
+                    ):
                         relative = mt.get("relative", {})
                         band = relative.get("repricing_band")
                         pct = (relative.get("windows", {}).get("EVENT") or {}).get("pctile")
                         if band in ranks and pct is not None:
-                            candidates.append((ranks[band], float(pct), -edge["exposure_score"], edge["edge_id"]))
+                            candidates.append(
+                                (ranks[band], float(pct), -edge["exposure_score"], edge["edge_id"])
+                            )
                 mapping["least_repriced_edge"] = min(candidates)[-1] if candidates else None
                 mapping["least_repriced_reason"] = (
                     "Lowest repricing band, event percentile, then highest exposure among credible NORMAL-liquidity beneficiaries"

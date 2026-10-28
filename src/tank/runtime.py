@@ -178,7 +178,9 @@ class Runtime:
             if prerequisite["status"] not in {"PENDING", "RUNNING", "COMPLETE", "PARTIAL", "FAILED"}:
                 raise RuntimeError("Required durable event capture was not scheduled")
             if prerequisite["status"] in {"PENDING", "RUNNING"}:
-                await self.market.wait_capture(payload["event_id"], payload["token_id"], timeout_s=CAPTURE_WAIT_S)
+                await self.market.wait_capture(
+                    payload["event_id"], payload["token_id"], timeout_s=CAPTURE_WAIT_S
+                )
         cutoff = propagate_timestamp(payload, "cutoff") if payload.get("cutoff") is not None else None
         with timing_span("job.repair"):
             if hasattr(self.market, "repair_windows"):
