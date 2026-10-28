@@ -1407,6 +1407,7 @@ async def test_canonical_seed_cancellation_settles_import_before_owned_cleanup(
     monkeypatch.setattr(comparison, "PostgresTemplate", Template)
     monkeypatch.setattr(comparison, "seed_full", seed)
     monkeypatch.setattr(comparison, "Settings", lambda **kwargs: SimpleNamespace())
+    monkeypatch.setattr(comparison, "confirm_source_absent", absent)
     lifecycle = {"receipts": [], "shutdown_actions": []}
 
     async def prepare():
