@@ -1227,7 +1227,9 @@ async def test_native_fixture_copies_are_exact_independent_and_survive_source_re
         def settings(name):
             return SimpleNamespace(data_dir=tmp_path / name)
 
-        setup = await full_inputs.seed_full(repository(source), settings("source"), fixtures, clickhouse_only=True)
+        setup = await full_inputs.seed_full(
+            repository(source), settings("source"), fixtures, clickhouse_only=True
+        )
         seed = {
             "comparison_id": "c" * 32,
             "admission": full_inputs.fixture_admission(settings("source"), fixtures),
@@ -1293,10 +1295,13 @@ async def test_native_fixture_copies_are_exact_independent_and_survive_source_re
             with pytest.raises(ValueError, match="full-column copy mismatch"):
                 await full_inputs.copy_clickhouse(first, source.database, table, 1)
         await source.execute("DROP DATABASE mkt SYNC")
-        assert await first.rows(
-            "SELECT name FROM system.databases WHERE name={source:String}",
-            {"source": (names[0], "String")},
-        ) == []
+        assert (
+            await first.rows(
+                "SELECT name FROM system.databases WHERE name={source:String}",
+                {"source": (names[0], "String")},
+            )
+            == []
+        )
         await first.execute(f"TRUNCATE TABLE {table}")
         assert await first.rows(f"SELECT count() AS n FROM {table} FINAL") == [{"n": 0}]
         assert await second.rows(f"SELECT {columns} FROM {table} FINAL") == [expected]
@@ -1311,10 +1316,13 @@ async def test_native_fixture_copies_are_exact_independent_and_survive_source_re
     verifier = ClickHouse(os.environ["CLICKHOUSE_TEST_URL"])
     try:
         for name in names:
-            assert await verifier.rows(
-                "SELECT name FROM system.databases WHERE name={name:String}",
-                {"name": (name, "String")},
-            ) == []
+            assert (
+                await verifier.rows(
+                    "SELECT name FROM system.databases WHERE name={name:String}",
+                    {"name": (name, "String")},
+                )
+                == []
+            )
     finally:
         await verifier.close()
 
