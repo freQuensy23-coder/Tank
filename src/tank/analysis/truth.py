@@ -882,7 +882,8 @@ def _oi_stats(rows, start, end, *, history_identity=None, venue_history=None):
     length = _time(z) - _time(a)
 
     window = end - start
-    bytime = {_time(r): r for r in rows if start - timedelta(days=lookback_days()) <= _time(r) < start}
+    history_start = start - timedelta(days=lookback_days())
+    bytime = {_time(r): r for r in rows if history_start <= _time(r) < start}
     if venue_history is not None:
         venue_history = [_history_slice(times, venue_rows, start) for times, venue_rows in venue_history]
     history_times = sorted(bytime)
@@ -1131,7 +1132,7 @@ def synchronized_oi(sync, start, end):
                     rs[i]
                     for i in (idx - 1, idx)
                     if 0 <= i < len(rs)
-                    and abs((times[i] - t).total_seconds()) <= float(parameter("oi_sync_tolerance_s", 60))
+                    and abs((times[i] - t).total_seconds()) <= tolerance
                     and times[i] <= end
                 ]
                 if not candidates:
@@ -1534,10 +1535,14 @@ def relative_truth(snapshot, start, end, *, include_outcome=True):
         )
     elif history_head is not None and not isinstance(history_head, str):
         history_head = fingerprint(history_head)
+    history_days = lookback_days()
+    history_start = None
+    hour = timedelta(hours=1)
+    day = timedelta(days=1)
     scope = (
         history_head,
         iso(start),
-        lookback_days(),
+        history_days,
         parameter("history_min_days", 7),
         parameter("beta_blume_weight", 2 / 3),
     )
@@ -1546,15 +1551,16 @@ def relative_truth(snapshot, start, end, *, include_outcome=True):
         return tuple(iid for iid, rows in groups.items() if rows is p)
 
     def hourly_values(p):
-        return {
-            t: log(p[t] / p[t - timedelta(hours=1)])
-            for t in p
-            if t.minute == 0
-            and t.second == 0
-            and t < history_end
-            and t - timedelta(hours=1) in p
-            and t >= history_end - timedelta(days=lookback_days())
-        }
+        nonlocal history_start
+        values = {}
+        for t in p:
+            if t.minute != 0 or t.second != 0 or t >= history_end or t - hour not in p:
+                continue
+            if history_start is None:
+                history_start = history_end - timedelta(days=history_days)
+            if t >= history_start:
+                values[t] = log(p[t] / p[t - hour])
+        return values
 
     def hourly(p):
         return remember(cache, ("relative_hourly", scope, series_id(p)), lambda: hourly_values(p))
@@ -1603,19 +1609,20 @@ def relative_truth(snapshot, start, end, *, include_outcome=True):
     history_diagnostics = {}
 
     def hist_values(length):
-        if (
-            not historical_times
-            or (historical_times[-1] - historical_times[0]).total_seconds()
-            < float(parameter("history_min_days", 7)) * 86400
-        ):
+        nonlocal history_start
+        if not historical_times:
             return []
+        minimum = float(parameter("history_min_days", 7)) * 86400
+        if (historical_times[-1] - historical_times[0]).total_seconds() < minimum:
+            return []
+        window_delta = timedelta(seconds=length)
         out = []
         durations = []
         stalenesses = []
         ends = []
 
         for t in historical_times:
-            target = t - timedelta(seconds=length)
+            target = t - window_delta
             i = bisect_left(historical_times, target)
             if i == len(historical_times) or historical_times[i] != target:
                 i -= 1
@@ -1623,8 +1630,10 @@ def relative_truth(snapshot, start, end, *, include_outcome=True):
                 continue
             a = historical_times[i]
             lag = (target - a).total_seconds()
+            if history_start is None:
+                history_start = start - timedelta(days=history_days)
             if (
-                a < start - timedelta(days=lookback_days())
+                a < history_start
                 or lag >= history_resolution_s
                 or not benchmark
                 and (t not in btc or a not in btc)
@@ -1790,18 +1799,23 @@ def relative_truth(snapshot, start, end, *, include_outcome=True):
     btc_hourly = {t: p for t, p in btc.items() if t.minute == 0 and t.second == 0 and t.microsecond == 0}
 
     def btc_baseline():
+        nonlocal history_start
         bh = []
         rvhist = []
         for t in sorted(btc_hourly):
-            if t >= start or t < start - timedelta(days=lookback_days()):
+            if t >= start:
                 continue
-            a = t - timedelta(days=1)
+            if history_start is None:
+                history_start = start - timedelta(days=history_days)
+            if t < history_start:
+                continue
+            a = t - day
             if a in btc:
                 bh.append(btc[t] / btc[a] - 1)
             lr = [
-                log(btc_hourly[x] / btc_hourly[x - timedelta(hours=1)])
+                log(btc_hourly[x] / btc_hourly[x - hour])
                 for x in btc_hourly
-                if a < x <= t and x - timedelta(hours=1) in btc_hourly
+                if a < x <= t and x - hour in btc_hourly
             ]
             if len(lr) == 24:
                 rvhist.append(stdev(lr))
@@ -1810,13 +1824,12 @@ def relative_truth(snapshot, start, end, *, include_outcome=True):
         ) if cache is not None else rvhist
 
     bh, rvhist = remember(cache, ("btc_context_history", scope, series_id(btc)), btc_baseline)
+    btc_hour_end = end.replace(minute=0, second=0, microsecond=0)
+    btc_hour_start = btc_hour_end - day
     lr = [
-        log(btc_hourly[t] / btc_hourly[t - timedelta(hours=1)])
+        log(btc_hourly[t] / btc_hourly[t - hour])
         for t in btc_hourly
-        if end.replace(minute=0, second=0, microsecond=0) - timedelta(days=1)
-        < t
-        <= end.replace(minute=0, second=0, microsecond=0)
-        and t - timedelta(hours=1) in btc_hourly
+        if btc_hour_start < t <= btc_hour_end and t - hour in btc_hourly
     ]
     if len(lr) == 24:
         rv = stdev(lr)
@@ -1842,11 +1855,13 @@ def relative_truth(snapshot, start, end, *, include_outcome=True):
     ):
         history = hist(length)
         diagnostic = history_diagnostics.get(length, {})
+        if history_start is None:
+            history_start = start - timedelta(days=history_days)
         horizon_ranges[name] = dict(
             value=float_normal(history),
             unit="DECIMAL_RETURN",
             window=name,
-            start=iso(start - timedelta(days=lookback_days())),
+            start=iso(history_start),
             cutoff=iso(start),
             observed_at=diagnostic.get("latest_observed_at"),
             precision=f"BUCKET({history_resolution_s}s)" if history_resolution_s else None,
