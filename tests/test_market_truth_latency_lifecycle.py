@@ -1,16 +1,20 @@
 import asyncio
 import hashlib
 import json
+import os
 import threading
 from contextlib import asynccontextmanager
 from importlib.machinery import ModuleSpec
 from pathlib import Path
 from types import ModuleType, SimpleNamespace
+from uuid import uuid4
 
 import market_truth_full_inputs as full_inputs
 import market_truth_latency_worker as worker
 import pytest
 import test_market_truth_latency_comparison as comparison
+
+from tank.clickhouse_market import ClickHouse, ddl
 
 
 def source_module(name, *, file=None, paths=()):
@@ -1092,3 +1096,113 @@ def test_canonical_public_read_preserves_postserialization_file_bound(tmp_path, 
     monkeypatch.setattr(comparison, "PUBLIC_FILE_LIMIT", len(canonical) - 1)
     with pytest.raises(ValueError, match="file exceeds"):
         comparison.read_public_file(source, canonical=True)
+
+
+@pytest.mark.integration
+@pytest.mark.postgres
+async def test_native_fixture_copies_are_exact_independent_and_survive_source_removal():
+    names = ["mkt_tank_test_fixture_" + uuid4().hex for _ in range(3)]
+    clients = [ClickHouse(os.environ["CLICKHOUSE_TEST_URL"], database=name) for name in names]
+    source, first, second = clients
+    table = "mkt.klines_1m"
+    row = {
+        "storage_key": "actual:tiny:key",
+        "instrument_id": "binance:spot:ENAUSDT",
+        "open_time": "2026-10-28 12:01:00.123456",
+        "recorded_at": "2026-10-28 12:02:00.654321",
+        "c": "0.123456789012345678901234567890123456789000",
+        "h": None,
+        "n_trades": 9007199254740993,
+        "complete": True,
+        "interval_s": 60,
+        "_version": 1,
+    }
+    try:
+        for client in clients:
+            for statement in ddl():
+                await client.execute(statement)
+        await source.insert(table, [row])
+        for target in (first, second):
+            await full_inputs.copy_clickhouse(target, source.database, table, 1)
+        expected = {
+            **row,
+            "open_time": "2026-10-28T12:01:00.123456Z",
+            "recorded_at": "2026-10-28T12:02:00.654321Z",
+            "o": None,
+        }
+        columns = ",".join(f"`{key}`" for key in expected)
+        for client in clients:
+            assert await client.rows(f"SELECT {columns} FROM {table} FINAL") == [expected]
+        with pytest.raises(ValueError, match="not empty"):
+            await full_inputs.copy_clickhouse(first, source.database, table, 1)
+        await source.execute("DROP DATABASE mkt SYNC")
+        assert await first.rows(
+            "SELECT name FROM system.databases WHERE name={source:String}",
+            {"source": (names[0], "String")},
+        ) == []
+        await first.execute(f"TRUNCATE TABLE {table}")
+        assert await first.rows(f"SELECT count() AS n FROM {table} FINAL") == [{"n": 0}]
+        assert await second.rows(f"SELECT {columns} FROM {table} FINAL") == [expected]
+    finally:
+        for client in clients:
+            try:
+                await client.execute("DROP DATABASE IF EXISTS mkt SYNC")
+            finally:
+                await client.close()
+    verifier = ClickHouse(os.environ["CLICKHOUSE_TEST_URL"])
+    try:
+        for name in names:
+            assert await verifier.rows(
+                "SELECT name FROM system.databases WHERE name={name:String}",
+                {"name": (name, "String")},
+            ) == []
+    finally:
+        await verifier.close()
+
+
+@pytest.mark.parametrize(
+    ("source", "table", "rows"),
+    [
+        ("mkt", "mkt.klines_1m", 1),
+        ("mkt_tank_test_fixture_" + "a" * 32, "mkt.trades", 1),
+        ("mkt_tank_test_fixture_" + "a" * 32, "mkt.klines_1m;DROP", 1),
+        ("mkt_tank_test_fixture_" + "a" * 32, "mkt.klines_1m", -1),
+        ("mkt_tank_test_fixture_" + "a" * 32, "mkt.klines_1m", True),
+    ],
+)
+async def test_native_copy_refuses_unsafe_contract_before_transport(source, table, rows):
+    client = ClickHouse("http://localhost:8123", database="mkt_tank_test_fixture_" + "b" * 32)
+    try:
+        with pytest.raises(ValueError):
+            await full_inputs.copy_clickhouse(client, source, table, rows)
+    finally:
+        await client.close()
+
+
+@pytest.mark.parametrize("mutation", ["run", "admission", "source", "partial", "table", "rows", "wire"])
+def test_seed_descriptor_refuses_stale_partial_or_foreign_inputs(mutation):
+    manifest = {"files": [{"table": "mkt.klines_1m", "rows": 1, "name": "tiny.gz"}]}
+    admission = {"manifest_sha256": "a" * 64, "loader_sha256": "b" * 64}
+    seed = {
+        "comparison_id": "c" * 32,
+        "admission": dict(admission),
+        "source_database": "mkt_tank_test_fixture_" + "d" * 32,
+        "inputs": [{"collection": "mkt.klines_1m", "rows": 1, "name": "tiny.gz"}],
+        "copy_tables": {"mkt.klines_1m": True},
+    }
+    if mutation == "run":
+        seed["comparison_id"] = "e" * 32
+    elif mutation == "admission":
+        seed["admission"]["loader_sha256"] = "0" * 64
+    elif mutation == "source":
+        seed["source_database"] = "mkt"
+    elif mutation == "partial":
+        seed["inputs"] = []
+    elif mutation == "table":
+        seed["copy_tables"] = {"mkt.trades": True}
+    elif mutation == "rows":
+        seed["inputs"][0]["rows"] = 2
+    else:
+        seed["copy_tables"]["mkt.klines_1m"] = "true"
+    with pytest.raises(ValueError):
+        full_inputs.validate_clickhouse_seed(seed, "c" * 32, admission, manifest)

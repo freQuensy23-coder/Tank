@@ -405,3 +405,37 @@ async def test_native_import_keeps_decoded_privacy_boundaries_without_impossible
         assert json.loads(payload) == {**json.loads(line), "_version": 1}
         assert json.loads(payload)["source_observations"] == document
     assert full_privacy_searches == searches
+
+
+@pytest.mark.parametrize(
+    ("fingerprint", "independent"),
+    [
+        ("public", True),
+        ("mkt_value", True),
+        ("literal mkt", False),
+        ("escaped \\u006dkt", True),
+        ("snowman ☃ mkt", False),
+        ("émkt", True),
+    ],
+)
+async def test_copy_admission_matches_actual_insert_wire(tmp_path, native_import, fingerprint, independent):
+    ch, requests = native_import
+    line = captured_line(semantic_fingerprint=fingerprint)
+    retained, _, _ = retained_batch(tmp_path, [line])
+    batch = list(retained)
+    assert full_inputs.clickhouse_wire_independent(batch) is independent
+    await full_inputs.insert_clickhouse(ch, "mkt.klines_1m", batch)
+    payload = requests[0].content.decode().split("\n", 1)[1]
+    assert (ch.database not in payload) is independent
+
+
+async def test_copy_admission_checks_decoded_escaped_database_token(tmp_path, native_import):
+    ch, requests = native_import
+    line = captured_line(semantic_fingerprint="escaped mkt").replace("escaped mkt", "escaped \\u006dkt")
+    retained, _, _ = retained_batch(tmp_path, [line])
+    batch = list(retained)
+    assert full_inputs.clickhouse_wire_independent(batch) is False
+    await full_inputs.insert_clickhouse(ch, "mkt.klines_1m", batch)
+    assert json.loads(requests[0].content.decode().split("\n", 1)[1])["semantic_fingerprint"] == (
+        "escaped " + ch.database
+    )
