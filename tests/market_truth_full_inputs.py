@@ -304,6 +304,32 @@ async def insert_postgres(repo, table, rows, columns):
         await cursor.executemany(query, [(raw,) for raw in rows])
 
 
+async def insert_clickhouse(ch, table, rows):
+    from tank.market_schema import MARKET_IDENTITIES
+
+    if not rows:
+        return
+    for row, _ in rows:
+        require(
+            isinstance(row.get("storage_key"), str) and row["storage_key"],
+            "Missing actual storage key",
+        )
+        require(
+            all(row.get(key) is not None for key in MARKET_IDENTITIES[table]),
+            "Missing actual market identity",
+        )
+    if all(
+        raw.isascii()
+        and "\\" not in raw
+        and all(type(value) in (str, int, bool, type(None)) for value in row.values())
+        for row, raw in rows
+    ):
+        body = "\n".join(raw[:-1] + ',"_version":1}' for _, raw in rows)
+        await ch.execute(f"INSERT INTO {table} FORMAT JSONEachRow\n{body}")
+    else:
+        await ch.insert(table, [{**row, "_version": 1} for row, _ in rows])
+
+
 async def seed_full(repo, settings, fixtures, progress=None):
     from psycopg.conninfo import conninfo_to_dict
 
@@ -361,15 +387,7 @@ async def seed_full(repo, settings, fixtures, progress=None):
             by_instrument[row.get("instrument_id") or row.get("token_id")] += 1
             missing.update(set(entry["columns"]) - set(row))
             if is_ch:
-                require(
-                    isinstance(row.get("storage_key"), str) and row["storage_key"],
-                    "Missing actual storage key",
-                )
-                require(
-                    all(row.get(key) is not None for key in MARKET_IDENTITIES[table]),
-                    "Missing actual market identity",
-                )
-                batch.append({**row, "_version": 1})
+                batch.append((row, raw))
             else:
                 additions = {}
                 if captured in PUBLIC_TABLES:
@@ -393,13 +411,13 @@ async def seed_full(repo, settings, fixtures, progress=None):
                 batch.append(raw)
             if len(batch) == 5000:
                 if is_ch:
-                    await repo.clickhouse.insert(table, batch)
+                    await insert_clickhouse(repo.clickhouse, table, batch)
                 else:
                     await insert_postgres(repo, table, batch, columns)
                 batch.clear()
         if batch:
             if is_ch:
-                await repo.clickhouse.insert(table, batch)
+                await insert_clickhouse(repo.clickhouse, table, batch)
             else:
                 await insert_postgres(repo, table, batch, columns)
         if is_ch:
