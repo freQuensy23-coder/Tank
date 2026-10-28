@@ -8,15 +8,25 @@ import stat
 import subprocess
 import sys
 import tarfile
-from contextlib import AsyncExitStack, suppress
+from contextlib import AsyncExitStack, asynccontextmanager, suppress
 from math import isfinite
 from pathlib import Path
 from time import perf_counter, process_time
+from urllib.parse import urlsplit
 from uuid import uuid4
 
 import pytest
-from market_truth_full_inputs import validate_progress
-from postgres_helpers import _finish
+from market_truth_full_inputs import (
+    StageProgress,
+    clickhouse_fixture_contract,
+    fixture_admission,
+    seed_full,
+    validate_progress,
+)
+from postgres_helpers import PostgresTemplate, _finish
+
+from tank.clickhouse_market import ClickHouse
+from tank.settings import Settings
 
 pytestmark = [pytest.mark.integration, pytest.mark.postgres, pytest.mark.process]
 
@@ -366,7 +376,18 @@ async def close_worker(process, lifecycle, checkpoint=None):
 
 
 async def start_worker(
-    stack, source, run_dir, policy_path, provenance, schema_template, lifecycle, checkpoint=None
+    stack,
+    source,
+    run_dir,
+    policy_path,
+    provenance,
+    schema_template,
+    lifecycle,
+    checkpoint=None,
+    *,
+    seed_path,
+    seed_sha256,
+    comparison_id,
 ):
     started = perf_counter()
     run_dir.mkdir()
@@ -386,6 +407,9 @@ async def start_worker(
         str(policy_path),
         provenance["commit"],
         schema_template,
+        str(seed_path),
+        seed_sha256,
+        comparison_id,
         cwd=source,
         env=environment,
         stdin=asyncio.subprocess.PIPE,
@@ -402,6 +426,85 @@ async def start_worker(
     if checkpoint is not None:
         checkpoint()
     return process, ready
+
+
+async def confirm_source_absent(route, clickhouse_url, database):
+    import psycopg
+
+    admin = await psycopg.AsyncConnection.connect(route, autocommit=True)
+    try:
+        assert await (
+            await admin.execute("SELECT datname FROM pg_database WHERE datname=%s", (database,))
+        ).fetchall() == [], "Canonical PostgreSQL database survived cleanup"
+    finally:
+        await _finish(admin.close())
+    ch = ClickHouse(clickhouse_url)
+    try:
+        assert await ch.rows(
+            "SELECT name FROM system.databases WHERE name={name:String}",
+            {"name": ("mkt_" + database, "String")},
+        ) == [], "Canonical ClickHouse database survived cleanup"
+    finally:
+        await _finish(ch.close())
+
+
+@asynccontextmanager
+async def prepared_clickhouse_seed(directory, schema_template, comparison_id, lifecycle, checkpoint):
+    from psycopg.conninfo import conninfo_to_dict
+
+    template = PostgresTemplate(schema_template=schema_template)
+    route = os.environ["TANK_TEST_DATABASE_URL"]
+    assert urlsplit(os.environ["CLICKHOUSE_TEST_URL"]).hostname in {"127.0.0.1", "localhost", "::1"}
+    database = None
+    context = template.repository(route)
+    repo = None
+    progress = StageProgress(lambda message: retain_message(message, lifecycle, checkpoint))
+    try:
+        repo = await context.__aenter__()
+        database = conninfo_to_dict(repo.database_url)["dbname"]
+        lifecycle["postgres_database"] = database
+        lifecycle["clickhouse_database"] = repo.clickhouse.database
+        lifecycle["cleanup_confirmed"] = False
+        checkpoint()
+        settings = Settings(_env_file=None, config_dir=ROOT / "config", data_dir=directory, replay=True)
+        progress.record("seed_start")
+        setup = await _finish(
+            seed_full(repo, settings, FIXTURES, progress=progress.record, clickhouse_only=True),
+        )
+        seed = {
+            "comparison_id": comparison_id,
+            "admission": fixture_admission(settings, FIXTURES),
+            "source_database": repo.clickhouse.database,
+            "inputs": setup["inputs"],
+            "copy_tables": setup["copy_tables"],
+        }
+        lifecycle["seed"] = seed
+        checkpoint()
+        yield seed
+    finally:
+        failure = sys.exc_info()
+        cleanup_error = None
+        if repo is not None:
+            try:
+                await _finish(context.__aexit__(*failure))
+            except BaseException as error:
+                cleanup_error = error
+        try:
+            await _finish(template.close())
+            if database is not None:
+                await _finish(confirm_source_absent(route, os.environ["CLICKHOUSE_TEST_URL"], database))
+                lifecycle["cleanup_confirmed"] = cleanup_error is None
+        except BaseException as error:
+            cleanup_error = cleanup_error or error
+        if cleanup_error is not None:
+            lifecycle["cleanup_failure_type"] = type(cleanup_error).__name__
+        try:
+            checkpoint()
+        except BaseException:
+            if failure[1] is None and cleanup_error is None:
+                raise
+        if failure[1] is None and cleanup_error is not None:
+            raise cleanup_error
 
 
 def compare_full_result(actual, expected, path=""):
@@ -430,7 +533,16 @@ async def test_original_and_candidate_full_input_market_truth_same_worker(
     assert os.environ.get("CLICKHOUSE_TEST_URL"), "Owned loopback ClickHouse route is required"
     schema_template = pytestconfig.getoption("postgres_schema_template")
     assert schema_template, "Permanent automatic CI sealed schema seed is required"
-    for path in ("uv.lock", "src/tank/storage.py", "src/tank/market_schema.py", "src/tank/migrations"):
+    for path in (
+        "uv.lock",
+        "pyproject.toml",
+        "config",
+        "src/tank/storage.py",
+        "src/tank/market_schema.py",
+        "src/tank/market_storage.py",
+        "src/tank/models.py",
+        "src/tank/migrations",
+    ):
         assert git_bytes("rev-parse", ORIGINAL + ":" + path) == git_bytes(
             "rev-parse", candidate + ":" + path
         ), "Original package requires its own schema/dependencies if migration or lock inputs change: " + path
@@ -440,6 +552,9 @@ async def test_original_and_candidate_full_input_market_truth_same_worker(
         name: archive_source(revision, tmp_path / name)
         for name, revision in (("original", ORIGINAL), ("candidate", candidate))
     }
+    assert clickhouse_fixture_contract(tmp_path / "original/src/tank/clickhouse_market.py") == (
+        clickhouse_fixture_contract(tmp_path / "candidate/src/tank/clickhouse_market.py")
+    ), "Original/candidate native fixture transport differs"
     identities = {
         "candidate_commit": candidate,
         "original_commit": ORIGINAL,
@@ -458,7 +573,7 @@ async def test_original_and_candidate_full_input_market_truth_same_worker(
         "completion": "INCOMPLETE_NO_LATENCY_OR_PARITY_OUTCOME",
     }
     public_bytes(identities)
-    lifecycles = {name: {"receipts": [], "shutdown_actions": []} for name in provenance}
+    lifecycles = {name: {"receipts": [], "shutdown_actions": []} for name in (*provenance, "canonical")}
     evidence_dir = ROOT / ".test-results" / "market-truth-latency" / identities["comparison_id"]
     progress_path = evidence_dir.with_name(identities["comparison_id"] + "-progress.json")
 
@@ -479,6 +594,10 @@ async def test_original_and_candidate_full_input_market_truth_same_worker(
         "underlying / 906 projected historical rows. Same pytest worker, owned PostgreSQL16/ClickHouse25.8; "
         "ABBA original-cold, candidate-cold, candidate-warm, original-warm is one balanced pair per state, "
         "not repeated statistical confidence. Independent package/process/DB/cache lifetimes per version. "
+        "One owned ClickHouse import, independent native full-column-verified copies; PostgreSQL is "
+        "loaded separately per worker. Database-dependent wire collections retain per-target imports. "
+        "Canonical source is dropped and its absence read back before ABBA. Native copy part layout "
+        "differs from replay batches; setup savings are not product-request speedup. "
         "Cold dense/analysis caches, warm native 7209 whole-day aggregates with actual later saved_at, "
         "native SQL invalidation and real edges; NOT all-application/OS/server caches cold. Warm uses "
         "new event/jobs at identical anchor/cutoff and retained application caches, not stored results; "
@@ -508,6 +627,21 @@ async def test_original_and_candidate_full_input_market_truth_same_worker(
     workers, reports, setups = {}, {}, {}
     try:
         async with asyncio.timeout(180), AsyncExitStack() as stack:
+            canonical = await stack.enter_async_context(AsyncExitStack())
+            seed = await canonical.enter_async_context(
+                prepared_clickhouse_seed(
+                    tmp_path / "canonical-data",
+                    schema_template,
+                    identities["comparison_id"],
+                    lifecycles["canonical"],
+                    checkpoint,
+                )
+            )
+            seed_path = tmp_path / "clickhouse-seed.json"
+            seed_path.write_bytes(public_bytes(seed))
+            seed_sha256 = file_digest(seed_path)
+            identities["clickhouse_seed_sha256"] = seed_sha256
+            checkpoint()
             for name in ("original", "candidate"):
                 process, ready = await start_worker(
                     stack,
@@ -518,6 +652,9 @@ async def test_original_and_candidate_full_input_market_truth_same_worker(
                     schema_template,
                     lifecycles[name],
                     checkpoint,
+                    seed_path=seed_path,
+                    seed_sha256=seed_sha256,
+                    comparison_id=identities["comparison_id"],
                 )
                 workers[name] = process
                 setups[name] = ready["setup"]
@@ -527,11 +664,17 @@ async def test_original_and_candidate_full_input_market_truth_same_worker(
                 assert [
                     {"collection": message["collection"], "rows": message["rows"]}
                     for message in setup_progress
-                    if message["stage"] == "collection_native_import_complete"
+                    if message["stage"]
+                    in {"collection_native_import_complete", "collection_native_copy_complete"}
                 ] == [
                     {"collection": entry["collection"], "rows": entry["rows"]}
                     for entry in ready["setup"]["inputs"]
                 ]
+                assert [
+                    message["collection"]
+                    for message in setup_progress
+                    if message["stage"] == "collection_native_copy_complete"
+                ] == [table for table, safe in seed["copy_tables"].items() if safe]
                 preflight = next(
                     message for message in setup_progress if message["stage"] == "fixture_preflight_complete"
                 )
@@ -543,7 +686,23 @@ async def test_original_and_candidate_full_input_market_truth_same_worker(
                 assert native_progress["dimensions"] == ready["setup"]["native_day_counts"]["loaded"]
                 assert native_progress["peers"] == len(ready["setup"]["native_day_counts"]["coverage"])
                 record_property("latency_setup_" + name, json.dumps(ready, sort_keys=True))
+            await _finish(canonical.aclose())
+            assert lifecycles["canonical"]["cleanup_confirmed"] is True
+            assert [
+                message["collection"]
+                for message in lifecycles["canonical"]["receipts"]
+                if message["stage"] == "collection_native_import_complete"
+            ] == [entry["collection"] for entry in seed["inputs"]]
+            assert seed["admission"] == fixture_admission(
+                Settings(
+                    _env_file=None, config_dir=ROOT / "config", data_dir=tmp_path / "admission", replay=True
+                ),
+                FIXTURES,
+            )
             assert workers["original"].pid != workers["candidate"].pid
+            for field in ("postgres_database", "clickhouse_database"):
+                databases = {lifecycles[name]["ownership"][field] for name in ("original", "candidate")}
+                assert len(databases | {lifecycles["canonical"][field]}) == 3
             for field in (
                 "inputs",
                 "registry_sha256",
@@ -554,6 +713,7 @@ async def test_original_and_candidate_full_input_market_truth_same_worker(
                 "expected_coverage",
                 "expected_dense_projections",
                 "native_day_counts",
+                "clickhouse_seed_sha256",
             ):
                 assert setups["original"][field] == setups["candidate"][field], field
             for ordinal, (name, state) in enumerate(ORDER):

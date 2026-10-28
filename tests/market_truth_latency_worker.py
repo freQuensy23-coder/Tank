@@ -880,6 +880,11 @@ async def run_worker(ownership):
     imported_sources(root)
     logging.basicConfig(level=logging.INFO, filename=directory / "application.log")
     policy = json.loads(policy_path.read_text())
+    seed_path = Path(sys.argv[7])
+    assert not seed_path.is_symlink() and seed_path.stat().st_size < 8_000_000
+    assert digest(seed_path) == sys.argv[8], "Fixture descriptor changed after admission"
+    clickhouse_seed = json.loads(seed_path.read_bytes())
+    assert clickhouse_seed["comparison_id"] == sys.argv[9]
     config = directory / "config"
     shutil.copytree(root / "config", config)
     template = PostgresTemplate(schema_template=sys.argv[6])
@@ -911,7 +916,15 @@ async def run_worker(ownership):
                     code_version=revision,
                 )
                 progress.record("seed_start")
-                setup = await seed_full(repo, settings, fixtures, progress=progress.record)
+                setup = await seed_full(
+                    repo,
+                    settings,
+                    fixtures,
+                    progress=progress.record,
+                    clickhouse_seed=clickhouse_seed,
+                    comparison_id=sys.argv[9],
+                )
+                setup["clickhouse_seed_sha256"] = sys.argv[8]
                 manifest = setup["manifest"]
                 expected = setup["expected_dense_projections"]
                 setup["native_cache_path"] = str(Path(setup["native_cache_path"]).relative_to(directory))
