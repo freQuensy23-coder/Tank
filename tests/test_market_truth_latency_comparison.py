@@ -433,17 +433,23 @@ async def confirm_source_absent(route, clickhouse_url, database):
 
     admin = await psycopg.AsyncConnection.connect(route, autocommit=True)
     try:
-        assert await (
-            await admin.execute("SELECT datname FROM pg_database WHERE datname=%s", (database,))
-        ).fetchall() == [], "Canonical PostgreSQL database survived cleanup"
+        assert (
+            await (
+                await admin.execute("SELECT datname FROM pg_database WHERE datname=%s", (database,))
+            ).fetchall()
+            == []
+        ), "Canonical PostgreSQL database survived cleanup"
     finally:
         await _finish(admin.close())
     ch = ClickHouse(clickhouse_url)
     try:
-        assert await ch.rows(
-            "SELECT name FROM system.databases WHERE name={name:String}",
-            {"name": ("mkt_" + database, "String")},
-        ) == [], "Canonical ClickHouse database survived cleanup"
+        assert (
+            await ch.rows(
+                "SELECT name FROM system.databases WHERE name={name:String}",
+                {"name": ("mkt_" + database, "String")},
+            )
+            == []
+        ), "Canonical ClickHouse database survived cleanup"
     finally:
         await _finish(ch.close())
 

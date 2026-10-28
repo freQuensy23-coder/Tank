@@ -494,7 +494,8 @@ async def copy_clickhouse(ch, source_database, table, expected_rows):
                 await ch.rows(
                     "SELECT engine FROM system.tables WHERE database={database:String} AND name={table:String}",
                     params,
-                ) == [{"engine": "ReplacingMergeTree"}],
+                )
+                == [{"engine": "ReplacingMergeTree"}],
                 "Native copy requires physical market tables",
             )
             schema = await ch.rows(
@@ -512,15 +513,14 @@ async def copy_clickhouse(ch, source_database, table, expected_rows):
             await ch.rows(counted + source + " FINAL") == expected, "Native source count/identity mismatch"
         )
         await ch.execute(f"INSERT INTO {target} ({columns}) SELECT {columns} FROM {source} FINAL")
-        require(
-            await ch.rows(counted + target + " FINAL") == expected, "Native copy count/identity mismatch"
-        )
+        require(await ch.rows(counted + target + " FINAL") == expected, "Native copy count/identity mismatch")
         for left, right in ((source, target), (target, source)):
             require(
                 await ch.rows(
                     f"SELECT count() AS n FROM (SELECT {columns} FROM {left} FINAL "
                     f"EXCEPT DISTINCT SELECT {columns} FROM {right} FINAL)"
-                ) == [{"n": 0}],
+                )
+                == [{"n": 0}],
                 "Native full-column copy mismatch",
             )
 
