@@ -90,6 +90,7 @@ def test_logging_failure_preserves_compute_and_context(monkeypatch, error):
         assert result["token_id"] == "T"
         assert result["primary_window"] == "W4H"
     else:
+
         def fail(*args, **kwargs):
             raise error
 
