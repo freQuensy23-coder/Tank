@@ -23,7 +23,7 @@ from tank.agents.pipeline import ConfigurationError
 from tank.agents.security import redact_tool_arguments
 from tank.agents.wire import tool_wire_result
 from tank.delivery import DeliveryDeferred
-from tank.logging import timing_identity, timing_span
+from tank.logging import timing_context, timing_identity, timing_span
 from tank.openma_sync import agent_tools
 from tank.ops_progress import session_progress
 from tank.settings import threshold
@@ -1494,7 +1494,8 @@ class SessionService:
             "record_review",
             "set_watch_condition",
         }:
-            await self.hydrate_prompt_provenance(session)
+            with timing_span("tool.provenance"):
+                await self.hydrate_prompt_provenance(session)
         if tool == "send_telegram_file" and not session.get("proposal_id"):
             return await self.send_file(session, arguments, call_id)
         if session.get("proposal_id") and tool not in ("web_search", "search_tank_items", "record_review"):
@@ -1523,10 +1524,11 @@ class SessionService:
         if decision_market_refresh_completed:
             context["_decision_market_refresh_completed"] = True
             context["_decision_prepared_condition_ids"] = decision_prepared_condition_ids
-        fresh = await self.repo.get("ops.agent_sessions", session["session_id"]) or session
-        arguments = await ModelContext(self.repo, self.settings, fresh).arguments(tool, arguments)
-        if resolved_arguments is not None:
-            resolved_arguments.update(copy.deepcopy(arguments))
+        with timing_span("tool.arguments"):
+            fresh = await self.repo.get("ops.agent_sessions", session["session_id"]) or session
+            arguments = await ModelContext(self.repo, self.settings, fresh).arguments(tool, arguments)
+            if resolved_arguments is not None:
+                resolved_arguments.update(copy.deepcopy(arguments))
         return await self.tool_dispatch(tool, arguments, context)
 
     def tool_failure(self, error):
@@ -1556,7 +1558,7 @@ class SessionService:
         return {"type": type(error).__name__, "reason": reason, "category": category}, "ERROR"
 
     async def tool(self, session, event):
-        if event.get("name") != "get_market_truth":
+        if event.get("name") not in {"get_market_truth", "get_decision"}:
             return await self._tool(session, event)
         with timing_span(
             "tool",
@@ -1613,16 +1615,19 @@ class SessionService:
                 slow_error, slow_error_status = self.tool_failure(error)
 
             slow_ready = not decision_market_refresh_completed
-        with timing_span("tool.audit"):
-            async with self.repo.lock("tool:" + key):
+        async with timing_context(self.repo.lock("tool:" + key), "tool.audit.lock_wait"):
+            with timing_span("tool.audit"):
                 stored = await self.repo.get("ops.tool_calls", key)
                 if not stored:
                     context = self.tool_context(session, call_id)
-                    async with self.repo.lock("session:" + sid):
-                        sequencing = await self.repo.get("ops.agent_sessions", sid)
-                        ordinal = int(sequencing.get("next_tool_call_ordinal", 0))
-                        sequencing["next_tool_call_ordinal"] = ordinal + 1
-                        await self.repo.put("ops.agent_sessions", sid, sequencing)
+                    async with timing_context(
+                        self.repo.lock("session:" + sid), "tool.audit.session_lock_wait"
+                    ):
+                        with timing_span("tool.audit.session_sequence"):
+                            sequencing = await self.repo.get("ops.agent_sessions", sid)
+                            ordinal = int(sequencing.get("next_tool_call_ordinal", 0))
+                            sequencing["next_tool_call_ordinal"] = ordinal + 1
+                            await self.repo.put("ops.agent_sessions", sid, sequencing)
                     stored = {
                         "native_turn_call_index": ordinal,
                         "call_id": call_id,
@@ -1748,8 +1753,9 @@ class SessionService:
                     await self.repo.put("ops.tool_calls", key, stored)
         current = await self.repo.get("ops.agent_sessions", sid) or session
         if current.get("model_context_version", 0) < CONTEXT_VERSION:
-            await self.sync_tools(sid, resume=True)
-            current = await self.repo.get("ops.agent_sessions", sid) or session
+            with timing_span("tool.sync_tools"):
+                await self.sync_tools(sid, resume=True)
+                current = await self.repo.get("ops.agent_sessions", sid) or session
         with timing_span("tool.projection"):
             projected = await ModelContext(self.repo, self.settings, current).result(
                 stored["tool"], stored["result"]
@@ -1776,8 +1782,8 @@ class SessionService:
             }
         if stored.get("is_error"):
             body["is_error"] = True
-        with timing_span("tool.wire_audit"):
-            async with self.repo.lock("tool:" + key):
+        async with timing_context(self.repo.lock("tool:" + key), "tool.wire_audit.lock_wait"):
+            with timing_span("tool.wire_audit"):
                 if (
                     stored.get("native_result_body") is None
                     or stored.get("model_context_version") != CONTEXT_VERSION
@@ -1795,8 +1801,8 @@ class SessionService:
             accepted = await self.request(
                 "POST", f"sessions/{sid}/events", json={"events": [body]}, idem="tool:" + sha256(key)
             )
-        with timing_span("tool.return_audit"):
-            async with self.repo.lock("tool:" + key):
+        async with timing_context(self.repo.lock("tool:" + key), "tool.return_audit.lock_wait"):
+            with timing_span("tool.return_audit"):
                 stored.update(
                     remote_event_id=self.accepted_input_id(accepted),
                     **self.clock_timestamp().fields("returned_at"),

@@ -2253,6 +2253,7 @@ class EventToolService:
         with timing_span("tool.enqueue"):
             async with self.repo.transaction():
                 jobs = []
+                prerequisites = []
                 for token in a["token_ids"]:
                     escalation = await self.repo.enqueue(
                         "ESCALATE_TOKENS",
@@ -2261,6 +2262,7 @@ class EventToolService:
                         priority=0,
                         max_attempts=3,
                     )
+                    prerequisites.append(escalation)
                     jobs.append(
                         await self.repo.enqueue(
                             "RUN_MARKET_TRUTH",
@@ -2276,11 +2278,18 @@ class EventToolService:
                             expires_at=offset_schedule(collection_clock(), timedelta(minutes=30)),
                         )
                     )
+        for prerequisite, job in zip(prerequisites, jobs, strict=True):
+            with timing_span("job.link", job_id=timing_identity(prerequisite["job_id"])):
+                pass
+            with timing_span(
+                "job.link",
+                job_id=timing_identity(job["job_id"]),
+                dependency_id=timing_identity(prerequisite["job_id"]),
+            ):
+                pass
         with timing_span("tool.jobs_wait"):
             truths = []
             for job in jobs:
-                with timing_span("job.link", job_id=timing_identity(job["job_id"])):
-                    pass
                 deadline = asyncio.get_running_loop().time() + 90 * 15
                 while True:
                     current = await self.require("ops.jobs", job["job_id"])

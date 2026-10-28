@@ -14,7 +14,14 @@ from types import SimpleNamespace
 
 import httpx
 
-from tank.logging import market_stage, timing_identity, timing_lock, timing_span, timing_thread
+from tank.logging import (
+    market_stage,
+    timing_context,
+    timing_identity,
+    timing_lock,
+    timing_span,
+    timing_thread,
+)
 from tank.market import normalize as norm
 from tank.market.capture import event_anchor
 from tank.market.rate_gate import PriorityGate
@@ -531,7 +538,12 @@ class MarketService:
         return {}
 
     async def escalate(self, event_id, tokens):
-        async with self.repo.lock("market-hot-set"), self.repo.transaction():
+        async with (
+            timing_context(
+                self.repo.lock("market-hot-set"), "capture.hot_set_lock_wait", "capture.escalate_prepare"
+            ),
+            self.repo.transaction(),
+        ):
             now = iso()
             event = await self.repo.get("evt.events", event_id) or {}
             anchor_record = event_anchor(event) if event else {"type": "KNOWN_TO_US_AT", "ts": now}
@@ -599,10 +611,12 @@ class MarketService:
                 )
         if self.settings.replay:
             return
-        await self._sync_hot_set()
-        for token_id in retained:
-            if token_id in [v.get("token_id") if isinstance(v, dict) else v for v in tokens]:
-                await self._schedule_event_backfill(event_id, token_id, anchor)
+        with timing_span("capture.hot_set_sync"):
+            await self._sync_hot_set()
+        with timing_span("capture.backfill_schedule"):
+            for token_id in retained:
+                if token_id in [v.get("token_id") if isinstance(v, dict) else v for v in tokens]:
+                    await self._schedule_event_backfill(event_id, token_id, anchor)
 
     @market_stage("capture.wait")
     async def wait_capture(self, event_id, token_id, *, timeout_s=30):

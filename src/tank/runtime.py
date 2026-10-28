@@ -158,6 +158,7 @@ class Runtime:
 
         validate_registry(settings)
 
+    @market_stage("capture.escalate", root=True)
     async def escalate(self, payload):
         tokens = payload.get("tokens") or ([payload["token_id"]] if payload.get("token_id") else None)
         if not tokens:
@@ -214,7 +215,7 @@ class Runtime:
             self.active_jobs.add(job["job_id"])
             with timing_span(
                 "job.claimed",
-                root=job["type"] == "RUN_MARKET_TRUTH",
+                root=job["type"] in {"RUN_MARKET_TRUTH", "ESCALATE_TOKENS"},
                 started_ns=claim_started,
                 job_id=timing_identity(job["job_id"]),
                 attempt=job.get("attempts", 0),
@@ -222,21 +223,29 @@ class Runtime:
                 pass
             try:
                 if job.get("expires_at") and parse_time(job["expires_at"]) <= utcnow():
-                    await self.repo.put(
-                        "ops.jobs",
-                        job["job_id"],
-                        {**job, "status": "EXPIRED", **collection_clock(utcnow()).fields("finished_at")},
-                    )
-                    await self.terminal_delivery_failure(job, "EXPIRED")
+                    with timing_span(
+                        "job.failure_persist",
+                        root=job["type"] in {"RUN_MARKET_TRUTH", "ESCALATE_TOKENS"},
+                        job_id=timing_identity(job["job_id"]),
+                    ):
+                        await self.repo.put(
+                            "ops.jobs",
+                            job["job_id"],
+                            {**job, "status": "EXPIRED", **collection_clock(utcnow()).fields("finished_at")},
+                        )
+                        await self.terminal_delivery_failure(job, "EXPIRED")
                     continue
                 with timing_span(
                     "job.dependencies",
-                    root=job["type"] == "RUN_MARKET_TRUTH",
+                    root=job["type"] in {"RUN_MARKET_TRUTH", "ESCALATE_TOKENS"},
                     job_id=timing_identity(job["job_id"]),
                 ):
-                    dependencies = [
-                        await self.repo.get("ops.jobs", dep) for dep in job["payload"].get("_depends_on", [])
-                    ]
+                    dependencies = []
+                    for dep in job["payload"].get("_depends_on", []):
+                        with timing_span("job.dependency", dependency_id=timing_identity(dep)) as timing:
+                            dependency = await self.repo.get("ops.jobs", dep)
+                            timing["dependency_status"] = dependency["status"] if dependency else "MISSING"
+                            dependencies.append(dependency)
                     if any(dep is None or dep["status"] in ("FAILED", "EXPIRED") for dep in dependencies):
                         raise RuntimeError("Durable job dependency failed or is missing")
                     if any(dep["status"] != "DONE" for dep in dependencies):
@@ -268,11 +277,11 @@ class Runtime:
                         ) from slow
                 with timing_span(
                     "job.execution",
-                    root=kind == "RUN_MARKET_TRUTH",
+                    root=kind in {"RUN_MARKET_TRUTH", "ESCALATE_TOKENS"},
                     job_id=timing_identity(job["job_id"]),
                     attempt=job.get("attempts", 0),
                     durable_age_ms=max(0, (utcnow() - parse_time(job["created_at"])).total_seconds() * 1000)
-                    if kind == "RUN_MARKET_TRUTH" and job.get("created_at")
+                    if kind in {"RUN_MARKET_TRUTH", "ESCALATE_TOKENS"} and job.get("created_at")
                     else 0,
                 ):
                     async with asyncio.timeout(TIMEOUTS[kind]):
@@ -324,14 +333,19 @@ class Runtime:
                     "Job %s (%s) failed: %s [%s]", job["job_id"], job["type"], type(exc).__name__, frames
                 )
                 try:
-                    await self.repo.fail_job(
-                        job["job_id"],
-                        type(exc).__name__,
-                        retry_after=getattr(exc, "retry_after", min(60, 2 ** job.get("attempts", 1))),
-                    )
-                    current = await self.repo.get("ops.jobs", job["job_id"])
-                    if current and current["status"] in {"FAILED", "EXPIRED"}:
-                        await self.terminal_delivery_failure(current, type(exc).__name__)
+                    with timing_span(
+                        "job.failure_persist",
+                        root=job["type"] in {"RUN_MARKET_TRUTH", "ESCALATE_TOKENS"},
+                        job_id=timing_identity(job["job_id"]),
+                    ):
+                        await self.repo.fail_job(
+                            job["job_id"],
+                            type(exc).__name__,
+                            retry_after=getattr(exc, "retry_after", min(60, 2 ** job.get("attempts", 1))),
+                        )
+                        current = await self.repo.get("ops.jobs", job["job_id"])
+                        if current and current["status"] in {"FAILED", "EXPIRED"}:
+                            await self.terminal_delivery_failure(current, type(exc).__name__)
                 except Exception:
                     log.exception("Could not persist job failure: %s", job["job_id"])
                     await self.pause(stop, 1)

@@ -10,7 +10,7 @@ import os
 import re
 import time
 import traceback
-from contextlib import asynccontextmanager, contextmanager, suppress
+from contextlib import AsyncExitStack, asynccontextmanager, contextmanager, suppress
 from contextvars import ContextVar
 from functools import wraps
 from urllib.parse import unquote, urlsplit
@@ -23,6 +23,7 @@ _TIMING_NUMBERS = frozenset({"rows", "bytes", "cache_hit", "durable_age_ms", "at
 _TIMING_IDS = frozenset(
     {
         "job_id",
+        "dependency_id",
         "call_id",
         "session_id",
         "event_id",
@@ -47,6 +48,7 @@ _TIMING_LABELS = {
     ),
     "window": frozenset({"W15M", "W1H", "W4H", "W24H", "EVENT"}),
     "kind": frozenset({"price", "volume"}),
+    "dependency_status": frozenset({"MISSING", "QUEUED", "RUNNING", "DONE", "FAILED", "EXPIRED"}),
 }
 
 
@@ -82,7 +84,7 @@ def _timing_emit(record):
 
 
 @contextmanager
-def timing_span(stage, *, root=False, cpu=False, started_ns=None, **fields):
+def timing_span(stage, *, root=False, cpu=False, started_ns=None, ended_ns=None, **fields):
     parent = _TIMING.get()
     values = dict(fields)
     if parent is None and not root:
@@ -112,7 +114,7 @@ def timing_span(stage, *, root=False, cpu=False, started_ns=None, **fields):
         status = "error"
         raise
     finally:
-        ended = time.monotonic_ns()
+        ended = time.monotonic_ns() if ended_ns is None else ended_ns
         wall = max(0, ended - begin) / 1_000_000
         used_cpu = max(0, time.thread_time_ns() - cpu_begin) / 1_000_000 if cpu_begin is not None else None
         _TIMING.reset(token)
@@ -160,11 +162,24 @@ async def timing_lock(lock, stage):
         lock.release()
 
 
+@asynccontextmanager
+async def timing_context(context, wait_stage, held_stage=None):
+    async with AsyncExitStack() as stack:
+        with timing_span(wait_stage):
+            value = await stack.enter_async_context(context)
+        if held_stage is None:
+            yield value
+        else:
+            with timing_span(held_stage):
+                yield value
+
+
 async def timing_thread(function, *args, **kwargs):
     queued = time.monotonic_ns()
 
     def run():
-        with timing_span("threadpool.wait", started_ns=queued):
+        entered = time.monotonic_ns()
+        with timing_span("threadpool.wait", started_ns=queued, ended_ns=entered):
             pass
         with timing_span("threadpool.work", cpu=True):
             return function(*args, **kwargs)
