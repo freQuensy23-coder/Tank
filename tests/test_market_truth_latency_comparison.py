@@ -9,8 +9,9 @@ import subprocess
 import sys
 import tarfile
 from contextlib import AsyncExitStack, suppress
+from math import isfinite
 from pathlib import Path
-from time import perf_counter
+from time import perf_counter, process_time
 from uuid import uuid4
 
 import pytest
@@ -66,6 +67,12 @@ def retained_policy():
 
 PUBLIC_FILE_LIMIT = 8_000_000
 PUBLIC_TOTAL_LIMIT = 64_000_000
+PUBLIC_RUN_FILES = ("ownership.json",) + tuple(
+    f"{state}-{kind}.json" for state in ("cold", "warm") for kind in ("result", "projection", "http")
+)
+PUBLIC_EXPORT_FILES = frozenset(
+    name + "-" + filename for name in ("original", "candidate") for filename in PUBLIC_RUN_FILES
+)
 FORBIDDEN_KEY = re.compile(
     r"(?:password|passwd|secret|api_key|access_token|refresh_token|authorization|cookie|"
     r"environment|config|headers|credentials|private_key|database_url|dsn|telegram_id|chat_id|user_id|"
@@ -121,7 +128,7 @@ def public_bytes(value):
     return payload
 
 
-def read_public_file(source):
+def read_public_file(source, *, canonical=False):
     if source.is_symlink() or source.parent.is_symlink() or source.stat().st_size > PUBLIC_FILE_LIMIT:
         raise ValueError("Unbounded or indirect public evidence source")
     with source.open("rb") as stream:
@@ -129,21 +136,47 @@ def read_public_file(source):
     if len(raw) > PUBLIC_FILE_LIMIT:
         raise ValueError("Public evidence source exceeds its bound")
     value = json.loads(raw)
-    public_bytes(value)
-    return raw, value
+    payload = public_bytes(value)
+    return raw, payload if canonical else value
 
 
-def checkpoint_progress(destination, identities, provenance, lifecycles):
+def validate_export_progress(progress):
+    if type(progress) is not list or len(progress) > 29:
+        raise ValueError("Parent export progress exceeds its bound")
+    fields = {"stage", "filename", "files", "bytes", "elapsed_wall_seconds", "elapsed_process_cpu_seconds"}
+    for receipt in progress:
+        if type(receipt) is not dict or receipt.keys() != fields:
+            raise ValueError("Unexpected parent export progress fields")
+        stage, filename = receipt["stage"], receipt["filename"]
+        if type(stage) is not str or type(filename) is not str:
+            raise ValueError("Unexpected parent export stage or file")
+        if not (
+            stage in {"read_start", "read_complete"} and filename in PUBLIC_EXPORT_FILES
+            or stage == "bundle_assembled" and filename == ""
+        ):
+            raise ValueError("Unexpected parent export stage or file")
+        for field, limit in (("files", 16), ("bytes", PUBLIC_TOTAL_LIMIT)):
+            if type(receipt[field]) is not int or not 0 <= receipt[field] <= limit:
+                raise ValueError("Invalid parent export progress count")
+        for field in ("elapsed_wall_seconds", "elapsed_process_cpu_seconds"):
+            value = receipt[field]
+            if type(value) not in (int, float) or not isfinite(value) or value < 0:
+                raise ValueError("Invalid parent export progress duration")
+
+
+def checkpoint_progress(destination, identities, provenance, lifecycles, *, export_progress=None):
     completion = identities.get("completion", "INCOMPLETE_NO_LATENCY_OR_PARITY_OUTCOME")
-    payload = public_bytes(
-        {
-            "completion": completion,
-            "identities": identities,
-            "sources": provenance,
-            "lifecycles": lifecycles,
-            "qualification": QUALIFICATION,
-        }
-    )
+    bundle = {
+        "completion": completion,
+        "identities": identities,
+        "sources": provenance,
+        "lifecycles": lifecycles,
+        "qualification": QUALIFICATION,
+    }
+    if export_progress is not None:
+        validate_export_progress(export_progress)
+        bundle["export_progress"] = export_progress
+    payload = public_bytes(bundle)
     if len(payload) > PUBLIC_TOTAL_LIMIT:
         raise ValueError("Public progress bundle exceeds its bound")
     destination = Path(destination).absolute()
@@ -178,21 +211,42 @@ def checkpoint_progress(destination, identities, provenance, lifecycles):
             os.close(directory)
 
 
-def export_evidence(workspace, destination, identities, provenance, lifecycles, progress_bytes=0):
+def export_evidence(
+    workspace, destination, identities, provenance, lifecycles, progress_bytes=0, *, checkpoint=None
+):
     if type(progress_bytes) is not int or not 0 <= progress_bytes <= PUBLIC_FILE_LIMIT:
         raise ValueError("Invalid public progress reservation")
     payloads, inventory = {}, {}
+    progress = []
+    started, cpu_started = perf_counter(), process_time()
+
+    def record_export(stage, filename=""):
+        nonlocal progress_bytes
+        if checkpoint is None:
+            return
+        progress.append(
+            {
+                "stage": stage,
+                "filename": filename,
+                "files": len(payloads),
+                "bytes": sum(map(len, payloads.values())),
+                "elapsed_wall_seconds": perf_counter() - started,
+                "elapsed_process_cpu_seconds": process_time() - cpu_started,
+            }
+        )
+        retained_bytes = checkpoint(progress)
+        if type(retained_bytes) is not int or not 0 <= retained_bytes <= PUBLIC_FILE_LIMIT:
+            raise ValueError("Invalid public progress reservation")
+        progress_bytes = max(progress_bytes, retained_bytes)
+
     for name in ("original", "candidate"):
-        allowed = ["ownership.json"] + [
-            f"{state}-{kind}.json" for state in ("cold", "warm") for kind in ("result", "projection", "http")
-        ]
-        for filename in allowed:
+        for filename in PUBLIC_RUN_FILES:
             source = workspace / (name + "-run") / filename
             if not source.exists():
                 continue
-            raw, value = read_public_file(source)
             output = name + "-" + filename
-            payloads[output] = public_bytes(value)
+            record_export("read_start", output)
+            raw, payloads[output] = read_public_file(source, canonical=True)
             if progress_bytes + sum(map(len, payloads.values())) > PUBLIC_TOTAL_LIMIT:
                 raise ValueError("Public evidence bundle exceeds its bound")
             inventory[output] = {
@@ -200,6 +254,7 @@ def export_evidence(workspace, destination, identities, provenance, lifecycles, 
                 "export_sha256": hashlib.sha256(payloads[output]).hexdigest(),
                 "bytes": len(payloads[output]),
             }
+            record_export("read_complete", output)
     payloads["receipts.json"] = public_bytes(lifecycles)
     inventory["receipts.json"] = {
         "export_sha256": hashlib.sha256(payloads["receipts.json"]).hexdigest(),
@@ -215,6 +270,7 @@ def export_evidence(workspace, destination, identities, provenance, lifecycles, 
             "trace_limit": "Phase/query receipts retained; raw application telemetry deliberately not exported",
         }
     )
+    record_export("bundle_assembled")
     if progress_bytes + sum(map(len, payloads.values())) > PUBLIC_TOTAL_LIMIT:
         raise ValueError("Public evidence bundle exceeds its bound")
     destination.mkdir(parents=True, exist_ok=False)
@@ -404,8 +460,11 @@ async def test_original_and_candidate_full_input_market_truth_same_worker(
     evidence_dir = ROOT / ".test-results" / "market-truth-latency" / identities["comparison_id"]
     progress_path = evidence_dir.with_name(identities["comparison_id"] + "-progress.json")
 
-    def checkpoint():
-        checkpoint_progress(progress_path, identities, provenance, lifecycles)
+    def checkpoint(export_progress=None):
+        checkpoint_progress(
+            progress_path, identities, provenance, lifecycles, export_progress=export_progress
+        )
+        return progress_path.stat().st_size
 
     checkpoint()
     record_property("latency_source_provenance", json.dumps(provenance, sort_keys=True))
@@ -576,7 +635,13 @@ async def test_original_and_candidate_full_input_market_truth_same_worker(
         try:
             checkpoint()
             exported = export_evidence(
-                tmp_path, evidence_dir, identities, provenance, lifecycles, progress_path.stat().st_size
+                tmp_path,
+                evidence_dir,
+                identities,
+                provenance,
+                lifecycles,
+                progress_path.stat().st_size,
+                checkpoint=checkpoint,
             )
         except Exception as error:
             record_property(
