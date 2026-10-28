@@ -237,30 +237,30 @@ def time_phase(record_property, phase, operation):
         )
 
 
-def profile_phase(record_property, phase, operation):
+def profile_phase(record_property, phase, operation, *, threaded=False):
+    profile = cProfile.Profile()
     worker_profiles = []
 
     def initialize_worker():
-        profile = cProfile.Profile()
-        worker_profiles.append(profile)
         profile.enable()
+        worker_profiles.append(True)
 
     async def invoke():
-        asyncio.get_running_loop().set_default_executor(ThreadPoolExecutor(initializer=initialize_worker))
+        if threaded:
+            asyncio.get_running_loop().set_default_executor(ThreadPoolExecutor(initializer=initialize_worker))
         value = operation()
         return await value if inspect.isawaitable(value) else value
 
-    profile = cProfile.Profile()
     wall_start, cpu_start = perf_counter(), process_time()
-    profile.enable()
+    if not threaded:
+        profile.enable()
     try:
         result = asyncio.run(invoke())
     finally:
         profile.disable()
         wall_seconds, cpu_seconds = perf_counter() - wall_start, process_time() - cpu_start
         stats = pstats.Stats(profile)
-        for worker in worker_profiles:
-            stats.add(worker)
+
         calls = {}
         functions = []
         for (filename, line, function), (primitive, total, own, cumulative, _) in stats.stats.items():
@@ -429,7 +429,7 @@ def test_retained_ena_dense_relative_populations_cold_and_warm(record_property):
         }
         snapshot["instruments"].append(instrument)
         snapshot["tokens"].append({"token_id": token_id, "symbol": symbol})
-        raw, _ = profile_phase(
+        raw = time_phase(
             record_property,
             "fixture_" + symbol,
             lambda: read_retained_rows(entries[symbol.lower() + "-price.jsonl.gz"], record_property),
@@ -451,6 +451,7 @@ def test_retained_ena_dense_relative_populations_cold_and_warm(record_property):
                 after=None,
                 limit=200000,
             ),
+            threaded=True,
         )
         del raw
         decoded = [row for _, _, row in page]
@@ -493,7 +494,7 @@ def test_retained_ena_dense_relative_populations_cold_and_warm(record_property):
             if parse_time(row["open_time"]) + timedelta(minutes=1) in wanted
         )
         del decoded
-    raw_flow, _ = profile_phase(
+    raw_flow = time_phase(
         record_property,
         "fixture_flow",
         lambda: read_retained_rows(entries["ena-flow.jsonl.gz"], record_property),
@@ -501,7 +502,7 @@ def test_retained_ena_dense_relative_populations_cold_and_warm(record_property):
     flow, _ = profile_phase(
         record_property,
         "flow_typed_decode",
-        lambda: clickhouse_market._records("mkt.flow_bars_1m", raw_flow),
+        lambda rows=raw_flow: clickhouse_market._records("mkt.flow_bars_1m", rows),
     )
     assert len(flow) == 1444
     for raw, decoded in zip(raw_flow, flow, strict=True):
@@ -582,7 +583,7 @@ def test_retained_ena_dense_relative_populations_cold_and_warm(record_property):
             assert diagnostic["exact"] is True
             assert diagnostic["endpoint_staleness_bounds_s"] == [0, 0]
             assert diagnostic["observed_duration_bounds_s"] == [length, length]
-    raw_oi, _ = profile_phase(
+    raw_oi = time_phase(
         record_property,
         "fixture_oi",
         lambda: read_retained_rows(entries["ena-oi.jsonl.gz"], record_property),
@@ -590,7 +591,7 @@ def test_retained_ena_dense_relative_populations_cold_and_warm(record_property):
     oi, _ = profile_phase(
         record_property,
         "oi_typed_decode",
-        lambda: clickhouse_market._records("mkt.oi_obs", raw_oi),
+        lambda rows=raw_oi: clickhouse_market._records("mkt.oi_obs", rows),
     )
     assert len(oi) == 57399
     for raw, decoded in zip(raw_oi, oi, strict=True):
