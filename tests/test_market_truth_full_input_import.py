@@ -1,6 +1,7 @@
 import gzip
 import hashlib
 import json
+import re
 from decimal import Decimal
 
 import httpx
@@ -254,3 +255,153 @@ async def test_native_import_preserves_batch_order_and_empty_noop(tmp_path, nati
     await full_inputs.insert_clickhouse(ch, "mkt.klines_1m", [])
     assert len(requests) == 1
     await ch.close()
+
+
+ORIGINAL_PRIVATE_CONTENT = re.compile(
+    r"://|[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}|-----BEGIN|"
+    r"(?:password|passwd|api_key|access_token|authorization|telegram_id|chat_id|user_id|email)\s*[\"=:]",
+    re.IGNORECASE,
+)
+
+
+@pytest.fixture
+def full_privacy_searches(monkeypatch):
+    matcher = full_inputs.PRIVATE_CONTENT
+    assert matcher.pattern == ORIGINAL_PRIVATE_CONTENT.pattern
+    assert matcher.flags == ORIGINAL_PRIVATE_CONTENT.flags
+    searches = []
+
+    class CountingMatcher:
+        def search(self, text):
+            searches.append(text)
+            return matcher.search(text)
+
+    monkeypatch.setattr(full_inputs, "PRIVATE_CONTENT", CountingMatcher())
+    return searches
+
+
+@pytest.mark.parametrize(
+    ("text", "private"),
+    [
+        ("", False),
+        ("public:key:2026-10-28T12:01:00.123456Z", False),
+        ("a" * 64, False),
+        ("b" * 111, False),
+        ("public\nidentifier", False),
+        ("escaped\\value", False),
+        ("snowman ☃ İstanbul ı ſ K", False),
+        ("@", False),
+        ("not-an-email@", False),
+        ("@example.invalid", False),
+        ("person@example", False),
+        ("person@example.c", False),
+        ("person＠example.invalid", False),
+        ("person example.invalid", False),
+        ("person@example.invalid", True),
+        ("PERSON+TAG@EXAMPLE.INVALID", True),
+        ("prefix person@example.invalid suffix", True),
+        ("ı@ſ.KK", True),
+        ("person@example.İı", True),
+        ("a@b..cc", True),
+        ("://", True),
+        ("HTTPS://PUBLIC.INVALID", True),
+        ("https://public.invalid/@", True),
+        ("-----BEGIN PUBLIC KEY-----", True),
+        ("-----begin marker@", True),
+        ("password", False),
+        ("password = public", True),
+        ("PASSWD\t:public", True),
+        ("api_key=public", True),
+        ("ACCESS_TOKEN : public", True),
+        ('authorization"public', True),
+        ("telegram_id:public", True),
+        ("chat_id=public", True),
+        ("USER_ID\n:public", True),
+        ("email : public", True),
+        ("API_KEY=public", True),
+        ("acceſſ_token=public", True),
+        ("password=public@", True),
+        ("-----BEGIN https://person@example.invalid", True),
+    ],
+)
+def test_public_privacy_preserves_decisions_and_omits_impossible_email_search(
+    text, private, full_privacy_searches
+):
+    assert bool(ORIGINAL_PRIVATE_CONTENT.search(text)) is private
+    for value, message in (
+        (text, "Private public-fixture value"),
+        ({text: None}, "Private public-fixture key"),
+    ):
+        full_privacy_searches.clear()
+        if private:
+            with pytest.raises(ValueError, match=f"^{message}$"):
+                full_inputs.public_value(value)
+        else:
+            assert full_inputs.public_value(value) is None
+        assert full_privacy_searches == ([text] if "@" in text else [])
+
+
+def test_public_privacy_checks_nested_keys_and_values_without_full_search(full_privacy_searches):
+    value = {"outer": [{"inner": "a" * 64}, {"@": "not-an-email@"}], "tag": "b" * 111}
+    assert full_inputs.public_value(value, {"outer", "inner", "@", "tag"}) is None
+    assert full_privacy_searches == ["@", "not-an-email@"]
+
+
+@pytest.mark.parametrize(
+    "text",
+    ["person@example.invalid", "https://private.invalid", "-----BEGIN", "api_key=public"],
+)
+@pytest.mark.parametrize("location", ["key", "value"])
+def test_public_privacy_refuses_nested_content(text, location, full_privacy_searches):
+    child = {text: None} if location == "key" else {"inner": [text]}
+    with pytest.raises(ValueError, match=f"^Private public-fixture {location}$"):
+        full_inputs.public_value({"outer": [child]})
+    assert full_privacy_searches == ([text] if "@" in text else [])
+
+
+@pytest.mark.parametrize(
+    ("document", "message", "searches"),
+    [
+        (r'{"value":["public","@","not-an-email@"]}', None, ["@", "not-an-email@"]),
+        (r'{"value":["public",null]}', None, []),
+        (
+            r'{"value":["person\u0040example.invalid"]}',
+            "Private public-fixture value",
+            ["person@example.invalid"],
+        ),
+        (
+            r'{"person\u0040example.invalid":"public"}',
+            "Private public-fixture key",
+            ["person@example.invalid"],
+        ),
+        (r'{"value":["https://private.invalid"]}', "Private public-fixture value", []),
+        (r'{"https://private.invalid":"public"}', "Private public-fixture key", []),
+        (r'{"value":["-----BEGIN"]}', "Private public-fixture value", []),
+        (r'{"value":["authorization=public"]}', "Private public-fixture value", []),
+        (r'{"value":{"unexpected":"public"}}', "Unexpected recursive public field", []),
+    ],
+)
+async def test_native_import_keeps_decoded_privacy_boundaries_without_impossible_email_search(
+    tmp_path, native_import, full_privacy_searches, document, message, searches
+):
+    ch, requests = native_import
+    line = captured_line(source_observations=document)
+    schema = {**MARKET_COLUMNS["mkt.klines_1m"], "source_observations": "jsonb"}
+    retained, _, _ = retained_batch(
+        tmp_path,
+        [line],
+        schema=schema,
+        recursive=["value", "person@example.invalid", "https://private.invalid"],
+    )
+    if message:
+        with pytest.raises(ValueError, match=f"^{message}$"):
+            await full_inputs.insert_clickhouse(ch, "mkt.klines_1m", list(retained))
+        assert requests == []
+    else:
+        await full_inputs.insert_clickhouse(ch, "mkt.klines_1m", list(retained))
+        assert len(requests) == 1
+        query, payload = requests[0].content.decode().split("\n", 1)
+        assert query == f"INSERT INTO {ch.database}.klines_1m FORMAT JSONEachRow"
+        assert json.loads(payload) == {**json.loads(line), "_version": 1}
+        assert json.loads(payload)["source_observations"] == document
+    assert full_privacy_searches == searches
