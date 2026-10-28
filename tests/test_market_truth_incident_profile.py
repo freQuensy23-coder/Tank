@@ -474,7 +474,13 @@ def test_retained_ena_dense_relative_populations_cold_and_warm(record_property):
         assert isinstance(series["values"], array) and series["values"].typecode == "d"
         assert len(series["times_us"]) == len(series["values"]) == 129600
         assert series["time_basis"] == "CLOSE_TIME"
-        assert series["precision"] == "BUCKET(60s)" and series["precision_reason"] is None
+        precision_counts = Counter(row["open_time_prec"] for row in decoded)
+        assert precision_counts == {"BUCKET(60s)": 80760, None: 48960}
+        assert series["precision"] is None and series["precision_reason"] == "INCOMPLETE"
+        record_property(
+            "incident_price_precision_" + symbol,
+            json.dumps({"bucket_60s_rows": precision_counts["BUCKET(60s)"], "unknown_rows": precision_counts[None]}),
+        )
         assert all(series["complete"])
         epoch = parse_time("1970-01-01T00:00:00Z")
         assert epoch + timedelta(microseconds=series["times_us"][0]) == history_start + timedelta(minutes=1)
