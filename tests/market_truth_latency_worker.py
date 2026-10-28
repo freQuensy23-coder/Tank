@@ -7,19 +7,22 @@ import logging
 import os
 import re
 import shutil
+import signal
 import sys
 from collections import Counter, defaultdict
 from contextlib import asynccontextmanager, suppress
 from datetime import timedelta
 from decimal import Decimal, Inexact, Rounded, getcontext, localcontext
 from functools import wraps
+from importlib.metadata import version
 from pathlib import Path
 from time import perf_counter, process_time, thread_time
 from urllib.parse import urlsplit
 
 import httpx
 import yaml
-from postgres_helpers import PostgresTemplate
+from postgres_helpers import PostgresTemplate, _finish
+from psycopg.conninfo import conninfo_to_dict
 
 import tank
 from tank import clickhouse_market
@@ -107,6 +110,8 @@ class Measurements:
         self.snapshot_invariants = None
         self.query_inventory = []
         self.executor_dispatch = []
+        self.executors = []
+        self.cleanup = {}
 
     def record(self, phase, started, cpu, thread_cpu):
         self.phases.append(
@@ -686,6 +691,139 @@ def assert_expected_components(result, expected):
             compare(by_instrument[row["instrument_id"]], row)
 
 
+async def settle_owned(tasks):
+    owned = tuple(task for task in tasks if task is not None)
+    for task in owned:
+        if not task.done():
+            task.cancel()
+    if owned:
+        await _finish(asyncio.gather(*owned, return_exceptions=True))
+
+
+async def finish_sample(repo, originals, tasks, stop, meter):
+    primary = sys.exception()
+    stop.set()
+    try:
+        try:
+            await settle_owned(tasks)
+        finally:
+            if meter.executors:
+                await _finish(asyncio.gather(*meter.executors, return_exceptions=True))
+    except BaseException:
+        if primary is None:
+            raise
+    finally:
+        repo.enqueue, repo.finish_job = originals
+        meter.cleanup = {
+            "owned_tasks": sum(task is not None for task in tasks),
+            "settled_tasks": sum(task is not None and task.done() for task in tasks),
+            "executor_submissions": len(meter.executors),
+            "executor_submissions_settled": sum(task.done() for task in meter.executors),
+            "executor_cancellation": "Await cancellation does not stop synchronous work; tracked submissions are awaited before repository teardown",
+            "hooks_restored": repo.enqueue == originals[0] and repo.finish_job == originals[1],
+        }
+
+
+async def serve_commands(reader, sample, emit):
+    seen, active, command = [], None, asyncio.create_task(reader.readline())
+    try:
+        while True:
+            waiting = (command,) if active is None else (command, active)
+            await asyncio.wait(waiting, return_when=asyncio.FIRST_COMPLETED)
+            if command.done():
+                line = command.result()
+                operation = json.loads(line)["operation"] if line else "close"
+                if operation == "close":
+                    return
+                assert active is None, "Overlapping samples are not permitted"
+                assert operation == ("cold" if not seen else "warm") and len(seen) < 2
+                active = asyncio.create_task(sample(operation))
+                command = asyncio.create_task(reader.readline())
+            if active is not None and active.done():
+                result = active.result()
+                emit(result)
+                seen.append(result["state"])
+                active = None
+    finally:
+        primary = sys.exception()
+        try:
+            await settle_owned((active, command))
+        except BaseException:
+            if primary is None:
+                raise
+
+
+async def cancel_safe_thread(meter, operation):
+    task = asyncio.create_task(operation)
+    meter.executors.append(task)
+    return await asyncio.shield(task)
+
+
+def safe_failure(error):
+    roots = (
+        (Path.cwd().resolve() / "src" / "tank", "src/tank"),
+        (Path(__file__).resolve().parent, "tests"),
+    )
+    frames, trace = [], error.__traceback__
+    while trace is not None:
+        path = Path(trace.tb_frame.f_code.co_filename).resolve()
+        for root, label in roots:
+            if path.is_relative_to(root) and path.is_file():
+                relative = str(path.relative_to(root))
+                function = trace.tb_frame.f_code.co_name
+                if re.fullmatch(r"[A-Za-z0-9_./<>-]{1,240}", relative) and re.fullmatch(
+                    r"[A-Za-z0-9_<>]{1,100}", function
+                ):
+                    frames.append(
+                        {
+                            "file": label + "/" + relative,
+                            "line": trace.tb_lineno,
+                            "function": function,
+                            "source_sha256": digest(path),
+                        }
+                    )
+                break
+        trace = trace.tb_next
+    return {"type": type(error).__name__, "source_frames": frames[-16:]}
+
+
+def emit_receipt(value):
+    print(json.dumps(value, sort_keys=True), flush=True)
+
+
+@asynccontextmanager
+async def owned_repository(template, route, ownership, directory):
+    context = template.repository(route)
+    repo = await context.__aenter__()
+    try:
+        postgres = conninfo_to_dict(repo.database_url)["dbname"]
+        clickhouse = repo.clickhouse.database
+        assert re.fullmatch(r"tank_test_fixture_[a-f0-9]{32}", postgres)
+        assert clickhouse == "mkt_" + postgres
+        ownership.update(
+            postgres_database=postgres,
+            clickhouse_database=clickhouse,
+            repository_cleanup="ACQUIRED_PENDING_CLEANUP",
+        )
+        (directory / "ownership.json").write_text(json.dumps(ownership, sort_keys=True))
+        emit_receipt({"kind": "ownership", **ownership})
+        yield repo
+    finally:
+        failure = sys.exc_info()
+        try:
+            await context.__aexit__(*failure)
+        except BaseException as error:
+            ownership["repository_cleanup"] = "NOT_CONFIRMED"
+            ownership["cleanup_failure"] = safe_failure(error)
+            if failure[1] is None:
+                raise
+        else:
+            ownership["repository_cleanup"] = "CONTEXT_EXIT_COMPLETED"
+        finally:
+            (directory / "ownership.json").write_text(json.dumps(ownership, sort_keys=True))
+            emit_receipt({"kind": "ownership", **ownership})
+
+
 async def run_sample(
     state, repo, session, backfill, sessions, runtime, meter, receipts, errors, directory, manifest, setup, expected
 ):
@@ -714,6 +852,7 @@ async def run_sample(
     meter.phases, meter.inventory, meter.decimals, meter.series = [], [], [], []
     meter.phase_decimals = []
     meter.query_inventory, meter.executor_dispatch = [], []
+    meter.executors, meter.cleanup = [], {}
     caller = worker = admission = None
     with localcontext() as context:
         context.prec = 37
@@ -740,21 +879,18 @@ async def run_sample(
                 )
                 admission = asyncio.create_task(admitted.wait())
                 await asyncio.wait((caller, admission), return_when=asyncio.FIRST_COMPLETED)
+                if caller.done():
+                    await caller
                 assert admitted.is_set(), "Session/tool returned without admitting the full Market Truth job"
                 worker = asyncio.create_task(runtime.worker(stop))
                 await caller
                 await worker
         finally:
-            meter.record("request", meter.request_started, cpu, thread_cpu)
-            meter.active = False
-            stop.set()
-            for task in (caller, worker, admission):
-                if task is not None:
-                    if not task.done():
-                        task.cancel()
-                    with suppress(asyncio.CancelledError):
-                        await task
-            repo.enqueue, repo.finish_job = enqueue, finish
+            try:
+                meter.record("request", meter.request_started, cpu, thread_cpu)
+            finally:
+                meter.active = False
+                await finish_sample(repo, (enqueue, finish), (caller, worker, admission), stop, meter)
         assert decimal_state() == decimal_before, "Request changed its caller's Decimal context"
     assert not errors, errors
     audit = await repo.get("ops.tool_calls", session["session_id"] + ":" + state)
@@ -819,6 +955,9 @@ async def run_sample(
     assert phases["compute"]["calls"] == phases["snapshot"]["calls"] == 1
     assert phases["compute.derivatives"]["calls"] == 5
     assert phases["compute.relative"]["calls"] == 1
+    assert phases["compute.support_features"]["calls"] == 5
+    assert phases["compute.timestamp_companions"]["calls"] == 1
+    assert phases["compute.jsonable"]["calls"] >= 1
     assert meter.decimals and all(item["before"]["precision"] == 37 for item in meter.decimals)
     return {
         "kind": "sample",
@@ -845,6 +984,7 @@ async def run_sample(
         },
         "historical_measurements": diagnostics,
         "receipt": receipts[state],
+        "cleanup": meter.cleanup,
         "result_sha256": digest(directory / f"{state}-result.json"),
         "projection_sha256": digest(directory / f"{state}-projection.json"),
         "durability": "SQL job/result/tool-call equality checked before HTTP200; response receipt fsynced; returned audit read back",
@@ -862,7 +1002,7 @@ def imported_sources(root):
     return modules
 
 
-async def main():
+async def run_worker(ownership):
     setup_started, setup_cpu = perf_counter(), process_time()
     root, directory, fixtures, policy_path = map(Path, sys.argv[1:5])
     revision = sys.argv[5]
@@ -877,9 +1017,9 @@ async def main():
     expected = json.loads(expected_path.read_text())
     config = directory / "config"
     shutil.copytree(root / "config", config)
-    template = PostgresTemplate(schema_template=os.environ["TANK_CI_SCHEMA_TEMPLATE"])
+    template = PostgresTemplate(schema_template=sys.argv[6])
     try:
-        async with template.repository(os.environ["TANK_TEST_DATABASE_URL"]) as repo:
+        async with owned_repository(template, os.environ["TANK_TEST_DATABASE_URL"], ownership, directory) as repo:
             assert repo.clickhouse.database.startswith("mkt_tank_test_")
             setup = await seed_market(repo, config, fixtures, policy, manifest)
             setup.update(
@@ -953,7 +1093,7 @@ async def main():
                                 }
                             )
 
-                    return await original_to_thread(work)
+                    return await cancel_safe_thread(meter, original_to_thread(work))
 
                 asyncio.to_thread = observed_to_thread
                 for name in (
@@ -963,9 +1103,12 @@ async def main():
                     "derivatives_truth",
                     "liquidity_truth",
                     "supply_truth",
+                    "support_features",
                     "enrich_evidence",
                     "data_confidence",
                     "measurement_metadata",
+                    "timestamp_companions",
+                    "jsonable",
                 ):
                     phase = (
                         "compute" if name == "compute_market_truth" else "compute." + name.removesuffix("_truth")
@@ -1013,19 +1156,21 @@ async def main():
                                 "kind": "ready",
                                 "pid": os.getpid(),
                                 "revision": revision,
+                                "interpreter": {
+                                    "implementation": sys.implementation.name,
+                                    "version": sys.version,
+                                },
+                                "dependencies": {
+                                    name: version(name) for name in ("httpx", "psycopg", "PyYAML")
+                                },
                                 "setup": setup,
                                 "modules": imported_sources(root),
                             }
                         ),
                         flush=True,
                     )
-                    seen = []
-                    while line := await reader.readline():
-                        operation = json.loads(line)["operation"]
-                        if operation == "close":
-                            assert seen == ["cold", "warm"]
-                            break
-                        assert operation == ("cold" if not seen else "warm") and len(seen) < 2
+
+                    async def sample(operation):
                         session, backfill = seeded[operation]
                         try:
                             result = await run_sample(
@@ -1047,46 +1192,68 @@ async def main():
                                 (row["instrument_id"], row["kind"]) for row in result["series_requests"]
                             }
                             assert observed_series == expected_series
-                        except Exception as error:
-                            print(
-                                json.dumps(
-                                    {
-                                        "kind": "error",
-                                        "state": operation,
-                                        "type": type(error).__name__,
-                                        "phases_inclusive_not_additive": meter.summary(),
-                                        "query_inventory": meter.query_inventory,
-                                        "message": str(error)
-                                        if isinstance(error, AssertionError)
-                                        else "Product or harness execution failed",
-                                    }
-                                ),
-                                flush=True,
+                        except BaseException as error:
+                            emit_receipt(
+                                {
+                                    "kind": "error",
+                                    "state": operation,
+                                    **safe_failure(error),
+                                    "completion": "INCOMPLETE_NO_LATENCY_OR_PARITY_OUTCOME",
+                                    "timeout": (
+                                        {"origin": "sample_harness", "limit_seconds": 90}
+                                        if isinstance(error, TimeoutError)
+                                        else None
+                                    ),
+                                    "phases_inclusive_not_additive": meter.summary(),
+                                    "query_inventory": meter.query_inventory,
+                                    "cleanup": meter.cleanup,
+                                }
                             )
                             raise
                         result["modules"] = imported_sources(root)
-                        print(json.dumps(result, sort_keys=True), flush=True)
-                        seen.append(operation)
+                        return result
+
+                    await serve_commands(reader, sample, emit_receipt)
                 finally:
                     transport.close()
     finally:
         await template.close()
 
 
+async def main():
+    ownership = {"pid": os.getpid(), "repository_cleanup": "NOT_ACQUIRED"}
+    task, loop = asyncio.current_task(), asyncio.get_running_loop()
+    assert task is not None
+
+    def terminate():
+        ownership["shutdown_signal"] = "SIGTERM"
+        if not task.cancelling():
+            task.cancel()
+
+    loop.add_signal_handler(signal.SIGTERM, terminate)
+    original_to_thread = asyncio.to_thread
+    original_iso, original_utcnow = market_module.iso, market_module.utcnow
+    try:
+        await run_worker(ownership)
+    except asyncio.CancelledError:
+        if ownership.get("shutdown_signal") != "SIGTERM":
+            raise
+    finally:
+        asyncio.to_thread = original_to_thread
+        market_module.iso, market_module.utcnow = original_iso, original_utcnow
+        loop.remove_signal_handler(signal.SIGTERM)
+        emit_receipt({"kind": "shutdown", **ownership})
+
+
 if __name__ == "__main__":
     try:
         asyncio.run(main())
     except Exception as failure:
-        print(
-            json.dumps(
-                {
-                    "kind": "error",
-                    "type": type(failure).__name__,
-                    "message": str(failure)
-                    if isinstance(failure, AssertionError)
-                    else "Worker prerequisite or product execution failed; no timing qualification",
-                }
-            ),
-            flush=True,
+        emit_receipt(
+            {
+                "kind": "error",
+                **safe_failure(failure),
+                "completion": "INCOMPLETE_NO_LATENCY_OR_PARITY_OUTCOME",
+            }
         )
         raise
