@@ -1,0 +1,443 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<feed xmlns="http://www.w3.org/2005/Atom" xmlns:media="http://search.yahoo.com/mrss/" xml:lang="en-US">
+  <id>tag:github.com,2008:/worldcoin/world-id-protocol/commits/main</id>
+  <link type="text/html" rel="alternate" href="https://github.com/worldcoin/world-id-protocol/commits/main"/>
+  <link type="application/atom+xml" rel="self" href="https://github.com/worldcoin/world-id-protocol/commits/main.atom"/>
+  <title>Recent Commits to world-id-protocol:main</title>
+  <updated>2026-10-28T12:05:22Z</updated>
+  <entry>
+    <id>tag:github.com,2008:Grit::Commit/111f5675534dbe317cf91bc7707bc5897889e72c</id>
+    <link type="text/html" rel="alternate" href="https://github.com/worldcoin/world-id-protocol/commit/111f5675534dbe317cf91bc7707bc5897889e72c"/>
+    <title>
+        feat: initial billing contracts (#1067)
+    </title>
+    <updated>2026-10-28T12:05:22Z</updated>
+    <media:thumbnail height="30" width="30" url="https://avatars.githubusercontent.com/u/26036115?s=30&amp;v=4"/>
+    <author>
+      <name>0xOsiris</name>
+      <uri>https://github.com/0xOsiris</uri>
+    </author>
+    <content type="html">
+      &lt;pre style=&#39;white-space:pre-wrap;width:81ex&#39;&gt;feat: initial billing contracts (#1067)
+
+Co-authored-by: Copilot Autofix powered by AI &amp;lt;175728472+Copilot@users.noreply.github.com&amp;gt;
+Co-authored-by: alessandromazza98 &amp;lt;alessandro98.mazza@gmail.com&amp;gt;
+Co-authored-by: Claude Opus 5.5 &amp;lt;noreply@anthropic.com&amp;gt;
+Co-authored-by: kempy &amp;lt;33121795+Kemperino@users.noreply.github.com&amp;gt;
+Co-authored-by: Kemperino &amp;lt;Kemperino@users.noreply.github.com&amp;gt;
+Co-authored-by: Amp &amp;lt;amp@ampcode.com&amp;gt;&lt;/pre&gt;
+    </content>
+  </entry>
+  <entry>
+    <id>tag:github.com,2008:Grit::Commit/070495b21833e6a3d1b336d7b80b349517160dee</id>
+    <link type="text/html" rel="alternate" href="https://github.com/worldcoin/world-id-protocol/commit/070495b21833e6a3d1b336d7b80b349517160dee"/>
+    <title>
+        docs: add WIP-113 uniqueness identifiers (#1125)
+    </title>
+    <updated>2026-10-28T10:23:02Z</updated>
+    <media:thumbnail height="30" width="30" url="https://avatars.githubusercontent.com/u/19326807?s=30&amp;v=4"/>
+    <author>
+      <name>kilianglas</name>
+      <uri>https://github.com/kilianglas</uri>
+    </author>
+    <content type="html">
+      &lt;pre style=&#39;white-space:pre-wrap;width:81ex&#39;&gt;docs: add WIP-113 uniqueness identifiers (#1125)&lt;/pre&gt;
+    </content>
+  </entry>
+  <entry>
+    <id>tag:github.com,2008:Grit::Commit/c2ed158e110cc6466d4f519ca4236a7f867a0e40</id>
+    <link type="text/html" rel="alternate" href="https://github.com/worldcoin/world-id-protocol/commit/c2ed158e110cc6466d4f519ca4236a7f867a0e40"/>
+    <title>
+        chore: release v0.18.0 (#1145)
+    </title>
+    <updated>2026-10-28T09:37:03Z</updated>
+    <media:thumbnail height="30" width="30" url="https://avatars.githubusercontent.com/in/15368?s=30&amp;v=4"/>
+    <author>
+      <name>github-actions</name>
+      <uri>https://github.com/github-actions</uri>
+    </author>
+    <content type="html">
+      &lt;pre style=&#39;white-space:pre-wrap;width:81ex&#39;&gt;chore: release v0.18.0 (#1145)
+
+Co-authored-by: github-actions[bot] &amp;lt;41898282+github-actions[bot]@users.noreply.github.com&amp;gt;&lt;/pre&gt;
+    </content>
+  </entry>
+  <entry>
+    <id>tag:github.com,2008:Grit::Commit/c8b788b0cf975e2f5eebcb0ab2873366ca317eed</id>
+    <link type="text/html" rel="alternate" href="https://github.com/worldcoin/world-id-protocol/commit/c8b788b0cf975e2f5eebcb0ab2873366ca317eed"/>
+    <title>
+        chore(deps): upgrade ProveKit to 1.0.3 (#1147)
+    </title>
+    <updated>2026-10-28T09:07:32Z</updated>
+    <media:thumbnail height="30" width="30" url="https://avatars.githubusercontent.com/u/121622391?s=30&amp;v=4"/>
+    <author>
+      <name>alessandromazza98</name>
+      <uri>https://github.com/alessandromazza98</uri>
+    </author>
+    <content type="html">
+      &lt;pre style=&#39;white-space:pre-wrap;width:81ex&#39;&gt;chore(deps): upgrade ProveKit to 1.0.3 (#1147)&lt;/pre&gt;
+    </content>
+  </entry>
+  <entry>
+    <id>tag:github.com,2008:Grit::Commit/f345eabe28ef58c24064736a8ecc224ed3dd5d5d</id>
+    <link type="text/html" rel="alternate" href="https://github.com/worldcoin/world-id-protocol/commit/f345eabe28ef58c24064736a8ecc224ed3dd5d5d"/>
+    <title>
+        chore: bump rust to 1.98 (#967)
+    </title>
+    <updated>2026-10-27T13:51:46Z</updated>
+    <media:thumbnail height="30" width="30" url="https://avatars.githubusercontent.com/u/8366997?s=30&amp;v=4"/>
+    <author>
+      <name>0xForerunner</name>
+      <uri>https://github.com/0xForerunner</uri>
+    </author>
+    <content type="html">
+      &lt;pre style=&#39;white-space:pre-wrap;width:81ex&#39;&gt;chore: bump rust to 1.98 (#967)
+
+* chore: bump rust to 1.98
+
+* fix: compile tests on rust 1.98
+
+- Add recursion_limit = 256 to every integration test crate whose async
+  layouts overflow the default limit on 1.98.
+- Move gateway tests/common.rs to tests/common/mod.rs so it is a shared
+  module rather than its own test target; the crate-level attribute there
+  was rejected as unused when included via mod common.
+- Drop redundant root: _ pattern flagged by clippy::unneeded_wildcard_pattern.
+
+Amp-Thread-ID: https://ampcode.com/threads/T-01a17d5a-3540-77e0-a3bb-868ad340edf6
+Co-authored-by: Amp &amp;lt;amp@ampcode.com&amp;gt;
+
+* chore: bump rust-overlay so nix resolves rust 1.98
+
+Amp-Thread-ID: https://ampcode.com/threads/T-01a17d5a-3540-77e0-a3bb-868ad340edf6
+Co-authored-by: Amp &amp;lt;amp@ampcode.com&amp;gt;
+
+---------
+
+Co-authored-by: kempy &amp;lt;33121795+Kemperino@users.noreply.github.com&amp;gt;
+Co-authored-by: Kemperino &amp;lt;Kemperino@users.noreply.github.com&amp;gt;
+Co-authored-by: Amp &amp;lt;amp@ampcode.com&amp;gt;&lt;/pre&gt;
+    </content>
+  </entry>
+  <entry>
+    <id>tag:github.com,2008:Grit::Commit/bc9f16039ae5fb568212ffe394884825852142fb</id>
+    <link type="text/html" rel="alternate" href="https://github.com/worldcoin/world-id-protocol/commit/bc9f16039ae5fb568212ffe394884825852142fb"/>
+    <title>
+        feat: clearer OHTTP client error messages (#785)
+    </title>
+    <updated>2026-10-27T12:55:21Z</updated>
+    <media:thumbnail height="30" width="30" url="https://avatars.githubusercontent.com/u/19326807?s=30&amp;v=4"/>
+    <author>
+      <name>kilianglas</name>
+      <uri>https://github.com/kilianglas</uri>
+    </author>
+    <content type="html">
+      &lt;pre style=&#39;white-space:pre-wrap;width:81ex&#39;&gt;feat: clearer OHTTP client error messages (#785)
+
+* feat: split OHTTP decapsulation error and guard non-OHTTP responses
+
+* feat: map inner 502/503/504 to a clear service-unavailable error
+
+* test: cover OHTTP relay, content-type guard, and decapsulation errors
+
+* fix: keep structured 503/504 service errors and name the service in OhttpRelayInvalidResponse
+
+Amp-Thread-ID: https://ampcode.com/threads/T-01a17d43-f5b7-71fd-9ec3-3aa8ea24078e
+Co-authored-by: Amp &amp;lt;amp@ampcode.com&amp;gt;
+
+* fix: require string service error codes before keeping the structured 5xx error
+
+Amp-Thread-ID: https://ampcode.com/threads/T-01a17d43-f5b7-71fd-9ec3-3aa8ea24078e
+Co-authored-by: Amp &amp;lt;amp@ampcode.com&amp;gt;
+
+---------
+
+Co-authored-by: kempy &amp;lt;33121795+Kemperino@users.noreply.github.com&amp;gt;
+Co-authored-by: Kemperino &amp;lt;Kemperino@users.noreply.github.com&amp;gt;
+Co-authored-by: Amp &amp;lt;amp@ampcode.com&amp;gt;&lt;/pre&gt;
+    </content>
+  </entry>
+  <entry>
+    <id>tag:github.com,2008:Grit::Commit/86733808ccb7c15984ad009ea33af778070bc348</id>
+    <link type="text/html" rel="alternate" href="https://github.com/worldcoin/world-id-protocol/commit/86733808ccb7c15984ad009ea33af778070bc348"/>
+    <title>
+        chore: pin node for circom tests (#1129)
+    </title>
+    <updated>2026-10-27T12:32:20Z</updated>
+    <media:thumbnail height="30" width="30" url="https://avatars.githubusercontent.com/u/5864173?s=30&amp;v=4"/>
+    <author>
+      <name>paolodamico</name>
+      <uri>https://github.com/paolodamico</uri>
+    </author>
+    <content type="html">
+      &lt;pre style=&#39;white-space:pre-wrap;width:81ex&#39;&gt;chore: pin node for circom tests (#1129)
+
+Co-authored-by: kempy &amp;lt;33121795+Kemperino@users.noreply.github.com&amp;gt;&lt;/pre&gt;
+    </content>
+  </entry>
+  <entry>
+    <id>tag:github.com,2008:Grit::Commit/ccbd31b8ecc7b8750abf9d9d0be9fd0c1c2bff89</id>
+    <link type="text/html" rel="alternate" href="https://github.com/worldcoin/world-id-protocol/commit/ccbd31b8ecc7b8750abf9d9d0be9fd0c1c2bff89"/>
+    <title>
+        docs(wip-107): clarify rp signature risk (#1144)
+    </title>
+    <updated>2026-10-27T12:29:07Z</updated>
+    <media:thumbnail height="30" width="30" url="https://avatars.githubusercontent.com/u/5864173?s=30&amp;v=4"/>
+    <author>
+      <name>paolodamico</name>
+      <uri>https://github.com/paolodamico</uri>
+    </author>
+    <content type="html">
+      &lt;pre style=&#39;white-space:pre-wrap;width:81ex&#39;&gt;docs(wip-107): clarify rp signature risk (#1144)&lt;/pre&gt;
+    </content>
+  </entry>
+  <entry>
+    <id>tag:github.com,2008:Grit::Commit/2aecebab93e3f0c53417079cc1615381ab917202</id>
+    <link type="text/html" rel="alternate" href="https://github.com/worldcoin/world-id-protocol/commit/2aecebab93e3f0c53417079cc1615381ab917202"/>
+    <title>
+        chore(deny): upgrade zstd-sys to 2.1.2, ignore zstd advisories blocke…
+    </title>
+    <updated>2026-10-27T12:22:53Z</updated>
+    <media:thumbnail height="30" width="30" url="https://avatars.githubusercontent.com/u/33121795?s=30&amp;v=4"/>
+    <author>
+      <name>Kemperino</name>
+      <uri>https://github.com/Kemperino</uri>
+    </author>
+    <content type="html">
+      &lt;pre style=&#39;white-space:pre-wrap;width:81ex&#39;&gt;chore(deny): upgrade zstd-sys to 2.1.2, ignore zstd advisories blocked by provekit (#1146)
+
+- zstd-sys 2.0.16 -&amp;gt; 2.1.2 (RUSTSEC-2026-0410, wasm32 allocator shim)
+  Fixes the advisory cargo-deny reported; zstd-safe ^2.0.15 permits 2.1.x.
+- Ignore RUSTSEC-2026-0391/-0398/-0403 (zstd 0.13.3 / zstd-safe 7.2.4):
+  transitive via pinned provekit-common 1.0.2 which requires zstd ^0.13;
+  the fixes live in zstd 0.14.3 / zstd-safe 8.2.0, unreachable until
+  provekit-common ships on zstd 0.14.
+- cargo also re-resolves tempfile&amp;#39;s getrandom to 0.4.1 (allowed by
+  tempfile&amp;#39;s &amp;gt;=0.3,&amp;lt;0.5 req; dedupes with the workspace getrandom 0.4).
+
+crypto-bigint/ctutils/tokio advisories were already fixed on main in
+
+Amp-Thread-ID: https://ampcode.com/threads/T-01a17d3d-215c-71a1-94aa-50a7f441321d
+
+#1137; this branch is rebased on that state.
+
+Co-authored-by: Kemperino &amp;lt;Kemperino@users.noreply.github.com&amp;gt;
+Co-authored-by: Amp &amp;lt;amp@ampcode.com&amp;gt;&lt;/pre&gt;
+    </content>
+  </entry>
+  <entry>
+    <id>tag:github.com,2008:Grit::Commit/387d8fdf37e3bceebee68c50af8e3928db83757f</id>
+    <link type="text/html" rel="alternate" href="https://github.com/worldcoin/world-id-protocol/commit/387d8fdf37e3bceebee68c50af8e3928db83757f"/>
+    <title>
+        refactor: carry each proof flow&#39;s parameters in the ProofType enum (#…
+    </title>
+    <updated>2026-10-27T11:04:37Z</updated>
+    <media:thumbnail height="30" width="30" url="https://avatars.githubusercontent.com/u/19326807?s=30&amp;v=4"/>
+    <author>
+      <name>kilianglas</name>
+      <uri>https://github.com/kilianglas</uri>
+    </author>
+    <content type="html">
+      &lt;pre style=&#39;white-space:pre-wrap;width:81ex&#39;&gt;refactor: carry each proof flow&amp;#39;s parameters in the ProofType enum (#1083)&lt;/pre&gt;
+    </content>
+  </entry>
+  <entry>
+    <id>tag:github.com,2008:Grit::Commit/0673c8ae7cd032d9fe4aa977fd26b439779f5236</id>
+    <link type="text/html" rel="alternate" href="https://github.com/worldcoin/world-id-protocol/commit/0673c8ae7cd032d9fe4aa977fd26b439779f5236"/>
+    <title>
+        docs(wip-109): simplify and tighten specification (#1114)
+    </title>
+    <updated>2026-10-27T10:14:59Z</updated>
+    <media:thumbnail height="30" width="30" url="https://avatars.githubusercontent.com/u/5088647?s=30&amp;v=4"/>
+    <author>
+      <name>Dzejkop</name>
+      <uri>https://github.com/Dzejkop</uri>
+    </author>
+    <content type="html">
+      &lt;pre style=&#39;white-space:pre-wrap;width:81ex&#39;&gt;docs(wip-109): simplify and tighten specification (#1114)
+
+Co-authored-by: Kilian Glas &amp;lt;glas_k@yahoo.de&amp;gt;&lt;/pre&gt;
+    </content>
+  </entry>
+  <entry>
+    <id>tag:github.com,2008:Grit::Commit/8946aafb7fa7ac1663101119519d36af77ac6368</id>
+    <link type="text/html" rel="alternate" href="https://github.com/worldcoin/world-id-protocol/commit/8946aafb7fa7ac1663101119519d36af77ac6368"/>
+    <title>
+        docs: wip 107 (#1091)
+    </title>
+    <updated>2026-10-27T07:57:34Z</updated>
+    <media:thumbnail height="30" width="30" url="https://avatars.githubusercontent.com/u/26036115?s=30&amp;v=4"/>
+    <author>
+      <name>0xOsiris</name>
+      <uri>https://github.com/0xOsiris</uri>
+    </author>
+    <content type="html">
+      &lt;pre style=&#39;white-space:pre-wrap;width:81ex&#39;&gt;docs: wip 107 (#1091)
+
+Co-authored-by: pd &amp;lt;paolodamico@users.noreply.github.com&amp;gt;
+Co-authored-by: Alessandro Mazza &amp;lt;121622391+alessandromazza98@users.noreply.github.com&amp;gt;
+Co-authored-by: alessandromazza98 &amp;lt;alessandro98.mazza@gmail.com&amp;gt;&lt;/pre&gt;
+    </content>
+  </entry>
+  <entry>
+    <id>tag:github.com,2008:Grit::Commit/f0551a531c4acf405adecce559d51fc74c965dc2</id>
+    <link type="text/html" rel="alternate" href="https://github.com/worldcoin/world-id-protocol/commit/f0551a531c4acf405adecce559d51fc74c965dc2"/>
+    <title>
+        fix(deps): fix cargo deny advisories (crypto-bigint, ctutils, tokio) …
+    </title>
+    <updated>2026-10-26T09:01:55Z</updated>
+    <media:thumbnail height="30" width="30" url="https://avatars.githubusercontent.com/u/121622391?s=30&amp;v=4"/>
+    <author>
+      <name>alessandromazza98</name>
+      <uri>https://github.com/alessandromazza98</uri>
+    </author>
+    <content type="html">
+      &lt;pre style=&#39;white-space:pre-wrap;width:81ex&#39;&gt;fix(deps): fix cargo deny advisories (crypto-bigint, ctutils, tokio) (#1137)&lt;/pre&gt;
+    </content>
+  </entry>
+  <entry>
+    <id>tag:github.com,2008:Grit::Commit/65bb2fac2acd1a72e4f1f1f62114c43afcc8ecac</id>
+    <link type="text/html" rel="alternate" href="https://github.com/worldcoin/world-id-protocol/commit/65bb2fac2acd1a72e4f1f1f62114c43afcc8ecac"/>
+    <title>
+        chore: release v0.17.1 (#1133)
+    </title>
+    <updated>2026-10-23T18:54:19Z</updated>
+    <media:thumbnail height="30" width="30" url="https://avatars.githubusercontent.com/in/15368?s=30&amp;v=4"/>
+    <author>
+      <name>github-actions</name>
+      <uri>https://github.com/github-actions</uri>
+    </author>
+    <content type="html">
+      &lt;pre style=&#39;white-space:pre-wrap;width:81ex&#39;&gt;chore: release v0.17.1 (#1133)
+
+Co-authored-by: github-actions[bot] &amp;lt;41898282+github-actions[bot]@users.noreply.github.com&amp;gt;&lt;/pre&gt;
+    </content>
+  </entry>
+  <entry>
+    <id>tag:github.com,2008:Grit::Commit/e1ac62d1452764146231703be154c3ddf925d4da</id>
+    <link type="text/html" rel="alternate" href="https://github.com/worldcoin/world-id-protocol/commit/e1ac62d1452764146231703be154c3ddf925d4da"/>
+    <title>
+        feat(proof): enable ownership proofs on wasm32 (#1132)
+    </title>
+    <updated>2026-10-23T04:20:23Z</updated>
+    <media:thumbnail height="30" width="30" url="https://avatars.githubusercontent.com/u/149738428?s=30&amp;v=4"/>
+    <author>
+      <name>kchaw2005</name>
+      <uri>https://github.com/kchaw2005</uri>
+    </author>
+    <content type="html">
+      &lt;pre style=&#39;white-space:pre-wrap;width:81ex&#39;&gt;feat(proof): enable ownership proofs on wasm32 (#1132)
+
+* feat(proof): enable ownership proofs on wasm32
+
+* fix(proof): gate ownership verification tests to native targets
+
+* fix(proof): skip verifier-only artifact generation on wasm32
+
+* fix(proof): require the portable Spongefish transcript fix
+
+* fix(proof): preserve native prover decoding compatibility
+
+* fix(proof): pin ProveKit to the Noir-compatible release
+
+* fix(proof): retain native witness generation through ProveKit
+
+---------
+
+Co-authored-by: Kartike Chawla &amp;lt;kchawla2005@ucla.edu&amp;gt;&lt;/pre&gt;
+    </content>
+  </entry>
+  <entry>
+    <id>tag:github.com,2008:Grit::Commit/b434b0958abc7ad73cf015c0ffe2d280046776cf</id>
+    <link type="text/html" rel="alternate" href="https://github.com/worldcoin/world-id-protocol/commit/b434b0958abc7ad73cf015c0ffe2d280046776cf"/>
+    <title>
+        chore: release v0.17.0 (#1130)
+    </title>
+    <updated>2026-10-22T21:15:01Z</updated>
+    <media:thumbnail height="30" width="30" url="https://avatars.githubusercontent.com/in/15368?s=30&amp;v=4"/>
+    <author>
+      <name>github-actions</name>
+      <uri>https://github.com/github-actions</uri>
+    </author>
+    <content type="html">
+      &lt;pre style=&#39;white-space:pre-wrap;width:81ex&#39;&gt;chore: release v0.17.0 (#1130)
+
+Co-authored-by: github-actions[bot] &amp;lt;41898282+github-actions[bot]@users.noreply.github.com&amp;gt;&lt;/pre&gt;
+    </content>
+  </entry>
+  <entry>
+    <id>tag:github.com,2008:Grit::Commit/1272135737afcb44ee3c378a900be986aaca77e4</id>
+    <link type="text/html" rel="alternate" href="https://github.com/worldcoin/world-id-protocol/commit/1272135737afcb44ee3c378a900be986aaca77e4"/>
+    <title>
+        build: enable world-id-flamingo publication (#1131)
+    </title>
+    <updated>2026-10-22T21:03:16Z</updated>
+    <media:thumbnail height="30" width="30" url="https://avatars.githubusercontent.com/u/80459599?s=30&amp;v=4"/>
+    <author>
+      <name>Takaros999</name>
+      <uri>https://github.com/Takaros999</uri>
+    </author>
+    <content type="html">
+      &lt;pre style=&#39;white-space:pre-wrap;width:81ex&#39;&gt;build: enable world-id-flamingo publication (#1131)
+
+Co-authored-by: Codex &amp;lt;codex@openai.com&amp;gt;&lt;/pre&gt;
+    </content>
+  </entry>
+  <entry>
+    <id>tag:github.com,2008:Grit::Commit/38df4a0731e5684ba162981dadce3ea629e571f1</id>
+    <link type="text/html" rel="alternate" href="https://github.com/worldcoin/world-id-protocol/commit/38df4a0731e5684ba162981dadce3ea629e571f1"/>
+    <title>
+        feat: add world-id-flamingo crate with the WIP-201 wire formats (#1079)
+    </title>
+    <updated>2026-10-22T20:23:46Z</updated>
+    <media:thumbnail height="30" width="30" url="https://avatars.githubusercontent.com/u/19326807?s=30&amp;v=4"/>
+    <author>
+      <name>kilianglas</name>
+      <uri>https://github.com/kilianglas</uri>
+    </author>
+    <content type="html">
+      &lt;pre style=&#39;white-space:pre-wrap;width:81ex&#39;&gt;feat: add world-id-flamingo crate with the WIP-201 wire formats (#1079)&lt;/pre&gt;
+    </content>
+  </entry>
+  <entry>
+    <id>tag:github.com,2008:Grit::Commit/49c57c03933b8063301b1c36be183210ccc43cef</id>
+    <link type="text/html" rel="alternate" href="https://github.com/worldcoin/world-id-protocol/commit/49c57c03933b8063301b1c36be183210ccc43cef"/>
+    <title>
+        feat: implement the WIP-106 TAKT and AAT in Rust and Noir (#1112)
+    </title>
+    <updated>2026-10-22T20:06:33Z</updated>
+    <media:thumbnail height="30" width="30" url="https://avatars.githubusercontent.com/u/19326807?s=30&amp;v=4"/>
+    <author>
+      <name>kilianglas</name>
+      <uri>https://github.com/kilianglas</uri>
+    </author>
+    <content type="html">
+      &lt;pre style=&#39;white-space:pre-wrap;width:81ex&#39;&gt;feat: implement the WIP-106 TAKT and AAT in Rust and Noir (#1112)&lt;/pre&gt;
+    </content>
+  </entry>
+  <entry>
+    <id>tag:github.com,2008:Grit::Commit/821fe98a8c76a8b26a03b5790f59b25d14d9be19</id>
+    <link type="text/html" rel="alternate" href="https://github.com/worldcoin/world-id-protocol/commit/821fe98a8c76a8b26a03b5790f59b25d14d9be19"/>
+    <title>
+        feat: add deterministic CBOR, COSE_Sign1 and field-element helpers to…
+    </title>
+    <updated>2026-10-22T18:46:17Z</updated>
+    <media:thumbnail height="30" width="30" url="https://avatars.githubusercontent.com/u/19326807?s=30&amp;v=4"/>
+    <author>
+      <name>kilianglas</name>
+      <uri>https://github.com/kilianglas</uri>
+    </author>
+    <content type="html">
+      &lt;pre style=&#39;white-space:pre-wrap;width:81ex&#39;&gt;feat: add deterministic CBOR, COSE_Sign1 and field-element helpers to primitives (#1122)
+
+* feat: add deterministic CBOR, COSE_Sign1 and field-element helpers to primitives
+
+* fix: canonicalize COSE headers and return encoding errors
+
+---------
+
+Co-authored-by: Paolo D&amp;#39;Amico &amp;lt;paolodamico@users.noreply.github.com&amp;gt;
+Co-authored-by: Takis Kakalis &amp;lt;80459599+Takaros999@users.noreply.github.com&amp;gt;&lt;/pre&gt;
+    </content>
+  </entry>
+</feed>

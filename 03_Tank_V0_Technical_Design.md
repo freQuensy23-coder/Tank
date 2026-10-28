@@ -734,6 +734,8 @@ Seed for the beneficiary walk (§4.7). An edge supported only by this map starts
 
 1. Adapters poll at the intervals in 02 §3 (conditional requests where supported) or consume pushes. Each entry yields `external_id` (the source key listed per source in 02 §3) and a normalized-text `content_hash`; raw content is written once and hashed.
 2. Exact duplicates (same `source_id` + `external_id`, or same `content_hash`) do not create new items; they increment observation counts on the existing item.
+S25 reads the append-only GitHub feed inventory in `config/sources.yaml`; [the coverage audit](docs/GITHUB_COVERAGE.md) records the exact default branch, primary publisher provenance and retained Atom evidence per repository. Per-feed author organizations retain the actual GitHub publisher namespace with an unambiguous registry protocol context, including independent client and ecosystem publishers; they do not claim foundation ownership or promote technical evidence. This context participates in routing identity matching, not the Decision-1 item text. Commit feeds can contain only subjects/trailers: coverage does not guarantee economic-event recognition, deployment or an alert.
+
 3. Where items go:
 
 | Items | Path |
@@ -774,6 +776,8 @@ Seed for the beneficiary walk (§4.7). An edge supported only by this map starts
 - Every call is logged in `ops.llm_usage` (call `ROUTE`) like FILTER_ITEM; the decision, the event and the score are stored on the item.
 
 Expected load (estimate from feed sizes on 16 Oct 2026): ≈ 230 items/day go straight to ROUTE_ITEM (CORE ≈ 180, organization accounts ≈ 50); ≈ 610 items/day go through FILTER_ITEM (news ≈ 250, other X accounts ≈ 330, GitHub commits ≈ 30), of which ≈ 410 are assumed to be about crypto (nearly all of CoinDesk, The Block, the X accounts and the commits; few BBC and Bloomberg items). About 40% of the ≈ 640 routed items are assumed to join an existing session, because outlets and accounts repeat the same news: ≈ 385 new sessions and ≈ 255 added items a day. Decision-1: ≈ 610 filter calls × ≈ 700 tokens plus ≈ 1,280 routing calls (≈ 2 candidates per item) × ≈ 1,000 tokens ≈ 1.7 M tokens/day; its cost is not reported by Azure and is not estimated here.
+
+This estimate predates the expanded S25 commit inventory. [The GitHub coverage audit](docs/GITHUB_COVERAGE.md#polling-and-initial-admission-load) records scheduled request rates and retained-window/bootstrap counts; it does not extrapolate truncated Atom windows into daily traffic or claim production capacity acceptance.
 
 ### S29 profile retries, Ops HTTP diagnostics and worker publication
 

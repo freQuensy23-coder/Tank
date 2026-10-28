@@ -1,0 +1,93 @@
+{
+  "source_id": "S25",
+  "name": "GitHub",
+  "mode": "REST",
+  "interval_s": 600,
+  "feeds": [
+    {
+      "url": "https://github.com/Uniswap/v4-core/releases.atom",
+      "kind": "atom",
+      "interval_s": 600,
+      "subtype": "releases"
+    },
+    {
+      "url": "https://github.com/aave-dao/aave-v3-origin/releases.atom",
+      "kind": "atom",
+      "interval_s": 600,
+      "subtype": "releases"
+    },
+    {
+      "url": "https://github.com/cowprotocol/services/releases.atom",
+      "kind": "atom",
+      "interval_s": 600,
+      "subtype": "releases"
+    },
+    {
+      "url": "https://github.com/hyperliquid-dex/hyperliquid-python-sdk/releases.atom",
+      "kind": "atom",
+      "interval_s": 600,
+      "subtype": "releases"
+    },
+    {
+      "url": "https://github.com/1inch/swap-vm/releases.atom",
+      "kind": "atom",
+      "interval_s": 600,
+      "subtype": "releases"
+    },
+    {
+      "url": "https://github.com/elliottech/lighter-python/releases.atom",
+      "kind": "atom",
+      "interval_s": 600,
+      "subtype": "releases"
+    },
+    {
+      "url": "https://github.com/ava-labs/avalanchego/releases.atom",
+      "kind": "atom",
+      "interval_s": 600,
+      "subtype": "releases"
+    },
+    {
+      "url": "https://github.com/near/nearcore/releases.atom",
+      "kind": "atom",
+      "interval_s": 600,
+      "subtype": "releases"
+    },
+    {
+      "url": "https://github.com/worldcoin/world-chain/releases.atom",
+      "kind": "atom",
+      "interval_s": 600,
+      "subtype": "releases"
+    },
+    {
+      "url": "https://github.com/PlasmaLaboratories/node-templates/releases.atom",
+      "kind": "atom",
+      "interval_s": 600,
+      "subtype": "releases"
+    },
+    {
+      "url": "https://github.com/LayerZero-Labs/LayerZero-v2/commits/main.atom",
+      "kind": "atom",
+      "interval_s": 600,
+      "subtype": "commits"
+    },
+    {
+      "url": "https://github.com/morpho-org/morpho-blue/commits/main.atom",
+      "kind": "atom",
+      "interval_s": 600,
+      "subtype": "commits"
+    }
+  ],
+  "priority": "SECONDARY",
+  "terms_notes": "Read-only public content; honor publisher terms and Retry-After.",
+  "limits": {
+    "rate_per_min": null,
+    "budget_fraction": 0.5,
+    "unknown_limit_policy": "Honor Retry-After and endpoint cadence; verify before production acceptance."
+  },
+  "bucket": "TECHNICAL_ARTIFACT",
+  "source_class": "TECHNICAL_EVIDENCE",
+  "cost_class": "FREE_OPEN",
+  "auth": "NONE",
+  "adapter_status": "NOT_TESTED",
+  "adapter_status_basis": "Offline parser tests and historical public smoke exist; no unattended acceptance claimed."
+}

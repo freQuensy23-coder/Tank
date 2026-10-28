@@ -150,7 +150,7 @@ Rules:
 
 | ID | Source | What Tank reads | Max delay |
 |---|---|---|---|
-| S25 | GitHub | Releases of Uniswap v4-core, Aave v3-origin, CoW Protocol services, Hyperliquid Python SDK, 1inch SwapVM, Lighter Python SDK, AvalancheGo, nearcore, World Chain, Plasma node; commits of LayerZero v2 and Morpho Blue. PancakeSwap, Aerodrome, Curve, 0x, Euler, Ondo, Ethena and Quant publish no release feed with 2026 activity; their news arrives through S15–S24 and S29 | 10 min |
+| S25 | GitHub | Existing release feeds plus verified default-branch commit feeds for all 22 tracked projects: core protocols, contracts, fees, governance and material products. The [coverage audit](docs/GITHUB_COVERAGE.md) identifies publishers, repositories, supplementary public clients and unavailable core source; release inactivity does not exclude protocol code. | 10 min |
 
 **Institutional and custody**
 

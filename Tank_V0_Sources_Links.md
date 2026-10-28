@@ -50,6 +50,9 @@ Built from 02 HLD §3 (sources) and 01 PRD §4.3 (X accounts), 19 Oct 2026. Link
 
 ## GitHub (S25)
 
+The original 12 feed indexes below are retained unchanged. Additional verified default-branch commit feeds for all 22 tracked projects are listed in [the coverage audit](docs/GITHUB_COVERAGE.md) and `config/sources.yaml`. Public SDKs, clients, node configuration and draft specifications are explicitly supplementary where core implementation is unavailable. Quiet releases are not a reason to omit protocol or economic code.
+
+
 | Repository | Watched |
 |---|---|
 | [Uniswap v4-core](https://github.com/Uniswap/v4-core/releases) | releases |
