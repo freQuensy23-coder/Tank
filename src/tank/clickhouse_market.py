@@ -12,18 +12,16 @@ without FINAL (_narrow). Numbers are stored as their exact decimal text (some ca
 digits), timestamps as DateTime64(6, UTC), JSON as text.
 """
 
+import asyncio
 import json
 import re
 import time
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
-from itertools import groupby
 from urllib.parse import urlsplit, urlunsplit
-from uuid import uuid4
 
 import httpx
 
-from tank.logging import timing_query_id, timing_span, timing_thread
 from tank.market_schema import MARKET_ALIASES, MARKET_COLUMNS, MARKET_IDENTITIES
 from tank.util import canonical_json, iso, parse_time
 
@@ -142,28 +140,21 @@ class ClickHouse:
         }
         for name, (value, _) in (params or {}).items():
             request["param_" + name] = value
-        query_id = timing_query_id()
-        request["query_id"] = query_id
-        with timing_span("clickhouse.http", query_id=query_id) as timing:
-            response = await self.http.post(
-                self.base,
-                params=request,
-                content=(
-                    query if self.database == "mkt" else re.sub(r"\bmkt\b", self.database, query)
-                ).encode(),
-                headers={"X-ClickHouse-User": self.user, "X-ClickHouse-Key": self.password},
-            )
-            timing["bytes"] = len(response.content)
-            if response.status_code != 200:
-                raise RuntimeError(f"ClickHouse {response.status_code}: {response.text[:500]}")
-            return response.content
+        response = await self.http.post(
+            self.base,
+            params=request,
+            content=(query if self.database == "mkt" else re.sub(r"\bmkt\b", self.database, query)).encode(),
+            headers={"X-ClickHouse-User": self.user, "X-ClickHouse-Key": self.password},
+        )
+        if response.status_code != 200:
+            raise RuntimeError(f"ClickHouse {response.status_code}: {response.text[:500]}")
+        return response.content
 
     async def rows(self, query, params=None):
-        with timing_span("clickhouse.rows", query_id=timing_query_id()):
-            body = await self._post(query + " FORMAT JSONEachRow", params)
-            if len(body) > 1_000_000:
-                return await timing_thread(_json_lines, body)
-            return _json_lines(body)
+        body = await self._post(query + " FORMAT JSONEachRow", params)
+        if len(body) > 1_000_000:
+            return await asyncio.to_thread(_json_lines, body)
+        return _json_lines(body)
 
     async def execute(self, query, params=None):
         await self._post(query, params)
@@ -175,10 +166,7 @@ class ClickHouse:
 
 
 def _json_lines(body):
-    with timing_span("clickhouse.json_decode", cpu=True, bytes=len(body)) as timing:
-        rows = [json.loads(line) for line in body.splitlines() if line]
-        timing["rows"] = len(rows)
-        return rows
+    return [json.loads(line) for line in body.splitlines() if line]
 
 
 def _literal(value):
@@ -281,39 +269,21 @@ def _record(collection, row):
     return decode(collection, out)
 
 
-def _records(collection, rows, queries=()):
-    if len(queries) > 1:
-        owners = {id(row): query_id for batch, query_id in queries for row in batch}
-        records = []
-        for query_id, group in groupby(rows, key=lambda row: owners[id(row)]):
-            batch = list(group)
-            records.extend(_records(collection, batch, [(batch, query_id)]))
-        return records
-    fields = {"query_id": queries[0][1]} if queries else {}
-    with timing_span("clickhouse.typed_decode", cpu=True, rows=len(rows), **fields):
-        return [_record(collection, r) for r in rows]
+def _records(collection, rows):
+    return [_record(collection, r) for r in rows]
 
 
-async def _decode(collection, rows, queries=()):
-    fields = {"query_id": queries[0][1]} if len(queries) == 1 else {}
-    with timing_span("clickhouse.convert", **fields):
-        if len(rows) > 1000:
-            return await timing_thread(_records, collection, rows, queries)
-        return _records(collection, rows, queries)
+async def _decode(collection, rows):
+    if len(rows) > 1000:
+        return await asyncio.to_thread(_records, collection, rows)
+    return _records(collection, rows)
 
 
 def _table(collection):
     return f"{collection} FINAL"
 
 
-async def _query_rows(ch, query, params):
-    query_id = uuid4().hex
-    with timing_span("clickhouse.query", query_id=query_id):
-        rows = await ch.rows(query, params)
-    return rows, query_id
-
-
-async def _select(ch, collection, q, order, tail="", selected="*", *, queries=None):
+async def _select(ch, collection, q, order, tail="", selected="*"):
     day = MARKET_TABLES[collection]
     keys = await ch.rows(
         f"SELECT storage_key, instrument_id, `{day}` AS _day FROM {_table(collection)} "
@@ -328,12 +298,9 @@ async def _select(ch, collection, q, order, tail="", selected="*", *, queries=No
     k.where(f"`{day}` >= {k.param(min(days), DT)}")
     k.where(f"`{day}` <= {k.param(max(days), DT)}")
     k.where(f"storage_key IN {k.param([r['storage_key'] for r in keys], 'Array(String)')}")
-    rows, query_id = await _query_rows(
-        ch, f"SELECT {selected} FROM {_table(collection)} WHERE {k.predicate()} ORDER BY {order}", k.params
+    return await ch.rows(
+        f"SELECT {selected} FROM {_table(collection)} WHERE {k.predicate()} ORDER BY {order}", k.params
     )
-    if queries is not None:
-        queries.append((rows, query_id))
-    return rows
 
 
 async def _narrow(ch, collection, q, time_field):
@@ -360,19 +327,17 @@ async def _narrow(ch, collection, q, time_field):
 
 
 async def get(ch, collection, key):
-    queries = []
     q = Query()
     q.where(f"storage_key = {q.param(str(key), 'String')}")
     if not await _narrow(ch, collection, q, MARKET_TABLES[collection]):
         return None
-    rows = await _select(ch, collection, q, "storage_key", "LIMIT 1", queries=queries)
-    return _records(collection, rows[:1], queries)[0] if rows else None
+    rows = await _select(ch, collection, q, "storage_key", "LIMIT 1")
+    return _record(collection, rows[0]) if rows else None
 
 
 async def range_page(
     ch, collection, time_field, *, start=None, end=None, filters=None, limit=1000, after=None
 ):
-    queries = []
     time_field = _column(collection, time_field)
     q = Query()
     q.where(f"`{time_field}` IS NOT NULL")
@@ -383,38 +348,31 @@ async def range_page(
     if after is not None:
         _after(q, (f"`{time_field}`", parse_time(after[0]), DT), ("storage_key", str(after[1]), "String"))
     _filters(q, collection, filters)
-    rows = await _select(
-        ch, collection, q, f"`{time_field}`, storage_key", f"LIMIT {int(limit)}", queries=queries
-    )
-    records = await _decode(collection, rows, queries)
+    rows = await _select(ch, collection, q, f"`{time_field}`, storage_key", f"LIMIT {int(limit)}")
+    records = await _decode(collection, rows)
     return [(rec, (rec[time_field], row["storage_key"])) for rec, row in zip(records, rows, strict=True)]
 
 
 async def latest_before(ch, collection, time_field, cutoff, *, filters=None):
-    queries = []
     time_field = _column(collection, time_field)
     q = Query()
     q.where(f"`{time_field}` < {q.param(parse_time(cutoff), DT)}")
     _filters(q, collection, filters)
-    rows = await _select(
-        ch, collection, q, f"`{time_field}` DESC, storage_key DESC", "LIMIT 1", queries=queries
-    )
-    return _records(collection, rows[:1], queries)[0] if rows else None
+    rows = await _select(ch, collection, q, f"`{time_field}` DESC, storage_key DESC", "LIMIT 1")
+    return _record(collection, rows[0]) if rows else None
 
 
 async def all_page(ch, collection, *, filters=None, after=None, limit=1000):
-    queries = []
     q = Query()
     _filters(q, collection, filters)
     if after is not None:
         q.where(f"storage_key > {q.param(str(after), 'String')}")
-    rows = await _select(ch, collection, q, "storage_key", f"LIMIT {int(limit)}", queries=queries)
-    records = await _decode(collection, rows, queries)
+    rows = await _select(ch, collection, q, "storage_key", f"LIMIT {int(limit)}")
+    records = await _decode(collection, rows)
     return [(row["storage_key"], rec) for row, rec in zip(rows, records, strict=True)]
 
 
 async def list_latest(ch, collection, time_field, *, filters=None, limit=100, start=None, end=None):
-    queries = []
     time_field = _column(collection, time_field)
     q = Query()
     _filters(q, collection, filters)
@@ -423,16 +381,13 @@ async def list_latest(ch, collection, time_field, *, filters=None, limit=100, st
         q.where(f"`{time_field}` >= {q.param(parse_time(start), DT)}")
     if end is not None:
         q.where(f"`{time_field}` < {q.param(parse_time(end), DT)}")
-    rows = await _select(
-        ch, collection, q, f"`{time_field}` DESC, storage_key DESC", f"LIMIT {int(limit)}", queries=queries
-    )
-    return await _decode(collection, rows, queries)
+    rows = await _select(ch, collection, q, f"`{time_field}` DESC, storage_key DESC", f"LIMIT {int(limit)}")
+    return await _decode(collection, rows)
 
 
 async def late_page(
     ch, collection, arrival_field, market_field, *, since, end, market_end, filters, after, limit
 ):
-    queries = []
     q = Query()
     _filters(q, collection, filters)
     q.where(f"`{arrival_field}` IS NOT NULL")
@@ -445,10 +400,8 @@ async def late_page(
         _after(q, (f"`{arrival_field}`", after[0], DT), ("storage_key", str(after[1]), "String"))
     if not await _narrow(ch, collection, q, MARKET_TABLES[collection]):
         return []
-    rows = await _select(
-        ch, collection, q, f"`{arrival_field}`, storage_key", f"LIMIT {int(limit)}", queries=queries
-    )
-    records = await _decode(collection, rows, queries)
+    rows = await _select(ch, collection, q, f"`{arrival_field}`, storage_key", f"LIMIT {int(limit)}")
+    records = await _decode(collection, rows)
     return [
         (rec, (parse_time(rec[arrival_field]), row["storage_key"]))
         for rec, row in zip(records, rows, strict=True)
@@ -464,7 +417,6 @@ async def latest_market_records(
     """Latest row per group. Grouped by instrument alone, the day before the cutoff is read first
     and only instruments without a row there read the rest of the range: the same rows, without
     merging months of every instrument under FINAL for the last minute of each."""
-    queries = []
     groups = ", ".join(f"`{g}`" for g in group_by)
 
     async def latest(lo, below, ids):
@@ -486,7 +438,6 @@ async def latest_market_records(
             q,
             f"{groups}, `{time_field}` DESC NULLS LAST, storage_key DESC",
             f"LIMIT 1 BY {groups}",
-            queries=queries,
         )
 
     recent = None if cutoff is None else parse_time(cutoff) - RECENT_LATEST
@@ -496,14 +447,14 @@ async def latest_market_records(
         or recent is None
         or (start is not None and parse_time(start) >= recent)
     ):
-        return await _decode(collection, await latest(start, None, instrument_ids), queries)
+        return await _decode(collection, await latest(start, None, instrument_ids))
     rows = await latest(recent, None, instrument_ids)
     found = {row["instrument_id"] for row in rows}
     rest = [i for i in instrument_ids if i not in found]
     if rest:
         rows += await latest(start, recent, rest)
         rows.sort(key=lambda row: row["instrument_id"])
-    return await _decode(collection, rows, queries)
+    return await _decode(collection, rows)
 
 
 async def market_dependency_head(
@@ -564,8 +515,7 @@ async def projection_page(
     if after is not None:
         _after(q, (f"`{time_field}`", after[0], DT), ("storage_key", str(after[1]), "String"))
     expressions = ", ".join(f"`{field}` AS `{requested}`" for requested, field in selected.items())
-    rows, query_id = await _query_rows(
-        ch,
+    rows = await ch.rows(
         f"SELECT {expressions}, `{time_field}` AS _cursor_time, storage_key AS _cursor_key "
         f"FROM {_table(collection)} WHERE {q.predicate()} ORDER BY `{time_field}`, storage_key LIMIT {int(limit)}",
         q.params,
@@ -573,43 +523,25 @@ async def projection_page(
     columns = MARKET_COLUMNS[collection]
 
     def convert():
-        with timing_span("clickhouse.projection_convert", cpu=True, rows=len(rows), query_id=query_id):
-            page = []
-            for row in rows:
-                result = {}
-                timestamps = {}
-                for requested, field in selected.items():
-                    value = row[requested]
-                    kind = columns.get(field)
-                    if value is not None and kind == "timestamptz":
-                        if type(value) is str:
-                            normalized = timestamps.get(field)
-                            if normalized is None or normalized[0] != value:
-                                parsed = parse_time(value)
-                                normalized = (value, parsed, parsed.isoformat().replace("+00:00", "Z"))
-                                timestamps[field] = normalized
-                            value = normalized[2]
-                        else:
-                            value = iso(parse_time(value))
-                    elif value is not None and kind == "jsonb":
-                        value = json.loads(value)
-                    elif value is not None and kind == "numeric":
-                        value = str(Decimal(value))
-                    elif kind == "text[]":
-                        value = list(value) or None
-                    result[requested] = value
-                cursor = row["_cursor_time"]
-                normalized = timestamps.get(time_field)
-                cursor = (
-                    normalized[1]
-                    if type(cursor) is str and normalized is not None and normalized[0] == cursor
-                    else parse_time(cursor)
-                )
-                page.append((cursor, row["_cursor_key"], result))
-            return page
+        page = []
+        for row in rows:
+            result = {}
+            for requested, field in selected.items():
+                value = row[requested]
+                kind = columns.get(field)
+                if value is not None and kind == "timestamptz":
+                    value = iso(parse_time(value))
+                elif value is not None and kind == "jsonb":
+                    value = json.loads(value)
+                elif value is not None and kind == "numeric":
+                    value = str(Decimal(value))
+                elif kind == "text[]":
+                    value = list(value) or None
+                result[requested] = value
+            page.append((parse_time(row["_cursor_time"]), row["_cursor_key"], result))
+        return page
 
-    with timing_span("clickhouse.projection", query_id=query_id):
-        return await timing_thread(convert) if len(rows) > 1000 else convert()
+    return await asyncio.to_thread(convert) if len(rows) > 1000 else convert()
 
 
 CLOSE_OK = "isFinite(toFloat64OrNull(c)) AND toFloat64OrNull(c) > 0"
@@ -682,22 +614,20 @@ async def market_kline_days_recorded_since(ch, since, end):
 
 
 async def market_rows_recorded_since(ch, collection, time_field, instrument_ids, since, start, end, filters):
-    queries = []
     q = Query()
     _ids(q, instrument_ids)
     q.where(f"recorded_at >= {q.param(since, DT)}")
     q.where(f"`{time_field}` >= {q.param(start, DT)}")
     q.where(f"`{time_field}` < {q.param(end, DT)}")
     _filters(q, collection, filters)
-    rows = await _select(ch, collection, q, f"instrument_id, `{time_field}`, storage_key", queries=queries)
-    records = await _decode(collection, rows, queries)
+    rows = await _select(ch, collection, q, f"instrument_id, `{time_field}`, storage_key")
+    records = await _decode(collection, rows)
     return [(row["instrument_id"], rec, row["storage_key"]) for row, rec in zip(rows, records, strict=True)]
 
 
 async def sampled_market_history(
     ch, collection, time_field, group_fields, instrument_ids, start, end, bucket_s
 ):
-    queries = []
     q = Query()
     _ids(q, instrument_ids)
     q.where(f"`{time_field}` >= {q.param(start, DT)}")
@@ -710,16 +640,14 @@ async def sampled_market_history(
         q,
         f"{groups}, {bucket}, `{time_field}` DESC, storage_key DESC",
         f"LIMIT 1 BY {groups}, {bucket}",
-        queries=queries,
     )
-    records = await _decode(collection, rows, queries)
+    records = await _decode(collection, rows)
     return sorted(records, key=lambda r: r[time_field])
 
 
 async def range_by_instrument_page(
     ch, collection, time_field, instrument_ids, start, end, filters, after, limit, levels
 ):
-    queries = []
     q = Query()
     q.where(f"`{time_field}` IS NOT NULL")
     _ids(q, instrument_ids)
@@ -737,15 +665,9 @@ async def range_by_instrument_page(
         )
     selected = "*" if levels else "* EXCEPT (bids, asks)" if collection == "mkt.book_summaries" else "*"
     rows = await _select(
-        ch,
-        collection,
-        q,
-        f"instrument_id, `{time_field}`, storage_key",
-        f"LIMIT {int(limit)}",
-        selected,
-        queries=queries,
+        ch, collection, q, f"instrument_id, `{time_field}`, storage_key", f"LIMIT {int(limit)}", selected
     )
-    records = await _decode(collection, rows, queries)
+    records = await _decode(collection, rows)
     return [
         (row["instrument_id"], rec, row["storage_key"], parse_time(row[time_field]))
         for row, rec in zip(rows, records, strict=True)

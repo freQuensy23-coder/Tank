@@ -3,14 +3,12 @@
 import asyncio
 import contextlib
 import logging
-import time
 import traceback
 from datetime import timedelta
 
 from tank.agents.sessions import ADMITTED_JOB_TYPES, AdmissionDeferred
 from tank.delivery import DeliveryDeferred, DeliveryService
 from tank.diagnostic_recovery import recover_legacy_diagnostic_job, validate_recovery_destination
-from tank.logging import market_stage, timing_identity, timing_span
 from tank.ops_progress import job_failure_progress
 from tank.scheduler import Scheduler
 from tank.time_precision import collection_clock, offset_schedule, propagate_timestamp
@@ -158,38 +156,32 @@ class Runtime:
 
         validate_registry(settings)
 
-    @market_stage("capture.escalate", root=True)
     async def escalate(self, payload):
         tokens = payload.get("tokens") or ([payload["token_id"]] if payload.get("token_id") else None)
         if not tokens:
             raise ValueError("ESCALATE_TOKENS requires tokens")
         await self.market.escalate(payload["event_id"], tokens)
 
-    @market_stage("job.assess", root=True)
     async def assess(self, payload):
         from tank.market.capture import event_anchor
 
-        with timing_span("job.capture_readiness"):
-            event = await self.repo.get("evt.events", payload["event_id"])
-            if event is None:
-                raise ValueError("Market truth event does not exist")
-            prerequisite = await self.market.capture_readiness(
-                payload["event_id"], payload["token_id"], anchor=event_anchor(event)["ts"]
-            )
-            if prerequisite["status"] not in {"PENDING", "RUNNING", "COMPLETE", "PARTIAL", "FAILED"}:
-                raise RuntimeError("Required durable event capture was not scheduled")
-            if prerequisite["status"] in {"PENDING", "RUNNING"}:
-                await self.market.wait_capture(
-                    payload["event_id"], payload["token_id"], timeout_s=CAPTURE_WAIT_S
-                )
+        event = await self.repo.get("evt.events", payload["event_id"])
+        if event is None:
+            raise ValueError("Market truth event does not exist")
+        prerequisite = await self.market.capture_readiness(
+            payload["event_id"], payload["token_id"], anchor=event_anchor(event)["ts"]
+        )
+        if prerequisite["status"] not in {"PENDING", "RUNNING", "COMPLETE", "PARTIAL", "FAILED"}:
+            raise RuntimeError("Required durable event capture was not scheduled")
+        if prerequisite["status"] in {"PENDING", "RUNNING"}:
+            await self.market.wait_capture(payload["event_id"], payload["token_id"], timeout_s=CAPTURE_WAIT_S)
         cutoff = propagate_timestamp(payload, "cutoff") if payload.get("cutoff") is not None else None
-        with timing_span("job.repair"):
-            if hasattr(self.market, "repair_windows"):
-                anchor = parse_time(event_anchor(event)["ts"])
-                end = parse_time(cutoff.value) if cutoff is not None and cutoff.value else utcnow()
-                await self.market.repair_windows(
-                    payload["token_id"], min(anchor, end) - REPAIR_LOOKBACK, end, budget_s=REPAIR_BUDGET_S
-                )
+        if hasattr(self.market, "repair_windows"):
+            anchor = parse_time(event_anchor(event)["ts"])
+            end = parse_time(cutoff.value) if cutoff is not None and cutoff.value else utcnow()
+            await self.market.repair_windows(
+                payload["token_id"], min(anchor, end) - REPAIR_LOOKBACK, end, budget_s=REPAIR_BUDGET_S
+            )
         return await self.truth.assess(payload["event_id"], payload["token_id"], cutoff)
 
     async def scout_review(self, payload):
@@ -202,7 +194,6 @@ class Runtime:
             self.active_jobs = set()
         while not stop.is_set():
             try:
-                claim_started = time.monotonic_ns()
                 job = await self.repo.claim_job()
             except Exception:
                 log.exception("Worker %s failed to claim a job", number)
@@ -213,55 +204,34 @@ class Runtime:
                 await self.pause(stop, 0.25)
                 continue
             self.active_jobs.add(job["job_id"])
-            with timing_span(
-                "job.claimed",
-                root=job["type"] in {"RUN_MARKET_TRUTH", "ESCALATE_TOKENS"},
-                started_ns=claim_started,
-                job_id=timing_identity(job["job_id"]),
-                attempt=job.get("attempts", 0),
-            ):
-                pass
             try:
                 if job.get("expires_at") and parse_time(job["expires_at"]) <= utcnow():
-                    with timing_span(
-                        "job.failure_persist",
-                        root=job["type"] in {"RUN_MARKET_TRUTH", "ESCALATE_TOKENS"},
-                        job_id=timing_identity(job["job_id"]),
-                    ):
-                        await self.repo.put(
-                            "ops.jobs",
-                            job["job_id"],
-                            {**job, "status": "EXPIRED", **collection_clock(utcnow()).fields("finished_at")},
-                        )
-                        await self.terminal_delivery_failure(job, "EXPIRED")
+                    await self.repo.put(
+                        "ops.jobs",
+                        job["job_id"],
+                        {**job, "status": "EXPIRED", **collection_clock(utcnow()).fields("finished_at")},
+                    )
+                    await self.terminal_delivery_failure(job, "EXPIRED")
                     continue
-                with timing_span(
-                    "job.dependencies",
-                    root=job["type"] in {"RUN_MARKET_TRUTH", "ESCALATE_TOKENS"},
-                    job_id=timing_identity(job["job_id"]),
-                ):
-                    dependencies = []
-                    for dep in job["payload"].get("_depends_on", []):
-                        with timing_span("job.dependency", dependency_id=timing_identity(dep)) as timing:
-                            dependency = await self.repo.get("ops.jobs", dep)
-                            timing["dependency_status"] = dependency["status"] if dependency else "MISSING"
-                            dependencies.append(dependency)
-                    if any(dep is None or dep["status"] in ("FAILED", "EXPIRED") for dep in dependencies):
-                        raise RuntimeError("Durable job dependency failed or is missing")
-                    if any(dep["status"] != "DONE" for dep in dependencies):
-                        await self.repo.put(
-                            "ops.jobs",
-                            job["job_id"],
-                            {
-                                **job,
-                                "status": "QUEUED",
-                                "attempts": max(0, job["attempts"] - 1),
-                                **offset_schedule(collection_clock(utcnow()), timedelta(seconds=0.25)).fields(
-                                    "run_after"
-                                ),
-                            },
-                        )
-                        continue
+                dependencies = [
+                    await self.repo.get("ops.jobs", dep) for dep in job["payload"].get("_depends_on", [])
+                ]
+                if any(dep is None or dep["status"] in ("FAILED", "EXPIRED") for dep in dependencies):
+                    raise RuntimeError("Durable job dependency failed or is missing")
+                if any(dep["status"] != "DONE" for dep in dependencies):
+                    await self.repo.put(
+                        "ops.jobs",
+                        job["job_id"],
+                        {
+                            **job,
+                            "status": "QUEUED",
+                            "attempts": max(0, job["attempts"] - 1),
+                            **offset_schedule(collection_clock(utcnow()), timedelta(seconds=0.25)).fields(
+                                "run_after"
+                            ),
+                        },
+                    )
+                    continue
                 kind = job["type"]
                 if kind not in self.handlers:
                     raise ValueError(f"Unregistered durable job kind: {kind}")
@@ -275,21 +245,11 @@ class Runtime:
                         raise AdmissionDeferred(
                             offset_schedule(collection_clock(utcnow()), timedelta(seconds=5))
                         ) from slow
-                with timing_span(
-                    "job.execution",
-                    root=kind in {"RUN_MARKET_TRUTH", "ESCALATE_TOKENS"},
-                    job_id=timing_identity(job["job_id"]),
-                    attempt=job.get("attempts", 0),
-                    durable_age_ms=max(0, (utcnow() - parse_time(job["created_at"])).total_seconds() * 1000)
-                    if kind in {"RUN_MARKET_TRUTH", "ESCALATE_TOKENS"} and job.get("created_at")
-                    else 0,
-                ):
-                    async with asyncio.timeout(TIMEOUTS[kind]):
-                        result = await self.handlers[kind](job["payload"])
-                    with timing_span("job.persist"):
-                        async with self.repo.transaction():
-                            await self.repo.put("ops.jobs", job["job_id"], {**job, "result": result})
-                            await self.repo.finish_job(job["job_id"])
+                async with asyncio.timeout(TIMEOUTS[kind]):
+                    result = await self.handlers[kind](job["payload"])
+                async with self.repo.transaction():
+                    await self.repo.put("ops.jobs", job["job_id"], {**job, "result": result})
+                    await self.repo.finish_job(job["job_id"])
             except DeliveryDeferred as deferred:
                 async with self.repo.transaction():
                     current = await self.repo.get("ops.jobs", job["job_id"])
@@ -333,19 +293,14 @@ class Runtime:
                     "Job %s (%s) failed: %s [%s]", job["job_id"], job["type"], type(exc).__name__, frames
                 )
                 try:
-                    with timing_span(
-                        "job.failure_persist",
-                        root=job["type"] in {"RUN_MARKET_TRUTH", "ESCALATE_TOKENS"},
-                        job_id=timing_identity(job["job_id"]),
-                    ):
-                        await self.repo.fail_job(
-                            job["job_id"],
-                            type(exc).__name__,
-                            retry_after=getattr(exc, "retry_after", min(60, 2 ** job.get("attempts", 1))),
-                        )
-                        current = await self.repo.get("ops.jobs", job["job_id"])
-                        if current and current["status"] in {"FAILED", "EXPIRED"}:
-                            await self.terminal_delivery_failure(current, type(exc).__name__)
+                    await self.repo.fail_job(
+                        job["job_id"],
+                        type(exc).__name__,
+                        retry_after=getattr(exc, "retry_after", min(60, 2 ** job.get("attempts", 1))),
+                    )
+                    current = await self.repo.get("ops.jobs", job["job_id"])
+                    if current and current["status"] in {"FAILED", "EXPIRED"}:
+                        await self.terminal_delivery_failure(current, type(exc).__name__)
                 except Exception:
                     log.exception("Could not persist job failure: %s", job["job_id"])
                     await self.pause(stop, 1)

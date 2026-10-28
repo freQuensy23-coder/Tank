@@ -23,7 +23,6 @@ from tank.agents.pipeline import ConfigurationError
 from tank.agents.security import redact_tool_arguments
 from tank.agents.wire import tool_wire_result
 from tank.delivery import DeliveryDeferred
-from tank.logging import timing_context, timing_identity, timing_span
 from tank.openma_sync import agent_tools
 from tank.ops_progress import session_progress
 from tank.settings import threshold
@@ -1494,8 +1493,7 @@ class SessionService:
             "record_review",
             "set_watch_condition",
         }:
-            with timing_span("tool.provenance"):
-                await self.hydrate_prompt_provenance(session)
+            await self.hydrate_prompt_provenance(session)
         if tool == "send_telegram_file" and not session.get("proposal_id"):
             return await self.send_file(session, arguments, call_id)
         if session.get("proposal_id") and tool not in ("web_search", "search_tank_items", "record_review"):
@@ -1524,11 +1522,10 @@ class SessionService:
         if decision_market_refresh_completed:
             context["_decision_market_refresh_completed"] = True
             context["_decision_prepared_condition_ids"] = decision_prepared_condition_ids
-        with timing_span("tool.arguments"):
-            fresh = await self.repo.get("ops.agent_sessions", session["session_id"]) or session
-            arguments = await ModelContext(self.repo, self.settings, fresh).arguments(tool, arguments)
-            if resolved_arguments is not None:
-                resolved_arguments.update(copy.deepcopy(arguments))
+        fresh = await self.repo.get("ops.agent_sessions", session["session_id"]) or session
+        arguments = await ModelContext(self.repo, self.settings, fresh).arguments(tool, arguments)
+        if resolved_arguments is not None:
+            resolved_arguments.update(copy.deepcopy(arguments))
         return await self.tool_dispatch(tool, arguments, context)
 
     def tool_failure(self, error):
@@ -1558,17 +1555,6 @@ class SessionService:
         return {"type": type(error).__name__, "reason": reason, "category": category}, "ERROR"
 
     async def tool(self, session, event):
-        if event.get("name") not in {"get_market_truth", "get_decision"}:
-            return await self._tool(session, event)
-        with timing_span(
-            "tool",
-            root=True,
-            session_id=timing_identity(session["session_id"]),
-            call_id=timing_identity(event["id"]),
-        ):
-            return await self._tool(session, event)
-
-    async def _tool(self, session, event):
         sid, call_id = session["session_id"], event["id"]
         requested_at = self.clock_timestamp()
         key = sid + ":" + call_id
@@ -1615,157 +1601,145 @@ class SessionService:
                 slow_error, slow_error_status = self.tool_failure(error)
 
             slow_ready = not decision_market_refresh_completed
-        async with timing_context(self.repo.lock("tool:" + key), "tool.audit.lock_wait"):
-            with timing_span("tool.audit"):
-                stored = await self.repo.get("ops.tool_calls", key)
-                if not stored:
-                    context = self.tool_context(session, call_id)
-                    async with timing_context(
-                        self.repo.lock("session:" + sid), "tool.audit.session_lock_wait"
-                    ):
-                        with timing_span("tool.audit.session_sequence"):
-                            sequencing = await self.repo.get("ops.agent_sessions", sid)
-                            ordinal = int(sequencing.get("next_tool_call_ordinal", 0))
-                            sequencing["next_tool_call_ordinal"] = ordinal + 1
-                            await self.repo.put("ops.agent_sessions", sid, sequencing)
-                    stored = {
-                        "native_turn_call_index": ordinal,
-                        "call_id": call_id,
-                        "session_id": sid,
-                        "event_id": session.get("event_id"),
-                        "item_id": session.get("item_id"),
-                        "tool": event["name"],
-                        "native_source_execution_id": event.get("execution_id"),
-                        "native_turn_message_id": event.get(
-                            "_host_turn_message_id", session.get("active_message_id")
-                        ),
-                        "native_turn_retry_count": event.get(
-                            "_host_turn_retry_count",
-                            next(
-                                (
-                                    row.get("retry_count", 0)
-                                    for row in session.get("message_log", [])
-                                    if row["message_id"] == session.get("active_message_id")
-                                ),
-                                0,
+        async with self.repo.lock("tool:" + key):
+            stored = await self.repo.get("ops.tool_calls", key)
+            if not stored:
+                context = self.tool_context(session, call_id)
+                async with self.repo.lock("session:" + sid):
+                    sequencing = await self.repo.get("ops.agent_sessions", sid)
+                    ordinal = int(sequencing.get("next_tool_call_ordinal", 0))
+                    sequencing["next_tool_call_ordinal"] = ordinal + 1
+                    await self.repo.put("ops.agent_sessions", sid, sequencing)
+                stored = {
+                    "native_turn_call_index": ordinal,
+                    "call_id": call_id,
+                    "session_id": sid,
+                    "event_id": session.get("event_id"),
+                    "item_id": session.get("item_id"),
+                    "tool": event["name"],
+                    "native_source_execution_id": event.get("execution_id"),
+                    "native_turn_message_id": event.get(
+                        "_host_turn_message_id", session.get("active_message_id")
+                    ),
+                    "native_turn_retry_count": event.get(
+                        "_host_turn_retry_count",
+                        next(
+                            (
+                                row.get("retry_count", 0)
+                                for row in session.get("message_log", [])
+                                if row["message_id"] == session.get("active_message_id")
                             ),
+                            0,
                         ),
-                        "arguments": event["input"],
-                        "model_arguments": event["input"],
-                        "input": event["input"],
-                        "input_sha256": original_hash,
-                        "arguments_redacted": bool(credential_reason),
-                        "status": "PENDING",
-                        **requested_at.fields("requested_at"),
-                        **propagate_timestamp(event, "processed_at").fields("processed_at"),
-                        **{
-                            key: context[key]
-                            for key in (
-                                "model_id",
-                                "prompt_version",
-                                "prompt_version_basis",
-                                "prompt_version_reason",
-                                "prompt_label",
-                                "agent_version",
-                                "config_version",
-                                "code_version",
-                                "session_config_version",
-                                "session_code_version",
+                    ),
+                    "arguments": event["input"],
+                    "model_arguments": event["input"],
+                    "input": event["input"],
+                    "input_sha256": original_hash,
+                    "arguments_redacted": bool(credential_reason),
+                    "status": "PENDING",
+                    **requested_at.fields("requested_at"),
+                    **propagate_timestamp(event, "processed_at").fields("processed_at"),
+                    **{
+                        key: context[key]
+                        for key in (
+                            "model_id",
+                            "prompt_version",
+                            "prompt_version_basis",
+                            "prompt_version_reason",
+                            "prompt_label",
+                            "agent_version",
+                            "config_version",
+                            "code_version",
+                            "session_config_version",
+                            "session_code_version",
+                        )
+                    },
+                }
+                await self.repo.put("ops.tool_calls", key, stored)
+            if stored["status"] not in ("DONE", "REFUSED", "ERROR"):
+                refusal = slow_error
+                refusal_status = slow_error_status
+                captured = None
+                try:
+                    async with AsyncExitStack() as mutation:
+                        if stored["tool"] in {
+                            "record_event",
+                            "add_observation",
+                            "set_assessment",
+                            "set_beneficiaries",
+                            "merge_into",
+                            "schedule_milestone",
+                            "propose_pattern",
+                            "get_decision",
+                            "publish_card",
+                            "record_review",
+                        }:
+                            await mutation.enter_async_context(self.repo.lock("session:" + sid))
+                        await mutation.enter_async_context(self.repo.transaction())
+                        result = (
+                            slow_result
+                            if slow_ready
+                            else await self.invoke_tool(
+                                session,
+                                stored["tool"],
+                                stored.get("model_arguments", stored["input"]),
+                                call_id,
+                                resolved_arguments=resolved_arguments,
+                                **(
+                                    {
+                                        "decision_market_refresh_completed": True,
+                                        "decision_prepared_condition_ids": decision_prepared_condition_ids,
+                                    }
+                                    if decision_market_refresh_completed
+                                    else {}
+                                ),
                             )
-                        },
+                        )
+                except Exception as error:
+                    refusal, refusal_status = self.tool_failure(error)
+                if not refusal and isinstance(result, CapturedToolResult):
+                    captured = result
+                    result = copy.deepcopy(captured.result)
+                elif refusal:
+                    result = {"ok": False, "error": refusal}
+                context = self.tool_context(session, call_id)
+                stored.update(
+                    {
+                        key: context[key]
+                        for key in (
+                            "model_id",
+                            "model_id_basis",
+                            "model_id_reason",
+                            "prompt_version",
+                            "prompt_version_basis",
+                            "prompt_version_reason",
+                            "prompt_label",
+                            "prompt_binding",
+                            "agent_version",
+                            "agent_version_basis",
+                            "agent_version_reason",
+                        )
                     }
-                    await self.repo.put("ops.tool_calls", key, stored)
-                if stored["status"] not in ("DONE", "REFUSED", "ERROR"):
-                    refusal = slow_error
-                    refusal_status = slow_error_status
-                    captured = None
-                    try:
-                        async with AsyncExitStack() as mutation:
-                            if stored["tool"] in {
-                                "record_event",
-                                "add_observation",
-                                "set_assessment",
-                                "set_beneficiaries",
-                                "merge_into",
-                                "schedule_milestone",
-                                "propose_pattern",
-                                "get_decision",
-                                "publish_card",
-                                "record_review",
-                            }:
-                                await mutation.enter_async_context(
-                                    timing_context(
-                                        self.repo.lock("session:" + sid),
-                                        "tool.audit.mutation_lock_wait",
-                                        "tool.audit.mutation",
-                                    )
-                                )
-                            await mutation.enter_async_context(self.repo.transaction())
-                            result = (
-                                slow_result
-                                if slow_ready
-                                else await self.invoke_tool(
-                                    session,
-                                    stored["tool"],
-                                    stored.get("model_arguments", stored["input"]),
-                                    call_id,
-                                    resolved_arguments=resolved_arguments,
-                                    **(
-                                        {
-                                            "decision_market_refresh_completed": True,
-                                            "decision_prepared_condition_ids": decision_prepared_condition_ids,
-                                        }
-                                        if decision_market_refresh_completed
-                                        else {}
-                                    ),
-                                )
-                            )
-                    except Exception as error:
-                        refusal, refusal_status = self.tool_failure(error)
-                    if not refusal and isinstance(result, CapturedToolResult):
-                        captured = result
-                        result = copy.deepcopy(captured.result)
-                    elif refusal:
-                        result = {"ok": False, "error": refusal}
-                    context = self.tool_context(session, call_id)
-                    stored.update(
-                        {
-                            key: context[key]
-                            for key in (
-                                "model_id",
-                                "model_id_basis",
-                                "model_id_reason",
-                                "prompt_version",
-                                "prompt_version_basis",
-                                "prompt_version_reason",
-                                "prompt_label",
-                                "prompt_binding",
-                                "agent_version",
-                                "agent_version_basis",
-                                "agent_version_reason",
-                            )
-                        }
-                    )
-                    if resolved_arguments:
-                        stored["arguments"] = copy.deepcopy(resolved_arguments)
-                    completed = self.clock_timestamp()
-                    stored.update(
-                        result=result,
-                        status=captured.status if captured else refusal_status if refusal else "DONE",
-                        is_error=captured.is_error if captured else bool(refusal),
-                        **completed.fields("answered_at"),
-                        **completed.fields("completed_at"),
-                    )
-                    await self.repo.put("ops.tool_calls", key, stored)
+                )
+                if resolved_arguments:
+                    stored["arguments"] = copy.deepcopy(resolved_arguments)
+                completed = self.clock_timestamp()
+                stored.update(
+                    result=result,
+                    status=captured.status if captured else refusal_status if refusal else "DONE",
+                    is_error=captured.is_error if captured else bool(refusal),
+                    **completed.fields("answered_at"),
+                    **completed.fields("completed_at"),
+                )
+                await self.repo.put("ops.tool_calls", key, stored)
         current = await self.repo.get("ops.agent_sessions", sid) or session
         if current.get("model_context_version", 0) < CONTEXT_VERSION:
-            with timing_span("tool.sync_tools"):
-                await self.sync_tools(sid, resume=True)
-                current = await self.repo.get("ops.agent_sessions", sid) or session
-        with timing_span("tool.projection"):
-            projected = await ModelContext(self.repo, self.settings, current).result(
-                stored["tool"], stored["result"]
-            )
+            await self.sync_tools(sid, resume=True)
+            current = await self.repo.get("ops.agent_sessions", sid) or session
+        projected = await ModelContext(self.repo, self.settings, current).result(
+            stored["tool"], stored["result"]
+        )
         note = await self.transition_note(sid) if self.legacy_contract(session) else None
         if note:
             projected = (
@@ -1773,47 +1747,43 @@ class SessionService:
                 if isinstance(projected, dict)
                 else {"result": projected, "context_update": note}
             )
-        with timing_span("tool.wire_json", cpu=True):
-            body = {
-                "type": "user.custom_tool_result",
-                "custom_tool_use_id": call_id,
-                "content": [
-                    {
-                        "type": "text",
-                        "text": canonical_json(
-                            tool_wire_result(stored["tool"], projected, session_id=sid, call_id=call_id)
-                        ),
-                    }
-                ],
-            }
+        body = {
+            "type": "user.custom_tool_result",
+            "custom_tool_use_id": call_id,
+            "content": [
+                {
+                    "type": "text",
+                    "text": canonical_json(
+                        tool_wire_result(stored["tool"], projected, session_id=sid, call_id=call_id)
+                    ),
+                }
+            ],
+        }
         if stored.get("is_error"):
             body["is_error"] = True
-        async with timing_context(self.repo.lock("tool:" + key), "tool.wire_audit.lock_wait"):
-            with timing_span("tool.wire_audit"):
+        async with self.repo.lock("tool:" + key):
+            if (
+                stored.get("native_result_body") is None
+                or stored.get("model_context_version") != CONTEXT_VERSION
+            ):
                 if (
-                    stored.get("native_result_body") is None
-                    or stored.get("model_context_version") != CONTEXT_VERSION
+                    stored.get("native_result_body")
+                    and stored.get("model_context_version") != CONTEXT_VERSION
                 ):
-                    if (
-                        stored.get("native_result_body")
-                        and stored.get("model_context_version") != CONTEXT_VERSION
-                    ):
-                        stored["legacy_native_result_body"] = stored["native_result_body"]
-                    stored["model_context_version"] = CONTEXT_VERSION
-                    stored["native_result_body"] = copy.deepcopy(body)
-                    await self.repo.put("ops.tool_calls", key, stored)
-                body = copy.deepcopy(stored["native_result_body"])
-        with timing_span("tool.openma_acceptance"):
-            accepted = await self.request(
-                "POST", f"sessions/{sid}/events", json={"events": [body]}, idem="tool:" + sha256(key)
-            )
-        async with timing_context(self.repo.lock("tool:" + key), "tool.return_audit.lock_wait"):
-            with timing_span("tool.return_audit"):
-                stored.update(
-                    remote_event_id=self.accepted_input_id(accepted),
-                    **self.clock_timestamp().fields("returned_at"),
-                )
+                    stored["legacy_native_result_body"] = stored["native_result_body"]
+                stored["model_context_version"] = CONTEXT_VERSION
+                stored["native_result_body"] = copy.deepcopy(body)
                 await self.repo.put("ops.tool_calls", key, stored)
+            body = copy.deepcopy(stored["native_result_body"])
+        accepted = await self.request(
+            "POST", f"sessions/{sid}/events", json={"events": [body]}, idem="tool:" + sha256(key)
+        )
+        async with self.repo.lock("tool:" + key):
+            stored.update(
+                remote_event_id=self.accepted_input_id(accepted),
+                **self.clock_timestamp().fields("returned_at"),
+            )
+            await self.repo.put("ops.tool_calls", key, stored)
 
     async def usage(self, session, event):
         usage = event.get("model_usage")
