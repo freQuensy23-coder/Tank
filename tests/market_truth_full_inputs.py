@@ -276,9 +276,7 @@ async def seed_full(repo, settings, fixtures):
             else:
                 additions = {}
                 if captured in PUBLIC_TABLES:
-                    key = row.get(
-                        "instrument_id" if captured == "registry-resolved" else "token_id"
-                    )
+                    key = row.get("instrument_id" if captured == "registry-resolved" else "token_id")
                     if captured.startswith("capture-"):
                         key = f"fixture-public:{captured}:{index:06d}"
                         field = "transition_id" if captured == "capture-tier-public" else "gap_id"
@@ -318,9 +316,7 @@ async def seed_full(repo, settings, fixtures):
                 "ClickHouse typed count/identity mismatch",
             )
         else:
-            require(
-                await postgres_count(repo, table) == entry["rows"], "PostgreSQL typed count mismatch"
-            )
+            require(await postgres_count(repo, table) == entry["rows"], "PostgreSQL typed count mismatch")
         inventory.append(
             {
                 "name": entry["name"],

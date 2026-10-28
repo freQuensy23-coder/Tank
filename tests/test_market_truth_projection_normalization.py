@@ -133,17 +133,14 @@ async def test_dense_public_projection_normalizes_each_timestamp_once(count, pro
         for index in range(count)
     ]
     assert [entry[:2] for entry in projection_probe.pages[0]] == [
-        (datetime(2026, 10, 28, 0, 0, 0, 123456, tzinfo=UTC), f"bar-{index:04d}")
-        for index in range(count)
+        (datetime(2026, 10, 28, 0, 0, 0, 123456, tzinfo=UTC), f"bar-{index:04d}") for index in range(count)
     ]
     assert len(projection_probe.spans) == 1
     conversion = projection_probe.spans[0]
     assert conversion["rows"] == count
     assert (conversion["thread"] == main_thread) is (count <= 1000)
     events = [
-        json.loads(record.getMessage())
-        for record in caplog.records
-        if record.name == "tank.market_timing"
+        json.loads(record.getMessage()) for record in caplog.records if record.name == "tank.market_timing"
     ]
     ended = [event for event in events if event["event"] == "stage_end"]
     converted = [event for event in ended if event["stage"] == "clickhouse.projection_convert"]
@@ -287,7 +284,9 @@ async def test_projection_validates_a_distinct_cursor_and_preserves_native_decim
     with localcontext() as context:
         context.prec = 7
         context.clear_flags()
-        page = await convert_row(row, {key: key for key in ("open_time", "recorded_at", "c", "volume_native")})
+        page = await convert_row(
+            row, {key: key for key in ("open_time", "recorded_at", "c", "volume_native")}
+        )
         assert context.prec == 7 and not any(context.flags.values())
     assert page == [
         (
@@ -319,7 +318,9 @@ async def test_projection_validates_a_distinct_cursor_and_preserves_native_decim
 
 
 @pytest.mark.parametrize("kind", ["price", "volume"])
-async def test_series_reuses_normalized_opens_without_changing_vectors_or_fingerprints(kind, setup, monkeypatch):
+async def test_series_reuses_normalized_opens_without_changing_vectors_or_fingerprints(
+    kind, setup, monkeypatch
+):
     repo, settings, instrument = setup
     start = datetime(2026, 10, 28, tzinfo=UTC)
     opened = [start + timedelta(minutes=index, microseconds=123456) for index in range(1, 9)]
@@ -346,9 +347,7 @@ async def test_series_reuses_normalized_opens_without_changing_vectors_or_finger
         }
         for index, at in enumerate(opened)
     ]
-    rows.append(
-        dict(rows[0], open_time="2026-10-28T03:01:00.123456+03:00", c="16.5", volume_native="9.0001")
-    )
+    rows.append(dict(rows[0], open_time="2026-10-28T03:01:00.123456+03:00", c="16.5", volume_native="9.0001"))
     rows.extend(
         [
             dict(rows[0], open_time="2026-10-27T23:59:00Z", c="99", volume_native="99"),

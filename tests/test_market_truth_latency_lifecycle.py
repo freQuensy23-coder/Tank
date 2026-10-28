@@ -3,12 +3,82 @@ import hashlib
 import json
 import threading
 from contextlib import asynccontextmanager
+from importlib.machinery import ModuleSpec
 from pathlib import Path
-from types import SimpleNamespace
+from types import ModuleType, SimpleNamespace
 
 import market_truth_latency_worker as worker
 import pytest
 import test_market_truth_latency_comparison as comparison
+
+
+def source_module(name, *, file=None, paths=()):
+    module = ModuleType(name)
+    module.__file__ = str(file) if file is not None else None
+    module.__spec__ = ModuleSpec(name, loader=None, is_package=file is None)
+    if file is None:
+        module.__path__ = [str(path) for path in paths]
+        module.__spec__.submodule_search_locations = module.__path__
+    else:
+        module.__spec__.origin = str(file)
+        module.__spec__.has_location = True
+    return module
+
+
+@pytest.fixture
+def isolated_sources(tmp_path, monkeypatch):
+    root = tmp_path / "original"
+    package = root / "src" / "tank"
+    namespace = package / "market"
+    namespace.mkdir(parents=True)
+    initializer = package / "__init__.py"
+    initializer.write_text("value = 1\n")
+    utility = package / "util.py"
+    utility.write_text("value = 2\n")
+    modules = {
+        "tank": source_module("tank", file=initializer),
+        "tank.util": source_module("tank.util", file=utility),
+        "tank.market": source_module("tank.market", paths=[namespace]),
+    }
+    monkeypatch.setattr(worker, "sys", SimpleNamespace(modules=modules))
+    monkeypatch.setattr(worker, "tank", modules["tank"])
+    return root, modules
+
+
+@pytest.mark.parametrize("namespace_root", [False, True])
+def test_imported_sources_records_namespaces_and_files(isolated_sources, monkeypatch, namespace_root):
+    root, modules = isolated_sources
+    if namespace_root:
+        modules["tank"] = source_module("tank", paths=[root / "src" / "tank"])
+        monkeypatch.setattr(worker, "tank", modules["tank"])
+    report = worker.imported_sources(root)
+    assert set(report) == set(modules)
+    assert report["tank.util"]["file"] == "src/tank/util.py"
+    assert report["tank.util"]["sha256"] == hashlib.sha256(b"value = 2\n").hexdigest()
+    assert "src/tank/market" in json.dumps(report["tank.market"])
+    assert str(root) not in json.dumps(report)
+
+
+@pytest.mark.parametrize("foreign_kind", ["file", "namespace", "mixed_namespace", "symlink_namespace"])
+def test_imported_sources_rejects_foreign_files_and_namespace_paths(isolated_sources, tmp_path, foreign_kind):
+    root, modules = isolated_sources
+    foreign = tmp_path / "foreign"
+    foreign.mkdir()
+    if foreign_kind == "file":
+        path = foreign / "util.py"
+        path.write_text("value = 3\n")
+        modules["tank.injected"] = source_module("tank.injected", file=path)
+    else:
+        paths = [foreign]
+        if foreign_kind == "mixed_namespace":
+            paths.insert(0, root / "src" / "tank" / "market")
+        elif foreign_kind == "symlink_namespace":
+            link = root / "src" / "tank" / "linked"
+            link.symlink_to(foreign, target_is_directory=True)
+            paths = [link]
+        modules["tank.injected"] = source_module("tank.injected", paths=paths)
+    with pytest.raises((AssertionError, ValueError)):
+        worker.imported_sources(root)
 
 
 def sample_arguments(tool, execute):
