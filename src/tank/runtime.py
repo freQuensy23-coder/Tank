@@ -3,6 +3,7 @@
 import asyncio
 import contextlib
 import logging
+import time
 import traceback
 from datetime import timedelta
 
@@ -198,6 +199,7 @@ class Runtime:
             self.active_jobs = set()
         while not stop.is_set():
             try:
+                claim_started = time.monotonic_ns()
                 job = await self.repo.claim_job()
             except Exception:
                 log.exception("Worker %s failed to claim a job", number)
@@ -211,6 +213,7 @@ class Runtime:
             with timing_span(
                 "job.claimed",
                 root=job["type"] == "RUN_MARKET_TRUTH",
+                started_ns=claim_started,
                 job_id=timing_identity(job["job_id"]),
                 attempt=job.get("attempts", 0),
             ):
@@ -224,25 +227,30 @@ class Runtime:
                     )
                     await self.terminal_delivery_failure(job, "EXPIRED")
                     continue
-                dependencies = [
-                    await self.repo.get("ops.jobs", dep) for dep in job["payload"].get("_depends_on", [])
-                ]
-                if any(dep is None or dep["status"] in ("FAILED", "EXPIRED") for dep in dependencies):
-                    raise RuntimeError("Durable job dependency failed or is missing")
-                if any(dep["status"] != "DONE" for dep in dependencies):
-                    await self.repo.put(
-                        "ops.jobs",
-                        job["job_id"],
-                        {
-                            **job,
-                            "status": "QUEUED",
-                            "attempts": max(0, job["attempts"] - 1),
-                            **offset_schedule(collection_clock(utcnow()), timedelta(seconds=0.25)).fields(
-                                "run_after"
-                            ),
-                        },
-                    )
-                    continue
+                with timing_span(
+                    "job.dependencies",
+                    root=job["type"] == "RUN_MARKET_TRUTH",
+                    job_id=timing_identity(job["job_id"]),
+                ):
+                    dependencies = [
+                        await self.repo.get("ops.jobs", dep) for dep in job["payload"].get("_depends_on", [])
+                    ]
+                    if any(dep is None or dep["status"] in ("FAILED", "EXPIRED") for dep in dependencies):
+                        raise RuntimeError("Durable job dependency failed or is missing")
+                    if any(dep["status"] != "DONE" for dep in dependencies):
+                        await self.repo.put(
+                            "ops.jobs",
+                            job["job_id"],
+                            {
+                                **job,
+                                "status": "QUEUED",
+                                "attempts": max(0, job["attempts"] - 1),
+                                **offset_schedule(collection_clock(utcnow()), timedelta(seconds=0.25)).fields(
+                                    "run_after"
+                                ),
+                            },
+                        )
+                        continue
                 kind = job["type"]
                 if kind not in self.handlers:
                     raise ValueError(f"Unregistered durable job kind: {kind}")

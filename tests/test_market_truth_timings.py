@@ -1,12 +1,19 @@
 import asyncio
 import json
 import logging
+import threading
+from pathlib import Path
+from runpy import run_path
 
+import httpx
 import pytest
 
 from tank import clickhouse_market as chm
 from tank import logging as telemetry
+from tank.agents import SessionService
+from tank.analysis import truth as truth_module
 from tank.analysis.truth import compute_market_truth
+from tank.storage import MemoryRepository
 
 
 def events(caplog):
@@ -171,3 +178,103 @@ async def test_threadpool_queue_span_precedes_real_compute(caplog):
     assert queue["ended_mono_ns"] <= compute["started_mono_ns"]
     assert "thread_cpu_ms" not in queue
     assert len(ended) < 300
+
+
+async def test_real_compute_lock_wait_has_no_compute_work_until_owner_releases(monkeypatch, caplog):
+    caplog.set_level(logging.INFO, logger="tank.market_timing")
+    lock = threading.RLock()
+    entered = threading.Event()
+
+    class ObservedLock:
+        def __enter__(self):
+            entered.set()
+            return lock.__enter__()
+
+        def __exit__(self, *args):
+            return lock.__exit__(*args)
+
+    monkeypatch.setattr(truth_module, "_COMPUTE_SLOT", ObservedLock())
+    lock.acquire()
+    task = asyncio.create_task(
+        telemetry.timing_thread(compute_market_truth, {"cutoff": "2026-10-28T12:00:00Z"})
+    )
+    try:
+        assert await asyncio.to_thread(entered.wait, 2)
+        assert not task.done()
+        records = events(caplog)
+        assert any(row["stage"] == "compute.lock_wait" and row["event"] == "stage_start" for row in records)
+        assert not any(row["stage"] == "compute.prepare" for row in records)
+        assert not any(row["stage"] == "compute.lock_wait" and row["event"] == "stage_end" for row in records)
+    finally:
+        lock.release()
+    result = await task
+    assert result["data_confidence"]["class"] == "LOW"
+    ended = [row for row in events(caplog) if row["event"] == "stage_end"]
+    waiting = next(row for row in ended if row["stage"] == "compute.lock_wait")
+    prepare = next(row for row in ended if row["stage"] == "compute.prepare")
+    assert waiting["ended_mono_ns"] <= prepare["started_mono_ns"]
+    assert "thread_cpu_ms" not in waiting
+    assert prepare["thread_cpu_ms"] >= 0
+
+
+def test_span_metadata_is_allowlisted_and_bounded_independent_of_payload_size(caplog):
+    caplog.set_level(logging.INFO, logger="tank.market_timing")
+    with telemetry.timing_span(
+        "safe",
+        root=True,
+        rows=3,
+        bytes=float("nan"),
+        collection="https://private.example/token",
+        job_id="private-job",
+        password="private-password" * 100000,
+    ):
+        pass
+    records = events(caplog)
+    assert len(records) == 2
+    assert all(row["rows"] == 3 for row in records)
+    assert all(not {"bytes", "collection", "job_id", "password"} & row.keys() for row in records)
+    assert "private" not in caplog.text
+    assert len(caplog.text) < 2000
+
+
+async def test_session_audit_wire_and_openma_acceptance_close_with_same_call_context(caplog):
+    helpers = run_path(str(Path(__file__).with_name("test_agents.py")))
+    settings, _ = helpers["settings"]()
+    repo = MemoryRepository()
+    session = await helpers["seed_session"](repo)
+    caplog.set_level(logging.INFO, logger="tank.market_timing")
+    requests = []
+
+    async def dispatch(name, arguments, context):
+        truth = compute_market_truth({"token_id": "world:WLD", "cutoff": "2026-10-28T12:00:00Z"})
+        truth["mta_id"] = "MTA-TIMING"
+        await repo.put("ana.market_truth", truth["mta_id"], truth, immutable=True)
+        return {"market_truth": [truth]}
+
+    def accept(request):
+        requests.append(json.loads(request.content))
+        return httpx.Response(200, json={})
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(accept)) as http:
+        service = SessionService(repo, settings, dispatch, http=http)
+        await service.tool(session, {"name": "get_market_truth", "id": "call-timing", "input": {}})
+    stored = await repo.get("ops.tool_calls", "ses_1:call-timing")
+    assert stored["status"] == "DONE"
+    assert stored["returned_at"] is not None
+    assert stored["result"]["market_truth"][0] == await repo.get("ana.market_truth", "MTA-TIMING")
+    delivered = json.loads(requests[0]["events"][0]["content"][0]["text"])
+    assert delivered["market_truth"][0]["cutoff"] == "2026-10-28T12:00:00Z"
+    assert "measurement_metadata" not in delivered["market_truth"][0]
+    ended = [row for row in events(caplog) if row["event"] == "stage_end"]
+    assert {
+        "tool",
+        "tool.audit",
+        "tool.projection",
+        "tool.wire_json",
+        "tool.wire_audit",
+        "tool.openma_acceptance",
+        "tool.return_audit",
+    } <= {row["stage"] for row in ended}
+    assert len({row["trace_id"] for row in ended}) == 1
+    assert all(row["call_id"] == telemetry.timing_identity("call-timing") for row in ended)
+    assert all(row["session_id"] == telemetry.timing_identity("ses_1") for row in ended)
