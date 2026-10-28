@@ -306,9 +306,14 @@ def profile_phase(record_property, phase, operation, *, threaded=False):
     return result, calls
 
 
-def evaluate_with_cache(operation, cache):
+class FreshOiPreparation(dict):
+    def setdefault(self, key, default=None):
+        return {} if key == "oi_preparation" else super().setdefault(key, default)
+
+
+def evaluate_with_cache(operation, cache, *, reuse_oi_preparation=True):
     baseline = truth._BASELINE_CACHE.set(cache)
-    inputs = truth._ASSESSMENT_INPUTS.set({})
+    inputs = truth._ASSESSMENT_INPUTS.set({} if reuse_oi_preparation else FreshOiPreparation())
     times = truth._TIMES.set({})
     parameters = truth._PARAMETERS.set({})
     try:
@@ -675,12 +680,29 @@ def test_retained_ena_dense_relative_populations_cold_and_warm(record_property):
         lambda: evaluate_with_cache(derivatives, {}),
     )
     assert derivative_cold_unprofiled == derivative_cold
+    derivative_cold_control = time_phase(
+        record_property,
+        "derivatives_cold_without_preparation_reuse",
+        lambda: evaluate_with_cache(derivatives, {}, reuse_oi_preparation=False),
+    )
+    assert derivative_cold_control == derivative_cold
     derivative_warm = time_phase(
         record_property,
         "derivatives_warm",
         lambda: evaluate_with_cache(derivatives, derivative_cache),
     )
     assert derivative_warm == derivative_cold
+    derivative_warm_control = time_phase(
+        record_property,
+        "derivatives_warm_without_preparation_reuse",
+        lambda: evaluate_with_cache(derivatives, derivative_cache, reuse_oi_preparation=False),
+    )
+    assert derivative_warm_control == derivative_cold
+    record_property(
+        "incident_oi_preparation_control",
+        "Same-worker unprofiled control disables only assessment-local structural OI preparation reuse; "
+        "all other caches retain their cold/warm policy. Not original source or historical production replay.",
+    )
     assert set(derivative_cache) == set(derivative_cached_objects)
     assert all(derivative_cache[key] is value for key, value in derivative_cached_objects.items())
     assert 5 <= derivative_calls.get("derivatives_truth", 0) <= 10
