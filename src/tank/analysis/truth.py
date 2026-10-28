@@ -12,6 +12,7 @@ import hashlib
 import json
 import pickle
 import threading
+import time
 from array import array
 from bisect import bisect_left, bisect_right
 from collections import defaultdict
@@ -23,6 +24,7 @@ from functools import wraps
 from math import log
 from statistics import mean, median, stdev
 
+from tank.logging import market_stage, market_timed
 from tank.market.capture import event_anchor
 from tank.time_precision import chosen_boundary, offset_schedule, propagate_timestamp
 from tank.util import iso, jsonable, new_id, parse_time
@@ -880,7 +882,8 @@ def _oi_stats(rows, start, end, *, history_identity=None, venue_history=None):
     length = _time(z) - _time(a)
 
     window = end - start
-    bytime = {_time(r): r for r in rows if start - timedelta(days=lookback_days()) <= _time(r) < start}
+    history_start = start - timedelta(days=lookback_days())
+    bytime = {_time(r): r for r in rows if history_start <= _time(r) < start}
     if venue_history is not None:
         venue_history = [_history_slice(times, venue_rows, start) for times, venue_rows in venue_history]
     history_times = sorted(bytime)
@@ -1152,6 +1155,7 @@ def synchronized_oi(sync, start, end):
 
 
 @precise
+@market_timed("compute.derivatives")
 def derivatives_truth(snapshot, start, end):
     groups = defaultdict(list)
     instruments = {}
@@ -1443,6 +1447,7 @@ def _price_groups(snapshot, token=None, *, exact=False, reference_only=False):
     return groups
 
 
+@market_timed("compute.relative")
 def relative_truth(snapshot, start, end, *, include_outcome=True):
     groups = _prices(snapshot)
     exact_groups = _prices(snapshot, exact=True, reference_only=True)
@@ -1531,10 +1536,12 @@ def relative_truth(snapshot, start, end, *, include_outcome=True):
         )
     elif history_head is not None and not isinstance(history_head, str):
         history_head = fingerprint(history_head)
+    days = lookback_days()
+    history_start = start - timedelta(days=days)
     scope = (
         history_head,
         iso(start),
-        lookback_days(),
+        days,
         parameter("history_min_days", 7),
         parameter("beta_blume_weight", 2 / 3),
     )
@@ -1550,7 +1557,7 @@ def relative_truth(snapshot, start, end, *, include_outcome=True):
             and t.second == 0
             and t < history_end
             and t - timedelta(hours=1) in p
-            and t >= history_end - timedelta(days=lookback_days())
+            and t >= history_start
         }
 
     def hourly(p):
@@ -1621,7 +1628,7 @@ def relative_truth(snapshot, start, end, *, include_outcome=True):
             a = historical_times[i]
             lag = (target - a).total_seconds()
             if (
-                a < start - timedelta(days=lookback_days())
+                a < history_start
                 or lag >= history_resolution_s
                 or not benchmark
                 and (t not in btc or a not in btc)
@@ -1789,7 +1796,7 @@ def relative_truth(snapshot, start, end, *, include_outcome=True):
         bh = []
         rvhist = []
         for t in sorted(btc_hourly):
-            if t >= start or t < start - timedelta(days=lookback_days()):
+            if t >= start or t < history_start:
                 continue
             a = t - timedelta(days=1)
             if a in btc:
@@ -1842,7 +1849,7 @@ def relative_truth(snapshot, start, end, *, include_outcome=True):
             value=float_normal(history),
             unit="DECIMAL_RETURN",
             window=name,
-            start=iso(start - timedelta(days=lookback_days())),
+            start=iso(history_start),
             cutoff=iso(start),
             observed_at=diagnostic.get("latest_observed_at"),
             precision=f"BUCKET({history_resolution_s}s)" if history_resolution_s else None,
@@ -1962,6 +1969,7 @@ def depth_at_band(book, side, unit="usd"):
 
 
 @precise
+@market_timed("compute.liquidity")
 def liquidity_truth(snapshot, start, end, spot, relative):
     books = [
         b
@@ -2317,6 +2325,7 @@ def _usd_mid(row, mid):
     return mid * rate if rate else None
 
 
+@market_timed("compute.evidence")
 def enrich_evidence(snapshot, start, end, spots, primary, deriv, relative, liquidity):
     """Compute cross-window claims only on pairwise common, complete venues."""
     for name, left in spots.items():
@@ -2776,6 +2785,7 @@ def enrich_evidence(snapshot, start, end, spots, primary, deriv, relative, liqui
 
 
 @precise
+@market_timed("compute.supply")
 def supply_truth(snapshot, start, end):
     """Interpret captured supply wrappers; unknown wallets and APY never become inferred sales/APR."""
     rows = sorted(
@@ -3417,6 +3427,7 @@ def available_field_freshness(snapshot, end):
     return checks
 
 
+@market_timed("compute.confidence")
 def data_confidence(snapshot, spot, derivatives, end):
     """§5.10: grade spot coverage, derivatives coverage, then field freshness."""
     failed = []
@@ -3551,9 +3562,11 @@ def data_confidence(snapshot, spot, derivatives, end):
 
 
 @precise
+@market_timed("compute.support")
 def support_features(snapshot, start, end, spot, deriv, liquidity, supply):
     """§5.8 support evidence. Unknown inputs remain None and never add support."""
     length = end - start
+    history_start = start - timedelta(days=lookback_days())
     token = snapshot.get("token_id")
     features = {}
     for market in ("SPOT", "PERP"):
@@ -3659,7 +3672,7 @@ def support_features(snapshot, start, end, spot, deriv, liquidity, supply):
         history_windows = []
         endpoints = set.intersection(*(set(v) for v in market_indexes.values())) if market_indexes else set()
         for t in endpoints:
-            if start - timedelta(days=lookback_days()) <= t - length < t < start:
+            if history_start <= t - length < t < start:
                 value = total(t - length, t)
                 if value is not None:
                     history.append(value)
@@ -4397,6 +4410,7 @@ def canonical_fact_text(fact):
     return f"{fact['text']} [{fact['window']}; {fact['unit']}; {label}]"
 
 
+@market_timed("compute.metadata")
 def measurement_metadata(result):
     """Companion metadata preserves the literal §2 bare-field shapes.
 
@@ -4589,6 +4603,7 @@ def measurement_metadata(result):
     return missing_fields
 
 
+@market_timed("compute.timestamps")
 def timestamp_companions(result, snapshot):
     """Declare selected bounds; propagate source precision without reading ISO formatting."""
     result = deepcopy(result)
@@ -4781,6 +4796,7 @@ def timestamp_companions(result, snapshot):
     return result
 
 
+@market_timed("compute.prepare")
 def bounded_market_snapshot(snapshot, end):
     snapshot = dict(snapshot)
     snapshot["flow_segments"] = [
@@ -4807,6 +4823,7 @@ def bounded_market_snapshot(snapshot, end):
     return snapshot
 
 
+@market_timed("compute.spot")
 def spot_window_graph(snapshot, start, end, av):
     instruments = [
         i for i in snapshot.get("instruments", []) if i.get("token_id") in (None, snapshot.get("token_id"))
@@ -4896,30 +4913,31 @@ def _compute_market_truth(snapshot, *, config=None):
     liquidity_windows = {}
     supply_windows = {}
     for name, seconds in windows.items():
-        wstart = end - timedelta(seconds=seconds)
-        scoped = dict(snapshot, _primary=name)
-        d = derivatives_truth(scoped, wstart, end)
-        window_liquidity = liquidity_truth(scoped, wstart, end, spots[name], relative)
-        su = supply_truth(scoped, wstart, end)
-        for record in (d, window_liquidity, su):
-            record.update(window=name, start=iso(wstart), cutoff=iso(end))
-        if d.get("synchronized"):
-            d["synchronized"]["coverage"] = {"venues": d["synchronized"]["venues"]}
-        if window_liquidity.get("per_venue"):
-            window_liquidity["coverage"] = {"venues": [v["venue"] for v in window_liquidity["per_venue"]]}
-            window_liquidity["observed_at"] = min(v["observed_at"] for v in window_liquidity["per_venue"])
-        window_liquidity["elasticity"].update(window=name, start=iso(wstart), cutoff=iso(end))
-        window_liquidity["replenishment"].update(window=name, start=iso(wstart), cutoff=iso(end))
-        enrich_evidence(scoped, wstart, end, spots, name, d, relative, window_liquidity)
-        d["support_features"] = support_features(scoped, wstart, end, spots[name], d, window_liquidity, su)
-        if name == "EVENT" and not av:
-            d = derivatives_truth(dict(scoped, oi=[], funding=[], liquidations=[], klines=[]), wstart, end)
-            d.update(window=name, start=None, cutoff=iso(end), reason="INCOMPLETE")
-            window_liquidity = {"window": name, "start": None, "cutoff": iso(end), "reason": "INCOMPLETE"}
-            su = {"window": name, "start": None, "cutoff": iso(end), "reason": "INCOMPLETE"}
-        derivative_windows[name] = d
-        liquidity_windows[name] = window_liquidity
-        supply_windows[name] = su
+        with market_stage("compute.window", window=name, cpu=True):
+            wstart = end - timedelta(seconds=seconds)
+            scoped = dict(snapshot, _primary=name)
+            d = derivatives_truth(scoped, wstart, end)
+            window_liquidity = liquidity_truth(scoped, wstart, end, spots[name], relative)
+            su = supply_truth(scoped, wstart, end)
+            for record in (d, window_liquidity, su):
+                record.update(window=name, start=iso(wstart), cutoff=iso(end))
+            if d.get("synchronized"):
+                d["synchronized"]["coverage"] = {"venues": d["synchronized"]["venues"]}
+            if window_liquidity.get("per_venue"):
+                window_liquidity["coverage"] = {"venues": [v["venue"] for v in window_liquidity["per_venue"]]}
+                window_liquidity["observed_at"] = min(v["observed_at"] for v in window_liquidity["per_venue"])
+            window_liquidity["elasticity"].update(window=name, start=iso(wstart), cutoff=iso(end))
+            window_liquidity["replenishment"].update(window=name, start=iso(wstart), cutoff=iso(end))
+            enrich_evidence(scoped, wstart, end, spots, name, d, relative, window_liquidity)
+            d["support_features"] = support_features(scoped, wstart, end, spots[name], d, window_liquidity, su)
+            if name == "EVENT" and not av:
+                d = derivatives_truth(dict(scoped, oi=[], funding=[], liquidations=[], klines=[]), wstart, end)
+                d.update(window=name, start=None, cutoff=iso(end), reason="INCOMPLETE")
+                window_liquidity = {"window": name, "start": None, "cutoff": iso(end), "reason": "INCOMPLETE"}
+                su = {"window": name, "start": None, "cutoff": iso(end), "reason": "INCOMPLETE"}
+            derivative_windows[name] = d
+            liquidity_windows[name] = window_liquidity
+            supply_windows[name] = su
     deriv = dict(derivative_windows[primary], windows=derivative_windows)
     liquidity = dict(liquidity_windows[primary], windows=liquidity_windows)
     supply = dict(supply_windows[primary], windows=supply_windows)
@@ -5007,16 +5025,20 @@ def _compute_market_truth(snapshot, *, config=None):
     }
     result = timestamp_companions(result, snapshot)
     result["measurement_metadata"] = measurement_metadata(result)
-    return jsonable(result)
+    with market_stage("compute.jsonable", cpu=True):
+        return jsonable(result)
 
 
 _COMPUTE_SLOT = threading.RLock()
 
 
+@market_timed("compute")
 def compute_market_truth(snapshot, *, config=None, baseline_cache=None):
     """baseline_cache: a dict the caller keeps per token across assessments. Its keys carry
     exact history fingerprints (and config), so a reused entry is the same computation."""
-    with _COMPUTE_SLOT:
+    with contextlib.ExitStack() as ownership:
+        with market_stage("compute.lock_wait"):
+            ownership.enter_context(_COMPUTE_SLOT)
         return _compute_market_truth_slot(snapshot, config=config, baseline_cache=baseline_cache)
 
 
@@ -5716,6 +5738,7 @@ class MarketTruthService:
             baseline_cache=self._condition_baselines,
         )
 
+    @market_timed("assessment")
     async def assess(self, event_id, token_id, cutoff=None):
         event = await self.repo.get("evt.events", event_id) if event_id else None
         event = event or {}
@@ -5746,13 +5769,24 @@ class MarketTruthService:
             knobs, config_version=self.settings.config_version, code_version=self.settings.code_version
         )
         lock = self._assessment_locks.setdefault(token_id, asyncio.Lock())
-        async with lock:
-            result = await asyncio.to_thread(
-                compute_market_truth,
-                snapshot,
-                config=knobs,
-                baseline_cache=self._assessment_baselines.setdefault(token_id, {}),
-            )
+        async with contextlib.AsyncExitStack() as ownership:
+            with market_stage("assessment.lock_wait"):
+                await ownership.enter_async_context(lock)
+            baselines = self._assessment_baselines.setdefault(token_id, {})
+
+            def calculate():
+                entered = time.perf_counter()
+                with market_stage("assessment.worker", cpu=True, queue_s=entered - queued):
+                    return compute_market_truth(
+                        snapshot,
+                        config=knobs,
+                        baseline_cache=baselines,
+                    )
+
+            with market_stage("assessment.executor"):
+                queued = time.perf_counter()
+                result = await asyncio.to_thread(calculate)
         result["mta_id"] = new_id("MTA")
-        await self.repo.put("ana.market_truth", result["mta_id"], result, immutable=True)
+        with market_stage("assessment.persist"):
+            await self.repo.put("ana.market_truth", result["mta_id"], result, immutable=True)
         return result

@@ -1804,6 +1804,14 @@ Permanent tests run through existing automatic PR/main CI, without manual tests/
 
 These composed SQL/HTTP regressions qualify incident recovery only, not real native-model/KVM upgrade execution (§3.2), live production recovery or V0-H's 14-day acceptance.
 
+### 11.8 Market Truth stage timings
+
+Market Truth uses the existing application logger to emit JSON start/terminal records with trace, span and parent IDs. Stages cover caller/job waiting, capture readiness and repair, snapshot reads and series preparation, SQL HTTP/JSON/typed conversion, compute lock acquisition and report domains/windows, result persistence, tool projection/audit and HTTP acceptance. Caller traces link to durable job IDs; workers use that job ID as their trace without changing job payloads or ownership. Each ClickHouse request sends the query ID emitted by its HTTP stage.
+
+Wall seconds use a monotonic clock and are inclusive; nested or concurrent intervals must not be summed. Synchronous stages additionally report calling-thread CPU, not process CPU. Async stages do not claim CPU ownership. Executor queue seconds are measured before worker telemetry; durable `queued_wall_s` is separately derived from the stored creation clock, not a monotonic historical span. Terminal status distinguishes success, error and cancellation without logging exception text, SQL, parameters, credentials or market payloads.
+
+History lookback bounds are prepared once per relative/OI/support computation rather than per historical row. Admitted samples, visit order, arithmetic/context, as-of boundaries, locks and durable effects are unchanged. A reduction in repeated preparation does not establish whole-request acceleration: acceptance still requires original/candidate full-request measurements on the same worker with identical realistic inputs and unchanged outputs. Historical uninstrumented intervals cannot be retrospectively assigned to individual functions.
+
 ## 12. Configuration baseline (⚙)
 
 Every number the rules use, with its basis. A number without a basis is not used; one that has to come from data is calibrated by the stated procedure and recorded at that checkpoint (01 D6).

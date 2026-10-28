@@ -13,6 +13,7 @@ from urllib.parse import parse_qsl, unquote, urlparse
 import httpx
 import zstandard
 
+from tank.logging import market_stage, market_timed
 from tank.ops_progress import event_progress, item_progress, tool_progress
 from tank.sources.capture_fetch import capture_fetch, is_exchange_url
 from tank.time_precision import (
@@ -2215,6 +2216,7 @@ class EventToolService:
         )
         return prepared_ids
 
+    @market_timed("tool.market_truth")
     async def get_market_truth(self, a, c, *, refresh_key=None):
 
         named = {"SECOND": "BUCKET(1s)", "MINUTE": "BUCKET(1m)", "HOUR": "BUCKET(1h)"}
@@ -2271,22 +2273,23 @@ class EventToolService:
                 )
         truths = []
         for job in jobs:
-            deadline = asyncio.get_running_loop().time() + 90 * 15
-            while True:
-                current = await self.require("ops.jobs", job["job_id"])
-                if current["status"] == "DONE":
-                    result = current.get("result")
-                    if result is None:
-                        raise ValueError("Market truth job completed without persisted result")
-                    truths.append(result)
-                    break
-                if current["status"] in {"FAILED", "EXPIRED"}:
-                    raise ValueError(
-                        "Market truth job is terminally failed or expired; inspect its durable job record"
-                    )
-                if asyncio.get_running_loop().time() >= deadline:
-                    raise TimeoutError("Market truth jobs are pending; retry this call with the same call_id")
-                await asyncio.sleep(0.25)
+            with market_stage("tool.job_wait", job_id=job["job_id"]):
+                deadline = asyncio.get_running_loop().time() + 90 * 15
+                while True:
+                    current = await self.require("ops.jobs", job["job_id"])
+                    if current["status"] == "DONE":
+                        result = current.get("result")
+                        if result is None:
+                            raise ValueError("Market truth job completed without persisted result")
+                        truths.append(result)
+                        break
+                    if current["status"] in {"FAILED", "EXPIRED"}:
+                        raise ValueError(
+                            "Market truth job is terminally failed or expired; inspect its durable job record"
+                        )
+                    if asyncio.get_running_loop().time() >= deadline:
+                        raise TimeoutError("Market truth jobs are pending; retry this call with the same call_id")
+                    await asyncio.sleep(0.25)
         if maps:
             mapping = max(maps, key=lambda r: int(r["map_version"]))
             edges = [

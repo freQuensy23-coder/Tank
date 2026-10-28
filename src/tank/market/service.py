@@ -14,6 +14,7 @@ from types import SimpleNamespace
 
 import httpx
 
+from tank.logging import market_timed
 from tank.market import normalize as norm
 from tank.market.capture import event_anchor
 from tank.market.rate_gate import PriorityGate
@@ -477,6 +478,7 @@ class MarketService:
                 return json.loads(response.content, parse_float=Decimal)
         raise RuntimeError(f"{host}: rate limited after bounded retries")
 
+    @market_timed("capture.repair")
     async def repair_windows(self, token_id, start, end, *, budget_s=None):
         """Ask tank-capture to repair every incomplete or missing persisted minute of
         [start, end) for a token's instruments within budget_s (03 §5.1 fill order, §5.2
@@ -601,6 +603,7 @@ class MarketService:
             if token_id in [v.get("token_id") if isinstance(v, dict) else v for v in tokens]:
                 await self._schedule_event_backfill(event_id, token_id, anchor)
 
+    @market_timed("capture.wait")
     async def wait_capture(self, event_id, token_id, *, timeout_s=30):
         """Await durable prerequisite or return an explicit bounded incomplete result.
 
@@ -800,6 +803,7 @@ class MarketService:
                     "reason": "Actual late normalized data became available after frozen reaction capture",
                 }
 
+    @market_timed("capture.readiness")
     async def capture_readiness(self, event_id, token_id, *, anchor=None):
         if anchor is not None:
             backfill_id = "BF-" + sha256({"event_id": event_id, "token_id": token_id, "anchor": iso(anchor)})
@@ -969,6 +973,7 @@ class MarketService:
             else key + (".ctx" if key.startswith("hyperliquid") else ".open-interest")
         )
 
+    @market_timed("snapshot.range")
     async def _range(self, collection, field, *, start=None, end=None, filters=None):
         return [
             row
@@ -1233,6 +1238,7 @@ class MarketService:
                 cache.pop(next(iter(cache)))
         return cache[key]["rows"]
 
+    @market_timed("snapshot.series")
     async def _condition_kline_series(
         self,
         instrument,
@@ -2546,6 +2552,7 @@ class MarketService:
             return None
         return _cut({iid: hit["rows"][iid] for iid in set(ids)}, field, start, end)
 
+    @market_timed("snapshot.collection")
     async def _ranged(self, collection, field, ids, start, end, filters=None, *, books=False):
         sliced = self._shared_slice(collection, field, filters, ids, start, end)
         if sliced is not None:
@@ -2743,6 +2750,7 @@ class MarketService:
         of the union range inside snapshot_anchors()."""
         return await self._ranged(collection, field, ids, start, end, books=books)
 
+    @market_timed("snapshot")
     async def snapshot(self, token_id, cutoff, anchor=None, *, scope=None):
         """scope="REACTION": a reaction checkpoint (03 §8, 01 FR-R-01) measures its EVENT
         window, anchor to cutoff. Flow bars, klines, OI, funding and liquidations are read
@@ -3189,6 +3197,7 @@ class MarketService:
         return result
 
     @staticmethod
+    @market_timed("snapshot.heads")
     def _snapshot_heads(result, cutoff_dt):
         """Dependency heads for Market Truth's cross-assessment caches, from the returned data
         (no DB calls). The relative head covers exactly what can enter truth's pre-start price

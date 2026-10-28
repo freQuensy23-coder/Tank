@@ -19,9 +19,11 @@ import time
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from urllib.parse import urlsplit, urlunsplit
+from uuid import uuid4
 
 import httpx
 
+from tank.logging import market_stage, market_timed
 from tank.market_schema import MARKET_ALIASES, MARKET_COLUMNS, MARKET_IDENTITIES
 from tank.util import canonical_json, iso, parse_time
 
@@ -130,7 +132,9 @@ class ClickHouse:
         await self.http.aclose()
 
     async def _post(self, query, params):
+        query_id = uuid4().hex
         request = {
+            "query_id": query_id,
             "date_time_output_format": "iso",
             "output_format_json_quote_64bit_integers": "0",
             "output_format_json_quote_decimals": "0",
@@ -140,21 +144,27 @@ class ClickHouse:
         }
         for name, (value, _) in (params or {}).items():
             request["param_" + name] = value
-        response = await self.http.post(
-            self.base,
-            params=request,
-            content=(query if self.database == "mkt" else re.sub(r"\bmkt\b", self.database, query)).encode(),
-            headers={"X-ClickHouse-User": self.user, "X-ClickHouse-Key": self.password},
-        )
-        if response.status_code != 200:
-            raise RuntimeError(f"ClickHouse {response.status_code}: {response.text[:500]}")
+        with market_stage("sql.http", query_id=query_id):
+            response = await self.http.post(
+                self.base,
+                params=request,
+                content=(query if self.database == "mkt" else re.sub(r"\bmkt\b", self.database, query)).encode(),
+                headers={"X-ClickHouse-User": self.user, "X-ClickHouse-Key": self.password},
+            )
+            if response.status_code != 200:
+                raise RuntimeError(f"ClickHouse {response.status_code}: {response.text[:500]}")
         return response.content
 
+    @market_timed("sql.rows")
     async def rows(self, query, params=None):
         body = await self._post(query + " FORMAT JSONEachRow", params)
-        if len(body) > 1_000_000:
-            return await asyncio.to_thread(_json_lines, body)
-        return _json_lines(body)
+        with market_stage("sql.json", bytes=len(body)) as receipt:
+            if len(body) > 1_000_000:
+                rows = await asyncio.to_thread(_json_lines, body)
+            else:
+                rows = _json_lines(body)
+            receipt["rows"] = len(rows)
+            return rows
 
     async def execute(self, query, params=None):
         await self._post(query, params)
@@ -165,6 +175,7 @@ class ClickHouse:
             await self._post(f"INSERT INTO {table} FORMAT JSONEachRow\n{body}", None)
 
 
+@market_timed("sql.json.convert")
 def _json_lines(body):
     return [json.loads(line) for line in body.splitlines() if line]
 
@@ -269,10 +280,12 @@ def _record(collection, row):
     return decode(collection, out)
 
 
+@market_timed("sql.typed.convert")
 def _records(collection, rows):
     return [_record(collection, r) for r in rows]
 
 
+@market_timed("sql.typed")
 async def _decode(collection, rows):
     if len(rows) > 1000:
         return await asyncio.to_thread(_records, collection, rows)
@@ -283,6 +296,7 @@ def _table(collection):
     return f"{collection} FINAL"
 
 
+@market_timed("sql.select")
 async def _select(ch, collection, q, order, tail="", selected="*"):
     day = MARKET_TABLES[collection]
     keys = await ch.rows(
@@ -498,6 +512,7 @@ async def market_dependency_head(
     return found
 
 
+@market_timed("sql.projection")
 async def projection_page(
     ch, collection, selected, time_field, *, start, end, filters, instrument_ids, assembled_at, after, limit
 ):
@@ -522,6 +537,7 @@ async def projection_page(
     )
     columns = MARKET_COLUMNS[collection]
 
+    @market_timed("sql.projection.convert")
     def convert():
         page = []
         for row in rows:

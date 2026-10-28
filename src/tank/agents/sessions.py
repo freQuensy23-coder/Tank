@@ -23,6 +23,7 @@ from tank.agents.pipeline import ConfigurationError
 from tank.agents.security import redact_tool_arguments
 from tank.agents.wire import tool_wire_result
 from tank.delivery import DeliveryDeferred
+from tank.logging import market_stage, market_timed
 from tank.openma_sync import agent_tools
 from tank.ops_progress import session_progress
 from tank.settings import threshold
@@ -1554,11 +1555,13 @@ class SessionService:
             )
         return {"type": type(error).__name__, "reason": reason, "category": category}, "ERROR"
 
+    @market_timed("tool.return")
     async def tool(self, session, event):
         sid, call_id = session["session_id"], event["id"]
         requested_at = self.clock_timestamp()
         key = sid + ":" + call_id
-        prior = await self.repo.get("ops.tool_calls", key)
+        with market_stage("tool.lookup", call_id=call_id):
+            prior = await self.repo.get("ops.tool_calls", key)
         if prior and prior.get("returned_at"):
             return
         original_hash = sha256(event["input"])
@@ -1594,18 +1597,23 @@ class SessionService:
                     decision_prepared_condition_ids = prepared.get("prepared_condition_ids")
                     decision_market_refresh_completed = True
                 else:
-                    slow_result = await self.invoke_tool(
-                        session, event["name"], event["input"], call_id, resolved_arguments=resolved_arguments
-                    )
+                    with market_stage("tool.invoke", call_id=call_id):
+                        slow_result = await self.invoke_tool(
+                            session, event["name"], event["input"], call_id, resolved_arguments=resolved_arguments
+                        )
             except Exception as error:
                 slow_error, slow_error_status = self.tool_failure(error)
 
             slow_ready = not decision_market_refresh_completed
-        async with self.repo.lock("tool:" + key):
+        async with AsyncExitStack() as audit:
+            with market_stage("tool.audit_lock_wait"):
+                await audit.enter_async_context(self.repo.lock("tool:" + key))
             stored = await self.repo.get("ops.tool_calls", key)
             if not stored:
                 context = self.tool_context(session, call_id)
-                async with self.repo.lock("session:" + sid):
+                async with AsyncExitStack() as sequencing_lock:
+                    with market_stage("tool.sequence_lock_wait"):
+                        await sequencing_lock.enter_async_context(self.repo.lock("session:" + sid))
                     sequencing = await self.repo.get("ops.agent_sessions", sid)
                     ordinal = int(sequencing.get("next_tool_call_ordinal", 0))
                     sequencing["next_tool_call_ordinal"] = ordinal + 1
@@ -1675,7 +1683,8 @@ class SessionService:
                             "publish_card",
                             "record_review",
                         }:
-                            await mutation.enter_async_context(self.repo.lock("session:" + sid))
+                            with market_stage("tool.mutation_lock_wait"):
+                                await mutation.enter_async_context(self.repo.lock("session:" + sid))
                         await mutation.enter_async_context(self.repo.transaction())
                         result = (
                             slow_result
@@ -1732,14 +1741,16 @@ class SessionService:
                     **completed.fields("answered_at"),
                     **completed.fields("completed_at"),
                 )
-                await self.repo.put("ops.tool_calls", key, stored)
+                with market_stage("tool.audit_persist"):
+                    await self.repo.put("ops.tool_calls", key, stored)
         current = await self.repo.get("ops.agent_sessions", sid) or session
         if current.get("model_context_version", 0) < CONTEXT_VERSION:
             await self.sync_tools(sid, resume=True)
             current = await self.repo.get("ops.agent_sessions", sid) or session
-        projected = await ModelContext(self.repo, self.settings, current).result(
-            stored["tool"], stored["result"]
-        )
+        with market_stage("tool.projection"):
+            projected = await ModelContext(self.repo, self.settings, current).result(
+                stored["tool"], stored["result"]
+            )
         note = await self.transition_note(sid) if self.legacy_contract(session) else None
         if note:
             projected = (
@@ -1747,21 +1758,24 @@ class SessionService:
                 if isinstance(projected, dict)
                 else {"result": projected, "context_update": note}
             )
-        body = {
-            "type": "user.custom_tool_result",
-            "custom_tool_use_id": call_id,
-            "content": [
-                {
-                    "type": "text",
-                    "text": canonical_json(
-                        tool_wire_result(stored["tool"], projected, session_id=sid, call_id=call_id)
-                    ),
-                }
-            ],
-        }
+        with market_stage("tool.wire_json", cpu=True):
+            body = {
+                "type": "user.custom_tool_result",
+                "custom_tool_use_id": call_id,
+                "content": [
+                    {
+                        "type": "text",
+                        "text": canonical_json(
+                            tool_wire_result(stored["tool"], projected, session_id=sid, call_id=call_id)
+                        ),
+                    }
+                ],
+            }
         if stored.get("is_error"):
             body["is_error"] = True
-        async with self.repo.lock("tool:" + key):
+        async with AsyncExitStack() as native_audit:
+            with market_stage("tool.native_audit_lock_wait"):
+                await native_audit.enter_async_context(self.repo.lock("tool:" + key))
             if (
                 stored.get("native_result_body") is None
                 or stored.get("model_context_version") != CONTEXT_VERSION
@@ -1773,17 +1787,22 @@ class SessionService:
                     stored["legacy_native_result_body"] = stored["native_result_body"]
                 stored["model_context_version"] = CONTEXT_VERSION
                 stored["native_result_body"] = copy.deepcopy(body)
-                await self.repo.put("ops.tool_calls", key, stored)
+                with market_stage("tool.native_audit_persist"):
+                    await self.repo.put("ops.tool_calls", key, stored)
             body = copy.deepcopy(stored["native_result_body"])
-        accepted = await self.request(
-            "POST", f"sessions/{sid}/events", json={"events": [body]}, idem="tool:" + sha256(key)
-        )
-        async with self.repo.lock("tool:" + key):
+        with market_stage("tool.http_acceptance"):
+            accepted = await self.request(
+                "POST", f"sessions/{sid}/events", json={"events": [body]}, idem="tool:" + sha256(key)
+            )
+        async with AsyncExitStack() as returned_audit:
+            with market_stage("tool.returned_lock_wait"):
+                await returned_audit.enter_async_context(self.repo.lock("tool:" + key))
             stored.update(
                 remote_event_id=self.accepted_input_id(accepted),
                 **self.clock_timestamp().fields("returned_at"),
             )
-            await self.repo.put("ops.tool_calls", key, stored)
+            with market_stage("tool.returned_persist"):
+                await self.repo.put("ops.tool_calls", key, stored)
 
     async def usage(self, session, event):
         usage = event.get("model_usage")

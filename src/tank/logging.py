@@ -1,11 +1,74 @@
 """Application logging with credential-safe URL and exception rendering."""
 
+import asyncio
+import inspect
+import json
 import logging
 import re
+import time
 import traceback
+from contextlib import contextmanager
+from contextvars import ContextVar
+from functools import wraps
 from urllib.parse import unquote, urlsplit
+from uuid import uuid4
 
 _KNOWN_SECRETS: set[str] = set()
+_MARKET_STAGE: ContextVar[tuple[str, str] | None] = ContextVar("market_stage", default=None)
+
+
+@contextmanager
+def market_stage(stage, *, trace_id=None, cpu=False, **fields):
+    parent = _MARKET_STAGE.get()
+    trace = trace_id or (parent[0] if parent else uuid4().hex)
+    span = uuid4().hex
+    record = {
+        "stage": stage,
+        "trace_id": trace,
+        "span_id": span,
+        "parent_id": parent[1] if parent and parent[0] == trace else None,
+    }
+    for key in ("window", "job_id", "call_id", "query_id", "rows", "bytes", "queue_s", "queued_wall_s"):
+        value = fields.get(key)
+        if isinstance(value, (int, float)) or isinstance(value, str) and re.fullmatch(r"[\w.:-]{1,128}", value):
+            record[key] = value
+    logger = logging.getLogger("tank.market_timing")
+    token = _MARKET_STAGE.set((trace, span))
+    status = "ok"
+    wall = time.perf_counter()
+    thread = time.thread_time() if cpu else None
+    try:
+        logger.info(json.dumps(dict(record, status="started")))
+        yield record
+    except BaseException as error:
+        status = "cancelled" if isinstance(error, asyncio.CancelledError) else "error"
+        raise
+    finally:
+        elapsed = time.perf_counter() - wall
+        used = time.thread_time() - thread if thread is not None else None
+        _MARKET_STAGE.reset(token)
+        logger.info(json.dumps(dict(record, status=status, wall_s=elapsed, thread_cpu_s=used)))
+
+
+def market_timed(stage):
+    def decorate(function):
+        if inspect.iscoroutinefunction(function):
+
+            @wraps(function)
+            async def asynchronous(*args, **kwargs):
+                with market_stage(stage):
+                    return await function(*args, **kwargs)
+
+            return asynchronous
+
+        @wraps(function)
+        def synchronous(*args, **kwargs):
+            with market_stage(stage, cpu=True):
+                return function(*args, **kwargs)
+
+        return synchronous
+
+    return decorate
 
 
 def redact_text(value: str, secrets: tuple[str, ...] = ()) -> str:

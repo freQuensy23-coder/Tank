@@ -9,6 +9,7 @@ from datetime import timedelta
 from tank.agents.sessions import ADMITTED_JOB_TYPES, AdmissionDeferred
 from tank.delivery import DeliveryDeferred, DeliveryService
 from tank.diagnostic_recovery import recover_legacy_diagnostic_job, validate_recovery_destination
+from tank.logging import market_stage, market_timed
 from tank.ops_progress import job_failure_progress
 from tank.scheduler import Scheduler
 from tank.time_precision import collection_clock, offset_schedule, propagate_timestamp
@@ -162,6 +163,7 @@ class Runtime:
             raise ValueError("ESCALATE_TOKENS requires tokens")
         await self.market.escalate(payload["event_id"], tokens)
 
+    @market_timed("job.assess")
     async def assess(self, payload):
         from tank.market.capture import event_anchor
 
@@ -245,11 +247,28 @@ class Runtime:
                         raise AdmissionDeferred(
                             offset_schedule(collection_clock(utcnow()), timedelta(seconds=5))
                         ) from slow
-                async with asyncio.timeout(TIMEOUTS[kind]):
-                    result = await self.handlers[kind](job["payload"])
-                async with self.repo.transaction():
-                    await self.repo.put("ops.jobs", job["job_id"], {**job, "result": result})
-                    await self.repo.finish_job(job["job_id"])
+                timing = (
+                    market_stage(
+                        "job",
+                        trace_id=job["job_id"],
+                        job_id=job["job_id"],
+                        queued_wall_s=(utcnow() - parse_time(job["created_at"])).total_seconds()
+                        if job.get("created_at")
+                        else None,
+                    )
+                    if kind == "RUN_MARKET_TRUTH"
+                    else contextlib.nullcontext()
+                )
+                with timing:
+                    async with asyncio.timeout(TIMEOUTS[kind]):
+                        result = await self.handlers[kind](job["payload"])
+                    persistence_timing = (
+                        market_stage("job.persist") if kind == "RUN_MARKET_TRUTH" else contextlib.nullcontext()
+                    )
+                    with persistence_timing:
+                        async with self.repo.transaction():
+                            await self.repo.put("ops.jobs", job["job_id"], {**job, "result": result})
+                            await self.repo.finish_job(job["job_id"])
             except DeliveryDeferred as deferred:
                 async with self.repo.transaction():
                     current = await self.repo.get("ops.jobs", job["job_id"])
