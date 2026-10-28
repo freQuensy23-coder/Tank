@@ -709,10 +709,18 @@ def test_progress_emission_and_parent_receipt_limits_refuse_without_replacing_ch
 
 
 def test_final_export_accounts_for_separately_retained_progress_bytes(tmp_path, monkeypatch):
+    baseline = tmp_path / "baseline"
+    comparison.export_evidence(tmp_path, baseline, {}, {}, {})
+    limit = sum(path.stat().st_size for path in baseline.iterdir())
+    monkeypatch.setattr(comparison, "PUBLIC_TOTAL_LIMIT", limit)
+    accepted = tmp_path / "accepted"
+    comparison.export_evidence(tmp_path, accepted, {}, {}, {}, progress_bytes=0)
+    assert {path.name: path.read_bytes() for path in accepted.iterdir()} == {
+        path.name: path.read_bytes() for path in baseline.iterdir()
+    }
     destination = tmp_path / "final"
-    monkeypatch.setattr(comparison, "PUBLIC_TOTAL_LIMIT", 100)
     with pytest.raises(ValueError, match="bundle exceeds"):
-        comparison.export_evidence(tmp_path, destination, {}, {}, {}, progress_bytes=100)
+        comparison.export_evidence(tmp_path, destination, {}, {}, {}, progress_bytes=1)
     assert not destination.exists()
 
 
