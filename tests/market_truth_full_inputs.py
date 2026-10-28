@@ -15,11 +15,16 @@ PUBLIC_TABLES = {
     "capture-tier-public": "ops.capture_tier_transitions",
     "capture-gaps-public": "mkt.capture_gaps",
 }
+_PRIVATE_CONTENT_PREFIX = r"://|"
+_PRIVATE_CONTENT_SUFFIX = (
+    r"-----BEGIN|"
+    r"(?:password|passwd|api_key|access_token|authorization|telegram_id|chat_id|user_id|email)\s*[\"=:]"
+)
 PRIVATE_CONTENT = re.compile(
-    r"://|[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}|-----BEGIN|"
-    r"(?:password|passwd|api_key|access_token|authorization|telegram_id|chat_id|user_id|email)\s*[\"=:]",
+    _PRIVATE_CONTENT_PREFIX + r"[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}|" + _PRIVATE_CONTENT_SUFFIX,
     re.IGNORECASE,
 )
+NON_EMAIL_PRIVATE_CONTENT = re.compile(_PRIVATE_CONTENT_PREFIX + _PRIVATE_CONTENT_SUFFIX, re.IGNORECASE)
 
 
 def require(condition, message):
@@ -142,17 +147,22 @@ def read_json(value):
     )
 
 
+def _private_content(text):
+    matcher = PRIVATE_CONTENT if "@" in text else NON_EMAIL_PRIVATE_CONTENT
+    return bool(matcher.search(text))
+
+
 def public_value(value, allowed=None):
     if isinstance(value, dict):
         require(allowed is None or set(value) <= allowed, "Unexpected recursive public field")
         for key, child in value.items():
-            require(not PRIVATE_CONTENT.search(key), "Private public-fixture key")
+            require(not _private_content(key), "Private public-fixture key")
             public_value(child, allowed)
     elif isinstance(value, list):
         for child in value:
             public_value(child, allowed)
     elif isinstance(value, str):
-        require(not PRIVATE_CONTENT.search(value), "Private public-fixture value")
+        require(not _private_content(value), "Private public-fixture value")
     elif isinstance(value, Decimal):
         require(value.is_finite(), "Nonfinite public JSON number")
 
