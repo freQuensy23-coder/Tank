@@ -171,6 +171,11 @@ HOT_FUNCTIONS = {
     "_oi_rows",
     "_composite_history",
     "synchronized_oi",
+    "lookback_days",
+    "parameter",
+    "decimal",
+    "exact_context",
+    "_sum",
 }
 
 
@@ -479,7 +484,9 @@ def test_retained_ena_dense_relative_populations_cold_and_warm(record_property):
         assert series["precision"] is None and series["precision_reason"] == "INCOMPLETE"
         record_property(
             "incident_price_precision_" + symbol,
-            json.dumps({"bucket_60s_rows": precision_counts["BUCKET(60s)"], "unknown_rows": precision_counts[None]}),
+            json.dumps(
+                {"bucket_60s_rows": precision_counts["BUCKET(60s)"], "unknown_rows": precision_counts[None]}
+            ),
         )
         assert all(series["complete"])
         epoch = parse_time("1970-01-01T00:00:00Z")
@@ -530,6 +537,12 @@ def test_retained_ena_dense_relative_populations_cold_and_warm(record_property):
         lambda: evaluate_with_cache(lambda: truth.relative_truth(snapshot, start, end), cache),
     )
     cached_objects = dict(cache)
+    cold_unprofiled = time_phase(
+        record_property,
+        "relative_cold_unprofiled",
+        lambda: evaluate_with_cache(lambda: truth.relative_truth(snapshot, start, end), {}),
+    )
+    assert cold_unprofiled == cold
     warm = time_phase(
         record_property,
         "relative_warm",
@@ -654,6 +667,12 @@ def test_retained_ena_dense_relative_populations_cold_and_warm(record_property):
         lambda: evaluate_with_cache(derivatives, derivative_cache),
     )
     derivative_cached_objects = dict(derivative_cache)
+    derivative_cold_unprofiled = time_phase(
+        record_property,
+        "derivatives_cold_unprofiled",
+        lambda: evaluate_with_cache(derivatives, {}),
+    )
+    assert derivative_cold_unprofiled == derivative_cold
     derivative_warm = time_phase(
         record_property,
         "derivatives_warm",
@@ -679,10 +698,10 @@ def test_retained_ena_dense_relative_populations_cold_and_warm(record_property):
     gap, _ = profile_phase(
         record_property,
         "missing_real_minute_coverage",
-        lambda: truth.spot_truth(
-            flow[:-1], [], [snapshot["instruments"][0]], end - timedelta(days=1), end
-        ),
+        lambda: truth.spot_truth(flow[:-1], [], [snapshot["instruments"][0]], end - timedelta(days=1), end),
     )
     assert gap["venues"] == [] and gap["composite_max"]["volume"] is None
     assert gap["coverage"]["excluded"][0]["reason"] == "INCOMPLETE"
     assert gap["coverage"]["excluded"][0]["detail"] == "FULL_MINUTE_COVERAGE_INCOMPLETE"
+    assert cold_calls.get("lookback_days", 0) <= 64
+    assert derivative_calls.get("lookback_days", 0) <= 256
