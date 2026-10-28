@@ -33,12 +33,19 @@ def market_stage(stage, *, trace_id=None, cpu=False, **fields):
         if isinstance(value, (int, float)) or isinstance(value, str) and re.fullmatch(r"[\w.:-]{1,128}", value):
             record[key] = value
     logger = logging.getLogger("tank.market_timing")
+
+    def emit(**timing):
+        try:
+            logger.info(json.dumps(dict(record, **timing)))
+        except Exception:
+            pass
+
     token = _MARKET_STAGE.set((trace, span))
     status = "ok"
     wall = time.perf_counter()
     thread = time.thread_time() if cpu else None
     try:
-        logger.info(json.dumps(dict(record, status="started")))
+        emit(status="started")
         yield record
     except BaseException as error:
         status = "cancelled" if isinstance(error, asyncio.CancelledError) else "error"
@@ -47,7 +54,7 @@ def market_stage(stage, *, trace_id=None, cpu=False, **fields):
         elapsed = time.perf_counter() - wall
         used = time.thread_time() - thread if thread is not None else None
         _MARKET_STAGE.reset(token)
-        logger.info(json.dumps(dict(record, status=status, wall_s=elapsed, thread_cpu_s=used)))
+        emit(status=status, wall_s=elapsed, thread_cpu_s=used)
 
 
 def market_timed(stage):
