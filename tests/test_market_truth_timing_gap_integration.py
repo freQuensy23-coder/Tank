@@ -8,9 +8,11 @@ import httpx
 import pytest
 from test_agents_session_audit import seed as seed_audit_session
 from test_agents_session_audit import settings as session_settings
+from test_event_tools import complete_event_fixture
 from test_market_capture_refresh import ReleasedMarket, seed_domain
 from test_market_truth_timing_gaps import timing_events
-from test_session_binding_concurrency import fixture_repo, seed as seed_typed_session
+from test_session_binding_concurrency import fixture_repo
+from test_session_binding_concurrency import seed as seed_typed_session
 
 from tank import logging as telemetry
 from tank.agents import SessionService
@@ -333,6 +335,7 @@ async def test_tool_advisory_acquisition_is_not_charged_to_the_held_audit_body(
 ):
     caplog.set_level(logging.INFO, logger="tank.market_timing")
     async with fixture_repo(backend, postgres_template) as repo:
+        await repo.put("evt.events", "e", complete_event_fixture("e"))
         session, _ = await seed_typed_session(repo)
         session["event_id"] = "e"
         session["model_context_version"] = CONTEXT_VERSION
