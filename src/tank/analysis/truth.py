@@ -1103,8 +1103,35 @@ def _composite_history(venue_history, window):
     return (hn if stored(native_ends) else []), (hu if stored(usd_ends) else [])
 
 
+def _build_oi_preparation(sync, end, tolerance):
+    timestamps = sorted({_time(r) for _, rs, _ in sync for r in rs})
+    indexed = []
+    for _, rs, _ in sync:
+        ordered = sorted(rs, key=_time)
+        indexed.append(([_time(r) for r in ordered], ordered))
+    groups = []
+    for t in timestamps:
+        selected = []
+        for times, rs in indexed:
+            idx = bisect_left(times, t)
+            candidates = [
+                rs[i]
+                for i in (idx - 1, idx)
+                if 0 <= i < len(rs)
+                and abs((times[i] - t).total_seconds()) <= tolerance
+                and times[i] <= end
+            ]
+            if not candidates:
+                break
+            selected.append(min(candidates, key=lambda r: abs((_time(r) - t).total_seconds())))
+        if len(selected) == len(sync):
+            groups.append((t, tuple(selected)))
+    return indexed, groups
+
+
 def synchronized_oi(sync, start, end):
     admissible = []
+    sources = []
     tolerance = float(parameter("oi_sync_tolerance_s", 60))
     for p, rows, category in sync:
         if _venue(p) == "hyperliquid":
@@ -1115,30 +1142,32 @@ def synchronized_oi(sync, start, end):
             for endpoint in (start, end)
         ):
             admissible.append((p, eligible, category))
+            sources.append(rows)
     sync = admissible
     synchronized = None
     if sync and len({s[2] for s in sync}) == 1 and sync[0][2] is not None:
-        timestamps = sorted({_time(r) for _, rs, _ in sync for r in rs})
+        inputs = _ASSESSMENT_INPUTS.get()
+        memo = inputs.setdefault("oi_preparation", {}) if inputs is not None else None
+        key = (
+            tuple(
+                (p.get("instrument_id"), _venue(p), category, id(rows))
+                for (p, _, category), rows in zip(sync, sources, strict=False)
+            ),
+            end,
+            tolerance,
+        )
+        hit = memo.get(key) if memo is not None else None
+        if hit is None or any(a is not b for a, b in zip(hit[0], sources, strict=False)):
+            indexed, groups = _build_oi_preparation(sync, end, tolerance)
+            hit = (tuple(sources), indexed, groups)
+            if memo is not None:
+                memo[key] = hit
+                if len(memo) > 128:
+                    memo.pop(next(iter(memo)))
+        _, indexed, groups = hit
         combined = []
-        indexed = []
-        for _, rs, _ in sync:
-            ordered = sorted(rs, key=_time)
-            indexed.append(([_time(r) for r in ordered], ordered))
-        for t in timestamps:
-            selected = []
-            for times, rs in indexed:
-                idx = bisect_left(times, t)
-                candidates = [
-                    rs[i]
-                    for i in (idx - 1, idx)
-                    if 0 <= i < len(rs)
-                    and abs((times[i] - t).total_seconds()) <= tolerance
-                    and times[i] <= end
-                ]
-                if not candidates:
-                    break
-                selected.append(min(candidates, key=lambda r: abs((_time(r) - t).total_seconds())))
-            if len(selected) == len(sync) and all(decimal(r.get("oi_native")) is not None for r in selected):
+        for t, selected in groups:
+            if all(decimal(r.get("oi_native")) is not None for r in selected):
                 combined.append(
                     dict(ts=iso(t), oi_native=_sum(selected, "oi_native"), oi_usd=_sum(selected, "oi_usd"))
                 )
