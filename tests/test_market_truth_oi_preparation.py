@@ -21,10 +21,7 @@ def _cohort():
     return [
         (
             {"instrument_id": f"{venue}:perp:T", "venue": venue},
-            [
-                {"ts": iso(_at(minute)), "oi_native": native, "oi_usd": usd}
-                for minute in range(12)
-            ],
+            [{"ts": iso(_at(minute)), "oi_native": native, "oi_usd": usd} for minute in range(12)],
             CATEGORY,
         )
         for venue, native, usd in [("binance", "100", "1000"), ("bybit", "200", "2000")]

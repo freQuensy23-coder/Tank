@@ -1117,9 +1117,7 @@ def _build_oi_preparation(sync, end, tolerance):
             candidates = [
                 rs[i]
                 for i in (idx - 1, idx)
-                if 0 <= i < len(rs)
-                and abs((times[i] - t).total_seconds()) <= tolerance
-                and times[i] <= end
+                if 0 <= i < len(rs) and abs((times[i] - t).total_seconds()) <= tolerance and times[i] <= end
             ]
             if not candidates:
                 break
