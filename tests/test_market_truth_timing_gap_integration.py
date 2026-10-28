@@ -242,8 +242,9 @@ async def test_all_token_and_prerequisite_links_exist_before_first_result_poll(s
             await caller
 
 
+@pytest.mark.parametrize("cancelled", [False, True])
 async def test_get_decision_refresh_keeps_session_identity_through_the_real_return_path(
-    tmp_path, monkeypatch, caplog
+    tmp_path, monkeypatch, caplog, cancelled
 ):
     repo = MemoryRepository()
     settings = Settings(data_dir=tmp_path, _env_file=None)
@@ -271,6 +272,27 @@ async def test_get_decision_refresh_keeps_session_identity_through_the_real_retu
     runtime.handlers = {"ESCALATE_TOKENS": runtime.escalate, "RUN_MARKET_TRUTH": runtime.assess}
     stop = asyncio.Event()
     finish = repo.finish_job
+    lock = repo.lock
+    requested, held, attempted, release = (asyncio.Event() for _ in range(4))
+    acquisitions = 0
+
+    @asynccontextmanager
+    async def observed_lock(key):
+        nonlocal acquisitions
+        if key == "session:s":
+            acquisitions += 1
+            if acquisitions == 2:
+                requested.set()
+                await held.wait()
+                attempted.set()
+        async with lock(key):
+            yield repo
+
+    async def owner():
+        await requested.wait()
+        async with lock("session:s"):
+            held.set()
+            await release.wait()
 
     async def finished(job_id):
         await finish(job_id)
@@ -278,25 +300,66 @@ async def test_get_decision_refresh_keeps_session_identity_through_the_real_retu
             stop.set()
 
     monkeypatch.setattr(repo, "finish_job", finished)
+    monkeypatch.setattr(repo, "lock", observed_lock)
     caplog.clear()
     caplog.set_level(logging.INFO, logger="tank.market_timing")
     worker = asyncio.create_task(runtime.worker(stop))
+    holder = asyncio.create_task(owner())
+    caller = None
     try:
         async with httpx.AsyncClient(transport=httpx.MockTransport(accept)) as http:
             sessions = SessionService(repo, session_settings(), tools.dispatch, http=http)
             async with asyncio.timeout(5):
-                await sessions.tool(
-                    session,
-                    {"name": "get_decision", "id": "refresh-decision", "input": {"token_id": "T"}},
+                caller = asyncio.create_task(
+                    sessions.tool(
+                        session,
+                        {"name": "get_decision", "id": "refresh-decision", "input": {"token_id": "T"}},
+                    )
                 )
+                await attempted.wait()
+                assert not caller.done()
+                active = timing_events(caplog)
+                waits = [row for row in active if row["stage"] == "tool.audit.mutation_lock_wait"]
+                assert [row["event"] for row in waits] == ["stage_start"], (
+                    "nested decision mutation advisory acquisition has no live wait span"
+                )
+                assert not any(row["stage"] == "tool.audit.mutation" for row in active)
+                pending = await repo.get("ops.tool_calls", "s:refresh-decision")
+                assert pending["status"] == "PENDING" and not pending.get("returned_at")
+                assert not (await repo.get("ana.watch_conditions", condition["cond_id"])).get("consumed_by")
+                if cancelled:
+                    caller.cancel()
+                    with pytest.raises(asyncio.CancelledError):
+                        await caller
+                release.set()
+                await holder
+                if not cancelled:
+                    await caller
                 await worker
     finally:
         stop.set()
-        if not worker.done():
-            worker.cancel()
-        with suppress(asyncio.CancelledError):
-            await worker
+        release.set()
+        for task in (caller, worker, holder):
+            if task is not None:
+                if not task.done():
+                    task.cancel()
+                with suppress(asyncio.CancelledError):
+                    await task
     stored = await repo.get("ops.tool_calls", "s:refresh-decision")
+    ended = timing_events(caplog, "stage_end")
+    wait = next(row for row in ended if row["stage"] == "tool.audit.mutation_lock_wait")
+    if cancelled:
+        assert wait["status"] == "cancelled"
+        assert stored["status"] == "PENDING" and not stored.get("returned_at")
+        assert not (await repo.get("ana.watch_conditions", condition["cond_id"])).get("consumed_by")
+        assert sent == []
+        assert not any(row["stage"] == "tool.audit.mutation" for row in ended)
+        async with asyncio.timeout(1):
+            async with lock("session:s"), lock("tool:s:refresh-decision"):
+                assert (await repo.get("ops.tool_calls", "s:refresh-decision"))["status"] == "PENDING"
+        return
+    body = next(row for row in ended if row["stage"] == "tool.audit.mutation")
+    assert wait["ended_mono_ns"] <= body["started_mono_ns"]
     assert stored["status"] == "DONE"
     assert stored["returned_at"] is not None
     assert stored["result"]["mta_id"] != first["mta_id"]
@@ -308,7 +371,6 @@ async def test_get_decision_refresh_keeps_session_identity_through_the_real_retu
     ]
     assert len(sent) == 1
     assert sent[0]["events"][0]["custom_tool_use_id"] == "refresh-decision"
-    ended = timing_events(caplog, "stage_end")
     refresh = next(row for row in ended if row["stage"] == "get_market_truth")
     assert refresh.get("session_id") == telemetry.timing_identity("s"), (
         "nested refresh lost its caller session"
