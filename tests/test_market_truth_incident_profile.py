@@ -391,7 +391,9 @@ def test_retained_ena_dense_relative_populations_cold_and_warm(record_property):
     start = parse_time(manifest["anchor"])
     end = parse_time(manifest["semantic_cutoff"])
     assembled = parse_time("2026-10-28T12:08:24.291857Z")
-    history_start = parse_time(entries["ena-price.jsonl.gz"]["first_open_time"])
+    projection_start = parse_time(entries["ena-price.jsonl.gz"]["first_open_time"])
+    history_start = end - timedelta(days=90)
+    assert history_start - projection_start == timedelta(hours=2)
     snapshot = {
         "token_id": "ethena:ENA",
         "cutoff": iso(end),
@@ -441,7 +443,7 @@ def test_retained_ena_dense_relative_populations_cold_and_warm(record_property):
                 "mkt.klines_1m",
                 selected,
                 "open_time",
-                start=history_start,
+                start=projection_start,
                 end=end,
                 filters=None,
                 instrument_ids=[instrument_id],
@@ -469,7 +471,7 @@ def test_retained_ena_dense_relative_populations_cold_and_warm(record_property):
         )
         assert isinstance(series["times_us"], array) and series["times_us"].typecode == "q"
         assert isinstance(series["values"], array) and series["values"].typecode == "d"
-        assert len(series["times_us"]) == len(series["values"]) == 129720
+        assert len(series["times_us"]) == len(series["values"]) == 129600
         assert series["time_basis"] == "CLOSE_TIME"
         assert series["precision"] == "BUCKET(60s)" and series["precision_reason"] is None
         assert all(series["complete"])
@@ -477,9 +479,19 @@ def test_retained_ena_dense_relative_populations_cold_and_warm(record_property):
         assert epoch + timedelta(microseconds=series["times_us"][0]) == history_start + timedelta(minutes=1)
         assert epoch + timedelta(microseconds=series["times_us"][-1]) == end
         snapshot["stat_price_series"][instrument_id] = series
-        wanted = {len(decoded) - 1}
-        wanted.add(max(i for i, stamp in enumerate(series["times_us"]) if stamp % 3600000000 == 0))
-        snapshot["klines"].extend(dict(decoded[i], **instrument) for i in sorted(wanted))
+        wanted = {
+            end,
+            max(
+                epoch + timedelta(microseconds=stamp)
+                for stamp in series["times_us"]
+                if stamp % 3600000000 == 0
+            ),
+        }
+        snapshot["klines"].extend(
+            dict(row, **instrument)
+            for row in decoded
+            if parse_time(row["open_time"]) + timedelta(minutes=1) in wanted
+        )
         del decoded
     raw_flow, _ = profile_phase(
         record_property,
