@@ -93,9 +93,7 @@ async def test_independent_escalation_worker_reports_the_contended_hot_set_prere
                 for record in stored
                 if record["status"] == "PENDING"
             ]
-            await put_market_batch(
-                collection, completed, keys=[record["request_id"] for record in completed]
-            )
+            await put_market_batch(collection, completed, keys=[record["request_id"] for record in completed])
         return stored
 
     @asynccontextmanager
