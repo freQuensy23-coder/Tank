@@ -6,6 +6,7 @@ from collections import Counter
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from pathlib import Path
+from time import perf_counter, process_time
 
 MANIFEST_SHA256 = "a4f924bafc62ca2d422da7245e2a4cade6b011fd87e864ea998edd07660c9285"
 PUBLIC_TABLES = {
@@ -24,6 +25,94 @@ PRIVATE_CONTENT = re.compile(
 def require(condition, message):
     if not condition:
         raise ValueError(message)
+
+
+PROGRESS_FIELDS = {
+    "source_preflight_complete": set(),
+    "repository_acquired": set(),
+    "seed_start": set(),
+    "fixture_preflight_complete": {"rows", "collections", "dimensions", "peers"},
+    "collection_native_import_complete": {"collection", "rows"},
+    "native_cache_installed": {"dimensions"},
+    "sessions_seeded": {"sessions"},
+    "native_cache_complete": {
+        "dimensions",
+        "peers",
+        "configured_instruments",
+        "captured_resolved_instruments",
+    },
+    "ready": set(),
+    "sample_start": {"state"},
+    "sample_completed": {"state"},
+    "completed": set(),
+}
+PROGRESS_COLLECTIONS = {
+    "mkt.klines_1m",
+    "mkt.flow_bars_1m",
+    "mkt.oi_obs",
+    "mkt.funding_obs",
+    "mkt.tickers_24h",
+    "mkt.supply_obs",
+    "reg.instruments",
+    "reg.tokens",
+    "ops.capture_tier_transitions",
+    "mkt.capture_gaps",
+}
+PROGRESS_TIMES = {
+    "wall_seconds",
+    "process_cpu_seconds",
+    "elapsed_wall_seconds",
+    "elapsed_process_cpu_seconds",
+}
+INCOMPLETE = "INCOMPLETE_NO_LATENCY_OR_PARITY_OUTCOME"
+
+
+def validate_progress(value):
+    require(isinstance(value, dict), "Invalid progress receipt")
+    stage = value.get("stage")
+    require(isinstance(stage, str) and stage in PROGRESS_FIELDS, "Unexpected progress stage")
+    fields = PROGRESS_FIELDS[stage]
+    require(
+        set(value) == {"kind", "stage", "completion"} | PROGRESS_TIMES | fields,
+        "Unexpected progress fields",
+    )
+    require(value["kind"] == "progress" and value["completion"] == INCOMPLETE, "Invalid progress status")
+    for key in PROGRESS_TIMES:
+        require(type(value[key]) in (int, float) and 0 <= value[key] <= 86400, "Invalid progress interval")
+    for key in fields - {"collection", "state"}:
+        require(type(value[key]) is int and 0 <= value[key] <= 1_000_000_000, "Invalid progress count")
+    if "collection" in fields:
+        require(value["collection"] in PROGRESS_COLLECTIONS, "Unexpected progress collection")
+    if "state" in fields:
+        require(value["state"] in {"cold", "warm"}, "Unexpected progress sample state")
+
+
+class StageProgress:
+    def __init__(self, emit):
+        self.emit = emit
+        self.started = self.previous = perf_counter()
+        self.cpu = self.previous_cpu = process_time()
+        self.count = 0
+
+    def record(self, stage, **details):
+        require(isinstance(stage, str) and stage in PROGRESS_FIELDS, "Unexpected progress stage")
+        require(set(details) == PROGRESS_FIELDS[stage], "Unexpected progress fields")
+        now, cpu = perf_counter(), process_time()
+        value = {
+            "kind": "progress",
+            "stage": stage,
+            "completion": INCOMPLETE,
+            "wall_seconds": now - self.previous,
+            "process_cpu_seconds": cpu - self.previous_cpu,
+            "elapsed_wall_seconds": now - self.started,
+            "elapsed_process_cpu_seconds": cpu - self.cpu,
+            **details,
+        }
+        validate_progress(value)
+        require(self.count < 24, "Progress receipts exceed their bound")
+        self.emit(value)
+        self.count += 1
+        self.previous, self.previous_cpu = perf_counter(), process_time()
 
 
 def digest(path):
@@ -215,13 +304,14 @@ async def insert_postgres(repo, table, rows, columns):
         await cursor.executemany(query, [(raw,) for raw in rows])
 
 
-async def seed_full(repo, settings, fixtures):
+async def seed_full(repo, settings, fixtures, progress=None):
     from psycopg.conninfo import conninfo_to_dict
 
     from tank import clickhouse_market
     from tank.market_schema import MARKET_COLUMNS, MARKET_IDENTITIES
     from tank.models import TABLE_COLUMNS
 
+    checkpoint = progress or (lambda stage, **details: None)
     database = conninfo_to_dict(repo.database_url).get("dbname", "")
     require(re.fullmatch(r"tank_test_fixture_[a-f0-9]{32}", database), "Owned fixture database required")
     require(repo.clickhouse.database == "mkt_" + database, "Owned ClickHouse database required")
@@ -236,9 +326,16 @@ async def seed_full(repo, settings, fixtures):
             hashlib.sha256(settings.read_config_bytes(Path(filename).name)).hexdigest() == entry["sha256"],
             "Original package config mismatch",
         )
-    native_counts(fixtures, manifest)
+    day_count_dimensions = len(native_counts(fixtures, manifest))
     cache_path = Path(settings.data_dir) / "market" / "kline_day_counts.json"
     require(not cache_path.exists(), "Native day-count cache already exists")
+    checkpoint(
+        "fixture_preflight_complete",
+        rows=sum(entry["rows"] for entry in manifest["files"]),
+        collections=len(manifest["files"]),
+        dimensions=day_count_dimensions,
+        peers=len(manifest["peer_spot_instrument_ids"]),
+    )
     inventory, envelopes = [], []
     for entry in manifest["files"]:
         captured = entry["table"]
@@ -315,8 +412,11 @@ async def seed_full(repo, settings, fixtures):
                 counted == [{"n": entry["rows"], "keys": entry["rows"], "identities": entry["rows"]}],
                 "ClickHouse typed count/identity mismatch",
             )
+            observed_rows = counted[0]["n"]
         else:
-            require(await postgres_count(repo, table) == entry["rows"], "PostgreSQL typed count mismatch")
+            observed_rows = await postgres_count(repo, table)
+            require(observed_rows == entry["rows"], "PostgreSQL typed count mismatch")
+        checkpoint("collection_native_import_complete", collection=table, rows=observed_rows)
         inventory.append(
             {
                 "name": entry["name"],
@@ -344,6 +444,7 @@ async def seed_full(repo, settings, fixtures):
         digest(cache_path) == digest(Path(fixtures) / "kline_day_counts.json"),
         "Installed native cache mismatch",
     )
+    checkpoint("native_cache_installed", dimensions=day_count_dimensions)
     return {
         "manifest": manifest,
         "inputs": inventory,

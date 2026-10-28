@@ -19,7 +19,7 @@ from time import perf_counter, process_time, thread_time
 from urllib.parse import urlsplit
 
 import httpx
-from market_truth_full_inputs import load_native_day_counts, seed_full
+from market_truth_full_inputs import StageProgress, load_native_day_counts, seed_full
 from postgres_helpers import PostgresTemplate, _finish
 from psycopg.conninfo import conninfo_to_dict
 
@@ -872,6 +872,7 @@ def imported_sources(root):
 
 async def run_worker(ownership):
     setup_started, setup_cpu = perf_counter(), process_time()
+    progress = StageProgress(emit_receipt)
     root, directory, fixtures, policy_path = map(Path, sys.argv[1:5])
     revision = sys.argv[5]
     assert root.resolve() == Path.cwd().resolve()
@@ -882,10 +883,12 @@ async def run_worker(ownership):
     config = directory / "config"
     shutil.copytree(root / "config", config)
     template = PostgresTemplate(schema_template=sys.argv[6])
+    progress.record("source_preflight_complete")
     try:
         async with owned_repository(
             template, os.environ["TANK_TEST_DATABASE_URL"], ownership, directory
         ) as repo:
+            progress.record("repository_acquired")
             assert repo.clickhouse.database.startswith("mkt_tank_test_")
             meter = Measurements()
             original_iso = market_module.iso
@@ -907,7 +910,8 @@ async def run_worker(ownership):
                     openma_api_key=None,
                     code_version=revision,
                 )
-                setup = await seed_full(repo, settings, fixtures)
+                progress.record("seed_start")
+                setup = await seed_full(repo, settings, fixtures, progress=progress.record)
                 manifest = setup["manifest"]
                 expected = setup["expected_dense_projections"]
                 setup["native_cache_path"] = str(Path(setup["native_cache_path"]).relative_to(directory))
@@ -930,6 +934,7 @@ async def run_worker(ownership):
                 seeded = {
                     state: await seed_session(repo, state, manifest["anchor"]) for state in ("cold", "warm")
                 }
+                progress.record("sessions_seeded", sessions=len(seeded))
                 market = MarketService(repo, settings, http=http)
                 configured = settings.load_config("registry")["instruments"]
                 assert set(market.instruments) == {
@@ -937,7 +942,9 @@ async def run_worker(ownership):
                 }
                 setup["configured_instrument_count"] = len(market.instruments)
                 setup["captured_resolved_instrument_count"] = next(
-                    entry["rows"] for entry in setup["inputs"] if entry["name"] == "registry-resolved.jsonl.gz"
+                    entry["rows"]
+                    for entry in setup["inputs"]
+                    if entry["name"] == "registry-resolved.jsonl.gz"
                 )
                 meter.instrument(repo.clickhouse, "rows", "clickhouse.rows_http_and_json")
                 meter.active = True
@@ -949,6 +956,13 @@ async def run_worker(ownership):
                 setup["native_day_count_queries"] = meter.query_inventory
                 assert sum(row["native_day_invalidation"] for row in meter.query_inventory) == 1
                 assert not market.__dict__.get("_condition_series")
+                progress.record(
+                    "native_cache_complete",
+                    dimensions=setup["native_day_counts"]["loaded"],
+                    peers=len(setup["native_day_counts"]["coverage"]),
+                    configured_instruments=setup["configured_instrument_count"],
+                    captured_resolved_instruments=setup["captured_resolved_instrument_count"],
+                )
                 service = truth.MarketTruthService(repo, settings, market)
                 tools = EventToolService(repo, settings, service, None)
                 sessions = SessionService(repo, settings, tools.dispatch, http=http)
@@ -1053,6 +1067,7 @@ async def run_worker(ownership):
                 try:
                     setup["total_wall_seconds"] = perf_counter() - setup_started
                     setup["total_process_cpu_seconds"] = process_time() - setup_cpu
+                    progress.record("ready")
                     print(
                         json.dumps(
                             {
@@ -1075,6 +1090,7 @@ async def run_worker(ownership):
 
                     async def sample(operation):
                         session, backfill = seeded[operation]
+                        progress.record("sample_start", state=operation)
                         try:
                             result = await run_sample(
                                 operation,
@@ -1115,6 +1131,7 @@ async def run_worker(ownership):
                             )
                             raise
                         result["modules"] = imported_sources(root)
+                        progress.record("sample_completed", state=operation)
                         return result
 
                     await serve_commands(reader, sample, emit_receipt)
@@ -1122,6 +1139,7 @@ async def run_worker(ownership):
                     transport.close()
     finally:
         await template.close()
+    progress.record("completed")
 
 
 async def main():

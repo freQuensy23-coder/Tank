@@ -7,6 +7,7 @@ from importlib.machinery import ModuleSpec
 from pathlib import Path
 from types import ModuleType, SimpleNamespace
 
+import market_truth_full_inputs as full_inputs
 import market_truth_latency_worker as worker
 import pytest
 import test_market_truth_latency_comparison as comparison
@@ -316,7 +317,7 @@ async def test_sigterm_callback_awaits_cleanup_and_ignores_repeated_signal(monke
     assert receipt["repository_cleanup"] == "CONTEXT_EXIT_COMPLETED"
 
 
-async def test_parent_close_drains_receipt_after_active_sample_cleanup():
+async def test_parent_close_drains_receipt_after_active_sample_cleanup(tmp_path):
     commands, output = asyncio.StreamReader(), asyncio.StreamReader()
     entered, finalizing, release, settled = (asyncio.Event() for _ in range(4))
     lifecycle = {"receipts": [], "shutdown_actions": []}
@@ -365,7 +366,12 @@ async def test_parent_close_drains_receipt_after_active_sample_cleanup():
     process.wait = wait
     commands.feed_data(b'{"operation":"cold"}\n')
     await entered.wait()
-    close = asyncio.create_task(comparison.close_worker(process, lifecycle))
+    checkpoint_path = tmp_path / "closing-progress.json"
+
+    def checkpoint():
+        comparison.checkpoint_progress(checkpoint_path, {}, {}, {"original": lifecycle})
+
+    close = asyncio.create_task(comparison.close_worker(process, lifecycle, checkpoint))
     await finalizing.wait()
     assert not close.done() and process.returncode is None
     release.set()
@@ -376,6 +382,8 @@ async def test_parent_close_drains_receipt_after_active_sample_cleanup():
     assert lifecycle["ownership"]["postgres_database"] == ownership["postgres_database"]
     assert lifecycle["ownership"]["clickhouse_database"] == ownership["clickhouse_database"]
     assert lifecycle["exit_code"] == 0
+    current = json.loads(checkpoint_path.read_bytes())["lifecycles"]["original"]
+    assert current == lifecycle and current["cleanup_confirmed"] is True
 
 
 def test_public_export_keeps_exact_derived_files_and_binds_bytes(tmp_path):
@@ -447,3 +455,291 @@ def test_failure_receipt_has_source_frames_but_no_exception_text():
     assert frame["source_sha256"] == hashlib.sha256(Path(__file__).read_bytes()).hexdigest()
     assert "private-secret" not in json.dumps(receipt)
     comparison.validate_public(receipt)
+
+
+def test_setup_progress_records_stage_and_elapsed_wall_and_cpu_without_callback_cost(monkeypatch):
+    clock = {"wall": 10.0, "cpu": 2.0}
+    emitted = []
+    monkeypatch.setattr(full_inputs, "perf_counter", lambda: clock["wall"])
+    monkeypatch.setattr(full_inputs, "process_time", lambda: clock["cpu"])
+
+    def emit(receipt):
+        emitted.append(receipt)
+        clock["wall"] += 100
+        clock["cpu"] += 50
+
+    progress = full_inputs.StageProgress(emit)
+    clock.update(wall=13.0, cpu=3.5)
+    progress.record("source_preflight_complete")
+    clock.update(wall=117.0, cpu=54.0)
+    progress.record("collection_native_import_complete", collection="mkt.klines_1m", rows=7)
+    first, second = emitted
+    assert first["wall_seconds"] == 3.0 and first["process_cpu_seconds"] == 1.5
+    assert second["wall_seconds"] == 4.0 and second["process_cpu_seconds"] == 0.5
+    assert second["elapsed_wall_seconds"] == 107.0
+    assert second["elapsed_process_cpu_seconds"] == 52.0
+    assert second["rows"] == 7 and second["collection"] == "mkt.klines_1m"
+    assert all(item["completion"] == "INCOMPLETE_NO_LATENCY_OR_PARITY_OUTCOME" for item in emitted)
+    for receipt in emitted:
+        comparison.public_bytes(receipt)
+
+
+@pytest.mark.parametrize(
+    ("stage", "details"),
+    [
+        ("postgresql://private:secret@localhost/private", {}),
+        ("ready", {"exception": "private text"}),
+        ("sample_start", {"state": "operator@example.invalid"}),
+        ("collection_native_import_complete", {"collection": "private.table", "rows": 1}),
+        ("collection_native_import_complete", {"collection": "mkt.klines_1m", "rows": -1}),
+    ],
+)
+def test_setup_progress_refuses_nonallowlisted_stages_fields_and_values(stage, details):
+    emitted = []
+    progress = full_inputs.StageProgress(emitted.append)
+    with pytest.raises(ValueError):
+        progress.record(stage, **details)
+    assert emitted == []
+
+
+def test_progress_checkpoint_atomically_replaces_current_public_receipts(tmp_path):
+    destination = tmp_path / "progress" / "owned.json"
+    identities = {"comparison_id": "owned", "completion": "INCOMPLETE_NO_LATENCY_OR_PARITY_OUTCOME"}
+    lifecycle = {"receipts": [], "shutdown_actions": []}
+    comparison.checkpoint_progress(destination, identities, {}, {"original": lifecycle})
+    before = destination.read_bytes()
+    comparison.retain_message(
+        {"kind": "ownership", "repository_cleanup": "ACQUIRED_PENDING_CLEANUP"}, lifecycle
+    )
+    comparison.checkpoint_progress(destination, identities, {}, {"original": lifecycle})
+    raw, current = comparison.read_public_file(destination)
+    assert raw != before
+    assert current["lifecycles"]["original"]["receipts"] == lifecycle["receipts"]
+    assert current["identities"] == identities
+    assert current["completion"] == "INCOMPLETE_NO_LATENCY_OR_PARITY_OUTCOME"
+    assert list(destination.parent.iterdir()) == [destination]
+    identities["completion"] = (
+        "MATCHED_FULL_DENSE_PATH_RECONSTRUCTION_COMPARISON_COMPLETED_NOT_PERFORMANCE_ACCEPTANCE"
+    )
+    comparison.checkpoint_progress(destination, identities, {}, {"original": lifecycle})
+    assert json.loads(destination.read_bytes())["completion"] == identities["completion"]
+
+
+@pytest.mark.parametrize(
+    "private",
+    [
+        {"receipts": [{"content": [{"text": '{"nested":{"access_token":"hidden"}}'}]}]},
+        {"receipts": [{"error": "postgresql://private:secret@localhost/private"}]},
+    ],
+)
+def test_progress_checkpoint_privacy_refusal_preserves_previous_bytes_and_creates_no_artifact(tmp_path, private):
+    destination = tmp_path / "progress" / "owned.json"
+    comparison.checkpoint_progress(destination, {}, {}, {})
+    before = destination.read_bytes()
+    with pytest.raises(ValueError, match="Forbidden public evidence"):
+        comparison.checkpoint_progress(destination, {}, {}, private)
+    assert destination.read_bytes() == before
+    missing = tmp_path / "refused" / "owned.json"
+    with pytest.raises(ValueError, match="Forbidden public evidence"):
+        comparison.checkpoint_progress(missing, {}, {}, private)
+    assert not missing.parent.exists()
+    assert list(destination.parent.iterdir()) == [destination]
+
+
+@pytest.mark.parametrize("boundary", ["fsync", "replace"])
+def test_progress_checkpoint_write_failure_preserves_previous_bytes(tmp_path, monkeypatch, boundary):
+    destination = tmp_path / "progress" / "owned.json"
+    comparison.checkpoint_progress(destination, {}, {}, {})
+    before = destination.read_bytes()
+
+    def refuse(*args, **kwargs):
+        raise OSError("private write failure must not be retained")
+
+    monkeypatch.setattr(comparison.os, boundary, refuse)
+    with pytest.raises(OSError):
+        comparison.checkpoint_progress(destination, {"comparison_id": "new"}, {}, {})
+    assert destination.read_bytes() == before
+    assert list(destination.parent.iterdir()) == [destination]
+
+
+@pytest.mark.parametrize("indirect", ["file", "parent", "ancestor"])
+def test_progress_checkpoint_refuses_symlink_targets_and_directories(tmp_path, indirect):
+    real = tmp_path / "real"
+    real.mkdir()
+    destination = real / "owned.json"
+    comparison.checkpoint_progress(destination, {}, {}, {})
+    before = destination.read_bytes()
+    link = tmp_path / "link"
+    if indirect == "file":
+        link.symlink_to(destination)
+        target = link
+    else:
+        link.symlink_to(real, target_is_directory=True)
+        target = link / "owned.json" if indirect == "parent" else link / "nested" / "owned.json"
+    with pytest.raises(ValueError, match="indirect"):
+        comparison.checkpoint_progress(target, {"comparison_id": "new"}, {}, {})
+    assert destination.read_bytes() == before
+    assert list(real.iterdir()) == [destination]
+
+
+@pytest.mark.parametrize("bound", ["file", "bundle"])
+def test_progress_checkpoint_bounds_preserve_previous_bytes(tmp_path, monkeypatch, bound):
+    destination = tmp_path / "progress" / "owned.json"
+    comparison.checkpoint_progress(destination, {}, {}, {})
+    before = destination.read_bytes()
+    name = "PUBLIC_FILE_LIMIT" if bound == "file" else "PUBLIC_TOTAL_LIMIT"
+    monkeypatch.setattr(comparison, name, 128 if bound == "file" else 32)
+    with pytest.raises(ValueError, match="exceeds its bound"):
+        comparison.checkpoint_progress(destination, {"comparison_id": "x" * 100}, {}, {})
+    assert destination.read_bytes() == before
+    assert list(destination.parent.iterdir()) == [destination]
+
+
+async def test_parent_checkpoints_ownership_progress_and_ready_in_order_before_child_exit(tmp_path):
+    reader = asyncio.StreamReader()
+    lifecycle = {"receipts": [], "shutdown_actions": []}
+    destination = tmp_path / "progress.json"
+    observed = []
+
+    def checkpoint():
+        comparison.checkpoint_progress(destination, {}, {}, {"original": lifecycle})
+        observed.append(json.loads(destination.read_bytes()))
+
+    messages = [{"kind": "ownership", "repository_cleanup": "ACQUIRED_PENDING_CLEANUP"}]
+    progress = full_inputs.StageProgress(messages.append)
+    progress.record("source_preflight_complete")
+    messages.append({"kind": "ready", "pid": 123})
+    for message in messages:
+        reader.feed_data(json.dumps(message).encode() + b"\n")
+    process = SimpleNamespace(stdout=reader, returncode=None)
+    ready = await comparison.worker_message(process, lifecycle, checkpoint)
+    assert ready == messages[-1]
+    assert [len(item["lifecycles"]["original"]["receipts"]) for item in observed] == [1, 2, 3]
+    assert lifecycle["receipts"] == messages
+    assert lifecycle["ownership"] == messages[0]
+    assert process.returncode is None and not reader.at_eof()
+    assert all(item["completion"] == "INCOMPLETE_NO_LATENCY_OR_PARITY_OUTCOME" for item in observed)
+
+
+def test_progress_checkpoint_retains_safe_failure_without_raw_exception(tmp_path):
+    destination = tmp_path / "progress.json"
+    try:
+        raise RuntimeError("postgresql://operator:private-secret@localhost/private")
+    except RuntimeError as error:
+        message = {"kind": "error", **worker.safe_failure(error)}
+    lifecycle = {"receipts": [], "shutdown_actions": []}
+    comparison.retain_message(message, lifecycle)
+    comparison.checkpoint_progress(destination, {}, {}, {"original": lifecycle})
+    raw, current = comparison.read_public_file(destination)
+    assert current["lifecycles"]["original"]["receipts"][0]["type"] == "RuntimeError"
+    assert b"private-secret" not in raw and b"postgresql" not in raw
+
+
+def test_complete_worker_progress_fits_unchanged_receipt_budget_and_stays_incomplete(tmp_path):
+    lifecycle = {"receipts": [], "shutdown_actions": []}
+    destination = tmp_path / "progress.json"
+
+    def retain(message):
+        comparison.retain_message(message, lifecycle)
+        comparison.checkpoint_progress(destination, {}, {}, {"original": lifecycle})
+
+    progress = full_inputs.StageProgress(retain)
+    progress.record("source_preflight_complete")
+    retain({"kind": "ownership", "repository_cleanup": "ACQUIRED_PENDING_CLEANUP"})
+    progress.record("repository_acquired")
+    progress.record("seed_start")
+    progress.record("fixture_preflight_complete", rows=10, collections=10, dimensions=2, peers=1)
+    for collection in sorted(full_inputs.PROGRESS_COLLECTIONS):
+        progress.record("collection_native_import_complete", collection=collection, rows=1)
+    progress.record("native_cache_installed", dimensions=2)
+    progress.record("sessions_seeded", sessions=2)
+    progress.record(
+        "native_cache_complete", dimensions=2, peers=1, configured_instruments=2, captured_resolved_instruments=1
+    )
+    progress.record("ready")
+    retain({"kind": "ready"})
+    for state in ("cold", "warm"):
+        progress.record("sample_start", state=state)
+        progress.record("sample_completed", state=state)
+        retain({"kind": "sample", "state": state})
+    retain({"kind": "ownership", "repository_cleanup": "CONTEXT_EXIT_COMPLETED"})
+    progress.record("completed")
+    retain({"kind": "shutdown", "repository_cleanup": "CONTEXT_EXIT_COMPLETED"})
+    assert len(lifecycle["receipts"]) == 29
+    assert lifecycle["receipt_bytes"] == sum(
+        len(comparison.public_bytes(item)) for item in lifecycle["receipts"]
+    )
+    current = json.loads(destination.read_bytes())
+    assert current["lifecycles"]["original"] == lifecycle
+    assert current["completion"] == "INCOMPLETE_NO_LATENCY_OR_PARITY_OUTCOME"
+    assert all(
+        item["completion"] == current["completion"]
+        for item in lifecycle["receipts"]
+        if item["kind"] == "progress"
+    )
+
+
+def test_progress_emission_and_parent_receipt_limits_refuse_without_replacing_checkpoint(tmp_path):
+    emitted = []
+    progress = full_inputs.StageProgress(emitted.append)
+    for _ in range(24):
+        progress.record("ready")
+    with pytest.raises(ValueError, match="Progress receipts exceed"):
+        progress.record("ready")
+    assert len(emitted) == 24
+    lifecycle = {"receipts": [], "shutdown_actions": []}
+    destination = tmp_path / "progress.json"
+
+    def checkpoint():
+        comparison.checkpoint_progress(destination, {}, {}, {"original": lifecycle})
+
+    for _ in range(32):
+        comparison.retain_message({"kind": "ready"}, lifecycle, checkpoint)
+    before = destination.read_bytes()
+    with pytest.raises(ValueError, match="Worker receipts exceed"):
+        comparison.retain_message({"kind": "ready"}, lifecycle, checkpoint)
+    assert len(lifecycle["receipts"]) == 32
+    assert destination.read_bytes() == before
+
+
+def test_final_export_accounts_for_separately_retained_progress_bytes(tmp_path, monkeypatch):
+    destination = tmp_path / "final"
+    monkeypatch.setattr(comparison, "PUBLIC_TOTAL_LIMIT", 100)
+    with pytest.raises(ValueError, match="bundle exceeds"):
+        comparison.export_evidence(tmp_path, destination, {}, {}, {}, progress_bytes=100)
+    assert not destination.exists()
+
+
+async def test_parent_refuses_invalid_progress_without_replacing_checkpoint(tmp_path):
+    reader = asyncio.StreamReader()
+    lifecycle = {"receipts": [], "shutdown_actions": []}
+    destination = tmp_path / "progress.json"
+
+    def checkpoint():
+        comparison.checkpoint_progress(destination, {}, {}, {"original": lifecycle})
+
+    checkpoint()
+    before = destination.read_bytes()
+    reader.feed_data(b'{"kind":"progress","stage":"private exception text"}\n')
+    with pytest.raises(ValueError, match="Unexpected progress stage"):
+        await comparison.worker_message(SimpleNamespace(stdout=reader), lifecycle, checkpoint)
+    assert lifecycle["receipts"] == []
+    assert destination.read_bytes() == before
+
+
+def test_parent_receipt_byte_limit_preserves_checkpoint(tmp_path, monkeypatch):
+    lifecycle = {"receipts": [], "shutdown_actions": []}
+    destination = tmp_path / "progress.json"
+
+    def checkpoint():
+        comparison.checkpoint_progress(destination, {}, {}, {"original": lifecycle})
+
+    comparison.retain_message({"kind": "ready"}, lifecycle, checkpoint)
+    before = destination.read_bytes()
+    payload = {"kind": "sample", "state": "cold"}
+    limit = lifecycle["receipt_bytes"] + len(comparison.public_bytes(payload)) - 1
+    monkeypatch.setattr(comparison, "PUBLIC_FILE_LIMIT", limit)
+    with pytest.raises(ValueError, match="Worker receipts exceed"):
+        comparison.retain_message(payload, lifecycle, checkpoint)
+    assert lifecycle["receipts"] == [{"kind": "ready"}]
+    assert destination.read_bytes() == before

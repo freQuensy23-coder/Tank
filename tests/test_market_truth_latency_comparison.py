@@ -4,15 +4,17 @@ import io
 import json
 import os
 import re
+import stat
 import subprocess
 import sys
 import tarfile
-from contextlib import AsyncExitStack
+from contextlib import AsyncExitStack, suppress
 from pathlib import Path
 from time import perf_counter
 from uuid import uuid4
 
 import pytest
+from market_truth_full_inputs import validate_progress
 from postgres_helpers import _finish
 
 pytestmark = [pytest.mark.integration, pytest.mark.postgres, pytest.mark.process]
@@ -131,7 +133,54 @@ def read_public_file(source):
     return raw, value
 
 
-def export_evidence(workspace, destination, identities, provenance, lifecycles):
+def checkpoint_progress(destination, identities, provenance, lifecycles):
+    completion = identities.get("completion", "INCOMPLETE_NO_LATENCY_OR_PARITY_OUTCOME")
+    payload = public_bytes(
+        {
+            "completion": completion,
+            "identities": identities,
+            "sources": provenance,
+            "lifecycles": lifecycles,
+            "qualification": QUALIFICATION,
+        }
+    )
+    if len(payload) > PUBLIC_TOTAL_LIMIT:
+        raise ValueError("Public progress bundle exceeds its bound")
+    destination = Path(destination).absolute()
+    if any(path.is_symlink() for path in (destination, *destination.parents)):
+        raise ValueError("Unbounded or indirect public progress destination")
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    if any(path.is_symlink() for path in (destination, *destination.parents)):
+        raise ValueError("Unbounded or indirect public progress destination")
+    directory = os.open(destination.parent, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+    temporary = "." + destination.name + "." + uuid4().hex + ".tmp"
+    try:
+        try:
+            current = os.stat(destination.name, dir_fd=directory, follow_symlinks=False)
+        except FileNotFoundError:
+            pass
+        else:
+            if not stat.S_ISREG(current.st_mode) or current.st_size > PUBLIC_FILE_LIMIT:
+                raise ValueError("Unbounded or indirect public progress destination")
+        descriptor = os.open(
+            temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600, dir_fd=directory
+        )
+        with os.fdopen(descriptor, "wb") as stream:
+            stream.write(payload)
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.replace(temporary, destination.name, src_dir_fd=directory, dst_dir_fd=directory)
+    finally:
+        try:
+            with suppress(FileNotFoundError):
+                os.unlink(temporary, dir_fd=directory)
+        finally:
+            os.close(directory)
+
+
+def export_evidence(workspace, destination, identities, provenance, lifecycles, progress_bytes=0):
+    if type(progress_bytes) is not int or not 0 <= progress_bytes <= PUBLIC_FILE_LIMIT:
+        raise ValueError("Invalid public progress reservation")
     payloads, inventory = {}, {}
     for name in ("original", "candidate"):
         allowed = ["ownership.json"] + [
@@ -144,7 +193,7 @@ def export_evidence(workspace, destination, identities, provenance, lifecycles):
             raw, value = read_public_file(source)
             output = name + "-" + filename
             payloads[output] = public_bytes(value)
-            if sum(map(len, payloads.values())) > PUBLIC_TOTAL_LIMIT:
+            if progress_bytes + sum(map(len, payloads.values())) > PUBLIC_TOTAL_LIMIT:
                 raise ValueError("Public evidence bundle exceeds its bound")
             inventory[output] = {
                 "source_bytes_sha256": hashlib.sha256(raw).hexdigest(),
@@ -166,7 +215,7 @@ def export_evidence(workspace, destination, identities, provenance, lifecycles):
             "trace_limit": "Phase/query receipts retained; raw application telemetry deliberately not exported",
         }
     )
-    if sum(map(len, payloads.values())) > PUBLIC_TOTAL_LIMIT:
+    if progress_bytes + sum(map(len, payloads.values())) > PUBLIC_TOTAL_LIMIT:
         raise ValueError("Public evidence bundle exceeds its bound")
     destination.mkdir(parents=True, exist_ok=False)
     for filename, payload in payloads.items():
@@ -174,7 +223,9 @@ def export_evidence(workspace, destination, identities, provenance, lifecycles):
     return {"files": len(payloads), "manifest_sha256": file_digest(destination / "manifest.json")}
 
 
-def retain_message(message, lifecycle):
+def retain_message(message, lifecycle, checkpoint=None):
+    if message.get("kind") == "progress":
+        validate_progress(message)
     payload = public_bytes(message)
     total = lifecycle.get("receipt_bytes", 0) + len(payload)
     if len(lifecycle["receipts"]) >= 32 or total > PUBLIC_FILE_LIMIT:
@@ -183,25 +234,27 @@ def retain_message(message, lifecycle):
     lifecycle["receipts"].append(message)
     if message.get("kind") in {"ownership", "shutdown"}:
         lifecycle["ownership"] = message
+    if checkpoint is not None:
+        checkpoint()
 
 
-async def worker_message(process, lifecycle):
+async def worker_message(process, lifecycle, checkpoint=None):
     assert process.stdout is not None
     while line := await process.stdout.readline():
         message = json.loads(line)
-        retain_message(message, lifecycle)
-        if message["kind"] != "ownership":
+        retain_message(message, lifecycle, checkpoint)
+        if message["kind"] not in {"ownership", "progress"}:
             return message
     raise AssertionError("Latency worker exited without its expected safe receipt")
 
 
-async def close_worker(process, lifecycle):
+async def close_worker(process, lifecycle, checkpoint=None):
     primary = sys.exception()
 
     async def drain():
         assert process.stdout is not None
         while line := await process.stdout.readline():
-            retain_message(json.loads(line), lifecycle)
+            retain_message(json.loads(line), lifecycle, checkpoint)
 
     async def shutdown():
         draining = asyncio.create_task(drain())
@@ -243,6 +296,8 @@ async def close_worker(process, lifecycle):
                 lifecycle.get("ownership", {}).get("repository_cleanup") == "CONTEXT_EXIT_COMPLETED"
                 and "SIGKILL_CLEANUP_NOT_CONFIRMED" not in lifecycle["shutdown_actions"]
             )
+            if checkpoint is not None:
+                checkpoint()
 
     try:
         await _finish(shutdown())
@@ -252,7 +307,9 @@ async def close_worker(process, lifecycle):
             raise
 
 
-async def start_worker(stack, source, run_dir, policy_path, provenance, schema_template, lifecycle):
+async def start_worker(
+    stack, source, run_dir, policy_path, provenance, schema_template, lifecycle, checkpoint=None
+):
     started = perf_counter()
     run_dir.mkdir()
     stderr = stack.enter_context((run_dir / "stderr.log").open("wb"))
@@ -280,10 +337,12 @@ async def start_worker(stack, source, run_dir, policy_path, provenance, schema_t
     )
 
     lifecycle["pid"] = process.pid
-    stack.push_async_callback(close_worker, process, lifecycle)
-    ready = await worker_message(process, lifecycle)
+    stack.push_async_callback(close_worker, process, lifecycle, checkpoint)
+    ready = await worker_message(process, lifecycle, checkpoint)
     assert ready["kind"] == "ready", ready
     ready["startup_including_imports_wall_seconds"] = perf_counter() - started
+    if checkpoint is not None:
+        checkpoint()
     return process, ready
 
 
@@ -343,6 +402,12 @@ async def test_original_and_candidate_full_input_market_truth_same_worker(
     public_bytes(identities)
     lifecycles = {name: {"receipts": [], "shutdown_actions": []} for name in provenance}
     evidence_dir = ROOT / ".test-results" / "market-truth-latency" / identities["comparison_id"]
+    progress_path = evidence_dir.with_name(identities["comparison_id"] + "-progress.json")
+
+    def checkpoint():
+        checkpoint_progress(progress_path, identities, provenance, lifecycles)
+
+    checkpoint()
     record_property("latency_source_provenance", json.dumps(provenance, sort_keys=True))
     record_property(
         "latency_scope",
@@ -391,9 +456,31 @@ async def test_original_and_candidate_full_input_market_truth_same_worker(
                     provenance[name],
                     schema_template,
                     lifecycles[name],
+                    checkpoint,
                 )
                 workers[name] = process
                 setups[name] = ready["setup"]
+                setup_progress = [
+                    message for message in lifecycles[name]["receipts"] if message["kind"] == "progress"
+                ]
+                assert [
+                    {"collection": message["collection"], "rows": message["rows"]}
+                    for message in setup_progress
+                    if message["stage"] == "collection_native_import_complete"
+                ] == [
+                    {"collection": entry["collection"], "rows": entry["rows"]}
+                    for entry in ready["setup"]["inputs"]
+                ]
+                preflight = next(
+                    message for message in setup_progress if message["stage"] == "fixture_preflight_complete"
+                )
+                assert preflight["collections"] == len(ready["setup"]["inputs"])
+                assert preflight["rows"] == sum(entry["rows"] for entry in ready["setup"]["inputs"])
+                native_progress = next(
+                    message for message in setup_progress if message["stage"] == "native_cache_complete"
+                )
+                assert native_progress["dimensions"] == ready["setup"]["native_day_counts"]["loaded"]
+                assert native_progress["peers"] == len(ready["setup"]["native_day_counts"]["coverage"])
                 record_property("latency_setup_" + name, json.dumps(ready, sort_keys=True))
             assert workers["original"].pid != workers["candidate"].pid
             for field in (
@@ -413,7 +500,7 @@ async def test_original_and_candidate_full_input_market_truth_same_worker(
                 assert process.stdin is not None
                 process.stdin.write(json.dumps({"operation": state}).encode() + b"\n")
                 await process.stdin.drain()
-                report = await worker_message(process, lifecycles[name])
+                report = await worker_message(process, lifecycles[name], checkpoint)
                 record_property(
                     f"latency_sample_{ordinal}_{name}_{state}", json.dumps(report, sort_keys=True)
                 )
@@ -487,7 +574,10 @@ async def test_original_and_candidate_full_input_market_truth_same_worker(
         for name, lifecycle in lifecycles.items():
             record_property("latency_worker_lifecycle_" + name, json.dumps(lifecycle, sort_keys=True))
         try:
-            exported = export_evidence(tmp_path, evidence_dir, identities, provenance, lifecycles)
+            checkpoint()
+            exported = export_evidence(
+                tmp_path, evidence_dir, identities, provenance, lifecycles, progress_path.stat().st_size
+            )
         except Exception as error:
             record_property(
                 "latency_public_export", json.dumps({"status": "REFUSED", "type": type(error).__name__})
