@@ -1,5 +1,4 @@
 import asyncio
-import gzip
 import hashlib
 import inspect
 import json
@@ -11,7 +10,7 @@ import signal
 import sys
 from collections import Counter, defaultdict
 from contextlib import asynccontextmanager, suppress
-from datetime import timedelta
+from datetime import datetime, timedelta
 from decimal import Decimal, Inexact, Rounded, getcontext, localcontext
 from functools import wraps
 from importlib.metadata import version
@@ -20,7 +19,7 @@ from time import perf_counter, process_time, thread_time
 from urllib.parse import urlsplit
 
 import httpx
-import yaml
+from market_truth_full_inputs import load_native_day_counts, seed_full
 from postgres_helpers import PostgresTemplate, _finish
 from psycopg.conninfo import conninfo_to_dict
 
@@ -39,11 +38,6 @@ from tank.util import parse_time, sha256
 TOKEN = "ethena:ENA"
 REFERENCE = "binance:spot:ENAUSDT"
 ASSEMBLED = "2026-10-28T12:08:24.291857Z"
-PRIVATE_CONTENT = re.compile(
-    rb"://|[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}|-----BEGIN|"
-    rb"(?:password|passwd|api_key|access_token|authorization|telegram_id|chat_id|user_id|email)\s*[\"=:]",
-    re.IGNORECASE,
-)
 
 
 def digest(path):
@@ -62,40 +56,6 @@ def decimal_state():
         "flags": {signal.__name__: value for signal, value in context.flags.items()},
         "traps": {signal.__name__: value for signal, value in context.traps.items()},
     }
-
-
-def public_nested(value, fields):
-    if isinstance(value, dict):
-        assert set(value) <= fields, "Unexpected nested public fixture field"
-        for child in value.values():
-            public_nested(child, fields)
-    elif isinstance(value, list):
-        for child in value:
-            public_nested(child, fields)
-
-
-def retained_rows(directory, entry, policy):
-    archive = (directory / entry["name"]).read_bytes()
-    assert hashlib.sha256(archive).hexdigest() == policy["ARCHIVE_HASHES"][entry["name"]]
-    assert hashlib.sha256(archive).hexdigest() == entry["archive_sha256"]
-    assert len(archive) == entry["compressed_bytes"]
-    payload = gzip.decompress(archive)
-    assert hashlib.sha256(payload).hexdigest() == entry["sha256"]
-    assert len(payload) == entry["bytes"] and not PRIVATE_CONTENT.search(payload)
-    rows = [json.loads(line) for line in payload.splitlines()]
-    assert len(rows) == entry["rows"]
-    family = (
-        "PRICE_FIELDS" if "price" in entry["name"] else "OI_FIELDS" if "-oi." in entry["name"] else "FLOW_FIELDS"
-    )
-    assert set(entry["columns"]) == set(policy[family])
-    for row in rows:
-        assert set(row) == set(policy[family]), "Unexpected public fixture field"
-        if family == "FLOW_FIELDS":
-            for field in ("first_trade", "last_trade", "boundary_segments", "reference_points"):
-                public_nested(
-                    json.loads(row[field]) if row[field] is not None else None, set(policy["NESTED_FIELDS"])
-                )
-    return rows
 
 
 class Measurements:
@@ -141,11 +101,31 @@ class Measurements:
             if name == "rows":
                 query = args[0]
                 collections = sorted(set(re.findall(r"\bmkt\.[a-z0-9_]+", query)))
+                selected = set(re.findall(r"`([a-z_]+)` AS `\1`", query.split(" FROM ")[0]))
+                common_fields = {"open_time", "open_time_prec", "recorded_at", "complete", "interval_s"}
+                dense_field = next(
+                    (field for field in ("c", "volume_native") if selected == common_fields | {field}),
+                    None,
+                )
+                dense_id = re.search(r"instrument_id IN \('([^']+)'\)", query) if dense_field else None
+                if dense_field:
+                    assert collections == ["mkt.klines_1m"] and dense_id is not None
+                params = (args[1] if len(args) > 1 else kwargs.get("params")) or {}
                 self.query_inventory.append(
                     {
                         "query_sha256": hashlib.sha256(query.encode()).hexdigest(),
                         "collections": collections,
                         "rows": len(result),
+                        "dense_projection": {"instrument_id": dense_id[1], "field": dense_field}
+                        if dense_id
+                        else None,
+                        "time_parameters": {
+                            key: value for key, (value, kind) in params.items() if kind.startswith("DateTime64")
+                        },
+                        "native_day_invalidation": query.startswith(
+                            "SELECT DISTINCT instrument_id, toString(toDate(open_time)) AS day "
+                            "FROM mkt.klines_1m "
+                        ),
                         "select_kind": "FULL_TYPED" if query.startswith("SELECT * ") else "PROJECTION_OR_INDEX",
                     }
                 )
@@ -191,123 +171,6 @@ class Measurements:
             for field in ("wall_seconds", "process_cpu_seconds", "calling_thread_cpu_seconds"):
                 aggregate[field] += phase[field]
         return dict(output)
-
-
-async def seed_market(repo, directory, fixtures, policy, manifest):
-    started, cpu = perf_counter(), process_time()
-    registry = yaml.safe_load((directory / "registry.yaml").read_text())
-    entries = {entry["name"]: entry for entry in manifest["files"]}
-    assert set(entries) == set(policy["ARCHIVE_HASHES"])
-    instruments = {row["instrument_id"]: row for row in registry["instruments"]}
-    admitted = {f"binance:spot:{symbol}USDT" for symbol in ("ENA", "BTC", "ETH")}
-    inventory = []
-    expected_spot = {}
-    for name, entry in entries.items():
-        rows = retained_rows(fixtures, entry, policy)
-        if "price" in name:
-            collection = "mkt.klines_1m"
-            instrument = instruments[f"binance:spot:{entry['symbol']}USDT"]
-            for row in rows:
-                row.pop("_cursor_time")
-                row["storage_key"] = row.pop("_cursor_key")
-                row.update(
-                    {field: instrument[field] for field in ("instrument_id", "token_id", "venue", "market_type")}
-                )
-        elif "flow" in name:
-            collection = "mkt.flow_bars_1m"
-            end = parse_time(manifest["semantic_cutoff"])
-            selected = [
-                row
-                for row in rows
-                if end - timedelta(hours=1) <= parse_time(row["minute_start"])
-                and parse_time(row["minute_start"]) + timedelta(minutes=1) <= end
-            ]
-            assert len(selected) == 60 and all(row["complete"] is True for row in selected)
-            with localcontext() as context:
-                context.prec = 128
-                expected_spot = {
-                    "buy_qty": str(sum((Decimal(row["buy_qty"]) for row in selected), Decimal(0))),
-                    "sell_qty": str(sum((Decimal(row["sell_qty"]) for row in selected), Decimal(0))),
-                }
-        else:
-            collection = "mkt.oi_obs"
-            admitted.update(row["instrument_id"] for row in rows)
-        counts = Counter(row["instrument_id"] for row in rows)
-        for index, row in enumerate(rows):
-            row.setdefault("storage_key", f"retained:{name}:{index}")
-            row["_version"] = 1
-        for offset in range(0, len(rows), 10000):
-            await repo.clickhouse.insert(collection, rows[offset : offset + 10000])
-        inventory.append(
-            {
-                "name": name,
-                "collection": collection,
-                "rows": len(rows),
-                "by_instrument": dict(counts),
-                "sha256": entry["sha256"],
-                "archive_sha256": entry["archive_sha256"],
-                "columns": entry["columns"],
-            }
-        )
-    assert len(admitted) == 7
-    controls = []
-    for symbol in ("ENA", "BTC", "ETH"):
-        instrument = instruments[f"binance:spot:{symbol}USDT"]
-        controls.append(
-            {
-                "storage_key": "synthetic-future-exclusion:" + instrument["instrument_id"],
-                "_version": 1,
-                **{field: instrument[field] for field in ("instrument_id", "token_id", "venue", "market_type")},
-                "open_time": parse_time(manifest["semantic_cutoff"]).strftime("%Y-%m-%d %H:%M:%S.%f"),
-                "open_time_prec": "BUCKET(60s)",
-                "recorded_at": parse_time(manifest["availability_cutoff"]).strftime("%Y-%m-%d %H:%M:%S.%f"),
-                "interval_s": 60,
-                "complete": True,
-                "c": "999999999.00000000000000000000000000001",
-            }
-        )
-    await repo.clickhouse.insert("mkt.klines_1m", controls)
-    for row in registry["tokens"]:
-        if row["token_id"] in {"ethena:ENA", "bitcoin:BTC", "ethereum:ETH"}:
-            await repo.put("reg.tokens", row["token_id"], row)
-    for row in registry["instruments"]:
-        if row["instrument_id"] in admitted:
-            await repo.put("reg.instruments", row["instrument_id"], row)
-    await repo.put("reg.sources", "S01", {"source_id": "S01", "name": "Public retained replay fixture"})
-    for collection, total in (("mkt.klines_1m", 389163), ("mkt.flow_bars_1m", 1444), ("mkt.oi_obs", 57399)):
-        counted = await repo.clickhouse.rows(f"SELECT count() AS n FROM {collection} FINAL")
-        assert counted == [{"n": total}], "Seeded rows were lost or deduplicated"
-    return {
-        "wall_seconds": perf_counter() - started,
-        "process_cpu_seconds": process_time() - cpu,
-        "inputs": inventory,
-        "qualification": "REDUCED_INPUT_DIAGNOSTIC_NOT_FULL_ENA_ACCEPTANCE",
-        "historical_original_dense_projection_rows": 785571,
-        "retained_dense_projection_rows": 389160,
-        "retained_dense_projection_dimensions": 3,
-        "historical_dense_projection_dimensions": 16,
-        "synthetic_controls": {
-            "collection": "mkt.klines_1m",
-            "rows": 3,
-            "purpose": "Explicit next-minute exclusion sentinels, NOT captured historical data",
-        },
-        "expected_spot": expected_spot,
-        "registry_sha256": digest(directory / "registry.yaml"),
-        "semantics_sha256": digest(directory / "semantics.yaml"),
-        "thresholds_sha256": digest(directory / "thresholds.yaml"),
-        "missing_dimensions": [
-            "90-day native-volume histories for every ENA instrument",
-            "non-Binance ENA spot price histories",
-            "ENA perpetual price histories",
-            "funding",
-            "books",
-            "supply",
-            "liquidations",
-            "live capture and repair",
-            "original row versions",
-        ],
-        "loader": "Direct sparse typed ClickHouse fixture insertion, not collector ingestion. Missing OHLC/volume fields remain NULL. No schema, required-field policy, registry semantics or product configuration is relaxed.",
-    }
 
 
 async def seed_session(repo, state, anchor):
@@ -454,42 +317,6 @@ async def seed_session(repo, state, anchor):
     return session, backfill_id
 
 
-async def load_native_day_counts(market, fixtures, manifest):
-    entry = manifest.get("native_day_counts")
-    if entry is None:
-        return {"state": "COLD_NATIVE_DAY_COUNTS", "restored": 0}
-    archive = (fixtures / entry["name"]).read_bytes()
-    assert hashlib.sha256(archive).hexdigest() == entry["archive_sha256"]
-    assert len(archive) == entry["compressed_bytes"]
-    payload = gzip.decompress(archive) if entry["name"].endswith(".gz") else archive
-    assert hashlib.sha256(payload).hexdigest() == entry["sha256"]
-    assert len(payload) == entry["bytes"] and not PRIVATE_CONTENT.search(payload)
-    saved = json.loads(payload)
-    assert set(saved) == {"version", "saved_at", "counts"} and saved["version"] == 1
-    parse_time(saved["saved_at"])
-    assert len(saved["counts"]) == entry["rows"]
-    admitted = set(entry["instrument_ids"])
-    assert len(admitted) == 81
-    for instrument_id, day, count in saved["counts"]:
-        assert instrument_id in admitted and instrument_id in market.instruments
-        assert parse_time(day).hour == parse_time(day).minute == parse_time(day).second == 0
-        assert isinstance(count, int) and not isinstance(count, bool) and count >= 0
-    path = market._day_counts_path()
-    assert not path.exists()
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_bytes(payload)
-    restored = await market._load_day_counts()
-    assert 0 < restored <= len(saved["counts"]), "Real cache load restored no eligible day aggregates"
-    return {
-        "state": "WARM_NATIVE_DAY_COUNTS_COLD_DENSE_AND_ANALYSIS",
-        "restored": restored,
-        "input_rows": len(saved["counts"]),
-        "sha256": entry["sha256"],
-        "saved_at": saved["saved_at"],
-        "semantics": "Actual captured aggregates loaded by the unchanged native disk-cache API and its SQL invalidation; NOT all application caches cold",
-    }
-
-
 @asynccontextmanager
 async def receiver(repo, directory, meter):
     pending, receipts, errors = set(), {}, []
@@ -566,47 +393,70 @@ async def receiver(repo, directory, meter):
             await asyncio.gather(*tuple(pending), return_exceptions=True)
 
 
+def snapshot_hash(value):
+    def encode(item):
+        if isinstance(item, Decimal):
+            return {"decimal": str(item)}
+        if isinstance(item, datetime):
+            return {"datetime": item.isoformat()}
+        return list(item)
+
+    return hashlib.sha256(json.dumps(value, sort_keys=True, default=encode).encode()).hexdigest()
+
+
 def assert_snapshot(snapshot, manifest):
-    series = snapshot["stat_price_series"]
     cutoff = parse_time(manifest["semantic_cutoff"])
     epoch = parse_time("1970-01-01T00:00:00Z")
-    retained = {"binance:spot:ENAUSDT", "binance:spot:BTCUSDT", "binance:spot:ETHUSDT"}
-    assert retained <= set(series)
-    for key, value in series.items():
-        if key not in retained:
-            assert not value["times_us"], "Unexpected unretained price history"
-            continue
+    assert snapshot["series_coverage_counts"] == manifest["peer_coverage_counts"]
+    for key in ("binance:spot:ENAUSDT", "binance:spot:BTCUSDT", "binance:spot:ETHUSDT"):
+        value = snapshot["stat_price_series"][key]
         assert len(value["times_us"]) == len(value["values"]) == 129600
         assert all(value["complete"])
         assert value["precision"] is None and value["precision_reason"] == "INCOMPLETE"
-        assert value["time_basis"] == "CLOSE_TIME"
         assert epoch + timedelta(microseconds=value["times_us"][-1]) == cutoff
         first_close = cutoff - timedelta(days=90) + timedelta(minutes=1)
         assert epoch + timedelta(microseconds=value["times_us"][0]) == first_close
-        assert all(price < 999999999 for price in value["values"])
     assert all(parse_time(row["open_time"]) + timedelta(minutes=1) <= cutoff for row in snapshot["klines"])
     assert all(parse_time(row["minute_start"]) + timedelta(minutes=1) <= cutoff for row in snapshot["flow_bars"])
     assert all(parse_time(row["ts"]) <= cutoff for row in snapshot["oi"])
-    assert len(snapshot["flow_bars"]) == 1444
-    assert len(snapshot["oi"]) == 57399
-    assert all(parse_time(row["recorded_at"]) <= parse_time(ASSEMBLED) for row in snapshot["oi"])
-    assert snapshot["funding"] == snapshot["books"] == snapshot["supply"] == snapshot["liquidations"] == []
+    assert {key: len(snapshot[key]) for key in ("flow_bars", "oi", "funding", "tickers", "supply")} == {
+        "flow_bars": 4346,
+        "oi": 57399,
+        "funding": 3260,
+        "tickers": 156,
+        "supply": 764,
+    }
+    assert sum(row["oi_usd"] is None for row in snapshot["oi"]) == 25721
+    assert all(
+        parse_time(row["recorded_at"]) <= parse_time(manifest["availability_cutoff"])
+        for row in snapshot["oi"]
+    )
+    assert snapshot["books"] == snapshot["liquidations"] == []
     return {
-        "price_points": {key: len(value["values"]) for key, value in series.items()},
-        "volume_points": {
-            key: {"rows": len(value["values"]), "valid_rows": sum(value["complete"])}
-            for key, value in snapshot["stat_volume_series"].items()
-        },
         "collections": {
             key: len(snapshot[key])
-            for key in ("flow_bars", "klines", "oi", "funding", "books", "supply", "liquidations")
+            for key in (
+                "flow_bars",
+                "klines",
+                "oi",
+                "funding",
+                "tickers",
+                "books",
+                "supply",
+                "liquidations",
+                "instruments",
+                "tokens",
+                "gaps",
+            )
         },
         "oi_by_instrument": dict(Counter(row["instrument_id"] for row in snapshot["oi"])),
+        "fields_sha256": {key: snapshot_hash(value) for key, value in snapshot.items() if key != "code_version"},
+        "hash_boundary": "Captured final snapshot after request timer; only root code_version excluded",
         "cutoff_exclusions": "ALL_KLINES_AND_FLOW_CLOSE_AT_OR_BEFORE_CUTOFF_AND_OI_AT_OR_BEFORE_CUTOFF",
     }
 
 
-def assert_result(result, manifest, expected_spot):
+def assert_result(result, manifest):
     assert result["token_id"] == TOKEN and result["cutoff"] == manifest["semantic_cutoff"]
     assert result["cutoff_prec"] == result["requested_cutoff_prec"] == "BUCKET(1m)"
     assert result["requested_cutoff"] == manifest["semantic_cutoff"] and result["assembled_at"] == ASSEMBLED
@@ -632,13 +482,6 @@ def assert_result(result, manifest, expected_spot):
         assert parse_time(diagnostic["latest_observed_at"]) < parse_time(manifest["anchor"])
     assert len(diagnostics) == 8
     assert 1000000 <= sum(value["sample_count"] for value in diagnostics.values()) <= 1050000
-    spot = result["spot"]["W1H"]["venues"]
-    assert len(spot) == 1
-    with localcontext() as context:
-        context.prec = 128
-        buy, sell = Decimal(expected_spot["buy_qty"]), Decimal(expected_spot["sell_qty"])
-        assert Decimal(spot[0]["buy_qty"]) == buy and Decimal(spot[0]["sell_qty"]) == sell
-        assert Decimal(spot[0]["cvd"]) == buy - sell and Decimal(spot[0]["volume_native"]) == buy + sell
     windows = result["derivatives"]["windows"]
     assert set(windows) == {"W15M", "W1H", "W4H", "W24H", "EVENT"}
     assert windows["W1H"]["synchronized"] is not None
@@ -648,47 +491,6 @@ def assert_result(result, manifest, expected_spot):
         hyperliquid = next(row for row in value["per_venue"] if row["venue"] == "hyperliquid")
         assert hyperliquid["oi_native_start"] is None and hyperliquid["oi_class"] is None
     return diagnostics
-
-
-def assert_expected_components(result, expected):
-    def compare(actual, original):
-        if isinstance(original, dict):
-            assert isinstance(actual, dict)
-            for key, value in original.items():
-                if key.endswith(("_prec", "_prec_reason")) or key == "precision":
-                    continue
-                compare(actual[key], value)
-        elif isinstance(original, list):
-            assert isinstance(actual, list) and len(actual) == len(original)
-            for left, right in zip(actual, original, strict=True):
-                compare(left, right)
-        elif isinstance(original, float):
-            assert actual is not None and abs(actual - original) <= max(1e-12, abs(original) * 1e-10)
-        elif isinstance(original, str) and re.fullmatch(r"-?\d+(?:\.\d+)?", original):
-            assert actual is not None and Decimal(actual) == Decimal(original)
-        else:
-            assert actual == original
-
-    for field in ("ref_venue", "beta_btc", "beta_eth", "normal_ranges", "market_context", "context_inputs"):
-        compare(result["relative"][field], expected["relative"][field])
-    for name, original in expected["oi_windows"].items():
-        actual = result["derivatives"]["windows"][name]
-        synchronized = original["synchronized"]
-        if synchronized is None:
-            assert actual["synchronized"] is None
-        else:
-            compare(
-                actual["synchronized"],
-                {
-                    key: value
-                    for key, value in synchronized.items()
-                    if key not in {"decomposition", "coverage", "venues"}
-                },
-            )
-            assert sorted(actual["synchronized"]["venues"]) == sorted(synchronized["venues"])
-        by_instrument = {row["instrument_id"]: row for row in actual["per_venue"]}
-        for row in original["per_venue"]:
-            compare(by_instrument[row["instrument_id"]], row)
 
 
 async def settle_owned(tasks):
@@ -899,8 +701,7 @@ async def run_sample(
     assert audit["remote_event_id"] == "protocol-" + state
     result = audit["result"]["market_truth"][0]
     assert await repo.get("ana.market_truth", result["mta_id"]) == result
-    diagnostics = assert_result(result, manifest, setup["expected_spot"])
-    assert_expected_components(result, expected)
+    diagnostics = assert_result(result, manifest)
     assert any(row["backfill_id"] == backfill for row in result["detail"]["backfill_runs"])
     jobs = [
         row
@@ -937,21 +738,47 @@ async def run_sample(
         (directory / f"{state}-{name}.json").write_text(json.dumps(output, sort_keys=True))
     phases = meter.summary()
     meter.snapshot_invariants = assert_snapshot(meter.snapshot, manifest)
-    meter.inventory = [
-        {
-            "instrument_id": instrument,
-            "kind": kind,
-            "rows": len(value["times_us"]),
-            "valid_rows": sum(value["complete"]),
-            "precision": value.get("precision"),
-            "precision_reason": value.get("precision_reason"),
-            "series_sha256": hashlib.sha256(
-                value["times_us"].tobytes()
-                + (value["values"].tobytes() if kind == "price" else json.dumps(value["values"]).encode())
-            ).hexdigest(),
-        }
-        for instrument, kind, value in meter.series
-    ]
+    meter.inventory = []
+    for entry in expected:
+        instrument, kind = entry["instrument_id"], "price" if entry["field"] == "c" else "volume"
+        value = meter.snapshot["stat_price_series" if kind == "price" else "stat_volume_series"][instrument]
+        assert len(value["times_us"]) == len(value["values"]) == len(value["complete"])
+        assert value["time_basis"] == ("CLOSE_TIME" if kind == "price" else "OPEN_TIME")
+        lower = parse_time(manifest["history_start"])
+        upper = parse_time(manifest["semantic_cutoff"])
+        if kind == "volume":
+            upper -= timedelta(minutes=1)
+        epoch = parse_time("1970-01-01T00:00:00Z")
+        low_us, high_us = (int((bound - epoch).total_seconds() * 1000000) for bound in (lower, upper))
+        assert not value["times_us"] or low_us <= min(value["times_us"]) <= max(value["times_us"]) <= high_us
+        meter.inventory.append(
+            {
+                "instrument_id": instrument,
+                "kind": kind,
+                "rows": len(value["times_us"]),
+                "valid_rows": sum(value["complete"]),
+                "precision": value.get("precision"),
+                "precision_reason": value.get("precision_reason"),
+                "time_basis": value["time_basis"],
+                "coverage_count": value["coverage_count"],
+                "first_time_us": value["times_us"][0] if value["times_us"] else None,
+                "last_time_us": value["times_us"][-1] if value["times_us"] else None,
+                "series_sha256": snapshot_hash(
+                    [list(value["times_us"]), list(value["values"]), list(value["complete"])]
+                ),
+            }
+        )
+    dense = Counter()
+    for query in meter.query_inventory:
+        if query["dense_projection"] is not None:
+            projection = query["dense_projection"]
+            dense[projection["instrument_id"], projection["field"]] += query["rows"]
+            assert [parse_time(query["time_parameters"][key]) for key in ("p0", "p1", "p2")] == [
+                parse_time(manifest[key]) for key in ("dense_lower", "dense_exclusive_upper", "availability_cutoff")
+            ]
+    if state == "cold":
+        assert dense == {(row["instrument_id"], row["field"]): row["rows"] for row in expected}
+        assert len(dense) == 16 and sum(dense.values()) == manifest["dense_projection_rows"] == 784665
     assert phases["compute"]["calls"] == phases["snapshot"]["calls"] == 1
     assert phases["compute.derivatives"]["calls"] == 5
     assert phases["compute.relative"]["calls"] == 1
@@ -976,6 +803,8 @@ async def run_sample(
         "snapshot_invariants": meter.snapshot_invariants,
         "series_requests": meter.inventory,
         "query_inventory": meter.query_inventory,
+        "dense_projection_rows": sum(dense.values()),
+        "dense_projection_dimensions": len(dense),
         "executor_dispatch": meter.executor_dispatch,
         "decimal_semantics": {
             "request_context": decimal_before,
@@ -1011,27 +840,12 @@ async def run_worker(ownership):
     imported_sources(root)
     logging.basicConfig(level=logging.INFO, filename=directory / "application.log")
     policy = json.loads(policy_path.read_text())
-    manifest = json.loads((fixtures / "manifest.json").read_text())
-    expected_path = fixtures / manifest["expected_output"]["name"]
-    assert digest(expected_path) == manifest["expected_output"]["sha256"]
-    expected = json.loads(expected_path.read_text())
     config = directory / "config"
     shutil.copytree(root / "config", config)
     template = PostgresTemplate(schema_template=sys.argv[6])
     try:
         async with owned_repository(template, os.environ["TANK_TEST_DATABASE_URL"], ownership, directory) as repo:
             assert repo.clickhouse.database.startswith("mkt_tank_test_")
-            setup = await seed_market(repo, config, fixtures, policy, manifest)
-            setup.update(
-                manifest_sha256=digest(fixtures / "manifest.json"),
-                expected_components_sha256=digest(expected_path),
-                public_policy_sha256=digest(policy_path),
-                availability_cutoff=manifest["availability_cutoff"],
-                final_assembled_at=ASSEMBLED,
-            )
-            seeded = {
-                state: await seed_session(repo, state, manifest["anchor"]) for state in ("cold", "warm")
-            }
             meter = Measurements()
             original_iso = market_module.iso
             frozen_time = {"value": ASSEMBLED}
@@ -1050,8 +864,41 @@ async def run_worker(ownership):
                     openma_api_key=None,
                     code_version=revision,
                 )
+                setup = await seed_full(repo, settings, fixtures)
+                manifest = setup["manifest"]
+                expected = setup["expected_dense_projections"]
+                setup["native_cache_path"] = str(Path(setup["native_cache_path"]).relative_to(directory))
+                setup.update(
+                    public_policy_sha256=digest(policy_path),
+                    registry_sha256=digest(config / "registry.yaml"),
+                    semantics_sha256=digest(config / "semantics.yaml"),
+                    thresholds_sha256=digest(config / "thresholds.yaml"),
+                    final_assembled_at=ASSEMBLED,
+                    capture_boundary="Fixture-owned COMPLETE run and replay=True; not the later captured PARTIAL status or original stream state",
+                )
+                assert policy == {
+                    "manifest_sha256": setup["manifest_sha256"],
+                    "privacy_sha256": digest(fixtures / "privacy.json"),
+                    "loader_sha256": setup["loader_sha256"],
+                }
+                await repo.put(
+                    "reg.sources", "S01", {"source_id": "S01", "name": "Public retained replay fixture"}
+                )
+                seeded = {
+                    state: await seed_session(repo, state, manifest["anchor"]) for state in ("cold", "warm")
+                }
                 market = MarketService(repo, settings, http=http)
-                setup["native_day_counts"] = await load_native_day_counts(market, fixtures, manifest)
+                assert len(market.instruments) == 85
+                meter.instrument(repo.clickhouse, "rows", "clickhouse.rows_http_and_json")
+                meter.active = True
+                try:
+                    setup["native_day_counts"] = await load_native_day_counts(market, fixtures, manifest)
+                finally:
+                    meter.active = False
+                setup["native_cache_loaded"] = True
+                setup["native_day_count_queries"] = meter.query_inventory
+                assert sum(row["native_day_invalidation"] for row in meter.query_inventory) == 1
+                assert not market.__dict__.get("_condition_series")
                 service = truth.MarketTruthService(repo, settings, market)
                 tools = EventToolService(repo, settings, service, None)
                 sessions = SessionService(repo, settings, tools.dispatch, http=http)
@@ -1139,7 +986,6 @@ async def run_worker(ownership):
 
                 market.snapshot = observe_snapshot
                 meter.instrument(market, "snapshot", "snapshot")
-                meter.instrument(repo.clickhouse, "rows", "clickhouse.rows_http_and_json")
                 meter.instrument(service, "assess", "assessment")
                 meter.instrument(tools, "get_market_truth", "tool.domain")
                 meter.instrument(sessions, "request", "tool.http_request")
@@ -1192,6 +1038,7 @@ async def run_worker(ownership):
                                 (row["instrument_id"], row["kind"]) for row in result["series_requests"]
                             }
                             assert observed_series == expected_series
+                            assert {(iid, kind) for iid, kind, _ in meter.series} == expected_series
                         except BaseException as error:
                             emit_receipt(
                                 {

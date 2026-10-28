@@ -1,4 +1,3 @@
-import ast
 import asyncio
 import hashlib
 import io
@@ -20,7 +19,8 @@ pytestmark = [pytest.mark.integration, pytest.mark.postgres, pytest.mark.process
 
 ORIGINAL = "ff6512a4ac2107319effc8e7745ee898a47c6212"
 ROOT = Path(__file__).resolve().parents[1]
-FIXTURES = ROOT / "tests" / "fixtures" / "market-truth-latency"
+FIXTURES = ROOT / "tests" / "fixtures" / "market-truth-latency-full"
+QUALIFICATION = "PUBLIC_CURRENT_FINAL_RECONSTRUCTION_WARM_NATIVE_DAY_COUNTS_COLD_DENSE_AND_ANALYSIS"
 ORDER = (("original", "cold"), ("candidate", "cold"), ("candidate", "warm"), ("original", "warm"))
 
 
@@ -53,23 +53,10 @@ def archive_source(revision, destination):
 
 
 def retained_policy():
-    source = ROOT / "tests" / "test_market_truth_incident_profile.py"
-    assignments = {
-        node.targets[0].id: node.value
-        for node in ast.parse(source.read_text()).body
-        if isinstance(node, ast.Assign) and isinstance(node.targets[0], ast.Name)
-    }
-    fields = {
-        name: sorted(ast.literal_eval(assignments[name]))
-        for name in ("PRICE_FIELDS", "FLOW_FIELDS", "OI_FIELDS")
-    }
-    nested = assignments["NESTED_FIELDS"]
-    assert isinstance(nested, ast.BinOp)
-    fields["NESTED_FIELDS"] = sorted(set(fields["FLOW_FIELDS"]) | ast.literal_eval(nested.right))
     return {
-        **fields,
-        "ARCHIVE_HASHES": ast.literal_eval(assignments["ARCHIVE_HASHES"]),
-        "policy_source_sha256": file_digest(source),
+        "manifest_sha256": file_digest(FIXTURES / "manifest.json"),
+        "privacy_sha256": file_digest(FIXTURES / "privacy.json"),
+        "loader_sha256": file_digest(ROOT / "tests" / "market_truth_full_inputs.py"),
     }
 
 
@@ -174,7 +161,7 @@ def export_evidence(workspace, destination, identities, provenance, lifecycles):
             "identities": identities,
             "sources": provenance,
             "files": inventory,
-            "qualification": "REDUCED_INPUT_DIAGNOSTIC_NOT_FULL_ENA_ACCEPTANCE",
+            "qualification": QUALIFICATION,
             "export_policy": "Only validated derived results, projections, HTTP JSON, ownership and receipts; no raw stderr, environment, config or application logs",
             "trace_limit": "Phase/query receipts retained; raw application telemetry deliberately not exported",
         }
@@ -316,7 +303,7 @@ def compare_full_result(actual, expected, path=""):
         assert type(actual) is type(expected) and actual == expected, path
 
 
-async def test_original_and_candidate_reduced_input_market_truth_same_worker(
+async def test_original_and_candidate_full_input_market_truth_same_worker(
     tmp_path,
     record_property,
     pytestconfig,
@@ -341,6 +328,7 @@ async def test_original_and_candidate_reduced_input_market_truth_same_worker(
         "original_commit": ORIGINAL,
         "harness_sha256": file_digest(Path(__file__)),
         "worker_sha256": file_digest(ROOT / "tests" / "market_truth_latency_worker.py"),
+        "full_input_loader_sha256": file_digest(ROOT / "tests" / "market_truth_full_inputs.py"),
         "postgres_adapter_sha256": file_digest(ROOT / "tests" / "postgres_helpers.py"),
         "fixture_manifest_sha256": file_digest(FIXTURES / "manifest.json"),
         "public_policy_sha256": file_digest(policy_path),
@@ -358,20 +346,25 @@ async def test_original_and_candidate_reduced_input_market_truth_same_worker(
     record_property("latency_source_provenance", json.dumps(provenance, sort_keys=True))
     record_property(
         "latency_scope",
-        "REDUCED_INPUT_DIAGNOSTIC_NOT_FULL_ENA_ACCEPTANCE. Complete code path, incomplete ENA inputs. "
-        "Same pytest worker and owned PostgreSQL16/ClickHouse25.8 services; ABBA original-cold, "
-        "candidate-cold, candidate-warm, original-warm. Independent long-lived subprocess/package/DB/cache "
-        "per version. Cold means fresh dense/analysis caches, NOT cold OS/server caches. Native day-count "
-        "cache state is separately recorded; a native warm-count fixture is NOT all-application-caches cold. "
-        "Warm is a new "
-        "event/job at identical anchor/cutoff with original application caches retained, NOT a stored-result "
-        "replay. Seeded COMPLETE capture plus replay=True: repair returns normally without contacting a "
-        "collector. Full Session.tool -> durable worker -> snapshot -> compute_market_truth -> SQL result "
-        "-> loopback HTTP receipt -> returned audit. No live capture, repair wait, actual OpenMA/model "
-        "continuation, historical incident latency, deployment, or statistical speedup acceptance. "
-        "Retained price projections omit OHLC/volume; NULL stays NULL. Three explicitly synthetic "
-        "next-minute exclusion controls are NOT captured historical data. "
-        "Funding/books/supply/liquidations and other venue histories are absent.",
+        QUALIFICATION
+        + ". Matched full-dense-path seeded request, not an exact historical reproduction. "
+        "All 16 projections / 784665 current FINAL rows, including nine native-volume paths; "
+        "original 85-instrument config and 81-peer counts retained. Later Coinbase FINAL lacks 453 "
+        "underlying / 906 projected historical rows. Same pytest worker, owned PostgreSQL16/ClickHouse25.8; "
+        "ABBA original-cold, candidate-cold, candidate-warm, original-warm is one balanced pair per state, "
+        "not repeated statistical confidence. Independent package/process/DB/cache lifetimes per version. "
+        "Cold dense/analysis caches, warm native 7209 whole-day aggregates with actual later saved_at, "
+        "native SQL invalidation and real edges; NOT all-application/OS/server caches cold. Warm uses "
+        "new event/jobs at identical anchor/cutoff and retained application caches, not stored results; "
+        "zero repeated dense SQL projections is permitted. Fixture-owned COMPLETE and replay=True "
+        "avoid live capture/repair waits; the later matching-anchor PARTIAL receipt is not historical COMPLETE. "
+        "Session.tool -> durable worker -> snapshot -> full compute -> durable SQL -> loopback HTTP "
+        "receipt -> returned audit. No actual OpenMA/model continuation, deployment, historical incident "
+        "latency or automatic performance acceptance. Real funding/tickers/supply/tier/gaps are loaded; "
+        "books/liquidations are confirmed empty. Genuine NULLs remain; uncaptured wide columns, original "
+        "mutable streams and privacy/source_archive omissions remain explicit in the pinned manifest. "
+        "Reduced subset component goldens and single-venue flow sums do not describe the expanded cohort; "
+        "complete independent original-source output and snapshot comparisons replace them.",
     )
     record_property("latency_harness_sha256", file_digest(Path(__file__)))
     record_property("latency_worker_sha256", file_digest(ROOT / "tests" / "market_truth_latency_worker.py"))
@@ -403,7 +396,17 @@ async def test_original_and_candidate_reduced_input_market_truth_same_worker(
                 setups[name] = ready["setup"]
                 record_property("latency_setup_" + name, json.dumps(ready, sort_keys=True))
             assert workers["original"].pid != workers["candidate"].pid
-            for field in ("inputs", "registry_sha256", "semantics_sha256", "thresholds_sha256"):
+            for field in (
+                "inputs",
+                "registry_sha256",
+                "semantics_sha256",
+                "thresholds_sha256",
+                "manifest_sha256",
+                "loader_sha256",
+                "expected_coverage",
+                "expected_dense_projections",
+                "native_day_counts",
+            ):
                 assert setups["original"][field] == setups["candidate"][field], field
             for ordinal, (name, state) in enumerate(ORDER):
                 process = workers[name]
@@ -422,6 +425,9 @@ async def test_original_and_candidate_reduced_input_market_truth_same_worker(
                 revised = reports["candidate", state]
                 assert original["snapshot_invariants"] == revised["snapshot_invariants"]
                 assert original["decimal_semantics"] == revised["decimal_semantics"]
+                assert original["series_requests"] == revised["series_requests"]
+                assert original["dense_projection_rows"] == revised["dense_projection_rows"]
+                assert original["dense_projection_dimensions"] == revised["dense_projection_dimensions"]
                 for output in ("result", "projection"):
                     _, left = read_public_file(tmp_path / "original-run" / f"{state}-{output}.json")
                     _, right = read_public_file(tmp_path / "candidate-run" / f"{state}-{output}.json")
@@ -443,9 +449,13 @@ async def test_original_and_candidate_reduced_input_market_truth_same_worker(
                         sort_keys=True,
                     ),
                 )
+        for name in ("original", "candidate"):
+            assert reports[name, "cold"]["series_requests"] == reports[name, "warm"]["series_requests"]
         assert all(process.returncode == 0 for process in workers.values()), "Latency worker cleanup failed"
         assert all(item.get("cleanup_confirmed") for item in lifecycles.values()), "Owned cleanup not confirmed"
-        identities["completion"] = "REDUCED_INPUT_COMPARISON_COMPLETED"
+        identities["completion"] = (
+            "MATCHED_FULL_DENSE_PATH_RECONSTRUCTION_COMPARISON_COMPLETED_NOT_PERFORMANCE_ACCEPTANCE"
+        )
     except TimeoutError:
         record_property(
             "latency_timeout",
