@@ -898,9 +898,7 @@ def test_export_checkpoints_all_parent_read_stages_and_bundle_without_claiming_e
     stages = observed[-1]["export_progress"]
     assert len(observed) == len(stages) == 29
     assert [(item["stage"], item["filename"]) for item in stages] == [
-        pair
-        for filename in export_inputs
-        for pair in (("read_start", filename), ("read_complete", filename))
+        pair for filename in export_inputs for pair in (("read_start", filename), ("read_complete", filename))
     ] + [("bundle_assembled", "")]
     assert stages[0]["elapsed_wall_seconds"] == stages[0]["elapsed_process_cpu_seconds"] == 0
     assert stages[1]["elapsed_wall_seconds"] == 2.5
