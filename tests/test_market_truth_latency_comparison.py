@@ -33,7 +33,9 @@ def file_digest(path):
 
 
 def archive_source(revision, destination):
-    archive = git_bytes("archive", "--format=tar", revision, "src/tank", "config", "pyproject.toml", "uv.lock")
+    archive = git_bytes(
+        "archive", "--format=tar", revision, "src/tank", "config", "pyproject.toml", "uv.lock"
+    )
     destination.mkdir()
     with tarfile.open(fileobj=io.BytesIO(archive)) as source:
         source.extractall(destination, filter="data")
@@ -133,9 +135,7 @@ def export_evidence(workspace, destination, identities, provenance, lifecycles):
     payloads, inventory = {}, {}
     for name in ("original", "candidate"):
         allowed = ["ownership.json"] + [
-            f"{state}-{kind}.json"
-            for state in ("cold", "warm")
-            for kind in ("result", "projection", "http")
+            f"{state}-{kind}.json" for state in ("cold", "warm") for kind in ("result", "projection", "http")
         ]
         for filename in allowed:
             source = workspace / (name + "-run") / filename
@@ -452,7 +452,9 @@ async def test_original_and_candidate_full_input_market_truth_same_worker(
         for name in ("original", "candidate"):
             assert reports[name, "cold"]["series_requests"] == reports[name, "warm"]["series_requests"]
         assert all(process.returncode == 0 for process in workers.values()), "Latency worker cleanup failed"
-        assert all(item.get("cleanup_confirmed") for item in lifecycles.values()), "Owned cleanup not confirmed"
+        assert all(item.get("cleanup_confirmed") for item in lifecycles.values()), (
+            "Owned cleanup not confirmed"
+        )
         identities["completion"] = (
             "MATCHED_FULL_DENSE_PATH_RECONSTRUCTION_COMPARISON_COMPLETED_NOT_PERFORMANCE_ACCEPTANCE"
         )

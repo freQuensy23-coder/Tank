@@ -126,7 +126,9 @@ class Measurements:
                             "SELECT DISTINCT instrument_id, toString(toDate(open_time)) AS day "
                             "FROM mkt.klines_1m "
                         ),
-                        "select_kind": "FULL_TYPED" if query.startswith("SELECT * ") else "PROJECTION_OR_INDEX",
+                        "select_kind": "FULL_TYPED"
+                        if query.startswith("SELECT * ")
+                        else "PROJECTION_OR_INDEX",
                     }
                 )
             return result
@@ -417,7 +419,9 @@ def assert_snapshot(snapshot, manifest):
         first_close = cutoff - timedelta(days=90) + timedelta(minutes=1)
         assert epoch + timedelta(microseconds=value["times_us"][0]) == first_close
     assert all(parse_time(row["open_time"]) + timedelta(minutes=1) <= cutoff for row in snapshot["klines"])
-    assert all(parse_time(row["minute_start"]) + timedelta(minutes=1) <= cutoff for row in snapshot["flow_bars"])
+    assert all(
+        parse_time(row["minute_start"]) + timedelta(minutes=1) <= cutoff for row in snapshot["flow_bars"]
+    )
     assert all(parse_time(row["ts"]) <= cutoff for row in snapshot["oi"])
     assert {key: len(snapshot[key]) for key in ("flow_bars", "oi", "funding", "tickers", "supply")} == {
         "flow_bars": 4346,
@@ -627,7 +631,19 @@ async def owned_repository(template, route, ownership, directory):
 
 
 async def run_sample(
-    state, repo, session, backfill, sessions, runtime, meter, receipts, errors, directory, manifest, setup, expected
+    state,
+    repo,
+    session,
+    backfill,
+    sessions,
+    runtime,
+    meter,
+    receipts,
+    errors,
+    directory,
+    manifest,
+    setup,
+    expected,
 ):
     assert state not in receipts
     cache_before = len(runtime.truth._assessment_baselines.get(TOKEN, {}))
@@ -821,13 +837,29 @@ async def run_sample(
 
 
 def imported_sources(root):
+    root = root.resolve()
+    package = root / "src" / "tank"
     modules = {}
     for name, module in tuple(sys.modules.items()):
         if name == "tank" or name.startswith("tank."):
-            path = Path(module.__file__).resolve()
-            assert path.is_relative_to(root / "src" / "tank"), "Mixed original/candidate product imports"
+            filename = getattr(module, "__file__", None)
+            if filename is None:
+                spec = getattr(module, "__spec__", None)
+                assert spec is not None and spec.name == name and spec.origin is None and not spec.has_location
+                locations = spec.submodule_search_locations
+                declared = getattr(module, "__path__", None)
+                assert locations and declared and 0 < len(locations) <= 16 and 0 < len(declared) <= 16
+                paths = {Path(location).resolve() for location in locations}
+                assert paths == {Path(location).resolve() for location in declared}
+                assert all(path.is_dir() and path.is_relative_to(package) for path in paths)
+                relative = sorted(str(path.relative_to(root)) for path in paths)
+                assert all(re.fullmatch(r"[A-Za-z0-9_./-]{1,240}", path) for path in relative)
+                modules[name] = {"namespace_locations": relative}
+                continue
+            path = Path(filename).resolve()
+            assert path.is_relative_to(package), "Mixed original/candidate product imports"
             modules[name] = {"file": str(path.relative_to(root)), "sha256": digest(path)}
-    assert Path(tank.__file__).resolve().is_relative_to(root / "src" / "tank")
+    assert sys.modules.get("tank") is tank and "tank" in modules
     return modules
 
 
@@ -844,13 +876,17 @@ async def run_worker(ownership):
     shutil.copytree(root / "config", config)
     template = PostgresTemplate(schema_template=sys.argv[6])
     try:
-        async with owned_repository(template, os.environ["TANK_TEST_DATABASE_URL"], ownership, directory) as repo:
+        async with owned_repository(
+            template, os.environ["TANK_TEST_DATABASE_URL"], ownership, directory
+        ) as repo:
             assert repo.clickhouse.database.startswith("mkt_tank_test_")
             meter = Measurements()
             original_iso = market_module.iso
             frozen_time = {"value": ASSEMBLED}
             market_module.utcnow = lambda: parse_time(ASSEMBLED)
-            market_module.iso = lambda value=None: original_iso(frozen_time["value"] if value is None else value)
+            market_module.iso = lambda value=None: original_iso(
+                frozen_time["value"] if value is None else value
+            )
             async with (
                 receiver(repo, directory, meter) as (url, receipts, errors),
                 httpx.AsyncClient(trust_env=False) as http,
@@ -903,7 +939,12 @@ async def run_worker(ownership):
                 tools = EventToolService(repo, settings, service, None)
                 sessions = SessionService(repo, settings, tools.dispatch, http=http)
                 runtime = object.__new__(Runtime)
-                runtime.repo, runtime.settings, runtime.market, runtime.truth = repo, settings, market, service
+                runtime.repo, runtime.settings, runtime.market, runtime.truth = (
+                    repo,
+                    settings,
+                    market,
+                    service,
+                )
                 runtime.handlers = {"ESCALATE_TOKENS": runtime.escalate, "RUN_MARKET_TRUTH": runtime.assess}
                 expected_series = {
                     (instrument["instrument_id"], kind)
@@ -958,7 +999,9 @@ async def run_worker(ownership):
                     "jsonable",
                 ):
                     phase = (
-                        "compute" if name == "compute_market_truth" else "compute." + name.removesuffix("_truth")
+                        "compute"
+                        if name == "compute_market_truth"
+                        else "compute." + name.removesuffix("_truth")
                     )
                     meter.instrument(truth, name, phase)
                 for name in ("_records", "_json_lines"):
