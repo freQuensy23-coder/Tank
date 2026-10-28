@@ -211,9 +211,8 @@ async def insert_postgres(repo, table, rows, columns):
     query = sql.SQL("INSERT INTO {} ({}) SELECT {} FROM jsonb_populate_record(NULL::{}, %s::jsonb)").format(
         target, names, names, target
     )
-    async with repo.transaction():
-        async with repo._conn().cursor() as cursor:
-            await cursor.executemany(query, [(raw,) for raw in rows])
+    async with repo.transaction(), repo._conn().cursor() as cursor:
+        await cursor.executemany(query, [(raw,) for raw in rows])
 
 
 async def seed_full(repo, settings, fixtures):
