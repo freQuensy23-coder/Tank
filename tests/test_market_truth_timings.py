@@ -18,9 +18,7 @@ from tank.storage import MemoryRepository
 
 def events(caplog):
     return [
-        json.loads(record.getMessage())
-        for record in caplog.records
-        if record.name == "tank.market_timing"
+        json.loads(record.getMessage()) for record in caplog.records if record.name == "tank.market_timing"
     ]
 
 
@@ -105,7 +103,9 @@ async def test_parallel_and_thread_contexts_are_isolated(caplog):
         compute = [
             row
             for row in records
-            if row["stage"] == "compute" and row["event"] == "stage_end" and row["trace_id"] == root["trace_id"]
+            if row["stage"] == "compute"
+            and row["event"] == "stage_end"
+            and row["trace_id"] == root["trace_id"]
         ]
         assert len(compute) == 1
         assert compute[0]["parent_span_id"] == root["span_id"]

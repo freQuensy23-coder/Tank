@@ -193,7 +193,9 @@ async def test_http_decode_and_real_compute_share_trace_without_payloads(caplog)
     assert requests[0]["query_id"] == [http_span["query_id"]]
     assert http_span["bytes"] == len(payload)
     assert next(r for r in ended if r["stage"] == "clickhouse.json_decode")["rows"] == 1
-    assert "private-" not in "\n".join(r.getMessage() for r in caplog.records if r.name == "tank.market_timing")
+    assert "private-" not in "\n".join(
+        r.getMessage() for r in caplog.records if r.name == "tank.market_timing"
+    )
 
 
 def test_bounded_real_compute_profile_retains_hot_functions(record_property):
@@ -219,4 +221,6 @@ def test_bounded_real_compute_profile_retains_hot_functions(record_property):
     assert any(row["function"] == "compute_market_truth" for row in top)
     assert any(row["function"] == "_compute_market_truth" for row in top)
     record_property("controlled_fixture_profile_top", json.dumps(top, sort_keys=True))
-    record_property("controlled_fixture_profile_scope", "synthetic compact START; not historical ENA reproduction")
+    record_property(
+        "controlled_fixture_profile_scope", "synthetic compact START; not historical ENA reproduction"
+    )
