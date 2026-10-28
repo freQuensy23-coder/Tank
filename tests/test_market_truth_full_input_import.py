@@ -27,8 +27,7 @@ async def native_import():
         await ch.close()
 
 
-def retained_batch(tmp_path, lines, *, schema=None, recursive=None):
-    table = "mkt.klines_1m"
+def retained_batch(tmp_path, lines, *, table="mkt.klines_1m", schema=None, recursive=None):
     payload = "\n".join(lines).encode() + b"\n"
     path = tmp_path / "rows.jsonl.gz"
     path.write_bytes(gzip.compress(payload))
@@ -90,9 +89,9 @@ async def test_native_import_reuses_validated_json_without_changing_typed_payloa
     assert "o" not in json.loads(payload)
     await ch.insert("mkt.klines_1m", [{**batch[0][0], "_version": 1}])
     assert json.loads(requests[1].content.decode().split("\n", 1)[1]) == json.loads(payload)
-    assert requests[0].url.params == requests[1].url.params.copy_with(
-        query_id=requests[0].url.params["query_id"]
-    )
+    assert {key: value for key, value in requests[0].url.params.items() if key != "query_id"} == {
+        key: value for key, value in requests[1].url.params.items() if key != "query_id"
+    }
     assert {key: value for key, value in requests[0].headers.items() if key != "content-length"} == {
         key: value for key, value in requests[1].headers.items() if key != "content-length"
     }
@@ -110,6 +109,8 @@ async def test_native_import_reuses_validated_json_without_changing_typed_payloa
 async def test_native_import_falls_back_to_product_serializer(tmp_path, native_import, changes):
     ch, requests = native_import
     line = captured_line(**changes)
+    if "☃" in changes.get("semantic_fingerprint", ""):
+        line = line.replace("\\u2603", "☃")
     if changes == {"semantic_fingerprint": "escaped mkt"}:
         line = line.replace("escaped mkt", "escaped \\u006dkt")
     schema = {**MARKET_COLUMNS["mkt.klines_1m"], "capture_sources": "text[]"}
@@ -120,6 +121,38 @@ async def test_native_import_falls_back_to_product_serializer(tmp_path, native_i
     assert len(requests) == 2
     assert requests[0].content == requests[1].content
     await ch.close()
+
+
+@pytest.mark.parametrize("private", [False, True])
+async def test_native_import_keeps_recursive_json_validation_and_text(tmp_path, native_import, private):
+    ch, requests = native_import
+    document = {"value": "0.12345678901234567890123456789000", "missing": None}
+    if private:
+        document["value"] = "https://private.invalid"
+    row = {
+        "storage_key": "actual:funding:key",
+        "instrument_id": "binance:perp_linear:ENAUSDT",
+        "kind": "CURRENT_ESTIMATE",
+        "as_of": "2026-10-28 12:01:00.123456",
+        "source_observations": json.dumps(document, separators=(",", ":")),
+    }
+    retained, _, _ = retained_batch(
+        tmp_path,
+        [json.dumps(row)],
+        table="mkt.funding_obs",
+        recursive=["value", "missing"],
+    )
+    if private:
+        with pytest.raises(ValueError, match="Private public-fixture value"):
+            await full_inputs.insert_clickhouse(ch, "mkt.funding_obs", list(retained))
+        assert requests == []
+    else:
+        await full_inputs.insert_clickhouse(ch, "mkt.funding_obs", list(retained))
+        payload = json.loads(requests[0].content.decode().split("\n", 1)[1])
+        assert payload["source_observations"] == (
+            '{"value":"0.12345678901234567890123456789000","missing":null}'
+        )
+        assert payload == {**row, "_version": 1}
 
 
 async def test_native_import_preserves_decimal_serializer_refusal(tmp_path, native_import):
@@ -160,6 +193,8 @@ async def test_native_import_refuses_missing_identities(tmp_path, native_import,
         (captured_line(semantic_fingerprint="https://private.invalid"), "Private public-fixture value"),
         (captured_line(semantic_fingerprint="person@example.invalid"), "Private public-fixture value"),
         (captured_line(source_archive=None), "Source archive was not captured"),
+        (captured_line(_version=9), "Selected package schema mismatch"),
+        (captured_line(open_time="not-a-timestamp"), "Invalid isoformat string"),
         (captured_line()[:-1] + ',"c":"1"}', "Duplicate JSON field"),
     ],
 )
@@ -192,6 +227,17 @@ async def test_native_import_keeps_complete_stream_validation(tmp_path, native_i
         await full_inputs.insert_clickhouse(ch, "mkt.klines_1m", list(retained))
     assert requests == []
     await ch.close()
+
+
+async def test_native_import_preserves_product_serializer_for_mixed_batch(tmp_path, native_import):
+    ch, requests = native_import
+    lines = [captured_line(storage_key="actual:first"), captured_line(storage_key="actual:escaped\\key")]
+    retained, _, _ = retained_batch(tmp_path, lines)
+    batch = list(retained)
+    await full_inputs.insert_clickhouse(ch, "mkt.klines_1m", batch)
+    await ch.insert("mkt.klines_1m", [{**row, "_version": 1} for row, _ in batch])
+    assert len(requests) == 2
+    assert requests[0].content == requests[1].content
 
 
 async def test_native_import_preserves_batch_order_and_empty_noop(tmp_path, native_import):
