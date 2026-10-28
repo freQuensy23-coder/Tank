@@ -1,4 +1,5 @@
 import asyncio
+import gzip
 import hashlib
 import json
 import os
@@ -7,6 +8,7 @@ from contextlib import asynccontextmanager
 from importlib.machinery import ModuleSpec
 from pathlib import Path
 from types import ModuleType, SimpleNamespace
+from urllib.parse import urlsplit
 from uuid import uuid4
 
 import market_truth_full_inputs as full_inputs
@@ -1100,7 +1102,8 @@ def test_canonical_public_read_preserves_postserialization_file_bound(tmp_path, 
 
 @pytest.mark.integration
 @pytest.mark.postgres
-async def test_native_fixture_copies_are_exact_independent_and_survive_source_removal():
+async def test_native_fixture_copies_are_exact_independent_and_survive_source_removal(tmp_path, monkeypatch):
+    assert urlsplit(os.environ["CLICKHOUSE_TEST_URL"]).hostname in {"127.0.0.1", "localhost", "::1"}
     names = ["mkt_tank_test_fixture_" + uuid4().hex for _ in range(3)]
     clients = [ClickHouse(os.environ["CLICKHOUSE_TEST_URL"], database=name) for name in names]
     source, first, second = clients
@@ -1121,9 +1124,150 @@ async def test_native_fixture_copies_are_exact_independent_and_survive_source_re
         for client in clients:
             for statement in ddl():
                 await client.execute(statement)
-        await source.insert(table, [row])
-        for target in (first, second):
-            await full_inputs.copy_clickhouse(target, source.database, table, 1)
+        funding = {
+            "storage_key": "actual:funding:key",
+            "instrument_id": row["instrument_id"],
+            "kind": "CURRENT_ESTIMATE",
+            "as_of": row["open_time"],
+            "semantic_fingerprint": "literal mkt",
+            "source_observations": '{"value":9007199254740993,"missing":null}',
+        }
+        tickers = {
+            "storage_key": "actual:ticker:key",
+            "instrument_id": row["instrument_id"],
+            "ts": row["open_time"],
+            "capture_sources": ["PUBLIC_REST", "PUBLIC_WS"],
+        }
+        fixtures = tmp_path / "tiny"
+        fixtures.mkdir()
+        entries = []
+        for collection, captured in (
+            (table, {key: value for key, value in row.items() if key != "_version"}),
+            ("mkt.funding_obs", funding),
+            ("mkt.tickers_24h", tickers),
+        ):
+            payload = json.dumps(captured).encode() + b"\n"
+            name = collection.split(".")[1] + ".gz"
+            archive = gzip.compress(payload)
+            (fixtures / name).write_bytes(archive)
+            entries.append(
+                {
+                    "name": name,
+                    "table": collection,
+                    "rows": 1,
+                    "columns": list(captured),
+                    "bytes": len(payload),
+                    "compressed_bytes": len(archive),
+                    "sha256": hashlib.sha256(payload).hexdigest(),
+                    "archive_sha256": hashlib.sha256(archive).hexdigest(),
+                }
+            )
+        cache = {
+            "version": 1,
+            "saved_at": "2026-10-29T00:00:00Z",
+            "counts": [[row["instrument_id"], "2026-10-27T00:00:00Z", 1]],
+        }
+        (fixtures / "kline_day_counts.json").write_text(json.dumps(cache))
+        (fixtures / "privacy.json").write_text(
+            json.dumps(
+                {
+                    "omitted_occurrences": {},
+                    "unapproved_fields_or_values": 0,
+                    "all_urls_omitted": True,
+                    "source_archive_not_selected": True,
+                    "top_level_allowlist": {entry["table"]: entry["columns"] for entry in entries},
+                    "recursive_key_allowlist": {"mkt.funding_obs": ["value", "missing"]},
+                }
+            )
+        )
+        manifest = {
+            "files": entries,
+            "auxiliary_files": [
+                {
+                    "name": name,
+                    "bytes": (fixtures / name).stat().st_size,
+                    "sha256": full_inputs.digest(fixtures / name),
+                }
+                for name in ("kline_day_counts.json", "privacy.json")
+            ],
+            "source_config_git_objects": {},
+            "privacy_omitted_occurrences": {},
+            "history_start": "2026-10-26T00:00:00Z",
+            "semantic_cutoff": "2026-10-28T00:00:00Z",
+            "peer_spot_instrument_ids": [row["instrument_id"]],
+            "native_cache": {
+                "saved_at": cache["saved_at"],
+                "entries": 1,
+                "eligible_whole_day_rows": 1,
+                "positive_entries": 1,
+                "zero_entries": 0,
+            },
+            "confirmed_empty_tables": ["mkt.book_summaries", "mkt.liq_obs"],
+            "qualification": "TINY_NATIVE_FIXTURE",
+            "peer_coverage_counts": {},
+            "dense_projections": [],
+            "limitations": [],
+        }
+        (fixtures / "manifest.json").write_text(json.dumps(manifest))
+        monkeypatch.setattr(full_inputs, "MANIFEST_SHA256", full_inputs.digest(fixtures / "manifest.json"))
+        streams = []
+        retained = full_inputs.retained_rows
+
+        def observe_stream(*args):
+            streams.append(args[1]["table"])
+            yield from retained(*args)
+
+        monkeypatch.setattr(full_inputs, "retained_rows", observe_stream)
+
+        def repository(client):
+            return SimpleNamespace(
+                database_url="dbname=" + client.database.removeprefix("mkt_"), clickhouse=client
+            )
+
+        def settings(name):
+            return SimpleNamespace(data_dir=tmp_path / name)
+
+        setup = await full_inputs.seed_full(repository(source), settings("source"), fixtures, clickhouse_only=True)
+        seed = {
+            "comparison_id": "c" * 32,
+            "admission": full_inputs.fixture_admission(settings("source"), fixtures),
+            "source_database": source.database,
+            "inputs": setup["inputs"],
+            "copy_tables": setup["copy_tables"],
+        }
+        assert seed["copy_tables"] == {table: True, "mkt.funding_obs": False, "mkt.tickers_24h": True}
+        for index, target in enumerate((first, second)):
+            await full_inputs.seed_full(
+                repository(target),
+                settings(str(index)),
+                fixtures,
+                clickhouse_seed=seed,
+                comparison_id="c" * 32,
+            )
+            assert await target.rows("SELECT capture_sources FROM mkt.tickers_24h FINAL") == [
+                {"capture_sources": ["PUBLIC_REST", "PUBLIC_WS"]}
+            ]
+            assert await target.rows(
+                "SELECT semantic_fingerprint,source_observations FROM mkt.funding_obs FINAL"
+            ) == [
+                {
+                    "semantic_fingerprint": "literal " + target.database,
+                    "source_observations": '{"value":9007199254740993,"missing":null}',
+                }
+            ]
+        assert streams == [
+            table,
+            "mkt.funding_obs",
+            "mkt.tickers_24h",
+            "mkt.funding_obs",
+            "mkt.funding_obs",
+        ]
+        archive_path = fixtures / entries[0]["name"]
+        original_archive = archive_path.read_bytes()
+        archive_path.write_bytes(original_archive + b"changed")
+        with pytest.raises(ValueError, match="Fixture admission hash mismatch"):
+            full_inputs.fixture_admission(settings("source"), fixtures)
+        archive_path.write_bytes(original_archive)
         expected = {
             **row,
             "open_time": "2026-10-28T12:01:00.123456Z",
@@ -1135,6 +1279,19 @@ async def test_native_fixture_copies_are_exact_independent_and_survive_source_re
             assert await client.rows(f"SELECT {columns} FROM {table} FINAL") == [expected]
         with pytest.raises(ValueError, match="not empty"):
             await full_inputs.copy_clickhouse(first, source.database, table, 1)
+        await first.execute(f"TRUNCATE TABLE {table}")
+        execute = first.execute
+
+        async def corrupt_copy(query, params=None):
+            if query.startswith("INSERT INTO"):
+                prefix, selected = query.split(" SELECT ", 1)
+                query = prefix + " SELECT " + selected.replace("`c`", "'wrong' AS `c`")
+            await execute(query, params)
+
+        with monkeypatch.context() as patch:
+            patch.setattr(first, "execute", corrupt_copy)
+            with pytest.raises(ValueError, match="full-column copy mismatch"):
+                await full_inputs.copy_clickhouse(first, source.database, table, 1)
         await source.execute("DROP DATABASE mkt SYNC")
         assert await first.rows(
             "SELECT name FROM system.databases WHERE name={source:String}",
@@ -1143,6 +1300,8 @@ async def test_native_fixture_copies_are_exact_independent_and_survive_source_re
         await first.execute(f"TRUNCATE TABLE {table}")
         assert await first.rows(f"SELECT count() AS n FROM {table} FINAL") == [{"n": 0}]
         assert await second.rows(f"SELECT {columns} FROM {table} FINAL") == [expected]
+        with pytest.raises(ValueError, match="physical market tables"):
+            await full_inputs.copy_clickhouse(first, source.database, table, 1)
     finally:
         for client in clients:
             try:
@@ -1206,3 +1365,78 @@ def test_seed_descriptor_refuses_stale_partial_or_foreign_inputs(mutation):
         seed["copy_tables"]["mkt.klines_1m"] = "true"
     with pytest.raises(ValueError):
         full_inputs.validate_clickhouse_seed(seed, "c" * 32, admission, manifest)
+
+
+@pytest.mark.parametrize("cleanup_fails", [False, True])
+async def test_canonical_seed_cancellation_settles_import_before_owned_cleanup(
+    tmp_path, monkeypatch, cleanup_fails
+):
+    entered, release = asyncio.Event(), asyncio.Event()
+    actions = []
+    name = "tank_test_fixture_" + "a" * 32
+    repo = SimpleNamespace(database_url="dbname=" + name, clickhouse=SimpleNamespace(database="mkt_" + name))
+
+    class Template:
+        def __init__(self, *, schema_template):
+            assert schema_template == "tank_test_external"
+
+        @asynccontextmanager
+        async def repository(self, route):
+            try:
+                yield repo
+            finally:
+                actions.append("repository_closed")
+                if cleanup_fails:
+                    raise ValueError("Secondary cleanup failure")
+
+        async def close(self):
+            actions.append("template_closed")
+
+    async def seed(*args, **kwargs):
+        entered.set()
+        await release.wait()
+        actions.append("import_settled")
+        return {"inputs": [], "copy_tables": {}}
+
+    async def absent(route, url, database):
+        assert database == name
+        actions.append("absence_read_back")
+
+    monkeypatch.setenv("TANK_TEST_DATABASE_URL", "dbname=tank_test_admin")
+    monkeypatch.setenv("CLICKHOUSE_TEST_URL", "http://localhost:8123")
+    monkeypatch.setattr(comparison, "PostgresTemplate", Template)
+    monkeypatch.setattr(comparison, "seed_full", seed)
+    monkeypatch.setattr(comparison, "Settings", lambda **kwargs: SimpleNamespace())
+    lifecycle = {"receipts": [], "shutdown_actions": []}
+
+    async def prepare():
+        async with comparison.prepared_clickhouse_seed(
+            tmp_path, "tank_test_external", "c" * 32, lifecycle, lambda: None
+        ):
+            pytest.fail("Cancelled import must not publish a ready seed")
+
+    task = asyncio.create_task(prepare())
+    await entered.wait()
+    task.cancel("primary cancellation")
+    task.cancel("repeated cancellation")
+    assert actions == []
+    release.set()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    assert actions == ["import_settled", "repository_closed", "template_closed", "absence_read_back"]
+    assert "seed" not in lifecycle and lifecycle["cleanup_confirmed"] is not cleanup_fails
+    if cleanup_fails:
+        assert lifecycle["cleanup_failure_type"] == "ValueError"
+
+
+def test_clickhouse_fixture_contract_refuses_wire_or_ddl_changes(tmp_path):
+    source = (comparison.ROOT / "src/tank/clickhouse_market.py").read_text()
+    original = tmp_path / "original.py"
+    original.write_text(source)
+    baseline = full_inputs.clickhouse_fixture_contract(original)
+    for replacement in (
+        source.replace('r"\\bmkt\\b"', 'r"mkt"'),
+        source.replace('"numeric": "String"', '"numeric": "Float64"'),
+    ):
+        original.write_text(replacement)
+        assert full_inputs.clickhouse_fixture_contract(original) != baseline
