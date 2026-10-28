@@ -23,6 +23,7 @@ from functools import wraps
 from math import log
 from statistics import mean, median, stdev
 
+from tank.logging import market_stage, timing_span, timing_thread
 from tank.market.capture import event_anchor
 from tank.time_precision import chosen_boundary, offset_schedule, propagate_timestamp
 from tank.util import iso, jsonable, new_id, parse_time
@@ -156,13 +157,14 @@ class StatisticalPopulation:
 
 
 def remember(cache, key, build):
-    if cache is None:
-        return build()
-    if key not in cache:
-        cache[key] = build()
-        if len(cache) > 128:
-            cache.pop(next(iter(cache)))
-    return cache[key]
+    with timing_span("compute.baseline_cache", cpu=True, cache_hit=cache is not None and key in cache):
+        if cache is None:
+            return build()
+        if key not in cache:
+            cache[key] = build()
+            if len(cache) > 128:
+                cache.pop(next(iter(cache)))
+        return cache[key]
 
 
 def percentile(values, p):
@@ -1443,6 +1445,7 @@ def _price_groups(snapshot, token=None, *, exact=False, reference_only=False):
     return groups
 
 
+@market_stage("compute.relative", cpu=True)
 def relative_truth(snapshot, start, end, *, include_outcome=True):
     groups = _prices(snapshot)
     exact_groups = _prices(snapshot, exact=True, reference_only=True)
@@ -1663,58 +1666,59 @@ def relative_truth(snapshot, start, end, *, include_outcome=True):
 
     windows = {}
     for name, length in dict(WINDOWS, EVENT=(end - start).total_seconds()).items():
-        a = end - timedelta(seconds=length)
-        r = (
-            (
-                float(
-                    (
-                        decimal(cutoff_row.get("price", cutoff_row.get("p")))
-                        if cutoff_row
-                        else price(exact_groups.get(ref, {}), end)
+        with timing_span("compute.relative_window", cpu=True, window=name):
+            a = end - timedelta(seconds=length)
+            r = (
+                (
+                    float(
+                        (
+                            decimal(cutoff_row.get("price", cutoff_row.get("p")))
+                            if cutoff_row
+                            else price(exact_groups.get(ref, {}), end)
+                        )
+                        / anchor_price
+                        - 1
                     )
-                    / anchor_price
-                    - 1
+                    if anchor_price and (cutoff_row or price(prices, end))
+                    else None
                 )
-                if anchor_price and (cutoff_row or price(prices, end))
-                else None
+                if name == "EVENT"
+                else ret(prices, a, end)
             )
-            if name == "EVENT"
-            else ret(prices, a, end)
-        )
-        rb = bench_ret(btc, a, end)
-        re = bench_ret(eth, a, end)
-        adj = r - bb * rb if r is not None and rb is not None and not benchmark else None
-        measure = r if benchmark else adj
-        h = hist(length)
-        windows[name] = dict(
-            window=name,
-            start=iso(a),
-            cutoff=iso(end),
-            observed_at=iso(max(prices)) if prices else None,
-            precision=f"BUCKET({int(next((r.get('interval_s', 60) for r in reversed(snapshot.get('klines', [])) if r.get('instrument_id') == ref), 60))}s)"
-            if prices
-            else None,
-            coverage={"reference_venue": ref, "complete_24h": bool(ref)},
-            r_raw=r,
-            r_btc_adj=adj,
-            r_btc_adj_reason="NOT_APPLICABLE_BENCHMARK" if benchmark else None,
-            relative_measure="R_RAW" if benchmark else "R_BTC_ADJ",
-            relative_return=measure,
-            r_eth_adj=r - be * re if r is not None and re is not None else None,
-            r_sector_adj=None,
-            sector_reason="NOT_ESTIMABLE",
-            pctile=ratio(sum(x <= measure for x in h), len(h)) if measure is not None and h else None,
-            normal_range=float_normal(h),
-            normal_range_reason=range_reason(h),
-            beyond_normal=beyond(measure, float_normal(h)),
-            historical_window_resolution_s=history_resolution_s,
-            historical_window_duration_s=length,
-            requested_window_duration_s=length,
-            historical_alignment="AS_OF_AT_EXACT_TARGET_BOUNDS",
-            historical_measurement=history_diagnostics.get(
-                length, {"exact": False, "reason": "INCOMPLETE", "target_window_duration_s": length}
-            ),
-        )
+            rb = bench_ret(btc, a, end)
+            re = bench_ret(eth, a, end)
+            adj = r - bb * rb if r is not None and rb is not None and not benchmark else None
+            measure = r if benchmark else adj
+            h = hist(length)
+            windows[name] = dict(
+                window=name,
+                start=iso(a),
+                cutoff=iso(end),
+                observed_at=iso(max(prices)) if prices else None,
+                precision=f"BUCKET({int(next((r.get('interval_s', 60) for r in reversed(snapshot.get('klines', [])) if r.get('instrument_id') == ref), 60))}s)"
+                if prices
+                else None,
+                coverage={"reference_venue": ref, "complete_24h": bool(ref)},
+                r_raw=r,
+                r_btc_adj=adj,
+                r_btc_adj_reason="NOT_APPLICABLE_BENCHMARK" if benchmark else None,
+                relative_measure="R_RAW" if benchmark else "R_BTC_ADJ",
+                relative_return=measure,
+                r_eth_adj=r - be * re if r is not None and re is not None else None,
+                r_sector_adj=None,
+                sector_reason="NOT_ESTIMABLE",
+                pctile=ratio(sum(x <= measure for x in h), len(h)) if measure is not None and h else None,
+                normal_range=float_normal(h),
+                normal_range_reason=range_reason(h),
+                beyond_normal=beyond(measure, float_normal(h)),
+                historical_window_resolution_s=history_resolution_s,
+                historical_window_duration_s=length,
+                requested_window_duration_s=length,
+                historical_alignment="AS_OF_AT_EXACT_TARGET_BOUNDS",
+                historical_measurement=history_diagnostics.get(
+                    length, {"exact": False, "reason": "INCOMPLETE", "target_window_duration_s": length}
+                ),
+            )
 
     sector_members = defaultdict(list)
     token_sectors = {}
@@ -3417,6 +3421,7 @@ def available_field_freshness(snapshot, end):
     return checks
 
 
+@market_stage("compute.confidence", cpu=True)
 def data_confidence(snapshot, spot, derivatives, end):
     """§5.10: grade spot coverage, derivatives coverage, then field freshness."""
     failed = []
@@ -4397,6 +4402,7 @@ def canonical_fact_text(fact):
     return f"{fact['text']} [{fact['window']}; {fact['unit']}; {label}]"
 
 
+@market_stage("compute.metadata", cpu=True)
 def measurement_metadata(result):
     """Companion metadata preserves the literal §2 bare-field shapes.
 
@@ -4589,6 +4595,7 @@ def measurement_metadata(result):
     return missing_fields
 
 
+@market_stage("compute.timestamps", cpu=True)
 def timestamp_companions(result, snapshot):
     """Declare selected bounds; propagate source precision without reading ISO formatting."""
     result = deepcopy(result)
@@ -4781,6 +4788,7 @@ def timestamp_companions(result, snapshot):
     return result
 
 
+@market_stage("compute.prepare", cpu=True)
 def bounded_market_snapshot(snapshot, end):
     snapshot = dict(snapshot)
     snapshot["flow_segments"] = [
@@ -4807,6 +4815,7 @@ def bounded_market_snapshot(snapshot, end):
     return snapshot
 
 
+@market_stage("compute.spot", cpu=True)
 def spot_window_graph(snapshot, start, end, av):
     instruments = [
         i for i in snapshot.get("instruments", []) if i.get("token_id") in (None, snapshot.get("token_id"))
@@ -4814,18 +4823,18 @@ def spot_window_graph(snapshot, start, end, av):
     primary = "EVENT" if av and 900 <= (end - start).total_seconds() <= 86400 else "W4H"
     snapshot["_primary"] = primary
     windows = dict(WINDOWS, EVENT=(end - start).total_seconds())
-    spots = {
-        name: spot_truth(
-            snapshot["flow_bars"],
-            snapshot["tickers"],
-            instruments,
-            end - timedelta(seconds=seconds),
-            end,
-            flow_segments=flow_segments(snapshot),
-            assembled_at=snapshot.get("assembled_at"),
-        )
-        for name, seconds in windows.items()
-    }
+    spots = {}
+    for name, seconds in windows.items():
+        with timing_span("compute.spot_window", cpu=True, window=name):
+            spots[name] = spot_truth(
+                snapshot["flow_bars"],
+                snapshot["tickers"],
+                instruments,
+                end - timedelta(seconds=seconds),
+                end,
+                flow_segments=flow_segments(snapshot),
+                assembled_at=snapshot.get("assembled_at"),
+            )
     cohort = set.intersection(*(set(v["venue"] for v in s["venues"]) for s in spots.values()))
     for name, s in spots.items():
         s.update(
@@ -4849,15 +4858,16 @@ def spot_window_graph(snapshot, start, end, av):
         )
         s["composite_cohort"] = c if valid else None
         s["cohort_consistent"] = {other: valid for other in spots if other != name}
-        prev = spot_truth(
-            snapshot["flow_bars"],
-            snapshot["tickers"],
-            instruments,
-            end - timedelta(seconds=2 * windows[name]),
-            end - timedelta(seconds=windows[name]),
-            flow_segments=flow_segments(snapshot),
-            assembled_at=snapshot.get("assembled_at"),
-        )
+        with timing_span("compute.spot_previous", cpu=True, window=name):
+            prev = spot_truth(
+                snapshot["flow_bars"],
+                snapshot["tickers"],
+                instruments,
+                end - timedelta(seconds=2 * windows[name]),
+                end - timedelta(seconds=windows[name]),
+                flow_segments=flow_segments(snapshot),
+                assembled_at=snapshot.get("assembled_at"),
+            )
         pv = [v for v in prev["venues"] if v["venue"] in cohort]
         if valid and len(pv) == len(cohort):
             c["velocity"] = ratio(c["volume"], sum(v["volume_native"] for v in pv))
@@ -4898,9 +4908,12 @@ def _compute_market_truth(snapshot, *, config=None):
     for name, seconds in windows.items():
         wstart = end - timedelta(seconds=seconds)
         scoped = dict(snapshot, _primary=name)
-        d = derivatives_truth(scoped, wstart, end)
-        window_liquidity = liquidity_truth(scoped, wstart, end, spots[name], relative)
-        su = supply_truth(scoped, wstart, end)
+        with timing_span("compute.derivatives", cpu=True, window=name):
+            d = derivatives_truth(scoped, wstart, end)
+        with timing_span("compute.liquidity", cpu=True, window=name):
+            window_liquidity = liquidity_truth(scoped, wstart, end, spots[name], relative)
+        with timing_span("compute.supply", cpu=True, window=name):
+            su = supply_truth(scoped, wstart, end)
         for record in (d, window_liquidity, su):
             record.update(window=name, start=iso(wstart), cutoff=iso(end))
         if d.get("synchronized"):
@@ -4910,8 +4923,9 @@ def _compute_market_truth(snapshot, *, config=None):
             window_liquidity["observed_at"] = min(v["observed_at"] for v in window_liquidity["per_venue"])
         window_liquidity["elasticity"].update(window=name, start=iso(wstart), cutoff=iso(end))
         window_liquidity["replenishment"].update(window=name, start=iso(wstart), cutoff=iso(end))
-        enrich_evidence(scoped, wstart, end, spots, name, d, relative, window_liquidity)
-        d["support_features"] = support_features(scoped, wstart, end, spots[name], d, window_liquidity, su)
+        with timing_span("compute.evidence", cpu=True, window=name):
+            enrich_evidence(scoped, wstart, end, spots, name, d, relative, window_liquidity)
+            d["support_features"] = support_features(scoped, wstart, end, spots[name], d, window_liquidity, su)
         if name == "EVENT" and not av:
             d = derivatives_truth(dict(scoped, oi=[], funding=[], liquidations=[], klines=[]), wstart, end)
             d.update(window=name, start=None, cutoff=iso(end), reason="INCOMPLETE")
@@ -4933,13 +4947,14 @@ def _compute_market_truth(snapshot, *, config=None):
         relative["windows"]["EVENT"]["reason"] = "INCOMPLETE"
         spots["EVENT"]["reason"] = "INCOMPLETE"
         spots["EVENT"]["classification"] = "INSUFFICIENT_DATA"
-    selected = select_move(spots[primary], deriv, liquidity, supply, relative, conf["class"], primary)
-    pstart = end - timedelta(seconds=windows[primary])
-    facts = decisive_facts(
-        spots[primary], deriv, liquidity, relative, supply, selected["move_class"], primary, pstart, end
-    )
-    for fact in facts:
-        fact["text"] = canonical_fact_text(fact)
+    with timing_span("compute.selection", cpu=True):
+        selected = select_move(spots[primary], deriv, liquidity, supply, relative, conf["class"], primary)
+        pstart = end - timedelta(seconds=windows[primary])
+        facts = decisive_facts(
+            spots[primary], deriv, liquidity, relative, supply, selected["move_class"], primary, pstart, end
+        )
+        for fact in facts:
+            fact["text"] = canonical_fact_text(fact)
     capture = snapshot.get("capture_status") or {"status": "UNKNOWN", "reason": "CAPTURE_STATUS_NOT_PROVIDED"}
     has_perps = any(_market(i) != "SPOT" for i in instruments)
     window_readiness = {
@@ -5007,17 +5022,23 @@ def _compute_market_truth(snapshot, *, config=None):
     }
     result = timestamp_companions(result, snapshot)
     result["measurement_metadata"] = measurement_metadata(result)
-    return jsonable(result)
+    with timing_span("compute.jsonable", cpu=True):
+        return jsonable(result)
 
 
 _COMPUTE_SLOT = threading.RLock()
 
 
+@market_stage("compute", root=True, cpu=True)
 def compute_market_truth(snapshot, *, config=None, baseline_cache=None):
     """baseline_cache: a dict the caller keeps per token across assessments. Its keys carry
     exact history fingerprints (and config), so a reused entry is the same computation."""
-    with _COMPUTE_SLOT:
+    with timing_span("compute.lock_wait"):
+        _COMPUTE_SLOT.acquire()
+    try:
         return _compute_market_truth_slot(snapshot, config=config, baseline_cache=baseline_cache)
+    finally:
+        _COMPUTE_SLOT.release()
 
 
 def _compute_market_truth_slot(snapshot, *, config=None, baseline_cache=None):
@@ -5716,6 +5737,7 @@ class MarketTruthService:
             baseline_cache=self._condition_baselines,
         )
 
+    @market_stage("assessment", root=True)
     async def assess(self, event_id, token_id, cutoff=None):
         event = await self.repo.get("evt.events", event_id) if event_id else None
         event = event or {}
@@ -5727,16 +5749,17 @@ class MarketTruthService:
         snapshot.update(event_id=event_id, token_id=token_id)
         if event.get("public_at") is not None:
             snapshot.update(propagate_timestamp(event, "public_at").fields("event_public_at"))
-        beneficiaries = (
-            await self.repo.list(
-                "evt.beneficiary_edges", filters={"event_id": event_id, "token_id": token_id}, limit=10000
+        with timing_span("assessment.beneficiaries"):
+            beneficiaries = (
+                await self.repo.list(
+                    "evt.beneficiary_edges", filters={"event_id": event_id, "token_id": token_id}, limit=10000
+                )
+                if event_id and hasattr(self.repo, "list")
+                else []
             )
-            if event_id and hasattr(self.repo, "list")
-            else []
-        )
-        if beneficiaries:
-            edge = max(beneficiaries, key=lambda b: (int(b.get("map_version", 0)), str(b.get("edge_id", ""))))
-            snapshot["expected_direction"] = "LOSER" if edge.get("role") == "LOSER" else "BULLISH"
+            if beneficiaries:
+                edge = max(beneficiaries, key=lambda b: (int(b.get("map_version", 0)), str(b.get("edge_id", ""))))
+                snapshot["expected_direction"] = "LOSER" if edge.get("role") == "LOSER" else "BULLISH"
         knobs = (
             self.settings.load_config("thresholds")
             if callable(getattr(self.settings, "load_config", None))
@@ -5746,13 +5769,18 @@ class MarketTruthService:
             knobs, config_version=self.settings.config_version, code_version=self.settings.code_version
         )
         lock = self._assessment_locks.setdefault(token_id, asyncio.Lock())
-        async with lock:
-            result = await asyncio.to_thread(
+        with timing_span("assessment.lock_wait"):
+            await lock.acquire()
+        try:
+            result = await timing_thread(
                 compute_market_truth,
                 snapshot,
                 config=knobs,
                 baseline_cache=self._assessment_baselines.setdefault(token_id, {}),
             )
+        finally:
+            lock.release()
         result["mta_id"] = new_id("MTA")
-        await self.repo.put("ana.market_truth", result["mta_id"], result, immutable=True)
+        with timing_span("assessment.persist"):
+            await self.repo.put("ana.market_truth", result["mta_id"], result, immutable=True)
         return result

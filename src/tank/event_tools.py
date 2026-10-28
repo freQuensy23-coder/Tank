@@ -13,6 +13,7 @@ from urllib.parse import parse_qsl, unquote, urlparse
 import httpx
 import zstandard
 
+from tank.logging import market_stage, timing_identity, timing_span
 from tank.ops_progress import event_progress, item_progress, tool_progress
 from tank.sources.capture_fetch import capture_fetch, is_exchange_url
 from tank.time_precision import (
@@ -2215,110 +2216,117 @@ class EventToolService:
         )
         return prepared_ids
 
+    @market_stage("get_market_truth", root=True)
     async def get_market_truth(self, a, c, *, refresh_key=None):
 
-        named = {"SECOND": "BUCKET(1s)", "MINUTE": "BUCKET(1m)", "HOUR": "BUCKET(1h)"}
-        normalized_prec = None
-        if a.get("cutoff_prec") in named:
-            normalized_prec = {"from": a["cutoff_prec"], "to": named[a["cutoff_prec"]]}
-            a = dict(a, cutoff_prec=named[a["cutoff_prec"]])
-        eid = a["event_id"]
-        event = await self.require("evt.events", eid)
-        assessment = await self.require("evt.ems_assessments", event["current_ems_id"])
-        managed = await self.managed_tokens(eid)
-        if assessment["class"] not in {"MAJOR", "STRUCTURAL_SHOCK"} and not set(a["token_ids"]) <= managed:
-            raise ValueError("Market escalation requires MAJOR+ or existing call/shown-token management")
-        maps = await self.rows("evt.beneficiary_maps", eid)
-        allowed = set(
-            max(maps, key=lambda r: int(r["map_version"]))["analysis_set"]
-            if maps
-            else event["tokens_mentioned"]
-        )
-        allowed |= await self.managed_tokens(eid)
-        if not set(a["token_ids"]) <= allowed:
-            raise ValueError("token_ids outside analysis set")
-        cutoff = iso(a["cutoff"]) if a.get("cutoff") else iso(utcnow().replace(second=0, microsecond=0))
-        cutoff_stamp = chosen_boundary(
-            cutoff,
-            precision=a.get("cutoff_prec", "EXACT" if a.get("cutoff") else "BUCKET(1m)"),
-            bucket_size=(a["cutoff_bucket_size_s"], "s") if a.get("cutoff_bucket_size_s") else None,
-        )
-        cutoff_minute = iso(parse_time(cutoff).replace(second=0, microsecond=0))
-        async with self.repo.transaction():
-            jobs = []
-            for token in a["token_ids"]:
-                escalation = await self.repo.enqueue(
-                    "ESCALATE_TOKENS",
-                    {"event_id": eid, "token_id": token, "tokens": [token]},
-                    f"{token}:{eid}",
-                    priority=0,
-                    max_attempts=3,
-                )
-                jobs.append(
-                    await self.repo.enqueue(
-                        "RUN_MARKET_TRUTH",
-                        {
-                            "event_id": eid,
-                            "token_id": token,
-                            **cutoff_stamp.fields("cutoff"),
-                            "_depends_on": [escalation["job_id"]],
-                        },
-                        f"{eid}:{token}:{refresh_key or cutoff_minute}",
-                        priority=1,
-                        max_attempts=2,
-                        expires_at=offset_schedule(collection_clock(), timedelta(minutes=30)),
-                    )
-                )
-        truths = []
-        for job in jobs:
-            deadline = asyncio.get_running_loop().time() + 90 * 15
-            while True:
-                current = await self.require("ops.jobs", job["job_id"])
-                if current["status"] == "DONE":
-                    result = current.get("result")
-                    if result is None:
-                        raise ValueError("Market truth job completed without persisted result")
-                    truths.append(result)
-                    break
-                if current["status"] in {"FAILED", "EXPIRED"}:
-                    raise ValueError(
-                        "Market truth job is terminally failed or expired; inspect its durable job record"
-                    )
-                if asyncio.get_running_loop().time() >= deadline:
-                    raise TimeoutError("Market truth jobs are pending; retry this call with the same call_id")
-                await asyncio.sleep(0.25)
-        if maps:
-            mapping = max(maps, key=lambda r: int(r["map_version"]))
-            edges = [
-                e
-                for e in await self.rows("evt.beneficiary_edges", eid)
-                if int(e["map_version"]) == int(mapping["map_version"])
-            ]
-            ranks = {"NEGATIVE": 0, "UNPRICED": 1, "EARLY": 2, "SUBSTANTIAL": 3, "HEAVY": 4}
-            candidates = []
-
-            latest = {truth["token_id"]: truth for truth in truths}
-            for edge in edges:
-                token = edge.get("token_id")
-                if edge.get("credible") and token and token not in latest:
-                    stored = await self.latest_record("ana.market_truth", eid, token)
-                    if stored:
-                        latest[token] = stored
-            for edge in edges:
-                mt = latest.get(edge.get("token_id"))
-                if edge.get("credible") and mt and mt.get("liquidity", {}).get("liquidity_state") == "NORMAL":
-                    relative = mt.get("relative", {})
-                    band = relative.get("repricing_band")
-                    pct = (relative.get("windows", {}).get("EVENT") or {}).get("pctile")
-                    if band in ranks and pct is not None:
-                        candidates.append((ranks[band], float(pct), -edge["exposure_score"], edge["edge_id"]))
-            mapping["least_repriced_edge"] = min(candidates)[-1] if candidates else None
-            mapping["least_repriced_reason"] = (
-                "Lowest repricing band, event percentile, then highest exposure among credible NORMAL-liquidity beneficiaries"
-                if candidates
-                else "No credible beneficiary has complete repricing and NORMAL liquidity evidence"
+        with timing_span("tool.validation"):
+            named = {"SECOND": "BUCKET(1s)", "MINUTE": "BUCKET(1m)", "HOUR": "BUCKET(1h)"}
+            normalized_prec = None
+            if a.get("cutoff_prec") in named:
+                normalized_prec = {"from": a["cutoff_prec"], "to": named[a["cutoff_prec"]]}
+                a = dict(a, cutoff_prec=named[a["cutoff_prec"]])
+            eid = a["event_id"]
+            event = await self.require("evt.events", eid)
+            assessment = await self.require("evt.ems_assessments", event["current_ems_id"])
+            managed = await self.managed_tokens(eid)
+            if assessment["class"] not in {"MAJOR", "STRUCTURAL_SHOCK"} and not set(a["token_ids"]) <= managed:
+                raise ValueError("Market escalation requires MAJOR+ or existing call/shown-token management")
+            maps = await self.rows("evt.beneficiary_maps", eid)
+            allowed = set(
+                max(maps, key=lambda r: int(r["map_version"]))["analysis_set"]
+                if maps
+                else event["tokens_mentioned"]
             )
-            await self.repo.put("evt.beneficiary_maps", f"{eid}:{mapping['map_version']}", mapping)
+            allowed |= await self.managed_tokens(eid)
+            if not set(a["token_ids"]) <= allowed:
+                raise ValueError("token_ids outside analysis set")
+            cutoff = iso(a["cutoff"]) if a.get("cutoff") else iso(utcnow().replace(second=0, microsecond=0))
+            cutoff_stamp = chosen_boundary(
+                cutoff,
+                precision=a.get("cutoff_prec", "EXACT" if a.get("cutoff") else "BUCKET(1m)"),
+                bucket_size=(a["cutoff_bucket_size_s"], "s") if a.get("cutoff_bucket_size_s") else None,
+            )
+            cutoff_minute = iso(parse_time(cutoff).replace(second=0, microsecond=0))
+        with timing_span("tool.enqueue"):
+            async with self.repo.transaction():
+                jobs = []
+                for token in a["token_ids"]:
+                    escalation = await self.repo.enqueue(
+                        "ESCALATE_TOKENS",
+                        {"event_id": eid, "token_id": token, "tokens": [token]},
+                        f"{token}:{eid}",
+                        priority=0,
+                        max_attempts=3,
+                    )
+                    jobs.append(
+                        await self.repo.enqueue(
+                            "RUN_MARKET_TRUTH",
+                            {
+                                "event_id": eid,
+                                "token_id": token,
+                                **cutoff_stamp.fields("cutoff"),
+                                "_depends_on": [escalation["job_id"]],
+                            },
+                            f"{eid}:{token}:{refresh_key or cutoff_minute}",
+                            priority=1,
+                            max_attempts=2,
+                            expires_at=offset_schedule(collection_clock(), timedelta(minutes=30)),
+                        )
+                    )
+        with timing_span("tool.jobs_wait"):
+            truths = []
+            for job in jobs:
+                with timing_span("job.link", job_id=timing_identity(job["job_id"])):
+                    pass
+                deadline = asyncio.get_running_loop().time() + 90 * 15
+                while True:
+                    current = await self.require("ops.jobs", job["job_id"])
+                    if current["status"] == "DONE":
+                        result = current.get("result")
+                        if result is None:
+                            raise ValueError("Market truth job completed without persisted result")
+                        truths.append(result)
+                        break
+                    if current["status"] in {"FAILED", "EXPIRED"}:
+                        raise ValueError(
+                            "Market truth job is terminally failed or expired; inspect its durable job record"
+                        )
+                    if asyncio.get_running_loop().time() >= deadline:
+                        raise TimeoutError("Market truth jobs are pending; retry this call with the same call_id")
+                    await asyncio.sleep(0.25)
+        with timing_span("tool.beneficiary_update"):
+            if maps:
+                mapping = max(maps, key=lambda r: int(r["map_version"]))
+                edges = [
+                    e
+                    for e in await self.rows("evt.beneficiary_edges", eid)
+                    if int(e["map_version"]) == int(mapping["map_version"])
+                ]
+                ranks = {"NEGATIVE": 0, "UNPRICED": 1, "EARLY": 2, "SUBSTANTIAL": 3, "HEAVY": 4}
+                candidates = []
+
+                latest = {truth["token_id"]: truth for truth in truths}
+                for edge in edges:
+                    token = edge.get("token_id")
+                    if edge.get("credible") and token and token not in latest:
+                        stored = await self.latest_record("ana.market_truth", eid, token)
+                        if stored:
+                            latest[token] = stored
+                for edge in edges:
+                    mt = latest.get(edge.get("token_id"))
+                    if edge.get("credible") and mt and mt.get("liquidity", {}).get("liquidity_state") == "NORMAL":
+                        relative = mt.get("relative", {})
+                        band = relative.get("repricing_band")
+                        pct = (relative.get("windows", {}).get("EVENT") or {}).get("pctile")
+                        if band in ranks and pct is not None:
+                            candidates.append((ranks[band], float(pct), -edge["exposure_score"], edge["edge_id"]))
+                mapping["least_repriced_edge"] = min(candidates)[-1] if candidates else None
+                mapping["least_repriced_reason"] = (
+                    "Lowest repricing band, event percentile, then highest exposure among credible NORMAL-liquidity beneficiaries"
+                    if candidates
+                    else "No credible beneficiary has complete repricing and NORMAL liquidity evidence"
+                )
+                await self.repo.put("evt.beneficiary_maps", f"{eid}:{mapping['map_version']}", mapping)
         return {
             "market_truth": truths,
             **({"cutoff_prec_normalized": normalized_prec} if normalized_prec else {}),

@@ -19,9 +19,11 @@ import time
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from urllib.parse import urlsplit, urlunsplit
+from uuid import uuid4
 
 import httpx
 
+from tank.logging import timing_query_id, timing_span, timing_thread
 from tank.market_schema import MARKET_ALIASES, MARKET_COLUMNS, MARKET_IDENTITIES
 from tank.util import canonical_json, iso, parse_time
 
@@ -140,21 +142,26 @@ class ClickHouse:
         }
         for name, (value, _) in (params or {}).items():
             request["param_" + name] = value
-        response = await self.http.post(
-            self.base,
-            params=request,
-            content=(query if self.database == "mkt" else re.sub(r"\bmkt\b", self.database, query)).encode(),
-            headers={"X-ClickHouse-User": self.user, "X-ClickHouse-Key": self.password},
-        )
-        if response.status_code != 200:
-            raise RuntimeError(f"ClickHouse {response.status_code}: {response.text[:500]}")
-        return response.content
+        query_id = timing_query_id()
+        request["query_id"] = query_id
+        with timing_span("clickhouse.http", query_id=query_id) as timing:
+            response = await self.http.post(
+                self.base,
+                params=request,
+                content=(query if self.database == "mkt" else re.sub(r"\bmkt\b", self.database, query)).encode(),
+                headers={"X-ClickHouse-User": self.user, "X-ClickHouse-Key": self.password},
+            )
+            timing["bytes"] = len(response.content)
+            if response.status_code != 200:
+                raise RuntimeError(f"ClickHouse {response.status_code}: {response.text[:500]}")
+            return response.content
 
     async def rows(self, query, params=None):
-        body = await self._post(query + " FORMAT JSONEachRow", params)
-        if len(body) > 1_000_000:
-            return await asyncio.to_thread(_json_lines, body)
-        return _json_lines(body)
+        with timing_span("clickhouse.rows", query_id=uuid4().hex):
+            body = await self._post(query + " FORMAT JSONEachRow", params)
+            if len(body) > 1_000_000:
+                return await timing_thread(_json_lines, body)
+            return _json_lines(body)
 
     async def execute(self, query, params=None):
         await self._post(query, params)
@@ -166,7 +173,10 @@ class ClickHouse:
 
 
 def _json_lines(body):
-    return [json.loads(line) for line in body.splitlines() if line]
+    with timing_span("clickhouse.json_decode", cpu=True, bytes=len(body)) as timing:
+        rows = [json.loads(line) for line in body.splitlines() if line]
+        timing["rows"] = len(rows)
+        return rows
 
 
 def _literal(value):
@@ -270,12 +280,13 @@ def _record(collection, row):
 
 
 def _records(collection, rows):
-    return [_record(collection, r) for r in rows]
+    with timing_span("clickhouse.typed_decode", cpu=True, rows=len(rows)):
+        return [_record(collection, r) for r in rows]
 
 
 async def _decode(collection, rows):
     if len(rows) > 1000:
-        return await asyncio.to_thread(_records, collection, rows)
+        return await timing_thread(_records, collection, rows)
     return _records(collection, rows)
 
 

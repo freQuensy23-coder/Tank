@@ -1804,6 +1804,28 @@ Permanent tests run through existing automatic PR/main CI, without manual tests/
 
 These composed SQL/HTTP regressions qualify incident recovery only, not real native-model/KVM upgrade execution (§3.2), live production recovery or V0-H's 14-day acceptance.
 
+### 11.8 Market Truth stage telemetry
+
+`get_market_truth` emits INFO JSON records through `tank.market_timing`, without changing tool arguments, results, durable job payloads or database schemas. `stage_start` and exactly one `stage_end` identify each started in-process span; terminal status is `ok`, `error` or `cancelled`. Logging-sink failures do not replace application results or exceptions. Process termination can leave an unmatched start; no terminal completion is fabricated after a crash.
+
+Each record carries a generated trace/span ID, parent span ID, process ID and monotonic start; the terminal record adds monotonic end and inclusive `wall_ms`. Synchronous compute/JSON/fingerprint spans additionally report calling-thread `thread_cpu_ms`. Async, network, lock-wait and executor-queue spans do not claim CPU time. Parent/child durations overlap; parallel spans overlap too. Never sum the tree as latency. Compare interval unions only within the same process/monotonic clock domain; CPU is inclusive and not additive across nested spans either.
+
+| Owner | Timed stages |
+|---|---|
+| Session/tool | Whole Market Truth tool call, validation, enqueue, durable job polling, beneficiary update, audit/locking, model projection, wire JSON, wire audit, OpenMA acceptance, returned audit |
+| Worker | Claim observation, execution attempt, capture readiness and bounded prerequisite wait, repair coordination, job result/finish persistence |
+| Snapshot | Preparation; each collection (flow, klines, books, OI, funding, liquidations, tickers, supply); ranges and shared reads; window/series cache state and lock acquisition; compact price/volume series and counts; reference/benchmark assembly; capture metadata; dependency fingerprints |
+| ClickHouse client | Each HTTP request including body transfer, byte count and generated `query_id`; JSON decode and row count; batched typed decode and row count; executor queue before offloaded decode |
+| Assessment/compute | Beneficiary lookup, per-token assessment lock acquisition, executor queue, global compute-lock acquisition, bounded input preparation, spot current/previous windows, relative and relative windows, baseline-cache reuse, each window's derivatives/liquidity/supply/evidence, confidence, move/fact selection, timestamp companions, measurement metadata, jsonable conversion, immutable result persistence |
+
+Correlation uses SHA-256 identity prefixes (32 lowercase hex characters), not raw session/call/job/capture identifiers. The tool emits a `job.link` for every awaited durable job. Worker/assessment spans carry the same hashed job ID; each execution attempt has its own trace. Reused or deduplicated jobs can therefore link to multiple callers without rewriting their original payload or pretending that they were executed again. Thread and async handoffs inherit context; independent calls do not share mutable telemetry state. The repair coordination wait carries a hashed request ID. Caller context includes hashed session/call IDs when entered through SessionService.
+
+A generated ClickHouse `query_id` is sent as an HTTP parameter and recorded on the request span. It is not a server setting or SQL comment. Join it to one terminal `system.query_log` event for server execution/read statistics. Client HTTP duration includes transport and scheduling, not just server execution; JSON and typed conversion are separate owned spans. Telemetry never records SQL, parameters, credentials, URLs, exception messages or market/result payloads. Metadata is restricted to generated/hashed IDs, static collection/window/kind labels, finite numeric counts and cache state; no record grows with input payload size.
+
+`job.claimed` is a point observation after a successful claim, not a measurement of the queue SQL. `durable_age_ms` is UTC created-to-handler age (including dependency/retry scheduling), not monotonic queue residence or proof of a worker's first claim. The executor wait interval ends when the worker thread enters; its start record is emitted there with the original enqueue monotonic time. Cancellation before entry may suppress that unstarted interval. Cancelling an await does not stop an already running Python thread: the outer cancelled span and later worker completion are distinct observations. Capture spans cover core-side coordination; independent Go capture internals and database server execution are not claimed as propagated in-process stages.
+
+Permanent automatic CI covers unchanged real compute results, monotonic nesting, async/thread isolation, terminal failures/cancellation, lock ownership, payload exclusion, a real loopback HTTP/decode/compute path and the durable tool→worker→snapshot→assessment→persistence path. A bounded synthetic START cProfile case retains a top-function summary in JUnit properties; this is controlled execution evidence, not an exact historical ENA snapshot, a latency fix or a reconstruction of unlogged historical stage costs. Existing CI test deadlines, selection and budgets remain unchanged.
+
 ## 12. Configuration baseline (⚙)
 
 Every number the rules use, with its basis. A number without a basis is not used; one that has to come from data is calibrated by the stated procedure and recorded at that checkpoint (01 D6).

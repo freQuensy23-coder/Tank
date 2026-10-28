@@ -4,6 +4,7 @@ import logging
 
 import pytest
 
+from tank import clickhouse_market as chm
 from tank import logging as telemetry
 from tank.analysis.truth import compute_market_truth
 
@@ -51,9 +52,8 @@ def test_spans_use_monotonic_clock_and_emit_one_terminal(caplog, monkeypatch):
     caplog.set_level(logging.INFO, logger="tank.market_timing")
     ticks = iter([1_000_000, 2_000_000, 5_000_000, 9_000_000])
     monkeypatch.setattr(telemetry.time, "monotonic_ns", lambda: next(ticks))
-    with telemetry.timing_span("outer", root=True):
-        with telemetry.timing_span("inner"):
-            pass
+    with telemetry.timing_span("outer", root=True), telemetry.timing_span("inner"):
+        pass
     records = events(caplog)
     ends = {row["stage"]: row for row in records if row["event"] == "stage_end"}
     assert ends["outer"]["wall_ms"] == 8
@@ -65,9 +65,11 @@ def test_spans_use_monotonic_clock_and_emit_one_terminal(caplog, monkeypatch):
 @pytest.mark.parametrize("failure", [ValueError("private-payload"), asyncio.CancelledError()])
 def test_span_closes_and_does_not_log_exception_payload(caplog, failure):
     caplog.set_level(logging.INFO, logger="tank.market_timing")
-    with pytest.raises(type(failure)):
-        with telemetry.timing_span("failure", root=True, password="private-password"):
-            raise failure
+    with (
+        pytest.raises(type(failure)),
+        telemetry.timing_span("failure", root=True, password="private-password"),
+    ):
+        raise failure
     records = events(caplog)
     assert [row["event"] for row in records] == ["stage_start", "stage_end"]
     assert records[-1]["status"] == ("cancelled" if isinstance(failure, asyncio.CancelledError) else "error")
@@ -114,3 +116,58 @@ def test_timing_sink_failure_does_not_replace_application_result(monkeypatch):
     with telemetry.timing_span("sink", root=True):
         result = 7
     assert result == 7
+
+
+async def test_cancelled_lock_wait_is_terminal_without_releasing_another_owner(caplog):
+    caplog.set_level(logging.INFO, logger="tank.market_timing")
+    lock = asyncio.Lock()
+    await lock.acquire()
+    started = asyncio.Event()
+
+    async def wait():
+        with telemetry.timing_span("request", root=True):
+            started.set()
+            async with telemetry.timing_lock(lock, "lock.wait"):
+                raise AssertionError("cancelled waiter acquired lock")
+
+    task = asyncio.create_task(wait())
+    await started.wait()
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    assert lock.locked()
+    lock.release()
+    ended = [row for row in events(caplog) if row["event"] == "stage_end"]
+    assert {row["stage"] for row in ended} == {"request", "lock.wait"}
+    assert all(row["status"] == "cancelled" for row in ended)
+    async with telemetry.timing_lock(lock, "inactive"):
+        assert lock.locked()
+    assert not lock.locked()
+
+
+def test_decode_error_preserves_error_and_closes_stage(caplog):
+    caplog.set_level(logging.INFO, logger="tank.market_timing")
+    with pytest.raises(json.JSONDecodeError), telemetry.timing_span("decode", root=True):
+        chm._json_lines(b"private-invalid-json")
+    records = events(caplog)
+    ended = [row for row in records if row["event"] == "stage_end"]
+    assert {row["stage"] for row in ended} == {"decode", "clickhouse.json_decode"}
+    assert all(row["status"] == "error" for row in ended)
+    assert "private-invalid-json" not in caplog.text
+
+
+async def test_threadpool_queue_span_precedes_real_compute(caplog):
+    caplog.set_level(logging.INFO, logger="tank.market_timing")
+    with telemetry.timing_span("request", root=True):
+        result = await telemetry.timing_thread(compute_market_truth, {"cutoff": "2026-10-28T12:00:00Z"})
+    assert result["data_confidence"]["class"] == "LOW"
+    ended = [row for row in events(caplog) if row["event"] == "stage_end"]
+    queue = next(row for row in ended if row["stage"] == "threadpool.wait")
+    work = next(row for row in ended if row["stage"] == "threadpool.work")
+    compute = next(row for row in ended if row["stage"] == "compute")
+    assert queue["trace_id"] == compute["trace_id"]
+    assert queue["parent_span_id"] == work["parent_span_id"]
+    assert compute["parent_span_id"] == work["span_id"]
+    assert queue["ended_mono_ns"] <= compute["started_mono_ns"]
+    assert "thread_cpu_ms" not in queue
+    assert len(ended) < 300
