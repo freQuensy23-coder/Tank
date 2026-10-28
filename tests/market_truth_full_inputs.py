@@ -231,6 +231,22 @@ def retained_rows(fixtures, entry, privacy, schema):
     require(checksum.hexdigest() == entry["sha256"], "Stream fixture hash mismatch")
 
 
+def account_missing_columns(rows, columns, missing):
+    declared = set(columns)
+    shapes = {}
+    for row, raw in rows:
+        shape = frozenset(row)
+        if shape in shapes:
+            shapes[shape] += 1
+        elif len(shapes) < 64:
+            shapes[shape] = 1
+        else:
+            missing.update(declared - shape)
+        yield row, raw
+    for shape, count in shapes.items():
+        missing.update(dict.fromkeys(declared - shape, count))
+
+
 def native_counts(fixtures, manifest):
     path = Path(fixtures) / "kline_day_counts.json"
     entry = next(row for row in manifest["auxiliary_files"] if row["name"] == path.name)
@@ -603,9 +619,9 @@ async def seed_full(
             require(await postgres_count(repo, table) == 0, "PostgreSQL fixture target is not empty")
         batch, by_instrument, missing = [], Counter(), Counter()
         wire_independent = True
-        for index, (row, raw) in enumerate(retained_rows(fixtures, entry, privacy, schema)):
+        retained = retained_rows(fixtures, entry, privacy, schema)
+        for index, (row, raw) in enumerate(account_missing_columns(retained, entry["columns"], missing)):
             by_instrument[row.get("instrument_id") or row.get("token_id")] += 1
-            missing.update(set(entry["columns"]) - set(row))
             if is_ch:
                 batch.append((row, raw))
             else:
