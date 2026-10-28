@@ -578,7 +578,7 @@ def test_missing_columns_caps_shapes_without_eviction_or_lost_overflow(absence_c
     missing, updates = absence_counter
     accounted = full_inputs.account_missing_columns(iter(original), columns, missing)
     observed = []
-    for index in range(64):
+    for _index in range(64):
         observed.append(next(accounted))
         assert updates == []
     for index in range(64, 67):
