@@ -532,7 +532,9 @@ def test_progress_checkpoint_atomically_replaces_current_public_receipts(tmp_pat
         {"receipts": [{"error": "postgresql://private:secret@localhost/private"}]},
     ],
 )
-def test_progress_checkpoint_privacy_refusal_preserves_previous_bytes_and_creates_no_artifact(tmp_path, private):
+def test_progress_checkpoint_privacy_refusal_preserves_previous_bytes_and_creates_no_artifact(
+    tmp_path, private
+):
     destination = tmp_path / "progress" / "owned.json"
     comparison.checkpoint_progress(destination, {}, {}, {})
     before = destination.read_bytes()
@@ -654,7 +656,11 @@ def test_complete_worker_progress_fits_unchanged_receipt_budget_and_stays_incomp
     progress.record("native_cache_installed", dimensions=2)
     progress.record("sessions_seeded", sessions=2)
     progress.record(
-        "native_cache_complete", dimensions=2, peers=1, configured_instruments=2, captured_resolved_instruments=1
+        "native_cache_complete",
+        dimensions=2,
+        peers=1,
+        configured_instruments=2,
+        captured_resolved_instruments=1,
     )
     progress.record("ready")
     retain({"kind": "ready"})
