@@ -120,7 +120,9 @@ class Measurements:
                         if dense_id
                         else None,
                         "time_parameters": {
-                            key: value for key, (value, kind) in params.items() if kind.startswith("DateTime64")
+                            key: value
+                            for key, (value, kind) in params.items()
+                            if kind.startswith("DateTime64")
                         },
                         "native_day_invalidation": query.startswith(
                             "SELECT DISTINCT instrument_id, toString(toDate(open_time)) AS day "
@@ -454,7 +456,9 @@ def assert_snapshot(snapshot, manifest):
             )
         },
         "oi_by_instrument": dict(Counter(row["instrument_id"] for row in snapshot["oi"])),
-        "fields_sha256": {key: snapshot_hash(value) for key, value in snapshot.items() if key != "code_version"},
+        "fields_sha256": {
+            key: snapshot_hash(value) for key, value in snapshot.items() if key != "code_version"
+        },
         "hash_boundary": "Captured final snapshot after request timer; only root code_version excluded",
         "cutoff_exclusions": "ALL_KLINES_AND_FLOW_CLOSE_AT_OR_BEFORE_CUTOFF_AND_OI_AT_OR_BEFORE_CUTOFF",
     }
@@ -790,7 +794,8 @@ async def run_sample(
             projection = query["dense_projection"]
             dense[projection["instrument_id"], projection["field"]] += query["rows"]
             assert [parse_time(query["time_parameters"][key]) for key in ("p0", "p1", "p2")] == [
-                parse_time(manifest[key]) for key in ("dense_lower", "dense_exclusive_upper", "availability_cutoff")
+                parse_time(manifest[key])
+                for key in ("dense_lower", "dense_exclusive_upper", "availability_cutoff")
             ]
     if state == "cold":
         assert dense == {(row["instrument_id"], row["field"]): row["rows"] for row in expected}
@@ -845,7 +850,9 @@ def imported_sources(root):
             filename = getattr(module, "__file__", None)
             if filename is None:
                 spec = getattr(module, "__spec__", None)
-                assert spec is not None and spec.name == name and spec.origin is None and not spec.has_location
+                assert (
+                    spec is not None and spec.name == name and spec.origin is None and not spec.has_location
+                )
                 locations = spec.submodule_search_locations
                 declared = getattr(module, "__path__", None)
                 assert locations and declared and 0 < len(locations) <= 16 and 0 < len(declared) <= 16
@@ -924,7 +931,14 @@ async def run_worker(ownership):
                     state: await seed_session(repo, state, manifest["anchor"]) for state in ("cold", "warm")
                 }
                 market = MarketService(repo, settings, http=http)
-                assert len(market.instruments) == 85
+                configured = settings.load_config("registry")["instruments"]
+                assert set(market.instruments) == {
+                    row["instrument_id"] for row in configured if row.get("active", True)
+                }
+                setup["configured_instrument_count"] = len(market.instruments)
+                setup["captured_resolved_instrument_count"] = next(
+                    entry["rows"] for entry in setup["inputs"] if entry["name"] == "registry-resolved.jsonl.gz"
+                )
                 meter.instrument(repo.clickhouse, "rows", "clickhouse.rows_http_and_json")
                 meter.active = True
                 try:

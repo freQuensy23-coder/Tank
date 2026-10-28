@@ -346,10 +346,10 @@ async def test_original_and_candidate_full_input_market_truth_same_worker(
     record_property("latency_source_provenance", json.dumps(provenance, sort_keys=True))
     record_property(
         "latency_scope",
-        QUALIFICATION
-        + ". Matched full-dense-path seeded request, not an exact historical reproduction. "
+        QUALIFICATION + ". Matched full-dense-path seeded request, not an exact historical reproduction. "
         "All 16 projections / 784665 current FINAL rows, including nine native-volume paths; "
-        "original 85-instrument config and 81-peer counts retained. Later Coinbase FINAL lacks 453 "
+        "original 181-active-instrument config, 85 captured resolved rows and 81-peer counts retained. "
+        "Later Coinbase FINAL lacks 453 "
         "underlying / 906 projected historical rows. Same pytest worker, owned PostgreSQL16/ClickHouse25.8; "
         "ABBA original-cold, candidate-cold, candidate-warm, original-warm is one balanced pair per state, "
         "not repeated statistical confidence. Independent package/process/DB/cache lifetimes per version. "
