@@ -75,19 +75,20 @@ async def read_projection(
     async with httpx.AsyncClient(transport=httpx.MockTransport(respond)) as http:
         repo = MemoryRepository()
         repo.clickhouse = chm.ClickHouse("http://clickhouse.test", http=http)
-        rows = [
-            row
-            async for row in repo.iter_market_projection(
-                collection,
-                fields,
-                time_field,
-                start="2026-10-28T00:00:00Z",
-                end="2026-10-28T01:00:00Z",
-                assembled_at="2026-10-29T00:00:00Z",
-                instrument_ids=["test:spot:T"],
-                batch_size=batch_size,
-            )
-        ]
+        with chm.timing_span("test.projection_normalization", root=True):
+            rows = [
+                row
+                async for row in repo.iter_market_projection(
+                    collection,
+                    fields,
+                    time_field,
+                    start="2026-10-28T00:00:00Z",
+                    end="2026-10-28T01:00:00Z",
+                    assembled_at="2026-10-29T00:00:00Z",
+                    instrument_ids=["test:spot:T"],
+                    batch_size=batch_size,
+                )
+            ]
     return rows, requests
 
 
