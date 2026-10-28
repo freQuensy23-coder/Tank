@@ -1019,6 +1019,7 @@ def test_export_progress_refuses_nonallowlisted_receipts_without_replacing_check
     progress_path = tmp_path / "progress.json"
     comparison.checkpoint_progress(progress_path, {}, {}, {})
     before = progress_path.read_bytes()
+    entries_before = set(tmp_path.iterdir())
     receipt = {
         "stage": "read_start",
         "filename": "original-ownership.json",
@@ -1031,7 +1032,7 @@ def test_export_progress_refuses_nonallowlisted_receipts_without_replacing_check
     with pytest.raises(ValueError):
         comparison.checkpoint_progress(progress_path, {}, {}, {}, export_progress=[receipt])
     assert progress_path.read_bytes() == before
-    assert list(tmp_path.iterdir()) == [progress_path]
+    assert set(tmp_path.iterdir()) == entries_before
 
 
 def test_export_progress_count_bound_preserves_previous_checkpoint(tmp_path):

@@ -151,8 +151,10 @@ def validate_export_progress(progress):
         if type(stage) is not str or type(filename) is not str:
             raise ValueError("Unexpected parent export stage or file")
         if not (
-            stage in {"read_start", "read_complete"} and filename in PUBLIC_EXPORT_FILES
-            or stage == "bundle_assembled" and filename == ""
+            stage in {"read_start", "read_complete"}
+            and filename in PUBLIC_EXPORT_FILES
+            or stage == "bundle_assembled"
+            and filename == ""
         ):
             raise ValueError("Unexpected parent export stage or file")
         for field, limit in (("files", 16), ("bytes", PUBLIC_TOTAL_LIMIT)):
