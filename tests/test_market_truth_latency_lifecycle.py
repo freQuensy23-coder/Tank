@@ -757,3 +757,339 @@ def test_parent_receipt_byte_limit_preserves_checkpoint(tmp_path, monkeypatch):
         comparison.retain_message(payload, lifecycle, checkpoint)
     assert lifecycle["receipts"] == [{"kind": "ready"}]
     assert destination.read_bytes() == before
+
+
+@pytest.fixture
+def export_inputs(tmp_path):
+    expected = {}
+    for name in ("original", "candidate"):
+        source = tmp_path / (name + "-run")
+        source.mkdir()
+        for filename in (
+            "ownership.json",
+            "cold-result.json",
+            "cold-projection.json",
+            "cold-http.json",
+            "warm-result.json",
+            "warm-projection.json",
+            "warm-http.json",
+        ):
+            output = name + "-" + filename
+            value = {"derived_file": output, "value": "0.202900000000000000001", "missing": None}
+            if output == "original-cold-result.json":
+                value["content"] = [
+                    {
+                        "text": json.dumps(
+                            {
+                                "points": [
+                                    {
+                                        "ts": "2026-10-28T10:00:00.123456Z",
+                                        "price": "0.202900000000000000001",
+                                        "reason": "RETAINED_PUBLIC_OBSERVATION_" * 4,
+                                        "value": index,
+                                        "missing": None,
+                                    }
+                                    for index in range(256)
+                                ]
+                            }
+                        )
+                    }
+                ]
+            raw = json.dumps(value, separators=(",", ":")).encode()
+            (source / filename).write_bytes(raw)
+            expected[output] = (raw, value)
+        for filename in ("stderr.log", "environment.json", "config.json", "application.log"):
+            (source / filename).write_text("private-operator-secret")
+    return expected
+
+
+def test_export_validates_and_serializes_each_full_file_once_without_trimming(
+    tmp_path, monkeypatch, export_inputs
+):
+    validations, serializations = [], []
+    validate, serialize = comparison.validate_public, comparison.json.dumps
+
+    def validate_once(value):
+        if isinstance(value, dict) and "derived_file" in value:
+            validations.append(value["derived_file"])
+        return validate(value)
+
+    def serialize_once(value, *args, **kwargs):
+        if isinstance(value, dict) and "derived_file" in value:
+            serializations.append(value["derived_file"])
+        return serialize(value, *args, **kwargs)
+
+    monkeypatch.setattr(comparison, "validate_public", validate_once)
+    monkeypatch.setattr(comparison.json, "dumps", serialize_once)
+    destination = tmp_path / "export"
+    receipt = comparison.export_evidence(tmp_path, destination, {}, {}, {})
+    assert receipt["files"] == 16
+    assert {path.name for path in destination.iterdir()} == {
+        *export_inputs,
+        "receipts.json",
+        "manifest.json",
+    }
+    manifest = json.loads((destination / "manifest.json").read_bytes())
+    for output, (raw, value) in export_inputs.items():
+        exported = (destination / output).read_bytes()
+        assert exported == serialize(value, sort_keys=True, allow_nan=False).encode()
+        assert json.loads(exported) == value
+        assert manifest["files"][output] == {
+            "source_bytes_sha256": hashlib.sha256(raw).hexdigest(),
+            "export_sha256": hashlib.sha256(exported).hexdigest(),
+            "bytes": len(exported),
+        }
+    assert validations == list(export_inputs)
+    assert serializations == list(export_inputs)
+    assert all(b"private-operator-secret" not in path.read_bytes() for path in destination.iterdir())
+
+
+def test_canonical_public_read_revalidates_changed_sources_and_preserves_default_result(tmp_path):
+    source = tmp_path / "cold-result.json"
+    raw = b'{"price":"0.20290000","missing":null}'
+    source.write_bytes(raw)
+    assert comparison.read_public_file(source) == (raw, {"price": "0.20290000", "missing": None})
+    assert comparison.read_public_file(source, canonical=True) == (
+        raw,
+        b'{"missing": null, "price": "0.20290000"}',
+    )
+    source.write_text('{"content":[{"text":"{\\"nested\\":{\\"stderr\\":\\"hidden\\"}}"}]}')
+    with pytest.raises(ValueError, match="Forbidden public evidence"):
+        comparison.read_public_file(source, canonical=True)
+
+
+def test_export_checkpoints_all_parent_read_stages_and_bundle_without_claiming_export_success(
+    tmp_path, monkeypatch, export_inputs
+):
+    clock = {"wall": 10.0, "cpu": 2.0}
+    monkeypatch.setattr(comparison, "perf_counter", lambda: clock["wall"])
+    monkeypatch.setattr(comparison, "process_time", lambda: clock["cpu"])
+    read = comparison.read_public_file
+
+    def timed_read(*args, **kwargs):
+        result = read(*args, **kwargs)
+        clock["wall"] += 2
+        clock["cpu"] += 1
+        return result
+
+    monkeypatch.setattr(comparison, "read_public_file", timed_read)
+    progress_path = tmp_path / "progress.json"
+    destination = tmp_path / "export"
+    identities = {
+        "completion": "MATCHED_FULL_DENSE_PATH_RECONSTRUCTION_COMPARISON_COMPLETED_NOT_PERFORMANCE_ACCEPTANCE"
+    }
+    lifecycle = {"original": {"receipts": [], "exit_code": 0, "cleanup_confirmed": True}}
+    observed = []
+
+    def checkpoint(export_progress):
+        assert not destination.exists()
+        comparison.checkpoint_progress(
+            progress_path, identities, {}, lifecycle, export_progress=export_progress
+        )
+        observed.append(json.loads(progress_path.read_bytes()))
+        clock["wall"] += 0.5
+        clock["cpu"] += 0.25
+        return progress_path.stat().st_size
+
+    receipt = comparison.export_evidence(
+        tmp_path, destination, identities, {}, lifecycle, checkpoint=checkpoint
+    )
+    assert receipt["files"] == 16
+    stages = observed[-1]["export_progress"]
+    assert len(observed) == len(stages) == 29
+    assert [(item["stage"], item["filename"]) for item in stages] == [
+        pair
+        for filename in export_inputs
+        for pair in (("read_start", filename), ("read_complete", filename))
+    ] + [("bundle_assembled", "")]
+    assert stages[0]["elapsed_wall_seconds"] == stages[0]["elapsed_process_cpu_seconds"] == 0
+    assert stages[1]["elapsed_wall_seconds"] == 2.5
+    assert stages[1]["elapsed_process_cpu_seconds"] == 1.25
+    assert stages[-1]["files"] == 16
+    assert stages[-1]["bytes"] == sum(path.stat().st_size for path in destination.iterdir())
+    for index, snapshot in enumerate(observed):
+        assert len(snapshot["export_progress"]) == index + 1
+        assert snapshot["completion"] == identities["completion"]
+        assert snapshot["lifecycles"] == lifecycle
+    assert json.loads(progress_path.read_bytes()) == observed[-1]
+    assert b"private-operator-secret" not in progress_path.read_bytes()
+
+
+@pytest.mark.parametrize("boundary", ["read", "write"])
+def test_export_interruption_retains_safe_parent_stage_and_cleanup(tmp_path, monkeypatch, boundary):
+    source = tmp_path / "original-run"
+    source.mkdir()
+    (source / "ownership.json").write_text('{"repository_cleanup":"CONTEXT_EXIT_COMPLETED"}')
+    destination, progress_path = tmp_path / "export", tmp_path / "progress.json"
+    lifecycle = {"original": {"cleanup_confirmed": True, "exit_code": 0, "receipts": []}}
+    failure = OSError("postgresql://operator:private-secret@localhost/private")
+
+    def checkpoint(export_progress):
+        comparison.checkpoint_progress(progress_path, {}, {}, lifecycle, export_progress=export_progress)
+        return progress_path.stat().st_size
+
+    if boundary == "read":
+
+        def refuse_read(*args, **kwargs):
+            raise failure
+
+        monkeypatch.setattr(comparison, "read_public_file", refuse_read)
+    else:
+        write = Path.write_bytes
+
+        def refuse_write(path, data):
+            if path.parent == destination:
+                raise failure
+            return write(path, data)
+
+        monkeypatch.setattr(Path, "write_bytes", refuse_write)
+    with pytest.raises(OSError) as raised:
+        comparison.export_evidence(tmp_path, destination, {}, {}, lifecycle, checkpoint=checkpoint)
+    assert raised.value is failure
+    current = json.loads(progress_path.read_bytes())
+    assert current["lifecycles"] == lifecycle
+    assert current["completion"] == "INCOMPLETE_NO_LATENCY_OR_PARITY_OUTCOME"
+    assert current["export_progress"][-1]["stage"] == (
+        "read_start" if boundary == "read" else "bundle_assembled"
+    )
+    assert b"private-secret" not in progress_path.read_bytes()
+    assert not (destination / "manifest.json").exists()
+    assert list(tmp_path.glob(".*.tmp")) == []
+
+
+@pytest.mark.parametrize("indirect", ["file", "parent"])
+def test_export_refuses_symlink_sources_before_bundle_creation(tmp_path, indirect):
+    source, real = tmp_path / "original-run", tmp_path / "real"
+    real.mkdir()
+    (real / "ownership.json").write_text('{"safe":true}')
+    if indirect == "parent":
+        source.symlink_to(real, target_is_directory=True)
+    else:
+        source.mkdir()
+        (source / "ownership.json").symlink_to(real / "ownership.json")
+    destination = tmp_path / "export"
+    with pytest.raises(ValueError, match="indirect"):
+        comparison.export_evidence(tmp_path, destination, {}, {}, {})
+    assert not destination.exists()
+    assert (real / "ownership.json").read_text() == '{"safe":true}'
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        {"value": float("nan")},
+        {"value": float("inf")},
+        {"content": [{"text": json.dumps({"nested": {"config": {"safe": True}}})}]},
+        {"content": [{"text": json.dumps({"nested": {"stderr": "hidden"}})}]},
+    ],
+)
+def test_export_refuses_nonfinite_and_embedded_private_json_with_parent_checkpoint(tmp_path, payload):
+    source = tmp_path / "original-run"
+    source.mkdir()
+    (source / "ownership.json").write_text(json.dumps(payload))
+    destination, progress_path = tmp_path / "export", tmp_path / "progress.json"
+    comparison.checkpoint_progress(progress_path, {}, {}, {})
+
+    def checkpoint(export_progress):
+        comparison.checkpoint_progress(progress_path, {}, {}, {}, export_progress=export_progress)
+        return progress_path.stat().st_size
+
+    with pytest.raises(ValueError):
+        comparison.export_evidence(tmp_path, destination, {}, {}, {}, checkpoint=checkpoint)
+    current = json.loads(progress_path.read_bytes())
+    assert current["export_progress"][-1]["stage"] == "read_start"
+    assert "hidden" not in progress_path.read_text()
+    assert not destination.exists()
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        {"stage": "private text"},
+        {"filename": "stderr.log"},
+        {"filename": "../ownership.json"},
+        {"extra": "private text"},
+        {"files": 17},
+        {"bytes": 64_000_001},
+        {"elapsed_wall_seconds": -1},
+        {"elapsed_process_cpu_seconds": float("nan")},
+        {"elapsed_wall_seconds": float("inf")},
+        {"files": True},
+    ],
+)
+def test_export_progress_refuses_nonallowlisted_receipts_without_replacing_checkpoint(tmp_path, mutation):
+    progress_path = tmp_path / "progress.json"
+    comparison.checkpoint_progress(progress_path, {}, {}, {})
+    before = progress_path.read_bytes()
+    receipt = {
+        "stage": "read_start",
+        "filename": "original-ownership.json",
+        "files": 0,
+        "bytes": 0,
+        "elapsed_wall_seconds": 0.0,
+        "elapsed_process_cpu_seconds": 0.0,
+        **mutation,
+    }
+    with pytest.raises(ValueError):
+        comparison.checkpoint_progress(progress_path, {}, {}, {}, export_progress=[receipt])
+    assert progress_path.read_bytes() == before
+    assert list(tmp_path.iterdir()) == [progress_path]
+
+
+def test_export_progress_count_bound_preserves_previous_checkpoint(tmp_path):
+    progress_path = tmp_path / "progress.json"
+    comparison.checkpoint_progress(progress_path, {}, {}, {})
+    before = progress_path.read_bytes()
+    receipt = {
+        "stage": "read_start",
+        "filename": "original-ownership.json",
+        "files": 0,
+        "bytes": 0,
+        "elapsed_wall_seconds": 0.0,
+        "elapsed_process_cpu_seconds": 0.0,
+    }
+    with pytest.raises(ValueError):
+        comparison.checkpoint_progress(progress_path, {}, {}, {}, export_progress=[receipt] * 30)
+    assert progress_path.read_bytes() == before
+
+
+def test_export_reserves_latest_parent_checkpoint_bytes_before_creating_bundle(tmp_path, monkeypatch):
+    monkeypatch.setattr(comparison, "perf_counter", lambda: 0.0)
+    monkeypatch.setattr(comparison, "process_time", lambda: 0.0)
+    progress_path = tmp_path / "progress.json"
+    comparison.checkpoint_progress(progress_path, {}, {}, {})
+    initial_size = progress_path.stat().st_size
+
+    def checkpoint(export_progress):
+        comparison.checkpoint_progress(progress_path, {}, {}, {}, export_progress=export_progress)
+        return progress_path.stat().st_size
+
+    baseline = tmp_path / "baseline"
+    comparison.export_evidence(tmp_path, baseline, {}, {}, {}, initial_size, checkpoint=checkpoint)
+    final_size = progress_path.stat().st_size
+    output_size = sum(path.stat().st_size for path in baseline.iterdir())
+    assert final_size > initial_size
+    monkeypatch.setattr(comparison, "PUBLIC_TOTAL_LIMIT", output_size + final_size)
+    accepted = tmp_path / "accepted"
+    comparison.export_evidence(tmp_path, accepted, {}, {}, {}, initial_size, checkpoint=checkpoint)
+    assert {path.name: path.read_bytes() for path in accepted.iterdir()} == {
+        path.name: path.read_bytes() for path in baseline.iterdir()
+    }
+    monkeypatch.setattr(comparison, "PUBLIC_TOTAL_LIMIT", output_size + final_size - 1)
+    refused = tmp_path / "refused"
+    with pytest.raises(ValueError, match="bundle exceeds"):
+        comparison.export_evidence(tmp_path, refused, {}, {}, {}, initial_size, checkpoint=checkpoint)
+    assert not refused.exists()
+    assert json.loads(progress_path.read_bytes())["export_progress"][-1]["stage"] == "bundle_assembled"
+
+
+def test_canonical_public_read_preserves_postserialization_file_bound(tmp_path, monkeypatch):
+    value = {str(index): index for index in range(20)}
+    raw = json.dumps(value, separators=(",", ":")).encode()
+    canonical = json.dumps(value, sort_keys=True, allow_nan=False).encode()
+    assert len(raw) < len(canonical)
+    source = tmp_path / "cold-result.json"
+    source.write_bytes(raw)
+    monkeypatch.setattr(comparison, "PUBLIC_FILE_LIMIT", len(canonical) - 1)
+    with pytest.raises(ValueError, match="file exceeds"):
+        comparison.read_public_file(source, canonical=True)
