@@ -134,10 +134,8 @@ def timestamp(value):
 
 
 def unique_object(pairs):
-    result = {}
-    for key, value in pairs:
-        require(key not in result, "Duplicate JSON field")
-        result[key] = value
+    result = dict(pairs)
+    require(len(result) == len(pairs), "Duplicate JSON field")
     return result
 
 
