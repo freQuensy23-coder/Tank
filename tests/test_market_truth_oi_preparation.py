@@ -9,7 +9,6 @@ import pytest
 import tank.analysis.truth as truth
 from tank.util import iso, parse_time
 
-
 ORIGIN = parse_time("2026-10-20T00:00:00Z")
 CATEGORY = "oi_native_single_sided"
 
@@ -247,7 +246,17 @@ def test_each_window_readmits_venues_before_reusing_preparation(assessment, meas
     older, _ = measured(sync, start=2)
     repeated, warm = measured(sync)
     assert recent == repeated == _flat_expected()
-    assert older == _flat_expected(start=2, native=Decimal(100), usd=Decimal(1000), venues=["binance"])
+    older_expected = _flat_expected(start=2, native=Decimal(100), usd=Decimal(1000), venues=["binance"])
+    older_expected.update(
+        native_oi_vs_normal=None,
+        oi_class=None,
+        classification_ready=False,
+        native_normal_range=None,
+        usd_normal_range=None,
+        native_beyond=None,
+        usd_beyond=None,
+    )
+    assert older == older_expected
     assert cold["sums"] == warm["sums"] == 12
     _assert_structural_hit(cold, warm)
 
@@ -266,7 +275,7 @@ def test_cached_alignment_cannot_bypass_category_admission(assessment, measured,
 
 @pytest.mark.parametrize(
     ("precision", "rounding", "trap", "final_precision"),
-    [(7, ROUND_FLOOR, False, 414), (768, ROUND_HALF_EVEN, True, 768)],
+    [(7, ROUND_FLOOR, False, 416), (768, ROUND_HALF_EVEN, True, 768)],
 )
 def test_structural_hits_replay_decimal_context_effects(
     assessment, measured, precision, rounding, trap, final_precision

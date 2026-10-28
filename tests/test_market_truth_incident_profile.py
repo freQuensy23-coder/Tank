@@ -169,6 +169,8 @@ HOT_FUNCTIONS = {
     "derivatives_truth",
     "_oi_stats",
     "_oi_rows",
+    "_build_oi_preparation",
+    "_time",
     "_composite_history",
     "synchronized_oi",
     "lookback_days",
@@ -705,3 +707,7 @@ def test_retained_ena_dense_relative_populations_cold_and_warm(record_property):
     assert gap["coverage"]["excluded"][0]["detail"] == "FULL_MINUTE_COVERAGE_INCOMPLETE"
     assert cold_calls.get("lookback_days", 0) <= 64
     assert derivative_calls.get("lookback_days", 0) <= 256
+    assert derivative_calls.get("_build_oi_preparation", 0) == 2
+    assert derivative_calls.get("_composite_history", 0) == 4
+    assert derivative_calls.get("decimal", 0) == 1_418_224
+    assert derivative_calls.get("_sum", 0) == 45_972
