@@ -65,6 +65,81 @@ def captured_line(**changes):
     return json.dumps(row, separators=(",", ":"))
 
 
+def test_json_object_construction_preserves_values_and_checks_each_object_once(monkeypatch):
+    checks = []
+    require = full_inputs.require
+
+    def counting_require(condition, message):
+        checks.append((condition, message))
+        return require(condition, message)
+
+    monkeypatch.setattr(full_inputs, "require", counting_require)
+    result = full_inputs.read_json(
+        r'{"Key":9007199254740993,"key":0.1234500,"prefix":true,"prefix_more":null,'
+        r'"é":"literal","e\u0301":"decomposed","\u0061":"escaped",'
+        r'"nested":[{},{"second":2,"first":1}],"tail":{}}'
+    )
+    assert result == {
+        "Key": 9007199254740993,
+        "key": Decimal("0.1234500"),
+        "prefix": True,
+        "prefix_more": None,
+        "é": "literal",
+        "é": "decomposed",
+        "a": "escaped",
+        "nested": [{}, {"second": 2, "first": 1}],
+        "tail": {},
+    }
+    assert list(result) == [
+        "Key",
+        "key",
+        "prefix",
+        "prefix_more",
+        "é",
+        "é",
+        "a",
+        "nested",
+        "tail",
+    ]
+    assert type(result["Key"]) is int
+    assert type(result["key"]) is Decimal
+    assert result["key"].as_tuple() == Decimal("0.1234500").as_tuple()
+    assert list(result["nested"][1]) == ["second", "first"]
+    assert checks == [(True, "Duplicate JSON field")] * 4
+
+
+@pytest.mark.parametrize(
+    "document",
+    [
+        r'{"value":1,"value":1}',
+        r'{"value":1,"\u0076alue":2}',
+        r'{"value":{"inner":1,"inner":2}}',
+        r'{"value":[{"inner":1,"inner":2}]}',
+        r'{"value":1,"other":0,"value":2,"value":3}',
+    ],
+)
+@pytest.mark.parametrize("encoded", [False, True])
+async def test_native_import_refuses_duplicate_decoded_objects_before_http(
+    tmp_path, native_import, document, encoded
+):
+    ch, requests = native_import
+    line = captured_line(source_observations=document if encoded else "object-marker")
+    if not encoded:
+        line = line.replace('"object-marker"', document)
+    schema = {**MARKET_COLUMNS["mkt.klines_1m"], "source_observations": "jsonb"}
+    retained, _, _ = retained_batch(
+        tmp_path,
+        [captured_line(), line],
+        schema=schema,
+        recursive=["value", "inner", "other"],
+    )
+    with pytest.raises(ValueError, match="^Duplicate JSON field$"):
+        await full_inputs.insert_clickhouse(ch, "mkt.klines_1m", list(retained))
+    assert requests == []
+    assert full_inputs.read_json('{"value":1}') == {"value": 1}
+    assert full_inputs.read_json('{"value":2}') == {"value": 2}
+
+
 async def test_native_import_reuses_validated_json_without_changing_typed_payload(tmp_path, native_import):
     ch, requests = native_import
     line = captured_line()
