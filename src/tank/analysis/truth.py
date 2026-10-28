@@ -23,7 +23,7 @@ from functools import wraps
 from math import log
 from statistics import mean, median, stdev
 
-from tank.logging import market_stage, timing_span, timing_thread
+from tank.logging import market_stage, timing_identity, timing_span, timing_thread
 from tank.market.capture import event_anchor
 from tank.time_precision import chosen_boundary, offset_schedule, propagate_timestamp
 from tank.util import iso, jsonable, new_id, parse_time
@@ -4788,7 +4788,7 @@ def timestamp_companions(result, snapshot):
     return result
 
 
-@market_stage("compute.prepare", cpu=True)
+@market_stage("compute.bound_inputs", cpu=True)
 def bounded_market_snapshot(snapshot, end):
     snapshot = dict(snapshot)
     snapshot["flow_segments"] = [
@@ -4876,27 +4876,28 @@ def spot_window_graph(snapshot, start, end, av):
 
 @precise
 def _compute_market_truth(snapshot, *, config=None):
-    config = config or {}
-    snapshot = dict(snapshot)
-    end = parse_time(snapshot["cutoff"])
-    anchor = snapshot.get("anchor")
-    av = anchor.get("ts") if isinstance(anchor, dict) else anchor
-    start = parse_time(av) if av else end - timedelta(hours=4)
-    if start >= end:
-        raise ValueError("anchor must precede cutoff")
+    with timing_span("compute.prepare", cpu=True):
+        config = config or {}
+        snapshot = dict(snapshot)
+        end = parse_time(snapshot["cutoff"])
+        anchor = snapshot.get("anchor")
+        av = anchor.get("ts") if isinstance(anchor, dict) else anchor
+        start = parse_time(av) if av else end - timedelta(hours=4)
+        if start >= end:
+            raise ValueError("anchor must precede cutoff")
 
-    snapshot = bounded_market_snapshot(snapshot, end)
+        snapshot = bounded_market_snapshot(snapshot, end)
 
-    indexed = defaultdict(list)
-    for row in snapshot.get("klines", []):
-        indexed[row.get("instrument_id")].append((_time(row), row))
-    snapshot["_kline_volume_index"] = {}
-    for iid, points in indexed.items():
-        points.sort(key=lambda point: point[0])
-        snapshot["_kline_volume_index"][iid] = (
-            [point[0] for point in points],
-            [point[1] for point in points],
-        )
+        indexed = defaultdict(list)
+        for row in snapshot.get("klines", []):
+            indexed[row.get("instrument_id")].append((_time(row), row))
+        snapshot["_kline_volume_index"] = {}
+        for iid, points in indexed.items():
+            points.sort(key=lambda point: point[0])
+            snapshot["_kline_volume_index"][iid] = (
+                [point[0] for point in points],
+                [point[1] for point in points],
+            )
     spots, windows, primary, instruments = spot_window_graph(snapshot, start, end, av)
     snapshot["_has_event"] = bool(av)
     snapshot["_lead_start"] = start
@@ -5033,12 +5034,10 @@ _COMPUTE_SLOT = threading.RLock()
 def compute_market_truth(snapshot, *, config=None, baseline_cache=None):
     """baseline_cache: a dict the caller keeps per token across assessments. Its keys carry
     exact history fingerprints (and config), so a reused entry is the same computation."""
-    with timing_span("compute.lock_wait"):
-        _COMPUTE_SLOT.acquire()
-    try:
+    with contextlib.ExitStack() as locked:
+        with timing_span("compute.lock_wait"):
+            locked.enter_context(_COMPUTE_SLOT)
         return _compute_market_truth_slot(snapshot, config=config, baseline_cache=baseline_cache)
-    finally:
-        _COMPUTE_SLOT.release()
 
 
 def _compute_market_truth_slot(snapshot, *, config=None, baseline_cache=None):
@@ -5739,48 +5738,54 @@ class MarketTruthService:
 
     @market_stage("assessment", root=True)
     async def assess(self, event_id, token_id, cutoff=None):
-        event = await self.repo.get("evt.events", event_id) if event_id else None
-        event = event or {}
-        cutoff = cutoff or iso(parse_time(iso()).replace(second=0, microsecond=0))
-        anchor = None
-        if event:
-            anchor = event_anchor(event)
-        snapshot = await self.market.snapshot(token_id, cutoff, anchor=anchor)
-        snapshot.update(event_id=event_id, token_id=token_id)
-        if event.get("public_at") is not None:
-            snapshot.update(propagate_timestamp(event, "public_at").fields("event_public_at"))
-        with timing_span("assessment.beneficiaries"):
-            beneficiaries = (
-                await self.repo.list(
-                    "evt.beneficiary_edges", filters={"event_id": event_id, "token_id": token_id}, limit=10000
+        with timing_span(
+            "assessment.inputs",
+            event_id=timing_identity(event_id),
+            token_id=timing_identity(token_id),
+        ):
+            event = await self.repo.get("evt.events", event_id) if event_id else None
+            event = event or {}
+            cutoff = cutoff or iso(parse_time(iso()).replace(second=0, microsecond=0))
+            anchor = None
+            if event:
+                anchor = event_anchor(event)
+            snapshot = await self.market.snapshot(token_id, cutoff, anchor=anchor)
+            snapshot.update(event_id=event_id, token_id=token_id)
+            if event.get("public_at") is not None:
+                snapshot.update(propagate_timestamp(event, "public_at").fields("event_public_at"))
+            with timing_span("assessment.beneficiaries"):
+                beneficiaries = (
+                    await self.repo.list(
+                        "evt.beneficiary_edges", filters={"event_id": event_id, "token_id": token_id}, limit=10000
+                    )
+                    if event_id and hasattr(self.repo, "list")
+                    else []
                 )
-                if event_id and hasattr(self.repo, "list")
-                else []
-            )
-            if beneficiaries:
-                edge = max(beneficiaries, key=lambda b: (int(b.get("map_version", 0)), str(b.get("edge_id", ""))))
-                snapshot["expected_direction"] = "LOSER" if edge.get("role") == "LOSER" else "BULLISH"
-        knobs = (
-            self.settings.load_config("thresholds")
-            if callable(getattr(self.settings, "load_config", None))
-            else {}
-        )
-        knobs = dict(
-            knobs, config_version=self.settings.config_version, code_version=self.settings.code_version
-        )
-        lock = self._assessment_locks.setdefault(token_id, asyncio.Lock())
-        with timing_span("assessment.lock_wait"):
-            await lock.acquire()
-        try:
-            result = await timing_thread(
-                compute_market_truth,
-                snapshot,
-                config=knobs,
-                baseline_cache=self._assessment_baselines.setdefault(token_id, {}),
-            )
-        finally:
-            lock.release()
-        result["mta_id"] = new_id("MTA")
-        with timing_span("assessment.persist"):
-            await self.repo.put("ana.market_truth", result["mta_id"], result, immutable=True)
-        return result
+                if beneficiaries:
+                    edge = max(beneficiaries, key=lambda b: (int(b.get("map_version", 0)), str(b.get("edge_id", ""))))
+                    snapshot["expected_direction"] = "LOSER" if edge.get("role") == "LOSER" else "BULLISH"
+            with timing_span("assessment.config"):
+                knobs = (
+                    self.settings.load_config("thresholds")
+                    if callable(getattr(self.settings, "load_config", None))
+                    else {}
+                )
+                knobs = dict(
+                    knobs, config_version=self.settings.config_version, code_version=self.settings.code_version
+                )
+            lock = self._assessment_locks.setdefault(token_id, asyncio.Lock())
+            with timing_span("assessment.lock_wait"):
+                await lock.acquire()
+            try:
+                result = await timing_thread(
+                    compute_market_truth,
+                    snapshot,
+                    config=knobs,
+                    baseline_cache=self._assessment_baselines.setdefault(token_id, {}),
+                )
+            finally:
+                lock.release()
+            result["mta_id"] = new_id("MTA")
+            with timing_span("assessment.persist", mta_id=timing_identity(result["mta_id"])):
+                await self.repo.put("ana.market_truth", result["mta_id"], result, immutable=True)
+            return result

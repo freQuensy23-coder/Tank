@@ -2756,7 +2756,11 @@ class MarketService:
     async def _window_rows(self, token_id, collection, field, ids, start, end, *, books=False):
         """The window rows of all of a token's instruments: one query per collection, or a cut
         of the union range inside snapshot_anchors()."""
-        return await self._ranged(collection, field, ids, start, end, books=books)
+        with timing_span(
+            "snapshot.window_read",
+            range_ms=max(0, (parse_time(end) - parse_time(start)).total_seconds() * 1000),
+        ):
+            return await self._ranged(collection, field, ids, start, end, books=books)
 
     @market_stage("snapshot")
     async def snapshot(self, token_id, cutoff, anchor=None, *, scope=None):

@@ -10,7 +10,7 @@ import os
 import re
 import time
 import traceback
-from contextlib import asynccontextmanager, contextmanager
+from contextlib import asynccontextmanager, contextmanager, suppress
 from contextvars import ContextVar
 from functools import wraps
 from urllib.parse import unquote, urlsplit
@@ -20,9 +20,31 @@ _KNOWN_SECRETS: set[str] = set()
 _TIMING: ContextVar[dict | None] = ContextVar("market_timing", default=None)
 _TIMING_LOG = logging.getLogger("tank.market_timing")
 _TIMING_NUMBERS = frozenset({"rows", "bytes", "cache_hit", "durable_age_ms", "attempt", "range_ms"})
-_TIMING_IDS = frozenset({"job_id", "call_id", "session_id", "event_id", "token_id", "request_id", "query_id", "mta_id"})
+_TIMING_IDS = frozenset(
+    {
+        "job_id",
+        "call_id",
+        "session_id",
+        "event_id",
+        "token_id",
+        "request_id",
+        "query_id",
+        "mta_id",
+    }
+)
 _TIMING_LABELS = {
-    "collection": frozenset({"flow_bars", "klines", "books", "oi", "funding", "liquidations", "tickers", "supply"}),
+    "collection": frozenset(
+        {
+            "flow_bars",
+            "klines",
+            "books",
+            "oi",
+            "funding",
+            "liquidations",
+            "tickers",
+            "supply",
+        }
+    ),
     "window": frozenset({"W15M", "W1H", "W4H", "W24H", "EVENT"}),
     "kind": frozenset({"price", "volume"}),
 }
@@ -39,20 +61,24 @@ def timing_query_id():
 def _timing_fields(fields):
     safe = {}
     for key, value in fields.items():
-        if key in _TIMING_NUMBERS and isinstance(value, (int, float)) and math.isfinite(value):
-            safe[key] = value
-        elif key in _TIMING_IDS and isinstance(value, str) and re.fullmatch(r"[0-9a-f]{32}", value):
-            safe[key] = value
-        elif key in _TIMING_LABELS and isinstance(value, str) and value in _TIMING_LABELS[key]:
+        if (
+            key in _TIMING_NUMBERS
+            and isinstance(value, (int, float))
+            and math.isfinite(value)
+            or key in _TIMING_IDS
+            and isinstance(value, str)
+            and re.fullmatch(r"[0-9a-f]{32}", value)
+            or key in _TIMING_LABELS
+            and isinstance(value, str)
+            and value in _TIMING_LABELS[key]
+        ):
             safe[key] = value
     return safe
 
 
 def _timing_emit(record):
-    try:
+    with suppress(Exception):
         _TIMING_LOG.info(json.dumps(record, separators=(",", ":"), sort_keys=True))
-    except Exception:
-        pass
 
 
 @contextmanager

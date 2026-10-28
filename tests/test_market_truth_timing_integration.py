@@ -24,6 +24,7 @@ pytestmark = pytest.mark.integration
 async def test_durable_tool_worker_snapshot_compute_and_persistence_are_linked(setup, monkeypatch, caplog):
     caplog.set_level(logging.INFO, logger="tank.market_timing")
     repo, settings, instrument = setup
+    (settings.config_dir / "thresholds.yaml").write_text("{}\n")
     token = instrument["token_id"]
     event_id = "EVT-TIMING"
     anchor = "2026-10-28T11:00:00Z"
@@ -103,10 +104,25 @@ async def test_durable_tool_worker_snapshot_compute_and_persistence_are_linked(s
     ends = [r for r in records if r["event"] == "stage_end"]
     by_stage = {r["stage"] for r in ends}
     assert {
-        "get_market_truth", "tool.validation", "tool.enqueue", "tool.jobs_wait", "job.link", "job.claimed",
-        "job.execution", "job.capture_readiness", "job.repair", "snapshot", "snapshot.collection",
-        "snapshot.series", "snapshot.fingerprints", "assessment.lock_wait", "threadpool.wait",
-        "compute.lock_wait", "compute.metadata", "assessment.persist", "job.persist",
+        "get_market_truth",
+        "tool.validation",
+        "tool.enqueue",
+        "tool.jobs_wait",
+        "job.link",
+        "job.claimed",
+        "job.execution",
+        "job.capture_readiness",
+        "job.repair",
+        "snapshot",
+        "snapshot.collection",
+        "snapshot.series",
+        "snapshot.fingerprints",
+        "assessment.lock_wait",
+        "threadpool.wait",
+        "compute.lock_wait",
+        "compute.metadata",
+        "assessment.persist",
+        "job.persist",
     } <= by_stage
     job_key = telemetry.timing_identity(jobs[0]["job_id"])
     for stage in ("job.link", "job.claimed", "job.execution", "assessment.persist"):
@@ -123,7 +139,7 @@ async def test_http_decode_and_real_compute_share_trace_without_payloads(caplog)
     caplog.set_level(logging.INFO, logger="tank.market_timing")
     requests = []
     tasks = set()
-    payload = b'{"instrument_id":"test:spot:T","open_time":"2026-10-28T11:59:00Z","c":"2","complete":true}\n'
+    payload = b'{"instrument_id":"test:spot:T","open_time":"2026-10-28T11:59:00Z","interval_s":60,"c":"2","complete":true}\n'
 
     async def serve(reader, writer):
         task = asyncio.current_task()
@@ -131,7 +147,9 @@ async def test_http_decode_and_real_compute_share_trace_without_payloads(caplog)
         try:
             head = await reader.readuntil(b"\r\n\r\n")
             headers = head.decode().split("\r\n")
-            length = int(next(line.split(":", 1)[1] for line in headers if line.lower().startswith("content-length:")))
+            length = int(
+                next(line.split(":", 1)[1] for line in headers if line.lower().startswith("content-length:"))
+            )
             await reader.readexactly(length)
             requests.append(parse_qs(urlsplit(headers[0].split()[1]).query))
             writer.write(
