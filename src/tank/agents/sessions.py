@@ -1693,7 +1693,13 @@ class SessionService:
                                 "publish_card",
                                 "record_review",
                             }:
-                                await mutation.enter_async_context(self.repo.lock("session:" + sid))
+                                await mutation.enter_async_context(
+                                    timing_context(
+                                        self.repo.lock("session:" + sid),
+                                        "tool.audit.mutation_lock_wait",
+                                        "tool.audit.mutation",
+                                    )
+                                )
                             await mutation.enter_async_context(self.repo.transaction())
                             result = (
                                 slow_result
