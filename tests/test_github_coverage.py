@@ -210,12 +210,15 @@ def test_retained_atom_archive_matches_catalog_and_real_routing_inputs(github_co
         assert all(member.isfile() for member in members)
         assert len(members) == len(expected_members)
         assert {member.name for member in members} == set(expected_members)
+        payloads = {}
+        for info in members:
+            member = archive.extractfile(info)
+            assert member is not None, info.name
+            with member:
+                payloads[info.name] = member.read()
         for project, repository in selected:
             evidence = repository["feed_evidence"]
-            member = archive.extractfile(evidence["archive_member"])
-            assert member is not None, repository["full_name"]
-            with member:
-                payload = member.read()
+            payload = payloads[evidence["archive_member"]]
             assert hashlib.sha256(payload).hexdigest() == evidence["sha256"], repository["full_name"]
             root = ElementTree.fromstring(payload)
             assert root.tag == ATOM + "feed", repository["full_name"]
@@ -285,9 +288,7 @@ def test_short_protocol_names_need_real_publisher_context_for_routing(
     project = next(project for project in github_coverage.projects if project["entity_id"] == entity_id)
     repository = next(row for row in project["repositories"] if row["decision"] == "ADD")
     feed = next(
-        feed
-        for feed in source["feeds"]
-        if feed_key(feed["url"]) == feed_key(selected_commit_url(repository))
+        feed for feed in source["feeds"] if feed_key(feed["url"]) == feed_key(selected_commit_url(repository))
     )
     item = {
         "source_id": "S25",
@@ -351,118 +352,122 @@ async def test_world_billing_atom_poll_persists_real_filter_admission_idempotent
     object.__setattr__(
         settings,
         "load_config",
-        lambda name: {"sources": [isolated_source]} if name == "sources" else Settings.load_config(settings, name),
+        lambda name: (
+            {"sources": [isolated_source]} if name == "sources" else Settings.load_config(settings, name)
+        ),
     )
-    async with postgres_template.repository(database_url) as repo:
-        async with httpx.AsyncClient(trust_env=False, timeout=10) as http:
-            service = SourceService(repo, settings, http=http)
-            try:
-                started = perf_counter()
-                first = await service.poll_once("S25")
-                first_poll_seconds = perf_counter() - started
-                assert first["status"] == "HEALTHY" and first["errors"] == [], first
-                rows = await repo.list("ingest.source_items", filters={"source_id": "S25"})
-                assert first["items"] == len(entries) == len(rows)
-                assert {row["external_id"] for row in rows} == external_ids
-                billing = next(row for row in rows if row["external_id"] == BILLING_ID)
-                assert billing["title"] == BILLING_TITLE and billing["text"] == expected_body
-                billing_url = "https://github.com/worldcoin/world-id-protocol/commit/" + BILLING_SHA
-                assert billing["url"] == billing_url
-                assert billing["source_id"] == "S25" and billing["feed"] == test_feed["url"]
-                assert billing["source"] == "GitHub" and billing["author"] == "GitHub"
-                assert billing["author_organization"] == feed["author_organization"]
-                assert {"world", "world:WLD"} <= Pipeline(repo, settings, http=http).identities(billing)
-                assert billing["subtype"] == "commits" and billing["source_class"] == "TECHNICAL_EVIDENCE"
-                assert billing["source_updated_at"] == "2026-10-28T12:05:22Z"
-                assert billing["source_updated_at_precision"] == "EXACT"
-                assert billing["published_at"] is None
-                assert billing["relevance"] == {"decision": None, "pending_reason": "AWAITING_FILTER"}
-                assert billing["extraction_status"] == "PENDING" and billing["deferrable"] is True
-                jobs = await repo.list("ops.jobs", filters={"type": "FILTER_ITEM"})
-                assert len(jobs) == len(rows)
-                assert {job["idem_key"] for job in jobs} == {row["item_id"] for row in rows}
-                assert all(job["payload"] == {"item_id": job["idem_key"]} for job in jobs)
-                assert all(job["status"] == "QUEUED" and job["priority"] == 2 for job in jobs)
-                assert await repo.list("ops.jobs", filters={"type": "ROUTE_ITEM"}) == []
-                assert await repo.list("ops.llm_usage") == []
-                assert await repo.list("evt.events") == []
-                assert await repo.list("out.alerts") == []
-                raw_before = {path: path.read_bytes() for path in tmp_path.rglob("*.zst")}
-                assert set(raw_before) == {Path(row["raw_ref"]) for row in rows}
-                for row in rows:
-                    assert row["raw_sha256"] == WORLD_SHA256
-                    assert row["observation_count"] == 1
-                    compressed = raw_before[Path(row["raw_ref"])]
-                    assert zstandard.ZstdDecompressor().decompress(compressed) == payload
-                async with repo.transaction():
-                    projected = await (
-                        await repo._conn().execute(
-                            "SELECT source_id,external_id,relevance_decision,body,raw_path,raw_sha256 "
-                            "FROM ingest.source_items WHERE item_id=%s",
-                            (billing["item_id"],),
-                        )
-                    ).fetchone()
-                    queued = await (
-                        await repo._conn().execute(
-                            "SELECT type,status,priority,idem_key,payload FROM ops.jobs "
-                            "WHERE payload->>'item_id'=%s",
-                            (billing["item_id"],),
-                        )
-                    ).fetchall()
-                assert projected["source_id"] == "S25" and projected["external_id"] == BILLING_ID
-                assert projected["body"] == expected_body and projected["relevance_decision"] is None
-                assert projected["raw_path"] == billing["raw_ref"]
-                assert projected["raw_sha256"] == WORLD_SHA256
-                assert len(queued) == 1
-                assert queued[0] == {
-                    "type": "FILTER_ITEM",
-                    "status": "QUEUED",
-                    "priority": 2,
-                    "idem_key": billing["item_id"],
-                    "payload": {"item_id": billing["item_id"]},
-                }
-                started = perf_counter()
-                second = await service.poll_once("S25")
-                second_poll_seconds = perf_counter() - started
-                assert second == {"source_id": "S25", "status": "HEALTHY", "items": 0, "errors": []}
-                assert stand.requests == [{"path": stand.path, "authorization": None}] * 2
-                after_rows = await repo.list("ingest.source_items")
-                after_jobs = await repo.list("ops.jobs", filters={"type": "FILTER_ITEM"})
-                assert sorted(after_rows, key=lambda row: row["item_id"]) == sorted(
-                    rows, key=lambda row: row["item_id"]
-                )
-                assert sorted(after_jobs, key=lambda job: job["job_id"]) == sorted(
-                    jobs, key=lambda job: job["job_id"]
-                )
-                assert {path: path.read_bytes() for path in tmp_path.rglob("*.zst")} == raw_before
-                checkpoint = await repo.get("ops.source_checkpoints", "S25:0")
-                assert checkpoint["http_status"] == 200 and checkpoint["payload_sha256"] == WORLD_SHA256
-                assert checkpoint["pending_batches"] == []
-                view = Pipeline.state(billing)["item"]
-                assert view["title"] == BILLING_TITLE and view["source"] == "GitHub"
-                assert "author_organization" not in view and "World Network" not in json.dumps(view)
-                for name, value in {
-                    "boundary": "retained-public-atom->real-http->postgres-ingest->queued-FILTER_ITEM",
-                    "canonical_configured_feed": feed["url"],
-                    "test_http_endpoint": test_feed["url"],
-                    "request_path": stand.path,
-                    "http_request_count": len(stand.requests),
-                    "authorization_header_count": sum(r["authorization"] is not None for r in stand.requests),
-                    "fixture_path": str(FIXTURES / "world-id-protocol-main.atom"),
-                    "payload_bytes": len(payload),
-                    "payload_sha256": WORLD_SHA256,
-                    "atom_entry_count": len(entries),
-                    "ingest_item_count": len(rows),
-                    "filter_admission_count": len(jobs),
-                    "raw_file_count": len(raw_before),
-                    "billing_external_id": BILLING_ID,
-                    "billing_source_updated_at": billing["source_updated_at"],
-                    "second_poll_new_item_count": second["items"],
-                    "first_poll_seconds": first_poll_seconds,
-                    "second_poll_seconds": second_poll_seconds,
-                    "classifier_executed": False,
-                    "telegram_delivery_executed": False,
-                }.items():
-                    record_property(name, value)
-            finally:
-                await service.close()
+    async with (
+        postgres_template.repository(database_url) as repo,
+        httpx.AsyncClient(trust_env=False, timeout=10) as http,
+    ):
+        service = SourceService(repo, settings, http=http)
+        try:
+            started = perf_counter()
+            first = await service.poll_once("S25")
+            first_poll_seconds = perf_counter() - started
+            assert first["status"] == "HEALTHY" and first["errors"] == [], first
+            rows = await repo.list("ingest.source_items", filters={"source_id": "S25"})
+            assert first["items"] == len(entries) == len(rows)
+            assert {row["external_id"] for row in rows} == external_ids
+            billing = next(row for row in rows if row["external_id"] == BILLING_ID)
+            assert billing["title"] == BILLING_TITLE and billing["text"] == expected_body
+            billing_url = "https://github.com/worldcoin/world-id-protocol/commit/" + BILLING_SHA
+            assert billing["url"] == billing_url
+            assert billing["source_id"] == "S25" and billing["feed"] == test_feed["url"]
+            assert billing["source"] == "GitHub" and billing["author"] == "GitHub"
+            assert billing["author_organization"] == feed["author_organization"]
+            assert {"world", "world:WLD"} <= Pipeline(repo, settings, http=http).identities(billing)
+            assert billing["subtype"] == "commits" and billing["source_class"] == "TECHNICAL_EVIDENCE"
+            assert billing["source_updated_at"] == "2026-10-28T12:05:22Z"
+            assert billing["source_updated_at_precision"] == "EXACT"
+            assert billing["published_at"] is None
+            assert billing["relevance"] == {"decision": None, "pending_reason": "AWAITING_FILTER"}
+            assert billing["extraction_status"] == "PENDING" and billing["deferrable"] is True
+            jobs = await repo.list("ops.jobs", filters={"type": "FILTER_ITEM"})
+            assert len(jobs) == len(rows)
+            assert {job["idem_key"] for job in jobs} == {row["item_id"] for row in rows}
+            assert all(job["payload"] == {"item_id": job["idem_key"]} for job in jobs)
+            assert all(job["status"] == "QUEUED" and job["priority"] == 2 for job in jobs)
+            assert await repo.list("ops.jobs", filters={"type": "ROUTE_ITEM"}) == []
+            assert await repo.list("ops.llm_usage") == []
+            assert await repo.list("evt.events") == []
+            assert await repo.list("out.alerts") == []
+            raw_before = {path: path.read_bytes() for path in tmp_path.rglob("*.zst")}
+            assert set(raw_before) == {Path(row["raw_ref"]) for row in rows}
+            for row in rows:
+                assert row["raw_sha256"] == WORLD_SHA256
+                assert row["observation_count"] == 1
+                compressed = raw_before[Path(row["raw_ref"])]
+                assert zstandard.ZstdDecompressor().decompress(compressed) == payload
+            async with repo.transaction():
+                projected = await (
+                    await repo._conn().execute(
+                        "SELECT source_id,external_id,relevance_decision,body,raw_path,raw_sha256 "
+                        "FROM ingest.source_items WHERE item_id=%s",
+                        (billing["item_id"],),
+                    )
+                ).fetchone()
+                queued = await (
+                    await repo._conn().execute(
+                        "SELECT type,status,priority,idem_key,document->'payload' AS payload FROM ops.jobs "
+                        "WHERE document->'payload'->>'item_id'=%s",
+                        (billing["item_id"],),
+                    )
+                ).fetchall()
+            assert projected["source_id"] == "S25" and projected["external_id"] == BILLING_ID
+            assert projected["body"] == expected_body and projected["relevance_decision"] is None
+            assert projected["raw_path"] == billing["raw_ref"]
+            assert projected["raw_sha256"] == WORLD_SHA256
+            assert len(queued) == 1
+            assert queued[0] == {
+                "type": "FILTER_ITEM",
+                "status": "QUEUED",
+                "priority": 2,
+                "idem_key": billing["item_id"],
+                "payload": {"item_id": billing["item_id"]},
+            }
+            started = perf_counter()
+            second = await service.poll_once("S25")
+            second_poll_seconds = perf_counter() - started
+            assert second == {"source_id": "S25", "status": "HEALTHY", "items": 0, "errors": []}
+            assert stand.requests == [{"path": stand.path, "authorization": None}] * 2
+            after_rows = await repo.list("ingest.source_items")
+            after_jobs = await repo.list("ops.jobs", filters={"type": "FILTER_ITEM"})
+            assert sorted(after_rows, key=lambda row: row["item_id"]) == sorted(
+                rows, key=lambda row: row["item_id"]
+            )
+            assert sorted(after_jobs, key=lambda job: job["job_id"]) == sorted(
+                jobs, key=lambda job: job["job_id"]
+            )
+            assert {path: path.read_bytes() for path in tmp_path.rglob("*.zst")} == raw_before
+            checkpoint = await repo.get("ops.source_checkpoints", "S25:0")
+            assert checkpoint["http_status"] == 200 and checkpoint["payload_sha256"] == WORLD_SHA256
+            assert checkpoint["pending_batches"] == []
+            view = Pipeline.state(billing)["item"]
+            assert view["title"] == BILLING_TITLE and view["source"] == "GitHub"
+            assert "author_organization" not in view and "World Network" not in json.dumps(view)
+            for name, value in {
+                "boundary": "retained-public-atom->real-http->postgres-ingest->queued-FILTER_ITEM",
+                "canonical_configured_feed": feed["url"],
+                "test_http_endpoint": test_feed["url"],
+                "request_path": stand.path,
+                "http_request_count": len(stand.requests),
+                "authorization_header_count": sum(r["authorization"] is not None for r in stand.requests),
+                "fixture_path": str(FIXTURES / "world-id-protocol-main.atom"),
+                "payload_bytes": len(payload),
+                "payload_sha256": WORLD_SHA256,
+                "atom_entry_count": len(entries),
+                "ingest_item_count": len(rows),
+                "filter_admission_count": len(jobs),
+                "raw_file_count": len(raw_before),
+                "billing_external_id": BILLING_ID,
+                "billing_source_updated_at": billing["source_updated_at"],
+                "second_poll_new_item_count": second["items"],
+                "first_poll_seconds": first_poll_seconds,
+                "second_poll_seconds": second_poll_seconds,
+                "classifier_executed": False,
+                "telegram_delivery_executed": False,
+            }.items():
+                record_property(name, value)
+        finally:
+            await service.close()
