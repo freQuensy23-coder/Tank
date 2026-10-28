@@ -772,6 +772,1901 @@ sources:
     kind: atom
     interval_s: 600
     subtype: commits
+  - url: https://github.com/bitcoin-core/asmap-data/commits/main.atom
+    kind: atom
+    interval_s: 600
+    subtype: commits
+    author_organization: bitcoin-core (Bitcoin)
+  - url: https://github.com/bitcoin-core/gui/commits/master.atom
+    kind: atom
+    interval_s: 600
+    subtype: commits
+    author_organization: bitcoin-core (Bitcoin)
+  - url: https://github.com/bitcoin-core/secp256k1/commits/master.atom
+    kind: atom
+    interval_s: 600
+    subtype: commits
+    author_organization: bitcoin-core (Bitcoin)
+  - url: https://github.com/bitcoin/bips/commits/master.atom
+    kind: atom
+    interval_s: 600
+    subtype: commits
+    author_organization: bitcoin (Bitcoin)
+  - url: https://github.com/bitcoin/bitcoin/commits/master.atom
+    kind: atom
+    interval_s: 600
+    subtype: commits
+    author_organization: bitcoin (Bitcoin)
+  - url: https://github.com/besu-eth/besu/commits/main.atom
+    kind: atom
+    interval_s: 600
+    subtype: commits
+    author_organization: besu-eth (Ethereum)
+  - url: https://github.com/ChainSafe/lodestar/commits/unstable.atom
+    kind: atom
+    interval_s: 600
+    subtype: commits
+    author_organization: ChainSafe (Ethereum)
+  - url: https://github.com/Consensys-Incorporated/teku/commits/master.atom
+    kind: atom
+    interval_s: 600
+    subtype: commits
+    author_organization: Consensys-Incorporated (Ethereum)
+  - url: https://github.com/erigontech/erigon/commits/main.atom
+    kind: atom
+    interval_s: 600
+    subtype: commits
+    author_organization: erigontech (Ethereum)
+  - url: https://github.com/eth-clients/e2store-format-specs/commits/main.atom
+    kind: atom
+    interval_s: 600
+    subtype: commits
+    author_organization: eth-clients (Ethereum)
+  - url: https://github.com/eth-clients/hoodi/commits/main.atom
+    kind: atom
+    interval_s: 600
+    subtype: commits
+    author_organization: eth-clients (Ethereum)
+  - url: https://github.com/eth-clients/mainnet/commits/main.atom
+    kind: atom
+    interval_s: 600
+    subtype: commits
+    author_organization: eth-clients (Ethereum)
+  - url: https://github.com/eth-clients/sepolia/commits/main.atom
+    kind: atom
+    interval_s: 600
+    subtype: commits
+    author_organization: eth-clients (Ethereum)
+  - url: https://github.com/eth-clients/slashing-protection-interchange-tests/commits/master.atom
+    kind: atom
+    interval_s: 600
+    subtype: commits
+    author_organization: eth-clients (Ethereum)
+  - url: https://github.com/ethereum/access-layer-specs/commits/main.atom
+    kind: atom
+    interval_s: 600
+    subtype: commits
+    author_organization: ethereum (Ethereum)
+  - url: https://github.com/ethereum/anon-rpc/commits/main.atom
+    kind: atom
+    interval_s: 600
+    subtype: commits
+    author_organization: ethereum (Ethereum)
+  - url: https://github.com/ethereum/audits/commits/master.atom
+    kind: atom
+    interval_s: 600
+    subtype: commits
+    author_organization: ethereum (Ethereum)
+  - url: https://github.com/ethereum/beacon-APIs/commits/master.atom
+    kind: atom
+    interval_s: 600
+    subtype: commits
+    author_organization: ethereum (Ethereum)
+  - url: https://github.com/ethereum/bls12-381-tests/commits/master.atom
+    kind: atom
+    interval_s: 600
+    subtype: commits
+    author_organization: ethereum (Ethereum)
+  - url: https://github.com/ethereum/builder-specs/commits/main.atom
+    kind: atom
+    interval_s: 600
+    subtype: commits
+    author_organization: ethereum (Ethereum)
+  - url: https://github.com/ethereum/c-kzg-4844/commits/main.atom
+    kind: atom
+    interval_s: 600
+    subtype: commits
+    author_organization: ethereum (Ethereum)
+  - url: https://github.com/ethereum/clear-signing-erc7730-registry/commits/master.atom
+    kind: atom
+    interval_s: 600
+    subtype: commits
+    author_organization: ethereum (Ethereum)
+  - url: https://github.com/ethereum/clef/commits/master.atom
+    kind: atom
+    interval_s: 600
+    subtype: commits
+    author_organization: ethereum (Ethereum)
+  - url: https://github.com/ethereum/consensus-specs/commits/master.atom
+    kind: atom
+    interval_s: 600
+    subtype: commits
+    author_organization: ethereum (Ethereum)
+  - url: https://github.com/ethereum/dc-networking/commits/main.atom
+    kind: atom
+    interval_s: 600
+    subtype: commits
+    author_organization: ethereum (Ethereum)
+  - url: https://github.com/ethereum/ddht/commits/master.atom
+    kind: atom
+    interval_s: 600
+    subtype: commits
+    author_organization: ethereum (Ethereum)
+  - url: https://github.com/ethereum/desktop-wallet/commits/master.atom
+    kind: atom
+    interval_s: 600
+    subtype: commits
+    author_organization: ethereum (Ethereum)
+  - url: https://github.com/ethereum/devp2p/commits/master.atom
+    kind: atom
+    interval_s: 600
+    subtype: commits
+    author_organization: ethereum (Ethereum)
+  - url: https://github.com/ethereum/discv4-crawl/commits/master.atom
+    kind: atom
+    interval_s: 600
+    subtype: commits
+    author_organization: ethereum (Ethereum)
+  - url: https://github.com/ethereum/discv4-dns-lists/commits/master.atom
+    kind: atom
+    interval_s: 600
+    subtype: commits
+    author_organization: ethereum (Ethereum)
+  - url: https://github.com/ethereum/distributed-validator-specs/commits/dev.atom
+    kind: atom
+    interval_s: 600
+    subtype: commits
+    author_organization: ethereum (Ethereum)
+  - url: https://github.com/ethereum/EIPs/commits/master.atom
+    kind: atom
+    interval_s: 600
+    subtype: commits
+    author_organization: ethereum (Ethereum)
+  - url: https://github.com/ethereum/ERCs/commits/master.atom
+    kind: atom
+    interval_s: 600
+    subtype: commits
+    author_organization: ethereum (Ethereum)
+  - url: https://github.com/ethereum/eth-enr/commits/master.atom
+    kind: atom
+    interval_s: 600
+    subtype: commits
+    author_organization: ethereum (Ethereum)
+  - url: https://github.com/ethereum/eth-portal/commits/main.atom
+    kind: atom
+    interval_s: 600
+    subtype: commits
+    author_organization: ethereum (Ethereum)
+  - url: https://github.com/ethereum/eth-trie.rs/commits/master.atom
+    kind: atom
+    interval_s: 600
+    subtype: commits
+    author_organization: ethereum (Ethereum)
+  - url: https://github.com/ethereum/ethereum-app/commits/master.atom
+    kind: atom
+    interval_s: 600
+    subtype: commits
+    author_organization: ethereum (Ethereum)
+  - url: https://github.com/ethereum/EthLib/commits/master.atom
+    kind: atom
+    interval_s: 600
+    subtype: commits
+    author_organization: ethereum (Ethereum)
+  - url: https://github.com/ethereum/execution-apis/commits/main.atom
+    kind: atom
+    interval_s: 600
+    subtype: commits
+    author_organization: ethereum (Ethereum)
+  - url: https://github.com/ethereum/execution-specs/commits/forks/bogota.atom
+    kind: atom
+    interval_s: 600
+    subtype: commits
+    author_organization: ethereum (Ethereum)
+  - url: https://github.com/ethereum/go-bigmodexpfix/commits/main.atom
+    kind: atom
+    interval_s: 600
+    subtype: commits
+    author_organization: ethereum (Ethereum)
+  - url: https://github.com/ethereum/go-ethereum/commits/master.atom
+    kind: atom
+    interval_s: 600
+    subtype: commits
+    author_organization: ethereum (Ethereum)
+  - url: https://github.com/ethereum/keymanager-APIs/commits/master.atom
+    kind: atom
+    interval_s: 600
+    subtype: commits
+    author_organization: ethereum (Ethereum)
+  - url: https://github.com/ethereum/kohaku-contracts/commits/master.atom
+    kind: atom
+    interval_s: 600
+    subtype: commits
+    author_organization: ethereum (Ethereum)
+  - url: https://github.com/ethereum/kohaku-extension/commits/main.atom
+    kind: atom
+    interval_s: 600
+    subtype: commits
+    author_organization: ethereum (Ethereum)
+  - url: https://github.com/ethereum/kzg-ceremony-specs/commits/master.atom
+    kind: atom
+    interval_s: 600
+    subtype: commits
+    author_organization: ethereum (Ethereum)
+  - url: https://github.com/ethereum/lean-pq-bindings/commits/main.atom
+    kind: atom
+    interval_s: 600
+    subtype: commits
+    author_organization: ethereum (Ethereum)
+  - url: https://github.com/ethereum/pm/commits/master.atom
+    kind: atom
+    interval_s: 600
+    subtype: commits
+    author_organization: ethereum (Ethereum)
+  - url: https://github.com/ethereum/portal-accumulators/commits/master.atom
+    kind: atom
+    interval_s: 600
+    subtype: commits
+    author_organization: ethereum (Ethereum)
+  - url: https://github.com/ethereum/portal-network-specs/commits/master.atom
+    kind: atom
+    interval_s: 600
+    subtype: commits
+    author_organization: ethereum (Ethereum)
+  - url: https://github.com/ethereum/portal-spec-tests/commits/master.atom
+    kind: atom
+    interval_s: 600
+    subtype: commits
+    author_organization: ethereum (Ethereum)
+  - url: https://github.com/ethereum/pos-evolution/commits/master.atom
+    kind: atom
+    interval_s: 600
+    subtype: commits
+    author_organization: ethereum (Ethereum)
+  - url: https://github.com/ethereum/py_ecc/commits/main.atom
+    kind: atom
+    interval_s: 600
+    subtype: commits
+    author_organization: ethereum (Ethereum)
+  - url: https://github.com/ethereum/sol-whir-p3/commits/main.atom
+    kind: atom
+    interval_s: 600
+    subtype: commits
+    author_organization: ethereum (Ethereum)
+  - url: https://github.com/ethereum/solidity-deposit-contract/commits/master.atom
+    kind: atom
+    interval_s: 600
+    subtype: commits
+    author_organization: ethereum (Ethereum)
+  - url: https://github.com/ethereum/ssz-specs/commits/main.atom
+    kind: atom
+    interval_s: 600
+    subtype: commits
+    author_organization: ethereum (Ethereum)
+  - url: https://github.com/ethereum/staking-launchpad/commits/dev.atom
+    kind: atom
+    interval_s: 600
+    subtype: commits
+    author_organization: ethereum (Ethereum)
+  - url: https://github.com/ethereum/strawmap/commits/main.atom
+    kind: atom
+    interval_s: 600
+    subtype: commits
+    author_organization: ethereum (Ethereum)
+  - url: https://github.com/ethereum/sys-asm/commits/main.atom
+    kind: atom
+    interval_s: 600
+    subtype: commits
+    author_organization: ethereum (Ethereum)
+  - url: https://github.com/ethereum/tests/commits/develop.atom
+    kind: atom
+    interval_s: 600
+    subtype: commits
+    author_organization: ethereum (Ethereum)
+  - url: https://github.com/ethereum/zkapi/commits/main.atom
+    kind: atom
+    interval_s: 600
+    subtype: commits
+    author_organization: ethereum (Ethereum)
+  - url: https://github.com/ethereumjs/ethereumjs-monorepo/commits/master.atom
+    kind: atom
+    interval_s: 600
+    subtype: commits
+    author_organization: ethereumjs (Ethereum)
+  - url: https://github.com/ethereumjs/kzg-wasm/commits/master.atom
+    kind: atom
+    interval_s: 600
+    subtype: commits
+    author_organization: ethereumjs (Ethereum)
+  - url: https://github.com/ethereumjs/rustbn-wasm/commits/master.atom
+    kind: atom
+    interval_s: 600
+    subtype: commits
+    author_organization: ethereumjs (Ethereum)
+  - url: https://github.com/ethereumjs/rustbn.js/commits/master.atom
+    kind: atom
+    interval_s: 600
+    subtype: commits
+    author_organization: ethereumjs (Ethereum)
+  - url: https://github.com/ethereumjs/ultralight/commits/master.atom
+    kind: atom
+    interval_s: 600
+    subtype: commits
+    author_organization: ethereumjs (Ethereum)
+  - url: https://github.com/ethereumjs/verkle-cryptography-wasm/commits/master.atom
+    kind: atom
+    interval_s: 600
+    subtype: commits
+    author_organization: ethereumjs (Ethereum)
+  - url: https://github.com/grandinetech/grandine/commits/develop.atom
+    kind: atom
+    interval_s: 600
+    subtype: commits
+    author_organization: grandinetech (Ethereum)
+  - url: https://github.com/lambdaclass/ethrex/commits/main.atom
+    kind: atom
+    interval_s: 600
+    subtype: commits
+    author_organization: lambdaclass (Ethereum)
+  - url: https://github.com/NethermindEth/nethermind/commits/master.atom
+    kind: atom
+    interval_s: 600
+    subtype: commits
+    author_organization: NethermindEth (Ethereum)
+  - url: https://github.com/OffchainLabs/prysm/commits/develop.atom
+    kind: atom
+    interval_s: 600
+    subtype: commits
+    author_organization: OffchainLabs (Ethereum)
+  - url: https://github.com/paradigmxyz/reth/commits/main.atom
+    kind: atom
+    interval_s: 600
+    subtype: commits
+    author_organization: paradigmxyz (Ethereum)
+  - url: https://github.com/sigp/lighthouse/commits/stable.atom
+    kind: atom
+    interval_s: 600
+    subtype: commits
+    author_organization: sigp (Ethereum)
+  - url: https://github.com/status-im/nimbus-eth1/commits/master.atom
+    kind: atom
+    interval_s: 600
+    subtype: commits
+    author_organization: status-im (Ethereum)
+  - url: https://github.com/status-im/nimbus-eth2/commits/stable.atom
+    kind: atom
+    interval_s: 600
+    subtype: commits
+    author_organization: status-im (Ethereum)
+  - url: https://github.com/Uniswap/arbiters/commits/main.atom
+    kind: atom
+    interval_s: 600
+    subtype: commits
+    author_organization: Uniswap (Uniswap)
+  - url: https://github.com/Uniswap/autocator/commits/main.atom
+    kind: atom
+    interval_s: 600
+    subtype: commits
+    author_organization: Uniswap (Uniswap)
+  - url: https://github.com/Uniswap/calibur/commits/main.atom
+    kind: atom
+    interval_s: 600
+    subtype: commits
+    author_organization: Uniswap (Uniswap)
+  - url: https://github.com/Uniswap/continuous-clearing-auction/commits/main.atom
+    kind: atom
+    interval_s: 600
+    subtype: commits
+    author_organization: Uniswap (Uniswap)
+  - url: https://github.com/Uniswap/contracts/commits/main.atom
+    kind: atom
+    interval_s: 600
+    subtype: commits
+    author_organization: Uniswap (Uniswap)
+  - url: https://github.com/Uniswap/emissary/commits/main.atom
+    kind: atom
+    interval_s: 600
+    subtype: commits
+    author_organization: Uniswap (Uniswap)
+  - url: https://github.com/Uniswap/ERC20-eth/commits/main.atom
+    kind: atom
+    interval_s: 600
+    subtype: commits
+    author_organization: Uniswap (Uniswap)
+  - url: https://github.com/Uniswap/flashblocks_number_contract/commits/main.atom
+    kind: atom
+    interval_s: 600
+    subtype: commits
+    author_organization: Uniswap (Uniswap)
+  - url: https://github.com/Uniswap/guidestar-public/commits/main.atom
+    kind: atom
+    interval_s: 600
+    subtype: commits
+    author_organization: Uniswap (Uniswap)
+  - url: https://github.com/Uniswap/hooklist/commits/main.atom
+    kind: atom
+    interval_s: 600
+    subtype: commits
+    author_organization: Uniswap (Uniswap)
+  - url: https://github.com/Uniswap/liquidity-launcher/commits/main.atom
+    kind: atom
+    interval_s: 600
+    subtype: commits
+    author_organization: Uniswap (Uniswap)
+  - url: https://github.com/Uniswap/mixed-quoter/commits/main.atom
+    kind: atom
+    interval_s: 600
+    subtype: commits
+    author_organization: Uniswap (Uniswap)
+  - url: https://github.com/Uniswap/modular-multichain-governance/commits/main.atom
+    kind: atom
+    interval_s: 600
+    subtype: commits
+    author_organization: Uniswap (Uniswap)
+  - url: https://github.com/Uniswap/onchain-router/commits/main.atom
+    kind: atom
+    interval_s: 600
+    subtype: commits
+    author_organization: Uniswap (Uniswap)
+  - url: https://github.com/Uniswap/permit2/commits/main.atom
+    kind: atom
+    interval_s: 600
+    subtype: commits
+    author_organization: Uniswap (Uniswap)
+  - url: https://github.com/Uniswap/polygon-bridge/commits/main.atom
+    kind: atom
+    interval_s: 600
+    subtype: commits
+    author_organization: Uniswap (Uniswap)
+  - url: https://github.com/Uniswap/protocol-fees/commits/main.atom
+    kind: atom
+    interval_s: 600
+    subtype: commits
+    author_organization: Uniswap (Uniswap)
+  - url: https://github.com/Uniswap/relayer/commits/main.atom
+    kind: atom
+    interval_s: 600
+    subtype: commits
+    author_organization: Uniswap (Uniswap)
+  - url: https://github.com/Uniswap/routing-api/commits/main.atom
+    kind: atom
+    interval_s: 600
+    subtype: commits
+    author_organization: Uniswap (Uniswap)
+  - url: https://github.com/Uniswap/smart-order-router/commits/main.atom
+    kind: atom
+    interval_s: 600
+    subtype: commits
+    author_organization: Uniswap (Uniswap)
+  - url: https://github.com/Uniswap/the-compact/commits/main.atom
+    kind: atom
+    interval_s: 600
+    subtype: commits
+    author_organization: Uniswap (Uniswap)
+  - url: https://github.com/Uniswap/Tribunal/commits/main.atom
+    kind: atom
+    interval_s: 600
+    subtype: commits
+    author_organization: Uniswap (Uniswap)
+  - url: https://github.com/Uniswap/uerc20-factory/commits/main.atom
+    kind: atom
+    interval_s: 600
+    subtype: commits
+    author_organization: Uniswap (Uniswap)
+  - url: https://github.com/Uniswap/unichain-contracts/commits/main.atom
+    kind: atom
+    interval_s: 600
+    subtype: commits
+    author_organization: Uniswap (Uniswap)
+  - url: https://github.com/Uniswap/unichain-node/commits/main.atom
+    kind: atom
+    interval_s: 600
+    subtype: commits
+    author_organization: Uniswap (Uniswap)
+  - url: https://github.com/Uniswap/uniroute-public/commits/main.atom
+    kind: atom
+    interval_s: 600
+    subtype: commits
+    author_organization: Uniswap (Uniswap)
+  - url: https://github.com/Uniswap/UniswapX/commits/main.atom
+    kind: atom
+    interval_s: 600
+    subtype: commits
+    author_organization: Uniswap (Uniswap)
+  - url: https://github.com/Uniswap/uniswapx-parameterization-api/commits/main.atom
+    kind: atom
+    interval_s: 600
+    subtype: commits
+    author_organization: Uniswap (Uniswap)
+  - url: https://github.com/Uniswap/uniswapx-service/commits/main.atom
+    kind: atom
+    interval_s: 600
+    subtype: commits
+    author_organization: Uniswap (Uniswap)
+  - url: https://github.com/Uniswap/universal-router/commits/main.atom
+    kind: atom
+    interval_s: 600
+    subtype: commits
+    author_organization: Uniswap (Uniswap)
+  - url: https://github.com/Uniswap/URCs/commits/main.atom
+    kind: atom
+    interval_s: 600
+    subtype: commits
+    author_organization: Uniswap (Uniswap)
+  - url: https://github.com/Uniswap/util-contracts/commits/main.atom
+    kind: atom
+    interval_s: 600
+    subtype: commits
+    author_organization: Uniswap (Uniswap)
+  - url: https://github.com/Uniswap/v2-core/commits/master.atom
+    kind: atom
+    interval_s: 600
+    subtype: commits
+    author_organization: Uniswap (Uniswap)
+  - url: https://github.com/Uniswap/v2-periphery/commits/master.atom
+    kind: atom
+    interval_s: 600
+    subtype: commits
+    author_organization: Uniswap (Uniswap)
+  - url: https://github.com/Uniswap/v3-core/commits/main.atom
+    kind: atom
+    interval_s: 600
+    subtype: commits
+    author_organization: Uniswap (Uniswap)
+  - url: https://github.com/Uniswap/v3-periphery/commits/main.atom
+    kind: atom
+    interval_s: 600
+    subtype: commits
+    author_organization: Uniswap (Uniswap)
+  - url: https://github.com/Uniswap/v4-core/commits/main.atom
+    kind: atom
+    interval_s: 600
+    subtype: commits
+    author_organization: Uniswap (Uniswap)
+  - url: https://github.com/Uniswap/v4-hooks-public/commits/main.atom
+    kind: atom
+    interval_s: 600
+    subtype: commits
+    author_organization: Uniswap (Uniswap)
+  - url: https://github.com/Uniswap/v4-periphery/commits/main.atom
+    kind: atom
+    interval_s: 600
+    subtype: commits
+    author_organization: Uniswap (Uniswap)
+  - url: https://github.com/uniswapfoundation/foundational-hooks/commits/main.atom
+    kind: atom
+    interval_s: 600
+    subtype: commits
+    author_organization: uniswapfoundation (Uniswap)
+  - url: https://github.com/uniswapfoundation/governance-processes/commits/main.atom
+    kind: atom
+    interval_s: 600
+    subtype: commits
+    author_organization: uniswapfoundation (Uniswap)
+  - url: https://github.com/uniswapfoundation/HookRegistry/commits/main.atom
+    kind: atom
+    interval_s: 600
+    subtype: commits
+    author_organization: uniswapfoundation (Uniswap)
+  - url: https://github.com/uniswapfoundation/router-rebates/commits/main.atom
+    kind: atom
+    interval_s: 600
+    subtype: commits
+    author_organization: uniswapfoundation (Uniswap)
+  - url: https://github.com/uniswapfoundation/UniStaker/commits/main.atom
+    kind: atom
+    interval_s: 600
+    subtype: commits
+    author_organization: uniswapfoundation (Uniswap)
+  - url: https://github.com/uniswapfoundation/Uniswap-Wormhole-Bridge/commits/main.atom
+    kind: atom
+    interval_s: 600
+    subtype: commits
+    author_organization: uniswapfoundation (Uniswap)
+  - url: https://github.com/pancakeswap/cake-token/commits/main.atom
+    kind: atom
+    interval_s: 600
+    subtype: commits
+    author_organization: pancakeswap (PancakeSwap)
+  - url: https://github.com/pancakeswap/infinity-core/commits/main.atom
+    kind: atom
+    interval_s: 600
+    subtype: commits
+    author_organization: pancakeswap (PancakeSwap)
+  - url: https://github.com/pancakeswap/infinity-core-bsc-base/commits/main.atom
+    kind: atom
+    interval_s: 600
+    subtype: commits
+    author_organization: pancakeswap (PancakeSwap)
+  - url: https://github.com/pancakeswap/infinity-dynamic-fee-hook/commits/master.atom
+    kind: atom
+    interval_s: 600
+    subtype: commits
+    author_organization: pancakeswap (PancakeSwap)
+  - url: https://github.com/pancakeswap/infinity-periphery/commits/main.atom
+    kind: atom
+    interval_s: 600
+    subtype: commits
+    author_organization: pancakeswap (PancakeSwap)
+  - url: https://github.com/pancakeswap/infinity-periphery-bsc-base/commits/main.atom
+    kind: atom
+    interval_s: 600
+    subtype: commits
+    author_organization: pancakeswap (PancakeSwap)
+  - url: https://github.com/pancakeswap/infinity-universal-router/commits/main.atom
+    kind: atom
+    interval_s: 600
+    subtype: commits
+    author_organization: pancakeswap (PancakeSwap)
+  - url: https://github.com/pancakeswap/pancake-create3-factory/commits/main.atom
+    kind: atom
+    interval_s: 600
+    subtype: commits
+    author_organization: pancakeswap (PancakeSwap)
+  - url: https://github.com/pancakeswap/pancake-lottery-scheduler/commits/master.atom
+    kind: atom
+    interval_s: 600
+    subtype: commits
+    author_organization: pancakeswap (PancakeSwap)
+  - url: https://github.com/pancakeswap/pancake-swap-periphery/commits/master.atom
+    kind: atom
+    interval_s: 600
+    subtype: commits
+    author_organization: pancakeswap (PancakeSwap)
+  - url: https://github.com/pancakeswap/pancake-v3-contracts/commits/main.atom
+    kind: atom
+    interval_s: 600
+    subtype: commits
+    author_organization: pancakeswap (PancakeSwap)
+  - url: https://github.com/pancakeswap/pancake-x-contracts/commits/master.atom
+    kind: atom
+    interval_s: 600
+    subtype: commits
+    author_organization: pancakeswap (PancakeSwap)
+  - url: https://github.com/pancakeswap/permit2/commits/main.atom
+    kind: atom
+    interval_s: 600
+    subtype: commits
+    author_organization: pancakeswap (PancakeSwap)
+  - url: https://github.com/pancakeswap/ve_crosschain/commits/master.atom
+    kind: atom
+    interval_s: 600
+    subtype: commits
+    author_organization: pancakeswap (PancakeSwap)
+  - url: https://github.com/aerodrome-finance/contracts/commits/main.atom
+    kind: atom
+    interval_s: 600
+    subtype: commits
+    author_organization: aerodrome-finance (Aerodrome)
+  - url: https://github.com/aerodrome-finance/relay/commits/main.atom
+    kind: atom
+    interval_s: 600
+    subtype: commits
+    author_organization: aerodrome-finance (Aerodrome)
+  - url: https://github.com/aerodrome-finance/slipstream/commits/main.atom
+    kind: atom
+    interval_s: 600
+    subtype: commits
+    author_organization: aerodrome-finance (Aerodrome)
+  - url: https://github.com/curvefi/blockhash-oracle/commits/main.atom
+    kind: atom
+    interval_s: 600
+    subtype: commits
+    author_organization: curvefi (Curve Finance)
+  - url: https://github.com/curvefi/contract-migrations/commits/master.atom
+    kind: atom
+    interval_s: 600
+    subtype: commits
+    author_organization: curvefi (Curve Finance)
+  - url: https://github.com/curvefi/crypto_lp_pricing/commits/master.atom
+    kind: atom
+    interval_s: 600
+    subtype: commits
+    author_organization: curvefi (Curve Finance)
+  - url: https://github.com/curvefi/curve-aragon-voting/commits/master.atom
+    kind: atom
+    interval_s: 600
+    subtype: commits
+    author_organization: curvefi (Curve Finance)
+  - url: https://github.com/curvefi/curve-burners/commits/main.atom
+    kind: atom
+    interval_s: 600
+    subtype: commits
+    author_organization: curvefi (Curve Finance)
+  - url: https://github.com/curvefi/curve-contract/commits/master.atom
+    kind: atom
+    interval_s: 600
+    subtype: commits
+    author_organization: curvefi (Curve Finance)
+  - url: https://github.com/curvefi/curve-contract-polygon/commits/master.atom
+    kind: atom
+    interval_s: 600
+    subtype: commits
+    author_organization: curvefi (Curve Finance)
+  - url: https://github.com/curvefi/curve-core/commits/main.atom
+    kind: atom
+    interval_s: 600
+    subtype: commits
+    author_organization: curvefi (Curve Finance)
+  - url: https://github.com/curvefi/curve-cross-asset-swaps/commits/master.atom
+    kind: atom
+    interval_s: 600
+    subtype: commits
+    author_organization: curvefi (Curve Finance)
+  - url: https://github.com/curvefi/curve-crypto-contract/commits/master.atom
+    kind: atom
+    interval_s: 600
+    subtype: commits
+    author_organization: curvefi (Curve Finance)
+  - url: https://github.com/curvefi/curve-dao-contracts/commits/master.atom
+    kind: atom
+    interval_s: 600
+    subtype: commits
+    author_organization: curvefi (Curve Finance)
+  - url: https://github.com/curvefi/curve-factory/commits/master.atom
+    kind: atom
+    interval_s: 600
+    subtype: commits
+    author_organization: curvefi (Curve Finance)
+  - url: https://github.com/curvefi/curve-factory-crypto/commits/master.atom
+    kind: atom
+    interval_s: 600
+    subtype: commits
+    author_organization: curvefi (Curve Finance)
+  - url: https://github.com/curvefi/curve-metapool/commits/master.atom
+    kind: atom
+    interval_s: 600
+    subtype: commits
+    author_organization: curvefi (Curve Finance)
+  - url: https://github.com/curvefi/curve-pool-registry/commits/master.atom
+    kind: atom
+    interval_s: 600
+    subtype: commits
+    author_organization: curvefi (Curve Finance)
+  - url: https://github.com/curvefi/curve-ren-adapter/commits/master.atom
+    kind: atom
+    interval_s: 600
+    subtype: commits
+    author_organization: curvefi (Curve Finance)
+  - url: https://github.com/curvefi/curve-reward-distributor/commits/main.atom
+    kind: atom
+    interval_s: 600
+    subtype: commits
+    author_organization: curvefi (Curve Finance)
+  - url: https://github.com/curvefi/curve-router-ng/commits/master.atom
+    kind: atom
+    interval_s: 600
+    subtype: commits
+    author_organization: curvefi (Curve Finance)
+  - url: https://github.com/curvefi/curve-stable-peg/commits/main.atom
+    kind: atom
+    interval_s: 600
+    subtype: commits
+    author_organization: curvefi (Curve Finance)
+  - url: https://github.com/curvefi/curve-stablecoin/commits/master.atom
+    kind: atom
+    interval_s: 600
+    subtype: commits
+    author_organization: curvefi (Curve Finance)
+  - url: https://github.com/curvefi/curve-std/commits/main.atom
+    kind: atom
+    interval_s: 600
+    subtype: commits
+    author_organization: curvefi (Curve Finance)
+  - url: https://github.com/curvefi/curve-veBoost/commits/master.atom
+    kind: atom
+    interval_s: 600
+    subtype: commits
+    author_organization: curvefi (Curve Finance)
+  - url: https://github.com/curvefi/curve-xchain-factory/commits/master.atom
+    kind: atom
+    interval_s: 600
+    subtype: commits
+    author_organization: curvefi (Curve Finance)
+  - url: https://github.com/curvefi/curve-xdao/commits/master.atom
+    kind: atom
+    interval_s: 600
+    subtype: commits
+    author_organization: curvefi (Curve Finance)
+  - url: https://github.com/curvefi/curve-xgov/commits/master.atom
+    kind: atom
+    interval_s: 600
+    subtype: commits
+    author_organization: curvefi (Curve Finance)
+  - url: https://github.com/curvefi/curve-zaps/commits/master.atom
+    kind: atom
+    interval_s: 600
+    subtype: commits
+    author_organization: curvefi (Curve Finance)
+  - url: https://github.com/curvefi/curve_gauge_factory/commits/main.atom
+    kind: atom
+    interval_s: 600
+    subtype: commits
+    author_organization: curvefi (Curve Finance)
+  - url: https://github.com/curvefi/deposit-and-stake-zap/commits/master.atom
+    kind: atom
+    interval_s: 600
+    subtype: commits
+    author_organization: curvefi (Curve Finance)
+  - url: https://github.com/curvefi/edao-proxy/commits/main.atom
+    kind: atom
+    interval_s: 600
+    subtype: commits
+    author_organization: curvefi (Curve Finance)
+  - url: https://github.com/curvefi/emergency-msig-crosschain/commits/main.atom
+    kind: atom
+    interval_s: 600
+    subtype: commits
+    author_organization: curvefi (Curve Finance)
+  - url: https://github.com/curvefi/fast-bridge/commits/main.atom
+    kind: atom
+    interval_s: 600
+    subtype: commits
+    author_organization: curvefi (Curve Finance)
+  - url: https://github.com/curvefi/fee-splitter/commits/main.atom
+    kind: atom
+    interval_s: 600
+    subtype: commits
+    author_organization: curvefi (Curve Finance)
+  - url: https://github.com/curvefi/fx-upkeep/commits/main.atom
+    kind: atom
+    interval_s: 600
+    subtype: commits
+    author_organization: curvefi (Curve Finance)
+  - url: https://github.com/curvefi/gas-bridger/commits/master.atom
+    kind: atom
+    interval_s: 600
+    subtype: commits
+    author_organization: curvefi (Curve Finance)
+  - url: https://github.com/curvefi/LayerZero-v2-vyper/commits/main.atom
+    kind: atom
+    interval_s: 600
+    subtype: commits
+    author_organization: curvefi (Curve Finance)
+  - url: https://github.com/curvefi/llv2-integration/commits/master.atom
+    kind: atom
+    interval_s: 600
+    subtype: commits
+    author_organization: curvefi (Curve Finance)
+  - url: https://github.com/curvefi/metaregistry/commits/main.atom
+    kind: atom
+    interval_s: 600
+    subtype: commits
+    author_organization: curvefi (Curve Finance)
+  - url: https://github.com/curvefi/multi-rewards/commits/master.atom
+    kind: atom
+    interval_s: 600
+    subtype: commits
+    author_organization: curvefi (Curve Finance)
+  - url: https://github.com/curvefi/ownership-proxy/commits/main.atom
+    kind: atom
+    interval_s: 600
+    subtype: commits
+    author_organization: curvefi (Curve Finance)
+  - url: https://github.com/curvefi/refuel-automation/commits/main.atom
+    kind: atom
+    interval_s: 600
+    subtype: commits
+    author_organization: curvefi (Curve Finance)
+  - url: https://github.com/curvefi/rewards-passthrough/commits/main.atom
+    kind: atom
+    interval_s: 600
+    subtype: commits
+    author_organization: curvefi (Curve Finance)
+  - url: https://github.com/curvefi/scrvusd/commits/main.atom
+    kind: atom
+    interval_s: 600
+    subtype: commits
+    author_organization: curvefi (Curve Finance)
+  - url: https://github.com/curvefi/stableswap-ng/commits/main.atom
+    kind: atom
+    interval_s: 600
+    subtype: commits
+    author_organization: curvefi (Curve Finance)
+  - url: https://github.com/curvefi/storage-proofs/commits/main.atom
+    kind: atom
+    interval_s: 600
+    subtype: commits
+    author_organization: curvefi (Curve Finance)
+  - url: https://github.com/curvefi/third-party-vault-oracles/commits/master.atom
+    kind: atom
+    interval_s: 600
+    subtype: commits
+    author_organization: curvefi (Curve Finance)
+  - url: https://github.com/curvefi/tricrypto-ng/commits/main.atom
+    kind: atom
+    interval_s: 600
+    subtype: commits
+    author_organization: curvefi (Curve Finance)
+  - url: https://github.com/curvefi/twocrypto-ng/commits/main.atom
+    kind: atom
+    interval_s: 600
+    subtype: commits
+    author_organization: curvefi (Curve Finance)
+  - url: https://github.com/curvefi/unipool-fork/commits/master.atom
+    kind: atom
+    interval_s: 600
+    subtype: commits
+    author_organization: curvefi (Curve Finance)
+  - url: https://github.com/curvefi/vest-split/commits/master.atom
+    kind: atom
+    interval_s: 600
+    subtype: commits
+    author_organization: curvefi (Curve Finance)
+  - url: https://github.com/1inch/1inch-audits/commits/master.atom
+    kind: atom
+    interval_s: 600
+    subtype: commits
+    author_organization: 1inch (1inch)
+  - url: https://github.com/1inch/aqua/commits/main.atom
+    kind: atom
+    interval_s: 600
+    subtype: commits
+    author_organization: 1inch (1inch)
+  - url: https://github.com/1inch/community-web-ui/commits/main.atom
+    kind: atom
+    interval_s: 600
+    subtype: commits
+    author_organization: 1inch (1inch)
+  - url: https://github.com/1inch/cross-chain-swap/commits/master.atom
+    kind: atom
+    interval_s: 600
+    subtype: commits
+    author_organization: 1inch (1inch)
+  - url: https://github.com/1inch/delegation-contracts/commits/master.atom
+    kind: atom
+    interval_s: 600
+    subtype: commits
+    author_organization: 1inch (1inch)
+  - url: https://github.com/1inch/farming/commits/master.atom
+    kind: atom
+    interval_s: 600
+    subtype: commits
+    author_organization: 1inch (1inch)
+  - url: https://github.com/1inch/fusion-protocol/commits/main.atom
+    kind: atom
+    interval_s: 600
+    subtype: commits
+    author_organization: 1inch (1inch)
+  - url: https://github.com/1inch/limit-order-protocol/commits/main.atom
+    kind: atom
+    interval_s: 600
+    subtype: commits
+    author_organization: 1inch (1inch)
+  - url: https://github.com/1inch/merkle-distribution/commits/master.atom
+    kind: atom
+    interval_s: 600
+    subtype: commits
+    author_organization: 1inch (1inch)
+  - url: https://github.com/1inch/solana-crosschain-protocol/commits/master.atom
+    kind: atom
+    interval_s: 600
+    subtype: commits
+    author_organization: 1inch (1inch)
+  - url: https://github.com/1inch/solana-fusion-protocol/commits/main.atom
+    kind: atom
+    interval_s: 600
+    subtype: commits
+    author_organization: 1inch (1inch)
+  - url: https://github.com/1inch/solidity-utils/commits/main.atom
+    kind: atom
+    interval_s: 600
+    subtype: commits
+    author_organization: 1inch (1inch)
+  - url: https://github.com/1inch/spot-price-aggregator/commits/master.atom
+    kind: atom
+    interval_s: 600
+    subtype: commits
+    author_organization: 1inch (1inch)
+  - url: https://github.com/1inch/swap-vm/commits/main.atom
+    kind: atom
+    interval_s: 600
+    subtype: commits
+    author_organization: 1inch (1inch)
+  - url: https://github.com/1inch/token-hooks/commits/master.atom
+    kind: atom
+    interval_s: 600
+    subtype: commits
+    author_organization: 1inch (1inch)
+  - url: https://github.com/0xProject/0x-protocol-specification/commits/master.atom
+    kind: atom
+    interval_s: 600
+    subtype: commits
+    author_organization: 0xProject (0x Protocol)
+  - url: https://github.com/0xProject/0x-settler/commits/master.atom
+    kind: atom
+    interval_s: 600
+    subtype: commits
+    author_organization: 0xProject (0x Protocol)
+  - url: https://github.com/0xProject/protocol/commits/development.atom
+    kind: atom
+    interval_s: 600
+    subtype: commits
+    author_organization: 0xProject (0x Protocol)
+  - url: https://github.com/0xProject/ZEIPs/commits/master.atom
+    kind: atom
+    interval_s: 600
+    subtype: commits
+    author_organization: 0xProject (0x Protocol)
+  - url: https://github.com/cowdao-grants/cow-amm-lp-oracle/commits/main.atom
+    kind: atom
+    interval_s: 600
+    subtype: commits
+    author_organization: cowdao-grants (CoW Protocol)
+  - url: https://github.com/cowdao-grants/cow-fee/commits/main.atom
+    kind: atom
+    interval_s: 600
+    subtype: commits
+    author_organization: cowdao-grants (CoW Protocol)
+  - url: https://github.com/cowdao-grants/cow-shed/commits/main.atom
+    kind: atom
+    interval_s: 600
+    subtype: commits
+    author_organization: cowdao-grants (CoW Protocol)
+  - url: https://github.com/cowdao-grants/herd-token/commits/main.atom
+    kind: atom
+    interval_s: 600
+    subtype: commits
+    author_organization: cowdao-grants (CoW Protocol)
+  - url: https://github.com/cowdao-grants/mb-billing/commits/main.atom
+    kind: atom
+    interval_s: 600
+    subtype: commits
+    author_organization: cowdao-grants (CoW Protocol)
+  - url: https://github.com/cowdao-grants/weiroll/commits/main.atom
+    kind: atom
+    interval_s: 600
+    subtype: commits
+    author_organization: cowdao-grants (CoW Protocol)
+  - url: https://github.com/cowprotocol/circuit-breaker-validator/commits/main.atom
+    kind: atom
+    interval_s: 600
+    subtype: commits
+    author_organization: cowprotocol (CoW Protocol)
+  - url: https://github.com/cowprotocol/composable-cow/commits/main.atom
+    kind: atom
+    interval_s: 600
+    subtype: commits
+    author_organization: cowprotocol (CoW Protocol)
+  - url: https://github.com/cowprotocol/contracts/commits/main.atom
+    kind: atom
+    interval_s: 600
+    subtype: commits
+    author_organization: cowprotocol (CoW Protocol)
+  - url: https://github.com/cowprotocol/cow-drop/commits/main.atom
+    kind: atom
+    interval_s: 600
+    subtype: commits
+    author_organization: cowprotocol (CoW Protocol)
+  - url: https://github.com/cowprotocol/cow-token-supply-api/commits/main.atom
+    kind: atom
+    interval_s: 600
+    subtype: commits
+    author_organization: cowprotocol (CoW Protocol)
+  - url: https://github.com/cowprotocol/ethflowcontract/commits/main.atom
+    kind: atom
+    interval_s: 600
+    subtype: commits
+    author_organization: cowprotocol (CoW Protocol)
+  - url: https://github.com/cowprotocol/euler-integration-contracts/commits/master.atom
+    kind: atom
+    interval_s: 600
+    subtype: commits
+    author_organization: cowprotocol (CoW Protocol)
+  - url: https://github.com/cowprotocol/flash-loan-router/commits/main.atom
+    kind: atom
+    interval_s: 600
+    subtype: commits
+    author_organization: cowprotocol (CoW Protocol)
+  - url: https://github.com/cowprotocol/hooks-trampoline/commits/main.atom
+    kind: atom
+    interval_s: 600
+    subtype: commits
+    author_organization: cowprotocol (CoW Protocol)
+  - url: https://github.com/cowprotocol/recover-cow-allocation/commits/main.atom
+    kind: atom
+    interval_s: 600
+    subtype: commits
+    author_organization: cowprotocol (CoW Protocol)
+  - url: https://github.com/cowprotocol/services/commits/main.atom
+    kind: atom
+    interval_s: 600
+    subtype: commits
+    author_organization: cowprotocol (CoW Protocol)
+  - url: https://github.com/cowprotocol/snapshot-settings/commits/main.atom
+    kind: atom
+    interval_s: 600
+    subtype: commits
+    author_organization: cowprotocol (CoW Protocol)
+  - url: https://github.com/cowprotocol/solana-programs/commits/main.atom
+    kind: atom
+    interval_s: 600
+    subtype: commits
+    author_organization: cowprotocol (CoW Protocol)
+  - url: https://github.com/cowprotocol/solver-7702-delegate/commits/main.atom
+    kind: atom
+    interval_s: 600
+    subtype: commits
+    author_organization: cowprotocol (CoW Protocol)
+  - url: https://github.com/cowprotocol/solver-rewards/commits/main.atom
+    kind: atom
+    interval_s: 600
+    subtype: commits
+    author_organization: cowprotocol (CoW Protocol)
+  - url: https://github.com/cowprotocol/solver-vouch-register/commits/main.atom
+    kind: atom
+    interval_s: 600
+    subtype: commits
+    author_organization: cowprotocol (CoW Protocol)
+  - url: https://github.com/cowprotocol/team-cow-allocation/commits/main.atom
+    kind: atom
+    interval_s: 600
+    subtype: commits
+    author_organization: cowprotocol (CoW Protocol)
+  - url: https://github.com/cowprotocol/token/commits/main.atom
+    kind: atom
+    interval_s: 600
+    subtype: commits
+    author_organization: cowprotocol (CoW Protocol)
+  - url: https://github.com/cowprotocol/token-imbalances/commits/main.atom
+    kind: atom
+    interval_s: 600
+    subtype: commits
+    author_organization: cowprotocol (CoW Protocol)
+  - url: https://github.com/cowprotocol/token-lz/commits/main.atom
+    kind: atom
+    interval_s: 600
+    subtype: commits
+    author_organization: cowprotocol (CoW Protocol)
+  - url: https://github.com/cowprotocol/watch-tower/commits/main.atom
+    kind: atom
+    interval_s: 600
+    subtype: commits
+    author_organization: cowprotocol (CoW Protocol)
+  - url: https://github.com/hyperliquid-dex/contracts/commits/master.atom
+    kind: atom
+    interval_s: 600
+    subtype: commits
+    author_organization: hyperliquid-dex (Hyperliquid)
+  - url: https://github.com/hyperliquid-dex/hyperliquid-python-sdk/commits/master.atom
+    kind: atom
+    interval_s: 600
+    subtype: commits
+    author_organization: hyperliquid-dex (Hyperliquid)
+  - url: https://github.com/hyperliquid-dex/node/commits/main.atom
+    kind: atom
+    interval_s: 600
+    subtype: commits
+    author_organization: hyperliquid-dex (Hyperliquid)
+  - url: https://github.com/elliottech/lighter-contracts/commits/main.atom
+    kind: atom
+    interval_s: 600
+    subtype: commits
+    author_organization: elliottech (Lighter.xyz)
+  - url: https://github.com/elliottech/lighter-go/commits/main.atom
+    kind: atom
+    interval_s: 600
+    subtype: commits
+    author_organization: elliottech (Lighter.xyz)
+  - url: https://github.com/elliottech/lighter-prover/commits/main.atom
+    kind: atom
+    interval_s: 600
+    subtype: commits
+    author_organization: elliottech (Lighter.xyz)
+  - url: https://github.com/elliottech/lighter-python/commits/main.atom
+    kind: atom
+    interval_s: 600
+    subtype: commits
+    author_organization: elliottech (Lighter.xyz)
+  - url: https://github.com/elliottech/plonky2/commits/dev.atom
+    kind: atom
+    interval_s: 600
+    subtype: commits
+    author_organization: elliottech (Lighter.xyz)
+  - url: https://github.com/elliottech/poseidon_crypto/commits/main.atom
+    kind: atom
+    interval_s: 600
+    subtype: commits
+    author_organization: elliottech (Lighter.xyz)
+  - url: https://github.com/elliottech/threshold-signature/commits/main.atom
+    kind: atom
+    interval_s: 600
+    subtype: commits
+    author_organization: elliottech (Lighter.xyz)
+  - url: https://github.com/aave-dao/aave-address-book/commits/main.atom
+    kind: atom
+    interval_s: 600
+    subtype: commits
+    author_organization: aave-dao (Aave)
+  - url: https://github.com/aave-dao/aave-agent-hub/commits/main.atom
+    kind: atom
+    interval_s: 600
+    subtype: commits
+    author_organization: aave-dao (Aave)
+  - url: https://github.com/aave-dao/aave-delivery-infrastructure/commits/main.atom
+    kind: atom
+    interval_s: 600
+    subtype: commits
+    author_organization: aave-dao (Aave)
+  - url: https://github.com/aave-dao/aave-governance-v3/commits/main.atom
+    kind: atom
+    interval_s: 600
+    subtype: commits
+    author_organization: aave-dao (Aave)
+  - url: https://github.com/aave-dao/aave-governance-v3-robot/commits/main.atom
+    kind: atom
+    interval_s: 600
+    subtype: commits
+    author_organization: aave-dao (Aave)
+  - url: https://github.com/aave-dao/aave-helpers/commits/main.atom
+    kind: atom
+    interval_s: 600
+    subtype: commits
+    author_organization: aave-dao (Aave)
+  - url: https://github.com/aave-dao/aave-price-feeds/commits/main.atom
+    kind: atom
+    interval_s: 600
+    subtype: commits
+    author_organization: aave-dao (Aave)
+  - url: https://github.com/aave-dao/aave-proof-of-reserve/commits/main.atom
+    kind: atom
+    interval_s: 600
+    subtype: commits
+    author_organization: aave-dao (Aave)
+  - url: https://github.com/aave-dao/aave-proposals-reports/commits/master.atom
+    kind: atom
+    interval_s: 600
+    subtype: commits
+    author_organization: aave-dao (Aave)
+  - url: https://github.com/aave-dao/aave-proposals-v3/commits/main.atom
+    kind: atom
+    interval_s: 600
+    subtype: commits
+    author_organization: aave-dao (Aave)
+  - url: https://github.com/aave-dao/aave-risk-agents/commits/main.atom
+    kind: atom
+    interval_s: 600
+    subtype: commits
+    author_organization: aave-dao (Aave)
+  - url: https://github.com/aave-dao/aave-robots-cre/commits/main.atom
+    kind: atom
+    interval_s: 600
+    subtype: commits
+    author_organization: aave-dao (Aave)
+  - url: https://github.com/aave-dao/aave-robots-list/commits/main.atom
+    kind: atom
+    interval_s: 600
+    subtype: commits
+    author_organization: aave-dao (Aave)
+  - url: https://github.com/aave-dao/aave-stewards/commits/main.atom
+    kind: atom
+    interval_s: 600
+    subtype: commits
+    author_organization: aave-dao (Aave)
+  - url: https://github.com/aave-dao/aave-umbrella/commits/main.atom
+    kind: atom
+    interval_s: 600
+    subtype: commits
+    author_organization: aave-dao (Aave)
+  - url: https://github.com/aave-dao/aave-v3-origin/commits/main.atom
+    kind: atom
+    interval_s: 600
+    subtype: commits
+    author_organization: aave-dao (Aave)
+  - url: https://github.com/aave-dao/aave-v3-risk-stewards/commits/main.atom
+    kind: atom
+    interval_s: 600
+    subtype: commits
+    author_organization: aave-dao (Aave)
+  - url: https://github.com/aave-dao/aave-v4-risk-stewards/commits/main.atom
+    kind: atom
+    interval_s: 600
+    subtype: commits
+    author_organization: aave-dao (Aave)
+  - url: https://github.com/aave-dao/adi-deploy/commits/main.atom
+    kind: atom
+    interval_s: 600
+    subtype: commits
+    author_organization: aave-dao (Aave)
+  - url: https://github.com/aave-dao/gho-origin/commits/main.atom
+    kind: atom
+    interval_s: 600
+    subtype: commits
+    author_organization: aave-dao (Aave)
+  - url: https://github.com/aave-dao/GhoDirectMinter/commits/main.atom
+    kind: atom
+    interval_s: 600
+    subtype: commits
+    author_organization: aave-dao (Aave)
+  - url: https://github.com/aave-dao/lend-migrator-rescue/commits/main.atom
+    kind: atom
+    interval_s: 600
+    subtype: commits
+    author_organization: aave-dao (Aave)
+  - url: https://github.com/aave-dao/reinvestment-controllers/commits/main.atom
+    kind: atom
+    interval_s: 600
+    subtype: commits
+    author_organization: aave-dao (Aave)
+  - url: https://github.com/aave-dao/solidity-utils/commits/main.atom
+    kind: atom
+    interval_s: 600
+    subtype: commits
+    author_organization: aave-dao (Aave)
+  - url: https://github.com/aave-dao/stable-vault/commits/master.atom
+    kind: atom
+    interval_s: 600
+    subtype: commits
+    author_organization: aave-dao (Aave)
+  - url: https://github.com/aave/aave-v3-horizon/commits/main.atom
+    kind: atom
+    interval_s: 600
+    subtype: commits
+    author_organization: aave (Aave)
+  - url: https://github.com/aave/aave-v4/commits/main.atom
+    kind: atom
+    interval_s: 600
+    subtype: commits
+    author_organization: aave (Aave)
+  - url: https://github.com/aave/aave-vault/commits/main.atom
+    kind: atom
+    interval_s: 600
+    subtype: commits
+    author_organization: aave (Aave)
+  - url: https://github.com/aave/aavenomics/commits/main.atom
+    kind: atom
+    interval_s: 600
+    subtype: commits
+    author_organization: aave (Aave)
+  - url: https://github.com/aave/aptos-aave-v3/commits/main.atom
+    kind: atom
+    interval_s: 600
+    subtype: commits
+    author_organization: aave (Aave)
+  - url: https://github.com/aave/gho-wrapper/commits/main.atom
+    kind: atom
+    interval_s: 600
+    subtype: commits
+    author_organization: aave (Aave)
+  - url: https://github.com/bgd-labs/aave-a-token-with-delegation/commits/main.atom
+    kind: atom
+    interval_s: 600
+    subtype: commits
+    author_organization: bgd-labs (Aave)
+  - url: https://github.com/bgd-labs/aave-debt-swap/commits/main.atom
+    kind: atom
+    interval_s: 600
+    subtype: commits
+    author_organization: bgd-labs (Aave)
+  - url: https://github.com/bgd-labs/aave-ecosystem-reserve-v2/commits/master.atom
+    kind: atom
+    interval_s: 600
+    subtype: commits
+    author_organization: bgd-labs (Aave)
+  - url: https://github.com/bgd-labs/aave-stk-v1-5/commits/main.atom
+    kind: atom
+    interval_s: 600
+    subtype: commits
+    author_organization: bgd-labs (Aave)
+  - url: https://github.com/bgd-labs/aave-token-v3/commits/main.atom
+    kind: atom
+    interval_s: 600
+    subtype: commits
+    author_organization: bgd-labs (Aave)
+  - url: https://github.com/bgd-labs/aave-umbrella-scripts/commits/main.atom
+    kind: atom
+    interval_s: 600
+    subtype: commits
+    author_organization: bgd-labs (Aave)
+  - url: https://github.com/bgd-labs/chaos-agents-migration/commits/main.atom
+    kind: atom
+    interval_s: 600
+    subtype: commits
+    author_organization: bgd-labs (Aave)
+  - url: https://github.com/bgd-labs/cl-synchronicity-price-adapter/commits/main.atom
+    kind: atom
+    interval_s: 600
+    subtype: commits
+    author_organization: bgd-labs (Aave)
+  - url: https://github.com/bgd-labs/stake-token/commits/main.atom
+    kind: atom
+    interval_s: 600
+    subtype: commits
+    author_organization: bgd-labs (Aave)
+  - url: https://github.com/bgd-labs/v2-deprecation/commits/main.atom
+    kind: atom
+    interval_s: 600
+    subtype: commits
+    author_organization: bgd-labs (Aave)
+  - url: https://github.com/bgd-labs/V2-V3-migration-helpers/commits/main.atom
+    kind: atom
+    interval_s: 600
+    subtype: commits
+    author_organization: bgd-labs (Aave)
+  - url: https://github.com/morpho-org/bundles/commits/main.atom
+    kind: atom
+    interval_s: 600
+    subtype: commits
+    author_organization: morpho-org (Morpho)
+  - url: https://github.com/morpho-org/metamorpho/commits/main.atom
+    kind: atom
+    interval_s: 600
+    subtype: commits
+    author_organization: morpho-org (Morpho)
+  - url: https://github.com/morpho-org/metamorpho-v1.1/commits/main.atom
+    kind: atom
+    interval_s: 600
+    subtype: commits
+    author_organization: morpho-org (Morpho)
+  - url: https://github.com/morpho-org/midnight/commits/main.atom
+    kind: atom
+    interval_s: 600
+    subtype: commits
+    author_organization: morpho-org (Morpho)
+  - url: https://github.com/morpho-org/morpho-blue-irm/commits/main.atom
+    kind: atom
+    interval_s: 600
+    subtype: commits
+    author_organization: morpho-org (Morpho)
+  - url: https://github.com/morpho-org/morpho-blue-oracles/commits/main.atom
+    kind: atom
+    interval_s: 600
+    subtype: commits
+    author_organization: morpho-org (Morpho)
+  - url: https://github.com/morpho-org/morpho-token/commits/main.atom
+    kind: atom
+    interval_s: 600
+    subtype: commits
+    author_organization: morpho-org (Morpho)
+  - url: https://github.com/morpho-org/morpho-token-l0/commits/main.atom
+    kind: atom
+    interval_s: 600
+    subtype: commits
+    author_organization: morpho-org (Morpho)
+  - url: https://github.com/morpho-org/pre-liquidation/commits/main.atom
+    kind: atom
+    interval_s: 600
+    subtype: commits
+    author_organization: morpho-org (Morpho)
+  - url: https://github.com/morpho-org/public-allocator/commits/main.atom
+    kind: atom
+    interval_s: 600
+    subtype: commits
+    author_organization: morpho-org (Morpho)
+  - url: https://github.com/morpho-org/vault-v2/commits/main.atom
+    kind: atom
+    interval_s: 600
+    subtype: commits
+    author_organization: morpho-org (Morpho)
+  - url: https://github.com/euler-xyz/ethereum-vault-connector/commits/master.atom
+    kind: atom
+    interval_s: 600
+    subtype: commits
+    author_organization: euler-xyz (Euler Finance)
+  - url: https://github.com/euler-xyz/euler-earn/commits/master.atom
+    kind: atom
+    interval_s: 600
+    subtype: commits
+    author_organization: euler-xyz (Euler Finance)
+  - url: https://github.com/euler-xyz/euler-interfaces/commits/master.atom
+    kind: atom
+    interval_s: 600
+    subtype: commits
+    author_organization: euler-xyz (Euler Finance)
+  - url: https://github.com/euler-xyz/euler-price-oracle/commits/master.atom
+    kind: atom
+    interval_s: 600
+    subtype: commits
+    author_organization: euler-xyz (Euler Finance)
+  - url: https://github.com/euler-xyz/euler-swap/commits/master.atom
+    kind: atom
+    interval_s: 600
+    subtype: commits
+    author_organization: euler-xyz (Euler Finance)
+  - url: https://github.com/euler-xyz/euler-vault-kit/commits/master.atom
+    kind: atom
+    interval_s: 600
+    subtype: commits
+    author_organization: euler-xyz (Euler Finance)
+  - url: https://github.com/euler-xyz/euler-vault-scripts/commits/master.atom
+    kind: atom
+    interval_s: 600
+    subtype: commits
+    author_organization: euler-xyz (Euler Finance)
+  - url: https://github.com/euler-xyz/evk-periphery/commits/master.atom
+    kind: atom
+    interval_s: 600
+    subtype: commits
+    author_organization: euler-xyz (Euler Finance)
+  - url: https://github.com/euler-xyz/fee-flow/commits/main.atom
+    kind: atom
+    interval_s: 600
+    subtype: commits
+    author_organization: euler-xyz (Euler Finance)
+  - url: https://github.com/euler-xyz/reward-streams/commits/master.atom
+    kind: atom
+    interval_s: 600
+    subtype: commits
+    author_organization: euler-xyz (Euler Finance)
+  - url: https://github.com/flux-finance/contracts/commits/main.atom
+    kind: atom
+    interval_s: 600
+    subtype: commits
+    author_organization: flux-finance (Ondo)
+  - url: https://github.com/ondoprotocol/global-markets-solana/commits/main.atom
+    kind: atom
+    interval_s: 600
+    subtype: commits
+    author_organization: ondoprotocol (Ondo)
+  - url: https://github.com/ondoprotocol/ondo-global-markets-token-list/commits/main.atom
+    kind: atom
+    interval_s: 600
+    subtype: commits
+    author_organization: ondoprotocol (Ondo)
+  - url: https://github.com/ondoprotocol/rwa-contracts/commits/main.atom
+    kind: atom
+    interval_s: 600
+    subtype: commits
+    author_organization: ondoprotocol (Ondo)
+  - url: https://github.com/ondoprotocol/usdy/commits/main.atom
+    kind: atom
+    interval_s: 600
+    subtype: commits
+    author_organization: ondoprotocol (Ondo)
+  - url: https://github.com/ondoprotocol/usdy-aptos/commits/main.atom
+    kind: atom
+    interval_s: 600
+    subtype: commits
+    author_organization: ondoprotocol (Ondo)
+  - url: https://github.com/ondoprotocol/usdy-noble/commits/main.atom
+    kind: atom
+    interval_s: 600
+    subtype: commits
+    author_organization: ondoprotocol (Ondo)
+  - url: https://github.com/LayerZero-Labs/akita/commits/main.atom
+    kind: atom
+    interval_s: 600
+    subtype: commits
+    author_organization: LayerZero-Labs (LayerZero)
+  - url: https://github.com/LayerZero-Labs/Audits/commits/main.atom
+    kind: atom
+    interval_s: 600
+    subtype: commits
+    author_organization: LayerZero-Labs (LayerZero)
+  - url: https://github.com/LayerZero-Labs/devtools/commits/main.atom
+    kind: atom
+    interval_s: 600
+    subtype: commits
+    author_organization: LayerZero-Labs (LayerZero)
+  - url: https://github.com/LayerZero-Labs/execution-beacon/commits/master.atom
+    kind: atom
+    interval_s: 600
+    subtype: commits
+    author_organization: LayerZero-Labs (LayerZero)
+  - url: https://github.com/LayerZero-Labs/fafo/commits/main.atom
+    kind: atom
+    interval_s: 600
+    subtype: commits
+    author_organization: LayerZero-Labs (LayerZero)
+  - url: https://github.com/LayerZero-Labs/LayerZero-Aptos-Contract/commits/main.atom
+    kind: atom
+    interval_s: 600
+    subtype: commits
+    author_organization: LayerZero-Labs (LayerZero)
+  - url: https://github.com/LayerZero-Labs/lz-address-book/commits/main.atom
+    kind: atom
+    interval_s: 600
+    subtype: commits
+    author_organization: LayerZero-Labs (LayerZero)
+  - url: https://github.com/LayerZero-Labs/monorepo-external/commits/main.atom
+    kind: atom
+    interval_s: 600
+    subtype: commits
+    author_organization: LayerZero-Labs (LayerZero)
+  - url: https://github.com/LayerZero-Labs/onesig/commits/main.atom
+    kind: atom
+    interval_s: 600
+    subtype: commits
+    author_organization: LayerZero-Labs (LayerZero)
+  - url: https://github.com/LayerZero-Labs/qmdb/commits/main.atom
+    kind: atom
+    interval_s: 600
+    subtype: commits
+    author_organization: LayerZero-Labs (LayerZero)
+  - url: https://github.com/LayerZero-Labs/SyncPools/commits/main.atom
+    kind: atom
+    interval_s: 600
+    subtype: commits
+    author_organization: LayerZero-Labs (LayerZero)
+  - url: https://github.com/LayerZero-Labs/usdt-native-mesh/commits/main.atom
+    kind: atom
+    interval_s: 600
+    subtype: commits
+    author_organization: LayerZero-Labs (LayerZero)
+  - url: https://github.com/LayerZero-Labs/ZeroOS/commits/main.atom
+    kind: atom
+    interval_s: 600
+    subtype: commits
+    author_organization: LayerZero-Labs (LayerZero)
+  - url: https://github.com/stargate-protocol/stargate/commits/main.atom
+    kind: atom
+    interval_s: 600
+    subtype: commits
+    author_organization: stargate-protocol (LayerZero)
+  - url: https://github.com/stargate-protocol/stargate-dao/commits/main.atom
+    kind: atom
+    interval_s: 600
+    subtype: commits
+    author_organization: stargate-protocol (LayerZero)
+  - url: https://github.com/stargate-protocol/stargate-v2/commits/main.atom
+    kind: atom
+    interval_s: 600
+    subtype: commits
+    author_organization: stargate-protocol (LayerZero)
+  - url: https://github.com/quantnetwork/payscript-language-specification/commits/main.atom
+    kind: atom
+    interval_s: 600
+    subtype: commits
+    author_organization: quantnetwork (Quant Network)
+  - url: https://github.com/quantnetwork/secure-asset-exchange-protocol/commits/main.atom
+    kind: atom
+    interval_s: 600
+    subtype: commits
+    author_organization: quantnetwork (Quant Network)
+  - url: https://github.com/ava-labs/ac-staking-contracts/commits/main.atom
+    kind: atom
+    interval_s: 600
+    subtype: commits
+    author_organization: ava-labs (Avalanche network)
+  - url: https://github.com/ava-labs/avalanchego/commits/master.atom
+    kind: atom
+    interval_s: 600
+    subtype: commits
+    author_organization: ava-labs (Avalanche network)
+  - url: https://github.com/ava-labs/EncryptedERC/commits/main.atom
+    kind: atom
+    interval_s: 600
+    subtype: commits
+    author_organization: ava-labs (Avalanche network)
+  - url: https://github.com/ava-labs/icm-services/commits/main.atom
+    kind: atom
+    interval_s: 600
+    subtype: commits
+    author_organization: ava-labs (Avalanche network)
+  - url: https://github.com/ava-labs/libevm/commits/main.atom
+    kind: atom
+    interval_s: 600
+    subtype: commits
+    author_organization: ava-labs (Avalanche network)
+  - url: https://github.com/ava-labs/Simplex/commits/main.atom
+    kind: atom
+    interval_s: 600
+    subtype: commits
+    author_organization: ava-labs (Avalanche network)
+  - url: https://github.com/ava-labs/wrapped-assets/commits/main.atom
+    kind: atom
+    interval_s: 600
+    subtype: commits
+    author_organization: ava-labs (Avalanche network)
+  - url: https://github.com/avalanche-foundation/ACPs/commits/main.atom
+    kind: atom
+    interval_s: 600
+    subtype: commits
+    author_organization: avalanche-foundation (Avalanche network)
+  - url: https://github.com/houseofstake/hos-treasury/commits/main.atom
+    kind: atom
+    interval_s: 600
+    subtype: commits
+    author_organization: houseofstake (NEAR Protocol)
+  - url: https://github.com/houseofstake/house-of-stake-contracts/commits/main.atom
+    kind: atom
+    interval_s: 600
+    subtype: commits
+    author_organization: houseofstake (NEAR Protocol)
+  - url: https://github.com/houseofstake/tla-contracts/commits/main.atom
+    kind: atom
+    interval_s: 600
+    subtype: commits
+    author_organization: houseofstake (NEAR Protocol)
+  - url: https://github.com/Near-One/btc-light-client-contract/commits/main.atom
+    kind: atom
+    interval_s: 600
+    subtype: commits
+    author_organization: Near-One (NEAR Protocol)
+  - url: https://github.com/Near-One/near-erc20-connector/commits/main.atom
+    kind: atom
+    interval_s: 600
+    subtype: commits
+    author_organization: Near-One (NEAR Protocol)
+  - url: https://github.com/Near-One/omni-bridge/commits/main.atom
+    kind: atom
+    interval_s: 600
+    subtype: commits
+    author_organization: Near-One (NEAR Protocol)
+  - url: https://github.com/Near-One/rainbow-token-connector/commits/master.atom
+    kind: atom
+    interval_s: 600
+    subtype: commits
+    author_organization: Near-One (NEAR Protocol)
+  - url: https://github.com/near/core-contracts/commits/master.atom
+    kind: atom
+    interval_s: 600
+    subtype: commits
+    author_organization: near (NEAR Protocol)
+  - url: https://github.com/near/intents/commits/main.atom
+    kind: atom
+    interval_s: 600
+    subtype: commits
+    author_organization: near (NEAR Protocol)
+  - url: https://github.com/near/mpc/commits/main.atom
+    kind: atom
+    interval_s: 600
+    subtype: commits
+    author_organization: near (NEAR Protocol)
+  - url: https://github.com/near/nearcore/commits/master.atom
+    kind: atom
+    interval_s: 600
+    subtype: commits
+    author_organization: near (NEAR Protocol)
+  - url: https://github.com/near/NEPs/commits/master.atom
+    kind: atom
+    interval_s: 600
+    subtype: commits
+    author_organization: near (NEAR Protocol)
+  - url: https://github.com/nearai/chat-api/commits/main.atom
+    kind: atom
+    interval_s: 600
+    subtype: commits
+    author_organization: nearai (NEAR Protocol)
+  - url: https://github.com/nearai/cloud-api/commits/main.atom
+    kind: atom
+    interval_s: 600
+    subtype: commits
+    author_organization: nearai (NEAR Protocol)
+  - url: https://github.com/nearai/inference-proxy/commits/main.atom
+    kind: atom
+    interval_s: 600
+    subtype: commits
+    author_organization: nearai (NEAR Protocol)
+  - url: https://github.com/nearai/ironclaw/commits/main.atom
+    kind: atom
+    interval_s: 600
+    subtype: commits
+    author_organization: nearai (NEAR Protocol)
+  - url: https://github.com/nearai/payment-channels/commits/main.atom
+    kind: atom
+    interval_s: 600
+    subtype: commits
+    author_organization: nearai (NEAR Protocol)
+  - url: https://github.com/PlasmaLaboratories/node-templates/commits/main.atom
+    kind: atom
+    interval_s: 600
+    subtype: commits
+    author_organization: PlasmaLaboratories (Plasma chain)
+  - url: https://github.com/ethena-labs/ethena-minting-client/commits/main.atom
+    kind: atom
+    interval_s: 600
+    subtype: commits
+    author_organization: ethena-labs (Ethena)
+  - url: https://github.com/ethena-labs/suiusde-sdk/commits/main.atom
+    kind: atom
+    interval_s: 600
+    subtype: commits
+    author_organization: ethena-labs (Ethena)
+  - url: https://github.com/ethena-labs/usdm-minting-client/commits/main.atom
+    kind: atom
+    interval_s: 600
+    subtype: commits
+    author_organization: ethena-labs (Ethena)
+  - url: https://github.com/worldcoin/bedrock/commits/main.atom
+    kind: atom
+    interval_s: 600
+    subtype: commits
+    author_organization: worldcoin (World Network)
+  - url: https://github.com/worldcoin/biometrics-tee/commits/main.atom
+    kind: atom
+    interval_s: 600
+    subtype: commits
+    author_organization: worldcoin (World Network)
+  - url: https://github.com/worldcoin/flamingo/commits/main.atom
+    kind: atom
+    interval_s: 600
+    subtype: commits
+    author_organization: worldcoin (World Network)
+  - url: https://github.com/worldcoin/iris-mpc/commits/main.atom
+    kind: atom
+    interval_s: 600
+    subtype: commits
+    author_organization: worldcoin (World Network)
+  - url: https://github.com/worldcoin/orb-core/commits/main.atom
+    kind: atom
+    interval_s: 600
+    subtype: commits
+    author_organization: worldcoin (World Network)
+  - url: https://github.com/worldcoin/orb-firmware/commits/main.atom
+    kind: atom
+    interval_s: 600
+    subtype: commits
+    author_organization: worldcoin (World Network)
+  - url: https://github.com/worldcoin/orb-kit/commits/main.atom
+    kind: atom
+    interval_s: 600
+    subtype: commits
+    author_organization: worldcoin (World Network)
+  - url: https://github.com/worldcoin/orb-software/commits/main.atom
+    kind: atom
+    interval_s: 600
+    subtype: commits
+    author_organization: worldcoin (World Network)
+  - url: https://github.com/worldcoin/semaphore-mtb/commits/master.atom
+    kind: atom
+    interval_s: 600
+    subtype: commits
+    author_organization: worldcoin (World Network)
+  - url: https://github.com/worldcoin/signup-sequencer/commits/main.atom
+    kind: atom
+    interval_s: 600
+    subtype: commits
+    author_organization: worldcoin (World Network)
+  - url: https://github.com/worldcoin/world-chain/commits/main.atom
+    kind: atom
+    interval_s: 600
+    subtype: commits
+    author_organization: worldcoin (World Network)
+  - url: https://github.com/worldcoin/world-id-contracts/commits/main.atom
+    kind: atom
+    interval_s: 600
+    subtype: commits
+    author_organization: worldcoin (World Network)
+  - url: https://github.com/worldcoin/world-id-protocol/commits/main.atom
+    kind: atom
+    interval_s: 600
+    subtype: commits
+    author_organization: worldcoin (World Network)
+  - url: https://github.com/worldcoin/world-id-protocol-solana/commits/main.atom
+    kind: atom
+    interval_s: 600
+    subtype: commits
+    author_organization: worldcoin (World Network)
+  - url: https://github.com/worldcoin/world-id-relay/commits/main.atom
+    kind: atom
+    interval_s: 600
+    subtype: commits
+    author_organization: worldcoin (World Network)
+  - url: https://github.com/worldcoin/world-id-state-bridge/commits/main.atom
+    kind: atom
+    interval_s: 600
+    subtype: commits
+    author_organization: worldcoin (World Network)
+  - url: https://github.com/worldcoin/world-id-utility-contracts/commits/main.atom
+    kind: atom
+    interval_s: 600
+    subtype: commits
+    author_organization: worldcoin (World Network)
+  - url: https://github.com/worldcoin/worldcoin-token/commits/main.atom
+    kind: atom
+    interval_s: 600
+    subtype: commits
+    author_organization: worldcoin (World Network)
+  - url: https://github.com/ethereum/kohaku-rs/commits/master.atom
+    kind: atom
+    interval_s: 600
+    subtype: commits
+    author_organization: ethereum (Ethereum)
+  - url: https://github.com/cowdao-grants/polyswap-contracts/commits/main.atom
+    kind: atom
+    interval_s: 600
+    subtype: commits
+    author_organization: cowdao-grants (CoW Protocol)
   priority: SECONDARY
   terms_notes: Read-only public content; honor publisher terms and Retry-After.
   limits:
