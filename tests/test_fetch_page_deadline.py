@@ -123,7 +123,9 @@ async def test_caller_cancellation_propagates_and_closes_body(tmp_path, monkeypa
     )
     try:
         task = asyncio.create_task(service.fetch_page({"url": "https://example.com/page"}, {}))
-        await asyncio.sleep(0.15)
+        async with asyncio.timeout(5):
+            while body.yielded < 1:
+                await asyncio.sleep(0.01)
         task.cancel()
         with pytest.raises(asyncio.CancelledError):
             await task
