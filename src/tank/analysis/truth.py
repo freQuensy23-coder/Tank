@@ -902,7 +902,8 @@ def _oi_split(rows):
 
 def _history_fixed_decimal_column(column):
     if len(column) < 256 or any(
-        value is not None and (type(value) is not str or len(value) > 160 or "\x00" in value) for value in column
+        value is not None and (type(value) is not str or len(value) > 160 or "\x00" in value)
+        for value in column
     ):
         return None
     raw = np.asarray(column, dtype=object)
