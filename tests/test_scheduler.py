@@ -1092,8 +1092,8 @@ async def test_reaction_creation_registers_only_five_post_jobs_and_starts_pre_wi
 @pytest.mark.asyncio
 async def test_scheduled_event_pre_windows_wait_until_their_anchor_has_passed():
     """A PRE window ends at the anchor. For a scheduled T0 two days ahead it was measured
-    at once over future minutes and then revised every half hour; it now waits for T0,
-    while POST checkpoints are still registered for their due times."""
+    at once over future minutes and then revised every half hour; each PRE window is now a
+    durable job due at T0, so it runs even if the event leaves the active set first."""
     import asyncio
 
     repo = MemoryRepository()
@@ -1121,11 +1121,18 @@ async def test_scheduled_event_pre_windows_wait_until_their_anchor_has_passed():
         await asyncio.gather(*scheduler.background.values())
         assert captured == []
         jobs = await repo.list("ops.jobs", filters={"type": "REACTION_CAPTURE"})
-        assert len(jobs) == 5 and all(job["payload"]["anchor"]["type"] == "T0" for job in jobs)
+        assert len(jobs) == 8 and all(job["payload"]["anchor"]["type"] == "T0" for job in jobs)
+        pre = {
+            job["payload"]["checkpoint"]: job
+            for job in jobs
+            if job["payload"]["checkpoint"].startswith("PRE")
+        }
+        assert set(pre) == {"PRE_24H", "PRE_4H", "PRE_1H"}
+        assert all(job["run_after"] == iso(event_time) for job in pre.values())
         await scheduler.ensure_reactions(event, now=event_time + timedelta(minutes=1))
         await asyncio.gather(*scheduler.background.values())
-        assert [p["checkpoint"] for p in captured] == ["PRE_24H", "PRE_4H", "PRE_1H"]
-        assert all(p["anchor"]["ts"] == iso(event_time) for p in captured)
+        assert captured == []
+        assert len(await repo.list("ops.jobs", filters={"type": "REACTION_CAPTURE"})) == 8
     finally:
         await scheduler.close()
 

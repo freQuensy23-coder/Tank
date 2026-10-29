@@ -212,12 +212,13 @@ class Scheduler:
     async def ensure_reactions(self, event, *, now=None):
         """Open the pack outside the analyst transaction; only POST windows are jobs.
 
-        PRE windows start as soon as the MAJOR+ assessment commits, or, for a
-        scheduled event whose anchor is still ahead, once the anchor has passed:
-        a PRE window ends at the anchor and is never measured before it ends.
-        Their immutable rows are the restart checkpoint: a tick resumes any missing
-        capture, while a named task prevents overlapping attempts during normal
-        operation.
+        PRE windows start as soon as the MAJOR+ assessment commits. A PRE window
+        ends at the anchor and is never measured before it ends: for a scheduled
+        event whose anchor is still ahead, each PRE window is a durable job due at
+        the anchor, like a POST window, so it runs even if the event leaves the
+        active set before then. Immutable rows are the restart checkpoint: a tick
+        resumes any missing capture, while a named task prevents overlapping
+        attempts during normal operation.
         """
         now = now or utcnow()
         assessment = await self.latest_assessment(event)
@@ -297,13 +298,13 @@ class Scheduler:
                     **offset_schedule(anchor_stamp, timedelta(seconds=offset)).fields("cutoff"),
                     "retro": offset < 0 or parse_time(anchor_stamp.value) + timedelta(seconds=offset) < now,
                 }
-                if offset < 0:
-                    missing_pre.append(payload)
-                    continue
-                due_stamp = offset_schedule(anchor_stamp, timedelta(seconds=offset))
-                due = parse_time(due_stamp.value)
                 key = f"{event['event_id']}:{token}:{label}"
                 job = await capture_job(key)
+                if offset < 0 and not job and parse_time(anchor_stamp.value) <= now:
+                    missing_pre.append(payload)
+                    continue
+                due_stamp = offset_schedule(anchor_stamp, timedelta(seconds=max(offset, 0)))
+                due = parse_time(due_stamp.value)
                 run_stamp = due_stamp if due >= now else collection_clock(now)
                 expiry_stamp = (
                     propagate_timestamp(job, "expires_at")
@@ -326,7 +327,7 @@ class Scheduler:
                         expires_at=expiry_stamp,
                         max_attempts=5,
                     )
-            if missing_pre and self.market is not None and parse_time(anchor_stamp.value) <= now:
+            if missing_pre and self.market is not None:
 
                 async def capture_pre(payloads=missing_pre):
 
