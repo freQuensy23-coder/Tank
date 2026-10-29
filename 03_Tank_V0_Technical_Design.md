@@ -2187,6 +2187,7 @@ GRANT USAGE ON SCHEMA reg, ingest, evt, mkt, ana, out, ops, scout, qa TO tank_ag
 GRANT SELECT ON ALL TABLES IN SCHEMA reg, ingest, evt, mkt, ana, out, ops, scout, qa TO tank_agent;
 ALTER DEFAULT PRIVILEGES IN SCHEMA reg, ingest, evt, mkt, ana, out, ops, scout, qa GRANT SELECT ON TABLES TO tank_agent;
 ALTER ROLE tank_agent SET default_transaction_read_only = on;
+-- The sandbox URL TANK_DB_URL carries options=-c search_path=reg,ingest,evt,mkt,ana,out,ops,scout,qa,public: a bare table name resolves
 
 -- Job claim by one of the service's workers (§3.8); on start: UPDATE ops.jobs SET status = 'QUEUED' WHERE status = 'RUNNING';
 UPDATE ops.jobs
