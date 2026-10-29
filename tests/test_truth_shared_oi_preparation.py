@@ -380,3 +380,54 @@ def test_dependency_key_skips_unused_cohort_preparation(monkeypatch, composite, 
         truth._BASELINE_DEPENDENCY.reset(dependency)
         truth._BASELINE_CACHE.reset(baseline)
         truth._ASSESSMENT_INPUTS.reset(inputs)
+
+
+@pytest.mark.parametrize("precision", [32, 128])
+def test_dependency_cache_hit_skips_composite_history_slices(monkeypatch, precision):
+    sync, end = cohort()
+    before = deepcopy(sync)
+    cache, calls = {}, []
+    original = truth._history_slice
+
+    def counted(*args):
+        calls.append(args)
+        return original(*args)
+
+    monkeypatch.setattr(truth, "_history_slice", counted)
+    inputs = truth._ASSESSMENT_INPUTS.set({})
+    baseline = truth._BASELINE_CACHE.set(cache)
+    dependency = truth._BASELINE_DEPENDENCY.set("retained-dependency-proof")
+    try:
+        expected = [
+            observe(
+                truth.synchronized_oi,
+                sync,
+                end - timedelta(hours=hours),
+                end,
+                precision,
+                "ROUND_DOWN",
+                None,
+            )
+            for hours in (6, 12, 24)
+        ]
+        assert cache and calls
+        calls.clear()
+        actual = [
+            observe(
+                truth.synchronized_oi,
+                sync,
+                end - timedelta(hours=hours),
+                end,
+                precision,
+                "ROUND_DOWN",
+                None,
+            )
+            for hours in (6, 12, 24)
+        ]
+        assert actual == expected
+        assert not calls
+        assert sync == before
+    finally:
+        truth._BASELINE_DEPENDENCY.reset(dependency)
+        truth._BASELINE_CACHE.reset(baseline)
+        truth._ASSESSMENT_INPUTS.reset(inputs)

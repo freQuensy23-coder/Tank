@@ -338,7 +338,7 @@ async def run(root, directory, fixtures, revision, reader):
                 )
                 await writer.drain()
         except Exception as error:
-            errors.append(type(error).__name__)
+            errors.append(failure_receipt(error))
         finally:
             writer.close()
             with suppress(ConnectionError):
@@ -607,7 +607,12 @@ async def run(root, directory, fixtures, revision, reader):
                         )
                         await admitted.wait()
                         worker = asyncio.create_task(runtime.worker(stop))
-                        await caller
+                        try:
+                            await caller
+                        except Exception as error:
+                            if errors:
+                                raise ReturnBoundaryError(errors) from error
+                            raise
                         await worker
                     wall, used = perf_counter() - started, process_time() - cpu
                 finally:
@@ -681,16 +686,23 @@ async def run(root, directory, fixtures, revision, reader):
     emit({"kind": "stopped"})
 
 
+class ReturnBoundaryError(Exception):
+    pass
+
+
 def failure_receipt(error):
     frames, trace = [], error.__traceback__
     while trace:
         frames.append([Path(trace.tb_frame.f_code.co_filename).name, trace.tb_lineno])
         trace = trace.tb_next
-    return {
+    result = {
         "failure": type(error).__name__,
         "frames": frames if len(frames) <= 16 else frames[:8] + frames[-8:],
         "frames_omitted": max(0, len(frames) - 16),
     }
+    if type(error) is ReturnBoundaryError:
+        result["return_boundary_failures"] = error.args[0]
+    return result
 
 
 async def main():
