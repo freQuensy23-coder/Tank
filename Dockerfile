@@ -43,5 +43,6 @@ ENV TANK_BUILD_SHA=${GIT_SHA} \
     TANK_BACKUP_DIR=/backup \
     TANK_CLICKHOUSE_URL=http://tank@clickhouse:8123
 USER tank
+RUN python -c "from importlib.machinery import ExtensionFileLoader; from tank.analysis import truth; assert isinstance(truth.__loader__, ExtensionFileLoader)"
 ENTRYPOINT ["/usr/bin/tini", "--"]
 CMD ["tank", "serve"]
