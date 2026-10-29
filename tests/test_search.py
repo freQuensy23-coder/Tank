@@ -25,6 +25,17 @@ DDG_HTML = """<!doctype html><html><body>
 </body></html>"""
 
 
+DDG_NO_RESULTS_HTML = """<!doctype html><html><body class="body--html">
+<div id="links" class="results">
+<div class="result results_links results_links_deep web-result result--no-result">
+<div class="links_main links_deep result__body">
+<div class="no-results__container result__title"><span class='no-results'>
+<div class="no-results__message"><h1>No results found for <strong>&quot;rare phrase&quot;</strong></h1>
+<p><strong>Suggestions</strong>:<ul><li>Check spelling</li></ul></p></div>
+</span></div><div class="clear"></div></div></div>
+</div></body></html>"""
+
+
 class Time:
     def __init__(self):
         self.now = 0.0
@@ -299,3 +310,30 @@ async def test_no_key_needed_and_invalid_query_does_not_make_request():
         await adapter.search(" ")
     with pytest.raises(ValueError):
         DuckDuckGoSearchService(user_agent="")
+
+
+async def test_no_results_page_is_an_explicit_error_not_an_empty_result(monkeypatch):
+    requests = []
+
+    def respond(request):
+        requests.append(request)
+        return httpx.Response(200, text=DDG_NO_RESULTS_HTML)
+
+    install_http(monkeypatch, respond)
+    adapter, timer = service(search._search_sync)
+    with pytest.raises(SearchError) as failure:
+        await adapter.search('"rare phrase"')
+    assert failure.value.code == "NO_RESULTS"
+    assert failure.value.attempts == 1
+    assert failure.value.as_dict()["verification"] == "UNCONFIRMED"
+    assert timer.delays == []
+    assert len(requests) == 1
+
+
+async def test_linkless_result_bodies_are_dropped_beside_real_results(monkeypatch):
+    page = DDG_HTML.replace("</body>", DDG_NO_RESULTS_HTML.split('<body class="body--html">')[1])
+
+    install_http(monkeypatch, lambda request: httpx.Response(200, text=page))
+    adapter, _ = service(search._search_sync)
+    result = await adapter.search("official announcement")
+    assert result.results == [RESULT]

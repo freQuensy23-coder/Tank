@@ -6,11 +6,13 @@ import logging
 import traceback
 from datetime import timedelta
 
+from tank.agents.pipeline import RoutingDeferred
 from tank.agents.sessions import ADMITTED_JOB_TYPES, AdmissionDeferred
 from tank.delivery import DeliveryDeferred, DeliveryService
 from tank.diagnostic_recovery import recover_legacy_diagnostic_job, validate_recovery_destination
 from tank.ops_progress import job_failure_progress
 from tank.scheduler import Scheduler
+from tank.storage import retry_delay
 from tank.time_precision import collection_clock, offset_schedule, propagate_timestamp
 from tank.util import parse_time, utcnow
 
@@ -253,7 +255,7 @@ class Runtime:
                 async with self.repo.transaction():
                     await self.repo.put("ops.jobs", job["job_id"], {**job, "result": result})
                     await self.repo.finish_job(job["job_id"])
-            except DeliveryDeferred as deferred:
+            except (DeliveryDeferred, RoutingDeferred) as deferred:
                 async with self.repo.transaction():
                     current = await self.repo.get("ops.jobs", job["job_id"])
                     if current and current["status"] == "RUNNING":
@@ -299,7 +301,9 @@ class Runtime:
                     await self.repo.fail_job(
                         job["job_id"],
                         type(exc).__name__,
-                        retry_after=getattr(exc, "retry_after", min(60, 2 ** job.get("attempts", 1))),
+                        retry_after=getattr(
+                            exc, "retry_after", retry_delay(job["type"], job.get("attempts", 1))
+                        ),
                     )
                     current = await self.repo.get("ops.jobs", job["job_id"])
                     if current and current["status"] in {"FAILED", "EXPIRED"}:

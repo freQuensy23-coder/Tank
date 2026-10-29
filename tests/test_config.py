@@ -1,6 +1,7 @@
 import json
 from collections import Counter
 from pathlib import Path
+from urllib.parse import parse_qs, urlsplit
 
 import yaml
 
@@ -44,6 +45,29 @@ def test_sources_have_concrete_endpoints():
                 assert f.get("article_pattern"), source["source_id"]
     assert len(next(x for x in s if x["source_id"] == "S14")["feeds"]) == 9
     assert len(next(x for x in s if x["source_id"] == "S25")["feeds"]) == 12
+
+
+def test_google_news_search_feeds_are_limited_to_the_last_day():
+    """Unbounded Google News search ranks years-old articles by relevance, so they arrive as new items."""
+    root = C.parent
+    documents = [
+        root / "02_Tank_V0_HLD.md",
+        root / "Tank_V0_Sources_Links.md",
+        C / "skills" / "tank-data" / "references" / "DATA_GUIDE.md",
+    ]
+    searches = [
+        (source["source_id"], feed["url"])
+        for source in load("sources")["sources"]
+        for feed in source["feeds"]
+        if urlsplit(feed["url"]).netloc == "news.google.com" and "/rss/search" in feed["url"]
+    ]
+    assert searches
+    for source_id, url in searches:
+        query = parse_qs(urlsplit(url).query)["q"][0].split()
+        assert "when:1d" in query, (source_id, url)
+        for document in documents:
+            rows = [line for line in document.read_text().splitlines() if line.startswith(f"| {source_id} |")]
+            assert rows and all(url in row for row in rows), (source_id, document.name)
 
 
 def test_wallet_artifacts_and_skills():

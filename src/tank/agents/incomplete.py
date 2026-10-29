@@ -8,6 +8,7 @@ Tank Ops shows it as a processing error, and the operator can queue it for re-an
 that fails terminally while its item is still pending fails the item with SESSION_FAILED, which
 is re-analysable the same way."""
 
+from tank.storage import DECISION_MAX_ATTEMPTS
 from tank.time_precision import collection_clock
 
 AGENT_INCOMPLETE = "AGENT_INCOMPLETE"
@@ -168,7 +169,7 @@ async def reanalyse(repo, *, item_ids=None, limit=100, apply=False):
                     "ROUTE_ITEM",
                     {"item_id": item["item_id"]},
                     f"{item['item_id']}:reanalysis:{attempt}",
-                    max_attempts=2,
+                    max_attempts=DECISION_MAX_ATTEMPTS,
                 )
                 row["queued"] = True
     return {"apply": apply, "count": len(rows), "items": rows}

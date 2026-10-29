@@ -18,6 +18,13 @@
       ],
       "description": "Registry entity key (reg.entities), shown after \u00ab \u00b7 \u00bb next to the name in Tank's messages and results, e.g. uniswap in \u00abUniswap \u00b7 uniswap\u00bb."
     },
+    "name": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "description": "Name or ticker of a project or token, inside or outside the registry, e.g. \u00abRipple\u00bb or \u00abXRP\u00bb. Tank resolves it like record_event (V3): a registry name or ticker matches its key and registry pair, like token_id or entity_id; any other name matches events that recorded it unresolved under the same name (case-insensitive), so try both the project name and the ticker. Null or omitted: no name filter."
+    },
     "query": {
       "type": [
         "string",
@@ -43,5 +50,5 @@
       "description": "Page start: the next_offset of the previous page. Null or omitted: 0."
     }
   },
-  "description": "List open events for routing or duplicate checks: statements, entities, tokens, stages, known-to-us and last-activity times and session associations. Only events with activity (first known, a routed item or a requested review) within the last `days` are listed; the default is the 3-day routing window. token_id and entity_id each also match the registry pair (a token's project, a project's tokens); with both, an event must match both. `query` keeps events whose statement contains any of its words and ranks them by how many match. Results are ordered by relevance, then most recent activity, at most 50 per page; `total` counts every match and `next_offset`, when set, is the `offset` for the next page. Read every page before deciding an item is new. Listing does not modify an event."
+  "description": "List open events for routing or duplicate checks: statements, entities, tokens, stages, known-to-us and last-activity times and session associations. Only events with activity (first known, a routed item or a requested review) within the last `days` are listed; the default is the 3-day routing window. token_id and entity_id each also match the registry pair (a token's project, a project's tokens). `name` looks up a project or token by name or ticker, including one outside the registry; with several filters, an event must match all of them. `query` keeps events whose statement contains any of its words and ranks them by how many match. Results are ordered by relevance, then most recent activity, at most 50 per page; `total` counts every match and `next_offset`, when set, is the `offset` for the next page. Read every page before deciding an item is new. Listing does not modify an event."
 }
