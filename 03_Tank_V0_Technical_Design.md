@@ -152,7 +152,7 @@ SourceItem
   observed_at: ts
   source_class: SourceClass
   relevance: {decision: ALWAYS | SEND | SKIP, p_relevant: 0..1?, model: str?}   # §3.1
-  route: {decision: NEW_SESSION | ADDED, event_id: str?, p_same: 0..1?}?        # §3.1
+  route: {decision: NEW_SESSION | ADDED, event_id: str?, p_same: 0..1?, basis: INSTRUMENT_ASSET?}?   # §3.1
   extraction_status: PENDING | DONE | SKIPPED | FAILED
   extraction_reason: str?   # no_event_reason when SKIPPED; AGENT_REMINDED (PENDING only, dropped when DONE); AGENT_INCOMPLETE or SESSION_FAILED (FAILED), §3.2
   extraction_error_type: str?   # native error type of the failed session when SESSION_FAILED, §3.2
@@ -773,6 +773,7 @@ Seed for the beneficiary walk (§4.7). An edge supported only by this map starts
 
 - Candidates: events whose session received an item in the last 3 days and that share an entity or token with the item. Entities are the registry aliases (§2.11; whole words, case-insensitive) found in the item text, the quoted text and the author's organization, and for an S25 item the entity whose registry `github_repos` lists the feed's repository (`owner/repo`, case-insensitive): a release title such as `2.14.0` names no project. No shared entity → no candidates.
 - Repository siblings: one release often arrives as several tags in one poll (`2.14.0-rc.7` and `crates-0.38.0-rc.7`, or the AvalancheGo graft tags). Items of one GitHub repository are routed one at a time, and while another item of that repository observed within ⚙`release_sibling_wait_s` (300 s) before it was routed NEW_SESSION and its agent turn is unsettled (`extraction_status` PENDING or RUNNING), ROUTE_ITEM is rescheduled every 15 s without spending an attempt, so the sibling's event exists and is a candidate when the item is scored. From 300 s after the item's own `observed_at` it routes without waiting, so an agent outage cannot hold it.
+- Instrument changes (S14): an S14 item names the venue and base asset of every symbol it reports (the symbol itself when the venue gives no base asset, as for OKX swaps). It joins, without a Decision-1 question, the open event of the latest other S14 item of the last 3 days that shares a venue and base asset — the event that item was routed to, or the event its own session recorded; an event merged into another one leads to that one. The route is stored as ADDED with `basis: INSTRUMENT_ASSET` and no `p_same`. A venue's follow-ups — pre-open to live, cancel-only to reduce-only, the next pair of a delisted asset — so reach the session of the first change instead of opening one each. S14 items are routed one at a time, and while another S14 item sharing a venue and base asset observed within ⚙`release_sibling_wait_s` before it was routed NEW_SESSION and its agent turn is unsettled, ROUTE_ITEM waits as for repository siblings. Without such an event the item is routed by its entities like any other.
 - One Decision-1 question per candidate, through the same endpoint; `state` = `{"item": <as in FILTER_ITEM>, "event": {"statement": "<the agent's statement>", "entities": [<readable names>], "tokens": [<tickers>], "stage": "<event state>"}}`:
 
 ```json
