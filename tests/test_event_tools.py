@@ -508,6 +508,49 @@ async def test_agent_confirmation_certainty_and_reason_are_preserved(service):
     assert event["certainty_reason"] == confirmation["certainty_reason"]
 
 
+@pytest.mark.parametrize("tool", ["record_event", "add_observation"])
+async def test_item_finished_after_a_reminder_drops_the_reminder_reason(service, tool):
+    x = await seed(service)
+    reminded = {"extraction_status": "PENDING", "extraction_reason": "AGENT_REMINDED"}
+    if tool == "record_event":
+        item = await service.repo.get("ingest.source_items", "i")
+        await service.repo.put("ingest.source_items", "i", {**item, **reminded})
+        await service.dispatch("record_event", x, {})
+        finished = "i"
+    else:
+        event_id = (await service.dispatch("record_event", x, {}))["event_id"]
+        await service.repo.put(
+            "ingest.source_items",
+            "late",
+            dict(
+                item_id="late",
+                source_id="S02",
+                text="Product announced",
+                source_class="SECONDARY",
+                observed_at=iso(utcnow() + timedelta(seconds=1)),
+                **reminded,
+            ),
+        )
+        await service.dispatch(
+            "add_observation",
+            dict(
+                event_id=event_id,
+                item_id="late",
+                link="CORROBORATION",
+                certainty="HIGH",
+                certainty_reason="Agent observation judgment",
+                claims=x["claims"],
+                public_at=x["public_at"],
+                freshness="FRESH",
+            ),
+            {},
+        )
+        finished = "late"
+    item = await service.repo.get("ingest.source_items", finished)
+    assert item["extraction_status"] == "DONE"
+    assert item.get("extraction_reason") is None
+
+
 async def test_numeric_ems_requires_accepted_evidence(service):
     x = await seed(service)
     result = await service.dispatch("record_event", x, {})

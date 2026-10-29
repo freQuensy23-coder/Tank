@@ -19,7 +19,7 @@ from httpx_sse import aconnect_sse
 
 from tank.agents import workflow
 from tank.agents.context import CONTEXT_TRANSITION, CONTEXT_VERSION, ModelContext
-from tank.agents.incomplete import UNFINISHED, fail_incomplete_turn
+from tank.agents.incomplete import UNFINISHED, fail_incomplete_turn, fail_with_session
 from tank.agents.pipeline import ConfigurationError
 from tank.agents.security import redact_tool_arguments
 from tank.agents.wire import tool_wire_result
@@ -81,6 +81,7 @@ SESSION_ADMISSION_FIELDS = (
     "archived_at",
     "remote_state",
     "agent_incomplete",
+    "reanalysis_attempt",
 )
 JOB_ADMISSION_FIELDS = ("job_id", "status", "priority", "payload", "slot_waiting_since", "slot_admitted")
 BUSY_RUNTIME_STATES = {"PENDING", "RUNNING", "REQUIRES_ACTION"}
@@ -235,6 +236,7 @@ class SessionService:
             return session
         event_id = payload.get("event_id")
         item_id = payload.get("item_id")
+        reanalysis = None if event_id else payload.get("reanalysis_attempt")
         identifiers = [
             ("event_id", event_id),
             ("item_id", item_id if not event_id else None),
@@ -248,7 +250,9 @@ class SessionService:
                     filters={field: value, **({"replay_run_id": replay_run_id} if replay_run_id else {})},
                 ):
                     if self.routable_session(session):
-                        return session
+                        if self.joins_attempt(session, field, payload):
+                            return session
+                        continue
                     closed[value] = closed.get(value, 0) + 1
         config = self.config()
         scout = payload.get("kind") == "SCOUT_REVIEW"
@@ -279,6 +283,7 @@ class SessionService:
                 "scout": scout,
                 "model_context_version": CONTEXT_VERSION,
                 **({"replay_run_id": replay_run_id} if replay_run_id else {}),
+                **({"reanalysis_attempt": reanalysis} if reanalysis else {}),
                 **({"generation": closed[identity]} if closed.get(identity) else {}),
             }
         )
@@ -350,6 +355,7 @@ class SessionService:
             "item_id": item_id,
             "proposal_id": payload.get("proposal_id"),
             "opened_by_item": item_id,
+            **({"reanalysis_attempt": reanalysis} if reanalysis else {}),
             **opened.fields("opened_at"),
             **self.agent_provenance(remote, config, agent),
             "billing_basis": "SUBSCRIPTION",
@@ -770,6 +776,14 @@ class SessionService:
             and remote.get("status") != "terminated"
             and not remote.get("archived_at")
         )
+
+    @staticmethod
+    def joins_attempt(session, field, payload):
+        """A re-analysis message routed by its item alone joins only the session opened for the
+        same re-analysis attempt; the item's earlier sessions, including one that has since
+        recorded an event, never take it, so every attempt starts in a fresh session."""
+        attempt = payload.get("reanalysis_attempt")
+        return field != "item_id" or not attempt or session.get("reanalysis_attempt") == attempt
 
     @staticmethod
     def recoverable_session(session):
@@ -2280,10 +2294,7 @@ class SessionService:
                     failed_payload = (active or {}).get("payload") or session.get("last_payload") or {}
                     item_id = failed_payload.get("item_id") or session.get("item_id")
                     if item_id:
-                        item = await self.repo.get("ingest.source_items", item_id)
-                        if item and item.get("extraction_status") == "PENDING":
-                            item["extraction_status"] = "FAILED"
-                            await self.repo.put("ingest.source_items", item_id, item)
+                        await fail_with_session(self.repo, session, item_id, terminal_failure)
             elif kind == "session.status_terminated":
                 session["status"] = "ENDED"
                 session["runtime_status"] = "IDLE"
@@ -2614,7 +2625,9 @@ class SessionService:
                 async for session in self.repo.iter_metadata(
                     "ops.agent_sessions", SESSION_ADMISSION_FIELDS, filters={field: value}
                 ):
-                    if field == "session_id" or self.routable_session(session):
+                    if field == "session_id" or (
+                        self.routable_session(session) and self.joins_attempt(session, field, payload)
+                    ):
                         return session
         return None
 
