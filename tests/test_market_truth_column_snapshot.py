@@ -99,7 +99,9 @@ async def test_snapshot_overlaps_independent_dense_reads_and_retains_each_lane(p
 
         async def post(query, params):
             value = await original_post(query, params)
-            if query.endswith("FORMAT JSONColumns"):
+            if query.endswith("FORMAT JSONColumns") and query.startswith(
+                "SELECT toUnixTimestamp64Micro(open_time) AS open_us,"
+            ):
                 for iid in IIDS:
                     if f"instrument_id IN ('{iid}')" in query:
                         seen.add(iid)
@@ -118,6 +120,7 @@ async def test_snapshot_overlaps_independent_dense_reads_and_retains_each_lane(p
                 for iid, venue in zip(IIDS, ("binance", "okx"), strict=True)
             }
             value = await market.snapshot(token, T0 + timedelta(minutes=3))
+            assert seen == set(IIDS)
             assert set(value["stat_price_series"]) == set(IIDS)
             assert set(value["stat_volume_series"]) == set(IIDS)
             for iid in IIDS:

@@ -156,6 +156,19 @@ def profile_rows(profiler):
             "calls": values[1],
             "self_seconds": values[2],
             "inclusive_seconds": values[3],
+            "callers": [
+                {
+                    "module": Path(caller_file).name,
+                    "line": caller_line,
+                    "function": caller_name,
+                    "calls": counts[1],
+                    "self_seconds": counts[2],
+                    "inclusive_seconds": counts[3],
+                }
+                for (caller_file, caller_line, caller_name), counts in sorted(
+                    values[4].items(), key=lambda item: item[1][3], reverse=True
+                )[:5]
+            ],
         }
         for (filename, line, name), values in sorted(
             stats.items(), key=lambda item: item[1][2], reverse=True

@@ -63,8 +63,21 @@ def decimal(v):
         v = v.get("value")
     if v is None:
         return None
+    memo = None
+    if type(v) is str and len(v) <= 64:
+        inputs = _ASSESSMENT_INPUTS.get()
+        if inputs is not None:
+            memo = inputs.setdefault("finite_text_decimals", {})
+            hit = memo.get(v)
+            if hit is not None:
+                context = getcontext()
+                context.prec = max(context.prec, hit[1])
+                return hit[0]
     value = v if isinstance(v, Decimal) else Decimal(str(v))
     exact_context(value)
+    if memo is not None and len(memo) < 65536 and value.is_finite():
+        required = 2 * (value.adjusted() - value.as_tuple().exponent + 1) + 32
+        memo[v] = (value, required)
     return value
 
 
