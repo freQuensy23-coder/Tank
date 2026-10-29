@@ -1837,6 +1837,38 @@ async def test_duckduckgo_results_are_durable_free_search_evidence(service):
     )
 
 
+async def test_duckduckgo_no_results_page_stores_no_search_evidence(service, monkeypatch):
+    import httpx
+
+    from tank import search
+    from tank.search import DuckDuckGoSearchService, SearchLimiter
+
+    page = (
+        '<html><body class="body--html"><div class="result result--no-result">'
+        '<div class="links_main links_deep result__body"><div class="no-results__container result__title">'
+        "<h1>No results found</h1></div></div></div></body></html>"
+    )
+    original = httpx.Client
+
+    def make_client(**kwargs):
+        return original(
+            transport=httpx.MockTransport(lambda request: httpx.Response(200, text=page)),
+            **kwargs,
+        )
+
+    monkeypatch.setattr(search.httpx, "Client", make_client)
+    service.search_service = DuckDuckGoSearchService(
+        user_agent="TankV0/search-test (offline fixture)", limiter=SearchLimiter()
+    )
+    result = await service.dispatch(
+        "web_search", {"query": '"rare phrase"'}, {"session_id": "search-session", "call_id": "search-call"}
+    )
+    assert result["items"] == []
+    assert result["search"]["error"] == "NO_RESULTS" and result["search"]["attempts"] == 1
+    assert await service.repo.list("ingest.source_items") == []
+    assert len(await service.repo.list("ops.llm_usage")) == 1
+
+
 async def test_search_failure_does_not_mutate_medium_event_certainty(service):
     from tank.search import SearchError
 
