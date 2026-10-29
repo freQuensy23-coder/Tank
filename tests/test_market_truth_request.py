@@ -125,7 +125,7 @@ async def full_request_comparison(tmp_path_factory, pytestconfig, request):
     workers, repositories, receipts, compiled = {}, [], {}, {}
     try:
         async with AsyncExitStack() as resources:
-            for label, revision in (("original", ORIGINAL), ("candidate", candidate)):
+            for label, revision in (("original", contract_base), ("candidate", candidate)):
                 root = tmp_path / label
                 archive(revision, root, ["src", "config", "uv.lock", "pyproject.toml"])
                 if label == "candidate":
@@ -209,7 +209,8 @@ async def full_request_comparison(tmp_path_factory, pytestconfig, request):
                     json.dumps(
                         {
                             "source_heads": {
-                                "original": ORIGINAL,
+                                "original": contract_base,
+                                "historical_capture_original": ORIGINAL,
                                 "candidate": candidate,
                                 "repository_contract_base": contract_base,
                             },
@@ -277,7 +278,16 @@ async def full_request_comparison(tmp_path_factory, pytestconfig, request):
             )
     finally:
         await check.close()
-    record_property("source_heads", json.dumps({"original": ORIGINAL, "candidate": candidate}))
+    record_property(
+        "source_heads",
+        json.dumps(
+            {
+                "original": contract_base,
+                "candidate": candidate,
+                "historical_capture_original": ORIGINAL,
+            }
+        ),
+    )
     record_property("manifest_sha256", hashlib.sha256((fixtures / "manifest.json").read_bytes()).hexdigest())
     return tmp_path
 
