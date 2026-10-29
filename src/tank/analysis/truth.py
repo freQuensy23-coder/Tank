@@ -20,7 +20,7 @@ from copy import deepcopy
 from datetime import datetime, timedelta
 from decimal import Decimal, DecimalException, Inexact, Rounded, getcontext, localcontext
 from functools import wraps
-from math import log
+from math import isfinite, log
 from statistics import mean, median, stdev
 
 import numpy as np
