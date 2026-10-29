@@ -1,9 +1,16 @@
 import cython
 
-cdef int _fixed_decimal_text_metadata(object value):
-    cdef str text
-    cdef Py_ssize_t length, index, dot, digits, significant, exponent
-    cdef Py_UCS4 code
+@cython.locals(
+    text=str,
+    length=cython.Py_ssize_t,
+    index=cython.Py_ssize_t,
+    dot=cython.Py_ssize_t,
+    digits=cython.Py_ssize_t,
+    significant=cython.Py_ssize_t,
+    exponent=cython.Py_ssize_t,
+    code=cython.Py_UCS4,
+)
+cdef int _fixed_decimal_text_metadata(object value)
 
 @cython.locals(inputs=dict, memo=dict, precisions=dict)
 cdef api object _scalar_decimal(object v)
