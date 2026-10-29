@@ -724,8 +724,9 @@ async def test_upstream_status_latency_and_usage_windows_logged_without_secrets(
 
 @pytest.mark.integration
 async def test_unauthorized_recovery_refresh_counted_and_logged(gateway_factory, caplog):
-    def provider(request):
+    async def provider(request):
         if str(request.url) == TOKEN_URL:
+            await asyncio.sleep(0.3)
             return httpx.Response(200, json={"access_token": jwt(exp=4102444801)})
         if request.headers["authorization"] == "Bearer " + jwt():
             return httpx.Response(401, json={"error": {"code": "unauthorized"}})
@@ -743,6 +744,7 @@ async def test_unauthorized_recovery_refresh_counted_and_logged(gateway_factory,
     ]
     assert lines[0][1].endswith(" attempt=1 used_percent=-")
     assert lines[2][1].endswith(" attempt=2 used_percent=-")
+    assert int(lines[2][1].split(" latency_ms=")[1].split()[0]) < 250
     assert "FAKE-refresh" not in caplog.text and jwt(exp=4102444801) not in caplog.text
 
 

@@ -461,7 +461,6 @@ class CodexGateway:
             return self._error(GatewayError("unauthorized", 401))
         upstream = None
         downstream = None
-        started = time.monotonic()
         try:
             try:
                 original = await request.json()
@@ -481,6 +480,7 @@ class CodexGateway:
                     "User-Agent": "tank-codex-gateway/0.1",
                     "originator": "codex_cli_rs",
                 }
+                started = time.monotonic()
                 upstream = await self._client.send(
                     httpx.Request("POST", RESPONSES_URL, headers=headers, json=body),
                     stream=True,
