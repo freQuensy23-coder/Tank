@@ -25,7 +25,7 @@ from market_truth_request_data import ORIGINAL, seed_data
 from tank import clickhouse_market as chm
 from tank.agents import SessionService
 from tank.agents.context import CONTEXT_VERSION, ModelContext
-from tank.analysis import truth
+from tank.analysis import compute_workers, truth
 from tank.clickhouse_market import ClickHouse
 from tank.event_tools import EventToolService
 from tank.market import service as market_module
@@ -84,6 +84,49 @@ def clear_timestamp_cache():
     if parser is not None:
         parser.cache_clear()
         assert parser.cache_info().currsize == 0
+
+
+def timed_process_compute(parts, config, baseline_key):
+    original = truth.compute_market_truth
+    assert original.__module__ == "tank.analysis.truth"
+    assert compute_workers._compute is not timed_process_compute
+    before = compute_workers._baselines.get(baseline_key)
+    receipt = {
+        "baseline_present_before": baseline_key in compute_workers._baselines,
+        "baseline_entries_before": len(before) if before is not None else 0,
+        "compute_seconds": [],
+        "compute_cpu_seconds": [],
+    }
+
+    @wraps(original)
+    def measured(*args, **kwargs):
+        started, cpu = perf_counter(), process_time()
+        try:
+            return original(*args, **kwargs)
+        finally:
+            receipt["compute_seconds"].append(perf_counter() - started)
+            receipt["compute_cpu_seconds"].append(process_time() - cpu)
+
+    truth.compute_market_truth = measured
+    try:
+        result = compute_workers._compute(parts, config, baseline_key)
+    finally:
+        truth.compute_market_truth = original
+    assert len(receipt["compute_seconds"]) == 1
+    after = compute_workers._baselines.get(baseline_key)
+    receipt["baseline_present_after"] = baseline_key in compute_workers._baselines
+    receipt["baseline_entries_after"] = len(after) if after is not None else 0
+    root = Path(sys.modules["tank.util"].__file__).resolve().parents[2]
+    receipt["modules"] = provenance(root)
+    receipt["artifacts"] = {
+        name: {
+            "path": str(Path(sys.modules[name].__file__).resolve().relative_to(root)),
+            "sha256": hashlib.sha256(Path(sys.modules[name].__file__).read_bytes()).hexdigest(),
+            "loader": type(sys.modules[name].__loader__).__name__,
+        }
+        for name in ("tank.analysis.truth", "tank.clickhouse_market", "tank.util")
+    }
+    return result, receipt
 
 
 def profile_retained_call(call, *, gc_receipt=None):
@@ -559,19 +602,41 @@ async def run(root, directory, fixtures, revision, reader):
                 if hasattr(truth, name):
                     setattr(truth, name, measure(name, getattr(truth, name)))
             original_compute = truth.compute_market_truth
-            compute_seconds = []
+            original_worker_compute = compute_workers.compute_market_truth
+            compute_workers._compute = timed_process_compute
+            compute_seconds, worker_receipts = [], []
 
-            def compute(*args, **kwargs):
-                nonlocal diagnostic_call
+            async def compute_in_worker(lane, snapshot, *, config, baseline_key=None):
+                nonlocal diagnostic_call, diagnostic_seconds
                 context = copy_context()
                 started = perf_counter()
-                try:
-                    return original_compute(*args, **kwargs)
-                finally:
-                    compute_seconds.append(perf_counter() - started)
-                    diagnostic_call = (context, original_compute, args, kwargs)
+                result, receipt = await original_worker_compute(
+                    lane, snapshot, config=config, baseline_key=baseline_key
+                )
+                assert lane == compute_workers.ASSESSMENT and baseline_key == TOKEN
+                assert len(receipt["compute_seconds"]) == 1
+                parent_modules = provenance(root)
+                assert all(parent_modules.get(name) == paths for name, paths in receipt["modules"].items())
+                for name, artifact in receipt["artifacts"].items():
+                    module = sys.modules[name]
+                    filename = Path(module.__file__).resolve()
+                    assert artifact == {
+                        "path": str(filename.relative_to(root)),
+                        "sha256": hashlib.sha256(filename.read_bytes()).hexdigest(),
+                        "loader": type(module.__loader__).__name__,
+                    }
+                compute_seconds.extend(receipt["compute_seconds"])
+                worker_receipts.append(receipt)
+                diagnostic_call = (
+                    context,
+                    original_compute,
+                    (snapshot,),
+                    {"config": config, "baseline_cache": {}},
+                )
+                diagnostic_seconds = max(diagnostic_seconds, perf_counter() - started)
+                return result
 
-            truth.compute_market_truth = compute
+            compute_workers.compute_market_truth = measure_async("compute.worker_boundary", compute_in_worker)
             while command := await reader.readline():
                 command = json.loads(command)
                 if command.get("stop"):
@@ -611,8 +676,8 @@ async def run(root, directory, fixtures, revision, reader):
                 diagnostic_seconds = 0.0
                 phases.clear()
                 phase_calls.clear()
-                baseline_before = len(service._assessment_baselines.get(TOKEN, {}))
-                assert (baseline_before == 0) == (state == "cold")
+                compute_seconds.clear()
+                worker_receipts.clear()
                 stop, admitted = asyncio.Event(), asyncio.Event()
                 enqueue, finish = repo.enqueue, repo.finish_job
 
@@ -667,6 +732,14 @@ async def run(root, directory, fixtures, revision, reader):
                     await asyncio.gather(*(task for task in (caller, worker) if task), return_exceptions=True)
                     repo.enqueue, repo.finish_job = enqueue, finish
                 assert not errors, errors
+                assert len(worker_receipts) == len(compute_seconds) == 1
+                worker_receipt = worker_receipts[0]
+                baseline_before = worker_receipt["baseline_entries_before"]
+                assert (baseline_before == 0) == (state == "cold")
+                assert worker_receipt["baseline_present_before"] == (state != "cold")
+                assert worker_receipt["baseline_present_after"]
+                assert worker_receipt["baseline_entries_after"] > 0
+                assert compute_seconds[0] > 0
                 audit = await repo.get("ops.tool_calls", f"s-{state}:{state}")
                 assert audit["returned_at"] and audit["remote_event_id"] == "accepted-" + state
                 result = audit["result"]["market_truth"][0]
@@ -713,6 +786,8 @@ async def run(root, directory, fixtures, revision, reader):
                         "digests": digests,
                         "baseline_entries_before": baseline_before,
                         "compute_seconds": compute_seconds[-1],
+                        "compute_cpu_seconds": worker_receipt["compute_cpu_seconds"][0],
+                        "compute_worker": worker_receipt,
                         "inclusive_nonadditive_phase_seconds": dict(phases),
                         "phase_call_counts": dict(phase_calls),
                         "modules": provenance(root),

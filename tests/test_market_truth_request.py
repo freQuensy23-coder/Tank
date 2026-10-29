@@ -267,7 +267,7 @@ async def full_request_comparison(tmp_path_factory, pytestconfig, request):
             finally:
                 failed = sys.exception() is not None
                 for process in workers.values():
-                    if process.returncode is None:
+                    if process.returncode is None and not failed:
                         await send(process, {"stop": True})
                         async with asyncio.timeout(10):
                             await process.wait()
