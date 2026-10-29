@@ -599,6 +599,8 @@ async def run(root, directory, fixtures, revision, reader):
                 "_native_volume_arrays",
                 "_history_decimal_arrays",
                 "_history_fixed_decimal_column",
+                "_reference_rv_series",
+                "_rv24_history",
                 "_native_volume_windows",
                 "_basis_history",
                 "_oi_cohort_key",

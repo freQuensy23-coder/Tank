@@ -11,6 +11,7 @@ import contextlib
 import hashlib
 import json
 import pickle
+import statistics
 import threading
 from array import array
 from bisect import bisect_left, bisect_right
@@ -70,16 +71,18 @@ def decimal(v):
         inputs = _ASSESSMENT_INPUTS.get()
         if inputs is not None:
             memo = inputs.setdefault("finite_text_decimals", {})
+            precisions = inputs.setdefault("finite_text_precisions", {})
             hit = memo.get(v)
             if hit is not None:
                 context = getcontext()
-                context.prec = max(context.prec, hit[1])
-                return hit[0]
+                context.prec = max(context.prec, precisions[v])
+                return hit
     value = v if isinstance(v, Decimal) else Decimal(str(v))
     exact_context(value)
     if memo is not None and len(memo) < 262144 and value.is_finite():
         required = 2 * (value.adjusted() - value.as_tuple().exponent + 1) + 32
-        memo[v] = (value, required)
+        precisions[v] = required
+        memo[v] = value
     return value
 
 
@@ -1010,6 +1013,7 @@ def _history_fixed_decimal_column(column):
     conversions = inputs.setdefault("fixed_text_decimals", {}) if inputs is not None else None
     metadata = inputs.setdefault("fixed_text_metadata", {}) if inputs is not None else None
     scalars = inputs.setdefault("finite_text_decimals", {}) if inputs is not None else None
+    precisions = inputs.setdefault("finite_text_precisions", {}) if inputs is not None else None
     values = np.empty(len(column), dtype=object)
     values.fill(None)
     low, high = 0, 0
@@ -1024,9 +1028,10 @@ def _history_fixed_decimal_column(column):
             if prepared < 0:
                 return None
             scalar = scalars.get(value) if scalars is not None else None
-            converted = scalar[0] if scalar is not None else Decimal(value)
+            converted = scalar if scalar is not None else Decimal(value)
             if scalars is not None and scalar is None and len(value) <= 64 and len(scalars) < 262144:
-                scalars[value] = (converted, 2 * max(prepared & 63, 1) + 32)
+                precisions[value] = 2 * max(prepared & 63, 1) + 32
+                scalars[value] = converted
             if conversions is not None and len(conversions) < 262144:
                 metadata[value] = prepared
                 conversions[value] = converted
@@ -2452,12 +2457,22 @@ def relative_truth(snapshot, start, end, *, include_outcome=True):
         hourly_order = list(btc_hourly)
         hourly_positions = {t: i for i, t in enumerate(hourly_order)}
         ordered_times = sorted(btc_hourly)
+        try:
+            prepared = _reference_rv_series(btc_hourly)
+        except (OverflowError, ValueError):
+            prepared = None
+        prepared_rv = dict(zip(prepared[1], prepared[2], strict=True)) if prepared is not None else None
         for t in ordered_times:
             if t >= start or t < start - timedelta(days=lookback_days()):
                 continue
             a = t - timedelta(days=1)
             if a in btc:
                 bh.append(btc[t] / btc[a] - 1)
+            if prepared_rv is not None:
+                value = prepared_rv.get(t)
+                if value is not None:
+                    rvhist.append(value)
+                continue
             lo = bisect_right(ordered_times, a)
             hi = bisect_right(ordered_times, t)
             positions = sorted(hourly_positions[x] for x in ordered_times[lo:hi])
@@ -2984,6 +2999,38 @@ def _usd_mid(row, mid):
     return mid * rate if rate else None
 
 
+def _rv24_history(returns, ends):
+    square_root = getattr(statistics, "_float_sqrt_of_frac", None)
+    if square_root is None or type(returns) is not dict or type(ends) not in (list, tuple):
+        return None
+    if any(
+        type(at) is not datetime or type(value) is not float or not isfinite(value)
+        for at, value in returns.items()
+    ):
+        return None
+    if any(type(at) is not datetime for at in ends):
+        return None
+    ordered = sorted(returns)
+    ratios = [returns[at].as_integer_ratio() for at in ordered]
+    scale = max((denominator for _, denominator in ratios), default=1)
+    sums, squares = [0], [0]
+    for numerator, denominator in ratios:
+        value = numerator * (scale // denominator)
+        sums.append(sums[-1] + value)
+        squares.append(squares[-1] + value * value)
+    variance_denominator = 24 * 23 * scale * scale
+    times, values = [], []
+    for end in ends:
+        first = bisect_right(ordered, end - timedelta(hours=24))
+        last = bisect_right(ordered, end)
+        if last - first == 24:
+            total = sums[last] - sums[first]
+            square = squares[last] - squares[first]
+            times.append(end)
+            values.append(square_root(24 * square - total * total, variance_denominator))
+    return times, values
+
+
 def _reference_rv_series(prices):
     inputs = _ASSESSMENT_INPUTS.get()
     memo = inputs.setdefault("reference_rv_series", {}) if inputs is not None else None
@@ -3003,15 +3050,19 @@ def _reference_rv_series(prices):
     }
     if any(not isfinite(value) for value in returns.values()):
         return None
-    return_times = sorted(returns)
-    times, values = [], []
-    for t in sorted(hourly):
-        first = bisect_right(return_times, t - timedelta(hours=24))
-        last = bisect_right(return_times, t)
-        observations = [returns[at] for at in return_times[first:last]]
-        if len(observations) == 24:
-            times.append(t)
-            values.append(stdev(observations))
+    prepared = _rv24_history(returns, sorted(hourly))
+    if prepared is None:
+        return_times = sorted(returns)
+        times, values = [], []
+        for t in sorted(hourly):
+            first = bisect_right(return_times, t - timedelta(hours=24))
+            last = bisect_right(return_times, t)
+            observations = [returns[at] for at in return_times[first:last]]
+            if len(observations) == 24:
+                times.append(t)
+                values.append(stdev(observations))
+    else:
+        times, values = prepared
     result = (hourly, times, values)
     if memo is not None:
         memo[id(prices)] = (prices, result)
