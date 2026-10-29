@@ -50,6 +50,7 @@ Entity
   names: [str]; aliases: [str]
   tokens: [token_id]
   official_sources: [source_id]      # where the Verifier looks first
+  github_repos: [owner/repo]         # S25 repositories this entity publishes; routing identity (§3.1)
   layers_served: [StackLayer]        # dependency map
   competes_with: [entity_id]
   chains: [str]

@@ -111,6 +111,7 @@ Entity
   names: [str]; aliases: [str]
   tokens: [token_id]
   official_sources: [source_id]      # where the Verifier looks first
+  github_repos: [owner/repo]         # S25 repositories this entity publishes; routing identity (§3.1)
   layers_served: [StackLayer]        # dependency map
   competes_with: [entity_id]
   chains: [str]
@@ -770,7 +771,8 @@ Seed for the beneficiary walk (§4.7). An edge supported only by this map starts
 
 **ROUTE_ITEM (Decision-1): one event, one session.** Decides whether the item opens a new agent session or joins the session of an event that received news in the last ⚙3 days (01 FR-E-02).
 
-- Candidates: events whose session received an item in the last 3 days and that share an entity or token with the item. Entities are the registry aliases (§2.11; whole words, case-insensitive) found in the item text, the quoted text and the author's organization. No shared entity → no candidates.
+- Candidates: events whose session received an item in the last 3 days and that share an entity or token with the item. Entities are the registry aliases (§2.11; whole words, case-insensitive) found in the item text, the quoted text and the author's organization, and for an S25 item the entity whose registry `github_repos` lists the feed's repository (`owner/repo`, case-insensitive): a release title such as `2.14.0` names no project. No shared entity → no candidates.
+- Repository siblings: one release often arrives as several tags in one poll (`2.14.0-rc.7` and `crates-0.38.0-rc.7`, or the AvalancheGo graft tags). Items of one GitHub repository are routed one at a time, and while another item of that repository observed within ⚙`release_sibling_wait_s` (300 s) before it was routed NEW_SESSION and its agent turn is unsettled (`extraction_status` PENDING or RUNNING), ROUTE_ITEM is rescheduled every 15 s without spending an attempt, so the sibling's event exists and is a candidate when the item is scored. From 300 s after the item's own `observed_at` it routes without waiting, so an agent outage cannot hold it.
 - One Decision-1 question per candidate, through the same endpoint; `state` = `{"item": <as in FILTER_ITEM>, "event": {"statement": "<the agent's statement>", "entities": [<readable names>], "tokens": [<tickers>], "stage": "<event state>"}}`:
 
 ```json
