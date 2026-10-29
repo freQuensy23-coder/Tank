@@ -1,9 +1,7 @@
 import asyncio
-import cProfile
 import hashlib
 import json
 import logging
-import pstats
 import re
 import signal
 import sys
@@ -274,7 +272,7 @@ async def run(root, directory, fixtures, revision, reader):
             runtime = object.__new__(Runtime)
             runtime.repo, runtime.settings, runtime.market, runtime.truth = repo, settings, market, service
             runtime.handlers = {"ESCALATE_TOKENS": runtime.escalate, "RUN_MARKET_TRUTH": runtime.assess}
-            snapshots, dense, phases = [], {}, {}
+            snapshots, dense, phases, phase_calls = [], {}, {}, {}
             original_snapshot, original_heads, original_rows = (
                 market.snapshot,
                 market._snapshot_heads,
@@ -332,11 +330,32 @@ async def run(root, directory, fixtures, revision, reader):
                         return function(*args, **kwargs)
                     finally:
                         phases[name] = phases.get(name, 0) + perf_counter() - started
+                        phase_calls[name] = phase_calls.get(name, 0) + 1
 
                 return measured
 
-            for name in ("relative_truth", "derivatives_truth", "support_features", "spot_truth", "data_confidence"):
-                setattr(truth, name, measure(name, getattr(truth, name)))
+            for name in (
+                "relative_truth",
+                "derivatives_truth",
+                "support_features",
+                "spot_truth",
+                "data_confidence",
+                "_native_volume_index",
+                "_price_groups",
+                "_price_index",
+                "_oi_rows",
+                "_oi_stats",
+                "_synchronized_oi",
+                "_composite_history",
+                "_oi_history_returns",
+                "_composite_history_vector",
+                "_relative_history_arrays",
+                "_relative_history_returns",
+                "btc_baseline",
+                "build_index",
+            ):
+                if hasattr(truth, name):
+                    setattr(truth, name, measure(name, getattr(truth, name)))
             original_compute = truth.compute_market_truth
             compute_seconds = []
 
@@ -348,54 +367,13 @@ async def run(root, directory, fixtures, revision, reader):
                     compute_seconds.append(perf_counter() - started)
 
             truth.compute_market_truth = compute
-            full = None
             while command := await reader.readline():
                 command = json.loads(command)
                 if command.get("stop"):
                     break
-                if command.get("profile"):
-                    assert full is not None
-                    profiler = cProfile.Profile()
-
-                    def profile_compute():
-                        profiler.enable()
-                        try:
-                            return original_compute(
-                                snapshots[-1],
-                                config=dict(
-                                    settings.load_config("thresholds"),
-                                    config_version=settings.config_version,
-                                    code_version=settings.code_version,
-                                ),
-                                baseline_cache={},
-                            )
-                        finally:
-                            profiler.disable()
-
-                    profiled = await asyncio.to_thread(profile_compute)
-                    assert {k: v for k, v in profiled.items() if k not in {"mta_id", "code_version"}} == full
-                    stats = pstats.Stats(profiler).stats
-                    top = sorted(stats.items(), key=lambda item: item[1][3], reverse=True)[:30]
-                    emit(
-                        {
-                            "kind": "diagnostic",
-                            "scope": "cold compute only after measured ABBA; not a latency sample",
-                            "top": [
-                                {
-                                    "file": Path(key[0]).name,
-                                    "line": key[1],
-                                    "function": key[2],
-                                    "calls": value[1],
-                                    "self_seconds": value[2],
-                                    "inclusive_seconds": value[3],
-                                }
-                                for key, value in top
-                            ],
-                        }
-                    )
-                    continue
                 state = command["sample"]
                 phases.clear()
+                phase_calls.clear()
                 baseline_before = len(service._assessment_baselines.get(TOKEN, {}))
                 assert (baseline_before == 0) == (state == "cold")
                 stop, admitted = asyncio.Event(), asyncio.Event()
@@ -491,6 +469,7 @@ async def run(root, directory, fixtures, revision, reader):
                         "baseline_entries_before": baseline_before,
                         "compute_seconds": compute_seconds[-1],
                         "inclusive_nonadditive_phase_seconds": dict(phases),
+                        "phase_call_counts": dict(phase_calls),
                         "modules": provenance(root),
                     }
                 )

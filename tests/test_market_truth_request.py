@@ -154,12 +154,6 @@ async def full_request_comparison(tmp_path_factory, pytestconfig, request):
                     )
                 )
                 (tmp_path / "comparison.json").write_text(evidence.read_text())
-                if any(samples["candidate", state]["wall_seconds"] >= 4 for state in ("cold", "warm")):
-                    diagnostic = await send(workers["candidate"], {"profile": True})
-                    assert diagnostic["kind"] == "diagnostic"
-                    (evidence.parent / "market-truth-compute-profile.json").write_text(
-                        json.dumps(diagnostic, sort_keys=True)
-                    )
                 record_property("qualification", manifest["qualification"])
                 record_property("dataset_revision", DATA_REVISION)
                 record_property("limitations", json.dumps(manifest["limitations"]))

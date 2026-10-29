@@ -579,7 +579,16 @@ async def dense_projection_page(
         )
         if raw_cache is not None:
             raw_cache[key] = raw
-    names = {"open_us", "open_time_prec", "recorded_unknown", "complete", "interval_s", "c", "volume_native", "_cursor_key"}
+    names = {
+        "open_us",
+        "open_time_prec",
+        "recorded_unknown",
+        "complete",
+        "interval_s",
+        "c",
+        "volume_native",
+        "_cursor_key",
+    }
     if raw and (raw.keys() != names or len({len(value) for value in raw.values()}) != 1):
         raise ValueError("Invalid dense projection columns")
 

@@ -35,13 +35,19 @@ def test_relative_vector_preserves_float_operations_endpoints_and_diagnostics(be
         durations.append((t - old).total_seconds())
         lags.append(lag)
         ends.append(t)
-    assert truth._relative_history_returns(
-        prepared, times, start, length, 60, benchmark, coefficient
-    ) == (expected, durations, lags, ends)
+    assert truth._relative_history_returns(prepared, times, start, length, 60, benchmark, coefficient) == (
+        expected,
+        durations,
+        lags,
+        ends,
+    )
 
 
 @pytest.mark.parametrize("value", [0.0, -1.0, float("nan"), float("inf"), 1e-300, 1e300])
 def test_relative_vector_refuses_unsafe_prices(value):
     start = parse_time("2026-10-01T00:00:00Z")
     times = [start, start + timedelta(minutes=1)]
-    assert truth._relative_history_arrays(times, dict(zip(times, [value, 7.0], strict=True)), {}, True, 1.0) is None
+    assert (
+        truth._relative_history_arrays(times, dict(zip(times, [value, 7.0], strict=True)), {}, True, 1.0)
+        is None
+    )

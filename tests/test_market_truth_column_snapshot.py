@@ -26,7 +26,7 @@ async def test_dense_columns_preserve_admitted_values_nulls_and_raw_pagination(b
         field="c",
         start=T0,
         end=T0 + timedelta(minutes=4),
-        assembled_at=T0 + timedelta(minutes=5),
+        assembled_at=(T0 + timedelta(minutes=5)).isoformat(),
         limit=2,
     )
     first = await chm.dense_projection_page(repo.clickhouse, after=None, **options)
@@ -50,9 +50,7 @@ async def test_dense_columns_preserve_admitted_values_nulls_and_raw_pagination(b
 async def test_dense_column_reset_and_late_correction_match_row_repository(both, setup, kind):
     memory, repo, put = both
     _, settings, _ = setup
-    instrument = dict(
-        instrument_id=IIDS[0], token_id="bitcoin:BTC", venue="binance", market_type="SPOT"
-    )
+    instrument = dict(instrument_id=IIDS[0], token_id="bitcoin:BTC", venue="binance", market_type="SPOT")
     rows = [
         dict(kline(IIDS[0], 0, "1e+3"), volume_native="3.000", open_time_prec="BUCKET(60s)"),
         dict(kline(IIDS[0], 1, None, complete=False), volume_native=None, open_time_prec="BUCKET(60s)"),
@@ -84,4 +82,3 @@ async def test_dense_column_reset_and_late_correction_match_row_repository(both,
         ]
         assert corrected[0] == corrected[1]
         assert corrected[1]["dependency_fingerprint"] != initial[1]["dependency_fingerprint"]
-

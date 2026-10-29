@@ -1186,7 +1186,9 @@ def _composite_history_vector(venue_history, window):
             return None
         gaps = np.divide(np.diff(at), 1000000)
         gaps = np.sort(gaps[gaps > 0])
-        tolerance = max(float(parameter("oi_sync_tolerance_s", 60)), gaps[len(gaps) // 2] / 2 if len(gaps) else 0)
+        tolerance = max(
+            float(parameter("oi_sync_tolerance_s", 60)), gaps[len(gaps) // 2] / 2 if len(gaps) else 0
+        )
         old, old_valid = _history_nearest(at, offsets - width, tolerance)
         new, new_valid = _history_nearest(at, offsets, tolerance)
         paired = old_valid & new_valid & (old != new)
@@ -1203,7 +1205,10 @@ def _composite_history_vector(venue_history, window):
         indices = np.flatnonzero(valid)
         changes = np.subtract(np.divide(totals[2 * measure + 1][valid], totals[2 * measure][valid]), 1)
         values = np.asarray(changes, dtype=np.float64).tolist()
-        if not len(indices) or (history[indices[-1]] - history[indices[0]] + window).total_seconds() < minimum:
+        if (
+            not len(indices)
+            or (history[indices[-1]] - history[indices[0]] + window).total_seconds() < minimum
+        ):
             result.append([])
         else:
             result.append(values)

@@ -1397,7 +1397,9 @@ class MarketService:
                         if times and stamp == times[-1]:
                             same = (
                                 values[-1] == value
-                                or kind == "price" and not isfinite(values[-1]) and not isfinite(value)
+                                or kind == "price"
+                                and not isfinite(values[-1])
+                                and not isfinite(value)
                             )
                             if same and complete[-1] == valid and precise[-1] == known:
                                 continue

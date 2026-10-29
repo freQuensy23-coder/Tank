@@ -89,9 +89,12 @@ def test_vector_history_rejects_unsupported_values_without_context_changes(value
         context.prec = 128
         context.flags[Rounded] = True
         before = context.copy()
-        assert truth._oi_history_returns(
-            [start, start + timedelta(minutes=1)], values, [None, None], timedelta(minutes=1), 0
-        ) is None
+        assert (
+            truth._oi_history_returns(
+                [start, start + timedelta(minutes=1)], values, [None, None], timedelta(minutes=1), 0
+            )
+            is None
+        )
         assert context.flags == before.flags
         assert context.prec == before.prec
 
@@ -103,10 +106,7 @@ def test_composite_vector_preserves_cohorts_stored_usd_and_decimal_flags(monkeyp
     venues = [
         (
             times,
-            [
-                dict(oi_native=str(3 + i * 2) + ".000", oi_usd=str(13 + i * 3) + ".00")
-                for i in range(10)
-            ],
+            [dict(oi_native=str(3 + i * 2) + ".000", oi_usd=str(13 + i * 3) + ".00") for i in range(10)],
         ),
         (
             times[2:],
@@ -141,12 +141,18 @@ def test_vector_history_refuses_timestamp_overflow_and_excessive_span():
     start = parse_time("2026-10-01T00:00:00Z")
     with localcontext() as context:
         context.prec = 128
-        assert truth._oi_history_returns(
-            [start, start + timedelta(days=60000)], ["3", "7"], [None, None], timedelta(days=1), 0
-        ) is None
-        assert truth._oi_history_returns(
-            [start.replace(year=1), start], ["3", "7"], [None, None], timedelta(days=1), 0
-        ) is None
+        assert (
+            truth._oi_history_returns(
+                [start, start + timedelta(days=60000)], ["3", "7"], [None, None], timedelta(days=1), 0
+            )
+            is None
+        )
+        assert (
+            truth._oi_history_returns(
+                [start.replace(year=1), start], ["3", "7"], [None, None], timedelta(days=1), 0
+            )
+            is None
+        )
 
 
 def test_composite_vector_keeps_arithmetic_flags_for_insufficient_measure_history(monkeypatch):
