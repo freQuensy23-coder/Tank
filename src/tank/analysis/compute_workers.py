@@ -5,7 +5,8 @@ process it shared one GIL with the event loop, every other worker thread and eve
 full computation, so a RUN_MARKET_TRUTH waited behind reaction checkpoints and the whole
 service stalled while it ran. Each lane is one spawned worker process: ASSESSMENT runs
 RUN_MARKET_TRUTH and keeps each token's baseline cache between assessments, REACTION runs
-reaction checkpoints, so an assessment never queues behind a checkpoint.
+reaction checkpoints, so an assessment never queues behind a checkpoint. The service
+releases a token's baselines in the worker when the token goes idle (03 §5).
 
 The snapshot is pickled in slices in a thread, so the event loop keeps running while it
 is serialized. A worker that dies fails only the call it was running; the next call
@@ -82,6 +83,25 @@ def _compute(parts: list, config: dict, baseline_key: str | None):
     return truth.compute_market_truth(
         snapshot, config=config, baseline_cache=_baselines.setdefault(baseline_key, {})
     )
+
+
+def _release(baseline_keys: list[str]) -> None:
+    for key in baseline_keys:
+        _baselines.pop(key, None)
+
+
+def release_baselines(lane: str, baseline_keys: list[str]) -> None:
+    """Drop these baseline caches in the lane's worker, after its current computation. A
+    lane without a worker, or whose worker died, holds none to drop."""
+    pool = _executors.get(lane)
+    if pool is None:
+        return
+    try:
+        pool.submit(_release, list(baseline_keys))
+    except BrokenProcessPool:
+        if _executors.get(lane) is pool:
+            del _executors[lane]
+            pool.shutdown(wait=False, cancel_futures=True)
 
 
 async def compute_market_truth(lane: str, snapshot: dict, *, config: dict, baseline_key: str | None = None):

@@ -162,3 +162,13 @@ async def test_a_dead_worker_process_is_replaced_on_the_next_call(worker_process
         await compute_workers.compute_market_truth(lane, _spot_packet(), config={})
     result = await compute_workers.compute_market_truth(lane, _spot_packet(), config={})
     assert result == truth.compute_market_truth(_spot_packet(), config={})
+
+
+def test_releasing_baselines_never_starts_a_worker_and_drops_only_the_named_tokens():
+    compute_workers.release_baselines(compute_workers.ASSESSMENT, ["T"])
+    assert compute_workers._executors == {}
+    compute_workers._baselines.update(T={"kept": 1}, U={"kept": 2})
+    compute_workers.executor(compute_workers.ASSESSMENT)
+    compute_workers.release_baselines(compute_workers.ASSESSMENT, ["T"])
+    compute_workers.executor(compute_workers.ASSESSMENT).submit(lambda: None).result(timeout=5)
+    assert compute_workers._baselines == {"U": {"kept": 2}}

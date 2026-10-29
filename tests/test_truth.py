@@ -2773,3 +2773,56 @@ def test_full_assessments_run_one_at_a_time_per_process(monkeypatch):
     for t in threads:
         t.join()
     assert peak[0] == 1
+
+
+@pytest.mark.asyncio
+async def test_idle_token_assessment_baselines_are_released(monkeypatch):
+    """Per-token assessment baselines were kept for the process lifetime, so every token
+    ever assessed kept its 90-day indexes in the assessment worker."""
+    from types import SimpleNamespace
+
+    import tank.analysis.truth as module
+    from tank.analysis import compute_workers
+
+    def held():
+        compute_workers.executor(compute_workers.ASSESSMENT).submit(lambda: None).result(timeout=5)
+        return compute_workers._baselines
+
+    clock = [1000.0]
+    monkeypatch.setattr(module.time, "monotonic", lambda: clock[0])
+
+    def fill(snapshot, *, config=None, baseline_cache=None):
+        baseline_cache[("native-volume-index", snapshot["token_id"])] = {"head": snapshot["cutoff"]}
+        return {"token_id": snapshot["token_id"]}
+
+    monkeypatch.setattr(module, "compute_market_truth", fill)
+
+    class Repo:
+        async def get(self, *args):
+            return {}
+
+        async def put(self, *args, **kwargs):
+            return args[2]
+
+    class Market:
+        async def snapshot(self, token, cutoff, anchor=None):
+            return {"token_id": token, "cutoff": cutoff, "anchor": anchor}
+
+        async def condition_snapshot(self, token, cutoff, anchor=None, requirements=None):
+            return {"token_id": token, "cutoff": cutoff}
+
+    service = module.MarketTruthService(
+        Repo(), SimpleNamespace(config_version="test", code_version="test"), Market()
+    )
+    await service.assess(None, "A", "2026-10-16T12:00:00Z")
+    clock[0] += 60
+    await service.assess(None, "B", "2026-10-16T12:01:00Z")
+    assert set(held()) == {"A", "B"}
+    clock[0] += module.ASSESSMENT_BASELINE_IDLE_S
+    await service.assess(None, "B", "2026-10-16T12:31:00Z")
+    assert set(held()) == {"B"}
+    assert held()["B"] == {("native-volume-index", "B"): {"head": "2026-10-16T12:31:00Z"}}
+    clock[0] += module.ASSESSMENT_BASELINE_IDLE_S + 1
+    monkeypatch.setattr(module, "compute_condition_values", lambda *args, **kwargs: {})
+    await service.condition_values(None, "C", "2026-10-16T13:02:00Z", [])
+    assert held() == {}

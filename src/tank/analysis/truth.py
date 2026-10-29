@@ -12,6 +12,7 @@ import hashlib
 import json
 import pickle
 import threading
+import time
 from array import array
 from bisect import bisect_left, bisect_right
 from collections import defaultdict
@@ -164,6 +165,20 @@ def remember(cache, key, build):
         if len(cache) > 128:
             cache.pop(next(iter(cache)))
     return cache[key]
+
+
+def remember_latest(cache, key, head, build):
+    """The entry built for `head` under one key: a new head replaces the previous entry, so
+    the cache keeps only the newest state per key instead of one copy per head."""
+    held = cache.get(key)
+    if held is not None and held["head"] == head:
+        return held
+    built = build()
+    cache.pop(key, None)
+    cache[key] = built
+    if len(cache) > 128:
+        cache.pop(next(iter(cache)))
+    return built
 
 
 def percentile(values, p):
@@ -3577,10 +3592,12 @@ def support_features(snapshot, start, end, spot, deriv, liquidity, supply):
                 index_cache = _BASELINE_CACHE.get()
                 previous_head = projection.get("previous_dependency_fingerprint") if projection else None
                 prior = (
-                    index_cache.get(("native-volume-index", iid, previous_head))
+                    index_cache.get(("native-volume-index", iid))
                     if index_cache is not None and previous_head
                     else None
                 )
+                if prior is not None and prior["head"] != previous_head:
+                    prior = None
                 append = bool(
                     projection
                     and projection.get("append_only") is True
@@ -3636,12 +3653,17 @@ def support_features(snapshot, start, end, spot, deriv, liquidity, supply):
                     bounds[z] = (running, segment)
                     last = z
                 return dict(
-                    bounds=bounds, running=running, segment=segment, last=last, last_open_us=last_open_us
+                    bounds=bounds,
+                    running=running,
+                    segment=segment,
+                    last=last,
+                    last_open_us=last_open_us,
+                    head=projection.get("dependency_fingerprint") if projection is not None else None,
                 )
 
             head = projection.get("dependency_fingerprint") if projection is not None else None
             index = (
-                remember(_BASELINE_CACHE.get(), ("native-volume-index", iid, head), build_index)
+                remember_latest(_BASELINE_CACHE.get(), ("native-volume-index", iid), head, build_index)
                 if head is not None and _BASELINE_CACHE.get() is not None
                 else build_index()
             )
@@ -5675,6 +5697,9 @@ def _cutoff_value(cutoff):
     return cutoff.value if isinstance(cutoff, Timestamp) else cutoff
 
 
+ASSESSMENT_BASELINE_IDLE_S = 1800
+
+
 class MarketTruthService:
     def __init__(self, repo, settings, market):
         self.repo, self.settings, self.market = repo, settings, market
@@ -5682,8 +5707,26 @@ class MarketTruthService:
         self._condition_baselines = {}
 
         self._assessment_locks = {}
+        self._assessment_used = {}
+
+    def _release_idle_assessment_baselines(self):
+        """Drop the baselines of tokens with no assessment for ASSESSMENT_BASELINE_IDLE_S.
+
+        Their entries are keyed by exact history heads that move every minute, so after half
+        an hour without an assessment they serve at most a repeat of an old cutoff; kept, they
+        would hold the token's 90-day indexes for the lifetime of the assessment worker."""
+        now = time.monotonic()
+        idle = []
+        for token_id, used in list(self._assessment_used.items()):
+            lock = self._assessment_locks.get(token_id)
+            if now - used > ASSESSMENT_BASELINE_IDLE_S and not (lock is not None and lock.locked()):
+                self._assessment_used.pop(token_id, None)
+                idle.append(token_id)
+        if idle:
+            compute_workers.release_baselines(compute_workers.ASSESSMENT, idle)
 
     async def condition_values(self, event_id, token_id, cutoff, requirements):
+        self._release_idle_assessment_baselines()
         event = await self.repo.get("evt.events", event_id) if event_id else None
         anchor = event_anchor(event, at=_cutoff_value(cutoff)) if event else None
         snapshot = await self.market.condition_snapshot(
@@ -5750,11 +5793,16 @@ class MarketTruthService:
         knobs = dict(
             knobs, config_version=self.settings.config_version, code_version=self.settings.code_version
         )
+        self._release_idle_assessment_baselines()
         lock = self._assessment_locks.setdefault(token_id, asyncio.Lock())
         async with lock:
-            result = await compute_workers.compute_market_truth(
-                compute_workers.ASSESSMENT, snapshot, config=knobs, baseline_key=token_id
-            )
+            self._assessment_used[token_id] = time.monotonic()
+            try:
+                result = await compute_workers.compute_market_truth(
+                    compute_workers.ASSESSMENT, snapshot, config=knobs, baseline_key=token_id
+                )
+            finally:
+                self._assessment_used[token_id] = time.monotonic()
         result["mta_id"] = new_id("MTA")
         await self.repo.put("ana.market_truth", result["mta_id"], result, immutable=True)
         return result
