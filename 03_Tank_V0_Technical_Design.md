@@ -1264,8 +1264,8 @@ Both tiers run in tank-capture (02 §5.1), which writes everything below into Cl
 
 | Tier | Universe | Data (endpoints in 02 §4) | Cadence ⚙ |
 |---|---|---|---|
-| Base | The 22 tokens of 01 §4.1 on every covered market (coverage matrix in 02 §4.10) | REST 1m klines (Binance spot and USDⓈ-M klines carry taker-buy volume; others OHLCV only); 24h tickers; native OI (Binance `openInterest`, OKX `oiCcy`, Bybit `singleOpenInterest`, Hyperliquid `openInterest`); funding settled + estimate | Klines every 60 s; OI and funding every 300 s |
-| Hot | Tokens in an event's analysis set (cap ⚙15) | WebSocket trades and books on every covered venue; Binance `markPrice@1s` and `forceOrder`; OKX `open-interest`, `funding-rate`, `liquidation-orders`; Bybit `tickers`, `allLiquidation`; Hyperliquid `activeAssetCtx`; OI + funding REST every 60 s | Streaming; book summaries every 10 s |
+| Base | The 22 tokens of 01 §4.1 on every covered market (coverage matrix in 02 §4.10) | REST 1m klines (Binance spot and USDⓈ-M klines carry taker-buy volume; others OHLCV only); 24h tickers; native OI (Binance `openInterest`, OKX `oiCcy`, Bybit `singleOpenInterest`, Hyperliquid `openInterest`); funding settled + estimate | Klines every 60 s; 24h tickers every 300 s (⚙`base_ticker_interval_s`, timed from the start of the previous poll); OI and funding every 300 s |
+| Hot | Tokens in an event's analysis set (cap ⚙15) | WebSocket trades and books on every covered venue; Binance `markPrice@1s` and `forceOrder`; OKX `open-interest`, `funding-rate`, `liquidation-orders`; Bybit `tickers`, `allLiquidation`; Hyperliquid `activeAssetCtx`; OI + funding REST every 60 s | Streaming; book summaries every 10 s; 24h tickers every ⚙`hot_ticker_interval_s` (300 s) |
 
 On escalation, pre-event windows (−24h, −4h, −1h) are filled in this order: base-tier rows already stored → REST trade backfill (Binance `aggTrades` by time in ≤ 1 h slices, OKX `history-trades`, Coinbase `trades` paginated with `after`, Kraken `Trades` with `since`; Bybit `recent-trade` reaches only the last 1,000 trades) → Binance archive files for anything older than REST retention. A window that cannot be filled for a venue is marked incomplete for that venue.
 
@@ -1466,7 +1466,7 @@ A class, not a score: first matching row.
 | Class | Conditions |
 |---|---|
 | LOW | Fewer than 2 complete spot venues |
-| HIGH | The complete spot venues carry most of the estimated volume · when perps exist, the synchronized OI covers the venues with most of the perp volume · every field of the snapshot observed within its own cadence before the cutoff |
+| HIGH | The complete spot venues carry most of the estimated volume · when perps exist, the synchronized OI covers the venues with most of the perp volume · every field of the snapshot observed within its own cadence before the cutoff (the capture tier's poll interval at the cutoff, as in §5.1; 24h tickers use the ticker interval, not the kline interval) |
 | MEDIUM | Otherwise |
 
 The first condition that keeps the class from HIGH (checked in the order spot coverage, derivatives coverage, freshness of fields) and its reason become the card's "main unknown".
