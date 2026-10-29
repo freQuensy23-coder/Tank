@@ -1,11 +1,14 @@
 import asyncio
+import cProfile
 import hashlib
 import json
 import logging
+import pstats
 import re
 import signal
 import sys
 from contextlib import suppress
+from contextvars import copy_context
 from datetime import datetime
 from decimal import Decimal
 from functools import wraps
@@ -70,6 +73,26 @@ def save(directory, name, value):
     body = json.dumps(value, sort_keys=True, default=encode).encode()
     (directory / name).write_bytes(body)
     return hashlib.sha256(body).hexdigest()
+
+
+def profile_retained_call(call):
+    context, function, args, kwargs = call
+    assert sys.getprofile() is None
+    profiler = cProfile.Profile()
+    profiler.runcall(context.run, function, *args, **kwargs)
+    assert sys.getprofile() is None
+    stats = pstats.Stats(profiler).stats
+    return [
+        {
+            "module": Path(filename).name,
+            "line": line,
+            "function": name,
+            "calls": values[1],
+            "self_seconds": values[2],
+            "inclusive_seconds": values[3],
+        }
+        for (filename, line, name), values in sorted(stats.items(), key=lambda item: item[1][2], reverse=True)[:40]
+    ]
 
 
 async def seed_session(repo, state, anchor):
@@ -276,6 +299,7 @@ async def run(root, directory, fixtures, revision, reader):
             runtime.repo, runtime.settings, runtime.market, runtime.truth = repo, settings, market, service
             runtime.handlers = {"ESCALATE_TOKENS": runtime.escalate, "RUN_MARKET_TRUTH": runtime.assess}
             snapshots, dense, phases, phase_calls = [], {}, {}, {}
+            diagnostic_call = None
             original_snapshot, original_heads, original_rows = (
                 market.snapshot,
                 market._snapshot_heads,
@@ -331,6 +355,9 @@ async def run(root, directory, fixtures, revision, reader):
             def measure(name, function):
                 @wraps(function)
                 def measured(*args, **kwargs):
+                    nonlocal diagnostic_call
+                    if name == "derivatives_truth":
+                        diagnostic_call = (copy_context(), function, args, kwargs)
                     started = perf_counter()
                     try:
                         return function(*args, **kwargs)
@@ -406,6 +433,10 @@ async def run(root, directory, fixtures, revision, reader):
                 command = json.loads(command)
                 if command.get("stop"):
                     break
+                if command.get("diagnose"):
+                    assert diagnostic_call is not None
+                    emit({"kind": "post_measurement_profile", "rows": profile_retained_call(diagnostic_call)})
+                    continue
                 state = command["sample"]
                 phases.clear()
                 phase_calls.clear()

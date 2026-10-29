@@ -139,12 +139,16 @@ async def full_request_comparison(tmp_path_factory, pytestconfig, request):
                     samples[label, state] = result
                     record_property(label + "_" + state, json.dumps(result, sort_keys=True))
                 assert receipts["original"]["native"] == receipts["candidate"]["native"]
+                diagnostic = await send(workers["candidate"], {"diagnose": True})
+                assert diagnostic["kind"] == "post_measurement_profile"
+                record_property("post_measurement_profile", json.dumps(diagnostic, sort_keys=True))
                 evidence = ROOT / ".test-results/market-truth-request.json"
                 evidence.parent.mkdir(exist_ok=True)
                 evidence.write_text(
                     json.dumps(
                         {
                             "source_heads": {"original": ORIGINAL, "candidate": candidate},
+                            "post_measurement_profile": diagnostic,
                             "samples": {
                                 label + "_" + state: value for (label, state), value in samples.items()
                             },
