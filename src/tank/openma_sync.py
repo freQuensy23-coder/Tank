@@ -169,7 +169,7 @@ async def sync(settings, client):
     """One pass; returns what changed. Raises on an unreachable or refusing OpenMA."""
     if settings._config_snapshot is None:
         settings = resolve_versions(settings)
-    config = settings.load_config("openma")
+    config = settings.openma()
     client.headers.update({"anthropic-beta": BETA, "x-api-key": settings.openma_api_key or ""})
     report = {"skills": {}, "agents": {}, "environments": {}}
     cards = _data(await client.get("/v1/oma/model_cards"))

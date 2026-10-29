@@ -79,7 +79,7 @@ def validate_registry(settings):
     sources = settings.load_config("sources")
     for source in sources.get("sources", []):
         add("reg.sources", source["source_id"], source, "sources.yaml", sources)
-    registry = settings.load_config("registry")
+    registry = settings.registry()
     for section, identifier in (
         ("tokens", "token_id"),
         ("instruments", "instrument_id"),
