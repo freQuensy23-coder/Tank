@@ -37,7 +37,7 @@
                   "items": {
                     "type": "string"
                   },
-                  "description": "Claim IDs (CLM-\u2026) of accepted claims of the current event; find them with read-only SQL (tank-data data guide, \u00abFinding record IDs for tool arguments\u00bb), \u00abClaims of an event\u00bb."
+                  "description": "Claim IDs (CLM-\u2026) of accepted claims of the current event that support this score; find them with read-only SQL (tank-data data guide, \u00abFinding record IDs for tool arguments\u00bb), \u00abClaims of an event\u00bb. A numeric value, 0 included, needs at least one; where no recorded claim supports a score, value is null with a reason."
                 },
                 "proposed_by": {
                   "enum": [
@@ -88,7 +88,7 @@
                   "items": {
                     "type": "string"
                   },
-                  "description": "Claim IDs (CLM-\u2026) of accepted claims of the current event; find them with read-only SQL (tank-data data guide, \u00abFinding record IDs for tool arguments\u00bb), \u00abClaims of an event\u00bb."
+                  "description": "Claim IDs (CLM-\u2026) of accepted claims of the current event that support this score; find them with read-only SQL (tank-data data guide, \u00abFinding record IDs for tool arguments\u00bb), \u00abClaims of an event\u00bb. A numeric value, 0 included, needs at least one; where no recorded claim supports a score, value is null with a reason."
                 },
                 "proposed_by": {
                   "enum": [
@@ -139,7 +139,7 @@
                   "items": {
                     "type": "string"
                   },
-                  "description": "Claim IDs (CLM-\u2026) of accepted claims of the current event; find them with read-only SQL (tank-data data guide, \u00abFinding record IDs for tool arguments\u00bb), \u00abClaims of an event\u00bb."
+                  "description": "Claim IDs (CLM-\u2026) of accepted claims of the current event that support this score; find them with read-only SQL (tank-data data guide, \u00abFinding record IDs for tool arguments\u00bb), \u00abClaims of an event\u00bb. A numeric value, 0 included, needs at least one; where no recorded claim supports a score, value is null with a reason."
                 },
                 "proposed_by": {
                   "enum": [
@@ -190,7 +190,7 @@
                   "items": {
                     "type": "string"
                   },
-                  "description": "Claim IDs (CLM-\u2026) of accepted claims of the current event; find them with read-only SQL (tank-data data guide, \u00abFinding record IDs for tool arguments\u00bb), \u00abClaims of an event\u00bb."
+                  "description": "Claim IDs (CLM-\u2026) of accepted claims of the current event that support this score; find them with read-only SQL (tank-data data guide, \u00abFinding record IDs for tool arguments\u00bb), \u00abClaims of an event\u00bb. A numeric value, 0 included, needs at least one; where no recorded claim supports a score, value is null with a reason."
                 },
                 "proposed_by": {
                   "enum": [
@@ -241,7 +241,7 @@
                   "items": {
                     "type": "string"
                   },
-                  "description": "Claim IDs (CLM-\u2026) of accepted claims of the current event; find them with read-only SQL (tank-data data guide, \u00abFinding record IDs for tool arguments\u00bb), \u00abClaims of an event\u00bb."
+                  "description": "Claim IDs (CLM-\u2026) of accepted claims of the current event that support this score; find them with read-only SQL (tank-data data guide, \u00abFinding record IDs for tool arguments\u00bb), \u00abClaims of an event\u00bb. A numeric value, 0 included, needs at least one; where no recorded claim supports a score, value is null with a reason."
                 },
                 "proposed_by": {
                   "enum": [
@@ -292,7 +292,7 @@
                   "items": {
                     "type": "string"
                   },
-                  "description": "Claim IDs (CLM-\u2026) of accepted claims of the current event; find them with read-only SQL (tank-data data guide, \u00abFinding record IDs for tool arguments\u00bb), \u00abClaims of an event\u00bb."
+                  "description": "Claim IDs (CLM-\u2026) of accepted claims of the current event that support this score; find them with read-only SQL (tank-data data guide, \u00abFinding record IDs for tool arguments\u00bb), \u00abClaims of an event\u00bb. A numeric value, 0 included, needs at least one; where no recorded claim supports a score, value is null with a reason."
                 },
                 "proposed_by": {
                   "enum": [
@@ -1149,5 +1149,5 @@
   "required": [
     "assessment"
   ],
-  "description": "Submit class and criterion, the claim proving the criterion, dimension scores with reasons and claim evidence, economic capture chains and impact horizon. Cite recorded claims of the current event by claim_id and identify the M1 venue with criterion_venue_id. Provide structured measured magnitude bases, timing evidence and mechanism flags rather than expecting quote-keyword inference. Tank applies the deterministic class, capture and horizon rules and mandatory caps; it does not reclassify source certainty, verified flags or stages. A final MAJOR or STRUCTURAL_SHOCK escalates official source polling to 15 seconds for 2 hours and opens reaction tracking. Returns final class and applied caps. Returns LOW with NO_UNIVERSE_CONCERN when neither mentioned tokens nor current beneficiary edges concern a registry token. A structural criterion needs criterion_claim_id to be a verified claim, and supplied structural gate evidence must include it. Reaction tracking computes PRE windows immediately and schedules only the five POST checkpoints; no agent reaction jobs are needed."
+  "description": "Submit class and criterion, the claim proving the criterion, dimension scores with reasons and claim evidence, economic capture chains and impact horizon. Cite recorded claims of the current event by claim_id and identify the M1 venue with criterion_venue_id. Read the event's claim IDs before calling (tank-data, \u00abClaims of an event\u00bb): every numeric dimension score except implementation cites at least one supporting claim in evidence, and a dimension no recorded claim supports is value null with a reason (01 FR-M-01: unknown, never a number, 0 included); Tank refuses an uncited score and names every such dimension. Provide structured measured magnitude bases, timing evidence and mechanism flags rather than expecting quote-keyword inference. Tank applies the deterministic class, capture and horizon rules and mandatory caps; it does not reclassify source certainty, verified flags or stages. A final MAJOR or STRUCTURAL_SHOCK escalates official source polling to 15 seconds for 2 hours and opens reaction tracking. Returns final class and applied caps. Returns LOW with NO_UNIVERSE_CONCERN when neither mentioned tokens nor current beneficiary edges concern a registry token. A structural criterion needs criterion_claim_id to be a verified claim, and supplied structural gate evidence must include it. Reaction tracking computes PRE windows immediately and schedules only the five POST checkpoints; no agent reaction jobs are needed."
 }
