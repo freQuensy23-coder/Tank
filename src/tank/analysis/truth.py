@@ -928,31 +928,48 @@ def _oi_split(rows):
     return hit[1:]
 
 
+def _fixed_decimal_text_metadata(value):
+    text = value
+    length = len(text)
+    dot, digits, significant = -1, 0, 0
+    for index in range(length):
+        code = ord(text[index])
+        if code == 46:
+            if dot >= 0:
+                return -1
+            dot = index
+        elif 48 <= code <= 57:
+            digits += 1
+            if code != 48 or significant:
+                significant += 1
+        else:
+            return -1
+    exponent = dot - length + 1 if dot >= 0 else 0
+    if not digits or significant > 48 or exponent < -100:
+        return -1
+    return ((-exponent) << 6) | significant
+
+
 def _history_fixed_decimal_column(column):
-    if len(column) < 256 or any(
-        value is not None and (type(value) is not str or len(value) > 160 or "\x00" in value)
-        for value in column
-    ):
+    if len(column) < 256:
         return None
-    raw = np.asarray(column, dtype=object)
-    present = np.not_equal(raw, None)
-    try:
-        text = np.asarray(raw[present], dtype="S")
-    except UnicodeError:
-        return None
-    digits = np.strings.replace(text, b".", b"")
-    if not np.all(np.strings.isdigit(digits)) or np.any(np.strings.count(text, b".") > 1):
-        return None
-    lengths = np.strings.str_len(np.strings.lstrip(digits, b"0"))
-    dot = np.strings.find(text, b".")
-    exponents = np.where(dot >= 0, dot - np.strings.str_len(text) + 1, 0)
-    if np.any(lengths > 48) or np.any(exponents < -100):
-        return None
-    adjusted = np.where(lengths == 0, exponents, lengths + exponents - 1)
-    values = np.empty(len(raw), dtype=object)
+    values = np.empty(len(column), dtype=object)
     values.fill(None)
-    values[present] = np.frompyfunc(Decimal, 1, 1)(raw[present])
-    return values, int(exponents.min(initial=0)), int(adjusted.max(initial=0))
+    low, high = 0, 0
+    for index, value in enumerate(column):
+        if value is None:
+            continue
+        if type(value) is not str or len(value) > 160:
+            return None
+        prepared = _fixed_decimal_text_metadata(value)
+        if prepared < 0:
+            return None
+        exponent = -(prepared >> 6)
+        significant = prepared & 63
+        adjusted = significant + exponent - 1 if significant else exponent
+        values[index] = Decimal(value)
+        low, high = min(low, exponent), max(high, adjusted)
+    return values, low, high
 
 
 def _history_decimal_arrays(columns, *, summands=1, metadata=None):

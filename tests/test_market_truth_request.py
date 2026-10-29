@@ -39,6 +39,18 @@ def stage_native_module(checkout, archived, binary, module):
     relative = Path("src", *module.split(".")).with_suffix(".py")
     assert (checkout / relative).read_bytes() == (archived / relative).read_bytes()
     assert (checkout / "pyproject.toml").read_bytes() == (archived / "pyproject.toml").read_bytes()
+    source_declaration = checkout / relative.with_suffix(".pxd")
+    archived_declaration = archived / relative.with_suffix(".pxd")
+    assert not source_declaration.is_symlink() and not archived_declaration.is_symlink()
+    assert source_declaration.exists() == archived_declaration.exists()
+    declaration_sha256 = None
+    if source_declaration.exists():
+        assert source_declaration.is_file() and archived_declaration.is_file()
+        assert source_declaration.resolve().is_relative_to(checkout.resolve())
+        assert archived_declaration.resolve().is_relative_to(archived.resolve())
+        declaration = source_declaration.read_bytes()
+        assert declaration == archived_declaration.read_bytes()
+        declaration_sha256 = hashlib.sha256(declaration).hexdigest()
     assert binary.is_file() and not binary.is_symlink()
     assert binary.resolve().is_relative_to(checkout.resolve())
     assert any(binary.name == relative.stem + suffix for suffix in EXTENSION_SUFFIXES)
@@ -48,7 +60,11 @@ def stage_native_module(checkout, archived, binary, module):
     shutil.copyfile(binary, destination)
     digest = hashlib.sha256(binary.read_bytes()).hexdigest()
     assert hashlib.sha256(destination.read_bytes()).hexdigest() == digest
-    return {"path": str(destination.relative_to(archived)), "sha256": digest}
+    return {
+        "path": str(destination.relative_to(archived)),
+        "sha256": digest,
+        "declaration_sha256": declaration_sha256,
+    }
 
 
 def archive(revision, destination, paths):
