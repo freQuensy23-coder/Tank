@@ -8,6 +8,7 @@ import asyncio
 import base64
 import copy
 import json
+import logging
 import time
 from contextlib import AsyncExitStack, suppress
 from dataclasses import dataclass
@@ -56,6 +57,8 @@ MATERIAL_EVENT_TYPES = {
 }
 
 IDLE_RECHECK_TICKS = 60
+FOLLOW_FAILURE_LOG_INTERVAL_S = 300
+log = logging.getLogger(__name__)
 
 
 def seen_key(event):
@@ -2565,6 +2568,8 @@ class SessionService:
 
     async def follow(self, sid):
         delay = 1
+        failures = 0
+        logged_at = None
         while not self.closed:
             stream_task = None
             try:
@@ -2606,10 +2611,25 @@ class SessionService:
                     if session.get("status") in ("FAILED", "ENDED") or await self.finish_if_idle(sid):
                         return
                 delay = 1
+                if failures:
+                    log.info("Agent session %s follower recovered after %d failures", sid, failures)
+                    failures, logged_at = 0, None
             except asyncio.CancelledError:
                 raise
-            except (httpx.HTTPError, ValueError, KeyError, RuntimeError):
+            except (httpx.HTTPError, ValueError, KeyError, RuntimeError) as exc:
                 delay = min(delay * 2, 30)
+                failures += 1
+                now = time.monotonic()
+                if logged_at is None or now - logged_at >= FOLLOW_FAILURE_LOG_INTERVAL_S:
+                    logged_at = now
+                    log.warning(
+                        "Agent session %s follower failed: %s (%s); failure %d, retrying in %ss",
+                        sid,
+                        type(exc).__name__,
+                        exc.response.status_code if isinstance(exc, httpx.HTTPStatusError) else "-",
+                        failures,
+                        delay,
+                    )
             finally:
                 if stream_task and not stream_task.done():
                     stream_task.cancel()

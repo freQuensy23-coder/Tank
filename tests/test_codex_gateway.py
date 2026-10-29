@@ -684,3 +684,85 @@ async def test_nonstream_preserves_actual_json_success_response(gateway_factory)
     async with gateway_factory(provider) as (_, client, _):
         response = await client.post("/v1/responses", json=body(stream=False))
         assert response.status_code == 200 and response.json() == result
+
+
+def gateway_lines(caplog):
+    return [(r.levelname, r.getMessage()) for r in caplog.records if r.name == "tank.codex_gateway"]
+
+
+@pytest.mark.integration
+async def test_upstream_status_latency_and_usage_windows_logged_without_secrets(gateway_factory, caplog):
+    statuses = iter((200, 429))
+
+    def provider(request):
+        return httpx.Response(
+            next(statuses),
+            json={"id": "resp_FAKE", "secret": "FAKE-body-secret"},
+            headers={
+                "x-codex-primary-used-percent": "42.5",
+                "x-codex-secondary-used-percent": "100",
+                "x-codex-bengalfox-primary-used-percent": "7",
+                "x-codex-primary-reset-at": "1800000000",
+                "x-request-id": "req_FAKE-identifier",
+            },
+        )
+
+    caplog.set_level("INFO", logger="tank.codex_gateway")
+    async with gateway_factory(provider) as (_, client, _):
+        assert (await client.post("/v1/responses", json=body())).status_code == 200
+        assert (await client.post("/v1/responses", json=body())).status_code == 429
+    lines = gateway_lines(caplog)
+    usage = "bengalfox-primary=7,primary=42.5,secondary=100"
+    assert [(level, message.split(" latency_ms=")[0]) for level, message in lines] == [
+        ("INFO", "Codex upstream response: status=200"),
+        ("WARNING", "Codex upstream response: status=429"),
+    ]
+    assert all(message.endswith(f" attempts=1 used_percent={usage}") for _, message in lines)
+    text = caplog.text
+    assert "FAKE-body-secret" not in text and "req_FAKE" not in text and jwt() not in text
+
+
+@pytest.mark.integration
+async def test_unauthorized_recovery_refresh_counted_and_logged(gateway_factory, caplog):
+    def provider(request):
+        if str(request.url) == TOKEN_URL:
+            return httpx.Response(200, json={"access_token": jwt(exp=4102444801)})
+        if request.headers["authorization"] == "Bearer " + jwt():
+            return httpx.Response(401, json={"error": {"code": "unauthorized"}})
+        return httpx.Response(200, json={"id": "resp_FAKE"})
+
+    caplog.set_level("INFO", logger="tank.codex_gateway")
+    async with gateway_factory(provider) as (gateway, client, _):
+        assert (await client.post("/v1/responses", json=body())).status_code == 200
+        assert gateway.refreshes == 1
+    lines = gateway_lines(caplog)
+    assert lines[0] == ("INFO", "Codex OAuth refresh succeeded: reason=unauthorized_recovery refreshes=1")
+    assert lines[1][1].startswith("Codex upstream response: status=200 ")
+    assert " attempts=2 used_percent=-" in lines[1][1]
+    assert "FAKE-refresh" not in caplog.text and jwt(exp=4102444801) not in caplog.text
+
+
+@pytest.mark.integration
+async def test_refresh_failure_and_stream_interruption_logged_by_code_and_class(gateway_factory, caplog):
+    def refusing(request):
+        return httpx.Response(401, text="FAKE-refresh")
+
+    caplog.set_level("INFO", logger="tank.codex_gateway")
+    async with gateway_factory(refusing, auth_document(jwt(exp=1))) as (gateway, client, _):
+        assert (await client.post("/v1/responses", json=body())).status_code == 503
+        assert gateway.refreshes == 0
+    assert gateway_lines(caplog) == [
+        ("WARNING", "Codex OAuth refresh failed: reason=proactive_expiry code=codex_login_required"),
+        ("WARNING", "Codex gateway request failed: code=codex_login_required status=503"),
+    ]
+    caplog.clear()
+
+    stream = Chunks([b'event: response.created\ndata: {"type":"response.created"}\n\n'], failure=True)
+
+    def interrupted(request):
+        return httpx.Response(200, headers={"content-type": "text/event-stream"}, stream=stream)
+
+    async with gateway_factory(interrupted) as (_, client, _):
+        await client.post("/v1/responses", json=body())
+    assert gateway_lines(caplog)[-1] == ("WARNING", "Codex upstream stream interrupted: ReadError")
+    assert "FAKE-refresh" not in caplog.text

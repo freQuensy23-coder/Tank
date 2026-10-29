@@ -639,3 +639,49 @@ async def test_new_replay_session_restores_captured_external_error_and_acknowled
     assert json.loads(posts[1]["content"][0]["text"]) == result
     assert (await repo.get("ops.tool_calls", "s:fresh-error"))["returned_at"]
     assert (await repo.get("ops.agent_sessions", "s"))["status"] == "OPEN"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(("interval", "warnings"), [(300, 1), (0, 3)])
+async def test_follower_failures_are_logged_rate_limited_and_recovery_reported(
+    monkeypatch, caplog, interval, warnings
+):
+    from tank.agents import sessions as sessions_module
+
+    repo = MemoryRepository()
+    await seed(repo)
+    original_sleep = asyncio.sleep
+    monkeypatch.setattr(sessions_module, "FOLLOW_FAILURE_LOG_INTERVAL_S", interval)
+    monkeypatch.setattr(sessions_module.asyncio, "sleep", lambda delay: original_sleep(0))
+    request = httpx.Request("GET", "http://oma/v1/sessions/s/events/stream")
+    streams = []
+    catchups = []
+
+    async with httpx.AsyncClient() as http:
+        service = SessionService(repo, settings(), None, http=http)
+
+        async def stream(sid):
+            streams.append(sid)
+            if len(streams) <= 3:
+                raise httpx.HTTPStatusError("busy", request=request, response=httpx.Response(503))
+
+        async def catch_up(sid):
+            catchups.append(sid)
+            if len(catchups) == 5:
+                service.closed = True
+
+        async def not_idle(sid):
+            return False
+
+        service.stream = stream
+        service.catch_up = catch_up
+        service.finish_if_idle = not_idle
+        with caplog.at_level("INFO", logger="tank.agents.sessions"):
+            await asyncio.wait_for(service.follow("s"), timeout=2)
+
+    failed = [r.getMessage() for r in caplog.records if r.levelname == "WARNING"]
+    assert len(failed) == warnings
+    assert failed[0] == "Agent session s follower failed: HTTPStatusError (503); failure 1, retrying in 2s"
+    assert failed[-1].endswith(f"failure {warnings}, retrying in {2**warnings}s")
+    recovered = [r.getMessage() for r in caplog.records if r.levelname == "INFO"]
+    assert recovered == ["Agent session s follower recovered after 3 failures"]

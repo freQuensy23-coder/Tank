@@ -158,6 +158,7 @@ describe("Managed Agents API — exhaustive session event history", () => {
               type: "span.model_request_end",
               isError: false,
               modelRequestStartId: "event_21",
+              finishReason: "toolUse",
               modelUsage: {
                 cacheCreationInputTokens: 1,
                 cacheReadInputTokens: 2,
@@ -269,6 +270,7 @@ describe("Managed Agents API — exhaustive session event history", () => {
     expect(page.data[21]).toMatchObject({
       type: "span.model_request_end",
       model_request_start_id: "event_21",
+      finish_reason: "toolUse",
       model_usage: {
         cache_creation_input_tokens: 1,
         cache_read_input_tokens: 2,

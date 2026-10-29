@@ -348,6 +348,7 @@ export type HistorySessionEvent =
       isError: boolean | null;
       modelRequestStartId: string;
       modelUsage: SpanModelUsageView;
+      finishReason?: string;
       processedAt: string;
     }
   | {

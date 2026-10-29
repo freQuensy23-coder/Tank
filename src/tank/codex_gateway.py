@@ -43,6 +43,7 @@ _RESPONSE_HEADERS = {
 _RATE_HEADER = re.compile(
     r"^x-codex-(?:[a-z0-9-]+-)?(?:primary|secondary)-(?:used-percent|window-minutes|reset-at)$"
 )
+_PERCENT = re.compile(r"^[0-9]{1,3}(?:\.[0-9]{1,4})?$")
 log = logging.getLogger(__name__)
 
 
@@ -137,6 +138,7 @@ class CodexGateway:
         self._auth_tasks: set[asyncio.Task] = set()
         self._refresh_failure: tuple[bytes, float, GatewayError] | None = None
         self._secrets: set[bytes] = set()
+        self.refreshes = 0
         self.ready = asyncio.Event()
         self.bound_port: int | None = None
 
@@ -365,10 +367,21 @@ class CodexGateway:
                         selected[name] = update[name]
                 result = self._persist(credentials, selected)
                 self._refresh_failure = None
+                self.refreshes += 1
+                log.info(
+                    "Codex OAuth refresh succeeded: reason=%s refreshes=%d",
+                    "unauthorized_recovery" if forced else "proactive_expiry",
+                    self.refreshes,
+                )
                 return result
             except (httpx.HTTPError, ValueError, GatewayError) as exc:
                 error = exc if isinstance(exc, GatewayError) else GatewayError("codex_refresh_failed")
                 self._refresh_failure = (credentials.fingerprint, time.monotonic(), error)
+                log.warning(
+                    "Codex OAuth refresh failed: reason=%s code=%s",
+                    "unauthorized_recovery" if forced else "proactive_expiry",
+                    error.code,
+                )
                 raise error from None
 
     @staticmethod
@@ -418,6 +431,22 @@ class CodexGateway:
         return result
 
     @staticmethod
+    def _log_upstream(upstream: httpx.Response, started: float, attempts: int) -> None:
+        """Status, header latency and Codex usage windows; never bodies, tokens or identifiers."""
+        usage = []
+        for name, value in upstream.headers.items():
+            if name.endswith("-used-percent") and _RATE_HEADER.fullmatch(name) and _PERCENT.fullmatch(value):
+                usage.append(name.removeprefix("x-codex-").removesuffix("-used-percent") + "=" + value)
+        log.log(
+            logging.WARNING if upstream.status_code >= 400 else logging.INFO,
+            "Codex upstream response: status=%d latency_ms=%d attempts=%d used_percent=%s",
+            upstream.status_code,
+            round((time.monotonic() - started) * 1000),
+            attempts,
+            ",".join(sorted(usage)) or "-",
+        )
+
+    @staticmethod
     def _error(error: GatewayError) -> web.Response:
         return web.json_response(
             {"error": {"type": "codex_gateway_error", "code": error.code, "message": error.code}},
@@ -432,6 +461,7 @@ class CodexGateway:
             return self._error(GatewayError("unauthorized", 401))
         upstream = None
         downstream = None
+        started = time.monotonic()
         try:
             try:
                 original = await request.json()
@@ -463,6 +493,7 @@ class CodexGateway:
                     continue
                 break
             assert upstream is not None
+            self._log_upstream(upstream, started, attempt + 1)
             if 300 <= upstream.status_code < 400:
                 raise GatewayError("codex_redirect_refused", 502)
             headers = self._headers(upstream)
@@ -479,10 +510,13 @@ class CodexGateway:
             await downstream.write_eof()
             return downstream
         except GatewayError as error:
+            log.warning("Codex gateway request failed: code=%s status=%d", error.code, error.status)
             return self._error(error)
-        except httpx.HTTPError:
+        except httpx.HTTPError as exc:
             if downstream is None:
+                log.warning("Codex upstream unavailable: %s", type(exc).__name__)
                 return self._error(GatewayError("codex_upstream_unavailable", 502))
+            log.warning("Codex upstream stream interrupted: %s", type(exc).__name__)
 
             await downstream.write(
                 b'event: error\ndata: {"type":"error","code":"codex_stream_interrupted","message":"Codex stream interrupted"}\n\n'
@@ -491,7 +525,8 @@ class CodexGateway:
             return downstream
         except (ConnectionError, asyncio.CancelledError):
             raise
-        except Exception:
+        except Exception as exc:
+            log.warning("Codex gateway failed: %s", type(exc).__name__)
             if downstream is not None and downstream.prepared:
                 await downstream.write(
                     b'event: error\ndata: {"type":"error","code":"codex_stream_interrupted","message":"Codex stream interrupted"}\n\n'
