@@ -19,7 +19,7 @@ import sys
 import time
 from copy import deepcopy
 from datetime import UTC, datetime, timedelta
-from decimal import Decimal
+from decimal import Decimal, getcontext, localcontext
 from urllib.parse import urlsplit, urlunsplit
 
 import httpx
@@ -820,6 +820,87 @@ async def sampled_market_history(
 
 
 def _wide_column_records(collection, columns, time_field):
+    if type(columns) is not dict or any(type(values) not in (list, tuple) for values in columns.values()):
+        return _wide_row_records(collection, columns, time_field)
+    parent = getcontext()
+    with localcontext() as context:
+        try:
+            result = _column_wide_records(collection, columns, time_field)
+        except (ArithmeticError, LookupError, OSError, RecursionError, TypeError, ValueError):
+            result = None
+    if result is None:
+        return _wide_row_records(collection, columns, time_field)
+    for signal, raised in context.flags.items():
+        if raised:
+            parent.flags[signal] = True
+    return result
+
+
+def _column_wide_records(collection, columns, time_field):
+    if not columns:
+        return []
+    sizes = {len(values) for values in columns.values()}
+    if len(sizes) != 1:
+        raise ValueError("Invalid wide page columns")
+    count = sizes.pop()
+    if any(type(value) is not str for value in columns[time_field]):
+        return None
+    empty = [None] * count
+    fields, timestamps, numbers = {}, {}, {}
+    for name, kind in MARKET_COLUMNS[collection].items():
+        values = columns.get(name, empty)
+        if kind == "timestamptz":
+            normalized = []
+            for value in values:
+                if value is None:
+                    normalized.append(None)
+                    continue
+                if type(value) is not str:
+                    return None
+                cached = timestamps.get(value)
+                if cached is None:
+                    cached = iso(parse_time(value))
+                    timestamps[value] = cached
+                normalized.append(cached)
+        elif kind == "numeric":
+            normalized = []
+            for value in values:
+                if value is None:
+                    normalized.append(None)
+                    continue
+                if type(value) not in (str, int, float, Decimal):
+                    return None
+                cached = numbers.get(value) if type(value) is str else None
+                if cached is None:
+                    cached = str(Decimal(value))
+                    if type(value) is str:
+                        numbers[value] = cached
+                normalized.append(cached)
+        elif kind == "jsonb":
+            if any(value is not None and type(value) not in (str, bytes, bytearray) for value in values):
+                return None
+            normalized = [json.loads(value) if value is not None else None for value in values]
+        elif kind == "text[]":
+            if any(value is not None and type(value) not in (list, tuple) for value in values):
+                return None
+            normalized = [(list(value) or None) if value is not None else None for value in values]
+        else:
+            normalized = values
+        fields[name] = normalized
+    for alias, target in MARKET_ALIASES.get(collection, {}).items():
+        if target in fields:
+            fields[alias] = fields[target]
+    names = tuple(fields)
+    records = zip(*fields.values(), strict=True)
+    return [
+        (iid, dict(zip(names, values, strict=True)), key, parse_time(at))
+        for iid, key, at, values in zip(
+            columns["instrument_id"], columns["storage_key"], columns[time_field], records, strict=True
+        )
+    ]
+
+
+def _wide_row_records(collection, columns, time_field):
     if not columns:
         return []
     sizes = {len(values) for values in columns.values()}

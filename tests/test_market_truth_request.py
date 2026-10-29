@@ -108,9 +108,19 @@ async def full_request_comparison(tmp_path_factory, pytestconfig, request):
     fixtures = fixtures / "tests/fixtures/market-truth-latency-full"
     manifest = stage_data(fixtures)
     contract_base = os.environ.get("MARKET_TRUTH_CONTRACT_BASE", ORIGINAL)
+    if os.environ.get("GITHUB_EVENT_NAME") == "pull_request":
+        parents = subprocess.check_output(
+            ["git", "show", "-s", "--format=%P", candidate], cwd=ROOT, text=True
+        ).split()
+        assert len(parents) == 2
+        contract_base = parents[0]
     assert re.fullmatch(r"[0-9a-f]{40}", contract_base)
     contract = tmp_path / "repository-base"
-    archive(contract_base, contract, ["src/tank/storage.py"])
+    archive(
+        contract_base,
+        contract,
+        ["src/tank/storage.py", "src/tank/models.py", "src/tank/market_schema.py", "uv.lock"],
+    )
     template = PostgresTemplate(schema_template=pytestconfig.getoption("postgres_schema_template"))
     workers, repositories, receipts, compiled = {}, [], {}, {}
     try:
@@ -120,9 +130,7 @@ async def full_request_comparison(tmp_path_factory, pytestconfig, request):
                 archive(revision, root, ["src", "config", "uv.lock", "pyproject.toml"])
                 if label == "candidate":
                     for filename in ("uv.lock", "src/tank/market_schema.py", "src/tank/models.py"):
-                        assert (root / filename).read_bytes() == (
-                            tmp_path / "original" / filename
-                        ).read_bytes()
+                        assert (root / filename).read_bytes() == (contract / filename).read_bytes()
                     assert repository_contract(root / "src/tank/storage.py") == repository_contract(
                         contract / "src/tank/storage.py"
                     )
