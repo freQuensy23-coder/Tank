@@ -1076,6 +1076,8 @@ def _history_decimal_arrays(columns, *, summands=1, metadata=None):
     low, high = 0, 0
     inputs = _ASSESSMENT_INPUTS.get()
     memo = inputs.setdefault("history_decimal_values", {}) if inputs is not None else None
+    owners = inputs.setdefault("history_decimal_owners", {}) if inputs is not None else None
+    descriptors = inputs.setdefault("history_decimal_metadata", {}) if inputs is not None else None
     with localcontext(context):
         try:
             for column in columns:
@@ -1092,8 +1094,9 @@ def _history_decimal_arrays(columns, *, summands=1, metadata=None):
                         continue
                     if type(value) not in (str, Decimal, int, float):
                         return None
-                    hit = memo.get(id(value)) if memo is not None else None
-                    if hit is None or hit[0] is not value:
+                    identity = id(value)
+                    hit = memo.get(identity) if memo is not None else None
+                    if hit is None or owners.get(identity) is not value:
                         raw = value
                         value = value if type(value) is Decimal else Decimal(str(value))
                         if not value.is_finite() or value < 0:
@@ -1102,10 +1105,15 @@ def _history_decimal_arrays(columns, *, summands=1, metadata=None):
                         exponent = int(parts.exponent)
                         if len(parts.digits) > 48 or not -100 <= exponent <= 100:
                             return None
-                        hit = (raw, value, exponent, value.adjusted())
+                        adjusted = value.adjusted()
                         if memo is not None:
-                            memo[id(raw)] = hit
-                    _, value, exponent, adjusted = hit
+                            owners[identity] = raw
+                            descriptors[identity] = (exponent + 100) * 256 + adjusted + 100
+                            memo[identity] = value
+                    else:
+                        value = hit
+                        descriptor = descriptors[identity]
+                        exponent, adjusted = descriptor // 256 - 100, descriptor % 256 - 100
                     if 2 * (adjusted - exponent + 1) + 32 > context.prec:
                         return None
                     low = min(low, exponent)
