@@ -208,14 +208,9 @@ def test_full_market_truth_original_candidate_same_worker(
     full_request_comparison, state, contract, record_property
 ):
     directory = full_request_comparison
-    left = json.loads(
-        (directory / "original/request-output" / f"{state}-{contract}.json").read_bytes()
-    )
-    right = json.loads(
-        (directory / "candidate/request-output" / f"{state}-{contract}.json").read_bytes()
-    )
+    left = json.loads((directory / "original/request-output" / f"{state}-{contract}.json").read_bytes())
+    right = json.loads((directory / "candidate/request-output" / f"{state}-{contract}.json").read_bytes())
     mismatch = first_difference(left, right)
     record_property("contract", state + "/" + contract)
     record_property("first_difference", json.dumps(mismatch))
     assert mismatch is None, (state, contract, mismatch)
-
