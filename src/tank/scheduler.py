@@ -701,12 +701,13 @@ class Scheduler:
                     truth = {}
                     if market_metric:
                         cache_key = (cond["event_id"], cond["token_id"], evaluation_stamp)
-                        if cache_key not in cache:
+                        entry_key = cache_key if periods else (*cache_key, "NEWEST")
+                        if entry_key not in cache:
                             requirements = requirement_sets[(cond["event_id"], cond["token_id"])] | {
                                 (item["metric"], item["window"])
                                 for item in self.condition_requirements(cond["expr"])
                             }
-                            cache[cache_key] = await bounded_truth(
+                            cache[entry_key] = await bounded_truth(
                                 cache_key,
                                 [
                                     {"metric": metric, "window": window}
@@ -714,7 +715,7 @@ class Scheduler:
                                 ],
                                 exact=bool(periods),
                             )
-                        evaluation_stamp, truth = cache[cache_key]
+                        evaluation_stamp, truth = cache[entry_key]
                         evaluation_cutoff = evaluation_stamp.value
                         window_id = int(parse_time(evaluation_cutoff).timestamp()) // seconds
                     value = metric_value(truth, event, metric, expr.get("window", "W1H"))

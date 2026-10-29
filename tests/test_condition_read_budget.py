@@ -241,3 +241,54 @@ async def test_background_read_answers_the_next_minute_at_its_own_cutoff(monkeyp
         assert reads == [iso(now), iso(now + timedelta(minutes=2))]
     finally:
         await scheduler.close()
+
+
+@pytest.mark.asyncio
+async def test_window_condition_is_not_served_an_older_read_cached_for_a_one_window_condition(monkeypatch):
+    """Codex on #68: at an hour boundary a one-window condition may be answered by an
+    older background read; a 2-window condition of the same event and token in the
+    same batch must still be evaluated exactly at the boundary."""
+    monkeypatch.setattr(scheduler_module, "EVAL_CONDITIONS_BUDGET_S", 1)
+    monkeypatch.setattr(scheduler_module, "EVAL_CONDITION_BUDGET_S", 0.05)
+    repo = MemoryRepository()
+    boundary = parse_time("2026-10-28T12:00:00Z")
+    await repo.put("evt.events", "e", {"event_id": "e"})
+    window = {"metric": "spot.cohort.direction", "window": "W1H", "op": "==", "value": "SELL"}
+    for cond_id, expr in (("one", dict(window)), ("two", dict(window, persist={"count": 2}))):
+        await repo.put(
+            "ana.watch_conditions",
+            cond_id,
+            {
+                "cond_id": cond_id,
+                "event_id": "e",
+                "token_id": "T",
+                "status": "ARMED",
+                "expires_at": iso(boundary + timedelta(days=1)),
+                "expr": expr,
+            },
+        )
+    reads = []
+
+    async def condition_values(event_id, token_id, cutoff, requirements):
+        reads.append(cutoff.value)
+        await asyncio.sleep(0.1 if cutoff.value == iso(boundary - timedelta(minutes=1)) else 0)
+        return {"cutoff": cutoff.value}
+
+    scheduler = Scheduler(repo, SimpleNamespace(), None, SimpleNamespace(condition_values=condition_values))
+    try:
+        before = chosen_boundary(boundary - timedelta(minutes=1), precision="EXACT")
+        await scheduler.eval_conditions(before.fields("cutoff"))
+        await asyncio.sleep(0.15)
+        conditions = {c: await repo.get("ana.watch_conditions", c) for c in ("one", "two")}
+        for cond_id, row in conditions.items():
+            stamp = "2026-10-28T11:00:00Z" if cond_id == "one" else "2026-10-28T11:59:30Z"
+            await repo.put("ana.watch_conditions", cond_id, {**row, "last_evaluated_at": stamp})
+        at = chosen_boundary(boundary, precision="EXACT")
+        await scheduler.eval_conditions(at.fields("cutoff"))
+        one = await repo.get("ana.watch_conditions", "one")
+        two = await repo.get("ana.watch_conditions", "two")
+        assert one["counters"]["root"]["cutoff"] == iso(boundary - timedelta(minutes=1))
+        assert two["counters"]["root"]["cutoff"] == iso(boundary)
+        assert all(row["cutoff"] == iso(boundary) for row in two["counters"]["root"]["history"][-1:])
+    finally:
+        await scheduler.close()
