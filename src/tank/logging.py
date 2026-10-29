@@ -39,7 +39,7 @@ class CredentialFilter(logging.Filter):
         return True
 
 
-def configure_logging(settings=None) -> None:
+def configure_logging(settings: object | None = None) -> None:
     """Install filters before clients are constructed, without logging settings."""
     values = []
     if settings is not None:

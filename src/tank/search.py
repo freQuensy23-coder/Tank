@@ -214,7 +214,7 @@ class DuckDuckGoSearchService:
             error = None
             launched = False
 
-            def run_attempt():
+            def run_attempt() -> list[dict[str, Any]]:
                 nonlocal launched
                 launched = True
                 return self._attempt(query, self.user_agent, self.limiter.mark_started)
