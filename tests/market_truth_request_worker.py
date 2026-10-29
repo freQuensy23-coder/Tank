@@ -573,6 +573,8 @@ async def run(root, directory, fixtures, revision, reader):
                 setattr(market, name, measure_async("snapshot." + name, getattr(market, name)))
 
             for name in (
+                "_compute_market_truth",
+                "spot_window_graph",
                 "relative_truth",
                 "derivatives_truth",
                 "support_features",
@@ -585,6 +587,7 @@ async def run(root, directory, fixtures, revision, reader):
                 "_oi_combined_timeline",
                 "_native_volume_arrays",
                 "_history_decimal_arrays",
+                "_history_fixed_decimal_column",
                 "_synchronized_oi",
                 "_composite_history",
                 "_oi_history_returns",
@@ -594,6 +597,7 @@ async def run(root, directory, fixtures, revision, reader):
                 "btc_baseline",
                 "enrich_evidence",
                 "timestamp_companions",
+                "measurement_metadata",
                 "bounded_market_snapshot",
                 "liquidity_truth",
                 "supply_truth",
@@ -659,6 +663,8 @@ async def run(root, directory, fixtures, revision, reader):
                         (copy_context(), cold_market.snapshot, snapshot_call[2], snapshot_call[3])
                     )
                     clock["value"] = manifest["availability_cutoff"]
+                    phases.clear()
+                    phase_calls.clear()
                     gc_receipt = {}
                     rows = profile_retained_call(diagnostic_call, gc_receipt=gc_receipt)
                     emit(
@@ -667,6 +673,8 @@ async def run(root, directory, fixtures, revision, reader):
                             "stage": diagnostic_call[1].__name__,
                             "rows": rows,
                             "garbage_collection": gc_receipt,
+                            "inclusive_nonadditive_phase_seconds": dict(phases),
+                            "phase_call_counts": dict(phase_calls),
                             "snapshot": await profile_retained_async(snapshot_call),
                             "cold_snapshot": cold_profile,
                         }
