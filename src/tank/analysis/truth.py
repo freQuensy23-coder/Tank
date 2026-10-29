@@ -366,8 +366,10 @@ def _row_time(row):
         identity = id(row)
         value = memo.get(identity, _ROW_MEMO_MISSING)
         if value is _ROW_MEMO_MISSING:
+            inputs = state[1]
+            inputs.setdefault("row_times", memo)
             value = _observation_time(row)
-            owners = state[1]
+            owners = inputs.setdefault("row_owners", {})
             owners[identity] = row
             memo[identity] = value
         return value
@@ -6345,9 +6347,9 @@ def _compute_market_truth_slot(snapshot, *, config=None, baseline_cache=None):
     token = _PARAMETERS.set(config)
     baselines = _BASELINE_CACHE.set(baseline_cache if baseline_cache is not None else {})
     dependency = _BASELINE_DEPENDENCY.set(None)
-    prepared_inputs = {"row_times": {}, "row_owners": {}}
+    prepared_inputs = {}
     inputs = _ASSESSMENT_INPUTS.set(prepared_inputs)
-    times = _TIMES.set((prepared_inputs["row_times"], prepared_inputs["row_owners"]))
+    times = _TIMES.set(({}, prepared_inputs))
     text_times = _TIME_PARSE_MEMO.set({})
     try:
         return _compute_market_truth(snapshot, config=config)
