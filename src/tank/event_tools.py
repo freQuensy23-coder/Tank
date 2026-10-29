@@ -738,6 +738,13 @@ class EventToolService:
             raise ValueError(f"Missing {table}: {key}")
         return row
 
+    async def current_assessment(self, event, tool):
+        """Return the event's current EMS assessment or refuse with the missing set_assessment step."""
+        ems_id = event.get("current_ems_id")
+        if ems_id is None:
+            raise ValueError(f"{tool} needs set_assessment for this event first")
+        return await self.require("evt.ems_assessments", ems_id)
+
     async def get_item(self, a, c):
         return self.source_item_view(await self.require("ingest.source_items", a["item_id"]))
 
@@ -2450,7 +2457,7 @@ class EventToolService:
             a = dict(a, cutoff_prec=named[a["cutoff_prec"]])
         eid = a["event_id"]
         event = await self.require("evt.events", eid)
-        assessment = await self.require("evt.ems_assessments", event["current_ems_id"])
+        assessment = await self.current_assessment(event, "get_market_truth")
         managed = await self.managed_tokens(eid)
         if assessment["class"] not in {"MAJOR", "STRUCTURAL_SHOCK"} and not set(a["token_ids"]) <= managed:
             raise ValueError("Market escalation requires MAJOR+ or existing call/shown-token management")
@@ -2563,7 +2570,7 @@ class EventToolService:
         event["contradictions"] = [
             row for row in await self.rows("ana.contradictions", eid) if row.get("token_id") in {None, token}
         ]
-        assessment = await self.require("evt.ems_assessments", event["current_ems_id"])
+        assessment = await self.current_assessment(event, "get_decision")
         edges = [r for r in await self.rows("evt.beneficiary_edges", eid) if r.get("token_id") == token]
         latest_truth = await self.latest_record("ana.market_truth", eid, token)
         maps = await self.rows("evt.beneficiary_maps", eid)
@@ -2896,7 +2903,7 @@ class EventToolService:
 
         eid = a["event_id"]
         event = await self.require("evt.events", eid)
-        assessment = await self.require("evt.ems_assessments", event["current_ems_id"])
+        assessment = await self.current_assessment(event, "publish_card")
         publication_state = {
             "contract_version": 1,
             "event_id": eid,
