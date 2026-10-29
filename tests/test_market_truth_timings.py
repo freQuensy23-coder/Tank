@@ -77,10 +77,12 @@ def test_failed_compute_closes_timing_and_preserves_exception(monkeypatch, caplo
     assert "private payload" not in caplog.text
 
 
+@pytest.mark.parametrize("when", ["both", "terminal"])
 @pytest.mark.parametrize("error", [None, ValueError("domain failure"), asyncio.CancelledError()])
-def test_logging_failure_preserves_compute_and_context(monkeypatch, error):
-    def unavailable(*args, **kwargs):
-        raise RuntimeError("logging unavailable")
+def test_logging_failure_preserves_compute_and_context(monkeypatch, error, when):
+    def unavailable(message, *args, **kwargs):
+        if when == "both" or json.loads(message)["status"] != "started":
+            raise RuntimeError("logging unavailable")
 
     monkeypatch.setattr(logging.getLogger("tank.market_timing"), "info", unavailable)
     if error is None:
