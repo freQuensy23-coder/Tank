@@ -870,7 +870,8 @@ class PostgresRepository(QueueMixin):
             old = await (
                 await conn.execute(
                     sql.SQL(
-                        "SELECT document, immutable, xmin::text AS revision FROM {} WHERE storage_key=%s"
+                        "SELECT document, immutable, xmin::text AS revision, ctid::text AS location "
+                        "FROM {} WHERE storage_key=%s"
                     ).format(table),
                     (key,),
                 )
@@ -917,9 +918,9 @@ class PostgresRepository(QueueMixin):
                 updated = await conn.execute(
                     sql.SQL(
                         "UPDATE {} SET document=(document - %s::text[]) || %s, {} "
-                        "WHERE storage_key=%s AND xmin::text=%s"
+                        "WHERE storage_key=%s AND xmin::text=%s AND ctid::text=%s"
                     ).format(table, setters),
-                    [removed, Jsonb(changed), *values[2:], key, old["revision"]],
+                    [removed, Jsonb(changed), *values[2:], key, old["revision"], old["location"]],
                 )
                 if updated.rowcount == 1:
                     return copy.deepcopy(record)
