@@ -58,9 +58,10 @@ class EtherscanBudget:
     A call is admitted only when it fits both a rolling 24 h bucket of that size and an hourly
     pacing bucket of a 24th of it, kept in the shared request ledger (so a restart does not
     forget the day), and the day's calls are spread over the day instead of being spent by
-    the morning. A refresh reserves its calls before it starts; once a reservation is refused
-    no other refresh of the same pass reserves, so the most overdue refresh gets the next
-    budget. Etherscan's own "Max daily rate limit" stops every call until 00:00 UTC, when
+    the morning. Each contract's refresh reserves its baseline calls before its first wallet
+    call; decimals lookups, further transfer pages and HTTP retries are charged one by one.
+    Once a charge is refused no other refresh of the same pass is charged, so the most
+    overdue refresh gets the next budget. Etherscan's own "Max daily rate limit" stops every call until 00:00 UTC, when
     Etherscan resets the day. Without a configured daily limit nothing is enforced."""
 
     def __init__(self, settings):
@@ -95,39 +96,51 @@ class EtherscanBudget:
             ETHERSCAN_DAILY_LIMIT_REACHED, (self.blocked_until - now).total_seconds()
         )
 
-    async def reserve(self, calls):
-        """Charge `calls` upcoming calls to the budget, or raise EtherscanBudgetDeferred."""
+    async def _charge(self, calls):
         from tank.sources.rate_limits import shared_request_budgets
 
         blocked = self._blocked()
         if blocked is not None:
             raise blocked
-        needed = calls - self.prepaid
-        if needed <= 0:
+        if self.per_day is None:
             return
-        if self.per_day is not None:
-            if self.refused is not None:
+        if self.refused is not None:
+            raise self.refused
+        for window_s, capacity in (
+            (ETHERSCAN_PACING_WINDOW_S, self.per_day * ETHERSCAN_PACING_WINDOW_S / ETHERSCAN_DAY_S),
+            (ETHERSCAN_DAY_S, self.per_day),
+        ):
+            if calls > capacity:
+                raise SemanticError("ETHERSCAN_REFRESH_EXCEEDS_HOURLY_BUDGET")
+            wait = await shared_request_budgets.try_acquire(
+                ETHERSCAN_HOST, capacity, window_s, weight=calls, host=ETHERSCAN_HOST
+            )
+            if wait > 0:
+                self.refused = EtherscanBudgetDeferred(ETHERSCAN_BUDGET_EXHAUSTED, wait)
                 raise self.refused
-            for window_s, capacity in (
-                (ETHERSCAN_PACING_WINDOW_S, self.per_day * ETHERSCAN_PACING_WINDOW_S / ETHERSCAN_DAY_S),
-                (ETHERSCAN_DAY_S, self.per_day),
-            ):
-                wait = await shared_request_budgets.try_acquire(
-                    ETHERSCAN_HOST, capacity, window_s, weight=min(needed, capacity), host=ETHERSCAN_HOST
-                )
-                if wait > 0:
-                    self.refused = EtherscanBudgetDeferred(ETHERSCAN_BUDGET_EXHAUSTED, wait)
-                    raise self.refused
-        self.prepaid += needed
 
-    async def spend(self):
-        """Admit one call: from the reserved calls, otherwise by reserving it."""
-        blocked = self._blocked()
-        if blocked is not None:
-            raise blocked
-        if self.prepaid <= 0:
-            await self.reserve(1)
-        self.prepaid -= 1
+    async def reserve(self, calls):
+        """Charge the baseline calls of one contract's refresh (a balance and the first transfer
+        page per wallet) before its first wallet call; unused credit of the previous contract
+        is dropped, never reused. Raises EtherscanBudgetDeferred when they do not fit."""
+        self.prepaid = 0
+        await self._charge(calls)
+        self.prepaid = calls
+
+    async def admit(self):
+        """Charge one call outside the reservation: a decimals lookup, a further transfer page
+        or an HTTP retry."""
+        await self._charge(1)
+
+    async def spend(self, reserved):
+        """Admit one call, from the reservation when it is a baseline call."""
+        if reserved and self.prepaid > 0:
+            blocked = self._blocked()
+            if blocked is not None:
+                raise blocked
+            self.prepaid -= 1
+            return
+        await self.admit()
 
 
 def refresh_due(age_s, cadence_s, cycle_s):
@@ -312,14 +325,15 @@ class SupplyCapture:
             inference_limits=["POTENTIAL_SUPPLY_IS_NOT_A_SALE"],
         )
 
-    async def etherscan(self, token, chainid, **params):
+    async def etherscan(self, token, chainid, *, reserved=False, **params):
         if not self.settings.etherscan_api_key:
             raise SemanticError("ETHERSCAN_API_KEY_UNCONFIGURED")
-        await self.budget.spend()
+        await self.budget.spend(reserved)
         raw = await self.market._request(
             "GET",
             "https://api.etherscan.io/v2/api",
             params={"chainid": chainid, "apikey": self.settings.etherscan_api_key, **params},
+            _admit_retry=self.budget.admit,
         )
         if raw.get("status") == "0" and "Max daily rate limit" in str(raw.get("result")):
             raise self.budget.provider_limit_reached()
@@ -379,8 +393,23 @@ class SupplyCapture:
                     continue
                 contract["decimals"] = decimals
             ready.append((contract, chainid, decimals))
-        await self.budget.reserve(2 * sum(len(group["addresses"]) for group in wallets) * len(ready))
-        for contract, chainid, decimals in ready:
+        baseline = 2 * sum(len(group["addresses"]) for group in wallets)
+        for position, (contract, chainid, decimals) in enumerate(ready):
+            try:
+                await self.budget.reserve(baseline)
+            except EtherscanBudgetDeferred as exc:
+                if not position:
+                    raise
+                errors.append(
+                    {
+                        "chain": contract["chain"],
+                        "chainid": chainid,
+                        "contract": contract["address"],
+                        "operation": "reserve",
+                        "reason": exc.reason,
+                    }
+                )
+                continue
             for group in wallets:
                 total = D(0)
                 observed = 0
@@ -395,6 +424,7 @@ class SupplyCapture:
                             contractaddress=contract["address"],
                             address=wallet,
                             tag="latest",
+                            reserved=True,
                         )
                         total += D(raw) / (D(10) ** decimals)
                         observed += 1
@@ -410,6 +440,7 @@ class SupplyCapture:
                                 page=page,
                                 offset=100,
                                 sort="desc",
+                                reserved=page == 1,
                             )
                             if not isinstance(rows, list):
                                 raise SemanticError("unexpected tokentx payload")

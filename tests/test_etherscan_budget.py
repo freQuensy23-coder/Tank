@@ -208,3 +208,98 @@ async def test_decimals_lookup_is_charged_and_deferred_before_any_wallet_call(tm
     assert deferred.value.reason == ETHERSCAN_BUDGET_EXHAUSTED
     assert calls == [(None, "eth_call")]
     assert token["contracts"][0]["decimals"] == 6
+
+
+async def test_each_contract_is_reserved_separately_so_no_call_runs_uncharged(tmp_path, budgets):
+    token = evm_token(0)
+    token["contracts"].append(
+        {"chain": "Arbitrum", "chain_id": 42161, "address": "0x" + "9" * 40, "decimals": 6}
+    )
+    market, calls = budget_market(tmp_path, [token], per_day=24 * 2)
+    result = await SupplyCapture(market).inventory(token)
+    assert {contract for contract, _ in calls} == {token["contracts"][0]["address"]}
+    assert len(calls) == 2
+    assert [b["chainid"] for b in result["balances"]] == [1]
+    assert result["coverage_errors"] == [
+        {
+            "chain": "Arbitrum",
+            "chainid": 42161,
+            "contract": "0x" + "9" * 40,
+            "operation": "reserve",
+            "reason": ETHERSCAN_BUDGET_EXHAUSTED,
+        }
+    ]
+    assert sum(weight for _, weight in budgets.windows["api.etherscan.io", 3600.0, 2.0]) == 2
+
+
+async def test_extra_pages_of_one_wallet_never_take_another_wallets_reserved_calls(tmp_path, budgets):
+    token = evm_token(0)
+    market, calls = budget_market(tmp_path, [token], per_day=24 * 4)
+    other = "0x" + "6" * 40
+    (tmp_path / "config" / "exchange_addresses.yaml").write_text(
+        yaml.safe_dump(
+            {"wallet_lists": [{"venue": "test", "commit": "synthetic", "addresses": [WALLET, other]}]}
+        )
+    )
+    recent = str(int(utcnow().timestamp()))
+    full_page = [
+        {
+            "hash": f"0x{i:064x}",
+            "logIndex": "0",
+            "from": "0x" + "5" * 40,
+            "to": WALLET,
+            "timeStamp": recent,
+            "value": "1",
+            "tokenDecimal": "6",
+        }
+        for i in range(100)
+    ]
+
+    async def request(method, url, **kwargs):
+        params = kwargs["params"]
+        calls.append((params["address"], params["action"]))
+        if params["action"] == "tokenbalance":
+            return {"status": "1", "result": "1000000"}
+        if params["address"] == WALLET:
+            return {"status": "1", "result": full_page}
+        return {"status": "0", "message": "No transactions found", "result": []}
+
+    market._request = request
+    result = await SupplyCapture(market).inventory(token)
+    assert calls == [
+        (WALLET, "tokenbalance"),
+        (WALLET, "tokentx"),
+        (other, "tokenbalance"),
+        (other, "tokentx"),
+    ]
+    assert result["balances"][0]["observed_wallets"] == 2
+    assert result["coverage_errors"] == [
+        {"wallet": WALLET, "chainid": 1, "reason": ETHERSCAN_BUDGET_EXHAUSTED}
+    ]
+
+
+async def test_an_http_retry_after_429_is_charged_before_it_is_sent(tmp_path, budgets):
+    import httpx
+
+    sent = []
+
+    def respond(request):
+        sent.append(request.url.path)
+        return httpx.Response(429, headers={"Retry-After": "1"})
+
+    market, _ = budget_market(tmp_path, [], per_day=None)
+    del market._request
+    market.http = httpx.AsyncClient(transport=httpx.MockTransport(respond))
+    admitted = []
+
+    async def admit():
+        admitted.append(len(sent))
+        raise EtherscanBudgetDeferred(ETHERSCAN_BUDGET_EXHAUSTED, 1.0)
+
+    try:
+        with pytest.raises(EtherscanBudgetDeferred):
+            await market._request("GET", "https://api.etherscan.io/v2/api", _admit_retry=admit)
+    finally:
+        await market.http.aclose()
+    assert sent == ["/v2/api"]
+    assert admitted == [1]
