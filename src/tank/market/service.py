@@ -879,6 +879,12 @@ class MarketService:
             await self._record_capture_tier(token_id, "HOT" if remaining else "BASE", "DEMOTION")
         await self._sync_hot_set()
 
+    def _ticker_cadence(self, hot):
+        """The 24h-ticker poll interval tank-capture runs for a tier (its hot grid or base loop)."""
+        if hot:
+            return float(self.thresholds.get("hot_ticker_interval_s", 20))
+        return float(self.thresholds.get("base_ticker_interval_s", 300))
+
     async def _record_capture_tier(self, token_id, tier, reason):
         from tank.market.supply import supply_cadences
 
@@ -891,6 +897,7 @@ class MarketService:
             ),
             "kline_s": float(self.thresholds.get("base_kline_interval_s", 60)),
             "book_s": float(self.thresholds.get("book_interval_s", 10)),
+            "ticker_s": self._ticker_cadence(tier == "HOT"),
             "supply_by_kind": supply_cadences(tier == "HOT"),
         }
         rows = [
@@ -1092,7 +1099,7 @@ class MarketService:
                     "cadence_s": oi if tier != "UNKNOWN" else None,
                     "reason": "CAPTURE_TIER_HISTORY_UNAVAILABLE" if tier == "UNKNOWN" else None,
                 },
-                "tickers": {"cadence_s": base},
+                "tickers": {"cadence_s": profile.get("ticker_s", self._ticker_cadence(is_hot))},
                 "supply": {"by_kind": supply},
                 "liquidations": {
                     "cadence_s": STREAM_PING_INTERVAL_S,

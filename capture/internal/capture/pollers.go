@@ -471,7 +471,7 @@ func (s *Service) instrumentLoop(ctx context.Context, inst *venue.Instrument) {
 			derivDue = s.clock.Monotonic() + time.Duration(s.opt.Threshold("base_oi_funding_interval_s", 300)*float64(time.Second))
 		}
 		if doTicker {
-			tickerDue = s.clock.Monotonic() + time.Duration(s.opt.Threshold("base_ticker_interval_s", 300)*float64(time.Second))
+			tickerDue = cadenceDue(started, s.opt.Threshold("base_ticker_interval_s", 300))
 		}
 		wait := time.Duration(s.opt.Threshold("base_kline_interval_s", 60)*float64(time.Second)) - (s.clock.Monotonic() - started)
 		if wait < time.Second {
@@ -482,6 +482,10 @@ func (s *Service) instrumentLoop(ctx context.Context, inst *venue.Instrument) {
 		case <-time.After(wait):
 		}
 	}
+}
+
+func cadenceDue(started time.Duration, seconds float64) time.Duration {
+	return started + time.Duration(seconds*float64(time.Second))
 }
 
 func (s *Service) auditOffset(iid string) time.Duration {
