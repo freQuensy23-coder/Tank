@@ -219,3 +219,27 @@ def test_frozen_config_is_parsed_once_and_callers_get_copies(tmp_path, monkeypat
     assert frozen.load_config("registry") == {"tokens": [{"token_id": "T"}]}
     unfrozen = Settings(_env_file=None, config_dir=config)
     assert unfrozen.load_config("registry") == {"tokens": []}
+
+
+def test_configured_secrets_cover_api_keys_and_database_passwords():
+    settings = Settings(
+        _env_file=None,
+        apify_api_token="FAKE-apify",
+        database_url="postgresql://tank:FAKE%20p%40ss@postgres:5432/tank",
+        openma_database_url="postgresql:///oma",
+    )
+    secrets = settings.configured_secrets()
+    assert {"FAKE-apify", "FAKE%20p%40ss", "FAKE p@ss"} <= set(secrets)
+    assert "" not in secrets and None not in secrets
+
+
+def test_typed_accessors_return_the_loaded_configuration(tmp_path):
+    config = tmp_path / "config"
+    config.mkdir()
+    (config / "thresholds.yaml").write_text("routing_window_days: 3\n")
+    (config / "openma.yaml").write_text("model_id: fake-model\n")
+    (config / "registry.yaml").write_text("tokens:\n- token_id: T1\n")
+    frozen = resolve_versions(Settings(_env_file=None, config_dir=config, data_dir=tmp_path / "data"))
+    assert frozen.thresholds() == frozen.load_config("thresholds") == {"routing_window_days": 3}
+    assert frozen.openma() == {"model_id": "fake-model"}
+    assert frozen.registry()["tokens"] == [{"token_id": "T1"}]
