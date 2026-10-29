@@ -6,14 +6,16 @@ import logging
 import os
 import re
 import tempfile
+from collections.abc import Mapping
 from pathlib import Path
 from types import MappingProxyType
-from typing import Any
-from urllib.parse import quote
+from typing import Protocol, TypedDict, cast, runtime_checkable
+from urllib.parse import quote, unquote, urlsplit
 
 import yaml
-from pydantic import AliasChoices, Field, PrivateAttr
-from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic import AliasChoices, Field, JsonValue, PrivateAttr
+from pydantic.fields import FieldInfo
+from pydantic_settings import BaseSettings, PydanticBaseSettingsSource, SettingsConfigDict
 
 _PROCESS_CODE_VERSION: str | None = None
 _CONFIG_SUFFIXES = {".yaml", ".yml", ".json", ".md"}
@@ -21,6 +23,106 @@ _YAML_LOADER = getattr(yaml, "CSafeLoader", yaml.SafeLoader)
 
 
 CONFIG_OWNED_FIELDS = ("user_agent", "telegram_alerts_chat", "telegram_ops_chat")
+
+type ConfigRows = list[dict[str, JsonValue]]
+
+
+class FreshnessHours(TypedDict, total=False):
+    FRESH: int
+    NORMAL: int
+    MEDIUM: int
+    POOR: int
+    OLD: int
+
+
+class ThresholdsConfig(TypedDict, total=False):
+    """Static view of config/thresholds.yaml; keys and values are not validated at load."""
+
+    version: str
+    filter_cutoff: float | None
+    routing_cutoff: float | None
+    filter_model: str
+    calibration_required: list[str]
+    tank_agent_statement_timeout_ms: int | None
+    tank_agent_connection_limit: int | None
+    normal_range_quantiles: list[float]
+    significant_flow_sigma: float
+    freshness_hours: FreshnessHours
+    min_spot_venues: int
+    large_ticket_usd: int
+    size_buckets_usd: list[int]
+    oi_sync_tolerance_s: int
+    book_interval_s: int
+    impact_tiers_usd: list[int]
+    depth_band_pct: float
+    refill_window_s: int
+    resilience_window_min: int
+    absorption_min_bursts: int
+    history_min_days: int
+    beta_blume_weight: float
+    event_close_days: int
+    call_expiry_days: int
+    session_keep_days: int
+    agent_completion_reminders_per_session: int
+    update_rate_limit_s: int
+    heartbeat_utc: str
+    agent_stall_alarm_min: int
+    escalated_interval_s: int
+    escalation_expiry_s: int
+    hot_token_cap: int
+    base_kline_interval_s: int
+    base_oi_funding_interval_s: int
+    hot_oi_funding_interval_s: int
+    base_retention_days: int
+    trades_retention_days: int
+    jobs_retention_days: int
+    backup_snapshots_kept: int
+    book_summary_retention_hours: int
+    hot_ticker_interval_s: int
+    quiet_socket_s: int
+    archive_retry_s: int
+    routing_window_days: int
+    market_context_rule: str
+
+
+class OpenMAConfig(TypedDict, total=False):
+    """Static view of config/openma.yaml; keys and values are not validated at load."""
+
+    version: str
+    agent_id: str
+    scout_agent_id: str
+    environment_id: str
+    replay_environment_id: str
+    release: str
+    prompt_version: str
+    model_id: str
+    reasoning_effort: str
+    model_prices: dict[str, dict[str, float]]
+    pricing_basis: str
+    model_access: str
+    gateway_base_url: str
+    model_card_provider: str
+    openma_overlay: str
+    max_running_sessions: int
+
+
+class RegistryConfig(TypedDict, total=False):
+    """Static view of config/registry.yaml; keys and values are not validated at load."""
+
+    version: str
+    tokens: ConfigRows
+    instruments: ConfigRows
+    entities: ConfigRows
+    sector_baskets: ConfigRows
+    x_accounts: ConfigRows
+    lending_pool_catalog: dict[str, JsonValue]
+
+
+@runtime_checkable
+class ConfigLoader(Protocol):
+    """Anything that loads named versioned configuration mappings."""
+
+    def load_config(self, name: str) -> Mapping[str, JsonValue]: ...
 
 
 def _capture_tree(root: Path, suffixes: set[str]) -> dict[str, bytes]:
@@ -53,6 +155,28 @@ def _config_version(build_sha: str | None, digest: str) -> str:
 def _default_codex_auth_path() -> Path:
     root = os.environ.get("CODEX_HOME")
     return Path(root).expanduser() / "auth.json" if root else Path.home() / ".codex" / "auth.json"
+
+
+class ConfigOwnedSource(PydanticBaseSettingsSource):
+    """Drop configuration-owned fields from an environment source, warning when they are set."""
+
+    def __init__(self, source: PydanticBaseSettingsSource) -> None:
+        super().__init__(source.settings_cls)
+        self.source = source
+
+    def get_field_value(self, field: FieldInfo, field_name: str) -> tuple[object, str, bool]:
+        return self.source.get_field_value(field, field_name)
+
+    def __call__(self) -> dict[str, object]:
+        values = self.source()
+        present = sorted(name for name in CONFIG_OWNED_FIELDS if values.get(name))
+        if present:
+            logging.getLogger("tank.settings").warning(
+                "Ignoring %s from the environment: set sources.yaml contact_email and "
+                "delivery.yaml chat IDs instead",
+                ", ".join("TANK_" + name.upper() for name in present),
+            )
+        return {k: v for k, v in values.items() if k not in CONFIG_OWNED_FIELDS}
 
 
 class Settings(BaseSettings):
@@ -132,11 +256,11 @@ class Settings(BaseSettings):
     backup_hour_utc: int = 2
     market_retention_days: int = 90
     shutdown_grace_s: int = 10
-    _config_snapshot: Any = PrivateAttr(default=None)
+    _config_snapshot: Mapping[str, bytes] | None = PrivateAttr(default=None)
 
-    _parsed_config: Any = PrivateAttr(default=None)
+    _parsed_config: dict[str, dict[str, JsonValue]] | None = PrivateAttr(default=None)
 
-    def model_post_init(self, context: Any) -> None:
+    def model_post_init(self, context: object) -> None:
         if self.tank_db_password and "database_url" not in self.model_fields_set:
             self.database_url = (
                 f"postgresql://tank:{quote(self.tank_db_password, safe='')}@postgres:5432/tank"
@@ -146,28 +270,39 @@ class Settings(BaseSettings):
                 f"postgresql://oma:{quote(self.oma_db_password, safe='')}@postgres:5432/oma"
             )
 
+    def configured_secrets(self) -> tuple[str, ...]:
+        """Configured credentials that logs must redact, including database URL passwords."""
+        values = [
+            value
+            for value in (
+                self.openma_api_key,
+                self.foundry_api_key,
+                self.telegram_token,
+                self.etherscan_api_key,
+                self.codex_gateway_key,
+                self.apify_api_token,
+            )
+            if value
+        ]
+        for url in (self.database_url, self.openma_database_url):
+            password = urlsplit(url).password if url else None
+            if password:
+                values.extend((password, unquote(password)))
+        return tuple(values)
+
     @classmethod
     def settings_customise_sources(
-        cls, settings_cls, init_settings, env_settings, dotenv_settings, file_secret_settings
-    ):
-        def without_config_owned(source):
-            def read():
-                values = source()
-                present = sorted(name for name in CONFIG_OWNED_FIELDS if values.get(name))
-                if present:
-                    logging.getLogger("tank.settings").warning(
-                        "Ignoring %s from the environment: set sources.yaml contact_email and "
-                        "delivery.yaml chat IDs instead",
-                        ", ".join("TANK_" + name.upper() for name in present),
-                    )
-                return {k: v for k, v in values.items() if k not in CONFIG_OWNED_FIELDS}
-
-            return read
-
+        cls,
+        settings_cls: type[BaseSettings],
+        init_settings: PydanticBaseSettingsSource,
+        env_settings: PydanticBaseSettingsSource,
+        dotenv_settings: PydanticBaseSettingsSource,
+        file_secret_settings: PydanticBaseSettingsSource,
+    ) -> tuple[PydanticBaseSettingsSource, ...]:
         return (
             init_settings,
-            without_config_owned(env_settings),
-            without_config_owned(dotenv_settings),
+            ConfigOwnedSource(env_settings),
+            ConfigOwnedSource(dotenv_settings),
         )
 
     @staticmethod
@@ -195,10 +330,23 @@ class Settings(BaseSettings):
     def read_config_text(self, relative: str) -> str:
         return self.read_config_bytes(relative).decode("utf-8")
 
-    def read_config_json(self, relative: str) -> Any:
-        return json.loads(self.read_config_bytes(relative))
+    def read_config_json(self, relative: str) -> JsonValue:
+        return cast(JsonValue, json.loads(self.read_config_bytes(relative)))
 
-    def load_config(self, name: str) -> dict[str, Any]:
+    def load_config_as[T](self, name: str, view: type[T]) -> T:
+        """Load a configuration mapping under a static type; the values are not validated."""
+        return cast(T, self.load_config(name))
+
+    def thresholds(self) -> ThresholdsConfig:
+        return self.load_config_as("thresholds", ThresholdsConfig)
+
+    def openma(self) -> OpenMAConfig:
+        return self.load_config_as("openma", OpenMAConfig)
+
+    def registry(self) -> RegistryConfig:
+        return self.load_config_as("registry", RegistryConfig)
+
+    def load_config(self, name: str) -> dict[str, JsonValue]:
         relative = name if name.endswith((".yaml", ".yml")) else name + ".yaml"
         cache = self._parsed_config if self._config_snapshot is not None else None
         if cache is not None and relative in cache:
@@ -212,12 +360,12 @@ class Settings(BaseSettings):
         return value
 
 
-def threshold(settings: Any, name: str, fixture_default: Any) -> Any:
+def threshold(settings: object, name: str, fixture_default: JsonValue) -> JsonValue:
     """A value of config/thresholds.yaml; the production settings must define it.
 
     Only test settings without a configuration loader fall back to the fixture default.
     """
-    if not hasattr(settings, "load_config"):
+    if not isinstance(settings, ConfigLoader):
         return fixture_default
     thresholds = settings.load_config("thresholds")
     if name not in thresholds:
