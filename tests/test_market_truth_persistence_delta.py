@@ -14,7 +14,10 @@ pytestmark = [pytest.mark.integration, pytest.mark.postgres]
 async def test_record_replacement_transfers_only_changed_document_fields(
     postgres_template, monkeypatch, intervening_write
 ):
-    async with postgres_template.repository(os.environ["TANK_TEST_DATABASE_URL"]) as repo:
+    async with (
+        postgres_template.repository(os.environ["TANK_TEST_DATABASE_URL"]) as repo,
+        repo.lock("record-replacement-test"),
+    ):
         original = {
             "token_id": "T",
             "symbol": "T",

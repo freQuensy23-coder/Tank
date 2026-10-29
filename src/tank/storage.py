@@ -683,9 +683,7 @@ def _same_json_value(left, right):
     if type(left) is not type(right):
         return False
     if type(left) is dict:
-        return left.keys() == right.keys() and all(
-            _same_json_value(left[key], right[key]) for key in left
-        )
+        return left.keys() == right.keys() and all(_same_json_value(left[key], right[key]) for key in left)
     if type(left) is list:
         return len(left) == len(right) and all(
             _same_json_value(a, b) for a, b in zip(left, right, strict=True)

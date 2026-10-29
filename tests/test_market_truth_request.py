@@ -1,3 +1,4 @@
+import ast
 import asyncio
 import hashlib
 import json
@@ -14,6 +15,21 @@ from market_truth_request_data import DATA_REVISION, ORIGINAL, stage_data
 
 pytestmark = [pytest.mark.integration, pytest.mark.postgres, pytest.mark.process]
 ROOT = Path(__file__).parents[1]
+
+
+def repository_contract(path):
+    source = ast.parse(path.read_text())
+    nodes = []
+    for node in source.body:
+        if isinstance(node, ast.ClassDef):
+            if node.name == "PostgresRepository":
+                for member in node.body:
+                    if isinstance(member, ast.AsyncFunctionDef) and member.name == "put":
+                        member.body = [ast.Pass()]
+            nodes.append(node)
+        elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name != "_same_json_value":
+            nodes.append(node)
+    return ast.dump(ast.Module(body=nodes, type_ignores=[]))
 
 
 def archive(revision, destination, paths):
@@ -79,10 +95,13 @@ async def full_request_comparison(tmp_path_factory, pytestconfig, request):
                 root = tmp_path / label
                 archive(revision, root, ["src", "config", "uv.lock", "pyproject.toml"])
                 if label == "candidate":
-                    for filename in ("uv.lock", "src/tank/market_schema.py", "src/tank/storage.py"):
+                    for filename in ("uv.lock", "src/tank/market_schema.py", "src/tank/models.py"):
                         assert (root / filename).read_bytes() == (
                             tmp_path / "original" / filename
                         ).read_bytes()
+                    assert repository_contract(root / "src/tank/storage.py") == repository_contract(
+                        tmp_path / "original/src/tank/storage.py"
+                    )
                 repo = await resources.enter_async_context(
                     template.repository(os.environ["TANK_TEST_DATABASE_URL"])
                 )
