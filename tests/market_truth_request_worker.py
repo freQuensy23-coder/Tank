@@ -1,13 +1,16 @@
 import asyncio
+import cProfile
 import hashlib
 import json
 import logging
+import pstats
 import re
 import signal
 import sys
 from contextlib import suppress
 from datetime import datetime
 from decimal import Decimal
+from functools import wraps
 from pathlib import Path
 from time import perf_counter, process_time
 from urllib.parse import urlsplit
@@ -15,6 +18,7 @@ from urllib.parse import urlsplit
 import httpx
 from market_truth_request_data import seed_data
 
+from tank import clickhouse_market as chm
 from tank.agents import SessionService
 from tank.agents.context import CONTEXT_VERSION
 from tank.analysis import truth
@@ -270,7 +274,7 @@ async def run(root, directory, fixtures, revision, reader):
             runtime = object.__new__(Runtime)
             runtime.repo, runtime.settings, runtime.market, runtime.truth = repo, settings, market, service
             runtime.handlers = {"ESCALATE_TOKENS": runtime.escalate, "RUN_MARKET_TRUTH": runtime.assess}
-            snapshots, dense = [], {}
+            snapshots, dense, phases = [], {}, {}
             original_snapshot, original_heads, original_rows = (
                 market.snapshot,
                 market._snapshot_heads,
@@ -283,7 +287,9 @@ async def run(root, directory, fixtures, revision, reader):
 
             async def snapshot(*args, **kwargs):
                 clock["value"] = manifest["availability_cutoff"]
+                started = perf_counter()
                 value = await original_snapshot(*args, **kwargs)
+                phases["snapshot"] = perf_counter() - started
                 snapshots.append(value)
                 return value
 
@@ -307,6 +313,30 @@ async def run(root, directory, fixtures, revision, reader):
                     "setup_seconds": perf_counter() - started,
                 }
             )
+            if hasattr(chm, "dense_projection_page"):
+                original_dense = chm.dense_projection_page
+
+                async def dense_page(client, **kwargs):
+                    value = await original_dense(client, **kwargs)
+                    key = kwargs["instrument_id"], kwargs["field"]
+                    dense[key] = dense.get(key, 0) + len(value["open_us"])
+                    return value
+
+                chm.dense_projection_page = dense_page
+
+            def measure(name, function):
+                @wraps(function)
+                def measured(*args, **kwargs):
+                    started = perf_counter()
+                    try:
+                        return function(*args, **kwargs)
+                    finally:
+                        phases[name] = phases.get(name, 0) + perf_counter() - started
+
+                return measured
+
+            for name in ("relative_truth", "derivatives_truth", "support_features", "spot_truth", "data_confidence"):
+                setattr(truth, name, measure(name, getattr(truth, name)))
             original_compute = truth.compute_market_truth
             compute_seconds = []
 
@@ -322,7 +352,48 @@ async def run(root, directory, fixtures, revision, reader):
                 command = json.loads(command)
                 if command.get("stop"):
                     break
+                if command.get("profile"):
+                    profiler = cProfile.Profile()
+
+                    def profile_compute():
+                        profiler.enable()
+                        try:
+                            return original_compute(
+                                snapshots[-1],
+                                config=dict(
+                                    settings.load_config("thresholds"),
+                                    config_version=settings.config_version,
+                                    code_version=settings.code_version,
+                                ),
+                                baseline_cache={},
+                            )
+                        finally:
+                            profiler.disable()
+
+                    profiled = await asyncio.to_thread(profile_compute)
+                    assert {k: v for k, v in profiled.items() if k not in {"mta_id", "code_version"}} == full
+                    stats = pstats.Stats(profiler).stats
+                    top = sorted(stats.items(), key=lambda item: item[1][3], reverse=True)[:30]
+                    emit(
+                        {
+                            "kind": "diagnostic",
+                            "scope": "cold compute only after measured ABBA; not a latency sample",
+                            "top": [
+                                {
+                                    "file": Path(key[0]).name,
+                                    "line": key[1],
+                                    "function": key[2],
+                                    "calls": value[1],
+                                    "self_seconds": value[2],
+                                    "inclusive_seconds": value[3],
+                                }
+                                for key, value in top
+                            ],
+                        }
+                    )
+                    continue
                 state = command["sample"]
+                phases.clear()
                 baseline_before = len(service._assessment_baselines.get(TOKEN, {}))
                 assert (baseline_before == 0) == (state == "cold")
                 stop, admitted = asyncio.Event(), asyncio.Event()
@@ -417,6 +488,7 @@ async def run(root, directory, fixtures, revision, reader):
                         "digests": digests,
                         "baseline_entries_before": baseline_before,
                         "compute_seconds": compute_seconds[-1],
+                        "inclusive_nonadditive_phase_seconds": dict(phases),
                         "modules": provenance(root),
                     }
                 )

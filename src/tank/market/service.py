@@ -14,6 +14,7 @@ from types import SimpleNamespace
 
 import httpx
 
+from tank import clickhouse_market as chm
 from tank.market import normalize as norm
 from tank.market.capture import event_anchor
 from tank.market.rate_gate import PriorityGate
@@ -1245,6 +1246,7 @@ class MarketService:
         fixed_window=False,
         captured_rows=None,
         rolling=None,
+        columns_cache=None,
     ):
         """Compact exact typed projections; histories never retain wide kline records.
 
@@ -1362,6 +1364,75 @@ class MarketService:
                 for row in captured_rows:
                     if row.get("recorded_at") is None or parse_time(row["recorded_at"]) <= availability:
                         apply(row)
+            elif reset and (ch := chm.client(self.repo, "mkt.klines_1m")) is not None:
+                low_us, high_us, served_us = (
+                    microseconds(state_start),
+                    microseconds(state_upper),
+                    microseconds(start),
+                )
+
+                def extend_columns(columns):
+                    nonlocal unknown_availability
+                    for stamp, raw, full, known, interval, unknown in zip(
+                        columns["open_us"],
+                        columns["value"],
+                        columns["complete"],
+                        columns["open_time_prec"],
+                        columns["interval_s"],
+                        columns["recorded_unknown"],
+                        strict=True,
+                    ):
+                        unknown_availability |= unknown
+                        if not low_us <= stamp <= high_us or interval != 60:
+                            continue
+                        if kind == "price":
+                            value = float(raw) if raw is not None else float("nan")
+                            valid = full is True and isfinite(value) and value > 0
+                        else:
+                            value = str(raw) if raw is not None else None
+                            valid = full is True and value is not None and norm.decimal(value) >= 0
+                        known = known == "BUCKET(60s)"
+                        if times and stamp < times[-1]:
+                            raise ValueError("Unordered dense projection")
+                        if times and stamp == times[-1]:
+                            same = (
+                                values[-1] == value
+                                or kind == "price" and not isfinite(values[-1]) and not isfinite(value)
+                            )
+                            if same and complete[-1] == valid and precise[-1] == known:
+                                continue
+                            values[-1], complete[-1], precise[-1] = value, valid, known
+                        else:
+                            times.append(stamp)
+                            values.append(value)
+                            complete.append(valid)
+                            precise.append(known)
+                        if not changed and stamp >= served_us:
+                            changed.append(
+                                (stamp, value if kind == "volume" or isfinite(value) else None, valid, known)
+                            )
+
+                after = None
+                while True:
+                    columns = await chm.dense_projection_page(
+                        ch,
+                        instrument_id=iid,
+                        field="c" if kind == "price" else "volume_native",
+                        start=state_start,
+                        end=upper_open + timedelta(microseconds=1),
+                        assembled_at=assembled_at,
+                        after=after,
+                        raw_cache=columns_cache,
+                    )
+                    if not columns["open_us"]:
+                        break
+                    await asyncio.to_thread(extend_columns, columns)
+                    after = (
+                        epoch + timedelta(microseconds=columns["open_us"][-1]),
+                        columns["_cursor_key"][-1],
+                    )
+                    if len(columns["open_us"]) < 200000:
+                        break
             elif reset:
                 page = []
                 async for row in self.repo.iter_market_projection(
@@ -3001,6 +3072,8 @@ class MarketService:
                     present_closes.add(identity)
                     result["klines"].append(row)
 
+        columns_cache = {}
+
         async def dense_prices(inst):
             iid = inst["instrument_id"]
             series = await self._condition_kline_series(
@@ -3013,6 +3086,7 @@ class MarketService:
                 fixed_window=True,
                 captured_rows=captured_klines.get(iid) if captured_klines is not None else None,
                 rolling=rolling,
+                columns_cache=columns_cache,
             )
             result["stat_price_series"][iid] = series
 
@@ -3049,6 +3123,7 @@ class MarketService:
                 fixed_window=True,
                 captured_rows=captured_klines.get(iid) if captured_klines is not None else None,
                 rolling=rolling,
+                columns_cache=columns_cache,
             )
             if volume["times_us"]:
                 result["stat_volume_series"][iid] = volume

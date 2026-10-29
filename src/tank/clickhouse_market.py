@@ -156,6 +156,10 @@ class ClickHouse:
             return await asyncio.to_thread(_json_lines, body)
         return _json_lines(body)
 
+    async def columns(self, query, params=None):
+        body = await self._post(query + " FORMAT JSONColumns", params)
+        return await asyncio.to_thread(json.loads, body)
+
     async def execute(self, query, params=None):
         await self._post(query, params)
 
@@ -542,6 +546,46 @@ async def projection_page(
         return page
 
     return await asyncio.to_thread(convert) if len(rows) > 1000 else convert()
+
+
+async def dense_projection_page(
+    ch, *, instrument_id, field, start, end, assembled_at, after=None, limit=200000, raw_cache=None
+):
+    if field not in {"c", "volume_native"}:
+        raise ValueError("Unsupported dense numeric projection")
+    q = Query()
+    _ids(q, [instrument_id])
+    q.where("open_time IS NOT NULL")
+    q.where(f"open_time >= {q.param(start, DT)}")
+    q.where(f"open_time < {q.param(end, DT)}")
+    if assembled_at is not None:
+        q.where(f"(recorded_at IS NULL OR recorded_at <= {q.param(assembled_at, DT)})")
+    if after is not None:
+        _after(q, ("open_time", after[0], DT), ("storage_key", str(after[1]), "String"))
+    key = (ch, ch.database, instrument_id, start, end, assembled_at, after, limit)
+    raw = raw_cache.get(key) if raw_cache is not None else None
+    if raw is None:
+        raw = await ch.columns(
+            "SELECT toUnixTimestamp64Micro(open_time) AS open_us, open_time_prec, "
+            "CAST(isNull(recorded_at), 'Bool') AS recorded_unknown, complete, interval_s, "
+            "c, volume_native, storage_key AS _cursor_key "
+            f"FROM {_table('mkt.klines_1m')} WHERE {q.predicate()} "
+            f"ORDER BY open_time, storage_key LIMIT {int(limit)}",
+            q.params,
+        )
+        if raw_cache is not None:
+            raw_cache[key] = raw
+    names = {"open_us", "open_time_prec", "recorded_unknown", "complete", "interval_s", "c", "volume_native", "_cursor_key"}
+    if raw and (raw.keys() != names or len({len(value) for value in raw.values()}) != 1):
+        raise ValueError("Invalid dense projection columns")
+
+    def convert():
+        result = {name: raw.get(name, []) for name in names - {"c", "volume_native"}}
+        result["open_us"] = [int(value) for value in result["open_us"]]
+        result["value"] = [None if value is None else str(Decimal(value)) for value in raw.get(field, [])]
+        return result
+
+    return await asyncio.to_thread(convert)
 
 
 CLOSE_OK = "isFinite(toFloat64OrNull(c)) AND toFloat64OrNull(c) > 0"

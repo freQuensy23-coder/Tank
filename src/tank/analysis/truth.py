@@ -17,11 +17,13 @@ from bisect import bisect_left, bisect_right
 from collections import defaultdict
 from contextvars import ContextVar
 from copy import deepcopy
-from datetime import timedelta
-from decimal import Decimal, getcontext, localcontext
+from datetime import datetime, timedelta
+from decimal import Decimal, DecimalException, Inexact, Rounded, getcontext, localcontext
 from functools import wraps
 from math import log
 from statistics import mean, median, stdev
+
+import numpy as np
 
 from tank.market.capture import event_anchor
 from tank.time_precision import chosen_boundary, offset_schedule, propagate_timestamp
@@ -836,6 +838,101 @@ def _oi_split(rows):
     return hit[1:]
 
 
+def _history_decimal_arrays(columns, *, summands=1):
+    context = getcontext()
+    if (
+        context.prec < 128
+        or context.traps[Inexact]
+        or context.traps[Rounded]
+        or context.clamp
+        or context.Emin > -512
+        or context.Emax < 512
+    ):
+        return None
+    arrays = []
+    low, high = 0, 0
+    with localcontext(context):
+        try:
+            for column in columns:
+                values = []
+                for value in column:
+                    if value is None:
+                        values.append(None)
+                        continue
+                    if type(value) not in (str, Decimal, int, float):
+                        return None
+                    value = value if type(value) is Decimal else Decimal(str(value))
+                    if not value.is_finite() or value < 0:
+                        return None
+                    parts = value.as_tuple()
+                    exponent = int(parts.exponent)
+                    if len(parts.digits) > 48 or not -100 <= exponent <= 100:
+                        return None
+                    if 2 * (value.adjusted() - exponent + 1) + 32 > context.prec:
+                        return None
+                    low = min(low, exponent)
+                    high = max(high, value.adjusted())
+                    values.append(value)
+                arrays.append(np.asarray(values, dtype=object))
+        except (DecimalException, ValueError, OverflowError):
+            return None
+    if high - low + len(str(max(summands, 1))) + 1 > context.prec:
+        return None
+    return arrays
+
+
+def _history_time_array(times, window):
+    if not times or type(window) is not timedelta or any(type(t) is not datetime for t in times):
+        return None
+    try:
+        origin, last = min(times), max(times)
+        _ = origin - window, last - window
+        offsets = [t - origin for t in times]
+        values = np.asarray(
+            [d.days * 86400000000 + d.seconds * 1000000 + d.microseconds for d in offsets],
+            dtype=np.int64,
+        )
+        width = window.days * 86400000000 + window.seconds * 1000000 + window.microseconds
+        if int(values.max()) + abs(width) > 2**52:
+            return None
+    except (TypeError, ValueError, OverflowError):
+        return None
+    return values, width, origin
+
+
+def _history_nearest(times, targets, tolerance):
+    right = np.searchsorted(times, targets, side="left")
+    left = np.maximum(right - 1, 0)
+    right = np.minimum(right, len(times) - 1)
+    left_distance = np.abs(times[left] - targets)
+    right_distance = np.abs(times[right] - targets)
+    chosen = np.where(left_distance <= right_distance, left, right)
+    valid = np.divide(np.minimum(left_distance, right_distance), 1000000) <= tolerance
+    return chosen, valid
+
+
+def _oi_history_returns(times, native, usd, window, tolerance):
+    prepared = _history_decimal_arrays((native, usd))
+    temporal = _history_time_array(times, window)
+    if prepared is None or temporal is None or len(native) != len(times) or len(usd) != len(times):
+        return None
+    offsets, width, _ = temporal
+    order = np.argsort(offsets, kind="stable")
+    ordered = offsets[order]
+    if np.any(ordered[1:] == ordered[:-1]):
+        return None
+    old, paired = _history_nearest(ordered, offsets - width, tolerance)
+    old = order[old]
+    returns, ends = [], []
+    for values in prepared:
+        valid = paired & np.not_equal(values, None) & np.not_equal(values[old], None)
+        valid &= np.not_equal(values[old], 0)
+        result = np.subtract(np.divide(values[valid], values[old[valid]]), 1)
+        returns.append(np.asarray(result, dtype=np.float64).tolist())
+        ends.append([times[i] for i in np.flatnonzero(valid)])
+    return returns[0], returns[1], ends[0], ends[1]
+
+
 def _oi_stats(rows, start, end, *, history_identity=None, venue_history=None):
     rows, _, ordered, ordered_times = _oi_split(rows)
     tolerance = float(parameter("oi_sync_tolerance_s", 60))
@@ -922,25 +1019,35 @@ def _oi_stats(rows, start, end, *, history_identity=None, venue_history=None):
             and (max(bytime) - min(bytime)).total_seconds() >= float(parameter("history_min_days", 7)) * 86400
         ):
             native_ends, usd_ends = [], []
-            for t, r in bytime.items():
-                target = t - window
-                i = bisect_left(history_times, target)
-                near = [
-                    (abs((history_times[j] - target).total_seconds()), j)
-                    for j in (i - 1, i)
-                    if 0 <= j < len(history_times)
-                    and abs((history_times[j] - target).total_seconds()) <= pair_tolerance
-                ]
-                old = bytime[history_times[min(near)[1]]] if near else None
-                if old:
-                    nn, oo = decimal(r.get("oi_native")), decimal(old.get("oi_native"))
-                    uu, ou = _stored_usd(r), _stored_usd(old)
-                    if nn is not None and oo:
-                        hn.append(float(nn / oo - 1))
-                        native_ends.append(t)
-                    if uu is not None and ou:
-                        hu.append(float(uu / ou - 1))
-                        usd_ends.append(t)
+            vector = _oi_history_returns(
+                list(bytime),
+                [r.get("oi_native") for r in bytime.values()],
+                [None if r.get("oi_usd_source") else r.get("oi_usd") for r in bytime.values()],
+                window,
+                pair_tolerance,
+            )
+            if vector is not None:
+                hn, hu, native_ends, usd_ends = vector
+            else:
+                for t, r in bytime.items():
+                    target = t - window
+                    i = bisect_left(history_times, target)
+                    near = [
+                        (abs((history_times[j] - target).total_seconds()), j)
+                        for j in (i - 1, i)
+                        if 0 <= j < len(history_times)
+                        and abs((history_times[j] - target).total_seconds()) <= pair_tolerance
+                    ]
+                    old = bytime[history_times[min(near)[1]]] if near else None
+                    if old:
+                        nn, oo = decimal(r.get("oi_native")), decimal(old.get("oi_native"))
+                        uu, ou = _stored_usd(r), _stored_usd(old)
+                        if nn is not None and oo:
+                            hn.append(float(nn / oo - 1))
+                            native_ends.append(t)
+                        if uu is not None and ou:
+                            hu.append(float(uu / ou - 1))
+                            usd_ends.append(t)
 
             minimum = float(parameter("history_min_days", 7)) * 86400
             if not usd_ends or (max(usd_ends) - min(usd_ends) + window).total_seconds() < minimum:
@@ -1038,6 +1145,71 @@ def _history_slice(times, rows, start):
     return times[lo:hi], rows[lo:hi]
 
 
+def _composite_history_vector(venue_history, window):
+    columns = [
+        column
+        for _, rows in venue_history
+        for column in (
+            [r.get("oi_native") for r in rows],
+            [None if r.get("oi_usd_source") else r.get("oi_usd") for r in rows],
+        )
+    ]
+    prepared = _history_decimal_arrays(columns, summands=len(venue_history))
+    if prepared is None:
+        return None
+    if any(type(t) is not datetime for times, _ in venue_history for t in times):
+        return None
+    try:
+        history = sorted({t for times, _ in venue_history for t in times})
+    except TypeError:
+        return None
+    temporal = _history_time_array(history, window)
+    if temporal is None:
+        return None
+    offsets, width, origin = temporal
+    minimum = float(parameter("history_min_days", 7)) * 86400
+    if (history[-1] - history[0]).total_seconds() < minimum:
+        return [], []
+    totals = [np.full(len(history), Decimal(0), dtype=object) for _ in range(4)]
+    covered = [np.zeros(len(history), dtype=bool) for _ in range(2)]
+    for venue, (times, rows) in enumerate(venue_history):
+        if not times:
+            continue
+        if len(times) != len(rows) or any(type(t) is not datetime for t in times):
+            return None
+        delta = [t - origin for t in times]
+        at = np.asarray(
+            [d.days * 86400000000 + d.seconds * 1000000 + d.microseconds for d in delta],
+            dtype=np.int64,
+        )
+        if np.any(at[1:] < at[:-1]):
+            return None
+        gaps = np.divide(np.diff(at), 1000000)
+        gaps = np.sort(gaps[gaps > 0])
+        tolerance = max(float(parameter("oi_sync_tolerance_s", 60)), gaps[len(gaps) // 2] / 2 if len(gaps) else 0)
+        old, old_valid = _history_nearest(at, offsets - width, tolerance)
+        new, new_valid = _history_nearest(at, offsets, tolerance)
+        paired = old_valid & new_valid & (old != new)
+        for measure in range(2):
+            values = prepared[2 * venue + measure]
+            valid = paired & np.not_equal(values[new], None) & np.not_equal(values[old], None)
+            valid &= np.not_equal(values[old], 0)
+            covered[measure] |= valid
+            for endpoint, indices in enumerate((old, new)):
+                total = totals[2 * measure + endpoint]
+                total[valid] = np.add(total[valid], values[indices[valid]])
+    result = []
+    for measure, valid in enumerate(covered):
+        indices = np.flatnonzero(valid)
+        changes = np.subtract(np.divide(totals[2 * measure + 1][valid], totals[2 * measure][valid]), 1)
+        values = np.asarray(changes, dtype=np.float64).tolist()
+        if not len(indices) or (history[indices[-1]] - history[indices[0]] + window).total_seconds() < minimum:
+            result.append([])
+        else:
+            result.append(values)
+    return result[0], result[1]
+
+
 def _composite_history(venue_history, window):
     """Past same-length changes of a synchronized composite (03 §0, §5.4).
 
@@ -1050,6 +1222,9 @@ def _composite_history(venue_history, window):
     composite stayed under the 7 days §0 needs. A venue joining or leaving the cohort is never
     counted as an OI change.
     """
+    vector = _composite_history_vector(venue_history, window)
+    if vector is not None:
+        return vector
     series = []
     for times, rows in venue_history:
         gaps = sorted((b - a).total_seconds() for a, b in zip(times, times[1:], strict=False) if b > a)
@@ -1443,6 +1618,65 @@ def _price_groups(snapshot, token=None, *, exact=False, reference_only=False):
     return groups
 
 
+def _relative_history_arrays(times, prices, btc, benchmark, coefficient):
+    temporal = _history_time_array(times, timedelta(0))
+    if temporal is None or type(coefficient) not in (int, float):
+        return None
+    if not np.isfinite(coefficient) or abs(coefficient) > 2.0**100:
+        return None
+    if coefficient and abs(coefficient) < 2.0**-100:
+        return None
+    values = [prices[t] for t in times]
+    present = np.asarray([t in btc for t in times], dtype=bool)
+    benchmark_values = [btc[t] if t in btc else 1.0 for t in times] if not benchmark else []
+    if any(type(value) is not float for value in (*values, *benchmark_values)):
+        return None
+    prices_array = np.asarray(values, dtype=np.float64)
+    btc_array = np.asarray(benchmark_values, dtype=np.float64)
+    for column in (prices_array, btc_array):
+        if np.any(~np.isfinite(column)) or np.any(column < 2.0**-400) or np.any(column > 2.0**400):
+            return None
+    offsets, _, origin = temporal
+    if np.any(offsets[1:] <= offsets[:-1]):
+        return None
+    return offsets, origin, prices_array, btc_array, present
+
+
+def _relative_history_returns(prepared, times, start, length, resolution, benchmark, coefficient):
+    if resolution is None:
+        return None
+    offsets, origin, prices, btc, present = prepared
+    try:
+        window = timedelta(seconds=length)
+        _ = times[0] - window, times[-1] - window
+        width = window.days * 86400000000 + window.seconds * 1000000 + window.microseconds
+        if int(offsets[-1]) + abs(width) > 2**52:
+            return None
+        cutoff = start - timedelta(days=lookback_days()) - origin
+        cutoff_us = cutoff.days * 86400000000 + cutoff.seconds * 1000000 + cutoff.microseconds
+        if abs(cutoff_us) > 2**52:
+            return None
+    except (TypeError, ValueError, OverflowError):
+        return None
+    targets = offsets - width
+    old = np.searchsorted(offsets, targets, side="right") - 1
+    valid = old >= 0
+    old = np.maximum(old, 0)
+    lags = np.divide(targets - offsets[old], 1000000)
+    valid &= (offsets[old] >= cutoff_us) & (lags < resolution)
+    if not benchmark:
+        valid &= present & present[old]
+    indices = np.flatnonzero(valid)
+    old = old[valid]
+    result = np.subtract(np.divide(prices[valid], prices[old]), 1)
+    if not benchmark:
+        benchmark_return = np.subtract(np.divide(btc[valid], btc[old]), 1)
+        adjustment = np.multiply(coefficient, benchmark_return)
+        result = np.subtract(result, adjustment)
+    durations = np.divide(offsets[valid] - offsets[old], 1000000)
+    return result.tolist(), durations.tolist(), lags[valid].tolist(), [times[i] for i in indices]
+
+
 def relative_truth(snapshot, start, end, *, include_outcome=True):
     groups = _prices(snapshot)
     exact_groups = _prices(snapshot, exact=True, reference_only=True)
@@ -1598,6 +1832,7 @@ def relative_truth(snapshot, start, end, *, include_outcome=True):
     ]
     history_resolution_s = int(median(deltas)) if deltas else None
     history_diagnostics = {}
+    vector_history = _relative_history_arrays(historical_times, prices, btc, benchmark, bb)
 
     def hist_values(length):
         if (
@@ -1611,30 +1846,40 @@ def relative_truth(snapshot, start, end, *, include_outcome=True):
         stalenesses = []
         ends = []
 
-        for t in historical_times:
-            target = t - timedelta(seconds=length)
-            i = bisect_left(historical_times, target)
-            if i == len(historical_times) or historical_times[i] != target:
-                i -= 1
-            if i < 0:
-                continue
-            a = historical_times[i]
-            lag = (target - a).total_seconds()
-            if (
-                a < start - timedelta(days=lookback_days())
-                or lag >= history_resolution_s
-                or not benchmark
-                and (t not in btc or a not in btc)
-            ):
-                continue
-            out.append(
-                prices[t] / prices[a] - 1
-                if benchmark
-                else prices[t] / prices[a] - 1 - bb * (btc[t] / btc[a] - 1)
+        vector = (
+            _relative_history_returns(
+                vector_history, historical_times, start, length, history_resolution_s, benchmark, bb
             )
-            durations.append((t - a).total_seconds())
-            stalenesses.append(lag)
-            ends.append(t)
+            if vector_history is not None
+            else None
+        )
+        if vector is not None:
+            out, durations, stalenesses, ends = vector
+        else:
+            for t in historical_times:
+                target = t - timedelta(seconds=length)
+                i = bisect_left(historical_times, target)
+                if i == len(historical_times) or historical_times[i] != target:
+                    i -= 1
+                if i < 0:
+                    continue
+                a = historical_times[i]
+                lag = (target - a).total_seconds()
+                if (
+                    a < start - timedelta(days=lookback_days())
+                    or lag >= history_resolution_s
+                    or not benchmark
+                    and (t not in btc or a not in btc)
+                ):
+                    continue
+                out.append(
+                    prices[t] / prices[a] - 1
+                    if benchmark
+                    else prices[t] / prices[a] - 1 - bb * (btc[t] / btc[a] - 1)
+                )
+                durations.append((t - a).total_seconds())
+                stalenesses.append(lag)
+                ends.append(t)
         history_diagnostics[length] = dict(
             target_window_duration_s=length,
             observed_duration_bounds_s=[min(durations), max(durations)] if durations else None,
@@ -1788,16 +2033,22 @@ def relative_truth(snapshot, start, end, *, include_outcome=True):
     def btc_baseline():
         bh = []
         rvhist = []
-        for t in sorted(btc_hourly):
+        hourly_order = list(btc_hourly)
+        hourly_positions = {t: i for i, t in enumerate(hourly_order)}
+        ordered_times = sorted(btc_hourly)
+        for t in ordered_times:
             if t >= start or t < start - timedelta(days=lookback_days()):
                 continue
             a = t - timedelta(days=1)
             if a in btc:
                 bh.append(btc[t] / btc[a] - 1)
+            lo = bisect_right(ordered_times, a)
+            hi = bisect_right(ordered_times, t)
+            positions = sorted(hourly_positions[x] for x in ordered_times[lo:hi])
             lr = [
                 log(btc_hourly[x] / btc_hourly[x - timedelta(hours=1)])
-                for x in btc_hourly
-                if a < x <= t and x - timedelta(hours=1) in btc_hourly
+                for position in positions
+                if (x := hourly_order[position]) - timedelta(hours=1) in btc_hourly
             ]
             if len(lr) == 24:
                 rvhist.append(stdev(lr))
