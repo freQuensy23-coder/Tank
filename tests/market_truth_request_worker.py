@@ -450,11 +450,14 @@ async def run(root, directory, fixtures, revision, reader):
             compute_seconds = []
 
             def compute(*args, **kwargs):
+                nonlocal diagnostic_call
+                context = copy_context()
                 started = perf_counter()
                 try:
                     return original_compute(*args, **kwargs)
                 finally:
                     compute_seconds.append(perf_counter() - started)
+                    diagnostic_call = (context, original_compute, args, kwargs)
 
             truth.compute_market_truth = compute
             while command := await reader.readline():

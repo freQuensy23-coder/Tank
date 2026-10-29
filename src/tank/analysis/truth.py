@@ -1120,7 +1120,14 @@ def _oi_stats(rows, start, end, *, history_identity=None, venue_history=None):
     lower = start - timedelta(days=lookback_days())
     lo, hi = bisect_left(ordered_times, lower), bisect_left(ordered_times, start)
     bytime = {_time(rows[i]): rows[i] for i in sorted(index for _, index in ordered[lo:hi])}
-    cohort_key = _oi_cohort_key(rows) if venue_history is None and _BASELINE_CACHE.get() is not None else None
+    cohort_key = None
+    if _BASELINE_CACHE.get() is not None:
+        if venue_history is None:
+            cohort_key = _oi_cohort_key(rows)
+        else:
+            cohort_keys = tuple(_oi_cohort_key(venue_rows) for _, venue_rows in venue_history)
+            if all(key is not None for key in cohort_keys):
+                cohort_key = cohort_keys
     if venue_history is not None:
         venue_history = [_history_slice(times, venue_rows, start) for times, venue_rows in venue_history]
     history_times = sorted(bytime)
@@ -4057,11 +4064,8 @@ def data_confidence(snapshot, spot, derivatives, end):
     for iid, _unused_venue, _unused_market, family, collection in required:
         rows = [
             r
-            for r in snapshot.get(collection, [])
-            if r.get("instrument_id") == iid
-            and _time(r) is not None
-            and _time(r) <= end
-            and _available(r, snapshot)
+            for r in _instrument_rows(snapshot, collection, iid)
+            if _time(r) is not None and _time(r) <= end and _available(r, snapshot)
         ]
         valid = []
         for r in rows:
