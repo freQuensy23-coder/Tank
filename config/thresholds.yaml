@@ -47,6 +47,8 @@ session_keep_days: 7
 agent_completion_reminders_per_session: 20
 update_rate_limit_s: 900
 heartbeat_utc: 08:00
+# Tank Ops AGENT_STALL: a queued agent turn waits this long, or a busy session makes no agent model call for this long (03 §7.6).
+agent_stall_alarm_min: 15
 escalated_interval_s: 15
 escalation_expiry_s: 7200
 hot_token_cap: 15
