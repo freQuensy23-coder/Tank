@@ -216,3 +216,138 @@ async def test_sweep_skips_retained_sessions_until_their_retention_passes():
         stop.clear()
         await service.run(stop)
     assert checked == ["ses_1"]
+
+
+async def seed_item(repo, status, reason=None):
+    await repo.put(
+        "ingest.source_items",
+        "itm_1",
+        {"item_id": "itm_1", "extraction_status": status, "extraction_reason": reason},
+    )
+
+
+@pytest.mark.parametrize(
+    ("status", "reason"),
+    [
+        ("SKIPPED", "NATIVE_TURN_COMPLETED_WITHOUT_OBSERVATION"),
+        ("DONE", None),
+        ("FAILED", "AGENT_INCOMPLETE"),
+    ],
+)
+async def test_eventless_session_whose_item_is_finished_is_archived_after_the_retention(status, reason):
+    repo = MemoryRepository()
+    await seed(repo, age_days=6.9)
+    await seed_item(repo, status, reason)
+    posts, session = await finish(repo)
+    assert posts == [] and session["status"] == "OPEN"
+    assert parse_time(session["archive_after"]) == parse_time(session["last_event_at"]) + timedelta(days=7)
+    session["last_event_at"] = iso(utcnow() - timedelta(days=7, minutes=1))
+    await repo.put("ops.agent_sessions", "ses_1", session)
+    posts, session = await finish(repo)
+    assert posts == [("POST", "/v1/sessions/ses_1/archive")]
+    assert session["status"] == "ENDED" and session["archive_reason"] == "RETENTION"
+
+
+@pytest.mark.parametrize("status", ["PENDING", "RUNNING", None])
+async def test_eventless_session_whose_item_is_unfinished_stays_open(status):
+    repo = MemoryRepository()
+    await seed(repo, age_days=30)
+    await seed_item(repo, status)
+    posts, session = await finish(repo)
+    assert posts == [] and session["status"] == "OPEN" and not session.get("archive_after")
+
+
+async def test_scout_review_session_is_archived_after_the_retention():
+    repo = MemoryRepository()
+    await seed(repo, age_days=30)
+    session = await repo.get("ops.agent_sessions", "ses_1")
+    session.pop("item_id")
+    session["proposal_id"] = "prp_1"
+    session["message_log"][0]["payload"] = {"kind": "SCOUT_REVIEW", "proposal_id": "prp_1"}
+    await repo.put("ops.agent_sessions", "ses_1", session)
+    posts, session = await finish(repo)
+    assert posts == [("POST", "/v1/sessions/ses_1/archive")]
+    assert session["status"] == "ENDED" and session["archive_reason"] == "RETENTION"
+
+
+async def finish_failed(repo, config=None):
+    posts = []
+
+    def handler(request):
+        posts.append((request.method, request.url.path))
+        return httpx.Response(200, json={})
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http:
+        service = SessionService(repo, config or settings(), None, http=http)
+        finished = await service.finish_failed("ses_1")
+    return finished, posts, await repo.get("ops.agent_sessions", "ses_1")
+
+
+async def fail(repo):
+    session = await repo.get("ops.agent_sessions", "ses_1")
+    session.update(status="FAILED", terminal_failure={"event_type": "session.error"})
+    await repo.put("ops.agent_sessions", "ses_1", session)
+
+
+async def test_failed_session_is_archived_in_openma_after_the_retention_and_stays_failed():
+    repo = MemoryRepository()
+    await seed(repo, age_days=6.9, event="TRACKED")
+    await fail(repo)
+    finished, posts, session = await finish_failed(repo)
+    assert finished and posts == [] and session["status"] == "FAILED"
+    assert parse_time(session["archive_after"]) == parse_time(session["last_event_at"]) + timedelta(days=7)
+    assert closed_reason(session) is None
+    session["last_event_at"] = iso(utcnow() - timedelta(days=7, minutes=1))
+    await repo.put("ops.agent_sessions", "ses_1", session)
+    finished, posts, session = await finish_failed(repo)
+    assert posts == [("POST", "/v1/sessions/ses_1/archive")]
+    assert session["status"] == "FAILED" and session["archived_at"]
+    assert session["archive_reason"] == "RETENTION" and session["terminal_failure"]
+    assert closed_reason(session) == (
+        "ARCHIVED",
+        "Продолжить нельзя: сессия агента по этому сообщению закрыта после 7 дней без сообщений.",
+    )
+    finished, posts, _ = await finish_failed(repo)
+    assert not finished and posts == []
+
+
+async def test_failed_session_with_a_delivered_card_is_kept_for_follow_ups():
+    repo = MemoryRepository()
+    await seed(repo, age_days=30, event="TRACKED")
+    await fail(repo)
+    await repo.put("out.alerts", "a:1", {"alert_id": "a", "version": 1, "event_id": "evt_1"}, immutable=True)
+    await repo.put(
+        "out.deliveries",
+        "d1",
+        {"alert_id": "a", "version": 1, "channel": "telegram:alerts", "status": "SENT", "attempt": 1},
+        immutable=True,
+    )
+    _, posts, session = await finish_failed(repo)
+    assert posts == [] and session["status"] == "FAILED" and session["followups_only"]
+    assert not session.get("archived_at")
+
+
+async def test_sweep_archives_only_failed_sessions_that_are_not_kept_or_archived():
+    repo = MemoryRepository()
+    rows = {
+        "due": {},
+        "kept": {"archive_after": iso(utcnow() + timedelta(days=1))},
+        "followups": {"followups_only": True},
+        "archived": {"archived_at": iso(utcnow())},
+    }
+    for sid, extra in rows.items():
+        await repo.put("ops.agent_sessions", sid, {"session_id": sid, "status": "FAILED", **extra})
+    await repo.put(
+        "ops.agent_sessions", "open", {"session_id": "open", "status": "OPEN", "runtime_status": "IDLE"}
+    )
+    checked = []
+    async with httpx.AsyncClient() as http:
+        service = SessionService(repo, settings(), None, http=http)
+
+        async def record(sid):
+            checked.append(sid)
+            return True
+
+        service.finish_failed = record
+        await service.sweep_failed()
+    assert checked == ["due"]

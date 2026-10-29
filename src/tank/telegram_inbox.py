@@ -88,7 +88,7 @@ def closed_reason(session):
     remote = session.get("remote_state") or {}
     if session.get("termination_receipt") or remote.get("status") == "terminated":
         return "TERMINATED", TERMINATED_TEXT
-    if session.get("status") != "ENDED" and not remote.get("archived_at"):
+    if session.get("status") != "ENDED" and not session.get("archived_at") and not remote.get("archived_at"):
         return None
     if session.get("archive_reason") == "RETENTION" and session.get("archive_keep_days"):
         return "ARCHIVED", KEPT_ARCHIVED_TEXT.format(days=days_text(session["archive_keep_days"]))
