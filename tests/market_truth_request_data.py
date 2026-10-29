@@ -81,7 +81,8 @@ async def seed_data(repo, settings, directory, manifest):
                 await ch.insert("mkt.request_wire_probe", [chm._row(table, decoded, first["storage_key"], 0)])
                 typed = await ch.rows("SELECT * FROM mkt.request_wire_probe FINAL")
                 assert chm._records(table, typed) == chm._records(table, selected)
-                assert chm._record(table, first) == decoded
+                expected = chm._row(table, first, first["storage_key"], 0)
+                assert chm._record(table, expected) == decoded
             finally:
                 await ch.execute("DROP TABLE mkt.request_wire_probe")
         else:

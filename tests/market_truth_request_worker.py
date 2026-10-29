@@ -291,10 +291,11 @@ async def run(root, directory, fixtures, revision, reader):
                 emit({"kind": "sample", "state": state, "wall_seconds": wall, "process_cpu_seconds": used, "digests": digests, "baseline_entries_before": baseline_before, "inclusive_nonadditive_stage_seconds": stage_seconds, "modules": provenance(root)})
     finally:
         server.close()
-        await server.wait_closed()
-        for task in tuple(connections):
+        pending_connections = tuple(connections)
+        for task in pending_connections:
             task.cancel()
-        await asyncio.gather(*tuple(connections), return_exceptions=True)
+        await asyncio.gather(*pending_connections, return_exceptions=True)
+        await server.wait_closed()
         await repo.clickhouse.close()
         await repo.close()
     emit({"kind": "stopped"})
