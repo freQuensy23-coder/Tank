@@ -6,8 +6,8 @@ Recovered original request: «Жду мердж квеста с фиксом э�
 
 - Reuse application logging with one small nested-stage helper. Emit JSON start/terminal records with trace/span/parent IDs, monotonic inclusive wall seconds, synchronous calling-thread CPU seconds, and success/error/cancellation. Async wall intervals do not claim CPU ownership. Nested/parallel intervals must not be added together.
 - Follow the existing tool, durable job, readiness/repair, snapshot/read/conversion, compute domains/windows, persistence, projection/audit and HTTP acceptance boundaries. Link caller traces to reused job IDs without changing durable payloads. Attach each ClickHouse HTTP interval's query ID to the actual server request; never log SQL, parameters, payloads or exception messages.
-- Hoist only invariant lookback configuration and timedelta construction out of relative, OI and native-volume history loops. Keep iteration, admitted samples, Decimal arithmetic, cache ownership, cutoffs, locks and persistence unchanged.
-- Add small ordinary pytest regressions; retain existing permanent CI and budgets. No retained-data importer, exporter, baseline package copy or benchmark framework.
+- Hoist invariant history bounds, reuse identical normalized row timestamps, and use a single-finite-Decimal precision path. Preserve admission, arithmetic order, every active-context precision effect, output values, cutoffs, locks and persistence. All general/subclass cases retain their original paths.
+- Keep focused pytest regressions and the unchanged permanent CI budgets. A small source-isolated SQL/HTTP qualification stages audited immutable Git data through native gzip insertion; it has no per-row validation/export framework. One module-scoped ABBA setup feeds six complete cold/warm result/projection/snapshot comparisons, with independent databases and exact parity. Native day-count caches are explicitly warm; dense/analysis caches start cold.
 
 ## Acceptance and limits
 

@@ -69,6 +69,12 @@ def decimal(v):
 
 
 def exact_context(*values):
+    if len(values) == 1 and type(values[0]) is Decimal:
+        value = values[0]
+        if value.is_finite():
+            context = getcontext()
+            context.prec = max(context.prec, 2 * len(value.as_tuple().digits) + 32)
+        return
     values = [v for v in values if isinstance(v, Decimal) and v.is_finite()]
     if values:
         span = max(v.adjusted() for v in values) - min(v.as_tuple().exponent for v in values) + 1

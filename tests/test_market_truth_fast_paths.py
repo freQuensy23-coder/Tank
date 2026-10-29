@@ -1,6 +1,6 @@
 import builtins
 from datetime import UTC, datetime
-from decimal import Decimal, Inexact, ROUND_DOWN, ROUND_HALF_EVEN, Rounded, localcontext
+from decimal import ROUND_DOWN, ROUND_HALF_EVEN, Decimal, Inexact, Rounded, localcontext
 from types import SimpleNamespace
 
 import pytest
@@ -35,7 +35,8 @@ def test_single_decimal_keeps_context_sequence_without_redundant_reductions(
         before = context.copy()
         expected_precision = precision
         for value in values:
-            expected_precision = max(expected_precision, 2 * len(value.as_tuple().digits) + 32)
+            span = value.adjusted() - int(value.as_tuple().exponent) + 1
+            expected_precision = max(expected_precision, 2 * span + 32)
             assert truth.decimal(value) is value
             assert context.prec == expected_precision
             assert context.rounding == before.rounding

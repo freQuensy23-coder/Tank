@@ -544,11 +544,20 @@ async def projection_page(
         page = []
         for row in rows:
             result = {}
+            timestamps = {}
             for requested, field in selected.items():
                 value = row[requested]
                 kind = columns.get(field)
                 if value is not None and kind == "timestamptz":
-                    value = iso(parse_time(value))
+                    if type(value) is str:
+                        normalized = timestamps.get(field)
+                        if normalized is None or normalized[0] != value:
+                            parsed = parse_time(value)
+                            normalized = (value, parsed, parsed.isoformat().replace("+00:00", "Z"))
+                            timestamps[field] = normalized
+                        value = normalized[2]
+                    else:
+                        value = iso(parse_time(value))
                 elif value is not None and kind == "jsonb":
                     value = json.loads(value)
                 elif value is not None and kind == "numeric":
@@ -556,7 +565,14 @@ async def projection_page(
                 elif kind == "text[]":
                     value = list(value) or None
                 result[requested] = value
-            page.append((parse_time(row["_cursor_time"]), row["_cursor_key"], result))
+            cursor = row["_cursor_time"]
+            normalized = timestamps.get(time_field)
+            cursor = (
+                normalized[1]
+                if type(cursor) is str and normalized is not None and normalized[0] == cursor
+                else parse_time(cursor)
+            )
+            page.append((cursor, row["_cursor_key"], result))
         return page
 
     return await asyncio.to_thread(convert) if len(rows) > 1000 else convert()

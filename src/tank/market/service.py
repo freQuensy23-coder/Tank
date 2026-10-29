@@ -1319,7 +1319,10 @@ class MarketService:
             epoch = datetime(1970, 1, 1, tzinfo=UTC)
 
             def microseconds(value):
-                delta = parse_time(value) - epoch
+                normalized = (
+                    value if type(value) is datetime and value.tzinfo is UTC else parse_time(value)
+                )
+                delta = normalized - epoch
                 return (delta.days * 86400 + delta.seconds) * 1000000 + delta.microseconds
 
             unknown_availability = False
