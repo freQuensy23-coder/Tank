@@ -17,9 +17,7 @@ ROOT = Path(__file__).parents[1]
 
 def archive(revision, destination, paths):
     destination.mkdir()
-    with subprocess.Popen(
-        ["git", "archive", revision, *paths], cwd=ROOT, stdout=subprocess.PIPE
-    ) as process:
+    with subprocess.Popen(["git", "archive", revision, *paths], cwd=ROOT, stdout=subprocess.PIPE) as process:
         with tarfile.open(fileobj=process.stdout, mode="r|") as source:
             source.extractall(destination, filter="data")
         assert process.wait() == 0
@@ -74,34 +72,49 @@ async def test_full_market_truth_original_candidate_same_worker(tmp_path, pytest
                 archive(revision, root, ["src", "config", "uv.lock", "pyproject.toml"])
                 if label == "candidate":
                     for filename in ("uv.lock", "src/tank/market_schema.py", "src/tank/storage.py"):
-                        assert (root / filename).read_bytes() == (tmp_path / "original" / filename).read_bytes()
+                        assert (root / filename).read_bytes() == (
+                            tmp_path / "original" / filename
+                        ).read_bytes()
                 repo = await resources.enter_async_context(
                     template.repository(os.environ["TANK_TEST_DATABASE_URL"])
                 )
                 repositories.append(repo)
                 directory = root / "request-output"
                 directory.mkdir()
-                environment = dict(os.environ, PYTHONPATH=os.pathsep.join((str(root / "src"), str(ROOT / "tests"))))
+                environment = dict(
+                    os.environ, PYTHONPATH=os.pathsep.join((str(root / "src"), str(ROOT / "tests")))
+                )
                 process = await asyncio.create_subprocess_exec(
                     sys.executable,
                     str(ROOT / "tests/market_truth_request_worker.py"),
-                    str(root), str(directory), str(fixtures), revision,
-                    cwd=root, env=environment,
-                    stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE,
+                    str(root),
+                    str(directory),
+                    str(fixtures),
+                    revision,
+                    cwd=root,
+                    env=environment,
+                    stdin=asyncio.subprocess.PIPE,
+                    stdout=asyncio.subprocess.PIPE,
                     stderr=asyncio.subprocess.DEVNULL,
                 )
                 workers[label] = process
                 resources.push_async_callback(stop, process)
-                receipts[label] = await send(process, {
-                    "database_url": repo.database_url, "clickhouse_database": repo.clickhouse.database
-                })
+                receipts[label] = await send(
+                    process,
+                    {"database_url": repo.database_url, "clickhouse_database": repo.clickhouse.database},
+                )
                 assert receipts[label]["kind"] == "ready"
                 record_property(label + "_setup", json.dumps(receipts[label], sort_keys=True))
             assert repositories[0].database_url != repositories[1].database_url
             assert repositories[0].clickhouse.database != repositories[1].clickhouse.database
             samples = {}
             try:
-                for label, state in (("original", "cold"), ("candidate", "cold"), ("candidate", "warm"), ("original", "warm")):
+                for label, state in (
+                    ("original", "cold"),
+                    ("candidate", "cold"),
+                    ("candidate", "warm"),
+                    ("original", "warm"),
+                ):
                     result = await send(workers[label], {"sample": state})
                     samples[label, state] = result
                     record_property(label + "_" + state, json.dumps(result, sort_keys=True))
@@ -115,11 +128,20 @@ async def test_full_market_truth_original_candidate_same_worker(tmp_path, pytest
                 record_property("qualification", manifest["qualification"])
                 record_property("dataset_revision", DATA_REVISION)
                 record_property("limitations", json.dumps(manifest["limitations"]))
-                record_property("parity", "Full result, model projection, snapshot and native readback equal; ABBA single samples, descriptive only")
-                record_property("candidate_minus_original_seconds", json.dumps({
-                    state: samples["candidate", state]["wall_seconds"] - samples["original", state]["wall_seconds"]
-                    for state in ("cold", "warm")
-                }))
+                record_property(
+                    "parity",
+                    "Full result, model projection, snapshot and native readback equal; ABBA single samples, descriptive only",
+                )
+                record_property(
+                    "candidate_minus_original_seconds",
+                    json.dumps(
+                        {
+                            state: samples["candidate", state]["wall_seconds"]
+                            - samples["original", state]["wall_seconds"]
+                            for state in ("cold", "warm")
+                        }
+                    ),
+                )
             finally:
                 for process in workers.values():
                     if process.returncode is None:
@@ -134,11 +156,20 @@ async def test_full_market_truth_original_candidate_same_worker(tmp_path, pytest
     async with await AsyncConnection.connect(os.environ["TANK_TEST_DATABASE_URL"], autocommit=True) as admin:
         for repo in repositories:
             name = conninfo_to_dict(repo.database_url)["dbname"]
-            assert await (await admin.execute("SELECT 1 FROM pg_database WHERE datname=%s", (name,))).fetchone() is None
+            assert (
+                await (await admin.execute("SELECT 1 FROM pg_database WHERE datname=%s", (name,))).fetchone()
+                is None
+            )
     check = ClickHouse(os.environ["CLICKHOUSE_TEST_URL"])
     try:
         for repo in repositories:
-            assert await check.rows("SELECT name FROM system.databases WHERE name={name:String}", {"name": (repo.clickhouse.database, "String")}) == []
+            assert (
+                await check.rows(
+                    "SELECT name FROM system.databases WHERE name={name:String}",
+                    {"name": (repo.clickhouse.database, "String")},
+                )
+                == []
+            )
     finally:
         await check.close()
     record_property("source_heads", json.dumps({"original": ORIGINAL, "candidate": candidate}))

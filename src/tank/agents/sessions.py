@@ -1599,7 +1599,11 @@ class SessionService:
                 else:
                     with market_stage("tool.invoke", call_id=call_id):
                         slow_result = await self.invoke_tool(
-                            session, event["name"], event["input"], call_id, resolved_arguments=resolved_arguments
+                            session,
+                            event["name"],
+                            event["input"],
+                            call_id,
+                            resolved_arguments=resolved_arguments,
                         )
             except Exception as error:
                 slow_error, slow_error_status = self.tool_failure(error)

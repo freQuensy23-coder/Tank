@@ -2288,7 +2288,9 @@ class EventToolService:
                             "Market truth job is terminally failed or expired; inspect its durable job record"
                         )
                     if asyncio.get_running_loop().time() >= deadline:
-                        raise TimeoutError("Market truth jobs are pending; retry this call with the same call_id")
+                        raise TimeoutError(
+                            "Market truth jobs are pending; retry this call with the same call_id"
+                        )
                     await asyncio.sleep(0.25)
         if maps:
             mapping = max(maps, key=lambda r: int(r["map_version"]))

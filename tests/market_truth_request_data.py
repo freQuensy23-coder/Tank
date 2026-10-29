@@ -44,7 +44,10 @@ async def seed_data(repo, settings, directory, manifest):
 
     native = {}
     for filename, entry in manifest["source_config_git_objects"].items():
-        assert hashlib.sha256((settings.config_dir / Path(filename).name).read_bytes()).hexdigest() == entry["sha256"]
+        assert (
+            hashlib.sha256((settings.config_dir / Path(filename).name).read_bytes()).hexdigest()
+            == entry["sha256"]
+        )
     for entry in manifest["files"]:
         table = PUBLIC_TABLES.get(entry["table"], entry["table"])
         path = directory / entry["name"]
@@ -57,8 +60,15 @@ async def seed_data(repo, settings, directory, manifest):
                         yield block
 
             response = await ch.http.post(
-                ch.base, params={"query": f"INSERT INTO {table.replace('mkt.', ch.database + '.')} FORMAT JSONEachRow"},
-                headers={"X-ClickHouse-User": ch.user, "X-ClickHouse-Key": ch.password, "Content-Encoding": "gzip"},
+                ch.base,
+                params={
+                    "query": f"INSERT INTO {table.replace('mkt.', ch.database + '.')} FORMAT JSONEachRow"
+                },
+                headers={
+                    "X-ClickHouse-User": ch.user,
+                    "X-ClickHouse-Key": ch.password,
+                    "Content-Encoding": "gzip",
+                },
                 content=chunks(),
             )
             assert response.status_code == 200, "Native gzip import refused"
@@ -73,7 +83,10 @@ async def seed_data(repo, settings, directory, manifest):
             native[table] = observed[0]
             with gzip.open(path, "rb") as stream:
                 first = json.loads(next(stream))
-            selected = await ch.rows(f"SELECT * FROM {table} FINAL WHERE storage_key={{key:String}}", {"key": (first["storage_key"], "String")})
+            selected = await ch.rows(
+                f"SELECT * FROM {table} FINAL WHERE storage_key={{key:String}}",
+                {"key": (first["storage_key"], "String")},
+            )
             assert len(selected) == 1 and selected[0]["_version"] == 0
             await ch.execute(f"CREATE TABLE mkt.request_wire_probe AS {table}")
             try:
@@ -103,10 +116,14 @@ async def seed_data(repo, settings, directory, manifest):
             target = sql.Identifier(*table.split("."))
             async with repo.transaction():
                 await repo._conn().execute(
-                    sql.SQL("INSERT INTO {} ({}) SELECT {} FROM jsonb_populate_recordset(NULL::{}, %s)").format(target, names, names, target),
+                    sql.SQL(
+                        "INSERT INTO {} ({}) SELECT {} FROM jsonb_populate_recordset(NULL::{}, %s)"
+                    ).format(target, names, names, target),
                     (Jsonb(rows),),
                 )
-                counted = await (await repo._conn().execute(sql.SQL("SELECT count(*) AS n FROM {}").format(target))).fetchone()
+                counted = await (
+                    await repo._conn().execute(sql.SQL("SELECT count(*) AS n FROM {}").format(target))
+                ).fetchone()
             assert counted["n"] == entry["rows"]
             native[table] = {"n": counted["n"]}
     for table in manifest["confirmed_empty_tables"]:

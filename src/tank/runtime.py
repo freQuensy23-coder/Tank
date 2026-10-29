@@ -263,7 +263,9 @@ class Runtime:
                     async with asyncio.timeout(TIMEOUTS[kind]):
                         result = await self.handlers[kind](job["payload"])
                     persistence_timing = (
-                        market_stage("job.persist") if kind == "RUN_MARKET_TRUTH" else contextlib.nullcontext()
+                        market_stage("job.persist")
+                        if kind == "RUN_MARKET_TRUTH"
+                        else contextlib.nullcontext()
                     )
                     with persistence_timing:
                         async with self.repo.transaction():

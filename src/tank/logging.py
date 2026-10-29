@@ -30,7 +30,11 @@ def market_stage(stage, *, trace_id=None, cpu=False, **fields):
     }
     for key in ("window", "job_id", "call_id", "query_id", "rows", "bytes", "queue_s", "queued_wall_s"):
         value = fields.get(key)
-        if isinstance(value, (int, float)) or isinstance(value, str) and re.fullmatch(r"[\w.:-]{1,128}", value):
+        if (
+            isinstance(value, (int, float))
+            or isinstance(value, str)
+            and re.fullmatch(r"[\w.:-]{1,128}", value)
+        ):
             record[key] = value
     logger = logging.getLogger("tank.market_timing")
 

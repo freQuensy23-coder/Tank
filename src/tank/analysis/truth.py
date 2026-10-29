@@ -4929,9 +4929,13 @@ def _compute_market_truth(snapshot, *, config=None):
             window_liquidity["elasticity"].update(window=name, start=iso(wstart), cutoff=iso(end))
             window_liquidity["replenishment"].update(window=name, start=iso(wstart), cutoff=iso(end))
             enrich_evidence(scoped, wstart, end, spots, name, d, relative, window_liquidity)
-            d["support_features"] = support_features(scoped, wstart, end, spots[name], d, window_liquidity, su)
+            d["support_features"] = support_features(
+                scoped, wstart, end, spots[name], d, window_liquidity, su
+            )
             if name == "EVENT" and not av:
-                d = derivatives_truth(dict(scoped, oi=[], funding=[], liquidations=[], klines=[]), wstart, end)
+                d = derivatives_truth(
+                    dict(scoped, oi=[], funding=[], liquidations=[], klines=[]), wstart, end
+                )
                 d.update(window=name, start=None, cutoff=iso(end), reason="INCOMPLETE")
                 window_liquidity = {"window": name, "start": None, "cutoff": iso(end), "reason": "INCOMPLETE"}
                 su = {"window": name, "start": None, "cutoff": iso(end), "reason": "INCOMPLETE"}

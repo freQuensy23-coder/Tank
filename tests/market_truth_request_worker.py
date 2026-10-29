@@ -47,7 +47,12 @@ def provenance(root):
             if not filename:
                 assert set(resolved) == {Path(path).resolve() for path in module.__path__}
             modules[name] = [str(path.relative_to(root)) for path in resolved]
-    assert {"tank.storage", "tank.analysis.truth", "tank.market.service", "tank.agents.sessions"} <= modules.keys()
+    assert {
+        "tank.storage",
+        "tank.analysis.truth",
+        "tank.market.service",
+        "tank.agents.sessions",
+    } <= modules.keys()
     return modules
 
 
@@ -68,45 +73,120 @@ def save(directory, name, value):
 async def seed_session(repo, state, anchor):
     event, sid, ems, item = "event-" + state, "s-" + state, "ems-" + state, "item-" + state
     await repo.put("reg.sources", "S01", {"source_id": "S01", "name": "Public replay"})
-    await repo.put("ingest.source_items", item, {
-        "item_id": item, "source_id": "S01", "feed": "fixture", "external_id": state,
-        "text": "Public retained ENA workload", "source_class": "PRIMARY", "observed_at": anchor,
-        "observed_at_prec": "COLLECTION_ONLY", "published_at": anchor, "published_prec": "EXACT",
-        "raw_ref": "/fixture/raw", "raw_sha256": sha256("public"), "content_hash": sha256("public"),
-        "relevance": {"decision": "ALWAYS"}, "extraction_status": "PENDING",
-    })
-    await repo.put("evt.events", event, {
-        "event_id": event, "statement": "Public retained ENA workload", "theme_tags": [], "entities": [],
-        "tokens_mentioned": [TOKEN], "public_at": anchor, "public_at_prec": "EXACT", "public_at_basis": "TEST",
-        "known_to_us_at": anchor, "known_to_us_at_prec": "EXACT", "event_state": "APPROVED",
-        "state_verified": True, "certainty": "HIGH", "timing_confidence": "HIGH", "freshness": "FRESH",
-        "best_source_class": "PRIMARY", "lifecycle": "MONITORING", "current_ems_id": ems,
-        "config_version": "fixture", "code_version": "fixture",
-    })
-    await repo.put("evt.ems_assessments", ems, {
-        "ems_id": ems, "event_id": event, "version": 1, "cutoff": anchor, "class": "MAJOR", "criterion": "M2",
-        "dims": {}, "gates": [], "structural_gates": [], "class_reasons": ["Seeded replay"],
-        "impact_horizon": {}, "config_version": "fixture", "code_version": "fixture",
-        "model_id": "fixture", "prompt_version": "fixture",
-    })
+    await repo.put(
+        "ingest.source_items",
+        item,
+        {
+            "item_id": item,
+            "source_id": "S01",
+            "feed": "fixture",
+            "external_id": state,
+            "text": "Public retained ENA workload",
+            "source_class": "PRIMARY",
+            "observed_at": anchor,
+            "observed_at_prec": "COLLECTION_ONLY",
+            "published_at": anchor,
+            "published_prec": "EXACT",
+            "raw_ref": "/fixture/raw",
+            "raw_sha256": sha256("public"),
+            "content_hash": sha256("public"),
+            "relevance": {"decision": "ALWAYS"},
+            "extraction_status": "PENDING",
+        },
+    )
+    await repo.put(
+        "evt.events",
+        event,
+        {
+            "event_id": event,
+            "statement": "Public retained ENA workload",
+            "theme_tags": [],
+            "entities": [],
+            "tokens_mentioned": [TOKEN],
+            "public_at": anchor,
+            "public_at_prec": "EXACT",
+            "public_at_basis": "TEST",
+            "known_to_us_at": anchor,
+            "known_to_us_at_prec": "EXACT",
+            "event_state": "APPROVED",
+            "state_verified": True,
+            "certainty": "HIGH",
+            "timing_confidence": "HIGH",
+            "freshness": "FRESH",
+            "best_source_class": "PRIMARY",
+            "lifecycle": "MONITORING",
+            "current_ems_id": ems,
+            "config_version": "fixture",
+            "code_version": "fixture",
+        },
+    )
+    await repo.put(
+        "evt.ems_assessments",
+        ems,
+        {
+            "ems_id": ems,
+            "event_id": event,
+            "version": 1,
+            "cutoff": anchor,
+            "class": "MAJOR",
+            "criterion": "M2",
+            "dims": {},
+            "gates": [],
+            "structural_gates": [],
+            "class_reasons": ["Seeded replay"],
+            "impact_horizon": {},
+            "config_version": "fixture",
+            "code_version": "fixture",
+            "model_id": "fixture",
+            "prompt_version": "fixture",
+        },
+    )
     session = {
-        "session_id": sid, "event_id": event, "status": "OPEN", "runtime_status": "RUNNING",
-        "opened_by_item": item, "opened_at": anchor, "opened_at_prec": "COLLECTION_ONLY",
-        "last_item_at": anchor, "last_item_at_prec": "COLLECTION_ONLY", "last_event_seq": 0,
-        "agent_version": "1", "prompt_version": "a" * 64,
-        "prompt_version_basis": "RESOLVED_SESSION_AGENT_SNAPSHOT", "model_id": "fixture",
-        "active_message_id": "m", "model_context_version": CONTEXT_VERSION,
-        "message_log": [{"message_id": "m", "remote_event_id": "input", "retry_count": 0,
-                         "payload": {"kind": "NEW_ITEM", "item_id": item}}],
+        "session_id": sid,
+        "event_id": event,
+        "status": "OPEN",
+        "runtime_status": "RUNNING",
+        "opened_by_item": item,
+        "opened_at": anchor,
+        "opened_at_prec": "COLLECTION_ONLY",
+        "last_item_at": anchor,
+        "last_item_at_prec": "COLLECTION_ONLY",
+        "last_event_seq": 0,
+        "agent_version": "1",
+        "prompt_version": "a" * 64,
+        "prompt_version_basis": "RESOLVED_SESSION_AGENT_SNAPSHOT",
+        "model_id": "fixture",
+        "active_message_id": "m",
+        "model_context_version": CONTEXT_VERSION,
+        "message_log": [
+            {
+                "message_id": "m",
+                "remote_event_id": "input",
+                "retry_count": 0,
+                "payload": {"kind": "NEW_ITEM", "item_id": item},
+            }
+        ],
     }
     await repo.put("ops.agent_sessions", sid, session)
     backfill = "BF-" + sha256({"event_id": event, "token_id": TOKEN, "anchor": anchor})
-    await repo.put("mkt.backfill_runs", backfill, {
-        "backfill_id": backfill, "event_id": event, "token_id": TOKEN, "anchor": anchor, "anchor_prec": "EXACT",
-        "started_at": anchor, "started_at_prec": "COLLECTION_ONLY", "finished_at": ASSEMBLED,
-        "finished_at_prec": "COLLECTION_ONLY", "status": "COMPLETE",
-        "config_version": "fixture", "code_version": "fixture",
-    })
+    await repo.put(
+        "mkt.backfill_runs",
+        backfill,
+        {
+            "backfill_id": backfill,
+            "event_id": event,
+            "token_id": TOKEN,
+            "anchor": anchor,
+            "anchor_prec": "EXACT",
+            "started_at": anchor,
+            "started_at_prec": "COLLECTION_ONLY",
+            "finished_at": ASSEMBLED,
+            "finished_at_prec": "COLLECTION_ONLY",
+            "status": "COMPLETE",
+            "config_version": "fixture",
+            "code_version": "fixture",
+        },
+    )
     return session
 
 
@@ -118,7 +198,9 @@ async def run(root, directory, fixtures, revision, reader):
     descriptor = json.loads(await reader.readline())
     repo = PostgresRepository(descriptor["database_url"])
     await repo.open()
-    repo.clickhouse = ClickHouse(os.environ["CLICKHOUSE_TEST_URL"], database=descriptor["clickhouse_database"])
+    repo.clickhouse = ClickHouse(
+        os.environ["CLICKHOUSE_TEST_URL"], database=descriptor["clickhouse_database"]
+    )
     errors, received, connections = [], {}, set()
 
     async def receive_http(reader, writer):
@@ -142,7 +224,12 @@ async def run(root, directory, fixtures, revision, reader):
                 assert await repo.get("ana.market_truth", result["mta_id"]) == result
                 received[state] = json.loads(native["content"][0]["text"])
                 response = json.dumps({"data": [{"id": "accepted-" + state}]}).encode()
-                writer.write(b"HTTP/1.1 200 OK\r\nConnection: close\r\nContent-Type: application/json\r\nContent-Length: " + str(len(response)).encode() + b"\r\n\r\n" + response)
+                writer.write(
+                    b"HTTP/1.1 200 OK\r\nConnection: close\r\nContent-Type: application/json\r\nContent-Length: "
+                    + str(len(response)).encode()
+                    + b"\r\n\r\n"
+                    + response
+                )
                 await writer.drain()
         except Exception as error:
             errors.append(type(error).__name__)
@@ -156,9 +243,13 @@ async def run(root, directory, fixtures, revision, reader):
     try:
         async with httpx.AsyncClient(trust_env=False) as http:
             settings = Settings(
-                _env_file=None, config_dir=root / "config", data_dir=directory / "data", replay=True,
+                _env_file=None,
+                config_dir=root / "config",
+                data_dir=directory / "data",
+                replay=True,
                 openma_url=f"http://127.0.0.1:{server.sockets[0].getsockname()[1]}",
-                openma_api_key=None, code_version=revision,
+                openma_api_key=None,
+                code_version=revision,
             )
             manifest = json.loads((fixtures / "manifest.json").read_bytes())
             started = perf_counter()
@@ -173,12 +264,18 @@ async def run(root, directory, fixtures, revision, reader):
             service = truth.MarketTruthService(repo, settings, market)
             tools = EventToolService(repo, settings, service, None)
             sessions = SessionService(repo, settings, tools.dispatch, http=http)
-            seeded = {state: await seed_session(repo, state, manifest["anchor"]) for state in ("cold", "warm")}
+            seeded = {
+                state: await seed_session(repo, state, manifest["anchor"]) for state in ("cold", "warm")
+            }
             runtime = object.__new__(Runtime)
             runtime.repo, runtime.settings, runtime.market, runtime.truth = repo, settings, market, service
             runtime.handlers = {"ESCALATE_TOKENS": runtime.escalate, "RUN_MARKET_TRUTH": runtime.assess}
             snapshots, dense = [], {}
-            original_snapshot, original_heads, original_rows = market.snapshot, market._snapshot_heads, repo.clickhouse.rows
+            original_snapshot, original_heads, original_rows = (
+                market.snapshot,
+                market._snapshot_heads,
+                repo.clickhouse.rows,
+            )
 
             def heads(*args):
                 original_heads(*args)
@@ -201,7 +298,15 @@ async def run(root, directory, fixtures, revision, reader):
                 return value
 
             market.snapshot, market._snapshot_heads, repo.clickhouse.rows = snapshot, heads, rows
-            emit({"kind": "ready", "revision": revision, "modules": provenance(root), "native": native, "setup_seconds": perf_counter() - started})
+            emit(
+                {
+                    "kind": "ready",
+                    "revision": revision,
+                    "modules": provenance(root),
+                    "native": native,
+                    "setup_seconds": perf_counter() - started,
+                }
+            )
             while command := await reader.readline():
                 command = json.loads(command)
                 if command.get("stop"):
@@ -245,10 +350,20 @@ async def run(root, directory, fixtures, revision, reader):
                 caller = worker = None
                 try:
                     async with asyncio.timeout(90):
-                        caller = asyncio.create_task(sessions.tool(seeded[state], {
-                            "name": "get_market_truth", "id": state,
-                            "input": {"token_ids": [TOKEN], "cutoff": manifest["semantic_cutoff"], "cutoff_prec": "BUCKET(1m)"},
-                        }))
+                        caller = asyncio.create_task(
+                            sessions.tool(
+                                seeded[state],
+                                {
+                                    "name": "get_market_truth",
+                                    "id": state,
+                                    "input": {
+                                        "token_ids": [TOKEN],
+                                        "cutoff": manifest["semantic_cutoff"],
+                                        "cutoff_prec": "BUCKET(1m)",
+                                    },
+                                },
+                            )
+                        )
                         await admitted.wait()
                         worker = asyncio.create_task(runtime.worker(stop))
                         await caller
@@ -266,7 +381,13 @@ async def run(root, directory, fixtures, revision, reader):
                 assert not errors, errors
                 if revision != manifest["original_package"]:
                     assert stage_status == {"ok"}
-                    assert {"tool.invoke", "job.persist", "assessment", "sql.typed.convert", "compute.relative"} <= stage_seconds.keys()
+                    assert {
+                        "tool.invoke",
+                        "job.persist",
+                        "assessment",
+                        "sql.typed.convert",
+                        "compute.relative",
+                    } <= stage_seconds.keys()
                 audit = await repo.get("ops.tool_calls", f"s-{state}:{state}")
                 assert audit["returned_at"] and audit["remote_event_id"] == "accepted-" + state
                 result = audit["result"]["market_truth"][0]
@@ -284,25 +405,39 @@ async def run(root, directory, fixtures, revision, reader):
                 value = snapshots[-1]
                 assert len(snapshots) == (1 if state == "cold" else 2)
                 assert value["series_coverage_counts"] == manifest["peer_coverage_counts"]
-                assert {key: len(value[key]) for key in ("flow_bars", "oi", "funding", "tickers", "supply")} == {"flow_bars": 4346, "oi": 57399, "funding": 3260, "tickers": 156, "supply": 764}
+                assert {
+                    key: len(value[key]) for key in ("flow_bars", "oi", "funding", "tickers", "supply")
+                } == {"flow_bars": 4346, "oi": 57399, "funding": 3260, "tickers": 156, "supply": 764}
                 assert sum(row["oi_usd"] is None for row in value["oi"]) == 25721
                 assert value["books"] == value["liquidations"] == []
                 if state == "cold":
-                    assert dense == {(row["instrument_id"], row["field"]): row["rows"] for row in manifest["dense_projections"]}
+                    assert dense == {
+                        (row["instrument_id"], row["field"]): row["rows"]
+                        for row in manifest["dense_projections"]
+                    }
                 full = {key: item for key, item in result.items() if key not in {"mta_id", "code_version"}}
                 snapshot_value = {key: item for key, item in value.items() if key != "code_version"}
-                digests = {name: save(directory, f"{state}-{name}.json", item) for name, item in (("result", full), ("projection", received[state]), ("snapshot", snapshot_value))}
-                emit({
-                    "kind": "sample",
-                    "state": state,
-                    "wall_seconds": wall,
-                    "process_cpu_seconds": used,
-                    "digests": digests,
-                    "baseline_entries_before": baseline_before,
-                    "inclusive_nonadditive_stage_seconds": stage_seconds,
-                    "inclusive_nonadditive_thread_cpu_seconds": stage_cpu_seconds,
-                    "modules": provenance(root),
-                })
+                digests = {
+                    name: save(directory, f"{state}-{name}.json", item)
+                    for name, item in (
+                        ("result", full),
+                        ("projection", received[state]),
+                        ("snapshot", snapshot_value),
+                    )
+                }
+                emit(
+                    {
+                        "kind": "sample",
+                        "state": state,
+                        "wall_seconds": wall,
+                        "process_cpu_seconds": used,
+                        "digests": digests,
+                        "baseline_entries_before": baseline_before,
+                        "inclusive_nonadditive_stage_seconds": stage_seconds,
+                        "inclusive_nonadditive_thread_cpu_seconds": stage_cpu_seconds,
+                        "modules": provenance(root),
+                    }
+                )
     finally:
         server.close()
         pending_connections = tuple(connections)
