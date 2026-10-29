@@ -1,5 +1,6 @@
 import asyncio
 import cProfile
+import gc
 import hashlib
 import json
 import logging
@@ -85,13 +86,51 @@ def clear_timestamp_cache():
         assert parser.cache_info().currsize == 0
 
 
-def profile_retained_call(call):
+def profile_retained_call(call, *, gc_receipt=None):
     context, function, args, kwargs = call
     if "baseline_cache" in kwargs:
         kwargs = dict(kwargs, baseline_cache={})
     assert sys.getprofile() is None
     profiler = cProfile.Profile()
-    profiler.runcall(context.run, function, *args, **kwargs)
+    starts = {}
+    parser = getattr(sys.modules["tank.util"], "_parse_text_time", None)
+
+    def observe_gc(phase, info):
+        generation = info["generation"]
+        if phase == "start":
+            starts[generation] = perf_counter()
+            return
+        elapsed = perf_counter() - starts.pop(generation)
+        counts = gc_receipt["by_generation"].setdefault(
+            str(generation), {"collections": 0, "collected": 0, "uncollectable": 0, "seconds": 0.0}
+        )
+        for name, value in (
+            ("collections", 1),
+            ("collected", info["collected"]),
+            ("uncollectable", info["uncollectable"]),
+            ("seconds", elapsed),
+        ):
+            counts[name] += value
+            gc_receipt[name] += value
+
+    if gc_receipt is not None:
+        gc_receipt.update(
+            collections=0,
+            collected=0,
+            uncollectable=0,
+            seconds=0.0,
+            by_generation={},
+            timestamp_cache_before=parser.cache_info()._asdict() if parser is not None else None,
+        )
+        gc.callbacks.append(observe_gc)
+    try:
+        profiler.runcall(context.run, function, *args, **kwargs)
+    finally:
+        if gc_receipt is not None:
+            gc.callbacks.remove(observe_gc)
+            gc_receipt["timestamp_cache_after"] = (
+                parser.cache_info()._asdict() if parser is not None else None
+            )
     assert sys.getprofile() is None
     return profile_rows(profiler)
 
@@ -351,7 +390,7 @@ async def run(root, directory, fixtures, revision, reader):
         async with httpx.AsyncClient(trust_env=False) as http:
             config_dir = Path(descriptor["input_config_dir"])
             assert not config_dir.is_symlink()
-            assert config_dir.resolve() == (root.parent / "original" / "config").resolve()
+            assert config_dir.resolve() == (root.parent / "retained-inputs" / "config").resolve()
             settings = Settings(
                 _env_file=None,
                 config_dir=config_dir,
@@ -555,11 +594,14 @@ async def run(root, directory, fixtures, revision, reader):
                         (copy_context(), cold_market.snapshot, snapshot_call[2], snapshot_call[3])
                     )
                     clock["value"] = manifest["availability_cutoff"]
+                    gc_receipt = {}
+                    rows = profile_retained_call(diagnostic_call, gc_receipt=gc_receipt)
                     emit(
                         {
                             "kind": "post_measurement_profile",
                             "stage": diagnostic_call[1].__name__,
-                            "rows": profile_retained_call(diagnostic_call),
+                            "rows": rows,
+                            "garbage_collection": gc_receipt,
                             "snapshot": await profile_retained_async(snapshot_call),
                             "cold_snapshot": cold_profile,
                         }
