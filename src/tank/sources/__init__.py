@@ -224,10 +224,8 @@ class SourceService:
 
     async def same_content(self, content_hash, item):
         """The stored item with this content_hash that is the same publication as item (03 §3.1)."""
-        async for row in self.repo.iter_all("ingest.source_items", filters={"content_hash": content_hash}):
-            if same_publication(row, item):
-                return row
-        return None
+        rows = await self.repo.list("ingest.source_items", filters={"content_hash": content_hash})
+        return next((row for row in rows if same_publication(row, item)), None)
 
     async def observe_known(self, source_id, external_id, feed):
         """True when the item is already captured; a sighting in another feed counts once (03 §3.1)."""
