@@ -86,6 +86,8 @@ def clear_timestamp_cache():
 
 def profile_retained_call(call):
     context, function, args, kwargs = call
+    if "baseline_cache" in kwargs:
+        kwargs = dict(kwargs, baseline_cache={})
     assert sys.getprofile() is None
     profiler = cProfile.Profile()
     profiler.runcall(context.run, function, *args, **kwargs)
