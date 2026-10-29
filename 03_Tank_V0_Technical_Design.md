@@ -425,7 +425,10 @@ MarketTruthAssessment
                candidates: [{state, eligible, refuted, testable, support}],
                unresolved: [DivergenceState]}
   flags: [PRICE_MARKUP_OI | NOT_COHORT_CONSISTENT | PRE_EVENT_RUNUP | FRAGMENTATION_INVESTIGATE | ...]
-  decisive_facts: [str]              # 2–3 facts selected for the card
+  decisive_facts: [str]              # 2–3 facts selected for the card; native quantities print
+                                     # signed with thousands separators, 2 decimals (3 significant
+                                     # digits below one unit) and the token ticker, e.g.
+                                     # "W4H spot flow BUY: CVD +506,057.72 AERO" (L8)
   data_confidence: DataConfidence
   class_confidence: Certainty
 
