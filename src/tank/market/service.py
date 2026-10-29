@@ -259,6 +259,7 @@ class MarketService:
         }
         self.semantics = settings.load_config("semantics")["metrics"]
         self._reads = {}
+        self._sampled_history_cache = {}
         self._hot_since = {}
 
         self._kline_day_counts = {}
@@ -2974,6 +2975,7 @@ class MarketService:
                         history_start,
                         recent_start,
                         300,
+                        cache=self._sampled_history_cache,
                     ),
                 ):
                     sampled[row["instrument_id"]].append(row)

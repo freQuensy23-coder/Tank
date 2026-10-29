@@ -1017,7 +1017,7 @@ async def market_rows_recorded_since(
 
 
 async def sampled_market_history(
-    repo, collection, time_field, group_fields, instrument_ids, start, end, bucket_s
+    repo, collection, time_field, group_fields, instrument_ids, start, end, bucket_s, *, cache=None
 ):
     """The last point per (instrument, group, bucket_s bucket) in [start, end).
 
@@ -1034,7 +1034,7 @@ async def sampled_market_history(
 
     if (ch := chm.client(repo, collection)) is not None:
         return await chm.sampled_market_history(
-            ch, collection, time_field, group_fields, instrument_ids, start, end, bucket_s
+            ch, collection, time_field, group_fields, instrument_ids, start, end, bucket_s, cache=cache
         )
     if not hasattr(repo, "_conn"):
         latest = {}

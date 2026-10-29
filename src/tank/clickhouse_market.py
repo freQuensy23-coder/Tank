@@ -698,9 +698,66 @@ async def market_rows_recorded_since(ch, collection, time_field, instrument_ids,
     return [(row["instrument_id"], rec, row["storage_key"]) for row, rec in zip(rows, records, strict=True)]
 
 
+async def _sampled_history_state(ch, collection, time_field, group_fields, instrument_ids, start, end, bucket_s, cache):
+    names = [*MARKET_COLUMNS[collection], "storage_key", "_version"]
+    identity = MARKET_IDENTITIES[collection]
+    kinds = [
+        TYPES[kind] if name in identity or kind == "text[]" else f"Nullable({TYPES[kind]})"
+        for name, kind in MARKET_COLUMNS[collection].items()
+    ] + ["String", "UInt64"]
+    q = Query()
+    _ids(q, instrument_ids)
+    q.where(f"`{time_field}` >= {q.param(start, DT)}")
+    q.where(f"`{time_field}` < {q.param(end, DT)}")
+    bucket = f"intDiv(toUnixTimestamp(`{time_field}`), {int(bucket_s)})"
+    groups = ", ".join(["instrument_id", *(f"`{g}`" for g in group_fields), bucket])
+    sort_keys = [f"x.{names.index(name) + 1}" for name in ("instrument_id", *group_fields)]
+    sort_keys.append(f"intDiv(toUnixTimestamp(x.{names.index(time_field) + 1}), {int(bucket_s)})")
+    fields = ", ".join(f"`{name}`" for name in names)
+    key = (ch, ch.database, collection, time_field, tuple(group_fields), tuple(sorted(instrument_ids)), start, end, bucket_s)
+    previous = cache.get(key)
+    known = q.param(previous[0] if previous is not None else "", "String")
+    sql = (
+        f"WITH arraySort(x -> tuple({', '.join(sort_keys)}), groupArray(sampled_record)) AS population, "
+        "hex(SHA256(toString(population))) AS fingerprint "
+        f"SELECT fingerprint, if(fingerprint = {known}, [], population) AS records FROM ("
+        f"SELECT CAST(tuple({fields}) AS Tuple({', '.join(kinds)})) AS sampled_record "
+        f"FROM {_table(collection)} WHERE {q.predicate()} "
+        f"ORDER BY {groups}, `{time_field}` DESC, storage_key DESC LIMIT 1 BY {groups})"
+    )
+    result = await ch.rows(sql, q.params)
+    if len(result) != 1:
+        raise ValueError("invalid sampled history state response")
+    fingerprint, payload = result[0].get("fingerprint"), result[0].get("records")
+    if not isinstance(fingerprint, str) or not re.fullmatch(r"[0-9A-F]{64}", fingerprint) or not isinstance(payload, list):
+        raise ValueError("invalid sampled history state response")
+    if previous is not None and fingerprint == previous[0]:
+        if payload:
+            raise ValueError("unchanged sampled history state returned a payload")
+        records = previous[1]
+    else:
+        if any(not isinstance(row, list) for row in payload):
+            raise ValueError("invalid sampled history population")
+        records = sorted(
+            await _decode(collection, [dict(zip(names, row, strict=True)) for row in payload]),
+            key=lambda row: row[time_field],
+        )
+    cache.pop(key, None)
+    cache[key] = (fingerprint, records)
+    while len(cache) > 32 or sum(len(entry[1]) for entry in cache.values()) > 300_000:
+        cache.pop(next(iter(cache)))
+    return records
+
+
 async def sampled_market_history(
-    ch, collection, time_field, group_fields, instrument_ids, start, end, bucket_s
+    ch, collection, time_field, group_fields, instrument_ids, start, end, bucket_s, *, cache=None
 ):
+    if cache is not None:
+        if not instrument_ids:
+            return []
+        return await _sampled_history_state(
+            ch, collection, time_field, group_fields, instrument_ids, start, end, bucket_s, cache
+        )
     q = Query()
     _ids(q, instrument_ids)
     q.where(f"`{time_field}` >= {q.param(start, DT)}")
