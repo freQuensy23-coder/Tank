@@ -885,7 +885,8 @@ class SourcePoller:
 
                 async def settled(row, current_batch=batch):
                     failed = await process(row, current_batch)
-                    outcomes.append((self.stamp(), failed is None))
+                    if self.needs_detail(sid, current_batch["kind"]):
+                        outcomes.append((self.stamp(), failed is None))
                     return failed
 
                 remaining = await asyncio.gather(*(settled(row) for row in batch["rows"]))

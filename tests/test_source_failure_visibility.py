@@ -46,7 +46,7 @@ async def test_chronic_feed_failure_is_logged_and_kept_in_recent_reads(tmp_path,
         await svc.close()
     state = await repo.get("ops.source_checkpoints", "S30:0")
     assert state["status"] == "HEALTHY"
-    assert oks(state) == [False] * 3 + [True, True]
+    assert oks(state) == [False] * 3 + [True]
     failures = [r for r in caplog.records if "S30:0 read failed" in r.getMessage()]
     assert len(failures) == 3 and all(r.levelno == logging.WARNING for r in failures)
     assert "503" in failures[0].getMessage()
@@ -116,6 +116,29 @@ async def test_detail_pass_keeps_early_failures_out_of_a_later_successful_window
     state = await repo.get("ops.source_checkpoints", "S20:0")
     assert len(result["errors"]) == 5 and state["detail_reads"] == {"ok": RECENT_READS + 5, "failed": 5}
     assert oks(state) == [True] * RECENT_READS
+
+
+@pytest.mark.asyncio
+async def test_ingesting_feed_entries_is_not_a_source_read(tmp_path):
+    entries = b"".join(
+        b"<item><guid>g%d</guid><title>Release %d</title><link>https://example.org/a%d</link>"
+        b"<pubDate>Fri, 16 Oct 2026 12:00:00 GMT</pubDate><description>Body %d</description></item>"
+        % (i, i, i, i)
+        for i in range(RECENT_READS)
+    )
+    feed = b'<rss version="2.0"><channel><title>Official</title>' + entries + b"</channel></rss>"
+    sources = [{"source_id": "S30", "feeds": [{"url": "https://example.org/rss", "kind": "rss"}]}]
+    repo = Repo()
+    await repo.put("ops.source_checkpoints", "S30:0", {"recent_reads": reads(NOW, [False] * 5)})
+    async with httpx.AsyncClient(
+        transport=httpx.MockTransport(lambda r: httpx.Response(200, content=feed))
+    ) as http:
+        svc = SourceService(repo, settings(tmp_path, sources), http=http)
+        result = await svc.poll_once("S30")
+        await svc.close()
+    state = await repo.get("ops.source_checkpoints", "S30:0")
+    assert result["items"] == RECENT_READS
+    assert oks(state) == [False] * 5 + [True]
 
 
 @pytest.mark.asyncio
