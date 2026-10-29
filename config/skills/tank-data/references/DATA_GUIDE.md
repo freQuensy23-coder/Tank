@@ -1323,7 +1323,7 @@ q("SELECT instrument_id, venue, market_type, venue_symbol FROM reg.instruments W
 q("SELECT source_id, name FROM reg.sources ORDER BY source_id")
 ```
 
-A project or token outside the registry has no key: name it (`entities[].name`, `token_names`, `entity_name`, `token_name`); Tank refuses a name its registry resolves and asks for the key.
+A project or token outside the registry has no key: name it (`entities[].name`, `token_names`, `entity_name`, `token_name`); Tank refuses a name its registry resolves and asks for the key. To look one up, pass its name or ticker in `name` of `list_open_events` or `get_registry`; never compose a key for it.
 
 
 # Executable sandbox access
