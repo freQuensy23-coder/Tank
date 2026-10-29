@@ -30,6 +30,7 @@ from tank.event_tools import EventToolService
 from tank.market import service as market_module
 from tank.market.service import MarketService
 from tank.runtime import Runtime
+from tank.scheduler import Scheduler
 from tank.settings import Settings
 from tank.storage import PostgresRepository
 from tank.util import iso, parse_time, sha256
@@ -378,6 +379,7 @@ async def run(root, directory, fixtures, revision, reader):
             }
             runtime = object.__new__(Runtime)
             runtime.repo, runtime.settings, runtime.market, runtime.truth = repo, settings, market, service
+            runtime.scheduler = Scheduler(repo, settings, market, service)
             runtime.handlers = {"ESCALATE_TOKENS": runtime.escalate, "RUN_MARKET_TRUTH": runtime.assess}
             snapshots, dense, phases, phase_calls = [], {}, {}, {}
             diagnostic_call = snapshot_call = None

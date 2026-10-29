@@ -1149,7 +1149,8 @@ def _oi_stats(rows, start, end, *, history_identity=None, venue_history=None):
             cohort_keys = tuple(_oi_cohort_key(venue_rows) for _, venue_rows in venue_history)
             if all(key is not None for key in cohort_keys):
                 cohort_key = cohort_keys
-    if venue_history is not None:
+    deferred_history = cache is not None and dependency is not None
+    if venue_history is not None and not deferred_history:
         venue_history = [_history_slice(times, venue_rows, start) for times, venue_rows in venue_history]
     history_times = sorted(bytime)
     gaps = sorted(
@@ -1184,6 +1185,10 @@ def _oi_stats(rows, start, end, *, history_identity=None, venue_history=None):
         hn = []
         hu = []
         if venue_history is not None:
+            if deferred_history:
+                venue_history = [
+                    _history_slice(times, venue_rows, start) for times, venue_rows in venue_history
+                ]
             hn, hu = _composite_history(venue_history, window)
         elif (
             bytime
