@@ -73,7 +73,7 @@ async def test_incomplete_item_is_an_ops_processing_error_not_a_rejection(settin
     card = render(await snapshot(repo, item["item_id"]))
     assert card["code"] == "PROCESSING_FAILED"
     assert card["status"] == "Ошибка обработки"
-    assert "Агент завершил ход без записи события или решения об отклонении" in card["text"]
+    assert "Агент так и не записал событие или решение об отклонении" in card["text"]
     assert "Отклонено агентом" not in card["text"]
 
 
@@ -133,7 +133,13 @@ async def test_idle_sweep_archives_an_eventless_incomplete_session_after_retenti
 
 
 @pytest.mark.parametrize(
-    "closed", [{"status": "FAILED"}, {"status": "ENDED"}, {"archived_at": "2026-10-01T00:00:00Z"}]
+    "closed",
+    [
+        {"status": "FAILED"},
+        {"status": "ENDED"},
+        {"archived_at": "2026-10-01T00:00:00Z"},
+        {"agent_incomplete": True},
+    ],
 )
 async def test_new_message_for_a_closed_session_opens_a_fresh_one(closed):
     repo = MemoryRepository()

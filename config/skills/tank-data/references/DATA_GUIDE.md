@@ -92,8 +92,11 @@ SourceItem
   relevance: {decision: ALWAYS | SEND | SKIP, p_relevant: 0..1?, model: str?}   # §3.1
   route: {decision: NEW_SESSION | ADDED, event_id: str?, p_same: 0..1?}?        # §3.1
   extraction_status: PENDING | DONE | SKIPPED | FAILED
-  extraction_reason: str?            # SKIPPED: no_event_reason; FAILED: AGENT_INCOMPLETE when a turn ended
-                                     # without record_event, add_observation or merge_into for the item
+  extraction_reason: str?
+  # SKIPPED: rejected by the agent (record_event is_event=false, its no_event_reason) or by the filter.
+  # A turn that ends without record_event, add_observation or merge_into for the item leaves it PENDING
+  # with extraction_reason AGENT_REMINDED while Tank reminds the agent; FAILED with AGENT_INCOMPLETE
+  # once the session's reminders are spent (tank reanalyse can queue it again).
 ```
 
 ### 2.3 Events

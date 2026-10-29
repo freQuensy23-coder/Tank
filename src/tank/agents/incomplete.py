@@ -1,7 +1,8 @@
 """Source items whose agent turn ended without the required outcome, and their re-analysis.
 
 A routed item is finished by the agent only through record_event (an event or an explicit
-rejection) or add_observation. A turn that ends without either is an agent failure, not a
+rejection) or add_observation. A turn that ends without either gets a completion reminder in the
+same session; once the session's reminder budget is spent it is an agent failure, not a
 rejection: the item gets extraction_status FAILED with extraction_reason AGENT_INCOMPLETE,
 Tank Ops shows it as a processing error, and the operator can queue it for re-analysis."""
 
@@ -12,14 +13,15 @@ LEGACY_INCOMPLETE = "NATIVE_TURN_COMPLETED_WITHOUT_OBSERVATION"
 UNFINISHED = {None, "PENDING", "RUNNING"}
 
 
-async def fail_incomplete_turn(repo, session, item_id):
+async def fail_incomplete_turn(repo, session, item_id, **details):
     """Record that the agent ended its turn on item_id without an event, observation or rejection.
 
     Call it once the turn is settled and no further reminder will be sent (the reminder budget is
     exhausted). The item becomes FAILED / AGENT_INCOMPLETE; an item the agent already finished is
     left unchanged. A session that never recorded an event is flagged agent_incomplete, so the
     idle sweep archives it through the normal retention path instead of leaving it open; the
-    caller persists the session. Returns whether the item was marked."""
+    caller persists the session. details are stored on the item with the failure, such as the
+    spent reminder budget. Returns whether the item was marked."""
     item = await repo.get("ingest.source_items", item_id)
     if item is None or item.get("extraction_status") not in UNFINISHED:
         return False
@@ -27,6 +29,7 @@ async def fail_incomplete_turn(repo, session, item_id):
         extraction_status="FAILED",
         extraction_reason=AGENT_INCOMPLETE,
         extraction_failed_session_id=session["session_id"],
+        **details,
         **collection_clock().fields("extraction_failed_at"),
     )
     await repo.put("ingest.source_items", item_id, item)
@@ -88,7 +91,14 @@ async def reanalyse(repo, *, item_ids=None, limit=100, apply=False):
                         **collection_clock().fields("requested_at"),
                     }
                 )
-                for key in ("routing_message", "route", "routing_scores", "route_event_id"):
+                for key in (
+                    "routing_message",
+                    "route",
+                    "routing_scores",
+                    "route_event_id",
+                    "extraction_reminders",
+                    "extraction_reminder_limit",
+                ):
                     item.pop(key, None)
                 item.update(extraction_status="PENDING", extraction_reason=None, reanalysis_attempt=attempt)
                 await repo.put("ingest.source_items", item["item_id"], item)

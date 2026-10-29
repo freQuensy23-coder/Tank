@@ -626,7 +626,11 @@ async def test_native_completion_preserves_source_failures_without_failing_sessi
         outcome = current["verified_source_completion"]["message"]["outcome"]
         assert (
             outcome
-            == {"PENDING": "FAILED", "FAILED": "FAILED", "MISSING": "MISSING_SOURCE_ITEM"}[source_state]
+            == {"PENDING": "PENDING", "FAILED": "FAILED", "MISSING": "MISSING_SOURCE_ITEM"}[source_state]
+        )
+        reminders = await repo.list("ops.jobs", filters={"type": "AGENT_MESSAGE"})
+        assert [job["payload"]["kind"] for job in reminders] == (
+            ["COMPLETION_REMINDER"] if source_state == "PENDING" else []
         )
 
 

@@ -5,6 +5,7 @@ from datetime import timedelta
 from tank.time_precision import collection_clock, offset_schedule
 from tank.util import sha256
 
+SOURCE_MESSAGE_KINDS = frozenset({"NEW_ITEM", "ITEM_ADDED", "COMPLETION_REMINDER"})
 STAGES = {
     "ANALYSIS_UPDATED": "Обновлён результат анализа",
     "RECEIVED": "Получен материал",
@@ -17,6 +18,7 @@ STAGES = {
     "EVENT_RECORDED": "Агент зарегистрировал событие",
     "OBSERVATION_ADDED": "Агент добавил материал к событию",
     "AGENT_REJECTED": "Агент не выделил событие",
+    "AGENT_REMINDED": "Агент не вернул результат, отправлено напоминание",
     "ASSESSED": "Агент оценил значимость",
     "PUBLICATION_BLOCKED": "Карточка не допущена к публикации",
     "ALERT_QUEUED": "Карточка подготовлена, ожидает отправки в Alerts",
@@ -138,7 +140,7 @@ async def session_progress(repo, settings, session):
         return
     for message in session.get("message_log", []):
         payload = message.get("payload") or {}
-        if payload.get("kind") not in {"NEW_ITEM", "ITEM_ADDED"}:
+        if payload.get("kind") not in SOURCE_MESSAGE_KINDS:
             continue
         item_id = payload.get("item_id")
         key = f"{session['session_id']}:{message['message_id']}:{message.get('retry_count', 0)}"
@@ -147,9 +149,12 @@ async def session_progress(repo, settings, session):
             stage, reason = "PROCESSING_FAILED", "AGENT_EXECUTION_FAILED"
         elif status == "DONE":
             item = await repo.get("ingest.source_items", item_id)
+            if item and item.get("extraction_status") in {None, "PENDING", "RUNNING"}:
+                continue
             if item and item.get("extraction_status") == "FAILED":
                 stage = "PROCESSING_FAILED"
                 reason = item.get("extraction_reason") or "AGENT_EXECUTION_FAILED"
+                key = f"{item_id}:{reason}:{item.get('reanalysis_attempt', 0)}"
             elif item and item.get("extraction_status") == "SKIPPED":
                 stage = "AGENT_REJECTED"
                 reason = item.get("extraction_reason") or ""
