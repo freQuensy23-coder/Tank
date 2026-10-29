@@ -68,7 +68,7 @@ async def full_request_comparison(tmp_path_factory, pytestconfig, request):
     assert os.environ.get("CLICKHOUSE_TEST_URL"), "Disposable ClickHouse is required"
     candidate = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=ROOT, text=True).strip()
     fixtures = tmp_path / "inputs"
-    archive(DATA_REVISION, fixtures, ["tests/fixtures/market-truth-latency-full"])
+    archive(candidate, fixtures, ["tests/fixtures/market-truth-latency-full"])
     fixtures = fixtures / "tests/fixtures/market-truth-latency-full"
     manifest = stage_data(fixtures)
     template = PostgresTemplate(schema_template=pytestconfig.getoption("postgres_schema_template"))
@@ -141,8 +141,12 @@ async def full_request_comparison(tmp_path_factory, pytestconfig, request):
                     json.dumps(
                         {
                             "source_heads": {"original": ORIGINAL, "candidate": candidate},
-                            "samples": {label + "_" + state: value for (label, state), value in samples.items()},
-                            "manifest_sha256": hashlib.sha256((fixtures / "manifest.json").read_bytes()).hexdigest(),
+                            "samples": {
+                                label + "_" + state: value for (label, state), value in samples.items()
+                            },
+                            "manifest_sha256": hashlib.sha256(
+                                (fixtures / "manifest.json").read_bytes()
+                            ).hexdigest(),
                             "qualification": manifest["qualification"],
                             "limitations": manifest["limitations"],
                         },
