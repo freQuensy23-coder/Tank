@@ -30,7 +30,12 @@ def test_canonical_money_text_keeps_exact_standard_decimal_spelling(capitals):
 
 def test_column_decoder_avoids_only_redundant_canonical_decimal_constructors(monkeypatch):
     texts = ["12.3400", "0.00", "-0.000000", "0.0000010", "0.00000010", "0001.00", "1E-8"]
-    columns = {"ts": ["2026-10-20T00:00:00Z"] * len(texts), "oi_native": texts}
+    columns = {
+        "ts": ["2026-10-20T00:00:00Z"] * len(texts),
+        "oi_native": texts,
+        "instrument_id": ["canonical-test-instrument"] * len(texts),
+        "storage_key": [f"canonical-{index}" for index in range(len(texts))],
+    }
     with localcontext() as context:
         context.prec = 9
         context.clear_flags()

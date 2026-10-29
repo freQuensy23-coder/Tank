@@ -836,6 +836,51 @@ def _wide_column_records(collection, columns, time_field):
     return result
 
 
+def _canonical_numeric_text(value):
+    if type(value) is not str or not value or len(value) > 160:
+        return None
+    text = value
+    length = len(text)
+    index = 1 if text[0] == "-" else 0
+    start = index
+    if index == length:
+        return None
+    code = ord(text[index])
+    if code < 48 or code > 57:
+        return None
+    if code == 48:
+        index += 1
+        if index < length and 48 <= ord(text[index]) <= 57:
+            return None
+    else:
+        while index < length:
+            code = ord(text[index])
+            if code < 48 or code > 57:
+                break
+            index += 1
+    if index == length:
+        return value
+    if text[index] != ".":
+        return None
+    dot = index
+    index += 1
+    if index == length:
+        return None
+    first_nonzero = 0
+    while index < length:
+        code = ord(text[index])
+        if code < 48 or code > 57:
+            return None
+        if code != 48 and not first_nonzero:
+            first_nonzero = index - dot
+        index += 1
+    if text[start] != "0":
+        return value
+    if first_nonzero:
+        return value if first_nonzero <= 6 else None
+    return value if length - dot - 1 <= 6 else None
+
+
 def _column_wide_records(collection, columns, time_field):
     if not columns:
         return []
@@ -872,7 +917,9 @@ def _column_wide_records(collection, columns, time_field):
                     return None
                 cached = numbers.get(value) if type(value) is str else None
                 if cached is None:
-                    cached = str(Decimal(value))
+                    cached = _canonical_numeric_text(value)
+                    if cached is None:
+                        cached = str(Decimal(value))
                     if type(value) is str:
                         numbers[value] = cached
                 normalized.append(cached)
