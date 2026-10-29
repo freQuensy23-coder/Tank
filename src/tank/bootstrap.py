@@ -79,7 +79,7 @@ def validate_registry(settings):
     sources = settings.load_config("sources")
     for source in sources.get("sources", []):
         add("reg.sources", source["source_id"], source, "sources.yaml", sources)
-    registry = settings.load_config("registry")
+    registry = settings.registry()
     for section, identifier in (
         ("tokens", "token_id"),
         ("instruments", "instrument_id"),
@@ -163,6 +163,6 @@ async def sync_registry(repo: Repository, settings: Settings) -> dict[str, int]:
             for key in stale:
                 await repo.delete(table, key)
             for key, record in configured.items():
-                old = await repo.get(table, key)
-                await repo.put(table, key, {**(old or {}), **record})
+                existing = await repo.get(table, key)
+                await repo.put(table, key, {**(existing or {}), **record})
     return {table: len(configured) for table, configured in rows.items()}

@@ -8,12 +8,14 @@ import logging
 import random
 import time
 import weakref
-from contextlib import asynccontextmanager, suppress
+from collections.abc import AsyncIterator, Collection, Iterable, Sequence
+from contextlib import AbstractAsyncContextManager, asynccontextmanager, suppress
 from contextvars import ContextVar
-from datetime import timedelta
+from datetime import datetime, timedelta
+from decimal import Decimal
 from math import isfinite
 from pathlib import Path
-from typing import Protocol
+from typing import Protocol, Self, overload
 
 from tank.market_schema import MARKET_COLUMNS
 from tank.market_storage import decode as decode_market
@@ -40,88 +42,176 @@ class ImmutableRecordError(ValueError):
     pass
 
 
+type TimeInput = datetime | str | int | float | Decimal
+type Records = list[Record]
+type RangeCursor = tuple[TimeInput, str]
+type RangePage = list[tuple[Record, tuple[str, str]]]
+type RetainedWindow = tuple[str, datetime, datetime]
+type RetainedWindows = list[RetainedWindow]
+type HeadMap = dict[str, Record | None]
+type MarketPruneCounts = dict[str, int | dict[str, int]]
+
+
 class Repository(Protocol):
-    async def open(self): ...
-    async def close(self): ...
-    async def migrate(self): ...
+    async def open(self) -> Self: ...
+    async def close(self) -> None: ...
+    async def migrate(self) -> None: ...
     async def put(self, collection: str, key: str, record: Record, *, immutable: bool = False) -> Record: ...
-    async def put_market_batch(self, collection: str, records, *, keys=None) -> list[Record]: ...
+    async def put_market_batch(
+        self, collection: str, records: Iterable[Record], *, keys: Iterable[str] | None = None
+    ) -> Records: ...
     async def latest_market_records(
         self,
         collection: str,
         *,
-        group_by=("instrument_id",),
-        time_field="ts",
-        filters=None,
-        cutoff=None,
-        assembled_at=None,
-        start=None,
-    ) -> list[Record]: ...
+        group_by: Sequence[str] = ("instrument_id",),
+        time_field: str = "ts",
+        filters: Record | None = None,
+        cutoff: TimeInput | None = None,
+        assembled_at: TimeInput | None = None,
+        start: TimeInput | None = None,
+        instrument_ids: Collection[str] | None = None,
+    ) -> Records: ...
+    @overload
     async def market_dependency_head(
         self,
-        collection,
-        semantic_field,
-        cutoff,
+        collection: str,
+        semantic_field: str,
+        cutoff: TimeInput,
         *,
-        start=None,
-        filters=None,
-        instrument_ids=None,
-        assembled_at=None,
-        order="availability",
+        start: TimeInput | None = None,
+        filters: Record | None = None,
+        instrument_ids: Collection[str] | None = None,
+        assembled_at: TimeInput | None = None,
+        order: str = "availability",
+        orders: None = None,
     ) -> Record | None: ...
+    @overload
+    async def market_dependency_head(
+        self,
+        collection: str,
+        semantic_field: str,
+        cutoff: TimeInput,
+        *,
+        start: TimeInput | None = None,
+        filters: Record | None = None,
+        instrument_ids: Collection[str] | None = None,
+        assembled_at: TimeInput | None = None,
+        order: str = "availability",
+        orders: Collection[str],
+    ) -> HeadMap: ...
     def iter_market_projection(
         self,
-        collection,
-        fields,
-        time_field,
+        collection: str,
+        fields: Sequence[str],
+        time_field: str,
         *,
-        start=None,
-        end=None,
-        filters=None,
-        instrument_ids=None,
-        assembled_at=None,
-        batch_size=1000,
-    ): ...
+        start: TimeInput | None = None,
+        end: TimeInput | None = None,
+        filters: Record | None = None,
+        instrument_ids: Collection[str] | None = None,
+        assembled_at: TimeInput | None = None,
+        batch_size: int = 1000,
+    ) -> AsyncIterator[Record]: ...
     async def market_series_counts(
-        self, instrument_ids, start, cutoff, assembled_at=None
+        self,
+        instrument_ids: Collection[str],
+        start: TimeInput,
+        cutoff: TimeInput,
+        assembled_at: TimeInput | None = None,
     ) -> dict[str, int]: ...
     async def get(self, collection: str, key: str) -> Record | None: ...
-    async def list(
-        self, collection: str, *, filters: dict | None = None, limit: int = 1000
-    ) -> list[Record]: ...
-    async def delete(self, collection: str, key: str): ...
-    def transaction(self): ...
-    def lock(self, key: str): ...
+    async def list(self, collection: str, *, filters: Record | None = None, limit: int = 1000) -> Records: ...
+    async def delete(self, collection: str, key: str) -> None: ...
+    def transaction(self) -> AbstractAsyncContextManager[Self]: ...
+    def lock(self, key: str) -> AbstractAsyncContextManager[Self]: ...
     async def enqueue(
-        self, kind, payload, idem_key, *, priority=1, run_after=None, expires_at=None, max_attempts=3
-    ): ...
-    async def claim_job(self): ...
-    async def finish_job(self, job_id): ...
-    async def fail_job(self, job_id, error, *, retry_after=1): ...
-    async def recover_jobs(self): ...
-    async def prune_market(self, before, *, book_before=None, trades_before=None): ...
-    async def prune_jobs(self, before): ...
-    async def preserved_market_windows(self): ...
-    async def latest_before(self, collection, time_field, cutoff, *, filters=None): ...
-    def iter_all(self, collection, *, filters=None, batch_size=1000): ...
-    def iter_metadata(self, collection, fields, *, filters=None, batch_size=1000): ...
+        self,
+        kind: str,
+        payload: Record,
+        idem_key: str,
+        *,
+        priority: int = 1,
+        run_after: TimeInput | Timestamp | None = None,
+        expires_at: TimeInput | Timestamp | None = None,
+        max_attempts: int = 3,
+    ) -> Record: ...
+    async def claim_job(self) -> Record | None: ...
+    async def finish_job(self, job_id: str) -> None: ...
+    async def fail_job(self, job_id: str, error: object, *, retry_after: float = 1) -> None: ...
+    async def recover_jobs(self) -> int: ...
+    async def prune_market(
+        self,
+        before: TimeInput,
+        *,
+        book_before: TimeInput | None = None,
+        trades_before: TimeInput | None = None,
+    ) -> MarketPruneCounts: ...
+    async def prune_jobs(self, before: TimeInput) -> int: ...
+    async def preserved_market_windows(self) -> RetainedWindows: ...
+    async def latest_before(
+        self, collection: str, time_field: str, cutoff: TimeInput, *, filters: Record | None = None
+    ) -> Record | None: ...
+    def iter_all(
+        self, collection: str, *, filters: Record | None = None, batch_size: int = 1000
+    ) -> AsyncIterator[Record]: ...
+    def iter_metadata(
+        self, collection: str, fields: Sequence[str], *, filters: Record | None = None, batch_size: int = 1000
+    ) -> AsyncIterator[Record]: ...
     def iter_late_arrivals(
         self,
-        collection,
-        arrival_field,
-        market_field,
+        collection: str,
+        arrival_field: str,
+        market_field: str,
         *,
-        since=None,
-        end=None,
-        market_end,
-        filters=None,
-        batch_size=1000,
-    ): ...
-    async def list_latest(self, collection, time_field, *, filters=None, limit=100, start=None, end=None): ...
+        since: TimeInput | None = None,
+        end: TimeInput | None = None,
+        market_end: TimeInput,
+        filters: Record | None = None,
+        batch_size: int = 1000,
+    ) -> AsyncIterator[Record]: ...
+    async def list_latest(
+        self,
+        collection: str,
+        time_field: str,
+        *,
+        filters: Record | None = None,
+        limit: int = 100,
+        start: TimeInput | None = None,
+        end: TimeInput | None = None,
+    ) -> Records: ...
     async def list_range(
-        self, collection, time_field, *, start=None, end=None, filters=None, limit=1000, after=None
-    ): ...
-    def iter_range(self, collection, time_field, *, start=None, end=None, filters=None, batch_size=10000): ...
+        self,
+        collection: str,
+        time_field: str,
+        *,
+        start: TimeInput | None = None,
+        end: TimeInput | None = None,
+        filters: Record | None = None,
+        limit: int = 1000,
+        after: RangeCursor | None = None,
+    ) -> Records: ...
+    async def page_range(
+        self,
+        collection: str,
+        time_field: str,
+        *,
+        start: TimeInput | None = None,
+        end: TimeInput | None = None,
+        filters: Record | None = None,
+        limit: int = 1000,
+        after: RangeCursor | None = None,
+    ) -> RangePage: ...
+    def iter_range(
+        self,
+        collection: str,
+        time_field: str,
+        *,
+        start: TimeInput | None = None,
+        end: TimeInput | None = None,
+        filters: Record | None = None,
+        batch_size: int = 10000,
+    ) -> AsyncIterator[Record]: ...
 
 
 log = logging.getLogger(__name__)
@@ -318,7 +408,243 @@ def _job(kind, payload, idem_key, priority, run_after, expires_at, max_attempts)
     return result
 
 
-class QueueMixin:
+class RepositoryQueries:
+    """Backend-neutral repository queries shared by the Memory and Postgres repositories."""
+
+    async def put_market_batch(
+        self, collection: str, records: Iterable[Record], *, keys: Iterable[str] | None = None
+    ) -> Records:
+        return await put_market_batch(self, collection, records, keys=keys)
+
+    async def latest_market_records(
+        self,
+        collection: str,
+        *,
+        group_by: Sequence[str] = ("instrument_id",),
+        time_field: str = "ts",
+        filters: Record | None = None,
+        cutoff: TimeInput | None = None,
+        assembled_at: TimeInput | None = None,
+        start: TimeInput | None = None,
+        instrument_ids: Collection[str] | None = None,
+    ) -> Records:
+        return await latest_market_records(
+            self,
+            collection,
+            group_by=group_by,
+            time_field=time_field,
+            filters=filters,
+            cutoff=cutoff,
+            assembled_at=assembled_at,
+            start=start,
+            instrument_ids=instrument_ids,
+        )
+
+    @overload
+    async def market_dependency_head(
+        self,
+        collection: str,
+        semantic_field: str,
+        cutoff: TimeInput,
+        *,
+        start: TimeInput | None = None,
+        filters: Record | None = None,
+        instrument_ids: Collection[str] | None = None,
+        assembled_at: TimeInput | None = None,
+        order: str = "availability",
+        orders: None = None,
+    ) -> Record | None: ...
+
+    @overload
+    async def market_dependency_head(
+        self,
+        collection: str,
+        semantic_field: str,
+        cutoff: TimeInput,
+        *,
+        start: TimeInput | None = None,
+        filters: Record | None = None,
+        instrument_ids: Collection[str] | None = None,
+        assembled_at: TimeInput | None = None,
+        order: str = "availability",
+        orders: Collection[str],
+    ) -> HeadMap: ...
+
+    async def market_dependency_head(
+        self,
+        collection: str,
+        semantic_field: str,
+        cutoff: TimeInput,
+        *,
+        start: TimeInput | None = None,
+        filters: Record | None = None,
+        instrument_ids: Collection[str] | None = None,
+        assembled_at: TimeInput | None = None,
+        order: str = "availability",
+        orders: Collection[str] | None = None,
+    ) -> Record | HeadMap | None:
+        return await market_dependency_head(
+            self,
+            collection,
+            semantic_field,
+            cutoff,
+            start=start,
+            filters=filters,
+            instrument_ids=instrument_ids,
+            assembled_at=assembled_at,
+            order=order,
+            orders=orders,
+        )
+
+    def iter_market_projection(
+        self,
+        collection: str,
+        fields: Sequence[str],
+        time_field: str,
+        *,
+        start: TimeInput | None = None,
+        end: TimeInput | None = None,
+        filters: Record | None = None,
+        instrument_ids: Collection[str] | None = None,
+        assembled_at: TimeInput | None = None,
+        batch_size: int = 1000,
+    ) -> AsyncIterator[Record]:
+        return iter_market_projection(
+            self,
+            collection,
+            fields,
+            time_field,
+            start=start,
+            end=end,
+            filters=filters,
+            instrument_ids=instrument_ids,
+            assembled_at=assembled_at,
+            batch_size=batch_size,
+        )
+
+    async def market_series_counts(
+        self,
+        instrument_ids: Collection[str],
+        start: TimeInput,
+        cutoff: TimeInput,
+        assembled_at: TimeInput | None = None,
+    ) -> dict[str, int]:
+        return await market_series_counts(self, instrument_ids, start, cutoff, assembled_at)
+
+    async def prune_market(
+        self,
+        before: TimeInput,
+        *,
+        book_before: TimeInput | None = None,
+        trades_before: TimeInput | None = None,
+    ) -> MarketPruneCounts:
+        return await _prune_market(self, before, book_before=book_before, trades_before=trades_before)
+
+    async def prune_jobs(self, before: TimeInput) -> int:
+        return await _prune_jobs(self, before)
+
+    async def preserved_market_windows(self) -> RetainedWindows:
+        return await _preserved_windows(self)
+
+    async def latest_before(
+        self, collection: str, time_field: str, cutoff: TimeInput, *, filters: Record | None = None
+    ) -> Record | None:
+        return await _latest_before(self, collection, time_field, cutoff, filters=filters)
+
+    def iter_all(
+        self, collection: str, *, filters: Record | None = None, batch_size: int = 1000
+    ) -> AsyncIterator[Record]:
+        return _iter_all(self, collection, filters=filters, batch_size=batch_size)
+
+    def iter_metadata(
+        self, collection: str, fields: Sequence[str], *, filters: Record | None = None, batch_size: int = 1000
+    ) -> AsyncIterator[Record]:
+        return _iter_metadata(self, collection, fields, filters=filters, batch_size=batch_size)
+
+    def iter_late_arrivals(
+        self,
+        collection: str,
+        arrival_field: str,
+        market_field: str,
+        *,
+        since: TimeInput | None = None,
+        end: TimeInput | None = None,
+        market_end: TimeInput,
+        filters: Record | None = None,
+        batch_size: int = 1000,
+    ) -> AsyncIterator[Record]:
+        return _iter_late_arrivals(
+            self,
+            collection,
+            arrival_field,
+            market_field,
+            since=since,
+            end=end,
+            market_end=market_end,
+            filters=filters,
+            batch_size=batch_size,
+        )
+
+    async def list_latest(
+        self,
+        collection: str,
+        time_field: str,
+        *,
+        filters: Record | None = None,
+        limit: int = 100,
+        start: TimeInput | None = None,
+        end: TimeInput | None = None,
+    ) -> Records:
+        return await _list_latest(
+            self, collection, time_field, filters=filters, limit=limit, start=start, end=end
+        )
+
+    async def list_range(
+        self,
+        collection: str,
+        time_field: str,
+        *,
+        start: TimeInput | None = None,
+        end: TimeInput | None = None,
+        filters: Record | None = None,
+        limit: int = 1000,
+        after: RangeCursor | None = None,
+    ) -> Records:
+        return await _list_range(
+            self, collection, time_field, start=start, end=end, filters=filters, limit=limit, after=after
+        )
+
+    async def page_range(
+        self,
+        collection: str,
+        time_field: str,
+        *,
+        start: TimeInput | None = None,
+        end: TimeInput | None = None,
+        filters: Record | None = None,
+        limit: int = 1000,
+        after: RangeCursor | None = None,
+    ) -> RangePage:
+        return await _range_page(
+            self, collection, time_field, start=start, end=end, filters=filters, limit=limit, after=after
+        )
+
+    def iter_range(
+        self,
+        collection: str,
+        time_field: str,
+        *,
+        start: TimeInput | None = None,
+        end: TimeInput | None = None,
+        filters: Record | None = None,
+        batch_size: int = 10000,
+    ) -> AsyncIterator[Record]:
+        return _iter_range(
+            self, collection, time_field, start=start, end=end, filters=filters, batch_size=batch_size
+        )
+
+
+class QueueMixin(RepositoryQueries):
     async def enqueue(
         self, kind, payload, idem_key, *, priority=1, run_after=None, expires_at=None, max_attempts=3
     ):
@@ -1326,10 +1652,6 @@ async def _prune_market(self, before, *, book_before=None, trades_before=None):
     return counts
 
 
-MemoryRepository.prune_market = _prune_market
-PostgresRepository.prune_market = _prune_market
-
-
 async def _range_page(
     self, collection, time_field, *, start=None, end=None, filters=None, limit=1000, after=None
 ):
@@ -1424,14 +1746,6 @@ async def _iter_range(self, collection, time_field, *, start=None, end=None, fil
         after = page[-1][1]
 
 
-MemoryRepository.list_range = _list_range
-MemoryRepository.page_range = _range_page
-PostgresRepository.page_range = _range_page
-PostgresRepository.list_range = _list_range
-MemoryRepository.iter_range = _iter_range
-PostgresRepository.iter_range = _iter_range
-
-
 async def _prune_jobs(self, before):
     """Prune aged terminal jobs; retain references needed by jobs, sessions or tool recovery.
 
@@ -1503,12 +1817,6 @@ async def _prune_expired_escalations(self, cutoff):
             rows.pop(key)
 
 
-MemoryRepository.prune_jobs = _prune_jobs
-PostgresRepository.prune_jobs = _prune_jobs
-MemoryRepository.preserved_market_windows = _preserved_windows
-PostgresRepository.preserved_market_windows = _preserved_windows
-
-
 async def _latest_before(self, collection, time_field, cutoff, *, filters=None):
     """Last actual observation strictly before cutoff, using typed time and stable key indexes."""
     _table(collection)
@@ -1560,10 +1868,6 @@ async def _latest_before(self, collection, time_field, cutoff, *, filters=None):
             if at < cutoff and all(k in row and row[k] == v for k, v in (filters or {}).items()):
                 candidates.append((at, key, row))
         return copy.deepcopy(max(candidates, key=lambda item: (item[0], item[1]))[2]) if candidates else None
-
-
-MemoryRepository.latest_before = _latest_before
-PostgresRepository.latest_before = _latest_before
 
 
 def _document_column(collection, keys):
@@ -1722,12 +2026,6 @@ async def _list_latest(self, collection, time_field, *, filters=None, limit=100,
         ]
 
 
-MemoryRepository.iter_all = _iter_all
-PostgresRepository.iter_all = _iter_all
-MemoryRepository.list_latest = _list_latest
-PostgresRepository.list_latest = _list_latest
-
-
 async def _iter_late_arrivals(
     self,
     collection,
@@ -1834,10 +2132,6 @@ async def _iter_late_arrivals(
         after = page[-1][1]
 
 
-MemoryRepository.iter_late_arrivals = _iter_late_arrivals
-PostgresRepository.iter_late_arrivals = _iter_late_arrivals
-
-
 async def _iter_metadata(self, collection, fields, *, filters=None, batch_size=1000):
     """Page selected top-level JSON fields without returning the full stored evidence payload.
 
@@ -1886,23 +2180,5 @@ def metadata_page_sql(collection, fields, *, filters=None, after=None, batch_siz
     return query, [*(key for field in fields for key in (field, field)), *args, batch_size]
 
 
-MemoryRepository.iter_metadata = _iter_metadata
-PostgresRepository.iter_metadata = _iter_metadata
-
-
 def _read_record(collection, row):
     return decode_market(collection, row) if collection in MARKET_COLUMNS else row["document"]
-
-
-MemoryRepository.put_market_batch = put_market_batch
-PostgresRepository.put_market_batch = put_market_batch
-MemoryRepository.latest_market_records = latest_market_records
-PostgresRepository.latest_market_records = latest_market_records
-
-MemoryRepository.market_dependency_head = market_dependency_head
-PostgresRepository.market_dependency_head = market_dependency_head
-
-MemoryRepository.iter_market_projection = iter_market_projection
-PostgresRepository.iter_market_projection = iter_market_projection
-MemoryRepository.market_series_counts = market_series_counts
-PostgresRepository.market_series_counts = market_series_counts
