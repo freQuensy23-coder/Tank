@@ -10,6 +10,7 @@ import re
 import ssl
 from contextlib import suppress
 from copy import deepcopy
+from datetime import timedelta
 from pathlib import Path
 from urllib.parse import urlsplit
 
@@ -33,6 +34,35 @@ def tls_context():
     context = ssl.create_default_context(cafile=certifi.where())
     context.post_handshake_auth = True
     return context
+
+
+SAME_PUBLICATION_WINDOW = timedelta(days=1)
+
+
+def publication_url(url):
+    """Host without www. and path without a trailing slash; query and fragment are tracking noise."""
+    parts = urlsplit(str(url or "").strip())
+    host = (parts.hostname or "").removeprefix("www.")
+    return (host, parts.path.rstrip("/")) if host else None
+
+
+def same_publication(stored, item):
+    """Whether two captures with one content_hash are one publication (03 §3.1).
+
+    Equal text alone is not identity: a templated official release ("Federal Reserve issues
+    FOMC statement", weekly listing posts) repeats its title-only body on every new release.
+    Captures are one publication when they share a URL, or when their publication times are
+    within SAME_PUBLICATION_WINDOW. Without a publication time on either side the equal text
+    decides, as before.
+    """
+    url = publication_url(item.get("url"))
+    if url is not None and url == publication_url(stored.get("url")):
+        return True
+    if not item.get("published_at") or not stored.get("published_at"):
+        return True
+    return (
+        abs(parse_time(item["published_at"]) - parse_time(stored["published_at"])) <= SAME_PUBLICATION_WINDOW
+    )
 
 
 class SourceService:
@@ -192,6 +222,13 @@ class SourceService:
         rows = await self.repo.list("ingest.source_items", filters=filters, limit=1)
         return rows[0] if rows else None
 
+    async def same_content(self, content_hash, item):
+        """The stored item with this content_hash that is the same publication as item (03 §3.1)."""
+        async for row in self.repo.iter_all("ingest.source_items", filters={"content_hash": content_hash}):
+            if same_publication(row, item):
+                return row
+        return None
+
     async def observe_known(self, source_id, external_id, feed):
         """True when the item is already captured; a sighting in another feed counts once (03 §3.1)."""
         item = await self.captured(source_id=source_id, external_id=str(external_id))
@@ -230,8 +267,8 @@ class SourceService:
         feed = item.get("feed") or source.get("feed") or sid
         item_id = item["item_id"]
         async with self.repo.lock("ingest-dedup"), self.repo.transaction():
-            existing = await self.captured(source_id=sid, external_id=external) or await self.captured(
-                content_hash=content_hash
+            existing = await self.captured(source_id=sid, external_id=external) or await self.same_content(
+                content_hash, item
             )
             if not existing and not body and sid != "S29":
                 raise ValueError("Source entry has no normalized content")

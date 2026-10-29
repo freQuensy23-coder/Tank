@@ -369,6 +369,26 @@ def sources_check(probe, accounts):
     run_db(command)
 
 
+@sources.command("recapture")
+@click.argument("source_id")
+@click.argument("external_ids", nargs=-1, required=True)
+@click.option(
+    "--apply", is_flag=True, help="Release the listed entries; without it the command only lists them."
+)
+def sources_recapture(source_id, external_ids, apply):
+    """Let the next poll ingest entries that a feed checkpoint skipped as duplicates. Dry run unless --apply."""
+
+    async def command(repo, settings):
+        from tank.sources.polling import recapture
+
+        configured = {s["source_id"]: s for s in settings.load_config("sources")["sources"]}
+        if source_id not in configured:
+            raise ValueError(f"Unknown source {source_id}")
+        return await recapture(repo, configured[source_id], external_ids, apply=apply)
+
+    run_db(command)
+
+
 @main.command()
 def coverage():
     async def command(repo, settings):
