@@ -39,9 +39,9 @@ src = "tank"
 compile_args = ["-O1", "-g0"]
 directives = { language_level = 3, binding = true, infer_types = false, annotation_typing = false, profile = false }
 [tool.hatch.build.targets.wheel.hooks.cython.options.files]
-targets = ["*/analysis/truth.py"]
+targets = ["*/analysis/truth.py", "*/clickhouse_market.py", "*/util.py"]
 [tool.uv]
-cache-keys = [{ file = "pyproject.toml" }, { file = "src/tank/analysis/truth.py" }]
+cache-keys = [{ file = "pyproject.toml" }, { file = "src/tank/analysis/truth.py" }, { file = "src/tank/clickhouse_market.py" }, { file = "src/tank/util.py" }]
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]

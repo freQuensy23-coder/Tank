@@ -121,11 +121,15 @@ async def full_request_comparison(tmp_path_factory, pytestconfig, request):
                     assert repository_contract(root / "src/tank/storage.py") == repository_contract(
                         tmp_path / "original/src/tank/storage.py"
                     )
+                    from tank import clickhouse_market, util
                     from tank.analysis import truth
 
-                    compiled[label] = stage_native_module(
-                        ROOT, root, Path(truth.__file__), "tank.analysis.truth"
-                    )
+                    compiled[label] = {
+                        module.__name__: stage_native_module(
+                            ROOT, root, Path(module.__file__), module.__name__
+                        )
+                        for module in (truth, clickhouse_market, util)
+                    }
                 repo = await resources.enter_async_context(
                     template.repository(os.environ["TANK_TEST_DATABASE_URL"])
                 )

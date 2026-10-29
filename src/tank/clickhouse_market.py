@@ -15,6 +15,7 @@ digits), timestamps as DateTime64(6, UTC), JSON as text.
 import asyncio
 import json
 import re
+import sys
 import time
 from copy import deepcopy
 from datetime import UTC, datetime, timedelta
@@ -22,6 +23,7 @@ from decimal import Decimal
 from urllib.parse import urlsplit, urlunsplit
 
 import httpx
+from pydantic_core import from_json
 
 from tank.market_schema import MARKET_ALIASES, MARKET_COLUMNS, MARKET_IDENTITIES
 from tank.util import canonical_json, iso, parse_time
@@ -159,7 +161,7 @@ class ClickHouse:
 
     async def columns(self, query, params=None):
         body = await self._post(query + " FORMAT JSONColumns", params)
-        return await asyncio.to_thread(json.loads, body)
+        return await asyncio.to_thread(_column_json, body)
 
     async def execute(self, query, params=None):
         await self._post(query, params)
@@ -168,6 +170,15 @@ class ClickHouse:
         if rows:
             body = "\n".join(json.dumps(row) for row in rows)
             await self._post(f"INSERT INTO {table} FORMAT JSONEachRow\n{body}", None)
+
+
+def _column_json(body):
+    if len(body) > 1_000_000 and sys.get_int_max_str_digits() == 4300:
+        try:
+            return from_json(body, allow_inf_nan=False, cache_strings="all", allow_partial=False)
+        except ValueError:
+            pass
+    return json.loads(body)
 
 
 def _compact_json_rows(body):
