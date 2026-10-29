@@ -641,21 +641,23 @@ async def test_new_replay_session_restores_captured_external_error_and_acknowled
     assert (await repo.get("ops.agent_sessions", "s"))["status"] == "OPEN"
 
 
-@pytest.mark.asyncio
-@pytest.mark.parametrize(("interval", "warnings"), [(300, 1), (0, 3)])
-async def test_follower_failures_are_logged_rate_limited_and_recovery_reported(
-    monkeypatch, caplog, interval, warnings
-):
+async def follow_through_failures(monkeypatch, caplog, *, interval, after_failures):
     from tank.agents import sessions as sessions_module
 
     repo = MemoryRepository()
     await seed(repo)
     original_sleep = asyncio.sleep
+    original_wait = asyncio.wait
     monkeypatch.setattr(sessions_module, "FOLLOW_FAILURE_LOG_INTERVAL_S", interval)
     monkeypatch.setattr(sessions_module.asyncio, "sleep", lambda delay: original_sleep(0))
+    monkeypatch.setattr(
+        sessions_module.asyncio, "wait", lambda tasks, timeout: original_wait(tasks, timeout=0.01)
+    )
     request = httpx.Request("GET", "http://oma/v1/sessions/s/events/stream")
     streams = []
     catchups = []
+    alive = asyncio.Event()
+    recovered_while_streaming = []
 
     async with httpx.AsyncClient() as http:
         service = SessionService(repo, settings(), None, http=http)
@@ -664,10 +666,18 @@ async def test_follower_failures_are_logged_rate_limited_and_recovery_reported(
             streams.append(sid)
             if len(streams) <= 3:
                 raise httpx.HTTPStatusError("busy", request=request, response=httpx.Response(503))
+            if after_failures == "stream_alive":
+                await alive.wait()
 
         async def catch_up(sid):
             catchups.append(sid)
-            if len(catchups) == 5:
+            if len(catchups) == 4 and after_failures == "session_ended":
+                session = await repo.get("ops.agent_sessions", sid)
+                await repo.put("ops.agent_sessions", sid, dict(session, status="ENDED"))
+            if len(catchups) == (6 if after_failures == "stream_alive" else 5):
+                recovered_while_streaming.append(
+                    not alive.is_set() and any("recovered" in r.getMessage() for r in caplog.records)
+                )
                 service.closed = True
 
         async def not_idle(sid):
@@ -676,8 +686,23 @@ async def test_follower_failures_are_logged_rate_limited_and_recovery_reported(
         service.stream = stream
         service.catch_up = catch_up
         service.finish_if_idle = not_idle
-        with caplog.at_level("INFO", logger="tank.agents.sessions"):
-            await asyncio.wait_for(service.follow("s"), timeout=2)
+        await asyncio.wait_for(service.follow("s"), timeout=2)
+        alive.set()
+    return recovered_while_streaming
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(("interval", "warnings"), [(300, 1), (0, 3)])
+@pytest.mark.parametrize("after_failures", ["stream_closed", "stream_alive", "session_ended"])
+async def test_follower_failures_are_logged_rate_limited_and_recovery_reported(
+    monkeypatch, caplog, interval, warnings, after_failures
+):
+    with caplog.at_level("INFO", logger="tank.agents.sessions"):
+        observed = await follow_through_failures(
+            monkeypatch, caplog, interval=interval, after_failures=after_failures
+        )
+    if after_failures == "stream_alive":
+        assert observed == [True]
 
     failed = [r.getMessage() for r in caplog.records if r.levelname == "WARNING"]
     assert len(failed) == warnings

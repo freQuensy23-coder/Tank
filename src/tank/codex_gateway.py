@@ -431,7 +431,7 @@ class CodexGateway:
         return result
 
     @staticmethod
-    def _log_upstream(upstream: httpx.Response, started: float, attempts: int) -> None:
+    def _log_upstream(upstream: httpx.Response, started: float, attempt: int) -> None:
         """Status, header latency and Codex usage windows; never bodies, tokens or identifiers."""
         usage = []
         for name, value in upstream.headers.items():
@@ -439,10 +439,10 @@ class CodexGateway:
                 usage.append(name.removeprefix("x-codex-").removesuffix("-used-percent") + "=" + value)
         log.log(
             logging.WARNING if upstream.status_code >= 400 else logging.INFO,
-            "Codex upstream response: status=%d latency_ms=%d attempts=%d used_percent=%s",
+            "Codex upstream response: status=%d latency_ms=%d attempt=%d used_percent=%s",
             upstream.status_code,
             round((time.monotonic() - started) * 1000),
-            attempts,
+            attempt,
             ",".join(sorted(usage)) or "-",
         )
 
@@ -486,6 +486,7 @@ class CodexGateway:
                     stream=True,
                     follow_redirects=False,
                 )
+                self._log_upstream(upstream, started, attempt + 1)
                 if upstream.status_code == 401 and attempt == 0:
                     await self._close_response(upstream)
                     upstream = None
@@ -493,7 +494,6 @@ class CodexGateway:
                     continue
                 break
             assert upstream is not None
-            self._log_upstream(upstream, started, attempt + 1)
             if 300 <= upstream.status_code < 400:
                 raise GatewayError("codex_redirect_refused", 502)
             headers = self._headers(upstream)

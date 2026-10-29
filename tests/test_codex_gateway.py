@@ -717,7 +717,7 @@ async def test_upstream_status_latency_and_usage_windows_logged_without_secrets(
         ("INFO", "Codex upstream response: status=200"),
         ("WARNING", "Codex upstream response: status=429"),
     ]
-    assert all(message.endswith(f" attempts=1 used_percent={usage}") for _, message in lines)
+    assert all(message.endswith(f" attempt=1 used_percent={usage}") for _, message in lines)
     text = caplog.text
     assert "FAKE-body-secret" not in text and "req_FAKE" not in text and jwt() not in text
 
@@ -736,9 +736,13 @@ async def test_unauthorized_recovery_refresh_counted_and_logged(gateway_factory,
         assert (await client.post("/v1/responses", json=body())).status_code == 200
         assert gateway.refreshes == 1
     lines = gateway_lines(caplog)
-    assert lines[0] == ("INFO", "Codex OAuth refresh succeeded: reason=unauthorized_recovery refreshes=1")
-    assert lines[1][1].startswith("Codex upstream response: status=200 ")
-    assert " attempts=2 used_percent=-" in lines[1][1]
+    assert [(level, message.split(" latency_ms=")[0]) for level, message in lines] == [
+        ("WARNING", "Codex upstream response: status=401"),
+        ("INFO", "Codex OAuth refresh succeeded: reason=unauthorized_recovery refreshes=1"),
+        ("INFO", "Codex upstream response: status=200"),
+    ]
+    assert lines[0][1].endswith(" attempt=1 used_percent=-")
+    assert lines[2][1].endswith(" attempt=2 used_percent=-")
     assert "FAKE-refresh" not in caplog.text and jwt(exp=4102444801) not in caplog.text
 
 

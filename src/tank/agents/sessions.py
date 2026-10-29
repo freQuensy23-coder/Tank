@@ -2570,6 +2570,13 @@ class SessionService:
         delay = 1
         failures = 0
         logged_at = None
+
+        def recovered():
+            nonlocal failures, logged_at
+            if failures:
+                log.info("Agent session %s follower recovered after %d failures", sid, failures)
+                failures, logged_at = 0, None
+
         while not self.closed:
             stream_task = None
             try:
@@ -2598,22 +2605,23 @@ class SessionService:
                         )
                     await self.repo.put("ops.agent_sessions", sid, session)
                 if session.get("status") in ("FAILED", "ENDED") or await self.finish_if_idle(sid):
+                    recovered()
                     return
                 while not self.closed:
                     done, _ = await asyncio.wait([stream_task], timeout=10)
                     if done:
                         await stream_task
                         if await self.finish_if_idle(sid):
+                            recovered()
                             return
                         break
                     await self.catch_up(sid)
+                    recovered()
                     session = await self.repo.get("ops.agent_sessions", sid)
                     if session.get("status") in ("FAILED", "ENDED") or await self.finish_if_idle(sid):
                         return
                 delay = 1
-                if failures:
-                    log.info("Agent session %s follower recovered after %d failures", sid, failures)
-                    failures, logged_at = 0, None
+                recovered()
             except asyncio.CancelledError:
                 raise
             except (httpx.HTTPError, ValueError, KeyError, RuntimeError) as exc:
