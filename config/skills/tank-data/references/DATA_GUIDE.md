@@ -508,7 +508,7 @@ Fixture
 | `book_summaries` | (`instrument_id`, ts) | ClickHouse; kept 72 hours; summary fields only (no order-book levels). |
 | `oi_obs`, `funding_obs`, `liq_obs`, `tickers_24h`, `trades` | (`instrument_id`, ts) | ClickHouse (daily partitions); `trades` (every print) 30 days. |
 | `market_truth`, `decisions`, `contradictions`, `watch_conditions`, `calls` | ids | `market_truth` indexed by (`token_id`, `cutoff`); a decision carries its outlook. |
-| `alerts`, `deliveries`, `ops_notices`, `evidence_bundles`, `reaction_checkpoints`, `reviews` | ids | Append-only (UPDATE/DELETE rejected by trigger). |
+| `alerts`, `deliveries`, `ops_notices`, `evidence_bundles`, `reaction_checkpoints`, `reviews` | ids | Append-only (UPDATE/DELETE rejected by trigger). A reaction checkpoint embeds its whole Market Truth (about 1 MB); its column `metadata` is the same row without `market_truth`: read and filter checkpoint fields through `metadata`, and `document` only when you need the Market Truth. |
 | `ops_cards` | (`chat_id`, `item_id`) | The "Tank Ops" card of each material and its Telegram message; mutable, edited as notices arrive (§7.6). |
 | `hot_tokens` | (`token_id`, `event_id`) | Hot set (§9); read on start to subscribe the hot tokens again. |
 | `jobs` | `job_id`; unique `idem_key` | The service's job queue (§3.8). |
@@ -1323,7 +1323,7 @@ q("SELECT instrument_id, venue, market_type, venue_symbol FROM reg.instruments W
 q("SELECT source_id, name FROM reg.sources ORDER BY source_id")
 ```
 
-A project or token outside the registry has no key: name it (`entities[].name`, `token_names`, `entity_name`, `token_name`); Tank refuses a name its registry resolves and asks for the key.
+A project or token outside the registry has no key: name it (`entities[].name`, `token_names`, `entity_name`, `token_name`); Tank refuses a name its registry resolves and asks for the key. To look one up, pass its name or ticker in `name` of `list_open_events` or `get_registry`; never compose a key for it.
 
 
 # Executable sandbox access

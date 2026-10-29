@@ -1220,3 +1220,38 @@ def test_window_cache_is_bounded_by_age_and_rows(monkeypatch):
     assert ("old",) not in windows
 
     assert [w["used"] for w in windows[("a",)]] == [995.0] and windows[("b",)][0]["size"] == 40
+
+
+@pytest.mark.asyncio
+async def test_scheduler_demotes_expired_unprotected_hot_rows_without_post72h_checkpoint(setup):
+    from tank.scheduler import Scheduler
+
+    repo, settings, _inst = setup
+    (settings.config_dir / "thresholds.yaml").write_text(yaml.safe_dump({"hot_token_cap": 15}))
+    now = utcnow().replace(microsecond=0)
+    async with httpx.AsyncClient() as http:
+        service = MarketService(repo, settings, http=http)
+        for event_id, age_h in (("stale", 80), ("fresh", 1), ("called", 80)):
+            await repo.put(
+                "evt.events",
+                event_id,
+                {"event_id": event_id, "public_at": iso(now - timedelta(hours=age_h)), "current_ems_id": "m"},
+            )
+        await repo.put("evt.ems_assessments", "m", {"ems_id": "m", "event_id": "stale", "class": "MAJOR"})
+        await service.escalate("stale", ["test:ABC"])
+        await service.escalate("fresh", ["bitcoin:BTC"])
+        await repo.put(
+            "ana.calls",
+            "call",
+            {"call_id": "call", "event_id": "called", "token_id": "bitcoin:BTC", "status": "OPEN"},
+        )
+        await service.escalate("called", ["bitcoin:BTC"])
+        assert parse_time((await repo.get("mkt.hot_tokens", "test:ABC:stale"))["expires_at"]) < now
+        await Scheduler(repo, settings, service, None).demote(now)
+        assert {(row["token_id"], row["event_id"]) for row in await repo.list("mkt.hot_tokens")} == {
+            ("bitcoin:BTC", "fresh"),
+            ("bitcoin:BTC", "called"),
+        }
+        tiers = await repo.list("ops.capture_tier_transitions", filters={"token_id": "test:ABC"})
+        latest = max(tiers, key=lambda row: row.get("transition_seq", 0))
+        assert (latest["tier"], latest["reason"]) == ("BASE", "DEMOTION")

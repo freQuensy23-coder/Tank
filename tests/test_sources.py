@@ -7,6 +7,7 @@ import pytest
 import zstandard
 
 from tank.sources import SourceService, parsers
+from tank.storage import DECISION_MAX_ATTEMPTS
 from tank.util import new_id, sha256
 
 
@@ -252,6 +253,7 @@ async def test_raw_first_dedup_and_conditional_get(tmp_path):
         == RSS
     )
     assert repo.jobs[0][0][0] == "FILTER_ITEM"
+    assert repo.jobs[0][1]["max_attempts"] == DECISION_MAX_ATTEMPTS
 
     assert (await svc.poll_once("S30"))["items"] == 0
     assert len(repo.jobs) == 1

@@ -11,6 +11,7 @@ import httpx
 from tank.agents.decision import MODEL, binding, classify
 from tank.agents.incomplete import UNFINISHED
 from tank.ops_progress import item_progress
+from tank.storage import DECISION_MAX_ATTEMPTS
 from tank.time_precision import collection_clock, offset_schedule, propagate_timestamp
 from tank.util import iso, parse_time, sha256, utcnow
 
@@ -283,7 +284,7 @@ class Pipeline:
                         {"item_id": item["item_id"]},
                         item["item_id"],
                         priority=priority(item),
-                        max_attempts=2,
+                        max_attempts=DECISION_MAX_ATTEMPTS,
                         expires_at=offset_schedule(
                             propagate_timestamp(item, "observed_at")
                             if item.get("observed_at")
