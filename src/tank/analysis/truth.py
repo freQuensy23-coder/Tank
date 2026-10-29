@@ -897,7 +897,7 @@ def oi_temporally_admissible(row):
         )
         values = tuple(row.get(name) for name in fields)
         if all(value is None or type(value) in (str, int, float, bool) for value in values):
-            envelope = (_history_context_key(), tuple((type(value), value) for value in values))
+            envelope = (_history_context_key(), tuple(map(type, values)), values)
             envelopes = inputs.setdefault("oi_precision_envelopes", {})
             if envelope not in envelopes:
                 candidate = None
