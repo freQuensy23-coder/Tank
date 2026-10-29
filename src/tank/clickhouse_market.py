@@ -152,10 +152,10 @@ class ClickHouse:
         return response.content
 
     async def rows(self, query, params=None):
-        body = await self._post(query + " FORMAT JSONEachRow", params)
+        body = await self._post(query + " FORMAT JSONCompactEachRowWithNames", params)
         if len(body) > 1_000_000:
-            return await asyncio.to_thread(_json_lines, body)
-        return _json_lines(body)
+            return await asyncio.to_thread(_compact_json_rows, body)
+        return _compact_json_rows(body)
 
     async def columns(self, query, params=None):
         body = await self._post(query + " FORMAT JSONColumns", params)
@@ -170,8 +170,21 @@ class ClickHouse:
             await self._post(f"INSERT INTO {table} FORMAT JSONEachRow\n{body}", None)
 
 
-def _json_lines(body):
-    return [json.loads(line) for line in body.splitlines() if line]
+def _compact_json_rows(body):
+    lines = (line for line in body.splitlines() if line)
+    first = next(lines, None)
+    if first is None:
+        return []
+    names = json.loads(first)
+    if not isinstance(names, list) or any(not isinstance(name, str) for name in names):
+        raise ValueError("Invalid compact column names")
+    result = []
+    for line in lines:
+        values = json.loads(line)
+        if not isinstance(values, list):
+            raise ValueError("Invalid compact row")
+        result.append(dict(zip(names, values, strict=True)))
+    return result
 
 
 def _literal(value):
