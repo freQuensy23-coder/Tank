@@ -1062,6 +1062,10 @@ def _fixed_decimal_column(column):
 
 
 def _history_decimal_arrays(columns, *, summands=1, metadata=None):
+    return _prepared_history_decimal_arrays(columns, summands, metadata)
+
+
+def _prepared_history_decimal_arrays(columns, summands, metadata):
     context = getcontext()
     if (
         context.prec < 128
