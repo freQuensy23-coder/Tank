@@ -681,6 +681,18 @@ async def run(root, directory, fixtures, revision, reader):
     emit({"kind": "stopped"})
 
 
+def failure_receipt(error):
+    frames, trace = [], error.__traceback__
+    while trace:
+        frames.append([Path(trace.tb_frame.f_code.co_filename).name, trace.tb_lineno])
+        trace = trace.tb_next
+    return {
+        "failure": type(error).__name__,
+        "frames": frames if len(frames) <= 16 else frames[:8] + frames[-8:],
+        "frames_omitted": max(0, len(frames) - 16),
+    }
+
+
 async def main():
     root, directory, fixtures = (Path(value).resolve() for value in sys.argv[1:4])
     loop, task = asyncio.get_running_loop(), asyncio.current_task()
@@ -691,11 +703,7 @@ async def main():
     try:
         await run(root, directory, fixtures, sys.argv[4], reader)
     except BaseException as error:
-        frames, trace = [], error.__traceback__
-        while trace:
-            frames.append([Path(trace.tb_frame.f_code.co_filename).name, trace.tb_lineno])
-            trace = trace.tb_next
-        emit({"failure": type(error).__name__, "frames": frames[-8:]})
+        emit(failure_receipt(error))
         raise SystemExit(1) from None
     finally:
         transport.close()

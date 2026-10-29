@@ -338,3 +338,45 @@ def test_prepared_join_preserves_nearest_rows_with_offset_venues_and_duplicate_t
         assert actual[0]["venues"] == ["binance", "bybit"]
     finally:
         truth._ASSESSMENT_INPUTS.reset(token)
+
+
+@pytest.mark.parametrize("composite", [False, True])
+@pytest.mark.parametrize("precision", [32, 128])
+@pytest.mark.parametrize("rounding", ["ROUND_HALF_EVEN", "ROUND_DOWN"])
+def test_dependency_key_skips_unused_cohort_preparation(monkeypatch, composite, precision, rounding):
+    sync, end = cohort()
+    before = deepcopy(sync)
+
+    def calculate(packet, start, end):
+        if composite:
+            return truth.synchronized_oi(packet, start, end)
+        return truth._oi_stats(packet[0][1], start, end, history_identity="single-venue")
+
+    expected = [
+        observe(calculate, sync, end - timedelta(hours=hours), end, precision, rounding, None)
+        for hours in (6, 12, 24)
+    ]
+    original, calls = truth._oi_cohort_key, []
+
+    def counted(rows):
+        calls.append(rows)
+        return original(rows)
+
+    monkeypatch.setattr(truth, "_oi_cohort_key", counted)
+    cache = {}
+    inputs = truth._ASSESSMENT_INPUTS.set({})
+    baseline = truth._BASELINE_CACHE.set(cache)
+    dependency = truth._BASELINE_DEPENDENCY.set("retained-dependency-proof")
+    try:
+        for _ in range(2):
+            actual = [
+                observe(calculate, sync, end - timedelta(hours=hours), end, precision, rounding, None)
+                for hours in (6, 12, 24)
+            ]
+            assert actual == expected
+        assert cache and not calls
+        assert sync == before
+    finally:
+        truth._BASELINE_DEPENDENCY.reset(dependency)
+        truth._BASELINE_CACHE.reset(baseline)
+        truth._ASSESSMENT_INPUTS.reset(inputs)

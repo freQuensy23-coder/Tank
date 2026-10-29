@@ -74,7 +74,8 @@ async def receive(process):
         line = await process.stdout.readline()
     assert line, "Isolated request worker exited without a receipt"
     receipt = json.loads(line)
-    assert "failure" not in receipt, receipt
+    if "failure" in receipt:
+        raise AssertionError(json.dumps(receipt, sort_keys=True))
     return receipt
 
 
