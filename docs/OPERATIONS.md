@@ -77,6 +77,19 @@ No build or synthetic test proves operational acceptance. Separate evidence is r
 
 `tank reanalyse` lists source items whose agent turn ended without an outcome: `extraction_status` FAILED with reason AGENT_INCOMPLETE, and legacy SKIPPED items with reason NATIVE_TURN_COMPLETED_WITHOUT_OBSERVATION. It changes nothing unless `--apply` is given; then each listed item returns to PENDING, keeps its previous status and route in `reanalysis_history`, and gets a new ROUTE_ITEM job, so the agent receives it as a new input. `--item-id` (repeatable) narrows the selection and `--limit` (default 100) bounds it. Review the dry-run list before applying.
 
+### Recapturing skipped duplicates
+
+A feed checkpoint keeps the external IDs it skipped as duplicates in `duplicate_ids` and never reads them again. `tank sources recapture SOURCE_ID EXTERNAL_ID...` lists the checkpoints of that source's feeds that hold the given IDs and changes nothing unless `--apply` is given; then it removes those IDs from `duplicate_ids` and drops the feed's `etag`/`last_modified`, so the next poll reads the full feed and ingests each entry still listed in it under the current deduplication rule (03 §3.1). An entry that is still a duplicate of the same publication only adds an observation and returns to `duplicate_ids`. The command does not fetch anything itself; an entry that has left the feed is not recovered. A poll running at the same moment may save its earlier checkpoint over the change, so repeat the dry run after the next poll and apply again if the ID is still listed.
+
+The Fed FOMC statement of 2026-10-28 was skipped this way before the fix, as a copy of the 2026-09-16 statement with the same title-only text. After the fix is deployed, recover it with:
+
+```
+docker exec tank-tank-1 tank sources recapture S05 https://www.federalreserve.gov/newsevents/pressreleases/monetary20261028a.htm
+docker exec tank-tank-1 tank sources recapture S05 https://www.federalreserve.gov/newsevents/pressreleases/monetary20261028a.htm --apply
+```
+
+Check after the next S05 poll that `ingest.source_items` holds a row with that `external_id`. The Bybit article `https://announcements.bybit.com/en-US/article/tradfi-stock-listing-10-stock-cfds-are-now-live-on-bybit-tradfi--artb755612610cb/` (S11) was skipped the same way and is recovered with `tank sources recapture S11 <that URL>`.
+
 ## Snapshot time and authority
 
 One market cutoff governs exchange/settlement times and completed-bar bucket ends. `received_ts` is collection latency and may be later than cutoff for historical backfills. `assembled_at` records availability: exclude rows received after snapshot assembly and semantic market points after cutoff. Official account authority is scoped to claim subject; `@sama` has documented World and OpenAI roles, not global trust.

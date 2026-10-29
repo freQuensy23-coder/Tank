@@ -735,7 +735,7 @@ Seed for the beneficiary walk (§4.7). An edge supported only by this map starts
 ### 3.1 Ingestion, filter and routing
 
 1. Adapters poll at the intervals in 02 §3 (conditional requests where supported) or consume pushes. Each entry yields `external_id` (the source key listed per source in 02 §3) and a normalized-text `content_hash`; raw content is written once and hashed.
-2. Exact duplicates (same `source_id` + `external_id`, or same `content_hash`) do not create new items; they increment observation counts on the existing item.
+2. Exact duplicates (same `source_id` + `external_id`, or same `content_hash` for the same publication) do not create new items; they increment observation counts on the existing item. Equal text alone is not identity: a templated release ("Federal Reserve issues FOMC statement", weekly listing posts) repeats its title-only body on every new date. A `content_hash` match is the same publication when both items share a URL (host without `www.`, path without trailing slash; query and fragment ignored), or when their `published_at` values are at most 24 hours apart, or when either has no `published_at`. Otherwise the entry is a new item even though its `content_hash` equals a stored one. An entry a feed checkpoint already skipped as a duplicate stays in its `duplicate_ids`; `tank sources recapture` releases it for the next poll (OPERATIONS.md).
 3. Where items go:
 
 | Items | Path |
