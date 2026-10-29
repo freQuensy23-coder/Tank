@@ -344,6 +344,16 @@ def test_full_market_truth_original_candidate_same_worker(
     assert mismatch is None, (state, contract, mismatch)
 
 
+def test_full_market_truth_retains_named_native_diagnostic_phases(full_request_comparison):
+    evidence = json.loads((full_request_comparison / "comparison.json").read_text())
+    profile = evidence["post_measurement_profile"]
+    phases = profile["inclusive_nonadditive_phase_seconds"]
+    calls = profile["phase_call_counts"]
+    for name in ("relative_truth", "derivatives_truth", "support_features"):
+        assert phases[name] > 0
+        assert calls[name] >= 1
+
+
 @pytest.mark.parametrize("state", ["cold", "warm"])
 def test_full_market_truth_under_four_seconds(full_request_comparison, state, record_property):
     evidence = json.loads((full_request_comparison / "comparison.json").read_text())
