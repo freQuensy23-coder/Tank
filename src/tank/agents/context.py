@@ -504,8 +504,11 @@ class ModelContext:
         return self.described[kind, key]
 
     async def project(self, value, *, diagnostic=False):
+        return clean_value(await self._project(value, diagnostic=diagnostic))
+
+    async def _project(self, value, *, diagnostic=False):
         if isinstance(value, list):
-            return [await self.project(item, diagnostic=diagnostic) for item in value]
+            return [await self._project(item, diagnostic=diagnostic) for item in value]
         if isinstance(value, str):
             if value in self.tokens:
                 return self.token_label(value)
@@ -573,7 +576,7 @@ class ModelContext:
                         elif not OPAQUE.search(entry):
                             refs.append(clean_text(entry))
                     else:
-                        refs.append(await self.project(entry))
+                        refs.append(await self._project(entry))
                 result[key] = refs
             elif not private_field(key):
                 named = (
@@ -589,9 +592,9 @@ class ModelContext:
                         if key in LITERAL_FIELDS
                         and isinstance(item, str)
                         and (not diagnostic or key in {"quote", "quoted", "url", "query"})
-                        else await self.project(item, diagnostic=diagnostic or key in DIAGNOSTIC_FIELDS)
+                        else await self._project(item, diagnostic=diagnostic or key in DIAGNOSTIC_FIELDS)
                     )
-        return clean_value(result)
+        return result
 
     async def result(self, tool, result):
         projected = await self.project(result)
