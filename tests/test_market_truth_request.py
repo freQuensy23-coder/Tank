@@ -110,10 +110,15 @@ async def full_request_comparison(tmp_path_factory, pytestconfig, request):
                 )
                 workers[label] = process
                 resources.push_async_callback(stop, process)
-                receipts[label] = await send(
-                    process,
-                    {"database_url": repo.database_url, "clickhouse_database": repo.clickhouse.database},
+                process.stdin.write(
+                    json.dumps(
+                        {"database_url": repo.database_url, "clickhouse_database": repo.clickhouse.database}
+                    ).encode()
+                    + b"\n"
                 )
+                await process.stdin.drain()
+            for label, process in workers.items():
+                receipts[label] = await receive(process)
                 assert receipts[label]["kind"] == "ready"
                 record_property(label + "_setup", json.dumps(receipts[label], sort_keys=True))
             assert repositories[0].database_url != repositories[1].database_url
