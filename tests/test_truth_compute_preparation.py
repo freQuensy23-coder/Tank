@@ -177,6 +177,7 @@ def test_native_volume_guard_keeps_trapping_context_on_scalar_path(signal):
     try:
         with localcontext() as context:
             context.prec = 128
+            context.clear_flags()
             context.traps[signal] = True
             assert truth._history_decimal_arrays((["1.00"],)) is None
             assert context.traps[signal]

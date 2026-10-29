@@ -3076,20 +3076,35 @@ class MarketService:
 
         columns_cache = {}
 
-        async def dense_prices(inst):
+        pending = {}
+
+        async def load_series(inst, kind):
             iid = inst["instrument_id"]
-            series = await self._condition_kline_series(
+            price = pending.get(("price", iid))
+            if kind == "volume" and price is not None:
+                await price
+            return await self._condition_kline_series(
                 inst,
                 history_start,
                 cutoff_dt,
                 assembled,
-                kind="price",
+                kind=kind,
                 coverage_count=counts.get(iid, 0),
                 fixed_window=True,
                 captured_rows=captured_klines.get(iid) if captured_klines is not None else None,
                 rolling=rolling,
                 columns_cache=columns_cache,
             )
+
+        async def projected(inst, kind):
+            key = (kind, inst["instrument_id"])
+            if key not in pending:
+                pending[key] = asyncio.create_task(load_series(inst, kind))
+            return await pending[key]
+
+        async def dense_prices(inst):
+            iid = inst["instrument_id"]
+            series = await projected(inst, "price")
             result["stat_price_series"][iid] = series
 
             wanted = set(series["times_us"][-1:])
@@ -3110,159 +3125,160 @@ class MarketService:
                     ):
                         await retain_close(row)
 
-        for inst in instruments:
-            iid = inst["instrument_id"]
-            await retain_close(latest_closes.get(iid))
-            if norm.venue_key(inst).endswith(".spot"):
-                await dense_prices(inst)
-            volume = await self._condition_kline_series(
-                inst,
-                history_start,
-                cutoff_dt,
-                assembled,
-                kind="volume",
-                coverage_count=counts.get(iid, 0),
-                fixed_window=True,
-                captured_rows=captured_klines.get(iid) if captured_klines is not None else None,
-                rolling=rolling,
-                columns_cache=columns_cache,
-            )
-            if volume["times_us"]:
-                result["stat_volume_series"][iid] = volume
-        chosen = {}
-        for inst in all_spot:
-            if inst["token_id"] not in peers:
-                continue
-            current = chosen.get(inst["token_id"])
-            if current is None or counts[inst["instrument_id"]] > counts[current["instrument_id"]]:
-                chosen[inst["token_id"]] = inst
-
-        from math import isfinite
-
-        boundaries = [cutoff_dt - timedelta(seconds=n) for n in (0, 900, 3600, 14400, 86400)]
-        if result["anchor"] and result["anchor"].get("ts"):
-            boundaries.append(parse_time(result["anchor"]["ts"]))
-        epoch = parse_time("1970-01-01T00:00:00Z")
-        sector_ids = [
-            inst["instrument_id"]
-            for inst in chosen.values()
-            if self.tokens[inst["token_id"]].get("symbol") not in {"BTC", "ETH"}
-        ]
-        sector_points = {iid: {} for iid in sector_ids}
-        for boundary in sorted(set(boundaries)):
-            upper_open = boundary - timedelta(minutes=1)
-            if upper_open < history_start or not sector_ids:
-                continue
-
-            pending = await self.repo.latest_market_records(
-                "mkt.klines_1m",
-                time_field="open_time",
-                instrument_ids=sector_ids,
-                filters={"complete": True, "interval_s": 60},
-                start=history_start,
-                cutoff=upper_open,
-                assembled_at=assembled,
-            )
-            for row in pending:
-                iid = row["instrument_id"]
-                while True:
-                    value = float(row["c"]) if row.get("c") is not None else float("nan")
-                    opened = parse_time(row["open_time"])
-                    if isfinite(value) and value > 0:
-                        delta = opened + timedelta(minutes=1) - epoch
-                        stamp = (delta.days * 86400 + delta.seconds) * 1000000 + delta.microseconds
-                        sector_points[iid][stamp] = value
-                        break
-                    before = opened - timedelta(microseconds=1)
-                    if before < history_start:
-                        break
-                    earlier = await self.repo.latest_market_records(
-                        "mkt.klines_1m",
-                        time_field="open_time",
-                        instrument_ids=[iid],
-                        filters={"complete": True, "interval_s": 60},
-                        start=history_start,
-                        cutoff=before,
-                        assembled_at=assembled,
-                    )
-                    if not earlier:
-                        break
-                    row = earlier[0]
-        for inst in self.instruments.values():
-            if inst["token_id"] not in peers or not norm.venue_key(inst).endswith(".spot"):
-                continue
-            instruments.append(inst)
-            if self.tokens[inst["token_id"]].get("symbol") not in {"BTC", "ETH"}:
-                if inst["instrument_id"] in latest_closes:
-                    await retain_close(latest_closes[inst["instrument_id"]])
-                if chosen[inst["token_id"]]["instrument_id"] != inst["instrument_id"]:
+        try:
+            for inst in instruments:
+                if norm.venue_key(inst).endswith(".spot"):
+                    pending[("price", inst["instrument_id"])] = asyncio.create_task(load_series(inst, "price"))
+            for inst in instruments:
+                pending[("volume", inst["instrument_id"])] = asyncio.create_task(load_series(inst, "volume"))
+            for inst in instruments:
+                iid = inst["instrument_id"]
+                await retain_close(latest_closes.get(iid))
+                if norm.venue_key(inst).endswith(".spot"):
+                    await dense_prices(inst)
+                volume = await projected(inst, "volume")
+                if volume["times_us"]:
+                    result["stat_volume_series"][iid] = volume
+            chosen = {}
+            for inst in all_spot:
+                if inst["token_id"] not in peers:
                     continue
-                points = sector_points[inst["instrument_id"]]
-                times = sorted(points)
-                result["stat_price_series"][inst["instrument_id"]] = {
-                    "instrument_id": inst["instrument_id"],
-                    "token_id": inst["token_id"],
-                    "venue": inst["venue"],
-                    "market_type": inst["market_type"],
-                    "time_basis": "CLOSE_TIME",
-                    "coverage_count": counts[inst["instrument_id"]],
-                    "times_us": times,
-                    "values": [points[stamp] for stamp in times],
-                    "complete": [1] * len(times),
-                }
-                continue
-            await retain_close(latest_closes.get(inst["instrument_id"]))
-            if chosen[inst["token_id"]]["instrument_id"] == inst["instrument_id"]:
-                await dense_prices(inst)
-        result["semantics"] = self._instrument_semantics(instruments)
-        result["instruments"] = instruments
-        result["tokens"] = list(self.tokens.values())
-        result["sector_baskets"] = deepcopy(self.sector_baskets)
-        gaps = await self._shared_call(
-            ("gaps", token_id),
-            lambda: self.repo.list("mkt.capture_gaps", filters={"token_id": token_id}, limit=100000),
-        )
-        result["gaps"] = [g for g in gaps if parse_time(g["start"]) <= cutoff_dt]
-        runs = await self._shared_call(
-            ("runs", token_id),
-            lambda: self.repo.list("mkt.backfill_runs", filters={"token_id": token_id}, limit=10000),
-        )
-        anchor_ts = (
-            anchor.get("ts") if isinstance(anchor, dict) else iso(anchor) if anchor is not None else None
-        )
-        runs = [r for r in runs if anchor_ts is None or parse_time(r["anchor"]) == parse_time(anchor_ts)]
-        result["backfill_runs"] = runs
-        latest = max(runs, key=lambda r: r["started_at"]) if runs else None
-        result["capture_status"] = {
-            "status": latest["status"] if latest else "NOT_REQUESTED",
-            "reason": latest.get("reason") if latest else "NO_DURABLE_CAPTURE_REQUEST",
-            "backfill_id": latest.get("backfill_id") if latest else None,
-            "observed_at": iso(),
-            "bounded_wait_s": 0,
-            "incomplete_windows_excluded": True,
-        }
-        if latest and latest["backfill_id"] in self._capture_waits:
-            waited = self._capture_waits[latest["backfill_id"]]
-            result["capture_status"]["bounded_wait_s"] = waited["bounded_wait_s"]
-            if latest["status"] in ("PENDING", "RUNNING"):
-                result["capture_status"].update(waited)
-        result["funding_source_observations"] = [
-            observation
-            for point in result["funding"]
-            for observation in (
-                list(point["source_observations"].values()) if point.get("source_observations") else [point]
+                current = chosen.get(inst["token_id"])
+                if current is None or counts[inst["instrument_id"]] > counts[current["instrument_id"]]:
+                    chosen[inst["token_id"]] = inst
+
+            from math import isfinite
+
+            boundaries = [cutoff_dt - timedelta(seconds=n) for n in (0, 900, 3600, 14400, 86400)]
+            if result["anchor"] and result["anchor"].get("ts"):
+                boundaries.append(parse_time(result["anchor"]["ts"]))
+            epoch = parse_time("1970-01-01T00:00:00Z")
+            sector_ids = [
+                inst["instrument_id"]
+                for inst in chosen.values()
+                if self.tokens[inst["token_id"]].get("symbol") not in {"BTC", "ETH"}
+            ]
+            sector_points = {iid: {} for iid in sector_ids}
+            for boundary in sorted(set(boundaries)):
+                upper_open = boundary - timedelta(minutes=1)
+                if upper_open < history_start or not sector_ids:
+                    continue
+
+                pending = await self.repo.latest_market_records(
+                    "mkt.klines_1m",
+                    time_field="open_time",
+                    instrument_ids=sector_ids,
+                    filters={"complete": True, "interval_s": 60},
+                    start=history_start,
+                    cutoff=upper_open,
+                    assembled_at=assembled,
+                )
+                for row in pending:
+                    iid = row["instrument_id"]
+                    while True:
+                        value = float(row["c"]) if row.get("c") is not None else float("nan")
+                        opened = parse_time(row["open_time"])
+                        if isfinite(value) and value > 0:
+                            delta = opened + timedelta(minutes=1) - epoch
+                            stamp = (delta.days * 86400 + delta.seconds) * 1000000 + delta.microseconds
+                            sector_points[iid][stamp] = value
+                            break
+                        before = opened - timedelta(microseconds=1)
+                        if before < history_start:
+                            break
+                        earlier = await self.repo.latest_market_records(
+                            "mkt.klines_1m",
+                            time_field="open_time",
+                            instrument_ids=[iid],
+                            filters={"complete": True, "interval_s": 60},
+                            start=history_start,
+                            cutoff=before,
+                            assembled_at=assembled,
+                        )
+                        if not earlier:
+                            break
+                        row = earlier[0]
+            for inst in self.instruments.values():
+                if inst["token_id"] not in peers or not norm.venue_key(inst).endswith(".spot"):
+                    continue
+                instruments.append(inst)
+                if self.tokens[inst["token_id"]].get("symbol") not in {"BTC", "ETH"}:
+                    if inst["instrument_id"] in latest_closes:
+                        await retain_close(latest_closes[inst["instrument_id"]])
+                    if chosen[inst["token_id"]]["instrument_id"] != inst["instrument_id"]:
+                        continue
+                    points = sector_points[inst["instrument_id"]]
+                    times = sorted(points)
+                    result["stat_price_series"][inst["instrument_id"]] = {
+                        "instrument_id": inst["instrument_id"],
+                        "token_id": inst["token_id"],
+                        "venue": inst["venue"],
+                        "market_type": inst["market_type"],
+                        "time_basis": "CLOSE_TIME",
+                        "coverage_count": counts[inst["instrument_id"]],
+                        "times_us": times,
+                        "values": [points[stamp] for stamp in times],
+                        "complete": [1] * len(times),
+                    }
+                    continue
+                await retain_close(latest_closes.get(inst["instrument_id"]))
+                if chosen[inst["token_id"]]["instrument_id"] == inst["instrument_id"]:
+                    await dense_prices(inst)
+            result["semantics"] = self._instrument_semantics(instruments)
+            result["instruments"] = instruments
+            result["tokens"] = list(self.tokens.values())
+            result["sector_baskets"] = deepcopy(self.sector_baskets)
+            gaps = await self._shared_call(
+                ("gaps", token_id),
+                lambda: self.repo.list("mkt.capture_gaps", filters={"token_id": token_id}, limit=100000),
             )
-        ]
-        result["funding_confirmations"] = [
-            {**rest, "independent_path_verified": True, "primary_source_path": ws.get("source_path")}
-            for rest, ws in funding_confirmations(result["funding_source_observations"])
-        ]
-        result["capture_metadata"] = await self._shared_call(
-            ("capture_metadata", token_id, cutoff), lambda: self._capture_metadata(token_id, cutoff)
-        )
-        result["capture_tier"] = result["capture_metadata"]["tier"]
-        self._snapshot_heads(result, cutoff_dt)
-        result.update(collection_clock(iso()).fields("assembled_at"))
+            result["gaps"] = [g for g in gaps if parse_time(g["start"]) <= cutoff_dt]
+            runs = await self._shared_call(
+                ("runs", token_id),
+                lambda: self.repo.list("mkt.backfill_runs", filters={"token_id": token_id}, limit=10000),
+            )
+            anchor_ts = (
+                anchor.get("ts") if isinstance(anchor, dict) else iso(anchor) if anchor is not None else None
+            )
+            runs = [r for r in runs if anchor_ts is None or parse_time(r["anchor"]) == parse_time(anchor_ts)]
+            result["backfill_runs"] = runs
+            latest = max(runs, key=lambda r: r["started_at"]) if runs else None
+            result["capture_status"] = {
+                "status": latest["status"] if latest else "NOT_REQUESTED",
+                "reason": latest.get("reason") if latest else "NO_DURABLE_CAPTURE_REQUEST",
+                "backfill_id": latest.get("backfill_id") if latest else None,
+                "observed_at": iso(),
+                "bounded_wait_s": 0,
+                "incomplete_windows_excluded": True,
+            }
+            if latest and latest["backfill_id"] in self._capture_waits:
+                waited = self._capture_waits[latest["backfill_id"]]
+                result["capture_status"]["bounded_wait_s"] = waited["bounded_wait_s"]
+                if latest["status"] in ("PENDING", "RUNNING"):
+                    result["capture_status"].update(waited)
+            result["funding_source_observations"] = [
+                observation
+                for point in result["funding"]
+                for observation in (
+                    list(point["source_observations"].values()) if point.get("source_observations") else [point]
+                )
+            ]
+            result["funding_confirmations"] = [
+                {**rest, "independent_path_verified": True, "primary_source_path": ws.get("source_path")}
+                for rest, ws in funding_confirmations(result["funding_source_observations"])
+            ]
+            result["capture_metadata"] = await self._shared_call(
+                ("capture_metadata", token_id, cutoff), lambda: self._capture_metadata(token_id, cutoff)
+            )
+            result["capture_tier"] = result["capture_metadata"]["tier"]
+            self._snapshot_heads(result, cutoff_dt)
+            result.update(collection_clock(iso()).fields("assembled_at"))
+        finally:
+            for task in pending.values():
+                if not task.done():
+                    task.cancel()
+            if pending:
+                await asyncio.gather(*pending.values(), return_exceptions=True)
         return result
 
     @staticmethod

@@ -3889,12 +3889,8 @@ def _native_volume_arrays(rows, projection, end, instrument=None):
             return result
         starts = np.asarray(times, dtype=np.int64)
         intervals = np.full(len(starts), interval * 1000000, dtype=np.int64)
-        delta = end - epoch
-        end_us = delta.days * 86400000000 + delta.seconds * 1000000 + delta.microseconds
-        admitted = starts + intervals <= end_us
-        raw = [value for value, keep in zip(projection["values"], admitted, strict=True) if keep]
-        complete = np.asarray(projection["complete"], dtype=bool)[admitted]
-        starts, intervals = starts[admitted], intervals[admitted]
+        raw = projection["values"]
+        complete = np.asarray(projection["complete"], dtype=bool)
     else:
         points = []
         for row in sorted(rows, key=_time):
