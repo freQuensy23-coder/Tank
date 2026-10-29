@@ -319,6 +319,7 @@ async def run(root, directory, fixtures, revision, reader):
             runtime.handlers = {"ESCALATE_TOKENS": runtime.escalate, "RUN_MARKET_TRUTH": runtime.assess}
             snapshots, dense, phases, phase_calls = [], {}, {}, {}
             diagnostic_call = snapshot_call = None
+            diagnostic_seconds = 0.0
             original_snapshot, original_heads, original_rows = (
                 market.snapshot,
                 market._snapshot_heads,
@@ -376,14 +377,17 @@ async def run(root, directory, fixtures, revision, reader):
             def measure(name, function):
                 @wraps(function)
                 def measured(*args, **kwargs):
-                    nonlocal diagnostic_call
-                    if name == "derivatives_truth":
-                        diagnostic_call = (copy_context(), function, args, kwargs)
+                    nonlocal diagnostic_call, diagnostic_seconds
+                    context = copy_context() if name == "derivatives_truth" else None
                     started = perf_counter()
                     try:
                         return function(*args, **kwargs)
                     finally:
-                        phases[name] = phases.get(name, 0) + perf_counter() - started
+                        elapsed = perf_counter() - started
+                        if context is not None and elapsed > diagnostic_seconds:
+                            diagnostic_call = (context, function, args, kwargs)
+                            diagnostic_seconds = elapsed
+                        phases[name] = phases.get(name, 0) + elapsed
                         phase_calls[name] = phase_calls.get(name, 0) + 1
 
                 return measured
@@ -467,6 +471,7 @@ async def run(root, directory, fixtures, revision, reader):
                     )
                     continue
                 state = command["sample"]
+                diagnostic_seconds = 0.0
                 phases.clear()
                 phase_calls.clear()
                 baseline_before = len(service._assessment_baselines.get(TOKEN, {}))
