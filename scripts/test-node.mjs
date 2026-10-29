@@ -18,6 +18,7 @@ const lanes = {
     "tests/openma/lifecycle/image-recovery.test.mjs",
     "tests/openma/lifecycle/custom-tool-validation.test.mjs",
     "tests/openma/lifecycle/memory-bindings.test.mjs",
+    "tests/openma/events/span-finish-reason.test.mjs",
   ],
   "local-contract": [
     "deploy/openma_lifecycle/native-qualification.test.mjs",
