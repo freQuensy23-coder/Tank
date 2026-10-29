@@ -201,6 +201,10 @@ def percentile(values, p):
         if isinstance(values, StatisticalPopulation)
         else sorted(v for v in values if v is not None)
     )
+    return _percentile_ordered(s, p)
+
+
+def _percentile_ordered(s, p):
     if not s:
         return None
     k = (len(s) - 1) * p
@@ -210,9 +214,44 @@ def percentile(values, p):
     )
 
 
+def _finite_homogeneous_population(values):
+    kind = None
+    for value in values:
+        if value is None:
+            continue
+        current = type(value)
+        if kind is None:
+            kind = current
+        if current is not kind:
+            return False
+        if kind is Decimal:
+            if not value.is_finite():
+                return False
+        elif kind is float:
+            if not isfinite(value):
+                return False
+        else:
+            return False
+    return True
+
+
 def normal(values):
     qs = parameter("normal_range_quantiles", [0.025, 0.975])
-    return [percentile(values, float(qs[0])), percentile(values, float(qs[1]))] if values else None
+    if not values:
+        return None
+    if (
+        type(values) in (list, tuple)
+        and type(qs) in (list, tuple)
+        and len(qs) == 2
+        and type(qs[0]) is float
+        and type(qs[1]) is float
+        and isfinite(qs[0])
+        and isfinite(qs[1])
+        and _finite_homogeneous_population(values)
+    ):
+        ordered = sorted(value for value in values if value is not None)
+        return [_percentile_ordered(ordered, qs[0]), _percentile_ordered(ordered, qs[1])]
+    return [percentile(values, float(qs[0])), percentile(values, float(qs[1]))]
 
 
 def float_normal(values):
@@ -953,6 +992,9 @@ def _fixed_decimal_text_metadata(value):
 def _history_fixed_decimal_column(column):
     if len(column) < 256:
         return None
+    inputs = _ASSESSMENT_INPUTS.get()
+    conversions = inputs.setdefault("fixed_text_decimals", {}) if inputs is not None else None
+    metadata = inputs.setdefault("fixed_text_metadata", {}) if inputs is not None else None
     values = np.empty(len(column), dtype=object)
     values.fill(None)
     low, high = 0, 0
@@ -961,13 +1003,21 @@ def _history_fixed_decimal_column(column):
             continue
         if type(value) is not str or len(value) > 160:
             return None
-        prepared = _fixed_decimal_text_metadata(value)
-        if prepared < 0:
-            return None
+        converted = conversions.get(value) if conversions is not None else None
+        if converted is None:
+            prepared = _fixed_decimal_text_metadata(value)
+            if prepared < 0:
+                return None
+            converted = Decimal(value)
+            if conversions is not None and len(conversions) < 65536:
+                metadata[value] = prepared
+                conversions[value] = converted
+        else:
+            prepared = metadata[value]
         exponent = -(prepared >> 6)
         significant = prepared & 63
         adjusted = significant + exponent - 1 if significant else exponent
-        values[index] = Decimal(value)
+        values[index] = converted
         low, high = min(low, exponent), max(high, adjusted)
     return values, low, high
 
