@@ -14,6 +14,7 @@ import httpx
 import zstandard
 
 from tank.ops_progress import event_progress, item_progress, tool_progress
+from tank.sources import tls_context
 from tank.sources.capture_fetch import capture_fetch, is_exchange_url
 from tank.time_precision import (
     Timestamp,
@@ -213,6 +214,7 @@ AGENT_WATCH_METRICS = frozenset(
     }
 )
 MAX_AGENT_WATCHES = 10
+MAX_EVIDENCE_REDIRECTS = 5
 CATEGORICAL_WATCH_METRICS = frozenset(
     {
         "event.state",
@@ -477,6 +479,7 @@ class EventToolService:
         self.repo, self.settings, self.truth, self.engine = repo, settings, market_truth, decision_engine
         self.http = http
         self.search_service = search
+        self.evidence_header_policy = None
         self.scheduler = None
         if reference_clock is not None:
             from tank.fixture_reference import TrustedFixtureClock
@@ -1222,41 +1225,96 @@ class EventToolService:
         }
 
     async def fetch_page(self, a, c):
-        self.validate_evidence_url(a["url"])
-        if urlparse(a["url"]).scheme != "https":
-            raise ValueError("Only HTTPS evidence fetches are allowed")
+        url = a["url"]
+        self.validate_fetch_url(url)
         limit = min(20, float(a.get("timeout_s") or 20))
-        if is_exchange_url(a["url"]):
-            response = await capture_fetch(self.repo, "GET", a["url"], budget_s=limit)
-            response.raise_for_status()
-            if len(response.content) > 2 * 1024 * 1024:
-                raise ValueError("Page exceeds 2 MB")
-            chunks, media_type = [response.content], response.headers.get("content-type")
-        else:
-            chunks, media_type = await self._direct_page(a["url"], limit)
+        deadline = asyncio.get_running_loop().time() + limit
+        async with (
+            httpx.AsyncClient(timeout=limit, follow_redirects=False, verify=tls_context())
+            if self.http is None
+            else _borrow(self.http)
+        ) as client:
+            for _hop in range(MAX_EVIDENCE_REDIRECTS + 1):
+                remaining = deadline - asyncio.get_running_loop().time()
+                if is_exchange_url(url):
+                    response = await capture_fetch(self.repo, "GET", url, budget_s=max(remaining, 0.001))
+                    response.raise_for_status()
+                    if len(response.content) > 2 * 1024 * 1024:
+                        raise ValueError("Page exceeds 2 MB")
+                    chunks, media_type = [response.content], response.headers.get("content-type")
+                    break
+                page = await self._direct_page(client, url, remaining, limit)
+                if isinstance(page, str):
+                    url = page
+                    self.validate_fetch_url(url)
+                    continue
+                chunks, media_type = page
+                break
+            else:
+                raise httpx.TooManyRedirects(
+                    f"Page redirected more than {MAX_EVIDENCE_REDIRECTS} times",
+                    request=httpx.Request("GET", url),
+                )
         original = b"".join(chunks)
         self.validate_evidence_bytes(original)
-        return await self._store_page(a, c, original, media_type or "application/octet-stream")
+        return await self._store_page(
+            {**a, "url": url}, c, original, media_type or "application/octet-stream"
+        )
 
-    async def _direct_page(self, url, limit):
-        async with (
-            asyncio.timeout(limit),
-            (
-                httpx.AsyncClient(timeout=limit, follow_redirects=False)
-                if self.http is None
-                else _borrow(self.http)
-            ) as client,
-            client.stream("GET", url, headers={"User-Agent": self.settings.user_agent}) as r,
-        ):
-            r.raise_for_status()
-            chunks = []
-            size = 0
-            async for chunk in r.aiter_bytes():
-                size += len(chunk)
-                if size > 2 * 1024 * 1024:
-                    raise ValueError("Page exceeds 2 MB")
-                chunks.append(chunk)
-            return chunks, r.headers.get("content-type")
+    def validate_fetch_url(self, url):
+        """Every hop of an evidence fetch, including each redirect target, passes the same checks."""
+        self.validate_evidence_url(url)
+        if urlparse(url).scheme != "https":
+            raise ValueError("Only HTTPS evidence fetches are allowed")
+
+    def evidence_headers(self, url):
+        """Request headers for one evidence fetch hop (HLD §3).
+
+        Hosts whose terms require a declared User-Agent (``requires_contact_user_agent`` in
+        sources.yaml, e.g. sec.gov) get Tank's contact User-Agent. Every other page is read
+        with the browser User-Agent configured as ``evidence_user_agent``: news and exchange
+        sites answer the contact User-Agent with 401/403 or no answer at all.
+        """
+        if self.evidence_header_policy is None:
+            sources = self.settings.load_config("sources")
+            contact_hosts = frozenset(
+                source["limits"]["shared_host"]
+                for source in sources.get("sources", [])
+                if source.get("limits", {}).get("requires_contact_user_agent")
+            )
+            self.evidence_header_policy = contact_hosts, sources["evidence_user_agent"]
+        contact_hosts, browser_agent = self.evidence_header_policy
+        host = (urlparse(url).hostname or "").lower()
+        if any(host == known or host.endswith("." + known) for known in contact_hosts):
+            return {"User-Agent": self.settings.user_agent}
+        return {
+            "User-Agent": browser_agent,
+            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+            "Accept-Language": "en-US,en;q=0.9",
+        }
+
+    async def _direct_page(self, client, url, remaining, limit):
+        """One evidence hop: the next URL for a redirect, else the page chunks and media type."""
+        try:
+            async with (
+                asyncio.timeout(remaining),
+                client.stream("GET", url, headers=self.evidence_headers(url)) as r,
+            ):
+                if r.has_redirect_location:
+                    return str(r.url.join(r.headers["location"]))
+                r.raise_for_status()
+                chunks = []
+                size = 0
+                async for chunk in r.aiter_bytes():
+                    size += len(chunk)
+                    if size > 2 * 1024 * 1024:
+                        raise ValueError("Page exceeds 2 MB")
+                    chunks.append(chunk)
+                return chunks, r.headers.get("content-type")
+        except TimeoutError as error:
+            raise httpx.TimeoutException(
+                f"Page not received within {limit:g} s", request=httpx.Request("GET", url)
+            ) from error
 
     async def _store_page(self, a, c, original, media_type):
 

@@ -1,6 +1,7 @@
 """Actual local async HTTPX streams; production 20-second deadline is unmodified."""
 
 import asyncio
+import ssl
 import time
 from pathlib import Path
 
@@ -39,7 +40,9 @@ async def setup(tmp_path, handler, owned, monkeypatch):
     if owned:
 
         def factory(**kwargs):
+            verify = kwargs.pop("verify")
             assert kwargs == {"timeout": 20, "follow_redirects": False}
+            assert isinstance(verify, ssl.SSLContext) and verify.post_handshake_auth
             return client
 
         monkeypatch.setattr(CANDIDATE.httpx, "AsyncClient", factory)
@@ -67,7 +70,7 @@ async def assert_real_twenty_second_total_deadline(tmp_path, monkeypatch, owned,
     service, client = await setup(tmp_path, handler, owned, monkeypatch)
     start = time.monotonic()
     try:
-        with pytest.raises(TimeoutError):
+        with pytest.raises(httpx.TimeoutException, match="within 20 s"):
             await service.fetch_page({"url": "https://example.com/page"}, {})
         elapsed = time.monotonic() - start
         assert 19.5 <= elapsed < 23, elapsed

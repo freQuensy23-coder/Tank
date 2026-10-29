@@ -1676,8 +1676,23 @@ class SessionService:
             )
             return {"type": type(error).__name__, "reason": reason, "category": "VALIDATION"}, "REFUSED"
         if isinstance(error, httpx.HTTPStatusError):
-            reason = f"Source request failed (HTTP {error.response.status_code})"
-            category = "SOURCE_HTTP"
+            status = error.response.status_code
+            if status == 429:
+                retry_after = error.response.headers.get("retry-after", "")
+                reason = "Source rate-limited the request (HTTP 429)" + (
+                    f"; Retry-After {retry_after} s" if retry_after.isdigit() else ""
+                )
+                category = "SOURCE_RATE_LIMITED"
+            elif status in {401, 403}:
+                reason = f"Source refused access to the page (HTTP {status})"
+                category = "SOURCE_ACCESS_DENIED"
+            else:
+                reason = f"Source request failed (HTTP {status})"
+                category = "SOURCE_HTTP"
+        elif isinstance(error, httpx.TimeoutException):
+            reason, category = "Source did not answer within the fetch timeout", "SOURCE_TIMEOUT"
+        elif isinstance(error, httpx.TooManyRedirects):
+            reason, category = "Source redirected too many times", "SOURCE_REDIRECT"
         elif isinstance(error, httpx.HTTPError):
             reason, category = "Source transport failed", "SOURCE_TRANSPORT"
         else:
