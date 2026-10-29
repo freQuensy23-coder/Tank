@@ -138,16 +138,18 @@ def test_shared_timeline_matches_original_windows_and_decimal_effects(
         truth._ASSESSMENT_INPUTS.reset(token)
 
 
-def test_shared_timeline_reuses_sums_and_retains_source_rows(monkeypatch):
+def test_shared_timeline_reuses_prepared_join_and_retains_source_rows(monkeypatch):
     sync, end = cohort()
     calls = []
-    original = truth._sum
+    original = truth._oi_combined_vector
 
-    def counted(rows, measure):
-        calls.append(measure)
-        return original(rows, measure)
+    def counted(*args):
+        result = original(*args)
+        assert result is not None
+        calls.append(len(result))
+        return result
 
-    monkeypatch.setattr(truth, "_sum", counted)
+    monkeypatch.setattr(truth, "_oi_combined_vector", counted)
     token = truth._ASSESSMENT_INPUTS.set({})
     try:
         with localcontext() as context:
@@ -318,3 +320,21 @@ def test_history_view_preserves_lower_bound_and_duplicate_source_order():
     finally:
         truth._ASSESSMENT_INPUTS.reset(token)
         truth._PARAMETERS.reset(parameters)
+
+
+def test_prepared_join_preserves_nearest_rows_with_offset_venues_and_duplicate_times(monkeypatch):
+    sync, end = cohort()
+    for row in sync[1][1]:
+        if row["ts"] < end:
+            row["ts"] += timedelta(seconds=30)
+    start = end - timedelta(hours=12)
+    with monkeypatch.context() as scalar:
+        scalar.setattr(truth, "_composite_history_vector", lambda *args: None)
+        expected = observe(original_synchronized, sync, start, end, 128, "ROUND_HALF_EVEN", None)
+    token = truth._ASSESSMENT_INPUTS.set({})
+    try:
+        actual = observe(truth.synchronized_oi, sync, start, end, 128, "ROUND_HALF_EVEN", None)
+        assert actual == expected
+        assert actual[0]["venues"] == ["binance", "bybit"]
+    finally:
+        truth._ASSESSMENT_INPUTS.reset(token)

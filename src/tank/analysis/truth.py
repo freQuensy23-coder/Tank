@@ -1416,6 +1416,44 @@ def _oi_cutoff_index(rows, end):
     return result
 
 
+def _oi_combined_vector(indexed, timestamps, tolerance, prepared):
+    temporal = _history_time_array(timestamps, timedelta(0))
+    if temporal is None or any(not times for times, _ in indexed):
+        return None
+    targets, _, origin = temporal
+    selected = []
+    admitted = np.ones(len(targets), dtype=bool)
+    usd_ready = np.ones(len(targets), dtype=bool)
+    for lane, (times, _) in enumerate(indexed):
+        delta = times[0] - origin
+        shift = delta.days * 86400000000 + delta.seconds * 1000000 + delta.microseconds
+        column = _history_time_array(times, timedelta(0))
+        if column is None or abs(shift) + int(column[0].max()) > 2**52:
+            return None
+        offsets = column[0] + shift
+        if np.any(offsets[1:] < offsets[:-1]):
+            return None
+        chosen, paired = _history_nearest(offsets, targets, tolerance)
+        native, usd = prepared[2 * lane][chosen], prepared[2 * lane + 1][chosen]
+        admitted &= paired & np.not_equal(native, None)
+        usd_ready &= np.not_equal(usd, None)
+        selected.append((native, usd))
+    usd_ready &= admitted
+    native_totals = np.full(len(targets), Decimal(0), dtype=object)
+    usd_totals = np.full(len(targets), Decimal(0), dtype=object)
+    for native, usd in selected:
+        native_totals[admitted] = np.add(native_totals[admitted], native[admitted])
+        usd_totals[usd_ready] = np.add(usd_totals[usd_ready], usd[usd_ready])
+    return [
+        dict(
+            ts=iso(timestamps[i]),
+            oi_native=native_totals[i],
+            oi_usd=usd_totals[i] if usd_ready[i] else None,
+        )
+        for i in np.flatnonzero(admitted)
+    ]
+
+
 def _oi_combined_timeline(indexed, tolerance):
     """Share exact endpoint sums only when conversions have no Decimal effects."""
     inputs = _ASSESSMENT_INPUTS.get()
@@ -1424,15 +1462,24 @@ def _oi_combined_timeline(indexed, tolerance):
     hit = memo.get(key) if memo is not None else None
     if hit is not None and all(a[1] is b[1] for a, b in zip(hit[0], indexed, strict=True)):
         return hit[1]
-    reusable = False
+    prepared = None
     if memo is not None:
         columns = [
-            [row.get(measure) for row in rows]
-            for _, rows in indexed
-            for measure in ("oi_native", "oi_usd")
+            [row.get(measure) for row in rows] for _, rows in indexed for measure in ("oi_native", "oi_usd")
         ]
-        reusable = _history_decimal_arrays(columns, summands=len(indexed)) is not None
+        metadata = {}
+        prepared = _history_decimal_arrays(columns, summands=len(indexed), metadata=metadata)
+        if (
+            prepared is not None
+            and metadata["high"] - metadata["low"] + len(str(max(len(indexed), 1))) + 1 > 128
+        ):
+            prepared = None
     timestamps = sorted({t for times, _ in indexed for t in times})
+    combined = _oi_combined_vector(indexed, timestamps, tolerance, prepared) if prepared is not None else None
+    if combined is not None:
+        memo[key] = (indexed, combined)
+        return combined
+    reusable = prepared is not None
     combined = []
     for t in timestamps:
         selected = []

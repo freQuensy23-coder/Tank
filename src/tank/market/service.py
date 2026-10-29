@@ -1380,8 +1380,10 @@ class MarketService:
                     admitted &= np.asarray(columns["interval_s"], dtype=object) == 60
                     indexes = np.flatnonzero(admitted)
                     selected = stamps[indexes]
-                    if len(selected) and (not times or selected[0] > times[-1]) and np.all(
-                        selected[1:] > selected[:-1]
+                    if (
+                        len(selected)
+                        and (not times or selected[0] > times[-1])
+                        and np.all(selected[1:] > selected[:-1])
                     ):
                         full = np.fromiter((columns["complete"][i] is True for i in indexes), dtype=np.bool_)
                         known = np.asarray(columns["open_time_prec"], dtype=object)[indexes] == "BUCKET(60s)"
