@@ -11,6 +11,7 @@ import weakref
 from contextlib import asynccontextmanager, suppress
 from contextvars import ContextVar
 from datetime import timedelta
+from math import isfinite
 from pathlib import Path
 from typing import Protocol
 
@@ -678,6 +679,24 @@ async def _stable_transaction(conn):
             raise exit_cancelled
 
 
+def _same_json_value(left, right):
+    if type(left) is not type(right):
+        return False
+    if type(left) is dict:
+        return left.keys() == right.keys() and all(
+            _same_json_value(left[key], right[key]) for key in left
+        )
+    if type(left) is list:
+        return len(left) == len(right) and all(
+            _same_json_value(a, b) for a, b in zip(left, right, strict=True)
+        )
+    if type(left) is float:
+        return isfinite(left) and isfinite(right) and left.hex() == right.hex()
+    if left is None or type(left) in (str, int, bool):
+        return left == right
+    return False
+
+
 class PostgresRepository(QueueMixin):
     def __init__(self, database_url):
         self.database_url = database_url
@@ -852,7 +871,9 @@ class PostgresRepository(QueueMixin):
             table = sql.Identifier(*collection.split("."))
             old = await (
                 await conn.execute(
-                    sql.SQL("SELECT document, immutable FROM {} WHERE storage_key=%s").format(table),
+                    sql.SQL(
+                        "SELECT document, immutable, xmin::text AS revision FROM {} WHERE storage_key=%s"
+                    ).format(table),
                     (key,),
                 )
             ).fetchone()
@@ -879,6 +900,31 @@ class PostgresRepository(QueueMixin):
                         value = json.dumps(value, sort_keys=True)
                 values.append(value)
             names = ["storage_key", "document", "immutable", *projected]
+            if (
+                old
+                and type(old["document"]) is dict
+                and type(record) is dict
+                and collection not in SERIAL_TABLES
+            ):
+                previous = old["document"]
+                changed = {
+                    name: value
+                    for name, value in record.items()
+                    if name not in previous or not _same_json_value(previous[name], value)
+                }
+                removed = list(previous.keys() - record.keys())
+                setters = sql.SQL(",").join(
+                    sql.SQL("{}=%s").format(sql.Identifier(name)) for name in names[2:]
+                )
+                updated = await conn.execute(
+                    sql.SQL(
+                        "UPDATE {} SET document=(document - %s::text[]) || %s, {} "
+                        "WHERE storage_key=%s AND xmin::text=%s"
+                    ).format(table, setters),
+                    [removed, Jsonb(changed), *values[2:], key, old["revision"]],
+                )
+                if updated.rowcount == 1:
+                    return copy.deepcopy(record)
             columns = sql.SQL(",").join(map(sql.Identifier, names))
             assignments = sql.SQL(",").join(
                 sql.SQL("{}=EXCLUDED.{}").format(sql.Identifier(n), sql.Identifier(n)) for n in names[1:]

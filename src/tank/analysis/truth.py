@@ -1065,6 +1065,10 @@ def _history_nearest(times, targets, tolerance):
     return chosen, valid
 
 
+def _history_present(values):
+    return np.fromiter((value is not None for value in values), dtype=bool, count=len(values))
+
+
 def _oi_history_returns(times, native, usd, window, tolerance):
     prepared = _history_decimal_arrays((native, usd))
     temporal = _history_time_array(times, window)
@@ -1079,7 +1083,8 @@ def _oi_history_returns(times, native, usd, window, tolerance):
     old = order[old]
     returns, ends = [], []
     for values in prepared:
-        valid = paired & np.not_equal(values, None) & np.not_equal(values[old], None)
+        present = _history_present(values)
+        valid = paired & present & present[old]
         valid &= np.not_equal(values[old], 0)
         result = np.subtract(np.divide(values[valid], values[old[valid]]), 1)
         returns.append(np.asarray(result, dtype=np.float64).tolist())
@@ -1390,7 +1395,8 @@ def _composite_history_vector(venue_history, window):
         paired = old_valid & new_valid & (old != new)
         for measure in range(2):
             values = prepared[2 * venue + measure]
-            valid = paired & np.not_equal(values[new], None) & np.not_equal(values[old], None)
+            present = _history_present(values)
+            valid = paired & present[new] & present[old]
             valid &= np.not_equal(values[old], 0)
             covered[measure] |= valid
             for endpoint, indices in enumerate((old, new)):
@@ -1511,8 +1517,8 @@ def _oi_combined_vector(indexed, timestamps, tolerance, prepared):
             return None
         chosen, paired = _history_nearest(offsets, targets, tolerance)
         native, usd = prepared[2 * lane][chosen], prepared[2 * lane + 1][chosen]
-        admitted &= paired & np.not_equal(native, None)
-        usd_ready &= np.not_equal(usd, None)
+        admitted &= paired & _history_present(native)
+        usd_ready &= _history_present(usd)
         selected.append((native, usd))
     usd_ready &= admitted
     native_totals = np.full(len(targets), Decimal(0), dtype=object)
@@ -4212,7 +4218,7 @@ def _native_volume_arrays(rows, projection, end, instrument=None):
     if prepared is None:
         return None
     values = prepared[0]
-    valid = complete & np.not_equal(values, None)
+    valid = complete & _history_present(values)
     closes = starts + intervals
     if len(closes) and np.any(np.abs(closes) > 2**52):
         return None
