@@ -1645,12 +1645,16 @@ class Scheduler:
         )
 
     async def demote(self, now):
+        """Demote an unprotected hot row once its +72h checkpoint is captured or its hot
+        expiry has passed, so a failed or expired +72h capture never keeps a token HOT."""
         hot = [row async for row in self.repo.iter_all("mkt.hot_tokens")]
         if hot:
-            await self.market.refresh_hot_expiry(now=now)
+            hot = await self.market.refresh_hot_expiry(now=now)
         for row in hot:
-            protected = await self.market.hot_protected(row["event_id"], row["token_id"], now=now)
-            checkpoints = [
+            if await self.market.hot_protected(row["event_id"], row["token_id"], now=now):
+                continue
+            expired = row.get("expires_at") is not None and parse_time(row["expires_at"]) <= now
+            if not expired and not [
                 checkpoint
                 async for checkpoint in self.repo.iter_metadata(
                     "out.reaction_checkpoints",
@@ -1661,9 +1665,9 @@ class Scheduler:
                         "checkpoint": "POST_72H",
                     },
                 )
-            ]
-            if checkpoints and not protected:
-                await self.market.demote(row["token_id"], row["event_id"])
+            ]:
+                continue
+            await self.market.demote(row["token_id"], row["event_id"])
         hot = [row async for row in self.repo.iter_all("mkt.hot_tokens")]
         tokens = {r["token_id"] for r in hot}
         for row in sorted(hot, key=lambda r: (r.get("priority", 0), r["since"])):
