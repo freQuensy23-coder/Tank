@@ -426,6 +426,45 @@ async def test_assessment_persists_with_event_anchor():
     assert result["config_version"] == "test"
 
 
+@pytest.mark.asyncio
+async def test_assessment_before_a_scheduled_t0_anchors_on_t1_instead_of_failing():
+    """Binance's 10-30 06:00 delisting was analysed on 10-27: anchoring on the future T0
+    raised "anchor must precede cutoff" and the MAJOR event got no market truth."""
+    from types import SimpleNamespace
+
+    from tank.analysis.truth import MarketTruthService
+    from tank.time_precision import chosen_boundary
+
+    event = {
+        "event_time": "2026-10-30T06:00:00Z",
+        "event_time_prec": "EXACT",
+        "state_verified": True,
+        "public_at": "2026-10-27T13:00:00Z",
+        "public_at_prec": "EXACT",
+    }
+
+    class Repo:
+        async def get(self, collection, key):
+            return event
+
+        async def put(self, collection, key, record, **kwargs):
+            return record
+
+    class Market:
+        async def snapshot(self, token_id, cutoff, anchor=None):
+            return {"token_id": token_id, "cutoff": getattr(cutoff, "value", cutoff), "anchor": anchor}
+
+    service = MarketTruthService(Repo(), SimpleNamespace(config_version="t", code_version="t"), Market())
+    cutoff = chosen_boundary("2026-10-27T13:35:00Z", precision="BUCKET(1m)")
+    before = await service.assess("EVT-1", "bitcoin:BTC", cutoff)
+    assert (before["relative"]["anchor"]["type"], before["relative"]["anchor"]["ts"]) == (
+        "T1",
+        "2026-10-27T13:00:00Z",
+    )
+    after = await service.assess("EVT-1", "bitcoin:BTC", "2026-10-30T07:00:00Z")
+    assert after["relative"]["anchor"]["type"] == "T0"
+
+
 @pytest.mark.parametrize("side", ["BUY", "SELL"])
 def test_asymmetric_depth_uses_actual_hit_side_and_excludes_perps(side):
     from tank.analysis.truth import liquidity_truth

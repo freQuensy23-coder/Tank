@@ -24,7 +24,7 @@ from math import log
 from statistics import mean, median, stdev
 
 from tank.market.capture import event_anchor
-from tank.time_precision import chosen_boundary, offset_schedule, propagate_timestamp
+from tank.time_precision import Timestamp, chosen_boundary, offset_schedule, propagate_timestamp
 from tank.util import iso, jsonable, new_id, parse_time
 
 WINDOWS = {"W15M": 900, "W1H": 3600, "W4H": 14400, "W24H": 86400}
@@ -5669,6 +5669,11 @@ def compute_condition_values(snapshot, requirements, *, config=None, cache=None,
         _PARAMETERS.reset(parameters)
 
 
+def _cutoff_value(cutoff):
+    """The instant of a Market Truth cutoff given as a Timestamp or a plain time."""
+    return cutoff.value if isinstance(cutoff, Timestamp) else cutoff
+
+
 class MarketTruthService:
     def __init__(self, repo, settings, market):
         self.repo, self.settings, self.market = repo, settings, market
@@ -5680,7 +5685,7 @@ class MarketTruthService:
 
     async def condition_values(self, event_id, token_id, cutoff, requirements):
         event = await self.repo.get("evt.events", event_id) if event_id else None
-        anchor = event_anchor(event) if event else None
+        anchor = event_anchor(event, at=_cutoff_value(cutoff)) if event else None
         snapshot = await self.market.condition_snapshot(
             token_id, cutoff, anchor=anchor, requirements=requirements
         )
@@ -5722,7 +5727,7 @@ class MarketTruthService:
         cutoff = cutoff or iso(parse_time(iso()).replace(second=0, microsecond=0))
         anchor = None
         if event:
-            anchor = event_anchor(event)
+            anchor = event_anchor(event, at=_cutoff_value(cutoff))
         snapshot = await self.market.snapshot(token_id, cutoff, anchor=anchor)
         snapshot.update(event_id=event_id, token_id=token_id)
         if event.get("public_at") is not None:

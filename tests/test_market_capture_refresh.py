@@ -300,6 +300,41 @@ async def test_runtime_waits_for_capture_release_before_numerical_assessment():
     runtime.truth.assess.assert_awaited_once()
 
 
+async def test_runtime_checks_the_capture_at_t1_before_a_scheduled_t0():
+    """The obligation of a pre-T0 call is anchored at T1; checking readiness at the future
+    T0 would find no durable capture and fail the job."""
+    repo = MemoryRepository()
+    cutoff = utcnow().replace(second=0, microsecond=0)
+    public_at = iso(cutoff - timedelta(hours=1))
+    await repo.put(
+        "evt.events",
+        "e",
+        {
+            "event_id": "e",
+            "event_time": iso(cutoff + timedelta(days=2)),
+            "event_time_prec": "EXACT",
+            "state_verified": True,
+            "public_at": public_at,
+            "public_at_prec": "EXACT",
+        },
+    )
+    runtime = object.__new__(Runtime)
+    runtime.repo = repo
+    runtime.market = SimpleNamespace(
+        capture_readiness=AsyncMock(return_value={"status": "PARTIAL"}), repair_windows=AsyncMock()
+    )
+    runtime.truth = SimpleNamespace(assess=AsyncMock(return_value={"measured": True}))
+    payload = {
+        "event_id": "e",
+        "token_id": "T",
+        **chosen_boundary(cutoff, precision="BUCKET(1m)").fields("cutoff"),
+    }
+    assert await runtime.assess(payload) == {"measured": True}
+    assert runtime.market.capture_readiness.await_args.kwargs["anchor"] == public_at
+    repaired_from = runtime.market.repair_windows.await_args.args[1]
+    assert repaired_from < parse_time(public_at)
+
+
 @pytest.mark.parametrize(
     "backend", ["memory", pytest.param("postgres", marks=[pytest.mark.integration, pytest.mark.postgres])]
 )
