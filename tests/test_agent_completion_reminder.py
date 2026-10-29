@@ -338,3 +338,154 @@ async def test_deliberate_no_event_still_renders_as_rejection():
     assert card["status"] == "Отклонено агентом"
     assert "Мнение без нового факта" in card["text"]
     await sessions.close()
+
+
+async def seed_event(repo, session_id="s", **fields):
+    await repo.put(
+        "evt.events",
+        "EVT-1",
+        {"event_id": "EVT-1", "lifecycle": "DETECTED", "current_ems_id": None, "merged_into": None, **fields},
+    )
+    session = await repo.get("ops.agent_sessions", session_id)
+    session["event_id"] = "EVT-1"
+    await repo.put("ops.agent_sessions", session_id, session)
+    item = await repo.get("ingest.source_items", "i")
+    item["extraction_status"] = "DONE"
+    await repo.put("ingest.source_items", "i", item)
+
+
+async def test_recorded_event_without_class_is_reminded_to_assess_with_refusals():
+    repo = MemoryRepository()
+    config = settings()
+    await seed(repo)
+    await seed_event(repo)
+    await repo.put(
+        "ops.tool_calls",
+        "s:merge",
+        {
+            "session_id": "s",
+            "call_id": "merge",
+            "tool": "merge_into",
+            "status": "REFUSED",
+            "native_turn_message_id": "m-i",
+            "native_turn_call_index": 0,
+            "result": {"ok": False, "error": {"reason": "Merge target must be the earlier event"}},
+        },
+    )
+    sessions = await service(repo, config)
+    session = await settle(repo, sessions)
+    [job] = await reminders(repo)
+    assert job["payload"] == {
+        "kind": "COMPLETION_REMINDER",
+        "session_id": "s",
+        "item_id": "i",
+        "event_id": "EVT-1",
+        "reminded_kind": "ASSESSMENT",
+        "attempt": 1,
+        "reminder": 1,
+        "reminder_limit": 20,
+        "turn_message_id": "m-i",
+    }
+    assert job["idem_key"] == "s:EVT-1:ASSESSMENT_REMINDER:1"
+    assert session["completion_reminders_sent"] == 1
+    assert session["assessment_reminder_attempts"] == {"EVT-1": 1}
+    assert (await repo.get("ingest.source_items", "i"))["extraction_status"] == "DONE"
+    item = await repo.get("ingest.source_items", "i")
+    content = await ModelContext(repo, config, session).message(job["payload"], item)
+    text = content["reminder"]
+    assert "event EVT-1, recorded in this session, has no class" in text
+    assert 'set_assessment arguments: {"assessment": {' in text and '"event_id": "EVT-1"}' in text
+    assert "merge_into arguments" in text
+    assert "merge_into: Merge target must be the earlier event" in text
+    assert "record_event" not in text
+    assert len(json.dumps(content, ensure_ascii=False)) < 6000
+    notices = await repo.list("out.ops_notices", filters={"subject_id": "i"})
+    assert [(row["stage"], row["reason"]) for row in notices] == [
+        ("AGENT_REMINDED", "Агент не оценил событие, напоминание 1/20")
+    ]
+    await sessions.close()
+
+
+async def test_assessment_reminder_repeats_until_class_then_stops():
+    repo = MemoryRepository()
+    config = settings()
+    await seed(repo)
+    await seed_event(repo)
+    sessions = await service(repo, config)
+    await settle(repo, sessions)
+    [first] = await reminders(repo)
+    await deliver(repo, first)
+    session = await settle(repo, sessions)
+    second = (await reminders(repo))[1]["payload"]
+    assert (second["attempt"], second["reminder"], second["reminded_kind"]) == (2, 2, "ASSESSMENT")
+    assert second["turn_message_id"] == "r-" + first["idem_key"]
+    assert session["assessment_reminder_attempts"] == {"EVT-1": 2}
+    await deliver(repo, (await reminders(repo))[1])
+    event = await repo.get("evt.events", "EVT-1")
+    event.update(current_ems_id="EMS-1", lifecycle="SCORED")
+    await repo.put("evt.events", "EVT-1", event)
+    session = await settle(repo, sessions)
+    assert len(await reminders(repo)) == 2
+    assert session["completion_reminders_sent"] == 2
+    await sessions.close()
+
+
+async def test_assessment_reminders_share_the_session_budget():
+    repo = MemoryRepository()
+    config = settings(limit=1)
+    await seed(repo)
+    await seed_event(repo)
+    sessions = await service(repo, config)
+    await settle(repo, sessions)
+    await deliver(repo, (await reminders(repo))[0])
+    session = await settle(repo, sessions)
+    assert len(await reminders(repo)) == 1
+    assert session["completion_reminders_sent"] == 1
+    assert (await repo.get("ingest.source_items", "i"))["extraction_status"] == "DONE"
+    assert not session.get("agent_incomplete")
+    await sessions.close()
+
+
+async def test_merged_closed_or_assessed_event_needs_no_assessment_reminder():
+    for fields in (
+        {"lifecycle": "MERGED", "merged_into": "EVT-0"},
+        {"lifecycle": "INVALIDATED"},
+        {"lifecycle": "CLOSED"},
+        {"lifecycle": "SCORED", "current_ems_id": "EMS-1"},
+    ):
+        repo = MemoryRepository()
+        config = settings()
+        await seed(repo)
+        await seed_event(repo, **fields)
+        sessions = await service(repo, config)
+        await settle(repo, sessions)
+        assert not await reminders(repo), fields
+        await sessions.close()
+
+
+async def test_missing_item_outcome_is_reminded_before_assessment():
+    repo = MemoryRepository()
+    config = settings()
+    await seed(repo, kind="ITEM_ADDED")
+    await seed_event(repo)
+    item = await repo.get("ingest.source_items", "i")
+    item["extraction_status"] = "PENDING"
+    await repo.put("ingest.source_items", "i", item)
+    sessions = await service(repo, config)
+    await settle(repo, sessions)
+    [job] = await reminders(repo)
+    assert job["payload"]["reminded_kind"] == "ITEM_ADDED"
+    await sessions.close()
+
+
+async def test_replay_sends_no_assessment_reminder():
+    repo = MemoryRepository()
+    config = settings()
+    config.replay = True
+    await seed(repo)
+    await seed_event(repo)
+    sessions = await service(repo, config)
+    session = await settle(repo, sessions)
+    assert not await reminders(repo)
+    assert session.get("completion_reminders_sent", 0) == 0
+    await sessions.close()
