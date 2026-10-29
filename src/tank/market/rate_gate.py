@@ -2,6 +2,7 @@
 
 import asyncio
 import heapq
+from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from itertools import count
 
@@ -9,13 +10,13 @@ from itertools import count
 class PriorityGate:
     """At most `capacity` holders at once; waiters are admitted lowest priority number first."""
 
-    def __init__(self, capacity=1):
+    def __init__(self, capacity: int = 1) -> None:
         self.capacity = capacity
         self.active = 0
-        self.waiters = []
+        self.waiters: list[tuple[int, int, asyncio.Future[bool]]] = []
         self.sequence = count()
 
-    def release(self):
+    def release(self) -> None:
         while self.waiters:
             _, _, future = heapq.heappop(self.waiters)
             if not future.done():
@@ -24,7 +25,7 @@ class PriorityGate:
         self.active -= 1
 
     @asynccontextmanager
-    async def enter(self, priority=0):
+    async def enter(self, priority: int = 0) -> AsyncIterator[None]:
         if self.active >= self.capacity:
             future = asyncio.get_running_loop().create_future()
             heapq.heappush(self.waiters, (priority, next(self.sequence), future))

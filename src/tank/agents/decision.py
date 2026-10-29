@@ -1,7 +1,9 @@
 """Typed Microsoft-Decision-1 classification through Azure Foundry."""
 
 import math
+from collections.abc import Iterable
 from dataclasses import dataclass
+from typing import Any
 from urllib.parse import urlsplit
 
 MODEL = "microsoft-decision-1:1"
@@ -22,7 +24,7 @@ class DecisionBinding:
         return self.base_url + "/v1/systemone"
 
 
-def binding(settings=None) -> DecisionBinding:
+def binding(settings: object | None = None) -> DecisionBinding:
     endpoint = getattr(settings, "foundry_endpoint", DEFAULT_ENDPOINT).rstrip("/")
     parsed = urlsplit(endpoint)
     if (
@@ -43,7 +45,14 @@ def binding(settings=None) -> DecisionBinding:
     return DecisionBinding(base_url=endpoint + "/providers/microsoft", request_model=deployment)
 
 
-async def classify(http, *, api_key=None, state, questions, pinned=None):
+async def classify(
+    http: Any,
+    *,
+    api_key: object = None,
+    state: object,
+    questions: Iterable[str],
+    pinned: DecisionBinding | None = None,
+) -> Any:
     if not isinstance(api_key, str) or not api_key.strip():
         raise ValueError("Foundry Decision-1 requires TANK_FOUNDRY_API_KEY")
     pinned = pinned or binding()

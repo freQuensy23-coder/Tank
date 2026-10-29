@@ -49,6 +49,8 @@ session_keep_days: 7
 agent_completion_reminders_per_session: 20
 update_rate_limit_s: 900
 heartbeat_utc: 08:00
+# The heartbeat lists a source feed whose failed share of its last 50 reads (polls and article fetches) is at least this (03 §7.6).
+source_failed_read_alarm: 0.1
 # Tank Ops AGENT_STALL: a queued agent turn waits this long, or a busy session makes no agent model call for this long (03 §7.6).
 agent_stall_alarm_min: 15
 escalated_interval_s: 15

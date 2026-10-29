@@ -12,7 +12,6 @@ import hashlib
 import json
 import pickle
 import threading
-import time
 from array import array
 from bisect import bisect_left, bisect_right
 from collections import defaultdict
@@ -26,6 +25,7 @@ from statistics import mean, median, stdev
 
 import numpy as np
 
+from tank.analysis import compute_workers
 from tank.market.capture import event_anchor
 from tank.time_precision import Timestamp, chosen_boundary, offset_schedule, propagate_timestamp
 from tank.util import iso, jsonable, new_id, parse_time
@@ -6571,22 +6571,15 @@ class MarketTruthService:
         self._condition_cache = {}
         self._condition_baselines = {}
 
-        self._assessment_baselines = {}
         self._assessment_locks = {}
-        self._assessment_used = {}
 
     def _release_idle_assessment_baselines(self):
         """Drop the baselines of tokens with no assessment for ASSESSMENT_BASELINE_IDLE_S.
 
         Their entries are keyed by exact history heads that move every minute, so after half
         an hour without an assessment they serve at most a repeat of an old cutoff; kept, they
-        would hold the token's 90-day indexes for the process lifetime."""
-        now = time.monotonic()
-        for token_id, used in list(self._assessment_used.items()):
-            lock = self._assessment_locks.get(token_id)
-            if now - used > ASSESSMENT_BASELINE_IDLE_S and not (lock is not None and lock.locked()):
-                self._assessment_baselines.pop(token_id, None)
-                self._assessment_used.pop(token_id, None)
+        would hold the token's 90-day indexes for the lifetime of the assessment worker."""
+        compute_workers.release_idle_baselines(compute_workers.ASSESSMENT, ASSESSMENT_BASELINE_IDLE_S)
 
     async def condition_values(self, event_id, token_id, cutoff, requirements):
         self._release_idle_assessment_baselines()
@@ -6659,16 +6652,9 @@ class MarketTruthService:
         self._release_idle_assessment_baselines()
         lock = self._assessment_locks.setdefault(token_id, asyncio.Lock())
         async with lock:
-            self._assessment_used[token_id] = time.monotonic()
-            try:
-                result = await asyncio.to_thread(
-                    compute_market_truth,
-                    snapshot,
-                    config=knobs,
-                    baseline_cache=self._assessment_baselines.setdefault(token_id, {}),
-                )
-            finally:
-                self._assessment_used[token_id] = time.monotonic()
+            result = await compute_workers.compute_market_truth(
+                compute_workers.ASSESSMENT, snapshot, config=knobs, baseline_key=token_id
+            )
         result["mta_id"] = new_id("MTA")
         await self.repo.put("ana.market_truth", result["mta_id"], result, immutable=True)
         return result
