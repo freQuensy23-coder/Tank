@@ -254,7 +254,13 @@ async def test_settled_turn_accepts_agent_choice_without_source_observation(
             proof = final["message_log"][0]["source_completion_verified"]
             assert proof["version"] == 4 and proof["item_id"] == "item"
             assert proof["native_input_id"] == "initial" and proof["retry_attempt"] == 0
-            assert proof["outcome"] == ("SKIPPED" if outcome == "ignored" else outcome)
+            assert proof["outcome"] == ("PENDING" if outcome == "ignored" else outcome)
+            reminders = [
+                job["payload"]
+                for job in await repo.list("ops.jobs", filters={"type": "AGENT_MESSAGE"})
+                if job["payload"].get("kind") == "COMPLETION_REMINDER"
+            ]
+            assert len(reminders) == (outcome == "ignored")
             assert "workflow" not in proof
             if outcome == "ignored":
                 observations = await repo.list("evt.event_observations", filters={"item_id": "item"})
@@ -344,7 +350,9 @@ async def test_ignored_item_keeps_event_and_call_for_next_native_update(tmp_path
             assert settled["status"] == "OPEN" and settled["event_id"] == eid
             assert settled["message_log"][0]["retry_count"] == 0
             assert settled["message_log"][0]["turn_status"] == "DONE"
-            assert (await repo.get("ingest.source_items", "reprint"))["extraction_status"] == "SKIPPED"
+            reprint = await repo.get("ingest.source_items", "reprint")
+            assert reprint["extraction_status"] == "PENDING"
+            assert reprint["extraction_reason"] == "AGENT_REMINDED"
             assert not await repo.list("evt.event_observations", filters={"item_id": "reprint"})
             assert await repo.get("evt.events", eid) == before
             assert await repo.get("ana.calls", "active-call") == call

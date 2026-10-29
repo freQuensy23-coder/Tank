@@ -514,7 +514,7 @@ class EventToolService:
                     {},
                 )
                 trigger = active.get("payload") or stored_session.get("last_payload") or {}
-                context["trigger_kind"] = trigger.get("kind")
+                context["trigger_kind"] = trigger.get("reminded_kind", trigger.get("kind"))
                 context["trigger_item_id"] = trigger.get("item_id")
         analyst = context.get("role") == "analyst" or (
             context.get("session_id") and context.get("role") not in {"system", "scout"}

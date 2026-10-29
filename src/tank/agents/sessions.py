@@ -24,7 +24,7 @@ from tank.agents.security import redact_tool_arguments
 from tank.agents.wire import tool_wire_result
 from tank.delivery import DeliveryDeferred
 from tank.openma_sync import agent_tools
-from tank.ops_progress import session_progress
+from tank.ops_progress import SOURCE_MESSAGE_KINDS, item_progress, session_progress
 from tank.settings import threshold
 from tank.telegram_inbox import DOCUMENT_LIMIT, closed_reason, question_message, record_answer
 from tank.time_precision import collection_clock, offset_schedule, propagate_timestamp
@@ -1327,15 +1327,7 @@ class SessionService:
             for message in current.get("message_log", []):
                 if message.get("turn_status") != "FAILED":
                     message["turn_status"] = "DONE"
-                payload = message.get("payload", {})
-                if payload.get("kind") in {"NEW_ITEM", "ITEM_ADDED"} and payload.get("item_id"):
-                    item = await self.repo.get("ingest.source_items", payload["item_id"])
-                    if item and item.get("extraction_status") in {None, "PENDING", "RUNNING"}:
-                        item.update(
-                            extraction_status="SKIPPED",
-                            extraction_reason="NATIVE_TURN_COMPLETED_WITHOUT_OBSERVATION",
-                        )
-                        await self.repo.put("ingest.source_items", item["item_id"], item)
+            await self.remind_incomplete(current)
             current["active_message_id"] = None
             current["runtime_status"] = "IDLE"
             outcomes = await self.source_completion_snapshot(current)
@@ -1352,6 +1344,86 @@ class SessionService:
             await self.repo.put("ops.agent_sessions", sid, current)
             await session_progress(self.repo, self.settings, current)
             return after
+
+    async def remind_incomplete(self, session):
+        """A settled turn that left its source item without an outcome reminds the agent of its task.
+
+        Each source item whose turn ended while it was still unprocessed gets one COMPLETION_REMINDER
+        message in the same session; the reminder turn is checked the same way. The session's durable
+        reminder budget bounds the loop: once spent, the item fails as AGENT_INCOMPLETE, which stays
+        recoverable and is never shown as a rejection.
+        """
+        sid = session["session_id"]
+        limit = int(threshold(self.settings, "agent_completion_reminders_per_session", 20))
+        unchecked = {}
+        for message in session.get("message_log", []):
+            payload = message.get("payload") or {}
+            if (
+                payload.get("kind") in SOURCE_MESSAGE_KINDS
+                and payload.get("item_id")
+                and not message.get("completion_checked")
+            ):
+                message["completion_checked"] = True
+                unchecked[payload["item_id"]] = message
+        for item_id, message in unchecked.items():
+            item = await self.repo.get("ingest.source_items", item_id)
+            if not item or item.get("extraction_status") not in {None, "PENDING", "RUNNING"}:
+                continue
+            payload = message["payload"]
+            sent = int(session.get("completion_reminders_sent", 0))
+            attempts = session.setdefault("completion_reminder_attempts", {})
+            if sent >= limit:
+                item.update(
+                    extraction_status="FAILED",
+                    extraction_reason="AGENT_INCOMPLETE",
+                    extraction_reminders=sent,
+                    extraction_reminder_limit=limit,
+                )
+                await self.repo.put("ingest.source_items", item_id, item)
+                await item_progress(
+                    self.repo,
+                    self.settings,
+                    item_id,
+                    "AGENT_INCOMPLETE",
+                    f"Агент не вернул результат; напоминания сессии исчерпаны ({sent}/{limit})",
+                    event_id=session.get("event_id"),
+                    key=f"{sid}:{item_id}:{message['message_id']}",
+                )
+                continue
+            attempt = int(attempts.get(item_id, 0)) + 1
+            attempts[item_id] = attempt
+            session["completion_reminders_sent"] = sent + 1
+            await self.repo.enqueue(
+                "AGENT_MESSAGE",
+                {
+                    "kind": "COMPLETION_REMINDER",
+                    "session_id": sid,
+                    "item_id": item_id,
+                    "reminded_kind": payload.get("reminded_kind", payload["kind"]),
+                    "attempt": attempt,
+                    "reminder": sent + 1,
+                    "reminder_limit": limit,
+                    "turn_message_id": message["message_id"],
+                },
+                f"{sid}:{item_id}:COMPLETION_REMINDER:{attempt}",
+                priority=1,
+            )
+            item.update(
+                extraction_status="PENDING",
+                extraction_reason="AGENT_REMINDED",
+                extraction_reminders=sent + 1,
+                extraction_reminder_limit=limit,
+            )
+            await self.repo.put("ingest.source_items", item_id, item)
+            await item_progress(
+                self.repo,
+                self.settings,
+                item_id,
+                "AGENT_REMINDED",
+                f"Агент не вернул результат, напоминание {sent + 1}/{limit}",
+                event_id=session.get("event_id"),
+                key=f"{sid}:{item_id}:{attempt}",
+            )
 
     def start_stream(self, sid):
         if not self.closed and (sid not in self.tasks or self.tasks[sid].done()):
