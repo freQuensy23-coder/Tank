@@ -299,7 +299,11 @@ async def test_recovered_ack_settles_all_inputs_before_releasing_admission(
             assert current["active_message_id"] is None
             assert current["runtime_status"] == "IDLE"
             assert all(row["turn_status"] == "DONE" for row in current["message_log"])
-            assert (await repo.get("ingest.source_items", "i"))["extraction_status"] == "SKIPPED"
+            settled = await repo.get("ingest.source_items", "i")
+            assert (settled["extraction_status"], settled["extraction_reason"]) == (
+                "FAILED",
+                "AGENT_INCOMPLETE",
+            )
             await service.wake_waiting()
             awakened = await repo.get("ops.jobs", job["job_id"])
             assert parse_time(awakened["run_after"]) == parse_time(AT)
