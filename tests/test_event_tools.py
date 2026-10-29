@@ -297,6 +297,21 @@ async def test_numeric_map_version_ten_removes_old_token(
             await service.repo.close()
 
 
+@pytest.mark.parametrize("stored", [{}, {"current_ems_id": None}])
+@pytest.mark.parametrize(
+    ("tool", "arguments"),
+    [
+        ("get_decision", {"token_id": "world:WLD"}),
+        ("get_market_truth", {"token_ids": ["world:WLD"]}),
+        ("publish_card", {"kind": "FULL", "what": "Fact", "verdict": "Fact", "why": ["A", "B"]}),
+    ],
+)
+async def test_assessment_tools_before_set_assessment_name_missing_step(service, stored, tool, arguments):
+    await service.repo.put("evt.events", "E", complete_event_fixture("E", **stored))
+    with pytest.raises(ValueError, match=f"^{tool} needs set_assessment for this event first$"):
+        await service.dispatch(tool, {"event_id": "E", **arguments}, {"call_id": "c"})
+
+
 async def test_real_decision_condition_reuse_expiry_and_consumption(service):
     from tank.analysis.decisions import DecisionEngine
 

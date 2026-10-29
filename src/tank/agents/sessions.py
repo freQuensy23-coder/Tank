@@ -2483,7 +2483,7 @@ class SessionService:
                 await self.repo.get("evt.events", session["event_id"]) if session.get("event_id") else None
             )
             archive = bool(event and await self.can_archive(session, event))
-            if not event and (session.get("no_event") or session.get("agent_incomplete")):
+            if not event and await self.eventless_finished(session):
                 unfinished = [
                     row
                     async for row in self.repo.iter_all("ops.tool_calls", filters={"session_id": sid})
@@ -2492,42 +2492,79 @@ class SessionService:
                 archive = not unfinished and not any(
                     row.get("turn_status") == "PENDING" for row in session.get("message_log", [])
                 )
-            replay = getattr(self.settings, "replay", False)
-            if archive and not replay and await self.followable(session):
-                archive = False
-                if not session.get("followups_only"):
-                    session["followups_only"] = True
-                    await self.repo.put("ops.agent_sessions", sid, session)
-            elif archive and not replay:
-                keep = threshold(self.settings, "session_keep_days", 7)
-                last = await self.last_message_at(session)
-                due = last + timedelta(days=keep)
-                if utcnow() < due:
-                    archive = False
-                    retained = {
-                        **collection_clock(last).fields("last_message_at"),
-                        **collection_clock(due).fields("archive_after"),
-                    }
-                    if any(session.get(key) != value for key, value in retained.items()):
-                        session.update(retained)
-                        await self.repo.put("ops.agent_sessions", sid, session)
-                else:
-                    session.update(
-                        archive_reason="RETENTION",
-                        archive_keep_days=keep,
-                        **collection_clock(last).fields("last_message_at"),
-                    )
-            elif not archive and session.get("archive_after"):
-                for key in ("archive_after", "archive_after_prec", "archive_after_prec_reason"):
-                    session.pop(key, None)
-                await self.repo.put("ops.agent_sessions", sid, session)
-            if archive:
-                await self.request("POST", f"sessions/{sid}/archive", json={})
-                session.update(status="ENDED", **self.clock_timestamp().fields("archived_at"))
-                session.setdefault("archive_reason", "REPLAY" if replay else "RETENTION")
-                await self.repo.put("ops.agent_sessions", sid, session)
-
+            await self.retain_or_archive(sid, session, archive)
             return True
+
+    async def eventless_finished(self, session):
+        """Whether a session without an event has nothing left to do.
+
+        Such a session holds only its source item or its scout proposal, so it is finished once the
+        agent rejected the material (no_event), its item failed as AGENT_INCOMPLETE, or every source
+        item it received is no longer unfinished (DONE, SKIPPED or FAILED, including the legacy
+        SKIPPED / NATIVE_TURN_COMPLETED_WITHOUT_OBSERVATION of a silent turn). A scout review session
+        has no source item and is finished once its turns settle."""
+        if session.get("no_event") or session.get("agent_incomplete"):
+            return True
+        items = {session.get("item_id"), session.get("opened_by_item")}
+        items |= {(row.get("payload") or {}).get("item_id") for row in session.get("message_log", [])}
+        for item_id in sorted(item for item in items if item):
+            item = await self.repo.get("ingest.source_items", item_id)
+            if item is not None and item.get("extraction_status") in UNFINISHED:
+                return False
+        return True
+
+    async def finish_failed(self, sid):
+        """Archive a FAILED session in OpenMA under the same retention as a finished one.
+
+        A FAILED session takes no further message, so nothing but a reader follow-up needs it: one
+        whose card was delivered or that received a question is kept (followups_only), any other is
+        archived session_keep_days after its last message. Its status stays FAILED."""
+        async with self.repo.lock("session:" + sid):
+            session = await self.repo.get("ops.agent_sessions", sid)
+            if not session or session.get("status") != "FAILED" or session.get("archived_at"):
+                return False
+            await self.retain_or_archive(sid, session, True)
+            return True
+
+    async def retain_or_archive(self, sid, session, archive):
+        """Archive a finished session once its retention has passed; record when it will be due."""
+        replay = getattr(self.settings, "replay", False)
+        if archive and not replay and await self.followable(session):
+            archive = False
+            if not session.get("followups_only"):
+                session["followups_only"] = True
+                await self.repo.put("ops.agent_sessions", sid, session)
+        elif archive and not replay:
+            keep = threshold(self.settings, "session_keep_days", 7)
+            last = await self.last_message_at(session)
+            due = last + timedelta(days=keep)
+            if utcnow() < due:
+                archive = False
+                retained = {
+                    **collection_clock(last).fields("last_message_at"),
+                    **collection_clock(due).fields("archive_after"),
+                }
+                if any(session.get(key) != value for key, value in retained.items()):
+                    session.update(retained)
+                    await self.repo.put("ops.agent_sessions", sid, session)
+            else:
+                session.update(
+                    archive_reason="RETENTION",
+                    archive_keep_days=keep,
+                    **collection_clock(last).fields("last_message_at"),
+                )
+        elif not archive and session.get("archive_after"):
+            for key in ("archive_after", "archive_after_prec", "archive_after_prec_reason"):
+                session.pop(key, None)
+            await self.repo.put("ops.agent_sessions", sid, session)
+        if archive:
+            await self.request("POST", f"sessions/{sid}/archive", json={})
+            session.update(
+                status="FAILED" if session.get("status") == "FAILED" else "ENDED",
+                **self.clock_timestamp().fields("archived_at"),
+            )
+            session.setdefault("archive_reason", "REPLAY" if replay else "RETENTION")
+            await self.repo.put("ops.agent_sessions", sid, session)
 
     async def last_message_at(self, session):
         """When the session last had a message: Tank's input, the agent's output or a reader's question.
@@ -2725,6 +2762,16 @@ class SessionService:
             raise KeyError(proposal_id)
         return await self.send_message({"kind": "SCOUT_REVIEW", "proposal_id": proposal_id})
 
+    async def sweep_failed(self):
+        """Archive FAILED sessions whose retention has passed; kept and retained ones are skipped."""
+        async for session in self.repo.iter_metadata(
+            "ops.agent_sessions", SESSION_ADMISSION_FIELDS, filters={"status": "FAILED"}
+        ):
+            kept = bool(session.get("archive_after")) and parse_time(session["archive_after"]) > utcnow()
+            if session.get("archived_at") or session.get("followups_only") or kept:
+                continue
+            await self.finish_failed(session["session_id"])
+
     async def run(self, stop):
         tick = 0
         while not stop.is_set() and not self.closed:
@@ -2745,6 +2792,7 @@ class SessionService:
                     continue
                 self.start_stream(sid)
             if tick % IDLE_RECHECK_TICKS == 0:
+                await self.sweep_failed()
                 await self.reconcile_answers()
             tick += 1
             await self.wake_waiting()
