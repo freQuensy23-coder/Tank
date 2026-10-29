@@ -279,6 +279,29 @@ def _fresh_quote_usd_history(monkeypatch):
     monkeypatch.setattr(normalize, "QUOTE_USD_HISTORY", {})
 
 
+@pytest.fixture(autouse=True)
+def compute_lanes_in_threads(monkeypatch):
+    """Market Truth compute lanes run in one thread each, so a test's substitutes of
+    compute_market_truth apply; tests/test_compute_workers.py uses the real worker
+    processes. Every test starts with fresh lanes and worker baseline caches."""
+    from concurrent.futures import ThreadPoolExecutor
+
+    from tank.analysis import compute_workers
+
+    started = []
+
+    def start_executor(lane):
+        started.append(ThreadPoolExecutor(max_workers=1, thread_name_prefix=f"compute-{lane}"))
+        return started[-1]
+
+    monkeypatch.setattr(compute_workers, "start_executor", start_executor)
+    monkeypatch.setattr(compute_workers, "_executors", {})
+    monkeypatch.setattr(compute_workers, "_baselines", {})
+    yield
+    for pool in started:
+        pool.shutdown(wait=False, cancel_futures=True)
+
+
 def pytest_addoption(parser):
     parser.addoption(
         "--postgres-schema-template",

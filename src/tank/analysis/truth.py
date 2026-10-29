@@ -23,6 +23,7 @@ from functools import wraps
 from math import log
 from statistics import mean, median, stdev
 
+from tank.analysis import compute_workers
 from tank.market.capture import event_anchor
 from tank.time_precision import Timestamp, chosen_boundary, offset_schedule, propagate_timestamp
 from tank.util import iso, jsonable, new_id, parse_time
@@ -5680,7 +5681,6 @@ class MarketTruthService:
         self._condition_cache = {}
         self._condition_baselines = {}
 
-        self._assessment_baselines = {}
         self._assessment_locks = {}
 
     async def condition_values(self, event_id, token_id, cutoff, requirements):
@@ -5752,11 +5752,8 @@ class MarketTruthService:
         )
         lock = self._assessment_locks.setdefault(token_id, asyncio.Lock())
         async with lock:
-            result = await asyncio.to_thread(
-                compute_market_truth,
-                snapshot,
-                config=knobs,
-                baseline_cache=self._assessment_baselines.setdefault(token_id, {}),
+            result = await compute_workers.compute_market_truth(
+                compute_workers.ASSESSMENT, snapshot, config=knobs, baseline_key=token_id
             )
         result["mta_id"] = new_id("MTA")
         await self.repo.put("ana.market_truth", result["mta_id"], result, immutable=True)
