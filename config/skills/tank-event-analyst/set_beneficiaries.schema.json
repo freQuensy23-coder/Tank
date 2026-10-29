@@ -10,11 +10,17 @@
         "additionalProperties": false,
         "properties": {
           "entity_id": {
-            "type": "string",
+            "type": [
+              "string",
+              "null"
+            ],
             "description": "Registry entity key (reg.entities), shown after \u00ab \u00b7 \u00bb next to the name in Tank's messages and results, e.g. uniswap in \u00abUniswap \u00b7 uniswap\u00bb."
           },
           "entity_name": {
-            "type": "string",
+            "type": [
+              "string",
+              "null"
+            ],
             "description": "Name of an entity outside the registry, kept unresolved; Tank refuses a registered name."
           },
           "token_id": {
@@ -25,7 +31,10 @@
             "description": "Registry token key (reg.tokens), shown after \u00ab \u00b7 \u00bb next to the name in Tank's messages and results, e.g. bitcoin:BTC in \u00abBitcoin (BTC) \u00b7 bitcoin:BTC\u00bb. Null when the entity has no token or the token is outside the registry."
           },
           "token_name": {
-            "type": "string",
+            "type": [
+              "string",
+              "null"
+            ],
             "description": "Ticker or name of a token outside the registry (token_id null), kept unresolved and named in WHO without a market block; Tank refuses a registry token here."
           },
           "role": {
@@ -99,13 +108,19 @@
             "description": "Claim IDs (CLM-\u2026) of accepted claims of the current event; find them with read-only SQL (tank-data data guide, \u00abFinding record IDs for tool arguments\u00bb), \u00abClaims of an event\u00bb."
           },
           "credibility_reasons": {
-            "type": "array",
+            "type": [
+              "array",
+              "null"
+            ],
             "items": {
               "type": "string"
             }
           },
           "negative_thesis": {
-            "type": "object",
+            "type": [
+              "object",
+              "null"
+            ],
             "additionalProperties": false,
             "required": [
               "mechanism",
@@ -158,94 +173,135 @@
       }
     },
     "layer_reasons": {
-      "type": "object",
+      "type": [
+        "object",
+        "null"
+      ],
       "additionalProperties": false,
       "properties": {
         "ISSUER_PRODUCT": {
-          "type": "string"
+          "type": [
+            "string",
+            "null"
+          ]
         },
         "VENUE_DEX": {
-          "type": "string"
+          "type": [
+            "string",
+            "null"
+          ]
         },
         "SETTLEMENT_L1_L2": {
-          "type": "string"
+          "type": [
+            "string",
+            "null"
+          ]
         },
         "LIQUIDITY_EXECUTION": {
-          "type": "string"
+          "type": [
+            "string",
+            "null"
+          ]
         },
         "LENDING_COLLATERAL": {
-          "type": "string"
+          "type": [
+            "string",
+            "null"
+          ]
         },
         "ORACLE_DATA": {
-          "type": "string"
+          "type": [
+            "string",
+            "null"
+          ]
         },
         "INTEROPERABILITY": {
-          "type": "string"
+          "type": [
+            "string",
+            "null"
+          ]
         },
         "CUSTODY_COMPLIANCE": {
-          "type": "string"
+          "type": [
+            "string",
+            "null"
+          ]
         }
       },
       "required": [],
       "description": "Give a reason for every layer without a credible beneficiary, including layers that contain only unverified or candidate edges."
     },
     "layer_statuses": {
-      "type": "object",
+      "type": [
+        "object",
+        "null"
+      ],
       "additionalProperties": false,
       "properties": {
         "ISSUER_PRODUCT": {
           "enum": [
             "NONE",
-            "UNKNOWN"
+            "UNKNOWN",
+            null
           ]
         },
         "VENUE_DEX": {
           "enum": [
             "NONE",
-            "UNKNOWN"
+            "UNKNOWN",
+            null
           ]
         },
         "SETTLEMENT_L1_L2": {
           "enum": [
             "NONE",
-            "UNKNOWN"
+            "UNKNOWN",
+            null
           ]
         },
         "LIQUIDITY_EXECUTION": {
           "enum": [
             "NONE",
-            "UNKNOWN"
+            "UNKNOWN",
+            null
           ]
         },
         "LENDING_COLLATERAL": {
           "enum": [
             "NONE",
-            "UNKNOWN"
+            "UNKNOWN",
+            null
           ]
         },
         "ORACLE_DATA": {
           "enum": [
             "NONE",
-            "UNKNOWN"
+            "UNKNOWN",
+            null
           ]
         },
         "INTEROPERABILITY": {
           "enum": [
             "NONE",
-            "UNKNOWN"
+            "UNKNOWN",
+            null
           ]
         },
         "CUSTODY_COMPLIANCE": {
           "enum": [
             "NONE",
-            "UNKNOWN"
+            "UNKNOWN",
+            null
           ]
         }
       },
       "required": []
     },
     "no_credible_secondary_reason": {
-      "type": "string"
+      "type": [
+        "string",
+        "null"
+      ]
     }
   },
   "required": [

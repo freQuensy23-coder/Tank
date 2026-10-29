@@ -5,7 +5,10 @@
   "additionalProperties": false,
   "properties": {
     "event_id": {
-      "type": "string",
+      "type": [
+        "string",
+        "null"
+      ],
       "description": "Event ID (EVT-\u2026); find it with read-only SQL (tank-data data guide, \u00abFinding record IDs for tool arguments\u00bb), \u00abEvents by statement, time or token\u00bb."
     }
   },

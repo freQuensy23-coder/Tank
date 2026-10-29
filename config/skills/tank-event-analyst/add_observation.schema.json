@@ -5,7 +5,10 @@
   "additionalProperties": false,
   "properties": {
     "item_id": {
-      "type": "string",
+      "type": [
+        "string",
+        "null"
+      ],
       "description": "Only for a callback without an incoming source: the stored document that establishes this observation, ITM-\u2026 for a collected item or web-\u2026 for a page read with fetch_page; find it with read-only SQL (tank-data data guide, \u00abFinding record IDs for tool arguments\u00bb), \u00abSource document by URL\u00bb. Omit when an incoming source is supplied."
     },
     "link": {
@@ -106,7 +109,10 @@
             "description": "Verbatim atomic quote. Omit evidence when it comes from the incoming source; otherwise cite the stored document containing it in evidence (a page read with fetch_page is its own document, even when its URL matches the discovery item)."
           },
           "approval_dependency": {
-            "type": "object",
+            "type": [
+              "object",
+              "null"
+            ],
             "additionalProperties": false,
             "required": [
               "scope",
@@ -149,14 +155,20 @@
             "description": "Agent-supplied explanation of what confirmation is missing for this unverified claim (for example, no announcement from the named organization). Tank preserves and displays it verbatim; null means the reason was not established. Keep it to about 10 words; it is printed in NOT VERIFIED."
           },
           "supersedes_claim_ids": {
-            "type": "array",
+            "type": [
+              "array",
+              "null"
+            ],
             "items": {
               "type": "string"
             },
             "description": "Claim IDs (CLM-\u2026) of prior claims of the current event that this claim replaces on the current card; the old claims remain historical evidence. Omit unrelated claims and remaining uncertainties; find them with read-only SQL (tank-data data guide, \u00abFinding record IDs for tool arguments\u00bb), \u00abClaims of an event\u00bb."
           },
           "evidence": {
-            "type": "array",
+            "type": [
+              "array",
+              "null"
+            ],
             "description": "The stored document containing this claim's quote, by item_id. Omit for a quote from the incoming source. For text read with fetch_page or web_search, cite that stored document, not the discovery document merely because its URL matches. The observation's own document is the incoming source, or the item_id given for a callback without one.",
             "items": {
               "type": "object",
@@ -224,12 +236,16 @@
       "enum": [
         "HIGH",
         "MEDIUM",
-        "LOW"
+        "LOW",
+        null
       ],
       "description": "Optional agent-supplied certainty update when reassessed: HIGH, MEDIUM or LOW. Tank stores it as supplied; omission preserves the existing event certainty without implicit promotion."
     },
     "milestone_outcome": {
-      "type": "object",
+      "type": [
+        "object",
+        "null"
+      ],
       "additionalProperties": false,
       "properties": {
         "outcome": {
@@ -245,14 +261,18 @@
       ]
     },
     "certainty_reason": {
-      "type": "string",
+      "type": [
+        "string",
+        "null"
+      ],
       "description": "Optional reason when certainty is reassessed. Tank stores it as supplied; omission preserves the existing reason without inferring a new judgment."
     },
     "timing_confidence": {
       "enum": [
         "HIGH",
         "MEDIUM",
-        "LOW"
+        "LOW",
+        null
       ],
       "description": "Agent-supplied confidence in the event timing: HIGH for an exact primary timestamp, MEDIUM for bucket precision, LOW for collection time only. Optional; omission leaves declared timestamp precision as the timing-confidence basis."
     }

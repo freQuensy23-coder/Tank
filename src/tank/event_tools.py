@@ -500,6 +500,9 @@ class EventToolService:
             raise ValueError(f"Unknown Tank tool: {tool}")
         if not isinstance(arguments, dict):
             raise ValueError("Tool arguments must be an object")
+        schema = domain_schema(self.settings, tool)
+        if schema is not None:
+            arguments = absent_optionals(arguments, schema)
         context = dict(context or {})
         if context.get("session_id"):
             stored_session = await self.repo.get("ops.agent_sessions", context["session_id"])
@@ -579,7 +582,6 @@ class EventToolService:
                     "reason": "Noncanonical beneficiary layer requires scout review",
                     "proposal_ids": proposals,
                 }
-        schema = domain_schema(self.settings, tool)
         if schema is not None:
             validate_schema(arguments, schema)
         ctx = dict(context or {})
@@ -3434,6 +3436,26 @@ def evidence_ids(evidence):
         for key in ("claim_id", "event_id", "item_id")
         if isinstance(entry, dict) and key in entry
     ]
+
+
+def absent_optionals(value, schema):
+    """Drop null and empty-string values of optional fields at every object level.
+
+    Strict tool calling makes the model send every declared field, so it fills the ones it does not
+    use with null or ""; Tank reads both as an omitted optional field. Required fields and unknown
+    fields are kept as sent, so validation still refuses them; a field that an anyOf branch
+    requires is refused as missing there."""
+    if isinstance(value, dict) and isinstance(schema, dict):
+        properties = schema.get("properties", {})
+        required = set(schema.get("required", []))
+        return {
+            key: absent_optionals(item, properties.get(key))
+            for key, item in value.items()
+            if key in required or key not in properties or not (item is None or item == "")
+        }
+    if isinstance(value, list) and isinstance(schema, dict):
+        return [absent_optionals(item, schema.get("items")) for item in value]
+    return value
 
 
 def validate_schema(value, schema, path="$"):

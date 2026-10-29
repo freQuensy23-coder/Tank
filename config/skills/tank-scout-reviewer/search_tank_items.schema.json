@@ -6,12 +6,18 @@
       "type": "string"
     },
     "days": {
-      "type": "integer",
+      "type": [
+        "integer",
+        "null"
+      ],
       "minimum": 1,
       "maximum": 90
     },
     "source_ids": {
-      "type": "array",
+      "type": [
+        "array",
+        "null"
+      ],
       "items": {
         "type": "string"
       },

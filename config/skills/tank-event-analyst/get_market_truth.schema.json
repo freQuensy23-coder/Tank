@@ -12,11 +12,17 @@
       "description": "Registry token keys (reg.tokens), shown after \u00ab \u00b7 \u00bb next to the name in Tank's messages and results, e.g. bitcoin:BTC or uniswap:UNI."
     },
     "cutoff": {
-      "type": "string",
+      "type": [
+        "string",
+        "null"
+      ],
       "format": "date-time"
     },
     "cutoff_prec": {
-      "type": "string",
+      "type": [
+        "string",
+        "null"
+      ],
       "anyOf": [
         {
           "enum": [
@@ -30,12 +36,18 @@
         },
         {
           "pattern": "^BUCKET\\((?:[1-9][0-9]*(?:\\.[0-9]+)?|0\\.[0-9]*[1-9][0-9]*)(?:us|ms|s|m|h|d|w)\\)$"
+        },
+        {
+          "type": "null"
         }
       ],
       "description": "Explicit timestamp provenance; ISO formatting does not establish precision. BUCKET requires an explicit positive duration, embedded or in the companion bucket-size field. SECOND, MINUTE and HOUR are accepted as BUCKET(1s), BUCKET(1m) and BUCKET(1h)."
     },
     "cutoff_bucket_size_s": {
-      "type": "number",
+      "type": [
+        "number",
+        "null"
+      ],
       "exclusiveMinimum": 0,
       "description": "Explicit bucket duration in seconds; only valid for BUCKET precision and must match any embedded duration."
     }

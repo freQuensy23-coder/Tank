@@ -9,7 +9,10 @@
       "pattern": "^[^/\\\\]+$"
     },
     "caption": {
-      "type": "string",
+      "type": [
+        "string",
+        "null"
+      ],
       "maxLength": 1024
     }
   },

@@ -34,7 +34,10 @@
       "maxItems": 3
     },
     "unconfirmed": {
-      "type": "string",
+      "type": [
+        "string",
+        "null"
+      ],
       "minLength": 1,
       "maxLength": 500,
       "pattern": "\\S",
