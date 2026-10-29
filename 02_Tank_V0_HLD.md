@@ -451,7 +451,7 @@ A sandbox image upgrade continues existing non-archived sessions on the current 
 
 Completion incident repair consumes those existing native upgrade results; it does not expand retained-sandbox migration, publish historical images or change event routing.
 
-Concurrency: one asyncio event loop with 8 job workers; CPU-heavy steps run in a thread pool; sessions run in parallel inside OpenMA, one per event; `publish_card` takes one lock per event.
+Concurrency: one asyncio event loop with 8 job workers; CPU-heavy steps run in a thread pool, except full Market Truth computations, which run in two worker processes of the `tank` service (one for RUN_MARKET_TRUTH, one for reaction checkpoints; 03 §3.8) so they neither share the event loop's GIL nor wait behind each other; sessions run in parallel inside OpenMA, one per event; `publish_card` takes one lock per event.
 
 ---
 

@@ -2826,13 +2826,18 @@ def test_full_assessments_run_one_at_a_time_per_process(monkeypatch):
 @pytest.mark.asyncio
 async def test_idle_token_assessment_baselines_are_released(monkeypatch):
     """Per-token assessment baselines were kept for the process lifetime, so every token
-    ever assessed kept its 90-day indexes in the serve process."""
+    ever assessed kept its 90-day indexes in the assessment worker."""
     from types import SimpleNamespace
 
     import tank.analysis.truth as module
+    from tank.analysis import compute_workers
+
+    def held():
+        compute_workers.executor(compute_workers.ASSESSMENT).submit(lambda: None).result(timeout=5)
+        return compute_workers._baselines
 
     clock = [1000.0]
-    monkeypatch.setattr(module.time, "monotonic", lambda: clock[0])
+    monkeypatch.setattr(compute_workers.time, "monotonic", lambda: clock[0])
 
     def fill(snapshot, *, config=None, baseline_cache=None):
         baseline_cache[("native-volume-index", snapshot["token_id"])] = {"head": snapshot["cutoff"]}
@@ -2860,14 +2865,19 @@ async def test_idle_token_assessment_baselines_are_released(monkeypatch):
     await service.assess(None, "A", "2026-10-16T12:00:00Z")
     clock[0] += 60
     await service.assess(None, "B", "2026-10-16T12:01:00Z")
-    assert set(service._assessment_baselines) == {"A", "B"}
+    assert set(held()) == {"A", "B"}
     clock[0] += module.ASSESSMENT_BASELINE_IDLE_S
     await service.assess(None, "B", "2026-10-16T12:31:00Z")
-    assert set(service._assessment_baselines) == {"B"}
-    assert service._assessment_baselines["B"] == {
-        ("native-volume-index", "B"): {"head": "2026-10-16T12:31:00Z"}
-    }
+    assert set(held()) == {"B"}
+    assert held()["B"] == {("native-volume-index", "B"): {"head": "2026-10-16T12:31:00Z"}}
     clock[0] += module.ASSESSMENT_BASELINE_IDLE_S + 1
     monkeypatch.setattr(module, "compute_condition_values", lambda *args, **kwargs: {})
     await service.condition_values(None, "C", "2026-10-16T13:02:00Z", [])
-    assert service._assessment_baselines == {}
+    assert held() == {}
+    await service.assess(None, "D", "2026-10-16T13:03:00Z")
+    clock[0] += module.ASSESSMENT_BASELINE_IDLE_S + 1
+    replacement = module.MarketTruthService(
+        Repo(), SimpleNamespace(config_version="next", code_version="test"), Market()
+    )
+    await replacement.condition_values(None, "C", "2026-10-16T13:34:00Z", [])
+    assert held() == {}

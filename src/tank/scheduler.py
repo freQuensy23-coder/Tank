@@ -1253,7 +1253,7 @@ class Scheduler:
     async def _measure_reaction(self, payload):
         payload = dict(payload)
         captured_stamp = collection_clock()
-        from tank.analysis.truth import compute_market_truth
+        from tank.analysis import compute_workers
 
         window = self._reaction_window(payload)
         anchor_stamp = window["anchor_stamp"]
@@ -1280,8 +1280,8 @@ class Scheduler:
         }
         knobs = self.settings.load_config("thresholds") if hasattr(self.settings, "load_config") else {}
         await self._yield_to_market_truth(payload, end)
-        truth = await asyncio.to_thread(
-            compute_market_truth,
+        truth = await compute_workers.compute_market_truth(
+            compute_workers.REACTION,
             snapshot,
             config={
                 **knobs,
