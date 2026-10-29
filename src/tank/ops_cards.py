@@ -30,6 +30,8 @@ REASONS = {
     "AGENT_INCOMPLETE": "Агент так и не записал событие или решение об отклонении, напоминания исчерпаны; "
     "материал можно отправить на повторный анализ",
     "SESSION_FAILED": "Сессия агента завершилась ошибкой; материал можно отправить на повторный анализ",
+    "ASSESSMENT_INCOMPLETE": "Агент зарегистрировал событие, но так и не оценил его значимость, "
+    "напоминания исчерпаны",
 }
 CLASSES = {
     "LOW": "низкая",
@@ -356,6 +358,12 @@ def outcome(data):
     if failure and time_of(failure) >= max((time_of(row) for row in recoveries), default=EPOCH):
         if item.get("extraction_status") == "FAILED":
             fields[-1] = ("Агент", failed_agent)
+        elif event and not assessment and item.get("assessment_incomplete"):
+            fields[-1] = (
+                "Агент",
+                "событие выделено, но не оценено, напоминания исчерпаны "
+                f"({item.get('assessment_reminders', '?')}/{item.get('assessment_reminder_limit', '?')})",
+            )
         fields.append(("Alerts", "не отправлено"))
         reason = reason_text(failure.get("reason", ""))
         for code, label in {
@@ -405,6 +413,21 @@ def outcome(data):
             "status": f"Агент не вернул результат, напоминание {progress}",
             "fields": fields,
             "reason": "Агенту напомнено вернуть результат в требуемом формате",
+        }
+    if (
+        event
+        and not assessment
+        and item.get("assessment_reminders")
+        and not item.get("assessment_incomplete")
+    ):
+        progress = f"{item['assessment_reminders']}/{item.get('assessment_reminder_limit', '?')}"
+        fields[-1] = ("Агент", "событие выделено; оценка не получена, отправлено напоминание")
+        fields.append(("Alerts", "ожидает оценки значимости"))
+        return {
+            "code": "AGENT_REMINDED",
+            "status": f"Агент не оценил событие, напоминание {progress}",
+            "fields": fields,
+            "reason": "Агенту напомнено оценить событие или объединить его с более ранним",
         }
     if item.get("extraction_status") == "SKIPPED":
         reason = item.get("extraction_reason") or (stages.get("AGENT_REJECTED") or {}).get("reason")

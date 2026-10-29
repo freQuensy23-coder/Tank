@@ -706,6 +706,8 @@ class ModelContext:
 
     async def completion_reminder(self, payload):
         """Deterministic reminder that the source item's task ends only with its recorded outcome."""
+        if payload.get("missing") == "ASSESSMENT":
+            return await self.assessment_reminder(payload)
         kind = payload.get("reminded_kind") or "NEW_ITEM"
         lines = [
             f"TASK NOT COMPLETE (reminder {payload.get('reminder')} of {payload.get('reminder_limit')} "
@@ -764,6 +766,37 @@ class ModelContext:
             "search) never blocks recording: record with the evidence you have, keep unconfirmed claims "
             "verified=false, and note the missing check in checked_sources and public_at.basis."
         )
+        return clean_value("\n".join(lines))
+
+    async def assessment_reminder(self, payload):
+        """Deterministic reminder that a recorded event is finished only with its class or merge."""
+        event_id = payload.get("event_id")
+        lines = [
+            f"TASK NOT COMPLETE (reminder {payload.get('reminder')} of {payload.get('reminder_limit')} "
+            f"for this session). Your previous turn ended while event {event_id}, recorded in this "
+            "session, has no class: no set_assessment was accepted for it, so Tank cannot judge or "
+            "publish it. Do it in this turn. When this event repeats an earlier open event (smaller "
+            "known_to_us_at), call merge_into with that earlier event's event_id. Otherwise, and "
+            "whenever merge_into is refused, call set_assessment for this event: LOW or MATERIAL is a "
+            "valid class, and a dimension no accepted claim supports is value null with its rationale.",
+        ]
+        assessment = self.skeleton("set_assessment")
+        if assessment:
+            lines.append("set_assessment arguments: " + assessment)
+        merge = self.skeleton("merge_into")
+        if merge:
+            lines.append("merge_into arguments: " + merge)
+        lines.append(
+            "Replace every <placeholder> with a value; an enum placeholder lists the allowed values "
+            "separated by |."
+        )
+        refused = await self.refusals(payload)
+        if refused:
+            lines.append(
+                "Tank refused these calls of your previous turn; correct each input as its reason says "
+                "and call again:"
+            )
+            lines.extend("- " + line for line in refused)
         return clean_value("\n".join(lines))
 
     def lookup(self, kind):
