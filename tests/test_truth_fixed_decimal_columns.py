@@ -1,4 +1,4 @@
-from decimal import Decimal, localcontext
+from decimal import Decimal, InvalidOperation, localcontext
 
 import pytest
 
@@ -31,7 +31,7 @@ def test_fixed_decimal_column_preserves_coefficients_without_retaining_per_scala
         truth._ASSESSMENT_INPUTS.reset(token)
 
 
-@pytest.mark.parametrize("tail", ["-0.000", "1e-10", ".12", "12.", "+12", " 12.00 "])
+@pytest.mark.parametrize("tail", ["-0.000", "1e-10", ".12", "12.", "+12", " 12.00 ", "１２.００"])
 def test_fixed_decimal_column_keeps_scalar_fallback_representations(tail):
     column = ["1.00"] * 512 + [tail]
     with localcontext() as context:
@@ -41,4 +41,13 @@ def test_fixed_decimal_column_keeps_scalar_fallback_representations(tail):
         actual = truth._history_decimal_arrays((column,))
         assert actual is not None
         assert representation(actual[0]) == representation(expected)
+        assert not any(context.flags.values())
+
+
+def test_fixed_decimal_column_rejects_nul_without_leaking_untrapped_invalid_flags():
+    with localcontext() as context:
+        context.prec = 128
+        context.traps[InvalidOperation] = False
+        context.clear_flags()
+        assert truth._history_decimal_arrays((["1.00"] * 512 + ["2\x00"],)) is None
         assert not any(context.flags.values())
