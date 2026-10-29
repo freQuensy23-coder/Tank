@@ -2099,10 +2099,7 @@ class _ColumnPrices(Mapping):
         ):
             return None
         if any(
-            type(at) is not datetime
-            or at.tzinfo is not UTC
-            or at.fold
-            or type(value) is not float
+            type(at) is not datetime or at.tzinfo is not UTC or at.fold or type(value) is not float
             for at, value in rows.items()
         ):
             return None

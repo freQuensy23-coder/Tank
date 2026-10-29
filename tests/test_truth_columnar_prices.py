@@ -4,7 +4,6 @@ from datetime import UTC, datetime, timedelta
 from decimal import Rounded, localcontext
 
 import pytest
-from test_truth_start_fixture import compact_start_snapshot
 
 from tank.analysis import truth
 from tank.util import parse_time
@@ -74,6 +73,8 @@ def test_projected_statistical_prices_keep_columns_without_float_reconversion(mo
 
 @pytest.mark.parametrize("microseconds", [0, 1])
 def test_columnar_relative_result_matches_legacy_order_and_context(microseconds):
+    from test_truth_start_fixture import compact_start_snapshot
+
     packet = compact_start_snapshot()
     identities = {row["instrument_id"]: row.get("token_id") for row in packet["klines"]}
     packet["stat_price_series"] = {
