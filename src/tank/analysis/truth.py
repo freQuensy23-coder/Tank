@@ -838,7 +838,7 @@ def _oi_split(rows):
     return hit[1:]
 
 
-def _history_decimal_arrays(columns, *, summands=1):
+def _history_decimal_arrays(columns, *, summands=1, metadata=None):
     context = getcontext()
     if (
         context.prec < 128
@@ -851,6 +851,8 @@ def _history_decimal_arrays(columns, *, summands=1):
         return None
     arrays = []
     low, high = 0, 0
+    inputs = _ASSESSMENT_INPUTS.get()
+    memo = inputs.setdefault("history_decimal_values", {}) if inputs is not None else None
     with localcontext(context):
         try:
             for column in columns:
@@ -861,24 +863,68 @@ def _history_decimal_arrays(columns, *, summands=1):
                         continue
                     if type(value) not in (str, Decimal, int, float):
                         return None
-                    value = value if type(value) is Decimal else Decimal(str(value))
-                    if not value.is_finite() or value < 0:
-                        return None
-                    parts = value.as_tuple()
-                    exponent = int(parts.exponent)
-                    if len(parts.digits) > 48 or not -100 <= exponent <= 100:
-                        return None
-                    if 2 * (value.adjusted() - exponent + 1) + 32 > context.prec:
+                    hit = memo.get(id(value)) if memo is not None else None
+                    if hit is None or hit[0] is not value:
+                        raw = value
+                        value = value if type(value) is Decimal else Decimal(str(value))
+                        if not value.is_finite() or value < 0:
+                            return None
+                        parts = value.as_tuple()
+                        exponent = int(parts.exponent)
+                        if len(parts.digits) > 48 or not -100 <= exponent <= 100:
+                            return None
+                        hit = (raw, value, exponent, value.adjusted())
+                        if memo is not None:
+                            memo[id(raw)] = hit
+                    _, value, exponent, adjusted = hit
+                    if 2 * (adjusted - exponent + 1) + 32 > context.prec:
                         return None
                     low = min(low, exponent)
-                    high = max(high, value.adjusted())
+                    high = max(high, adjusted)
                     values.append(value)
                 arrays.append(np.asarray(values, dtype=object))
         except (DecimalException, ValueError, OverflowError):
             return None
     if high - low + len(str(max(summands, 1))) + 1 > context.prec:
         return None
+    if metadata is not None:
+        metadata.update(low=low, high=high, context=_history_context_key())
     return arrays
+
+
+def _history_context_key():
+    context = getcontext()
+    return (
+        context.prec,
+        context.rounding,
+        context.Emin,
+        context.Emax,
+        context.clamp,
+        tuple(context.traps.items()),
+    )
+
+
+def _oi_cohort_key(rows):
+    inputs = _ASSESSMENT_INPUTS.get()
+    if inputs is None:
+        return None
+    memo = inputs.setdefault("oi_cohort_keys", {})
+    signature = _history_context_key()
+    hit = memo.get((id(rows), signature))
+    if hit is not None and hit[0] is rows:
+        return hit[1]
+    columns = (
+        [row.get("oi_native") for row in rows],
+        [None if row.get("oi_usd_source") else row.get("oi_usd") for row in rows],
+    )
+    prepared = _history_decimal_arrays(columns)
+    key = None
+    if prepared is not None:
+        key = history_fingerprint(
+            [(_time(row), native, usd) for row, native, usd in zip(rows, *columns, strict=True)]
+        )
+    memo[(id(rows), signature)] = (rows, key)
+    return key
 
 
 def _history_time_array(times, window):
@@ -977,7 +1023,12 @@ def _oi_stats(rows, start, end, *, history_identity=None, venue_history=None):
     length = _time(z) - _time(a)
 
     window = end - start
-    bytime = {_time(r): r for r in rows if start - timedelta(days=lookback_days()) <= _time(r) < start}
+    lower = start - timedelta(days=lookback_days())
+    lo, hi = bisect_left(ordered_times, lower), bisect_left(ordered_times, start)
+    bytime = {_time(rows[i]): rows[i] for i in sorted(index for _, index in ordered[lo:hi])}
+    cohort_key = (
+        _oi_cohort_key(rows) if venue_history is None and _BASELINE_CACHE.get() is not None else None
+    )
     if venue_history is not None:
         venue_history = [_history_slice(times, venue_rows, start) for times, venue_rows in venue_history]
     history_times = sorted(bytime)
@@ -996,6 +1047,8 @@ def _oi_stats(rows, start, end, *, history_identity=None, venue_history=None):
             tuple(parameter("normal_range_quantiles", [0.025, 0.975])),
             (dependency, history_identity or tuple(sorted({r.get("instrument_id", "") for r in rows})))
             if dependency is not None
+            else (cohort_key, lower, start, _history_context_key())
+            if cohort_key is not None
             else history_fingerprint(
                 [(t, r.get("oi_native"), _stored_usd(r)) for t, r in sorted(bytime.items())]
                 if venue_history is None
@@ -3806,17 +3859,180 @@ def data_confidence(snapshot, spot, derivatives, end):
     )
 
 
+def _native_volume_arrays(rows, projection, end, instrument=None):
+    if _ASSESSMENT_INPUTS.get() is None:
+        return None
+    signature = _history_context_key()
+    source = projection if projection is not None else rows
+    memo = _ASSESSMENT_INPUTS.get().setdefault("native_volume_arrays", {})
+    key = (id(source), end, signature)
+    hit = memo.get(key)
+    if hit is not None and hit[0] is source:
+        return hit[1]
+    epoch = parse_time("1970-01-01T00:00:00Z")
+    if projection is not None:
+        head = projection.get("dependency_fingerprint")
+        cache = _BASELINE_CACHE.get()
+        times = projection.get("times_us", ())
+        interval = projection.get("interval_s", 60)
+        if type(interval) is not int or not 0 < interval <= 2**52 // 1000000:
+            return None
+        if len(times) != len(projection["values"]) or len(times) != len(projection["complete"]):
+            return None
+        cache_key = (
+            "native-volume-arrays", instrument, head, len(times), end, interval,
+            times[0] if len(times) else None, times[-1] if len(times) else None, signature,
+        )
+        if head is not None and cache is not None and cache_key in cache:
+            result = cache[cache_key]
+            memo[key] = (source, result)
+            return result
+        starts = np.asarray(times, dtype=np.int64)
+        intervals = np.full(len(starts), interval * 1000000, dtype=np.int64)
+        delta = end - epoch
+        end_us = delta.days * 86400000000 + delta.seconds * 1000000 + delta.microseconds
+        admitted = starts + intervals <= end_us
+        raw = [value for value, keep in zip(projection["values"], admitted, strict=True) if keep]
+        complete = np.asarray(projection["complete"], dtype=bool)[admitted]
+        starts, intervals = starts[admitted], intervals[admitted]
+    else:
+        points = []
+        for row in sorted(rows, key=_time):
+            at = _time(row)
+            interval = row.get("interval_s", 60)
+            if (
+                type(at) is not datetime
+                or type(interval) is not int
+                or not 0 < interval <= 2**52 // 1000000
+            ):
+                return None
+            if at + timedelta(seconds=interval) <= end:
+                delta = at - epoch
+                micros = delta.days * 86400000000 + delta.seconds * 1000000 + delta.microseconds
+                points.append(
+                    (
+                        micros,
+                        interval * 1000000,
+                        row.get("volume_native"),
+                        row.get("complete") is True,
+                    )
+                )
+        starts = np.asarray([point[0] for point in points], dtype=np.int64)
+        intervals = np.asarray([point[1] for point in points], dtype=np.int64)
+        raw = [point[2] for point in points]
+        complete = np.asarray([point[3] for point in points], dtype=bool)
+    if len(starts) and (
+        np.any(starts[1:] < starts[:-1])
+        or np.any(np.abs(starts) > 2**52)
+        or np.any(intervals > 2**52)
+    ):
+        return None
+    metadata = {}
+    prepared = _history_decimal_arrays((raw,), summands=2 * len(raw), metadata=metadata)
+    if prepared is None:
+        return None
+    values = prepared[0]
+    valid = complete & np.not_equal(values, None)
+    closes = starts + intervals
+    if len(closes) and np.any(np.abs(closes) > 2**52):
+        return None
+    breaks = np.ones(len(starts), dtype=bool)
+    if len(starts) > 1:
+        breaks[1:] = ~valid[1:] | ~valid[:-1] | (starts[1:] != closes[:-1])
+    segments = np.cumsum(breaks, dtype=np.int64)[valid]
+    prefixes = np.cumsum(np.concatenate((np.asarray([Decimal(0)], dtype=object), values[valid])))
+    endpoints = np.empty(2 * int(np.count_nonzero(valid)), dtype=np.int64)
+    endpoints[0::2], endpoints[1::2] = starts[valid], closes[valid]
+    totals = np.empty(len(endpoints), dtype=object)
+    totals[0::2], totals[1::2] = prefixes[:-1], prefixes[1:]
+    labels = np.repeat(segments, 2)
+    times, positions = np.unique(endpoints[::-1], return_index=True)
+    positions = len(endpoints) - 1 - positions
+    guard = (
+        metadata["low"],
+        metadata["high"] + len(str(max(len(raw), 1))),
+        metadata["context"],
+    )
+    result = (times, totals[positions], labels[positions], len(raw), guard)
+    memo[key] = (source, result)
+    if projection is not None and head is not None and cache is not None:
+        remember(cache, cache_key, lambda: result)
+    return result
+
+
+def _native_volume_windows(indexes, start, end):
+    epoch = parse_time("1970-01-01T00:00:00Z")
+
+    def micros(value):
+        delta = value - epoch
+        return delta.days * 86400000000 + delta.seconds * 1000000 + delta.microseconds
+
+    first, last = micros(start), micros(end)
+    width = last - first
+    lower = micros(start - timedelta(days=lookback_days()))
+    if width <= 0 or abs(width) > 2**52:
+        return None
+    signature = _history_context_key()
+    if any(index[4][2] != signature for index in indexes):
+        return None
+    low = min(index[4][0] for index in indexes)
+    high = max(index[4][1] for index in indexes)
+    if high - low + len(str(2 * max(len(indexes), 1))) + 2 > getcontext().prec:
+        return None
+    endpoints = indexes[0][0]
+    for index in indexes[1:]:
+        endpoints = np.intersect1d(endpoints, index[0], assume_unique=True)
+    endpoints = endpoints[(endpoints < first) & (endpoints - width >= lower)]
+    targets = np.concatenate((np.asarray([last, first], dtype=np.int64), endpoints))
+    origins = targets - width
+    totals = np.full(len(targets), Decimal(0), dtype=object)
+    covered = np.ones(len(targets), dtype=bool)
+    for times, values, segments, _, _guard in indexes:
+        if not len(times):
+            return None, None, []
+        a, z = np.searchsorted(times, origins), np.searchsorted(times, targets)
+        a, z = np.minimum(a, len(times) - 1), np.minimum(z, len(times) - 1)
+        valid = (times[a] == origins) & (times[z] == targets) & (segments[a] == segments[z])
+        covered &= valid
+        totals[valid] = np.add(totals[valid], np.subtract(values[z[valid]], values[a[valid]]))
+    history = totals[2:][covered[2:]].tolist()
+    observed = endpoints[covered[2:]]
+    if not len(observed) or (
+        (int(observed[-1]) - int(observed[0]) + width) / 1000000
+        < float(parameter("history_min_days", 7)) * 86400
+    ):
+        history = []
+    ordered_history = sorted(history)
+    if any(
+        a == b and a.compare_total(b)
+        for a, b in zip(ordered_history, ordered_history[1:], strict=False)
+    ):
+        return None
+    return totals[0] if covered[0] else None, totals[1] if covered[1] else None, history
+
+
 @precise
 def support_features(snapshot, start, end, spot, deriv, liquidity, supply):
     """§5.8 support evidence. Unknown inputs remain None and never add support."""
     length = end - start
     token = snapshot.get("token_id")
     features = {}
+    inputs = _ASSESSMENT_INPUTS.get()
+    source_rows = snapshot.get("klines", [])
+    grouped_cache = inputs.setdefault("native_volume_groups", {}) if inputs is not None else None
+    grouped_hit = grouped_cache.get((id(source_rows), token)) if grouped_cache is not None else None
+    if grouped_hit is not None and grouped_hit[0] is source_rows:
+        grouped_markets = grouped_hit[1]
+    else:
+        grouped_markets = {market: defaultdict(list) for market in ("SPOT", "PERP")}
+        for row in source_rows:
+            if row.get("token_id", token) == token:
+                market = "SPOT" if _market(row) == "SPOT" else "PERP"
+                grouped_markets[market][row["instrument_id"]].append(row)
+        if grouped_cache is not None:
+            grouped_cache[(id(source_rows), token)] = (source_rows, grouped_markets)
     for market in ("SPOT", "PERP"):
-        grouped = defaultdict(list)
-        for row in snapshot.get("klines", []):
-            if row.get("token_id", token) == token and ((_market(row) == "SPOT") == (market == "SPOT")):
-                grouped[row["instrument_id"]].append(row)
+        grouped = grouped_markets[market]
         market_indexes = {}
         projected = {
             iid: row
@@ -3825,7 +4041,19 @@ def support_features(snapshot, start, end, spot, deriv, liquidity, supply):
             and row.get("market_type") == market
             and row.get("time_basis") == "OPEN_TIME"
         }
-        for iid in set(grouped) | set(projected):
+        instruments = set(grouped) | set(projected)
+        compact = []
+        for iid in instruments:
+            index = _native_volume_arrays(grouped[iid], projected.get(iid), end, iid)
+            if index is None:
+                break
+            compact.append(index)
+        batched = (
+            _native_volume_windows(compact, start, end)
+            if compact and len(compact) == len(instruments)
+            else None
+        )
+        for iid in instruments if batched is None else ():
             projection = projected.get(iid)
 
             def build_index():
@@ -3927,6 +4155,8 @@ def support_features(snapshot, start, end, spot, deriv, liquidity, supply):
             < float(parameter("history_min_days", 7)) * 86400
         ):
             history = []
+        if batched is not None:
+            current, previous, history = batched
         nr = normal(history)
         up = (
             bool(current > previous and current > nr[1])

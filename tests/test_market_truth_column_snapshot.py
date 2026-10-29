@@ -1,4 +1,5 @@
 import asyncio
+import os
 from datetime import timedelta
 
 import httpx
@@ -85,41 +86,40 @@ async def test_dense_column_reset_and_late_correction_match_row_repository(both,
         assert corrected[1]["dependency_fingerprint"] != initial[1]["dependency_fingerprint"]
 
 
-async def test_snapshot_overlaps_independent_dense_reads_and_retains_each_lane(both, setup):
-    _, repo, put = both
+async def test_snapshot_overlaps_independent_dense_reads_and_retains_each_lane(postgres_template, setup):
     _, settings, _ = setup
     token = "bitcoin:BTC"
-    await put(
-        "mkt.klines_1m",
-        [dict(kline(iid, minute, "1.5"), volume_native="3.00") for iid in IIDS for minute in range(3)],
-    )
-    seen, released = set(), asyncio.Event()
-    original_post = repo.clickhouse._post
+    async with postgres_template.repository(os.environ["TANK_TEST_DATABASE_URL"]) as repo:
+        await repo.put_market_batch(
+            "mkt.klines_1m",
+            [dict(kline(iid, minute, "1.5"), volume_native="3.00") for iid in IIDS for minute in range(3)],
+        )
+        seen, released = set(), asyncio.Event()
+        original_post = repo.clickhouse._post
 
-    async def post(query, params):
-        value = await original_post(query, params)
-        if query.endswith("FORMAT JSONColumns"):
-            for iid in IIDS:
-                if f"instrument_id IN ('{iid}')" in query:
-                    seen.add(iid)
-            if len(seen) == len(IIDS):
-                released.set()
-            await released.wait()
-        return value
+        async def post(query, params):
+            value = await original_post(query, params)
+            if query.endswith("FORMAT JSONColumns"):
+                for iid in IIDS:
+                    if f"instrument_id IN ('{iid}')" in query:
+                        seen.add(iid)
+                if len(seen) == len(IIDS):
+                    released.set()
+                async with asyncio.timeout(1):
+                    await released.wait()
+            return value
 
-    repo.clickhouse._post = post
-    async with httpx.AsyncClient() as http:
-        market = MarketService(repo, settings, http=http)
-        market.tokens = {token: {"token_id": token, "symbol": "BTC", "sector": "BENCHMARK"}}
-        market.instruments = {
-            iid: dict(instrument_id=iid, token_id=token, venue=venue, market_type="SPOT")
-            for iid, venue in zip(IIDS, ("binance", "kraken"), strict=True)
-        }
-        async with asyncio.timeout(1):
+        repo.clickhouse._post = post
+        async with httpx.AsyncClient() as http:
+            market = MarketService(repo, settings, http=http)
+            market.tokens = {token: {"token_id": token, "symbol": "BTC", "sector": "BENCHMARK"}}
+            market.instruments = {
+                iid: dict(instrument_id=iid, token_id=token, venue=venue, market_type="SPOT")
+                for iid, venue in zip(IIDS, ("binance", "okx"), strict=True)
+            }
             value = await market.snapshot(token, T0 + timedelta(minutes=3))
-        assert set(value["stat_price_series"]) == set(IIDS)
-        assert set(value["stat_volume_series"]) == set(IIDS)
-        for iid in IIDS:
-            assert list(value["stat_price_series"][iid]["values"]) == [1.5, 1.5, 1.5]
-            assert value["stat_volume_series"][iid]["values"] == ["3.00", "3.00", "3.00"]
-
+            assert set(value["stat_price_series"]) == set(IIDS)
+            assert set(value["stat_volume_series"]) == set(IIDS)
+            for iid in IIDS:
+                assert list(value["stat_price_series"][iid]["values"]) == [1.5, 1.5, 1.5]
+                assert value["stat_volume_series"][iid]["values"] == ["3.00", "3.00", "3.00"]

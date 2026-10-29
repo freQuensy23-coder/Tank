@@ -16,7 +16,7 @@ from time import perf_counter, process_time
 from urllib.parse import urlsplit
 
 import httpx
-from market_truth_request_data import seed_data
+from market_truth_request_data import ORIGINAL, seed_data
 
 from tank import clickhouse_market as chm
 from tank.agents import SessionService
@@ -246,9 +246,12 @@ async def run(root, directory, fixtures, revision, reader):
     server = await asyncio.start_server(receive_http, "127.0.0.1", 0)
     try:
         async with httpx.AsyncClient(trust_env=False) as http:
+            config_dir = Path(descriptor["input_config_dir"])
+            assert not config_dir.is_symlink()
+            assert config_dir.resolve() == (root.parent / "original" / "config").resolve()
             settings = Settings(
                 _env_file=None,
-                config_dir=root / "config",
+                config_dir=config_dir,
                 data_dir=directory / "data",
                 replay=True,
                 openma_url=f"http://127.0.0.1:{server.sockets[0].getsockname()[1]}",
@@ -308,6 +311,7 @@ async def run(root, directory, fixtures, revision, reader):
                 {
                     "kind": "ready",
                     "revision": revision,
+                    "input_configuration_revision": ORIGINAL,
                     "modules": provenance(root),
                     "native": native,
                     "setup_seconds": perf_counter() - started,

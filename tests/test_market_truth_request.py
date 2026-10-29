@@ -112,7 +112,11 @@ async def full_request_comparison(tmp_path_factory, pytestconfig, request):
                 resources.push_async_callback(stop, process)
                 process.stdin.write(
                     json.dumps(
-                        {"database_url": repo.database_url, "clickhouse_database": repo.clickhouse.database}
+                        {
+                            "database_url": repo.database_url,
+                            "clickhouse_database": repo.clickhouse.database,
+                            "input_config_dir": str(tmp_path / "original" / "config"),
+                        }
                     ).encode()
                     + b"\n"
                 )
