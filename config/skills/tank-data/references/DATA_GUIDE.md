@@ -92,7 +92,8 @@ SourceItem
   relevance: {decision: ALWAYS | SEND | SKIP, p_relevant: 0..1?, model: str?}   # §3.1
   route: {decision: NEW_SESSION | ADDED, event_id: str?, p_same: 0..1?}?        # §3.1
   extraction_status: PENDING | DONE | SKIPPED | FAILED
-  # A successful native turn may ignore an item: SKIPPED, not event/call failure.
+  extraction_reason: str?            # SKIPPED: no_event_reason; FAILED: AGENT_INCOMPLETE when a turn ended
+                                     # without record_event, add_observation or merge_into for the item
 ```
 
 ### 2.3 Events
