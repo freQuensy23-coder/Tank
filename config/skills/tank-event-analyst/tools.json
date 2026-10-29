@@ -7,7 +7,10 @@
       "additionalProperties": false,
       "properties": {
         "item_id": {
-          "type": "string",
+          "type": [
+            "string",
+            "null"
+          ],
           "description": "ID of a stored source document: ITM-… for a collected item, web-… for a page read with fetch_page or a web_search result; find it with read-only SQL (tank-data data guide, «Finding record IDs for tool arguments»), «Source document by URL»."
         }
       }
@@ -24,12 +27,18 @@
           "type": "string"
         },
         "days": {
-          "type": "integer",
+          "type": [
+            "integer",
+            "null"
+          ],
           "minimum": 1,
           "maximum": 90
         },
         "source_ids": {
-          "type": "array",
+          "type": [
+            "array",
+            "null"
+          ],
           "items": {
             "type": "string"
           },
@@ -43,18 +52,48 @@
   },
   {
     "name": "list_open_events",
-    "description": "List open events eligible for routing or comparison, including their statements, entities, tokens, current stages, known-to-us time and session associations. Filter by token_id or entity_id (a token's project and a project's tokens match too), or omit both for every open event. Use their recorded evidence to distinguish a new development from a duplicate or continuation; listing an event does not modify it.",
+    "description": "List open events for routing or duplicate checks: statements, entities, tokens, stages, known-to-us and last-activity times and session associations. Only events with activity (first known, a routed item or a requested review) within the last `days` are listed; the default is the 3-day routing window. token_id and entity_id each also match the registry pair (a token's project, a project's tokens); with both, an event must match both. `query` keeps events whose statement contains any of its words and ranks them by how many match. Results are ordered by relevance, then most recent activity, at most 50 per page; `total` counts every match and `next_offset`, when set, is the `offset` for the next page. Read every page before deciding an item is new. Listing does not modify an event.",
     "input_schema": {
       "type": "object",
       "additionalProperties": false,
       "properties": {
         "token_id": {
-          "type": "string",
+          "type": [
+            "string",
+            "null"
+          ],
           "description": "Registry token key (reg.tokens), shown after « · » next to the name in Tank's messages and results, e.g. bitcoin:BTC in «Bitcoin (BTC) · bitcoin:BTC»."
         },
         "entity_id": {
-          "type": "string",
+          "type": [
+            "string",
+            "null"
+          ],
           "description": "Registry entity key (reg.entities), shown after « · » next to the name in Tank's messages and results, e.g. uniswap in «Uniswap · uniswap»."
+        },
+        "query": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "Words of the development, e.g. «ETF approval»; events whose statement contains any of them are kept and ranked by how many match. Null or omitted: no text filter."
+        },
+        "days": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "exclusiveMinimum": 0,
+          "maximum": 90,
+          "description": "Activity window in days (>0, ≤90). Null or omitted: the 3-day routing window. Widen it to see older open events of the same story."
+        },
+        "offset": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0,
+          "description": "Page start: the next_offset of the previous page. Null or omitted: 0."
         }
       }
     }
@@ -67,7 +106,10 @@
       "additionalProperties": false,
       "properties": {
         "event_id": {
-          "type": "string",
+          "type": [
+            "string",
+            "null"
+          ],
           "description": "Event ID (EVT-…); find it with read-only SQL (tank-data data guide, «Finding record IDs for tool arguments»), «Events by statement, time or token»."
         }
       }
@@ -81,11 +123,17 @@
       "additionalProperties": false,
       "properties": {
         "token_id": {
-          "type": "string",
+          "type": [
+            "string",
+            "null"
+          ],
           "description": "Registry token key (reg.tokens), shown after « · » next to the name in Tank's messages and results, e.g. bitcoin:BTC in «Bitcoin (BTC) · bitcoin:BTC»."
         },
         "entity_id": {
-          "type": "string",
+          "type": [
+            "string",
+            "null"
+          ],
           "description": "Registry entity key (reg.entities), shown after « · » next to the name in Tank's messages and results, e.g. uniswap in «Uniswap · uniswap»."
         }
       }
@@ -136,7 +184,10 @@
           "format": "uri"
         },
         "timeout_s": {
-          "type": "number",
+          "type": [
+            "number",
+            "null"
+          ],
           "exclusiveMinimum": 0,
           "maximum": 20,
           "description": "Seconds to wait for the page, at most 20 (the default). Use a short value (e.g. 8) for the one immediate official-source check before record_event, so a slow site cannot hold the event."
@@ -193,11 +244,17 @@
             "additionalProperties": false,
             "properties": {
               "entity_id": {
-                "type": "string",
+                "type": [
+                  "string",
+                  "null"
+                ],
                 "description": "Registry entity key (reg.entities), shown after « · » next to the name in Tank's messages and results, e.g. uniswap in «Uniswap · uniswap»."
               },
               "name": {
-                "type": "string",
+                "type": [
+                  "string",
+                  "null"
+                ],
                 "description": "Name of an entity outside the registry, kept unresolved. Tank refuses a name the registry resolves; pass that entity's entity_id instead."
               },
               "role": {
@@ -234,7 +291,10 @@
           "description": "Registry token keys (reg.tokens), shown after « · » next to the name in Tank's messages and results, e.g. bitcoin:BTC or uniswap:UNI."
         },
         "token_names": {
-          "type": "array",
+          "type": [
+            "array",
+            "null"
+          ],
           "items": {
             "type": "string"
           },
@@ -402,7 +462,10 @@
                 "description": "Verbatim atomic quote. Omit evidence when it comes from the incoming source; otherwise cite the stored document containing it in evidence (a page read with fetch_page is its own document, even when its URL matches the discovery item)."
               },
               "approval_dependency": {
-                "type": "object",
+                "type": [
+                  "object",
+                  "null"
+                ],
                 "additionalProperties": false,
                 "required": [
                   "scope",
@@ -445,7 +508,10 @@
                 "description": "Agent-supplied explanation of what confirmation is missing for this unverified claim (for example, no announcement from the named organization). Tank preserves and displays it verbatim; null means the reason was not established. Keep it to about 10 words; it is printed in NOT VERIFIED."
               },
               "evidence": {
-                "type": "array",
+                "type": [
+                  "array",
+                  "null"
+                ],
                 "description": "The stored document containing this claim's quote, by item_id. Omit for a quote from the incoming source. For text read with fetch_page or web_search, cite that stored document, not the discovery document merely because its URL matches. The incoming source remains the event's origin.",
                 "items": {
                   "type": "object",
@@ -507,12 +573,16 @@
           "enum": [
             "HIGH",
             "MEDIUM",
-            "LOW"
+            "LOW",
+            null
           ],
           "description": "Agent-supplied confidence in the event timing: HIGH for an exact primary timestamp, MEDIUM for bucket precision, LOW for collection time only. Optional; omission leaves declared timestamp precision as the timing-confidence basis."
         },
         "no_event_reason": {
-          "type": "string",
+          "type": [
+            "string",
+            "null"
+          ],
           "minLength": 1,
           "maxLength": 500,
           "description": "When is_event is false, explain in one concrete sentence why this material is not an actionable event. This is the rejection decision, separate from certainty_reason about source reliability.",
@@ -535,6 +605,11 @@
               "enum": [
                 false
               ]
+            },
+            "no_event_reason": {
+              "type": "string",
+              "minLength": 1,
+              "pattern": "\\S"
             }
           },
           "required": [
@@ -552,7 +627,10 @@
       "additionalProperties": false,
       "properties": {
         "item_id": {
-          "type": "string",
+          "type": [
+            "string",
+            "null"
+          ],
           "description": "Only for a callback without an incoming source: the stored document that establishes this observation, ITM-… for a collected item or web-… for a page read with fetch_page; find it with read-only SQL (tank-data data guide, «Finding record IDs for tool arguments»), «Source document by URL». Omit when an incoming source is supplied."
         },
         "link": {
@@ -653,7 +731,10 @@
                 "description": "Verbatim atomic quote. Omit evidence when it comes from the incoming source; otherwise cite the stored document containing it in evidence (a page read with fetch_page is its own document, even when its URL matches the discovery item)."
               },
               "approval_dependency": {
-                "type": "object",
+                "type": [
+                  "object",
+                  "null"
+                ],
                 "additionalProperties": false,
                 "required": [
                   "scope",
@@ -696,14 +777,20 @@
                 "description": "Agent-supplied explanation of what confirmation is missing for this unverified claim (for example, no announcement from the named organization). Tank preserves and displays it verbatim; null means the reason was not established. Keep it to about 10 words; it is printed in NOT VERIFIED."
               },
               "supersedes_claim_ids": {
-                "type": "array",
+                "type": [
+                  "array",
+                  "null"
+                ],
                 "items": {
                   "type": "string"
                 },
                 "description": "Claim IDs (CLM-…) of prior claims of the current event that this claim replaces on the current card; the old claims remain historical evidence. Omit unrelated claims and remaining uncertainties; find them with read-only SQL (tank-data data guide, «Finding record IDs for tool arguments»), «Claims of an event»."
               },
               "evidence": {
-                "type": "array",
+                "type": [
+                  "array",
+                  "null"
+                ],
                 "description": "The stored document containing this claim's quote, by item_id. Omit for a quote from the incoming source. For text read with fetch_page or web_search, cite that stored document, not the discovery document merely because its URL matches. The observation's own document is the incoming source, or the item_id given for a callback without one.",
                 "items": {
                   "type": "object",
@@ -771,12 +858,16 @@
           "enum": [
             "HIGH",
             "MEDIUM",
-            "LOW"
+            "LOW",
+            null
           ],
           "description": "Optional agent-supplied certainty update when reassessed: HIGH, MEDIUM or LOW. Tank stores it as supplied; omission preserves the existing event certainty without implicit promotion."
         },
         "milestone_outcome": {
-          "type": "object",
+          "type": [
+            "object",
+            "null"
+          ],
           "additionalProperties": false,
           "properties": {
             "outcome": {
@@ -792,14 +883,18 @@
           ]
         },
         "certainty_reason": {
-          "type": "string",
+          "type": [
+            "string",
+            "null"
+          ],
           "description": "Optional reason when certainty is reassessed. Tank stores it as supplied; omission preserves the existing reason without inferring a new judgment."
         },
         "timing_confidence": {
           "enum": [
             "HIGH",
             "MEDIUM",
-            "LOW"
+            "LOW",
+            null
           ],
           "description": "Agent-supplied confidence in the event timing: HIGH for an exact primary timestamp, MEDIUM for bucket precision, LOW for collection time only. Optional; omission leaves declared timestamp precision as the timing-confidence basis."
         }
@@ -875,11 +970,15 @@
                     "proposed_by": {
                       "enum": [
                         "LLM",
-                        "RULE"
+                        "RULE",
+                        null
                       ]
                     },
                     "caps_applied": {
-                      "type": "array",
+                      "type": [
+                        "array",
+                        "null"
+                      ],
                       "items": {
                         "type": "string"
                       }
@@ -922,11 +1021,15 @@
                     "proposed_by": {
                       "enum": [
                         "LLM",
-                        "RULE"
+                        "RULE",
+                        null
                       ]
                     },
                     "caps_applied": {
-                      "type": "array",
+                      "type": [
+                        "array",
+                        "null"
+                      ],
                       "items": {
                         "type": "string"
                       }
@@ -969,11 +1072,15 @@
                     "proposed_by": {
                       "enum": [
                         "LLM",
-                        "RULE"
+                        "RULE",
+                        null
                       ]
                     },
                     "caps_applied": {
-                      "type": "array",
+                      "type": [
+                        "array",
+                        "null"
+                      ],
                       "items": {
                         "type": "string"
                       }
@@ -1016,11 +1123,15 @@
                     "proposed_by": {
                       "enum": [
                         "LLM",
-                        "RULE"
+                        "RULE",
+                        null
                       ]
                     },
                     "caps_applied": {
-                      "type": "array",
+                      "type": [
+                        "array",
+                        "null"
+                      ],
                       "items": {
                         "type": "string"
                       }
@@ -1063,11 +1174,15 @@
                     "proposed_by": {
                       "enum": [
                         "LLM",
-                        "RULE"
+                        "RULE",
+                        null
                       ]
                     },
                     "caps_applied": {
-                      "type": "array",
+                      "type": [
+                        "array",
+                        "null"
+                      ],
                       "items": {
                         "type": "string"
                       }
@@ -1110,11 +1225,15 @@
                     "proposed_by": {
                       "enum": [
                         "LLM",
-                        "RULE"
+                        "RULE",
+                        null
                       ]
                     },
                     "caps_applied": {
-                      "type": "array",
+                      "type": [
+                        "array",
+                        "null"
+                      ],
                       "items": {
                         "type": "string"
                       }
@@ -1157,11 +1276,15 @@
                     "proposed_by": {
                       "enum": [
                         "LLM",
-                        "RULE"
+                        "RULE",
+                        null
                       ]
                     },
                     "caps_applied": {
-                      "type": "array",
+                      "type": [
+                        "array",
+                        "null"
+                      ],
                       "items": {
                         "type": "string"
                       }
@@ -1185,7 +1308,10 @@
               ]
             },
             "structural_gates": {
-              "type": "array",
+              "type": [
+                "array",
+                "null"
+              ],
               "items": {
                 "type": "object",
                 "additionalProperties": false,
@@ -1253,7 +1379,10 @@
               "description": "Claim ID (CLM-…) of the recorded claim that establishes the selected criterion, or null when no claim does; a claim about another subject does not establish a structural criterion. Find it with read-only SQL (tank-data data guide, «Finding record IDs for tool arguments»), «Claims of an event»."
             },
             "class_reasons": {
-              "type": "array",
+              "type": [
+                "array",
+                "null"
+              ],
               "items": {
                 "type": "string"
               }
@@ -1298,7 +1427,10 @@
                   ]
                 },
                 "timing_evidence": {
-                  "type": "array",
+                  "type": [
+                    "array",
+                    "null"
+                  ],
                   "minItems": 1,
                   "items": {
                     "type": "object",
@@ -1326,7 +1458,10 @@
                   }
                 },
                 "immediate_market_access": {
-                  "type": "object",
+                  "type": [
+                    "object",
+                    "null"
+                  ],
                   "additionalProperties": false,
                   "properties": {
                     "claim_id": {
@@ -1365,7 +1500,10 @@
               ]
             },
             "capture_chains": {
-              "type": "array",
+              "type": [
+                "array",
+                "null"
+              ],
               "items": {
                 "type": "object",
                 "additionalProperties": false,
@@ -1799,14 +1937,21 @@
                       "DIRECT",
                       "INDIRECT",
                       "NARRATIVE_ONLY",
-                      "UNKNOWN"
+                      "UNKNOWN",
+                      null
                     ]
                   },
                   "conditional": {
-                    "type": "boolean"
+                    "type": [
+                      "boolean",
+                      "null"
+                    ]
                   },
                   "caps_applied": {
-                    "type": "array",
+                    "type": [
+                      "array",
+                      "null"
+                    ],
                     "items": {
                       "type": "string"
                     }
@@ -1826,7 +1971,10 @@
               }
             },
             "magnitude_basis": {
-              "type": "object",
+              "type": [
+                "object",
+                "null"
+              ],
               "additionalProperties": false,
               "properties": {
                 "kind": {
@@ -1910,7 +2058,10 @@
               "description": "Optional measured economic numerator/base for the existing magnitude rubric. Each number must match its quoted accepted claim; units and base window must match the rubric. Missing evidence remains NOT_ESTIMABLE, never an inferred number from rationale text."
             },
             "criterion_venue_id": {
-              "type": "string",
+              "type": [
+                "string",
+                "null"
+              ],
               "description": "Required for M1: the registry entity_id of the venue (binance, coinbase, okx, bybit, kraken or robinhood count for M1). Tank never infers the venue from the quotation."
             }
           },
@@ -1942,11 +2093,17 @@
             "additionalProperties": false,
             "properties": {
               "entity_id": {
-                "type": "string",
+                "type": [
+                  "string",
+                  "null"
+                ],
                 "description": "Registry entity key (reg.entities), shown after « · » next to the name in Tank's messages and results, e.g. uniswap in «Uniswap · uniswap»."
               },
               "entity_name": {
-                "type": "string",
+                "type": [
+                  "string",
+                  "null"
+                ],
                 "description": "Name of an entity outside the registry, kept unresolved; Tank refuses a registered name."
               },
               "token_id": {
@@ -1957,7 +2114,10 @@
                 "description": "Registry token key (reg.tokens), shown after « · » next to the name in Tank's messages and results, e.g. bitcoin:BTC in «Bitcoin (BTC) · bitcoin:BTC». Null when the entity has no token or the token is outside the registry."
               },
               "token_name": {
-                "type": "string",
+                "type": [
+                  "string",
+                  "null"
+                ],
                 "description": "Ticker or name of a token outside the registry (token_id null), kept unresolved and named in WHO without a market block; Tank refuses a registry token here."
               },
               "role": {
@@ -2031,13 +2191,19 @@
                 "description": "Claim IDs (CLM-…) of accepted claims of the current event; find them with read-only SQL (tank-data data guide, «Finding record IDs for tool arguments»), «Claims of an event»."
               },
               "credibility_reasons": {
-                "type": "array",
+                "type": [
+                  "array",
+                  "null"
+                ],
                 "items": {
                   "type": "string"
                 }
               },
               "negative_thesis": {
-                "type": "object",
+                "type": [
+                  "object",
+                  "null"
+                ],
                 "additionalProperties": false,
                 "required": [
                   "mechanism",
@@ -2090,94 +2256,135 @@
           }
         },
         "layer_reasons": {
-          "type": "object",
+          "type": [
+            "object",
+            "null"
+          ],
           "additionalProperties": false,
           "properties": {
             "ISSUER_PRODUCT": {
-              "type": "string"
+              "type": [
+                "string",
+                "null"
+              ]
             },
             "VENUE_DEX": {
-              "type": "string"
+              "type": [
+                "string",
+                "null"
+              ]
             },
             "SETTLEMENT_L1_L2": {
-              "type": "string"
+              "type": [
+                "string",
+                "null"
+              ]
             },
             "LIQUIDITY_EXECUTION": {
-              "type": "string"
+              "type": [
+                "string",
+                "null"
+              ]
             },
             "LENDING_COLLATERAL": {
-              "type": "string"
+              "type": [
+                "string",
+                "null"
+              ]
             },
             "ORACLE_DATA": {
-              "type": "string"
+              "type": [
+                "string",
+                "null"
+              ]
             },
             "INTEROPERABILITY": {
-              "type": "string"
+              "type": [
+                "string",
+                "null"
+              ]
             },
             "CUSTODY_COMPLIANCE": {
-              "type": "string"
+              "type": [
+                "string",
+                "null"
+              ]
             }
           },
           "required": [],
           "description": "Give a reason for every layer without a credible beneficiary, including layers that contain only unverified or candidate edges."
         },
         "layer_statuses": {
-          "type": "object",
+          "type": [
+            "object",
+            "null"
+          ],
           "additionalProperties": false,
           "properties": {
             "ISSUER_PRODUCT": {
               "enum": [
                 "NONE",
-                "UNKNOWN"
+                "UNKNOWN",
+                null
               ]
             },
             "VENUE_DEX": {
               "enum": [
                 "NONE",
-                "UNKNOWN"
+                "UNKNOWN",
+                null
               ]
             },
             "SETTLEMENT_L1_L2": {
               "enum": [
                 "NONE",
-                "UNKNOWN"
+                "UNKNOWN",
+                null
               ]
             },
             "LIQUIDITY_EXECUTION": {
               "enum": [
                 "NONE",
-                "UNKNOWN"
+                "UNKNOWN",
+                null
               ]
             },
             "LENDING_COLLATERAL": {
               "enum": [
                 "NONE",
-                "UNKNOWN"
+                "UNKNOWN",
+                null
               ]
             },
             "ORACLE_DATA": {
               "enum": [
                 "NONE",
-                "UNKNOWN"
+                "UNKNOWN",
+                null
               ]
             },
             "INTEROPERABILITY": {
               "enum": [
                 "NONE",
-                "UNKNOWN"
+                "UNKNOWN",
+                null
               ]
             },
             "CUSTODY_COMPLIANCE": {
               "enum": [
                 "NONE",
-                "UNKNOWN"
+                "UNKNOWN",
+                null
               ]
             }
           },
           "required": []
         },
         "no_credible_secondary_reason": {
-          "type": "string"
+          "type": [
+            "string",
+            "null"
+          ]
         }
       },
       "required": [
@@ -2200,11 +2407,17 @@
           "description": "Registry token keys (reg.tokens), shown after « · » next to the name in Tank's messages and results, e.g. bitcoin:BTC or uniswap:UNI."
         },
         "cutoff": {
-          "type": "string",
+          "type": [
+            "string",
+            "null"
+          ],
           "format": "date-time"
         },
         "cutoff_prec": {
-          "type": "string",
+          "type": [
+            "string",
+            "null"
+          ],
           "anyOf": [
             {
               "enum": [
@@ -2218,12 +2431,18 @@
             },
             {
               "pattern": "^BUCKET\\((?:[1-9][0-9]*(?:\\.[0-9]+)?|0\\.[0-9]*[1-9][0-9]*)(?:us|ms|s|m|h|d|w)\\)$"
+            },
+            {
+              "type": "null"
             }
           ],
           "description": "Explicit timestamp provenance; ISO formatting does not establish precision. BUCKET requires an explicit positive duration, embedded or in the companion bucket-size field. SECOND, MINUTE and HOUR are accepted as BUCKET(1s), BUCKET(1m) and BUCKET(1h)."
         },
         "cutoff_bucket_size_s": {
-          "type": "number",
+          "type": [
+            "number",
+            "null"
+          ],
           "exclusiveMinimum": 0,
           "description": "Explicit bucket duration in seconds; only valid for BUCKET precision and must match any embedded duration."
         }
@@ -2287,7 +2506,10 @@
           "maxItems": 3
         },
         "unconfirmed": {
-          "type": "string",
+          "type": [
+            "string",
+            "null"
+          ],
           "minLength": 1,
           "maxLength": 500,
           "pattern": "\\S",
@@ -2321,7 +2543,10 @@
           "description": "Registered source key (reg.sources), shown after « · » next to the name in Tank's messages and results, e.g. S14 in «Venue instrument lists · S14»."
         },
         "due_at_prec": {
-          "type": "string",
+          "type": [
+            "string",
+            "null"
+          ],
           "anyOf": [
             {
               "enum": [
@@ -2332,12 +2557,18 @@
             },
             {
               "pattern": "^BUCKET\\((?:[1-9][0-9]*(?:\\.[0-9]+)?|0\\.[0-9]*[1-9][0-9]*)(?:us|ms|s|m|h|d|w)\\)$"
+            },
+            {
+              "type": "null"
             }
           ],
           "description": "Explicit timestamp provenance; ISO formatting does not establish precision. BUCKET requires an explicit positive duration, embedded or in the companion bucket-size field."
         },
         "due_at_bucket_size_s": {
-          "type": "number",
+          "type": [
+            "number",
+            "null"
+          ],
           "exclusiveMinimum": 0,
           "description": "Explicit bucket duration in seconds; only valid for BUCKET precision and must match any embedded duration."
         }
@@ -2431,7 +2662,10 @@
           "pattern": "^[^/\\\\]+$"
         },
         "caption": {
-          "type": "string",
+          "type": [
+            "string",
+            "null"
+          ],
           "maxLength": 1024
         }
       },
@@ -2454,19 +2688,31 @@
           ]
         },
         "cond_id": {
-          "type": "string",
+          "type": [
+            "string",
+            "null"
+          ],
           "description": "DISARM only: ID of the ARMED watch condition of the current event (CND-…); find it with read-only SQL (tank-data data guide, «Finding record IDs for tool arguments»), «Watch conditions of an event»."
         },
         "token_id": {
-          "type": "string",
+          "type": [
+            "string",
+            "null"
+          ],
           "description": "ARM only: Registry token key (reg.tokens), shown after « · » next to the name in Tank's messages and results, e.g. bitcoin:BTC in «Bitcoin (BTC) · bitcoin:BTC»."
         },
         "text": {
-          "type": "string",
+          "type": [
+            "string",
+            "null"
+          ],
           "maxLength": 500
         },
         "conditions": {
-          "type": "array",
+          "type": [
+            "array",
+            "null"
+          ],
           "minItems": 1,
           "maxItems": 6,
           "items": {
@@ -2495,11 +2741,15 @@
                   "W15M",
                   "W1H",
                   "W4H",
-                  "W24H"
+                  "W24H",
+                  null
                 ]
               },
               "persist_count": {
-                "type": "integer",
+                "type": [
+                  "integer",
+                  "null"
+                ],
                 "minimum": 1,
                 "maximum": 24
               }
@@ -2512,17 +2762,26 @@
           }
         },
         "expires_in_hours": {
-          "type": "integer",
+          "type": [
+            "integer",
+            "null"
+          ],
           "minimum": 1,
           "maximum": 168
         },
         "review_at": {
-          "type": "string",
+          "type": [
+            "string",
+            "null"
+          ],
           "format": "date-time",
           "description": "ARM timed review: future UTC time before the condition expires. Mutually exclusive with token_id and metric conditions."
         },
         "review_question": {
-          "type": "string",
+          "type": [
+            "string",
+            "null"
+          ],
           "minLength": 1,
           "maxLength": 500,
           "pattern": "\\S",

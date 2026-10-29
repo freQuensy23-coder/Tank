@@ -26,6 +26,9 @@ REASONS = {
     "M1_VENUE": "Площадка не входит в список основных бирж Tank",
     "STRUCTURAL_GATE": "Не выполнены условия структурного изменения",
     "NATIVE_TURN_COMPLETED_WITHOUT_OBSERVATION": "Агент не записал ни событие, ни решение об отклонении",
+    "AGENT_REMINDED": "Агент не вернул результат, отправлено напоминание",
+    "AGENT_INCOMPLETE": "Агент так и не записал событие или решение об отклонении, напоминания исчерпаны; "
+    "материал можно отправить на повторный анализ",
 }
 CLASSES = {
     "LOW": "низкая",
@@ -339,7 +342,17 @@ def outcome(data):
         if row["stage"]
         not in {"PROCESSING_FAILED", "PROCESSING_EXPIRED", "AGENT_COMPLETED", "RECEIVED", "EVIDENCE_FETCHED"}
     ]
+    failed_agent = "ошибка выполнения"
+    if item.get("extraction_reason") == "AGENT_INCOMPLETE":
+        failed_agent = "ход завершён без результата"
+        if "extraction_reminders" in item:
+            failed_agent = (
+                "не вернул результат, напоминания исчерпаны "
+                f"({item['extraction_reminders']}/{item.get('extraction_reminder_limit', '?')})"
+            )
     if failure and time_of(failure) >= max((time_of(row) for row in recoveries), default=EPOCH):
+        if item.get("extraction_status") == "FAILED":
+            fields[-1] = ("Агент", failed_agent)
         fields.append(("Alerts", "не отправлено"))
         reason = reason_text(failure.get("reason", ""))
         for code, label in {
@@ -359,6 +372,15 @@ def outcome(data):
             "fields": fields,
             "reason": reason,
         }
+    if item.get("extraction_status") == "FAILED":
+        fields[-1] = ("Агент", failed_agent)
+        fields.append(("Alerts", "не отправлено"))
+        return {
+            "code": "PROCESSING_FAILED",
+            "status": "Ошибка обработки",
+            "fields": fields,
+            "reason": reason_text(item.get("extraction_reason") or "AGENT_EXECUTION_FAILED"),
+        }
     if decision == "SKIP":
         fields.append(("Alerts", "не отправлено — материал отсеян до анализа"))
         return {
@@ -366,6 +388,20 @@ def outcome(data):
             "status": "Отсеяно фильтром",
             "fields": fields,
             "reason": "Релевантность ниже порога",
+        }
+    if item.get("extraction_reason") == "AGENT_REMINDED" and item.get("extraction_status") in {
+        None,
+        "PENDING",
+        "RUNNING",
+    }:
+        progress = f"{item.get('extraction_reminders', '?')}/{item.get('extraction_reminder_limit', '?')}"
+        fields[-1] = ("Агент", "результат не возвращён, отправлено напоминание")
+        fields.append(("Alerts", "ожидает результата агента"))
+        return {
+            "code": "AGENT_REMINDED",
+            "status": f"Агент не вернул результат, напоминание {progress}",
+            "fields": fields,
+            "reason": "Агенту напомнено вернуть результат в требуемом формате",
         }
     if item.get("extraction_status") == "SKIPPED":
         reason = item.get("extraction_reason") or (stages.get("AGENT_REJECTED") or {}).get("reason")

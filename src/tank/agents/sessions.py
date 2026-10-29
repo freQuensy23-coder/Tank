@@ -19,12 +19,13 @@ from httpx_sse import aconnect_sse
 
 from tank.agents import workflow
 from tank.agents.context import CONTEXT_TRANSITION, CONTEXT_VERSION, ModelContext
+from tank.agents.incomplete import UNFINISHED, fail_incomplete_turn
 from tank.agents.pipeline import ConfigurationError
 from tank.agents.security import redact_tool_arguments
 from tank.agents.wire import tool_wire_result
 from tank.delivery import DeliveryDeferred
 from tank.openma_sync import agent_tools
-from tank.ops_progress import session_progress
+from tank.ops_progress import SOURCE_MESSAGE_KINDS, item_progress, session_progress
 from tank.settings import threshold
 from tank.telegram_inbox import DOCUMENT_LIMIT, closed_reason, question_message, record_answer
 from tank.time_precision import collection_clock, offset_schedule, propagate_timestamp
@@ -33,6 +34,7 @@ from tank.util import canonical_json, iso, parse_time, sha256, utcnow
 REST_TIMEOUT_S = 30
 
 DEFAULT_MAX_RUNNING_SESSIONS = 2
+DEFAULT_COMPLETION_REMINDERS = 20
 ADMITTED_JOB_TYPES = ("AGENT_MESSAGE", "SCOUT_REVIEW")
 
 ADMISSION_SLEEP_S = 60
@@ -76,6 +78,9 @@ SESSION_ADMISSION_FIELDS = (
     "active_message_id",
     "followups_only",
     "archive_after",
+    "archived_at",
+    "remote_state",
+    "agent_incomplete",
 )
 JOB_ADMISSION_FIELDS = ("job_id", "status", "priority", "payload", "slot_waiting_since", "slot_admitted")
 BUSY_RUNTIME_STATES = {"PENDING", "RUNNING", "REQUIRES_ACTION"}
@@ -109,6 +114,9 @@ class CapturedToolResult:
 
     def signature(self):
         return canonical_json({"result": self.result, "status": self.status, "is_error": self.is_error})
+
+
+EVENT_INPUTS = frozenset({"ITEM_ADDED", "CONDITION_FIRED", "MILESTONE", "CALL_EXPIRED"})
 
 
 class SessionService:
@@ -232,13 +240,16 @@ class SessionService:
             ("item_id", item_id if not event_id else None),
             ("proposal_id", payload.get("proposal_id")),
         ]
+        closed = {}
         for field, value in identifiers:
             if value:
                 async for session in self.repo.iter_all(
                     "ops.agent_sessions",
                     filters={field: value, **({"replay_run_id": replay_run_id} if replay_run_id else {})},
                 ):
-                    return session
+                    if self.routable_session(session):
+                        return session
+                    closed[value] = closed.get(value, 0) + 1
         config = self.config()
         scout = payload.get("kind") == "SCOUT_REVIEW"
         agent = config.get("scout_agent_id") if scout else config["agent_id"]
@@ -268,6 +279,7 @@ class SessionService:
                 "scout": scout,
                 "model_context_version": CONTEXT_VERSION,
                 **({"replay_run_id": replay_run_id} if replay_run_id else {}),
+                **({"generation": closed[identity]} if closed.get(identity) else {}),
             }
         )
         replay_metadata = (
@@ -325,9 +337,11 @@ class SessionService:
             raise ValueError("Replay session evidence binding does not match requested run")
         sid = remote["id"]
         opened = self.clock_timestamp()
+        tools = self.analyst_tools(scout=scout)
         session = {
             "session_id": sid,
             "model_context_version": CONTEXT_VERSION,
+            **({"tools_sha256": sha256(tools)} if tools else {}),
             "event_id": event_id,
             "replay_run_id": replay_run_id,
             "replay_source_session_id": payload.get("replay_source_session_id"),
@@ -413,6 +427,16 @@ class SessionService:
         if reader is None:
             return None
         return agent_tools(self.settings, "tank-scout-reviewer" if scout else "tank-event-analyst")
+
+    def tools_changed(self, session):
+        """Whether the session's tool definitions differ from the current skill's.
+
+        A session records the digest of the tools it was created or last synchronized with; a
+        changed schema (for example optional fields made nullable) reaches a retained session at its
+        next idle input boundary, without a context-version migration. A busy session keeps its
+        tools until a later input finds it idle."""
+        tools = self.analyst_tools(scout=bool(session.get("proposal_id")))
+        return bool(tools) and session.get("tools_sha256") != sha256(tools)
 
     @staticmethod
     def legacy_contract(session):
@@ -566,6 +590,7 @@ class SessionService:
     async def send_message(self, payload):
         if payload.get("kind") == "USER_QUESTION" and not await self.continuable(payload):
             return None
+        payload = await self.readdressed(payload)
         item = (
             await self.repo.get("ingest.source_items", payload["item_id"]) if payload.get("item_id") else None
         )
@@ -582,6 +607,9 @@ class SessionService:
         if migrating or payload.get("kind") == "USER_QUESTION":
             if await self.sync_tools(sid) == "BUSY":
                 raise DeliveryDeferred(offset_schedule(collection_clock(), timedelta(seconds=30)))
+            session = await self.repo.get("ops.agent_sessions", sid)
+        elif self.tools_changed(session):
+            await self.sync_tools(sid)
             session = await self.repo.get("ops.agent_sessions", sid)
         content = await ModelContext(self.repo, self.settings, session).message(payload, item)
         note = CONTEXT_TRANSITION[bool(session.get("proposal_id"))]
@@ -707,6 +735,41 @@ class SessionService:
             await self.repo.put("ops.agent_sessions", sid, session)
             await session_progress(self.repo, self.settings, session)
             return session
+
+    async def readdressed(self, payload):
+        """An event input addressed to a session that has since closed goes to its event instead.
+
+        Timed reviews and agent-defined conditions carry the session that scheduled them, and a
+        merge hands its observations to the target event's recorded session. When that session is
+        FAILED, ENDED or archived, the input drops the stale session_id and is routed by its
+        event_id, so it joins the event's open session or opens a fresh generation."""
+        if (
+            payload.get("kind") not in EVENT_INPUTS
+            or not payload.get("session_id")
+            or not payload.get("event_id")
+        ):
+            return payload
+        session = await self.repo.get("ops.agent_sessions", payload["session_id"])
+        if session is None or self.routable_session(session):
+            return payload
+        return {key: value for key, value in payload.items() if key != "session_id"}
+
+    @staticmethod
+    def routable_session(session):
+        """A session new messages may join: not failed, ended or archived locally or remotely, and not
+        an eventless session whose item failed as AGENT_INCOMPLETE after its reminder budget.
+
+        A closed session never takes another input, so routing to it would strand the message;
+        the next message for the same event, item or proposal opens a fresh session instead, and a
+        re-analysed item starts with a full reminder budget."""
+        remote = session.get("remote_state") or {}
+        return (
+            session.get("status") not in {"FAILED", "ENDED"}
+            and not session.get("agent_incomplete")
+            and not session.get("archived_at")
+            and remote.get("status") != "terminated"
+            and not remote.get("archived_at")
+        )
 
     @staticmethod
     def recoverable_session(session):
@@ -1327,15 +1390,7 @@ class SessionService:
             for message in current.get("message_log", []):
                 if message.get("turn_status") != "FAILED":
                     message["turn_status"] = "DONE"
-                payload = message.get("payload", {})
-                if payload.get("kind") in {"NEW_ITEM", "ITEM_ADDED"} and payload.get("item_id"):
-                    item = await self.repo.get("ingest.source_items", payload["item_id"])
-                    if item and item.get("extraction_status") in {None, "PENDING", "RUNNING"}:
-                        item.update(
-                            extraction_status="SKIPPED",
-                            extraction_reason="NATIVE_TURN_COMPLETED_WITHOUT_OBSERVATION",
-                        )
-                        await self.repo.put("ingest.source_items", item["item_id"], item)
+            await self.remind_incomplete(current)
             current["active_message_id"] = None
             current["runtime_status"] = "IDLE"
             outcomes = await self.source_completion_snapshot(current)
@@ -1352,6 +1407,84 @@ class SessionService:
             await self.repo.put("ops.agent_sessions", sid, current)
             await session_progress(self.repo, self.settings, current)
             return after
+
+    async def remind_incomplete(self, session):
+        """A settled turn that left its source item without an outcome reminds the agent of its task.
+
+        Each source item whose turn ended while it was still unprocessed gets one COMPLETION_REMINDER
+        message in the same session; the reminder turn is checked the same way. The session's durable
+        reminder budget bounds the loop: once spent, fail_incomplete_turn marks the item FAILED /
+        AGENT_INCOMPLETE, which Ops shows as a processing error and tank reanalyse can queue again;
+        it is never shown as a rejection. A replay sends the original inputs only and no reminder:
+        its budget is zero, so a replayed turn without an outcome fails the item at once and the
+        replay reports it as incomplete.
+        """
+        sid = session["session_id"]
+        limit = (
+            0
+            if getattr(self.settings, "replay", False)
+            else int(
+                (self.settings.load_config("thresholds") or {}).get(
+                    "agent_completion_reminders_per_session", DEFAULT_COMPLETION_REMINDERS
+                )
+            )
+        )
+        unchecked = {}
+        for message in session.get("message_log", []):
+            payload = message.get("payload") or {}
+            if (
+                payload.get("kind") in SOURCE_MESSAGE_KINDS
+                and payload.get("item_id")
+                and not message.get("completion_checked")
+            ):
+                message["completion_checked"] = True
+                unchecked[payload["item_id"]] = message
+        for item_id, message in unchecked.items():
+            item = await self.repo.get("ingest.source_items", item_id)
+            if not item or item.get("extraction_status") not in UNFINISHED:
+                continue
+            payload = message["payload"]
+            sent = int(session.get("completion_reminders_sent", 0))
+            attempts = session.setdefault("completion_reminder_attempts", {})
+            if sent >= limit:
+                await fail_incomplete_turn(
+                    self.repo, session, item_id, extraction_reminders=sent, extraction_reminder_limit=limit
+                )
+                continue
+            attempt = int(attempts.get(item_id, 0)) + 1
+            attempts[item_id] = attempt
+            session["completion_reminders_sent"] = sent + 1
+            await self.repo.enqueue(
+                "AGENT_MESSAGE",
+                {
+                    "kind": "COMPLETION_REMINDER",
+                    "session_id": sid,
+                    "item_id": item_id,
+                    "reminded_kind": payload.get("reminded_kind", payload["kind"]),
+                    "attempt": attempt,
+                    "reminder": sent + 1,
+                    "reminder_limit": limit,
+                    "turn_message_id": message["message_id"],
+                },
+                f"{sid}:{item_id}:COMPLETION_REMINDER:{attempt}",
+                priority=1,
+            )
+            item.update(
+                extraction_status="PENDING",
+                extraction_reason="AGENT_REMINDED",
+                extraction_reminders=sent + 1,
+                extraction_reminder_limit=limit,
+            )
+            await self.repo.put("ingest.source_items", item_id, item)
+            await item_progress(
+                self.repo,
+                self.settings,
+                item_id,
+                "AGENT_REMINDED",
+                f"Агент не вернул результат, напоминание {sent + 1}/{limit}",
+                event_id=session.get("event_id"),
+                key=f"{sid}:{item_id}:{attempt}",
+            )
 
     def start_stream(self, sid):
         if not self.closed and (sid not in self.tasks or self.tasks[sid].done()):
@@ -2319,7 +2452,7 @@ class SessionService:
                 await self.repo.get("evt.events", session["event_id"]) if session.get("event_id") else None
             )
             archive = bool(event and await self.can_archive(session, event))
-            if not event and session.get("no_event"):
+            if not event and (session.get("no_event") or session.get("agent_incomplete")):
                 unfinished = [
                     row
                     async for row in self.repo.iter_all("ops.tool_calls", filters={"session_id": sid})
@@ -2465,7 +2598,11 @@ class SessionService:
         )
 
     async def existing_session(self, payload):
-        """The admission fields of the session a message would go to, without creating one."""
+        """The admission fields of the session a message would go to, without creating one.
+
+        It selects the same generation as resolve: a closed session is skipped, so a message for
+        an event whose replacement session is running is admitted to that running session."""
+        payload = await self.readdressed(payload)
         event_id = payload.get("event_id")
         for field, value in (
             ("session_id", payload.get("session_id")),
@@ -2477,7 +2614,8 @@ class SessionService:
                 async for session in self.repo.iter_metadata(
                     "ops.agent_sessions", SESSION_ADMISSION_FIELDS, filters={field: value}
                 ):
-                    return session
+                    if field == "session_id" or self.routable_session(session):
+                        return session
         return None
 
     async def slot_state(self, exclude_job=None):

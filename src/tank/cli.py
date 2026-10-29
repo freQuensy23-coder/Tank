@@ -584,5 +584,21 @@ def backup(force, prune):
     run_db(command)
 
 
+@main.command()
+@click.option("--item-id", "item_ids", multiple=True, help="Only these source items; repeat for several.")
+@click.option("--limit", type=click.IntRange(1, 10000), default=100, show_default=True)
+@click.option("--apply", is_flag=True, help="Queue the listed items; without it the command only lists them.")
+def reanalyse(item_ids, limit, apply):
+    """Re-queue items whose agent turn ended without an outcome (AGENT_INCOMPLETE or the legacy
+    NATIVE_TURN_COMPLETED_WITHOUT_OBSERVATION) for a fresh analysis. Dry run unless --apply."""
+
+    async def command(repo, settings):
+        from tank.agents.incomplete import reanalyse as queue
+
+        return await queue(repo, item_ids=list(item_ids) or None, limit=limit, apply=apply)
+
+    run_db(command)
+
+
 if __name__ == "__main__":
     main()

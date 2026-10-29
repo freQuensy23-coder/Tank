@@ -16,6 +16,40 @@ Alerts: публикация не запрошена
 Robinhood · источник
 ```
 
+## Robinhood: агент закончил ход без результата, отправлено напоминание
+
+Ход агента завершился, а по материалу нет ни события, ни явного отклонения (`record_event` с `is_event = false`). Tank не считает это отклонением: он отправляет в ту же сессию напоминание COMPLETION_REMINDER с требуемым инструментом, шаблоном аргументов и причинами отказов инструментов в прошлом ходе. Счётчик N — общий для сессии, лимит задаётся `agent_completion_reminders_per_session` в `config/thresholds.yaml` (сейчас 20).
+
+```text
+Агент не вернул результат, напоминание 3/20
+Robinhood chooses DIFC as regional headquarters to drive Middle East expansion
+Robinhood has received authorization from the DFSA to introduce its retail investing platform in the Middle East.
+
+Фильтр: пропущен
+Агент: результат не возвращён, отправлено напоминание
+Alerts: ожидает результата агента
+Причина: Агенту напомнено вернуть результат в требуемом формате
+
+Robinhood · источник
+```
+
+## Robinhood: напоминания сессии исчерпаны
+
+Если лимит напоминаний сессии исчерпан, а ход снова заканчивается без результата, материал получает `extraction_status = FAILED` с причиной `AGENT_INCOMPLETE`, а в Ops приходит этап PROCESSING_FAILED. Это ошибка обработки, а не отклонение агентом; `tank reanalyse --apply` отправляет материал на повторный анализ в новой сессии.
+
+```text
+Ошибка обработки
+Robinhood chooses DIFC as regional headquarters to drive Middle East expansion
+Robinhood has received authorization from the DFSA to introduce its retail investing platform in the Middle East.
+
+Фильтр: пропущен
+Агент: не вернул результат, напоминания исчерпаны (20/20)
+Alerts: не отправлено
+Причина: Агент так и не записал событие или решение об отклонении, напоминания исчерпаны; материал можно отправить на повторный анализ
+
+Robinhood · источник
+```
+
 ## Robinhood: сохранена низкая значимость с причиной
 
 ```text

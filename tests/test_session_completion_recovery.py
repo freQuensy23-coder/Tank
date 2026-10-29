@@ -243,12 +243,15 @@ async def test_recovery_refuses_unproven_or_conflicting_accepted_identity(case):
 
 @pytest.mark.integration
 @pytest.mark.parametrize("backend", ["memory", pytest.param("postgres", marks=pytest.mark.postgres)])
+@pytest.mark.parametrize("budget", ["left", "exhausted"])
 async def test_recovered_ack_settles_all_inputs_before_releasing_admission(
-    backend, postgres_template, monkeypatch
+    backend, postgres_template, monkeypatch, budget
 ):
     monkeypatch.setattr("tank.agents.sessions.collection_clock", lambda: collection_clock(AT))
     async with fixture_repo(backend, postgres_template) as repo:
         session = await seed(repo)
+        if budget == "exhausted":
+            session["completion_reminders_sent"] = 20
         lost = message("lost", None, status="ACCEPTING")
         lost["native_input_attempts"] = {"input-lost": 0}
         session["message_log"].append(lost)
@@ -299,7 +302,25 @@ async def test_recovered_ack_settles_all_inputs_before_releasing_admission(
             assert current["active_message_id"] is None
             assert current["runtime_status"] == "IDLE"
             assert all(row["turn_status"] == "DONE" for row in current["message_log"])
-            assert (await repo.get("ingest.source_items", "i"))["extraction_status"] == "SKIPPED"
+            item = await repo.get("ingest.source_items", "i")
+            reminders = [
+                job["payload"]
+                for job in await repo.list("ops.jobs", filters={"type": "AGENT_MESSAGE"})
+                if job["payload"].get("kind") == "COMPLETION_REMINDER"
+            ]
+            if budget == "left":
+                assert (item["extraction_status"], item["extraction_reason"]) == ("PENDING", "AGENT_REMINDED")
+                assert [(row["session_id"], row["item_id"], row["attempt"]) for row in reminders] == [
+                    ("s", "i", 1)
+                ]
+            else:
+                assert (item["extraction_status"], item["extraction_reason"]) == (
+                    "FAILED",
+                    "AGENT_INCOMPLETE",
+                )
+                assert (item["extraction_failed_session_id"], item["extraction_reminders"]) == ("s", 20)
+                assert not reminders
+                assert current["completion_reminders_sent"] == 20
             await service.wake_waiting()
             awakened = await repo.get("ops.jobs", job["job_id"])
             assert parse_time(awakened["run_after"]) == parse_time(AT)

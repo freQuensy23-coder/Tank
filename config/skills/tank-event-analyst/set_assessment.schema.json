@@ -42,11 +42,15 @@
                 "proposed_by": {
                   "enum": [
                     "LLM",
-                    "RULE"
+                    "RULE",
+                    null
                   ]
                 },
                 "caps_applied": {
-                  "type": "array",
+                  "type": [
+                    "array",
+                    "null"
+                  ],
                   "items": {
                     "type": "string"
                   }
@@ -89,11 +93,15 @@
                 "proposed_by": {
                   "enum": [
                     "LLM",
-                    "RULE"
+                    "RULE",
+                    null
                   ]
                 },
                 "caps_applied": {
-                  "type": "array",
+                  "type": [
+                    "array",
+                    "null"
+                  ],
                   "items": {
                     "type": "string"
                   }
@@ -136,11 +144,15 @@
                 "proposed_by": {
                   "enum": [
                     "LLM",
-                    "RULE"
+                    "RULE",
+                    null
                   ]
                 },
                 "caps_applied": {
-                  "type": "array",
+                  "type": [
+                    "array",
+                    "null"
+                  ],
                   "items": {
                     "type": "string"
                   }
@@ -183,11 +195,15 @@
                 "proposed_by": {
                   "enum": [
                     "LLM",
-                    "RULE"
+                    "RULE",
+                    null
                   ]
                 },
                 "caps_applied": {
-                  "type": "array",
+                  "type": [
+                    "array",
+                    "null"
+                  ],
                   "items": {
                     "type": "string"
                   }
@@ -230,11 +246,15 @@
                 "proposed_by": {
                   "enum": [
                     "LLM",
-                    "RULE"
+                    "RULE",
+                    null
                   ]
                 },
                 "caps_applied": {
-                  "type": "array",
+                  "type": [
+                    "array",
+                    "null"
+                  ],
                   "items": {
                     "type": "string"
                   }
@@ -277,11 +297,15 @@
                 "proposed_by": {
                   "enum": [
                     "LLM",
-                    "RULE"
+                    "RULE",
+                    null
                   ]
                 },
                 "caps_applied": {
-                  "type": "array",
+                  "type": [
+                    "array",
+                    "null"
+                  ],
                   "items": {
                     "type": "string"
                   }
@@ -324,11 +348,15 @@
                 "proposed_by": {
                   "enum": [
                     "LLM",
-                    "RULE"
+                    "RULE",
+                    null
                   ]
                 },
                 "caps_applied": {
-                  "type": "array",
+                  "type": [
+                    "array",
+                    "null"
+                  ],
                   "items": {
                     "type": "string"
                   }
@@ -352,7 +380,10 @@
           ]
         },
         "structural_gates": {
-          "type": "array",
+          "type": [
+            "array",
+            "null"
+          ],
           "items": {
             "type": "object",
             "additionalProperties": false,
@@ -420,7 +451,10 @@
           "description": "Claim ID (CLM-\u2026) of the recorded claim that establishes the selected criterion, or null when no claim does; a claim about another subject does not establish a structural criterion. Find it with read-only SQL (tank-data data guide, \u00abFinding record IDs for tool arguments\u00bb), \u00abClaims of an event\u00bb."
         },
         "class_reasons": {
-          "type": "array",
+          "type": [
+            "array",
+            "null"
+          ],
           "items": {
             "type": "string"
           }
@@ -465,7 +499,10 @@
               ]
             },
             "timing_evidence": {
-              "type": "array",
+              "type": [
+                "array",
+                "null"
+              ],
               "minItems": 1,
               "items": {
                 "type": "object",
@@ -493,7 +530,10 @@
               }
             },
             "immediate_market_access": {
-              "type": "object",
+              "type": [
+                "object",
+                "null"
+              ],
               "additionalProperties": false,
               "properties": {
                 "claim_id": {
@@ -532,7 +572,10 @@
           ]
         },
         "capture_chains": {
-          "type": "array",
+          "type": [
+            "array",
+            "null"
+          ],
           "items": {
             "type": "object",
             "additionalProperties": false,
@@ -966,14 +1009,21 @@
                   "DIRECT",
                   "INDIRECT",
                   "NARRATIVE_ONLY",
-                  "UNKNOWN"
+                  "UNKNOWN",
+                  null
                 ]
               },
               "conditional": {
-                "type": "boolean"
+                "type": [
+                  "boolean",
+                  "null"
+                ]
               },
               "caps_applied": {
-                "type": "array",
+                "type": [
+                  "array",
+                  "null"
+                ],
                 "items": {
                   "type": "string"
                 }
@@ -993,7 +1043,10 @@
           }
         },
         "magnitude_basis": {
-          "type": "object",
+          "type": [
+            "object",
+            "null"
+          ],
           "additionalProperties": false,
           "properties": {
             "kind": {
@@ -1077,7 +1130,10 @@
           "description": "Optional measured economic numerator/base for the existing magnitude rubric. Each number must match its quoted accepted claim; units and base window must match the rubric. Missing evidence remains NOT_ESTIMABLE, never an inferred number from rationale text."
         },
         "criterion_venue_id": {
-          "type": "string",
+          "type": [
+            "string",
+            "null"
+          ],
           "description": "Required for M1: the registry entity_id of the venue (binance, coinbase, okx, bybit, kraken or robinhood count for M1). Tank never infers the venue from the quotation."
         }
       },

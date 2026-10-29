@@ -2,9 +2,10 @@
 Tool arguments name records by ID and registry objects by key; the host validates every one."""
 
 import copy
+import json
 import re
 
-from tank.event_tools import SCOPED_TOOLS, validate_schema
+from tank.event_tools import SCOPED_TOOLS, absent_optionals, validate_schema
 
 CONTEXT_VERSION = 3
 AGENT_SKILLS = {False: "tank-event-analyst", True: "tank-scout-reviewer"}
@@ -241,6 +242,49 @@ def clean_value(value):
     if isinstance(value, list):
         return [clean_value(item) for item in value]
     return clean_text(value) if isinstance(value, str) else value
+
+
+def non_null(schema):
+    """The schema without its null alternative: a field an anyOf branch requires needs a value."""
+    narrowed = dict(schema)
+    if isinstance(narrowed.get("type"), list):
+        narrowed["type"] = [kind for kind in narrowed["type"] if kind != "null"]
+    if "enum" in narrowed:
+        narrowed["enum"] = [value for value in narrowed["enum"] if value is not None]
+    return narrowed
+
+
+def schema_skeleton(schema):
+    """A minimal value of a JSON schema: required fields only, null where null is allowed."""
+    types = schema.get("type")
+    types = types if isinstance(types, list) else [types] if types else []
+    if "enum" in schema:
+        values = schema["enum"]
+        if None in values and len(values) > 1:
+            return None
+        return "<" + "|".join(str(value) for value in values) + ">"
+    if "null" in types:
+        return None
+    if "object" in types or "properties" in schema:
+        properties = schema.get("properties", {})
+        required = list(schema.get("required", []))
+        chosen = [
+            name
+            for option in schema.get("anyOf", [])[:1]
+            for name in option.get("required", [])
+            if name not in required
+        ]
+        skeleton = {name: schema_skeleton(properties.get(name, {})) for name in required}
+        skeleton.update({name: schema_skeleton(non_null(properties.get(name, {}))) for name in chosen})
+        return skeleton
+    if "array" in types:
+        items = schema.get("items", {})
+        return [schema_skeleton(items)] if items else []
+    if "boolean" in types:
+        return "<true|false>"
+    if "integer" in types or "number" in types:
+        return 0
+    return "<non-empty string>" if schema.get("minLength") else "<string>"
 
 
 def labelled(name, key):
@@ -571,6 +615,14 @@ class ModelContext:
         return projected
 
     async def message(self, payload, item):
+        if payload.get("kind") == "COMPLETION_REMINDER":
+            return clean_value(
+                {
+                    "message": await self.project(payload),
+                    "source": self.source_reference(item),
+                    "reminder": await self.completion_reminder(payload),
+                }
+            )
         content = {"message": await self.project(payload), "item": await self.project(item)}
         if self.session.get("event_id"):
             event = await self.repo.get("evt.events", self.session["event_id"])
@@ -588,6 +640,108 @@ class ModelContext:
                 if not r.get("human_action")
             ]
         return clean_value(content)
+
+    def skeleton(self, tool, **fixed):
+        """A minimal argument object of a tool, built from its schema's required fields."""
+        schema = self.public_schema(tool)
+        if schema is None:
+            return None
+        value = schema_skeleton(schema)
+        if isinstance(value, dict):
+            value.update(fixed)
+        return json.dumps(value, ensure_ascii=False)
+
+    def source_reference(self, item):
+        """The incoming source named compactly; its full text is already in the session."""
+        item = item or {}
+        reference = {
+            "title": clean_text(" ".join(str(item.get("title") or "").split())[:200]),
+            "source": self.source_label(item.get("source_id")) or item.get("source_name"),
+            "url": item.get("url"),
+            "observed_at": item.get("observed_at"),
+        }
+        return {key: value for key, value in reference.items() if value}
+
+    async def refusals(self, payload):
+        """The refused or failed tool calls of the turn the reminder follows, with their reasons."""
+        turn = payload.get("turn_message_id")
+        rows = [
+            row
+            async for row in self.repo.iter_all(
+                "ops.tool_calls", filters={"session_id": self.session.get("session_id")}
+            )
+            if turn
+            and row.get("native_turn_message_id") == turn
+            and row.get("status") in {"REFUSED", "ERROR"}
+        ]
+        rows.sort(key=lambda row: (row.get("native_turn_call_index", 0), row.get("call_id", "")))
+        lines = []
+        for row in rows:
+            error = (row.get("result") or {}).get("error") or {}
+            lines.append(f"{row.get('tool')}: {error.get('reason') or row.get('status')}")
+        return lines
+
+    async def completion_reminder(self, payload):
+        """Deterministic reminder that the source item's task ends only with its recorded outcome."""
+        kind = payload.get("reminded_kind") or "NEW_ITEM"
+        lines = [
+            f"TASK NOT COMPLETE (reminder {payload.get('reminder')} of {payload.get('reminder_limit')} "
+            "for this session). Your previous turn on this incoming source ended without its outcome. "
+            "The task is complete only after you return the outcome by calling a tool below with "
+            "arguments in exactly this format; a turn that ends without it leaves the news item "
+            "unprocessed. Do it in this turn. The source is the one named in `source`; its full text is "
+            "earlier in this session.",
+        ]
+        if kind == "ITEM_ADDED":
+            lines.append(
+                "This source was routed to the current event, so record_event is not available in this "
+                "session. Return exactly one outcome: add_observation with link CORROBORATION (repeat "
+                "coverage, or a source that adds nothing new), STATE_UPDATE, DENIAL or CONTRADICTION."
+            )
+            observation = self.skeleton("add_observation")
+            if observation:
+                lines.append("add_observation arguments: " + observation)
+        else:
+            lines.append(
+                "Return exactly one outcome: record_event with is_event=true when the source asserts a "
+                "new event claim, even an unverified or LOW-certainty one; or record_event with "
+                "is_event=false and a non-empty no_event_reason when it asserts none. When it repeats an "
+                "earlier open event, first record_event, then merge_into with that earlier event's "
+                "event_id."
+            )
+            merge = self.skeleton("merge_into")
+            if merge:
+                lines.append("merge_into arguments: " + merge)
+        if kind != "ITEM_ADDED":
+            recorded = self.skeleton("record_event", is_event=True)
+            if recorded:
+                lines.append("record_event arguments (is_event=true): " + recorded)
+            lines.append(
+                'record_event rejection: the same record_event arguments with "is_event": false and '
+                '"no_event_reason": "<non-empty string>" (one concrete sentence why there is no event claim).'
+            )
+        lines.append(
+            "Replace every <placeholder> with a value; an enum placeholder lists the allowed values "
+            "separated by |."
+            + (
+                ""
+                if kind == "ITEM_ADDED"
+                else " is_event=false requires no_event_reason, and every other required field is still required."
+            )
+        )
+        refused = await self.refusals(payload)
+        if refused:
+            lines.append(
+                "Tank refused these calls of your previous turn; correct each input as its reason says "
+                "and call again:"
+            )
+            lines.extend("- " + line for line in refused)
+        lines.append(
+            "A failed, refused or unfinished lookup (web_search, fetch_page, get_registry, history "
+            "search) never blocks recording: record with the evidence you have, keep unconfirmed claims "
+            "verified=false, and note the missing check in checked_sources and public_at.basis."
+        )
+        return clean_value("\n".join(lines))
 
     def lookup(self, kind):
         if kind in REGISTRY:
@@ -755,6 +909,7 @@ class ModelContext:
         """Validate the model's arguments and every record ID in them, then bind the implicit records."""
         if not isinstance(arguments, dict):
             raise ValueError("Tool arguments must be an object")
+        arguments = absent_optionals(arguments, self.public_schema(tool))
         self.validate_shape(tool, arguments)
         reject_text_ids(tool, arguments)
         for path, kind, value in references(tool, arguments):

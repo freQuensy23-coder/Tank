@@ -16,7 +16,10 @@
       "description": "Registered source key (reg.sources), shown after \u00ab \u00b7 \u00bb next to the name in Tank's messages and results, e.g. S14 in \u00abVenue instrument lists \u00b7 S14\u00bb."
     },
     "due_at_prec": {
-      "type": "string",
+      "type": [
+        "string",
+        "null"
+      ],
       "anyOf": [
         {
           "enum": [
@@ -27,12 +30,18 @@
         },
         {
           "pattern": "^BUCKET\\((?:[1-9][0-9]*(?:\\.[0-9]+)?|0\\.[0-9]*[1-9][0-9]*)(?:us|ms|s|m|h|d|w)\\)$"
+        },
+        {
+          "type": "null"
         }
       ],
       "description": "Explicit timestamp provenance; ISO formatting does not establish precision. BUCKET requires an explicit positive duration, embedded or in the companion bucket-size field."
     },
     "due_at_bucket_size_s": {
-      "type": "number",
+      "type": [
+        "number",
+        "null"
+      ],
       "exclusiveMinimum": 0,
       "description": "Explicit bucket duration in seconds; only valid for BUCKET precision and must match any embedded duration."
     }

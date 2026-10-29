@@ -424,6 +424,8 @@ class Pipeline:
             message = {"kind": "ITEM_ADDED" if added else "NEW_ITEM", "item_id": item["item_id"]}
             if best:
                 message["event_id"] = best["event_id"]
+            if item.get("reanalysis_attempt"):
+                message["reanalysis_attempt"] = item["reanalysis_attempt"]
             route = {
                 "decision": "ADDED" if added else "NEW_SESSION",
                 "event_id": best["event_id"] if best else None,
@@ -450,7 +452,13 @@ class Pipeline:
                     event_id=route["event_id"],
                 )
                 await self.repo.enqueue(
-                    "AGENT_MESSAGE", message, item["item_id"] + ":" + message["kind"], priority=priority(item)
+                    "AGENT_MESSAGE",
+                    message,
+                    item["item_id"]
+                    + ":"
+                    + message["kind"]
+                    + (f":reanalysis:{item['reanalysis_attempt']}" if item.get("reanalysis_attempt") else ""),
+                    priority=priority(item),
                 )
             return item
 
