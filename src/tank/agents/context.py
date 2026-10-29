@@ -5,7 +5,7 @@ import copy
 import json
 import re
 
-from tank.event_tools import SCOPED_TOOLS, absent_optionals, validate_schema
+from tank.event_tools import SCOPED_TOOLS, absent_optionals, registry_key_for, validate_schema
 
 CONTEXT_VERSION = 3
 AGENT_SKILLS = {False: "tank-event-analyst", True: "tank-scout-reviewer"}
@@ -129,6 +129,7 @@ SCORED_DIMENSIONS = (
     "surprise",
 )
 PATTERN_TOOLS = {"propose_pattern", "record_review"}
+NAME_LOOKUP_TOOLS = {"list_open_events", "get_registry"}
 LEGACY_REFERENCES = {
     "document": "item_id",
     "event": "event_id",
@@ -173,7 +174,8 @@ CONTEXT_TRANSITION = {
         "instructions and skill text that cite records by description. Tool arguments name records only by ID. "
         "Registry objects now read «Name · key» (World (WLD) · world:WLD, Uniswap · uniswap): token_id, token_ids, "
         "entity_id, instrument_id and source_id take the key after « · »; an entity or token outside the registry "
-        "is named (entities[].name, token_names, entity_name, token_name). "
+        "is named (entities[].name, token_names, entity_name, token_name), and looked up by name in "
+        "list_open_events and get_registry; never compose a key for it. "
         "Finding record IDs for tool arguments, with read-only SQL in your sandbox "
         '(psql "$TANK_DB_URL" -Atc "<query>"): '
         "«Source document by URL»: SELECT item_id, observed_at, document->>'evidence_kind' FROM "
@@ -706,6 +708,8 @@ class ModelContext:
 
     async def completion_reminder(self, payload):
         """Deterministic reminder that the source item's task ends only with its recorded outcome."""
+        if payload.get("missing") == "ASSESSMENT":
+            return await self.assessment_reminder(payload)
         kind = payload.get("reminded_kind") or "NEW_ITEM"
         lines = [
             f"TASK NOT COMPLETE (reminder {payload.get('reminder')} of {payload.get('reminder_limit')} "
@@ -766,6 +770,37 @@ class ModelContext:
         )
         return clean_value("\n".join(lines))
 
+    async def assessment_reminder(self, payload):
+        """Deterministic reminder that a recorded event is finished only with its class or merge."""
+        event_id = payload.get("event_id")
+        lines = [
+            f"TASK NOT COMPLETE (reminder {payload.get('reminder')} of {payload.get('reminder_limit')} "
+            f"for this session). Your previous turn ended while event {event_id}, recorded in this "
+            "session, has no class: no set_assessment was accepted for it, so Tank cannot judge or "
+            "publish it. Do it in this turn. When this event repeats an earlier open event (smaller "
+            "known_to_us_at), call merge_into with that earlier event's event_id. Otherwise, and "
+            "whenever merge_into is refused, call set_assessment for this event: LOW or MATERIAL is a "
+            "valid class, and a dimension no accepted claim supports is value null with its rationale.",
+        ]
+        assessment = self.skeleton("set_assessment")
+        if assessment:
+            lines.append("set_assessment arguments: " + assessment)
+        merge = self.skeleton("merge_into")
+        if merge:
+            lines.append("merge_into arguments: " + merge)
+        lines.append(
+            "Replace every <placeholder> with a value; an enum placeholder lists the allowed values "
+            "separated by |."
+        )
+        refused = await self.refusals(payload)
+        if refused:
+            lines.append(
+                "Tank refused these calls of your previous turn; correct each input as its reason says "
+                "and call again:"
+            )
+            lines.extend("- " + line for line in refused)
+        return clean_value("\n".join(lines))
+
     def lookup(self, kind):
         if kind in REGISTRY:
             return (
@@ -773,6 +808,19 @@ class ModelContext:
                 f"(Name · key); a key not shown yet is in {ID_LOOKUP[self.scout]}, «{QUERIES[kind]}»."
             )
         return f"Look it up with read-only SQL: {ID_LOOKUP[self.scout]}, «{QUERIES[kind]}»."
+
+    def unregistered(self, tool, kind, value):
+        """Guidance for a key the registry does not hold: the key it names, or how to look up a name outside the registry."""
+        key = registry_key_for(self.registry, kind, value) if kind in {"token", "entity"} else None
+        if key:
+            return f"The registry key for {value!r} is {key}; pass {key}. {self.lookup(kind)}"
+        if kind in {"token", "entity"} and tool in NAME_LOOKUP_TOOLS:
+            return (
+                f"{value!r} is not in the registry. A project or token outside the registry has no key: "
+                "pass its name or ticker in name instead, e.g. name: «Ripple» or «XRP». "
+                f"For a registry object: {self.lookup(kind)}"
+            )
+        return self.lookup(kind)
 
     def public_schema(self, tool):
         reader = getattr(self.settings, "read_config_json", None)
@@ -894,7 +942,7 @@ class ModelContext:
                 kind == "source" and await self.repo.get("reg.sources", value) is not None
             )
             if not registered:
-                raise ValueError(f"{path}: not a {REGISTRY[kind]}. {self.lookup(kind)}")
+                raise ValueError(f"{path}: not a {REGISTRY[kind]}. {self.unregistered(tool, kind, value)}")
             return
         table, label = RECORDS[kind]
         row = await self.repo.get(table, value)

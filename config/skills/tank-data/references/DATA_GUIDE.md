@@ -50,6 +50,7 @@ Entity
   names: [str]; aliases: [str]
   tokens: [token_id]
   official_sources: [source_id]      # where the Verifier looks first
+  github_repos: [owner/repo]         # S25 repositories this entity publishes; routing identity (§3.1)
   layers_served: [StackLayer]        # dependency map
   competes_with: [entity_id]
   chains: [str]
@@ -507,7 +508,7 @@ Fixture
 | `book_summaries` | (`instrument_id`, ts) | ClickHouse; kept 72 hours; summary fields only (no order-book levels). |
 | `oi_obs`, `funding_obs`, `liq_obs`, `tickers_24h`, `trades` | (`instrument_id`, ts) | ClickHouse (daily partitions); `trades` (every print) 30 days. |
 | `market_truth`, `decisions`, `contradictions`, `watch_conditions`, `calls` | ids | `market_truth` indexed by (`token_id`, `cutoff`); a decision carries its outlook. |
-| `alerts`, `deliveries`, `ops_notices`, `evidence_bundles`, `reaction_checkpoints`, `reviews` | ids | Append-only (UPDATE/DELETE rejected by trigger). |
+| `alerts`, `deliveries`, `ops_notices`, `evidence_bundles`, `reaction_checkpoints`, `reviews` | ids | Append-only (UPDATE/DELETE rejected by trigger). A reaction checkpoint embeds its whole Market Truth (about 1 MB); its column `metadata` is the same row without `market_truth`: read and filter checkpoint fields through `metadata`, and `document` only when you need the Market Truth. |
 | `ops_cards` | (`chat_id`, `item_id`) | The "Tank Ops" card of each material and its Telegram message; mutable, edited as notices arrive (§7.6). |
 | `hot_tokens` | (`token_id`, `event_id`) | Hot set (§9); read on start to subscribe the hot tokens again. |
 | `jobs` | `job_id`; unique `idem_key` | The service's job queue (§3.8). |
@@ -742,7 +743,7 @@ GitHub evidence is SOURCE_SIDE_SUPPORT: it can raise an integration claim to BUI
 |---|---|---|
 | S30 | `https://feeds.bbci.co.uk/news/business/rss.xml` · `https://feeds.bbci.co.uk/news/technology/rss.xml` | 120 s · 300 s |
 | S31 | `https://feeds.bloomberg.com/markets/news.rss` | 120 s |
-| S32 | `https://news.google.com/rss/search?q=site:reuters.com+crypto&hl=en-US&gl=US&ceid=US:en` | 300 s |
+| S32 | `https://news.google.com/rss/search?q=site:reuters.com+crypto+when:1d&hl=en-US&gl=US&ceid=US:en` | 300 s |
 | S33 | `https://www.coindesk.com/arc/outboundfeeds/rss/` | 120 s |
 | S34 | `https://www.theblock.co/rss.xml` | 120 s |
 
@@ -857,8 +858,8 @@ The separate futures depth route follows Binance's [WebSocket change notice](htt
 
 | Tier | Universe | What runs | Cadence |
 |---|---|---|---|
-| Base (always) | 22 tokens (01 §4.1) on every covered market (§4.10) | REST 1m klines; 24h tickers; OI and funding | Klines every 60 s; OI + funding every 300 s |
-| Hot (escalated, max 15 tokens) | Tokens in an event's analysis set | WebSocket trades and books on every covered venue; OI + funding every 60 s; liquidations; mark/index | Streaming; book summaries every 10 s |
+| Base (always) | 22 tokens (01 §4.1) on every covered market (§4.10) | REST 1m klines; 24h tickers; OI and funding | Klines every 60 s; 24h tickers and OI + funding every 300 s |
+| Hot (escalated, max 15 tokens) | Tokens in an event's analysis set | WebSocket trades and books on every covered venue; OI + funding every 60 s; liquidations; mark/index | Streaming; book summaries every 10 s; 24h tickers every 300 s |
 
 Load check: base tier = 181 market series (22 tokens over the venues of the coverage matrix in §4.10) → ≈ 181 kline requests/min (Binance: 43 series, ≈ 86 weight/min of a 3,000 budget); hot tier ≤ 15 tokens × 9 markets = 135 WebSocket subscriptions on ≈ 10 connections.
 
@@ -1207,6 +1208,7 @@ GRANT USAGE ON SCHEMA reg, ingest, evt, mkt, ana, out, ops, scout, qa TO tank_ag
 GRANT SELECT ON ALL TABLES IN SCHEMA reg, ingest, evt, mkt, ana, out, ops, scout, qa TO tank_agent;
 ALTER DEFAULT PRIVILEGES IN SCHEMA reg, ingest, evt, mkt, ana, out, ops, scout, qa GRANT SELECT ON TABLES TO tank_agent;
 ALTER ROLE tank_agent SET default_transaction_read_only = on;
+-- The sandbox URL TANK_DB_URL carries options=-c search_path=reg,ingest,evt,mkt,ana,out,ops,scout,qa,public: a bare table name resolves
 
 -- Job claim by one of the service's workers (§3.8); on start: UPDATE ops.jobs SET status = 'QUEUED' WHERE status = 'RUNNING';
 UPDATE ops.jobs
@@ -1321,7 +1323,7 @@ q("SELECT instrument_id, venue, market_type, venue_symbol FROM reg.instruments W
 q("SELECT source_id, name FROM reg.sources ORDER BY source_id")
 ```
 
-A project or token outside the registry has no key: name it (`entities[].name`, `token_names`, `entity_name`, `token_name`); Tank refuses a name its registry resolves and asks for the key.
+A project or token outside the registry has no key: name it (`entities[].name`, `token_names`, `entity_name`, `token_name`); Tank refuses a name its registry resolves and asks for the key. To look one up, pass its name or ticker in `name` of `list_open_events` or `get_registry`; never compose a key for it.
 
 
 # Executable sandbox access
@@ -1345,7 +1347,7 @@ def ch(query, **params):
 bars = ch("SELECT minute_start, buy_qty, sell_qty FROM mkt.flow_bars_1m FINAL WHERE instrument_id = {i:String} AND minute_start >= now() - INTERVAL 1 HOUR ORDER BY minute_start", i="binance:spot:BTCUSDT")
 ```
 
-Connect only through the injected read-only `TANK_DB_URL`; never print that URL. PostgreSQL access is read-only as `tank_agent`. The following examples perform reads; results from own scripts inform analysis and are not card numbers. Facts still require quotes stored through Tank tools.
+Connect only through the injected read-only `TANK_DB_URL`; never print that URL. PostgreSQL access is read-only as `tank_agent`. Its `search_path` covers every Tank schema (`reg, ingest, evt, mkt, ana, out, ops, scout, qa, public`), so `FROM claims` reads `evt.claims`; schema-qualified names work as well. The following examples perform reads; results from own scripts inform analysis and are not card numbers. Facts still require quotes stored through Tank tools.
 
 ```python
 import os
@@ -1848,6 +1850,8 @@ Read with `TANK_DB_URL`. These hold no exchange series or prints.
 | `token_id` | `text` |
 | `semantic_fingerprint` | `text` |
 
+Each row is one append-only report by tank-capture that a collection failed or a range could not be proven at `observed_at` (`kind`, `reason`, `start`–`end`). Rows are never updated, so `status` is always `OPEN` and the table is not a list of outstanding holes: a later repair shows on the data itself (`complete` and `gap_reason` of `mkt.flow_bars_1m`, `complete` of `mkt.klines_1m`, `status` of `mkt.backfill_runs`). Rows older than 90 days are deleted, except days overlapping a MAJOR+ event window. Market Truth does not read this table. Query it by `token_id` with an `observed_at` range; there is no `instrument_id` index.
+
 ## mkt.backfill_runs
 
 | Column | PostgreSQL type |
@@ -1956,7 +1960,7 @@ This manifest is generated from current `sources.yaml` and takes precedence for 
 | S30 | BBC News | 120 | rss | GET https://feeds.bbci.co.uk/news/business/rss.xml |
 | S30 | BBC News | 300 | rss | GET https://feeds.bbci.co.uk/news/technology/rss.xml |
 | S31 | Bloomberg | 120 | rss | GET https://feeds.bloomberg.com/markets/news.rss |
-| S32 | Reuters | 300 | rss | GET https://news.google.com/rss/search?q=site:reuters.com+crypto&hl=en-US&gl=US&ceid=US:en |
+| S32 | Reuters | 300 | rss | GET https://news.google.com/rss/search?q=site:reuters.com+crypto+when:1d&hl=en-US&gl=US&ceid=US:en |
 | S33 | CoinDesk | 120 | rss | GET https://www.coindesk.com/arc/outboundfeeds/rss/ |
 | S34 | The Block | 120 | rss | GET https://www.theblock.co/rss.xml |
 

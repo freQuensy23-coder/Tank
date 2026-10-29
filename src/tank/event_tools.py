@@ -106,6 +106,55 @@ def resolve_tokens(registry, values, context=""):
     return list(dict.fromkeys(resolve_token(registry, value, context) for value in values or []))
 
 
+def name_identities(registry, name):
+    """V3 for a lookup name: a name the registry resolves (ticker, $TICKER,
+    alias) covers its key and registry pair, like token_id or entity_id; any
+    other name covers the stored UNRESOLVED:<name> identity, with and without
+    a leading $ (record_event keeps an unresolved name as written)."""
+    text = str(name).strip().removeprefix("UNRESOLVED:").strip()
+    tokens = registry.get("tokens", [])
+    token = resolve_token(registry, text)
+    if any(row["token_id"] == token for row in tokens):
+        return {token, *(row.get("entity_id") for row in tokens if row["token_id"] == token)} - {None}
+    entity = resolve_entity(registry, text)
+    if not entity.startswith("UNRESOLVED:"):
+        return {entity, *(row["token_id"] for row in tokens if row.get("entity_id") == entity)}
+    bare = text.removeprefix("$")
+    return {"UNRESOLVED:" + bare, "UNRESOLVED:$" + bare}
+
+
+def registry_key_for(registry, kind, value):
+    """The registry key a guessed token_id or entity_id names, or None.
+
+    A guessed token key is read as its ticker and its project
+    (cow-protocol:COW is cow:COW); a guessed entity key as an alias, with
+    hyphens read as spaces (cow-protocol is cow)."""
+    text = str(value or "").strip()
+    if not text:
+        return None
+    tokens = registry.get("tokens", [])
+    token_ids = {row["token_id"] for row in tokens}
+    stem, _, ticker = text.rpartition(":")
+    names = [part for part in (ticker, stem, text) if part]
+    names += [part.replace("-", " ") for part in names if "-" in part]
+    for name in names:
+        token = resolve_token(registry, name)
+        entity = resolve_entity(registry, name)
+        if kind == "token":
+            if token in token_ids:
+                return token
+            owned = [row["token_id"] for row in tokens if row.get("entity_id") == entity]
+            if len(owned) == 1:
+                return owned[0]
+        else:
+            if not entity.startswith("UNRESOLVED:"):
+                return entity
+            owner = next((row.get("entity_id") for row in tokens if row["token_id"] == token), None)
+            if owner:
+                return owner
+    return None
+
+
 def entity_identity(registry, entity_id, name, context=""):
     """V3: an entity is named by its registry entity_id or, outside the registry, by its name (kept UNRESOLVED).
     A name the registry resolves (alias, or qualified alias with its qualifier) is refused: pass the entity_id."""
@@ -766,11 +815,13 @@ class EventToolService:
         return set().union(*self.identity_sides(a))
 
     def identity_sides(self, a):
-        """The registry identity sets of the token_id and entity_id filters.
+        """The identity sets of the token_id, entity_id and name filters.
 
         Each filter covers its key and the registry pair (a token's project, a
-        project's tokens); an event must match every given filter."""
-        tokens = self.settings.load_config("registry").get("tokens", [])
+        project's tokens); a name outside the registry covers its stored
+        UNRESOLVED:<name>. An event must match every given filter."""
+        registry = self.settings.load_config("registry")
+        tokens = registry.get("tokens", [])
         sides = []
         if a.get("token_id"):
             sides.append(
@@ -788,12 +839,21 @@ class EventToolService:
                 }
                 - {None}
             )
+        if str(a.get("name") or "").strip():
+            sides.append(name_identities(registry, a["name"]))
         return sides
+
+    def name_resolution(self, a):
+        """What the name filter resolved to: registry keys, or its UNRESOLVED:<name> identity."""
+        if not str(a.get("name") or "").strip():
+            return {}
+        return {"name_identities": sorted(name_identities(self.settings.load_config("registry"), a["name"]))}
 
     async def list_open_events(self, a, c):
         """Open events active within the routing window that match every filter,
-        most relevant then most recently active first, one bounded page at a time."""
-        sides = self.identity_sides(a)
+        most relevant then most recently active first, one bounded page at a time.
+        Identities match case-insensitively, as a name outside the registry is stored as written."""
+        sides = [{str(key).casefold() for key in side} for side in self.identity_sides(a)]
         days = a.get("days")
         if days is None:
             days = self.settings.load_config("thresholds").get("routing_window_days", 3)
@@ -831,8 +891,12 @@ class EventToolService:
             if r.get("lifecycle") in {"CLOSED", "MERGED", "INVALIDATED"} or r["event_id"] in failed:
                 continue
             identities = {
-                *(e.get("entity_id") for e in r.get("entities", []) if isinstance(e, dict)),
-                *r.get("tokens_mentioned", []),
+                str(identity).casefold()
+                for identity in (
+                    *(e.get("entity_id") for e in r.get("entities", []) if isinstance(e, dict)),
+                    *r.get("tokens_mentioned", []),
+                )
+                if identity
             }
             if not all(side & identities for side in sides):
                 continue
@@ -869,6 +933,7 @@ class EventToolService:
             "days": days,
             "events": page,
             "next_offset": None,
+            **self.name_resolution(a),
         }
         while len(page) > 1 and len(canonical_json(result).encode()) > TOOL_RESULT_MAX_BYTES - 1000:
             page.pop()
@@ -897,14 +962,18 @@ class EventToolService:
     async def get_registry(self, a, c):
         wanted = self.identities(a)
         registry = self.settings.load_config("registry")
-        return {
-            name: [
-                r
-                for r in registry.get(name, [])
-                if not wanted or wanted & {r.get("entity_id"), r.get("token_id")}
-            ]
-            for name in ["entities", "tokens", "instruments", "x_accounts"]
-        } | {"dependency_map": self.settings.load_config("dependency_map")}
+        return (
+            {
+                name: [
+                    r
+                    for r in registry.get(name, [])
+                    if not wanted or wanted & {r.get("entity_id"), r.get("token_id")}
+                ]
+                for name in ["entities", "tokens", "instruments", "x_accounts"]
+            }
+            | {"dependency_map": self.settings.load_config("dependency_map")}
+            | self.name_resolution(a)
+        )
 
     async def covered_daily_volume(self, token, cutoff):
         """03 §4.2: the base of M for access and distribution effects is the
@@ -2997,7 +3066,7 @@ class EventToolService:
         kind = a["kind"]
         if kind == "PARTIAL" and previous:
             return publication_outcome({"published": False, "reason": "FIRST_CARD_ALREADY_GENERATED"})
-        completing_partial = kind == "FULL" and previous and previous["kind"] == "PARTIAL"
+        completing_partial = kind in {"FULL", "UPDATE"} and bool(previous) and previous["kind"] == "PARTIAL"
         pinned_for_gate = initial_full.get("shown_tokens", []) if initial_full else []
         gate_decisions = (
             [row for row in decisions if row["token_id"] in pinned_for_gate]
@@ -3043,8 +3112,9 @@ class EventToolService:
             ok, reason = alert_gate(
                 event,
                 assessment,
-                previous=None if completing_partial else gate_previous,
+                previous=None if completing_partial and kind == "FULL" else gate_previous,
                 decisions=gate_decisions,
+                completing_partial=completing_partial,
             )
         publication_state["gate_reason"] = reason
         rate_limited = not ok and reason == "UPDATE_RATE_LIMIT"
@@ -3059,9 +3129,13 @@ class EventToolService:
                 await self.repo.put("evt.events", eid, stored)
                 publication_state["lifecycle"] = stored["lifecycle"]
             return publication_outcome({"published": False, "reason": reason})
-        immediate = reason == "PRELIMINARY_CORRECTION" or (
-            not preliminary
-            and publication_immediate(event, assessment, previous=gate_previous, decisions=gate_decisions)
+        immediate = (
+            reason == "PRELIMINARY_CORRECTION"
+            or completing_partial
+            or (
+                not preliminary
+                and publication_immediate(event, assessment, previous=gate_previous, decisions=gate_decisions)
+            )
         )
         delivery_stamp = collection_clock()
         if rate_limited:

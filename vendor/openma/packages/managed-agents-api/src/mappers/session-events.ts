@@ -659,6 +659,9 @@ export function toSessionEventResponse(event: SessionEventView): object {
         is_error: event.isError,
         model_request_start_id: event.modelRequestStartId,
         model_usage: fromSpanModelUsage(event.modelUsage),
+        ...(typeof event.finishReason === "string" && event.finishReason !== "" && {
+          finish_reason: event.finishReason,
+        }),
         processed_at: event.processedAt,
       };
     case "span.outcome_evaluation_start":

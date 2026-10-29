@@ -46,6 +46,9 @@ const secret = name => {
   return value;
 };
 
+export const SANDBOX_SEARCH_PATH = ['reg', 'ingest', 'evt', 'mkt', 'ana', 'out', 'ops', 'scout', 'qa', 'public'];
+const sandboxConnectionOptions = `?options=${encodeURIComponent(`-c search_path=${SANDBOX_SEARCH_PATH.join(',')}`)}`;
+
 export function sandboxDatabaseRoute(env, readSecret) {
   const database = env.TANK_SANDBOX_DATABASE_NAME ?? 'tank';
   const role = env.TANK_SANDBOX_DATABASE_ROLE ?? 'tank_agent';
@@ -54,7 +57,7 @@ export function sandboxDatabaseRoute(env, readSecret) {
       throw Error(`Invalid sandbox database ${name}; use a lowercase SQL identifier`);
     }
   }
-  return `postgresql://${role}:${encodeURIComponent(readSecret('tank_agent_db_password'))}@postgres:5432/${database}`;
+  return `postgresql://${role}:${encodeURIComponent(readSecret('tank_agent_db_password'))}@postgres:5432/${database}${sandboxConnectionOptions}`;
 }
 
 export async function replayDatabaseRoute(readSecret, resolve = lookup) {
@@ -63,7 +66,7 @@ export async function replayDatabaseRoute(readSecret, resolve = lookup) {
   if (isIP(address) !== 4 || !(octets[0] === 10 || (octets[0] === 172 && octets[1] >= 16 && octets[1] <= 31) || (octets[0] === 192 && octets[1] === 168))) {
     throw Error('Replay database must resolve to a private IPv4 service address');
   }
-  return { address, url: `postgresql://tank_replay_agent:${encodeURIComponent(readSecret('tank_replay_agent_db_password'))}@${address}:5432/tank_replay` };
+  return { address, url: `postgresql://tank_replay_agent:${encodeURIComponent(readSecret('tank_replay_agent_db_password'))}@${address}:5432/tank_replay${sandboxConnectionOptions}` };
 }
 
 export async function main() {

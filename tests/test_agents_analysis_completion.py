@@ -260,7 +260,12 @@ async def test_settled_turn_reminds_an_item_left_without_an_outcome_and_keeps_th
                 for job in await repo.list("ops.jobs", filters={"type": "AGENT_MESSAGE"})
                 if job["payload"].get("kind") == "COMPLETION_REMINDER"
             ]
-            assert len(reminders) == (outcome == "ignored")
+            source_kind = "ITEM_ADDED" if bound else "NEW_ITEM"
+            assert [(row["reminded_kind"], row.get("missing")) for row in reminders] == {
+                "ignored": [(source_kind, None)],
+                "DONE": [(source_kind, "ASSESSMENT")],
+                "SKIPPED": [],
+            }[outcome]
             assert "workflow" not in proof
             if outcome == "ignored":
                 observations = await repo.list("evt.event_observations", filters={"item_id": "item"})

@@ -50,7 +50,10 @@ argument prevents fallback:
 The adapter overrides engine selection with a single instance of the pinned
 DuckDuckGo engine. It does not consult the registry or call the upstream
 fallback. It inherits the real engine's payload builder, HTML parser and result
-normalizers. DDGS still aggregates and returns the results through `text`.
+normalizers. DuckDuckGo renders its "No results found" message inside a
+`result__body` block, which the pinned parser reads as one result with an empty
+title, URL and snippet. The adapter drops every parsed result without a URL, so
+such a page becomes the nonretryable `NO_RESULTS` error and stores no evidence. DDGS still aggregates and returns the results through `text`.
 The upstream engine's `provider="bing"` attribute describes its syndicated
 result source; it does not authorize a request to Bing. The endpoint guard
 permits only DuckDuckGo.

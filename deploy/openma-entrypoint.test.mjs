@@ -187,10 +187,10 @@ test("main starts the installed application without package-manager installs and
       TANK_SANDBOX_DATABASE_NAME: "tank_check",
       TANK_SANDBOX_DATABASE_ROLE: "tank_audit_reader",
       TANK_SANDBOX_REPLAY_DB_URL:
-        "postgresql://tank_replay_agent:synthetic%20replay%20password@172.29.0.2:5432/tank_replay",
+        "postgresql://tank_replay_agent:synthetic%20replay%20password@172.29.0.2:5432/tank_replay?options=-c%20search_path%3Dreg%2Cingest%2Cevt%2Cmkt%2Cana%2Cout%2Cops%2Cscout%2Cqa%2Cpublic",
       TANK_SANDBOX_DATABASE_IPV4: "172.29.0.2",
       TANK_SANDBOX_DB_URL:
-        "postgresql://tank_audit_reader:synthetic%20agent%20password@postgres:5432/tank_check",
+        "postgresql://tank_audit_reader:synthetic%20agent%20password@postgres:5432/tank_check?options=-c%20search_path%3Dreg%2Cingest%2Cevt%2Cmkt%2Cana%2Cout%2Cops%2Cscout%2Cqa%2Cpublic",
       TANK_SANDBOX_OPENROUTER_API_KEY: f.secrets.openrouter_api_key,
       TANK_SANDBOX_ETHERSCAN_API_KEY: f.secrets.etherscan_api_key,
       TANK_SANDBOX_JEV_PROVIDER: "openrouter",
