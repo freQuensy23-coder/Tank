@@ -129,6 +129,28 @@ class SharedRequestBudgets:
             if urgent:
                 self.urgent[bucket] -= 1
 
+    async def try_acquire(self, key, capacity, window_s, *, weight=1, host=None):
+        """Admit `weight` now if it fits the rolling window, without waiting. Returns 0 when
+        admitted, otherwise the seconds until it could fit; nothing is charged then."""
+        capacity = float(capacity)
+        weight = float(weight)
+        window_s = float(window_s)
+        if capacity <= 0 or weight <= 0 or weight > capacity:
+            raise ValueError("Invalid configured request budget")
+        ledger = self.ledger
+        if ledger is not None:
+            return await ledger.wait_s(f"{key}|{window_s!r}|{capacity!r}", capacity, window_s, weight, host)
+        bucket = (key, window_s, capacity)
+        async with self.locks.setdefault(bucket, asyncio.Lock()):
+            history = self.windows.setdefault(bucket, deque())
+            now = time.monotonic()
+            while history and now - history[0][0] >= window_s:
+                history.popleft()
+            if sum(row[1] for row in history) + weight <= capacity:
+                history.append((now, weight))
+                return 0.0
+            return max(0.001, window_s - (now - history[0][0]))
+
     async def _acquire_shared(self, ledger, bucket, weight, priority, host):
         key, window_s, capacity = bucket
 

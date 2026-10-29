@@ -369,6 +369,29 @@ async def test_request_ledger_is_one_budget_for_every_process(migrated):
 
 @pytest.mark.integration
 @pytest.mark.postgres
+async def test_try_acquire_charges_the_shared_ledger_only_when_admitted(migrated):
+    """The Etherscan daily budget (03 §5.6) survives restarts and is shared by processes."""
+    first, second = SharedRequestBudgets(), SharedRequestBudgets()
+    first.ledger = RequestLedger(migrated.database_url, "first")
+    second.ledger = RequestLedger(migrated.database_url, "second")
+    try:
+        assert await first.try_acquire("api.etherscan.io", 5, 86400, weight=4, host="api.etherscan.io") == 0
+        wait = await second.try_acquire("api.etherscan.io", 5, 86400, weight=2, host="api.etherscan.io")
+        assert 86000 < wait <= 86400
+        assert await second.try_acquire("api.etherscan.io", 5, 86400, weight=1, host="api.etherscan.io") == 0
+        assert [(row["bucket"], row["owner"]) for row in await ledger_rows(migrated)] == [
+            ("api.etherscan.io|86400.0|5.0", "first"),
+            ("api.etherscan.io|86400.0|5.0", "second"),
+        ]
+        await first.block("api.etherscan.io", utcnow() + timedelta(seconds=30), "HTTP 429")
+        assert await second.try_acquire("api.etherscan.io", 50, 3600, host="api.etherscan.io") > 20
+    finally:
+        await first.release(first.ledger)
+        await second.release(second.ledger)
+
+
+@pytest.mark.integration
+@pytest.mark.postgres
 async def test_external_contract_on_postgres(migrated, tmp_path):
     service = MarketService(migrated, make_settings(tmp_path))
     await repair_round_trip(migrated, service)
