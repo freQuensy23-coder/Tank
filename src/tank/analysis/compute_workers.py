@@ -8,9 +8,9 @@ RUN_MARKET_TRUTH and keeps each token's baseline cache between assessments, REAC
 reaction checkpoints, so an assessment never queues behind a checkpoint. The service
 releases a token's baselines in the worker when the token goes idle (03 §5).
 
-The snapshot is pickled in slices in a thread, so the event loop keeps running while it
-is serialized. A worker that dies fails only the call it was running; the next call
-starts a new worker.
+The snapshot is pickled in a thread in small parts (dicts key by key at any depth, long
+lists in slices), so the event loop keeps running while it is serialized. A worker that
+dies fails only the call it was running; the next call starts a new worker.
 """
 
 import asyncio
@@ -19,6 +19,7 @@ import pickle
 import time
 from concurrent.futures import Executor, ProcessPoolExecutor
 from concurrent.futures.process import BrokenProcessPool
+from typing import Any
 
 ASSESSMENT = "ASSESSMENT"
 REACTION = "REACTION"
@@ -45,39 +46,36 @@ def executor(lane: str) -> Executor:
     return current
 
 
-def pack(snapshot: dict) -> list:
-    """The snapshot as pickled parts; long lists are cut into slices of SLICE_ROWS rows."""
-    parts: list[tuple[str, bytes | list[bytes]]] = []
-    for key, value in snapshot.items():
-        if isinstance(value, list) and len(value) > SLICE_ROWS:
-            parts.append(
-                (
-                    key,
-                    [
-                        pickle.dumps(value[start : start + SLICE_ROWS], protocol=pickle.HIGHEST_PROTOCOL)
-                        for start in range(0, len(value), SLICE_ROWS)
-                    ],
-                )
-            )
-        else:
-            parts.append((key, pickle.dumps(value, protocol=pickle.HIGHEST_PROTOCOL)))
-    return parts
+def pack(value: Any) -> tuple[str, Any]:
+    """value as pickled parts small enough not to hold the GIL for long: a dict is packed
+    key by key, so series nested in dicts are reached too, and a list longer than
+    SLICE_ROWS is cut into slices of SLICE_ROWS items."""
+    if type(value) is dict:
+        return ("dict", [(key, pack(item)) for key, item in value.items()])
+    if type(value) is list and len(value) > SLICE_ROWS:
+        return (
+            "rows",
+            [
+                pickle.dumps(value[start : start + SLICE_ROWS], protocol=pickle.HIGHEST_PROTOCOL)
+                for start in range(0, len(value), SLICE_ROWS)
+            ],
+        )
+    return ("value", pickle.dumps(value, protocol=pickle.HIGHEST_PROTOCOL))
 
 
-def unpack(parts: list) -> dict:
-    snapshot = {}
-    for key, value in parts:
-        if isinstance(value, list):
-            rows = []
-            for part in value:
-                rows.extend(pickle.loads(part))
-            snapshot[key] = rows
-        else:
-            snapshot[key] = pickle.loads(value)
-    return snapshot
+def unpack(packed: tuple[str, Any]) -> Any:
+    kind, body = packed
+    if kind == "dict":
+        return {key: unpack(item) for key, item in body}
+    if kind == "rows":
+        rows = []
+        for part in body:
+            rows.extend(pickle.loads(part))
+        return rows
+    return pickle.loads(body)
 
 
-def _compute(parts: list, config: dict, baseline_key: str | None):
+def _compute(parts: tuple[str, Any], config: dict, baseline_key: str | None):
     from tank.analysis import truth
 
     snapshot = unpack(parts)
