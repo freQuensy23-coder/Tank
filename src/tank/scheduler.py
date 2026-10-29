@@ -1834,6 +1834,7 @@ class Scheduler:
                 and not review_pending
                 and (
                     not event.get("next_milestone")
+                    or not event["next_milestone"].get("due_at")
                     or event["next_milestone"].get("status") in {"CONFIRMED", "VERIFIED", "FAILED", "MISSED"}
                 )
                 and now - parse_time(last) >= timedelta(days=self.threshold("event_close_days", 7))
