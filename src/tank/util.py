@@ -73,6 +73,8 @@ def new_id(prefix: str, *, timestamp: Any = None, entropy: int | None = None) ->
 
 
 def jsonable(value: Any) -> Any:
+    if value is None or type(value) in (str, int, float, bool):
+        return value
     if dataclasses.is_dataclass(value):
         return jsonable(dataclasses.asdict(cast(Any, value)))
     if hasattr(value, "model_dump"):

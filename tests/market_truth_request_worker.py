@@ -470,6 +470,19 @@ async def run(root, directory, fixtures, revision, reader):
                 if command.get("diagnose"):
                     assert diagnostic_call is not None
                     assert snapshot_call is not None
+                    cold_market = MarketService(repo, settings, http=http)
+                    assert await cold_market._load_day_counts() == manifest["native_cache"]["entries"]
+                    cold_heads = cold_market._snapshot_heads
+
+                    def cold_snapshot_heads(result, cutoff_dt):
+                        cold_heads(result, cutoff_dt)
+                        clock["value"] = ASSEMBLED
+
+                    cold_market._snapshot_heads = cold_snapshot_heads
+                    clock["value"] = manifest["availability_cutoff"]
+                    cold_profile = await profile_retained_async(
+                        (copy_context(), cold_market.snapshot, snapshot_call[2], snapshot_call[3])
+                    )
                     clock["value"] = manifest["availability_cutoff"]
                     emit(
                         {
@@ -477,6 +490,7 @@ async def run(root, directory, fixtures, revision, reader):
                             "stage": diagnostic_call[1].__name__,
                             "rows": profile_retained_call(diagnostic_call),
                             "snapshot": await profile_retained_async(snapshot_call),
+                            "cold_snapshot": cold_profile,
                         }
                     )
                     continue
