@@ -7,6 +7,8 @@ import pstats
 import re
 import signal
 import sys
+import threading
+from collections import Counter
 from contextlib import suppress
 from contextvars import copy_context
 from datetime import datetime
@@ -95,6 +97,44 @@ async def profile_retained_async(call):
     finally:
         profiler.disable()
     return profile_rows(profiler)
+
+
+async def sample_retained_async(call):
+    context, function, args, kwargs = call
+    stopped = threading.Event()
+    samples = Counter()
+    ticks = 0
+    deadline = perf_counter() + 10
+
+    def sample():
+        nonlocal ticks
+        while True:
+            for ident, frame in sys._current_frames().items():
+                if ident != threading.get_ident():
+                    code = frame.f_code
+                    samples[(Path(code.co_filename).name, code.co_firstlineno, code.co_name)] += 1
+            ticks += 1
+            if stopped.wait(0.005) or perf_counter() >= deadline:
+                return
+
+    sampler = threading.Thread(target=sample, name="market-truth-sampler", daemon=True)
+    sampler.start()
+    try:
+        async with asyncio.timeout(10):
+            await asyncio.create_task(function(*args, **kwargs), context=context)
+    finally:
+        stopped.set()
+        sampler.join(timeout=1)
+        assert not sampler.is_alive()
+    return {
+        "kind": "statistical_thread_samples",
+        "period_s": 0.005,
+        "ticks": ticks,
+        "rows": [
+            {"module": module, "line": line, "function": name, "samples": count}
+            for (module, line, name), count in samples.most_common(40)
+        ],
+    }
 
 
 def profile_rows(profiler):
@@ -480,7 +520,7 @@ async def run(root, directory, fixtures, revision, reader):
 
                     cold_market._snapshot_heads = cold_snapshot_heads
                     clock["value"] = manifest["availability_cutoff"]
-                    cold_profile = await profile_retained_async(
+                    cold_profile = await sample_retained_async(
                         (copy_context(), cold_market.snapshot, snapshot_call[2], snapshot_call[3])
                     )
                     clock["value"] = manifest["availability_cutoff"]

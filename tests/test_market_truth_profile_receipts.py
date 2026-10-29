@@ -1,9 +1,10 @@
 import asyncio
 import sys
+import threading
 from contextvars import ContextVar, copy_context
 
 import pytest
-from market_truth_request_worker import profile_retained_async, profile_retained_call
+from market_truth_request_worker import profile_retained_async, profile_retained_call, sample_retained_async
 
 
 def test_postmeasurement_profile_runs_in_retained_context_and_restores_profiler():
@@ -67,4 +68,36 @@ async def test_async_postmeasurement_profile_preserves_error_and_restores_profil
     with pytest.raises(ValueError) as caught:
         await profile_retained_async((copy_context(), retained_work, (), {}))
     assert caught.value is failure
+    assert sys.getprofile() is None
+
+
+async def test_statistical_profile_retains_context_and_stops_its_bounded_sampler():
+    marker = ContextVar("sample-proof", default="outside")
+    token = marker.set("retained")
+    context = copy_context()
+    marker.reset(token)
+    observed = []
+
+    async def retained_work():
+        observed.append(marker.get())
+
+    receipt = await sample_retained_async((context, retained_work, (), {}))
+    assert observed == ["retained"] and marker.get() == "outside"
+    assert receipt["kind"] == "statistical_thread_samples"
+    assert receipt["ticks"] >= 1 and receipt["rows"]
+    assert all(set(row) == {"module", "line", "function", "samples"} for row in receipt["rows"])
+    assert not any(thread.name == "market-truth-sampler" for thread in threading.enumerate())
+    assert sys.getprofile() is None
+
+
+async def test_statistical_profile_preserves_callback_error_and_stops_sampler():
+    failure = ValueError("sample-proof")
+
+    async def retained_work():
+        raise failure
+
+    with pytest.raises(ValueError) as caught:
+        await sample_retained_async((copy_context(), retained_work, (), {}))
+    assert caught.value is failure
+    assert not any(thread.name == "market-truth-sampler" for thread in threading.enumerate())
     assert sys.getprofile() is None
