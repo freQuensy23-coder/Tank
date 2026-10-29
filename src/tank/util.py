@@ -6,6 +6,7 @@ import time
 from datetime import UTC, datetime
 from decimal import Decimal
 from enum import Enum
+from functools import lru_cache
 from pathlib import Path
 from typing import Any, cast
 
@@ -16,7 +17,16 @@ def utcnow() -> datetime:
     return datetime.now(UTC)
 
 
+@lru_cache(maxsize=65536)
+def _parse_text_time(value: str) -> datetime:
+    if value.replace(".", "", 1).isdigit():
+        return parse_time(float(value))
+    return parse_time(datetime.fromisoformat(value.replace("Z", "+00:00")))
+
+
 def parse_time(value: Any) -> datetime:
+    if type(value) is str and len(value) <= 64:
+        return _parse_text_time(value)
     if isinstance(value, datetime):
         return value.replace(tzinfo=UTC) if value.tzinfo is None else value.astimezone(UTC)
     if isinstance(value, (int, float, Decimal)) or (

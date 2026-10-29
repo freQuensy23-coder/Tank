@@ -61,3 +61,12 @@ def test_invalid_timestamp_text_still_raises_on_each_call():
     for _ in range(2):
         with pytest.raises(ValueError):
             util.parse_time("not-a-market-timestamp")
+
+
+def test_long_valid_timestamp_text_is_not_retained_in_parser_cache():
+    parser = util._parse_text_time
+    parser.cache_clear()
+    value = "2026-10-01T12:34:56." + "1" * 128 + "Z"
+    expected = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    assert util.parse_time(value) == expected
+    assert parser.cache_info().currsize == 0

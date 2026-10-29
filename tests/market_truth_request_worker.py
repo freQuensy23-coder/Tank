@@ -77,6 +77,13 @@ def save(directory, name, value):
     return hashlib.sha256(body).hexdigest()
 
 
+def clear_timestamp_cache():
+    parser = getattr(sys.modules["tank.util"], "_parse_text_time", None)
+    if parser is not None:
+        parser.cache_clear()
+        assert parser.cache_info().currsize == 0
+
+
 def profile_retained_call(call):
     context, function, args, kwargs = call
     assert sys.getprofile() is None
@@ -520,6 +527,7 @@ async def run(root, directory, fixtures, revision, reader):
 
                     cold_market._snapshot_heads = cold_snapshot_heads
                     clock["value"] = manifest["availability_cutoff"]
+                    clear_timestamp_cache()
                     cold_profile = await sample_retained_async(
                         (copy_context(), cold_market.snapshot, snapshot_call[2], snapshot_call[3])
                     )
@@ -555,6 +563,8 @@ async def run(root, directory, fixtures, revision, reader):
                         stop.set()
 
                 repo.enqueue, repo.finish_job = observe_enqueue, observe_finish
+                if state == "cold":
+                    clear_timestamp_cache()
                 assert sys.getprofile() is None
                 started, cpu = perf_counter(), process_time()
                 caller = worker = None
