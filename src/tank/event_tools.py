@@ -2997,7 +2997,7 @@ class EventToolService:
         kind = a["kind"]
         if kind == "PARTIAL" and previous:
             return publication_outcome({"published": False, "reason": "FIRST_CARD_ALREADY_GENERATED"})
-        completing_partial = kind == "FULL" and previous and previous["kind"] == "PARTIAL"
+        completing_partial = kind in {"FULL", "UPDATE"} and bool(previous) and previous["kind"] == "PARTIAL"
         pinned_for_gate = initial_full.get("shown_tokens", []) if initial_full else []
         gate_decisions = (
             [row for row in decisions if row["token_id"] in pinned_for_gate]
@@ -3043,8 +3043,9 @@ class EventToolService:
             ok, reason = alert_gate(
                 event,
                 assessment,
-                previous=None if completing_partial else gate_previous,
+                previous=None if completing_partial and kind == "FULL" else gate_previous,
                 decisions=gate_decisions,
+                completing_partial=completing_partial,
             )
         publication_state["gate_reason"] = reason
         rate_limited = not ok and reason == "UPDATE_RATE_LIMIT"
@@ -3059,9 +3060,13 @@ class EventToolService:
                 await self.repo.put("evt.events", eid, stored)
                 publication_state["lifecycle"] = stored["lifecycle"]
             return publication_outcome({"published": False, "reason": reason})
-        immediate = reason == "PRELIMINARY_CORRECTION" or (
-            not preliminary
-            and publication_immediate(event, assessment, previous=gate_previous, decisions=gate_decisions)
+        immediate = (
+            reason == "PRELIMINARY_CORRECTION"
+            or completing_partial
+            or (
+                not preliminary
+                and publication_immediate(event, assessment, previous=gate_previous, decisions=gate_decisions)
+            )
         )
         delivery_stamp = collection_clock()
         if rate_limited:

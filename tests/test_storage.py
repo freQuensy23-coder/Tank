@@ -616,6 +616,75 @@ async def test_agent_new_connection_defaults_read_only(repo):
         await connection.close()
 
 
+@pytest.mark.integration
+@pytest.mark.postgres
+@pytest.mark.node
+@pytest.mark.process
+@pytest.mark.parametrize("repo", [pytest.param("postgres_deployment", id="postgres")], indirect=True)
+async def test_agent_sandbox_url_resolves_bare_table_names_read_only(repo):
+    assert isinstance(repo, PostgresRepository)
+    import json
+    import re
+    import shutil
+    import subprocess
+    from pathlib import Path
+
+    import psycopg
+    from psycopg.conninfo import conninfo_to_dict, make_conninfo
+
+    node = shutil.which("node")
+    if node is None:
+        pytest.skip("Node executable required for the actual sandbox database route")
+    root = Path(__file__).resolve().parents[1]
+    grants = (root / "src/tank/agent_grants.sql").read_text()
+    granted = re.findall(r"'(\w+)'", re.search(r"ARRAY\[([^\]]+)\]\s+LOOP", grants).group(1))
+    route = subprocess.run(
+        [
+            node,
+            "--input-type=module",
+            "-e",
+            "import {sandboxDatabaseRoute,replayDatabaseRoute} from './vendor/openma/tank-deploy/openma_entrypoint.mjs';"
+            "const replay=await replayDatabaseRoute(()=> 'synthetic',async()=>({address:'172.30.60.2'}));"
+            "console.log(JSON.stringify([sandboxDatabaseRoute({},()=> 'synthetic'),replay.url]));",
+        ],
+        cwd=root,
+        check=True,
+        capture_output=True,
+        text=True,
+        timeout=3,
+    )
+    production, replay = (conninfo_to_dict(url) for url in json.loads(route.stdout))
+    async with repo.transaction():
+        await repo._conn().execute(grants, prepare=False)
+    parameters = conninfo_to_dict(repo.database_url)
+    parameters["user"] = "tank_agent"
+    parameters.pop("password", None)
+    parameters["options"] = production.get("options")
+    connection = await psycopg.AsyncConnection.connect(make_conninfo(**parameters), autocommit=True)
+    try:
+        path = (await (await connection.execute("SELECT current_schemas(false)")).fetchone())[0]
+        assert set(granted) <= set(path)
+        for table in (
+            "tokens",
+            "source_items",
+            "events",
+            "claims",
+            "event_observations",
+            "supply_obs",
+            "decisions",
+            "alerts",
+            "jobs",
+            "expansion_proposals",
+            "reviews",
+        ):
+            await connection.execute("SELECT count(*) FROM " + table)
+        with pytest.raises(psycopg.errors.ReadOnlySqlTransaction):
+            await connection.execute("DELETE FROM claims WHERE false")
+    finally:
+        await connection.close()
+    assert replay.get("options") == production["options"]
+
+
 async def test_late_arrivals_use_availability_not_original_receipt(repo):
     instrument = new_id("late")
     cutoff = utcnow() - timedelta(hours=2)
@@ -915,6 +984,62 @@ async def test_captures_wait_for_a_fresh_event_card(repo):
         immutable=True,
     )
     assert (await repo.claim_job())["job_id"] == capture["job_id"]
+
+
+def _plan_nodes(node):
+    yield node
+    for child in node.get("Plans", ()):
+        yield from _plan_nodes(child)
+
+
+async def _clone_job(repo, job, copies, types):
+    """Insert copies of job under new ids, cycling through types."""
+    async with repo.transaction():
+        await repo._conn().execute(
+            "INSERT INTO ops.jobs SELECT (jsonb_populate_record(j, jsonb_build_object("
+            "'storage_key', j.storage_key || '-' || g, 'job_id', j.job_id || '-' || g,"
+            " 'idem_key', j.idem_key || '-' || g, 'type', (%(types)s::text[])[g %% %(n)s + 1],"
+            " 'document', j.document || jsonb_build_object('job_id', j.job_id || '-' || g,"
+            " 'idem_key', j.idem_key || '-' || g, 'type', (%(types)s::text[])[g %% %(n)s + 1])))).*"
+            " FROM ops.jobs j, generate_series(1, %(copies)s) g WHERE j.storage_key = %(key)s",
+            {"types": types, "n": len(types), "copies": copies, "key": job["job_id"]},
+        )
+
+
+@pytest.mark.integration
+@pytest.mark.postgres
+@pytest.mark.parametrize("repo", ["postgres"], indirect=True)
+async def test_claim_reads_ops_jobs_through_indexes_once_history_accumulates(repo):
+    """A claim poll must not scan the whole job history.
+
+    Production had ~29k finished jobs of mixed types and ~250 deferred captures; the
+    analysis gate then read every ops.jobs row on each poll."""
+    from tank.storage import CLAIM_SQL, RUNNING_CAPS, claim_params
+
+    await _clear_queue(repo)
+    done = await repo.enqueue("DELIVER", {}, new_id("idem"), priority=3)
+    await repo.claim_job()
+    await repo.finish_job(done["job_id"])
+    await _clone_job(
+        repo, done, 10000, ["DELIVER", "EVAL_CONDITIONS", "FILTER_ITEM", "ROUTE_ITEM", "AGENT_MESSAGE"]
+    )
+    truth = await repo.enqueue("RUN_MARKET_TRUTH", {}, new_id("idem"), priority=1)
+    assert (await repo.claim_job())["job_id"] == truth["job_id"]
+    capture = await repo.enqueue(
+        "REACTION_CAPTURE", {}, new_id("idem"), priority=0, expires_at=iso(utcnow() + timedelta(hours=5))
+    )
+    await _clone_job(repo, capture, 250, ["REACTION_CAPTURE"])
+    async with repo.transaction():
+        conn = repo._conn()
+        await conn.execute("ANALYZE ops.jobs")
+        explained = await conn.execute("EXPLAIN (FORMAT JSON) " + CLAIM_SQL, claim_params(list(RUNNING_CAPS)))
+        plan = (await explained.fetchone())["QUERY PLAN"][0]["Plan"]
+    scans = [node for node in _plan_nodes(plan) if node.get("Relation Name") == "jobs"]
+    assert len(scans) >= 6
+    assert [node["Alias"] for node in scans if node["Node Type"] == "Seq Scan"] == []
+    assert await repo.claim_job() is None
+    await repo.finish_job(truth["job_id"])
+    assert (await repo.claim_job())["type"] == "REACTION_CAPTURE"
 
 
 async def test_memory_reads_return_isolated_values_and_see_own_writes_before_rollback():

@@ -6,6 +6,9 @@ from pathlib import Path
 import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
+SANDBOX_OPTIONS = (
+    "?options=-c%20search_path%3Dreg%2Cingest%2Cevt%2Cmkt%2Cana%2Cout%2Cops%2Cscout%2Cqa%2Cpublic"
+)
 
 
 def module(name):
@@ -53,8 +56,10 @@ console.log(JSON.stringify({defaults,isolated,rejected}));
         timeout=3,
     )
     data = json.loads(result.stdout)
-    assert data["defaults"] == "postgresql://tank_agent:synthetic%3Ap%40ss@postgres:5432/tank"
-    assert data["isolated"].endswith("@postgres:5432/tank_integration_extract_20261018")
+    assert (
+        data["defaults"] == "postgresql://tank_agent:synthetic%3Ap%40ss@postgres:5432/tank" + SANDBOX_OPTIONS
+    )
+    assert data["isolated"].endswith("@postgres:5432/tank_integration_extract_20261018" + SANDBOX_OPTIONS)
     assert data["rejected"] == 10
 
 
@@ -82,4 +87,6 @@ console.log(JSON.stringify({called,resolved,denied}));"""
     )
     data = json.loads(result.stdout)
     assert data["called"] and data["denied"] == 4
-    assert data["resolved"]["url"] == "postgresql://tank_replay_agent:synthetic@172.30.42.2:5432/tank_replay"
+    assert data["resolved"]["url"] == (
+        "postgresql://tank_replay_agent:synthetic@172.30.42.2:5432/tank_replay" + SANDBOX_OPTIONS
+    )

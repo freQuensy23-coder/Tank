@@ -534,6 +534,7 @@ const historySessionEventSchema = z.discriminatedUnion("type", [
       is_error: z.boolean().nullable(),
       model_request_start_id: z.string(),
       model_usage: spanModelUsageSchema,
+      finish_reason: z.string().min(1).optional(),
       processed_at: z.string(),
     })
     .strict(),

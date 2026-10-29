@@ -1188,6 +1188,125 @@ async def test_real_expiry_to_update_delivery_never_reopens_call(service, monkey
     assert (await service.repo.get("ana.decisions", first_decision["dec_id"]))["action"] == "HOLD"
 
 
+@pytest.mark.parametrize("completion_kind", ["FULL", "UPDATE"])
+async def test_structural_shock_completion_is_sent_at_once_and_later_updates_wait(
+    service, monkeypatch, completion_kind
+):
+    """Production (Aerodrome, 28 Oct): the full card completing a sent STRUCTURAL_SHOCK
+    PARTIAL was published as UPDATE and held 11.5 min by the 15-minute update
+    interval. The completion is sent at once; the interval applies to later updates."""
+    import httpx
+
+    from tank.analysis.decisions import DecisionEngine
+    from tank.delivery import DeliveryDeferred, DeliveryService
+
+    service.engine = DecisionEngine()
+    eid = "shock-event"
+    token = "T"
+    now = utcnow()
+    event = {
+        "event_id": eid,
+        "statement": "Buyback announced",
+        "current_ems_id": "shock-ems",
+        "event_state": "ANNOUNCED",
+        "state_verified": True,
+        "freshness": "FRESH",
+        "certainty": "HIGH",
+        "lifecycle": "ANALYZING",
+        "public_at": iso(now),
+        "known_to_us_at": iso(now),
+        "event_time": {"value": None, "precision": "UNKNOWN"},
+    }
+    assessment = {
+        "ems_id": "shock-ems",
+        "event_id": eid,
+        "class": "STRUCTURAL_SHOCK",
+        "criterion": "G5",
+        "certainty": "HIGH",
+        "impact_horizon": {"impact_start": "WEEKS"},
+    }
+    edge = {
+        "edge_id": "shock-edge",
+        "event_id": eid,
+        "map_version": 1,
+        "entity_id": "protocol",
+        "token_id": token,
+        "role": "PRIMARY",
+        "tradable": True,
+        "credible": True,
+        "capture_class": "DIRECT",
+        "exposure_score": 8,
+    }
+    truth = {
+        "mta_id": "shock-truth",
+        "event_id": eid,
+        "token_id": token,
+        "cutoff": iso(now),
+        "move_class": "SPOT_LED_ACCUMULATION",
+        "data_confidence": {"class": "MEDIUM", "critical_semantics_verified": True},
+        "relative": {"repricing_band": "EARLY", "market_context": "NEUTRAL", "anchor": {"ref_price": "10"}},
+        "liquidity": {"liquidity_state": "NORMAL"},
+        "spot": {},
+        "derivatives": {},
+    }
+    for table, key, row in [
+        ("evt.events", eid, event),
+        ("evt.ems_assessments", "shock-ems", assessment),
+        ("evt.beneficiary_maps", "shock-map", {"event_id": eid, "map_version": 1, "analysis_set": [token]}),
+        ("evt.beneficiary_edges", "shock-edge", edge),
+        ("ana.market_truth", "shock-truth", truth),
+    ]:
+        await service.repo.put(table, key, row)
+    partial = await service.dispatch(
+        "publish_card",
+        {"event_id": eid, "kind": "PARTIAL", "what": "Buyback", "verdict": "Buyback", "why": []},
+        {},
+    )
+    assert partial["published"], partial
+    service.settings.telegram_token = "test"
+    service.settings.telegram_alerts_chat = "1"
+    service.settings.telegram_ops_chat = "2"
+    sent = []
+
+    async def telegram(request):
+        sent.append(request)
+        return httpx.Response(200, json={"ok": True, "result": {"message_id": len(sent)}})
+
+    async def advance(state):
+        stored = await service.repo.get("evt.events", eid)
+        stored.update(event_state=state, state_verified=True)
+        await service.repo.put("evt.events", eid, stored)
+        decision = await service.dispatch("get_decision", {"event_id": eid, "token_id": token}, {})
+        assert decision["action"] not in {"START", "EXIT", "HOLD"}, decision
+
+    card = {"what": "Buyback", "verdict": "Buyback", "why": ["Buyback funded", "Fees redirected"]}
+    async with httpx.AsyncClient(transport=httpx.MockTransport(telegram)) as http:
+        delivery = DeliveryService(service.repo, service.settings, http=http)
+        assert await delivery.deliver({"alert_id": partial["alert_id"], "version": 1}) is None
+        assert len(sent) == 1
+        await advance("APPROVED")
+        completion = await service.dispatch(
+            "publish_card", {"event_id": eid, "kind": completion_kind, **card}, {}
+        )
+        assert completion["published"] and completion["reason"] == "GENERATED", completion
+        alert = await service.repo.get("out.alerts", f"{partial['alert_id']}:2")
+        assert alert["kind"] == completion_kind and alert["delivery_immediate"]
+        assert alert["delivery_not_before"] == alert["generated_at"]
+        assert await delivery.deliver({"alert_id": partial["alert_id"], "version": 2}) is None
+        assert len(sent) == 2
+        await advance("SIGNED")
+        later = await service.dispatch("publish_card", {"event_id": eid, "kind": "UPDATE", **card}, {})
+        assert later["published"] and later["reason"] == "QUEUED_RATE_LIMIT", later
+        held = await service.repo.get("out.alerts", f"{partial['alert_id']}:3")
+        assert not held["delivery_immediate"]
+        assert parse_time(held["delivery_not_before"]) - parse_time(held["generated_at"]) > timedelta(
+            minutes=14
+        )
+        with pytest.raises(DeliveryDeferred):
+            await delivery.deliver({"alert_id": partial["alert_id"], "version": 3})
+        assert len(sent) == 2
+
+
 @pytest.mark.integration
 async def test_material_update_is_queued_once_and_delivered_after_window(service, monkeypatch):
     import httpx
