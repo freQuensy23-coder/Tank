@@ -1,7 +1,9 @@
 import asyncio
+import cProfile
 import hashlib
 import json
 import logging
+import pstats
 import re
 import signal
 import sys
@@ -322,13 +324,40 @@ async def run(root, directory, fixtures, revision, reader):
 
                 chm.dense_projection_page = dense_page
 
+            profiler = cProfile.Profile() if hasattr(chm, "dense_projection_page") else None
+            profiled, profiling = set(), False
+            profile_roots = {
+                "derivatives_truth",
+                "support_features",
+                "enrich_evidence",
+                "timestamp_companions",
+                "bounded_market_snapshot",
+                "liquidity_truth",
+                "supply_truth",
+                "data_confidence",
+            }
+
             def measure(name, function):
                 @wraps(function)
                 def measured(*args, **kwargs):
+                    nonlocal profiling
                     started = perf_counter()
+                    selected = (
+                        profiler is not None
+                        and name in profile_roots
+                        and name not in profiled
+                        and not profiling
+                    )
+                    if selected:
+                        profiled.add(name)
+                        profiling = True
+                        profiler.enable()
                     try:
                         return function(*args, **kwargs)
                     finally:
+                        if selected:
+                            profiler.disable()
+                            profiling = False
                         phases[name] = phases.get(name, 0) + perf_counter() - started
                         phase_calls[name] = phase_calls.get(name, 0) + 1
 
@@ -340,9 +369,7 @@ async def run(root, directory, fixtures, revision, reader):
                 "support_features",
                 "spot_truth",
                 "data_confidence",
-                "_native_volume_index",
                 "_price_groups",
-                "_price_index",
                 "_oi_rows",
                 "_oi_stats",
                 "_synchronized_oi",
@@ -352,7 +379,12 @@ async def run(root, directory, fixtures, revision, reader):
                 "_relative_history_arrays",
                 "_relative_history_returns",
                 "btc_baseline",
-                "build_index",
+                "enrich_evidence",
+                "timestamp_companions",
+                "bounded_market_snapshot",
+                "liquidity_truth",
+                "supply_truth",
+                "available_field_freshness",
             ):
                 if hasattr(truth, name):
                     setattr(truth, name, measure(name, getattr(truth, name)))
@@ -470,6 +502,22 @@ async def run(root, directory, fixtures, revision, reader):
                         "compute_seconds": compute_seconds[-1],
                         "inclusive_nonadditive_phase_seconds": dict(phases),
                         "phase_call_counts": dict(phase_calls),
+                        "diagnostic_profiled_first_roots": sorted(profiled) if state == "cold" else [],
+                        "diagnostic_profile": [
+                            {
+                                "file": Path(key[0]).name,
+                                "line": key[1],
+                                "function": key[2],
+                                "calls": value[1],
+                                "self_seconds": value[2],
+                                "inclusive_seconds": value[3],
+                            }
+                            for key, value in sorted(
+                                pstats.Stats(profiler).stats.items(),
+                                key=lambda item: item[1][3],
+                                reverse=True,
+                            )[:40]
+                        ] if profiler is not None and state == "cold" else [],
                         "modules": provenance(root),
                     }
                 )
