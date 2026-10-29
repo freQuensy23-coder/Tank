@@ -62,6 +62,10 @@ def lookback_days():
 
 
 def decimal(v):
+    return _scalar_decimal(v)
+
+
+def _scalar_decimal(v):
     if isinstance(v, dict):
         v = v.get("value")
     if v is None:
@@ -351,6 +355,10 @@ def repricing(value, event_history, day_history):
 
 
 def _time(row):
+    return _row_time(row)
+
+
+def _row_time(row):
     times = _TIMES.get()
     inputs = _ASSESSMENT_INPUTS.get()
     if times is not None and inputs is not None:
@@ -463,6 +471,10 @@ def _composite(venues):
 
 
 def _available(row, snapshot):
+    return _row_available(row, snapshot)
+
+
+def _row_available(row, snapshot):
     assembled = snapshot.get("assembled_at")
     received = row.get("received_ts")
     if not assembled or not received:
@@ -1007,6 +1019,10 @@ def _fixed_decimal_text_metadata(value):
 
 
 def _history_fixed_decimal_column(column):
+    return _fixed_decimal_column(column)
+
+
+def _fixed_decimal_column(column):
     if len(column) < 256:
         return None
     inputs = _ASSESSMENT_INPUTS.get()
