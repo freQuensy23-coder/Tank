@@ -9,6 +9,7 @@ from contextlib import AsyncExitStack
 from pathlib import Path
 
 import pytest
+import pytest_asyncio
 from market_truth_request_data import DATA_REVISION, ORIGINAL, stage_data
 
 pytestmark = [pytest.mark.integration, pytest.mark.postgres, pytest.mark.process]
@@ -49,12 +50,19 @@ async def send(process, value):
     return await receive(process)
 
 
-async def test_full_market_truth_original_candidate_same_worker(tmp_path, pytestconfig, record_property):
+@pytest_asyncio.fixture(scope="module", loop_scope="module")
+async def full_request_comparison(tmp_path_factory, pytestconfig, request):
     from postgres_helpers import PostgresTemplate
     from psycopg import AsyncConnection
     from psycopg.conninfo import conninfo_to_dict
 
     from tank.clickhouse_market import ClickHouse
+
+    tmp_path = tmp_path_factory.mktemp("market-truth-request")
+    evidence_case = next(item for item in request.session.items if item.path == request.path)
+
+    def record_property(name, value):
+        evidence_case.user_properties.append((name, value))
 
     assert os.environ.get("TANK_TEST_DATABASE_URL"), "Disposable PostgreSQL is required"
     assert os.environ.get("CLICKHOUSE_TEST_URL"), "Disposable ClickHouse is required"
@@ -82,7 +90,10 @@ async def test_full_market_truth_original_candidate_same_worker(tmp_path, pytest
                 directory = root / "request-output"
                 directory.mkdir()
                 environment = dict(
-                    os.environ, PYTHONPATH=os.pathsep.join((str(root / "src"), str(ROOT / "tests")))
+                    os.environ,
+                    PYTHONPATH=os.pathsep.join((str(root / "src"), str(ROOT / "tests"))),
+                    PYTHONHASHSEED="0",
+                    PYTHONDONTWRITEBYTECODE="1",
                 )
                 process = await asyncio.create_subprocess_exec(
                     sys.executable,
@@ -118,19 +129,13 @@ async def test_full_market_truth_original_candidate_same_worker(tmp_path, pytest
                     result = await send(workers[label], {"sample": state})
                     samples[label, state] = result
                     record_property(label + "_" + state, json.dumps(result, sort_keys=True))
-                for state in ("cold", "warm"):
-                    for contract in ("result", "projection", "snapshot"):
-                        left = tmp_path / "original/request-output" / f"{state}-{contract}.json"
-                        right = tmp_path / "candidate/request-output" / f"{state}-{contract}.json"
-                        equal = json.loads(left.read_bytes()) == json.loads(right.read_bytes())
-                        assert equal, (state, contract)
                 assert receipts["original"]["native"] == receipts["candidate"]["native"]
                 record_property("qualification", manifest["qualification"])
                 record_property("dataset_revision", DATA_REVISION)
                 record_property("limitations", json.dumps(manifest["limitations"]))
                 record_property(
-                    "parity",
-                    "Full result, model projection, snapshot and native readback equal; ABBA single samples, descriptive only",
+                    "comparison",
+                    "ABBA complete; six cold/warm result, projection and snapshot cases enforce exact parity",
                 )
                 record_property(
                     "candidate_minus_original_seconds",
@@ -174,3 +179,43 @@ async def test_full_market_truth_original_candidate_same_worker(tmp_path, pytest
         await check.close()
     record_property("source_heads", json.dumps({"original": ORIGINAL, "candidate": candidate}))
     record_property("manifest_sha256", hashlib.sha256((fixtures / "manifest.json").read_bytes()).hexdigest())
+    return tmp_path
+
+
+def first_difference(original, candidate, path="$"):
+    if original == candidate:
+        return None
+    if isinstance(original, dict) and isinstance(candidate, dict):
+        if original.keys() != candidate.keys():
+            return {"path": path, "keys": [sorted(original), sorted(candidate)]}
+        for key in original:
+            found = first_difference(original[key], candidate[key], path + "/" + key)
+            if found is not None:
+                return found
+    elif isinstance(original, list) and isinstance(candidate, list):
+        if len(original) != len(candidate):
+            return {"path": path, "lengths": [len(original), len(candidate)]}
+        for index, (left, right) in enumerate(zip(original, candidate, strict=True)):
+            found = first_difference(left, right, path + "/" + str(index))
+            if found is not None:
+                return found
+    return {"path": path, "original": repr(original)[:160], "candidate": repr(candidate)[:160]}
+
+
+@pytest.mark.parametrize("state", ["cold", "warm"])
+@pytest.mark.parametrize("contract", ["result", "projection", "snapshot"])
+def test_full_market_truth_original_candidate_same_worker(
+    full_request_comparison, state, contract, record_property
+):
+    directory = full_request_comparison
+    left = json.loads(
+        (directory / "original/request-output" / f"{state}-{contract}.json").read_bytes()
+    )
+    right = json.loads(
+        (directory / "candidate/request-output" / f"{state}-{contract}.json").read_bytes()
+    )
+    mismatch = first_difference(left, right)
+    record_property("contract", state + "/" + contract)
+    record_property("first_difference", json.dumps(mismatch))
+    assert mismatch is None, (state, contract, mismatch)
+
