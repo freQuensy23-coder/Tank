@@ -816,9 +816,7 @@ def _wide_column_records(collection, columns, time_field):
         raise ValueError("Invalid wide page columns")
     count = sizes.pop()
     empty = [None] * count
-    fields = [
-        (name, kind, columns.get(name, empty)) for name, kind in MARKET_COLUMNS[collection].items()
-    ]
+    fields = [(name, kind, columns.get(name, empty)) for name, kind in MARKET_COLUMNS[collection].items()]
     aliases = MARKET_ALIASES.get(collection, {})
     timestamps = {}
     numbers = {}
