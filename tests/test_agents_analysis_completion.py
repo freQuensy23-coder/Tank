@@ -8,6 +8,7 @@ import pytest
 from test_agents_execution_barrier import config, idle
 from test_session_binding_concurrency import fixture_repo, seed
 
+from tank.agents.incomplete import reanalyse
 from tank.agents.sessions import SessionService
 from tank.util import sha256
 
@@ -265,6 +266,10 @@ async def test_settled_turn_fails_an_item_left_without_an_outcome_and_keeps_the_
                 assert final.get("agent_incomplete", False) is not bound
                 if bound:
                     assert (await repo.get("evt.events", event_id))["lifecycle"] != "FAILED"
+                assert (await reanalyse(repo, apply=True))["count"] == 1
+                assert (await service.completed_turn("s"))["complete"]
+                requeued = await repo.get("ingest.source_items", "item")
+                assert (requeued["extraction_status"], requeued["reanalysis_attempt"]) == ("PENDING", 1)
 
 
 @pytest.mark.parametrize(
