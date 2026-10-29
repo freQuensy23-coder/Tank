@@ -359,9 +359,10 @@ Each requirement describes behavior the operator can observe or a test can check
 | ID | Requirement |
 |---|---|
 | FR-P-01 | Tank MUST notify "Tank Ops" when a card cannot be delivered (§7.2). |
-| FR-P-02 | Tank MUST send a daily heartbeat to "Tank Ops" at 08:00 UTC: cards delivered in the last 24 h, tokens under close market watch, the analysis backlog (queued and running) and how long the oldest queued work has waited, LLM spending since 00:00 UTC (calls without a reported cost counted separately, never as zero), and the number of processing cards that could not be delivered or updated. |
+| FR-P-02 | Tank MUST send a daily heartbeat to "Tank Ops" at 08:00 UTC: cards delivered in the last 24 h, tokens under close market watch, the analysis backlog (queued and running) and how long the oldest queued work has waited (an agent turn held back by the running-session cap waits from when it was first held back, not from its next retry), LLM spending since 00:00 UTC (calls without a reported cost counted separately, never as zero), and the number of processing cards that could not be delivered or updated. |
 | FR-P-03 | A reply in "Tank Alerts" or "Tank Ops" to a Tank message about an event or a material that an agent handled MUST continue that agent's session, with all its messages, files and history; the agent's answer MUST come back as a reply in the same chat. Durable acknowledgment damage MUST recover without duplicate input or tool effects; acknowledgment alone never proves completed work. When no session can be continued (the material never reached an agent, or the session is closed), Tank MUST reply only with the reason; Tank never answers in the agent's place. |
 | FR-P-04 | An agent session MUST stay open for at least 7 days after its last message, and longer while something keeps it alive: an open call, an armed watch condition, unfinished work, a delivered card or a reader's question. A handled historical terminal failure MUST NOT block valid later work, including an ordinary milestone, but pending/running inputs and required tool results MUST NOT be discarded to declare completion. |
+| FR-P-05 | Tank MUST alarm "Tank Ops" when the analyst stops working while work waits for it: a material or other message has waited for the agent for ⚙15 min, or an agent session has been working on a message for 15 min with no agent model call in that time. One stall gives one alarm, with the number of waiting messages, how long the oldest has waited, the sessions at work and the agent model calls in the window; a later stall after recovery alarms again. |
 
 ---
 
@@ -404,7 +405,7 @@ WHAT TO DO: DON'T CHASE
 
 ### 7.2 "Tank Ops" notices
 
-"Tank Ops" receives exactly these four notices:
+"Tank Ops" receives exactly these five notices:
 
 | Notice | When | What it contains |
 |---|---|---|
@@ -412,6 +413,7 @@ WHAT TO DO: DON'T CHASE
 | ENTRY ERRORS | A source poll returned entries Tank could not turn into a material: no identifier or link, an entry that does not match the source's format, a damaged feed document, a tracked Snapshot proposal missing from the answer, an X profile that could not be read | One message per poll with all its new broken entries; each broken entry is reported only once, however often the source repeats it. For an X profile that failed every attempt, the message lists the attempts and the HTTP request, and the HTTP responses (status, headers, body) are attached as documents in reply to it. |
 | DELIVERY FAILED | A card or update for "Tank Alerts" was not delivered after 5 attempts | The card and its version; the material's processing card shows the same failure. A notice that itself fails to reach "Tank Ops" creates no further notice. |
 | HEARTBEAT | Daily at 08:00 UTC | The figures of FR-P-02. |
+| AGENT STALL | The analyst stopped working while work waits for it (FR-P-05) | How many messages wait for the agent and since when, how many sessions are at work, how many agent model calls were made in the window, and which condition fired. Sent once per stall. |
 
 A reply in "Tank Ops" to the card of a material reaches the agent that handled it (FR-P-03); a reply to a notice that concerns no material, such as the heartbeat, gets a short explanation.
 

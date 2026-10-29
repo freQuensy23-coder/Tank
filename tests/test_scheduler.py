@@ -1090,6 +1090,135 @@ async def test_reaction_creation_registers_only_five_post_jobs_and_starts_pre_wi
 
 
 @pytest.mark.asyncio
+async def test_scheduled_event_pre_windows_wait_until_their_anchor_has_passed():
+    """A PRE window ends at the anchor. For a scheduled T0 two days ahead it was measured
+    at once over future minutes and then revised every half hour; each PRE window is now a
+    durable job due at T0, so it runs even if the event leaves the active set first."""
+    import asyncio
+
+    repo = MemoryRepository()
+    now = utcnow().replace(microsecond=0)
+    event_time = now + timedelta(days=2)
+    event = {
+        "event_id": "scheduled-major",
+        "event_time": iso(event_time),
+        "event_time_prec": "EXACT",
+        "state_verified": True,
+        "public_at": iso(now - timedelta(hours=1)),
+        "public_at_prec": "EXACT",
+    }
+    scheduler = Scheduler(repo, SimpleNamespace(), object(), None)
+    scheduler.latest_assessment = AsyncMock(return_value={"class": "MAJOR"})
+    scheduler.analysis_tokens = AsyncMock(return_value={"token:T"})
+    captured = []
+
+    async def capture(payload, *, wait_for_slot=False):
+        captured.append(payload)
+
+    scheduler.reaction_capture = capture
+    try:
+        await scheduler.ensure_reactions(event, now=now)
+        await asyncio.gather(*scheduler.background.values())
+        assert captured == []
+        jobs = await repo.list("ops.jobs", filters={"type": "REACTION_CAPTURE"})
+        assert len(jobs) == 8 and all(job["payload"]["anchor"]["type"] == "T0" for job in jobs)
+        pre = {
+            job["payload"]["checkpoint"]: job
+            for job in jobs
+            if job["payload"]["checkpoint"].startswith("PRE")
+        }
+        assert set(pre) == {"PRE_24H", "PRE_4H", "PRE_1H"}
+        assert all(job["run_after"] == iso(event_time) for job in pre.values())
+        await scheduler.ensure_reactions(event, now=event_time + timedelta(minutes=1))
+        await asyncio.gather(*scheduler.background.values())
+        assert captured == []
+        assert len(await repo.list("ops.jobs", filters={"type": "REACTION_CAPTURE"})) == 8
+    finally:
+        await scheduler.close()
+
+
+@pytest.mark.asyncio
+async def test_pre_checkpoint_captured_before_its_window_ended_is_revised_once_after_it():
+    """Rows written before this rule have PRE windows measured before they ended; once the
+    window has ended each gets one automatic revision with an explicit reason."""
+    repo = MemoryRepository()
+    now = utcnow().replace(microsecond=0)
+    anchor = now - timedelta(hours=1)
+    event = {
+        "event_id": "early-major",
+        "event_time": iso(anchor),
+        "event_time_prec": "EXACT",
+        "state_verified": True,
+    }
+    for label, captured_at, revision in (
+        ("PRE_1H", anchor - timedelta(days=2), 2),
+        ("PRE_4H", anchor + timedelta(minutes=5), 1),
+    ):
+        await repo.put(
+            "out.reaction_checkpoints",
+            f"early-major:token:T:{label}:{revision}",
+            {
+                "event_id": "early-major",
+                "token_id": "token:T",
+                "checkpoint": label,
+                "revision": revision,
+                "captured_at": iso(captured_at),
+                "window_end": iso(anchor),
+                "anchor": {"type": "T0", "ts": iso(anchor)},
+            },
+        )
+    scheduler = Scheduler(repo, SimpleNamespace(), None, None)
+    scheduler.latest_assessment = AsyncMock(return_value={"class": "MAJOR"})
+    scheduler.analysis_tokens = AsyncMock(return_value={"token:T"})
+    try:
+        for _ in range(2):
+            await scheduler.ensure_reactions(event, now=now)
+        revisions = [
+            job
+            for job in await repo.list("ops.jobs", filters={"type": "REACTION_CAPTURE"})
+            if job["payload"].get("automatic_revision")
+        ]
+        assert [job["payload"]["checkpoint"] for job in revisions] == ["PRE_1H"]
+        assert revisions[0]["idem_key"] == "reaction-early:early-major:token:T:PRE_1H:2"
+        assert revisions[0]["payload"]["reason"] == "Captured before its window ended at " + iso(anchor)
+    finally:
+        await scheduler.close()
+
+
+@pytest.mark.asyncio
+async def test_late_data_does_not_revise_a_window_that_has_not_ended():
+    repo = MemoryRepository()
+    now = utcnow().replace(microsecond=0)
+    anchor = now + timedelta(days=2)
+    await repo.put(
+        "out.reaction_checkpoints",
+        "e:t:PRE_1H",
+        {
+            "event_id": "e",
+            "token_id": "t",
+            "checkpoint": "PRE_1H",
+            "revision": 1,
+            "captured_at": iso(now - timedelta(hours=1)),
+            "window_end": iso(anchor),
+            "anchor": {"ts": iso(anchor)},
+        },
+    )
+
+    class Market:
+        async def capture_changes(self, since, end):
+            yield {
+                "change_id": "CAP-LIVE-1",
+                "event_id": "e",
+                "token_id": "t",
+                "anchor": iso(anchor),
+                "observed_at": iso(now),
+            }
+
+    await Scheduler(repo, SimpleNamespace(), Market(), None).detect_late_data(now)
+    assert await repo.list("ops.jobs", filters={"type": "REACTION_CAPTURE"}) == []
+
+
+@pytest.mark.asyncio
 async def test_reaction_pre_capture_restart_resumes_only_missing_immutable_rows(monkeypatch):
     import asyncio
 
@@ -1743,5 +1872,138 @@ async def test_failed_capture_job_of_this_event_records_a_gap_and_other_events_j
         gaps = await repo.list("ops.scheduler_checkpoints", filters={"kind": "REACTION_CAPTURE_GAP"})
         assert [(g["state"]["event_id"], g["state"]["checkpoint"]) for g in gaps] == [("evt-1", "POST_15M")]
         assert len(await repo.list("ops.jobs", filters={"type": "REACTION_CAPTURE"})) == 6
+    finally:
+        await scheduler.close()
+
+
+@pytest.mark.asyncio
+async def test_backfill_terminal_reruns_truth_assembled_while_capture_was_unfinished():
+    """03 §5.1: Market Truth waits only a bounded time for the pre-event backfill. When the
+    backfill ends after the latest truth was assembled without it, the truth is computed
+    again once at the same cutoff; a truth that already saw the terminal run is kept."""
+    repo = MemoryRepository()
+    now = utcnow().replace(microsecond=0)
+    cutoff = now.replace(second=0) - timedelta(minutes=40)
+    for token, status in (("t", "INCOMPLETE"), ("done", "PARTIAL")):
+        await repo.put(
+            "ana.market_truth",
+            "MTA-" + token,
+            {
+                "mta_id": "MTA-" + token,
+                "event_id": "e",
+                "token_id": token,
+                "cutoff": iso(cutoff),
+                "cutoff_prec": "BUCKET(1m)",
+                "detail": {"capture_status": {"status": status, "backfill_id": "BF-" + token}},
+            },
+            immutable=True,
+        )
+
+    class Market:
+        async def capture_changes(self, since, end):
+            for token in ("t", "done", "other"):
+                yield {
+                    "backfill_id": "BF-" + token,
+                    "event_id": "e",
+                    "token_id": token,
+                    "anchor": iso(cutoff - timedelta(minutes=3)),
+                    "status": "COMPLETE",
+                    "finished_at": iso(now),
+                    "kind": "HISTORICAL_CAPTURE_TERMINAL",
+                }
+
+    scheduler = Scheduler(repo, SimpleNamespace(), Market(), None)
+    for _ in range(2):
+        await scheduler.detect_late_data(now)
+    (job,) = await repo.list("ops.jobs", filters={"type": "RUN_MARKET_TRUTH"})
+    assert job["payload"]["event_id"] == "e" and job["payload"]["token_id"] == "t"
+    from tank.util import parse_time
+
+    assert parse_time(job["payload"]["cutoff"]) == cutoff
+    assert job["payload"]["cutoff_prec"] == "BUCKET(1m)"
+    assert job["idem_key"] == "e:t:capture:BF-t"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("finished", [True, False])
+async def test_backfill_ending_during_an_assessment_reruns_the_truth_it_left_behind(finished):
+    """03 §5.1: the backfill can end after the assessment read its snapshot and before the
+    record is stored. The capture-change scan then finds no truth to refresh and consumes
+    the change, so the stored record is checked once more; a backfill still running is left
+    to the scan that will see the stored record."""
+    from tank.runtime import Runtime
+    from tank.time_precision import chosen_boundary
+    from tank.util import parse_time
+
+    repo = MemoryRepository()
+    now = utcnow().replace(microsecond=0)
+    cutoff = now.replace(second=0) - timedelta(minutes=5)
+    anchor = iso(cutoff - timedelta(minutes=3))
+    await repo.put("evt.events", "e", {"event_id": "e", "public_at": anchor, "known_to_us_at": anchor})
+    run = {"backfill_id": "BF-1", "event_id": "e", "token_id": "t", "anchor": anchor, "status": "RUNNING"}
+    await repo.put("mkt.backfill_runs", "BF-1", run)
+    terminal = {
+        "backfill_id": "BF-1",
+        "event_id": "e",
+        "token_id": "t",
+        "anchor": anchor,
+        "status": "COMPLETE",
+        "finished_at": iso(now),
+        "kind": "HISTORICAL_CAPTURE_TERMINAL",
+    }
+
+    class Market:
+        changes = []
+
+        async def capture_readiness(self, event_id, token_id, *, anchor):
+            return {"status": "RUNNING"}
+
+        async def wait_capture(self, event_id, token_id, *, timeout_s):
+            return None
+
+        async def capture_changes(self, since, end):
+            for change in self.changes:
+                yield change
+
+    class Truth:
+        async def assess(self, event_id, token_id, at):
+            result = {
+                "mta_id": "MTA-1",
+                "event_id": event_id,
+                "token_id": token_id,
+                **at.fields("cutoff"),
+                "detail": {"capture_status": {"status": "INCOMPLETE", "backfill_id": "BF-1"}},
+            }
+            if finished:
+                await repo.put(
+                    "mkt.backfill_runs", "BF-1", run | {"status": "COMPLETE", "finished_at": iso(now)}
+                )
+                Market.changes = [terminal]
+                await scheduler.detect_late_data(now)
+            await repo.put("ana.market_truth", "MTA-1", result, immutable=True)
+            return result
+
+    market = Market()
+    scheduler = Scheduler(repo, SimpleNamespace(), market, Truth())
+    runtime = object.__new__(Runtime)
+    runtime.repo, runtime.market, runtime.truth, runtime.scheduler = repo, market, scheduler.truth, scheduler
+    payload = {
+        "event_id": "e",
+        "token_id": "t",
+        **chosen_boundary(cutoff, precision="BUCKET(1m)").fields("cutoff"),
+    }
+    try:
+        await runtime.assess(payload)
+        jobs = await repo.list("ops.jobs", filters={"type": "RUN_MARKET_TRUTH"})
+        if not finished:
+            assert jobs == []
+            await repo.put("mkt.backfill_runs", "BF-1", run | {"status": "COMPLETE", "finished_at": iso(now)})
+            Market.changes = [terminal]
+            await scheduler.detect_late_data(now + timedelta(seconds=1))
+            jobs = await repo.list("ops.jobs", filters={"type": "RUN_MARKET_TRUTH"})
+        (job,) = jobs
+        assert job["idem_key"] == "e:t:capture:BF-1"
+        assert parse_time(job["payload"]["cutoff"]) == cutoff
+        assert job["payload"]["cutoff_prec"] == "BUCKET(1m)"
     finally:
         await scheduler.close()

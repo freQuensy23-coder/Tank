@@ -8,12 +8,14 @@ import pytest
 from click.testing import CliRunner
 
 from tank import cli
-from tank.agents.incomplete import AGENT_INCOMPLETE, LEGACY_INCOMPLETE
+from tank.agents.incomplete import AGENT_INCOMPLETE, LEGACY_INCOMPLETE, SESSION_FAILED
 from tank.storage import MemoryRepository
 
 ITEMS = {
     "ITM-incomplete": {"extraction_status": "FAILED", "extraction_reason": AGENT_INCOMPLETE},
     "ITM-legacy": {"extraction_status": "SKIPPED", "extraction_reason": LEGACY_INCOMPLETE},
+    "ITM-session-failed": {"extraction_status": "FAILED", "extraction_reason": SESSION_FAILED},
+    "ITM-reminded-failed": {"extraction_status": "FAILED", "extraction_reason": "AGENT_REMINDED"},
     "ITM-rejected": {
         "extraction_status": "SKIPPED",
         "extraction_decision": "NO_EVENT",
@@ -24,7 +26,7 @@ ITEMS = {
     "ITM-done": {"extraction_status": "DONE"},
     "ITM-pending": {"extraction_status": "PENDING"},
 }
-ELIGIBLE = ["ITM-incomplete", "ITM-legacy"]
+ELIGIBLE = ["ITM-incomplete", "ITM-legacy", "ITM-session-failed", "ITM-reminded-failed"]
 
 
 @pytest.fixture
@@ -59,7 +61,7 @@ def jobs(repo):
 def test_dry_run_is_the_default_and_changes_nothing(monkeypatch, repo):
     before = copy.deepcopy(stored(repo))
     listed = invoke(monkeypatch, repo)
-    assert (listed["apply"], listed["count"]) == (False, 2)
+    assert (listed["apply"], listed["count"]) == (False, len(ELIGIBLE))
     assert [row["item_id"] for row in listed["items"]] == ELIGIBLE
     assert all("queued" not in row for row in listed["items"])
     assert stored(repo) == before
@@ -79,7 +81,7 @@ def test_apply_requeues_only_incomplete_items(monkeypatch, repo):
         )
     for item_id in set(ITEMS) - set(ELIGIBLE):
         assert after[item_id] == before[item_id]
-    assert jobs(repo) == [("ROUTE_ITEM", f"{item_id}:reanalysis:1") for item_id in ELIGIBLE]
+    assert jobs(repo) == sorted(("ROUTE_ITEM", f"{item_id}:reanalysis:1") for item_id in ELIGIBLE)
 
 
 def test_applying_twice_does_not_enqueue_again(monkeypatch, repo):

@@ -1150,12 +1150,12 @@ async def test_runtime_autonomous_source_to_telegram(tmp_path, monkeypatch, capl
         async def run(self, event):
             await event.wait()
 
-        async def escalate(self, event_id, tokens):
+        async def escalate(self, event_id, tokens, anchor=None):
             from tank.market.capture import event_anchor
             from tank.util import sha256
 
             self.escalations.append((event_id, tokens))
-            anchor = event_anchor(await repo.get("evt.events", event_id))["ts"]
+            anchor = anchor or event_anchor(await repo.get("evt.events", event_id), at=iso())["ts"]
             for token in tokens:
                 key = "BF-" + sha256({"event_id": event_id, "token_id": token, "anchor": iso(anchor)})
                 await repo.put(

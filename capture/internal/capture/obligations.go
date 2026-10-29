@@ -593,7 +593,7 @@ func (s *Service) captureWindowCoverage(ctx context.Context, inst *venue.Instrum
 			w[k] = v
 		}
 		windows[fmt.Sprintf("W%dH", hours)] = w
-		allComplete = allComplete && windowComplete && unresolved == 0
+		allComplete = allComplete && windowComplete
 	}
 	result := map[string]any{"instrument_id": inst.ID, "windows": windows, "complete": allComplete}
 	if inst.Spot() {

@@ -1,9 +1,10 @@
 """Capture policies shared by ingestion, repair and operator reports."""
 
 from tank.time_precision import propagate_timestamp
+from tank.util import parse_time
 
 
-def event_anchor(event):
+def _verified_t0(event):
     value = event.get("event_time")
     precision = event.get("event_time_prec", event.get("event_time_precision"))
     if isinstance(value, dict):
@@ -11,7 +12,26 @@ def event_anchor(event):
     if value and precision == "EXACT" and event.get("state_verified"):
         selected = propagate_timestamp(event, "event_time")
         if selected.value and selected.precision == "EXACT":
-            return {"type": "T0", **selected.fields("ts")}
+            return selected
+    return None
+
+
+def t0_pending(event, at):
+    """Whether `event` has a verified EXACT T0 that has not happened before `at`."""
+    selected = _verified_t0(event)
+    return selected is not None and parse_time(selected.value) >= parse_time(at)
+
+
+def event_anchor(event, at=None):
+    """The market anchor of `event`: verified EXACT T0, else T1, else known_to_us_at.
+
+    With `at`, a T0 that is not strictly before `at` has not happened yet at that
+    moment, so the anchor falls back to T1 or known_to_us_at; a scheduled event is
+    anchored on its own time only once that time has passed.
+    """
+    selected = _verified_t0(event)
+    if selected is not None and (at is None or not t0_pending(event, at)):
+        return {"type": "T0", **selected.fields("ts")}
     for field, kind in (("public_at", "T1"), ("known_to_us_at", "KNOWN_TO_US_AT")):
         if event.get(field):
             selected = propagate_timestamp(event, field)

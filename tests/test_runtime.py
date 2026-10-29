@@ -5,6 +5,7 @@ from unittest.mock import AsyncMock
 import pytest
 
 from tank.runtime import Runtime
+from tank.scheduler import Scheduler
 from tank.storage import MemoryRepository
 from tank.util import parse_time
 
@@ -833,11 +834,10 @@ async def test_external_capture_consumer_uses_bounded_incomplete_then_terminal_h
         runtime.repo = repo
         runtime.market = market
         runtime.truth = truth
+        runtime.scheduler = Scheduler(repo, settings, market, truth)
         runtime.handlers = {
             "RUN_MARKET_TRUTH": runtime.assess,
-            "EVAL_CONDITIONS": __import__("tank.scheduler", fromlist=["Scheduler"])
-            .Scheduler(repo, settings, market, truth)
-            .eval_conditions,
+            "EVAL_CONDITIONS": runtime.scheduler.eval_conditions,
         }
         runtime.active_jobs = set()
         await market._schedule_event_backfill("e", "T", anchor)
@@ -1278,6 +1278,7 @@ async def test_market_truth_repairs_windows_within_budget_before_assessing():
     await repo.put("evt.events", "e", {"event_id": "e", "public_at": anchor, "known_to_us_at": anchor})
     rt = object.__new__(Runtime)
     rt.repo, rt.market, rt.truth = repo, Market(), Truth()
+    rt.scheduler = Scheduler(repo, SimpleNamespace(), rt.market, rt.truth)
     result = await rt.assess({"event_id": "e", "token_id": "T", "cutoff": "2026-10-20T13:00:00Z"})
     assert result == {"mta_id": "MTA"} and [c[0] for c in calls] == ["repair", "assess"]
     _, token, start, end, budget = calls[0]

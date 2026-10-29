@@ -29,6 +29,30 @@ def count_read(state, name, *, ok, n=1):
     counters["ok" if ok else "failed"] += n
 
 
+async def recapture(repo, source, external_ids, *, apply=False):
+    """Release entries a feed checkpoint skips as duplicates so the next poll ingests them anew.
+
+    Lists every feed checkpoint of the source whose duplicate_ids hold one of external_ids.
+    With apply, removes those ids and the feed's conditional-request validators, so the next
+    poll reads the full feed and judges the entries by the current deduplication rule (03 §3.1).
+    """
+    wanted = {str(external_id) for external_id in external_ids}
+    rows = []
+    for index in range(len(source["feeds"])):
+        key = f"{source['source_id']}:{index}"
+        state = await repo.get("ops.source_checkpoints", key)
+        listed = [x for x in (state or {}).get("duplicate_ids", []) if x in wanted]
+        if not listed:
+            continue
+        rows.append({"checkpoint": key, "external_ids": listed, "released": apply})
+        if apply:
+            state["duplicate_ids"] = [x for x in state["duplicate_ids"] if x not in wanted]
+            state.pop("etag", None)
+            state.pop("last_modified", None)
+            await repo.put("ops.source_checkpoints", key, state)
+    return {"source_id": source["source_id"], "apply": apply, "checkpoints": rows}
+
+
 def instrument_changes(snapshot, previous, feed, pages, found_on, completed_at):
     """S14 diff against the previous snapshot and the snapshot digest (CPU-bound, runs in a thread).
 

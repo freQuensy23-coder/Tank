@@ -230,6 +230,7 @@ async def test_wait_data_watch_refreshes_truth_before_decision_and_replays_lost_
 
         runtime = object.__new__(Runtime)
         runtime.repo, runtime.market, runtime.truth = repo, market, truth
+        runtime.scheduler = Scheduler(repo, SimpleNamespace(), market, truth)
         runtime.handlers = {"ESCALATE_TOKENS": runtime.escalate, "RUN_MARKET_TRUTH": runtime.assess}
         stop = asyncio.Event()
         worker = None
@@ -292,12 +293,49 @@ async def test_runtime_waits_for_capture_release_before_numerical_assessment():
         capture_readiness=AsyncMock(return_value={"status": "RUNNING"}), wait_capture=wait_capture
     )
     runtime.truth = SimpleNamespace(assess=AsyncMock(return_value={"measured": True}))
+    runtime.scheduler = Scheduler(repo, SimpleNamespace(), runtime.market, runtime.truth)
     job = asyncio.create_task(runtime.assess({"event_id": "e", "token_id": "T"}))
     await waiting.wait()
     runtime.truth.assess.assert_not_called()
     release.set()
     assert await job == {"measured": True}
     runtime.truth.assess.assert_awaited_once()
+
+
+async def test_runtime_checks_the_capture_at_t1_before_a_scheduled_t0():
+    """The obligation of a pre-T0 call is anchored at T1; checking readiness at the future
+    T0 would find no durable capture and fail the job."""
+    repo = MemoryRepository()
+    cutoff = utcnow().replace(second=0, microsecond=0)
+    public_at = iso(cutoff - timedelta(hours=1))
+    await repo.put(
+        "evt.events",
+        "e",
+        {
+            "event_id": "e",
+            "event_time": iso(cutoff + timedelta(days=2)),
+            "event_time_prec": "EXACT",
+            "state_verified": True,
+            "public_at": public_at,
+            "public_at_prec": "EXACT",
+        },
+    )
+    runtime = object.__new__(Runtime)
+    runtime.repo = repo
+    runtime.market = SimpleNamespace(
+        capture_readiness=AsyncMock(return_value={"status": "PARTIAL"}), repair_windows=AsyncMock()
+    )
+    runtime.truth = SimpleNamespace(assess=AsyncMock(return_value={"measured": True}))
+    runtime.scheduler = Scheduler(repo, SimpleNamespace(), runtime.market, runtime.truth)
+    payload = {
+        "event_id": "e",
+        "token_id": "T",
+        **chosen_boundary(cutoff, precision="BUCKET(1m)").fields("cutoff"),
+    }
+    assert await runtime.assess(payload) == {"measured": True}
+    assert runtime.market.capture_readiness.await_args.kwargs["anchor"] == public_at
+    repaired_from = runtime.market.repair_windows.await_args.args[1]
+    assert repaired_from < parse_time(public_at)
 
 
 @pytest.mark.parametrize(
@@ -355,6 +393,7 @@ async def test_cancelled_preflight_reuses_job_before_any_decision_ledger(
             market.released = True
             runtime = object.__new__(Runtime)
             runtime.repo, runtime.market, runtime.truth = repo, market, truth
+            runtime.scheduler = Scheduler(repo, SimpleNamespace(), market, truth)
             runtime.handlers = {"ESCALATE_TOKENS": runtime.escalate, "RUN_MARKET_TRUTH": runtime.assess}
             stop = asyncio.Event()
             worker = asyncio.create_task(runtime.worker(stop))
@@ -430,6 +469,7 @@ async def test_condition_firing_during_refresh_wait_is_deferred_until_its_own_re
         market.released = True
         runtime = object.__new__(Runtime)
         runtime.repo, runtime.market, runtime.truth = repo, market, truth
+        runtime.scheduler = Scheduler(repo, SimpleNamespace(), market, truth)
         runtime.handlers = {"ESCALATE_TOKENS": runtime.escalate, "RUN_MARKET_TRUTH": runtime.assess}
         stop = asyncio.Event()
         worker = asyncio.create_task(runtime.worker(stop))
