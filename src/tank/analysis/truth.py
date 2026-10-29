@@ -63,23 +63,8 @@ def decimal(v):
         v = v.get("value")
     if v is None:
         return None
-    inputs = _ASSESSMENT_INPUTS.get()
-    memo = inputs.setdefault("decimal_scalars", {}) if inputs is not None else None
-    reusable = memo is not None and type(v) in (str, int, float, Decimal)
-    if reusable:
-        hit = memo.get(id(v))
-        if hit is not None and hit[0] is v:
-            context = getcontext()
-            context.prec = max(context.prec, hit[2])
-            return hit[1]
     value = v if isinstance(v, Decimal) else Decimal(str(v))
-    if reusable and value.is_finite():
-        required = 2 * (value.adjusted() - value.as_tuple().exponent + 1) + 32
-        context = getcontext()
-        context.prec = max(context.prec, required)
-        memo[id(v)] = (v, value, required)
-    else:
-        exact_context(value)
+    exact_context(value)
     return value
 
 
