@@ -40,7 +40,7 @@ async def test_compact_wire_empty_result_does_not_return_a_header_as_data():
 
 @pytest.mark.parametrize(
     "payload",
-    [b'42\n[1]\n', b'["value",1]\n[1,2]\n', b'["value"]\n{"value":1}\n', b'["value"]\n[1,2]\n'],
+    [b"42\n[1]\n", b'["value",1]\n[1,2]\n', b'["value"]\n{"value":1}\n', b'["value"]\n[1,2]\n'],
 )
 async def test_compact_wire_rejects_invalid_headers_or_row_width(payload):
     with pytest.raises(ValueError):

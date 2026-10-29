@@ -53,3 +53,16 @@ async def test_single_projection_guard_preserves_literals_and_removes_private_re
     assert await model.project(payload) == expected
     assert await model.result("get_market_truth", payload) == expected
     assert payload["config_version"] == "hidden"
+
+
+async def test_projection_keeps_standalone_registry_labels_and_guards_object_values(context):
+    repo, settings, session, item = context
+    model = boundary.ModelContext(repo, settings, session)
+    project = f"Registry {item['item_id']}"
+    model.tokens = {"custom:T": {"name": project, "symbol": "T"}}
+    label = f"{project} (T) · custom:T"
+    assert await model.project("custom:T") == label
+    assert await model.project(["custom:T"]) == [label]
+    assert await model.project({"token_id": "custom:T"}) == {
+        "token": "Registry [internal reference omitted] (T) · custom:T"
+    }
