@@ -277,6 +277,34 @@ def fit_result(result, max_bytes=TOOL_RESULT_MAX_BYTES):
     return {"items": fitted, "_truncated": note}
 
 
+OPEN_EVENTS_PAGE = 50
+OPEN_EVENTS_MAX_DAYS = 90
+OPEN_EVENT_FIELDS = (
+    "event_id",
+    "statement",
+    "entities",
+    "tokens_mentioned",
+    "event_state",
+    "state_verified",
+    "lifecycle",
+    "certainty",
+    "freshness",
+    "known_to_us_at",
+    "public_at",
+)
+
+
+def query_terms(query):
+    """The distinct casefolded words of a free-text filter, in order."""
+    return list(dict.fromkeys(re.findall(r"\w+", str(query).casefold())))
+
+
+def statement_relevance(terms, statement):
+    """How many of the query words begin a word of the statement (ETF matches ETFs)."""
+    words = re.findall(r"\w+", statement.casefold())
+    return sum(any(word.startswith(term) for word in words) for term in terms)
+
+
 UNLOCK_ROWS_SHOWN = 14
 TICKER_MAX_AGE_S = 3600
 UNLOCK_WINDOW_DAYS = 14
@@ -724,64 +752,119 @@ class EventToolService:
         }
 
     def identities(self, a):
-        """The registry identities a token_id or entity_id filter covers: the token or entity and its pair."""
+        """Every registry identity a token_id or entity_id filter covers (get_registry)."""
+        return set().union(*self.identity_sides(a))
+
+    def identity_sides(self, a):
+        """The registry identity sets of the token_id and entity_id filters.
+
+        Each filter covers its key and the registry pair (a token's project, a
+        project's tokens); an event must match every given filter."""
         tokens = self.settings.load_config("registry").get("tokens", [])
-        wanted = set()
+        sides = []
         if a.get("token_id"):
-            wanted |= {
-                a["token_id"],
-                *(row.get("entity_id") for row in tokens if row["token_id"] == a["token_id"]),
-            }
+            sides.append(
+                {
+                    a["token_id"],
+                    *(row.get("entity_id") for row in tokens if row["token_id"] == a["token_id"]),
+                }
+                - {None}
+            )
         if a.get("entity_id"):
-            wanted |= {
-                a["entity_id"],
-                *(row["token_id"] for row in tokens if row.get("entity_id") == a["entity_id"]),
-            }
-        return wanted - {None}
+            sides.append(
+                {
+                    a["entity_id"],
+                    *(row["token_id"] for row in tokens if row.get("entity_id") == a["entity_id"]),
+                }
+                - {None}
+            )
+        return sides
 
     async def list_open_events(self, a, c):
-        wanted = self.identities(a)
+        """Open events active within the routing window that match every filter,
+        most relevant then most recently active first, one bounded page at a time."""
+        sides = self.identity_sides(a)
+        days = a.get("days")
+        if days is None:
+            days = self.settings.load_config("thresholds").get("routing_window_days", 3)
+        if (
+            isinstance(days, bool)
+            or not isinstance(days, (int, float))
+            or not 0 < days <= OPEN_EVENTS_MAX_DAYS
+        ):
+            raise ValueError(f"days must be >0 and <={OPEN_EVENTS_MAX_DAYS}")
+        offset = a.get("offset") or 0
+        if isinstance(offset, bool) or not isinstance(offset, int) or offset < 0:
+            raise ValueError("offset must be a nonnegative integer")
+        terms = query_terms(a.get("query") or "")
 
         statuses = {}
-        for session in await self.rows("ops.agent_sessions"):
-            if session.get("event_id"):
-                statuses.setdefault(session["event_id"], set()).add(session.get("status"))
-        failed = {eid for eid, seen in statuses.items() if seen == {"FAILED"}}
         sessions = {}
+        last_item = {}
         for session in await self.rows("ops.agent_sessions"):
-            if session.get("event_id"):
-                sessions.setdefault(session["event_id"], []).append(
+            if event_id := session.get("event_id"):
+                statuses.setdefault(event_id, set()).add(session.get("status"))
+                sessions.setdefault(event_id, []).append(
                     {"session_id": session.get("session_id"), "status": session.get("status")}
                 )
-        fields = (
-            "event_id",
-            "statement",
-            "entities",
-            "tokens_mentioned",
-            "event_state",
-            "state_verified",
-            "lifecycle",
-            "certainty",
-            "freshness",
-            "known_to_us_at",
-            "public_at",
+                if session.get("last_item_at"):
+                    last_item[event_id] = max(
+                        [
+                            parse_time(session["last_item_at"]),
+                            *([last_item[event_id]] if event_id in last_item else []),
+                        ]
+                    )
+        failed = {eid for eid, seen in statuses.items() if seen == {"FAILED"}}
+
+        candidates = []
+        for r in await self.rows("evt.events"):
+            if r.get("lifecycle") in {"CLOSED", "MERGED", "INVALIDATED"} or r["event_id"] in failed:
+                continue
+            identities = {
+                *(e.get("entity_id") for e in r.get("entities", []) if isinstance(e, dict)),
+                *r.get("tokens_mentioned", []),
+            }
+            if not all(side & identities for side in sides):
+                continue
+            stamps = [parse_time(r[k]) for k in ("known_to_us_at", "review_requested_at") if r.get(k)]
+            if r["event_id"] in last_item:
+                stamps.append(last_item[r["event_id"]])
+            candidates.append((max(stamps) if stamps else None, r))
+        cutoff = utcnow() - timedelta(days=days)
+
+        ranked = []
+        for active, r in candidates:
+            if active is not None and active < cutoff:
+                continue
+            relevance = statement_relevance(terms, r.get("statement") or "")
+            if terms and not relevance:
+                continue
+            ranked.append((relevance, active, r))
+        ranked.sort(
+            key=lambda row: (-row[0], -(row[1].timestamp() if row[1] else float("inf")), row[2]["event_id"])
         )
-        return {
-            "events": [
-                {**{k: r.get(k) for k in fields}, "sessions": sessions.get(r["event_id"], [])}
-                for r in await self.rows("evt.events")
-                if r["lifecycle"] not in {"CLOSED", "MERGED", "INVALIDATED"}
-                and r["event_id"] not in failed
-                and (
-                    not wanted
-                    or wanted
-                    & {
-                        *(e.get("entity_id") for e in r.get("entities", []) if isinstance(e, dict)),
-                        *r.get("tokens_mentioned", []),
-                    }
-                )
-            ]
+        total = len(ranked)
+        page = [
+            {
+                **{k: r.get(k) for k in OPEN_EVENT_FIELDS},
+                "last_activity_at": iso(active) if active else None,
+                **({"relevance": relevance} if terms else {}),
+                "sessions": sessions.get(r["event_id"], []),
+            }
+            for relevance, active, r in ranked[offset : offset + OPEN_EVENTS_PAGE]
+        ]
+        result = {
+            "total": total,
+            "offset": offset,
+            "days": days,
+            "events": page,
+            "next_offset": None,
         }
+        while len(page) > 1 and len(canonical_json(result).encode()) > TOOL_RESULT_MAX_BYTES - 1000:
+            page.pop()
+        if offset + len(page) < total:
+            result["next_offset"] = offset + len(page)
+        return result
 
     async def get_event(self, a, c):
         eid = a["event_id"]
