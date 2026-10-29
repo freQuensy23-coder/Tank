@@ -230,6 +230,7 @@ async def test_wait_data_watch_refreshes_truth_before_decision_and_replays_lost_
 
         runtime = object.__new__(Runtime)
         runtime.repo, runtime.market, runtime.truth = repo, market, truth
+        runtime.scheduler = Scheduler(repo, SimpleNamespace(), market, truth)
         runtime.handlers = {"ESCALATE_TOKENS": runtime.escalate, "RUN_MARKET_TRUTH": runtime.assess}
         stop = asyncio.Event()
         worker = None
@@ -392,6 +393,7 @@ async def test_cancelled_preflight_reuses_job_before_any_decision_ledger(
             market.released = True
             runtime = object.__new__(Runtime)
             runtime.repo, runtime.market, runtime.truth = repo, market, truth
+            runtime.scheduler = Scheduler(repo, SimpleNamespace(), market, truth)
             runtime.handlers = {"ESCALATE_TOKENS": runtime.escalate, "RUN_MARKET_TRUTH": runtime.assess}
             stop = asyncio.Event()
             worker = asyncio.create_task(runtime.worker(stop))
@@ -467,6 +469,7 @@ async def test_condition_firing_during_refresh_wait_is_deferred_until_its_own_re
         market.released = True
         runtime = object.__new__(Runtime)
         runtime.repo, runtime.market, runtime.truth = repo, market, truth
+        runtime.scheduler = Scheduler(repo, SimpleNamespace(), market, truth)
         runtime.handlers = {"ESCALATE_TOKENS": runtime.escalate, "RUN_MARKET_TRUTH": runtime.assess}
         stop = asyncio.Event()
         worker = asyncio.create_task(runtime.worker(stop))

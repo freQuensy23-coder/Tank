@@ -834,11 +834,10 @@ async def test_external_capture_consumer_uses_bounded_incomplete_then_terminal_h
         runtime.repo = repo
         runtime.market = market
         runtime.truth = truth
+        runtime.scheduler = Scheduler(repo, settings, market, truth)
         runtime.handlers = {
             "RUN_MARKET_TRUTH": runtime.assess,
-            "EVAL_CONDITIONS": __import__("tank.scheduler", fromlist=["Scheduler"])
-            .Scheduler(repo, settings, market, truth)
-            .eval_conditions,
+            "EVAL_CONDITIONS": runtime.scheduler.eval_conditions,
         }
         runtime.active_jobs = set()
         await market._schedule_event_backfill("e", "T", anchor)
