@@ -389,6 +389,7 @@ APPEND_ONLY = frozenset(
         "qa.reviews",
     ]
 )
+LEAN_DOCUMENTS = {"out.reaction_checkpoints": "market_truth"}
 
 TABLE_COLUMNS["ops.jobs"].update(created_at="timestamptz", finished_at="timestamptz")
 TABLE_COLUMNS["mkt.backfill_runs"] = {
