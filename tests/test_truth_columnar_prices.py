@@ -105,7 +105,9 @@ def test_columnar_relative_result_matches_legacy_order_and_context(microseconds)
     assert packet == before
 
 
-@pytest.mark.parametrize("case", ["duplicate", "mismatch", "nonfinite", "callback"])
+@pytest.mark.parametrize(
+    "case", ["duplicate", "mismatch", "nonfinite", "callback", "custom_id", "custom_field"]
+)
 def test_unsupported_price_columns_retain_legacy_conversion_and_flags(case):
     packet = price_packet()
     projected = packet["stat_price_series"]["A:spot:T"]
@@ -116,12 +118,26 @@ def test_unsupported_price_columns_retain_legacy_conversion_and_flags(case):
             calls.append("price")
             return 107.0
 
+    class Key(str):
+        def __hash__(self):
+            calls.append("hash")
+            return str.__hash__(self)
+
+        def __eq__(self, other):
+            calls.append("equal")
+            return str.__eq__(self, other)
+
     if case == "duplicate":
         projected["times_us"][1] = projected["times_us"][0]
     elif case == "mismatch":
         projected["values"].pop()
     elif case == "nonfinite":
         projected["values"][1] = float("nan")
+    elif case == "custom_id":
+        packet["stat_price_series"] = {Key("A:spot:T"): projected}
+    elif case == "custom_field":
+        values = projected.pop("times_us")
+        projected[Key("times_us")] = values
     else:
         projected["values"] = [Price(), 102.0, 103.0, 104.0, 105.0, 106.0]
 

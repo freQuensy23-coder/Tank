@@ -16,6 +16,7 @@ import threading
 from array import array
 from bisect import bisect_left, bisect_right
 from collections import defaultdict
+from collections.abc import Mapping, Sequence
 from contextvars import ContextVar
 from copy import deepcopy
 from datetime import UTC, datetime, timedelta
@@ -2052,6 +2053,183 @@ def derivatives_truth(snapshot, start, end):
     )
 
 
+_PRICE_EPOCH = datetime(1970, 1, 1, tzinfo=UTC)
+
+
+def _price_micros(value):
+    delta = value - _PRICE_EPOCH
+    return delta.days * 86400000000 + delta.seconds * 1000000 + delta.microseconds
+
+
+class _ColumnPriceTimes(Sequence):
+    def __init__(self, series, stop):
+        self.series = series
+        self.micros = series.micros[:stop]
+
+    def __len__(self):
+        return len(self.micros)
+
+    def __getitem__(self, index):
+        if isinstance(index, slice):
+            return [self[at] for at in range(*index.indices(len(self)))]
+        return _PRICE_EPOCH + timedelta(microseconds=int(self.micros[index]))
+
+
+class _ColumnPrices(Mapping):
+    def __init__(self, micros, values, order):
+        self.micros = micros
+        self.values_array = values
+        self.order = order
+        self.plain = None
+
+    @classmethod
+    def prepare(cls, rows, projected, cutoff):
+        if type(projected) is not dict or any(type(key) is not str for key in projected):
+            return None
+        times, values = projected.get("times_us"), projected.get("values")
+        if (
+            type(times) is not array
+            or type(values) is not array
+            or times.typecode != "q"
+            or values.typecode != "d"
+            or times.itemsize != 8
+            or values.itemsize != 8
+            or len(times) != len(values)
+            or not times
+        ):
+            return None
+        if any(
+            type(at) is not datetime
+            or at.tzinfo is not UTC
+            or at.fold
+            or type(value) is not float
+            for at, value in rows.items()
+        ):
+            return None
+        stamps = np.frombuffer(times, dtype=np.int64)
+        prices = np.frombuffer(values, dtype=np.float64)
+        if np.any(stamps[1:] <= stamps[:-1]):
+            return None
+        try:
+            _ = _PRICE_EPOCH + timedelta(microseconds=int(stamps[0]))
+            _ = _PRICE_EPOCH + timedelta(microseconds=int(stamps[-1]))
+        except OverflowError:
+            return None
+        raw_times = np.fromiter((_price_micros(at) for at in rows), dtype=np.int64, count=len(rows))
+        raw_values = np.fromiter(rows.values(), dtype=np.float64, count=len(rows))
+        for column in (prices, raw_values):
+            if np.any(~np.isfinite(column)) or np.any(column < 2.0**-400) or np.any(column > 2.0**400):
+                return None
+        stop = int(np.searchsorted(stamps, _price_micros(cutoff), side="right"))
+        combined_times = np.concatenate((raw_times, stamps[:stop]))
+        combined_values = np.concatenate((raw_values, prices[:stop]))
+        if not len(combined_times):
+            return None
+        ordered = np.argsort(combined_times, kind="stable")
+        sorted_times = combined_times[ordered]
+        first = np.concatenate(([True], sorted_times[1:] != sorted_times[:-1]))
+        last = np.concatenate((sorted_times[1:] != sorted_times[:-1], [True]))
+        selected = ordered[last]
+        stamps = combined_times[selected]
+        if int(stamps[-1]) - int(stamps[0]) > 2**52:
+            return None
+        return cls(stamps, combined_values[selected], np.argsort(ordered[first], kind="stable"))
+
+    def __len__(self):
+        return len(self.micros)
+
+    def at(self, index):
+        return _PRICE_EPOCH + timedelta(microseconds=int(self.micros[index]))
+
+    def __iter__(self):
+        return (self.at(index) for index in self.order)
+
+    def items(self):
+        return ((self.at(index), float(self.values_array[index])) for index in self.order)
+
+    def __getitem__(self, key):
+        if type(key) is not datetime or key.tzinfo is not UTC:
+            if self.plain is None:
+                self.plain = dict(self.items())
+            return self.plain[key]
+        value = _price_micros(key)
+        index = int(np.searchsorted(self.micros, value))
+        if index == len(self) or int(self.micros[index]) != value:
+            raise KeyError(key)
+        return float(self.values_array[index])
+
+    def before(self, at):
+        return _ColumnPriceTimes(self, int(np.searchsorted(self.micros, _price_micros(at))))
+
+    def endpoint(self, at, fresh):
+        value = _price_micros(at)
+        index = int(np.searchsorted(self.micros, value, side="right")) - 1
+        if index < 0:
+            return None
+        if fresh:
+            step = (int(self.micros[index]) - int(self.micros[index - 1])) / 1000000 if index else 60
+            if (value - int(self.micros[index])) / 1000000 > max(step, 60):
+                return None
+        return float(self.values_array[index])
+
+
+def _hourly_prices(prices, *, exact_microseconds=False):
+    if type(prices) is _ColumnPrices:
+        stamps = prices.micros[prices.order]
+        mask = stamps % 3600000000 == 0 if exact_microseconds else (stamps // 1000000) % 3600 == 0
+        return {prices.at(index): float(prices.values_array[index]) for index in prices.order[mask]}
+    return {
+        at: value
+        for at, value in prices.items()
+        if at.minute == 0 and at.second == 0 and (not exact_microseconds or at.microsecond == 0)
+    }
+
+
+def _last_price_time(prices):
+    return prices.at(-1) if type(prices) is _ColumnPrices else max(prices)
+
+
+def _price_span_seconds(prices):
+    if type(prices) is _ColumnPrices:
+        return (int(prices.micros[-1]) - int(prices.micros[0])) / 1000000
+    return (max(prices) - min(prices)).total_seconds()
+
+
+def _statistical_price_groups(snapshot, token):
+    if type(snapshot) is not dict or any(type(key) is not str for key in snapshot):
+        return _price_groups(snapshot, token)
+    raw_cutoff = snapshot["cutoff"]
+    if type(raw_cutoff) not in (str, datetime) or (
+        type(raw_cutoff) is datetime and raw_cutoff.tzinfo is not UTC
+    ):
+        return _price_groups(snapshot, token)
+    cutoff = parse_time(raw_cutoff)
+    if type(cutoff) is not datetime or cutoff.tzinfo is not UTC:
+        return _price_groups(snapshot, token)
+    groups = _price_groups(dict(snapshot, stat_price_series={}), token)
+    projected_groups = snapshot.get("stat_price_series") or {}
+    plain_ids = type(projected_groups) is dict and all(type(key) is str for key in projected_groups)
+    for iid, projected in projected_groups.items():
+        if projected.get("time_basis") != "CLOSE_TIME":
+            continue
+        if token and projected.get("token_id") != token:
+            continue
+        columns = (
+            _ColumnPrices.prepare(groups.get(iid, {}), projected, cutoff)
+            if plain_ids and type(iid) is str and all(type(key) is str for key in groups)
+            else None
+        )
+        if columns is not None:
+            groups[iid] = columns
+            continue
+        for micros, value in zip(projected.get("times_us", ()), projected.get("values", ()), strict=False):
+            at = _PRICE_EPOCH + timedelta(microseconds=int(micros))
+            price = number(value)
+            if price and price > 0 and at <= cutoff:
+                groups[iid][at] = price
+    return groups
+
+
 def _prices(snapshot, token=None, *, exact=False, reference_only=False):
     inputs = _ASSESSMENT_INPUTS.get()
     if exact or inputs is None:
@@ -2061,7 +2239,7 @@ def _prices(snapshot, token=None, *, exact=False, reference_only=False):
     key = (id(candles), id(projected), snapshot["cutoff"], token)
     prices = inputs.setdefault("prices", {})
     if key not in prices:
-        prices[key] = (candles, projected, _price_groups(snapshot, token))
+        prices[key] = (candles, projected, _statistical_price_groups(snapshot, token))
     return prices[key][2]
 
 
@@ -2113,20 +2291,38 @@ def _price_groups(snapshot, token=None, *, exact=False, reference_only=False):
 
 
 def _relative_history_arrays(times, prices, btc, benchmark, coefficient):
-    temporal = _history_time_array(times, timedelta(0))
+    columnar = type(times) is _ColumnPriceTimes and times.series is prices and len(times) > 0
+    temporal = (
+        (times.micros - times.micros[0], 0, times[0])
+        if columnar
+        else _history_time_array(times, timedelta(0))
+    )
     if temporal is None or type(coefficient) not in (int, float):
         return None
     if not np.isfinite(coefficient) or abs(coefficient) > 2.0**100:
         return None
     if coefficient and abs(coefficient) < 2.0**-100:
         return None
-    values = [prices[t] for t in times]
-    present = np.asarray([t in btc for t in times], dtype=bool)
-    benchmark_values = [btc.get(t, 1.0) for t in times] if not benchmark else []
-    if any(type(value) is not float for value in (*values, *benchmark_values)):
-        return None
-    prices_array = np.asarray(values, dtype=np.float64)
-    btc_array = np.asarray(benchmark_values, dtype=np.float64)
+    if columnar and (type(btc) is _ColumnPrices or type(btc) is dict and not btc):
+        prices_array = prices.values_array[: len(times)]
+        if btc:
+            positions = np.searchsorted(btc.micros, times.micros)
+            bounded = np.minimum(positions, len(btc) - 1)
+            present = (positions < len(btc)) & (btc.micros[bounded] == times.micros)
+            btc_array = np.where(present, btc.values_array[bounded], 1.0)
+        else:
+            present = np.zeros(len(times), dtype=bool)
+            btc_array = np.ones(len(times), dtype=np.float64)
+        if benchmark:
+            btc_array = np.asarray([], dtype=np.float64)
+    else:
+        values = [prices[t] for t in times]
+        present = np.asarray([t in btc for t in times], dtype=bool)
+        benchmark_values = [btc.get(t, 1.0) for t in times] if not benchmark else []
+        if any(type(value) is not float for value in (*values, *benchmark_values)):
+            return None
+        prices_array = np.asarray(values, dtype=np.float64)
+        btc_array = np.asarray(benchmark_values, dtype=np.float64)
     for column in (prices_array, btc_array):
         if np.any(~np.isfinite(column)) or np.any(column < 2.0**-400) or np.any(column > 2.0**400):
             return None
@@ -2168,6 +2364,13 @@ def _relative_history_returns(prepared, times, start, length, resolution, benchm
         adjustment = np.multiply(coefficient, benchmark_return)
         result = np.subtract(result, adjustment)
     durations = np.divide(offsets[valid] - offsets[old], 1000000)
+    if type(times) is _ColumnPriceTimes:
+        return (
+            result.tolist(),
+            [float(durations.min()), float(durations.max())] if len(indices) else [],
+            [float(lags[valid].min()), float(lags[valid].max())] if len(indices) else [],
+            [times[int(indices[-1])]] if len(indices) else [],
+        )
     return result.tolist(), durations.tolist(), lags[valid].tolist(), [times[i] for i in indices]
 
 
@@ -2273,7 +2476,7 @@ def relative_truth(snapshot, start, end, *, include_outcome=True):
     def hourly_values(p):
         return {
             t: log(p[t] / p[t - timedelta(hours=1)])
-            for t in p
+            for t in (_hourly_prices(p) if type(p) is _ColumnPrices else p)
             if t.minute == 0
             and t.second == 0
             and t < history_end
@@ -2297,6 +2500,8 @@ def relative_truth(snapshot, start, end, *, include_outcome=True):
     price_times = {}
 
     def price(p, t):
+        if type(p) is _ColumnPrices and type(t) is datetime and t.tzinfo is UTC:
+            return p.endpoint(t, False)
         times = price_times.setdefault(id(p), sorted(p)) if id(p) not in price_times else price_times[id(p)]
         index = bisect_right(times, t) - 1
         return p[times[index]] if index >= 0 else None
@@ -2308,6 +2513,8 @@ def relative_truth(snapshot, start, end, *, include_outcome=True):
     def fresh_price(p, t):
         """A benchmark/peer price at t only if its last point is within that series' own bar
         spacing: a base-tier outage must not turn two copies of one old close into a 0 return."""
+        if type(p) is _ColumnPrices and type(t) is datetime and t.tzinfo is UTC:
+            return p.endpoint(t, True)
         times = price_times.setdefault(id(p), sorted(p)) if id(p) not in price_times else price_times[id(p)]
         index = bisect_right(times, t) - 1
         if index < 0:
@@ -2320,10 +2527,20 @@ def relative_truth(snapshot, start, end, *, include_outcome=True):
         return pz / pa - 1 if pa and pz else None
 
     benchmark = token_symbols.get(token_id) == "BTC"
-    historical_times = sorted(t for t in prices if t < start)
-    deltas = [
-        (b - a).total_seconds() for a, b in zip(historical_times, historical_times[1:], strict=False) if b > a
-    ]
+    historical_times = (
+        prices.before(start)
+        if type(prices) is _ColumnPrices and type(start) is datetime and start.tzinfo is UTC
+        else sorted(t for t in prices if t < start)
+    )
+    deltas = (
+        np.divide(np.diff(historical_times.micros), 1000000).tolist()
+        if type(historical_times) is _ColumnPriceTimes
+        else [
+            (b - a).total_seconds()
+            for a, b in zip(historical_times, historical_times[1:], strict=False)
+            if b > a
+        ]
+    )
     history_resolution_s = int(median(deltas)) if deltas else None
     history_diagnostics = {}
     vector_history = _relative_history_arrays(historical_times, prices, btc, benchmark, bb)
@@ -2429,7 +2646,7 @@ def relative_truth(snapshot, start, end, *, include_outcome=True):
             window=name,
             start=iso(a),
             cutoff=iso(end),
-            observed_at=iso(max(prices)) if prices else None,
+            observed_at=iso(_last_price_time(prices)) if prices else None,
             precision=f"BUCKET({int(next((r.get('interval_s', 60) for r in reversed(snapshot.get('klines', [])) if r.get('instrument_id') == ref), 60))}s)"
             if prices
             else None,
@@ -2522,7 +2739,7 @@ def relative_truth(snapshot, start, end, *, include_outcome=True):
     bh = []
     rvhist = []
     rv = None
-    btc_hourly = {t: p for t, p in btc.items() if t.minute == 0 and t.second == 0 and t.microsecond == 0}
+    btc_hourly = _hourly_prices(btc, exact_microseconds=True)
 
     def btc_baseline():
         bh = []
@@ -2571,7 +2788,7 @@ def relative_truth(snapshot, start, end, *, include_outcome=True):
     ]
     if len(lr) == 24:
         rv = stdev(lr)
-    if not btc or (max(btc) - min(btc)).total_seconds() < float(parameter("history_min_days", 7)) * 86400:
+    if not btc or _price_span_seconds(btc) < float(parameter("history_min_days", 7)) * 86400:
         bh = []
         rvhist = []
     context = market_context(br, rv, bh, rvhist)
@@ -2612,7 +2829,7 @@ def relative_truth(snapshot, start, end, *, include_outcome=True):
     outcome_btc = dict(
         instrument_id=btc_iid,
         entry_ref_price=btc_entry,
-        observed_at=iso(_time(btc_last)) if btc_last else iso(max(btc)) if btc else None,
+        observed_at=iso(_time(btc_last)) if btc_last else iso(_last_price_time(btc)) if btc else None,
         price_source="LAST_TRADE" if btc_last else "KLINE_CLOSE" if btc else None,
         reason=None if btc_entry is not None else "INCOMPLETE",
     )
@@ -2630,7 +2847,7 @@ def relative_truth(snapshot, start, end, *, include_outcome=True):
         entry_price_source="LAST_TRADE" if cutoff_row else "KLINE_CLOSE",
         entry_price_observed_at=iso(_time(cutoff_row))
         if cutoff_row
-        else iso(max(prices))
+        else iso(_last_price_time(prices))
         if prices
         else None,
         close_1h_price=max(hourly_closes, key=lambda x: x[0])[1] if hourly_closes else None,
@@ -3110,12 +3327,15 @@ def _reference_rv_series(prices):
     hit = memo.get(id(prices)) if memo is not None else None
     if hit is not None and hit[0] is prices:
         return hit[1]
-    if type(prices) is not dict or any(
-        type(t) is not datetime or type(p) is not float or not isfinite(p) or p <= 0
-        for t, p in prices.items()
+    if type(prices) is not _ColumnPrices and (
+        type(prices) is not dict
+        or any(
+            type(t) is not datetime or type(p) is not float or not isfinite(p) or p <= 0
+            for t, p in prices.items()
+        )
     ):
         return None
-    hourly = {t: p for t, p in prices.items() if t.minute == 0 and t.second == 0}
+    hourly = _hourly_prices(prices)
     returns = {
         t: log(p / hourly[t - timedelta(hours=1)])
         for t, p in hourly.items()
