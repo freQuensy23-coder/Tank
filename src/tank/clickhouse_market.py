@@ -698,7 +698,9 @@ async def market_rows_recorded_since(ch, collection, time_field, instrument_ids,
     return [(row["instrument_id"], rec, row["storage_key"]) for row, rec in zip(rows, records, strict=True)]
 
 
-async def _sampled_history_state(ch, collection, time_field, group_fields, instrument_ids, start, end, bucket_s, cache):
+async def _sampled_history_state(
+    ch, collection, time_field, group_fields, instrument_ids, start, end, bucket_s, cache
+):
     names = [*MARKET_COLUMNS[collection], "storage_key", "_version"]
     identity = MARKET_IDENTITIES[collection]
     kinds = [
@@ -714,7 +716,17 @@ async def _sampled_history_state(ch, collection, time_field, group_fields, instr
     sort_keys = [f"x.{names.index(name) + 1}" for name in ("instrument_id", *group_fields)]
     sort_keys.append(f"intDiv(toUnixTimestamp(x.{names.index(time_field) + 1}), {int(bucket_s)})")
     fields = ", ".join(f"`{name}`" for name in names)
-    key = (ch, ch.database, collection, time_field, tuple(group_fields), tuple(sorted(instrument_ids)), start, end, bucket_s)
+    key = (
+        ch,
+        ch.database,
+        collection,
+        time_field,
+        tuple(group_fields),
+        tuple(sorted(instrument_ids)),
+        start,
+        end,
+        bucket_s,
+    )
     previous = cache.get(key)
     known = q.param(previous[0] if previous is not None else "", "String")
     sql = (
@@ -729,7 +741,11 @@ async def _sampled_history_state(ch, collection, time_field, group_fields, instr
     if len(result) != 1:
         raise ValueError("invalid sampled history state response")
     fingerprint, payload = result[0].get("fingerprint"), result[0].get("records")
-    if not isinstance(fingerprint, str) or not re.fullmatch(r"[0-9A-F]{64}", fingerprint) or not isinstance(payload, list):
+    if (
+        not isinstance(fingerprint, str)
+        or not re.fullmatch(r"[0-9A-F]{64}", fingerprint)
+        or not isinstance(payload, list)
+    ):
         raise ValueError("invalid sampled history state response")
     if previous is not None and fingerprint == previous[0]:
         if payload:

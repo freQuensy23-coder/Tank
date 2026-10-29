@@ -54,6 +54,9 @@ async def test_sampled_oi_state_suppresses_unchanged_payload_and_refreshes_inter
     assert selected[-1][0]["records"] == []
     assert len(selected[-2][0]["records"]) == len(expected)
     previous_fingerprint = selected[-1][0]["fingerprint"]
+    first[0]["gap_reason"] = "caller-local"
+    assert await chm.sampled_market_history(routed.clickhouse, *args, cache=cache) == expected
+    assert selected[-1][0]["records"] == []
 
     changed = dict(rows[1], oi_native="200.000", mark_price="17.00")
     await memory.put_market_batch(collection, [changed])
