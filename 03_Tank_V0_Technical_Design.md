@@ -1083,7 +1083,7 @@ PRELIMINARY delivery leaves a MATERIAL event TRACKED and does not set ordinary f
 | DELIVER | `publish_card` or ops notice | 0 | `alert:version:channel` or `notice:notice_id` | 10 s | 5 | 24 h |
 | EVAL_CONDITIONS | Scheduler, every minute | 2 | `batch:minute` | 20 s | 2 | 5 min |
 | MILESTONE_CHECK | Scheduler, at the milestone's time (`schedule_milestone`) | 1 | `event:milestone` | — | — | Milestone window |
-| REACTION_CAPTURE | Scheduler, at each checkpoint | 2 | `event:token:checkpoint` | 120 s | 5 | Checkpoint + 6 h |
+| REACTION_CAPTURE | Scheduler, at each checkpoint | 2; one runs at a time, due checkpoint captures before automatic revisions | `event:token:checkpoint` | 120 s | 5 | Checkpoint + 6 h |
 | SCOUT_REVIEW | Proposal created | 4 | `proposal_id` | 300 s | 2 | 7 d |
 
 FAILED diagnostic attachment jobs have only the narrow permanent recovery path in §7.6: under the notice/recovery lock and transaction, reread eligibility and enqueue one deterministic version-specific generation through the existing queue. Its payload durably references the original job/notice and validated compatibility proof; retain original expiry, priority, failure audit and per-document attempt history. Re-enqueueing the original idempotency key does not revive a FAILED job. Restarts, concurrent reconcilers and an existing failure-reporting marker must neither suppress this eligible generation nor create another. No table or SQL schema change is required.
@@ -1683,7 +1683,7 @@ ITEM_PROGRESS and ENTRY_ERRORS are not written in replay or when `ops_progress_e
 3. **Pre-event windows** (−24h, −4h, −1h) end at the anchor and are computed at creation, or, when the anchor is still ahead, by REACTION_CAPTURE jobs due at the anchor — never over minutes that have not happened. They use base-tier data, hot data if present, and archive files when needed. Spot flow comes from trades (hot data, REST backfill or archive aggTrades); a venue and window without trades shows n/a with the reason.
 4. **Post-event checkpoints** (+15m, +1h, +4h, +24h, +72h) are scheduled jobs. Checkpoints already in the past at creation are captured immediately with `retro = true`.
 5. **Each checkpoint** stores cumulative values from the anchor: raw and BTC-adjusted return, its percentile (§5.7), composite spot CVD with method and coverage, native OI change and class, funding per venue (settled and estimate), liquidations with coverage.
-6. **Immutability:** a checkpoint is frozen when captured; late data creates a new revision with a reason, never an overwrite. A window that has not ended is never revised; a checkpoint captured before its window ended gets one automatic revision once it has.
+6. **Immutability:** a checkpoint is frozen when captured; late data creates a new revision with a reason, never an overwrite. A window that has not ended is never revised; a checkpoint captured before its window ended gets one automatic revision once it has. Automatic revisions (an early capture, late data) never delay a checkpoint: while any checkpoint capture is due, the capture slot takes it first.
 
 ---
 

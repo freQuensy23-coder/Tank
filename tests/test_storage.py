@@ -918,6 +918,35 @@ async def test_due_captures_are_claimed_earliest_expiry_first(repo):
     assert (await repo.claim_job())["job_id"] == slack["job_id"]
 
 
+async def test_due_checkpoint_captures_are_claimed_before_automatic_revisions(repo):
+    """Production had hundreds of due automatic revisions expiring before a primary
+    checkpoint; with one capture slot the checkpoint then waited for all of them."""
+    await _clear_queue(repo)
+    now = utcnow()
+    revision = await repo.enqueue(
+        "REACTION_CAPTURE",
+        {"automatic_revision": True, "change_id": "c1"},
+        new_id("idem"),
+        priority=2,
+        run_after=iso(now - timedelta(hours=3)),
+        expires_at=iso(now + timedelta(minutes=30)),
+    )
+    checkpoint = await repo.enqueue(
+        "REACTION_CAPTURE",
+        {"checkpoint": "POST_15M"},
+        new_id("idem"),
+        priority=2,
+        run_after=iso(now - timedelta(minutes=1)),
+        expires_at=iso(now + timedelta(hours=6)),
+    )
+    other = await repo.enqueue("EVAL_CONDITIONS", {}, new_id("idem"), priority=2)
+    first = await repo.claim_job()
+    assert first["job_id"] == checkpoint["job_id"]
+    assert (await repo.claim_job())["job_id"] == other["job_id"]
+    await repo.finish_job(first["job_id"])
+    assert (await repo.claim_job())["job_id"] == revision["job_id"]
+
+
 @pytest.mark.integration
 @pytest.mark.postgres
 @pytest.mark.parametrize("repo", ["postgres"], indirect=True)
