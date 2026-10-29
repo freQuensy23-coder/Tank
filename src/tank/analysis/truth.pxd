@@ -15,7 +15,7 @@ cdef int _fixed_decimal_text_metadata(object value)
 @cython.locals(inputs=dict, memo=dict, precisions=dict)
 cdef api object _scalar_decimal(object v)
 
-@cython.locals(times=dict, inputs=dict, memo=dict)
+@cython.locals(times=dict, inputs=dict, memo=dict, owners=dict)
 cdef api object _row_time(object row)
 
 @cython.locals(inputs=dict, memo=dict)

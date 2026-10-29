@@ -360,7 +360,18 @@ def _time(row):
 
 
 def _row_time(row):
-    times = _TIMES.get()
+    state = _TIMES.get()
+    if type(state) is tuple:
+        memo = state[0]
+        identity = id(row)
+        value = memo.get(identity, _ROW_MEMO_MISSING)
+        if value is _ROW_MEMO_MISSING:
+            value = _observation_time(row)
+            owners = state[1]
+            owners[identity] = row
+            memo[identity] = value
+        return value
+    times = state
     inputs = _ASSESSMENT_INPUTS.get()
     if times is not None and inputs is not None:
         memo = inputs.setdefault("row_times", {})
@@ -6334,8 +6345,9 @@ def _compute_market_truth_slot(snapshot, *, config=None, baseline_cache=None):
     token = _PARAMETERS.set(config)
     baselines = _BASELINE_CACHE.set(baseline_cache if baseline_cache is not None else {})
     dependency = _BASELINE_DEPENDENCY.set(None)
-    inputs = _ASSESSMENT_INPUTS.set({})
-    times = _TIMES.set({})
+    prepared_inputs = {"row_times": {}, "row_owners": {}}
+    inputs = _ASSESSMENT_INPUTS.set(prepared_inputs)
+    times = _TIMES.set((prepared_inputs["row_times"], prepared_inputs["row_owners"]))
     text_times = _TIME_PARSE_MEMO.set({})
     try:
         return _compute_market_truth(snapshot, config=config)
