@@ -52,9 +52,10 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        shard: [0, 1, 2]
+        shard: [0, 1, 2, market-truth]
     env:
       CLICKHOUSE_TEST_URL: http://tank_ci:tank-ci-disposable@127.0.0.1:8123
+      INTEGRATION_SHARD: ${{ matrix.shard == 'market-truth' && 'market-truth' || format('{0}/3', matrix.shard) }}
     services:
       clickhouse:
         image: clickhouse/clickhouse-server:25.8
@@ -75,6 +76,7 @@ jobs:
           persist-credentials: false
           fetch-depth: 0
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
+        if: matrix.shard != 'market-truth'
         with:
           node-version: "24.22.0"
           package-manager-cache: false
@@ -85,6 +87,7 @@ jobs:
           enable-cache: true
       - run: uv sync --python 3.13.13 --frozen --extra dev
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e
+        if: matrix.shard != 'market-truth'
         with:
           go-version: "1.25.14"
           cache-dependency-path: capture/go.sum
@@ -93,6 +96,7 @@ jobs:
       - name: Install versioned X worker dependencies
         run: uv pip install --python .venv/bin/python -r apify/x-reader/requirements.txt
       - name: Prepare the pinned Go modules and offline build cache
+        if: matrix.shard != 'market-truth'
         working-directory: capture
         run: |
           export GOENV=off GOTOOLCHAIN=local
@@ -106,6 +110,7 @@ jobs:
           git diff --exit-code -- go.mod go.sum
           CGO_ENABLED=0 GOPROXY=off GOSUMDB=off go build -mod=readonly -o "$RUNNER_TEMP/capture-parity-prime" ./cmd/capture-parity
       - name: Install the locked actual pi-ai gateway test dependency
+        if: matrix.shard != 'market-truth'
         run: npm ci --prefix tests/node-gateway --ignore-scripts --no-audit --no-fund
       - name: Stage exact retained capture inputs
         run: uv run --frozen --extra dev python scripts/ci/stage_retained_fixtures.py
@@ -145,11 +150,11 @@ jobs:
         env:
           PYTHONPATH: scripts/ci:tests
       - name: Run all integration cases
-        run: uv run --frozen --extra dev pytest -p parallel_postgres -p integration_shard --ci-shard "${{ matrix.shard }}/3" -q -n auto --dist loadfile -m integration --postgres-schema-template "$TANK_CI_SCHEMA_TEMPLATE" --timeout=300 --junitxml=.test-results/integration.xml
+        run: uv run --frozen --extra dev pytest -p parallel_postgres -p integration_shard --ci-shard "$INTEGRATION_SHARD" -q -n auto --dist loadfile -m integration --postgres-schema-template "$TANK_CI_SCHEMA_TEMPLATE" --timeout=300 --junitxml=.test-results/integration.xml
         env:
           PYTHONPATH: scripts/ci:tests
       - name: Require the complete integration collection with zero skips
-        run: uv run --frozen --extra dev python scripts/ci/check_integration_results.py .test-results/integration.xml --collection .test-results/integration-collection.json --shard "${{ matrix.shard }}/3"
+        run: uv run --frozen --extra dev python scripts/ci/check_integration_results.py .test-results/integration.xml --collection .test-results/integration-collection.json --shard "$INTEGRATION_SHARD"
       - name: Collect the owned ClickHouse logs
         if: always()
         env:
@@ -206,7 +211,7 @@ jobs:
           path: .test-results/shards
       - name: Require the full integration union exactly once with zero skips
         run: |
-          test "$(find .test-results/shards -name integration.xml | wc -l)" -eq 3
+          test "$(find .test-results/shards -name integration.xml | wc -l)" -eq 4
           uv run --frozen --extra dev python scripts/ci/check_integration_results.py \
             .test-results/shards/*/integration.xml \
             --collection .test-results/shards/*/integration-collection.json

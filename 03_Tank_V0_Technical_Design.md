@@ -1804,6 +1804,10 @@ Permanent tests run through existing automatic PR/main CI, without manual tests/
 
 These composed SQL/HTTP regressions qualify incident recovery only, not real native-model/KVM upgrade execution (§3.2), live production recovery or V0-H's 14-day acceptance.
 
+### 11.8 Market Truth request latency qualification
+
+Permanent automatic CI compares complete original and candidate packages on one worker, in balanced cold/warm order, using independently owned PostgreSQL and ClickHouse databases and the immutable full retained market-input manifest. Cold means a new service with empty dense-series and assessment caches; the native persisted day-count cache is restored and disclosed. The complete get_market_truth path, including snapshot, calculation, immutable persistence and actual loopback HTTP acceptance, must finish in less than four seconds in both states. Calculation is recorded separately and must also remain below four seconds. Results, returned projection, complete snapshot, native populations, cutoff admission and provenance must match the original exactly. Reduced inputs, mocked databases, cached finished answers and component-only timings do not establish acceptance. Existing test inventories, job/global deadlines, production configuration and deployment stay unchanged.
+
 ## 12. Configuration baseline (⚙)
 
 Every number the rules use, with its basis. A number without a basis is not used; one that has to come from data is calibrated by the stated procedure and recorded at that checkpoint (01 D6).

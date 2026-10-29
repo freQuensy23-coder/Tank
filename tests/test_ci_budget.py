@@ -52,6 +52,45 @@ def reports(tmp_path):
     return manifest, paths
 
 
+def test_request_partition_preserves_legacy_shards_and_complete_union(integration_checks):
+    shard, _ = integration_checks
+    legacy = [f"tests/test_integration_{index}.py" for index in range(500)]
+    request = "tests/test_market_truth_request.py"
+    paths = [*legacy, request]
+    selections = ["0/3", "1/3", "2/3", "market-truth"]
+    groups = [{path for path in paths if shard.selected_for(path, value)} for value in selections]
+    assert set.union(*groups) == set(paths)
+    assert sum(map(len, groups)) == len(paths)
+    assert groups[-1] == {request}
+    for index in range(3):
+        assert groups[index] == {path for path in legacy if shard.shard_for(path, 3) == index}
+
+
+def test_request_partition_report_cannot_omit_or_duplicate_cases(integration_checks, tmp_path):
+    _, check = integration_checks
+    manifest, paths = reports(tmp_path)
+    expected = json.loads(manifest.read_text())
+    expected.append(
+        {
+            "classname": "tests.test_market_truth_request",
+            "name": "cold",
+            "file": "tests/test_market_truth_request.py",
+        }
+    )
+    manifest.write_text(json.dumps(expected))
+    root = ET.Element("testsuite")
+    ET.SubElement(root, "testcase", classname=expected[-1]["classname"], name="cold")
+    request = tmp_path / "market-truth.xml"
+    ET.ElementTree(root).write(request)
+    assert check.verify([request], [manifest], "market-truth") == {"cases": 1, "passed": 1, "skipped": 0}
+    assert check.verify([*paths, request], [manifest]) == {"cases": 3, "passed": 3, "skipped": 0}
+    for invalid in (paths, [*paths, request, request]):
+        with pytest.raises(ValueError, match="full collected"):
+            check.verify(invalid, [manifest])
+    with pytest.raises(ValueError, match="full collected"):
+        check.verify([paths[0]], [manifest], "market-truth")
+
+
 def test_full_union_requires_every_case_once(integration_checks, tmp_path):
     _, check = integration_checks
     manifest, paths = reports(tmp_path)
