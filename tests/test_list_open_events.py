@@ -170,6 +170,18 @@ async def test_oversized_rows_shrink_the_page_and_keep_the_next_offset(service):
     assert "_truncated" not in page
 
 
+async def test_a_single_row_over_the_limit_still_advances_the_page(service):
+    """One statement larger than the whole result limit is shown clipped, and paging moves past it."""
+    await put_event(service, "huge", statement="x" * 60_000, age=timedelta(minutes=1))
+    await put_event(service, "small", statement="Small", age=timedelta(minutes=2))
+    first = await service.dispatch("list_open_events", {}, {})
+    assert [row["event_id"] for row in first["events"]] == ["huge"]
+    assert first["next_offset"] == 1 and first["total"] == 2
+    assert "_truncated" in first and len(canonical_json(first).encode()) <= TOOL_RESULT_MAX_BYTES
+    second = await service.dispatch("list_open_events", {"offset": first["next_offset"]}, {})
+    assert [row["event_id"] for row in second["events"]] == ["small"] and second["next_offset"] is None
+
+
 def lifecycle_scheduler(repo, close_days=None):
     settings = SimpleNamespace(
         load_config=lambda name: {} if close_days is None else {"event_close_days": close_days}

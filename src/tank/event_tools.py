@@ -861,7 +861,7 @@ class EventToolService:
             "events": page,
             "next_offset": None,
         }
-        while page and len(canonical_json(result).encode()) > TOOL_RESULT_MAX_BYTES - 1000:
+        while len(page) > 1 and len(canonical_json(result).encode()) > TOOL_RESULT_MAX_BYTES - 1000:
             page.pop()
         if offset + len(page) < total:
             result["next_offset"] = offset + len(page)
