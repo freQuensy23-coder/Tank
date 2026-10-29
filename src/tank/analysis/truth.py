@@ -1140,7 +1140,9 @@ def _oi_stats(rows, start, end, *, history_identity=None, venue_history=None):
     lo, hi = bisect_left(ordered_times, lower), bisect_left(ordered_times, start)
     bytime = {_time(rows[i]): rows[i] for i in sorted(index for _, index in ordered[lo:hi])}
     cohort_key = None
-    if _BASELINE_CACHE.get() is not None:
+    cache = _BASELINE_CACHE.get()
+    dependency = _BASELINE_DEPENDENCY.get()
+    if cache is not None and dependency is None:
         if venue_history is None:
             cohort_key = _oi_cohort_key(rows)
         else:
@@ -1154,8 +1156,6 @@ def _oi_stats(rows, start, end, *, history_identity=None, venue_history=None):
         (b - a).total_seconds() for a, b in zip(history_times, history_times[1:], strict=False) if b > a
     )
     pair_tolerance = max(float(parameter("oi_sync_tolerance_s", 60)), gaps[len(gaps) // 2] / 2 if gaps else 0)
-    cache = _BASELINE_CACHE.get()
-    dependency = _BASELINE_DEPENDENCY.get()
     history_key = (
         (
             "oi" if venue_history is None else "oi_composite",

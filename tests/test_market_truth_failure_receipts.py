@@ -39,3 +39,14 @@ async def test_worker_receive_preserves_complete_failure_receipt_as_json():
     with pytest.raises(AssertionError) as caught:
         await receive(SimpleNamespace(stdout=reader))
     assert caught.value.args == (json.dumps(receipt, sort_keys=True),)
+
+
+def test_return_boundary_failure_retains_safe_peer_diagnostics_without_error_text():
+    try:
+        raise ValueError("private peer error text")
+    except ValueError as error:
+        peer = worker.failure_receipt(error)
+    actual = worker.failure_receipt(worker.ReturnBoundaryError([peer]))
+    assert actual["failure"] == "ReturnBoundaryError"
+    assert actual["return_boundary_failures"] == [peer]
+    assert "private peer error text" not in json.dumps(actual)
