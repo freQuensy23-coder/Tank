@@ -28,7 +28,9 @@ def reference(rows, end):
 
 
 @pytest.mark.parametrize("shape", ["continuous", "gaps", "empty", "overlap"])
-def test_native_volume_endpoint_selection_preserves_last_wins_without_sorting_ordered_data(monkeypatch, shape):
+def test_native_volume_endpoint_selection_preserves_last_wins_without_sorting_ordered_data(
+    monkeypatch, shape
+):
     base = datetime(2026, 10, 28, tzinfo=UTC)
     rows = [
         {

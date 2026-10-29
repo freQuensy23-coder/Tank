@@ -2,9 +2,6 @@ import ctypes
 import random
 from datetime import UTC, datetime, timedelta
 from decimal import (
-    Decimal,
-    FloatOperation,
-    Inexact,
     ROUND_05UP,
     ROUND_CEILING,
     ROUND_DOWN,
@@ -13,6 +10,9 @@ from decimal import (
     ROUND_HALF_EVEN,
     ROUND_HALF_UP,
     ROUND_UP,
+    Decimal,
+    FloatOperation,
+    Inexact,
     Rounded,
     localcontext,
 )
@@ -21,7 +21,6 @@ import numpy as np
 import pytest
 
 from tank.analysis import truth
-
 
 ROUNDINGS = [
     ROUND_05UP,
@@ -153,6 +152,7 @@ def test_dimensionless_batch_declines_non_nearest_binary_rounding():
             assert not any(context.flags.values())
     finally:
         assert setter(initial) == 0
+
 
 @pytest.mark.parametrize("large", [False, True])
 def test_composite_history_uses_exact_batches_and_original_large_ratio_fallback(monkeypatch, large):
