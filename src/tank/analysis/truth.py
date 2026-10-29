@@ -1692,7 +1692,29 @@ def _oi_combined_timeline(indexed, tolerance):
             [row.get(measure) for row in rows] for _, rows in indexed for measure in ("oi_native", "oi_usd")
         ]
         metadata = {}
-        prepared = _history_decimal_arrays(columns, summands=len(indexed), metadata=metadata)
+        if all(type(row) is dict for _, rows in indexed for row in rows):
+            prepared = []
+            low, high = 0, 0
+            for lane, (_, rows) in enumerate(indexed):
+                if all(row.get("oi_usd_source") is None for row in rows):
+                    pair = _oi_history_arrays(rows)
+                else:
+                    lane_metadata = {}
+                    arrays = _history_decimal_arrays(
+                        columns[2 * lane : 2 * lane + 2], summands=len(indexed), metadata=lane_metadata
+                    )
+                    pair = (arrays, lane_metadata) if arrays is not None else None
+                if pair is None:
+                    prepared = None
+                    break
+                arrays, lane_metadata = pair
+                prepared.extend(arrays)
+                low, high = min(low, lane_metadata["low"]), max(high, lane_metadata["high"])
+            metadata.update(low=low, high=high)
+            if high - low + len(str(max(len(indexed), 1))) + 1 > getcontext().prec:
+                prepared = None
+        else:
+            prepared = _history_decimal_arrays(columns, summands=len(indexed), metadata=metadata)
         if (
             prepared is not None
             and metadata["high"] - metadata["low"] + len(str(max(len(indexed), 1))) + 1 > 128
