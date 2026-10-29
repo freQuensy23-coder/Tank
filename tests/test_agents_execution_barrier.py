@@ -626,7 +626,7 @@ async def test_native_completion_preserves_source_failures_without_failing_sessi
         outcome = current["verified_source_completion"]["message"]["outcome"]
         assert (
             outcome
-            == {"PENDING": "SKIPPED", "FAILED": "FAILED", "MISSING": "MISSING_SOURCE_ITEM"}[source_state]
+            == {"PENDING": "FAILED", "FAILED": "FAILED", "MISSING": "MISSING_SOURCE_ITEM"}[source_state]
         )
 
 

@@ -26,6 +26,8 @@ REASONS = {
     "M1_VENUE": "Площадка не входит в список основных бирж Tank",
     "STRUCTURAL_GATE": "Не выполнены условия структурного изменения",
     "NATIVE_TURN_COMPLETED_WITHOUT_OBSERVATION": "Агент не записал ни событие, ни решение об отклонении",
+    "AGENT_INCOMPLETE": "Агент завершил ход без записи события или решения об отклонении; "
+    "материал можно отправить на повторный анализ",
 }
 CLASSES = {
     "LOW": "низкая",
@@ -358,6 +360,20 @@ def outcome(data):
             else "Ошибка обработки",
             "fields": fields,
             "reason": reason,
+        }
+    if item.get("extraction_status") == "FAILED":
+        fields[-1] = (
+            "Агент",
+            "ход завершён без результата"
+            if item.get("extraction_reason") == "AGENT_INCOMPLETE"
+            else "ошибка выполнения",
+        )
+        fields.append(("Alerts", "не отправлено"))
+        return {
+            "code": "PROCESSING_FAILED",
+            "status": "Ошибка обработки",
+            "fields": fields,
+            "reason": reason_text(item.get("extraction_reason") or "AGENT_EXECUTION_FAILED"),
         }
     if decision == "SKIP":
         fields.append(("Alerts", "не отправлено — материал отсеян до анализа"))

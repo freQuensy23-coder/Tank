@@ -19,6 +19,7 @@ from httpx_sse import aconnect_sse
 
 from tank.agents import workflow
 from tank.agents.context import CONTEXT_TRANSITION, CONTEXT_VERSION, ModelContext
+from tank.agents.incomplete import fail_incomplete_turn
 from tank.agents.pipeline import ConfigurationError
 from tank.agents.security import redact_tool_arguments
 from tank.agents.wire import tool_wire_result
@@ -232,13 +233,16 @@ class SessionService:
             ("item_id", item_id if not event_id else None),
             ("proposal_id", payload.get("proposal_id")),
         ]
+        closed = {}
         for field, value in identifiers:
             if value:
                 async for session in self.repo.iter_all(
                     "ops.agent_sessions",
                     filters={field: value, **({"replay_run_id": replay_run_id} if replay_run_id else {})},
                 ):
-                    return session
+                    if self.routable_session(session):
+                        return session
+                    closed[value] = closed.get(value, 0) + 1
         config = self.config()
         scout = payload.get("kind") == "SCOUT_REVIEW"
         agent = config.get("scout_agent_id") if scout else config["agent_id"]
@@ -268,6 +272,7 @@ class SessionService:
                 "scout": scout,
                 "model_context_version": CONTEXT_VERSION,
                 **({"replay_run_id": replay_run_id} if replay_run_id else {}),
+                **({"generation": closed[identity]} if closed.get(identity) else {}),
             }
         )
         replay_metadata = (
@@ -707,6 +712,20 @@ class SessionService:
             await self.repo.put("ops.agent_sessions", sid, session)
             await session_progress(self.repo, self.settings, session)
             return session
+
+    @staticmethod
+    def routable_session(session):
+        """A session new messages may join: not failed, ended or archived locally or remotely.
+
+        A closed session never takes another input, so routing to it would strand the message;
+        the next message for the same event, item or proposal opens a fresh session instead."""
+        remote = session.get("remote_state") or {}
+        return (
+            session.get("status") not in {"FAILED", "ENDED"}
+            and not session.get("archived_at")
+            and remote.get("status") != "terminated"
+            and not remote.get("archived_at")
+        )
 
     @staticmethod
     def recoverable_session(session):
@@ -1329,13 +1348,7 @@ class SessionService:
                     message["turn_status"] = "DONE"
                 payload = message.get("payload", {})
                 if payload.get("kind") in {"NEW_ITEM", "ITEM_ADDED"} and payload.get("item_id"):
-                    item = await self.repo.get("ingest.source_items", payload["item_id"])
-                    if item and item.get("extraction_status") in {None, "PENDING", "RUNNING"}:
-                        item.update(
-                            extraction_status="SKIPPED",
-                            extraction_reason="NATIVE_TURN_COMPLETED_WITHOUT_OBSERVATION",
-                        )
-                        await self.repo.put("ingest.source_items", item["item_id"], item)
+                    await fail_incomplete_turn(self.repo, current, payload["item_id"])
             current["active_message_id"] = None
             current["runtime_status"] = "IDLE"
             outcomes = await self.source_completion_snapshot(current)
@@ -2319,7 +2332,7 @@ class SessionService:
                 await self.repo.get("evt.events", session["event_id"]) if session.get("event_id") else None
             )
             archive = bool(event and await self.can_archive(session, event))
-            if not event and session.get("no_event"):
+            if not event and (session.get("no_event") or session.get("agent_incomplete")):
                 unfinished = [
                     row
                     async for row in self.repo.iter_all("ops.tool_calls", filters={"session_id": sid})

@@ -147,7 +147,10 @@ async def session_progress(repo, settings, session):
             stage, reason = "PROCESSING_FAILED", "AGENT_EXECUTION_FAILED"
         elif status == "DONE":
             item = await repo.get("ingest.source_items", item_id)
-            if item and item.get("extraction_status") == "SKIPPED":
+            if item and item.get("extraction_status") == "FAILED":
+                stage = "PROCESSING_FAILED"
+                reason = item.get("extraction_reason") or "AGENT_EXECUTION_FAILED"
+            elif item and item.get("extraction_status") == "SKIPPED":
                 stage = "AGENT_REJECTED"
                 reason = item.get("extraction_reason") or ""
                 key = None
