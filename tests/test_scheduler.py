@@ -1745,3 +1745,51 @@ async def test_failed_capture_job_of_this_event_records_a_gap_and_other_events_j
         assert len(await repo.list("ops.jobs", filters={"type": "REACTION_CAPTURE"})) == 6
     finally:
         await scheduler.close()
+
+
+@pytest.mark.asyncio
+async def test_backfill_terminal_reruns_truth_assembled_while_capture_was_unfinished():
+    """03 §5.1: Market Truth waits only a bounded time for the pre-event backfill. When the
+    backfill ends after the latest truth was assembled without it, the truth is computed
+    again once at the same cutoff; a truth that already saw the terminal run is kept."""
+    repo = MemoryRepository()
+    now = utcnow().replace(microsecond=0)
+    cutoff = now.replace(second=0) - timedelta(minutes=40)
+    for token, status in (("t", "INCOMPLETE"), ("done", "PARTIAL")):
+        await repo.put(
+            "ana.market_truth",
+            "MTA-" + token,
+            {
+                "mta_id": "MTA-" + token,
+                "event_id": "e",
+                "token_id": token,
+                "cutoff": iso(cutoff),
+                "cutoff_prec": "BUCKET(1m)",
+                "detail": {"capture_status": {"status": status, "backfill_id": "BF-" + token}},
+            },
+            immutable=True,
+        )
+
+    class Market:
+        async def capture_changes(self, since, end):
+            for token in ("t", "done", "other"):
+                yield {
+                    "backfill_id": "BF-" + token,
+                    "event_id": "e",
+                    "token_id": token,
+                    "anchor": iso(cutoff - timedelta(minutes=3)),
+                    "status": "COMPLETE",
+                    "finished_at": iso(now),
+                    "kind": "HISTORICAL_CAPTURE_TERMINAL",
+                }
+
+    scheduler = Scheduler(repo, SimpleNamespace(), Market(), None)
+    for _ in range(2):
+        await scheduler.detect_late_data(now)
+    (job,) = await repo.list("ops.jobs", filters={"type": "RUN_MARKET_TRUTH"})
+    assert job["payload"]["event_id"] == "e" and job["payload"]["token_id"] == "t"
+    from tank.util import parse_time
+
+    assert parse_time(job["payload"]["cutoff"]) == cutoff
+    assert job["payload"]["cutoff_prec"] == "BUCKET(1m)"
+    assert job["idem_key"] == "e:t:capture:BF-t"

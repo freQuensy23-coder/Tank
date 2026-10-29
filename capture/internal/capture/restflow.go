@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -593,7 +594,11 @@ func (s *Service) writeRevised(inst *venue.Instrument, key flow.Key, row, stored
 		}
 		if SameFlow(stored, row) && (stored["complete"] == true) == (row["complete"] == true) &&
 			text(stored["gap_reason"]) == text(row["gap_reason"]) {
-			return
+			if !addsBoundaryEvidence(stored, row) {
+				return
+			}
+			keepBoundaryEvidence(stored, row)
+			reason = "BOUNDARY_EVIDENCE"
 		}
 	}
 	next := version + 1
@@ -609,6 +614,80 @@ func (s *Service) writeRevised(inst *venue.Instrument, key flow.Key, row, stored
 	row["capture_proof"] = proof
 	s.seal.Forget(key, next)
 	s.points.Put("mkt.flow_bars_1m", key.IID+":"+key.MinuteISO(), row)
+}
+
+var boundaryEvidenceFields = []string{"reference_points", "boundary_segments"}
+
+func boundaryIdentity(field string, item map[string]any) (string, bool) {
+	keys := []string{"boundary"}
+	if field == "boundary_segments" {
+		keys = []string{"start", "end"}
+	}
+	id := ""
+	for _, k := range keys {
+		t, err := pytime.Parse(item[k])
+		if err != nil {
+			return "", false
+		}
+		id += strconv.FormatInt(t.UnixMicro(), 10) + "|"
+	}
+	return id, true
+}
+
+func completeBoundaryEvidence(field string, row map[string]any) map[string]map[string]any {
+	out := map[string]map[string]any{}
+	for _, item := range pyval.List(row[field]) {
+		m := pyval.Map(item)
+		if m == nil || m["complete"] != true {
+			continue
+		}
+		if id, ok := boundaryIdentity(field, m); ok {
+			out[id] = m
+		}
+	}
+	return out
+}
+
+func addsBoundaryEvidence(stored, row map[string]any) bool {
+	for _, field := range boundaryEvidenceFields {
+		have := completeBoundaryEvidence(field, stored)
+		for id := range completeBoundaryEvidence(field, row) {
+			if have[id] == nil {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func keepBoundaryEvidence(stored, row map[string]any) {
+	for _, field := range boundaryEvidenceFields {
+		kept := completeBoundaryEvidence(field, stored)
+		var merged []any
+		for _, item := range pyval.List(row[field]) {
+			m := pyval.Map(item)
+			if id, ok := boundaryIdentity(field, m); ok && m["complete"] != true && kept[id] != nil {
+				merged = append(merged, kept[id])
+				delete(kept, id)
+				continue
+			} else if ok {
+				delete(kept, id)
+			}
+			merged = append(merged, item)
+		}
+		ids := make([]string, 0, len(kept))
+		for id := range kept {
+			ids = append(ids, id)
+		}
+		sort.Strings(ids)
+		for _, id := range ids {
+			merged = append(merged, kept[id])
+		}
+		if merged == nil {
+			merged = []any{}
+		}
+		row[field] = merged
+	}
 }
 
 func (s *Service) recordReference(inst *venue.Instrument, boundary time.Time, t *normalize.Trade, source string) {
