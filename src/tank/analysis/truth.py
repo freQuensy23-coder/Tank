@@ -1202,8 +1202,9 @@ def _history_present(values):
     return np.fromiter((value is not None for value in values), dtype=bool, count=len(values))
 
 
-def _oi_history_returns(times, native, usd, window, tolerance):
-    prepared = _history_decimal_arrays((native, usd))
+def _oi_history_returns(times, native, usd, window, tolerance, *, prepared=None):
+    if prepared is None:
+        prepared = _history_decimal_arrays((native, usd))
     temporal = _history_time_array(times, window)
     if prepared is None or temporal is None or len(native) != len(times) or len(usd) != len(times):
         return None
@@ -1332,13 +1333,19 @@ def _oi_stats(rows, start, end, *, history_identity=None, venue_history=None):
             and (max(bytime) - min(bytime)).total_seconds() >= float(parameter("history_min_days", 7)) * 86400
         ):
             native_ends, usd_ends = [], []
-            vector = _oi_history_returns(
-                list(bytime),
-                [r.get("oi_native") for r in bytime.values()],
-                [None if r.get("oi_usd_source") else r.get("oi_usd") for r in bytime.values()],
-                window,
-                pair_tolerance,
-            )
+            prepared = _oi_history_column_views(rows, bytime.values())
+            if prepared is None:
+                vector = _oi_history_returns(
+                    list(bytime),
+                    [r.get("oi_native") for r in bytime.values()],
+                    [None if r.get("oi_usd_source") else r.get("oi_usd") for r in bytime.values()],
+                    window,
+                    pair_tolerance,
+                )
+            else:
+                vector = _oi_history_returns(
+                    list(bytime), prepared[0], prepared[1], window, pair_tolerance, prepared=prepared
+                )
             if vector is not None:
                 hn, hu, native_ends, usd_ends = vector
             else:
@@ -1557,6 +1564,22 @@ def _composite_history_vector(venue_history, window):
         else:
             result.append(values)
     return result[0], result[1]
+
+
+def _oi_history_column_views(rows, selected_rows):
+    inputs = _ASSESSMENT_INPUTS.get()
+    if inputs is None or not all(type(row) is dict for row in rows):
+        return None
+    prepared = _oi_history_arrays(rows)
+    if prepared is None:
+        return None
+    memo = inputs.setdefault("oi_history_positions", {})
+    hit = memo.get(id(rows))
+    if hit is None or hit[0] is not rows:
+        hit = (rows, {id(row): index for index, row in enumerate(rows)})
+        memo[id(rows)] = hit
+    indices = np.fromiter((hit[1][id(row)] for row in selected_rows), dtype=np.intp, count=len(selected_rows))
+    return [column[indices] for column in prepared[0]]
 
 
 def _composite_history(venue_history, window):

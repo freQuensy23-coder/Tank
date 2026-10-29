@@ -1,5 +1,8 @@
+from copy import deepcopy
 from datetime import UTC, datetime, timedelta
-from decimal import Decimal, localcontext
+from decimal import Decimal, Rounded, localcontext
+
+import pytest
 
 from tank.analysis import truth
 
@@ -35,3 +38,46 @@ def test_venue_windows_reuse_validated_columns_instead_of_repreparing_each_histo
             assert not prepared_values
     finally:
         truth._ASSESSMENT_INPUTS.reset(token)
+
+
+@pytest.mark.parametrize("case", ["duplicates", "invalid_outside", "low_precision", "custom_rows"])
+def test_venue_column_views_preserve_scalar_order_context_and_fallback(case):
+    first = datetime(2026, 10, 1, tzinfo=UTC)
+    rows = [
+        {
+            "ts": first + timedelta(hours=index),
+            "oi_native": str(100 + index),
+            "oi_usd": str(300 + 3 * index),
+        }
+        for index in range(193)
+    ]
+    end = rows[-1]["ts"]
+    if case == "duplicates":
+        rows[:100] = reversed(rows[:100])
+        duplicate = dict(rows[10], oi_native="127.00", oi_usd="381.000")
+        rows.insert(120, duplicate)
+        rows.insert(121, duplicate)
+    elif case == "invalid_outside":
+        rows.append({"ts": end + timedelta(days=1), "oi_native": "invalid", "oi_usd": "invalid"})
+    elif case == "custom_rows":
+
+        class CustomRow(dict):
+            pass
+
+        rows = [CustomRow(row) for row in rows]
+    before = deepcopy(rows)
+
+    def compute(inputs):
+        token = truth._ASSESSMENT_INPUTS.set(inputs)
+        try:
+            with localcontext() as context:
+                context.prec = 32 if case == "low_precision" else 128
+                context.clear_flags()
+                context.flags[Rounded] = True
+                result = truth._oi_stats(rows, end - timedelta(hours=2), end)
+                return result, dict(context.flags)
+        finally:
+            truth._ASSESSMENT_INPUTS.reset(token)
+
+    assert compute({}) == compute(None)
+    assert rows == before
