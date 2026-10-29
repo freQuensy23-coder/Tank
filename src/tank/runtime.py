@@ -6,6 +6,7 @@ import logging
 import traceback
 from datetime import timedelta
 
+from tank.agents.pipeline import RoutingDeferred
 from tank.agents.sessions import ADMITTED_JOB_TYPES, AdmissionDeferred
 from tank.delivery import DeliveryDeferred, DeliveryService
 from tank.diagnostic_recovery import recover_legacy_diagnostic_job, validate_recovery_destination
@@ -253,7 +254,7 @@ class Runtime:
                 async with self.repo.transaction():
                     await self.repo.put("ops.jobs", job["job_id"], {**job, "result": result})
                     await self.repo.finish_job(job["job_id"])
-            except DeliveryDeferred as deferred:
+            except (DeliveryDeferred, RoutingDeferred) as deferred:
                 async with self.repo.transaction():
                     current = await self.repo.get("ops.jobs", job["job_id"])
                     if current and current["status"] == "RUNNING":

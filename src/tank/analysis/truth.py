@@ -4156,7 +4156,17 @@ def select_move(spot, deriv, liq, supply, relative, confidence, window):
     )
 
 
-def decisive_facts(spot, derivatives, liquidity, relative, supply, move_class, window, start, end):
+def _signed_native(value, token_id):
+    """A signed native quantity with thousands separators and its ticker (03 L8), e.g.
+    "+506,057.72 AERO"; below one unit it keeps three significant digits."""
+    amount = decimal(value)
+    text = format(amount, "+,.2f") if abs(amount) >= 1 else format(amount, "+.3g")
+    return text + " " + str(token_id).rsplit(":", 1)[-1]
+
+
+def decisive_facts(
+    spot, derivatives, liquidity, relative, supply, move_class, window, start, end, *, token_id
+):
     """Card-ready measured facts with the exact evidence scope behind the class."""
     facts = []
     coverage = spot["coverage"]
@@ -4190,7 +4200,7 @@ def decisive_facts(spot, derivatives, liquidity, relative, supply, move_class, w
         "spot.cvd",
         cvd,
         "NATIVE_TOKEN",
-        f"{window} spot flow {direction or 'unknown'}: CVD {cvd:g}, {spot['classification']}; {_count(coverage['n_complete'], 'complete venue')}."
+        f"{window} spot flow {direction or 'unknown'}: CVD {_signed_native(cvd, token_id)}, {spot['classification']}; {_count(coverage['n_complete'], 'complete venue')}."
         if cvd is not None
         else "",
         "mkt.flow_bars_1m",
@@ -4958,7 +4968,16 @@ def _compute_market_truth(snapshot, *, config=None):
     selected = select_move(spots[primary], deriv, liquidity, supply, relative, conf["class"], primary)
     pstart = end - timedelta(seconds=windows[primary])
     facts = decisive_facts(
-        spots[primary], deriv, liquidity, relative, supply, selected["move_class"], primary, pstart, end
+        spots[primary],
+        deriv,
+        liquidity,
+        relative,
+        supply,
+        selected["move_class"],
+        primary,
+        pstart,
+        end,
+        token_id=snapshot.get("token_id"),
     )
     for fact in facts:
         fact["text"] = canonical_fact_text(fact)

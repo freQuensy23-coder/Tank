@@ -50,6 +50,7 @@ Entity
   names: [str]; aliases: [str]
   tokens: [token_id]
   official_sources: [source_id]      # where the Verifier looks first
+  github_repos: [owner/repo]         # S25 repositories this entity publishes; routing identity (§3.1)
   layers_served: [StackLayer]        # dependency map
   competes_with: [entity_id]
   chains: [str]
@@ -1207,6 +1208,7 @@ GRANT USAGE ON SCHEMA reg, ingest, evt, mkt, ana, out, ops, scout, qa TO tank_ag
 GRANT SELECT ON ALL TABLES IN SCHEMA reg, ingest, evt, mkt, ana, out, ops, scout, qa TO tank_agent;
 ALTER DEFAULT PRIVILEGES IN SCHEMA reg, ingest, evt, mkt, ana, out, ops, scout, qa GRANT SELECT ON TABLES TO tank_agent;
 ALTER ROLE tank_agent SET default_transaction_read_only = on;
+-- The sandbox URL TANK_DB_URL carries options=-c search_path=reg,ingest,evt,mkt,ana,out,ops,scout,qa,public: a bare table name resolves
 
 -- Job claim by one of the service's workers (§3.8); on start: UPDATE ops.jobs SET status = 'QUEUED' WHERE status = 'RUNNING';
 UPDATE ops.jobs
@@ -1345,7 +1347,7 @@ def ch(query, **params):
 bars = ch("SELECT minute_start, buy_qty, sell_qty FROM mkt.flow_bars_1m FINAL WHERE instrument_id = {i:String} AND minute_start >= now() - INTERVAL 1 HOUR ORDER BY minute_start", i="binance:spot:BTCUSDT")
 ```
 
-Connect only through the injected read-only `TANK_DB_URL`; never print that URL. PostgreSQL access is read-only as `tank_agent`. The following examples perform reads; results from own scripts inform analysis and are not card numbers. Facts still require quotes stored through Tank tools.
+Connect only through the injected read-only `TANK_DB_URL`; never print that URL. PostgreSQL access is read-only as `tank_agent`. Its `search_path` covers every Tank schema (`reg, ingest, evt, mkt, ana, out, ops, scout, qa, public`), so `FROM claims` reads `evt.claims`; schema-qualified names work as well. The following examples perform reads; results from own scripts inform analysis and are not card numbers. Facts still require quotes stored through Tank tools.
 
 ```python
 import os

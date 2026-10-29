@@ -3507,6 +3507,8 @@ entities:
   - S23
   - S24
   - S25
+  github_repos:
+  - Uniswap/v4-core
   layers_served:
   - VENUE_DEX
   - LIQUIDITY_EXECUTION
@@ -3583,6 +3585,8 @@ entities:
   - S23
   - S24
   - S25
+  github_repos:
+  - 1inch/swap-vm
   layers_served:
   - LIQUIDITY_EXECUTION
   competes_with:
@@ -3624,6 +3628,8 @@ entities:
   - S23
   - S24
   - S25
+  github_repos:
+  - cowprotocol/services
   layers_served:
   - LIQUIDITY_EXECUTION
   competes_with:
@@ -3645,6 +3651,8 @@ entities:
   - S29
   - S25
   - S14
+  github_repos:
+  - hyperliquid-dex/hyperliquid-python-sdk
   layers_served:
   - VENUE_DEX
   - SETTLEMENT_L1_L2
@@ -3668,6 +3676,8 @@ entities:
   official_sources:
   - S29
   - S25
+  github_repos:
+  - elliottech/lighter-python
   layers_served:
   - VENUE_DEX
   competes_with:
@@ -3690,6 +3700,8 @@ entities:
   - S23
   - S24
   - S25
+  github_repos:
+  - aave-dao/aave-v3-origin
   layers_served:
   - LENDING_COLLATERAL
   competes_with:
@@ -3711,6 +3723,8 @@ entities:
   - S23
   - S24
   - S25
+  github_repos:
+  - morpho-org/morpho-blue
   layers_served:
   - LENDING_COLLATERAL
   competes_with:
@@ -3772,6 +3786,8 @@ entities:
   - S29
   - S17
   - S25
+  github_repos:
+  - LayerZero-Labs/LayerZero-v2
   layers_served:
   - INTEROPERABILITY
   competes_with:
@@ -3814,6 +3830,8 @@ entities:
   official_sources:
   - S29
   - S25
+  github_repos:
+  - ava-labs/avalanchego
   layers_served:
   - SETTLEMENT_L1_L2
   competes_with:
@@ -3833,6 +3851,8 @@ entities:
   - S29
   - S23
   - S25
+  github_repos:
+  - near/nearcore
   layers_served:
   - SETTLEMENT_L1_L2
   competes_with:
@@ -3854,6 +3874,8 @@ entities:
   official_sources:
   - S29
   - S25
+  github_repos:
+  - PlasmaLaboratories/node-templates
   layers_served:
   - SETTLEMENT_L1_L2
   competes_with:
@@ -3898,6 +3920,8 @@ entities:
   official_sources:
   - S29
   - S25
+  github_repos:
+  - worldcoin/world-chain
   layers_served:
   - ISSUER_PRODUCT
   competes_with: []

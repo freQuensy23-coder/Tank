@@ -641,6 +641,7 @@ def test_btc_benchmark_is_judged_by_its_raw_return_against_its_own_raw_history()
         "W15M",
         start,
         end,
+        token_id="bitcoin:BTC",
     )
     fact = next(f for f in facts if f["metric"] == "relative.r_raw")
     assert fact["text"].startswith("W15M price move (benchmark, raw)")
@@ -937,13 +938,60 @@ def test_decisive_facts_print_ranges_as_percents_and_singular_venues():
         "ref_venue": "binance:spot:T",
     }
     facts = decisive_facts(
-        spot, {"synchronized": None, "per_venue": []}, {}, relative, {}, "UNKNOWN", "W15M", start, end
+        spot,
+        {"synchronized": None, "per_venue": []},
+        {},
+        relative,
+        {},
+        "UNKNOWN",
+        "W15M",
+        start,
+        end,
+        token_id="t:T",
     )
     price = next(f for f in facts if f["metric"] == "relative.r_btc_adj")
     assert price["text"] == "W15M BTC-adjusted price move +0.51%; normal range -0.40% to +0.42%."
     assert "1 complete trailing-24h reference venue]" in canonical_fact_text(price)
     flow = next(f for f in facts if f["metric"].startswith("spot."))
     assert flow["text"].endswith("1 complete venue.")
+
+
+def test_spot_flow_fact_prints_cvd_signed_rounded_with_token_ticker():
+    """03 L8: the spot net flow carries its unit, not a raw Decimal scale (prod 'CVD 506057.71628000')."""
+    from decimal import Decimal
+
+    from tank.analysis.truth import decisive_facts
+
+    end = parse_time("2026-10-28T19:00:00Z")
+    start = end - timedelta(hours=4)
+
+    def flow(cvd, token_id):
+        spot = {
+            "coverage": {"n_complete": 4},
+            "composite_max": {"cvd": cvd, "venues": []},
+            "venues": [],
+            "classification": "CONCENTRATED",
+            "direction": "BUY",
+        }
+        facts = decisive_facts(
+            spot,
+            {"synchronized": None, "per_venue": []},
+            {},
+            {"windows": {"W4H": {"r_btc_adj": None}}},
+            {},
+            "UNKNOWN",
+            "W4H",
+            start,
+            end,
+            token_id=token_id,
+        )
+        return next(f for f in facts if f["metric"] == "spot.cvd")
+
+    fact = flow(Decimal("506057.71628000"), "aerodrome-finance:AERO")
+    assert fact["text"] == "W4H spot flow BUY: CVD +506,057.72 AERO, CONCENTRATED; 4 complete venues."
+    assert fact["value"] == Decimal("506057.71628000") and fact["unit"] == "NATIVE_TOKEN"
+    assert "CVD -91,144.20 BTC," in flow(Decimal("-91144.20000000"), "bitcoin:BTC")["text"]
+    assert "CVD -0.00341 BTC," in flow(Decimal("-0.003410000"), "bitcoin:BTC")["text"]
 
 
 def test_oi_seconds_anchor_uses_actual_synchronized_observation_duration():
@@ -2090,14 +2138,14 @@ def test_oi_fact_reports_venue_decomposition_when_synchronized_class_unavailable
         "classification": "INSUFFICIENT_DATA",
     }
     relative = {"windows": {"W4H": {"r_btc_adj": None}}}
-    facts = decisive_facts(spot, derivatives, {}, relative, {}, "UNKNOWN", "W4H", start, end)
+    facts = decisive_facts(spot, derivatives, {}, relative, {}, "UNKNOWN", "W4H", start, end, token_id="t:T")
     text = next(f["text"] for f in facts if f["metric"] == "derivatives.oi_native_chg_pct")
     assert text == (
         "W4H synchronized native OI +8.18%, ABOVE; class unavailable (SYNCHRONIZED_MARK_OR_QUOTE_RATE_UNAVAILABLE); "
         "by venue: binance REAL_NATIVE (native +10.37%, position share 57.3%, price-markup component +6,530,101 USD)."
     )
     derivatives["synchronized"]["oi_class"] = "MIXED"
-    facts = decisive_facts(spot, derivatives, {}, relative, {}, "UNKNOWN", "W4H", start, end)
+    facts = decisive_facts(spot, derivatives, {}, relative, {}, "UNKNOWN", "W4H", start, end, token_id="t:T")
     assert next(f["text"] for f in facts if f["metric"] == "derivatives.oi_native_chg_pct").endswith(
         "; class MIXED."
     )
