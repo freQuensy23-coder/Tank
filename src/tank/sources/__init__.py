@@ -22,6 +22,7 @@ from tank.sources import parsers
 from tank.sources.capture_fetch import capture_fetch, is_exchange_url
 from tank.sources.rate_limits import shared_request_budgets
 from tank.sources.xsensor import XSensor
+from tank.storage import DECISION_MAX_ATTEMPTS
 from tank.util import iso, parse_time, sha256, utcnow
 
 
@@ -391,7 +392,7 @@ class SourceService:
                 {"item_id": item_id},
                 item_id,
                 priority=priority,
-                max_attempts=2,
+                max_attempts=DECISION_MAX_ATTEMPTS,
             )
             return record
 
