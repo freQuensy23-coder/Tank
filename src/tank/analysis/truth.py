@@ -1535,20 +1535,47 @@ def synchronized_oi(sync, start, end):
     return synchronized
 
 
-@precise
-def derivatives_truth(snapshot, start, end):
-    groups = defaultdict(list)
-    instruments = {}
+def _derivative_universe(snapshot):
     target = snapshot.get("token_id")
+    names = ("instruments", "oi", "funding", "liquidations", "klines", "flow_bars", "semantics")
+    sources = tuple(snapshot.get(name, ()) for name in names)
+    inputs = _ASSESSMENT_INPUTS.get()
+    memo = inputs.setdefault("derivative_universe", {}) if inputs is not None else None
+    key = (id(target), tuple(map(id, sources)))
+    hit = memo.get(key) if memo is not None else None
+    if hit is not None and hit[0] is target and all(a is b for a, b in zip(hit[1], sources, strict=True)):
+        return hit[2]
+    instruments = {}
     for collection in ("instruments", "oi", "funding", "liquidations"):
         for row in snapshot.get(collection, []):
             iid = row.get("instrument_id")
             if iid and _market(row) != "SPOT" and row.get("token_id", target) == target:
                 instruments.setdefault(iid, row)
-                groups.setdefault(iid, [])
-    for iid in groups:
-        groups[iid] = _oi_rows(snapshot, iid)
-    sem = {(s.get("instrument_id"), s["metric_key"]): s for s in snapshot.get("semantics", [])}
+    semantics = {(row.get("instrument_id"), row["metric_key"]): row for row in snapshot.get("semantics", [])}
+    volumes = {}
+    for market in ("SPOT", "PERP"):
+        selected = {
+            row["instrument_id"]
+            for row in snapshot.get("instruments", [])
+            if row.get("token_id", target) == target and ((_market(row) == "SPOT") == (market == "SPOT"))
+        }
+        selected |= {
+            row["instrument_id"]
+            for collection in ("klines", "flow_bars")
+            for row in snapshot.get(collection, [])
+            if row.get("token_id", target) == target and ((_market(row) == "SPOT") == (market == "SPOT"))
+        }
+        volumes[market] = selected
+    result = instruments, semantics, volumes
+    if memo is not None:
+        memo[key] = (target, sources, result)
+    return result
+
+
+@precise
+def derivatives_truth(snapshot, start, end):
+    instruments, sem, volume_instruments = _derivative_universe(snapshot)
+    groups = {iid: _oi_rows(snapshot, iid) for iid in instruments}
     per = []
     sync = []
     for instrument, rs in groups.items():
@@ -1721,19 +1748,8 @@ def derivatives_truth(snapshot, start, end):
         }
     volumes = {}
     volume_coverage = {}
-    target = snapshot.get("token_id")
     for market in ("SPOT", "PERP"):
-        instruments = {
-            r["instrument_id"]
-            for r in snapshot.get("instruments", [])
-            if r.get("token_id", target) == target and ((_market(r) == "SPOT") == (market == "SPOT"))
-        }
-        instruments |= {
-            r["instrument_id"]
-            for collection in ("klines", "flow_bars")
-            for r in snapshot.get(collection, [])
-            if r.get("token_id", target) == target and ((_market(r) == "SPOT") == (market == "SPOT"))
-        }
+        instruments = volume_instruments[market]
         current = []
         previous = []
         for iid in instruments:

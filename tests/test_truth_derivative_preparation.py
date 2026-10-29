@@ -56,3 +56,24 @@ def test_derivative_windows_reuse_universe_classification_without_reusing_window
         assert len(calls) == first_calls
     finally:
         truth._ASSESSMENT_INPUTS.reset(token)
+
+
+def test_derivative_preparation_tracks_replaced_sources_and_isolates_assessments():
+    snapshot, end = workload()
+    replacement = dict(snapshot, instruments=list(reversed(snapshot["instruments"])))
+    replacement["oi"] = [dict(row, oi_native="200") for row in snapshot["oi"]]
+    expected = truth.derivatives_truth(replacement, end - timedelta(hours=6), end)
+    token = truth._ASSESSMENT_INPUTS.set({})
+    try:
+        first = truth.derivatives_truth(snapshot, end - timedelta(hours=6), end)
+        second = truth.derivatives_truth(replacement, end - timedelta(hours=6), end)
+        assert second == expected
+        assert second["per_venue"][0]["instrument_id"] != first["per_venue"][0]["instrument_id"]
+        assert second["per_venue"][0]["oi_native_end"] != first["per_venue"][0]["oi_native_end"]
+    finally:
+        truth._ASSESSMENT_INPUTS.reset(token)
+    fresh = truth._ASSESSMENT_INPUTS.set({})
+    try:
+        assert truth.derivatives_truth(replacement, end - timedelta(hours=6), end) == expected
+    finally:
+        truth._ASSESSMENT_INPUTS.reset(fresh)
