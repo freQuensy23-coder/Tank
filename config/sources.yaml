@@ -765,6 +765,14 @@ sources:
     kind: atom
     interval_s: 600
     subtype: releases
+  - url: https://github.com/bitcoin/bitcoin/releases.atom
+    kind: atom
+    interval_s: 600
+    subtype: releases
+  - url: https://github.com/ethereum/go-ethereum/releases.atom
+    kind: atom
+    interval_s: 600
+    subtype: releases
   - url: https://github.com/LayerZero-Labs/LayerZero-v2/commits/main.atom
     kind: atom
     interval_s: 600

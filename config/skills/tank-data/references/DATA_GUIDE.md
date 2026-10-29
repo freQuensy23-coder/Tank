@@ -50,6 +50,7 @@ Entity
   names: [str]; aliases: [str]
   tokens: [token_id]
   official_sources: [source_id]      # where the Verifier looks first
+  github_repos: [owner/repo]         # S25 repositories this entity publishes; routing identity (§3.1)
   layers_served: [StackLayer]        # dependency map
   competes_with: [entity_id]
   chains: [str]
@@ -714,7 +715,7 @@ HTML page sources: Tank collects every link on the page that matches the source'
 
 | ID | Endpoint(s) | Format | Item key | Interval |
 |---|---|---|---|---|
-| S25 | Releases: `https://github.com/Uniswap/v4-core/releases.atom`, `https://github.com/aave-dao/aave-v3-origin/releases.atom`, `https://github.com/cowprotocol/services/releases.atom`, `https://github.com/hyperliquid-dex/hyperliquid-python-sdk/releases.atom`, `https://github.com/1inch/swap-vm/releases.atom`, `https://github.com/elliottech/lighter-python/releases.atom`, `https://github.com/ava-labs/avalanchego/releases.atom`, `https://github.com/near/nearcore/releases.atom`, `https://github.com/worldcoin/world-chain/releases.atom`, `https://github.com/PlasmaLaboratories/node-templates/releases.atom`. Commits: `https://github.com/LayerZero-Labs/LayerZero-v2/commits/main.atom`, `https://github.com/morpho-org/morpho-blue/commits/main.atom` | Atom | entry `id` | 600 s |
+| S25 | Releases: `https://github.com/Uniswap/v4-core/releases.atom`, `https://github.com/aave-dao/aave-v3-origin/releases.atom`, `https://github.com/cowprotocol/services/releases.atom`, `https://github.com/hyperliquid-dex/hyperliquid-python-sdk/releases.atom`, `https://github.com/1inch/swap-vm/releases.atom`, `https://github.com/elliottech/lighter-python/releases.atom`, `https://github.com/ava-labs/avalanchego/releases.atom`, `https://github.com/near/nearcore/releases.atom`, `https://github.com/worldcoin/world-chain/releases.atom`, `https://github.com/PlasmaLaboratories/node-templates/releases.atom`, `https://github.com/bitcoin/bitcoin/releases.atom`, `https://github.com/ethereum/go-ethereum/releases.atom`. Commits: `https://github.com/LayerZero-Labs/LayerZero-v2/commits/main.atom`, `https://github.com/morpho-org/morpho-blue/commits/main.atom` | Atom | entry `id` | 600 s |
 
 Feeds checked on 16 Oct 2026: every release feed above except Uniswap v4-core (last release Jan 2025, kept for the next protocol version) had releases in 2026; Morpho Blue commits are active (latest 16 Oct 2026), LayerZero v2 commits are quiet (latest Feb 2026). Repositories checked and left out because they had no release in 2026: PancakeSwap `infinity-core`, Aerodrome `slipstream` and `contracts`, Curve `curve-stablecoin`, 0x `0x-settler`, Euler `evk-periphery` and `euler-vault-kit`, Ondo `rwa-contracts`, Ethena `ethena-minting-client`; Quant's public repositories are forks and tools.
 
@@ -1947,6 +1948,8 @@ This manifest is generated from current `sources.yaml` and takes precedence for 
 | S25 | GitHub | 600 | atom | GET https://github.com/near/nearcore/releases.atom |
 | S25 | GitHub | 600 | atom | GET https://github.com/worldcoin/world-chain/releases.atom |
 | S25 | GitHub | 600 | atom | GET https://github.com/PlasmaLaboratories/node-templates/releases.atom |
+| S25 | GitHub | 600 | atom | GET https://github.com/bitcoin/bitcoin/releases.atom |
+| S25 | GitHub | 600 | atom | GET https://github.com/ethereum/go-ethereum/releases.atom |
 | S25 | GitHub | 600 | atom | GET https://github.com/LayerZero-Labs/LayerZero-v2/commits/main.atom |
 | S25 | GitHub | 600 | atom | GET https://github.com/morpho-org/morpho-blue/commits/main.atom |
 | S26 | BNY | 600 | html | GET https://www.bny.com/corporate/global/en/about-us/newsroom.html |
