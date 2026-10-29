@@ -1,6 +1,7 @@
 """An agent turn that ends without the source item's outcome is reminded, never silently skipped."""
 
 import copy
+import json
 from types import SimpleNamespace
 
 import httpx
@@ -14,6 +15,7 @@ from tank.storage import MemoryRepository
 
 AT = "2026-10-27T10:00:00Z"
 REAL = Settings(_env_file=None)
+BODY = "Full article body that is already in the session. " * 200
 
 
 def settings(limit=20):
@@ -52,7 +54,8 @@ async def seed(repo, items=("i",), kind="NEW_ITEM"):
                 "item_id": item_id,
                 "source_id": "S01",
                 "title": "Exchange lists a token",
-                "text": "Exchange lists a token",
+                "text": BODY,
+                "url": "https://example.test/listing",
                 "observed_at": AT,
                 "relevance": {"decision": "ALWAYS"},
                 "extraction_status": "PENDING",
@@ -134,6 +137,15 @@ async def test_missing_outcome_reminds_same_session_with_format_and_refusals():
     text = content["reminder"]
     assert "TASK NOT COMPLETE (reminder 1 of 20" in text
     assert '"is_event": false' in text and '"no_event_reason": "<non-empty string>"' in text
+    assert set(content) == {"message", "source", "reminder"}
+    assert content["source"] == {
+        "title": "Exchange lists a token",
+        "source": "SEC · S01",
+        "url": "https://example.test/listing",
+        "observed_at": AT,
+    }
+    assert "Full article body" not in json.dumps(content, ensure_ascii=False)
+    assert len(json.dumps(content, ensure_ascii=False)) < 6000
     assert '"is_event": true' in text and '"checked_sources": ["<string>"]' in text
     assert "merge_into arguments" in text
     assert "record_event: $.event_time.quote: required field missing" in text
@@ -150,7 +162,12 @@ async def test_item_added_reminder_names_add_observation():
     session = await settle(repo, sessions)
     [job] = await reminders(repo)
     assert job["payload"]["reminded_kind"] == "ITEM_ADDED"
-    text = (await ModelContext(repo, config, session).message(job["payload"], None))["reminder"]
+    item = await repo.get("ingest.source_items", "i")
+    content = await ModelContext(repo, config, session).message(job["payload"], item)
+    text = content["reminder"]
+    assert "Full article body" not in json.dumps(content, ensure_ascii=False)
+    assert len(json.dumps(content, ensure_ascii=False)) < 6000
+    assert '"is_event": true' in text
     assert 'add_observation arguments: {"link": "<CORROBORATION|STATE_UPDATE|DENIAL|CONTRADICTION>"' in text
     assert "merge_into" not in text
     await sessions.close()

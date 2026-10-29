@@ -599,9 +599,15 @@ class ModelContext:
         return projected
 
     async def message(self, payload, item):
-        content = {"message": await self.project(payload), "item": await self.project(item)}
         if payload.get("kind") == "COMPLETION_REMINDER":
-            content["reminder"] = await self.completion_reminder(payload)
+            return clean_value(
+                {
+                    "message": await self.project(payload),
+                    "source": self.source_reference(item),
+                    "reminder": await self.completion_reminder(payload),
+                }
+            )
+        content = {"message": await self.project(payload), "item": await self.project(item)}
         if self.session.get("event_id"):
             event = await self.repo.get("evt.events", self.session["event_id"])
             if event:
@@ -628,6 +634,17 @@ class ModelContext:
         if isinstance(value, dict):
             value.update(fixed)
         return json.dumps(value, ensure_ascii=False)
+
+    def source_reference(self, item):
+        """The incoming source named compactly; its full text is already in the session."""
+        item = item or {}
+        reference = {
+            "title": clean_text(" ".join(str(item.get("title") or "").split())[:200]),
+            "source": self.source_label(item.get("source_id")) or item.get("source_name"),
+            "url": item.get("url"),
+            "observed_at": item.get("observed_at"),
+        }
+        return {key: value for key, value in reference.items() if value}
 
     async def refusals(self, payload):
         """The refused or failed tool calls of the turn the reminder follows, with their reasons."""
@@ -656,9 +673,9 @@ class ModelContext:
             "for this session). Your previous turn on this incoming source ended without its outcome. "
             "The task is complete only after you return the outcome by calling a tool below with "
             "arguments in exactly this format; a turn that ends without it leaves the news item "
-            "unprocessed. Do it in this turn.",
+            "unprocessed. Do it in this turn. The source is the one named in `source`; its full text is "
+            "earlier in this session.",
         ]
-        rejection = self.skeleton("record_event", is_event=False, no_event_reason="<non-empty string>")
         if kind == "ITEM_ADDED":
             lines.append(
                 "This source was routed to the current event. Return exactly one outcome: "
@@ -677,14 +694,16 @@ class ModelContext:
                 "earlier open event, first record_event, then merge_into with that earlier event's "
                 "event_id."
             )
-            recorded = self.skeleton("record_event", is_event=True)
-            if recorded:
-                lines.append("record_event arguments (is_event=true): " + recorded)
             merge = self.skeleton("merge_into")
             if merge:
                 lines.append("merge_into arguments: " + merge)
-        if rejection:
-            lines.append("record_event arguments (is_event=false): " + rejection)
+        recorded = self.skeleton("record_event", is_event=True)
+        if recorded:
+            lines.append("record_event arguments (is_event=true): " + recorded)
+        lines.append(
+            'record_event rejection: the same record_event arguments with "is_event": false and '
+            '"no_event_reason": "<non-empty string>" (one concrete sentence why there is no event claim).'
+        )
         lines.append(
             "Replace every <placeholder> with a value; an enum placeholder lists the allowed values "
             "separated by |. is_event=false requires no_event_reason, and every other required field "
