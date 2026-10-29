@@ -877,6 +877,32 @@ def _oi_split(rows):
     return hit[1:]
 
 
+def _history_fixed_decimal_column(column):
+    if len(column) < 256 or any(
+        value is not None and (type(value) is not str or len(value) > 160) for value in column
+    ):
+        return None
+    raw = np.asarray(column, dtype=object)
+    present = np.not_equal(raw, None)
+    try:
+        text = np.asarray(raw[present], dtype="S")
+    except UnicodeError:
+        return None
+    digits = np.strings.replace(text, b".", b"")
+    if not np.all(np.strings.isdigit(digits)) or np.any(np.strings.count(text, b".") > 1):
+        return None
+    lengths = np.strings.str_len(np.strings.lstrip(digits, b"0"))
+    dot = np.strings.find(text, b".")
+    exponents = np.where(dot >= 0, dot - np.strings.str_len(text) + 1, 0)
+    if np.any(lengths > 48) or np.any(exponents < -100):
+        return None
+    adjusted = np.where(lengths == 0, exponents, lengths + exponents - 1)
+    values = np.empty(len(raw), dtype=object)
+    values.fill(None)
+    values[present] = np.frompyfunc(Decimal, 1, 1)(raw[present])
+    return values, int(exponents.min(initial=0)), int(adjusted.max(initial=0))
+
+
 def _history_decimal_arrays(columns, *, summands=1, metadata=None):
     context = getcontext()
     if (
@@ -895,6 +921,12 @@ def _history_decimal_arrays(columns, *, summands=1, metadata=None):
     with localcontext(context):
         try:
             for column in columns:
+                fixed = _history_fixed_decimal_column(column)
+                if fixed is not None:
+                    array, column_low, column_high = fixed
+                    arrays.append(array)
+                    low, high = min(low, column_low), max(high, column_high)
+                    continue
                 values = []
                 for value in column:
                     if value is None:

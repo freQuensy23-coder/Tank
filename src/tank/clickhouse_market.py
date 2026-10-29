@@ -16,6 +16,7 @@ import asyncio
 import json
 import re
 import time
+from copy import deepcopy
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from urllib.parse import urlsplit, urlunsplit
@@ -762,7 +763,9 @@ async def _sampled_history_state(
     cache[key] = (fingerprint, records)
     while len(cache) > 32 or sum(len(entry[1]) for entry in cache.values()) > 300_000:
         cache.pop(next(iter(cache)))
-    return records
+    if any(kind in {"jsonb", "text[]"} for kind in MARKET_COLUMNS[collection].values()):
+        return deepcopy(records)
+    return [dict(record) for record in records]
 
 
 async def sampled_market_history(
