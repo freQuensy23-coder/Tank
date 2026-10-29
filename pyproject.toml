@@ -1,5 +1,5 @@
 [build-system]
-requires = ["hatchling>=1.27", "hatch-cython==0.6.0", "Cython==3.3.0", "setuptools==84.2.1"]
+requires = ["hatchling>=1.27", "hatch-cython==0.6.0", "Cython==3.2.9", "setuptools==84.2.1"]
 build-backend = "hatchling.build"
 
 [project]
