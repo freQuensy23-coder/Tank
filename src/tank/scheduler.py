@@ -1726,6 +1726,13 @@ class Scheduler:
             if failed_ops_cards
             else ""
         )
+        failing = await self.failing_source_feeds()
+        failing_label = (
+            "; failing source feeds: "
+            + ", ".join(f"{row['feed']} {row['failed']}/{row['reads']}" for row in failing)
+            if failing
+            else ""
+        )
         async with self.repo.transaction():
             await self.repo.put(
                 "out.ops_notices",
@@ -1733,11 +1740,12 @@ class Scheduler:
                 {
                     "notice_id": notice_id,
                     "kind": "HEARTBEAT",
-                    "text": f"Tank 24h: alerts={count}; hot tokens={len(hot_tokens)}; queue lag={lag:.0f}s; analysis backlog queued={backlog['queued']}, running={backlog['running']}; LLM spending={spending_label}{ops_delivery}",
+                    "text": f"Tank 24h: alerts={count}; hot tokens={len(hot_tokens)}; queue lag={lag:.0f}s; analysis backlog queued={backlog['queued']}, running={backlog['running']}; LLM spending={spending_label}{ops_delivery}{failing_label}",
                     **collection_clock(now).fields("created_at"),
                     "created_by": "scheduler",
                     "analysis_backlog": backlog,
                     "queue_lag_s": lag,
+                    "failing_source_feeds": failing,
                 },
                 immutable=True,
             )
@@ -1749,6 +1757,24 @@ class Scheduler:
                 expires_at=offset_schedule(collection_clock(now), timedelta(days=1)),
                 max_attempts=5,
             )
+
+    async def failing_source_feeds(self):
+        """Feeds whose share of failed reads among their recent reads reaches the alarm rate.
+
+        A feed's checkpoint keeps the outcomes of its last reads (``recent_reads``, feed polls
+        and article/detail fetches); ⚙``source_failed_read_alarm`` is the rate (03 §7.6)."""
+        if not hasattr(self.settings, "load_config"):
+            return []
+        alarm = self.threshold("source_failed_read_alarm", 0.1)
+        rows = []
+        for source in self.settings.load_config("sources")["sources"]:
+            for index, _ in enumerate(source.get("feeds", [])):
+                key = f"{source['source_id']}:{index}"
+                recent = (await self.repo.get("ops.source_checkpoints", key) or {}).get("recent_reads") or []
+                failed = sum(not ok for ok in recent)
+                if recent and failed / len(recent) >= alarm:
+                    rows.append({"feed": key, "failed": failed, "reads": len(recent)})
+        return rows
 
     async def agent_backlog(self, now, window):
         """What the analyst owes: queued agent turns, busy sessions and recent agent model calls.

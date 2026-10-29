@@ -23,10 +23,19 @@ log = logging.getLogger(__name__)
 ARTICLE_KINDS = {"html", "rendered", "rendered_html", "html_diff"}
 
 
+RECENT_READS = 50
+
+
 def count_read(state, name, *, ok, n=1):
-    """Cumulative per-feed read counters for the V0-A failed-read rate (01 §10)."""
+    """Cumulative per-feed read counters for the V0-A failed-read rate (01 §10).
+
+    ``recent_reads`` keeps the outcomes of the feed's last ``RECENT_READS`` reads of
+    either kind (true for ok) for the heartbeat's rolling failed-read rate (03 §7.6).
+    """
     counters = state.setdefault(name, {"ok": 0, "failed": 0})
     counters["ok" if ok else "failed"] += n
+    if n > 0:
+        state["recent_reads"] = (state.get("recent_reads", []) + [ok] * min(n, RECENT_READS))[-RECENT_READS:]
 
 
 async def recapture(repo, source, external_ids, *, apply=False):
@@ -640,6 +649,7 @@ class SourcePoller:
                         last_failure_at=self.stamp(),
                     )
                     await self.save(key, current)
+                log.warning("Source feed %s read failed: %s", key, exc)
                 return {"items": 0, "errors": [str(exc)]}
             await self.report_entry_errors(
                 key, source, feed, acquired.get("entry_errors") or [], acquired.get("fetched_at") or attempted
@@ -779,8 +789,15 @@ class SourcePoller:
                 payload, source_id=sid, item_id=item["item_id"], observed_at=item["observed_at"]
             )
         stored = await svc.ingest(source, item)
-
-        return "DUPLICATE" if stored["item_id"] != item["item_id"] else None
+        if stored["item_id"] == item["item_id"]:
+            return None
+        log.warning(
+            "Source feed %s entry %s merged as a duplicate into item %s",
+            key,
+            item["external_id"],
+            stored["item_id"],
+        )
+        return "DUPLICATE"
 
     async def drain(self, source, index, *, force=False, escalated=False):
         sid = source["source_id"]
@@ -877,6 +894,9 @@ class SourcePoller:
                 if duplicates:
                     current["duplicate_ids"] = (current.get("duplicate_ids", []) + duplicates)[-1000:]
                 if errors:
+                    log.warning(
+                        "Source feed %s: %d detail reads failed: %s", key, len(errors), "; ".join(errors)
+                    )
                     current.update(
                         status="DEGRADED",
                         error="; ".join(errors),
