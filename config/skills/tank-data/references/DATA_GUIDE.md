@@ -92,7 +92,9 @@ SourceItem
   relevance: {decision: ALWAYS | SEND | SKIP, p_relevant: 0..1?, model: str?}   # §3.1
   route: {decision: NEW_SESSION | ADDED, event_id: str?, p_same: 0..1?}?        # §3.1
   extraction_status: PENDING | DONE | SKIPPED | FAILED
-  # A successful native turn may ignore an item: SKIPPED, not event/call failure.
+  # SKIPPED: rejected by the agent (record_event is_event=false) or by the filter.
+  # A turn that ends without an outcome leaves it PENDING with extraction_reason AGENT_REMINDED
+  # while Tank reminds the agent; FAILED with AGENT_INCOMPLETE once the session's reminders are spent.
 ```
 
 ### 2.3 Events
