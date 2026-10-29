@@ -44,6 +44,8 @@ One Linux host runs everything in Docker Compose, five containers in all: the Ta
 
 Common to all HTTP sources: header `User-Agent: TankV0/1.0 (<operator contact e-mail>)`; conditional GET (`If-None-Match` / `If-Modified-Since`) where the server returns `ETag` / `Last-Modified`; timeout 20 s; 3 retries with 2/4/8 s backoff; escalated interval 15 s (01 FR-D-02). Each payload is stored raw with SHA-256 before parsing; items are deduplicated by the item key in the tables below. Requests to exchange hosts — the announcement APIs of S09–S11 and the instrument lists of S14 — are sent by tank-capture, not by Tank: the `sources` loop writes an `HTTP_FETCH` row to `mkt.capture_requests`, tank-capture sends it within the shared venue budget and stores the response in that row, and `sources` parses it as usual (§5.1).
 
+Evidence pages the analyst reads with `fetch_page` (03 §3.2 tool table) are single agent-requested reads, not source polling. They use the browser User-Agent `evidence_user_agent` from `sources.yaml` with browser `Accept`/`Accept-Language` headers and the source client's TLS settings, because news and exchange sites (The Block, CoinDesk, Bybit announcements) answer the contact User-Agent with 403, 429 or no response. Hosts whose terms require a declared User-Agent — every `limits.shared_host` with `requires_contact_user_agent: true`, today sec.gov — still get the contact User-Agent above.
+
 HTML page sources: Tank collects every link on the page that matches the source's article pattern below, resolves it to an absolute URL, and treats each URL not seen before as a new item; the article page is then fetched for its full text. Zero matches on a successful fetch marks the source DEGRADED (layout change). Every source works from plain HTTP; Tank runs no browser. S19 reads the JSON search behind its page.
 
 ### 3.1 Regulators and market structure (CORE)
@@ -295,7 +297,7 @@ The interface between the two processes is tables; no files pass between them:
 | `mkt.trades` | ClickHouse | tank-capture | Tank, agents | Every print |
 | `mkt.hot_tokens` | PostgreSQL | Tank | tank-capture | The hot set tank-capture subscribes |
 | `mkt.backfill_runs` | PostgreSQL | Tank creates, tank-capture runs | Tank | Pre-event backfill obligations and their readiness |
-| `mkt.capture_requests` | PostgreSQL | Tank creates, tank-capture runs | Tank | Window repairs before a Market Truth run; `HTTP_FETCH` requests to exchange hosts with their stored responses |
+| `mkt.capture_requests` | PostgreSQL | Tank creates, tank-capture runs | Tank | Window repairs before a Market Truth run; `HTTP_FETCH` requests to exchange hosts with their stored responses (a request with `redirects: manual` gets a redirect back with its `location`, unfollowed; a host that keeps answering 429 until the retries or budget end fails the request as `RATE_LIMITED` with its `retry_after`) |
 | `mkt.capture_streams`, `mkt.capture_gaps` | PostgreSQL | tank-capture | Tank | Stream state per instrument (Data Confidence) and explicit gap evidence |
 | `ops.request_budget_ledger`, `ops.request_budget_blocks` | PostgreSQL | both | both | One request budget per provider and IP; a 429 or 418 closes the host for both processes |
 

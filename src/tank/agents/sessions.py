@@ -27,6 +27,7 @@ from tank.delivery import DeliveryDeferred
 from tank.openma_sync import agent_tools
 from tank.ops_progress import SOURCE_MESSAGE_KINDS, item_progress, session_progress
 from tank.settings import threshold
+from tank.sources.capture_fetch import CaptureRateLimited
 from tank.telegram_inbox import DOCUMENT_LIMIT, closed_reason, question_message, record_answer
 from tank.time_precision import collection_clock, offset_schedule, propagate_timestamp
 from tank.util import canonical_json, iso, parse_time, sha256, utcnow
@@ -1689,9 +1690,28 @@ class SessionService:
                 "Tool input rejected; credential-bearing diagnostic withheld" if rejected else safe["reason"]
             )
             return {"type": type(error).__name__, "reason": reason, "category": "VALIDATION"}, "REFUSED"
-        if isinstance(error, httpx.HTTPStatusError):
-            reason = f"Source request failed (HTTP {error.response.status_code})"
-            category = "SOURCE_HTTP"
+        retry_after = None
+        if isinstance(error, CaptureRateLimited):
+            retry_after = error.retry_after
+        elif isinstance(error, httpx.HTTPStatusError) and error.response.status_code == 429:
+            retry_after = error.response.headers.get("retry-after", "")
+        if retry_after is not None:
+            reason = "Source rate-limited the request (HTTP 429)" + (
+                f"; Retry-After {retry_after} s" if retry_after.isdigit() else ""
+            )
+            category = "SOURCE_RATE_LIMITED"
+        elif isinstance(error, httpx.HTTPStatusError):
+            status = error.response.status_code
+            if status in {401, 403}:
+                reason = f"Source refused access to the page (HTTP {status})"
+                category = "SOURCE_ACCESS_DENIED"
+            else:
+                reason = f"Source request failed (HTTP {status})"
+                category = "SOURCE_HTTP"
+        elif isinstance(error, httpx.TimeoutException):
+            reason, category = "Source did not answer within the fetch timeout", "SOURCE_TIMEOUT"
+        elif isinstance(error, httpx.TooManyRedirects):
+            reason, category = "Source redirected too many times", "SOURCE_REDIRECT"
         elif isinstance(error, httpx.HTTPError):
             reason, category = "Source transport failed", "SOURCE_TRANSPORT"
         else:
