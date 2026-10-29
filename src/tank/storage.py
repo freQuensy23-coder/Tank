@@ -130,6 +130,7 @@ RUNNING_CAPS = {"REACTION_CAPTURE": 1}
 
 
 EARLIEST_EXPIRY_FIRST = ("REACTION_CAPTURE",)
+REVISIONS_LAST = ("REACTION_CAPTURE",)
 CLAIM_SLOW_S, DELIVER_LATE_S = 0.5, 1.0
 
 
@@ -166,7 +167,9 @@ CLAIM_SQL = """WITH expired AS (
     AND (NOT j.type=ANY(%(yields)s::text[])
       OR j.expires_at <= now() + make_interval(secs => %(safety)s)
       OR NOT (SELECT analysis_busy OR fresh_event FROM gate))
-    ORDER BY priority,CASE WHEN type=ANY(%(edf)s::text[]) THEN expires_at END NULLS LAST,
+    ORDER BY priority,CASE WHEN type=ANY(%(revisions_last)s::text[])
+      THEN coalesce(document#>>'{payload,automatic_revision}'='true',false) END NULLS LAST,
+      CASE WHEN type=ANY(%(edf)s::text[]) THEN expires_at END NULLS LAST,
       run_after,storage_key FOR UPDATE SKIP LOCKED LIMIT 1),
   claimed AS (
     UPDATE ops.jobs SET status='RUNNING',
@@ -193,6 +196,7 @@ def claim_params(held):
         "yields": list(YIELDS_TO_ANALYSIS),
         "safety": EXPIRY_SAFETY_S,
         "edf": list(EARLIEST_EXPIRY_FIRST),
+        "revisions_last": list(REVISIONS_LAST),
     }
 
 
@@ -527,8 +531,15 @@ class MemoryRepository(QueueMixin):
 
             def order(r):
                 deadline = r.get("expires_at") if r["type"] in EARLIEST_EXPIRY_FIRST else None
+                revision = (
+                    bool((r.get("payload") or {}).get("automatic_revision"))
+                    if r["type"] in REVISIONS_LAST
+                    else None
+                )
                 return (
                     r["priority"],
+                    revision is None,
+                    bool(revision),
                     deadline is None,
                     parse_time(deadline) if deadline else now,
                     r["run_after"],
