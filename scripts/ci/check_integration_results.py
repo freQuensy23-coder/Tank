@@ -6,7 +6,7 @@ import xml.etree.ElementTree as ET
 from collections import Counter
 from pathlib import Path
 
-from integration_shard import parse_shard, shard_for
+from integration_shard import selected_for
 
 
 def verify(reports: list[Path], collections: list[Path], shard: str | None = None) -> dict:
@@ -18,8 +18,7 @@ def verify(reports: list[Path], collections: list[Path], shard: str | None = Non
     if shard is not None:
         if len(reports) != 1 or len(collections) != 1:
             raise ValueError("a shard check requires exactly one report and collection")
-        index, count = parse_shard(shard)
-        expected = [case for case in expected if shard_for(case["file"], count) == index]
+        expected = [case for case in expected if selected_for(case["file"], shard)]
     cases = [case for report in reports for case in ET.parse(report).getroot().findall(".//testcase")]
     if not cases or not expected:
         raise ValueError("the integration report or selected collection contains no cases")
