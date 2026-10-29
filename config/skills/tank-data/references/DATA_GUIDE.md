@@ -511,7 +511,7 @@ Fixture
 | `ops_cards` | (`chat_id`, `item_id`) | The "Tank Ops" card of each material and its Telegram message; mutable, edited as notices arrive (§7.6). |
 | `hot_tokens` | (`token_id`, `event_id`) | Hot set (§9); read on start to subscribe the hot tokens again. |
 | `jobs` | `job_id`; unique `idem_key` | The service's job queue (§3.8). |
-| `agent_sessions`, `tool_calls` | `session_id`, `call_id` | The OpenMA session of each event, and every tool call with its input, result and timing (§3.2). |
+| `agent_sessions`, `tool_calls` | `session_id`, `call_id` | The OpenMA sessions of each event (one live session; closed earlier generations keep their rows and `event_id`, indexed, not unique), and every tool call with its input, result and timing (§3.2). |
 | `expansion_proposals` | `prp_id` | Only table the scout role may write, together with its own logs. |
 | `fixtures`, `replay_runs` | — | Files, not tables: fixtures are listed in `tests/fixtures/manifest.json`; a replay run freezes its inputs and outputs in its output directory. Sealed outcomes stay outside anything the pipeline reads. |
 
@@ -1175,7 +1175,7 @@ CREATE TABLE ops.llm_usage (
 
 CREATE TABLE ops.agent_sessions (
   session_id      text PRIMARY KEY,                    -- OpenMA session id
-  event_id        text UNIQUE REFERENCES evt.events(event_id),   -- set by record_event
+  event_id        text REFERENCES evt.events(event_id),   -- set by record_event; a closed session's event gets a fresh generation, so earlier closed sessions share it
   opened_by_item  text NOT NULL REFERENCES ingest.source_items(item_id),
   agent_version   text NOT NULL,                       -- tank-event-analyst@<version>
   status          text NOT NULL CHECK (status IN ('OPEN','ENDED','FAILED')),
