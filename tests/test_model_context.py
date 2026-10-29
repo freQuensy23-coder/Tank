@@ -236,6 +236,38 @@ async def test_unknown_ids_are_refused_with_the_lookup_query(context, tool, argu
     assert ("Look it up with read-only SQL" in str(refused.value)) is not registry_key
 
 
+@pytest.mark.parametrize(
+    "tool,arguments,key",
+    [
+        ("list_open_events", {"token_id": "cow-protocol:COW"}, "cow:COW"),
+        ("list_open_events", {"token_id": "worldcoin:WLD"}, "world:WLD"),
+        ("get_registry", {"entity_id": "cow-protocol"}, "cow"),
+        ("get_token_facts", {"token_id": "BTC"}, "bitcoin:BTC"),
+    ],
+)
+async def test_a_guessed_registry_key_is_refused_with_the_key_it_names(context, tool, arguments, key):
+    repo, settings, session, _ = context
+    with pytest.raises(ValueError, match="not a registry") as refused:
+        await ModelContext(repo, settings, session).arguments(tool, arguments)
+    guess = next(iter(arguments.values()))
+    assert f"The registry key for {guess!r} is {key}; pass {key}." in str(refused.value)
+
+
+@pytest.mark.parametrize(
+    "arguments", [{"token_id": "ripple:XRP"}, {"entity_id": "solana"}, {"token_id": "binance:BNB"}]
+)
+async def test_a_key_outside_the_registry_is_refused_with_the_name_lookup(context, arguments):
+    repo, settings, session, _ = context
+    for tool in ("list_open_events", "get_registry"):
+        with pytest.raises(ValueError, match="not a registry") as refused:
+            await ModelContext(repo, settings, session).arguments(tool, arguments)
+        assert "is not in the registry" in str(refused.value)
+        assert "pass its name or ticker in name instead" in str(refused.value)
+    assert await ModelContext(repo, settings, session).arguments("list_open_events", {"name": "Ripple"}) == {
+        "name": "Ripple"
+    }
+
+
 async def test_an_id_of_the_wrong_kind_is_named_as_such(context):
     repo, settings, session, item = context
     event = await bound_event(repo, session)
@@ -333,6 +365,76 @@ async def test_claim_descriptions_in_assessment_evidence_are_refused(context, pa
     target[path[-1]] = [{"quote": "Product is live.", "subject": "World"}]
     with pytest.raises(ValueError, match="evidence\\[0\\].*name records only by their IDs"):
         await ModelContext(repo, settings, session).arguments("set_assessment", args)
+
+
+def scored_assessment(values, evidence):
+    return {
+        "assessment": {
+            "dims": {
+                name: {
+                    "value": value,
+                    "reason": None if value is not None else "NOT_SUPPORTED",
+                    "rationale": "Judged from the launch",
+                    "evidence": list(evidence.get(name, [])),
+                }
+                for name, value in values.items()
+            },
+            "class": "MATERIAL",
+            "criterion": "MATERIAL",
+            "criterion_claim_id": None,
+            "impact_horizon": {
+                "impact_start": "WEEKS",
+                "ramp_shape": "GRADUAL",
+                "dependencies": [],
+                "time_to_materiality": "Unknown",
+                "timing_confidence": "LOW",
+            },
+        }
+    }
+
+
+SCORES = {
+    "economic_directness": 4,
+    "magnitude": None,
+    "permanence": 6,
+    "distribution_expansion": 0,
+    "mechanical_flows": None,
+    "surprise": 8,
+    "implementation": None,
+}
+
+
+async def test_uncited_numeric_scores_are_refused_together_with_the_claim_lookup(context):
+    repo, settings, session, _ = context
+    event = await bound_event(repo, session)
+    claim = await claim_of(repo, event["event_id"])
+    args = scored_assessment(SCORES, {"permanence": [claim["claim_id"]]})
+    with pytest.raises(ValueError) as refused:
+        await ModelContext(repo, settings, session).arguments("set_assessment", args)
+    reason = str(refused.value)
+    for name in ("economic_directness", "distribution_expansion", "surprise"):
+        assert f"$.assessment.dims.{name}.evidence" in reason
+    for name in ("permanence", "magnitude", "mechanical_flows", "implementation"):
+        assert f"dims.{name}." not in reason
+    assert "value null with a reason" in reason
+    assert "«Claims of an event»" in reason
+    assert claim["claim_id"] not in reason
+
+
+async def test_cited_scores_and_unknown_dimensions_pass_the_evidence_check(context):
+    repo, settings, session, _ = context
+    event = await bound_event(repo, session)
+    claim = await claim_of(repo, event["event_id"])
+    cited = {name: [claim["claim_id"]] for name, value in SCORES.items() if value is not None}
+    bound = await ModelContext(repo, settings, session).arguments(
+        "set_assessment", scored_assessment(SCORES, cited)
+    )
+    assert bound["event_id"] == event["event_id"]
+    unknown = {name: None for name in SCORES}
+    bound = await ModelContext(repo, settings, session).arguments(
+        "set_assessment", scored_assessment(unknown, {})
+    )
+    assert bound["assessment"]["dims"]["surprise"]["value"] is None
 
 
 async def test_scoped_tools_bind_the_current_event_and_refuse_an_explicit_one(context):

@@ -79,7 +79,7 @@ Built from 02 HLD §3 (sources) and 01 PRD §4.3 (X accounts), 19 Oct 2026. Link
 |---|---|---|---|
 | S30 | BBC | [business](https://feeds.bbci.co.uk/news/business/rss.xml) · [technology](https://feeds.bbci.co.uk/news/technology/rss.xml) | 120 s · 300 s |
 | S31 | Bloomberg | [markets RSS](https://feeds.bloomberg.com/markets/news.rss) | 120 s |
-| S32 | Reuters | [crypto via Google News RSS](https://news.google.com/rss/search?q=site:reuters.com+crypto&hl=en-US&gl=US&ceid=US:en) | 300 s |
+| S32 | Reuters | [crypto via Google News RSS](https://news.google.com/rss/search?q=site:reuters.com+crypto+when:1d&hl=en-US&gl=US&ceid=US:en) | 300 s |
 | S33 | CoinDesk | [RSS](https://www.coindesk.com/arc/outboundfeeds/rss/) | 120 s |
 | S34 | The Block | [RSS](https://www.theblock.co/rss.xml) | 120 s |
 

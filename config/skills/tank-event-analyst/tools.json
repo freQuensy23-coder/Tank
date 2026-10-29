@@ -52,7 +52,7 @@
   },
   {
     "name": "list_open_events",
-    "description": "List open events for routing or duplicate checks: statements, entities, tokens, stages, known-to-us and last-activity times and session associations. Only events with activity (first known, a routed item or a requested review) within the last `days` are listed; the default is the 3-day routing window. token_id and entity_id each also match the registry pair (a token's project, a project's tokens); with both, an event must match both. `query` keeps events whose statement contains any of its words and ranks them by how many match. Results are ordered by relevance, then most recent activity, at most 50 per page; `total` counts every match and `next_offset`, when set, is the `offset` for the next page. Read every page before deciding an item is new. Listing does not modify an event.",
+    "description": "List open events for routing or duplicate checks: statements, entities, tokens, stages, known-to-us and last-activity times and session associations. Only events with activity (first known, a routed item or a requested review) within the last `days` are listed; the default is the 3-day routing window. token_id and entity_id each also match the registry pair (a token's project, a project's tokens). `name` looks up a project or token by name or ticker, including one outside the registry; with several filters, an event must match all of them. `query` keeps events whose statement contains any of its words and ranks them by how many match. Results are ordered by relevance, then most recent activity, at most 50 per page; `total` counts every match and `next_offset`, when set, is the `offset` for the next page. Read every page before deciding an item is new. Listing does not modify an event.",
     "input_schema": {
       "type": "object",
       "additionalProperties": false,
@@ -70,6 +70,13 @@
             "null"
           ],
           "description": "Registry entity key (reg.entities), shown after « · » next to the name in Tank's messages and results, e.g. uniswap in «Uniswap · uniswap»."
+        },
+        "name": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "Name or ticker of a project or token, inside or outside the registry, e.g. «Ripple» or «XRP». Tank resolves it like record_event (V3): a registry name or ticker matches its key and registry pair, like token_id or entity_id; any other name matches events that recorded it unresolved under the same name (case-insensitive), so try both the project name and the ticker. Null or omitted: no name filter."
         },
         "query": {
           "type": [
@@ -117,7 +124,7 @@
   },
   {
     "name": "get_registry",
-    "description": "Read fixed registry identity and dependency information: project names, aliases, contracts, official accounts and sources, plus registered causal dependencies. Filter by token_id or entity_id, or omit both for the whole registry. Registry links identify candidates; they do not alone prove a current integration, economic effect or token capture.",
+    "description": "Read fixed registry identity and dependency information: project names, aliases, contracts, official accounts and sources, plus registered causal dependencies. Filter by token_id, entity_id or name (a project or token by name or ticker; a name outside the registry matches nothing), or omit all for the whole registry. Registry links identify candidates; they do not alone prove a current integration, economic effect or token capture.",
     "input_schema": {
       "type": "object",
       "additionalProperties": false,
@@ -135,6 +142,13 @@
             "null"
           ],
           "description": "Registry entity key (reg.entities), shown after « · » next to the name in Tank's messages and results, e.g. uniswap in «Uniswap · uniswap»."
+        },
+        "name": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "Name or ticker of a project or token, e.g. «CoW Protocol» or «WLD». Tank resolves it like record_event (V3) and returns its registry rows; `name_identities` in the result lists the keys it resolved to, or UNRESOLVED:<name> when it is outside the registry. Null or omitted: no name filter."
         }
       }
     }
@@ -926,7 +940,7 @@
   },
   {
     "name": "set_assessment",
-    "description": "Submit class and criterion, the claim proving the criterion, dimension scores with reasons and claim evidence, economic capture chains and impact horizon. Cite recorded claims of the current event by claim_id and identify the M1 venue with criterion_venue_id. Provide structured measured magnitude bases, timing evidence and mechanism flags rather than expecting quote-keyword inference. Tank applies the deterministic class, capture and horizon rules and mandatory caps; it does not reclassify source certainty, verified flags or stages. A final MAJOR or STRUCTURAL_SHOCK escalates official source polling to 15 seconds for 2 hours and opens reaction tracking. Returns final class and applied caps. Returns LOW with NO_UNIVERSE_CONCERN when neither mentioned tokens nor current beneficiary edges concern a registry token. A structural criterion needs criterion_claim_id to be a verified claim, and supplied structural gate evidence must include it. Reaction tracking computes PRE windows immediately and schedules only the five POST checkpoints; no agent reaction jobs are needed.",
+    "description": "Submit class and criterion, the claim proving the criterion, dimension scores with reasons and claim evidence, economic capture chains and impact horizon. Cite recorded claims of the current event by claim_id and identify the M1 venue with criterion_venue_id. Read the event's claim IDs before calling (tank-data, «Claims of an event»): every numeric dimension score except implementation cites at least one supporting claim in evidence, and a dimension no recorded claim supports is value null with a reason (01 FR-M-01: unknown, never a number, 0 included); Tank refuses an uncited score and names every such dimension. Provide structured measured magnitude bases, timing evidence and mechanism flags rather than expecting quote-keyword inference. Tank applies the deterministic class, capture and horizon rules and mandatory caps; it does not reclassify source certainty, verified flags or stages. A final MAJOR or STRUCTURAL_SHOCK escalates official source polling to 15 seconds for 2 hours and opens reaction tracking. Returns final class and applied caps. Returns LOW with NO_UNIVERSE_CONCERN when neither mentioned tokens nor current beneficiary edges concern a registry token. A structural criterion needs criterion_claim_id to be a verified claim, and supplied structural gate evidence must include it. Reaction tracking computes PRE windows immediately and schedules only the five POST checkpoints; no agent reaction jobs are needed.",
     "input_schema": {
       "type": "object",
       "additionalProperties": false,
@@ -965,7 +979,7 @@
                       "items": {
                         "type": "string"
                       },
-                      "description": "Claim IDs (CLM-…) of accepted claims of the current event; find them with read-only SQL (tank-data data guide, «Finding record IDs for tool arguments»), «Claims of an event»."
+                      "description": "Claim IDs (CLM-…) of accepted claims of the current event that support this score; find them with read-only SQL (tank-data data guide, «Finding record IDs for tool arguments»), «Claims of an event». A numeric value, 0 included, needs at least one; where no recorded claim supports a score, value is null with a reason."
                     },
                     "proposed_by": {
                       "enum": [
@@ -1016,7 +1030,7 @@
                       "items": {
                         "type": "string"
                       },
-                      "description": "Claim IDs (CLM-…) of accepted claims of the current event; find them with read-only SQL (tank-data data guide, «Finding record IDs for tool arguments»), «Claims of an event»."
+                      "description": "Claim IDs (CLM-…) of accepted claims of the current event that support this score; find them with read-only SQL (tank-data data guide, «Finding record IDs for tool arguments»), «Claims of an event». A numeric value, 0 included, needs at least one; where no recorded claim supports a score, value is null with a reason."
                     },
                     "proposed_by": {
                       "enum": [
@@ -1067,7 +1081,7 @@
                       "items": {
                         "type": "string"
                       },
-                      "description": "Claim IDs (CLM-…) of accepted claims of the current event; find them with read-only SQL (tank-data data guide, «Finding record IDs for tool arguments»), «Claims of an event»."
+                      "description": "Claim IDs (CLM-…) of accepted claims of the current event that support this score; find them with read-only SQL (tank-data data guide, «Finding record IDs for tool arguments»), «Claims of an event». A numeric value, 0 included, needs at least one; where no recorded claim supports a score, value is null with a reason."
                     },
                     "proposed_by": {
                       "enum": [
@@ -1118,7 +1132,7 @@
                       "items": {
                         "type": "string"
                       },
-                      "description": "Claim IDs (CLM-…) of accepted claims of the current event; find them with read-only SQL (tank-data data guide, «Finding record IDs for tool arguments»), «Claims of an event»."
+                      "description": "Claim IDs (CLM-…) of accepted claims of the current event that support this score; find them with read-only SQL (tank-data data guide, «Finding record IDs for tool arguments»), «Claims of an event». A numeric value, 0 included, needs at least one; where no recorded claim supports a score, value is null with a reason."
                     },
                     "proposed_by": {
                       "enum": [
@@ -1169,7 +1183,7 @@
                       "items": {
                         "type": "string"
                       },
-                      "description": "Claim IDs (CLM-…) of accepted claims of the current event; find them with read-only SQL (tank-data data guide, «Finding record IDs for tool arguments»), «Claims of an event»."
+                      "description": "Claim IDs (CLM-…) of accepted claims of the current event that support this score; find them with read-only SQL (tank-data data guide, «Finding record IDs for tool arguments»), «Claims of an event». A numeric value, 0 included, needs at least one; where no recorded claim supports a score, value is null with a reason."
                     },
                     "proposed_by": {
                       "enum": [
@@ -1220,7 +1234,7 @@
                       "items": {
                         "type": "string"
                       },
-                      "description": "Claim IDs (CLM-…) of accepted claims of the current event; find them with read-only SQL (tank-data data guide, «Finding record IDs for tool arguments»), «Claims of an event»."
+                      "description": "Claim IDs (CLM-…) of accepted claims of the current event that support this score; find them with read-only SQL (tank-data data guide, «Finding record IDs for tool arguments»), «Claims of an event». A numeric value, 0 included, needs at least one; where no recorded claim supports a score, value is null with a reason."
                     },
                     "proposed_by": {
                       "enum": [

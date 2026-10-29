@@ -124,6 +124,44 @@ async def test_snapshot_exact_cutoff_anchor_and_benchmark_history(setup):
 
 
 @pytest.mark.asyncio
+async def test_snapshot_does_not_read_capture_gap_history(setup):
+    repo, settings, inst = setup
+    http = httpx.AsyncClient()
+    service = MarketService(repo, settings, http=http)
+    for n in range(3):
+        await repo.put(
+            "mkt.capture_gaps",
+            f"GAP-{n}",
+            {
+                "gap_id": f"GAP-{n}",
+                "instrument_id": inst["instrument_id"],
+                "token_id": inst["token_id"],
+                "kind": "STREAM",
+                "reason": "STREAM_DISCONNECTED",
+                "status": "OPEN",
+                "start": "2026-06-16T23:00:00Z",
+                "end": "2026-06-16T23:01:00Z",
+                "observed_at": "2026-06-16T23:01:00Z",
+            },
+        )
+    reads = []
+    original_list = repo.list
+
+    async def list_spy(collection, *args, **kwargs):
+        reads.append(collection)
+        return await original_list(collection, *args, **kwargs)
+
+    repo.list = list_spy
+    snapshot = await service.snapshot(
+        inst["token_id"], "2026-06-17T00:02:00Z", {"ts": "2026-06-16T23:00:00Z", "type": "T0"}
+    )
+    await http.aclose()
+    assert "mkt.backfill_runs" in reads
+    assert "mkt.capture_gaps" not in reads
+    assert "gaps" not in snapshot
+
+
+@pytest.mark.asyncio
 async def test_fundamentals_use_registered_slugs_only_and_partial_holders_revenue(setup):
     from tank.market.supply import SupplyCapture
 
@@ -741,6 +779,62 @@ async def test_bucketed_oi_cadence_is_bounded_by_its_source(setup):
 
 
 @pytest.mark.asyncio
+async def test_ticker_freshness_uses_the_ticker_poll_cadence_of_the_capture_tier(setup, monkeypatch):
+    import tank.market.service as module
+    from tank.analysis.truth import compute_market_truth
+    from tank.util import iso, parse_time
+
+    repo, settings, inst = setup
+    clock = parse_time("2026-10-28T14:00:00Z")
+    monkeypatch.setattr(module, "iso", lambda value=None: iso(clock if value is None else value))
+    service = MarketService(repo, settings)
+    service.thresholds = {
+        **service.thresholds,
+        "base_kline_interval_s": 60,
+        "hot_ticker_interval_s": 120,
+        "base_ticker_interval_s": 300,
+    }
+    token = inst["token_id"]
+    await service._record_capture_tier(token, "BASE", "CAPTURE_POLICY_STARTED")
+    clock += timedelta(hours=1)
+    await repo.put(
+        "mkt.tickers_24h",
+        "ticker-base",
+        {"instrument_id": inst["instrument_id"], "token_id": token, "ts": iso(clock), "mark_price": "2"},
+    )
+    cutoff = clock + timedelta(seconds=250)
+    metadata = await service._capture_metadata(token, iso(cutoff))
+    assert metadata["tier"] == "BASE"
+    assert metadata["collections"]["tickers"]["cadence_s"] == 300.0
+    truth = compute_market_truth(await service.snapshot(token, iso(cutoff)))
+    assert not [
+        row
+        for row in truth["data_confidence"]["failed"]
+        if row["condition"] == "freshness" and row.get("collection") == "tickers"
+    ]
+    await service._record_capture_tier(token, "HOT", "ESCALATION")
+    clock += timedelta(minutes=10)
+    await repo.put(
+        "mkt.tickers_24h",
+        "ticker-hot",
+        {"instrument_id": inst["instrument_id"], "token_id": token, "ts": iso(clock), "mark_price": "2"},
+    )
+    stale = clock + timedelta(seconds=250)
+    assert (await service._capture_metadata(token, iso(stale)))["collections"]["tickers"][
+        "cadence_s"
+    ] == 120.0
+    failed = [
+        row
+        for row in compute_market_truth(await service.snapshot(token, iso(stale)))["data_confidence"][
+            "failed"
+        ]
+        if row["condition"] == "freshness" and row.get("collection") == "tickers"
+    ]
+    assert [(row["cadence_s"], row["cadence_source"]) for row in failed] == [(120.0, "CAPTURE_METADATA")]
+    await service.close()
+
+
+@pytest.mark.asyncio
 async def test_condition_heads_are_reused_until_their_scope_is_written(setup, monkeypatch):
     from tank.market import service as service_module
     from tank.util import iso
@@ -1182,3 +1276,38 @@ def test_window_cache_is_bounded_by_age_and_rows(monkeypatch):
     assert ("old",) not in windows
 
     assert [w["used"] for w in windows[("a",)]] == [995.0] and windows[("b",)][0]["size"] == 40
+
+
+@pytest.mark.asyncio
+async def test_scheduler_demotes_expired_unprotected_hot_rows_without_post72h_checkpoint(setup):
+    from tank.scheduler import Scheduler
+
+    repo, settings, _inst = setup
+    (settings.config_dir / "thresholds.yaml").write_text(yaml.safe_dump({"hot_token_cap": 15}))
+    now = utcnow().replace(microsecond=0)
+    async with httpx.AsyncClient() as http:
+        service = MarketService(repo, settings, http=http)
+        for event_id, age_h in (("stale", 80), ("fresh", 1), ("called", 80)):
+            await repo.put(
+                "evt.events",
+                event_id,
+                {"event_id": event_id, "public_at": iso(now - timedelta(hours=age_h)), "current_ems_id": "m"},
+            )
+        await repo.put("evt.ems_assessments", "m", {"ems_id": "m", "event_id": "stale", "class": "MAJOR"})
+        await service.escalate("stale", ["test:ABC"])
+        await service.escalate("fresh", ["bitcoin:BTC"])
+        await repo.put(
+            "ana.calls",
+            "call",
+            {"call_id": "call", "event_id": "called", "token_id": "bitcoin:BTC", "status": "OPEN"},
+        )
+        await service.escalate("called", ["bitcoin:BTC"])
+        assert parse_time((await repo.get("mkt.hot_tokens", "test:ABC:stale"))["expires_at"]) < now
+        await Scheduler(repo, settings, service, None).demote(now)
+        assert {(row["token_id"], row["event_id"]) for row in await repo.list("mkt.hot_tokens")} == {
+            ("bitcoin:BTC", "fresh"),
+            ("bitcoin:BTC", "called"),
+        }
+        tiers = await repo.list("ops.capture_tier_transitions", filters={"token_id": "test:ABC"})
+        latest = max(tiers, key=lambda row: row.get("transition_seq", 0))
+        assert (latest["tier"], latest["reason"]) == ("BASE", "DEMOTION")

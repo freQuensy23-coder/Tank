@@ -1,16 +1,20 @@
 """Version-pinned Decision-1 classification (03 §3.1). Cutoffs come from config/thresholds.yaml."""
 
 import asyncio
+import json
 import re
 from datetime import timedelta
 from decimal import Decimal
+from urllib.parse import urlparse
 
 import httpx
 
 from tank.agents.decision import MODEL, binding, classify
+from tank.agents.incomplete import UNFINISHED
 from tank.ops_progress import item_progress
+from tank.storage import DECISION_MAX_ATTEMPTS
 from tank.time_precision import collection_clock, offset_schedule, propagate_timestamp
-from tank.util import iso, sha256, utcnow
+from tank.util import iso, parse_time, sha256, utcnow
 
 DECISION_PROMPT_VERSION = "decision-1-v1"
 
@@ -26,6 +30,57 @@ ROUTE_CRITERIA = {
     "false": "A different event, even one about the same project, company, exchange or token.",
 }
 TEXT_LIMIT = 12000
+RELEASE_SIBLING_RECHECK_S = 15
+
+
+CLOSED_LIFECYCLES = ("CLOSED", "MERGED", "INVALIDATED")
+
+
+class RoutingDeferred(Exception):
+    """A sibling's first event is still being recorded; the item routes again later."""
+
+    def __init__(self, not_before, sibling):
+        self.not_before = not_before
+        super().__init__(f"Routing waits for the event of sibling {sibling}")
+
+
+def github_repository(item):
+    """The case-folded `owner/repo` of an item from a GitHub repository feed, else None."""
+    feed = urlparse(str(item.get("feed") or ""))
+    parts = feed.path.strip("/").split("/")
+    if feed.scheme != "https" or feed.netloc != "github.com" or len(parts) < 3 or not all(parts[:2]):
+        return None
+    return "/".join(parts[:2]).casefold()
+
+
+def instrument_assets(item):
+    """The case-folded (venue, base asset) pairs an S14 instrument-change item reports.
+
+    A side without a base asset (OKX swaps, OKX pre-open spot) counts by its symbol instead.
+    Any other item has none.
+    """
+    if item.get("source_id") != "S14":
+        return frozenset()
+    try:
+        body = json.loads(item.get("text") or "")
+    except ValueError:
+        return frozenset()
+    if not isinstance(body, dict):
+        return frozenset()
+    changes = body["changes"] if isinstance(body.get("changes"), list) else [body]
+    pairs = set()
+    for change in changes:
+        if not isinstance(change, dict):
+            continue
+        for side in (change.get("before"), change.get("after")):
+            if not isinstance(side, dict) or not side.get("venue"):
+                continue
+            venue = str(side["venue"]).casefold()
+            if side.get("base"):
+                pairs.add((venue, str(side["base"]).casefold()))
+            elif side.get("symbol"):
+                pairs.add((venue, "symbol:" + str(side["symbol"]).casefold()))
+    return frozenset(pairs)
 
 
 def _clean(value):
@@ -263,7 +318,7 @@ class Pipeline:
                         {"item_id": item["item_id"]},
                         item["item_id"],
                         priority=priority(item),
-                        max_attempts=2,
+                        max_attempts=DECISION_MAX_ATTEMPTS,
                         expires_at=offset_schedule(
                             propagate_timestamp(item, "observed_at")
                             if item.get("observed_at")
@@ -305,6 +360,11 @@ class Pipeline:
         for row in registry.get("tokens", []):
             if row.get("symbol") and matches("$" + row["symbol"]):
                 result.update([row.get("entity_id"), row["token_id"]])
+        repository = github_repository(item)
+        if repository:
+            for row in registry.get("entities", []):
+                if repository in {str(name).casefold() for name in row.get("github_repos", [])}:
+                    result.update([row.get("entity_id"), *row.get("tokens", [])])
         authors = {
             str(item.get(key) or "").lstrip("@").lower()
             for key in ("author", "monitored_author", "reposted_by")
@@ -361,11 +421,7 @@ class Pipeline:
 
         for event_id in sorted(recent):
             event = await self.repo.get("evt.events", event_id)
-            if not event or event.get("lifecycle", event.get("status")) in (
-                "CLOSED",
-                "MERGED",
-                "INVALIDATED",
-            ):
+            if not event or event.get("lifecycle", event.get("status")) in CLOSED_LIFECYCLES:
                 continue
             event_ids = {
                 e["entity_id"] if isinstance(e, dict) else e for e in event.get("entities", [])
@@ -382,7 +438,81 @@ class Pipeline:
         )
         return await self._candidate_events(self.identities(item), since, now)
 
+    async def pending_sibling(self, item, related, now):
+        """A related NEW_SESSION item of the same source, observed within the wait, whose turn is unsettled."""
+        wait = timedelta(seconds=self.settings.load_config("thresholds").get("release_sibling_wait_s", 300))
+        if not item.get("observed_at"):
+            return None
+        observed = parse_time(item["observed_at"])
+        if now >= observed + wait:
+            return None
+        async for row in self.repo.iter_range(
+            "ingest.source_items",
+            "observed_at",
+            start=iso(observed - wait),
+            end=iso(now + timedelta(microseconds=1)),
+            filters={"source_id": item.get("source_id")},
+        ):
+            if (
+                row.get("item_id") != item["item_id"]
+                and related(row)
+                and (row.get("route") or {}).get("decision") == "NEW_SESSION"
+                and row.get("extraction_status") in UNFINISHED
+            ):
+                return row["item_id"]
+        return None
+
+    async def open_event(self, event_id):
+        """The event, or the event it was merged into, while it is open; else None."""
+        seen = set()
+        while event_id and event_id not in seen:
+            seen.add(event_id)
+            event = await self.repo.get("evt.events", event_id)
+            if not event:
+                return None
+            lifecycle = event.get("lifecycle", event.get("status"))
+            if lifecycle == "MERGED":
+                event_id = event.get("merged_into")
+                continue
+            return None if lifecycle in CLOSED_LIFECYCLES else event
+        return None
+
+    async def instrument_event(self, item, assets, since, now):
+        """The open event of the latest other S14 item in the window that shares a venue and base asset."""
+        end = iso(now + timedelta(microseconds=1))
+        opened = {}
+        async for row in self.repo.iter_range("ops.agent_sessions", "last_item_at", start=since, end=end):
+            if row.get("event_id") and row.get("opened_by_item") and row.get("status") != "FAILED":
+                opened.setdefault(row["opened_by_item"], []).append(row["event_id"])
+        related = [
+            row
+            async for row in self.repo.iter_range(
+                "ingest.source_items", "observed_at", start=since, end=end, filters={"source_id": "S14"}
+            )
+            if row.get("item_id") != item["item_id"] and assets & instrument_assets(row)
+        ]
+        related.sort(key=lambda row: (parse_time(row["observed_at"]), row["item_id"]), reverse=True)
+        for row in related:
+            for event_id in [row.get("route_event_id"), *sorted(opened.get(row["item_id"], []))]:
+                event = await self.open_event(event_id)
+                if event:
+                    return event
+        return None
+
     async def route_item(self, payload):
+        item = await self.repo.get("ingest.source_items", payload["item_id"])
+        if item is None:
+            raise KeyError(payload["item_id"])
+        repository = github_repository(item)
+        if repository is not None:
+            async with self.repo.lock("routing-repository:" + repository):
+                return await self._route_item(payload, repository)
+        if instrument_assets(item):
+            async with self.repo.lock("routing-instruments"):
+                return await self._route_item(payload)
+        return await self._route_item(payload)
+
+    async def _route_item(self, payload, repository=None):
         async with self.repo.lock("routing:" + payload["item_id"]):
             item = await self.repo.get("ingest.source_items", payload["item_id"])
             if item is None:
@@ -390,14 +520,31 @@ class Pipeline:
             if item.get("routing_message"):
                 return item
             identities = self.identities(item)
+            assets = instrument_assets(item)
             now = utcnow()
+            if repository or assets:
+                sibling = await self.pending_sibling(
+                    item,
+                    (lambda row: github_repository(row) == repository)
+                    if repository
+                    else (lambda row: bool(assets & instrument_assets(row))),
+                    now,
+                )
+                if sibling:
+                    raise RoutingDeferred(
+                        offset_schedule(collection_clock(now), timedelta(seconds=RELEASE_SIBLING_RECHECK_S)),
+                        sibling,
+                    )
             since = iso(
                 now - timedelta(days=self.settings.load_config("thresholds").get("routing_window_days", 3))
             )
             best, best_score = None, -1
             scores = {}
-            candidates = tuple(await self._candidate_events(identities, since, now))
-            if candidates:
+            same_asset = await self.instrument_event(item, assets, since, now) if assets else None
+            candidates = () if same_asset else tuple(await self._candidate_events(identities, since, now))
+            if same_asset:
+                best = same_asset
+            elif candidates:
                 cutoff = self.cutoff("routing_cutoff")
 
                 requests = [
@@ -429,8 +576,10 @@ class Pipeline:
             route = {
                 "decision": "ADDED" if added else "NEW_SESSION",
                 "event_id": best["event_id"] if best else None,
-                "p_same": best_score if added else None,
+                "p_same": best_score if added and not same_asset else None,
             }
+            if same_asset:
+                route["basis"] = "INSTRUMENT_ASSET"
             async with self.repo.lock("ingest-dedup"), self.repo.transaction():
                 item = await self.repo.get("ingest.source_items", payload["item_id"])
                 if item is None:

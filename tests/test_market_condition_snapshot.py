@@ -620,3 +620,50 @@ async def test_warm_native_history_is_not_rehashed_on_every_condition_read(setup
         )
     assert len(first["oi"]) == len(second["oi"]) == 1000
     assert len(hashed) < 20
+
+
+@pytest.mark.asyncio
+async def test_composite_dependency_heads_read_each_scope_once(setup, monkeypatch):
+    """The three heads of one scope come from one read, not one full scan per head."""
+    from tank.market import service as service_module
+
+    repo, settings, inst = setup
+    end = utcnow() - timedelta(hours=1)
+    await repo.put(
+        "mkt.klines_1m",
+        "btc",
+        {
+            "instrument_id": "binance:spot:BTCUSD",
+            "token_id": "bitcoin:BTC",
+            "open_time": iso(end - timedelta(days=2)),
+            "open_time_prec": "EXACT",
+            "interval_s": 60,
+            "c": "2",
+            "complete": True,
+            "recorded_at": iso(end - timedelta(days=2) + timedelta(minutes=1)),
+        },
+    )
+    calls = []
+    real = service_module.market_dependency_head
+
+    async def counted(store, collection, field, cutoff, **kwargs):
+        calls.append((collection, kwargs.get("orders"), kwargs.get("order")))
+        return await real(store, collection, field, cutoff, **kwargs)
+
+    async def single(collection, field, cutoff, **kwargs):
+        calls.append((collection, kwargs.get("orders"), kwargs.get("order")))
+        return await real(repo, collection, field, cutoff, **kwargs)
+
+    monkeypatch.setattr(service_module, "market_dependency_head", counted)
+    monkeypatch.setattr(repo, "market_dependency_head", single)
+    async with httpx.AsyncClient() as http:
+        service = MarketService(repo, settings, http=http)
+        req = [
+            {"metric": "market.overall_classification", "window": "W1H"},
+            {"metric": "price.vs_anchor_pct", "window": "W1H"},
+        ]
+        packet = await service.condition_snapshot(inst["token_id"], end, requirements=req)
+    orders = ("availability", "semantic_latest", "semantic_earliest")
+    assert packet["dependency_fingerprint"] and packet["relative_history_dependency_fingerprint"]
+    assert calls and all(c[1] == orders and c[2] is None for c in calls)
+    assert sum(c[0] == "mkt.klines_1m" for c in calls) >= 2

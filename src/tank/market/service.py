@@ -161,6 +161,7 @@ LOOP_STALL_S = 10
 
 
 HEAD_REUSE_S = 300
+HEAD_ORDERS = ("availability", "semantic_latest", "semantic_earliest")
 
 
 DAY_COUNTS_SAVE_S = 60
@@ -882,6 +883,12 @@ class MarketService:
             await self._record_capture_tier(token_id, "HOT" if remaining else "BASE", "DEMOTION")
         await self._sync_hot_set()
 
+    def _ticker_cadence(self, hot):
+        """The 24h-ticker poll interval tank-capture runs for a tier (its hot grid or base loop)."""
+        if hot:
+            return float(self.thresholds.get("hot_ticker_interval_s", 20))
+        return float(self.thresholds.get("base_ticker_interval_s", 300))
+
     async def _record_capture_tier(self, token_id, tier, reason):
         from tank.market.supply import supply_cadences
 
@@ -894,6 +901,7 @@ class MarketService:
             ),
             "kline_s": float(self.thresholds.get("base_kline_interval_s", 60)),
             "book_s": float(self.thresholds.get("book_interval_s", 10)),
+            "ticker_s": self._ticker_cadence(tier == "HOT"),
             "supply_by_kind": supply_cadences(tier == "HOT"),
         }
         rows = [
@@ -1095,7 +1103,7 @@ class MarketService:
                     "cadence_s": oi if tier != "UNKNOWN" else None,
                     "reason": "CAPTURE_TIER_HISTORY_UNAVAILABLE" if tier == "UNKNOWN" else None,
                 },
-                "tickers": {"cadence_s": base},
+                "tickers": {"cadence_s": profile.get("ticker_s", self._ticker_cadence(is_hot))},
                 "supply": {"by_kind": supply},
                 "liquidations": {
                     "cadence_s": STREAM_PING_INTERVAL_S,
@@ -1683,7 +1691,7 @@ class MarketService:
         recorded by its assembly clock, so for a later clock of the same window it is reused
         while nothing was written to its scope since (one condition evaluation asks for the
         same heads once per condition; prod r106 ran ~60-80 sequential heads per BTC pass)."""
-        orders = ("availability", "semantic_latest", "semantic_earliest")
+        orders = HEAD_ORDERS
         key = (collection, field, tuple(sorted(filters.items())), iso(start), iso(cutoff))
         scope = next(
             ((name, filters[name]) for name in ("instrument_id", "token_id") if name in filters), (None, None)
@@ -1983,20 +1991,17 @@ class MarketService:
             result["stat_price_series"][iid] = series
             price_heads.append(series["dependency_fingerprint"])
             if dense or symbol == "ETH":
-                preanchor_heads.extend(
-                    [
-                        await self.repo.market_dependency_head(
-                            "mkt.klines_1m",
-                            "open_time",
-                            anchor - timedelta(minutes=1, microseconds=1),
-                            start=history_start,
-                            instrument_ids=[iid],
-                            assembled_at=assembled,
-                            order=order,
-                        )
-                        for order in ("availability", "semantic_latest", "semantic_earliest")
-                    ]
+                found = await market_dependency_head(
+                    self.repo,
+                    "mkt.klines_1m",
+                    "open_time",
+                    anchor - timedelta(minutes=1, microseconds=1),
+                    start=history_start,
+                    instrument_ids=[iid],
+                    assembled_at=assembled,
+                    orders=HEAD_ORDERS,
                 )
+                preanchor_heads.extend(found[o] for o in HEAD_ORDERS)
         result["relative_history_dependency_fingerprint"] = sha256(
             [
                 preanchor_heads,
@@ -2493,21 +2498,18 @@ class MarketService:
         if "composite" in domains:
             heads = []
             for name, (collection, field) in COLLECTIONS.items():
-                for order in ("availability", "semantic_latest", "semantic_earliest"):
-                    heads.append(
-                        await self.repo.market_dependency_head(
-                            collection,
-                            field,
-                            end,
-                            start=end - timedelta(days=90),
-                            filters={"token_id": token_id} if name == "supply" else None,
-                            instrument_ids=None
-                            if name == "supply"
-                            else [i["instrument_id"] for i in instruments],
-                            assembled_at=result["assembled_at"],
-                            order=order,
-                        )
-                    )
+                found = await market_dependency_head(
+                    self.repo,
+                    collection,
+                    field,
+                    end,
+                    start=end - timedelta(days=90),
+                    filters={"token_id": token_id} if name == "supply" else None,
+                    instrument_ids=None if name == "supply" else [i["instrument_id"] for i in instruments],
+                    assembled_at=result["assembled_at"],
+                    orders=HEAD_ORDERS,
+                )
+                heads.extend(found[o] for o in HEAD_ORDERS)
 
             peers = [
                 i["instrument_id"]
@@ -2519,18 +2521,17 @@ class MarketService:
                     or i["token_id"] in self._sector_tokens
                 )
             ]
-            for order in ("availability", "semantic_latest", "semantic_earliest"):
-                heads.append(
-                    await self.repo.market_dependency_head(
-                        "mkt.klines_1m",
-                        "open_time",
-                        end,
-                        start=end - timedelta(days=90),
-                        instrument_ids=peers,
-                        assembled_at=result["assembled_at"],
-                        order=order,
-                    )
-                )
+            found = await market_dependency_head(
+                self.repo,
+                "mkt.klines_1m",
+                "open_time",
+                end,
+                start=end - timedelta(days=90),
+                instrument_ids=peers,
+                assembled_at=result["assembled_at"],
+                orders=HEAD_ORDERS,
+            )
+            heads.extend(found[o] for o in HEAD_ORDERS)
             result["dependency_fingerprint"] = sha256(
                 [
                     heads,
@@ -3312,11 +3313,6 @@ class MarketService:
             result["instruments"] = instruments
             result["tokens"] = list(self.tokens.values())
             result["sector_baskets"] = deepcopy(self.sector_baskets)
-            gaps = await self._shared_call(
-                ("gaps", token_id),
-                lambda: self.repo.list("mkt.capture_gaps", filters={"token_id": token_id}, limit=100000),
-            )
-            result["gaps"] = [g for g in gaps if parse_time(g["start"]) <= cutoff_dt]
             runs = await self._shared_call(
                 ("runs", token_id),
                 lambda: self.repo.list("mkt.backfill_runs", filters={"token_id": token_id}, limit=10000),

@@ -17,7 +17,14 @@
         "null"
       ],
       "description": "Registry entity key (reg.entities), shown after \u00ab \u00b7 \u00bb next to the name in Tank's messages and results, e.g. uniswap in \u00abUniswap \u00b7 uniswap\u00bb."
+    },
+    "name": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "description": "Name or ticker of a project or token, e.g. \u00abCoW Protocol\u00bb or \u00abWLD\u00bb. Tank resolves it like record_event (V3) and returns its registry rows; `name_identities` in the result lists the keys it resolved to, or UNRESOLVED:<name> when it is outside the registry. Null or omitted: no name filter."
     }
   },
-  "description": "Read fixed registry identity and dependency information: project names, aliases, contracts, official accounts and sources, plus registered causal dependencies. Filter by token_id or entity_id, or omit both for the whole registry. Registry links identify candidates; they do not alone prove a current integration, economic effect or token capture."
+  "description": "Read fixed registry identity and dependency information: project names, aliases, contracts, official accounts and sources, plus registered causal dependencies. Filter by token_id, entity_id or name (a project or token by name or ticker; a name outside the registry matches nothing), or omit all for the whole registry. Registry links identify candidates; they do not alone prove a current integration, economic effect or token capture."
 }

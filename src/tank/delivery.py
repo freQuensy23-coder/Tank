@@ -10,6 +10,7 @@ from datetime import timedelta
 import httpx
 
 from tank.analysis.cards import telegram_card_html
+from tank.delivery_jobs import NoticeDeliveryJob, ledger_filters, parse_delivery_job
 from tank.ops_progress import event_progress
 from tank.sources.x_diagnostics import verified_documents
 from tank.time_precision import collection_clock, offset_schedule, propagate_timestamp
@@ -50,23 +51,16 @@ class DeliveryService:
 
     async def terminal_failure(self, payload, error, attempt=None):
         """Persist terminal queue failures, including outcomes before any HTTP send."""
-        subject = payload.get("notice_id") or f"{payload['alert_id']}:{payload['version']}"
-        channel = payload.get("channel", "telegram:ops" if payload.get("notice_id") else "telegram:alerts")
-        filters = {"channel": channel}
-        filters.update(
-            {"notice_id": payload["notice_id"]}
-            if payload.get("notice_id")
-            else {"alert_id": payload["alert_id"], "version": payload["version"]}
-        )
-        async with self.repo.lock("deliver:" + subject + ":" + channel), self.repo.transaction():
+        job = parse_delivery_job(payload)
+        subject = job.subject
+        filters = ledger_filters(job)
+        async with self.repo.lock("deliver:" + subject + ":" + job.channel), self.repo.transaction():
             ledger = await self._all("out.deliveries", filters=filters)
             if any(row["status"] == "SENT" for row in ledger):
                 return
             source = payload
-            if not payload.get("notice_id"):
-                alerts = await self._all(
-                    "out.alerts", filters={"alert_id": payload["alert_id"], "version": payload["version"]}
-                )
+            if not isinstance(job, NoticeDeliveryJob):
+                alerts = await self._all("out.alerts", filters=job.subject_filters)
                 source = alerts[0] if alerts else payload
             if not any(row.get("terminal") for row in ledger):
                 source_times = {
@@ -93,7 +87,7 @@ class DeliveryService:
                     },
                     immutable=True,
                 )
-            if payload.get("notice_id"):
+            if isinstance(job, NoticeDeliveryJob):
                 return
             await event_progress(
                 self.repo,
@@ -111,7 +105,7 @@ class DeliveryService:
                     {
                         "notice_id": notice_id,
                         "kind": "DELIVERY_FAILED",
-                        "subject_id": payload["alert_id"],
+                        "subject_id": job.alert_id,
                         "text": f"Delivery failed: {subject}",
                         **collection_clock(utcnow()).fields("created_at"),
                         "created_by": "delivery",
@@ -137,10 +131,11 @@ class DeliveryService:
             ) from None
 
     async def deliver(self, payload):
-        if payload.get("notice_id"):
-            notice = await self.repo.get("out.ops_notices", payload["notice_id"])
+        job = parse_delivery_job(payload)
+        if isinstance(job, NoticeDeliveryJob):
+            notice = await self.repo.get("out.ops_notices", job.notice_id)
             if notice and notice.get("kind") == "ITEM_PROGRESS":
-                error = await self._deliver_progress(payload, notice)
+                error = await self._deliver_progress(notice)
             elif notice and (
                 "document_manifest" in notice
                 or (
@@ -150,27 +145,25 @@ class DeliveryService:
             ):
                 async with AsyncExitStack() as locks:
                     await self._enter_delivery_lock(locks, "ops-documents:" + notice["notice_id"])
-                    error = await self._deliver(payload)
+                    error = await self._deliver(job)
                     if error is None:
-                        error = await self._deliver_documents(payload, notice)
+                        error = await self._deliver_documents(notice)
             else:
-                error = await self._deliver(payload)
+                error = await self._deliver(job)
         else:
-            rows = await self._all(
-                "out.alerts", filters={"alert_id": payload["alert_id"], "version": payload["version"]}
-            )
+            rows = await self._all("out.alerts", filters=job.subject_filters)
             if not rows:
                 raise ValueError("Delivery subject does not exist")
 
             async with AsyncExitStack() as locks:
                 await self._enter_delivery_lock(locks, "event:" + rows[0]["event_id"])
-                error = await self._deliver(payload)
+                error = await self._deliver(job)
         if isinstance(error, DeliveryError):
             if getattr(error, "terminal", False):
                 await self.terminal_failure(payload, error, 5)
             raise error
 
-    async def _deliver_documents(self, payload, notice):
+    async def _deliver_documents(self, notice):
         deadline = time.monotonic() + 30
         chat = str(self.settings.telegram_ops_chat or "")
         ledger = await self._all(
@@ -269,7 +262,7 @@ class DeliveryService:
             )
         return terminal_failure
 
-    async def _deliver_progress(self, payload, notice):
+    async def _deliver_progress(self, notice):
         from tank.ops_cards import render, snapshot, time_of
 
         item_id = notice["subject_id"]
@@ -466,17 +459,12 @@ class DeliveryService:
                 )
             return None
 
-    async def _deliver(self, payload):
-        subject = payload.get("notice_id") or f"{payload['alert_id']}:{payload['version']}"
-        channel = payload.get("channel", "telegram:ops" if payload.get("notice_id") else "telegram:alerts")
+    async def _deliver(self, job):
+        subject = job.subject
+        channel = job.channel
         async with AsyncExitStack() as locks:
             await self._enter_delivery_lock(locks, "deliver:" + subject + ":" + channel)
-            filters = {"channel": channel}
-            filters.update(
-                {"notice_id": payload["notice_id"]}
-                if payload.get("notice_id")
-                else {"alert_id": payload["alert_id"], "version": payload["version"]}
-            )
+            filters = ledger_filters(job)
             ledger = await self._all("out.deliveries", filters=filters)
             if any(row["status"] == "SENT" or row.get("terminal") for row in ledger):
                 return
@@ -485,13 +473,11 @@ class DeliveryService:
                 failure = DeliveryError("Delivery exhausted five attempts")
                 failure.terminal = True
                 return failure
-            notice = bool(payload.get("notice_id"))
+            notice = isinstance(job, NoticeDeliveryJob)
             if notice:
-                record = await self.repo.get("out.ops_notices", payload["notice_id"])
+                record = await self.repo.get("out.ops_notices", job.notice_id)
             else:
-                rows = await self._all(
-                    "out.alerts", filters={"alert_id": payload["alert_id"], "version": payload["version"]}
-                )
+                rows = await self._all("out.alerts", filters=job.subject_filters)
                 record = rows[0] if rows else None
             if record is None:
                 raise ValueError("Delivery subject does not exist")
@@ -611,9 +597,7 @@ class DeliveryService:
                 return failure
             async with (
                 self.repo.transaction(),
-                self.repo.lock(
-                    "event:" + record["event_id"] if not notice else "notice:" + payload["notice_id"]
-                ),
+                self.repo.lock("event:" + record["event_id"] if not notice else "notice:" + job.subject),
             ):
                 sent_at = collection_clock(utcnow())
                 await self.repo.put(
