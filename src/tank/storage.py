@@ -255,6 +255,22 @@ def _stamp_job_clock_fields(record):
     return record
 
 
+DECISION_JOBS = ("FILTER_ITEM", "ROUTE_ITEM")
+DECISION_MAX_ATTEMPTS = 30
+DECISION_RETRY_FIRST_S, DECISION_RETRY_MAX_S = 15, 900
+
+
+def retry_delay(kind, attempts):
+    """Seconds before a failed job runs again after its attempt number `attempts`.
+
+    FILTER_ITEM and ROUTE_ITEM back off from 15 s, doubling to 15 min, so a Decision-1 outage is
+    retried across the whole 6 h job window instead of failing within seconds; other kinds keep
+    the short generic backoff."""
+    if kind in DECISION_JOBS:
+        return min(DECISION_RETRY_MAX_S, DECISION_RETRY_FIRST_S * 2 ** max(0, attempts - 1))
+    return min(60, 2**attempts)
+
+
 def _job(kind, payload, idem_key, priority, run_after, expires_at, max_attempts):
     if not 0 <= priority <= 4 or max_attempts < 1:
         raise ValueError("priority must be0..4 and max_attempts positive")
