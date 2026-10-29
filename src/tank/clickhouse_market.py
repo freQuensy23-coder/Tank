@@ -302,7 +302,7 @@ def _table(collection):
     return f"{collection} FINAL"
 
 
-async def _select(ch, collection, q, order, tail="", selected="*"):
+async def _select(ch, collection, q, order, tail="", selected="*", *, columnar=False):
     day = MARKET_TABLES[collection]
     keys = await ch.rows(
         f"SELECT storage_key, instrument_id, `{day}` AS _day FROM {_table(collection)} "
@@ -310,14 +310,15 @@ async def _select(ch, collection, q, order, tail="", selected="*"):
         q.params,
     )
     if not keys:
-        return []
+        return {} if columnar else []
     days = [parse_time(r["_day"]) for r in keys]
     k = Query()
     k.where(f"instrument_id IN {k.param(sorted({r['instrument_id'] for r in keys}), 'Array(String)')}")
     k.where(f"`{day}` >= {k.param(min(days), DT)}")
     k.where(f"`{day}` <= {k.param(max(days), DT)}")
     k.where(f"storage_key IN {k.param([r['storage_key'] for r in keys], 'Array(String)')}")
-    return await ch.rows(
+    read = ch.columns if columnar else ch.rows
+    return await read(
         f"SELECT {selected} FROM {_table(collection)} WHERE {k.predicate()} ORDER BY {order}", k.params
     )
 
@@ -807,6 +808,61 @@ async def sampled_market_history(
     return sorted(records, key=lambda r: r[time_field])
 
 
+def _wide_column_records(collection, columns, time_field):
+    if not columns:
+        return []
+    sizes = {len(values) for values in columns.values()}
+    if len(sizes) != 1:
+        raise ValueError("Invalid wide page columns")
+    count = sizes.pop()
+    empty = [None] * count
+    fields = [
+        (name, kind, columns.get(name, empty)) for name, kind in MARKET_COLUMNS[collection].items()
+    ]
+    aliases = MARKET_ALIASES.get(collection, {})
+    timestamps = {}
+    numbers = {}
+    result = []
+    for index in range(count):
+        out = {}
+        for name, kind, values in fields:
+            value = values[index]
+            if value is None:
+                out[name] = None
+            elif kind == "timestamptz":
+                cached = timestamps.get(value) if type(value) is str else None
+                if cached is None:
+                    cached = iso(parse_time(value))
+                    if type(value) is str:
+                        timestamps[value] = cached
+                out[name] = cached
+            elif kind == "numeric":
+                cached = numbers.get(value) if type(value) is str else None
+                if cached is None:
+                    cached = str(Decimal(value))
+                    if type(value) is str:
+                        numbers[value] = cached
+                out[name] = cached
+            elif kind == "jsonb":
+                out[name] = json.loads(value)
+            elif kind == "text[]":
+                out[name] = list(value) or None
+            else:
+                out[name] = value
+        for alias, target in aliases.items():
+            if target in out:
+                out[alias] = out[target]
+        result.append(
+            (
+                columns["instrument_id"][index],
+                out,
+                columns["storage_key"][index],
+                parse_time(columns[time_field][index]),
+            )
+        )
+    return result
+
+
 async def range_by_instrument_page(
     ch, collection, time_field, instrument_ids, start, end, filters, after, limit, levels
 ):
@@ -826,14 +882,18 @@ async def range_by_instrument_page(
             ("storage_key", after[2], "String"),
         )
     selected = "*" if levels else "* EXCEPT (bids, asks)" if collection == "mkt.book_summaries" else "*"
-    rows = await _select(
-        ch, collection, q, f"instrument_id, `{time_field}`, storage_key", f"LIMIT {int(limit)}", selected
+    columns = await _select(
+        ch,
+        collection,
+        q,
+        f"instrument_id, `{time_field}`, storage_key",
+        f"LIMIT {int(limit)}",
+        selected,
+        columnar=True,
     )
-    records = await _decode(collection, rows)
-    return [
-        (row["instrument_id"], rec, row["storage_key"], parse_time(row[time_field]))
-        for row, rec in zip(rows, records, strict=True)
-    ]
+    if columns and len(next(iter(columns.values()))) > 1000:
+        return await asyncio.to_thread(_wide_column_records, collection, columns, time_field)
+    return _wide_column_records(collection, columns, time_field)
 
 
 async def prune(ch, cutoff, preserved_days, *, book_cutoff=None, trades_cutoff=None):

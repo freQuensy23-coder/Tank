@@ -17,7 +17,7 @@ from bisect import bisect_left, bisect_right
 from collections import defaultdict
 from contextvars import ContextVar
 from copy import deepcopy
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal, DecimalException, Inexact, Rounded, getcontext, localcontext
 from functools import wraps
 from math import isfinite, log
@@ -4275,6 +4275,57 @@ def _native_volume_windows(indexes, start, end):
     return totals[0] if covered[0] else None, totals[1] if covered[1] else None, history
 
 
+def _basis_history(rows, end):
+    inputs = _ASSESSMENT_INPUTS.get()
+    if inputs is None:
+        return None
+    memo = inputs.setdefault("basis_history", {})
+    context = getcontext()
+    signature = _history_context_key()
+    key = (id(rows), end, signature, tuple(context.flags.items()))
+    hit = memo.get(key)
+    if hit is not None and hit[0] is rows:
+        for signal, raised in hit[2]:
+            if raised:
+                context.flags[signal] = True
+        return hit[1]
+    time_fields = (
+        "minute_start",
+        "open_time",
+        "exchange_ts",
+        "ts",
+        "as_of",
+        "settlement_time",
+        "funding_time",
+        "observed_at",
+    )
+    for row in rows:
+        if type(row) is not dict:
+            return None
+        if any(
+            type(row.get(field)) not in (str, int, float, Decimal, type(None))
+            for field in ("mark_price", "index_price")
+        ):
+            return None
+        for field in time_fields:
+            value = row.get(field)
+            if value is not None:
+                if type(value) is not str and not (type(value) is datetime and value.tzinfo is UTC):
+                    return None
+                break
+    admitted = [row for row in rows if _time(row) <= end]
+    result = []
+    for row in admitted:
+        mark, index = decimal(row.get("mark_price")), decimal(row.get("index_price"))
+        if mark is None or not index:
+            continue
+        basis = (mark / index - 1) * 10000
+        result.append((_time(row), basis))
+    if _history_context_key() == signature:
+        memo[key] = (rows, result, tuple(context.flags.items()))
+    return result
+
+
 @precise
 def support_features(snapshot, start, end, spot, deriv, liquidity, supply):
     """§5.8 support evidence. Unknown inputs remain None and never add support."""
@@ -4465,19 +4516,25 @@ def support_features(snapshot, start, end, spot, deriv, liquidity, supply):
         perp_flags.append(complete)
         p["perp_volume_usd"] = window_usd_volume(snapshot, iid, start, end)
         p["perp_volume_reason"] = None if p["perp_volume_usd"] is not None else "INCOMPLETE"
-        oi = [r for r in _instrument_rows(snapshot, "oi", iid) if _time(r) <= end]
+        source = _instrument_rows(snapshot, "oi", iid)
+        points = _basis_history(source, end)
+        if points is None:
+            oi = [r for r in source if _time(r) <= end]
+            points = []
+            for row in oi:
+                mark, index = decimal(row.get("mark_price")), decimal(row.get("index_price"))
+                if mark is None or not index:
+                    continue
+                basis = (mark / index - 1) * 10000
+                points.append((_time(row), basis))
         historical = []
         initial = []
         tolerance = float(parameter("oi_sync_tolerance_s", 60))
-        for row in oi:
-            mark, index = decimal(row.get("mark_price")), decimal(row.get("index_price"))
-            if mark is None or not index:
-                continue
-            basis = (mark / index - 1) * 10000
-            if _time(row) < start:
-                historical.append((_time(row), basis))
-            if abs((_time(row) - start).total_seconds()) <= tolerance:
-                initial.append((_time(row), basis))
+        for when, basis in points:
+            if when < start:
+                historical.append((when, basis))
+            if abs((when - start).total_seconds()) <= tolerance:
+                initial.append((when, basis))
         br = (
             normal([v for _, v in historical])
             if historical

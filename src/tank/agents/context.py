@@ -504,7 +504,10 @@ class ModelContext:
         return self.described[kind, key]
 
     async def project(self, value, *, diagnostic=False):
-        return clean_value(await self._project(value, diagnostic=diagnostic))
+        if isinstance(value, list):
+            return [await self.project(item, diagnostic=diagnostic) for item in value]
+        projected = await self._project(value, diagnostic=diagnostic)
+        return clean_value(projected) if isinstance(value, dict) else projected
 
     async def _project(self, value, *, diagnostic=False):
         if isinstance(value, list):

@@ -2,6 +2,8 @@ from copy import deepcopy
 from datetime import timedelta
 from decimal import Decimal
 
+import pytest
+
 from tank import clickhouse_market as chm
 from tank.util import parse_time
 
@@ -59,10 +61,39 @@ async def test_wide_pages_decode_columns_directly_with_exact_cursor_and_mutable_
 
 async def test_empty_wide_page_skips_column_read():
     ch = WideClient([])
-    assert (
-        await chm.range_by_instrument_page(
-            ch, "mkt.oi_obs", "ts", [], T0, T0, {}, None, 2, False
-        )
-        == []
-    )
+    assert await chm.range_by_instrument_page(ch, "mkt.oi_obs", "ts", [], T0, T0, {}, None, 2, False) == []
     assert len(ch.row_queries) == 1 and ch.column_queries == []
+
+
+@pytest.mark.parametrize("collection", list(chm.MARKET_TABLES))
+def test_wide_column_decoder_matches_every_typed_schema_and_keeps_mutable_values_separate(collection):
+    values = {
+        "text": "x",
+        "numeric": "3.000",
+        "bigint": 1,
+        "boolean": True,
+        "timestamptz": "2026-10-19T00:00:00Z",
+        "text[]": ["x"],
+        "jsonb": '{"items":[]}',
+    }
+    row = {name: values[kind] for name, kind in chm.MARKET_COLUMNS[collection].items()}
+    row["storage_key"] = "first"
+    time_field = chm.MARKET_TABLES[collection]
+    rows = [row, dict(row, storage_key="second")]
+    columns = {name: [item[name] for item in rows] for name in row}
+    actual = chm._wide_column_records(collection, columns, time_field)
+    assert actual == [
+        (item["instrument_id"], chm._record(collection, item), item["storage_key"], T0) for item in rows
+    ]
+    for name, kind in chm.MARKET_COLUMNS[collection].items():
+        if kind == "jsonb":
+            actual[0][1][name]["items"].append(1)
+            assert actual[1][1][name] == {"items": []}
+        elif kind == "text[]":
+            actual[0][1][name].append("changed")
+            assert actual[1][1][name] == ["x"]
+
+
+def test_wide_column_decoder_refuses_ragged_columns():
+    with pytest.raises(ValueError, match="Invalid wide page columns"):
+        chm._wide_column_records("mkt.oi_obs", {"instrument_id": ["T"], "ts": []}, "ts")
