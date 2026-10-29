@@ -159,6 +159,7 @@ LOOP_STALL_S = 10
 
 
 HEAD_REUSE_S = 300
+HEAD_ORDERS = ("availability", "semantic_latest", "semantic_earliest")
 
 
 DAY_COUNTS_SAVE_S = 60
@@ -1570,7 +1571,7 @@ class MarketService:
         recorded by its assembly clock, so for a later clock of the same window it is reused
         while nothing was written to its scope since (one condition evaluation asks for the
         same heads once per condition; prod r106 ran ~60-80 sequential heads per BTC pass)."""
-        orders = ("availability", "semantic_latest", "semantic_earliest")
+        orders = HEAD_ORDERS
         key = (collection, field, tuple(sorted(filters.items())), iso(start), iso(cutoff))
         scope = next(
             ((name, filters[name]) for name in ("instrument_id", "token_id") if name in filters), (None, None)
@@ -1870,20 +1871,17 @@ class MarketService:
             result["stat_price_series"][iid] = series
             price_heads.append(series["dependency_fingerprint"])
             if dense or symbol == "ETH":
-                preanchor_heads.extend(
-                    [
-                        await self.repo.market_dependency_head(
-                            "mkt.klines_1m",
-                            "open_time",
-                            anchor - timedelta(minutes=1, microseconds=1),
-                            start=history_start,
-                            instrument_ids=[iid],
-                            assembled_at=assembled,
-                            order=order,
-                        )
-                        for order in ("availability", "semantic_latest", "semantic_earliest")
-                    ]
+                found = await market_dependency_head(
+                    self.repo,
+                    "mkt.klines_1m",
+                    "open_time",
+                    anchor - timedelta(minutes=1, microseconds=1),
+                    start=history_start,
+                    instrument_ids=[iid],
+                    assembled_at=assembled,
+                    orders=HEAD_ORDERS,
                 )
+                preanchor_heads.extend(found[o] for o in HEAD_ORDERS)
         result["relative_history_dependency_fingerprint"] = sha256(
             [
                 preanchor_heads,
@@ -2380,21 +2378,18 @@ class MarketService:
         if "composite" in domains:
             heads = []
             for name, (collection, field) in COLLECTIONS.items():
-                for order in ("availability", "semantic_latest", "semantic_earliest"):
-                    heads.append(
-                        await self.repo.market_dependency_head(
-                            collection,
-                            field,
-                            end,
-                            start=end - timedelta(days=90),
-                            filters={"token_id": token_id} if name == "supply" else None,
-                            instrument_ids=None
-                            if name == "supply"
-                            else [i["instrument_id"] for i in instruments],
-                            assembled_at=result["assembled_at"],
-                            order=order,
-                        )
-                    )
+                found = await market_dependency_head(
+                    self.repo,
+                    collection,
+                    field,
+                    end,
+                    start=end - timedelta(days=90),
+                    filters={"token_id": token_id} if name == "supply" else None,
+                    instrument_ids=None if name == "supply" else [i["instrument_id"] for i in instruments],
+                    assembled_at=result["assembled_at"],
+                    orders=HEAD_ORDERS,
+                )
+                heads.extend(found[o] for o in HEAD_ORDERS)
 
             peers = [
                 i["instrument_id"]
@@ -2406,18 +2401,17 @@ class MarketService:
                     or i["token_id"] in self._sector_tokens
                 )
             ]
-            for order in ("availability", "semantic_latest", "semantic_earliest"):
-                heads.append(
-                    await self.repo.market_dependency_head(
-                        "mkt.klines_1m",
-                        "open_time",
-                        end,
-                        start=end - timedelta(days=90),
-                        instrument_ids=peers,
-                        assembled_at=result["assembled_at"],
-                        order=order,
-                    )
-                )
+            found = await market_dependency_head(
+                self.repo,
+                "mkt.klines_1m",
+                "open_time",
+                end,
+                start=end - timedelta(days=90),
+                instrument_ids=peers,
+                assembled_at=result["assembled_at"],
+                orders=HEAD_ORDERS,
+            )
+            heads.extend(found[o] for o in HEAD_ORDERS)
             result["dependency_fingerprint"] = sha256(
                 [
                     heads,
