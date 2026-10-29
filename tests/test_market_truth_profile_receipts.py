@@ -1,8 +1,9 @@
+import asyncio
 import sys
 from contextvars import ContextVar, copy_context
 
 import pytest
-from market_truth_request_worker import profile_retained_call
+from market_truth_request_worker import profile_retained_async, profile_retained_call
 
 
 def test_postmeasurement_profile_runs_in_retained_context_and_restores_profiler():
@@ -35,5 +36,35 @@ def test_postmeasurement_profile_preserves_callback_error_and_restores_profiler(
 
     with pytest.raises(ValueError) as caught:
         profile_retained_call((copy_context(), retained_work, (), {}))
+    assert caught.value is failure
+    assert sys.getprofile() is None
+
+
+async def test_async_postmeasurement_profile_retains_context_across_task_handoff():
+    marker = ContextVar("async-profile-proof", default="outside")
+    token = marker.set("retained")
+    context = copy_context()
+    marker.reset(token)
+    observed = []
+
+    async def retained_work():
+        await asyncio.sleep(0)
+        observed.append(marker.get())
+
+    rows = await profile_retained_async((context, retained_work, (), {}))
+    assert observed == ["retained"]
+    assert marker.get() == "outside"
+    assert sys.getprofile() is None
+    assert any(row["function"] == "retained_work" for row in rows)
+
+
+async def test_async_postmeasurement_profile_preserves_error_and_restores_profiler():
+    failure = ValueError("async-profile-proof")
+
+    async def retained_work():
+        raise failure
+
+    with pytest.raises(ValueError) as caught:
+        await profile_retained_async((copy_context(), retained_work, (), {}))
     assert caught.value is failure
     assert sys.getprofile() is None

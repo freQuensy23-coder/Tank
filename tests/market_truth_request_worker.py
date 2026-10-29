@@ -81,6 +81,23 @@ def profile_retained_call(call):
     profiler = cProfile.Profile()
     profiler.runcall(context.run, function, *args, **kwargs)
     assert sys.getprofile() is None
+    return profile_rows(profiler)
+
+
+async def profile_retained_async(call):
+    context, function, args, kwargs = call
+    assert sys.getprofile() is None
+    profiler = cProfile.Profile()
+    profiler.enable()
+    try:
+        async with asyncio.timeout(10):
+            await asyncio.create_task(function(*args, **kwargs), context=context)
+    finally:
+        profiler.disable()
+    return profile_rows(profiler)
+
+
+def profile_rows(profiler):
     stats = pstats.Stats(profiler).stats
     return [
         {
@@ -91,7 +108,9 @@ def profile_retained_call(call):
             "self_seconds": values[2],
             "inclusive_seconds": values[3],
         }
-        for (filename, line, name), values in sorted(stats.items(), key=lambda item: item[1][2], reverse=True)[:40]
+        for (filename, line, name), values in sorted(
+            stats.items(), key=lambda item: item[1][2], reverse=True
+        )[:40]
     ]
 
 
@@ -299,7 +318,7 @@ async def run(root, directory, fixtures, revision, reader):
             runtime.repo, runtime.settings, runtime.market, runtime.truth = repo, settings, market, service
             runtime.handlers = {"ESCALATE_TOKENS": runtime.escalate, "RUN_MARKET_TRUTH": runtime.assess}
             snapshots, dense, phases, phase_calls = [], {}, {}, {}
-            diagnostic_call = None
+            diagnostic_call = snapshot_call = None
             original_snapshot, original_heads, original_rows = (
                 market.snapshot,
                 market._snapshot_heads,
@@ -313,6 +332,8 @@ async def run(root, directory, fixtures, revision, reader):
                 clock["value"] = ASSEMBLED
 
             async def snapshot(*args, **kwargs):
+                nonlocal snapshot_call
+                snapshot_call = (copy_context(), original_snapshot, args, kwargs)
                 clock["value"] = manifest["availability_cutoff"]
                 started = perf_counter()
                 value = await original_snapshot(*args, **kwargs)
@@ -435,7 +456,15 @@ async def run(root, directory, fixtures, revision, reader):
                     break
                 if command.get("diagnose"):
                     assert diagnostic_call is not None
-                    emit({"kind": "post_measurement_profile", "rows": profile_retained_call(diagnostic_call)})
+                    assert snapshot_call is not None
+                    clock["value"] = manifest["availability_cutoff"]
+                    emit(
+                        {
+                            "kind": "post_measurement_profile",
+                            "rows": profile_retained_call(diagnostic_call),
+                            "snapshot": await profile_retained_async(snapshot_call),
+                        }
+                    )
                     continue
                 state = command["sample"]
                 phases.clear()
