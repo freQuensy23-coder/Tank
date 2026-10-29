@@ -1,7 +1,6 @@
 import pytest
 from test_market_truth_request import repository_contract
 
-
 SOURCE = """
 def _projection(collection, record):
     return record

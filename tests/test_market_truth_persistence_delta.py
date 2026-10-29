@@ -36,6 +36,7 @@ async def test_record_replacement_transfers_only_changed_document_fields(
         updated.pop("null_to_missing")
         sent = []
         intervened = []
+        revised = []
         connect = repo._conn
 
         class Connection:
@@ -47,6 +48,11 @@ async def test_record_replacement_transfers_only_changed_document_fields(
 
             async def execute(self, query, params=None, **kwargs):
                 text = query.as_string(self.connection) if hasattr(query, "as_string") else query
+                if intervening_write and not revised and text.startswith("SELECT document, immutable,"):
+                    await self.connection.execute(
+                        "UPDATE reg.tokens SET document=document WHERE storage_key=%s", ("T",)
+                    )
+                    revised.append(True)
                 if intervening_write and not intervened and text.startswith('UPDATE "reg"."tokens" SET'):
                     await self.connection.execute(
                         "UPDATE reg.tokens SET document = document || %s WHERE storage_key=%s",
