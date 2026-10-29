@@ -797,7 +797,9 @@ def oi_temporally_admissible(row):
             resolved = envelopes[envelope]
     if resolved is None:
         value = (
-            propagate_timestamp(row, "ts", precision_aliases=("timestamp_precision", "precision")).bucket_anchor
+            propagate_timestamp(
+                row, "ts", precision_aliases=("timestamp_precision", "precision")
+            ).bucket_anchor
             != "UNSPECIFIED"
         )
     else:
@@ -1227,23 +1229,53 @@ def liquidation_side_evidence(rows, window_complete, coverage):
     return result
 
 
+def _oi_history_arrays(rows):
+    """Prepare stored history columns once for a retained source and Decimal context."""
+    inputs = _ASSESSMENT_INPUTS.get()
+    memo = inputs.setdefault("oi_history_arrays", {}) if inputs is not None else None
+    key = (id(rows), _history_context_key())
+    hit = memo.get(key) if memo is not None else None
+    if hit is not None and hit[0] is rows:
+        return hit[1]
+    columns = (
+        [row.get("oi_native") for row in rows],
+        [None if row.get("oi_usd_source") else row.get("oi_usd") for row in rows],
+    )
+    metadata = {}
+    arrays = _history_decimal_arrays(columns, metadata=metadata)
+    result = (arrays, metadata) if arrays is not None else None
+    if memo is not None:
+        memo[key] = (rows, result)
+    return result
+
+
 def _history_slice(times, rows, start):
     lo = bisect_left(times, start - timedelta(days=lookback_days()))
     hi = bisect_left(times, start)
-    return times[lo:hi], rows[lo:hi]
+    selected = rows[lo:hi]
+    inputs = _ASSESSMENT_INPUTS.get()
+    if inputs is not None:
+        prepared = _oi_history_arrays(rows)
+        if prepared is not None:
+            arrays, metadata = prepared
+            inputs["oi_history_arrays"][(id(selected), _history_context_key())] = (
+                selected,
+                ([values[lo:hi] for values in arrays], metadata),
+            )
+    return times[lo:hi], selected
 
 
 def _composite_history_vector(venue_history, window):
-    columns = [
-        column
-        for _, rows in venue_history
-        for column in (
-            [r.get("oi_native") for r in rows],
-            [None if r.get("oi_usd_source") else r.get("oi_usd") for r in rows],
-        )
-    ]
-    prepared = _history_decimal_arrays(columns, summands=len(venue_history))
-    if prepared is None:
+    prepared = []
+    low, high = 0, 0
+    for _, rows in venue_history:
+        columns = _oi_history_arrays(rows)
+        if columns is None:
+            return None
+        arrays, metadata = columns
+        prepared.extend(arrays)
+        low, high = min(low, metadata["low"]), max(high, metadata["high"])
+    if high - low + len(str(max(len(venue_history), 1))) + 1 > getcontext().prec:
         return None
     if any(type(t) is not datetime for times, _ in venue_history for t in times):
         return None
@@ -1368,45 +1400,82 @@ def _composite_history(venue_history, window):
     return (hn if stored(native_ends) else []), (hu if stored(usd_ends) else [])
 
 
+def _oi_cutoff_index(rows, end):
+    """Retain one stable, admissible venue index at this assessment's cutoff."""
+    inputs = _ASSESSMENT_INPUTS.get()
+    memo = inputs.setdefault("oi_cutoff_indexes", {}) if inputs is not None else None
+    key = (id(rows), end)
+    hit = memo.get(key) if memo is not None else None
+    if hit is not None and hit[0] is rows:
+        return hit[1]
+    admissible, _, ordered, times = _oi_split(rows)
+    hi = bisect_right(times, end)
+    result = (times[:hi], [admissible[i] for _, i in ordered[:hi]])
+    if memo is not None:
+        memo[key] = (rows, result)
+    return result
+
+
+def _oi_combined_timeline(indexed, tolerance):
+    """Share exact endpoint sums only when conversions have no Decimal effects."""
+    inputs = _ASSESSMENT_INPUTS.get()
+    memo = inputs.setdefault("oi_combined_timelines", {}) if inputs is not None else None
+    key = (tuple(id(rows) for _, rows in indexed), tolerance, _history_context_key())
+    hit = memo.get(key) if memo is not None else None
+    if hit is not None and all(a[1] is b[1] for a, b in zip(hit[0], indexed, strict=True)):
+        return hit[1]
+    reusable = False
+    if memo is not None:
+        columns = [
+            [row.get(measure) for row in rows]
+            for _, rows in indexed
+            for measure in ("oi_native", "oi_usd")
+        ]
+        reusable = _history_decimal_arrays(columns, summands=len(indexed)) is not None
+    timestamps = sorted({t for times, _ in indexed for t in times})
+    combined = []
+    for t in timestamps:
+        selected = []
+        for times, rows in indexed:
+            idx = bisect_left(times, t)
+            candidates = [
+                rows[i]
+                for i in (idx - 1, idx)
+                if 0 <= i < len(rows) and abs((times[i] - t).total_seconds()) <= tolerance
+            ]
+            if not candidates:
+                break
+            selected.append(min(candidates, key=lambda r: abs((_time(r) - t).total_seconds())))
+        if len(selected) == len(indexed) and all(decimal(r.get("oi_native")) is not None for r in selected):
+            combined.append(
+                dict(ts=iso(t), oi_native=_sum(selected, "oi_native"), oi_usd=_sum(selected, "oi_usd"))
+            )
+    if reusable:
+        memo[key] = (indexed, combined)
+    return combined
+
+
 def synchronized_oi(sync, start, end):
     admissible = []
     tolerance = float(parameter("oi_sync_tolerance_s", 60))
     for p, rows, category in sync:
         if _venue(p) == "hyperliquid":
             continue
-        eligible = [r for r in rows if oi_temporally_admissible(r) and _time(r) <= end]
+        times, eligible = _oi_cutoff_index(rows, end)
         if all(
-            any(abs((_time(row) - endpoint).total_seconds()) <= tolerance for row in eligible)
+            any(
+                abs((times[i] - endpoint).total_seconds()) <= tolerance
+                for i in (bisect_left(times, endpoint) - 1, bisect_left(times, endpoint))
+                if 0 <= i < len(times)
+            )
             for endpoint in (start, end)
         ):
-            admissible.append((p, eligible, category))
+            admissible.append((p, (times, eligible), category))
     sync = admissible
     synchronized = None
     if sync and len({s[2] for s in sync}) == 1 and sync[0][2] is not None:
-        timestamps = sorted({_time(r) for _, rs, _ in sync for r in rs})
-        combined = []
-        indexed = []
-        for _, rs, _ in sync:
-            ordered = sorted(rs, key=_time)
-            indexed.append(([_time(r) for r in ordered], ordered))
-        for t in timestamps:
-            selected = []
-            for times, rs in indexed:
-                idx = bisect_left(times, t)
-                candidates = [
-                    rs[i]
-                    for i in (idx - 1, idx)
-                    if 0 <= i < len(rs)
-                    and abs((times[i] - t).total_seconds()) <= float(parameter("oi_sync_tolerance_s", 60))
-                    and times[i] <= end
-                ]
-                if not candidates:
-                    break
-                selected.append(min(candidates, key=lambda r: abs((_time(r) - t).total_seconds())))
-            if len(selected) == len(sync) and all(decimal(r.get("oi_native")) is not None for r in selected):
-                combined.append(
-                    dict(ts=iso(t), oi_native=_sum(selected, "oi_native"), oi_usd=_sum(selected, "oi_usd"))
-                )
+        indexed = [series for _, series, _ in sync]
+        combined = _oi_combined_timeline(indexed, tolerance)
         synchronized = _oi_stats(
             combined,
             start,

@@ -13,6 +13,7 @@ from decimal import Decimal
 from types import SimpleNamespace
 
 import httpx
+import numpy as np
 
 from tank import clickhouse_market as chm
 from tank.market import normalize as norm
@@ -1373,6 +1374,49 @@ class MarketService:
 
                 def extend_columns(columns):
                     nonlocal unknown_availability
+                    unknown_availability |= any(columns["recorded_unknown"])
+                    stamps = np.asarray(columns["open_us"], dtype=np.int64)
+                    admitted = (stamps >= low_us) & (stamps <= high_us)
+                    admitted &= np.asarray(columns["interval_s"], dtype=object) == 60
+                    indexes = np.flatnonzero(admitted)
+                    selected = stamps[indexes]
+                    if len(selected) and (not times or selected[0] > times[-1]) and np.all(
+                        selected[1:] > selected[:-1]
+                    ):
+                        full = np.fromiter(
+                            (columns["complete"][i] is True for i in indexes), dtype=np.bool_
+                        )
+                        known = np.asarray(columns["open_time_prec"], dtype=object)[indexes] == "BUCKET(60s)"
+                        if kind == "price":
+                            points = np.asarray([columns["value"][i] for i in indexes], dtype=np.float64)
+                            valid = full & np.isfinite(points) & (points > 0)
+                            values.frombytes(points.tobytes())
+                        else:
+                            points = np.asarray(columns["value"], dtype=object)[indexes]
+                            numbers = np.asarray(columns["decimal_values"], dtype=object)[indexes]
+                            valid = full & np.fromiter(
+                                (number is not None for number in numbers), dtype=np.bool_
+                            )
+                            for number in numbers[valid]:
+                                if not number.is_finite():
+                                    norm.decimal(number)
+                            valid[valid] = numbers[valid] >= 0
+                            values.extend(points.tolist())
+                        times.frombytes(selected.tobytes())
+                        complete.extend(valid.astype(np.uint8).tobytes())
+                        precise.extend(known.astype(np.uint8).tobytes())
+                        first = int(np.searchsorted(selected, served_us))
+                        if not changed and first < len(selected):
+                            value = points[first]
+                            changed.append(
+                                (
+                                    int(selected[first]),
+                                    value if kind == "volume" or isfinite(value) else None,
+                                    bool(valid[first]),
+                                    bool(known[first]),
+                                )
+                            )
+                        return
                     for stamp, raw, full, known, interval, unknown in zip(
                         columns["open_us"],
                         columns["value"],
@@ -1534,8 +1578,10 @@ class MarketService:
                         (point[0] for point in changed if opens and point[0] >= opens[0]), default=None
                     )
                 if kind == "price":
-                    output_times = array("q", (stamp + 60000000 for i, stamp in enumerate(opens) if valid[i]))
-                    output_values = array("d", (value for i, value in enumerate(points) if valid[i]))
+                    mask = np.frombuffer(valid, dtype=np.uint8).astype(np.bool_)
+                    output_times, output_values = array("q"), array("d")
+                    output_times.frombytes((np.frombuffer(opens, dtype=np.int64)[mask] + 60000000).tobytes())
+                    output_values.frombytes(np.frombuffer(points, dtype=np.float64)[mask].tobytes())
                     valid = bytearray([1]) * len(output_times)
                 else:
                     output_times, output_values = opens, points
@@ -2646,6 +2692,8 @@ class MarketService:
             )
 
         page = WIDE_PAGE_ROWS if collection == "mkt.tickers_24h" else 1000
+        if collection != "mkt.tickers_24h" and chm.client(self.repo, collection) is not None:
+            page = 20000
         return await market_range_by_instrument(
             self.repo, collection, field, ids, start, end, filters, batch_size=page, keys_out=keys_out
         )
@@ -2896,8 +2944,10 @@ class MarketService:
         ids = {r["instrument_id"] for r in instruments}
         result["flow_segments"] = []
         result["reference_points"] = []
-        for name, (collection, field) in COLLECTIONS.items():
-            values = []
+
+        async def read_collection(name, collection, field):
+            window_rows, sampled, settled_history, settled_by_time = {}, {}, {}, {}
+            supply_rows = None
 
             if name in bounded:
                 window_rows = {iid: [] for iid in ids}
@@ -2938,15 +2988,33 @@ class MarketService:
                 settled_by_time = await self._ranged(
                     collection, "funding_time", ids, history_start, snapshot_end
                 )
+            if name == "supply":
+                supply_rows = await self._range(
+                    collection,
+                    field,
+                    start=history_start,
+                    end=snapshot_end,
+                    filters={"token_id": token_id},
+                )
+            return window_rows, sampled, settled_history, settled_by_time, supply_rows
+
+        collection_reads = [
+            asyncio.create_task(read_collection(name, collection, field))
+            for name, (collection, field) in COLLECTIONS.items()
+        ]
+        try:
+            collections = await asyncio.gather(*collection_reads)
+        finally:
+            for task in collection_reads:
+                if not task.done():
+                    task.cancel()
+            await asyncio.gather(*collection_reads, return_exceptions=True)
+        for (name, (collection, field)), loaded in zip(COLLECTIONS.items(), collections, strict=True):
+            window_rows, sampled, settled_history, settled_by_time, supply_rows = loaded
+            values = []
             for iid in ids if name != "supply" else [None]:
                 if iid is None:
-                    rows = await self._range(
-                        collection,
-                        field,
-                        start=history_start,
-                        end=snapshot_end,
-                        filters={"token_id": token_id},
-                    )
+                    rows = supply_rows
                 else:
                     rows = list(window_rows[iid])
                 if name == "oi" and recent_start > history_start:
@@ -3132,7 +3200,9 @@ class MarketService:
                         load_series(inst, "price")
                     )
             for inst in instruments:
-                series_reads[("volume", inst["instrument_id"])] = asyncio.create_task(load_series(inst, "volume"))
+                series_reads[("volume", inst["instrument_id"])] = asyncio.create_task(
+                    load_series(inst, "volume")
+                )
             for inst in instruments:
                 iid = inst["instrument_id"]
                 await retain_close(latest_closes.get(iid))

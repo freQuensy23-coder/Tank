@@ -253,24 +253,25 @@ def _ids(q, instrument_ids):
 
 def _record(collection, row):
     """A ClickHouse row as the typed values a PostgreSQL row carries (then decode)."""
-    from tank.market_storage import decode
-
     out = {}
     for name, kind in MARKET_COLUMNS[collection].items():
         value = row.get(name)
         if value is None:
             out[name] = None
         elif kind == "timestamptz":
-            out[name] = parse_time(value)
+            out[name] = iso(parse_time(value))
         elif kind == "jsonb":
             out[name] = json.loads(value)
         elif kind == "text[]":
             out[name] = list(value) or None
         elif kind == "numeric":
-            out[name] = Decimal(value)
+            out[name] = str(Decimal(value))
         else:
             out[name] = value
-    return decode(collection, out)
+    for alias, target in MARKET_ALIASES.get(collection, {}).items():
+        if target in out:
+            out[alias] = out[target]
+    return out
 
 
 def _records(collection, rows):
@@ -595,7 +596,22 @@ async def dense_projection_page(
     def convert():
         result = {name: raw.get(name, []) for name in names - {"c", "volume_native"}}
         result["open_us"] = [int(value) for value in result["open_us"]]
-        result["value"] = [None if value is None else str(Decimal(value)) for value in raw.get(field, [])]
+        numbers = {}
+        decimals = []
+        texts = []
+        for value in raw.get(field, []):
+            if value is None:
+                decimals.append(None)
+                texts.append(None)
+                continue
+            pair = numbers.get(value)
+            if pair is None:
+                number = Decimal(value)
+                pair = numbers[value] = (number, str(number))
+            decimals.append(pair[0])
+            texts.append(pair[1])
+        result["value"] = texts
+        result["decimal_values"] = decimals
         return result
 
     return await asyncio.to_thread(convert)
