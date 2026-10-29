@@ -12,9 +12,7 @@ from tank.util import parse_time
 
 @pytest.mark.parametrize("precision", [7, 128, 768])
 @pytest.mark.parametrize("rounding", [ROUND_DOWN, ROUND_HALF_EVEN])
-def test_single_decimal_keeps_context_sequence_without_redundant_reductions(
-    monkeypatch, precision, rounding
-):
+def test_single_decimal_keeps_context_sequence_without_redundant_reductions(monkeypatch, precision, rounding):
     calls = []
 
     def maximum(*args, **kwargs):
@@ -72,9 +70,7 @@ def test_context_general_and_nonfinite_paths_keep_precision_and_flags():
         (datetime(2026, 10, 28, 12, 6, 0, 123456, tzinfo=UTC), 4),
     ],
 )
-async def test_projection_reuses_only_equal_timestamps_and_preserves_values(
-    monkeypatch, raw, expected_calls
-):
+async def test_projection_reuses_only_equal_timestamps_and_preserves_values(monkeypatch, raw, expected_calls):
     available = "2026-10-28T12:07:00Z"
     source = {
         "opened": raw,
