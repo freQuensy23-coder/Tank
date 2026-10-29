@@ -337,7 +337,11 @@ def diff_tables(base, tables):
         for c in old.cols:
             if c["name"] not in now:
                 cols.append(dict(c, change="removed", ref=None))
-            elif (c["type"], c["nn"]) != (now[c["name"]]["type"], now[c["name"]]["nn"]):
+            elif (c["type"], c["nn"], c["uk"]) != (
+                now[c["name"]]["type"],
+                now[c["name"]]["nn"],
+                now[c["name"]]["uk"],
+            ):
                 cols.append(dict(now[c["name"]], change="altered"))
             else:
                 cols.append(now[c["name"]])
@@ -758,7 +762,7 @@ PG_ROUTES = {
     "claim_observation": {"side": "L", "lanes": [2]},
     "tool_session": {"side": "L", "lanes": [3]},
     "observation_event": {"lanes": [0]},
-    "session_event": {"lanes": [1], "one_to_one": True},
+    "session_event": {"lanes": [1]},
     "change_event": {"side": "L", "lanes": [2]},
     "assessment_event": {"side": "L", "lanes": [3]},
     "event_merge_target": {"side": "L", "lanes": [4]},
@@ -810,10 +814,9 @@ def route(fk, boxes, col_of, col_x, col_w, gut, channel_y, spec, color):
             sx, dx, s_dir, d_dir = src.x + src.w, dst.x, 1, -1
         l1, l2 = lane_x(g1, lanes[0]), lane_x(g2, lanes[1])
         pts = [(sx, sy), (l1, sy), (l1, channel_y), (l2, channel_y), (l2, dy), (dx, dy)]
-    child = "one" if spec.get("one_to_one") else "many"
     parts = [
         f'<path d="{rounded(pts)}" fill="none" stroke="{color}" stroke-width="1.35" stroke-linejoin="round" opacity="0.92"/>',
-        end_marker(pts[0][0], pts[0][1], s_dir, child, color),
+        end_marker(pts[0][0], pts[0][1], s_dir, "many", color),
         end_marker(pts[-1][0], pts[-1][1], d_dir, "one", color),
     ]
     if len(fk["cols"]) > 1:
@@ -830,9 +833,6 @@ def legend_line(x, y, kind, color="#2D3748"):
     out = [f'<path d="M{x},{y} H{x + 70}" stroke="{color}" stroke-width="1.35"/>']
     if kind == "fk":
         out.append(end_marker(x, y, 1, "many", color))
-        out.append(end_marker(x + 70, y, -1, "one", color))
-    elif kind == "11":
-        out.append(end_marker(x, y, 1, "one", color))
         out.append(end_marker(x + 70, y, -1, "one", color))
     return "".join(out)
 
@@ -1072,16 +1072,12 @@ def render_pg(root, base_ref=None):
     hdr.append(
         text(lx + 100, ly + 48, "FOREIGN KEY: child 0..N  →  parent 0..1 (the FK column is nullable)", 10.2)
     )
-    hdr.append(legend_line(lx + 16, ly + 70, "11", SCHEMA["ops"][0]))
     hdr.append(
-        text(lx + 100, ly + 74, "1 : 1 — FK + UNIQUE (ops.agent_sessions.event_id → evt.events)", 10.2)
+        f'<path d="M{lx + 16},{ly + 70} H{lx + 38} V{ly + 62}" fill="none" stroke="#2D3748" stroke-width="1.1" stroke-dasharray="2 2"/>'
     )
-    hdr.append(
-        f'<path d="M{lx + 16},{ly + 96} H{lx + 38} V{ly + 88}" fill="none" stroke="#2D3748" stroke-width="1.1" stroke-dasharray="2 2"/>'
-    )
-    hdr.append(text(lx + 100, ly + 100, "composite FK: the second column joins with a dotted line", 10.2))
-    hdr.append(text(lx + 16, ly + 126, "→ evt.events", 10, "#3182CE", None, MONO, None, "italic"))
-    hdr.append(text(lx + 100, ly + 126, "by-convention reference, no FK constraint", 10.2))
+    hdr.append(text(lx + 100, ly + 74, "composite FK: the second column joins with a dotted line", 10.2))
+    hdr.append(text(lx + 16, ly + 100, "→ evt.events", 10, "#3182CE", None, MONO, None, "italic"))
+    hdr.append(text(lx + 100, ly + 100, "by-convention reference, no FK constraint", 10.2))
     hdr.append(
         text(
             lx + 14,

@@ -77,6 +77,25 @@ No build or synthetic test proves operational acceptance. Separate evidence is r
 
 `tank reanalyse` lists source items whose analysis ended without an outcome: `extraction_status` FAILED with reason AGENT_INCOMPLETE or SESSION_FAILED (the agent session failed terminally; `extraction_error_type` names the native error), and the legacy forms SKIPPED / NATIVE_TURN_COMPLETED_WITHOUT_OBSERVATION and FAILED / AGENT_REMINDED. It changes nothing unless `--apply` is given; then each listed item returns to PENDING, keeps its previous status and route in `reanalysis_history`, and gets a new ROUTE_ITEM job, so the agent receives it as a new input. The item's open sessions without an event are closed first (flagged `agent_incomplete`, archived later by the idle sweep; their ids are printed as `retired_sessions`), and a NEW_ITEM re-analysis always opens a fresh session for its attempt; it never resumes an old session, which a later OpenMA image may be unable to restore. An ITEM_ADDED re-analysis joins its event's session. `--item-id` (repeatable) narrows the selection and `--limit` (default 100) bounds it. Review the dry-run list before applying.
 
+### Re-delivering a failed event input
+
+A FAILED `AGENT_MESSAGE` job is never revived by enqueueing its idempotency key again. Before migration 009, an event input (a merge handoff's ITEM_ADDED, CONDITION_FIRED, MILESTONE, CALL_EXPIRED) for an event whose session had closed failed with `last_error` UniqueViolation: the fresh session generation could not be stored next to the closed one. After that migration is deployed, and only with the owner's agreement to this write, queue a copy of such a job under a derived key; it goes to the event's live session or opens a fresh one, exactly once:
+
+    docker exec -i tank-tank-1 python - JOB-... <<'PY'
+    import sys
+    from tank.cli import run_db
+
+    async def redeliver(repo, settings):
+        failed = await repo.get("ops.jobs", sys.argv[1])
+        assert failed["type"] == "AGENT_MESSAGE" and failed["status"] == "FAILED"
+        job = await repo.enqueue("AGENT_MESSAGE", failed["payload"], failed["idem_key"] + ":redeliver")
+        return {key: job[key] for key in ("job_id", "status", "idem_key", "payload")}
+
+    run_db(redeliver)
+    PY
+
+Running it again returns the same queued job. The original FAILED job stays as the audit record.
+
 ### Recapturing skipped duplicates
 
 A feed checkpoint keeps the external IDs it skipped as duplicates in `duplicate_ids` and never reads them again. `tank sources recapture SOURCE_ID EXTERNAL_ID...` lists the checkpoints of that source's feeds that hold the given IDs and changes nothing unless `--apply` is given; then it removes those IDs from `duplicate_ids` and drops the feed's `etag`/`last_modified`, so the next poll reads the full feed and ingests each entry still listed in it under the current deduplication rule (03 §3.1). An entry that is still a duplicate of the same publication only adds an observation and returns to `duplicate_ids`. The command does not fetch anything itself; an entry that has left the feed is not recovered. A poll running at the same moment may save its earlier checkpoint over the change, so repeat the dry run after the next poll and apply again if the ID is still listed.
