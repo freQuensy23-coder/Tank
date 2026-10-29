@@ -1,6 +1,6 @@
 from dataclasses import dataclass
 from decimal import Decimal
-from enum import Enum, IntEnum
+from enum import IntEnum, StrEnum
 
 from tank import util
 
@@ -20,7 +20,7 @@ def test_json_primitives_do_not_require_dataclass_or_model_reflection(monkeypatc
 
 
 def test_jsonable_fast_path_keeps_nonprimitive_conversion_and_subclass_hooks():
-    class Color(str, Enum):
+    class Color(StrEnum):
         BLUE = "blue"
 
     class Priority(IntEnum):
