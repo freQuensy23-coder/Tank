@@ -49,6 +49,7 @@ _BASELINE_DEPENDENCY = ContextVar("truth_baseline_dependency", default=None)
 _TIMES = ContextVar("truth_observation_times", default=None)
 _PARAMETERS = ContextVar("tank_truth_parameters", default=None)
 _ASSESSMENT_INPUTS = ContextVar("truth_assessment_inputs", default=None)
+_ROW_MEMO_MISSING = object()
 
 
 def parameter(name, default):
@@ -348,6 +349,16 @@ def repricing(value, event_history, day_history):
 
 def _time(row):
     times = _TIMES.get()
+    inputs = _ASSESSMENT_INPUTS.get()
+    if times is not None and inputs is not None:
+        memo = inputs.setdefault("row_times", {})
+        identity = id(row)
+        value = memo.get(identity, _ROW_MEMO_MISSING)
+        if value is _ROW_MEMO_MISSING:
+            value = _observation_time(row)
+            inputs.setdefault("row_owners", {})[identity] = row
+            memo[identity] = value
+        return value
     if times is not None:
         hit = times.get(id(row))
         if hit is not None:
@@ -456,12 +467,14 @@ def _available(row, snapshot):
     inputs = _ASSESSMENT_INPUTS.get()
     if inputs is None:
         return parse_time(received) <= parse_time(assembled)
-    memo = inputs.setdefault("available", {})
-    hit = memo.get((id(row), assembled))
-    if hit is None or hit[0] is not row:
-        hit = (row, parse_time(received) <= parse_time(assembled))
-        memo[(id(row), assembled)] = hit
-    return hit[1]
+    memo = inputs.setdefault("available", {}).setdefault(assembled, {})
+    identity = id(row)
+    value = memo.get(identity, _ROW_MEMO_MISSING)
+    if value is _ROW_MEMO_MISSING:
+        value = parse_time(received) <= parse_time(assembled)
+        inputs.setdefault("row_owners", {})[identity] = row
+        memo[identity] = value
+    return value
 
 
 def flow_segments(snapshot):
@@ -851,7 +864,7 @@ def oi_temporally_admissible(row):
     memo = inputs.setdefault("oi_admissible", {}) if inputs is not None else None
     identity = id(row)
     if memo is not None and identity in memo:
-        return memo[identity][1]
+        return memo[identity]
     resolved = None
     if inputs is not None and type(row) is dict and type(raw) is str:
         fields = (
@@ -896,7 +909,8 @@ def oi_temporally_admissible(row):
         parse_time(raw)
         value = resolved
     if memo is not None:
-        memo[identity] = (row, value)
+        inputs.setdefault("row_owners", {})[identity] = row
+        memo[identity] = value
     return value
 
 
