@@ -68,16 +68,21 @@ func (s *Service) runFetch(ctx context.Context, row map[string]any, budgetS time
 	got, err := s.opt.Fetcher.Fetch(ctx, method, raw, params, headers, req["body"], fetchPriority)
 	if err != nil {
 		reason := "FETCH_FAILED"
+		details := map[string]any{"error": err.Error(), "source_id": req["source_id"]}
 		var banned *budget.BannedError
+		var limited *rest.RateLimitedError
 		switch {
 		case errors.Is(err, rest.ErrTooLarge):
 			reason = "RESPONSE_TOO_LARGE"
 		case errors.As(err, &banned):
 			reason = "HOST_BANNED"
+		case errors.As(err, &limited):
+			reason = "RATE_LIMITED"
+			details["retry_after"] = limited.RetryAfter
 		case errors.Is(err, context.DeadlineExceeded):
 			reason = "REQUEST_BUDGET_EXHAUSTED"
 		}
-		finish("FAILED", reason, map[string]any{"error": err.Error(), "source_id": req["source_id"]})
+		finish("FAILED", reason, details)
 		return
 	}
 	sum := sha256.Sum256(got.Body)

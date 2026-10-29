@@ -1236,10 +1236,17 @@ class EventToolService:
         ) as client:
             for _hop in range(MAX_EVIDENCE_REDIRECTS + 1):
                 remaining = deadline - asyncio.get_running_loop().time()
-                if is_exchange_url(url):
-                    page = await self._captured_page(url, remaining)
-                else:
-                    page = await self._direct_page(client, url, remaining, limit)
+                try:
+                    async with asyncio.timeout(remaining):
+                        page = await (
+                            self._captured_page(url, remaining)
+                            if is_exchange_url(url)
+                            else self._direct_page(client, url)
+                        )
+                except TimeoutError as error:
+                    raise httpx.TimeoutException(
+                        f"Page not received within {limit:g} s", request=httpx.Request("GET", url)
+                    ) from error
                 if isinstance(page, str):
                     url = page
                     self.validate_fetch_url(url)
@@ -1306,28 +1313,20 @@ class EventToolService:
             raise ValueError("Page exceeds 2 MB")
         return [response.content], response.headers.get("content-type")
 
-    async def _direct_page(self, client, url, remaining, limit):
+    async def _direct_page(self, client, url):
         """One evidence hop: the next URL for a redirect, else the page chunks and media type."""
-        try:
-            async with (
-                asyncio.timeout(remaining),
-                client.stream("GET", url, headers=self.evidence_headers(url)) as r,
-            ):
-                if r.has_redirect_location:
-                    return str(r.url.join(r.headers["location"]))
-                r.raise_for_status()
-                chunks = []
-                size = 0
-                async for chunk in r.aiter_bytes():
-                    size += len(chunk)
-                    if size > 2 * 1024 * 1024:
-                        raise ValueError("Page exceeds 2 MB")
-                    chunks.append(chunk)
-                return chunks, r.headers.get("content-type")
-        except TimeoutError as error:
-            raise httpx.TimeoutException(
-                f"Page not received within {limit:g} s", request=httpx.Request("GET", url)
-            ) from error
+        async with client.stream("GET", url, headers=self.evidence_headers(url)) as r:
+            if r.has_redirect_location:
+                return str(r.url.join(r.headers["location"]))
+            r.raise_for_status()
+            chunks = []
+            size = 0
+            async for chunk in r.aiter_bytes():
+                size += len(chunk)
+                if size > 2 * 1024 * 1024:
+                    raise ValueError("Page exceeds 2 MB")
+                chunks.append(chunk)
+            return chunks, r.headers.get("content-type")
 
     async def _store_page(self, a, c, original, media_type):
 

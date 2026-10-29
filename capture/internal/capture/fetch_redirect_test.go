@@ -45,3 +45,20 @@ func TestHTTPFetchManualRedirectsReturnLocation(t *testing.T) {
 		t.Fatalf("default result %v", results[1])
 	}
 }
+
+type limitedFetcher struct{}
+
+func (limitedFetcher) Fetch(context.Context, string, string, map[string]string, map[string]string, any, int) (*rest.Fetched, error) {
+	return nil, &rest.RateLimitedError{Host: "www.okx.com", RetryAfter: "30", Cause: context.DeadlineExceeded}
+}
+
+func TestHTTPFetchRateLimitKeepsRetryAfter(t *testing.T) {
+	s := &Service{opt: Options{Fetcher: limitedFetcher{}}, clock: &testClock{time.Date(2026, 10, 29, 0, 0, 0, 0, time.UTC)}}
+	var status, reason string
+	var details map[string]any
+	s.runFetch(context.Background(), map[string]any{"request": map[string]any{"url": "https://www.okx.com/help/x"}}, 0,
+		func(st string, r any, result any) { status, reason, details = st, r.(string), result.(map[string]any) })
+	if status != "FAILED" || reason != "RATE_LIMITED" || details["retry_after"] != "30" {
+		t.Fatalf("got %s %s %v", status, reason, details)
+	}
+}

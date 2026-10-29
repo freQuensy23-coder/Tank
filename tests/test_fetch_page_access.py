@@ -150,6 +150,52 @@ async def test_redirect_returned_by_tank_capture_passes_the_url_checks(tmp_path,
     assert not await service.repo.list("ingest.source_items")
 
 
+async def test_capture_hop_is_bound_by_the_fetch_deadline(tmp_path):
+    def handler(request):
+        return httpx.Response(302, headers={"location": "https://www.okx.com/help/x"})
+
+    service, client = await service_with(tmp_path, handler)
+    start = time.monotonic()
+    async with client:
+        with pytest.raises(httpx.TimeoutException, match="within 1 s"):
+            await service.fetch_page({"url": "https://example.com/start", "timeout_s": 1}, {})
+    assert time.monotonic() - start < 1.5
+
+
+@pytest.mark.parametrize(
+    "reason,result,category,message",
+    [
+        (
+            "RATE_LIMITED",
+            {"retry_after": "30"},
+            "SOURCE_RATE_LIMITED",
+            "Source rate-limited the request (HTTP 429); Retry-After 30 s",
+        ),
+        ("REQUEST_BUDGET_EXHAUSTED", {}, "SOURCE_TIMEOUT", "Source did not answer within the fetch timeout"),
+        ("FETCH_FAILED", {}, "SOURCE_TRANSPORT", "Source transport failed"),
+    ],
+)
+async def test_capture_failures_keep_their_class(tmp_path, reason, result, category, message):
+    def handler(request):
+        raise AssertionError("core must not fetch " + str(request.url))
+
+    service, client = await service_with(tmp_path, handler)
+
+    async def fail_capture():
+        while not (rows := await service.repo.list("mkt.capture_requests")):
+            await asyncio.sleep(0.01)
+        rows[0].update(status="FAILED", reason=reason, result=result)
+        await service.repo.put("mkt.capture_requests", rows[0]["request_id"], rows[0])
+
+    async with client, asyncio.timeout(5):
+        worker = asyncio.create_task(fail_capture())
+        with pytest.raises(httpx.TransportError) as caught:
+            await service.fetch_page({"url": "https://www.okx.com/help/x"}, {})
+        await worker
+    error, status = object.__new__(SessionService).tool_failure(caught.value)
+    assert (status, error["category"], error["reason"]) == ("ERROR", category, message)
+
+
 async def test_redirect_hops_share_one_deadline(tmp_path):
     async def handler(request):
         await asyncio.sleep(0.6)

@@ -297,7 +297,7 @@ The interface between the two processes is tables; no files pass between them:
 | `mkt.trades` | ClickHouse | tank-capture | Tank, agents | Every print |
 | `mkt.hot_tokens` | PostgreSQL | Tank | tank-capture | The hot set tank-capture subscribes |
 | `mkt.backfill_runs` | PostgreSQL | Tank creates, tank-capture runs | Tank | Pre-event backfill obligations and their readiness |
-| `mkt.capture_requests` | PostgreSQL | Tank creates, tank-capture runs | Tank | Window repairs before a Market Truth run; `HTTP_FETCH` requests to exchange hosts with their stored responses (a request with `redirects: manual` gets a redirect back with its `location`, unfollowed) |
+| `mkt.capture_requests` | PostgreSQL | Tank creates, tank-capture runs | Tank | Window repairs before a Market Truth run; `HTTP_FETCH` requests to exchange hosts with their stored responses (a request with `redirects: manual` gets a redirect back with its `location`, unfollowed; a host that keeps answering 429 until the retries or budget end fails the request as `RATE_LIMITED` with its `retry_after`) |
 | `mkt.capture_streams`, `mkt.capture_gaps` | PostgreSQL | tank-capture | Tank | Stream state per instrument (Data Confidence) and explicit gap evidence |
 | `ops.request_budget_ledger`, `ops.request_budget_blocks` | PostgreSQL | both | both | One request budget per provider and IP; a 429 or 418 closes the host for both processes |
 

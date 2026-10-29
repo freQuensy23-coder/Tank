@@ -37,6 +37,17 @@ TERMINAL = ("COMPLETE", "FAILED", "EXPIRED")
 CONDITIONAL_HEADERS = ("if-none-match", "if-modified-since")
 
 
+CAPTURE_TIMEOUTS = frozenset({"REQUEST_BUDGET_EXHAUSTED", "EXPIRED", "NO_ANSWER"})
+
+
+class CaptureRateLimited(httpx.TransportError):
+    """The exchange kept answering HTTP 429 until tank-capture's retries or budget ran out."""
+
+    def __init__(self, message, *, request, retry_after=None):
+        super().__init__(message, request=request)
+        self.retry_after = retry_after or ""
+
+
 def is_exchange_url(url):
     return (urlsplit(url).hostname or "") in EXCHANGE_FETCH_HOSTS
 
@@ -104,7 +115,12 @@ async def capture_fetch(
     http_request = httpx.Request(request["method"], url)
     if row.get("status") != "COMPLETE":
         reason = row.get("reason") or row.get("status") or "NO_ANSWER"
-        raise httpx.TransportError(f"tank-capture fetch {request_id}: {reason}", request=http_request)
+        message = f"tank-capture fetch {request_id}: {reason}"
+        if reason == "RATE_LIMITED":
+            raise CaptureRateLimited(message, request=http_request, retry_after=result.get("retry_after"))
+        if reason in CAPTURE_TIMEOUTS:
+            raise httpx.TimeoutException(message, request=http_request)
+        raise httpx.TransportError(message, request=http_request)
     if result.get("body_b64") is not None:
         content = base64.b64decode(result["body_b64"])
     else:
