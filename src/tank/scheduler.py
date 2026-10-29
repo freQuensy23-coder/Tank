@@ -32,6 +32,7 @@ EVAL_CONDITIONS_BUDGET_S = 15
 
 
 EVAL_CONDITION_BUDGET_S = 8
+CONDITION_READ_KEEP_S = 600
 REACTION_RETRY_S = 30
 
 
@@ -99,6 +100,7 @@ class Scheduler:
         self.closing = False
         self._verified_backups = {}
         self._reaction_slots = asyncio.Semaphore(REACTION_MEASUREMENT_SLOTS)
+        self._condition_reads = {}
 
     def threshold(self, name, fixture_default):
         from tank.settings import threshold
@@ -132,11 +134,14 @@ class Scheduler:
 
     async def close(self):
         self.closing = True
-        tasks = tuple(self.background.values())
+        tasks = tuple(self.background.values()) + tuple(
+            entry["task"] for entry in self._condition_reads.values()
+        )
         for task in tasks:
             task.cancel()
         await asyncio.gather(*tasks, return_exceptions=True)
         self.background.clear()
+        self._condition_reads.clear()
 
     async def run(self, stop):
         try:
@@ -498,6 +503,62 @@ class Scheduler:
 
         return truth
 
+    async def condition_read(self, key, requirements, *, run, until, exact=True):
+        """One market read for a condition, as (cutoff stamp, truth).
+
+        A read is never cancelled when the EVAL_CONDITIONS budget runs out: it keeps
+        running in the background and its result serves the next batch, so the
+        incremental market caches it fills survive and a cold read is paid once
+        instead of being restarted every minute. A result serves only the batch that
+        first uses it; later batches read again and so see late corrections. With
+        exact=False (no persistence window) at most one read per event, token and
+        requirements runs at a time, and the newest one answers at its own, possibly
+        earlier, cutoff.
+        """
+        loop = asyncio.get_running_loop()
+        event_id, token_id, stamp = key
+        base = (event_id, token_id, tuple(sorted((r["metric"], r["window"]) for r in requirements)))
+        reads = self._condition_reads
+        entry = reads.get((base, stamp))
+        if entry is None and not exact:
+            mine = sorted(
+                (
+                    other
+                    for other, candidate in reads.items()
+                    if other[0] == base
+                    and not candidate["exact"]
+                    and parse_time(other[1].value) <= parse_time(stamp.value)
+                ),
+                key=lambda other: parse_time(other[1].value),
+            )
+            running = [other for other in mine if not reads[other]["task"].done()]
+            chosen = running[-1:] or mine[-1:]
+            if chosen:
+                entry = reads[chosen[0]]
+        if entry is None:
+            read = self.condition_truth(event_id, token_id, stamp, requirements=requirements)
+            entry = {
+                "stamp": stamp,
+                "exact": exact,
+                "run": None,
+                "task": asyncio.create_task(read, name="condition-read"),
+            }
+            entry["task"].add_done_callback(lambda task: task.cancelled() or task.exception())
+            reads[(base, stamp)] = entry
+        entry["touched"] = loop.time()
+        task = entry["task"]
+        if not task.done():
+            remaining = until - loop.time()
+            if remaining <= 0:
+                raise _EvalBudgetSpent
+            await asyncio.wait({task}, timeout=remaining)
+            if not task.done():
+                raise _EvalBudgetSpent
+        if task.cancelled() or task.exception() is not None:
+            reads.pop((base, entry["stamp"]), None)
+        entry["run"] = entry["run"] or run
+        return entry["stamp"], task.result()
+
     async def eval_conditions(self, payload):
         cutoff_stamp = propagate_timestamp(payload, "cutoff") if payload.get("cutoff") else collection_clock()
         cutoff = cutoff_stamp.value
@@ -525,17 +586,16 @@ class Scheduler:
         limit = {"until": deadline}
         outcomes = {"evaluated": [], "fired": [], "deferred": []}
 
-        async def bounded_truth(key, requirements):
+        run = object()
+        clock = loop.time()
+        for read_key, entry in list(self._condition_reads.items()):
+            if entry["task"].done() and (
+                entry["run"] is not None or clock - entry["touched"] > CONDITION_READ_KEEP_S
+            ):
+                self._condition_reads.pop(read_key)
 
-            remaining = limit["until"] - loop.time()
-            if remaining <= 0:
-                raise _EvalBudgetSpent
-            try:
-                return await asyncio.wait_for(
-                    self.condition_truth(*key, requirements=requirements), timeout=remaining
-                )
-            except TimeoutError:
-                raise _EvalBudgetSpent from None
+        async def bounded_truth(key, requirements, *, exact=True):
+            return await self.condition_read(key, requirements, run=run, until=limit["until"], exact=exact)
 
         event_cache = {}
         for position, cond in enumerate(conditions):
@@ -644,19 +704,23 @@ class Scheduler:
                     truth = {}
                     if market_metric:
                         cache_key = (cond["event_id"], cond["token_id"], evaluation_stamp)
-                        if cache_key not in cache:
+                        entry_key = cache_key if periods else (*cache_key, "NEWEST")
+                        if entry_key not in cache:
                             requirements = requirement_sets[(cond["event_id"], cond["token_id"])] | {
                                 (item["metric"], item["window"])
                                 for item in self.condition_requirements(cond["expr"])
                             }
-                            cache[cache_key] = await bounded_truth(
+                            cache[entry_key] = await bounded_truth(
                                 cache_key,
                                 [
                                     {"metric": metric, "window": window}
                                     for metric, window in sorted(requirements)
                                 ],
+                                exact=bool(periods),
                             )
-                        truth = cache[cache_key]
+                        evaluation_stamp, truth = cache[entry_key]
+                        evaluation_cutoff = evaluation_stamp.value
+                        window_id = int(parse_time(evaluation_cutoff).timestamp()) // seconds
                     value = metric_value(truth, event, metric, expr.get("window", "W1H"))
                     matched = compare(value, expr["op"], expr["value"])
                     leaf_matches.append(matched)
@@ -718,7 +782,7 @@ class Scheduler:
                                 )
                             except _EvalBudgetSpent:
                                 continue
-                        old_truth = cache[old_key]
+                        _, old_truth = cache[old_key]
                         old_value = metric_value(old_truth, event, metric, expr.get("window", "W1H"))
                         old_proof = next(
                             (
@@ -766,7 +830,8 @@ class Scheduler:
                     )
                     outcomes["deferred"].append({"cond_id": cond["cond_id"], "reason": "READ_TIMEOUT"})
                     log.warning(
-                        "EVAL_CONDITIONS: market read for %s exceeded its %ss budget; retried next minute",
+                        "EVAL_CONDITIONS: market read for %s still running after %ss; it continues "
+                        "in the background and serves the next minute",
                         cond["cond_id"],
                         EVAL_CONDITION_BUDGET_S,
                     )

@@ -2296,7 +2296,7 @@ class MarketService:
                 )
             )
         for name in ("books", "oi", "funding", "supply", "klines", "liquidations", "tickers"):
-            if name in result:
+            if name in result and name not in domains:
                 field = COLLECTIONS[name][1]
                 result[name] = list(
                     {

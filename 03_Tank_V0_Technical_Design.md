@@ -1529,6 +1529,8 @@ Condition library (the card shows at most two: the decisive upgrade and the deci
 
 The existing minute EVAL_CONDITIONS job evaluates timed reviews without Market Truth. Under the event lock it rereads the condition and only acts while ARMED: expired → EXPIRED; missing/terminal event → CANCELLED; due → FIRED plus one AGENT_MESSAGE CONDITION_FIRED containing the saved question and originating session. Cancellation uses the same event lock. A review is one-shot; a later review must be armed explicitly. schedule_milestone retains its separate meaning of a source-announced dated milestone. Current merge behavior and analyst-level validation gaps are listed in §11.6.
 
+**Market reads of metric conditions.** One EVAL_CONDITIONS batch spends at most 15 s and waits at most 8 s for one market read (Market Truth `condition_values` for an event, token and the union of that pair's requested metrics); conditions it cannot reach continue next minute, least recently evaluated first. A read that outlasts its wait is not cancelled: it finishes in the background, the condition records `last_attempt_outcome` READ_TIMEOUT, and the next batch evaluates it from that read, so the incremental market caches a cold read fills are kept and a cold read is paid once. A result serves only the batch that first uses it; later batches read again and so see late corrections. A condition without a persistence window keeps at most one read per event, token and requirements in flight and is evaluated at the cutoff of the newest one, which its counter records; a condition with `persist.count` > 1 is evaluated only at its exact window boundaries.
+
 ---
 
 ## 7. Decision and alert
