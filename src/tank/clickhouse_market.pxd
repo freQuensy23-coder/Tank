@@ -1,4 +1,12 @@
-cpdef object _canonical_numeric_text(object value):
-    cdef str text
-    cdef Py_ssize_t length, index, start, dot, first_nonzero
-    cdef Py_UCS4 code
+import cython
+
+@cython.locals(
+    text=str,
+    length=cython.Py_ssize_t,
+    index=cython.Py_ssize_t,
+    start=cython.Py_ssize_t,
+    dot=cython.Py_ssize_t,
+    first_nonzero=cython.Py_ssize_t,
+    code=cython.int,
+)
+cpdef object _canonical_numeric_text(object value)
