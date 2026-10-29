@@ -10,6 +10,7 @@ from tank.agents.sessions import SessionService
 from tank.replay import semantic_verdict_output
 from tank.settings import Settings
 from tank.storage import MemoryRepository
+from tank.util import iso, utcnow
 
 
 def config():
@@ -491,7 +492,8 @@ async def test_equal_time_terminal_then_running_order_uses_committed_queue_not_l
 
 async def test_settled_open_turn_reuses_proof_without_history_or_session_writes():
     repo = MemoryRepository()
-    await seeded(repo)
+    session = await seeded(repo)
+    await repo.put("ops.agent_sessions", "s", {**session, "opened_at": iso(utcnow())})
     requests = []
 
     def handler(request):
