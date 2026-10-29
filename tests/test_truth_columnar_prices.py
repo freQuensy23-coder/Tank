@@ -8,7 +8,6 @@ import pytest
 from tank.analysis import truth
 from tank.util import parse_time
 
-
 EPOCH = datetime(1970, 1, 1, tzinfo=UTC)
 
 
