@@ -77,7 +77,7 @@ def decimal(v):
                 return hit[0]
     value = v if isinstance(v, Decimal) else Decimal(str(v))
     exact_context(value)
-    if memo is not None and len(memo) < 65536 and value.is_finite():
+    if memo is not None and len(memo) < 262144 and value.is_finite():
         required = 2 * (value.adjusted() - value.as_tuple().exponent + 1) + 32
         memo[v] = (value, required)
     return value
@@ -1009,6 +1009,7 @@ def _history_fixed_decimal_column(column):
     inputs = _ASSESSMENT_INPUTS.get()
     conversions = inputs.setdefault("fixed_text_decimals", {}) if inputs is not None else None
     metadata = inputs.setdefault("fixed_text_metadata", {}) if inputs is not None else None
+    scalars = inputs.setdefault("finite_text_decimals", {}) if inputs is not None else None
     values = np.empty(len(column), dtype=object)
     values.fill(None)
     low, high = 0, 0
@@ -1022,8 +1023,11 @@ def _history_fixed_decimal_column(column):
             prepared = _fixed_decimal_text_metadata(value)
             if prepared < 0:
                 return None
-            converted = Decimal(value)
-            if conversions is not None and len(conversions) < 65536:
+            scalar = scalars.get(value) if scalars is not None else None
+            converted = scalar[0] if scalar is not None else Decimal(value)
+            if scalars is not None and scalar is None and len(value) <= 64 and len(scalars) < 262144:
+                scalars[value] = (converted, 2 * max(prepared & 63, 1) + 32)
+            if conversions is not None and len(conversions) < 262144:
                 metadata[value] = prepared
                 conversions[value] = converted
         else:

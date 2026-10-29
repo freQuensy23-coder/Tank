@@ -19,7 +19,7 @@ RUN --mount=type=cache,id=tank-uv,target=/root/.cache/uv \
     uv sync --frozen --no-dev --no-install-project
 
 FROM dependencies AS application
-RUN apt-get update && apt-get install -y --no-install-recommends gcc libc6-dev && rm -rf /var/lib/apt/lists/*
+RUN apt-get update && apt-get install -y --no-install-recommends clang-16 libc6-dev && rm -rf /var/lib/apt/lists/*
 COPY src ./src
 RUN --mount=type=cache,id=tank-uv,target=/root/.cache/uv \
     uv sync --frozen --no-dev
