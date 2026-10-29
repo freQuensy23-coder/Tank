@@ -1611,3 +1611,46 @@ def test_discourse_topic_post_refuses_publication_after_cutoff(reference_packet)
     save(reference_packet[0], packet)
     with pytest.raises(ReplayError, match="publication precision interval"):
         load_inputs(reference_packet[0], settings())
+
+
+async def test_fixture_replay_lists_open_events_by_the_replay_clock(reference_packet, tmp_path, monkeypatch):
+    """The activity window counts from the replay clock, so a filter can never shift it."""
+    from datetime import timedelta
+
+    from tank.event_tools import EventToolService
+    from tank.fixture_reference import TrustedFixtureClock
+    from tank.storage import MemoryRepository
+    from tank.util import iso
+
+    path, packet = reference_packet
+    save(path, packet)
+    options = settings().model_copy(update={"data_dir": tmp_path})
+    repo = MemoryRepository()
+    await repo.open()
+    tools = EventToolService(
+        repo, options, None, None, reference_clock=TrustedFixtureClock(load_inputs(path, options))
+    )
+    now = parse_time(packet["cutoff"])
+    for event_id, age, tokens in (("recent", 1, []), ("old", 20, ["bitcoin:BTC"])):
+        await repo.put(
+            "evt.events",
+            event_id,
+            {
+                "event_id": event_id,
+                "lifecycle": "TRACKED",
+                "statement": "Exchange listing",
+                "entities": [{"entity_id": "okx", "role": "SUBJECT"}],
+                "tokens_mentioned": tokens,
+                "known_to_us_at": iso(now - timedelta(days=age)),
+            },
+        )
+    monkeypatch.setattr("tank.event_tools.utcnow", lambda: now)
+
+    async def listed(arguments):
+        return [
+            row["event_id"] for row in (await tools.dispatch("list_open_events", arguments, {}))["events"]
+        ]
+
+    assert await listed({}) == ["recent"]
+    assert await listed({"token_id": "bitcoin:BTC"}) == []
+    assert await listed({"token_id": "bitcoin:BTC", "days": 30}) == ["old"]

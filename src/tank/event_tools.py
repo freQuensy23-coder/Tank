@@ -828,10 +828,7 @@ class EventToolService:
             if r["event_id"] in last_item:
                 stamps.append(last_item[r["event_id"]])
             candidates.append((max(stamps) if stamps else None, r))
-        now = utcnow()
-        if self.reference_clock is not None:
-            now = max([stamp for stamp, _ in candidates if stamp is not None], default=now)
-        cutoff = now - timedelta(days=days)
+        cutoff = utcnow() - timedelta(days=days)
 
         ranked = []
         for active, r in candidates:
