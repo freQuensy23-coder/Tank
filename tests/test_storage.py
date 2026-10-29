@@ -986,6 +986,62 @@ async def test_captures_wait_for_a_fresh_event_card(repo):
     assert (await repo.claim_job())["job_id"] == capture["job_id"]
 
 
+def _plan_nodes(node):
+    yield node
+    for child in node.get("Plans", ()):
+        yield from _plan_nodes(child)
+
+
+async def _clone_job(repo, job, copies, types):
+    """Insert copies of job under new ids, cycling through types."""
+    async with repo.transaction():
+        await repo._conn().execute(
+            "INSERT INTO ops.jobs SELECT (jsonb_populate_record(j, jsonb_build_object("
+            "'storage_key', j.storage_key || '-' || g, 'job_id', j.job_id || '-' || g,"
+            " 'idem_key', j.idem_key || '-' || g, 'type', (%(types)s::text[])[g %% %(n)s + 1],"
+            " 'document', j.document || jsonb_build_object('job_id', j.job_id || '-' || g,"
+            " 'idem_key', j.idem_key || '-' || g, 'type', (%(types)s::text[])[g %% %(n)s + 1])))).*"
+            " FROM ops.jobs j, generate_series(1, %(copies)s) g WHERE j.storage_key = %(key)s",
+            {"types": types, "n": len(types), "copies": copies, "key": job["job_id"]},
+        )
+
+
+@pytest.mark.integration
+@pytest.mark.postgres
+@pytest.mark.parametrize("repo", ["postgres"], indirect=True)
+async def test_claim_reads_ops_jobs_through_indexes_once_history_accumulates(repo):
+    """A claim poll must not scan the whole job history.
+
+    Production had ~29k finished jobs of mixed types and ~250 deferred captures; the
+    analysis gate then read every ops.jobs row on each poll."""
+    from tank.storage import CLAIM_SQL, RUNNING_CAPS, claim_params
+
+    await _clear_queue(repo)
+    done = await repo.enqueue("DELIVER", {}, new_id("idem"), priority=3)
+    await repo.claim_job()
+    await repo.finish_job(done["job_id"])
+    await _clone_job(
+        repo, done, 10000, ["DELIVER", "EVAL_CONDITIONS", "FILTER_ITEM", "ROUTE_ITEM", "AGENT_MESSAGE"]
+    )
+    truth = await repo.enqueue("RUN_MARKET_TRUTH", {}, new_id("idem"), priority=1)
+    assert (await repo.claim_job())["job_id"] == truth["job_id"]
+    capture = await repo.enqueue(
+        "REACTION_CAPTURE", {}, new_id("idem"), priority=0, expires_at=iso(utcnow() + timedelta(hours=5))
+    )
+    await _clone_job(repo, capture, 250, ["REACTION_CAPTURE"])
+    async with repo.transaction():
+        conn = repo._conn()
+        await conn.execute("ANALYZE ops.jobs")
+        explained = await conn.execute("EXPLAIN (FORMAT JSON) " + CLAIM_SQL, claim_params(list(RUNNING_CAPS)))
+        plan = (await explained.fetchone())["QUERY PLAN"][0]["Plan"]
+    scans = [node for node in _plan_nodes(plan) if node.get("Relation Name") == "jobs"]
+    assert len(scans) >= 6
+    assert [node["Alias"] for node in scans if node["Node Type"] == "Seq Scan"] == []
+    assert await repo.claim_job() is None
+    await repo.finish_job(truth["job_id"])
+    assert (await repo.claim_job())["type"] == "REACTION_CAPTURE"
+
+
 async def test_memory_reads_return_isolated_values_and_see_own_writes_before_rollback():
     repo = MemoryRepository()
     original = {"token_id": "a", "nested": {"values": [1]}}
