@@ -717,3 +717,56 @@ def test_compact_native_prefix_extends_only_with_proven_append_and_rebuilds_corr
         assert len(converted) == len(corrected["times_us"])
     finally:
         module._BASELINE_CACHE.reset(token)
+
+
+def test_native_volume_index_keeps_only_the_newest_head_per_instrument():
+    """Prod held one 90-day index copy per minute head: each appended minute kept the
+    previous head's index until 128 newer entries pushed it out."""
+    from array import array
+
+    end = module.parse_time("2026-10-19T12:00:00Z")
+    epoch = module.parse_time("1970-01-01T00:00:00Z")
+    first = end - module.timedelta(days=8)
+
+    def micros(at):
+        return int((at - epoch).total_seconds() * 1_000_000)
+
+    stamps = array("q", [micros(first + module.timedelta(minutes=i)) for i in range(8 * 1440)])
+    series = dict(
+        token_id="T",
+        market_type="SPOT",
+        time_basis="OPEN_TIME",
+        interval_s=60,
+        times_us=stamps,
+        values=["1.5"] * len(stamps),
+        complete=bytearray([1]) * len(stamps),
+        dependency_fingerprint="head-0",
+    )
+    cache = {}
+    token = module._BASELINE_CACHE.set(cache)
+    try:
+        for minute in range(4):
+            at = end + module.timedelta(minutes=minute)
+            if minute:
+                series = deepcopy(series)
+                series["times_us"].append(micros(at - module.timedelta(minutes=1)))
+                series["values"].append("2.5")
+                series["complete"].append(1)
+                series.update(
+                    dependency_fingerprint=f"head-{minute}",
+                    previous_dependency_fingerprint=f"head-{minute - 1}",
+                    append_only=True,
+                    changed_from_us=series["times_us"][-1],
+                )
+            packet = dict(token_id="T", cutoff=module.iso(at), stat_volume_series={"A:spot:T": series})
+            result = module.support_features(packet, at - module.timedelta(hours=1), at, {}, {}, {}, {})
+            indexes = [key for key in cache if key[0] == "native-volume-index"]
+            assert indexes == [("native-volume-index", "A:spot:T")]
+            assert cache[indexes[0]]["head"] == f"head-{minute}"
+            module._BASELINE_CACHE.set({})
+            fresh = module.support_features(packet, at - module.timedelta(hours=1), at, {}, {}, {}, {})
+            module._BASELINE_CACHE.set(cache)
+            assert result["spot_volume"] == fresh["spot_volume"]
+            assert result["spot_volume_up_beyond_normal"] == fresh["spot_volume_up_beyond_normal"]
+    finally:
+        module._BASELINE_CACHE.reset(token)
