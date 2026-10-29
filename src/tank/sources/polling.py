@@ -27,15 +27,18 @@ RECENT_READS = 50
 
 
 def count_read(state, name, *, ok, n=1):
-    """Cumulative per-feed read counters for the V0-A failed-read rate (01 §10).
-
-    ``recent_reads`` keeps the outcomes of the feed's last ``RECENT_READS`` reads of
-    either kind (true for ok) for the heartbeat's rolling failed-read rate (03 §7.6).
-    """
+    """Cumulative per-feed read counters for the V0-A failed-read rate (01 §10)."""
     counters = state.setdefault(name, {"ok": 0, "failed": 0})
     counters["ok" if ok else "failed"] += n
-    if n > 0:
-        state["recent_reads"] = (state.get("recent_reads", []) + [ok] * min(n, RECENT_READS))[-RECENT_READS:]
+
+
+def remember_reads(state, outcomes):
+    """Keep the outcomes (true for ok) of the feed's last ``RECENT_READS`` reads, in order.
+
+    Feed polls and article/detail fetches share ``recent_reads``, the window of the
+    heartbeat's rolling failed-read rate (03 §7.6)."""
+    if outcomes:
+        state["recent_reads"] = (state.get("recent_reads", []) + list(outcomes))[-RECENT_READS:]
 
 
 async def recapture(repo, source, external_ids, *, apply=False):
@@ -315,6 +318,7 @@ class SourcePoller:
                 account_cursors=result.cursors,
                 entry_errors=[asdict(failure) for failure in result.failures],
                 history_gap=result.gaps,
+                run_failed=result.failed,
             )
             return result.rows, state, kind
         payload, fetched = await svc.fetch(feed, key, on_start=lambda: self.mark_request_start(key))
@@ -621,7 +625,11 @@ class SourcePoller:
                     current.pop("instruments", None)
                     if not any(batch["rows"] for batch in current.get("pending_batches", [])):
                         current["article_errors"] = {}
-                    count_read(current, "reads", ok=True)
+                    read_ok = not acquired.get("run_failed")
+                    count_read(current, "reads", ok=read_ok)
+                    remember_reads(current, [read_ok])
+                    if not read_ok:
+                        current["last_failure_at"] = self.stamp()
                     current.update(
                         status="DEGRADED"
                         if current.get("article_errors")
@@ -636,12 +644,15 @@ class SourcePoller:
                     elif not current.get("last_success_at") and current["status"] == "HEALTHY":
                         current["status"] = "PENDING"
                     await self.save(key, current)
+                if not read_ok:
+                    log.warning("Source feed %s read failed: the actor run failed", key)
             except Exception as exc:
                 async with self.lock(self.state_locks, key):
                     current = await self.state(key)
                     current.pop("etag", None)
                     current.pop("last_modified", None)
                     count_read(current, "reads", ok=False)
+                    remember_reads(current, [False])
                     current.update(
                         status="DEGRADED",
                         acquisition_error=str(exc),
@@ -835,7 +846,7 @@ class SourcePoller:
                     await self.save(key, current)
             if not batches:
                 return {"items": 0, "errors": []}
-            errors, completed, count, duplicates = [], {}, 0, []
+            errors, completed, count, duplicates, outcomes = [], {}, 0, [], []
             article_errors = {}
             for batch in batches:
 
@@ -870,7 +881,12 @@ class SourcePoller:
                             errors.append(str(exc))
                             return row
 
-                remaining = await asyncio.gather(*(process(row) for row in batch["rows"]))
+                async def settled(row, current_batch=batch):
+                    failed = await process(row, current_batch)
+                    outcomes.append(failed is None)
+                    return failed
+
+                remaining = await asyncio.gather(*(settled(row) for row in batch["rows"]))
                 completed[batch["batch_id"]] = {
                     row["item_id"]
                     for row, failed in zip(batch["rows"], remaining, strict=True)
@@ -881,6 +897,7 @@ class SourcePoller:
                 done_count = sum(len(ids) for ids in completed.values())
                 count_read(current, "detail_reads", ok=True, n=done_count)
                 count_read(current, "detail_reads", ok=False, n=len(errors))
+                remember_reads(current, outcomes)
                 for batch in current.get("pending_batches", []):
                     if batch["batch_id"] in completed:
                         done = completed[batch["batch_id"]]

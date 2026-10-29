@@ -116,12 +116,16 @@ class AccountFailure:
 
 @dataclass(frozen=True)
 class Scan:
-    """One pass: new post rows, next cursors, failed accounts and accounts with a history gap."""
+    """One pass: new post rows, next cursors, failed accounts and accounts with a history gap.
+
+    ``failed`` is a run the actor reported as failed (with per-account diagnostics): no
+    posts were read, so the poll counts as a failed read."""
 
     rows: list[dict[str, object]]
     cursors: dict[str, str]
     failures: list[AccountFailure]
     gaps: list[str]
+    failed: bool = False
 
 
 def scan(run: ApifyRun, accounts: list[str], cursors: Mapping[str, str], raw: bytes) -> Scan:
@@ -169,7 +173,7 @@ def scan(run: ApifyRun, accounts: list[str], cursors: Mapping[str, str], raw: by
         rows = []
     else:
         rows = [row for row in rows if str(row["author"]).lower() not in failed_handles]
-    return Scan(rows=rows, cursors=next_cursors, failures=failures, gaps=gaps)
+    return Scan(rows=rows, cursors=next_cursors, failures=failures, gaps=gaps, failed=run.health == "failed")
 
 
 class XSensor:
