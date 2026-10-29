@@ -62,8 +62,6 @@ Built from 02 HLD §3 (sources) and 01 PRD §4.3 (X accounts), 19 Oct 2026. Link
 | [nearcore](https://github.com/near/nearcore/releases) | releases |
 | [World Chain](https://github.com/worldcoin/world-chain/releases) | releases |
 | [Plasma node templates](https://github.com/PlasmaLaboratories/node-templates/releases) | releases |
-| [Bitcoin Core](https://github.com/bitcoin/bitcoin/releases) | releases |
-| [go-ethereum](https://github.com/ethereum/go-ethereum/releases) | releases |
 | [LayerZero v2](https://github.com/LayerZero-Labs/LayerZero-v2/commits/main) | commits |
 | [Morpho Blue](https://github.com/morpho-org/morpho-blue/commits/main) | commits |
 

@@ -3474,9 +3474,6 @@ entities:
   - bitcoin:BTC
   official_sources:
   - S29
-  - S25
-  github_repos:
-  - bitcoin/bitcoin
   layers_served: []
   competes_with: []
   chains: []
@@ -3490,9 +3487,6 @@ entities:
   - ethereum:ETH
   official_sources:
   - S29
-  - S25
-  github_repos:
-  - ethereum/go-ethereum
   layers_served: []
   competes_with: []
   chains: []

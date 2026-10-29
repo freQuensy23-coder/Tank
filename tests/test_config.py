@@ -43,7 +43,7 @@ def test_sources_have_concrete_endpoints():
             if f["kind"] == "html":
                 assert f.get("article_pattern"), source["source_id"]
     assert len(next(x for x in s if x["source_id"] == "S14")["feeds"]) == 9
-    assert len(next(x for x in s if x["source_id"] == "S25")["feeds"]) == 14
+    assert len(next(x for x in s if x["source_id"] == "S25")["feeds"]) == 12
 
 
 def test_wallet_artifacts_and_skills():

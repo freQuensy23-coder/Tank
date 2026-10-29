@@ -90,19 +90,6 @@ def test_every_s25_repository_resolves_one_registry_entity_and_its_token():
 @pytest.mark.parametrize(
     "feed",
     [
-        "https://github.com/bitcoin/bitcoin/releases.atom",
-        "https://github.com/ethereum/go-ethereum/releases.atom",
-    ],
-)
-def test_benchmark_l1_client_releases_are_monitored(feed):
-    sources = yaml.safe_load(Path("config/sources.yaml").read_text())["sources"]
-    feeds = next(row for row in sources if row["source_id"] == "S25")["feeds"]
-    assert {"url": feed, "kind": "atom", "interval_s": 600, "subtype": "releases"} in feeds
-
-
-@pytest.mark.parametrize(
-    "feed",
-    [
         "https://github.com/someone/nearcore/releases.atom",
         "https://github.com/near/releases.atom",
         "http://github.com/near/nearcore/releases.atom",
