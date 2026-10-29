@@ -26,6 +26,8 @@ REASONS = {
     "M1_VENUE": "Площадка не входит в список основных бирж Tank",
     "STRUCTURAL_GATE": "Не выполнены условия структурного изменения",
     "NATIVE_TURN_COMPLETED_WITHOUT_OBSERVATION": "Агент не записал ни событие, ни решение об отклонении",
+    "AGENT_REMINDED": "Агент не вернул результат, отправлено напоминание",
+    "AGENT_INCOMPLETE": "Агент не вернул результат, напоминания исчерпаны",
 }
 CLASSES = {
     "LOW": "низкая",
@@ -366,6 +368,31 @@ def outcome(data):
             "status": "Отсеяно фильтром",
             "fields": fields,
             "reason": "Релевантность ниже порога",
+        }
+    if item.get("extraction_reason") == "AGENT_INCOMPLETE" and item.get("extraction_status") == "FAILED":
+        fields[-1] = ("Агент", "не вернул результат после напоминаний")
+        fields.append(("Alerts", "не отправлено"))
+        return {
+            "code": "AGENT_INCOMPLETE",
+            "status": "Ошибка: агент не вернул результат",
+            "fields": fields,
+            "reason": "Исчерпаны напоминания сессии "
+            f"({item.get('extraction_reminders', '?')}/{item.get('extraction_reminder_limit', '?')}); "
+            "материал можно переобработать",
+        }
+    if item.get("extraction_reason") == "AGENT_REMINDED" and item.get("extraction_status") in {
+        None,
+        "PENDING",
+        "RUNNING",
+    }:
+        progress = f"{item.get('extraction_reminders', '?')}/{item.get('extraction_reminder_limit', '?')}"
+        fields[-1] = ("Агент", "результат не возвращён, отправлено напоминание")
+        fields.append(("Alerts", "ожидает результата агента"))
+        return {
+            "code": "AGENT_REMINDED",
+            "status": f"Агент не вернул результат, напоминание {progress}",
+            "fields": fields,
+            "reason": "Агенту напомнено вернуть результат в требуемом формате",
         }
     if item.get("extraction_status") == "SKIPPED":
         reason = item.get("extraction_reason") or (stages.get("AGENT_REJECTED") or {}).get("reason")

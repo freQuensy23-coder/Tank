@@ -242,7 +242,8 @@ async def test_agent_acceptance_completion_and_failure_are_not_confused_with_app
         {
             "item_id": "i",
             "extraction_status": "SKIPPED",
-            "extraction_reason": "NATIVE_TURN_COMPLETED_WITHOUT_OBSERVATION",
+            "extraction_decision": "NO_EVENT",
+            "extraction_reason": "Мнение без нового факта",
         },
     )
     await session_progress(repo, settings, session)
