@@ -33,6 +33,7 @@ from tank.util import canonical_json, iso, parse_time, sha256, utcnow
 REST_TIMEOUT_S = 30
 
 DEFAULT_MAX_RUNNING_SESSIONS = 2
+DEFAULT_COMPLETION_REMINDERS = 20
 ADMITTED_JOB_TYPES = ("AGENT_MESSAGE", "SCOUT_REVIEW")
 
 ADMISSION_SLEEP_S = 60
@@ -1354,7 +1355,11 @@ class SessionService:
         recoverable and is never shown as a rejection.
         """
         sid = session["session_id"]
-        limit = int(threshold(self.settings, "agent_completion_reminders_per_session", 20))
+        limit = int(
+            (self.settings.load_config("thresholds") or {}).get(
+                "agent_completion_reminders_per_session", DEFAULT_COMPLETION_REMINDERS
+            )
+        )
         unchecked = {}
         for message in session.get("message_log", []):
             payload = message.get("payload") or {}
