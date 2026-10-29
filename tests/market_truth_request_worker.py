@@ -207,7 +207,7 @@ async def run(root, directory, fixtures, revision, reader):
                 if command.get("stop"):
                     break
                 state = command["sample"]
-                stage_seconds, stage_status = {}, set()
+                stage_seconds, stage_cpu_seconds, stage_status = {}, {}, set()
 
                 class Timings(logging.Handler):
                     def emit(self, record):
@@ -216,6 +216,10 @@ async def run(root, directory, fixtures, revision, reader):
                             stage_status.add(value["status"])
                             stage = value["stage"]
                             stage_seconds[stage] = stage_seconds.get(stage, 0) + value["wall_s"]
+                            if value["thread_cpu_s"] is not None:
+                                stage_cpu_seconds[stage] = (
+                                    stage_cpu_seconds.get(stage, 0) + value["thread_cpu_s"]
+                                )
 
                 logger = logging.getLogger("tank.market_timing")
                 logger.handlers, logger.propagate = [Timings()], False
@@ -288,7 +292,17 @@ async def run(root, directory, fixtures, revision, reader):
                 full = {key: item for key, item in result.items() if key not in {"mta_id", "code_version"}}
                 snapshot_value = {key: item for key, item in value.items() if key != "code_version"}
                 digests = {name: save(directory, f"{state}-{name}.json", item) for name, item in (("result", full), ("projection", received[state]), ("snapshot", snapshot_value))}
-                emit({"kind": "sample", "state": state, "wall_seconds": wall, "process_cpu_seconds": used, "digests": digests, "baseline_entries_before": baseline_before, "inclusive_nonadditive_stage_seconds": stage_seconds, "modules": provenance(root)})
+                emit({
+                    "kind": "sample",
+                    "state": state,
+                    "wall_seconds": wall,
+                    "process_cpu_seconds": used,
+                    "digests": digests,
+                    "baseline_entries_before": baseline_before,
+                    "inclusive_nonadditive_stage_seconds": stage_seconds,
+                    "inclusive_nonadditive_thread_cpu_seconds": stage_cpu_seconds,
+                    "modules": provenance(root),
+                })
     finally:
         server.close()
         pending_connections = tuple(connections)
