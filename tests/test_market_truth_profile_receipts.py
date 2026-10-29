@@ -14,8 +14,11 @@ def test_postmeasurement_profile_runs_in_retained_context_and_restores_profiler(
     marker.reset(token)
     observed = []
 
-    def retained_work():
+    def nested_work():
         observed.append(marker.get())
+
+    def retained_work():
+        nested_work()
 
     rows = profile_retained_call((context, retained_work, (), {}))
     assert observed == ["retained"]
@@ -25,8 +28,10 @@ def test_postmeasurement_profile_runs_in_retained_context_and_restores_profiler(
     assert len(selected) == 1
     assert selected[0]["calls"] == 1
     assert selected[0]["module"] == "test_market_truth_profile_receipts.py"
-    fields = {"module", "line", "function", "calls", "self_seconds", "inclusive_seconds"}
+    fields = {"module", "line", "function", "calls", "self_seconds", "inclusive_seconds", "callers"}
     assert all(set(row) == fields for row in rows)
+    nested = next(row for row in rows if row["function"] == "nested_work")
+    assert any(caller["function"] == "retained_work" and caller["calls"] == 1 for caller in nested["callers"])
 
 
 def test_postmeasurement_profile_does_not_reuse_or_mutate_the_accepted_baseline_cache():

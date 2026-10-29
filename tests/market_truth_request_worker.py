@@ -456,7 +456,13 @@ async def run(root, directory, fixtures, revision, reader):
             for name, handler in tuple(runtime.handlers.items()):
                 runtime.handlers[name] = measure_async(f"request.{name}", handler)
             ModelContext.result = measure_async("return.project", ModelContext.result)
-            repo.put = measure_async("request.repo.put", repo.put)
+            original_put = repo.put
+
+            async def put(collection, *args, **kwargs):
+                name = "request.repo.put." + collection
+                return await measure_async(name, original_put)(collection, *args, **kwargs)
+
+            repo.put = measure_async("request.repo.put", put)
             sessions.request = measure_async("return.request", sessions.request)
 
             for name in (
