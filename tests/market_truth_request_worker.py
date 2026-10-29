@@ -572,18 +572,6 @@ async def run(root, directory, fixtures, revision, reader):
             ):
                 setattr(market, name, measure_async("snapshot." + name, getattr(market, name)))
 
-            ratio_statistics = {}
-            if hasattr(truth, "_oi_dimensionless_changes"):
-                original_changes = truth._oi_dimensionless_changes
-
-                @wraps(original_changes)
-                def counted_changes(current, previous):
-                    result = original_changes(current, previous, statistics=ratio_statistics)
-                    if result is None:
-                        ratio_statistics["slow_pairs"] = ratio_statistics.get("slow_pairs", 0) + len(current)
-                    return result
-
-                truth._oi_dimensionless_changes = counted_changes
             for name in (
                 "_compute_market_truth",
                 "spot_window_graph",
@@ -608,7 +596,6 @@ async def run(root, directory, fixtures, revision, reader):
                 "_synchronized_oi",
                 "_composite_history",
                 "_oi_history_returns",
-                "_oi_dimensionless_changes",
                 "_composite_history_vector",
                 "_relative_history_arrays",
                 "_relative_history_returns",
@@ -683,7 +670,6 @@ async def run(root, directory, fixtures, revision, reader):
                     clock["value"] = manifest["availability_cutoff"]
                     phases.clear()
                     phase_calls.clear()
-                    ratio_statistics.clear()
                     gc_receipt = {}
                     rows = profile_retained_call(diagnostic_call, gc_receipt=gc_receipt)
                     emit(
@@ -692,7 +678,6 @@ async def run(root, directory, fixtures, revision, reader):
                             "stage": diagnostic_call[1].__name__,
                             "rows": rows,
                             "garbage_collection": gc_receipt,
-                            "dimensionless_ratio_pairs": dict(ratio_statistics),
                             "inclusive_nonadditive_phase_seconds": dict(phases),
                             "phase_call_counts": dict(phase_calls),
                             "snapshot": await profile_retained_async(snapshot_call),

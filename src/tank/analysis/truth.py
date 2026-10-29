@@ -18,18 +18,9 @@ from collections import defaultdict
 from contextvars import ContextVar
 from copy import deepcopy
 from datetime import UTC, datetime, timedelta
-from decimal import (
-    ROUND_FLOOR,
-    Context,
-    Decimal,
-    DecimalException,
-    Inexact,
-    Rounded,
-    getcontext,
-    localcontext,
-)
+from decimal import Decimal, DecimalException, Inexact, Rounded, getcontext, localcontext
 from functools import wraps
-from math import gcd, isfinite, log
+from math import isfinite, log
 from statistics import mean, median, stdev
 
 import numpy as np
@@ -1174,94 +1165,6 @@ def _history_present(values):
     return np.fromiter((value is not None for value in values), dtype=bool, count=len(values))
 
 
-def _oi_dimensionless_changes(current, previous, *, statistics=None):
-    context = getcontext()
-    if (
-        type(context) is not Context
-        or context.prec < 128
-        or context.traps[Inexact]
-        or context.traps[Rounded]
-        or context.clamp
-        or context.Emin > -512
-        or context.Emax < 512
-        or type(current) is not np.ndarray
-        or type(previous) is not np.ndarray
-        or current.ndim != 1
-        or previous.shape != current.shape
-        or current.dtype != object
-        or previous.dtype != object
-        or not len(current)
-    ):
-        return None
-    ones = np.ones(2, dtype=np.float64)
-    if not np.array_equal(np.add(ones, np.asarray([2**-53, -(2**-54)])), ones):
-        return None
-    inputs = _ASSESSMENT_INPUTS.get()
-    memo = inputs.setdefault("oi_ratio_coefficients", {}) if inputs is not None else {}
-    pending, prepared = {}, {}
-    for is_previous, values in ((False, current), (True, previous)):
-        for value in values:
-            if (
-                type(value) is not Decimal
-                or not value.is_finite()
-                or (value.is_signed() and not value.is_zero())
-                or (is_previous and value.is_zero())
-            ):
-                return None
-            identity = id(value)
-            hit = memo.get(identity)
-            if hit is not None and hit[0] is value:
-                prepared[identity] = hit
-            elif identity not in pending:
-                parts = value.as_tuple()
-                if len(parts.digits) > 48 or not -100 <= parts.exponent <= 100:
-                    return None
-                pending[identity] = (value, parts.exponent)
-    for identity, (value, exponent) in pending.items():
-        entry = (value, int(value.scaleb(-exponent)), exponent)
-        prepared[identity] = entry
-        if len(memo) < 65536:
-            memo[identity] = entry
-    fast = np.zeros(len(current), dtype=bool)
-    numerators = np.zeros(len(current), dtype=np.float64)
-    denominators = np.ones(len(current), dtype=np.float64)
-    inexact = False
-    flags_satisfied = context.flags[Inexact] and context.flags[Rounded]
-    for index, (new, old) in enumerate(zip(current, previous, strict=True)):
-        _, a, new_exponent = prepared[id(new)]
-        _, b, old_exponent = prepared[id(old)]
-        if new_exponent != old_exponent:
-            continue
-        common = gcd(a, b)
-        a, b = a // common, b // common
-        if a >= 2**53 or b >= 2**53:
-            continue
-        fast[index] = True
-        numerators[index], denominators[index] = a - b, b
-        if not flags_satisfied and not inexact:
-            remainder = b >> ((b & -b).bit_length() - 1)
-            while remainder % 5 == 0:
-                remainder //= 5
-            inexact = remainder != 1
-    count = int(np.count_nonzero(fast))
-    if not count:
-        return None
-    result = np.empty(len(current), dtype=np.float64)
-    slow = ~fast
-    if count < len(current):
-        result[slow] = np.asarray(np.subtract(np.divide(current[slow], previous[slow]), 1), dtype=np.float64)
-    result[fast] = np.divide(numerators[fast], denominators[fast])
-    if context.rounding == ROUND_FLOOR:
-        result[fast & (numerators == 0)] = -0.0
-    if inexact:
-        context.flags[Inexact] = True
-        context.flags[Rounded] = True
-    if statistics is not None:
-        statistics["fast_pairs"] = statistics.get("fast_pairs", 0) + count
-        statistics["slow_pairs"] = statistics.get("slow_pairs", 0) + len(current) - count
-    return result
-
-
 def _oi_history_returns(times, native, usd, window, tolerance):
     prepared = _history_decimal_arrays((native, usd))
     temporal = _history_time_array(times, window)
@@ -1279,9 +1182,7 @@ def _oi_history_returns(times, native, usd, window, tolerance):
         present = _history_present(values)
         valid = paired & present & present[old]
         valid &= np.not_equal(values[old], 0)
-        result = _oi_dimensionless_changes(values[valid], values[old[valid]])
-        if result is None:
-            result = np.subtract(np.divide(values[valid], values[old[valid]]), 1)
+        result = np.subtract(np.divide(values[valid], values[old[valid]]), 1)
         returns.append(np.asarray(result, dtype=np.float64).tolist())
         ends.append([times[i] for i in np.flatnonzero(valid)])
     return returns[0], returns[1], ends[0], ends[1]
@@ -1605,9 +1506,7 @@ def _composite_history_vector(venue_history, window):
     result = []
     for measure, valid in enumerate(covered):
         indices = np.flatnonzero(valid)
-        changes = _oi_dimensionless_changes(totals[2 * measure + 1][valid], totals[2 * measure][valid])
-        if changes is None:
-            changes = np.subtract(np.divide(totals[2 * measure + 1][valid], totals[2 * measure][valid]), 1)
+        changes = np.subtract(np.divide(totals[2 * measure + 1][valid], totals[2 * measure][valid]), 1)
         values = np.asarray(changes, dtype=np.float64).tolist()
         if (
             not len(indices)
