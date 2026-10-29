@@ -348,11 +348,13 @@ async def run(root, directory, fixtures, revision, reader):
                     compute_seconds.append(perf_counter() - started)
 
             truth.compute_market_truth = compute
+            full = None
             while command := await reader.readline():
                 command = json.loads(command)
                 if command.get("stop"):
                     break
                 if command.get("profile"):
+                    assert full is not None
                     profiler = cProfile.Profile()
 
                     def profile_compute():

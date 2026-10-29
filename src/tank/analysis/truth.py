@@ -1628,7 +1628,7 @@ def _relative_history_arrays(times, prices, btc, benchmark, coefficient):
         return None
     values = [prices[t] for t in times]
     present = np.asarray([t in btc for t in times], dtype=bool)
-    benchmark_values = [btc[t] if t in btc else 1.0 for t in times] if not benchmark else []
+    benchmark_values = [btc.get(t, 1.0) for t in times] if not benchmark else []
     if any(type(value) is not float for value in (*values, *benchmark_values)):
         return None
     prices_array = np.asarray(values, dtype=np.float64)

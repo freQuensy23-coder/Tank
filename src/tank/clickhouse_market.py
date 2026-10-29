@@ -553,6 +553,10 @@ async def dense_projection_page(
 ):
     if field not in {"c", "volume_native"}:
         raise ValueError("Unsupported dense numeric projection")
+    start, end = parse_time(start), parse_time(end)
+    assembled_at = parse_time(assembled_at) if assembled_at is not None else None
+    if after is not None:
+        after = (parse_time(after[0]), after[1])
     q = Query()
     _ids(q, [instrument_id])
     q.where("open_time IS NOT NULL")

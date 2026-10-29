@@ -74,6 +74,8 @@ async def test_dense_column_reset_and_late_correction_match_row_repository(both,
             "mkt.klines_1m",
             [dict(rows[0], c="1001.00", volume_native="4.000", recorded_at=T0 + timedelta(minutes=6))],
         )
+        for service in services:
+            service._condition_heads_memo.clear()
         corrected = [
             await service._condition_kline_series(
                 instrument, T0, T0 + timedelta(minutes=4), T0 + timedelta(minutes=7), **options

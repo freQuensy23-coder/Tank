@@ -49,7 +49,7 @@ def test_vector_history_retains_endpoint_selection_decimal_values_and_flags(reve
         context.clear_flags()
         actual = truth._oi_history_returns(times, native, usd, timedelta(seconds=90), 30.0)
         assert actual == expected
-        assert context.flags == flags
+        assert dict(context.flags) == flags
         assert context.prec == 128
 
 
@@ -68,7 +68,7 @@ def test_vector_history_refuses_reordered_arithmetic_when_rounding_traps_are_ena
             0,
         )
         assert actual is None
-        assert context.flags == before
+        assert dict(context.flags) == before
 
 
 @pytest.mark.parametrize(
@@ -123,6 +123,7 @@ def test_composite_vector_preserves_cohorts_stored_usd_and_decimal_flags(monkeyp
     with localcontext() as context:
         context.prec = 128
         context.rounding = rounding
+        context.clear_flags()
         context.flags[Inexact] = True
         with monkeypatch.context() as scalar:
             scalar.setattr(truth, "_composite_history_vector", lambda *args: None)
@@ -132,7 +133,7 @@ def test_composite_vector_preserves_cohorts_stored_usd_and_decimal_flags(monkeyp
         context.flags[Inexact] = True
         actual = truth._composite_history_vector(venues, timedelta(days=1))
         assert actual == expected
-        assert context.flags == flags
+        assert dict(context.flags) == flags
         assert context.prec == 128
 
 
@@ -161,5 +162,5 @@ def test_composite_vector_keeps_arithmetic_flags_for_insufficient_measure_histor
         flags = dict(context.flags)
         context.clear_flags()
         assert truth._composite_history_vector([(times, rows)], timedelta(days=1)) == expected == ([], [])
-        assert context.flags == flags
+        assert dict(context.flags) == flags
         assert context.flags[Inexact]
