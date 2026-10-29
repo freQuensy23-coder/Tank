@@ -706,9 +706,9 @@ class ModelContext:
 
     async def completion_reminder(self, payload):
         """Deterministic reminder that the source item's task ends only with its recorded outcome."""
-        kind = payload.get("reminded_kind") or "NEW_ITEM"
-        if kind == "ASSESSMENT":
+        if payload.get("missing") == "ASSESSMENT":
             return await self.assessment_reminder(payload)
+        kind = payload.get("reminded_kind") or "NEW_ITEM"
         lines = [
             f"TASK NOT COMPLETE (reminder {payload.get('reminder')} of {payload.get('reminder_limit')} "
             "for this session). Your previous turn on this incoming source ended without its outcome. "
@@ -780,7 +780,7 @@ class ModelContext:
             "whenever merge_into is refused, call set_assessment for this event: LOW or MATERIAL is a "
             "valid class, and a dimension no accepted claim supports is value null with its rationale.",
         ]
-        assessment = self.skeleton("set_assessment", event_id=event_id)
+        assessment = self.skeleton("set_assessment")
         if assessment:
             lines.append("set_assessment arguments: " + assessment)
         merge = self.skeleton("merge_into")

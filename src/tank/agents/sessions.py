@@ -1511,10 +1511,13 @@ class SessionService:
 
         The session's event is still open (not MERGED, CLOSED or INVALIDATED), was not merged into
         an earlier event and has no current_ems_id: no set_assessment was accepted, so the event would
-        never reach the class gate. One COMPLETION_REMINDER with reminded_kind ASSESSMENT goes to the
-        same session; it counts against the same session reminder budget as missing item outcomes.
-        Once the budget is spent no further reminder is sent and Ops keeps showing the item's
-        analysis as incomplete, with the missing assessment named.
+        never reach the class gate. One COMPLETION_REMINDER with missing ASSESSMENT goes to the same
+        session; it counts against the same session reminder budget as missing item outcomes. The
+        reminder keeps the source kind of the turn in reminded_kind, so tools in the reminder turn
+        apply the same trigger-freshness rules as the original source turn. The item keeps its DONE
+        outcome and records the reminder count for Ops. Once the budget is spent no further reminder
+        is sent: the item is flagged assessment_incomplete and Ops shows a processing error
+        ASSESSMENT_INCOMPLETE.
         """
         sid, event_id = session["session_id"], session.get("event_id")
         if not event_id:
@@ -1528,13 +1531,31 @@ class SessionService:
         ):
             return
         sent = int(session.get("completion_reminders_sent", 0))
+        payload = message["payload"]
+        item_id = payload["item_id"]
+        item = await self.repo.get("ingest.source_items", item_id)
         if sent >= limit:
+            if item and not item.get("assessment_incomplete"):
+                item.update(
+                    assessment_incomplete=True,
+                    assessment_reminders=sent,
+                    assessment_reminder_limit=limit,
+                )
+                await self.repo.put("ingest.source_items", item_id, item)
+                await item_progress(
+                    self.repo,
+                    self.settings,
+                    item_id,
+                    "PROCESSING_FAILED",
+                    "ASSESSMENT_INCOMPLETE",
+                    event_id=event_id,
+                    key=f"{sid}:{event_id}:ASSESSMENT_INCOMPLETE",
+                )
             return
         attempts = session.setdefault("assessment_reminder_attempts", {})
         attempt = int(attempts.get(event_id, 0)) + 1
         attempts[event_id] = attempt
         session["completion_reminders_sent"] = sent + 1
-        item_id = message["payload"]["item_id"]
         await self.repo.enqueue(
             "AGENT_MESSAGE",
             {
@@ -1542,7 +1563,8 @@ class SessionService:
                 "session_id": sid,
                 "item_id": item_id,
                 "event_id": event_id,
-                "reminded_kind": "ASSESSMENT",
+                "reminded_kind": payload.get("reminded_kind", payload["kind"]),
+                "missing": "ASSESSMENT",
                 "attempt": attempt,
                 "reminder": sent + 1,
                 "reminder_limit": limit,
@@ -1551,6 +1573,9 @@ class SessionService:
             f"{sid}:{event_id}:ASSESSMENT_REMINDER:{attempt}",
             priority=1,
         )
+        if item:
+            item.update(assessment_reminders=sent + 1, assessment_reminder_limit=limit)
+            await self.repo.put("ingest.source_items", item_id, item)
         await item_progress(
             self.repo,
             self.settings,

@@ -8,6 +8,7 @@ import httpx
 
 from tank.agents.context import ModelContext
 from tank.agents.sessions import SessionService
+from tank.event_tools import EventToolService
 from tank.ops_cards import render, snapshot
 from tank.ops_progress import item_progress, session_progress
 from tank.settings import Settings
@@ -380,7 +381,8 @@ async def test_recorded_event_without_class_is_reminded_to_assess_with_refusals(
         "session_id": "s",
         "item_id": "i",
         "event_id": "EVT-1",
-        "reminded_kind": "ASSESSMENT",
+        "reminded_kind": "NEW_ITEM",
+        "missing": "ASSESSMENT",
         "attempt": 1,
         "reminder": 1,
         "reminder_limit": 20,
@@ -394,7 +396,11 @@ async def test_recorded_event_without_class_is_reminded_to_assess_with_refusals(
     content = await ModelContext(repo, config, session).message(job["payload"], item)
     text = content["reminder"]
     assert "event EVT-1, recorded in this session, has no class" in text
-    assert 'set_assessment arguments: {"assessment": {' in text and '"event_id": "EVT-1"}' in text
+    published = REAL.read_config_json("skills/tank-event-analyst/tools.json")
+    schema = next(tool for tool in published if tool["name"] == "set_assessment")["input_schema"]
+    skeleton = json.loads(text.split("set_assessment arguments: ", 1)[1].split("\n", 1)[0])
+    assert set(skeleton) == set(schema["properties"]) == {"assessment"}
+    assert schema["additionalProperties"] is False
     assert "merge_into arguments" in text
     assert "merge_into: Merge target must be the earlier event" in text
     assert "record_event" not in text
@@ -403,6 +409,10 @@ async def test_recorded_event_without_class_is_reminded_to_assess_with_refusals(
     assert [(row["stage"], row["reason"]) for row in notices] == [
         ("AGENT_REMINDED", "Агент не оценил событие, напоминание 1/20")
     ]
+    assert (item["assessment_reminders"], item["assessment_reminder_limit"]) == (1, 20)
+    card = render(await snapshot(repo, "i"))
+    assert card["code"] == "AGENT_REMINDED"
+    assert card["status"] == "Агент не оценил событие, напоминание 1/20"
     await sessions.close()
 
 
@@ -417,7 +427,13 @@ async def test_assessment_reminder_repeats_until_class_then_stops():
     await deliver(repo, first)
     session = await settle(repo, sessions)
     second = (await reminders(repo))[1]["payload"]
-    assert (second["attempt"], second["reminder"], second["reminded_kind"]) == (2, 2, "ASSESSMENT")
+    assert (second["attempt"], second["reminder"], second["reminded_kind"], second["missing"]) == (
+        2,
+        2,
+        "NEW_ITEM",
+        "ASSESSMENT",
+    )
+    assert render(await snapshot(repo, "i"))["status"] == "Агент не оценил событие, напоминание 2/20"
     assert second["turn_message_id"] == "r-" + first["idem_key"]
     assert session["assessment_reminder_attempts"] == {"EVT-1": 2}
     await deliver(repo, (await reminders(repo))[1])
@@ -441,8 +457,20 @@ async def test_assessment_reminders_share_the_session_budget():
     session = await settle(repo, sessions)
     assert len(await reminders(repo)) == 1
     assert session["completion_reminders_sent"] == 1
-    assert (await repo.get("ingest.source_items", "i"))["extraction_status"] == "DONE"
+    item = await repo.get("ingest.source_items", "i")
+    assert (item["extraction_status"], item["assessment_incomplete"], item["assessment_reminders"]) == (
+        "DONE",
+        True,
+        1,
+    )
     assert not session.get("agent_incomplete")
+    card = render(await snapshot(repo, "i"))
+    assert card["code"] == "PROCESSING_FAILED"
+    assert "напоминания исчерпаны (1/1)" in card["text"]
+    assert "так и не оценил его значимость" in card["text"]
+    await settle(repo, sessions)
+    failures = [row for row in await repo.list("out.ops_notices") if row["stage"] == "PROCESSING_FAILED"]
+    assert [row["reason"] for row in failures] == ["ASSESSMENT_INCOMPLETE"]
     await sessions.close()
 
 
@@ -474,7 +502,33 @@ async def test_missing_item_outcome_is_reminded_before_assessment():
     sessions = await service(repo, config)
     await settle(repo, sessions)
     [job] = await reminders(repo)
-    assert job["payload"]["reminded_kind"] == "ITEM_ADDED"
+    assert job["payload"]["reminded_kind"] == "ITEM_ADDED" and "missing" not in job["payload"]
+    await sessions.close()
+
+
+async def test_assessment_reminder_turn_keeps_the_source_trigger_for_tools():
+    repo = MemoryRepository()
+    config = settings()
+    await seed(repo, kind="ITEM_ADDED")
+    await seed_event(repo)
+    sessions = await service(repo, config)
+    await settle(repo, sessions)
+    [job] = await reminders(repo)
+    assert (job["payload"]["reminded_kind"], job["payload"]["missing"]) == ("ITEM_ADDED", "ASSESSMENT")
+    await deliver(repo, job, status="RUNNING")
+    session = await repo.get("ops.agent_sessions", "s")
+    session["active_message_id"] = "r-" + job["idem_key"]
+    await repo.put("ops.agent_sessions", "s", session)
+    seen = {}
+    tools = EventToolService(repo, SimpleNamespace(**vars(config), has_config=REAL.has_config), None, None)
+
+    async def capture(arguments, context):
+        seen.update(context)
+        return {}
+
+    tools.get_item = capture
+    await tools.dispatch("get_item", {"item_id": "i"}, {"session_id": "s"})
+    assert (seen["trigger_kind"], seen["trigger_item_id"]) == ("ITEM_ADDED", "i")
     await sessions.close()
 
 
