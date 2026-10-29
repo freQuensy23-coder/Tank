@@ -1,4 +1,4 @@
-from decimal import Decimal, InvalidOperation, localcontext
+from decimal import Decimal, InvalidOperation, Rounded, localcontext
 
 import pytest
 
@@ -100,3 +100,35 @@ def test_fixed_decimal_metadata_admission_boundaries(tail, admitted):
             assert result[1] == min(0, *(value.as_tuple().exponent for value in expected))
             assert result[2] == max(0, *(value.adjusted() for value in expected))
         assert not any(context.flags.values())
+
+
+def test_fixed_text_conversion_reuses_exact_text_only_inside_one_assessment(monkeypatch):
+    original, calls = truth.Decimal, []
+    column = ["001.2300", "0.00", ".12", "12."] * 128 + [None]
+
+    def counted(value):
+        calls.append(value)
+        return original(value)
+
+    monkeypatch.setattr(truth, "Decimal", counted)
+    for replacement in ("001.2300", "9.000"):
+        column[0] = replacement
+        clone = [(value + " ")[:-1] if value is not None else None for value in reversed(column)]
+        expected = [
+            [original(value) if value is not None else None for value in values] for values in (column, clone)
+        ]
+        before = len(calls)
+        inputs = truth._ASSESSMENT_INPUTS.set({})
+        try:
+            with localcontext() as context:
+                context.prec = 128
+                context.clear_flags()
+                context.flags[Rounded] = True
+                initial = context.prec, dict(context.flags)
+                for values, reference in zip((column, clone), expected, strict=True):
+                    actual, _low, _high = truth._history_fixed_decimal_column(values)
+                    assert representation(actual) == representation(reference)
+                assert (context.prec, dict(context.flags)) == initial
+        finally:
+            truth._ASSESSMENT_INPUTS.reset(inputs)
+        assert len(calls) - before == len({value for value in column if value is not None})
