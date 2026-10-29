@@ -521,7 +521,9 @@ async def run(root, directory, fixtures, revision, reader):
                                 key=lambda item: item[1][3],
                                 reverse=True,
                             )[:40]
-                        ] if profiler is not None and state == "cold" else [],
+                        ]
+                        if profiler is not None and state == "cold"
+                        else [],
                         "modules": provenance(root),
                     }
                 )

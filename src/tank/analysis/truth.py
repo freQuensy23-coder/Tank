@@ -762,10 +762,47 @@ def oi_temporally_admissible(row):
     identity = id(row)
     if memo is not None and identity in memo:
         return memo[identity][1]
-    value = (
-        propagate_timestamp(row, "ts", precision_aliases=("timestamp_precision", "precision")).bucket_anchor
-        != "UNSPECIFIED"
-    )
+    resolved = None
+    if inputs is not None and type(row) is dict and type(raw) is str:
+        fields = (
+            "ts_prec",
+            "ts_precision",
+            "timestamp_precision",
+            "precision",
+            "ts_prec_reason",
+            "ts_precision_reason",
+            "timestamp_precision_reason",
+            "precision_reason",
+            "ts_bucket_size_s",
+            "ts_bucket_anchor",
+            "ts_reason",
+        )
+        values = tuple(row.get(name) for name in fields)
+        if all(value is None or type(value) in (str, int, float, bool) for value in values):
+            envelope = (_history_context_key(), tuple((type(value), value) for value in values))
+            envelopes = inputs.setdefault("oi_precision_envelopes", {})
+            if envelope not in envelopes:
+                candidate = None
+                try:
+                    with localcontext() as probe:
+                        probe.clear_flags()
+                        result = propagate_timestamp(
+                            row, "ts", precision_aliases=("timestamp_precision", "precision")
+                        )
+                        if not any(probe.flags.values()):
+                            candidate = result.bucket_anchor != "UNSPECIFIED"
+                except (DecimalException, ValueError, TypeError, OverflowError):
+                    pass
+                envelopes[envelope] = candidate
+            resolved = envelopes[envelope]
+    if resolved is None:
+        value = (
+            propagate_timestamp(row, "ts", precision_aliases=("timestamp_precision", "precision")).bucket_anchor
+            != "UNSPECIFIED"
+        )
+    else:
+        parse_time(raw)
+        value = resolved
     if memo is not None:
         memo[identity] = (row, value)
     return value
@@ -1026,9 +1063,7 @@ def _oi_stats(rows, start, end, *, history_identity=None, venue_history=None):
     lower = start - timedelta(days=lookback_days())
     lo, hi = bisect_left(ordered_times, lower), bisect_left(ordered_times, start)
     bytime = {_time(rows[i]): rows[i] for i in sorted(index for _, index in ordered[lo:hi])}
-    cohort_key = (
-        _oi_cohort_key(rows) if venue_history is None and _BASELINE_CACHE.get() is not None else None
-    )
+    cohort_key = _oi_cohort_key(rows) if venue_history is None and _BASELINE_CACHE.get() is not None else None
     if venue_history is not None:
         venue_history = [_history_slice(times, venue_rows, start) for times, venue_rows in venue_history]
     history_times = sorted(bytime)
@@ -2626,6 +2661,40 @@ def _usd_mid(row, mid):
     return mid * rate if rate else None
 
 
+def _reference_rv_series(prices):
+    inputs = _ASSESSMENT_INPUTS.get()
+    memo = inputs.setdefault("reference_rv_series", {}) if inputs is not None else None
+    hit = memo.get(id(prices)) if memo is not None else None
+    if hit is not None and hit[0] is prices:
+        return hit[1]
+    if type(prices) is not dict or any(
+        type(t) is not datetime or type(p) is not float or not isfinite(p) or p <= 0
+        for t, p in prices.items()
+    ):
+        return None
+    hourly = {t: p for t, p in prices.items() if t.minute == 0 and t.second == 0}
+    returns = {
+        t: log(p / hourly[t - timedelta(hours=1)])
+        for t, p in hourly.items()
+        if t - timedelta(hours=1) in hourly
+    }
+    if any(not isfinite(value) for value in returns.values()):
+        return None
+    return_times = sorted(returns)
+    times, values = [], []
+    for t in sorted(hourly):
+        first = bisect_right(return_times, t - timedelta(hours=24))
+        last = bisect_right(return_times, t)
+        observations = [returns[at] for at in return_times[first:last]]
+        if len(observations) == 24:
+            times.append(t)
+            values.append(stdev(observations))
+    result = (hourly, times, values)
+    if memo is not None:
+        memo[id(prices)] = (prices, result)
+    return result
+
+
 def enrich_evidence(snapshot, start, end, spots, primary, deriv, relative, liquidity):
     """Compute cross-window claims only on pairwise common, complete venues."""
     for name, left in spots.items():
@@ -3048,24 +3117,33 @@ def enrich_evidence(snapshot, start, end, spots, primary, deriv, relative, liqui
 
     token = relative["ref_venue"]
     prices = _prices(snapshot).get(token, {})
-    hourly = {t: p for t, p in prices.items() if t.minute == 0 and t.second == 0}
-    hourly_returns = {
-        t: log(p / hourly[t - timedelta(hours=1)])
-        for t, p in hourly.items()
-        if t - timedelta(hours=1) in hourly
-    }
-    return_times = sorted(hourly_returns)
-    rvs = []
-    current = None
-    for t in sorted(hourly):
-        left = bisect_right(return_times, t - timedelta(hours=24))
-        right = bisect_right(return_times, t)
-        lr = [hourly_returns[x] for x in return_times[left:right]]
-        if len(lr) == 24:
-            if start - timedelta(days=lookback_days()) <= t < start:
-                rvs.append(stdev(lr))
-            if t <= end:
-                current = stdev(lr)
+    prepared_reference_rv = _reference_rv_series(prices)
+    if prepared_reference_rv is None:
+        hourly = {t: p for t, p in prices.items() if t.minute == 0 and t.second == 0}
+        hourly_returns = {
+            t: log(p / hourly[t - timedelta(hours=1)])
+            for t, p in hourly.items()
+            if t - timedelta(hours=1) in hourly
+        }
+        return_times = sorted(hourly_returns)
+        rvs = []
+        current = None
+        for t in sorted(hourly):
+            left = bisect_right(return_times, t - timedelta(hours=24))
+            right = bisect_right(return_times, t)
+            lr = [hourly_returns[x] for x in return_times[left:right]]
+            if len(lr) == 24:
+                if start - timedelta(days=lookback_days()) <= t < start:
+                    rvs.append(stdev(lr))
+                if t <= end:
+                    current = stdev(lr)
+    else:
+        hourly, rv_times, rv_values = prepared_reference_rv
+        lower = start - timedelta(days=lookback_days())
+        first, last = bisect_left(rv_times, lower), bisect_left(rv_times, start)
+        rvs = rv_values[first:last]
+        latest_rv = bisect_right(rv_times, end) - 1
+        current = rv_values[latest_rv] if latest_rv >= 0 else None
     if (
         hourly
         and (max(hourly) - min(hourly)).total_seconds() < float(parameter("history_min_days", 7)) * 86400
@@ -3880,8 +3958,15 @@ def _native_volume_arrays(rows, projection, end, instrument=None):
         if len(times) != len(projection["values"]) or len(times) != len(projection["complete"]):
             return None
         cache_key = (
-            "native-volume-arrays", instrument, head, len(times), end, interval,
-            times[0] if len(times) else None, times[-1] if len(times) else None, signature,
+            "native-volume-arrays",
+            instrument,
+            head,
+            len(times),
+            end,
+            interval,
+            times[0] if len(times) else None,
+            times[-1] if len(times) else None,
+            signature,
         )
         if head is not None and cache is not None and cache_key in cache:
             result = cache[cache_key]
@@ -3896,11 +3981,7 @@ def _native_volume_arrays(rows, projection, end, instrument=None):
         for row in sorted(rows, key=_time):
             at = _time(row)
             interval = row.get("interval_s", 60)
-            if (
-                type(at) is not datetime
-                or type(interval) is not int
-                or not 0 < interval <= 2**52 // 1000000
-            ):
+            if type(at) is not datetime or type(interval) is not int or not 0 < interval <= 2**52 // 1000000:
                 return None
             if at + timedelta(seconds=interval) <= end:
                 delta = at - epoch
@@ -3918,9 +3999,7 @@ def _native_volume_arrays(rows, projection, end, instrument=None):
         raw = [point[2] for point in points]
         complete = np.asarray([point[3] for point in points], dtype=bool)
     if len(starts) and (
-        np.any(starts[1:] < starts[:-1])
-        or np.any(np.abs(starts) > 2**52)
-        or np.any(intervals > 2**52)
+        np.any(starts[1:] < starts[:-1]) or np.any(np.abs(starts) > 2**52) or np.any(intervals > 2**52)
     ):
         return None
     metadata = {}
@@ -3999,10 +4078,7 @@ def _native_volume_windows(indexes, start, end):
     ):
         history = []
     ordered_history = sorted(history)
-    if any(
-        a == b and a.compare_total(b)
-        for a, b in zip(ordered_history, ordered_history[1:], strict=False)
-    ):
+    if any(a == b and a.compare_total(b) for a, b in zip(ordered_history, ordered_history[1:], strict=False)):
         return None
     return totals[0] if covered[0] else None, totals[1] if covered[1] else None, history
 

@@ -3076,11 +3076,11 @@ class MarketService:
 
         columns_cache = {}
 
-        pending = {}
+        series_reads = {}
 
         async def load_series(inst, kind):
             iid = inst["instrument_id"]
-            price = pending.get(("price", iid))
+            price = series_reads.get(("price", iid))
             if kind == "volume" and price is not None:
                 await price
             return await self._condition_kline_series(
@@ -3098,9 +3098,9 @@ class MarketService:
 
         async def projected(inst, kind):
             key = (kind, inst["instrument_id"])
-            if key not in pending:
-                pending[key] = asyncio.create_task(load_series(inst, kind))
-            return await pending[key]
+            if key not in series_reads:
+                series_reads[key] = asyncio.create_task(load_series(inst, kind))
+            return await series_reads[key]
 
         async def dense_prices(inst):
             iid = inst["instrument_id"]
@@ -3128,9 +3128,11 @@ class MarketService:
         try:
             for inst in instruments:
                 if norm.venue_key(inst).endswith(".spot"):
-                    pending[("price", inst["instrument_id"])] = asyncio.create_task(load_series(inst, "price"))
+                    series_reads[("price", inst["instrument_id"])] = asyncio.create_task(
+                        load_series(inst, "price")
+                    )
             for inst in instruments:
-                pending[("volume", inst["instrument_id"])] = asyncio.create_task(load_series(inst, "volume"))
+                series_reads[("volume", inst["instrument_id"])] = asyncio.create_task(load_series(inst, "volume"))
             for inst in instruments:
                 iid = inst["instrument_id"]
                 await retain_close(latest_closes.get(iid))
@@ -3260,7 +3262,9 @@ class MarketService:
                 observation
                 for point in result["funding"]
                 for observation in (
-                    list(point["source_observations"].values()) if point.get("source_observations") else [point]
+                    list(point["source_observations"].values())
+                    if point.get("source_observations")
+                    else [point]
                 )
             ]
             result["funding_confirmations"] = [
@@ -3274,11 +3278,11 @@ class MarketService:
             self._snapshot_heads(result, cutoff_dt)
             result.update(collection_clock(iso()).fields("assembled_at"))
         finally:
-            for task in pending.values():
+            for task in series_reads.values():
                 if not task.done():
                     task.cancel()
-            if pending:
-                await asyncio.gather(*pending.values(), return_exceptions=True)
+            if series_reads:
+                await asyncio.gather(*series_reads.values(), return_exceptions=True)
         return result
 
     @staticmethod
