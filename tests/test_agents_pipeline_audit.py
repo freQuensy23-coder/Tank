@@ -121,6 +121,29 @@ async def test_new_item_routes_without_reservation_state():
     assert routed["route"] == {"decision": "NEW_SESSION", "event_id": None, "p_same": None}
 
 
+async def test_reanalysed_item_is_routed_as_a_new_agent_input():
+    opts, _ = options()
+    repo = MemoryRepository()
+    await repo.put("ingest.source_items", "new", {"item_id": "new", "title": "Aave announcement"})
+    pipe = Pipeline(repo, opts, http=object())
+    await pipe.route_item({"item_id": "new"})
+    item = await repo.get("ingest.source_items", "new")
+    for key in ("routing_message", "route"):
+        item.pop(key)
+    item["reanalysis_attempt"] = 1
+    await repo.put("ingest.source_items", "new", item)
+    routed = await pipe.route_item({"item_id": "new"})
+    assert routed["routing_message"] == {"kind": "NEW_ITEM", "item_id": "new", "reanalysis_attempt": 1}
+    jobs = sorted(
+        (job["idem_key"], job["payload"])
+        for job in await repo.list("ops.jobs", filters={"type": "AGENT_MESSAGE"})
+    )
+    assert jobs == [
+        ("new:NEW_ITEM", {"kind": "NEW_ITEM", "item_id": "new"}),
+        ("new:NEW_ITEM:reanalysis:1", {"kind": "NEW_ITEM", "item_id": "new", "reanalysis_attempt": 1}),
+    ]
+
+
 @pytest.mark.integration
 @pytest.mark.asyncio
 @pytest.mark.parametrize("same,decision", [(0.95, "ADDED"), (0.1, "NEW_SESSION")])

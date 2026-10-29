@@ -4,7 +4,7 @@ Tool arguments name records by ID and registry objects by key; the host validate
 import copy
 import re
 
-from tank.event_tools import SCOPED_TOOLS, validate_schema
+from tank.event_tools import SCOPED_TOOLS, absent_optionals, validate_schema
 
 CONTEXT_VERSION = 3
 AGENT_SKILLS = {False: "tank-event-analyst", True: "tank-scout-reviewer"}
@@ -755,6 +755,7 @@ class ModelContext:
         """Validate the model's arguments and every record ID in them, then bind the implicit records."""
         if not isinstance(arguments, dict):
             raise ValueError("Tool arguments must be an object")
+        arguments = absent_optionals(arguments, self.public_schema(tool))
         self.validate_shape(tool, arguments)
         reject_text_ids(tool, arguments)
         for path, kind, value in references(tool, arguments):

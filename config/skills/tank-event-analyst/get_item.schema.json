@@ -5,7 +5,10 @@
   "additionalProperties": false,
   "properties": {
     "item_id": {
-      "type": "string",
+      "type": [
+        "string",
+        "null"
+      ],
       "description": "ID of a stored source document: ITM-\u2026 for a collected item, web-\u2026 for a page read with fetch_page or a web_search result; find it with read-only SQL (tank-data data guide, \u00abFinding record IDs for tool arguments\u00bb), \u00abSource document by URL\u00bb."
     }
   },

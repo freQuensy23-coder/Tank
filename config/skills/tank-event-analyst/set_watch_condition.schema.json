@@ -9,19 +9,31 @@
       ]
     },
     "cond_id": {
-      "type": "string",
+      "type": [
+        "string",
+        "null"
+      ],
       "description": "DISARM only: ID of the ARMED watch condition of the current event (CND-\u2026); find it with read-only SQL (tank-data data guide, \u00abFinding record IDs for tool arguments\u00bb), \u00abWatch conditions of an event\u00bb."
     },
     "token_id": {
-      "type": "string",
+      "type": [
+        "string",
+        "null"
+      ],
       "description": "ARM only: Registry token key (reg.tokens), shown after \u00ab \u00b7 \u00bb next to the name in Tank's messages and results, e.g. bitcoin:BTC in \u00abBitcoin (BTC) \u00b7 bitcoin:BTC\u00bb."
     },
     "text": {
-      "type": "string",
+      "type": [
+        "string",
+        "null"
+      ],
       "maxLength": 500
     },
     "conditions": {
-      "type": "array",
+      "type": [
+        "array",
+        "null"
+      ],
       "minItems": 1,
       "maxItems": 6,
       "items": {
@@ -50,11 +62,15 @@
               "W15M",
               "W1H",
               "W4H",
-              "W24H"
+              "W24H",
+              null
             ]
           },
           "persist_count": {
-            "type": "integer",
+            "type": [
+              "integer",
+              "null"
+            ],
             "minimum": 1,
             "maximum": 24
           }
@@ -67,17 +83,26 @@
       }
     },
     "expires_in_hours": {
-      "type": "integer",
+      "type": [
+        "integer",
+        "null"
+      ],
       "minimum": 1,
       "maximum": 168
     },
     "review_at": {
-      "type": "string",
+      "type": [
+        "string",
+        "null"
+      ],
       "format": "date-time",
       "description": "ARM timed review: future UTC time before the condition expires. Mutually exclusive with token_id and metric conditions."
     },
     "review_question": {
-      "type": "string",
+      "type": [
+        "string",
+        "null"
+      ],
       "minLength": 1,
       "maxLength": 500,
       "pattern": "\\S",

@@ -41,11 +41,17 @@
         "additionalProperties": false,
         "properties": {
           "entity_id": {
-            "type": "string",
+            "type": [
+              "string",
+              "null"
+            ],
             "description": "Registry entity key (reg.entities), shown after \u00ab \u00b7 \u00bb next to the name in Tank's messages and results, e.g. uniswap in \u00abUniswap \u00b7 uniswap\u00bb."
           },
           "name": {
-            "type": "string",
+            "type": [
+              "string",
+              "null"
+            ],
             "description": "Name of an entity outside the registry, kept unresolved. Tank refuses a name the registry resolves; pass that entity's entity_id instead."
           },
           "role": {
@@ -82,7 +88,10 @@
       "description": "Registry token keys (reg.tokens), shown after \u00ab \u00b7 \u00bb next to the name in Tank's messages and results, e.g. bitcoin:BTC or uniswap:UNI."
     },
     "token_names": {
-      "type": "array",
+      "type": [
+        "array",
+        "null"
+      ],
       "items": {
         "type": "string"
       },
@@ -250,7 +259,10 @@
             "description": "Verbatim atomic quote. Omit evidence when it comes from the incoming source; otherwise cite the stored document containing it in evidence (a page read with fetch_page is its own document, even when its URL matches the discovery item)."
           },
           "approval_dependency": {
-            "type": "object",
+            "type": [
+              "object",
+              "null"
+            ],
             "additionalProperties": false,
             "required": [
               "scope",
@@ -293,7 +305,10 @@
             "description": "Agent-supplied explanation of what confirmation is missing for this unverified claim (for example, no announcement from the named organization). Tank preserves and displays it verbatim; null means the reason was not established. Keep it to about 10 words; it is printed in NOT VERIFIED."
           },
           "evidence": {
-            "type": "array",
+            "type": [
+              "array",
+              "null"
+            ],
             "description": "The stored document containing this claim's quote, by item_id. Omit for a quote from the incoming source. For text read with fetch_page or web_search, cite that stored document, not the discovery document merely because its URL matches. The incoming source remains the event's origin.",
             "items": {
               "type": "object",
@@ -355,12 +370,16 @@
       "enum": [
         "HIGH",
         "MEDIUM",
-        "LOW"
+        "LOW",
+        null
       ],
       "description": "Agent-supplied confidence in the event timing: HIGH for an exact primary timestamp, MEDIUM for bucket precision, LOW for collection time only. Optional; omission leaves declared timestamp precision as the timing-confidence basis."
     },
     "no_event_reason": {
-      "type": "string",
+      "type": [
+        "string",
+        "null"
+      ],
       "minLength": 1,
       "maxLength": 500,
       "description": "When is_event is false, explain in one concrete sentence why this material is not an actionable event. This is the rejection decision, separate from certainty_reason about source reliability.",
@@ -383,6 +402,11 @@
           "enum": [
             false
           ]
+        },
+        "no_event_reason": {
+          "type": "string",
+          "minLength": 1,
+          "pattern": "\\S"
         }
       },
       "required": [

@@ -8,6 +8,7 @@ import pytest
 from test_agents_execution_barrier import config, idle
 from test_session_binding_concurrency import fixture_repo, seed
 
+from tank.agents.incomplete import reanalyse
 from tank.agents.sessions import SessionService
 from tank.util import sha256
 
@@ -24,7 +25,7 @@ from tank.util import sha256
         if not (bound and outcome == "SKIPPED")
     ],
 )
-async def test_settled_turn_accepts_agent_choice_without_source_observation(
+async def test_settled_turn_fails_an_item_left_without_an_outcome_and_keeps_the_session(
     tmp_path, backend, outcome, bound, postgres_template
 ):
     async with fixture_repo(backend, postgres_template) as repo:
@@ -254,13 +255,21 @@ async def test_settled_turn_accepts_agent_choice_without_source_observation(
             proof = final["message_log"][0]["source_completion_verified"]
             assert proof["version"] == 4 and proof["item_id"] == "item"
             assert proof["native_input_id"] == "initial" and proof["retry_attempt"] == 0
-            assert proof["outcome"] == ("SKIPPED" if outcome == "ignored" else outcome)
+            assert proof["outcome"] == ("FAILED" if outcome == "ignored" else outcome)
             assert "workflow" not in proof
             if outcome == "ignored":
                 observations = await repo.list("evt.event_observations", filters={"item_id": "item"})
                 assert not observations
+                assert (await repo.get("ingest.source_items", "item"))[
+                    "extraction_reason"
+                ] == "AGENT_INCOMPLETE"
+                assert final.get("agent_incomplete", False) is not bound
                 if bound:
                     assert (await repo.get("evt.events", event_id))["lifecycle"] != "FAILED"
+                assert (await reanalyse(repo, apply=True))["count"] == 1
+                assert (await service.completed_turn("s"))["complete"]
+                requeued = await repo.get("ingest.source_items", "item")
+                assert (requeued["extraction_status"], requeued["reanalysis_attempt"]) == ("PENDING", 1)
 
 
 @pytest.mark.parametrize(
@@ -344,7 +353,11 @@ async def test_ignored_item_keeps_event_and_call_for_next_native_update(tmp_path
             assert settled["status"] == "OPEN" and settled["event_id"] == eid
             assert settled["message_log"][0]["retry_count"] == 0
             assert settled["message_log"][0]["turn_status"] == "DONE"
-            assert (await repo.get("ingest.source_items", "reprint"))["extraction_status"] == "SKIPPED"
+            ignored = await repo.get("ingest.source_items", "reprint")
+            assert (ignored["extraction_status"], ignored["extraction_reason"]) == (
+                "FAILED",
+                "AGENT_INCOMPLETE",
+            )
             assert not await repo.list("evt.event_observations", filters={"item_id": "reprint"})
             assert await repo.get("evt.events", eid) == before
             assert await repo.get("ana.calls", "active-call") == call

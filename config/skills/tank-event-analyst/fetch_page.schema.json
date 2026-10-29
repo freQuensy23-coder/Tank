@@ -9,7 +9,10 @@
       "format": "uri"
     },
     "timeout_s": {
-      "type": "number",
+      "type": [
+        "number",
+        "null"
+      ],
       "exclusiveMinimum": 0,
       "maximum": 20,
       "description": "Seconds to wait for the page, at most 20 (the default). Use a short value (e.g. 8) for the one immediate official-source check before record_event, so a slow site cannot hold the event."
