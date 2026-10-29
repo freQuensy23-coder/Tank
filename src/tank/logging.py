@@ -7,7 +7,7 @@ import logging
 import re
 import time
 import traceback
-from contextlib import contextmanager
+from contextlib import contextmanager, suppress
 from contextvars import ContextVar
 from functools import wraps
 from urllib.parse import unquote, urlsplit
@@ -35,10 +35,8 @@ def market_stage(stage, *, trace_id=None, cpu=False, **fields):
     logger = logging.getLogger("tank.market_timing")
 
     def emit(**timing):
-        try:
+        with suppress(Exception):
             logger.info(json.dumps(dict(record, **timing)))
-        except Exception:
-            pass
 
     token = _MARKET_STAGE.set((trace, span))
     status = "ok"
