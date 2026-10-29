@@ -230,6 +230,7 @@ async def test_wait_data_watch_refreshes_truth_before_decision_and_replays_lost_
 
         runtime = object.__new__(Runtime)
         runtime.repo, runtime.market, runtime.truth = repo, market, truth
+        runtime.scheduler = Scheduler(repo, SimpleNamespace(), market, truth)
         runtime.handlers = {"ESCALATE_TOKENS": runtime.escalate, "RUN_MARKET_TRUTH": runtime.assess}
         stop = asyncio.Event()
         worker = None
@@ -292,6 +293,7 @@ async def test_runtime_waits_for_capture_release_before_numerical_assessment():
         capture_readiness=AsyncMock(return_value={"status": "RUNNING"}), wait_capture=wait_capture
     )
     runtime.truth = SimpleNamespace(assess=AsyncMock(return_value={"measured": True}))
+    runtime.scheduler = Scheduler(repo, SimpleNamespace(), runtime.market, runtime.truth)
     job = asyncio.create_task(runtime.assess({"event_id": "e", "token_id": "T"}))
     await waiting.wait()
     runtime.truth.assess.assert_not_called()
@@ -324,6 +326,7 @@ async def test_runtime_checks_the_capture_at_t1_before_a_scheduled_t0():
         capture_readiness=AsyncMock(return_value={"status": "PARTIAL"}), repair_windows=AsyncMock()
     )
     runtime.truth = SimpleNamespace(assess=AsyncMock(return_value={"measured": True}))
+    runtime.scheduler = Scheduler(repo, SimpleNamespace(), runtime.market, runtime.truth)
     payload = {
         "event_id": "e",
         "token_id": "T",
@@ -390,6 +393,7 @@ async def test_cancelled_preflight_reuses_job_before_any_decision_ledger(
             market.released = True
             runtime = object.__new__(Runtime)
             runtime.repo, runtime.market, runtime.truth = repo, market, truth
+            runtime.scheduler = Scheduler(repo, SimpleNamespace(), market, truth)
             runtime.handlers = {"ESCALATE_TOKENS": runtime.escalate, "RUN_MARKET_TRUTH": runtime.assess}
             stop = asyncio.Event()
             worker = asyncio.create_task(runtime.worker(stop))
@@ -465,6 +469,7 @@ async def test_condition_firing_during_refresh_wait_is_deferred_until_its_own_re
         market.released = True
         runtime = object.__new__(Runtime)
         runtime.repo, runtime.market, runtime.truth = repo, market, truth
+        runtime.scheduler = Scheduler(repo, SimpleNamespace(), market, truth)
         runtime.handlers = {"ESCALATE_TOKENS": runtime.escalate, "RUN_MARKET_TRUTH": runtime.assess}
         stop = asyncio.Event()
         worker = asyncio.create_task(runtime.worker(stop))

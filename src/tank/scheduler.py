@@ -41,6 +41,13 @@ CAPTURE_EXPIRY_S, CAPTURE_EXPIRY_SAFETY_S = 6 * 3600, 1200
 
 
 LATE_REVISION_DEFER_S = 1800
+CAPTURE_UNFINISHED = frozenset({"PENDING", "RUNNING", "INCOMPLETE"})
+CAPTURE_TERMINAL = frozenset({"COMPLETE", "PARTIAL", "FAILED"})
+
+
+def _unfinished_backfill(truth):
+    capture = ((truth or {}).get("detail") or {}).get("capture_status") or {}
+    return capture.get("backfill_id") if capture.get("status") in CAPTURE_UNFINISHED else None
 
 
 class _EvalBudgetSpent(Exception):
@@ -1030,6 +1037,7 @@ class Scheduler:
         async for change in self.market.capture_changes(
             since=since, end=iso(now + timedelta(microseconds=1))
         ):
+            await self.refresh_truth_after_capture(change, now)
             changed_at = change.get("finished_at") or change["observed_at"]
             change_id = change.get("change_id") or change["backfill_id"] + ":" + changed_at
             source_id = change.get("backfill_id") or change_id
@@ -1086,6 +1094,55 @@ class Scheduler:
             "ops.scheduler_checkpoints",
             "reaction-capture-changes",
             {"checkpoint_id": "reaction-capture-changes", **collection_clock(now).fields("at"), "state": {}},
+        )
+
+    async def refresh_truth_after_capture(self, change, now):
+        """Re-run Market Truth once the pre-event backfill it could not wait for ends.
+
+        RUN_MARKET_TRUTH waits only a bounded time for the backfill, which usually
+        takes minutes to an hour. When the latest Market Truth of the event and token
+        was assembled while this backfill was unfinished, it is computed again at the
+        same cutoff, so the newer record for that moment uses the completed pre-event
+        data. One re-run per backfill.
+        """
+        if change.get("kind") != "HISTORICAL_CAPTURE_TERMINAL" or not change.get("backfill_id"):
+            return
+        latest = await self.repo.latest_before(
+            "ana.market_truth",
+            "cutoff",
+            iso(now + timedelta(microseconds=1)),
+            filters={"event_id": change["event_id"], "token_id": change["token_id"]},
+        )
+        if _unfinished_backfill(latest) == change["backfill_id"]:
+            await self._enqueue_truth_refresh(latest, now)
+
+    async def refresh_truth_after_assessment(self, truth, now=None):
+        """Close the race with refresh_truth_after_capture for an assessment in flight.
+
+        A backfill that ends after the assessment read its snapshot but before the
+        record was stored is consumed by the capture-change scan without a truth to
+        refresh, so the stored record is checked against the backfill once more here.
+        """
+        backfill_id = _unfinished_backfill(truth)
+        if backfill_id is None:
+            return
+        run = await self.repo.get("mkt.backfill_runs", backfill_id)
+        if run and run.get("status") in CAPTURE_TERMINAL:
+            await self._enqueue_truth_refresh(truth, now or utcnow())
+
+    async def _enqueue_truth_refresh(self, truth, now):
+        backfill_id = truth["detail"]["capture_status"]["backfill_id"]
+        await self.repo.enqueue(
+            "RUN_MARKET_TRUTH",
+            {
+                "event_id": truth["event_id"],
+                "token_id": truth["token_id"],
+                **propagate_timestamp(truth, "cutoff").fields("cutoff"),
+            },
+            f"{truth['event_id']}:{truth['token_id']}:capture:{backfill_id}",
+            priority=2,
+            max_attempts=2,
+            expires_at=offset_schedule(collection_clock(now), timedelta(minutes=30)),
         )
 
     async def reaction_pack_id(self, event_id, token_id):

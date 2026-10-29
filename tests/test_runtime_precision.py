@@ -6,6 +6,7 @@ from unittest.mock import AsyncMock
 import pytest
 
 from tank.runtime import Runtime
+from tank.scheduler import Scheduler
 from tank.storage import MemoryRepository
 from tank.time_precision import Timestamp, chosen_boundary
 from tank.util import utcnow
@@ -52,6 +53,7 @@ async def test_market_job_preserves_its_declared_cutoff_precision(precision):
     runtime = object.__new__(Runtime)
     runtime.repo = repo
     runtime.market = SimpleNamespace(capture_readiness=AsyncMock(return_value={"status": "COMPLETE"}))
+    runtime.scheduler = Scheduler(repo, SimpleNamespace(), runtime.market, None)
     runtime.truth = SimpleNamespace(assess=AsyncMock(return_value={"mta_id": "actual-result"}))
     assert await runtime.assess({"event_id": "event", "token_id": "token", **cutoff.fields("cutoff")}) == {
         "mta_id": "actual-result"
