@@ -247,6 +247,8 @@ async def test_condition_addressed_to_a_closed_session_is_routed_by_its_event(cl
         readdressed = await service.readdressed(fired)
         assert readdressed == {"kind": "CONDITION_FIRED", "event_id": "e", "condition_id": "c"}
         assert (await service.resolve(readdressed))["session_id"] == "live"
+        merged = {"kind": "ITEM_ADDED", "event_id": "e", "item_id": "i", "session_id": "dead"}
+        assert (await service.resolve(await service.readdressed(merged)))["session_id"] == "live"
         to_live = dict(fired, session_id="live")
         assert await service.readdressed(to_live) == to_live
         question = {"kind": "USER_QUESTION", "event_id": "e", "session_id": "dead", "question_id": "q"}

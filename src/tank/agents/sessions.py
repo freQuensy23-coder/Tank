@@ -114,7 +114,7 @@ class CapturedToolResult:
         return canonical_json({"result": self.result, "status": self.status, "is_error": self.is_error})
 
 
-EVENT_INPUTS = frozenset({"CONDITION_FIRED", "MILESTONE", "CALL_EXPIRED"})
+EVENT_INPUTS = frozenset({"ITEM_ADDED", "CONDITION_FIRED", "MILESTONE", "CALL_EXPIRED"})
 
 
 class SessionService:
@@ -737,9 +737,10 @@ class SessionService:
     async def readdressed(self, payload):
         """An event input addressed to a session that has since closed goes to its event instead.
 
-        Timed reviews and agent-defined conditions carry the session that scheduled them. When that
-        session is FAILED, ENDED or archived, the input drops the stale session_id and is routed by
-        its event_id, so it joins the event's open session or opens a fresh generation."""
+        Timed reviews and agent-defined conditions carry the session that scheduled them, and a
+        merge hands its observations to the target event's recorded session. When that session is
+        FAILED, ENDED or archived, the input drops the stale session_id and is routed by its
+        event_id, so it joins the event's open session or opens a fresh generation."""
         if (
             payload.get("kind") not in EVENT_INPUTS
             or not payload.get("session_id")
