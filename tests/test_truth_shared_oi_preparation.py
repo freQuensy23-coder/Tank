@@ -152,11 +152,13 @@ def test_shared_timeline_reuses_sums_and_retains_source_rows(monkeypatch):
     try:
         with localcontext() as context:
             context.prec = 128
-            truth.synchronized_oi(sync, end - timedelta(hours=6), end)
+            with localcontext(context):
+                truth.synchronized_oi(sync, end - timedelta(hours=6), end)
             count = len(calls)
             assert count > 0
             context.clear_flags()
-            truth.synchronized_oi(sync, end - timedelta(hours=12), end)
+            with localcontext(context):
+                truth.synchronized_oi(sync, end - timedelta(hours=12), end)
             assert len(calls) == count
             times, rows = truth._oi_cutoff_index(sync[0][1], end)
             assert times == sorted(times)
@@ -202,10 +204,26 @@ def test_changed_sources_cutoffs_and_assessments_never_share_timeline():
             with localcontext() as context:
                 context.prec = 128
                 for packet in (sync, corrected, sync):
-                    actual = truth.synchronized_oi(packet, end - timedelta(hours=6), end)
+                    actual = observe(
+                        truth.synchronized_oi,
+                        packet,
+                        end - timedelta(hours=6),
+                        end,
+                        128,
+                        "ROUND_HALF_EVEN",
+                        None,
+                    )
                     isolated = truth._ASSESSMENT_INPUTS.set(None)
                     try:
-                        expected = original_synchronized(packet, end - timedelta(hours=6), end)
+                        expected = observe(
+                            original_synchronized,
+                            packet,
+                            end - timedelta(hours=6),
+                            end,
+                            128,
+                            "ROUND_HALF_EVEN",
+                            None,
+                        )
                     finally:
                         truth._ASSESSMENT_INPUTS.reset(isolated)
                     assert actual == expected

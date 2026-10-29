@@ -1383,9 +1383,7 @@ class MarketService:
                     if len(selected) and (not times or selected[0] > times[-1]) and np.all(
                         selected[1:] > selected[:-1]
                     ):
-                        full = np.fromiter(
-                            (columns["complete"][i] is True for i in indexes), dtype=np.bool_
-                        )
+                        full = np.fromiter((columns["complete"][i] is True for i in indexes), dtype=np.bool_)
                         known = np.asarray(columns["open_time_prec"], dtype=object)[indexes] == "BUCKET(60s)"
                         if kind == "price":
                             points = np.asarray([columns["value"][i] for i in indexes], dtype=np.float64)
@@ -3009,14 +3007,11 @@ class MarketService:
                 if not task.done():
                     task.cancel()
             await asyncio.gather(*collection_reads, return_exceptions=True)
-        for (name, (collection, field)), loaded in zip(COLLECTIONS.items(), collections, strict=True):
+        for (name, (_collection, field)), loaded in zip(COLLECTIONS.items(), collections, strict=True):
             window_rows, sampled, settled_history, settled_by_time, supply_rows = loaded
             values = []
             for iid in ids if name != "supply" else [None]:
-                if iid is None:
-                    rows = supply_rows
-                else:
-                    rows = list(window_rows[iid])
+                rows = supply_rows if iid is None else list(window_rows[iid])
                 if name == "oi" and recent_start > history_start:
                     rows = sampled[iid] + rows
                 if name == "funding":

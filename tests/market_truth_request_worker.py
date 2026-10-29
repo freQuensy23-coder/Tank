@@ -283,7 +283,9 @@ async def run(root, directory, fixtures, revision, reader):
             )
 
             def heads(*args):
+                started = perf_counter()
                 original_heads(*args)
+                phases["snapshot.heads"] = perf_counter() - started
                 clock["value"] = ASSEMBLED
 
             async def snapshot(*args, **kwargs):
@@ -338,6 +340,28 @@ async def run(root, directory, fixtures, revision, reader):
 
                 return measured
 
+            def measure_async(name, function):
+                @wraps(function)
+                async def measured(*args, **kwargs):
+                    started = perf_counter()
+                    try:
+                        return await function(*args, **kwargs)
+                    finally:
+                        phases[name] = phases.get(name, 0) + perf_counter() - started
+                        phase_calls[name] = phase_calls.get(name, 0) + 1
+
+                return measured
+
+            for name in (
+                "_ranged_read",
+                "_ranged_cached",
+                "_condition_kline_series",
+                "_condition_heads",
+                "_series_counts",
+                "_capture_metadata",
+            ):
+                setattr(market, name, measure_async("snapshot." + name, getattr(market, name)))
+
             for name in (
                 "relative_truth",
                 "derivatives_truth",
@@ -347,6 +371,10 @@ async def run(root, directory, fixtures, revision, reader):
                 "_price_groups",
                 "_oi_rows",
                 "_oi_stats",
+                "synchronized_oi",
+                "_oi_combined_timeline",
+                "_native_volume_arrays",
+                "_history_decimal_arrays",
                 "_synchronized_oi",
                 "_composite_history",
                 "_oi_history_returns",

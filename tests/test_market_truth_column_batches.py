@@ -68,13 +68,25 @@ async def test_bulk_series_matches_rows_including_exact_tiny_negative_and_partia
     if duplicate:
         rows.insert(1, dict(rows[0], c="1001.00", volume_native="4.000"))
     ch = ColumnClient(columns(rows))
+    canonical_rows = [
+        dict(
+            row,
+            volume_native=str(Decimal(row["volume_native"])) if row["volume_native"] is not None else None,
+        )
+        for row in rows
+    ]
     async with httpx.AsyncClient() as http:
         dense = MarketService(SimpleNamespace(clickhouse=ch), settings, http=http)
         reference = MarketService(repo, settings, http=http)
         dense._condition_heads = AsyncMock(return_value=["head"])
         options = dict(kind=kind, coverage_count=6, fixed_window=True)
         expected = await reference._condition_kline_series(
-            inst, T0, T0 + timedelta(minutes=6), T0 + timedelta(minutes=7), captured_rows=rows, **options
+            inst,
+            T0,
+            T0 + timedelta(minutes=6),
+            T0 + timedelta(minutes=7),
+            captured_rows=canonical_rows,
+            **options,
         )
         actual = await dense._condition_kline_series(
             inst, T0, T0 + timedelta(minutes=6), T0 + timedelta(minutes=7), **options
