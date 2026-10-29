@@ -31,7 +31,7 @@ def test_venue_windows_reuse_validated_columns_instead_of_repreparing_each_histo
                 assert result["oi_native_start"].as_tuple() == Decimal("100.00").as_tuple()
                 assert result["oi_usd_end"].as_tuple() == Decimal("300.000").as_tuple()
                 assert result["oi_native_chg_pct"] == result["oi_usd_chg_pct"] == 0.0
-                assert result["native_normal_range"] == result["usd_normal_range"] == (0.0, 0.0)
+                assert result["native_normal_range"] == result["usd_normal_range"] == [0.0, 0.0]
             assert not prepared_values
     finally:
         truth._ASSESSMENT_INPUTS.reset(token)
