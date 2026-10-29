@@ -164,11 +164,28 @@ async def test_a_dead_worker_process_is_replaced_on_the_next_call(worker_process
     assert result == truth.compute_market_truth(_spot_packet(), config={})
 
 
-def test_releasing_baselines_never_starts_a_worker_and_drops_only_the_named_tokens():
-    compute_workers.release_baselines(compute_workers.ASSESSMENT, ["T"])
-    assert compute_workers._executors == {}
-    compute_workers._baselines.update(T={"kept": 1}, U={"kept": 2})
-    compute_workers.executor(compute_workers.ASSESSMENT)
-    compute_workers.release_baselines(compute_workers.ASSESSMENT, ["T"])
-    compute_workers.executor(compute_workers.ASSESSMENT).submit(lambda: None).result(timeout=5)
-    assert compute_workers._baselines == {"U": {"kept": 2}}
+def test_idle_release_never_starts_a_worker_and_spares_baselines_in_use(monkeypatch):
+    clock = [100.0]
+    monkeypatch.setattr(compute_workers.time, "monotonic", lambda: clock[0])
+    compute_workers._used.update({(compute_workers.ASSESSMENT, "T"): 0.0})
+    compute_workers.release_idle_baselines(compute_workers.ASSESSMENT, 10)
+    assert compute_workers._executors == {} and compute_workers._used == {}
+    compute_workers._baselines.update(T={"kept": 1}, U={"kept": 2}, V={"kept": 3})
+    compute_workers._used.update(
+        {
+            (compute_workers.ASSESSMENT, "T"): 0.0,
+            (compute_workers.ASSESSMENT, "U"): 0.0,
+            (compute_workers.ASSESSMENT, "V"): 95.0,
+            (compute_workers.REACTION, "T"): 0.0,
+        }
+    )
+    compute_workers._active[(compute_workers.ASSESSMENT, "U")] = 1
+    pool = compute_workers.executor(compute_workers.ASSESSMENT)
+    compute_workers.release_idle_baselines(compute_workers.ASSESSMENT, 10)
+    pool.submit(lambda: None).result(timeout=5)
+    assert compute_workers._baselines == {"U": {"kept": 2}, "V": {"kept": 3}}
+    assert set(compute_workers._used) == {
+        (compute_workers.ASSESSMENT, "U"),
+        (compute_workers.ASSESSMENT, "V"),
+        (compute_workers.REACTION, "T"),
+    }

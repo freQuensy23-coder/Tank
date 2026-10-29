@@ -16,6 +16,7 @@ starts a new worker.
 import asyncio
 import multiprocessing
 import pickle
+import time
 from concurrent.futures import Executor, ProcessPoolExecutor
 from concurrent.futures.process import BrokenProcessPool
 
@@ -26,6 +27,8 @@ SLICE_ROWS = 5000
 
 _executors: dict[str, Executor] = {}
 _baselines: dict[str, dict] = {}
+_used: dict[tuple[str, str], float] = {}
+_active: dict[tuple[str, str], int] = {}
 
 
 def start_executor(lane: str) -> Executor:
@@ -90,14 +93,24 @@ def _release(baseline_keys: list[str]) -> None:
         _baselines.pop(key, None)
 
 
-def release_baselines(lane: str, baseline_keys: list[str]) -> None:
-    """Drop these baseline caches in the lane's worker, after its current computation. A
-    lane without a worker, or whose worker died, holds none to drop."""
+def release_idle_baselines(lane: str, idle_s: float) -> None:
+    """Drop, in the lane's worker after its current computation, the baseline caches whose
+    last computation ended more than idle_s ago and that no computation is using. Last use
+    is kept per process, so it survives a service generation replaced on SIGHUP. A lane
+    without a worker, or whose worker died, holds none to drop."""
+    now = time.monotonic()
+    idle = [
+        key
+        for (owner, key), used in list(_used.items())
+        if owner == lane and now - used > idle_s and not _active.get((owner, key))
+    ]
+    for key in idle:
+        del _used[(lane, key)]
     pool = _executors.get(lane)
-    if pool is None:
+    if not idle or pool is None:
         return
     try:
-        pool.submit(_release, list(baseline_keys))
+        pool.submit(_release, idle)
     except BrokenProcessPool:
         if _executors.get(lane) is pool:
             del _executors[lane]
@@ -108,12 +121,23 @@ async def compute_market_truth(lane: str, snapshot: dict, *, config: dict, basel
     """compute_market_truth(snapshot) in the lane's worker process. baseline_key names the
     baseline cache kept in that worker between calls (03 §5.7 history reuse); None uses a
     fresh cache, as compute_market_truth does without one."""
-    parts = await asyncio.to_thread(pack, snapshot)
-    pool = executor(lane)
+    use = (lane, baseline_key) if baseline_key is not None else None
+    if use is not None:
+        _active[use] = _active.get(use, 0) + 1
+        _used[use] = time.monotonic()
     try:
-        return await asyncio.wrap_future(pool.submit(_compute, parts, config, baseline_key))
-    except BrokenProcessPool:
-        if _executors.get(lane) is pool:
-            del _executors[lane]
-            pool.shutdown(wait=False, cancel_futures=True)
-        raise
+        parts = await asyncio.to_thread(pack, snapshot)
+        pool = executor(lane)
+        try:
+            return await asyncio.wrap_future(pool.submit(_compute, parts, config, baseline_key))
+        except BrokenProcessPool:
+            if _executors.get(lane) is pool:
+                del _executors[lane]
+                pool.shutdown(wait=False, cancel_futures=True)
+            raise
+    finally:
+        if use is not None:
+            _used[use] = time.monotonic()
+            _active[use] -= 1
+            if not _active[use]:
+                del _active[use]

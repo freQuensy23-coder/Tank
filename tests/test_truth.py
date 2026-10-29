@@ -2789,7 +2789,7 @@ async def test_idle_token_assessment_baselines_are_released(monkeypatch):
         return compute_workers._baselines
 
     clock = [1000.0]
-    monkeypatch.setattr(module.time, "monotonic", lambda: clock[0])
+    monkeypatch.setattr(compute_workers.time, "monotonic", lambda: clock[0])
 
     def fill(snapshot, *, config=None, baseline_cache=None):
         baseline_cache[("native-volume-index", snapshot["token_id"])] = {"head": snapshot["cutoff"]}
@@ -2825,4 +2825,11 @@ async def test_idle_token_assessment_baselines_are_released(monkeypatch):
     clock[0] += module.ASSESSMENT_BASELINE_IDLE_S + 1
     monkeypatch.setattr(module, "compute_condition_values", lambda *args, **kwargs: {})
     await service.condition_values(None, "C", "2026-10-16T13:02:00Z", [])
+    assert held() == {}
+    await service.assess(None, "D", "2026-10-16T13:03:00Z")
+    clock[0] += module.ASSESSMENT_BASELINE_IDLE_S + 1
+    replacement = module.MarketTruthService(
+        Repo(), SimpleNamespace(config_version="next", code_version="test"), Market()
+    )
+    await replacement.condition_values(None, "C", "2026-10-16T13:34:00Z", [])
     assert held() == {}

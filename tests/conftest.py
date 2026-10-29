@@ -297,6 +297,8 @@ def compute_lanes_in_threads(monkeypatch):
     monkeypatch.setattr(compute_workers, "start_executor", start_executor)
     monkeypatch.setattr(compute_workers, "_executors", {})
     monkeypatch.setattr(compute_workers, "_baselines", {})
+    monkeypatch.setattr(compute_workers, "_used", {})
+    monkeypatch.setattr(compute_workers, "_active", {})
     yield
     for pool in started:
         pool.shutdown(wait=False, cancel_futures=True)
