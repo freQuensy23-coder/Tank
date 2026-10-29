@@ -36,9 +36,7 @@ tank = "tank.cli:main"
 packages = ["src/tank"]
 [tool.hatch.build.targets.wheel.hooks.cython.options]
 src = "tank"
-compile_args = ["-O2", "-g0", "-fno-fast-math", "-ffp-contract=off"]
-env = [{ env = "CC", arg = "clang-16", platforms = "linux" }]
-cythonize_kwargs = { nthreads = 2 }
+compile_args = ["-O1", "-g0", "-ffp-contract=off"]
 directives = { language_level = 3, binding = true, annotation_typing = false, profile = false }
 [tool.hatch.build.targets.wheel.hooks.cython.options.files]
 targets = ["*/analysis/truth.py", "*/clickhouse_market.py", "*/util.py"]
