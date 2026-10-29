@@ -234,7 +234,7 @@ On the list: every official account of a universe project's organizations (proje
 | Stage | Capability | Result |
 |---|---|---|
 | 1 | Watch sources and market data | New items and market data, each with time and origin |
-| — | Filter and route | News, GitHub commits and non-organization posts that are not about crypto are kept but not analyzed (FR-D-06). An item that repeats or develops an event with news in the last 3 days joins that event's analysis, even while it is running (FR-E-02). Any other item starts a new analysis |
+| — | Filter and route | News, GitHub commits and non-organization posts that are not about crypto are kept but not analyzed (FR-D-06). An item that repeats or develops an event with news in the last 3 days joins that event's analysis, even while it is running (FR-E-02). A later status change of a venue's market for the same asset joins the analysis of the earlier change. Any other item starts a new analysis |
 | 2 | Work out what happened | One event per asserted development: facts and unverified claims with quotes, certainty, state, freshness and first-known time; an item with no new fact (opinion, price talk) is recorded and goes no further |
 | 3 | Grade the event | LOW / MATERIAL / MAJOR / STRUCTURAL SHOCK, with value-capture and timing. LOW stops. MATERIAL normally stops; a selected sourced lead may take the preliminary-publication and timed-review branch (FR-A-08–09) without stages 4–6 |
 | 4 | Map beneficiaries | Primary, secondary, competitor and loser tokens; least-repriced beneficiary |

@@ -163,6 +163,6 @@ async def sync_registry(repo: Repository, settings: Settings) -> dict[str, int]:
             for key in stale:
                 await repo.delete(table, key)
             for key, record in configured.items():
-                old = await repo.get(table, key)
-                await repo.put(table, key, {**(old or {}), **record})
+                existing = await repo.get(table, key)
+                await repo.put(table, key, {**(existing or {}), **record})
     return {table: len(configured) for table, configured in rows.items()}

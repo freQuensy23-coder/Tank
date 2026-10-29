@@ -112,9 +112,5 @@ strict_equality = true
 warn_return_any = true
 
 [[tool.mypy.overrides]]
-module = ["tank.storage"]
-disable_error_code = ["attr-defined"]
-
-[[tool.mypy.overrides]]
 module = ["tank.search"]
 disable_error_code = ["assignment", "override"]
