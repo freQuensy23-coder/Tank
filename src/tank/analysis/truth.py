@@ -4044,12 +4044,11 @@ def data_confidence(snapshot, spot, derivatives, end):
         venue = _venue(inst)
         market = _market(inst)
         if market == "SPOT" and venue in complete_venues:
-            required.extend(
-                (iid, venue, market, f, c)
-                for f, c in [("aggressor", "flow_bars"), ("depth", "books"), ("price", "klines")]
-            )
+            for field, collection in (("aggressor", "flow_bars"), ("depth", "books"), ("price", "klines")):
+                required.append((iid, venue, market, field, collection))
         elif market != "SPOT":
-            required.extend((iid, venue, market, f, c) for f, c in [("oi", "oi"), ("funding", "funding")])
+            for field, collection in (("oi", "oi"), ("funding", "funding")):
+                required.append((iid, venue, market, field, collection))
     cov = spot["coverage"]
     low = low or cov["n_complete"] < int(parameter("min_spot_venues", 2))
     if (
