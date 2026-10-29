@@ -107,6 +107,8 @@ async def full_request_comparison(tmp_path_factory, pytestconfig, request):
     archive(candidate, fixtures, ["tests/fixtures/market-truth-latency-full"])
     fixtures = fixtures / "tests/fixtures/market-truth-latency-full"
     manifest = stage_data(fixtures)
+    inputs = tmp_path / "retained-inputs"
+    archive(ORIGINAL, inputs, ["config"])
     contract_base = os.environ.get("MARKET_TRUTH_CONTRACT_BASE", ORIGINAL)
     if os.environ.get("GITHUB_EVENT_NAME") == "pull_request":
         parents = subprocess.check_output(
@@ -175,7 +177,7 @@ async def full_request_comparison(tmp_path_factory, pytestconfig, request):
                         {
                             "database_url": repo.database_url,
                             "clickhouse_database": repo.clickhouse.database,
-                            "input_config_dir": str(tmp_path / "original" / "config"),
+                            "input_config_dir": str(inputs / "config"),
                         }
                     ).encode()
                     + b"\n"

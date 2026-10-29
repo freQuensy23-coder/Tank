@@ -1,4 +1,5 @@
 import asyncio
+import gc
 import sys
 import threading
 from contextvars import ContextVar, copy_context
@@ -59,6 +60,38 @@ def test_postmeasurement_profile_preserves_callback_error_and_restores_profiler(
         profile_retained_call((copy_context(), retained_work, (), {}))
     assert caught.value is failure
     assert sys.getprofile() is None
+
+
+def test_diagnostic_profile_records_real_gc_and_restores_callbacks():
+    callbacks = list(gc.callbacks)
+    receipt = {}
+
+    def retained_work():
+        cycle = []
+        cycle.append(cycle)
+        del cycle
+        gc.collect()
+
+    rows = profile_retained_call((copy_context(), retained_work, (), {}), gc_receipt=receipt)
+    assert rows and receipt["collections"] >= 1 and receipt["collected"] >= 1
+    assert receipt["seconds"] >= 0
+    assert receipt["collections"] == sum(value["collections"] for value in receipt["by_generation"].values())
+    assert gc.callbacks == callbacks and sys.getprofile() is None
+
+
+def test_diagnostic_gc_restores_callbacks_when_the_kernel_raises():
+    callbacks = list(gc.callbacks)
+    receipt = {}
+    failure = ValueError("gc-profile-proof")
+
+    def retained_work():
+        gc.collect()
+        raise failure
+
+    with pytest.raises(ValueError) as caught:
+        profile_retained_call((copy_context(), retained_work, (), {}), gc_receipt=receipt)
+    assert caught.value is failure and receipt["collections"] >= 1
+    assert gc.callbacks == callbacks and sys.getprofile() is None
 
 
 async def test_async_postmeasurement_profile_retains_context_across_task_handoff():
