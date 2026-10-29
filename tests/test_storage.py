@@ -6,6 +6,7 @@ from datetime import timedelta
 import pytest
 import pytest_asyncio
 from deployment_postgres_helpers import deployment_repository
+from psycopg import sql
 
 from tank.storage import ImmutableRecordError, MemoryRepository, PostgresRepository
 from tank.util import iso, new_id, parse_time, utcnow
@@ -718,6 +719,115 @@ async def test_metadata_pages_omit_large_document_payload(repo):
     assert all(
         set(r) == {"event_id", "token_id", "revision", "missing"} and r["missing"] is None for r in rows
     )
+
+
+async def test_metadata_reads_and_filters_keep_the_market_truth_payload(repo):
+    prefix = new_id("lean")
+    truth = {"mta_id": prefix, "large_payload": "y" * 5000}
+    for n, token in enumerate(["test:A", "test:A", "test:B"]):
+        await repo.put(
+            "out.reaction_checkpoints",
+            f"{prefix}:{n}",
+            {"event_id": prefix, "token_id": token, "revision": n + 1, "market_truth": truth},
+            immutable=True,
+        )
+    filters = {"event_id": prefix, "token_id": "test:A"}
+    rows = [
+        r
+        async for r in repo.iter_metadata(
+            "out.reaction_checkpoints", ["revision", "market_truth"], filters=filters
+        )
+    ]
+    assert sorted(r["revision"] for r in rows) == [1, 2] and all(r["market_truth"] == truth for r in rows)
+    full = await repo.list("out.reaction_checkpoints", filters=filters)
+    assert sorted(r["revision"] for r in full) == [1, 2] and all(r["market_truth"] == truth for r in full)
+    by_truth = await repo.list(
+        "out.reaction_checkpoints", filters={"event_id": prefix, "market_truth": truth}
+    )
+    assert len(by_truth) == 3
+
+
+def _shared_blocks(node):
+    return (
+        node.get("Shared Hit Blocks", 0)
+        + node.get("Shared Read Blocks", 0)
+        + sum(_shared_blocks(child) for child in node.get("Plans", ()))
+    )
+
+
+@pytest.mark.integration
+@pytest.mark.postgres
+@pytest.mark.parametrize("repo", ["postgres"], indirect=True)
+async def test_reaction_checkpoint_metadata_pages_do_not_detoast_market_truth(repo):
+    """Hot scheduler loops page checkpoint metadata on every tick.
+
+    Production rows embed a ~1 MB Market Truth each; reading seven fields through
+    document -> field decompressed it seven times per row (7 s for 1,000 rows)."""
+    from tank.storage import metadata_page_sql
+
+    event_id = new_id("evt")
+    for n in range(12):
+        await repo.put(
+            "out.reaction_checkpoints",
+            f"{event_id}:{n}",
+            {
+                "event_id": event_id,
+                "token_id": f"test:T{n % 3}",
+                "checkpoint": "POST_1H",
+                "revision": n + 1,
+                "captured_at": "2026-10-28T10:00:00Z",
+                "window_end": "2026-10-28T09:00:00Z",
+                "anchor": {"ts": "2026-10-28T08:00:00Z"},
+                "market_truth": {"mta_id": f"mta-{n}", "blob": os.urandom(200_000).hex()},
+            },
+            immutable=True,
+        )
+    fields = ["event_id", "token_id", "anchor", "checkpoint", "revision", "captured_at", "window_end"]
+    rows = [
+        r
+        async for r in repo.iter_metadata("out.reaction_checkpoints", fields, filters={"event_id": event_id})
+    ]
+    assert len(rows) == 12 and rows[0]["anchor"] == {"ts": "2026-10-28T08:00:00Z"}
+    async with repo.transaction():
+        conn = repo._conn()
+        for filters in (None, {"event_id": event_id}, {"event_id": event_id, "token_id": "test:T1"}):
+            query, args = metadata_page_sql("out.reaction_checkpoints", fields, filters=filters)
+            explained = await conn.execute(sql.SQL("EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON) ") + query, args)
+            plan = (await explained.fetchone())["QUERY PLAN"][0]["Plan"]
+            assert _shared_blocks(plan) < 40, (filters, _shared_blocks(plan))
+
+
+@pytest.mark.integration
+@pytest.mark.postgres
+async def test_upgrade_gives_existing_reaction_checkpoints_their_metadata(postgres_template):
+    """Migration 010 fills the generated metadata column of append-only rows written before it."""
+    from psycopg.types.json import Jsonb
+
+    url = os.getenv("TANK_TEST_DATABASE_URL")
+    if not url:
+        pytest.skip("Real PostgreSQL requires TANK_TEST_DATABASE_URL pointing at an isolated test database")
+    legacy = {"event_id": "evt-legacy", "token_id": "test:T", "revision": 1, "market_truth": {"mta_id": "m"}}
+    async with postgres_template.repository(url, migrated=False) as repo:
+        await repo.migrate(target="009_agent_session_generations.sql")
+        async with repo.transaction():
+            await repo._conn().execute(
+                "INSERT INTO out.reaction_checkpoints(storage_key,document,immutable,event_id,token_id,revision)"
+                " VALUES ('legacy',%s,true,'evt-legacy','test:T',1)",
+                (Jsonb(legacy),),
+            )
+        await repo.migrate()
+        await repo.put("out.reaction_checkpoints", "fresh", {**legacy, "revision": 2}, immutable=True)
+        async with repo.transaction():
+            rows = await (
+                await repo._conn().execute(
+                    "SELECT document, metadata FROM out.reaction_checkpoints ORDER BY storage_key"
+                )
+            ).fetchall()
+        assert [row["metadata"] for row in rows] == [
+            {k: v for k, v in row["document"].items() if k != "market_truth"} for row in rows
+        ]
+        assert [row["metadata"]["revision"] for row in rows] == [2, 1]
+        assert await repo.get("out.reaction_checkpoints", "legacy") == legacy
 
 
 async def test_capture_tier_transitions_follow_market_retention(repo):

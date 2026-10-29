@@ -585,7 +585,7 @@ Fixture
 | `oi_obs`, `funding_obs`, `liq_obs`, `tickers_24h` | (`instrument_id`, ts) | ClickHouse, daily partitions. |
 | `trades` | (`instrument_id`, ts, `trade_id`) | ClickHouse, every print; 30 days ⚙ (MAJOR+ event days kept). |
 | `market_truth`, `decisions`, `contradictions`, `watch_conditions`, `calls` | ids | `market_truth` indexed by (`token_id`, `cutoff`); a decision carries its outlook. |
-| `alerts`, `deliveries`, `ops_notices`, `evidence_bundles`, `reaction_checkpoints`, `reviews` | ids | Append-only (UPDATE/DELETE rejected by trigger). |
+| `alerts`, `deliveries`, `ops_notices`, `evidence_bundles`, `reaction_checkpoints`, `reviews` | ids | Append-only (UPDATE/DELETE rejected by trigger). A reaction checkpoint embeds its whole Market Truth (about 1 MB); its stored generated column `metadata` is the row without `market_truth`, and every checkpoint metadata read and exact filter goes through it, so the scheduler's per-tick reads never decompress the Market Truth. |
 | `ops_cards` | (`chat_id`, `item_id`) | The "Tank Ops" card of each material and its Telegram message; mutable, edited as notices arrive (§7.6). |
 | `hot_tokens` | (`token_id`, `event_id`) | Hot set (§9); read on start to subscribe the hot tokens again. |
 | `jobs` | `job_id`; unique `idem_key` | The service's job queue (§3.8). |
