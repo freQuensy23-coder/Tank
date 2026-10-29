@@ -1,9 +1,13 @@
 """Configured publisher authority of a source item."""
 
+from collections.abc import Mapping, Sequence
+from typing import Any
 from urllib.parse import urlparse
 
 
-def _retained_publisher_organization(source, item, feeds):
+def _retained_publisher_organization(
+    source: Mapping[str, Any], item: Mapping[str, Any], feeds: Sequence[Mapping[str, Any]]
+) -> str | None:
     """Issuing agency or repository publisher; never a contributor's employer."""
     if len(feeds) != 1:
         return None
@@ -23,7 +27,7 @@ def _retained_publisher_organization(source, item, feeds):
         agencies = item.get("agencies")
         if not isinstance(agencies, list) or not agencies:
             return None
-        names = []
+        names: list[str] = []
         for agency in agencies:
             if not isinstance(agency, dict):
                 return None
@@ -57,7 +61,9 @@ def _retained_publisher_organization(source, item, feeds):
     return None
 
 
-def resolve_author_organization(source, item, accounts=None):
+def resolve_author_organization(
+    source: Mapping[str, Any], item: Mapping[str, Any], accounts: Mapping[str, Any] | None = None
+) -> Any:
     """The ingestion precedence; never infer authority from a display name."""
     if item.get("author_organization"):
         return item["author_organization"]

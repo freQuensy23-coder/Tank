@@ -1,10 +1,14 @@
 """Capture policies shared by ingestion, repair and operator reports."""
 
-from tank.time_precision import propagate_timestamp
+from collections.abc import Mapping
+from datetime import datetime
+from typing import Any
+
+from tank.time_precision import Timestamp, propagate_timestamp
 from tank.util import parse_time
 
 
-def _verified_t0(event):
+def _verified_t0(event: Mapping[str, Any]) -> Timestamp | None:
     value = event.get("event_time")
     precision = event.get("event_time_prec", event.get("event_time_precision"))
     if isinstance(value, dict):
@@ -16,13 +20,13 @@ def _verified_t0(event):
     return None
 
 
-def t0_pending(event, at):
+def t0_pending(event: Mapping[str, Any], at: Any) -> bool:
     """Whether `event` has a verified EXACT T0 that has not happened before `at`."""
     selected = _verified_t0(event)
     return selected is not None and parse_time(selected.value) >= parse_time(at)
 
 
-def event_anchor(event, at=None):
+def event_anchor(event: Mapping[str, Any], at: Any = None) -> dict[str, Any]:
     """The market anchor of `event`: verified EXACT T0, else T1, else known_to_us_at.
 
     With `at`, a T0 that is not strictly before `at` has not happened yet at that
@@ -40,7 +44,7 @@ def event_anchor(event, at=None):
     raise ValueError("Event has no verified exactT0,publicT1 orknown_to_us_at anchor")
 
 
-def capture_boundary_points(cutoff, anchor=None):
+def capture_boundary_points(cutoff: Any, anchor: Any = None) -> set[datetime]:
     """The exact window bounds a snapshot at `cutoff` (and its anchor) splits bars at:
     the cutoff, each analysis window's start and the window before it, and the anchor with
     its mirrored pre-anchor bound."""

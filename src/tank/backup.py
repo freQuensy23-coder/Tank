@@ -7,12 +7,13 @@ the production disk, 7 once it has its own disk).
 
 import re
 import shutil
+from os import PathLike
 from pathlib import Path
 
 SNAPSHOT = re.compile(r"tank-\d{4}-\d{2}-\d{2}")
 
 
-def prune_backup_snapshots(target, keep):
+def prune_backup_snapshots(target: str | PathLike[str], keep: int) -> list[str]:
     """Remove complete `tank-YYYY-MM-DD` snapshots older than the newest `keep`.
 
     Only directories that `Scheduler.maintenance` completed (`COMPLETE` present) count

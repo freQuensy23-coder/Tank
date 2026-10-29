@@ -7,7 +7,7 @@ Producers choose the correct constructor; repositories must not assign source pr
 import re
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
-from datetime import timedelta
+from datetime import datetime, timedelta
 from decimal import Decimal
 from typing import Any
 
@@ -91,7 +91,7 @@ class Timestamp:
     precision_reason: str | None = None
     bucket_anchor: str | None = None
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         if self.value is not None:
             parse_time(self.value)
         if self.precision is None:
@@ -226,7 +226,7 @@ def bucket_duration(precision: str) -> timedelta:
     return timedelta(microseconds=int(microseconds))
 
 
-def interval_bounds(timestamp: Timestamp):
+def interval_bounds(timestamp: Timestamp) -> tuple[datetime, datetime] | tuple[None, None]:
     """Preserve the provider's declared bucket edge; an unknown edge has no interval.
 
     Existing records without an edge retain their original start-bucket contract.
