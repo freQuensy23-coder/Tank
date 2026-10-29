@@ -521,6 +521,29 @@ def flow_reference(snapshot, iid, boundary):
     return dict(max(trades, key=_time), instrument_id=iid) if trades else None
 
 
+def _spot_window_source(rows, start, end):
+    inputs = _ASSESSMENT_INPUTS.get()
+    if inputs is None or type(rows) not in (list, tuple):
+        return rows
+    memo = inputs.setdefault("spot_window_sources", {})
+    hit = memo.get(id(rows))
+    if hit is None or hit[0] is not rows:
+        selected = []
+        for index, row in enumerate(rows):
+            if _market(row) == "SPOT":
+                at = _time(row)
+                if not isinstance(at, datetime):
+                    return rows
+                selected.append((at, index))
+        selected.sort()
+        hit = rows, [at for at, _ in selected], [index for _, index in selected]
+        memo[id(rows)] = hit
+    _, times, indexes = hit
+    lo = bisect_right(times, start - timedelta(minutes=1))
+    hi = bisect_left(times, end)
+    return [rows[index] for index in sorted(indexes[lo:hi])]
+
+
 @precise
 def spot_truth(
     rows,
@@ -538,7 +561,7 @@ def spot_truth(
     for i in instruments:
         if _market(i) == "SPOT":
             ids[_venue(i)].add(i["instrument_id"])
-    for r in rows:
+    for r in _spot_window_source(rows, start, end):
         if _market(r) == "SPOT" and _time(r) < end and _time(r) + timedelta(minutes=1) > start:
             ids[_venue(r)].add(r["instrument_id"])
             if start <= _time(r) and _time(r) + timedelta(minutes=1) <= end:
@@ -879,7 +902,7 @@ def _oi_split(rows):
 
 def _history_fixed_decimal_column(column):
     if len(column) < 256 or any(
-        value is not None and (type(value) is not str or len(value) > 160) for value in column
+        value is not None and (type(value) is not str or len(value) > 160 or "\x00" in value) for value in column
     ):
         return None
     raw = np.asarray(column, dtype=object)

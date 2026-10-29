@@ -378,13 +378,13 @@ async def run(root, directory, fixtures, revision, reader):
                 @wraps(function)
                 def measured(*args, **kwargs):
                     nonlocal diagnostic_call, diagnostic_seconds
-                    context = copy_context() if name == "derivatives_truth" else None
+                    context = copy_context()
                     started = perf_counter()
                     try:
                         return function(*args, **kwargs)
                     finally:
                         elapsed = perf_counter() - started
-                        if context is not None and elapsed > diagnostic_seconds:
+                        if elapsed > diagnostic_seconds:
                             diagnostic_call = (context, function, args, kwargs)
                             diagnostic_seconds = elapsed
                         phases[name] = phases.get(name, 0) + elapsed
@@ -403,6 +403,9 @@ async def run(root, directory, fixtures, revision, reader):
                         phase_calls[name] = phase_calls.get(name, 0) + 1
 
                 return measured
+
+            for name, handler in tuple(runtime.handlers.items()):
+                runtime.handlers[name] = measure_async(f"request.{name}", handler)
 
             for name in (
                 "_ranged_read",
@@ -465,6 +468,7 @@ async def run(root, directory, fixtures, revision, reader):
                     emit(
                         {
                             "kind": "post_measurement_profile",
+                            "stage": diagnostic_call[1].__name__,
                             "rows": profile_retained_call(diagnostic_call),
                             "snapshot": await profile_retained_async(snapshot_call),
                         }

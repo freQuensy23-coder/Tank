@@ -8,12 +8,8 @@ from tank.util import iso, parse_time
 
 
 def test_synchronized_history_reuses_guarded_full_cohort_keys_across_assessments(monkeypatch):
-    rows, first = cohort()
-    end, start = first + timedelta(hours=79), first + timedelta(hours=40)
-    sync = [
-        (dict(instrument_id=f"i{index}", venue=venue), list(rows), "BASE")
-        for index, venue in enumerate(("binance", "bybit", "okx"))
-    ]
+    sync, end = cohort()
+    start = end - timedelta(hours=12)
     original = truth._stored_usd
     converted = []
 
