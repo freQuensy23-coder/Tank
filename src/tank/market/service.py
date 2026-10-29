@@ -3154,11 +3154,6 @@ class MarketService:
         result["instruments"] = instruments
         result["tokens"] = list(self.tokens.values())
         result["sector_baskets"] = deepcopy(self.sector_baskets)
-        gaps = await self._shared_call(
-            ("gaps", token_id),
-            lambda: self.repo.list("mkt.capture_gaps", filters={"token_id": token_id}, limit=100000),
-        )
-        result["gaps"] = [g for g in gaps if parse_time(g["start"]) <= cutoff_dt]
         runs = await self._shared_call(
             ("runs", token_id),
             lambda: self.repo.list("mkt.backfill_runs", filters={"token_id": token_id}, limit=10000),

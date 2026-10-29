@@ -1850,6 +1850,8 @@ Read with `TANK_DB_URL`. These hold no exchange series or prints.
 | `token_id` | `text` |
 | `semantic_fingerprint` | `text` |
 
+Each row is one append-only report by tank-capture that a collection failed or a range could not be proven at `observed_at` (`kind`, `reason`, `start`–`end`). Rows are never updated, so `status` is always `OPEN` and the table is not a list of outstanding holes: a later repair shows on the data itself (`complete` and `gap_reason` of `mkt.flow_bars_1m`, `complete` of `mkt.klines_1m`, `status` of `mkt.backfill_runs`). Rows older than 90 days are deleted, except days overlapping a MAJOR+ event window. Market Truth does not read this table. Query it by `token_id` with an `observed_at` range; there is no `instrument_id` index.
+
 ## mkt.backfill_runs
 
 | Column | PostgreSQL type |

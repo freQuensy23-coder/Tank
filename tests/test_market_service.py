@@ -124,6 +124,44 @@ async def test_snapshot_exact_cutoff_anchor_and_benchmark_history(setup):
 
 
 @pytest.mark.asyncio
+async def test_snapshot_does_not_read_capture_gap_history(setup):
+    repo, settings, inst = setup
+    http = httpx.AsyncClient()
+    service = MarketService(repo, settings, http=http)
+    for n in range(3):
+        await repo.put(
+            "mkt.capture_gaps",
+            f"GAP-{n}",
+            {
+                "gap_id": f"GAP-{n}",
+                "instrument_id": inst["instrument_id"],
+                "token_id": inst["token_id"],
+                "kind": "STREAM",
+                "reason": "STREAM_DISCONNECTED",
+                "status": "OPEN",
+                "start": "2026-06-16T23:00:00Z",
+                "end": "2026-06-16T23:01:00Z",
+                "observed_at": "2026-06-16T23:01:00Z",
+            },
+        )
+    reads = []
+    original_list = repo.list
+
+    async def list_spy(collection, *args, **kwargs):
+        reads.append(collection)
+        return await original_list(collection, *args, **kwargs)
+
+    repo.list = list_spy
+    snapshot = await service.snapshot(
+        inst["token_id"], "2026-06-17T00:02:00Z", {"ts": "2026-06-16T23:00:00Z", "type": "T0"}
+    )
+    await http.aclose()
+    assert "mkt.backfill_runs" in reads
+    assert "mkt.capture_gaps" not in reads
+    assert "gaps" not in snapshot
+
+
+@pytest.mark.asyncio
 async def test_fundamentals_use_registered_slugs_only_and_partial_holders_revenue(setup):
     from tank.market.supply import SupplyCapture
 
