@@ -212,9 +212,12 @@ class Scheduler:
     async def ensure_reactions(self, event, *, now=None):
         """Open the pack outside the analyst transaction; only POST windows are jobs.
 
-        PRE windows start as soon as the MAJOR+ assessment commits. Their immutable
-        rows are the restart checkpoint: a tick resumes any missing capture, while
-        a named task prevents overlapping attempts during normal operation.
+        PRE windows start as soon as the MAJOR+ assessment commits, or, for a
+        scheduled event whose anchor is still ahead, once the anchor has passed:
+        a PRE window ends at the anchor and is never measured before it ends.
+        Their immutable rows are the restart checkpoint: a tick resumes any missing
+        capture, while a named task prevents overlapping attempts during normal
+        operation.
         """
         now = now or utcnow()
         assessment = await self.latest_assessment(event)
@@ -223,14 +226,38 @@ class Scheduler:
         anchor = self.anchor(event)
         anchor_stamp = propagate_timestamp(anchor, "ts", precision_aliases=("precision",))
         tokens = await self.analysis_tokens(event)
-        captured = {
-            (row["token_id"], row["checkpoint"])
-            async for row in self.repo.iter_metadata(
-                "out.reaction_checkpoints",
-                ["token_id", "checkpoint"],
-                filters={"event_id": event["event_id"]},
-            )
-        }
+        latest = {}
+        async for row in self.repo.iter_metadata(
+            "out.reaction_checkpoints",
+            ["token_id", "checkpoint", "revision", "captured_at", "window_end"],
+            filters={"event_id": event["event_id"]},
+        ):
+            key = (row["token_id"], row["checkpoint"])
+            if key not in latest or int(row.get("revision") or 1) > int(latest[key].get("revision") or 1):
+                latest[key] = row
+        captured = set(latest)
+        for (token, label), row in sorted(latest.items()):
+            if (
+                row.get("captured_at")
+                and row.get("window_end")
+                and parse_time(row["captured_at"]) < parse_time(row["window_end"]) <= now
+            ):
+                change = f"early:{event['event_id']}:{token}:{label}:{int(row.get('revision') or 1)}"
+                await self.repo.enqueue(
+                    "REACTION_CAPTURE",
+                    {
+                        "event_id": event["event_id"],
+                        "token_id": token,
+                        "checkpoint": label,
+                        "automatic_revision": True,
+                        "change_id": change,
+                        "reason": "Captured before its window ended at " + iso(parse_time(row["window_end"])),
+                    },
+                    "reaction-" + change,
+                    priority=2,
+                    max_attempts=5,
+                    expires_at=offset_schedule(collection_clock(now), timedelta(hours=6)),
+                )
         gaps = {
             (row["state"]["token_id"], row["state"]["checkpoint"])
             async for row in self.repo.iter_all(
@@ -299,7 +326,7 @@ class Scheduler:
                         expires_at=expiry_stamp,
                         max_attempts=5,
                     )
-            if missing_pre and self.market is not None:
+            if missing_pre and self.market is not None and parse_time(anchor_stamp.value) <= now:
 
                 async def capture_pre(payloads=missing_pre):
 
@@ -948,6 +975,8 @@ class Scheduler:
                     latest[label] = row
             for label, row in latest.items():
                 if parse_time(changed_at) < parse_time(row["captured_at"]):
+                    continue
+                if row.get("window_end") and parse_time(row["window_end"]) > now:
                     continue
                 if parse_time(change["anchor"]) != parse_time(row["anchor"]["ts"]):
                     continue

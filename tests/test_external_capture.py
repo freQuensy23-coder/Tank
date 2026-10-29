@@ -73,6 +73,36 @@ async def finish(repo, collection, key, **fields):
     await update(repo, collection, key, **collection_clock(utcnow()).fields("finished_at"), **fields)
 
 
+async def test_escalation_before_a_scheduled_t0_requests_no_future_capture(settings):
+    """An obligation at a future T0 made tank-capture write a day of placeholder flow
+    bars ahead of now; before T0 the obligation is anchored at T1, while the token
+    stays hot until 72 h after the scheduled time."""
+    repo = MemoryRepository()
+    service = MarketService(repo, settings)
+    service._stop = asyncio.Event()
+    now = utcnow().replace(microsecond=0)
+    public_at, event_time = iso(now - timedelta(hours=1)), iso(now + timedelta(days=2))
+    await repo.put(
+        "evt.events",
+        "EVT-SCHEDULED",
+        {
+            "event_id": "EVT-SCHEDULED",
+            "event_time": event_time,
+            "event_time_prec": "EXACT",
+            "state_verified": True,
+            "public_at": public_at,
+            "public_at_prec": "EXACT",
+        },
+    )
+    await service.escalate("EVT-SCHEDULED", [TOKEN])
+    (hot,) = await repo.list("mkt.hot_tokens")
+    assert parse_time(hot["since"]) == parse_time(public_at)
+    assert parse_time(hot["expires_at"]) == parse_time(event_time) + timedelta(hours=72)
+    (run,) = await repo.list("mkt.backfill_runs")
+    assert parse_time(run["anchor"]) == parse_time(public_at) and run["anchor_prec"] == "EXACT"
+    assert (await service.capture_readiness("EVT-SCHEDULED", TOKEN, anchor=public_at))["status"] == "PENDING"
+
+
 async def test_external_escalation_writes_the_obligation_and_starts_nothing(settings):
     repo = MemoryRepository()
     service = MarketService(repo, settings)

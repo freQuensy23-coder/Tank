@@ -7,7 +7,7 @@ from tank.event_tools import EventToolService, freshness, validate_schema
 from tank.settings import Settings
 from tank.storage import MemoryRepository
 from tank.telegram_rich import score_summary
-from tank.util import iso, utcnow
+from tank.util import iso, parse_time, utcnow
 
 
 @pytest.fixture
@@ -4948,6 +4948,68 @@ async def test_least_repriced_ranks_all_credible_tokens_on_partial_refresh(servi
         await asyncio.gather(task, return_exceptions=True)
     mapping = await service.repo.get("evt.beneficiary_maps", f"{eid}:1")
     assert mapping["least_repriced_edge"] == "edge-B"
+
+
+async def test_market_truth_before_a_scheduled_t0_escalates_at_t1_then_again_at_t0(
+    service, truth_job_enqueued
+):
+    """Before a scheduled T0 the pre-event capture is requested at T1 under its own key,
+    so once T0 has passed a later call requests the capture the T0 anchor needs."""
+    import asyncio
+
+    eid = "scheduled-event"
+    now = utcnow().replace(second=0, microsecond=0)
+    public_at, event_time = iso(now - timedelta(hours=1)), iso(now + timedelta(minutes=30))
+    await service.repo.put(
+        "evt.events",
+        eid,
+        {
+            "event_id": eid,
+            "current_ems_id": "scheduled-ems",
+            "event_time": event_time,
+            "event_time_prec": "EXACT",
+            "state_verified": True,
+            "public_at": public_at,
+            "public_at_prec": "EXACT",
+        },
+    )
+    await service.repo.put(
+        "evt.ems_assessments", "scheduled-ems", {"ems_id": "scheduled-ems", "event_id": eid, "class": "MAJOR"}
+    )
+    await service.repo.put(
+        "evt.beneficiary_maps", f"{eid}:1", {"event_id": eid, "map_version": 1, "analysis_set": ["A"]}
+    )
+
+    async def call(cutoff):
+        truth_job_enqueued.clear()
+        task = asyncio.create_task(
+            service.dispatch("get_market_truth", {"event_id": eid, "token_ids": ["A"], "cutoff": cutoff}, {})
+        )
+        try:
+            async with asyncio.timeout(2):
+                await truth_job_enqueued.wait()
+                for kind in ("ESCALATE_TOKENS", "RUN_MARKET_TRUTH"):
+                    job = await service.repo.claim_job()
+                    assert job is not None and job["type"] == kind
+                    if kind == "ESCALATE_TOKENS":
+                        escalation = job
+                    else:
+                        stored = await service.repo.get("ops.jobs", job["job_id"])
+                        stored["result"] = {"mta_id": "mta-" + cutoff, "event_id": eid, "token_id": "A"}
+                        await service.repo.put("ops.jobs", job["job_id"], stored)
+                    await service.repo.finish_job(job["job_id"])
+                await task
+        finally:
+            if not task.done():
+                task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
+        return escalation
+
+    before = await call(iso(now))
+    assert before["idem_key"] == "A:" + eid + ":PRE_T0"
+    assert parse_time(before["payload"]["anchor"]) == parse_time(public_at)
+    after = await call(iso(now + timedelta(hours=1)))
+    assert after["idem_key"] == "A:" + eid and "anchor" not in after["payload"]
 
 
 async def test_list_open_events_skips_events_whose_session_failed(service):

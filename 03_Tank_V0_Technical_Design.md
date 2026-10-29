@@ -1063,7 +1063,7 @@ PRELIMINARY delivery leaves a MATERIAL event TRACKED and does not set ordinary f
 | FILTER_ITEM | New item of a filtered source (§3.1) | 1 (deferrable: 2) | `item_id` | 10 s | 2 | 6 h |
 | ROUTE_ITEM | New item of another source, or FILTER_ITEM found it relevant | 1 (deferrable: 2) | `item_id` | 20 s | 2 | 6 h |
 | AGENT_MESSAGE | ROUTE_ITEM, EVAL_CONDITIONS, MILESTONE_CHECK, call expiry | 1 (deferrable: 2) | `session_or_item:message` | 10 s | 3 | 24 h |
-| ESCALATE_TOKENS | `get_market_truth` | 0 | `token:event_id` | 10 s | 3 | — |
+| ESCALATE_TOKENS | `get_market_truth` | 0 | `token:event_id`; `token:event_id:PRE_T0` while a verified T0 is not before the cutoff (§5.7) | 10 s | 3 | — |
 | RUN_MARKET_TRUTH | `get_market_truth` | 1 | `event:token:cutoff_minute` | 90 s | 2 | 30 min |
 | DELIVER | `publish_card` or ops notice | 0 | `alert:version:channel` or `notice:notice_id` | 10 s | 5 | 24 h |
 | EVAL_CONDITIONS | Scheduler, every minute | 2 | `batch:minute` | 20 s | 2 | 5 min |
@@ -1379,7 +1379,7 @@ A synchronized composite includes only venues whose OI observations fall within 
 ### 5.7 Relative price, repricing and market context
 
 - **Reference venue:** the complete spot venue with the largest trailing-24h covered volume.
-- **Anchor:** T0 when exact and verified, else T1, else `known_to_us_at`; the type is recorded. Anchor price = last reference-venue trade before the anchor.
+- **Anchor:** T0 when exact, verified and before the cutoff, else T1, else `known_to_us_at`; the type is recorded. A scheduled event (T0 still ahead of the cutoff) is therefore assessed from its announcement until T0 has passed, and never fails on a future anchor. Anchor price = last reference-venue trade before the anchor.
 - **Beta:** OLS of 1h log returns versus BTC (and ETH) over the stored history (up to 90 days, at least 7, §0), with the Blume adjustment `β_s = (2/3)·β + 1/3` (the standard correction toward 1); β = 1 with a flag when history is insufficient.
 - **Per window:** `r_raw`; `r_btc_adj = r − β_btc·r_btc`; `r_eth_adj` likewise; `r_sector_adj = r − mean(r of sector constituents except the token)` using the baskets of 01 §4.1 (DEX & execution: UNI, CAKE, AERO, CRV, 1INCH, ZRX, COW; Lending & credit: AAVE, MORPHO, EUL; L1/settlement: AVAX, NEAR, XPL; Perp DEX: HYPE, LIT; RWA: ONDO; Interoperability: ZRO, QNT; Synthetic dollar: ENA); a basket with < 2 tradable constituents other than the token is compared with the DeFi composite (DEX & execution, Lending & credit, Perp DEX, RWA, Interoperability, Synthetic dollar); WLD gets `r_sector_adj` = n/a (NOT_APPLICABLE); `pctile` = percentile of `r_btc_adj` among the token's stored windows of the same length — the move relative to its own volatility (01 FR-T-09).
 - **Event window** runs from the anchor to the cutoff and is kept separate from rolling 24h statistics.
@@ -1655,18 +1655,18 @@ ITEM_PROGRESS and ENTRY_ERRORS are not written in replay or when `ops_progress_e
 ## 8. Event Reaction Window Pack
 
 1. **Scope and start:** every MAJOR/STRUCTURAL event, opened by `set_assessment` when it returns that class; the checkpoints below are plain code (REACTION_CAPTURE jobs created by the scheduler, run by the job workers); tokens of its analysis set plus BTC and ETH benchmarks.
-2. **Anchor:** T0 if EXACT and verified, else T1, else `known_to_us_at`; the type is stored.
-3. **Pre-event windows** (−24h, −4h, −1h) are computed at creation from base-tier data, hot data if present, and archive files when needed. Spot flow comes from trades (hot data, REST backfill or archive aggTrades); a venue and window without trades shows n/a with the reason.
+2. **Anchor:** T0 if EXACT and verified, else T1, else `known_to_us_at`; the type is stored. A scheduled T0 still in the future stays the anchor: the pack measures the reaction to the event itself.
+3. **Pre-event windows** (−24h, −4h, −1h) end at the anchor and are computed at creation, or, when the anchor is still ahead, at the first scheduler tick after it has passed — never over minutes that have not happened. They use base-tier data, hot data if present, and archive files when needed. Spot flow comes from trades (hot data, REST backfill or archive aggTrades); a venue and window without trades shows n/a with the reason.
 4. **Post-event checkpoints** (+15m, +1h, +4h, +24h, +72h) are scheduled jobs. Checkpoints already in the past at creation are captured immediately with `retro = true`.
 5. **Each checkpoint** stores cumulative values from the anchor: raw and BTC-adjusted return, its percentile (§5.7), composite spot CVD with method and coverage, native OI change and class, funding per venue (settled and estimate), liquidations with coverage.
-6. **Immutability:** a checkpoint is frozen when captured; late data creates a new revision with a reason, never an overwrite.
+6. **Immutability:** a checkpoint is frozen when captured; late data creates a new revision with a reason, never an overwrite. A window that has not ended is never revised; a checkpoint captured before its window ended gets one automatic revision once it has.
 
 ---
 
 ## 9. Adaptive polling
 
 - **Token tier:** BASE → HOT when the agent calls `get_market_truth` for a MAJOR+ event → BASE once that event's +72h checkpoint is captured and no open call or armed condition exists. The hot set is capped at ⚙15 tokens; the lowest-priority token (lowest EMS class, then the oldest event) is demoted.
-- **Hand-off:** ESCALATE_TOKENS (a job of `get_market_truth`) has `market` write the token to `mkt.hot_tokens` and a pre-event backfill obligation to `mkt.backfill_runs`. tank-capture follows `mkt.hot_tokens`: it subscribes the token on every covered market (02 §4.10), fills the pre-event windows (§5.1) and marks the obligation done or failed. The scheduler applies the demotion rule every minute by removing the token from `mkt.hot_tokens`, and tank-capture unsubscribes it. After a restart, tank-capture subscribes every token in `mkt.hot_tokens` again and Tank re-creates any missing obligation.
+- **Hand-off:** ESCALATE_TOKENS (a job of `get_market_truth`) has `market` write the token to `mkt.hot_tokens` and a pre-event backfill obligation to `mkt.backfill_runs` at the Market Truth anchor of the call's cutoff (§5.7), so an obligation never covers future minutes; the hot expiry runs from the event's own anchor, keeping a scheduled event's tokens hot through T0. tank-capture follows `mkt.hot_tokens`: it subscribes the token on every covered market (02 §4.10), fills the pre-event windows (§5.1) and marks the obligation done or failed. The scheduler applies the demotion rule every minute by removing the token from `mkt.hot_tokens`, and tank-capture unsubscribes it. After a restart, tank-capture subscribes every token in `mkt.hot_tokens` again and Tank re-creates any missing obligation.
 - **Source cadence:** NORMAL ↔ ESCALATED (15 s) with an expiry per trigger (01 FR-D-02): set by `set_assessment` when the final class is MAJOR+ (2 h) and by `schedule_milestone` (the milestone window); the scheduler then runs that source's loop every 15 s. Each source has a token-bucket budget derived from its limits; escalation never exceeds it, and a rate-limit response triggers backoff.
 
 ---

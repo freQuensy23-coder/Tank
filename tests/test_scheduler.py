@@ -1090,6 +1090,128 @@ async def test_reaction_creation_registers_only_five_post_jobs_and_starts_pre_wi
 
 
 @pytest.mark.asyncio
+async def test_scheduled_event_pre_windows_wait_until_their_anchor_has_passed():
+    """A PRE window ends at the anchor. For a scheduled T0 two days ahead it was measured
+    at once over future minutes and then revised every half hour; it now waits for T0,
+    while POST checkpoints are still registered for their due times."""
+    import asyncio
+
+    repo = MemoryRepository()
+    now = utcnow().replace(microsecond=0)
+    event_time = now + timedelta(days=2)
+    event = {
+        "event_id": "scheduled-major",
+        "event_time": iso(event_time),
+        "event_time_prec": "EXACT",
+        "state_verified": True,
+        "public_at": iso(now - timedelta(hours=1)),
+        "public_at_prec": "EXACT",
+    }
+    scheduler = Scheduler(repo, SimpleNamespace(), object(), None)
+    scheduler.latest_assessment = AsyncMock(return_value={"class": "MAJOR"})
+    scheduler.analysis_tokens = AsyncMock(return_value={"token:T"})
+    captured = []
+
+    async def capture(payload, *, wait_for_slot=False):
+        captured.append(payload)
+
+    scheduler.reaction_capture = capture
+    try:
+        await scheduler.ensure_reactions(event, now=now)
+        await asyncio.gather(*scheduler.background.values())
+        assert captured == []
+        jobs = await repo.list("ops.jobs", filters={"type": "REACTION_CAPTURE"})
+        assert len(jobs) == 5 and all(job["payload"]["anchor"]["type"] == "T0" for job in jobs)
+        await scheduler.ensure_reactions(event, now=event_time + timedelta(minutes=1))
+        await asyncio.gather(*scheduler.background.values())
+        assert [p["checkpoint"] for p in captured] == ["PRE_24H", "PRE_4H", "PRE_1H"]
+        assert all(p["anchor"]["ts"] == iso(event_time) for p in captured)
+    finally:
+        await scheduler.close()
+
+
+@pytest.mark.asyncio
+async def test_pre_checkpoint_captured_before_its_window_ended_is_revised_once_after_it():
+    """Rows written before this rule have PRE windows measured before they ended; once the
+    window has ended each gets one automatic revision with an explicit reason."""
+    repo = MemoryRepository()
+    now = utcnow().replace(microsecond=0)
+    anchor = now - timedelta(hours=1)
+    event = {
+        "event_id": "early-major",
+        "event_time": iso(anchor),
+        "event_time_prec": "EXACT",
+        "state_verified": True,
+    }
+    for label, captured_at, revision in (
+        ("PRE_1H", anchor - timedelta(days=2), 2),
+        ("PRE_4H", anchor + timedelta(minutes=5), 1),
+    ):
+        await repo.put(
+            "out.reaction_checkpoints",
+            f"early-major:token:T:{label}:{revision}",
+            {
+                "event_id": "early-major",
+                "token_id": "token:T",
+                "checkpoint": label,
+                "revision": revision,
+                "captured_at": iso(captured_at),
+                "window_end": iso(anchor),
+                "anchor": {"type": "T0", "ts": iso(anchor)},
+            },
+        )
+    scheduler = Scheduler(repo, SimpleNamespace(), None, None)
+    scheduler.latest_assessment = AsyncMock(return_value={"class": "MAJOR"})
+    scheduler.analysis_tokens = AsyncMock(return_value={"token:T"})
+    try:
+        for _ in range(2):
+            await scheduler.ensure_reactions(event, now=now)
+        revisions = [
+            job
+            for job in await repo.list("ops.jobs", filters={"type": "REACTION_CAPTURE"})
+            if job["payload"].get("automatic_revision")
+        ]
+        assert [job["payload"]["checkpoint"] for job in revisions] == ["PRE_1H"]
+        assert revisions[0]["idem_key"] == "reaction-early:early-major:token:T:PRE_1H:2"
+        assert revisions[0]["payload"]["reason"] == "Captured before its window ended at " + iso(anchor)
+    finally:
+        await scheduler.close()
+
+
+@pytest.mark.asyncio
+async def test_late_data_does_not_revise_a_window_that_has_not_ended():
+    repo = MemoryRepository()
+    now = utcnow().replace(microsecond=0)
+    anchor = now + timedelta(days=2)
+    await repo.put(
+        "out.reaction_checkpoints",
+        "e:t:PRE_1H",
+        {
+            "event_id": "e",
+            "token_id": "t",
+            "checkpoint": "PRE_1H",
+            "revision": 1,
+            "captured_at": iso(now - timedelta(hours=1)),
+            "window_end": iso(anchor),
+            "anchor": {"ts": iso(anchor)},
+        },
+    )
+
+    class Market:
+        async def capture_changes(self, since, end):
+            yield {
+                "change_id": "CAP-LIVE-1",
+                "event_id": "e",
+                "token_id": "t",
+                "anchor": iso(anchor),
+                "observed_at": iso(now),
+            }
+
+    await Scheduler(repo, SimpleNamespace(), Market(), None).detect_late_data(now)
+    assert await repo.list("ops.jobs", filters={"type": "REACTION_CAPTURE"}) == []
+
+
+@pytest.mark.asyncio
 async def test_reaction_pre_capture_restart_resumes_only_missing_immutable_rows(monkeypatch):
     import asyncio
 

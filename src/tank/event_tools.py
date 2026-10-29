@@ -2329,13 +2329,17 @@ class EventToolService:
             bucket_size=(a["cutoff_bucket_size_s"], "s") if a.get("cutoff_bucket_size_s") else None,
         )
         cutoff_minute = iso(parse_time(cutoff).replace(second=0, microsecond=0))
+        from tank.market.capture import event_anchor, t0_pending
+
+        pre_t0 = t0_pending(event, cutoff_stamp.value)
+        capture = {"anchor": event_anchor(event, at=cutoff_stamp.value)["ts"]} if pre_t0 else {}
         async with self.repo.transaction():
             jobs = []
             for token in a["token_ids"]:
                 escalation = await self.repo.enqueue(
                     "ESCALATE_TOKENS",
-                    {"event_id": eid, "token_id": token, "tokens": [token]},
-                    f"{token}:{eid}",
+                    {"event_id": eid, "token_id": token, "tokens": [token], **capture},
+                    f"{token}:{eid}" + (":PRE_T0" if pre_t0 else ""),
                     priority=0,
                     max_attempts=3,
                 )
