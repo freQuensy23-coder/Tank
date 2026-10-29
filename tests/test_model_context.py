@@ -236,6 +236,38 @@ async def test_unknown_ids_are_refused_with_the_lookup_query(context, tool, argu
     assert ("Look it up with read-only SQL" in str(refused.value)) is not registry_key
 
 
+@pytest.mark.parametrize(
+    "tool,arguments,key",
+    [
+        ("list_open_events", {"token_id": "cow-protocol:COW"}, "cow:COW"),
+        ("list_open_events", {"token_id": "worldcoin:WLD"}, "world:WLD"),
+        ("get_registry", {"entity_id": "cow-protocol"}, "cow"),
+        ("get_token_facts", {"token_id": "BTC"}, "bitcoin:BTC"),
+    ],
+)
+async def test_a_guessed_registry_key_is_refused_with_the_key_it_names(context, tool, arguments, key):
+    repo, settings, session, _ = context
+    with pytest.raises(ValueError, match="not a registry") as refused:
+        await ModelContext(repo, settings, session).arguments(tool, arguments)
+    guess = next(iter(arguments.values()))
+    assert f"The registry key for {guess!r} is {key}; pass {key}." in str(refused.value)
+
+
+@pytest.mark.parametrize(
+    "arguments", [{"token_id": "ripple:XRP"}, {"entity_id": "solana"}, {"token_id": "binance:BNB"}]
+)
+async def test_a_key_outside_the_registry_is_refused_with_the_name_lookup(context, arguments):
+    repo, settings, session, _ = context
+    for tool in ("list_open_events", "get_registry"):
+        with pytest.raises(ValueError, match="not a registry") as refused:
+            await ModelContext(repo, settings, session).arguments(tool, arguments)
+        assert "is not in the registry" in str(refused.value)
+        assert "pass its name or ticker in name instead" in str(refused.value)
+    assert await ModelContext(repo, settings, session).arguments("list_open_events", {"name": "Ripple"}) == {
+        "name": "Ripple"
+    }
+
+
 async def test_an_id_of_the_wrong_kind_is_named_as_such(context):
     repo, settings, session, item = context
     event = await bound_event(repo, session)

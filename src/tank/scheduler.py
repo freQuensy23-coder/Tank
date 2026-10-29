@@ -1654,11 +1654,18 @@ class Scheduler:
             if await self.market.hot_protected(row["event_id"], row["token_id"], now=now):
                 continue
             expired = row.get("expires_at") is not None and parse_time(row["expires_at"]) <= now
-            if not expired and not await self.repo.list(
-                "out.reaction_checkpoints",
-                filters={"event_id": row["event_id"], "token_id": row["token_id"], "checkpoint": "POST_72H"},
-                limit=1,
-            ):
+            if not expired and not [
+                checkpoint
+                async for checkpoint in self.repo.iter_metadata(
+                    "out.reaction_checkpoints",
+                    ["revision"],
+                    filters={
+                        "event_id": row["event_id"],
+                        "token_id": row["token_id"],
+                        "checkpoint": "POST_72H",
+                    },
+                )
+            ]:
                 continue
             await self.market.demote(row["token_id"], row["event_id"])
         hot = [row async for row in self.repo.iter_all("mkt.hot_tokens")]
@@ -2158,8 +2165,10 @@ class Scheduler:
             )
             checkpoints = [
                 row
-                async for row in self.repo.iter_all(
-                    "out.reaction_checkpoints", filters={"event_id": event_id, "checkpoint": "POST_72H"}
+                async for row in self.repo.iter_metadata(
+                    "out.reaction_checkpoints",
+                    ["token_id"],
+                    filters={"event_id": event_id, "checkpoint": "POST_72H"},
                 )
             ]
             targets = await self.analysis_tokens(event)

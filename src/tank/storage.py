@@ -25,6 +25,7 @@ from tank.market_storage import (
 )
 from tank.models import (
     APPEND_ONLY,
+    LEAN_DOCUMENTS,
     SERIAL_TABLES,
     TABLE_COLUMNS,
     TIMESTAMP_PRECISION_FIELDS,
@@ -130,6 +131,7 @@ RUNNING_CAPS = {"REACTION_CAPTURE": 1}
 
 
 EARLIEST_EXPIRY_FIRST = ("REACTION_CAPTURE",)
+REVISIONS_LAST = ("REACTION_CAPTURE",)
 CLAIM_SLOW_S, DELIVER_LATE_S = 0.5, 1.0
 
 
@@ -166,7 +168,9 @@ CLAIM_SQL = """WITH expired AS (
     AND (NOT j.type=ANY(%(yields)s::text[])
       OR j.expires_at <= now() + make_interval(secs => %(safety)s)
       OR NOT (SELECT analysis_busy OR fresh_event FROM gate))
-    ORDER BY priority,CASE WHEN type=ANY(%(edf)s::text[]) THEN expires_at END NULLS LAST,
+    ORDER BY priority,CASE WHEN type=ANY(%(revisions_last)s::text[])
+      THEN coalesce(document#>>'{payload,automatic_revision}'='true',false) END NULLS LAST,
+      CASE WHEN type=ANY(%(edf)s::text[]) THEN expires_at END NULLS LAST,
       run_after,storage_key FOR UPDATE SKIP LOCKED LIMIT 1),
   claimed AS (
     UPDATE ops.jobs SET status='RUNNING',
@@ -193,6 +197,7 @@ def claim_params(held):
         "yields": list(YIELDS_TO_ANALYSIS),
         "safety": EXPIRY_SAFETY_S,
         "edf": list(EARLIEST_EXPIRY_FIRST),
+        "revisions_last": list(REVISIONS_LAST),
     }
 
 
@@ -527,8 +532,15 @@ class MemoryRepository(QueueMixin):
 
             def order(r):
                 deadline = r.get("expires_at") if r["type"] in EARLIEST_EXPIRY_FIRST else None
+                revision = (
+                    bool((r.get("payload") or {}).get("automatic_revision"))
+                    if r["type"] in REVISIONS_LAST
+                    else None
+                )
                 return (
                     r["priority"],
+                    revision is None,
+                    bool(revision),
                     deadline is None,
                     parse_time(deadline) if deadline else now,
                     r["run_after"],
@@ -983,8 +995,9 @@ class PostgresRepository(QueueMixin):
             raise ValueError("limit must be nonnegative")
 
         clauses, args = [], []
+        document = sql.Identifier(_document_column(collection, filters or {}))
         for k, v in (filters or {}).items():
-            clauses.append(sql.SQL("document -> %s = %s"))
+            clauses.append(sql.SQL("{} -> %s = %s").format(document))
             args.extend([k, Jsonb(jsonable(v))])
             datatype = TABLE_COLUMNS[collection].get(k)
             if (
@@ -1289,10 +1302,11 @@ async def _range_page(
             clauses.extend(extra)
             args.extend(values)
         elif filters:
-            clauses.append(sql.SQL("document @> %s"))
+            document = sql.Identifier(_document_column(collection, filters))
+            clauses.append(sql.SQL("{} @> %s").format(document))
             args.append(Jsonb(jsonable(filters)))
             for key, value in filters.items():
-                clauses.append(sql.SQL("document -> %s = %s"))
+                clauses.append(sql.SQL("{} -> %s = %s").format(document))
                 args.extend([key, Jsonb(jsonable(value))])
                 if TABLE_COLUMNS[collection].get(key) == "text" and isinstance(value, str):
                     clauses.append(sql.SQL("{} = %s").format(sql.Identifier(key)))
@@ -1454,10 +1468,11 @@ async def _latest_before(self, collection, time_field, cutoff, *, filters=None):
             clauses.extend(extra)
             args.extend(values)
         elif filters:
-            clauses.append(sql.SQL("document @> %s"))
+            document = sql.Identifier(_document_column(collection, filters))
+            clauses.append(sql.SQL("{} @> %s").format(document))
             args.append(Jsonb(jsonable(filters)))
             for key, value in filters.items():
-                clauses.append(sql.SQL("document -> %s = %s"))
+                clauses.append(sql.SQL("{} -> %s = %s").format(document))
                 args.extend([key, Jsonb(jsonable(value))])
                 if TABLE_COLUMNS[collection].get(key) == "text" and isinstance(value, str):
                     clauses.append(sql.SQL("{}=%s").format(sql.Identifier(key)))
@@ -1490,6 +1505,17 @@ MemoryRepository.latest_before = _latest_before
 PostgresRepository.latest_before = _latest_before
 
 
+def _document_column(collection, keys):
+    """The jsonb column that answers reads of the given top-level keys.
+
+    A LEAN_DOCUMENTS table answers from its generated metadata column, which PostgreSQL
+    keeps equal to the document without the bulky key, so reads and filters do not
+    detoast that payload; only a read of the bulky key itself uses the document.
+    """
+    omitted = LEAN_DOCUMENTS.get(collection)
+    return "metadata" if omitted is not None and omitted not in keys else "document"
+
+
 def _exact_predicate(collection, filters):
     from psycopg import sql
     from psycopg.types.json import Jsonb
@@ -1519,10 +1545,11 @@ def _exact_predicate(collection, filters):
             )
         return clauses, args
     if filters:
-        clauses.append(sql.SQL("document @> %s"))
+        document = sql.Identifier(_document_column(collection, filters))
+        clauses.append(sql.SQL("{} @> %s").format(document))
         args.append(Jsonb(jsonable(filters)))
         for key, value in filters.items():
-            clauses.append(sql.SQL("document -> %s = %s"))
+            clauses.append(sql.SQL("{} -> %s = %s").format(document))
             args.extend([key, Jsonb(jsonable(value))])
             datatype = TABLE_COLUMNS[collection].get(key)
             if datatype == "text" and isinstance(value, str):
@@ -1754,7 +1781,8 @@ async def _iter_metadata(self, collection, fields, *, filters=None, batch_size=1
     """Page selected top-level JSON fields without returning the full stored evidence payload.
 
     Keys absent from a record appear as None in the projection; exact filtering continues to
-    operate on the original document, preserving missing-vs-null filter semantics.
+    operate on the stored JSON, preserving missing-vs-null filter semantics. A LEAN_DOCUMENTS
+    table is read from its metadata column, so the bulky key is not detoasted per row.
     """
     _table(collection)
     fields = list(fields)
@@ -1766,27 +1794,35 @@ async def _iter_metadata(self, collection, fields, *, filters=None, batch_size=1
         async for row in self.iter_all(collection, filters=filters, batch_size=batch_size):
             yield {field: row.get(field) for field in fields}
         return
-    from psycopg import sql
-
     after = None
-    expressions = sql.SQL(",").join(sql.SQL("%s::text,document -> %s::text") for _ in fields)
-    projected_args = [key for field in fields for key in (field, field)]
     while True:
-        clauses, args = _exact_predicate(collection, filters)
-        if after is not None:
-            clauses.append(sql.SQL("storage_key>%s"))
-            args.append(after)
-        predicate = sql.SQL(" AND ").join(clauses) if clauses else sql.SQL("TRUE")
+        query, args = metadata_page_sql(
+            collection, fields, filters=filters, after=after, batch_size=batch_size
+        )
         async with self.transaction():
-            query = sql.SQL(
-                "SELECT jsonb_build_object({}) AS metadata,storage_key FROM {} WHERE {} ORDER BY storage_key LIMIT %s"
-            ).format(expressions, sql.Identifier(*collection.split(".")), predicate)
-            page = await (await self._conn().execute(query, [*projected_args, *args, batch_size])).fetchall()
+            page = await (await self._conn().execute(query, args)).fetchall()
         for row in page:
-            yield row["metadata"]
+            yield row["projection"]
         if len(page) < batch_size:
             return
         after = page[-1]["storage_key"]
+
+
+def metadata_page_sql(collection, fields, *, filters=None, after=None, batch_size=1000):
+    """The PostgreSQL query and parameters of one iter_metadata page after storage key after."""
+    from psycopg import sql
+
+    document = sql.Identifier(_document_column(collection, fields))
+    expressions = sql.SQL(",").join(sql.SQL("%s::text,{} -> %s::text").format(document) for _ in fields)
+    clauses, args = _exact_predicate(collection, filters)
+    if after is not None:
+        clauses.append(sql.SQL("storage_key>%s"))
+        args.append(after)
+    predicate = sql.SQL(" AND ").join(clauses) if clauses else sql.SQL("TRUE")
+    query = sql.SQL(
+        "SELECT jsonb_build_object({}) AS projection,storage_key FROM {} WHERE {} ORDER BY storage_key LIMIT %s"
+    ).format(expressions, sql.Identifier(*collection.split(".")), predicate)
+    return query, [*(key for field in fields for key in (field, field)), *args, batch_size]
 
 
 MemoryRepository.iter_metadata = _iter_metadata
