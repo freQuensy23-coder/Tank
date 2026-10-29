@@ -229,6 +229,63 @@ FRESH_EVENT_S, EXPIRY_SAFETY_S = 600, 1200
 DEFERRAL_LOG_S = 60
 
 
+CLAIM_SQL = """WITH expired AS (
+    UPDATE ops.jobs SET status='EXPIRED', document=jsonb_set(document,'{status}','"EXPIRED"')
+    WHERE status='QUEUED' AND expires_at <= now() RETURNING 1),
+  failed AS (
+    UPDATE ops.jobs SET status='FAILED', document=jsonb_set(document,'{status}','"FAILED"')
+    WHERE status='QUEUED' AND attempts >= max_attempts
+    AND coalesce((document->>'recovery_reclaim')::boolean,false)=false RETURNING 1),
+  gate AS (
+    SELECT EXISTS (SELECT 1 FROM ops.jobs b WHERE b.status='RUNNING'
+        AND b.type=ANY(%(analysis)s::text[]))
+      OR EXISTS (SELECT 1 FROM ops.jobs b WHERE b.status='QUEUED'
+        AND b.type=ANY(%(analysis)s::text[]) AND b.run_after<=now()
+        AND (b.expires_at IS NULL OR b.expires_at>now())) AS analysis_busy,
+      EXISTS (SELECT 1 FROM evt.events e
+        WHERE e.known_to_us_at > now() - make_interval(secs => %(fresh)s)
+        AND NOT EXISTS (SELECT 1 FROM out.alerts a WHERE a.event_id=e.event_id AND a.kind='FULL'))
+        AS fresh_event),
+  pick AS (
+    SELECT storage_key FROM ops.jobs j WHERE status='QUEUED' AND run_after<=now()
+    AND (expires_at IS NULL OR expires_at>now())
+    AND (attempts<max_attempts OR document->>'recovery_reclaim'='true')
+    AND NOT EXISTS (SELECT 1 FROM unnest(%(capped)s::text[], %(caps)s::int[]) AS c(type, cap)
+      WHERE c.type=j.type AND (NOT c.type=ANY(%(held)s::text[])
+        OR (SELECT count(*) FROM ops.jobs r WHERE r.status='RUNNING' AND r.type=c.type)>=c.cap))
+    AND (NOT j.type=ANY(%(yields)s::text[])
+      OR j.expires_at <= now() + make_interval(secs => %(safety)s)
+      OR NOT (SELECT analysis_busy OR fresh_event FROM gate))
+    ORDER BY priority,CASE WHEN type=ANY(%(edf)s::text[]) THEN expires_at END NULLS LAST,
+      run_after,storage_key FOR UPDATE SKIP LOCKED LIMIT 1),
+  claimed AS (
+    UPDATE ops.jobs SET status='RUNNING',
+    attempts=attempts+CASE WHEN document->>'recovery_reclaim'='true' THEN 0 ELSE 1 END,
+    document=document||jsonb_build_object('status','RUNNING','recovery_reclaim',false,
+      'attempts',attempts+CASE WHEN document->>'recovery_reclaim'='true' THEN 0 ELSE 1 END)
+    WHERE storage_key=(SELECT storage_key FROM pick) RETURNING document)
+  SELECT (SELECT document FROM claimed) AS document,
+    (SELECT analysis_busy FROM gate) AS analysis_busy,
+    (SELECT fresh_event FROM gate) AS fresh_event,
+    (SELECT count(*) FROM ops.jobs d WHERE d.type=ANY(%(yields)s::text[]) AND d.status='QUEUED'
+      AND d.run_after<=now() AND d.expires_at > now() + make_interval(secs => %(safety)s)
+      AND (SELECT analysis_busy OR fresh_event FROM gate)) AS deferred"""
+
+
+def claim_params(held):
+    """Parameters of CLAIM_SQL; held lists the capped job types whose claim lock this transaction holds."""
+    return {
+        "analysis": list(ANALYSIS_TYPES),
+        "fresh": FRESH_EVENT_S,
+        "capped": list(RUNNING_CAPS),
+        "caps": list(RUNNING_CAPS.values()),
+        "held": list(held),
+        "yields": list(YIELDS_TO_ANALYSIS),
+        "safety": EXPIRY_SAFETY_S,
+        "edf": list(EARLIEST_EXPIRY_FIRST),
+    }
+
+
 def _analysis_gate_memory(data, now):
     """(analysis_busy, fresh_event_without_card) for the memory repository."""
     busy = any(
@@ -1348,55 +1405,8 @@ class PostgresRepository(QueueMixin):
             )["held"]
             row = await (
                 await conn.execute(
-                    """WITH expired AS (
-                UPDATE ops.jobs SET status='EXPIRED', document=jsonb_set(document,'{status}','"EXPIRED"')
-                WHERE status='QUEUED' AND expires_at <= now() RETURNING 1),
-              failed AS (
-                UPDATE ops.jobs SET status='FAILED', document=jsonb_set(document,'{status}','"FAILED"')
-                WHERE status='QUEUED' AND attempts >= max_attempts
-                AND coalesce((document->>'recovery_reclaim')::boolean,false)=false RETURNING 1),
-              gate AS (
-                SELECT EXISTS (SELECT 1 FROM ops.jobs b WHERE b.type=ANY(%(analysis)s::text[])
-                    AND (b.status='RUNNING' OR (b.status='QUEUED' AND b.run_after<=now()
-                      AND (b.expires_at IS NULL OR b.expires_at>now())))) AS analysis_busy,
-                  EXISTS (SELECT 1 FROM evt.events e
-                    WHERE e.known_to_us_at > now() - make_interval(secs => %(fresh)s)
-                    AND NOT EXISTS (SELECT 1 FROM out.alerts a WHERE a.event_id=e.event_id AND a.kind='FULL'))
-                    AS fresh_event),
-              pick AS (
-                SELECT storage_key FROM ops.jobs j WHERE status='QUEUED' AND run_after<=now()
-                AND (expires_at IS NULL OR expires_at>now())
-                AND (attempts<max_attempts OR document->>'recovery_reclaim'='true')
-                AND NOT EXISTS (SELECT 1 FROM unnest(%(capped)s::text[], %(caps)s::int[]) AS c(type, cap)
-                  WHERE c.type=j.type AND (NOT c.type=ANY(%(held)s::text[])
-                    OR (SELECT count(*) FROM ops.jobs r WHERE r.status='RUNNING' AND r.type=c.type)>=c.cap))
-                AND (NOT j.type=ANY(%(yields)s::text[])
-                  OR j.expires_at <= now() + make_interval(secs => %(safety)s)
-                  OR NOT (SELECT analysis_busy OR fresh_event FROM gate))
-                ORDER BY priority,CASE WHEN type=ANY(%(edf)s::text[]) THEN expires_at END NULLS LAST,
-                  run_after,storage_key FOR UPDATE SKIP LOCKED LIMIT 1),
-              claimed AS (
-                UPDATE ops.jobs SET status='RUNNING',
-                attempts=attempts+CASE WHEN document->>'recovery_reclaim'='true' THEN 0 ELSE 1 END,
-                document=document||jsonb_build_object('status','RUNNING','recovery_reclaim',false,
-                  'attempts',attempts+CASE WHEN document->>'recovery_reclaim'='true' THEN 0 ELSE 1 END)
-                WHERE storage_key=(SELECT storage_key FROM pick) RETURNING document)
-              SELECT (SELECT document FROM claimed) AS document,
-                (SELECT analysis_busy FROM gate) AS analysis_busy,
-                (SELECT fresh_event FROM gate) AS fresh_event,
-                (SELECT count(*) FROM ops.jobs d WHERE d.type=ANY(%(yields)s::text[]) AND d.status='QUEUED'
-                  AND d.run_after<=now() AND d.expires_at > now() + make_interval(secs => %(safety)s)
-                  AND (SELECT analysis_busy OR fresh_event FROM gate)) AS deferred""",
-                    {
-                        "analysis": list(ANALYSIS_TYPES),
-                        "fresh": FRESH_EVENT_S,
-                        "capped": list(RUNNING_CAPS),
-                        "caps": list(RUNNING_CAPS.values()),
-                        "held": held,
-                        "yields": list(YIELDS_TO_ANALYSIS),
-                        "safety": EXPIRY_SAFETY_S,
-                        "edf": list(EARLIEST_EXPIRY_FIRST),
-                    },
+                    CLAIM_SQL,
+                    claim_params(held),
                 )
             ).fetchone()
             if row["deferred"]:
