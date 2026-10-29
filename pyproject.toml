@@ -36,7 +36,7 @@ tank = "tank.cli:main"
 packages = ["src/tank"]
 [tool.hatch.build.targets.wheel.hooks.cython.options]
 src = "tank"
-compile_args = ["-O2", "-g0"]
+compile_args = ["-O1", "-g0"]
 directives = { language_level = 3, binding = true, infer_types = false, annotation_typing = false, profile = true }
 [tool.hatch.build.targets.wheel.hooks.cython.options.files]
 targets = ["*/analysis/truth.py"]

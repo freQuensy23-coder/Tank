@@ -122,7 +122,9 @@ async def full_request_comparison(tmp_path_factory, pytestconfig, request):
                     )
                     from tank.analysis import truth
 
-                    compiled[label] = stage_native_module(ROOT, root, Path(truth.__file__), "tank.analysis.truth")
+                    compiled[label] = stage_native_module(
+                        ROOT, root, Path(truth.__file__), "tank.analysis.truth"
+                    )
                 repo = await resources.enter_async_context(
                     template.repository(os.environ["TANK_TEST_DATABASE_URL"])
                 )
