@@ -147,6 +147,7 @@ async def test_missing_outcome_reminds_same_session_with_format_and_refusals():
     assert "Full article body" not in json.dumps(content, ensure_ascii=False)
     assert len(json.dumps(content, ensure_ascii=False)) < 6000
     assert '"is_event": true' in text and '"checked_sources": ["<string>"]' in text
+    assert '"entity_id": "<string>"' in text and '"entity_id": null' not in text
     assert "merge_into arguments" in text
     assert "record_event: $.event_time.quote: required field missing" in text
     assert "never blocks recording" in text
@@ -246,6 +247,24 @@ async def test_session_budget_spans_items_then_fails_explicitly():
     assert sorted(failures) == [("a", "AGENT_INCOMPLETE"), ("b", "AGENT_INCOMPLETE")]
     card = render(await snapshot(repo, "a"))
     assert card["code"] == "PROCESSING_FAILED" and "повторный анализ" in card["text"]
+    await sessions.close()
+
+
+async def test_replay_sends_no_reminder_and_fails_the_item_at_once():
+    repo = MemoryRepository()
+    config = settings()
+    config.replay = True
+    await seed(repo)
+    sessions = await service(repo, config)
+    session = await settle(repo, sessions)
+    assert not await reminders(repo)
+    item = await repo.get("ingest.source_items", "i")
+    assert (item["extraction_status"], item["extraction_reason"], item["extraction_reminder_limit"]) == (
+        "FAILED",
+        "AGENT_INCOMPLETE",
+        0,
+    )
+    assert session.get("completion_reminders_sent", 0) == 0
     await sessions.close()
 
 

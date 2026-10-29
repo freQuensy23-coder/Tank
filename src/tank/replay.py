@@ -974,7 +974,7 @@ def original_replay_messages(inputs):
     Tool-call order cannot reconstruct analyst messages, so never infer NEW_ITEM
     from a tool's arguments or fabricate a request when the capture is absent.
     COMPLETION_REMINDER entries are left out: Tank derives them from how a turn
-    ended, so they are not inputs, and the replayed session earns its own.
+    ended, so they are not inputs, and a replay sends none of its own.
     """
     explicit = inputs.config.get("replay_messages")
     if explicit is not None:

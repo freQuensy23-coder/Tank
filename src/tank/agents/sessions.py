@@ -78,6 +78,9 @@ SESSION_ADMISSION_FIELDS = (
     "active_message_id",
     "followups_only",
     "archive_after",
+    "archived_at",
+    "remote_state",
+    "agent_incomplete",
 )
 JOB_ADMISSION_FIELDS = ("job_id", "status", "priority", "payload", "slot_waiting_since", "slot_admitted")
 BUSY_RUNTIME_STATES = {"PENDING", "RUNNING", "REQUIRES_ACTION"}
@@ -334,9 +337,11 @@ class SessionService:
             raise ValueError("Replay session evidence binding does not match requested run")
         sid = remote["id"]
         opened = self.clock_timestamp()
+        tools = self.analyst_tools(scout=scout)
         session = {
             "session_id": sid,
             "model_context_version": CONTEXT_VERSION,
+            **({"tools_sha256": sha256(tools)} if tools else {}),
             "event_id": event_id,
             "replay_run_id": replay_run_id,
             "replay_source_session_id": payload.get("replay_source_session_id"),
@@ -422,6 +427,16 @@ class SessionService:
         if reader is None:
             return None
         return agent_tools(self.settings, "tank-scout-reviewer" if scout else "tank-event-analyst")
+
+    def tools_changed(self, session):
+        """Whether the session's tool definitions differ from the current skill's.
+
+        A session records the digest of the tools it was created or last synchronized with; a
+        changed schema (for example optional fields made nullable) reaches a retained session at its
+        next idle input boundary, without a context-version migration. A busy session keeps its
+        tools until a later input finds it idle."""
+        tools = self.analyst_tools(scout=bool(session.get("proposal_id")))
+        return bool(tools) and session.get("tools_sha256") != sha256(tools)
 
     @staticmethod
     def legacy_contract(session):
@@ -592,6 +607,9 @@ class SessionService:
         if migrating or payload.get("kind") == "USER_QUESTION":
             if await self.sync_tools(sid) == "BUSY":
                 raise DeliveryDeferred(offset_schedule(collection_clock(), timedelta(seconds=30)))
+            session = await self.repo.get("ops.agent_sessions", sid)
+        elif self.tools_changed(session):
+            await self.sync_tools(sid)
             session = await self.repo.get("ops.agent_sessions", sid)
         content = await ModelContext(self.repo, self.settings, session).message(payload, item)
         note = CONTEXT_TRANSITION[bool(session.get("proposal_id"))]
@@ -1396,12 +1414,18 @@ class SessionService:
         message in the same session; the reminder turn is checked the same way. The session's durable
         reminder budget bounds the loop: once spent, fail_incomplete_turn marks the item FAILED /
         AGENT_INCOMPLETE, which Ops shows as a processing error and tank reanalyse can queue again;
-        it is never shown as a rejection.
+        it is never shown as a rejection. A replay sends the original inputs only and no reminder:
+        its budget is zero, so a replayed turn without an outcome fails the item at once and the
+        replay reports it as incomplete.
         """
         sid = session["session_id"]
-        limit = int(
-            (self.settings.load_config("thresholds") or {}).get(
-                "agent_completion_reminders_per_session", DEFAULT_COMPLETION_REMINDERS
+        limit = (
+            0
+            if getattr(self.settings, "replay", False)
+            else int(
+                (self.settings.load_config("thresholds") or {}).get(
+                    "agent_completion_reminders_per_session", DEFAULT_COMPLETION_REMINDERS
+                )
             )
         )
         unchecked = {}
@@ -2573,7 +2597,11 @@ class SessionService:
         )
 
     async def existing_session(self, payload):
-        """The admission fields of the session a message would go to, without creating one."""
+        """The admission fields of the session a message would go to, without creating one.
+
+        It selects the same generation as resolve: a closed session is skipped, so a message for
+        an event whose replacement session is running is admitted to that running session."""
+        payload = await self.readdressed(payload)
         event_id = payload.get("event_id")
         for field, value in (
             ("session_id", payload.get("session_id")),
@@ -2585,7 +2613,8 @@ class SessionService:
                 async for session in self.repo.iter_metadata(
                     "ops.agent_sessions", SESSION_ADMISSION_FIELDS, filters={field: value}
                 ):
-                    return session
+                    if field == "session_id" or self.routable_session(session):
+                        return session
         return None
 
     async def slot_state(self, exclude_job=None):

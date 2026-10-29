@@ -257,3 +257,74 @@ async def test_condition_addressed_to_a_closed_session_is_routed_by_its_event(cl
         assert await service.readdressed(to_live) == to_live
         question = {"kind": "USER_QUESTION", "event_id": "e", "session_id": "dead", "question_id": "q"}
         assert await service.readdressed(question) == question
+
+
+async def test_a_retained_session_receives_changed_tool_schemas_at_its_next_input():
+    repo = MemoryRepository()
+    item = await source(repo)
+    await repo.put(
+        "ops.agent_sessions",
+        "kept",
+        {
+            "session_id": "kept",
+            "event_id": "e",
+            "status": "OPEN",
+            "runtime_status": "IDLE",
+            "model_context_version": CONTEXT_VERSION,
+            "tools_sha256": "digest-of-the-previous-schemas",
+            "message_log": [],
+            "messages": [],
+        },
+    )
+    nullable = [
+        {
+            "name": "list_open_events",
+            "description": "d",
+            "input_schema": {"type": "object", "properties": {"token_id": {"type": ["string", "null"]}}},
+        }
+    ]
+    settings = session_settings()
+    settings.read_config_json = lambda relative: nullable
+    requests = []
+
+    def handler(request):
+        requests.append((request.method, request.url.path, json.loads(request.content or b"{}")))
+        if request.method == "GET" and request.url.path == "/v1/sessions/kept":
+            return httpx.Response(200, json={"id": "kept", "status": "idle", "agent": {"id": "agt"}})
+        if request.method == "GET":
+            return httpx.Response(200, json={"data": [], "next_page": None})
+        return httpx.Response(200, json={"id": "evt-input"})
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http:
+        service = SessionService(repo, settings, lambda *args: None, http=http)
+        assert service.tools_changed(await repo.get("ops.agent_sessions", "kept"))
+        try:
+            await service.send_message({"kind": "ITEM_ADDED", "event_id": "e", "item_id": item["item_id"]})
+        finally:
+            await service.stop_followers()
+        synced = await repo.get("ops.agent_sessions", "kept")
+    updates = [row for row in requests if row[:2] == ("POST", "/v1/sessions/kept")]
+    assert len(updates) == 1
+    assert updates[0][2]["agent"]["tools"][-1]["input_schema"]["properties"]["token_id"]["type"] == [
+        "string",
+        "null",
+    ]
+    assert not service.tools_changed(synced)
+
+
+async def test_admission_looks_up_the_same_generation_as_routing():
+    repo = MemoryRepository()
+    await repo.put("ops.agent_sessions", "dead", {"session_id": "dead", "event_id": "e", "status": "ENDED"})
+    await repo.put(
+        "ops.agent_sessions",
+        "live",
+        {"session_id": "live", "event_id": "e", "status": "OPEN", "runtime_status": "RUNNING"},
+    )
+    async with httpx.AsyncClient(transport=httpx.MockTransport(lambda request: httpx.Response(500))) as http:
+        service = SessionService(repo, session_settings(), lambda *args: None, http=http)
+        target = await service.existing_session({"kind": "ITEM_ADDED", "event_id": "e", "item_id": "i"})
+        fired = await service.existing_session(
+            {"kind": "CONDITION_FIRED", "event_id": "e", "session_id": "dead"}
+        )
+    assert (target["session_id"], target["runtime_status"]) == ("live", "RUNNING")
+    assert fired["session_id"] == "live"

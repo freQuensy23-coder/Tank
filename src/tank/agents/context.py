@@ -244,6 +244,16 @@ def clean_value(value):
     return clean_text(value) if isinstance(value, str) else value
 
 
+def non_null(schema):
+    """The schema without its null alternative: a field an anyOf branch requires needs a value."""
+    narrowed = dict(schema)
+    if isinstance(narrowed.get("type"), list):
+        narrowed["type"] = [kind for kind in narrowed["type"] if kind != "null"]
+    if "enum" in narrowed:
+        narrowed["enum"] = [value for value in narrowed["enum"] if value is not None]
+    return narrowed
+
+
 def schema_skeleton(schema):
     """A minimal value of a JSON schema: required fields only, null where null is allowed."""
     types = schema.get("type")
@@ -258,9 +268,15 @@ def schema_skeleton(schema):
     if "object" in types or "properties" in schema:
         properties = schema.get("properties", {})
         required = list(schema.get("required", []))
-        for option in schema.get("anyOf", [])[:1]:
-            required += [name for name in option.get("required", []) if name not in required]
-        return {name: schema_skeleton(properties.get(name, {})) for name in required}
+        chosen = [
+            name
+            for option in schema.get("anyOf", [])[:1]
+            for name in option.get("required", [])
+            if name not in required
+        ]
+        skeleton = {name: schema_skeleton(properties.get(name, {})) for name in required}
+        skeleton.update({name: schema_skeleton(non_null(properties.get(name, {}))) for name in chosen})
+        return skeleton
     if "array" in types:
         items = schema.get("items", {})
         return [schema_skeleton(items)] if items else []
