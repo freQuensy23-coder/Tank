@@ -984,8 +984,9 @@ class PostgresRepository(QueueMixin):
             raise ValueError("limit must be nonnegative")
 
         clauses, args = [], []
+        document = sql.Identifier(_document_column(collection, filters or {}))
         for k, v in (filters or {}).items():
-            clauses.append(sql.SQL("document -> %s = %s"))
+            clauses.append(sql.SQL("{} -> %s = %s").format(document))
             args.extend([k, Jsonb(jsonable(v))])
             datatype = TABLE_COLUMNS[collection].get(k)
             if (
@@ -1290,10 +1291,11 @@ async def _range_page(
             clauses.extend(extra)
             args.extend(values)
         elif filters:
-            clauses.append(sql.SQL("document @> %s"))
+            document = sql.Identifier(_document_column(collection, filters))
+            clauses.append(sql.SQL("{} @> %s").format(document))
             args.append(Jsonb(jsonable(filters)))
             for key, value in filters.items():
-                clauses.append(sql.SQL("document -> %s = %s"))
+                clauses.append(sql.SQL("{} -> %s = %s").format(document))
                 args.extend([key, Jsonb(jsonable(value))])
                 if TABLE_COLUMNS[collection].get(key) == "text" and isinstance(value, str):
                     clauses.append(sql.SQL("{} = %s").format(sql.Identifier(key)))
@@ -1455,10 +1457,11 @@ async def _latest_before(self, collection, time_field, cutoff, *, filters=None):
             clauses.extend(extra)
             args.extend(values)
         elif filters:
-            clauses.append(sql.SQL("document @> %s"))
+            document = sql.Identifier(_document_column(collection, filters))
+            clauses.append(sql.SQL("{} @> %s").format(document))
             args.append(Jsonb(jsonable(filters)))
             for key, value in filters.items():
-                clauses.append(sql.SQL("document -> %s = %s"))
+                clauses.append(sql.SQL("{} -> %s = %s").format(document))
                 args.extend([key, Jsonb(jsonable(value))])
                 if TABLE_COLUMNS[collection].get(key) == "text" and isinstance(value, str):
                     clauses.append(sql.SQL("{}=%s").format(sql.Identifier(key)))

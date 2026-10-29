@@ -1,5 +1,6 @@
 import asyncio
 import os
+import re
 from contextlib import AsyncExitStack, asynccontextmanager
 from datetime import timedelta
 
@@ -795,6 +796,49 @@ async def test_reaction_checkpoint_metadata_pages_do_not_detoast_market_truth(re
             explained = await conn.execute(sql.SQL("EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON) ") + query, args)
             plan = (await explained.fetchone())["QUERY PLAN"][0]["Plan"]
             assert _shared_blocks(plan) < 40, (filters, _shared_blocks(plan))
+
+
+@pytest.mark.integration
+@pytest.mark.postgres
+@pytest.mark.parametrize("repo", ["postgres"], indirect=True)
+async def test_every_filtered_checkpoint_read_tests_the_metadata_column(repo, monkeypatch):
+    """list, iter_all, iter_metadata, iter_range and latest_before filter on metadata, not on the document."""
+    event_id = new_id("evt")
+    record = {
+        "event_id": event_id,
+        "token_id": "test:T",
+        "revision": 1,
+        "captured_at": "2026-10-28T10:00:00Z",
+    }
+    await repo.put("out.reaction_checkpoints", event_id, {**record, "market_truth": {"m": 1}}, immutable=True)
+    statements = []
+    connection = repo._conn
+
+    def recording_conn():
+        conn = connection()
+        execute = conn.execute
+
+        async def recorded(query, *args, **kwargs):
+            statements.append(query.as_string(conn) if isinstance(query, sql.Composable) else query)
+            return await execute(query, *args, **kwargs)
+
+        return type(
+            "Recording", (), {"execute": staticmethod(recorded), "__getattr__": lambda _, n: getattr(conn, n)}
+        )()
+
+    monkeypatch.setattr(repo, "_conn", recording_conn)
+    filters = {"event_id": event_id, "token_id": "test:T"}
+    table = "out.reaction_checkpoints"
+    assert len(await repo.list(table, filters=filters)) == 1
+    assert len([r async for r in repo.iter_all(table, filters=filters)]) == 1
+    assert len([r async for r in repo.iter_metadata(table, ["revision"], filters=filters)]) == 1
+    end = "2026-10-29T00:00:00Z"
+    assert len([r async for r in repo.iter_range(table, "captured_at", end=end, filters=filters)]) == 1
+    assert (await repo.latest_before(table, "captured_at", end, filters=filters))["revision"] == 1
+    reads = [q for q in statements if "reaction_checkpoints" in q and "WHERE" in q]
+    assert len(reads) >= 5
+    assert not [q for q in reads if re.search(r'\bdocument"? (->|@>)', q)], reads
+    assert all('"metadata" ->' in q for q in reads), reads
 
 
 @pytest.mark.integration
