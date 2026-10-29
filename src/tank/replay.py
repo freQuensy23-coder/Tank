@@ -973,6 +973,8 @@ def original_replay_messages(inputs):
 
     Tool-call order cannot reconstruct analyst messages, so never infer NEW_ITEM
     from a tool's arguments or fabricate a request when the capture is absent.
+    COMPLETION_REMINDER entries are left out: Tank derives them from how a turn
+    ended, so they are not inputs, and a replay sends none of its own.
     """
     explicit = inputs.config.get("replay_messages")
     if explicit is not None:
@@ -995,6 +997,8 @@ def original_replay_messages(inputs):
         if not entry.get("sent_at") or not isinstance(entry.get("payload"), dict):
             raise ReplayError("insufficient_fixture: incomplete original message log")
         if parse_time(entry["sent_at"]) > parse_time(inputs.cutoff):
+            continue
+        if entry["payload"].get("kind") == "COMPLETION_REMINDER":
             continue
         payload = copy.deepcopy(entry["payload"])
         for field in ("session_id", "replay_run_id"):

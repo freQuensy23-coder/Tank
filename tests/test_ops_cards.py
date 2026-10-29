@@ -135,7 +135,7 @@ async def test_running_major_analysis_shows_current_work_instead_of_completion(s
     assert "данные: 0/1 токенов; решения: 0/1" in card["text"]
 
 
-async def test_no_observation_is_missing_agent_decision_not_rejection(settings):
+async def test_legacy_no_observation_row_is_missing_agent_decision_not_rejection(settings):
     repo = MemoryRepository()
     item = await source(
         repo, extraction_status="SKIPPED", extraction_reason="NATIVE_TURN_COMPLETED_WITHOUT_OBSERVATION"

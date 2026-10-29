@@ -43,6 +43,8 @@ event_close_days: 7
 call_expiry_days: 7
 # An idle agent session stays continuable from Telegram at least this long after its last message (operator ruling 2026-10-24).
 session_keep_days: 7
+# Completion reminders one agent session may receive when a turn ends without the source item's outcome; then the item fails as AGENT_INCOMPLETE.
+agent_completion_reminders_per_session: 20
 update_rate_limit_s: 900
 heartbeat_utc: 08:00
 escalated_interval_s: 15
