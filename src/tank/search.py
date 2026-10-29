@@ -15,6 +15,7 @@ import httpx
 from ddgs.ddgs import DDGS
 from ddgs.engines.duckduckgo import Duckduckgo
 from ddgs.exceptions import DDGSException, RatelimitException, TimeoutException
+from ddgs.results import TextResult
 
 DDGS_VERSION = "9.16.0"
 SEARCH_URL = "https://html.duckduckgo.com/html/"
@@ -142,6 +143,10 @@ class _DuckDuckGoEngine(Duckduckgo):
 
         self.http_client = transport
         self.results = []
+
+    def post_extract_results(self, results: list[TextResult]) -> list[TextResult]:
+        """Drop the linkless "No results found" block DuckDuckGo renders as a result body."""
+        return [result for result in super().post_extract_results(results) if result.href.strip()]
 
 
 class _DuckDuckGoOnly(DDGS):

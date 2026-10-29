@@ -2,6 +2,8 @@ version: decision-1-1
 # Uncalibrated midpoint, user decision 2026-10-20, see todo.md: calibrate on labeled real news later (03 §3.1, 01 V0-B).
 filter_cutoff: 0.5
 routing_cutoff: 0.5
+# ROUTE_ITEM of a GitHub repository item waits at most this long after observation for a same-repository NEW_SESSION sibling to settle (03 §3.1).
+release_sibling_wait_s: 300
 filter_model: microsoft-decision-1:1
 calibration_required:
 - 'filter_cutoff: V0-B highest cutoff retaining >=95% relevant items (Decision-1 remains uncalibrated; midpoint until then)'

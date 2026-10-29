@@ -49,7 +49,8 @@ def publication_immediate(event, assessment, previous=None, decisions=None):
     )
 
 
-def alert_gate(event, assessment, *, previous=None, decisions=None, now=None):
+def alert_gate(event, assessment, *, previous=None, decisions=None, now=None, completing_partial=False):
+    """Apply 03 §7.4; the first card completing a STRUCTURAL_SHOCK PARTIAL skips the update interval."""
     decisions = decisions or []
     cls = assessment.get("class", assessment.get("ems_class"))
     if cls not in {"MAJOR", "STRUCTURAL_SHOCK"}:
@@ -101,6 +102,7 @@ def alert_gate(event, assessment, *, previous=None, decisions=None, now=None):
         stamp = previous.get("published_at", previous.get("created_at"))
         if (
             not immediate
+            and not completing_partial
             and stamp
             and (parse_time(now) if now else utcnow()) - parse_time(stamp)
             < timedelta(seconds=_update_interval_s(event))

@@ -4,13 +4,16 @@ import asyncio
 import re
 from datetime import timedelta
 from decimal import Decimal
+from urllib.parse import urlparse
 
 import httpx
 
 from tank.agents.decision import MODEL, binding, classify
+from tank.agents.incomplete import UNFINISHED
 from tank.ops_progress import item_progress
+from tank.storage import DECISION_MAX_ATTEMPTS
 from tank.time_precision import collection_clock, offset_schedule, propagate_timestamp
-from tank.util import iso, sha256, utcnow
+from tank.util import iso, parse_time, sha256, utcnow
 
 DECISION_PROMPT_VERSION = "decision-1-v1"
 
@@ -26,6 +29,24 @@ ROUTE_CRITERIA = {
     "false": "A different event, even one about the same project, company, exchange or token.",
 }
 TEXT_LIMIT = 12000
+RELEASE_SIBLING_RECHECK_S = 15
+
+
+class RoutingDeferred(Exception):
+    """A repository sibling's first event is still being recorded; the item routes again later."""
+
+    def __init__(self, not_before, sibling):
+        self.not_before = not_before
+        super().__init__(f"Routing waits for the event of repository sibling {sibling}")
+
+
+def github_repository(item):
+    """The case-folded `owner/repo` of an item from a GitHub repository feed, else None."""
+    feed = urlparse(str(item.get("feed") or ""))
+    parts = feed.path.strip("/").split("/")
+    if feed.scheme != "https" or feed.netloc != "github.com" or len(parts) < 3 or not all(parts[:2]):
+        return None
+    return "/".join(parts[:2]).casefold()
 
 
 def _clean(value):
@@ -263,7 +284,7 @@ class Pipeline:
                         {"item_id": item["item_id"]},
                         item["item_id"],
                         priority=priority(item),
-                        max_attempts=2,
+                        max_attempts=DECISION_MAX_ATTEMPTS,
                         expires_at=offset_schedule(
                             propagate_timestamp(item, "observed_at")
                             if item.get("observed_at")
@@ -305,6 +326,11 @@ class Pipeline:
         for row in registry.get("tokens", []):
             if row.get("symbol") and matches("$" + row["symbol"]):
                 result.update([row.get("entity_id"), row["token_id"]])
+        repository = github_repository(item)
+        if repository:
+            for row in registry.get("entities", []):
+                if repository in {str(name).casefold() for name in row.get("github_repos", [])}:
+                    result.update([row.get("entity_id"), *row.get("tokens", [])])
         authors = {
             str(item.get(key) or "").lstrip("@").lower()
             for key in ("author", "monitored_author", "reposted_by")
@@ -382,7 +408,41 @@ class Pipeline:
         )
         return await self._candidate_events(self.identities(item), since, now)
 
+    async def pending_release_sibling(self, item, repository, now):
+        """A NEW_SESSION item of the same repository, observed within the wait, whose turn is unsettled."""
+        wait = timedelta(seconds=self.settings.load_config("thresholds").get("release_sibling_wait_s", 300))
+        if not item.get("observed_at"):
+            return None
+        observed = parse_time(item["observed_at"])
+        if now >= observed + wait:
+            return None
+        async for row in self.repo.iter_range(
+            "ingest.source_items",
+            "observed_at",
+            start=iso(observed - wait),
+            end=iso(now + timedelta(microseconds=1)),
+            filters={"source_id": item.get("source_id")},
+        ):
+            if (
+                row.get("item_id") != item["item_id"]
+                and github_repository(row) == repository
+                and (row.get("route") or {}).get("decision") == "NEW_SESSION"
+                and row.get("extraction_status") in UNFINISHED
+            ):
+                return row["item_id"]
+        return None
+
     async def route_item(self, payload):
+        item = await self.repo.get("ingest.source_items", payload["item_id"])
+        if item is None:
+            raise KeyError(payload["item_id"])
+        repository = github_repository(item)
+        if repository is None:
+            return await self._route_item(payload)
+        async with self.repo.lock("routing-repository:" + repository):
+            return await self._route_item(payload, repository)
+
+    async def _route_item(self, payload, repository=None):
         async with self.repo.lock("routing:" + payload["item_id"]):
             item = await self.repo.get("ingest.source_items", payload["item_id"])
             if item is None:
@@ -391,6 +451,13 @@ class Pipeline:
                 return item
             identities = self.identities(item)
             now = utcnow()
+            if repository:
+                sibling = await self.pending_release_sibling(item, repository, now)
+                if sibling:
+                    raise RoutingDeferred(
+                        offset_schedule(collection_clock(now), timedelta(seconds=RELEASE_SIBLING_RECHECK_S)),
+                        sibling,
+                    )
             since = iso(
                 now - timedelta(days=self.settings.load_config("thresholds").get("routing_window_days", 3))
             )
