@@ -36,6 +36,7 @@ tank = "tank.cli:main"
 packages = ["src/tank"]
 [tool.hatch.build.targets.wheel.hooks.cython.options]
 src = "tank"
+includes = ["src"]
 compile_args = ["-O1", "-g0", "-ffp-contract=off"]
 directives = { language_level = 3, binding = true, annotation_typing = false, profile = false }
 [tool.hatch.build.targets.wheel.hooks.cython.options.files]
