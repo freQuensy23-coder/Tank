@@ -1458,6 +1458,35 @@ def test_original_messages_use_durable_log_not_inferred_tool_calls(packet):
     assert data["records"][0]["record"]["message_log"][0]["payload"]["session_id"] == "old"
 
 
+def test_original_messages_leave_out_completion_reminders(packet):
+    from tank.replay import original_replay_messages
+
+    data = json.loads(packet.read_text())
+    reminder = {
+        "kind": "COMPLETION_REMINDER",
+        "item_id": "real",
+        "reminded_kind": "NEW_ITEM",
+        "session_id": "old",
+    }
+    data["records"] = [
+        {
+            "collection": "ops.agent_sessions",
+            "key": "old",
+            "available_at": data["cutoff"],
+            "record": {
+                "session_id": "old",
+                "message_log": [
+                    {"sent_at": data["cutoff"], "payload": {"kind": "NEW_ITEM", "item_id": "real"}},
+                    {"sent_at": data["cutoff"], "payload": reminder},
+                ],
+            },
+        }
+    ]
+    packet.write_text(json.dumps(data))
+    messages = original_replay_messages(load_inputs(packet, settings()))
+    assert [(row["kind"], row["item_id"]) for row in messages] == [("NEW_ITEM", "real")]
+
+
 @pytest.mark.parametrize("change", [None, "action", "thesis_grade", "gate", "window", "evidence"])
 def test_semantic_verdict_comparison_declares_identity_only_changes(change):
     import copy

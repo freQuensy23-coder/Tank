@@ -678,10 +678,9 @@ class ModelContext:
         ]
         if kind == "ITEM_ADDED":
             lines.append(
-                "This source was routed to the current event. Return exactly one outcome: "
-                "add_observation with link CORROBORATION (repeat coverage), STATE_UPDATE, DENIAL or "
-                "CONTRADICTION; or, when the source contains no new event claim, record_event with "
-                "is_event=false and a non-empty no_event_reason."
+                "This source was routed to the current event, so record_event is not available in this "
+                "session. Return exactly one outcome: add_observation with link CORROBORATION (repeat "
+                "coverage, or a source that adds nothing new), STATE_UPDATE, DENIAL or CONTRADICTION."
             )
             observation = self.skeleton("add_observation")
             if observation:
@@ -697,17 +696,22 @@ class ModelContext:
             merge = self.skeleton("merge_into")
             if merge:
                 lines.append("merge_into arguments: " + merge)
-        recorded = self.skeleton("record_event", is_event=True)
-        if recorded:
-            lines.append("record_event arguments (is_event=true): " + recorded)
-        lines.append(
-            'record_event rejection: the same record_event arguments with "is_event": false and '
-            '"no_event_reason": "<non-empty string>" (one concrete sentence why there is no event claim).'
-        )
+        if kind != "ITEM_ADDED":
+            recorded = self.skeleton("record_event", is_event=True)
+            if recorded:
+                lines.append("record_event arguments (is_event=true): " + recorded)
+            lines.append(
+                'record_event rejection: the same record_event arguments with "is_event": false and '
+                '"no_event_reason": "<non-empty string>" (one concrete sentence why there is no event claim).'
+            )
         lines.append(
             "Replace every <placeholder> with a value; an enum placeholder lists the allowed values "
-            "separated by |. is_event=false requires no_event_reason, and every other required field "
-            "is still required."
+            "separated by |."
+            + (
+                ""
+                if kind == "ITEM_ADDED"
+                else " is_event=false requires no_event_reason, and every other required field is still required."
+            )
         )
         refused = await self.refusals(payload)
         if refused:

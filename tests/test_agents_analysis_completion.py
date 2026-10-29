@@ -271,6 +271,17 @@ async def test_settled_turn_reminds_an_item_left_without_an_outcome_and_keeps_th
                 assert "agent_incomplete" not in final
                 if bound:
                     assert (await repo.get("evt.events", event_id))["lifecycle"] != "FAILED"
+                stale = await repo.get("ops.agent_sessions", "s")
+                stale.pop("verified_native_completion")
+                await repo.put("ops.agent_sessions", "s", stale)
+                assert (await service.completed_turn("s"))["complete"]
+                again = [
+                    job
+                    for job in await repo.list("ops.jobs", filters={"type": "AGENT_MESSAGE"})
+                    if job["payload"].get("kind") == "COMPLETION_REMINDER"
+                ]
+                assert len(again) == 1
+                assert (await repo.get("ingest.source_items", "item"))["extraction_status"] == "PENDING"
 
 
 @pytest.mark.parametrize(

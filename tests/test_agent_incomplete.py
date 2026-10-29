@@ -228,3 +228,32 @@ async def test_reanalysis_dry_run_lists_without_changing_and_apply_requeues_once
     await reanalyse(repo, item_ids=[legacy["item_id"]], apply=True)
     assert (await repo.get("ingest.source_items", "ITM-legacy"))["extraction_status"] == "PENDING"
     assert len(await repo.list("ops.jobs")) == 2
+
+
+@pytest.mark.parametrize(
+    "closed", [{"status": "FAILED"}, {"status": "ENDED"}, {"archived_at": "2026-10-01T00:00:00Z"}]
+)
+async def test_condition_addressed_to_a_closed_session_is_routed_by_its_event(closed):
+    repo = MemoryRepository()
+    await repo.put(
+        "ops.agent_sessions",
+        "dead",
+        {
+            "session_id": "dead",
+            "event_id": "e",
+            "status": "OPEN",
+            "model_context_version": CONTEXT_VERSION,
+            **closed,
+        },
+    )
+    await repo.put("ops.agent_sessions", "live", {"session_id": "live", "event_id": "e", "status": "OPEN"})
+    async with httpx.AsyncClient(transport=httpx.MockTransport(lambda request: httpx.Response(500))) as http:
+        service = SessionService(repo, session_settings(), lambda *args: None, http=http)
+        fired = {"kind": "CONDITION_FIRED", "event_id": "e", "session_id": "dead", "condition_id": "c"}
+        readdressed = await service.readdressed(fired)
+        assert readdressed == {"kind": "CONDITION_FIRED", "event_id": "e", "condition_id": "c"}
+        assert (await service.resolve(readdressed))["session_id"] == "live"
+        to_live = dict(fired, session_id="live")
+        assert await service.readdressed(to_live) == to_live
+        question = {"kind": "USER_QUESTION", "event_id": "e", "session_id": "dead", "question_id": "q"}
+        assert await service.readdressed(question) == question

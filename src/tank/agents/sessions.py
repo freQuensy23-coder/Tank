@@ -113,6 +113,9 @@ class CapturedToolResult:
         return canonical_json({"result": self.result, "status": self.status, "is_error": self.is_error})
 
 
+EVENT_INPUTS = frozenset({"CONDITION_FIRED", "MILESTONE", "CALL_EXPIRED"})
+
+
 class SessionService:
     def __init__(self, repo, settings, tool_dispatch, *, http=None, stream_http=None):
         self.repo, self.settings, self.tool_dispatch = repo, settings, tool_dispatch
@@ -572,6 +575,7 @@ class SessionService:
     async def send_message(self, payload):
         if payload.get("kind") == "USER_QUESTION" and not await self.continuable(payload):
             return None
+        payload = await self.readdressed(payload)
         item = (
             await self.repo.get("ingest.source_items", payload["item_id"]) if payload.get("item_id") else None
         )
@@ -713,6 +717,23 @@ class SessionService:
             await self.repo.put("ops.agent_sessions", sid, session)
             await session_progress(self.repo, self.settings, session)
             return session
+
+    async def readdressed(self, payload):
+        """An event input addressed to a session that has since closed goes to its event instead.
+
+        Timed reviews and agent-defined conditions carry the session that scheduled them. When that
+        session is FAILED, ENDED or archived, the input drops the stale session_id and is routed by
+        its event_id, so it joins the event's open session or opens a fresh generation."""
+        if (
+            payload.get("kind") not in EVENT_INPUTS
+            or not payload.get("session_id")
+            or not payload.get("event_id")
+        ):
+            return payload
+        session = await self.repo.get("ops.agent_sessions", payload["session_id"])
+        if session is None or self.routable_session(session):
+            return payload
+        return {key: value for key, value in payload.items() if key != "session_id"}
 
     @staticmethod
     def routable_session(session):

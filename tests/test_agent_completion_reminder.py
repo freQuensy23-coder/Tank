@@ -167,8 +167,9 @@ async def test_item_added_reminder_names_add_observation():
     text = content["reminder"]
     assert "Full article body" not in json.dumps(content, ensure_ascii=False)
     assert len(json.dumps(content, ensure_ascii=False)) < 6000
-    assert '"is_event": true' in text
     assert 'add_observation arguments: {"link": "<CORROBORATION|STATE_UPDATE|DENIAL|CONTRADICTION>"' in text
+    assert "record_event is not available" in text
+    assert '"is_event"' not in text and "no_event_reason" not in text
     assert "merge_into" not in text
     await sessions.close()
 
