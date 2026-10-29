@@ -3,10 +3,12 @@ import asyncio
 import hashlib
 import json
 import os
+import shutil
 import subprocess
 import sys
 import tarfile
 from contextlib import AsyncExitStack
+from importlib.machinery import EXTENSION_SUFFIXES
 from pathlib import Path
 
 import pytest
@@ -30,6 +32,22 @@ def repository_contract(path):
         elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name != "_same_json_value":
             nodes.append(node)
     return ast.dump(ast.Module(body=nodes, type_ignores=[]))
+
+
+def stage_native_module(checkout, archived, binary, module):
+    relative = Path("src", *module.split(".")).with_suffix(".py")
+    assert (checkout / relative).read_bytes() == (archived / relative).read_bytes()
+    assert (checkout / "pyproject.toml").read_bytes() == (archived / "pyproject.toml").read_bytes()
+    assert binary.is_file() and not binary.is_symlink()
+    assert binary.resolve().is_relative_to(checkout.resolve())
+    assert any(binary.name == relative.stem + suffix for suffix in EXTENSION_SUFFIXES)
+    destination = archived / relative.with_name(binary.name)
+    assert destination.parent.resolve().is_relative_to(archived.resolve())
+    assert not destination.exists() and not destination.is_symlink()
+    shutil.copyfile(binary, destination)
+    digest = hashlib.sha256(binary.read_bytes()).hexdigest()
+    assert hashlib.sha256(destination.read_bytes()).hexdigest() == digest
+    return {"path": str(destination.relative_to(archived)), "sha256": digest}
 
 
 def archive(revision, destination, paths):
@@ -88,7 +106,7 @@ async def full_request_comparison(tmp_path_factory, pytestconfig, request):
     fixtures = fixtures / "tests/fixtures/market-truth-latency-full"
     manifest = stage_data(fixtures)
     template = PostgresTemplate(schema_template=pytestconfig.getoption("postgres_schema_template"))
-    workers, repositories, receipts = {}, [], {}
+    workers, repositories, receipts, compiled = {}, [], {}, {}
     try:
         async with AsyncExitStack() as resources:
             for label, revision in (("original", ORIGINAL), ("candidate", candidate)):
@@ -102,6 +120,9 @@ async def full_request_comparison(tmp_path_factory, pytestconfig, request):
                     assert repository_contract(root / "src/tank/storage.py") == repository_contract(
                         tmp_path / "original/src/tank/storage.py"
                     )
+                    from tank.analysis import truth
+
+                    compiled[label] = stage_native_module(ROOT, root, Path(truth.__file__), "tank.analysis.truth")
                 repo = await resources.enter_async_context(
                     template.repository(os.environ["TANK_TEST_DATABASE_URL"])
                 )
@@ -168,6 +189,7 @@ async def full_request_comparison(tmp_path_factory, pytestconfig, request):
                     json.dumps(
                         {
                             "source_heads": {"original": ORIGINAL, "candidate": candidate},
+                            "compiled_artifacts": compiled,
                             "post_measurement_profile": diagnostic,
                             "samples": {
                                 label + "_" + state: value for (label, state), value in samples.items()

@@ -1,5 +1,5 @@
 [build-system]
-requires = ["hatchling>=1.27"]
+requires = ["hatchling>=1.27", "hatch-cython==0.6.0", "Cython==3.3.0", "setuptools==84.2.1"]
 build-backend = "hatchling.build"
 
 [project]
@@ -34,6 +34,14 @@ dev = ["pytest==9.1.1", "pytest-asyncio==1.4.0", "pytest-timeout==2.4.0", "pytes
 tank = "tank.cli:main"
 [tool.hatch.build.targets.wheel]
 packages = ["src/tank"]
+[tool.hatch.build.targets.wheel.hooks.cython.options]
+src = "tank"
+compile_args = ["-O2"]
+directives = { language_level = 3, binding = true, infer_types = false, annotation_typing = false, profile = true }
+[tool.hatch.build.targets.wheel.hooks.cython.options.files]
+targets = ["*/analysis/truth.py"]
+[tool.uv]
+cache-keys = [{ file = "pyproject.toml" }, { file = "src/tank/analysis/truth.py" }]
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]
