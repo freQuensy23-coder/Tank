@@ -183,7 +183,9 @@ class Runtime:
             await self.market.repair_windows(
                 payload["token_id"], min(anchor, end) - REPAIR_LOOKBACK, end, budget_s=REPAIR_BUDGET_S
             )
-        return await self.truth.assess(payload["event_id"], payload["token_id"], cutoff)
+        result = await self.truth.assess(payload["event_id"], payload["token_id"], cutoff)
+        await self.scheduler.refresh_truth_after_assessment(result)
+        return result
 
     async def scout_review(self, payload):
         if not hasattr(self.sessions, "scout_review"):

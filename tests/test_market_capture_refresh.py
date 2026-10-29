@@ -292,6 +292,7 @@ async def test_runtime_waits_for_capture_release_before_numerical_assessment():
         capture_readiness=AsyncMock(return_value={"status": "RUNNING"}), wait_capture=wait_capture
     )
     runtime.truth = SimpleNamespace(assess=AsyncMock(return_value={"measured": True}))
+    runtime.scheduler = Scheduler(repo, SimpleNamespace(), runtime.market, runtime.truth)
     job = asyncio.create_task(runtime.assess({"event_id": "e", "token_id": "T"}))
     await waiting.wait()
     runtime.truth.assess.assert_not_called()
@@ -324,6 +325,7 @@ async def test_runtime_checks_the_capture_at_t1_before_a_scheduled_t0():
         capture_readiness=AsyncMock(return_value={"status": "PARTIAL"}), repair_windows=AsyncMock()
     )
     runtime.truth = SimpleNamespace(assess=AsyncMock(return_value={"measured": True}))
+    runtime.scheduler = Scheduler(repo, SimpleNamespace(), runtime.market, runtime.truth)
     payload = {
         "event_id": "e",
         "token_id": "T",
