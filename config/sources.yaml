@@ -936,7 +936,7 @@ sources:
   mode: REST
   interval_s: 300
   feeds:
-  - url: https://news.google.com/rss/search?q=site:reuters.com+crypto&hl=en-US&gl=US&ceid=US:en
+  - url: https://news.google.com/rss/search?q=site:reuters.com+crypto+when:1d&hl=en-US&gl=US&ceid=US:en
     kind: rss
     interval_s: 300
   priority: SECONDARY

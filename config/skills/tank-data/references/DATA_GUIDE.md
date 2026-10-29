@@ -743,7 +743,7 @@ GitHub evidence is SOURCE_SIDE_SUPPORT: it can raise an integration claim to BUI
 |---|---|---|
 | S30 | `https://feeds.bbci.co.uk/news/business/rss.xml` · `https://feeds.bbci.co.uk/news/technology/rss.xml` | 120 s · 300 s |
 | S31 | `https://feeds.bloomberg.com/markets/news.rss` | 120 s |
-| S32 | `https://news.google.com/rss/search?q=site:reuters.com+crypto&hl=en-US&gl=US&ceid=US:en` | 300 s |
+| S32 | `https://news.google.com/rss/search?q=site:reuters.com+crypto+when:1d&hl=en-US&gl=US&ceid=US:en` | 300 s |
 | S33 | `https://www.coindesk.com/arc/outboundfeeds/rss/` | 120 s |
 | S34 | `https://www.theblock.co/rss.xml` | 120 s |
 
@@ -1958,7 +1958,7 @@ This manifest is generated from current `sources.yaml` and takes precedence for 
 | S30 | BBC News | 120 | rss | GET https://feeds.bbci.co.uk/news/business/rss.xml |
 | S30 | BBC News | 300 | rss | GET https://feeds.bbci.co.uk/news/technology/rss.xml |
 | S31 | Bloomberg | 120 | rss | GET https://feeds.bloomberg.com/markets/news.rss |
-| S32 | Reuters | 300 | rss | GET https://news.google.com/rss/search?q=site:reuters.com+crypto&hl=en-US&gl=US&ceid=US:en |
+| S32 | Reuters | 300 | rss | GET https://news.google.com/rss/search?q=site:reuters.com+crypto+when:1d&hl=en-US&gl=US&ceid=US:en |
 | S33 | CoinDesk | 120 | rss | GET https://www.coindesk.com/arc/outboundfeeds/rss/ |
 | S34 | The Block | 120 | rss | GET https://www.theblock.co/rss.xml |
 

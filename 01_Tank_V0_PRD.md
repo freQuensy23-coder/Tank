@@ -172,7 +172,7 @@ Rules:
 |---|---|---|---|
 | S30 | BBC News | Business; Technology | 2 min / 5 min |
 | S31 | Bloomberg | Markets headlines | 2 min |
-| S32 | Reuters | Crypto coverage (via Google News, as Reuters has no public feed) | 5 min |
+| S32 | Reuters | Crypto coverage published in the last day (via Google News search limited to `when:1d`, as Reuters has no public feed; without the limit Google ranks years-old articles by relevance) | 5 min |
 | S33 | CoinDesk | All articles | 2 min |
 | S34 | The Block | All articles | 2 min |
 
