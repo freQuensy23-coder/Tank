@@ -18,7 +18,7 @@ from collections import defaultdict
 from contextvars import ContextVar
 from copy import deepcopy
 from datetime import UTC, datetime, timedelta
-from decimal import Decimal, DecimalException, Inexact, Rounded, getcontext, localcontext
+from decimal import Context, Decimal, DecimalException, Inexact, Rounded, getcontext, localcontext
 from functools import wraps
 from math import isfinite, log
 from statistics import mean, median, stdev
@@ -28,7 +28,7 @@ import numpy as np
 from tank.analysis import compute_workers
 from tank.market.capture import event_anchor
 from tank.time_precision import Timestamp, chosen_boundary, offset_schedule, propagate_timestamp
-from tank.util import iso, jsonable, new_id, parse_time
+from tank.util import _TIME_PARSE_MEMO, iso, jsonable, new_id, parse_time
 
 WINDOWS = {"W15M": 900, "W1H": 3600, "W4H": 14400, "W24H": 86400}
 RISK_ORDER = [
@@ -1104,7 +1104,7 @@ def _history_context_key():
         context.Emin,
         context.Emax,
         context.clamp,
-        tuple(context.traps.items()),
+        tuple(context.traps.values()) if type(context) is Context else tuple(context.traps.items()),
     )
 
 
@@ -1234,7 +1234,12 @@ def _oi_stats(rows, start, end, *, history_identity=None, venue_history=None):
     window = end - start
     lower = start - timedelta(days=lookback_days())
     lo, hi = bisect_left(ordered_times, lower), bisect_left(ordered_times, start)
-    bytime = {_time(rows[i]): rows[i] for i in sorted(index for _, index in ordered[lo:hi])}
+    if venue_history is not None and all(type(at) is datetime for at in ordered_times[lo:hi]):
+        history_times = list(dict.fromkeys(ordered_times[lo:hi]))
+        bytime = None
+    else:
+        bytime = {_time(rows[i]): rows[i] for i in sorted(index for _, index in ordered[lo:hi])}
+        history_times = sorted(bytime)
     cohort_key = None
     cache = _BASELINE_CACHE.get()
     dependency = _BASELINE_DEPENDENCY.get()
@@ -1248,7 +1253,6 @@ def _oi_stats(rows, start, end, *, history_identity=None, venue_history=None):
     deferred_history = cache is not None and dependency is not None
     if venue_history is not None and not deferred_history:
         venue_history = [_history_slice(times, venue_rows, start) for times, venue_rows in venue_history]
-    history_times = sorted(bytime)
     gaps = sorted(
         (b - a).total_seconds() for a, b in zip(history_times, history_times[1:], strict=False) if b > a
     )
@@ -5987,9 +5991,11 @@ def _compute_market_truth_slot(snapshot, *, config=None, baseline_cache=None):
     dependency = _BASELINE_DEPENDENCY.set(None)
     inputs = _ASSESSMENT_INPUTS.set({})
     times = _TIMES.set({})
+    text_times = _TIME_PARSE_MEMO.set({})
     try:
         return _compute_market_truth(snapshot, config=config)
     finally:
+        _TIME_PARSE_MEMO.reset(text_times)
         _TIMES.reset(times)
         _ASSESSMENT_INPUTS.reset(inputs)
         _BASELINE_DEPENDENCY.reset(dependency)

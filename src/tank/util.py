@@ -3,6 +3,7 @@ import hashlib
 import json
 import secrets
 import time
+from contextvars import ContextVar
 from datetime import UTC, datetime
 from decimal import Decimal
 from enum import Enum
@@ -24,9 +25,23 @@ def _parse_text_time(value: str) -> datetime:
     return parse_time(datetime.fromisoformat(value.replace("Z", "+00:00")))
 
 
+_TIME_PARSE_MEMO: ContextVar[dict[str, datetime] | None] = ContextVar(
+    "assessment_timestamp_texts", default=None
+)
+
+
 def parse_time(value: Any) -> datetime:
     if type(value) is str and len(value) <= 64:
-        return _parse_text_time(value)
+        memo = _TIME_PARSE_MEMO.get()
+        if memo is None:
+            return _parse_text_time(value)
+        cached = memo.get(value)
+        if cached is not None:
+            return cached
+        parsed = _parse_text_time(value)
+        if len(memo) < 65536:
+            memo[value] = parsed
+        return parsed
     if isinstance(value, datetime):
         return value.replace(tzinfo=UTC) if value.tzinfo is None else value.astimezone(UTC)
     if isinstance(value, (int, float, Decimal)) or (

@@ -520,6 +520,8 @@ async def run(root, directory, fixtures, revision, reader):
 
                 chm.dense_projection_page = dense_page
 
+            assessment_cache_entries = {}
+
             def measure(name, function):
                 @wraps(function)
                 def measured(*args, **kwargs):
@@ -535,6 +537,15 @@ async def run(root, directory, fixtures, revision, reader):
                             diagnostic_seconds = elapsed
                         phases[name] = phases.get(name, 0) + elapsed
                         phase_calls[name] = phase_calls.get(name, 0) + 1
+                        if name == "_compute_market_truth":
+                            inputs = truth._ASSESSMENT_INPUTS.get()
+                            if type(inputs) is dict:
+                                assessment_cache_entries.update(
+                                    (key, len(value)) for key, value in inputs.items() if type(value) is dict
+                                )
+                            text_cache = getattr(sys.modules["tank.util"], "_TIME_PARSE_MEMO", None)
+                            if text_cache is not None and text_cache.get() is not None:
+                                assessment_cache_entries["timestamp_texts"] = len(text_cache.get())
 
                 return measured
 
@@ -670,6 +681,7 @@ async def run(root, directory, fixtures, revision, reader):
                     clock["value"] = manifest["availability_cutoff"]
                     phases.clear()
                     phase_calls.clear()
+                    assessment_cache_entries.clear()
                     gc_receipt = {}
                     rows = profile_retained_call(diagnostic_call, gc_receipt=gc_receipt)
                     emit(
@@ -678,6 +690,7 @@ async def run(root, directory, fixtures, revision, reader):
                             "stage": diagnostic_call[1].__name__,
                             "rows": rows,
                             "garbage_collection": gc_receipt,
+                            "assessment_cache_entries": dict(assessment_cache_entries),
                             "inclusive_nonadditive_phase_seconds": dict(phases),
                             "phase_call_counts": dict(phase_calls),
                             "snapshot": await profile_retained_async(snapshot_call),
