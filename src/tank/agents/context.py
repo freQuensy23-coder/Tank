@@ -120,6 +120,14 @@ ID_FIELDS = {
     "source_ids": "source",
 }
 CLAIM_EVIDENCE_TOOLS = {"set_assessment", "set_beneficiaries"}
+SCORED_DIMENSIONS = (
+    "economic_directness",
+    "magnitude",
+    "permanence",
+    "distribution_expansion",
+    "mechanical_flows",
+    "surprise",
+)
 PATTERN_TOOLS = {"propose_pattern", "record_review"}
 LEGACY_REFERENCES = {
     "document": "item_id",
@@ -322,6 +330,21 @@ def references(tool, value, path="$", field=None):
             yield from references(tool, item, f"{path}[{index}]", field)
     elif isinstance(value, str) and (kind := id_kind(tool, field)):
         yield path, kind, value
+
+
+def uncited_scores(arguments):
+    """Argument paths of numeric assessment scores that cite no claim (01 FR-M-01: unknown, never a number)."""
+    assessment = arguments.get("assessment")
+    dims = assessment.get("dims") if isinstance(assessment, dict) else None
+    if not isinstance(dims, dict):
+        return []
+    return [
+        f"$.assessment.dims.{name}.evidence"
+        for name in SCORED_DIMENSIONS
+        if isinstance(dims.get(name), dict)
+        and dims[name].get("value") is not None
+        and not dims[name].get("evidence")
+    ]
 
 
 def reject_text_ids(tool, value, path="$", field=None):
@@ -914,6 +937,14 @@ class ModelContext:
         reject_text_ids(tool, arguments)
         for path, kind, value in references(tool, arguments):
             await self.check(tool, path, kind, value)
+        uncited = uncited_scores(arguments) if tool == "set_assessment" else []
+        if uncited:
+            raise ValueError(
+                ", ".join(uncited) + ": a numeric score cites the claim IDs of the current event that "
+                "support it. Cite them, or set value null with a reason where no recorded claim supports "
+                "the score: without evidence a score is unknown, never a number, 0 included. "
+                + self.lookup("claim")
+            )
         result = copy.deepcopy(arguments)
         self.bind(tool, result)
         return result
