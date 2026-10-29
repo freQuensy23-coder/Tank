@@ -5,7 +5,7 @@ import copy
 import json
 import re
 
-from tank.event_tools import SCOPED_TOOLS, absent_optionals, validate_schema
+from tank.event_tools import SCOPED_TOOLS, absent_optionals, registry_key_for, validate_schema
 
 CONTEXT_VERSION = 3
 AGENT_SKILLS = {False: "tank-event-analyst", True: "tank-scout-reviewer"}
@@ -121,6 +121,7 @@ ID_FIELDS = {
 }
 CLAIM_EVIDENCE_TOOLS = {"set_assessment", "set_beneficiaries"}
 PATTERN_TOOLS = {"propose_pattern", "record_review"}
+NAME_LOOKUP_TOOLS = {"list_open_events", "get_registry"}
 LEGACY_REFERENCES = {
     "document": "item_id",
     "event": "event_id",
@@ -165,7 +166,8 @@ CONTEXT_TRANSITION = {
         "instructions and skill text that cite records by description. Tool arguments name records only by ID. "
         "Registry objects now read «Name · key» (World (WLD) · world:WLD, Uniswap · uniswap): token_id, token_ids, "
         "entity_id, instrument_id and source_id take the key after « · »; an entity or token outside the registry "
-        "is named (entities[].name, token_names, entity_name, token_name). "
+        "is named (entities[].name, token_names, entity_name, token_name), and looked up by name in "
+        "list_open_events and get_registry; never compose a key for it. "
         "Finding record IDs for tool arguments, with read-only SQL in your sandbox "
         '(psql "$TANK_DB_URL" -Atc "<query>"): '
         "«Source document by URL»: SELECT item_id, observed_at, document->>'evidence_kind' FROM "
@@ -751,6 +753,19 @@ class ModelContext:
             )
         return f"Look it up with read-only SQL: {ID_LOOKUP[self.scout]}, «{QUERIES[kind]}»."
 
+    def unregistered(self, tool, kind, value):
+        """Guidance for a key the registry does not hold: the key it names, or how to look up a name outside the registry."""
+        key = registry_key_for(self.registry, kind, value) if kind in {"token", "entity"} else None
+        if key:
+            return f"The registry key for {value!r} is {key}; pass {key}. {self.lookup(kind)}"
+        if kind in {"token", "entity"} and tool in NAME_LOOKUP_TOOLS:
+            return (
+                f"{value!r} is not in the registry. A project or token outside the registry has no key: "
+                "pass its name or ticker in name instead, e.g. name: «Ripple» or «XRP». "
+                f"For a registry object: {self.lookup(kind)}"
+            )
+        return self.lookup(kind)
+
     def public_schema(self, tool):
         reader = getattr(self.settings, "read_config_json", None)
         if reader is None:
@@ -871,7 +886,7 @@ class ModelContext:
                 kind == "source" and await self.repo.get("reg.sources", value) is not None
             )
             if not registered:
-                raise ValueError(f"{path}: not a {REGISTRY[kind]}. {self.lookup(kind)}")
+                raise ValueError(f"{path}: not a {REGISTRY[kind]}. {self.unregistered(tool, kind, value)}")
             return
         table, label = RECORDS[kind]
         row = await self.repo.get(table, value)
