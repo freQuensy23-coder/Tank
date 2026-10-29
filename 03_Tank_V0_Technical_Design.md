@@ -1249,6 +1249,8 @@ Modifiers: HEADWIND → one notch down; STRESS → one notch down. Exception: ST
 
 ## 5. Market Truth algorithms
 
+**In-process baselines.** Market Truth reuses history baselines between computations only while they can still be reused. A baseline is keyed by the exact history heads it was computed from; the 90-day native-volume index of an instrument is kept once, for its newest head, and an appended minute extends it in place of a new copy. An assessment's baselines belong to its token and are released after 30 minutes without an assessment of that token (`ASSESSMENT_BASELINE_IDLE_S`), because the heads they are keyed by move every minute. Reuse never changes a result: a released or replaced baseline is computed again from the same inputs.
+
 ### 5.1 Capture tiers
 
 Both tiers run in tank-capture (02 §5.1), which writes everything below into ClickHouse `mkt`; Tank's Market Truth reads it from there. The normalization of §5.2 is implemented in tank-capture's Go port and kept identical to the Python reference `tank.market` by the parity harness.
