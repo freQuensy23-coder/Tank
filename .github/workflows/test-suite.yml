@@ -153,6 +153,7 @@ jobs:
         run: uv run --frozen --extra dev pytest -p parallel_postgres -p integration_shard --ci-shard "$INTEGRATION_SHARD" -q -n auto --dist loadfile -m integration --postgres-schema-template "$TANK_CI_SCHEMA_TEMPLATE" --timeout=300 --junitxml=.test-results/integration.xml
         env:
           PYTHONPATH: scripts/ci:tests
+          MARKET_TRUTH_CONTRACT_BASE: ${{ github.event.pull_request.base.sha || github.sha }}
       - name: Require the complete integration collection with zero skips
         run: uv run --frozen --extra dev python scripts/ci/check_integration_results.py .test-results/integration.xml --collection .test-results/integration-collection.json --shard "$INTEGRATION_SHARD"
       - name: Collect the owned ClickHouse logs

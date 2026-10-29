@@ -1,6 +1,6 @@
 from copy import deepcopy
 from datetime import timedelta
-from decimal import Decimal
+from decimal import Decimal, FloatOperation, InvalidOperation, localcontext
 
 import pytest
 
@@ -97,3 +97,48 @@ def test_wide_column_decoder_matches_every_typed_schema_and_keeps_mutable_values
 def test_wide_column_decoder_refuses_ragged_columns():
     with pytest.raises(ValueError, match="Invalid wide page columns"):
         chm._wide_column_records("mkt.oi_obs", {"instrument_id": ["T"], "ts": []}, "ts")
+
+
+def test_wide_schema_dispatch_is_once_per_column_instead_of_once_per_cell(monkeypatch):
+    comparisons = []
+
+    class Kind(str):
+        __hash__ = str.__hash__
+
+        def __eq__(self, other):
+            comparisons.append(None)
+            return super().__eq__(other)
+
+    kinds = dict(chm.MARKET_COLUMNS["mkt.oi_obs"], oi_native=Kind("numeric"))
+    monkeypatch.setitem(chm.MARKET_COLUMNS, "mkt.oi_obs", kinds)
+    rows = [
+        dict(instrument_id="A:perp:T", storage_key=str(i), ts="2026-10-19T00:00:00Z", oi_native="3.000")
+        for i in range(20)
+    ]
+    expected = [(r["instrument_id"], chm._record("mkt.oi_obs", r), r["storage_key"], T0) for r in rows]
+    comparisons.clear()
+    columns = {name: [row[name] for row in rows] for name in rows[0]}
+    assert chm._wide_column_records("mkt.oi_obs", columns, "ts") == expected
+    assert len(comparisons) <= 4
+
+
+@pytest.mark.parametrize("trap", [False, True])
+def test_wide_column_batches_keep_first_row_error_and_decimal_flags(monkeypatch, trap):
+    monkeypatch.setitem(chm.MARKET_COLUMNS, "mkt.oi_obs", {"oi_native": "numeric", "ts": "timestamptz"})
+    rows = [
+        dict(instrument_id="A:perp:T", storage_key="first", ts="not-a-date", oi_native=1.1),
+        dict(instrument_id="A:perp:T", storage_key="second", ts="2026-10-19T00:00:00Z", oi_native="bad"),
+    ]
+    columns = {name: [row[name] for row in rows] for name in rows[0]}
+    with localcontext() as context:
+        context.traps[InvalidOperation] = trap
+        context.traps[FloatOperation] = False
+        context.clear_flags()
+        with pytest.raises(ValueError) as expected:
+            chm._record("mkt.oi_obs", rows[0])
+        flags = dict(context.flags)
+        context.clear_flags()
+        with pytest.raises(type(expected.value)) as actual:
+            chm._wide_column_records("mkt.oi_obs", columns, "ts")
+        assert str(actual.value) == str(expected.value)
+        assert dict(context.flags) == flags

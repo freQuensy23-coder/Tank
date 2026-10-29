@@ -1837,7 +1837,7 @@ The existing `tank.analysis.truth`, `tank.clickhouse_market` and `tank.util` Pyt
 
 Large JSONColumns responses use the already pinned Pydantic Core JSON decoder with immutable-string reuse, complete-input validation and standard-decoder fallback for unsupported JSON. Non-default interpreter integer digit limits also retain the standard path. Monetary strings retain their exact spelling; floating-point bit patterns, signed zero, Unicode, non-finite values and malformed-input exceptions are checked against the standard decoder. Row transport and canonical JSON serialization remain unchanged.
 
-Mutable non-serial record replacements may transfer only changed top-level document fields while still updating every typed projection. The conditional update requires the previously read `xmin` and `ctid`; an intervening write or missing row uses the original complete upsert. Immutable records, serial-table defaults, transaction ownership, locks, copy isolation and full replacement semantics remain unchanged.
+Mutable non-serial record replacements may transfer only changed top-level document fields while still updating every typed projection. The conditional update requires the previously read `xmin` and `ctid`; an intervening write or missing row uses the original complete upsert. Immutable records, serial-table defaults, transaction ownership, locks, copy isolation and full replacement semantics remain unchanged. The repository AST guard compares the candidate against the exact PR-base commit, whose SHA is recorded in the qualification receipt; unrelated main-branch additions remain protected in that comparison. The frozen original package remains the calculation, projection, snapshot and latency comparison oracle.
 
 ## 12. Configuration baseline (⚙)
 

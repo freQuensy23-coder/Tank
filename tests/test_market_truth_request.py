@@ -3,6 +3,7 @@ import asyncio
 import hashlib
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -106,6 +107,10 @@ async def full_request_comparison(tmp_path_factory, pytestconfig, request):
     archive(candidate, fixtures, ["tests/fixtures/market-truth-latency-full"])
     fixtures = fixtures / "tests/fixtures/market-truth-latency-full"
     manifest = stage_data(fixtures)
+    contract_base = os.environ.get("MARKET_TRUTH_CONTRACT_BASE", ORIGINAL)
+    assert re.fullmatch(r"[0-9a-f]{40}", contract_base)
+    contract = tmp_path / "repository-base"
+    archive(contract_base, contract, ["src/tank/storage.py"])
     template = PostgresTemplate(schema_template=pytestconfig.getoption("postgres_schema_template"))
     workers, repositories, receipts, compiled = {}, [], {}, {}
     try:
@@ -119,7 +124,7 @@ async def full_request_comparison(tmp_path_factory, pytestconfig, request):
                             tmp_path / "original" / filename
                         ).read_bytes()
                     assert repository_contract(root / "src/tank/storage.py") == repository_contract(
-                        tmp_path / "original/src/tank/storage.py"
+                        contract / "src/tank/storage.py"
                     )
                     from tank import clickhouse_market, util
                     from tank.analysis import truth
@@ -195,7 +200,11 @@ async def full_request_comparison(tmp_path_factory, pytestconfig, request):
                 evidence.write_text(
                     json.dumps(
                         {
-                            "source_heads": {"original": ORIGINAL, "candidate": candidate},
+                            "source_heads": {
+                                "original": ORIGINAL,
+                                "candidate": candidate,
+                                "repository_contract_base": contract_base,
+                            },
                             "compiled_artifacts": compiled,
                             "post_measurement_profile": diagnostic,
                             "samples": {
