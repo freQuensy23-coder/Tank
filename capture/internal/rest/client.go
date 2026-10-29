@@ -316,7 +316,19 @@ var ErrTooLarge = errors.New("RESPONSE_TOO_LARGE")
 type Fetched struct {
 	Status      int
 	ContentType string
+	Location    string
 	Body        []byte
+}
+
+type manualRedirectsKey struct{}
+
+func WithManualRedirects(ctx context.Context) context.Context {
+	return context.WithValue(ctx, manualRedirectsKey{}, true)
+}
+
+func ManualRedirects(ctx context.Context) bool {
+	manual, _ := ctx.Value(manualRedirectsKey{}).(bool)
+	return manual
 }
 
 func (c *Client) Fetch(ctx context.Context, method, rawURL string, params, headers map[string]string, body any, priority int) (*Fetched, error) {
@@ -399,7 +411,13 @@ func (c *Client) raw(ctx context.Context, method string, u *url.URL, params, hea
 	for k, v := range headers {
 		req.Header.Set(k, v)
 	}
-	resp, err := c.HTTP.Do(req)
+	client := c.HTTP
+	if ManualRedirects(ctx) {
+		manual := *c.HTTP
+		manual.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
+		client = &manual
+	}
+	resp, err := client.Do(req)
 	if err != nil {
 		return nil, err
 	}
@@ -413,7 +431,8 @@ func (c *Client) raw(ctx context.Context, method string, u *url.URL, params, hea
 	if len(data) > FetchLimit {
 		return nil, ErrTooLarge
 	}
-	return &rawResponse{Fetched{resp.StatusCode, resp.Header.Get("Content-Type"), data}, resp.Header}, nil
+	fetched := Fetched{resp.StatusCode, resp.Header.Get("Content-Type"), resp.Header.Get("Location"), data}
+	return &rawResponse{fetched, resp.Header}, nil
 }
 
 func (c *Client) count(host string, ok bool) {

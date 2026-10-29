@@ -92,31 +92,62 @@ async def test_each_redirect_hop_passes_the_url_checks(tmp_path, location, messa
     assert not await service.repo.list("ingest.source_items")
 
 
-async def test_redirect_to_exchange_host_goes_through_tank_capture(tmp_path):
+async def answer_capture(service, results):
+    """Play tank-capture: answer each queued HTTP_FETCH with the next result; return the requests."""
+    requests = []
+    for result in results:
+        while not (
+            rows := [r for r in await service.repo.list("mkt.capture_requests") if r["status"] == "PENDING"]
+        ):
+            await asyncio.sleep(0.01)
+        row = rows[0]
+        requests.append(row["request"])
+        row.update(status="COMPLETE", result=result)
+        await service.repo.put("mkt.capture_requests", row["request_id"], row)
+    return requests
+
+
+async def test_exchange_hops_go_through_tank_capture_one_hop_at_a_time(tmp_path):
     exchange = "https://www.binance.com/en/support/announcement/abc"
+    final = "https://www.okx.com/help/final"
 
     def handler(request):
-        if request.url.host == "www.binance.com":
+        if request.url.host in {"www.binance.com", "www.okx.com"}:
             raise AssertionError("core reached an exchange host")
         return httpx.Response(302, headers={"location": exchange})
 
     service, client = await service_with(tmp_path, handler)
-
-    async def tank_capture():
-        while not (rows := await service.repo.list("mkt.capture_requests")):
-            await asyncio.sleep(0.01)
-        row = rows[0]
-        assert row["request"]["url"] == exchange
-        row.update(
-            status="COMPLETE", result={"status_code": 200, "content_type": "text/html", "body": "<p>x</p>"}
-        )
-        await service.repo.put("mkt.capture_requests", row["request_id"], row)
-
+    results = [
+        {"status_code": 302, "location": final},
+        {"status_code": 200, "content_type": "text/html", "body": "<p>x</p>"},
+    ]
     async with client, asyncio.timeout(5):
-        worker = asyncio.create_task(tank_capture())
+        worker = asyncio.create_task(answer_capture(service, results))
         item = await service.fetch_page({"url": "https://example.com/link"}, {})
+        requests = await worker
+    assert [r["url"] for r in requests] == [exchange, final]
+    browser = service.settings.load_config("sources")["evidence_user_agent"]
+    for request in requests:
+        assert request["redirects"] == "manual"
+        assert request["headers"]["User-Agent"] == browser
+    assert item["url"] == final
+
+
+@pytest.mark.parametrize(
+    "location,message",
+    [("http://www.okx.com/plain", "Only HTTPS"), ("https://example.com/p?apikey=1", "Credential-bearing")],
+)
+async def test_redirect_returned_by_tank_capture_passes_the_url_checks(tmp_path, location, message):
+    def handler(request):
+        raise AssertionError("core must not fetch " + str(request.url))
+
+    service, client = await service_with(tmp_path, handler)
+    async with client, asyncio.timeout(5):
+        worker = asyncio.create_task(answer_capture(service, [{"status_code": 301, "location": location}]))
+        with pytest.raises(ValueError, match=message):
+            await service.fetch_page({"url": "https://www.okx.com/help/x"}, {})
         await worker
-    assert item["url"] == exchange
+    assert not await service.repo.list("ingest.source_items")
 
 
 async def test_redirect_hops_share_one_deadline(tmp_path):

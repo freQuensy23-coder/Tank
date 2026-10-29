@@ -1237,13 +1237,9 @@ class EventToolService:
             for _hop in range(MAX_EVIDENCE_REDIRECTS + 1):
                 remaining = deadline - asyncio.get_running_loop().time()
                 if is_exchange_url(url):
-                    response = await capture_fetch(self.repo, "GET", url, budget_s=max(remaining, 0.001))
-                    response.raise_for_status()
-                    if len(response.content) > 2 * 1024 * 1024:
-                        raise ValueError("Page exceeds 2 MB")
-                    chunks, media_type = [response.content], response.headers.get("content-type")
-                    break
-                page = await self._direct_page(client, url, remaining, limit)
+                    page = await self._captured_page(url, remaining)
+                else:
+                    page = await self._direct_page(client, url, remaining, limit)
                 if isinstance(page, str):
                     url = page
                     self.validate_fetch_url(url)
@@ -1292,6 +1288,23 @@ class EventToolService:
             "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
             "Accept-Language": "en-US,en;q=0.9",
         }
+
+    async def _captured_page(self, url, remaining):
+        """One evidence hop on an exchange host, sent by tank-capture without following redirects."""
+        response = await capture_fetch(
+            self.repo,
+            "GET",
+            url,
+            headers=self.evidence_headers(url),
+            budget_s=max(remaining, 0.001),
+            follow_redirects=False,
+        )
+        if response.has_redirect_location:
+            return str(response.request.url.join(response.headers["location"]))
+        response.raise_for_status()
+        if len(response.content) > 2 * 1024 * 1024:
+            raise ValueError("Page exceeds 2 MB")
+        return [response.content], response.headers.get("content-type")
 
     async def _direct_page(self, client, url, remaining, limit):
         """One evidence hop: the next URL for a redirect, else the page chunks and media type."""

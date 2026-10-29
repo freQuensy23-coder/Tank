@@ -76,10 +76,23 @@ async def _capture_request(repo, kind, request, budget_s):
 
 
 async def capture_fetch(
-    repo, method, url, *, headers=None, body=None, source_id=None, budget_s=FETCH_BUDGET_S
+    repo,
+    method,
+    url,
+    *,
+    headers=None,
+    body=None,
+    source_id=None,
+    budget_s=FETCH_BUDGET_S,
+    follow_redirects=True,
 ):
-    """Ask tank-capture to fetch url; return its response, or raise httpx.TransportError."""
+    """Ask tank-capture to fetch url; return its response, or raise httpx.TransportError.
+
+    With follow_redirects=False tank-capture returns a redirect as is, with its Location header.
+    """
     request = {"method": (method or "GET").upper(), "url": url, "source_id": source_id}
+    if not follow_redirects:
+        request["redirects"] = "manual"
     if headers:
         request["headers"] = {k: v for k, v in headers.items() if k.lower() not in CONDITIONAL_HEADERS}
     if body is not None:
@@ -97,6 +110,8 @@ async def capture_fetch(
     else:
         content = (result.get("body") or "").encode()
     response_headers = {"content-type": result["content_type"]} if result.get("content_type") else {}
+    if result.get("location"):
+        response_headers["location"] = result["location"]
     return httpx.Response(
         int(result["status_code"]), content=content, headers=response_headers, request=http_request
     )

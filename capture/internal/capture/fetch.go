@@ -57,6 +57,9 @@ func (s *Service) runFetch(ctx context.Context, row map[string]any, budgetS time
 	for k, v := range pyval.Map(req["headers"]) {
 		headers[k] = text(v)
 	}
+	if text(req["redirects"]) == "manual" {
+		ctx = rest.WithManualRedirects(ctx)
+	}
 	if budgetS > 0 {
 		var cancel context.CancelFunc
 		ctx, cancel = context.WithTimeout(ctx, budgetS)
@@ -81,6 +84,9 @@ func (s *Service) runFetch(ctx context.Context, row map[string]any, budgetS time
 	result := map[string]any{
 		"status_code": int64(got.Status), "content_type": got.ContentType, "sha256": hex.EncodeToString(sum[:]),
 		"fetched_at": pytime.ISO(s.clock.Now()), "bytes": int64(len(got.Body)), "source_id": req["source_id"],
+	}
+	if got.Location != "" {
+		result["location"] = got.Location
 	}
 	if utf8.Valid(got.Body) {
 		result["body"] = string(got.Body)
