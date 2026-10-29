@@ -616,6 +616,75 @@ async def test_agent_new_connection_defaults_read_only(repo):
         await connection.close()
 
 
+@pytest.mark.integration
+@pytest.mark.postgres
+@pytest.mark.node
+@pytest.mark.process
+@pytest.mark.parametrize("repo", [pytest.param("postgres_deployment", id="postgres")], indirect=True)
+async def test_agent_sandbox_url_resolves_bare_table_names_read_only(repo):
+    assert isinstance(repo, PostgresRepository)
+    import json
+    import re
+    import shutil
+    import subprocess
+    from pathlib import Path
+
+    import psycopg
+    from psycopg.conninfo import conninfo_to_dict, make_conninfo
+
+    node = shutil.which("node")
+    if node is None:
+        pytest.skip("Node executable required for the actual sandbox database route")
+    root = Path(__file__).resolve().parents[1]
+    grants = (root / "src/tank/agent_grants.sql").read_text()
+    granted = re.findall(r"'(\w+)'", re.search(r"ARRAY\[([^\]]+)\]\s+LOOP", grants).group(1))
+    route = subprocess.run(
+        [
+            node,
+            "--input-type=module",
+            "-e",
+            "import {sandboxDatabaseRoute,replayDatabaseRoute} from './vendor/openma/tank-deploy/openma_entrypoint.mjs';"
+            "const replay=await replayDatabaseRoute(()=> 'synthetic',async()=>({address:'172.30.60.2'}));"
+            "console.log(JSON.stringify([sandboxDatabaseRoute({},()=> 'synthetic'),replay.url]));",
+        ],
+        cwd=root,
+        check=True,
+        capture_output=True,
+        text=True,
+        timeout=3,
+    )
+    production, replay = (conninfo_to_dict(url) for url in json.loads(route.stdout))
+    async with repo.transaction():
+        await repo._conn().execute(grants, prepare=False)
+    parameters = conninfo_to_dict(repo.database_url)
+    parameters["user"] = "tank_agent"
+    parameters.pop("password", None)
+    parameters["options"] = production.get("options")
+    connection = await psycopg.AsyncConnection.connect(make_conninfo(**parameters), autocommit=True)
+    try:
+        path = (await (await connection.execute("SELECT current_schemas(false)")).fetchone())[0]
+        assert set(granted) <= set(path)
+        for table in (
+            "tokens",
+            "source_items",
+            "events",
+            "claims",
+            "event_observations",
+            "supply_obs",
+            "decisions",
+            "alerts",
+            "jobs",
+            "expansion_proposals",
+            "reviews",
+        ):
+            await connection.execute("SELECT count(*) FROM " + table)
+        with pytest.raises(psycopg.errors.ReadOnlySqlTransaction):
+            await connection.execute("DELETE FROM claims WHERE false")
+    finally:
+        await connection.close()
+    assert replay.get("options") == production["options"]
+
+
 async def test_late_arrivals_use_availability_not_original_receipt(repo):
     instrument = new_id("late")
     cutoff = utcnow() - timedelta(hours=2)
