@@ -5,12 +5,20 @@ from types import SimpleNamespace
 
 import httpx
 import pytest
+from test_agents_session_audit import seed as seed_session
 from test_agents_session_audit import settings as session_settings
 from test_ops_cards import source
 
 from tank.agents import SessionService
 from tank.agents.context import CONTEXT_VERSION
-from tank.agents.incomplete import AGENT_INCOMPLETE, fail_incomplete_turn, reanalyse
+from tank.agents.incomplete import (
+    AGENT_INCOMPLETE,
+    LEGACY_INCOMPLETE,
+    SESSION_FAILED,
+    fail_incomplete_turn,
+    reanalysable,
+    reanalyse,
+)
 from tank.ops_cards import render, snapshot
 from tank.ops_progress import item_progress, session_progress
 from tank.storage import MemoryRepository
@@ -330,3 +338,87 @@ async def test_admission_looks_up_the_same_generation_as_routing():
         )
     assert (target["session_id"], target["runtime_status"]) == ("live", "RUNNING")
     assert fired["session_id"] == "live"
+
+
+async def test_legacy_item_reanalysis_closes_its_eventless_session_and_opens_a_fresh_one():
+    repo = MemoryRepository()
+    item = await source(repo, extraction_status="SKIPPED", extraction_reason=LEGACY_INCOMPLETE)
+    item_id = item["item_id"]
+    legacy = {
+        "session_id": "legacy",
+        "item_id": item_id,
+        "event_id": None,
+        "status": "OPEN",
+        "runtime_status": "IDLE",
+        "model_context_version": CONTEXT_VERSION,
+    }
+    await repo.put("ops.agent_sessions", "legacy", legacy)
+    await repo.put(
+        "ops.agent_sessions",
+        "evented",
+        {**legacy, "session_id": "evented", "event_id": "e"},
+    )
+    applied = await reanalyse(repo, item_ids=[item_id], apply=True)
+    assert applied["items"][0]["retired_sessions"] == ["legacy"]
+    retired = await repo.get("ops.agent_sessions", "legacy")
+    assert retired["agent_incomplete"] is True and retired["superseded_by_reanalysis"] == 1
+    assert "agent_incomplete" not in await repo.get("ops.agent_sessions", "evented")
+
+    creates = []
+
+    def handler(request):
+        if request.method == "GET":
+            return httpx.Response(200, json={"data": [], "next_page": None})
+        creates.append(json.loads(request.content))
+        return httpx.Response(200, json={"id": "fresh"})
+
+    attempt = (await repo.get("ingest.source_items", item_id))["reanalysis_attempt"]
+    message = {"kind": "NEW_ITEM", "item_id": item_id, "reanalysis_attempt": attempt}
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http:
+        service = SessionService(repo, session_settings(), lambda *args: None, http=http)
+        assert await service.existing_session(message) is None
+        fresh = await service.resolve(message)
+        assert (fresh["session_id"], fresh["reanalysis_attempt"]) == ("fresh", 1)
+        assert (await service.resolve(message))["session_id"] == "fresh"
+        assert (await service.existing_session(message))["session_id"] == "fresh"
+    assert len(creates) == 1
+
+
+async def test_session_failure_on_a_reminded_item_fails_it_as_session_failed_and_reanalysable(settings):
+    repo = MemoryRepository()
+    await seed_session(repo, event_id=None, runtime_status="IDLE")
+    await source(repo, item_id="one")
+    posts = []
+
+    def transport(request):
+        posts.append(json.loads(request.content))
+        return httpx.Response(200, json={})
+
+    error = {
+        "id": "native-error",
+        "type": "session.error",
+        "error": {
+            "type": "unknown_error",
+            "message": "retained_legacy_provenance_missing:opaque_fingerprint_mismatch",
+            "retry_status": {"type": "exhausted"},
+        },
+    }
+    async with httpx.AsyncClient(transport=httpx.MockTransport(transport)) as http:
+        service = SessionService(repo, session_settings(), None, http=http)
+        service.start_stream = lambda sid: None
+        await service.send_message({"kind": "NEW_ITEM", "item_id": "one"})
+        item = await repo.get("ingest.source_items", "one")
+        await repo.put("ingest.source_items", "one", {**item, "extraction_reason": "AGENT_REMINDED"})
+        await service.process_event("s", error)
+        await service.process_event("s", {**error, "id": "native-error-retried"})
+    assert (await repo.get("ops.agent_sessions", "s"))["status"] == "FAILED"
+    item = await repo.get("ingest.source_items", "one")
+    assert (item["extraction_status"], item["extraction_reason"]) == ("FAILED", SESSION_FAILED)
+    assert item["extraction_error_type"] == "unknown_error"
+    assert item["extraction_failed_session_id"] == "s"
+    assert reanalysable(item)
+    assert [row["item_id"] for row in (await reanalyse(repo))["items"]] == ["one"]
+    card = render(await snapshot(repo, "one"))
+    assert card["status"] == "Ошибка обработки"
+    assert "Агент: сессия завершилась ошибкой (unknown" in card["text"]
+    assert "напоминание" not in card["text"]

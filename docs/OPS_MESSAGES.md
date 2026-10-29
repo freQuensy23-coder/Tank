@@ -37,6 +37,8 @@ Robinhood · источник
 
 Если лимит напоминаний сессии исчерпан, а ход снова заканчивается без результата, материал получает `extraction_status = FAILED` с причиной `AGENT_INCOMPLETE`, а в Ops приходит этап PROCESSING_FAILED. Это ошибка обработки, а не отклонение агентом; `tank reanalyse --apply` отправляет материал на повторный анализ в новой сессии.
 
+Если сессия агента завершилась ошибкой (`session.error` или отказ после повторной отправки), пока материал ещё ожидал результата, материал получает `extraction_status = FAILED` с причиной `SESSION_FAILED` и типом ошибки в `extraction_error_type`; карточка показывает «Ошибка обработки», а `tank reanalyse --apply` отправляет его на повторный анализ в новой сессии.
+
 ```text
 Ошибка обработки
 Robinhood chooses DIFC as regional headquarters to drive Middle East expansion

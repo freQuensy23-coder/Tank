@@ -29,6 +29,7 @@ REASONS = {
     "AGENT_REMINDED": "Агент не вернул результат, отправлено напоминание",
     "AGENT_INCOMPLETE": "Агент так и не записал событие или решение об отклонении, напоминания исчерпаны; "
     "материал можно отправить на повторный анализ",
+    "SESSION_FAILED": "Сессия агента завершилась ошибкой; материал можно отправить на повторный анализ",
 }
 CLASSES = {
     "LOW": "низкая",
@@ -350,6 +351,8 @@ def outcome(data):
                 "не вернул результат, напоминания исчерпаны "
                 f"({item['extraction_reminders']}/{item.get('extraction_reminder_limit', '?')})"
             )
+    if item.get("extraction_reason") == "SESSION_FAILED":
+        failed_agent = f"сессия завершилась ошибкой ({item.get('extraction_error_type') or 'тип не записан'})"
     if failure and time_of(failure) >= max((time_of(row) for row in recoveries), default=EPOCH):
         if item.get("extraction_status") == "FAILED":
             fields[-1] = ("Агент", failed_agent)
