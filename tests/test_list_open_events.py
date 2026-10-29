@@ -247,13 +247,16 @@ async def test_name_finds_events_that_recorded_a_project_or_token_outside_the_re
     await put_event(service, "ripple", entities=["UNRESOLVED:Ripple"], tokens=["UNRESOLVED:XRP"])
     await put_event(service, "solana", entities=["ondo", "UNRESOLVED:Solana"], tokens=["ondo:ONDO"])
     await put_event(service, "other", entities=["world"], tokens=["world:WLD"])
+    await put_event(service, "dollar", tokens=["UNRESOLVED:$TAO"])
     assert await listed_ids(service, {"name": "ripple"}) == ["ripple"]
+    assert await listed_ids(service, {"name": "TAO"}) == ["dollar"]
+    assert await listed_ids(service, {"name": "$tao"}) == ["dollar"]
     assert await listed_ids(service, {"name": "$XRP"}) == ["ripple"]
     assert await listed_ids(service, {"name": "Solana"}) == ["solana"]
     assert await listed_ids(service, {"name": "Solana", "token_id": "ondo:ONDO"}) == ["solana"]
     assert await listed_ids(service, {"name": "Solana", "token_id": "world:WLD"}) == []
     result = await service.dispatch("list_open_events", {"name": "XRP"}, {})
-    assert result["name_identities"] == ["UNRESOLVED:XRP"]
+    assert result["name_identities"] == ["UNRESOLVED:$XRP", "UNRESOLVED:XRP"]
 
 
 async def test_a_registry_name_matches_its_key_and_registry_pair(service):
@@ -274,4 +277,4 @@ async def test_get_registry_resolves_a_name(service):
     assert found["name_identities"] == ["cow", "cow:COW"]
     outside = await service.dispatch("get_registry", {"name": "Ripple"}, {})
     assert outside["entities"] == outside["tokens"] == []
-    assert outside["name_identities"] == ["UNRESOLVED:Ripple"]
+    assert outside["name_identities"] == ["UNRESOLVED:$Ripple", "UNRESOLVED:Ripple"]

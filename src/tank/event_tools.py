@@ -109,7 +109,8 @@ def resolve_tokens(registry, values, context=""):
 def name_identities(registry, name):
     """V3 for a lookup name: a name the registry resolves (ticker, $TICKER,
     alias) covers its key and registry pair, like token_id or entity_id; any
-    other name covers the stored UNRESOLVED:<name> identity."""
+    other name covers the stored UNRESOLVED:<name> identity, with and without
+    a leading $ (record_event keeps an unresolved name as written)."""
     text = str(name).strip().removeprefix("UNRESOLVED:").strip()
     tokens = registry.get("tokens", [])
     token = resolve_token(registry, text)
@@ -118,7 +119,8 @@ def name_identities(registry, name):
     entity = resolve_entity(registry, text)
     if not entity.startswith("UNRESOLVED:"):
         return {entity, *(row["token_id"] for row in tokens if row.get("entity_id") == entity)}
-    return {"UNRESOLVED:" + text.removeprefix("$")}
+    bare = text.removeprefix("$")
+    return {"UNRESOLVED:" + bare, "UNRESOLVED:$" + bare}
 
 
 def registry_key_for(registry, kind, value):
