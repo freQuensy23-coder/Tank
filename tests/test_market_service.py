@@ -409,6 +409,24 @@ def test_verified_exact_event_time_selects_t0():
     assert event_anchor(event)["type"] == "T1"
 
 
+def test_scheduled_event_anchors_on_t0_only_once_t0_precedes_the_given_time():
+    from tank.market.capture import event_anchor
+
+    event = {
+        "event_time": "2026-10-30T06:00:00Z",
+        "event_time_prec": "EXACT",
+        "state_verified": True,
+        "public_at": "2026-10-27T13:00:00Z",
+        "public_at_prec": "EXACT",
+    }
+    assert event_anchor(event)["type"] == "T0"
+    before = event_anchor(event, at="2026-10-27T13:35:00Z")
+    assert (before["type"], before["ts"]) == ("T1", "2026-10-27T13:00:00Z")
+    assert event_anchor(event, at="2026-10-30T06:00:00Z")["type"] == "T1"
+    after = event_anchor(event, at="2026-10-30T06:01:00Z")
+    assert (after["type"], after["ts"]) == ("T0", "2026-10-30T06:00:00Z")
+
+
 def test_missing_oi_field_is_data_error_without_runtime_semantic_promotion():
     from tank.market import normalize
 

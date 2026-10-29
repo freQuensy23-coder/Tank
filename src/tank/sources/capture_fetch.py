@@ -37,6 +37,17 @@ TERMINAL = ("COMPLETE", "FAILED", "EXPIRED")
 CONDITIONAL_HEADERS = ("if-none-match", "if-modified-since")
 
 
+CAPTURE_TIMEOUTS = frozenset({"REQUEST_BUDGET_EXHAUSTED", "EXPIRED", "NO_ANSWER"})
+
+
+class CaptureRateLimited(httpx.TransportError):
+    """The exchange kept answering HTTP 429 until tank-capture's retries or budget ran out."""
+
+    def __init__(self, message, *, request, retry_after=None):
+        super().__init__(message, request=request)
+        self.retry_after = retry_after or ""
+
+
 def is_exchange_url(url):
     return (urlsplit(url).hostname or "") in EXCHANGE_FETCH_HOSTS
 
@@ -76,10 +87,23 @@ async def _capture_request(repo, kind, request, budget_s):
 
 
 async def capture_fetch(
-    repo, method, url, *, headers=None, body=None, source_id=None, budget_s=FETCH_BUDGET_S
+    repo,
+    method,
+    url,
+    *,
+    headers=None,
+    body=None,
+    source_id=None,
+    budget_s=FETCH_BUDGET_S,
+    follow_redirects=True,
 ):
-    """Ask tank-capture to fetch url; return its response, or raise httpx.TransportError."""
+    """Ask tank-capture to fetch url; return its response, or raise httpx.TransportError.
+
+    With follow_redirects=False tank-capture returns a redirect as is, with its Location header.
+    """
     request = {"method": (method or "GET").upper(), "url": url, "source_id": source_id}
+    if not follow_redirects:
+        request["redirects"] = "manual"
     if headers:
         request["headers"] = {k: v for k, v in headers.items() if k.lower() not in CONDITIONAL_HEADERS}
     if body is not None:
@@ -91,12 +115,19 @@ async def capture_fetch(
     http_request = httpx.Request(request["method"], url)
     if row.get("status") != "COMPLETE":
         reason = row.get("reason") or row.get("status") or "NO_ANSWER"
-        raise httpx.TransportError(f"tank-capture fetch {request_id}: {reason}", request=http_request)
+        message = f"tank-capture fetch {request_id}: {reason}"
+        if reason == "RATE_LIMITED":
+            raise CaptureRateLimited(message, request=http_request, retry_after=result.get("retry_after"))
+        if reason in CAPTURE_TIMEOUTS:
+            raise httpx.TimeoutException(message, request=http_request)
+        raise httpx.TransportError(message, request=http_request)
     if result.get("body_b64") is not None:
         content = base64.b64decode(result["body_b64"])
     else:
         content = (result.get("body") or "").encode()
     response_headers = {"content-type": result["content_type"]} if result.get("content_type") else {}
+    if result.get("location"):
+        response_headers["location"] = result["location"]
     return httpx.Response(
         int(result["status_code"]), content=content, headers=response_headers, request=http_request
     )

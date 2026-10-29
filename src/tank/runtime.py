@@ -160,7 +160,7 @@ class Runtime:
         tokens = payload.get("tokens") or ([payload["token_id"]] if payload.get("token_id") else None)
         if not tokens:
             raise ValueError("ESCALATE_TOKENS requires tokens")
-        await self.market.escalate(payload["event_id"], tokens)
+        await self.market.escalate(payload["event_id"], tokens, anchor=payload.get("anchor"))
 
     async def assess(self, payload):
         from tank.market.capture import event_anchor
@@ -168,17 +168,18 @@ class Runtime:
         event = await self.repo.get("evt.events", payload["event_id"])
         if event is None:
             raise ValueError("Market truth event does not exist")
+        cutoff = propagate_timestamp(payload, "cutoff") if payload.get("cutoff") is not None else None
+        end = parse_time(cutoff.value) if cutoff is not None and cutoff.value else utcnow()
+        selected = event_anchor(event, at=end)
         prerequisite = await self.market.capture_readiness(
-            payload["event_id"], payload["token_id"], anchor=event_anchor(event)["ts"]
+            payload["event_id"], payload["token_id"], anchor=selected["ts"]
         )
         if prerequisite["status"] not in {"PENDING", "RUNNING", "COMPLETE", "PARTIAL", "FAILED"}:
             raise RuntimeError("Required durable event capture was not scheduled")
         if prerequisite["status"] in {"PENDING", "RUNNING"}:
             await self.market.wait_capture(payload["event_id"], payload["token_id"], timeout_s=CAPTURE_WAIT_S)
-        cutoff = propagate_timestamp(payload, "cutoff") if payload.get("cutoff") is not None else None
         if hasattr(self.market, "repair_windows"):
-            anchor = parse_time(event_anchor(event)["ts"])
-            end = parse_time(cutoff.value) if cutoff is not None and cutoff.value else utcnow()
+            anchor = parse_time(selected["ts"])
             await self.market.repair_windows(
                 payload["token_id"], min(anchor, end) - REPAIR_LOOKBACK, end, budget_s=REPAIR_BUDGET_S
             )

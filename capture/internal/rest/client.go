@@ -316,7 +316,19 @@ var ErrTooLarge = errors.New("RESPONSE_TOO_LARGE")
 type Fetched struct {
 	Status      int
 	ContentType string
+	Location    string
 	Body        []byte
+}
+
+type manualRedirectsKey struct{}
+
+func WithManualRedirects(ctx context.Context) context.Context {
+	return context.WithValue(ctx, manualRedirectsKey{}, true)
+}
+
+func ManualRedirects(ctx context.Context) bool {
+	manual, _ := ctx.Value(manualRedirectsKey{}).(bool)
+	return manual
 }
 
 func (c *Client) Fetch(ctx context.Context, method, rawURL string, params, headers map[string]string, body any, priority int) (*Fetched, error) {
@@ -329,25 +341,29 @@ func (c *Client) Fetch(ctx context.Context, method, rawURL string, params, heade
 	if m, ok := body.(map[string]any); ok {
 		payload = m
 	}
+	var limited *RateLimitedError
 	for attempt := 0; attempt < Attempts; attempt++ {
 		if err := c.Gate.AdmitBuckets(ctx, host, budget.FetchConstraints(host, u.Path, params, payload), priority); err != nil {
-			return nil, err
+			return nil, limited.or(err)
 		}
 		release, err := c.Gate.Enter(ctx, host, priority)
 		if err != nil {
-			return nil, err
+			return nil, limited.or(err)
 		}
 		got, err := c.raw(ctx, method, u, params, headers, body)
 		if err != nil {
 			release()
 			c.count(host, false)
 			if ctx.Err() != nil {
-				return nil, ctx.Err()
+				return nil, limited.or(ctx.Err())
 			}
 			if errors.Is(err, ErrTooLarge) {
 				return nil, err
 			}
 			return nil, fmt.Errorf("%s: %s", host, errorName(err))
+		}
+		if got.Status == http.StatusTooManyRequests {
+			limited = &RateLimitedError{Host: host, RetryAfter: got.header.Get("Retry-After")}
 		}
 		retry, err := c.Gate.Observe(ctx, host, got.Status, got.header)
 		release()
@@ -361,7 +377,26 @@ func (c *Client) Fetch(ctx context.Context, method, rawURL string, params, heade
 		c.count(host, got.Status < 400)
 		return &got.Fetched, nil
 	}
-	return nil, fmt.Errorf("%s: rate limited after bounded retries", host)
+	limited.Cause = fmt.Errorf("%s: rate limited after bounded retries", host)
+	return nil, limited
+}
+
+type RateLimitedError struct {
+	Host       string
+	RetryAfter string
+	Cause      error
+}
+
+func (e *RateLimitedError) Error() string { return e.Cause.Error() }
+
+func (e *RateLimitedError) Unwrap() error { return e.Cause }
+
+func (e *RateLimitedError) or(err error) error {
+	if e == nil {
+		return err
+	}
+	e.Cause = err
+	return e
 }
 
 type rawResponse struct {
@@ -399,7 +434,13 @@ func (c *Client) raw(ctx context.Context, method string, u *url.URL, params, hea
 	for k, v := range headers {
 		req.Header.Set(k, v)
 	}
-	resp, err := c.HTTP.Do(req)
+	client := c.HTTP
+	if ManualRedirects(ctx) {
+		manual := *c.HTTP
+		manual.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
+		client = &manual
+	}
+	resp, err := client.Do(req)
 	if err != nil {
 		return nil, err
 	}
@@ -413,7 +454,8 @@ func (c *Client) raw(ctx context.Context, method string, u *url.URL, params, hea
 	if len(data) > FetchLimit {
 		return nil, ErrTooLarge
 	}
-	return &rawResponse{Fetched{resp.StatusCode, resp.Header.Get("Content-Type"), data}, resp.Header}, nil
+	fetched := Fetched{resp.StatusCode, resp.Header.Get("Content-Type"), resp.Header.Get("Location"), data}
+	return &rawResponse{fetched, resp.Header}, nil
 }
 
 func (c *Client) count(host string, ok bool) {

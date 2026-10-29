@@ -436,12 +436,15 @@ class MarketService:
         from tank.sources.rate_limits import shared_request_budgets
 
         priority = kwargs.pop("_priority", 0)
+        admit_retry = kwargs.pop("_admit_retry", None)
         host = httpx.URL(url).host
         if is_exchange_url(url):
             raise RuntimeError(EXCHANGE_REST_OWNER)
         interval = 0.35 if host == "api.etherscan.io" else 0.08
         lock = self._request_locks.setdefault(host, PriorityGate(HOST_IN_FLIGHT))
-        for _attempt in range(4):
+        for attempt in range(4):
+            if attempt and admit_retry is not None:
+                await admit_retry()
             async with lock.enter(priority):
                 async with self._request_pace_locks.setdefault(host, asyncio.Lock()):
                     while True:
@@ -527,12 +530,20 @@ class MarketService:
         )
         return {}
 
-    async def escalate(self, event_id, tokens):
+    async def escalate(self, event_id, tokens, anchor=None):
+        """Make `tokens` hot for the event and request the pre-event capture at `anchor`.
+
+        `anchor` is the Market Truth anchor chosen at the requested cutoff; without it the
+        anchor is chosen now. Before a scheduled T0 that is T1 or known_to_us_at, so the
+        capture obligation never covers future minutes; the hot expiry still runs from
+        the event's own anchor, keeping the token hot through the scheduled time.
+        """
         async with self.repo.lock("market-hot-set"), self.repo.transaction():
             now = iso()
             event = await self.repo.get("evt.events", event_id) or {}
-            anchor_record = event_anchor(event) if event else {"type": "KNOWN_TO_US_AT", "ts": now}
-            anchor = anchor_record["ts"]
+            if anchor is None:
+                anchor = event_anchor(event, at=now)["ts"] if event else now
+            expiry_anchor = event_anchor(event)["ts"] if event else anchor
             assessment = (
                 await self.repo.get("evt.ems_assessments", event["current_ems_id"])
                 if event.get("current_ems_id")
@@ -568,7 +579,9 @@ class MarketService:
                         "event_id": event_id,
                         "priority": priority,
                         "since": existing.get("since", anchor) if existing else anchor,
-                        "expires_at": None if protected else iso(parse_time(anchor) + timedelta(hours=72)),
+                        "expires_at": None
+                        if protected
+                        else iso(parse_time(expiry_anchor) + timedelta(hours=72)),
                     },
                 )
             hot = await self.repo.list("mkt.hot_tokens", limit=10000)
@@ -652,7 +665,7 @@ class MarketService:
             "result": None,
         }
         event = await self.repo.get("evt.events", event_id)
-        selected = event_anchor(event) if event else None
+        selected = event_anchor(event, at=parse_time(anchor) + timedelta(microseconds=1)) if event else None
         precision = selected.get("ts_prec") if selected and selected["ts"] == iso(anchor) else None
         row.update(norm.timestamp_fields("anchor", anchor, precision))
         await self._put("mkt.backfill_runs", backfill_id, row)
@@ -2296,7 +2309,7 @@ class MarketService:
                 )
             )
         for name in ("books", "oi", "funding", "supply", "klines", "liquidations", "tickers"):
-            if name in result:
+            if name in result and name not in domains:
                 field = COLLECTIONS[name][1]
                 result[name] = list(
                     {
@@ -3328,7 +3341,9 @@ class MarketService:
         for hot in await self.repo.list("mkt.hot_tokens", limit=10000):
             event = await self.repo.get("evt.events", hot["event_id"]) or {}
             await self._schedule_event_backfill(
-                hot["event_id"], hot["token_id"], event_anchor(event)["ts"] if event else hot["since"]
+                hot["event_id"],
+                hot["token_id"],
+                event_anchor(event, at=iso())["ts"] if event else hot["since"],
             )
 
     async def run(self, stop):

@@ -369,6 +369,26 @@ def sources_check(probe, accounts):
     run_db(command)
 
 
+@sources.command("recapture")
+@click.argument("source_id")
+@click.argument("external_ids", nargs=-1, required=True)
+@click.option(
+    "--apply", is_flag=True, help="Release the listed entries; without it the command only lists them."
+)
+def sources_recapture(source_id, external_ids, apply):
+    """Let the next poll ingest entries that a feed checkpoint skipped as duplicates. Dry run unless --apply."""
+
+    async def command(repo, settings):
+        from tank.sources.polling import recapture
+
+        configured = {s["source_id"]: s for s in settings.load_config("sources")["sources"]}
+        if source_id not in configured:
+            raise ValueError(f"Unknown source {source_id}")
+        return await recapture(repo, configured[source_id], external_ids, apply=apply)
+
+    run_db(command)
+
+
 @main.command()
 def coverage():
     async def command(repo, settings):
@@ -589,8 +609,8 @@ def backup(force, prune):
 @click.option("--limit", type=click.IntRange(1, 10000), default=100, show_default=True)
 @click.option("--apply", is_flag=True, help="Queue the listed items; without it the command only lists them.")
 def reanalyse(item_ids, limit, apply):
-    """Re-queue items whose agent turn ended without an outcome (AGENT_INCOMPLETE or the legacy
-    NATIVE_TURN_COMPLETED_WITHOUT_OBSERVATION) for a fresh analysis. Dry run unless --apply."""
+    """Re-queue items whose analysis ended without an outcome (AGENT_INCOMPLETE, SESSION_FAILED or
+    their legacy forms) for a fresh analysis in a fresh session. Dry run unless --apply."""
 
     async def command(repo, settings):
         from tank.agents.incomplete import reanalyse as queue

@@ -2697,3 +2697,151 @@ def test_a_grouped_change_keeps_its_own_identity_when_the_list_returns_to_an_ear
     back, back_digest = ids(second, third)
     assert back_digest == at_second
     assert len({*forward, *other, *back}) == 3
+
+
+def fomc_rss(*releases):
+    items = b"".join(
+        b"<item><title>Federal Reserve issues FOMC statement</title><link>"
+        + link
+        + b"</link><guid>"
+        + link
+        + b"</guid>"
+        b"<pubDate>"
+        + published
+        + b"</pubDate><description>Federal Reserve issues FOMC statement</description></item>"
+        for link, published in releases
+    )
+    return b'<rss version="2.0"><channel><title>Fed monetary policy</title>' + items + b"</channel></rss>"
+
+
+SEPTEMBER = (
+    b"https://www.federalreserve.gov/newsevents/pressreleases/monetary20260916a.htm",
+    b"Wed, 16 Sep 2026 18:00:00 GMT",
+)
+OCTOBER = (
+    b"https://www.federalreserve.gov/newsevents/pressreleases/monetary20261028a.htm",
+    b"Wed, 28 Oct 2026 18:00:00 GMT",
+)
+
+
+async def poll_feed(repo, tmp_path, source, payload):
+    async with httpx.AsyncClient(
+        transport=httpx.MockTransport(lambda r: httpx.Response(200, content=payload))
+    ) as http:
+        svc = SourceService(repo, settings(tmp_path, [source]), http=http)
+        return await svc.poll_once(source["source_id"])
+
+
+@pytest.mark.asyncio
+async def test_templated_release_on_a_new_date_is_a_new_item_not_a_duplicate(tmp_path):
+    repo = Repo()
+    source = {
+        "source_id": "S05",
+        "feeds": [{"url": "https://www.federalreserve.gov/feeds/press_monetary.xml"}],
+    }
+    await poll_feed(repo, tmp_path, source, fomc_rss(SEPTEMBER))
+    await poll_feed(repo, tmp_path, source, fomc_rss(OCTOBER, SEPTEMBER))
+
+    items = sorted(
+        (v for (c, _), v in repo.rows.items() if c == "ingest.source_items"), key=lambda v: v["published_at"]
+    )
+    assert [i["external_id"] for i in items] == [SEPTEMBER[0].decode(), OCTOBER[0].decode()]
+    assert items[0]["content_hash"] == items[1]["content_hash"]
+    assert [i["observation_count"] for i in items] == [1, 1]
+    assert (await repo.get("ops.source_checkpoints", "S05:0")).get("duplicate_ids", []) == []
+
+
+@pytest.mark.asyncio
+async def test_same_text_is_one_publication_by_url_or_publication_time(tmp_path):
+    repo = Repo()
+    svc = SourceService(repo, settings(tmp_path, []))
+    first = await svc.ingest(
+        {"source_id": "S10"},
+        captured(
+            svc,
+            "S10",
+            {
+                "external_id": "https://www.okx.com/help/okx-to-support-migration|1784023216123",
+                "url": "https://www.okx.com/help/okx-to-support-migration",
+                "published_at": "2026-07-14T10:00:16.123Z",
+                "title": "OKX to support migration",
+            },
+        ),
+    )
+    regional = await svc.ingest(
+        {"source_id": "S10"},
+        captured(
+            svc,
+            "S10",
+            {
+                "external_id": "https://www.okx.com/en-eu/help/okx-to-support-migration|1784023216123",
+                "url": "https://www.okx.com/en-eu/help/okx-to-support-migration",
+                "published_at": "2026-07-14T10:00:16.123Z",
+                "title": "OKX to support migration",
+                "feed": "eu",
+            },
+        ),
+    )
+    redated = await svc.ingest(
+        {"source_id": "S10"},
+        captured(
+            svc,
+            "S10",
+            {
+                "external_id": "https://www.okx.com/help/okx-to-support-migration|1790000000000",
+                "url": "https://www.okx.com/help/okx-to-support-migration/",
+                "published_at": "2026-09-21T13:33:20Z",
+                "title": "OKX to support migration",
+                "feed": "redated",
+            },
+        ),
+    )
+    later = await svc.ingest(
+        {"source_id": "S10"},
+        captured(
+            svc,
+            "S10",
+            {
+                "external_id": "https://www.okx.com/help/okx-to-support-migration-2|1790000000000",
+                "url": "https://www.okx.com/help/okx-to-support-migration-2",
+                "published_at": "2026-09-21T13:33:20Z",
+                "title": "OKX to support migration",
+            },
+        ),
+    )
+    assert regional["item_id"] == redated["item_id"] == first["item_id"]
+    assert redated["observation_count"] == 3
+    assert later["item_id"] != first["item_id"] and later["observation_count"] == 1
+    await svc.close()
+
+
+@pytest.mark.asyncio
+async def test_recapture_releases_a_skipped_duplicate_for_the_next_poll(tmp_path):
+    from tank.sources.polling import recapture
+
+    repo = Repo()
+    source = {
+        "source_id": "S05",
+        "feeds": [{"url": "https://www.federalreserve.gov/feeds/press_monetary.xml"}],
+    }
+    await poll_feed(repo, tmp_path, source, fomc_rss(SEPTEMBER))
+    october = OCTOBER[0].decode()
+    state = await repo.get("ops.source_checkpoints", "S05:0")
+    state.update(duplicate_ids=["older", october], etag='"v1"', last_modified="Wed, 28 Oct 2026 18:00:15 GMT")
+    await repo.put("ops.source_checkpoints", "S05:0", state)
+    await poll_feed(repo, tmp_path, source, fomc_rss(OCTOBER, SEPTEMBER))
+    assert len([k for k in repo.rows if k[0] == "ingest.source_items"]) == 1
+
+    preview = await recapture(repo, source, [october, "unknown"])
+    assert preview["checkpoints"] == [{"checkpoint": "S05:0", "external_ids": [october], "released": False}]
+    assert (await repo.get("ops.source_checkpoints", "S05:0"))["duplicate_ids"] == ["older", october]
+
+    applied = await recapture(repo, source, [october], apply=True)
+    assert applied["checkpoints"][0]["released"] is True
+    state = await repo.get("ops.source_checkpoints", "S05:0")
+    assert state["duplicate_ids"] == ["older"] and "etag" not in state and "last_modified" not in state
+
+    await poll_feed(repo, tmp_path, source, fomc_rss(OCTOBER, SEPTEMBER))
+    items = [v for (c, _), v in repo.rows.items() if c == "ingest.source_items"]
+    assert sorted(i["external_id"] for i in items) == sorted([october, SEPTEMBER[0].decode()])
+    assert (await recapture(repo, source, [october]))["checkpoints"] == []

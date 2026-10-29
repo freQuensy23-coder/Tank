@@ -571,3 +571,52 @@ async def test_rolling_kline_cursor_serves_an_older_assembly_clock_without_later
         async with httpx.AsyncClient() as other:
             fresh = await series(MarketService(repo, settings, http=other), older)
         assert list(rebuilt["values"]) == list(fresh["values"])
+
+
+@pytest.mark.asyncio
+async def test_warm_native_history_is_not_rehashed_on_every_condition_read(setup, monkeypatch):
+    """Audit finding 4: a warm OI condition read hashed every cached 90-day row again to
+    deduplicate rows the history already holds once (UNI: 208k rows, ~33 us each, a
+    ~7 s event-loop stall per read). Hashing now scales with new rows only."""
+    import tank.market.service as service_module
+
+    repo, settings, spot = setup
+    end = utcnow().replace(second=0, microsecond=0) - timedelta(hours=1)
+    perps = [
+        dict(spot, instrument_id=f"venue{n}:perp:ABCUSD", venue=f"venue{n}", market_type="PERP_LINEAR")
+        for n in range(4)
+    ]
+    rows = [
+        {
+            "instrument_id": perp["instrument_id"],
+            "token_id": spot["token_id"],
+            "metric_key": "binance.usdm.openInterest",
+            "ts": iso(end - timedelta(minutes=minute)),
+            "oi_native": str(1000 + minute),
+            "recorded_at": iso(end - timedelta(minutes=minute)),
+            "ts_prec": "EXACT",
+        }
+        for perp in perps
+        for minute in range(0, 90 * 1440, 520)
+    ]
+    await repo.put_market_batch("mkt.oi_obs", rows, keys=[r["instrument_id"] + r["ts"] for r in rows])
+    hashed = []
+    original = service_module.sha256
+
+    def counting(value):
+        hashed.append(1)
+        return original(value)
+
+    monkeypatch.setattr(service_module, "sha256", counting)
+    requirements = [{"metric": "deriv.native_oi_vs_normal", "window": "W1H"}]
+    async with httpx.AsyncClient() as http:
+        service = MarketService(repo, settings, http=http)
+        for perp in perps:
+            service.instruments[perp["instrument_id"]] = perp
+        first = await service.condition_snapshot(spot["token_id"], end, requirements=requirements)
+        hashed.clear()
+        second = await service.condition_snapshot(
+            spot["token_id"], end + timedelta(minutes=1), requirements=requirements
+        )
+    assert len(first["oi"]) == len(second["oi"]) == 1000
+    assert len(hashed) < 20

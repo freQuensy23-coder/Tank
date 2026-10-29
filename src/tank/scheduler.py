@@ -6,6 +6,7 @@ import logging
 from datetime import UTC, timedelta
 from decimal import Decimal, InvalidOperation, localcontext
 
+from tank.agents.sessions import ADMITTED_JOB_TYPES, BUSY_RUNTIME_STATES
 from tank.time_precision import chosen_boundary, collection_clock, offset_schedule, propagate_timestamp
 from tank.util import iso, new_id, parse_time, utcnow
 
@@ -23,6 +24,7 @@ CHECKPOINTS = {
 BENCHMARK_TOKENS = frozenset({"bitcoin:BTC", "ethereum:ETH"})
 
 
+AGENT_STALL_CHECKPOINT = "agent_stall"
 REACTION_MEASUREMENT_SLOTS = 2
 
 
@@ -30,6 +32,7 @@ EVAL_CONDITIONS_BUDGET_S = 15
 
 
 EVAL_CONDITION_BUDGET_S = 8
+CONDITION_READ_KEEP_S = 600
 REACTION_RETRY_S = 30
 
 
@@ -98,6 +101,7 @@ class Scheduler:
         self.closing = False
         self._verified_backups = {}
         self._reaction_slots = asyncio.Semaphore(REACTION_MEASUREMENT_SLOTS)
+        self._condition_reads = {}
 
     def threshold(self, name, fixture_default):
         from tank.settings import threshold
@@ -131,11 +135,14 @@ class Scheduler:
 
     async def close(self):
         self.closing = True
-        tasks = tuple(self.background.values())
+        tasks = tuple(self.background.values()) + tuple(
+            entry["task"] for entry in self._condition_reads.values()
+        )
         for task in tasks:
             task.cancel()
         await asyncio.gather(*tasks, return_exceptions=True)
         self.background.clear()
+        self._condition_reads.clear()
 
     async def run(self, stop):
         try:
@@ -205,6 +212,7 @@ class Scheduler:
         self.launch("scout", lambda: self.detect_scout_hooks(now))
         if self.market is not None:
             self.launch("late-reactions", lambda: self.detect_late_data(now))
+        self.launch("agent-stall", lambda: self.agent_stall(now))
         heartbeat_hour, heartbeat_minute = map(int, str(self.threshold("heartbeat_utc", "08:00")).split(":"))
         if (now.hour, now.minute) >= (heartbeat_hour, heartbeat_minute):
             await self.heartbeat(now)
@@ -213,9 +221,13 @@ class Scheduler:
     async def ensure_reactions(self, event, *, now=None):
         """Open the pack outside the analyst transaction; only POST windows are jobs.
 
-        PRE windows start as soon as the MAJOR+ assessment commits. Their immutable
-        rows are the restart checkpoint: a tick resumes any missing capture, while
-        a named task prevents overlapping attempts during normal operation.
+        PRE windows start as soon as the MAJOR+ assessment commits. A PRE window
+        ends at the anchor and is never measured before it ends: for a scheduled
+        event whose anchor is still ahead, each PRE window is a durable job due at
+        the anchor, like a POST window, so it runs even if the event leaves the
+        active set before then. Immutable rows are the restart checkpoint: a tick
+        resumes any missing capture, while a named task prevents overlapping
+        attempts during normal operation.
         """
         now = now or utcnow()
         assessment = await self.latest_assessment(event)
@@ -224,14 +236,38 @@ class Scheduler:
         anchor = self.anchor(event)
         anchor_stamp = propagate_timestamp(anchor, "ts", precision_aliases=("precision",))
         tokens = await self.analysis_tokens(event)
-        captured = {
-            (row["token_id"], row["checkpoint"])
-            async for row in self.repo.iter_metadata(
-                "out.reaction_checkpoints",
-                ["token_id", "checkpoint"],
-                filters={"event_id": event["event_id"]},
-            )
-        }
+        latest = {}
+        async for row in self.repo.iter_metadata(
+            "out.reaction_checkpoints",
+            ["token_id", "checkpoint", "revision", "captured_at", "window_end"],
+            filters={"event_id": event["event_id"]},
+        ):
+            key = (row["token_id"], row["checkpoint"])
+            if key not in latest or int(row.get("revision") or 1) > int(latest[key].get("revision") or 1):
+                latest[key] = row
+        captured = set(latest)
+        for (token, label), row in sorted(latest.items()):
+            if (
+                row.get("captured_at")
+                and row.get("window_end")
+                and parse_time(row["captured_at"]) < parse_time(row["window_end"]) <= now
+            ):
+                change = f"early:{event['event_id']}:{token}:{label}:{int(row.get('revision') or 1)}"
+                await self.repo.enqueue(
+                    "REACTION_CAPTURE",
+                    {
+                        "event_id": event["event_id"],
+                        "token_id": token,
+                        "checkpoint": label,
+                        "automatic_revision": True,
+                        "change_id": change,
+                        "reason": "Captured before its window ended at " + iso(parse_time(row["window_end"])),
+                    },
+                    "reaction-" + change,
+                    priority=2,
+                    max_attempts=5,
+                    expires_at=offset_schedule(collection_clock(now), timedelta(hours=6)),
+                )
         gaps = {
             (row["state"]["token_id"], row["state"]["checkpoint"])
             async for row in self.repo.iter_all(
@@ -271,13 +307,13 @@ class Scheduler:
                     **offset_schedule(anchor_stamp, timedelta(seconds=offset)).fields("cutoff"),
                     "retro": offset < 0 or parse_time(anchor_stamp.value) + timedelta(seconds=offset) < now,
                 }
-                if offset < 0:
-                    missing_pre.append(payload)
-                    continue
-                due_stamp = offset_schedule(anchor_stamp, timedelta(seconds=offset))
-                due = parse_time(due_stamp.value)
                 key = f"{event['event_id']}:{token}:{label}"
                 job = await capture_job(key)
+                if offset < 0 and not job and parse_time(anchor_stamp.value) <= now:
+                    missing_pre.append(payload)
+                    continue
+                due_stamp = offset_schedule(anchor_stamp, timedelta(seconds=max(offset, 0)))
+                due = parse_time(due_stamp.value)
                 run_stamp = due_stamp if due >= now else collection_clock(now)
                 expiry_stamp = (
                     propagate_timestamp(job, "expires_at")
@@ -496,6 +532,62 @@ class Scheduler:
 
         return truth
 
+    async def condition_read(self, key, requirements, *, run, until, exact=True):
+        """One market read for a condition, as (cutoff stamp, truth).
+
+        A read is never cancelled when the EVAL_CONDITIONS budget runs out: it keeps
+        running in the background and its result serves the next batch, so the
+        incremental market caches it fills survive and a cold read is paid once
+        instead of being restarted every minute. A result serves only the batch that
+        first uses it; later batches read again and so see late corrections. With
+        exact=False (no persistence window) at most one read per event, token and
+        requirements runs at a time, and the newest one answers at its own, possibly
+        earlier, cutoff.
+        """
+        loop = asyncio.get_running_loop()
+        event_id, token_id, stamp = key
+        base = (event_id, token_id, tuple(sorted((r["metric"], r["window"]) for r in requirements)))
+        reads = self._condition_reads
+        entry = reads.get((base, stamp))
+        if entry is None and not exact:
+            mine = sorted(
+                (
+                    other
+                    for other, candidate in reads.items()
+                    if other[0] == base
+                    and not candidate["exact"]
+                    and parse_time(other[1].value) <= parse_time(stamp.value)
+                ),
+                key=lambda other: parse_time(other[1].value),
+            )
+            running = [other for other in mine if not reads[other]["task"].done()]
+            chosen = running[-1:] or mine[-1:]
+            if chosen:
+                entry = reads[chosen[0]]
+        if entry is None:
+            read = self.condition_truth(event_id, token_id, stamp, requirements=requirements)
+            entry = {
+                "stamp": stamp,
+                "exact": exact,
+                "run": None,
+                "task": asyncio.create_task(read, name="condition-read"),
+            }
+            entry["task"].add_done_callback(lambda task: task.cancelled() or task.exception())
+            reads[(base, stamp)] = entry
+        entry["touched"] = loop.time()
+        task = entry["task"]
+        if not task.done():
+            remaining = until - loop.time()
+            if remaining <= 0:
+                raise _EvalBudgetSpent
+            await asyncio.wait({task}, timeout=remaining)
+            if not task.done():
+                raise _EvalBudgetSpent
+        if task.cancelled() or task.exception() is not None:
+            reads.pop((base, entry["stamp"]), None)
+        entry["run"] = entry["run"] or run
+        return entry["stamp"], task.result()
+
     async def eval_conditions(self, payload):
         cutoff_stamp = propagate_timestamp(payload, "cutoff") if payload.get("cutoff") else collection_clock()
         cutoff = cutoff_stamp.value
@@ -523,17 +615,16 @@ class Scheduler:
         limit = {"until": deadline}
         outcomes = {"evaluated": [], "fired": [], "deferred": []}
 
-        async def bounded_truth(key, requirements):
+        run = object()
+        clock = loop.time()
+        for read_key, entry in list(self._condition_reads.items()):
+            if entry["task"].done() and (
+                entry["run"] is not None or clock - entry["touched"] > CONDITION_READ_KEEP_S
+            ):
+                self._condition_reads.pop(read_key)
 
-            remaining = limit["until"] - loop.time()
-            if remaining <= 0:
-                raise _EvalBudgetSpent
-            try:
-                return await asyncio.wait_for(
-                    self.condition_truth(*key, requirements=requirements), timeout=remaining
-                )
-            except TimeoutError:
-                raise _EvalBudgetSpent from None
+        async def bounded_truth(key, requirements, *, exact=True):
+            return await self.condition_read(key, requirements, run=run, until=limit["until"], exact=exact)
 
         event_cache = {}
         for position, cond in enumerate(conditions):
@@ -642,19 +733,23 @@ class Scheduler:
                     truth = {}
                     if market_metric:
                         cache_key = (cond["event_id"], cond["token_id"], evaluation_stamp)
-                        if cache_key not in cache:
+                        entry_key = cache_key if periods else (*cache_key, "NEWEST")
+                        if entry_key not in cache:
                             requirements = requirement_sets[(cond["event_id"], cond["token_id"])] | {
                                 (item["metric"], item["window"])
                                 for item in self.condition_requirements(cond["expr"])
                             }
-                            cache[cache_key] = await bounded_truth(
+                            cache[entry_key] = await bounded_truth(
                                 cache_key,
                                 [
                                     {"metric": metric, "window": window}
                                     for metric, window in sorted(requirements)
                                 ],
+                                exact=bool(periods),
                             )
-                        truth = cache[cache_key]
+                        evaluation_stamp, truth = cache[entry_key]
+                        evaluation_cutoff = evaluation_stamp.value
+                        window_id = int(parse_time(evaluation_cutoff).timestamp()) // seconds
                     value = metric_value(truth, event, metric, expr.get("window", "W1H"))
                     matched = compare(value, expr["op"], expr["value"])
                     leaf_matches.append(matched)
@@ -716,7 +811,7 @@ class Scheduler:
                                 )
                             except _EvalBudgetSpent:
                                 continue
-                        old_truth = cache[old_key]
+                        _, old_truth = cache[old_key]
                         old_value = metric_value(old_truth, event, metric, expr.get("window", "W1H"))
                         old_proof = next(
                             (
@@ -764,7 +859,8 @@ class Scheduler:
                     )
                     outcomes["deferred"].append({"cond_id": cond["cond_id"], "reason": "READ_TIMEOUT"})
                     log.warning(
-                        "EVAL_CONDITIONS: market read for %s exceeded its %ss budget; retried next minute",
+                        "EVAL_CONDITIONS: market read for %s still running after %ss; it continues "
+                        "in the background and serves the next minute",
                         cond["cond_id"],
                         EVAL_CONDITION_BUDGET_S,
                     )
@@ -950,6 +1046,8 @@ class Scheduler:
                     latest[label] = row
             for label, row in latest.items():
                 if parse_time(changed_at) < parse_time(row["captured_at"]):
+                    continue
+                if row.get("window_end") and parse_time(row["window_end"]) > now:
                     continue
                 if parse_time(change["anchor"]) != parse_time(row["anchor"]["ts"]):
                     continue
@@ -1578,7 +1676,8 @@ class Scheduler:
             async for row in self.repo.iter_all("ops.jobs", filters={"status": status}):
                 backlog[status.lower()] += row["type"] in analysis_kinds
                 if status == "QUEUED":
-                    lag = max(lag, max(0, (now - parse_time(row["run_after"])).total_seconds()))
+                    waiting_since = parse_time(row.get("slot_waiting_since") or row["run_after"])
+                    lag = max(lag, max(0, (now - waiting_since).total_seconds()))
         spend, unknown = Decimal(0), 0
         async for row in self.repo.iter_range(
             "ops.llm_usage", "at", start=now.replace(hour=0, minute=0, second=0, microsecond=0), end=end
@@ -1620,6 +1719,142 @@ class Scheduler:
                 priority=0,
                 expires_at=offset_schedule(collection_clock(now), timedelta(days=1)),
                 max_attempts=5,
+            )
+
+    async def agent_backlog(self, now, window):
+        """What the analyst owes: queued agent turns, busy sessions and recent agent model calls.
+
+        A queued turn waits from its first admission deferral (`slot_waiting_since`) or its
+        creation; a busy session works since its active message was requested."""
+        queued, oldest = 0, None
+        for kind in ADMITTED_JOB_TYPES:
+            async for row in self.repo.iter_metadata(
+                "ops.jobs",
+                ["job_id", "created_at", "slot_waiting_since"],
+                filters={"type": kind, "status": "QUEUED"},
+            ):
+                queued += 1
+                since = parse_time(row.get("slot_waiting_since") or row["created_at"])
+                oldest = since if oldest is None else min(oldest, since)
+        busy, busy_since = 0, None
+        async for row in self.repo.iter_metadata(
+            "ops.agent_sessions",
+            ["session_id", "runtime_status", "active_message_id"],
+            filters={"status": "OPEN"},
+        ):
+            if row.get("runtime_status") not in BUSY_RUNTIME_STATES and not row.get("active_message_id"):
+                continue
+            busy += 1
+            session = await self.repo.get("ops.agent_sessions", row["session_id"]) or {}
+            log_rows = session.get("message_log") or []
+            active = next(
+                (entry for entry in log_rows if entry.get("message_id") == session.get("active_message_id")),
+                log_rows[-1] if log_rows else None,
+            )
+            if active and active.get("requested_at"):
+                since = parse_time(active["requested_at"])
+                busy_since = since if busy_since is None else min(busy_since, since)
+        calls = 0
+        async for _ in self.repo.iter_range(
+            "ops.llm_usage",
+            "at",
+            start=now - window,
+            end=now + timedelta(microseconds=1),
+            filters={"call": "AGENT"},
+        ):
+            calls += 1
+        return {
+            "queued": queued,
+            "oldest_waiting_since": oldest,
+            "busy_sessions": busy,
+            "busy_since": busy_since,
+            "agent_calls": calls,
+        }
+
+    async def agent_stall(self, now):
+        """Alarm "Tank Ops" once per agent stall: work waits for the analyst and nothing moves.
+
+        The agent is stalled when a queued agent turn has waited ⚙`agent_stall_alarm_min`
+        minutes, or when a session has been busy that long while no agent model call was
+        recorded in that window (03 §7.6). The episode is kept in the `agent_stall`
+        scheduler checkpoint, so one stall gives one AGENT_STALL notice; it ends at the
+        first tick without a stall."""
+        minutes = self.threshold("agent_stall_alarm_min", 15)
+        window = timedelta(minutes=minutes)
+        cutoff = now - window
+        backlog = await self.agent_backlog(now, window)
+        oldest, busy_since = backlog["oldest_waiting_since"], backlog["busy_since"]
+        reasons = []
+        if oldest is not None and oldest <= cutoff:
+            reasons.append("QUEUE_WAIT")
+        if busy_since is not None and busy_since <= cutoff and not backlog["agent_calls"]:
+            reasons.append("LLM_SILENCE")
+        checkpoint = await self.repo.get("ops.scheduler_checkpoints", AGENT_STALL_CHECKPOINT)
+        state = (checkpoint or {}).get("state") or {}
+        if not reasons:
+            if state.get("notice_id"):
+                await self.repo.put(
+                    "ops.scheduler_checkpoints",
+                    AGENT_STALL_CHECKPOINT,
+                    {
+                        "checkpoint_id": AGENT_STALL_CHECKPOINT,
+                        **collection_clock(now).fields("at"),
+                        "state": {"notice_id": None, "previous_notice_id": state["notice_id"]},
+                    },
+                )
+            return
+        if state.get("notice_id"):
+            return
+        stamp = collection_clock(now)
+        notice_id = "agent_stall_" + now.strftime("%Y%m%dT%H%M")
+        lines = ["TANK OPS · Агент не разбирает очередь"]
+        if oldest is not None:
+            waited = int((now - oldest).total_seconds() // 60)
+            lines.append(
+                f"Ждут агента: {backlog['queued']}; самое старое ждёт {waited} мин "
+                f"(с {oldest:%Y-%m-%d %H:%M} UTC)"
+            )
+        lines.append(f"Сессий в работе: {backlog['busy_sessions']}")
+        lines.append(f"Вызовов модели агента за {minutes} мин: {backlog['agent_calls']}")
+        lines.append(f"Порог: {minutes} мин (agent_stall_alarm_min); причина: {', '.join(reasons)}")
+        async with self.repo.transaction():
+            await self.repo.put(
+                "out.ops_notices",
+                notice_id,
+                {
+                    "notice_id": notice_id,
+                    "kind": "AGENT_STALL",
+                    "text": "\n".join(lines),
+                    **stamp.fields("created_at"),
+                    "created_by": "scheduler",
+                    "reasons": reasons,
+                    "agent_backlog": {
+                        "queued": backlog["queued"],
+                        "oldest_waiting_since": iso(oldest) if oldest else None,
+                        "busy_sessions": backlog["busy_sessions"],
+                        "busy_since": iso(busy_since) if busy_since else None,
+                        "agent_calls": backlog["agent_calls"],
+                        "window_min": minutes,
+                    },
+                },
+                immutable=True,
+            )
+            await self.repo.enqueue(
+                "DELIVER",
+                {"notice_id": notice_id, "channel": "telegram:ops"},
+                notice_id,
+                priority=0,
+                expires_at=offset_schedule(stamp, timedelta(days=1)),
+                max_attempts=5,
+            )
+            await self.repo.put(
+                "ops.scheduler_checkpoints",
+                AGENT_STALL_CHECKPOINT,
+                {
+                    "checkpoint_id": AGENT_STALL_CHECKPOINT,
+                    **stamp.fields("at"),
+                    "state": {"notice_id": notice_id, "reasons": reasons},
+                },
             )
 
     @staticmethod

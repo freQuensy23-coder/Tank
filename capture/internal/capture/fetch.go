@@ -57,6 +57,9 @@ func (s *Service) runFetch(ctx context.Context, row map[string]any, budgetS time
 	for k, v := range pyval.Map(req["headers"]) {
 		headers[k] = text(v)
 	}
+	if text(req["redirects"]) == "manual" {
+		ctx = rest.WithManualRedirects(ctx)
+	}
 	if budgetS > 0 {
 		var cancel context.CancelFunc
 		ctx, cancel = context.WithTimeout(ctx, budgetS)
@@ -65,22 +68,30 @@ func (s *Service) runFetch(ctx context.Context, row map[string]any, budgetS time
 	got, err := s.opt.Fetcher.Fetch(ctx, method, raw, params, headers, req["body"], fetchPriority)
 	if err != nil {
 		reason := "FETCH_FAILED"
+		details := map[string]any{"error": err.Error(), "source_id": req["source_id"]}
 		var banned *budget.BannedError
+		var limited *rest.RateLimitedError
 		switch {
 		case errors.Is(err, rest.ErrTooLarge):
 			reason = "RESPONSE_TOO_LARGE"
 		case errors.As(err, &banned):
 			reason = "HOST_BANNED"
+		case errors.As(err, &limited):
+			reason = "RATE_LIMITED"
+			details["retry_after"] = limited.RetryAfter
 		case errors.Is(err, context.DeadlineExceeded):
 			reason = "REQUEST_BUDGET_EXHAUSTED"
 		}
-		finish("FAILED", reason, map[string]any{"error": err.Error(), "source_id": req["source_id"]})
+		finish("FAILED", reason, details)
 		return
 	}
 	sum := sha256.Sum256(got.Body)
 	result := map[string]any{
 		"status_code": int64(got.Status), "content_type": got.ContentType, "sha256": hex.EncodeToString(sum[:]),
 		"fetched_at": pytime.ISO(s.clock.Now()), "bytes": int64(len(got.Body)), "source_id": req["source_id"],
+	}
+	if got.Location != "" {
+		result["location"] = got.Location
 	}
 	if utf8.Valid(got.Body) {
 		result["body"] = string(got.Body)

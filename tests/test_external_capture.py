@@ -73,6 +73,36 @@ async def finish(repo, collection, key, **fields):
     await update(repo, collection, key, **collection_clock(utcnow()).fields("finished_at"), **fields)
 
 
+async def test_escalation_before_a_scheduled_t0_requests_no_future_capture(settings):
+    """An obligation at a future T0 made tank-capture write a day of placeholder flow
+    bars ahead of now; before T0 the obligation is anchored at T1, while the token
+    stays hot until 72 h after the scheduled time."""
+    repo = MemoryRepository()
+    service = MarketService(repo, settings)
+    service._stop = asyncio.Event()
+    now = utcnow().replace(microsecond=0)
+    public_at, event_time = iso(now - timedelta(hours=1)), iso(now + timedelta(days=2))
+    await repo.put(
+        "evt.events",
+        "EVT-SCHEDULED",
+        {
+            "event_id": "EVT-SCHEDULED",
+            "event_time": event_time,
+            "event_time_prec": "EXACT",
+            "state_verified": True,
+            "public_at": public_at,
+            "public_at_prec": "EXACT",
+        },
+    )
+    await service.escalate("EVT-SCHEDULED", [TOKEN])
+    (hot,) = await repo.list("mkt.hot_tokens")
+    assert parse_time(hot["since"]) == parse_time(public_at)
+    assert parse_time(hot["expires_at"]) == parse_time(event_time) + timedelta(hours=72)
+    (run,) = await repo.list("mkt.backfill_runs")
+    assert parse_time(run["anchor"]) == parse_time(public_at) and run["anchor_prec"] == "EXACT"
+    assert (await service.capture_readiness("EVT-SCHEDULED", TOKEN, anchor=public_at))["status"] == "PENDING"
+
+
 async def test_external_escalation_writes_the_obligation_and_starts_nothing(settings):
     repo = MemoryRepository()
     service = MarketService(repo, settings)
@@ -335,6 +365,29 @@ async def test_request_ledger_is_one_budget_for_every_process(migrated):
         await first.release(first.ledger)
         await second.release(second.ledger)
     assert first.ledger is None and second.ledger is None
+
+
+@pytest.mark.integration
+@pytest.mark.postgres
+async def test_try_acquire_charges_the_shared_ledger_only_when_admitted(migrated):
+    """The Etherscan daily budget (03 §5.6) survives restarts and is shared by processes."""
+    first, second = SharedRequestBudgets(), SharedRequestBudgets()
+    first.ledger = RequestLedger(migrated.database_url, "first")
+    second.ledger = RequestLedger(migrated.database_url, "second")
+    try:
+        assert await first.try_acquire("api.etherscan.io", 5, 86400, weight=4, host="api.etherscan.io") == 0
+        wait = await second.try_acquire("api.etherscan.io", 5, 86400, weight=2, host="api.etherscan.io")
+        assert 86000 < wait <= 86400
+        assert await second.try_acquire("api.etherscan.io", 5, 86400, weight=1, host="api.etherscan.io") == 0
+        assert [(row["bucket"], row["owner"]) for row in await ledger_rows(migrated)] == [
+            ("api.etherscan.io|86400.0|5.0", "first"),
+            ("api.etherscan.io|86400.0|5.0", "second"),
+        ]
+        await first.block("api.etherscan.io", utcnow() + timedelta(seconds=30), "HTTP 429")
+        assert await second.try_acquire("api.etherscan.io", 50, 3600, host="api.etherscan.io") > 20
+    finally:
+        await first.release(first.ledger)
+        await second.release(second.ledger)
 
 
 @pytest.mark.integration
