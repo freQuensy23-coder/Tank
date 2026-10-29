@@ -21,7 +21,7 @@ from market_truth_request_data import ORIGINAL, seed_data
 
 from tank import clickhouse_market as chm
 from tank.agents import SessionService
-from tank.agents.context import CONTEXT_VERSION
+from tank.agents.context import CONTEXT_VERSION, ModelContext
 from tank.analysis import truth
 from tank.clickhouse_market import ClickHouse
 from tank.event_tools import EventToolService
@@ -406,6 +406,9 @@ async def run(root, directory, fixtures, revision, reader):
 
             for name, handler in tuple(runtime.handlers.items()):
                 runtime.handlers[name] = measure_async(f"request.{name}", handler)
+            ModelContext.result = measure_async("return.project", ModelContext.result)
+            repo.put = measure_async("request.repo.put", repo.put)
+            sessions.request = measure_async("return.request", sessions.request)
 
             for name in (
                 "_ranged_read",
