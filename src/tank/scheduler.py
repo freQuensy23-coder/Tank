@@ -1761,8 +1761,8 @@ class Scheduler:
     async def failing_source_feeds(self):
         """Feeds whose share of failed reads among their recent reads reaches the alarm rate.
 
-        A feed's checkpoint keeps the outcomes of its last reads (``recent_reads``, feed polls
-        and article/detail fetches); ⚙``source_failed_read_alarm`` is the rate (03 §7.6)."""
+        A feed's checkpoint keeps its last reads as ``[finished_at, ok]`` pairs (``recent_reads``,
+        feed polls and article/detail fetches); ⚙``source_failed_read_alarm`` is the rate (03 §7.6)."""
         if not hasattr(self.settings, "load_config"):
             return []
         alarm = self.threshold("source_failed_read_alarm", 0.1)
@@ -1771,7 +1771,7 @@ class Scheduler:
             for index, _ in enumerate(source.get("feeds", [])):
                 key = f"{source['source_id']}:{index}"
                 recent = (await self.repo.get("ops.source_checkpoints", key) or {}).get("recent_reads") or []
-                failed = sum(not ok for ok in recent)
+                failed = sum(not ok for _, ok in recent)
                 if recent and failed / len(recent) >= alarm:
                     rows.append({"feed": key, "failed": failed, "reads": len(recent)})
         return rows

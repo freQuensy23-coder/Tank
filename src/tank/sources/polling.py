@@ -33,12 +33,14 @@ def count_read(state, name, *, ok, n=1):
 
 
 def remember_reads(state, outcomes):
-    """Keep the outcomes (true for ok) of the feed's last ``RECENT_READS`` reads, in order.
+    """Keep the feed's last ``RECENT_READS`` reads as ``[finished_at, ok]`` pairs.
 
     Feed polls and article/detail fetches share ``recent_reads``, the window of the
-    heartbeat's rolling failed-read rate (03 §7.6)."""
+    heartbeat's rolling failed-read rate (03 §7.6). A poll and a detail pass of the same
+    feed can overlap, so the window is ordered by when each read finished."""
     if outcomes:
-        state["recent_reads"] = (state.get("recent_reads", []) + list(outcomes))[-RECENT_READS:]
+        reads = [*state.get("recent_reads", []), *([at, ok] for at, ok in outcomes)]
+        state["recent_reads"] = sorted(reads, key=lambda read: parse_time(read[0]))[-RECENT_READS:]
 
 
 async def recapture(repo, source, external_ids, *, apply=False):
@@ -627,7 +629,7 @@ class SourcePoller:
                         current["article_errors"] = {}
                     read_ok = not acquired.get("run_failed")
                     count_read(current, "reads", ok=read_ok)
-                    remember_reads(current, [read_ok])
+                    remember_reads(current, [(self.stamp(), read_ok)])
                     if not read_ok:
                         current["last_failure_at"] = self.stamp()
                     current.update(
@@ -652,7 +654,7 @@ class SourcePoller:
                     current.pop("etag", None)
                     current.pop("last_modified", None)
                     count_read(current, "reads", ok=False)
-                    remember_reads(current, [False])
+                    remember_reads(current, [(self.stamp(), False)])
                     current.update(
                         status="DEGRADED",
                         acquisition_error=str(exc),
@@ -883,7 +885,7 @@ class SourcePoller:
 
                 async def settled(row, current_batch=batch):
                     failed = await process(row, current_batch)
-                    outcomes.append(failed is None)
+                    outcomes.append((self.stamp(), failed is None))
                     return failed
 
                 remaining = await asyncio.gather(*(settled(row) for row in batch["rows"]))

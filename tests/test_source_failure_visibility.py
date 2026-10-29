@@ -1,4 +1,5 @@
 import logging
+from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 
 import httpx
@@ -11,7 +12,9 @@ from tank.scheduler import Scheduler
 from tank.sources import SourceService
 from tank.sources.polling import RECENT_READS, remember_reads
 from tank.storage import MemoryRepository
-from tank.util import utcnow
+from tank.util import iso, utcnow
+
+NOW = datetime(2026, 10, 29, 7, tzinfo=UTC)
 
 
 @pytest.fixture
@@ -43,21 +46,40 @@ async def test_chronic_feed_failure_is_logged_and_kept_in_recent_reads(tmp_path,
         await svc.close()
     state = await repo.get("ops.source_checkpoints", "S30:0")
     assert state["status"] == "HEALTHY"
-    assert state["recent_reads"].count(False) == 3 and state["recent_reads"][:3] == [False] * 3
+    assert oks(state) == [False] * 3 + [True, True]
     failures = [r for r in caplog.records if "S30:0 read failed" in r.getMessage()]
     assert len(failures) == 3 and all(r.levelno == logging.WARNING for r in failures)
     assert "503" in failures[0].getMessage()
 
 
-def test_recent_reads_keep_the_last_window_in_order():
+def oks(state):
+    return [ok for _, ok in state["recent_reads"]]
+
+
+def reads(start, outcomes):
+    return [(iso(start + timedelta(seconds=i)), ok) for i, ok in enumerate(outcomes)]
+
+
+def test_recent_reads_keep_the_last_window_in_finishing_order():
+    start = datetime(2026, 10, 29, 12, tzinfo=UTC)
     state = {"reads": {"ok": 2, "failed": 1}}
-    remember_reads(state, [False] * 3)
-    remember_reads(state, [True] * (RECENT_READS - 1))
-    assert state["recent_reads"] == [False] * 1 + [True] * (RECENT_READS - 1)
+    remember_reads(state, reads(start, [False] * 3))
+    remember_reads(state, reads(start + timedelta(minutes=1), [True] * (RECENT_READS - 1)))
+    assert oks(state) == [False] + [True] * (RECENT_READS - 1)
     remember_reads(state, [])
-    remember_reads(state, [False])
-    assert state["recent_reads"] == [True] * (RECENT_READS - 1) + [False]
+    remember_reads(state, reads(start + timedelta(minutes=5), [False]))
+    assert oks(state) == [True] * (RECENT_READS - 1) + [False]
     assert state["reads"] == {"ok": 2, "failed": 1}
+
+
+def test_overlapping_poll_and_detail_pass_are_merged_by_finish_time():
+    start = datetime(2026, 10, 29, 12, tzinfo=UTC)
+    detail = reads(start, [False] * 5 + [True] * 45)
+    state = {}
+    remember_reads(state, [(iso(start + timedelta(seconds=0.5)), True)])
+    remember_reads(state, detail)
+    assert oks(state) == [True] + [False] * 4 + [True] * 45
+    assert state["recent_reads"][0] == [iso(start + timedelta(seconds=0.5)), True]
 
 
 @pytest.mark.asyncio
@@ -93,7 +115,7 @@ async def test_detail_pass_keeps_early_failures_out_of_a_later_successful_window
         await svc.close()
     state = await repo.get("ops.source_checkpoints", "S20:0")
     assert len(result["errors"]) == 5 and state["detail_reads"] == {"ok": RECENT_READS + 5, "failed": 5}
-    assert state["recent_reads"] == [True] * RECENT_READS
+    assert oks(state) == [True] * RECENT_READS
 
 
 @pytest.mark.asyncio
@@ -111,7 +133,7 @@ async def test_failed_x_actor_run_is_a_failed_read(tmp_path, caplog):
         await service.poll_once("S29")
         await service.close()
     state = await repo.get("ops.source_checkpoints", "S29:0")
-    assert state["reads"] == {"ok": 0, "failed": 1} and state["recent_reads"] == [False]
+    assert state["reads"] == {"ok": 0, "failed": 1} and oks(state) == [False]
     assert state["status"] == "DEGRADED" and state["last_failure_at"]
     assert any("S29:0 read failed: the actor run failed" in r.getMessage() for r in caplog.records)
 
@@ -152,13 +174,17 @@ async def test_heartbeat_lists_feeds_failing_their_recent_reads():
     await repo.put(
         "ops.source_checkpoints",
         "S29:0",
-        {"status": "HEALTHY", "recent_reads": [False] * 27 + [True] * 23},
+        {"status": "HEALTHY", "recent_reads": reads(NOW, [False] * 27 + [True] * 23)},
     )
     await repo.put(
-        "ops.source_checkpoints", "S05:1", {"status": "HEALTHY", "recent_reads": [False, True] * 5}
+        "ops.source_checkpoints",
+        "S05:1",
+        {"status": "HEALTHY", "recent_reads": reads(NOW, [False, True] * 5)},
     )
     await repo.put(
-        "ops.source_checkpoints", "S01:0", {"status": "HEALTHY", "recent_reads": [False] * 4 + [True] * 46}
+        "ops.source_checkpoints",
+        "S01:0",
+        {"status": "HEALTHY", "recent_reads": reads(NOW, [False] * 4 + [True] * 46)},
     )
     config = SimpleNamespace(
         load_config=lambda name: (
@@ -179,7 +205,7 @@ async def test_heartbeat_lists_feeds_failing_their_recent_reads():
 async def test_heartbeat_without_failing_feeds_has_no_source_line():
     repo = MemoryRepository()
     sources = [{"source_id": "S01", "feeds": [{"url": "https://example.org/c"}]}]
-    await repo.put("ops.source_checkpoints", "S01:0", {"recent_reads": [True] * 50})
+    await repo.put("ops.source_checkpoints", "S01:0", {"recent_reads": reads(NOW, [True] * 50)})
     config = SimpleNamespace(load_config=lambda name: {"sources": sources} if name == "sources" else {})
     now = utcnow()
     await Scheduler(repo, config, None, None).heartbeat(now)
