@@ -29,6 +29,21 @@ def test_postmeasurement_profile_runs_in_retained_context_and_restores_profiler(
     assert all(set(row) == fields for row in rows)
 
 
+def test_postmeasurement_profile_does_not_reuse_or_mutate_the_accepted_baseline_cache():
+    baseline = {"already-prepared": 1}
+    options = {"baseline_cache": baseline}
+    seen = []
+
+    def retained_work(*, baseline_cache):
+        seen.append(dict(baseline_cache))
+        baseline_cache["diagnostic-only"] = 2
+
+    profile_retained_call((copy_context(), retained_work, (), options))
+    assert seen == [{}]
+    assert baseline == {"already-prepared": 1}
+    assert options == {"baseline_cache": baseline}
+
+
 def test_postmeasurement_profile_preserves_callback_error_and_restores_profiler():
     failure = ValueError("profile-proof")
 
