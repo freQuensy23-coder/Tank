@@ -70,7 +70,7 @@ Values marked ⚙ are collected in §12 with their basis: a PRD requirement, an 
 | `ContradictionType` | FATAL, UNRESOLVED, DIAGNOSTIC, EXPLAINABLE |
 | `AlertKind` | PARTIAL, FULL, UPDATE, PRELIMINARY |
 | `DeliveryStatus` | GENERATED, SENT, FAILED |
-| `OpsNoticeKind` | ITEM_PROGRESS, ENTRY_ERRORS, DELIVERY_FAILED, HEARTBEAT (sent); ENTRY_ERROR (the stored once-only marker of one broken entry, never sent on its own) |
+| `OpsNoticeKind` | ITEM_PROGRESS, ENTRY_ERRORS, DELIVERY_FAILED, HEARTBEAT, AGENT_STALL (sent); ENTRY_ERROR (the stored once-only marker of one broken entry, never sent on its own) |
 | `EventLifecycle` | DETECTED, SCORED, TRACKED, ANALYZING, ALERTED, MONITORING, COOLDOWN, CLOSED, MERGED, INVALIDATED |
 | `ScoutHook` | BENEFICIARY_LAYER, MARKET_TRUTH_STATE, SOURCE_OPPORTUNITY, ALTERNATIVE_EXPLANATION |
 | `ScoutRecommendation` | SUBCATEGORY, TEST_MORE, NEW_CATEGORY, REJECT |
@@ -495,7 +495,9 @@ OpsNotice                            # append-only; one "Tank Ops" message (§7.
   entry_errors: [{reason, entry?, entry_index?, proposal_id?, account?, error?, payload_sha256?, diagnostics?}]?   # ENTRY_ERRORS
   document_manifest: [{filename, sha256, bytes}]?                  # ENTRY_ERRORS with HTTP responses of a failed X profile
   text: str; created_at
-  created_by: ops-progress (ITEM_PROGRESS) | source-poller (ENTRY_ERRORS, ENTRY_ERROR) | delivery (DELIVERY_FAILED) | scheduler (HEARTBEAT)
+  reasons: [QUEUE_WAIT | LLM_SILENCE]?                              # AGENT_STALL
+  agent_backlog: {queued, oldest_waiting_since?, busy_sessions, busy_since?, agent_calls, window_min}?   # AGENT_STALL
+  created_by: ops-progress (ITEM_PROGRESS) | source-poller (ENTRY_ERRORS, ENTRY_ERROR) | delivery (DELIVERY_FAILED) | scheduler (HEARTBEAT, AGENT_STALL)
 
 OpsCard                              # mutable; the "Tank Ops" card of one material
   item_id, chat_id
@@ -1632,14 +1634,15 @@ Wording rules. They are written in the skill: the agent follows them in the verd
 - Telegram Bot API sendRichMessage with explicit rich_message.blocks for new cards in "Tank Alerts"; a compact, bordered table replaces the abbreviated Scores line. Its seven rows show the full dimension name, score out of 10 (or "Not assessed"), and saved rationale. Freeze the rich payload in the alert and evidence bundle before queueing delivery. Keep a readable text representation for follow-up context. Legacy cards and "Tank Ops" notices use sendMessage with parse_mode=HTML. Updates set reply_parameters.message_id to the first card. Tank sets no length limit of its own: `publish_card` refuses only a card whose rich message exceeds Telegram's limits (32,768 characters including table cells, 500 blocks), with the reason and the counts, so the agent can shorten it; nothing is cut silently.
 - Before sending, the ledger is checked for (`alert_id`, `version`, `channel`) = SENT; if present, nothing is re-sent.
 - Retries with exponential backoff (1, 2, 4, 8, 16 s), honoring rate-limit `retry_after`. After the last attempt the status is FAILED and Tank Ops gets DELIVERY_FAILED.
-- "Tank Ops" gets four kinds of notice (01 §7.2). Each is an `out.ops_notices` row plus a DELIVER job in `telegram:ops`, written in one transaction; its delivery transitions go to the same ledger with `notice_id` set:
+- "Tank Ops" gets five kinds of notice (01 §7.2). Each is an `out.ops_notices` row plus a DELIVER job in `telegram:ops`, written in one transaction; its delivery transitions go to the same ledger with `notice_id` set:
 
 | Kind | Written by | When | Delivery |
 |---|---|---|---|
 | ITEM_PROGRESS | `ops-progress` | Each processing stage of a new unique material: received, filter passed / rejected / not required (stage codes `JEV_*`, kept from Jev so history keeps its meaning), queued for and accepted by the agent, an extra source fetched by the agent, event recorded or observation added, no event, assessed, analysis updated, card blocked / queued / sent / failed, agent finished, processing failed or expired. One notice per material, stage and reason | Priority 2, 7-day expiry. One card per material in `out.ops_cards`: the first stage is sent with sendMessage, later stages edit that message (editMessageText) |
 | ENTRY_ERRORS | `source-poller` | A source poll found entries that do not become materials (no identifier or link, an entry outside the source's format, a damaged feed document, a tracked Snapshot proposal missing, an X profile not read). Each broken entry is reported once: its `ENTRY_ERROR` marker is keyed by source, feed, reason and the entry's own identity, not by the poll time; all new errors of one poll form one notice | Priority 2, 7-day expiry; text cut to Telegram's limit with "… and N more", the full list stays in the notice. For an X profile whose attempts all failed, the HTTP responses (status, allowlisted headers, body, without credentials or cookies) go as documents (sendDocument) in reply to the notice, each with its own delivery receipt |
 | DELIVERY_FAILED | `delivery` | A card or update for "Tank Alerts" reached its terminal failure (5 attempts); the material's card also shows the failed stage. A failed Ops notice creates no further notice | Priority 0, 5 attempts, 1-day expiry |
-| HEARTBEAT | `scheduler` | The first scheduler tick at or after ⚙08:00 UTC each day: cards delivered in the last 24 h, tokens in the hot set, the analysis backlog (queued, running) and the oldest queued job's lag, LLM spending since 00:00 UTC (the known subtotal plus the number of usage records without a cost), and the number of Ops cards that failed to deliver or update | Priority 0, 5 attempts, 1-day expiry |
+| HEARTBEAT | `scheduler` | The first scheduler tick at or after ⚙08:00 UTC each day: cards delivered in the last 24 h, tokens in the hot set, the analysis backlog (queued, running) and the oldest queued job's lag (measured from `slot_waiting_since` for an agent turn deferred by the running-session cap, whose `run_after` is pushed forward on every deferral, otherwise from `run_after`), LLM spending since 00:00 UTC (the known subtotal plus the number of usage records without a cost), and the number of Ops cards that failed to deliver or update | Priority 0, 5 attempts, 1-day expiry |
+| AGENT_STALL | `scheduler` | Checked every scheduler tick against ⚙`agent_stall_alarm_min` (15). QUEUE_WAIT: a QUEUED AGENT_MESSAGE or SCOUT_REVIEW has waited that long, from `slot_waiting_since` or else `created_at`. LLM_SILENCE: an OPEN session in a busy runtime state (or with an active message) has worked on its active message (`message_log.requested_at`) that long and `ops.llm_usage` has no `call = AGENT` row in the window. The notice carries the reasons and `agent_backlog` (queued count, oldest wait start, busy sessions, earliest busy start, agent calls in the window). The episode is the `agent_stall` row of `ops.scheduler_checkpoints`: one notice per stall, cleared at the first tick without one, so a later stall alarms again. The check only reports; it changes no job or session | Priority 0, 5 attempts, 1-day expiry |
 
 **Diagnostic document integrity and recovery:**
 
@@ -2080,7 +2083,7 @@ CREATE TABLE out.alerts (                              -- append-only, one row p
 CREATE TABLE out.ops_notices (                         -- append-only
   notice_id   text PRIMARY KEY,
   kind        text NOT NULL CHECK (kind IN ('ITEM_PROGRESS','ENTRY_ERRORS','ENTRY_ERROR',
-                                            'DELIVERY_FAILED','HEARTBEAT')),
+                                            'DELIVERY_FAILED','HEARTBEAT','AGENT_STALL')),
   subject_id  text,                                    -- item_id / source_id / alert_id
   text        text NOT NULL,
   created_at  timestamptz NOT NULL,

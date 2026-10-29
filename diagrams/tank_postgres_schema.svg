@@ -1,7 +1,7 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="4270" height="2109" viewBox="0 0 4270 2109">
 <rect width="100%" height="100%" fill="#FFFFFF"/>
 <text x="40.0" y="52.0" font-family="'Helvetica Neue', Helvetica, Arial, sans-serif" font-size="26" fill="#1A202C" font-weight="700">Tank · PostgreSQL — database schema <tspan font-weight='400' fill='#4A5568'>tank</tspan></text>
-<text x="40.0" y="78.0" font-family="'Helvetica Neue', Helvetica, Arial, sans-serif" font-size="12.5" fill="#4A5568">PostgreSQL 16 · migrations src/tank/migrations/001–007 + ops.schema_migrations (storage.py) · 9 schemas · 51 tables · 16 FK · 151 indexes · ER diagram generated from the DDL by scripts/render_db_schema.py · IE (crow’s foot) notation</text>
+<text x="40.0" y="78.0" font-family="'Helvetica Neue', Helvetica, Arial, sans-serif" font-size="12.5" fill="#4A5568">PostgreSQL 16 · migrations src/tank/migrations/001–008 + ops.schema_migrations (storage.py) · 9 schemas · 51 tables · 16 FK · 151 indexes · ER diagram generated from the DDL by scripts/render_db_schema.py · IE (crow’s foot) notation</text>
 <rect x="40" y="108" width="600" height="190" rx="6" fill="#F7FAFC" stroke="#CBD5E0"/>
 <text x="54.0" y="130.0" font-family="'Helvetica Neue', Helvetica, Arial, sans-serif" font-size="12" fill="#1A202C" font-weight="700">Relations</text>
 <path d="M56,152 H126" stroke="#2D3748" stroke-width="1.35"/><path d="M67.0,152.0 L56.0,146.5 M67.0,152.0 L56.0,152.0 M67.0,152.0 L56.0,157.5" stroke="#2D3748" stroke-width="1.3" fill="none"/><circle cx="72.0" cy="152.0" r="3.1" fill="#fff" stroke="#2D3748" stroke-width="1.3"/><path d="M119.0,146.5 L119.0,157.5" stroke="#2D3748" stroke-width="1.5"/><circle cx="113.0" cy="152.0" r="3.1" fill="#fff" stroke="#2D3748" stroke-width="1.3"/>
@@ -82,7 +82,7 @@
 <text x="2634.7" y="252.5" font-family="'Helvetica Neue', Helvetica, Arial, sans-serif" font-size="12" fill="#1A202C"><tspan font-weight='700'>scout</tspan> · 1 table</text>
 <text x="2634.7" y="268.0" font-family="'Helvetica Neue', Helvetica, Arial, sans-serif" font-size="10" fill="#718096">expansion proposals</text>
 <rect x="2904" y="108" width="1326.4735999999994" height="190" rx="6" fill="#FFF5F5" stroke="#FEB2B2"/>
-<text x="2918.0" y="130.0" font-family="'Helvetica Neue', Helvetica, Arial, sans-serif" font-size="12" fill="#9B2C2C" font-weight="700">Not enforced by the schema <tspan font-weight='400' fill='#718096'>(computed from migrations 001–007)</tspan></text>
+<text x="2918.0" y="130.0" font-family="'Helvetica Neue', Helvetica, Arial, sans-serif" font-size="12" fill="#9B2C2C" font-weight="700">Not enforced by the schema <tspan font-weight='400' fill='#718096'>(computed from migrations 001–008)</tspan></text>
 <circle cx="2923" cy="148.0" r="2.2" fill="#C53030"/>
 <text x="2932.0" y="152.0" font-family="'Helvetica Neue', Helvetica, Arial, sans-serif" font-size="10.2" fill="#1A202C">All design §14 FKs exist</text>
 <circle cx="2923" cy="166.5" r="2.2" fill="#C53030"/>

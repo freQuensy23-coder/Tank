@@ -6,6 +6,7 @@ import logging
 from datetime import UTC, timedelta
 from decimal import Decimal, InvalidOperation, localcontext
 
+from tank.agents.sessions import ADMITTED_JOB_TYPES, BUSY_RUNTIME_STATES
 from tank.time_precision import chosen_boundary, collection_clock, offset_schedule, propagate_timestamp
 from tank.util import iso, new_id, parse_time, utcnow
 
@@ -23,6 +24,7 @@ CHECKPOINTS = {
 BENCHMARK_TOKENS = frozenset({"bitcoin:BTC", "ethereum:ETH"})
 
 
+AGENT_STALL_CHECKPOINT = "agent_stall"
 REACTION_MEASUREMENT_SLOTS = 2
 
 
@@ -204,6 +206,7 @@ class Scheduler:
         self.launch("scout", lambda: self.detect_scout_hooks(now))
         if self.market is not None:
             self.launch("late-reactions", lambda: self.detect_late_data(now))
+        self.launch("agent-stall", lambda: self.agent_stall(now))
         heartbeat_hour, heartbeat_minute = map(int, str(self.threshold("heartbeat_utc", "08:00")).split(":"))
         if (now.hour, now.minute) >= (heartbeat_hour, heartbeat_minute):
             await self.heartbeat(now)
@@ -1539,7 +1542,8 @@ class Scheduler:
             async for row in self.repo.iter_all("ops.jobs", filters={"status": status}):
                 backlog[status.lower()] += row["type"] in analysis_kinds
                 if status == "QUEUED":
-                    lag = max(lag, max(0, (now - parse_time(row["run_after"])).total_seconds()))
+                    waiting_since = parse_time(row.get("slot_waiting_since") or row["run_after"])
+                    lag = max(lag, max(0, (now - waiting_since).total_seconds()))
         spend, unknown = Decimal(0), 0
         async for row in self.repo.iter_range(
             "ops.llm_usage", "at", start=now.replace(hour=0, minute=0, second=0, microsecond=0), end=end
@@ -1581,6 +1585,142 @@ class Scheduler:
                 priority=0,
                 expires_at=offset_schedule(collection_clock(now), timedelta(days=1)),
                 max_attempts=5,
+            )
+
+    async def agent_backlog(self, now, window):
+        """What the analyst owes: queued agent turns, busy sessions and recent agent model calls.
+
+        A queued turn waits from its first admission deferral (`slot_waiting_since`) or its
+        creation; a busy session works since its active message was requested."""
+        queued, oldest = 0, None
+        for kind in ADMITTED_JOB_TYPES:
+            async for row in self.repo.iter_metadata(
+                "ops.jobs",
+                ["job_id", "created_at", "slot_waiting_since"],
+                filters={"type": kind, "status": "QUEUED"},
+            ):
+                queued += 1
+                since = parse_time(row.get("slot_waiting_since") or row["created_at"])
+                oldest = since if oldest is None else min(oldest, since)
+        busy, busy_since = 0, None
+        async for row in self.repo.iter_metadata(
+            "ops.agent_sessions",
+            ["session_id", "runtime_status", "active_message_id"],
+            filters={"status": "OPEN"},
+        ):
+            if row.get("runtime_status") not in BUSY_RUNTIME_STATES and not row.get("active_message_id"):
+                continue
+            busy += 1
+            session = await self.repo.get("ops.agent_sessions", row["session_id"]) or {}
+            log_rows = session.get("message_log") or []
+            active = next(
+                (entry for entry in log_rows if entry.get("message_id") == session.get("active_message_id")),
+                log_rows[-1] if log_rows else None,
+            )
+            if active and active.get("requested_at"):
+                since = parse_time(active["requested_at"])
+                busy_since = since if busy_since is None else min(busy_since, since)
+        calls = 0
+        async for _ in self.repo.iter_range(
+            "ops.llm_usage",
+            "at",
+            start=now - window,
+            end=now + timedelta(microseconds=1),
+            filters={"call": "AGENT"},
+        ):
+            calls += 1
+        return {
+            "queued": queued,
+            "oldest_waiting_since": oldest,
+            "busy_sessions": busy,
+            "busy_since": busy_since,
+            "agent_calls": calls,
+        }
+
+    async def agent_stall(self, now):
+        """Alarm "Tank Ops" once per agent stall: work waits for the analyst and nothing moves.
+
+        The agent is stalled when a queued agent turn has waited ⚙`agent_stall_alarm_min`
+        minutes, or when a session has been busy that long while no agent model call was
+        recorded in that window (03 §7.6). The episode is kept in the `agent_stall`
+        scheduler checkpoint, so one stall gives one AGENT_STALL notice; it ends at the
+        first tick without a stall."""
+        minutes = self.threshold("agent_stall_alarm_min", 15)
+        window = timedelta(minutes=minutes)
+        cutoff = now - window
+        backlog = await self.agent_backlog(now, window)
+        oldest, busy_since = backlog["oldest_waiting_since"], backlog["busy_since"]
+        reasons = []
+        if oldest is not None and oldest <= cutoff:
+            reasons.append("QUEUE_WAIT")
+        if busy_since is not None and busy_since <= cutoff and not backlog["agent_calls"]:
+            reasons.append("LLM_SILENCE")
+        checkpoint = await self.repo.get("ops.scheduler_checkpoints", AGENT_STALL_CHECKPOINT)
+        state = (checkpoint or {}).get("state") or {}
+        if not reasons:
+            if state.get("notice_id"):
+                await self.repo.put(
+                    "ops.scheduler_checkpoints",
+                    AGENT_STALL_CHECKPOINT,
+                    {
+                        "checkpoint_id": AGENT_STALL_CHECKPOINT,
+                        **collection_clock(now).fields("at"),
+                        "state": {"notice_id": None, "previous_notice_id": state["notice_id"]},
+                    },
+                )
+            return
+        if state.get("notice_id"):
+            return
+        stamp = collection_clock(now)
+        notice_id = "agent_stall_" + now.strftime("%Y%m%dT%H%M")
+        lines = ["TANK OPS · Агент не разбирает очередь"]
+        if oldest is not None:
+            waited = int((now - oldest).total_seconds() // 60)
+            lines.append(
+                f"Ждут агента: {backlog['queued']}; самое старое ждёт {waited} мин "
+                f"(с {oldest:%Y-%m-%d %H:%M} UTC)"
+            )
+        lines.append(f"Сессий в работе: {backlog['busy_sessions']}")
+        lines.append(f"Вызовов модели агента за {minutes} мин: {backlog['agent_calls']}")
+        lines.append(f"Порог: {minutes} мин (agent_stall_alarm_min); причина: {', '.join(reasons)}")
+        async with self.repo.transaction():
+            await self.repo.put(
+                "out.ops_notices",
+                notice_id,
+                {
+                    "notice_id": notice_id,
+                    "kind": "AGENT_STALL",
+                    "text": "\n".join(lines),
+                    **stamp.fields("created_at"),
+                    "created_by": "scheduler",
+                    "reasons": reasons,
+                    "agent_backlog": {
+                        "queued": backlog["queued"],
+                        "oldest_waiting_since": iso(oldest) if oldest else None,
+                        "busy_sessions": backlog["busy_sessions"],
+                        "busy_since": iso(busy_since) if busy_since else None,
+                        "agent_calls": backlog["agent_calls"],
+                        "window_min": minutes,
+                    },
+                },
+                immutable=True,
+            )
+            await self.repo.enqueue(
+                "DELIVER",
+                {"notice_id": notice_id, "channel": "telegram:ops"},
+                notice_id,
+                priority=0,
+                expires_at=offset_schedule(stamp, timedelta(days=1)),
+                max_attempts=5,
+            )
+            await self.repo.put(
+                "ops.scheduler_checkpoints",
+                AGENT_STALL_CHECKPOINT,
+                {
+                    "checkpoint_id": AGENT_STALL_CHECKPOINT,
+                    **stamp.fields("at"),
+                    "state": {"notice_id": notice_id, "reasons": reasons},
+                },
             )
 
     @staticmethod
