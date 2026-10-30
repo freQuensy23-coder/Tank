@@ -172,3 +172,62 @@ async def test_record_copy_fallback_preserves_conversion_and_mutable_enum_callba
         stored = await repo.get("reg.tokens", "CUSTOM")
         assert stored["enum"] == ["kept"] and stored["model"] == {"mode": "python"}
         assert stored["extra"] == 7
+
+
+@pytest.mark.parametrize("drift", [False, True])
+@pytest.mark.parametrize("result_kind", ["object", "null", "missing"])
+async def test_jsonb_projections_are_rebuilt_without_resending_unchanged_payloads(
+    postgres_template, monkeypatch, drift, result_kind
+):
+    async with (
+        postgres_template.repository(os.environ["TANK_TEST_DATABASE_URL"]) as repo,
+        repo.lock("projection-delta-test"),
+    ):
+        job = await repo.enqueue(
+            "RUN_MARKET_TRUTH",
+            {"retained": ["x" * 50000], "typed": [1.0, False]},
+            "projection-delta-test",
+            priority=7,
+        )
+        job["result"] = {"retained": ["y" * 30000]}
+        await repo.put("ops.jobs", job["job_id"], job)
+        updated = dict(job, priority=8)
+        if result_kind == "null":
+            updated["result"] = None
+        elif result_kind == "missing":
+            updated.pop("result")
+        if drift:
+            await repo._conn().execute(
+                "UPDATE ops.jobs SET payload=%s, result=%s WHERE storage_key=%s",
+                (Jsonb({"drift": True}), Jsonb({"drift": True}), job["job_id"]),
+            )
+        sent = []
+        connect = repo._conn
+
+        class Connection:
+            def __init__(self, connection):
+                self.connection = connection
+
+            def __getattr__(self, name):
+                return getattr(self.connection, name)
+
+            async def execute(self, query, params=None, **kwargs):
+                sent.extend(deepcopy(value.obj) for value in params or () if isinstance(value, Jsonb))
+                return await self.connection.execute(query, params, **kwargs)
+
+        with monkeypatch.context() as patch:
+            patch.setattr(repo, "_conn", lambda: Connection(connect()))
+            returned = await repo.put("ops.jobs", job["job_id"], updated)
+        assert sent and max(len(json.dumps(value)) for value in sent) < 1000
+        stored = await repo.get("ops.jobs", job["job_id"])
+        typed = await (
+            await repo._conn().execute(
+                "SELECT payload, result, priority FROM ops.jobs WHERE storage_key=%s", (job["job_id"],)
+            )
+        ).fetchone()
+        assert returned == stored == updated
+        assert typed["payload"] == updated["payload"]
+        assert typed["result"] == updated.get("result")
+        assert typed["priority"] == updated["priority"]
+        assert type(typed["payload"]["typed"][0]) is float
+        assert type(typed["payload"]["typed"][1]) is bool
