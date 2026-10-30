@@ -315,23 +315,21 @@ def _table(collection):
 
 async def _select(ch, collection, q, order, tail="", selected="*", *, columnar=False):
     day = MARKET_TABLES[collection]
-    keys = await ch.rows(
-        f"SELECT storage_key, instrument_id, `{day}` AS _day FROM {_table(collection)} "
-        f"WHERE {q.predicate()} ORDER BY {order} {tail}",
+    table = _table(collection)
+    read = ch.columns if columnar else ch.rows
+    result = await read(
+        f"WITH (SELECT tuple(groupUniqArray(instrument_id), min(`{day}`), max(`{day}`), "
+        "groupUniqArray(storage_key)) FROM "
+        f"(SELECT storage_key, instrument_id, `{day}` FROM {table} "
+        f"WHERE {q.predicate()} ORDER BY {order} {tail})) AS _page "
+        f"SELECT {selected} FROM {table} "
+        "WHERE instrument_id IN (SELECT arrayJoin(tupleElement(_page, 1))) "
+        f"AND `{day}` >= tupleElement(_page, 2) AND `{day}` <= tupleElement(_page, 3) "
+        "AND storage_key IN (SELECT arrayJoin(tupleElement(_page, 4))) "
+        f"ORDER BY {order}",
         q.params,
     )
-    if not keys:
-        return {} if columnar else []
-    days = [parse_time(r["_day"]) for r in keys]
-    k = Query()
-    k.where(f"instrument_id IN {k.param(sorted({r['instrument_id'] for r in keys}), 'Array(String)')}")
-    k.where(f"`{day}` >= {k.param(min(days), DT)}")
-    k.where(f"`{day}` <= {k.param(max(days), DT)}")
-    k.where(f"storage_key IN {k.param([r['storage_key'] for r in keys], 'Array(String)')}")
-    read = ch.columns if columnar else ch.rows
-    return await read(
-        f"SELECT {selected} FROM {_table(collection)} WHERE {k.predicate()} ORDER BY {order}", k.params
-    )
+    return {} if columnar and not any(result.values()) else result
 
 
 async def _narrow(ch, collection, q, time_field):

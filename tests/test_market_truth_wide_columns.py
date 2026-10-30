@@ -27,7 +27,7 @@ class WideClient:
 
     async def columns(self, query, params=None):
         self.column_queries.append((query, deepcopy(params)))
-        return {name: [row.get(name) for row in self.data] for name in self.data[0]}
+        return {name: [row.get(name) for row in self.data] for name in self.data[0]} if self.data else {}
 
 
 async def test_wide_pages_decode_columns_directly_with_exact_cursor_and_mutable_values():
@@ -50,7 +50,7 @@ async def test_wide_pages_decode_columns_directly_with_exact_cursor_and_mutable_
         (row["instrument_id"], chm._record("mkt.oi_obs", row), row["storage_key"], T0) for row in rows
     ]
     assert actual == expected
-    assert len(ch.row_queries) == len(ch.column_queries) == 1
+    assert ch.row_queries == [] and len(ch.column_queries) == 1
     query, params = ch.column_queries[0]
     assert "FINAL" in query and "storage_key IN" in query
     assert query.endswith("ORDER BY instrument_id, `ts`, storage_key")
@@ -59,10 +59,10 @@ async def test_wide_pages_decode_columns_directly_with_exact_cursor_and_mutable_
     assert actual[1][1]["oi_native"] == str(Decimal("1e-900"))
 
 
-async def test_empty_wide_page_skips_column_read():
+async def test_empty_wide_page_uses_one_transport_read():
     ch = WideClient([])
     assert await chm.range_by_instrument_page(ch, "mkt.oi_obs", "ts", [], T0, T0, {}, None, 2, False) == []
-    assert len(ch.row_queries) == 1 and ch.column_queries == []
+    assert ch.row_queries == [] and len(ch.column_queries) == 1
 
 
 @pytest.mark.parametrize("collection", list(chm.MARKET_TABLES))
