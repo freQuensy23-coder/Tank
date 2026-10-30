@@ -141,15 +141,15 @@ def test_shared_timeline_matches_original_windows_and_decimal_effects(
 def test_shared_timeline_reuses_prepared_join_and_retains_source_rows(monkeypatch):
     sync, end = cohort()
     calls = []
-    original = truth._oi_combined_vector
+    original = truth._oi_combined_selection
 
     def counted(*args):
         result = original(*args)
         assert result is not None
-        calls.append(len(result))
+        calls.append(sum(result[1]))
         return result
 
-    monkeypatch.setattr(truth, "_oi_combined_vector", counted)
+    monkeypatch.setattr(truth, "_oi_combined_selection", counted)
     token = truth._ASSESSMENT_INPUTS.set({})
     try:
         with localcontext() as context:

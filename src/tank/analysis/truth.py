@@ -1240,7 +1240,7 @@ def _oi_history_returns(times, native, usd, window, tolerance, *, prepared=None)
     return returns[0], returns[1], ends[0], ends[1]
 
 
-def _oi_stats(rows, start, end, *, history_identity=None, venue_history=None):
+def _oi_stats(rows, start, end, *, history_identity=None, venue_history=None, timeline_times=None):
     rows, _, ordered, ordered_times = _oi_split(rows)
     tolerance = float(parameter("oi_sync_tolerance_s", 60))
 
@@ -1285,9 +1285,12 @@ def _oi_stats(rows, start, end, *, history_identity=None, venue_history=None):
 
     window = end - start
     lower = start - timedelta(days=lookback_days())
-    lo, hi = bisect_left(ordered_times, lower), bisect_left(ordered_times, start)
-    if venue_history is not None and all(type(at) is datetime for at in ordered_times[lo:hi]):
-        history_times = list(dict.fromkeys(ordered_times[lo:hi]))
+    history_axis = (
+        timeline_times if venue_history is not None and timeline_times is not None else ordered_times
+    )
+    lo, hi = bisect_left(history_axis, lower), bisect_left(history_axis, start)
+    if venue_history is not None and all(type(at) is datetime for at in history_axis[lo:hi]):
+        history_times = list(dict.fromkeys(history_axis[lo:hi]))
         bytime = None
     else:
         bytime = {_time(rows[i]): rows[i] for i in sorted(index for _, index in ordered[lo:hi])}
@@ -1677,7 +1680,7 @@ def _oi_cutoff_index(rows, end):
     return result
 
 
-def _oi_combined_vector(indexed, timestamps, tolerance, prepared):
+def _oi_combined_selection(indexed, timestamps, tolerance, prepared):
     temporal = _history_time_array(timestamps, timedelta(0))
     if temporal is None or any(not times for times, _ in indexed):
         return None
@@ -1700,23 +1703,31 @@ def _oi_combined_vector(indexed, timestamps, tolerance, prepared):
         usd_ready &= _history_present(usd)
         selected.append((native, usd))
     usd_ready &= admitted
-    native_totals = np.full(len(targets), Decimal(0), dtype=object)
-    usd_totals = np.full(len(targets), Decimal(0), dtype=object)
-    for native, usd in selected:
-        native_totals[admitted] = np.add(native_totals[admitted], native[admitted])
-        usd_totals[usd_ready] = np.add(usd_totals[usd_ready], usd[usd_ready])
+    return selected, admitted, usd_ready
+
+
+def _oi_combined_records(timestamps, selection, positions, *, context=None):
+    selected, _, usd_ready = selection
+    ready = usd_ready[positions]
+    native_totals = np.full(len(positions), Decimal(0), dtype=object)
+    usd_totals = np.full(len(positions), Decimal(0), dtype=object)
+    with localcontext(context) if context is not None else contextlib.nullcontext():
+        for native, usd in selected:
+            native_totals = np.add(native_totals, native[positions])
+            usd_totals[ready] = np.add(usd_totals[ready], usd[positions][ready])
     return [
         dict(
-            ts=iso(timestamps[i]),
-            oi_native=native_totals[i],
-            oi_usd=usd_totals[i] if usd_ready[i] else None,
+            ts=iso(timestamps[position]),
+            oi_native=native_totals[index],
+            oi_usd=usd_totals[index] if ready[index] else None,
         )
-        for i in np.flatnonzero(admitted)
+        for index, position in enumerate(positions)
     ]
 
 
-def _oi_combined_timeline(indexed, tolerance):
+def _oi_combined_data(indexed, tolerance):
     """Share exact endpoint sums only when conversions have no Decimal effects."""
+    context = getcontext()
     inputs = _ASSESSMENT_INPUTS.get()
     memo = inputs.setdefault("oi_combined_timelines", {}) if inputs is not None else None
     key = (tuple(id(rows) for _, rows in indexed), tolerance, _history_context_key())
@@ -1758,8 +1769,26 @@ def _oi_combined_timeline(indexed, tolerance):
         ):
             prepared = None
     timestamps = sorted({t for times, _ in indexed for t in times})
-    combined = _oi_combined_vector(indexed, timestamps, tolerance, prepared) if prepared is not None else None
-    if combined is not None:
+    selection = (
+        _oi_combined_selection(indexed, timestamps, tolerance, prepared) if prepared is not None else None
+    )
+    if selection is not None:
+        positions = np.flatnonzero(selection[1])
+        if (
+            type(context) is Context
+            and getcontext() is context
+            and _history_context_key() == key[-1]
+            and all(type(at) is datetime and at.tzinfo is UTC for at in timestamps)
+        ):
+            combined = dict(
+                timestamps=timestamps,
+                selection=selection,
+                positions=positions,
+                context=context.copy(),
+                records=None,
+            )
+        else:
+            combined = _oi_combined_records(timestamps, selection, positions)
         memo[key] = (indexed, combined)
         return combined
     reusable = prepared is not None
@@ -1785,6 +1814,46 @@ def _oi_combined_timeline(indexed, tolerance):
     return combined
 
 
+def _oi_combined_timeline(indexed, tolerance):
+    data = _oi_combined_data(indexed, tolerance)
+    if type(data) is not dict:
+        return data
+    if data["records"] is None:
+        data["records"] = _oi_combined_records(
+            data["timestamps"], data["selection"], data["positions"], context=data["context"]
+        )
+    return data["records"]
+
+
+def _oi_synchronized_points(indexed, tolerance, start, end):
+    data = _oi_combined_data(indexed, tolerance)
+    if type(data) is not dict:
+        return data, None
+    if (
+        type(start) is not datetime
+        or start.tzinfo is not UTC
+        or type(end) is not datetime
+        or end.tzinfo is not UTC
+    ):
+        return _oi_combined_timeline(indexed, tolerance), None
+    times = [data["timestamps"][position] for position in data["positions"]]
+    chosen = []
+    for endpoint in (start, end):
+        lo = bisect_left(times, endpoint - timedelta(seconds=tolerance))
+        hi = bisect_right(times, min(endpoint + timedelta(seconds=tolerance), end))
+        nearest = None
+        for index in range(lo, hi):
+            candidate = (abs((times[index] - endpoint).total_seconds()), index)
+            if nearest is None or candidate < nearest:
+                nearest = candidate
+        if nearest is None:
+            return [], times
+        chosen.append(int(data["positions"][nearest[1]]))
+    positions = np.asarray(sorted(set(chosen)), dtype=np.intp)
+    rows = _oi_combined_records(data["timestamps"], data["selection"], positions, context=data["context"])
+    return rows, times
+
+
 def synchronized_oi(sync, start, end):
     admissible = []
     tolerance = float(parameter("oi_sync_tolerance_s", 60))
@@ -1805,13 +1874,14 @@ def synchronized_oi(sync, start, end):
     synchronized = None
     if sync and len({s[2] for s in sync}) == 1 and sync[0][2] is not None:
         indexed = [series for _, series, _ in sync]
-        combined = _oi_combined_timeline(indexed, tolerance)
+        combined, timeline_times = _oi_synchronized_points(indexed, tolerance, start, end)
         synchronized = _oi_stats(
             combined,
             start,
             end,
             history_identity=tuple(sorted(p[0]["instrument_id"] for p in sync)),
             venue_history=indexed,
+            timeline_times=timeline_times,
         )
         if synchronized:
             synchronized["venues"] = [p["venue"] for p, _, _ in sync]
