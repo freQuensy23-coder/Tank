@@ -49,6 +49,8 @@ def test_shared_values_still_require_fixed_lexical_metadata():
             first = truth._history_fixed_decimal_column([raw, "0.0000"] * 128)
             inputs["fixed_text_metadata"].clear()
             second = truth._history_fixed_decimal_column([raw, "0.0000"] * 128)
+            assert first[1:] == second[1:]
+            assert inputs["fixed_text_metadata"][raw] & 63 == 5
             assert all(left is right for left, right in zip(first[0], second[0], strict=True))
             assert inputs["finite_text_precisions"][raw] == 42
             assert inputs["finite_text_precisions"]["0.0000"] == 34

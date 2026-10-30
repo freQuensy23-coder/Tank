@@ -23,7 +23,6 @@ cdef api object _row_available(object row, object snapshot)
 
 @cython.locals(
     inputs=dict,
-    conversions=dict,
     metadata=dict,
     scalars=dict,
     precisions=dict,

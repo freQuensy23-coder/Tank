@@ -1040,7 +1040,6 @@ def _fixed_decimal_column(column):
     if len(column) < 256:
         return None
     inputs = _ASSESSMENT_INPUTS.get()
-    conversions = inputs.setdefault("fixed_text_decimals", {}) if inputs is not None else None
     metadata = inputs.setdefault("fixed_text_metadata", {}) if inputs is not None else None
     scalars = inputs.setdefault("finite_text_decimals", {}) if inputs is not None else None
     precisions = inputs.setdefault("finite_text_precisions", {}) if inputs is not None else None
@@ -1052,21 +1051,20 @@ def _fixed_decimal_column(column):
             continue
         if type(value) is not str or len(value) > 160:
             return None
-        converted = conversions.get(value) if conversions is not None else None
-        if converted is None:
+        prepared = metadata.get(value, -1) if metadata is not None else -1
+        missing = prepared < 0
+        if missing:
             prepared = _fixed_decimal_text_metadata(value)
             if prepared < 0:
                 return None
-            scalar = scalars.get(value) if scalars is not None else None
-            converted = scalar if scalar is not None else Decimal(value)
-            if scalars is not None and scalar is None and len(value) <= 64 and len(scalars) < 262144:
+        converted = scalars.get(value) if scalars is not None else None
+        if converted is None:
+            converted = Decimal(value)
+            if scalars is not None and len(scalars) < 262144:
                 precisions[value] = 2 * max(prepared & 63, 1) + 32
                 scalars[value] = converted
-            if conversions is not None and len(conversions) < 262144:
-                metadata[value] = prepared
-                conversions[value] = converted
-        else:
-            prepared = metadata[value]
+        if missing and metadata is not None and len(metadata) < 262144:
+            metadata[value] = prepared
         exponent = -(prepared >> 6)
         significant = prepared & 63
         adjusted = significant + exponent - 1 if significant else exponent
