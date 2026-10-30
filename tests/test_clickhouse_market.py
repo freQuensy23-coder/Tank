@@ -246,3 +246,69 @@ async def test_latest_per_instrument_reaches_past_the_recent_day(both):
     got = await routed.latest_market_records("mkt.klines_1m", **options)
     assert got == expected
     assert [(r["instrument_id"], r["c"]) for r in got] == [(IIDS[0], "2"), (IIDS[1], "4")]
+
+
+@pytest.mark.parametrize("columnar", [False, True])
+async def test_key_envelope_matches_two_stage_read_with_collisions_and_microseconds(both, columnar):
+    from tank.util import parse_time
+
+    _, routed, _ = both
+    ch = routed.clickhouse
+    collection = "mkt.klines_1m"
+    source = [kline(IIDS[0], 0, "1"), kline(IIDS[0], 10, "2")]
+    source += [kline(IIDS[1], minute, str(index + 3)) for index, minute in enumerate((0, 5, 30))]
+    source[0]["open_time"] = iso(T0 + timedelta(microseconds=17))
+    prepared = ms._prepare_records(collection, source, None, MARKET_COLUMNS[collection], False)
+    body = "\n".join(
+        json.dumps(ch_row(collection, record, key))
+        for record, key in zip(
+            prepared.values(), ("shared", "other", "shared", "shared", "shared"), strict=True
+        )
+    )
+    response = await ch.http.post(
+        ch.base,
+        params={"query": f"INSERT INTO {collection} FORMAT JSONEachRow"},
+        content=body.encode(),
+        headers={"X-ClickHouse-User": ch.user, "X-ClickHouse-Key": ch.password},
+    )
+    assert response.status_code == 200, response.text
+    for predicate, order, tail in (
+        (None, "instrument_id, open_time, storage_key", "LIMIT 3"),
+        ("c IN ('2', '3')", "instrument_id, open_time, storage_key", "LIMIT 2"),
+        ("0", "open_time, storage_key", "LIMIT 1"),
+        (None, "open_time DESC, instrument_id DESC, storage_key DESC", "LIMIT 1"),
+        (
+            "(instrument_id, open_time, storage_key) > ('okx:spot:BTC-USDT', toDateTime64('2026-10-21 12:00:00', 6, 'UTC'), 'shared')",
+            "instrument_id, open_time, storage_key",
+            "LIMIT 2",
+        ),
+    ):
+        query = chm.Query()
+        query.where(f"open_time >= {query.param(T0, chm.DT)}")
+        query.where(f"open_time < {query.param(T0 + timedelta(hours=1), chm.DT)}")
+        if predicate:
+            query.where(predicate)
+        keys = await ch.rows(
+            f"SELECT storage_key, instrument_id, open_time AS _day FROM {collection} FINAL "
+            f"WHERE {query.predicate()} ORDER BY {order} {tail}",
+            query.params,
+        )
+        expected = []
+        if keys:
+            bounds = chm.Query()
+            bounds.where(
+                f"instrument_id IN {bounds.param(sorted({row['instrument_id'] for row in keys}), 'Array(String)')}"
+            )
+            dates = [parse_time(row["_day"]) for row in keys]
+            bounds.where(f"open_time >= {bounds.param(min(dates), chm.DT)}")
+            bounds.where(f"open_time <= {bounds.param(max(dates), chm.DT)}")
+            bounds.where(
+                f"storage_key IN {bounds.param([row['storage_key'] for row in keys], 'Array(String)')}"
+            )
+            expected = await ch.rows(
+                f"SELECT * FROM {collection} FINAL WHERE {bounds.predicate()} ORDER BY {order}", bounds.params
+            )
+        if columnar:
+            expected = {name: [row[name] for row in expected] for name in expected[0]} if expected else {}
+        actual = await chm._select(ch, collection, query, order, tail, columnar=columnar)
+        assert actual == expected
