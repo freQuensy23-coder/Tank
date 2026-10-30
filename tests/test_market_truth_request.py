@@ -352,6 +352,40 @@ def test_full_market_truth_retains_named_native_diagnostic_phases(full_request_c
     for name in ("relative_truth", "derivatives_truth", "support_features"):
         assert phases[name] > 0
         assert calls[name] >= 1
+    for state in ("candidate_cold", "candidate_warm"):
+        sample = evidence["samples"][state]
+        timeline = sample["phase_timeline"]
+        assert timeline
+        names = {span["phase"] for span in timeline}
+        assert {
+            "snapshot",
+            "snapshot.latest_market_records",
+            "compute.pack",
+            "compute.worker_boundary",
+            "harness.parent_verification",
+            "harness.finish_observe",
+            "harness.return_validation",
+            "request.RUN_MARKET_TRUTH",
+            "request.caller",
+            "request.worker_drain",
+        } <= names
+        for span in timeline:
+            assert set(span) == {"phase", "task", "scope", "start_seconds", "duration_seconds"}
+            assert isinstance(span["task"], int) and span["task"] >= 0
+            assert span["scope"] in {"request", "current", "peer", "sector-boundary"}
+            assert 0 <= span["start_seconds"] <= sample["wall_seconds"]
+            assert 0 <= span["duration_seconds"] <= sample["wall_seconds"]
+            assert span["start_seconds"] + span["duration_seconds"] <= sample["wall_seconds"]
+        receipt = sample["compute_worker"]
+        assert receipt["worker_seconds"] >= sample["compute_seconds"]
+        for field in (
+            "pre_compute_seconds",
+            "post_compute_seconds",
+            "evidence_seconds",
+            "parent_pack_seconds",
+            "parent_verification_seconds",
+        ):
+            assert 0 <= receipt[field] <= sample["wall_seconds"]
 
 
 @pytest.mark.parametrize("state", ["cold", "warm"])
