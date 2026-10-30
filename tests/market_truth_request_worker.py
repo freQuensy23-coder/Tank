@@ -18,6 +18,7 @@ from functools import wraps
 from pathlib import Path
 from time import perf_counter, process_time
 from urllib.parse import urlsplit
+from weakref import WeakKeyDictionary
 
 import httpx
 from market_truth_request_data import ORIGINAL, seed_data
@@ -98,21 +99,31 @@ def timed_process_compute(parts, config, baseline_key):
         "compute_cpu_seconds": [],
     }
 
+    compute_finished = None
+
     @wraps(original)
     def measured(*args, **kwargs):
+        nonlocal compute_finished
+        receipt["pre_compute_seconds"] = perf_counter() - worker_started
         started, cpu = perf_counter(), process_time()
         try:
             return original(*args, **kwargs)
         finally:
-            receipt["compute_seconds"].append(perf_counter() - started)
+            compute_finished = perf_counter()
+            receipt["compute_seconds"].append(compute_finished - started)
             receipt["compute_cpu_seconds"].append(process_time() - cpu)
 
     truth.compute_market_truth = measured
+    worker_started = perf_counter()
     try:
         result = compute_workers._compute(parts, config, baseline_key)
     finally:
         truth.compute_market_truth = original
-    assert len(receipt["compute_seconds"]) == 1
+    worker_finished = perf_counter()
+    receipt["worker_seconds"] = worker_finished - worker_started
+    assert len(receipt["compute_seconds"]) == 1 and compute_finished is not None
+    receipt["post_compute_seconds"] = worker_finished - compute_finished
+    evidence_started = perf_counter()
     after = compute_workers._baselines.get(baseline_key)
     receipt["baseline_present_after"] = baseline_key in compute_workers._baselines
     receipt["baseline_entries_after"] = len(after) if after is not None else 0
@@ -126,6 +137,7 @@ def timed_process_compute(parts, config, baseline_key):
         }
         for name in ("tank.analysis.truth", "tank.clickhouse_market", "tank.util")
     }
+    receipt["evidence_seconds"] = perf_counter() - evidence_started
     return result, receipt
 
 
@@ -391,6 +403,33 @@ async def run(root, directory, fixtures, revision, reader):
         os.environ["CLICKHOUSE_TEST_URL"], database=descriptor["clickhouse_database"]
     )
     errors, received, connections = [], {}, set()
+    phase_timeline = []
+    phase_tasks = WeakKeyDictionary()
+    sample_origin = None
+    timeline_omitted = next_task = 0
+
+    def record_span(name, started, finished, scope="request"):
+        nonlocal timeline_omitted, next_task
+        if sample_origin is None:
+            return
+        if len(phase_timeline) >= 2048:
+            timeline_omitted += 1
+            return
+        task = asyncio.current_task()
+        ordinal = phase_tasks.get(task)
+        if ordinal is None:
+            ordinal = next_task
+            next_task += 1
+            phase_tasks[task] = ordinal
+        phase_timeline.append(
+            {
+                "phase": name,
+                "task": ordinal,
+                "scope": scope,
+                "start_seconds": started - sample_origin,
+                "duration_seconds": finished - started,
+            }
+        )
 
     async def receive_http(reader, writer):
         connections.add(asyncio.current_task())
@@ -406,12 +445,16 @@ async def run(root, directory, fixtures, revision, reader):
                 assert lines[0] == f"POST /v1/sessions/s-{state}/events HTTP/1.1"
                 assert headers["anthropic-beta"] == "managed-agents-2026-04-01"
                 assert headers["idempotency-key"] == "tool:" + sha256(f"s-{state}:{state}")
-                audit = await repo.get("ops.tool_calls", f"s-{state}:{state}")
-                assert audit["status"] == "DONE" and not audit["is_error"] and not audit.get("returned_at")
-                assert audit["native_result_body"] == native
-                result = audit["result"]["market_truth"][0]
-                assert await repo.get("ana.market_truth", result["mta_id"]) == result
-                received[state] = json.loads(native["content"][0]["text"])
+                validation_started = perf_counter()
+                try:
+                    audit = await repo.get("ops.tool_calls", f"s-{state}:{state}")
+                    assert audit["status"] == "DONE" and not audit["is_error"] and not audit.get("returned_at")
+                    assert audit["native_result_body"] == native
+                    result = audit["result"]["market_truth"][0]
+                    assert await repo.get("ana.market_truth", result["mta_id"]) == result
+                    received[state] = json.loads(native["content"][0]["text"])
+                finally:
+                    record_span("harness.return_validation", validation_started, perf_counter())
                 response = json.dumps({"data": [{"id": "accepted-" + state}]}).encode()
                 writer.write(
                     b"HTTP/1.1 200 OK\r\nConnection: close\r\nContent-Type: application/json\r\nContent-Length: "
@@ -484,7 +527,9 @@ async def run(root, directory, fixtures, revision, reader):
                 clock["value"] = manifest["availability_cutoff"]
                 started = perf_counter()
                 value = await original_snapshot(*args, **kwargs)
-                phases["snapshot"] = perf_counter() - started
+                finished = perf_counter()
+                phases["snapshot"] = finished - started
+                record_span("snapshot", started, finished)
                 snapshots.append(value)
                 return value
 
@@ -556,8 +601,18 @@ async def run(root, directory, fixtures, revision, reader):
                     try:
                         return await function(*args, **kwargs)
                     finally:
-                        phases[name] = phases.get(name, 0) + perf_counter() - started
+                        finished = perf_counter()
+                        phases[name] = phases.get(name, 0) + finished - started
                         phase_calls[name] = phase_calls.get(name, 0) + 1
+                        scope = "request"
+                        if name == "snapshot._condition_kline_series":
+                            scope = "current" if args[0]["token_id"] == TOKEN else "peer"
+                        elif name == "snapshot.latest_market_records" and kwargs.get("filters") == {
+                            "complete": True,
+                            "interval_s": 60,
+                        }:
+                            scope = "sector-boundary"
+                        record_span(name, started, finished, scope)
 
                 return measured
 
@@ -572,6 +627,9 @@ async def run(root, directory, fixtures, revision, reader):
 
             repo.put = measure_async("request.repo.put", put)
             sessions.request = measure_async("return.request", sessions.request)
+            repo.latest_market_records = measure_async(
+                "snapshot.latest_market_records", repo.latest_market_records
+            )
 
             for name in (
                 "_ranged_read",
@@ -633,9 +691,29 @@ async def run(root, directory, fixtures, revision, reader):
                 nonlocal diagnostic_call, diagnostic_seconds
                 context = copy_context()
                 started = perf_counter()
-                result, receipt = await original_worker_compute(
-                    lane, snapshot, config=config, baseline_key=baseline_key
-                )
+                original_pack = compute_workers.pack
+                pack_spans = []
+
+                def observed_pack(value):
+                    if value is not snapshot:
+                        return original_pack(value)
+                    pack_started = perf_counter()
+                    try:
+                        return original_pack(value)
+                    finally:
+                        pack_spans.append((pack_started, perf_counter()))
+
+                compute_workers.pack = observed_pack
+                try:
+                    result, receipt = await original_worker_compute(
+                        lane, snapshot, config=config, baseline_key=baseline_key
+                    )
+                finally:
+                    compute_workers.pack = original_pack
+                receipt["parent_pack_seconds"] = sum(end - begin for begin, end in pack_spans)
+                for begin, end in pack_spans:
+                    record_span("compute.pack", begin, end)
+                verification_started = perf_counter()
                 assert lane == compute_workers.ASSESSMENT and baseline_key == TOKEN
                 assert len(receipt["compute_seconds"]) == 1
                 parent_modules = provenance(root)
@@ -648,6 +726,9 @@ async def run(root, directory, fixtures, revision, reader):
                         "sha256": hashlib.sha256(filename.read_bytes()).hexdigest(),
                         "loader": type(module.__loader__).__name__,
                     }
+                verification_finished = perf_counter()
+                receipt["parent_verification_seconds"] = verification_finished - verification_started
+                record_span("harness.parent_verification", verification_started, verification_finished)
                 compute_seconds.extend(receipt["compute_seconds"])
                 worker_receipts.append(receipt)
                 diagnostic_call = (
@@ -718,14 +799,22 @@ async def run(root, directory, fixtures, revision, reader):
 
                 async def observe_finish(job_id):
                     await finish(job_id)
-                    if (await repo.get("ops.jobs", job_id))["type"] == "RUN_MARKET_TRUTH":
-                        stop.set()
+                    observation_started = perf_counter()
+                    try:
+                        if (await repo.get("ops.jobs", job_id))["type"] == "RUN_MARKET_TRUTH":
+                            stop.set()
+                    finally:
+                        record_span("harness.finish_observe", observation_started, perf_counter())
 
                 repo.enqueue, repo.finish_job = observe_enqueue, observe_finish
                 if state == "cold":
                     clear_timestamp_cache()
                 assert sys.getprofile() is None
+                phase_timeline.clear()
+                phase_tasks.clear()
+                timeline_omitted = next_task = 0
                 started, cpu = perf_counter(), process_time()
+                sample_origin = started
                 caller = worker = None
                 try:
                     async with asyncio.timeout(90):
@@ -751,8 +840,12 @@ async def run(root, directory, fixtures, revision, reader):
                             if errors:
                                 raise ReturnBoundaryError(errors) from error
                             raise
+                        caller_finished = perf_counter()
+                        record_span("request.caller", started, caller_finished)
                         await worker
+                        record_span("request.worker_drain", caller_finished, perf_counter())
                     wall, used = perf_counter() - started, process_time() - cpu
+                    sample_origin = None
                 finally:
                     stop.set()
                     for task in (caller, worker):
@@ -760,6 +853,7 @@ async def run(root, directory, fixtures, revision, reader):
                             task.cancel()
                     await asyncio.gather(*(task for task in (caller, worker) if task), return_exceptions=True)
                     repo.enqueue, repo.finish_job = enqueue, finish
+                    sample_origin = None
                 assert not errors, errors
                 assert len(worker_receipts) == len(compute_seconds) == 1
                 worker_receipt = worker_receipts[0]
@@ -811,6 +905,8 @@ async def run(root, directory, fixtures, revision, reader):
                         "kind": "sample",
                         "state": state,
                         "wall_seconds": wall,
+                        "phase_timeline": list(phase_timeline),
+                        "timeline_omitted": timeline_omitted,
                         "process_cpu_seconds": used,
                         "digests": digests,
                         "baseline_entries_before": baseline_before,

@@ -355,7 +355,7 @@ def test_full_market_truth_retains_named_native_diagnostic_phases(full_request_c
     for state in ("candidate_cold", "candidate_warm"):
         sample = evidence["samples"][state]
         timeline = sample["phase_timeline"]
-        assert timeline
+        assert timeline and sample["timeline_omitted"] == 0
         names = {span["phase"] for span in timeline}
         assert {
             "snapshot",
