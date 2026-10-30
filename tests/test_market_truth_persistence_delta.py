@@ -1,10 +1,12 @@
 import json
 import os
 from copy import deepcopy
+from enum import Enum
 
 import pytest
 from psycopg.types.json import Jsonb
 
+from tank import storage
 from tank.storage import ImmutableRecordError
 
 pytestmark = [pytest.mark.integration, pytest.mark.postgres]
@@ -62,8 +64,19 @@ async def test_record_replacement_transfers_only_changed_document_fields(
                 sent.extend(deepcopy(value.obj) for value in params or () if isinstance(value, Jsonb))
                 return await self.connection.execute(query, params, **kwargs)
 
+        copies = []
+        original_copy = storage.copy.deepcopy
+
+        def observed_copy(value, memo=None):
+            if type(value) is dict and value.get("token_id") == "T":
+                copies.append(value)
+            return original_copy(value, memo)
+
         monkeypatch.setattr(repo, "_conn", lambda: Connection(connect()))
-        returned = await repo.put("reg.tokens", "T", updated)
+        with monkeypatch.context() as patch:
+            patch.setattr(storage.copy, "deepcopy", observed_copy)
+            returned = await repo.put("reg.tokens", "T", updated)
+        assert not copies
         stored = await repo.get("reg.tokens", "T")
         assert stored == returned == updated
         assert type(stored["numeric"]) is float and type(stored["boolean"]) is bool
@@ -82,3 +95,64 @@ async def test_record_replacement_transfers_only_changed_document_fields(
         await repo.put("reg.tokens", "T", updated, immutable=True)
         with pytest.raises(ImmutableRecordError):
             await repo.put("reg.tokens", "T", dict(updated, symbol="V"))
+
+
+async def test_new_json_record_is_detached_without_a_second_copy(postgres_template, monkeypatch):
+    record = {"token_id": "COPY", "symbol": "COPY", "copy_probe": True, "nested": [{"v": [1.0, False]}]}
+    expected = deepcopy(record)
+    original_copy, copies = storage.copy.deepcopy, []
+
+    def observed_copy(value, memo=None):
+        if type(value) is dict and value.get("copy_probe") is True:
+            copies.append(value)
+        return original_copy(value, memo)
+
+    async with (
+        postgres_template.repository(os.environ["TANK_TEST_DATABASE_URL"]) as repo,
+        repo.lock("record-copy-test"),
+    ):
+        with monkeypatch.context() as patch:
+            patch.setattr(storage.copy, "deepcopy", observed_copy)
+            returned = await repo.put("reg.tokens", "COPY", record)
+        assert not copies
+        record["nested"][0]["v"].append("input")
+        assert returned == expected
+        returned["nested"].clear()
+        assert await repo.get("reg.tokens", "COPY") == expected
+
+
+async def test_record_copy_fallback_preserves_conversion_and_mutable_enum_callbacks(postgres_template):
+    calls = []
+
+    class Model:
+        def model_dump(self, *, mode):
+            calls.append("model")
+            return {"mode": mode}
+
+    class Mutable(list):
+        def __deepcopy__(self, memo):
+            calls.append("copy")
+            return Mutable(self)
+
+    class Status(Enum):
+        VALUE = Mutable(["kept"])
+
+    class Key:
+        def __str__(self):
+            calls.append("key")
+            return "extra"
+
+    record = {"token_id": "CUSTOM", "symbol": "CUSTOM", "model": Model(), Key(): 7, "enum": Status.VALUE}
+    async with (
+        postgres_template.repository(os.environ["TANK_TEST_DATABASE_URL"]) as repo,
+        repo.lock("record-copy-fallback-test"),
+    ):
+        returned = await repo.put("reg.tokens", "CUSTOM", record)
+        assert calls == ["model", "key", "copy"]
+        assert type(returned["enum"]) is Mutable
+        Status.VALUE.value.append("input")
+        assert returned["enum"] == ["kept"]
+        returned["enum"].clear()
+        stored = await repo.get("reg.tokens", "CUSTOM")
+        assert stored["enum"] == ["kept"] and stored["model"] == {"mode": "python"}
+        assert stored["extra"] == 7
