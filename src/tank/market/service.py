@@ -3206,6 +3206,14 @@ class MarketService:
                     ):
                         await retain_close(row)
 
+        chosen = {}
+        for inst in all_spot:
+            if inst["token_id"] not in peers:
+                continue
+            current = chosen.get(inst["token_id"])
+            if current is None or counts[inst["instrument_id"]] > counts[current["instrument_id"]]:
+                chosen[inst["token_id"]] = inst
+
         try:
             for inst in instruments:
                 if norm.venue_key(inst).endswith(".spot"):
@@ -3216,6 +3224,11 @@ class MarketService:
                 series_reads[("volume", inst["instrument_id"])] = asyncio.create_task(
                     load_series(inst, "volume")
                 )
+            for inst in chosen.values():
+                if self.tokens[inst["token_id"]].get("symbol") in {"BTC", "ETH"}:
+                    key = ("price", inst["instrument_id"])
+                    if key not in series_reads:
+                        series_reads[key] = asyncio.create_task(load_series(inst, "price"))
             for inst in instruments:
                 iid = inst["instrument_id"]
                 await retain_close(latest_closes.get(iid))
@@ -3224,13 +3237,6 @@ class MarketService:
                 volume = await projected(inst, "volume")
                 if volume["times_us"]:
                     result["stat_volume_series"][iid] = volume
-            chosen = {}
-            for inst in all_spot:
-                if inst["token_id"] not in peers:
-                    continue
-                current = chosen.get(inst["token_id"])
-                if current is None or counts[inst["instrument_id"]] > counts[current["instrument_id"]]:
-                    chosen[inst["token_id"]] = inst
 
             from math import isfinite
 
