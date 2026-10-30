@@ -448,7 +448,9 @@ async def run(root, directory, fixtures, revision, reader):
                 validation_started = perf_counter()
                 try:
                     audit = await repo.get("ops.tool_calls", f"s-{state}:{state}")
-                    assert audit["status"] == "DONE" and not audit["is_error"] and not audit.get("returned_at")
+                    assert (
+                        audit["status"] == "DONE" and not audit["is_error"] and not audit.get("returned_at")
+                    )
                     assert audit["native_result_body"] == native
                     result = audit["result"]["market_truth"][0]
                     assert await repo.get("ana.market_truth", result["mta_id"]) == result
