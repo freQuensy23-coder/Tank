@@ -166,6 +166,9 @@ async def test_record_copy_fallback_preserves_conversion_and_mutable_enum_callba
         returned = await repo.put("reg.tokens", "CUSTOM", record)
         assert calls == expected_calls and returned == expected
         assert type(returned["enum"]) is Mutable
+        calls.clear()
+        returned = await repo.put("reg.tokens", "CUSTOM", record)
+        assert calls == expected_calls and returned == expected
         Status.VALUE.value.append("input")
         assert returned["enum"] == ["kept"]
         returned["enum"].clear()
@@ -187,11 +190,11 @@ async def test_jsonb_projections_are_rebuilt_without_resending_unchanged_payload
             "RUN_MARKET_TRUTH",
             {"retained": ["x" * 50000], "typed": [1.0, False]},
             "projection-delta-test",
-            priority=7,
+            priority=1,
         )
         job["result"] = {"retained": ["y" * 30000]}
         await repo.put("ops.jobs", job["job_id"], job)
-        updated = dict(job, priority=8)
+        updated = dict(job, priority=2)
         if result_kind == "null":
             updated["result"] = None
         elif result_kind == "missing":
@@ -222,12 +225,15 @@ async def test_jsonb_projections_are_rebuilt_without_resending_unchanged_payload
         stored = await repo.get("ops.jobs", job["job_id"])
         typed = await (
             await repo._conn().execute(
-                "SELECT payload, result, priority FROM ops.jobs WHERE storage_key=%s", (job["job_id"],)
+                "SELECT payload, result, priority, result IS NULL AS result_is_sql_null "
+                "FROM ops.jobs WHERE storage_key=%s",
+                (job["job_id"],),
             )
         ).fetchone()
         assert returned == stored == updated
         assert typed["payload"] == updated["payload"]
         assert typed["result"] == updated.get("result")
+        assert typed["result_is_sql_null"] == (result_kind != "object")
         assert typed["priority"] == updated["priority"]
         assert type(typed["payload"]["typed"][0]) is float
         assert type(typed["payload"]["typed"][1]) is bool
