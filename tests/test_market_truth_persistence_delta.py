@@ -97,8 +97,13 @@ async def test_record_replacement_transfers_only_changed_document_fields(
             await repo.put("reg.tokens", "T", dict(updated, symbol="V"))
 
 
-async def test_new_json_record_is_detached_without_a_second_copy(postgres_template, monkeypatch):
-    record = {"token_id": "COPY", "symbol": "COPY", "copy_probe": True, "nested": [{"v": [1.0, False]}]}
+@pytest.mark.parametrize("depth", [2, 80])
+async def test_new_json_record_is_detached_without_a_second_copy(postgres_template, monkeypatch, depth):
+    leaf = [{"v": [1.0, False]}]
+    nested = leaf
+    for _ in range(depth):
+        nested = {"nested": nested}
+    record = {"token_id": "COPY", "symbol": "COPY", "copy_probe": True, "nested": nested}
     expected = deepcopy(record)
     original_copy, copies = storage.copy.deepcopy, []
 
@@ -114,8 +119,8 @@ async def test_new_json_record_is_detached_without_a_second_copy(postgres_templa
         with monkeypatch.context() as patch:
             patch.setattr(storage.copy, "deepcopy", observed_copy)
             returned = await repo.put("reg.tokens", "COPY", record)
-        assert not copies
-        record["nested"][0]["v"].append("input")
+        assert len(copies) == (1 if depth >= 64 else 0)
+        leaf[0]["v"].append("input")
         assert returned == expected
         returned["nested"].clear()
         assert await repo.get("reg.tokens", "COPY") == expected
@@ -124,7 +129,14 @@ async def test_new_json_record_is_detached_without_a_second_copy(postgres_templa
 async def test_record_copy_fallback_preserves_conversion_and_mutable_enum_callbacks(postgres_template):
     calls = []
 
-    class Model:
+    class Meta(type):
+        def __eq__(cls, other):
+            calls.append("class")
+            return type.__eq__(cls, other)
+
+        __hash__ = type.__hash__
+
+    class Model(metaclass=Meta):
         def model_dump(self, *, mode):
             calls.append("model")
             return {"mode": mode}
@@ -143,12 +155,16 @@ async def test_record_copy_fallback_preserves_conversion_and_mutable_enum_callba
             return "extra"
 
     record = {"token_id": "CUSTOM", "symbol": "CUSTOM", "model": Model(), Key(): 7, "enum": Status.VALUE}
+    expected = deepcopy(storage.jsonable(record))
+    expected_calls = list(calls)
+    assert [value for value in calls if value != "class"] == ["model", "key", "copy"]
+    calls.clear()
     async with (
         postgres_template.repository(os.environ["TANK_TEST_DATABASE_URL"]) as repo,
         repo.lock("record-copy-fallback-test"),
     ):
         returned = await repo.put("reg.tokens", "CUSTOM", record)
-        assert calls == ["model", "key", "copy"]
+        assert calls == expected_calls and returned == expected
         assert type(returned["enum"]) is Mutable
         Status.VALUE.value.append("input")
         assert returned["enum"] == ["kept"]
