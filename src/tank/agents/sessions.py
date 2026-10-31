@@ -2885,32 +2885,57 @@ class SessionService:
                 continue
             await self.finish_failed(session["session_id"])
 
+    async def reconcile_idle_sessions(self, sessions, tick):
+        for session in sessions:
+            sid = session["session_id"]
+            following = sid in self.tasks and not self.tasks[sid].done()
+            kept = bool(session.get("archive_after")) and parse_time(session["archive_after"]) > utcnow()
+            if following or session.get("followups_only") or kept or tick % IDLE_RECHECK_TICKS:
+                continue
+            try:
+                current = await self.repo.get("ops.agent_sessions", sid)
+                if not current or current.get("status") != "OPEN":
+                    continue
+                if self.running(current) or not await self.finish_if_idle(sid):
+                    self.start_stream(sid)
+            except (httpx.HTTPError, ValueError, KeyError, RuntimeError) as exc:
+                log.warning("Agent session %s idle reconciliation failed: %s", sid, type(exc).__name__)
+        if tick % IDLE_RECHECK_TICKS == 0:
+            for operation in (self.sweep_failed, self.reconcile_answers):
+                try:
+                    await operation()
+                except (httpx.HTTPError, ValueError, KeyError, RuntimeError) as exc:
+                    log.warning("Agent maintenance %s failed: %s", operation.__name__, type(exc).__name__)
+
     async def run(self, stop):
         tick = 0
-        while not stop.is_set() and not self.closed:
-            async for session in self.repo.iter_metadata(
-                "ops.agent_sessions", SESSION_ADMISSION_FIELDS, filters={"status": "OPEN"}
-            ):
-                sid = session["session_id"]
-                settled = session.get("runtime_status") == "IDLE" and not session.get("active_message_id")
-                following = sid in self.tasks and not self.tasks[sid].done()
-                kept = bool(session.get("archive_after")) and parse_time(session["archive_after"]) > utcnow()
-                if (
-                    settled
-                    and not following
-                    and (session.get("followups_only") or kept or tick % IDLE_RECHECK_TICKS)
+        maintenance = None
+        try:
+            while not stop.is_set() and not self.closed:
+                idle = []
+                async for session in self.repo.iter_metadata(
+                    "ops.agent_sessions", SESSION_ADMISSION_FIELDS, filters={"status": "OPEN"}
                 ):
-                    continue
-                if await self.finish_if_idle(sid):
-                    continue
-                self.start_stream(sid)
-            if tick % IDLE_RECHECK_TICKS == 0:
-                await self.sweep_failed()
-                await self.reconcile_answers()
-            tick += 1
-            await self.wake_waiting()
-            with suppress(TimeoutError):
-                await asyncio.wait_for(stop.wait(), timeout=5)
+                    sid = session["session_id"]
+                    settled = session.get("runtime_status") == "IDLE" and not session.get("active_message_id")
+                    if not settled:
+                        self.start_stream(sid)
+                    else:
+                        idle.append(session)
+                if maintenance is None or maintenance.done():
+                    if maintenance is not None:
+                        await maintenance
+                    maintenance = asyncio.create_task(
+                        self.reconcile_idle_sessions(idle, tick), name="openma-idle-maintenance"
+                    )
+                tick += 1
+                await self.wake_waiting()
+                with suppress(TimeoutError):
+                    await asyncio.wait_for(stop.wait(), timeout=5)
+        finally:
+            if maintenance is not None:
+                maintenance.cancel()
+                await asyncio.gather(maintenance, return_exceptions=True)
 
     async def close(self):
         self.closed = True

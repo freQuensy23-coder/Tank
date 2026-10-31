@@ -44,7 +44,7 @@ async def test_busy_recovery_and_admission_are_not_blocked_by_idle_maintenance()
                             "type": "agent.custom_tool_use",
                             "name": "get_item",
                             "input": {"item_id": "i"},
-                            "source_position": {"execution_id": "input-root"},
+                            "execution_id": "input-root",
                         }
                     ]
                 },
@@ -138,8 +138,7 @@ async def test_idle_maintenance_failure_does_not_prevent_next_session_reconcilia
     service = SessionService(repo, config(), None, http=object())
     checked = []
     sessions = [
-        {"session_id": sid, "status": "OPEN", "runtime_status": "IDLE"}
-        for sid in ("a-broken", "b-healthy")
+        {"session_id": sid, "status": "OPEN", "runtime_status": "IDLE"} for sid in ("a-broken", "b-healthy")
     ]
     for session in sessions:
         await repo.put("ops.agent_sessions", session["session_id"], session)
@@ -152,7 +151,7 @@ async def test_idle_maintenance_failure_does_not_prevent_next_session_reconcilia
 
     service.finish_if_idle = finish
     try:
-        await service.reconcile_idle_sessions(sessions, 1)
+        await service.reconcile_idle_sessions(sessions, 0)
         assert checked == ["b-healthy"]
         assert "a-broken" in caplog.text and "ValueError" in caplog.text
         assert "private provider diagnostic" not in caplog.text
