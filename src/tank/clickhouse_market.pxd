@@ -10,3 +10,6 @@ import cython
     code=cython.int,
 )
 cpdef object _canonical_numeric_text(object value)
+
+@cython.locals(index=cython.Py_ssize_t, count=cython.Py_ssize_t, records=list, template=dict, record=dict)
+cdef api object _materialize_field_columns(object fields)

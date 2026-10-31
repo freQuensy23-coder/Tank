@@ -953,6 +953,36 @@ def _canonical_numeric_text(value):
     return value if length - dot - 1 <= 6 else None
 
 
+def _materialize_field_columns(fields):
+    if type(fields) is not dict:
+        return None
+    count = -1
+    active = []
+    for name, values in fields.items():
+        if type(name) is not str or type(values) not in (list, tuple):
+            return None
+        if count < 0:
+            count = len(values)
+        elif len(values) != count:
+            return None
+        for value in values:
+            if value is not None:
+                active.append((name, values))
+                break
+    if count < 0:
+        return None
+    template = dict.fromkeys(fields)
+    records = []
+    for index in range(count):
+        record = template.copy()
+        for name, values in active:
+            value = values[index]
+            if value is not None:
+                record[name] = value
+        records.append(record)
+    return records
+
+
 def _column_records(collection, columns, count):
     if any(type(name) is not str for name in columns):
         return None
@@ -1003,6 +1033,9 @@ def _column_records(collection, columns, count):
     for alias, target in MARKET_ALIASES.get(collection, {}).items():
         if target in fields:
             fields[alias] = fields[target]
+    records = _materialize_field_columns(fields)
+    if records is not None:
+        return records
     names = tuple(fields)
     return [dict(zip(names, values, strict=True)) for values in zip(*fields.values(), strict=True)]
 
