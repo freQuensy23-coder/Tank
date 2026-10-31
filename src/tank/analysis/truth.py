@@ -93,9 +93,15 @@ def _scalar_decimal(v):
                 context.prec = max(context.prec, precisions[v])
                 return hit
     value = v if isinstance(v, Decimal) else Decimal(str(v))
-    exact_context(value)
-    if memo is not None and len(memo) < 262144 and value.is_finite():
+    required = None
+    if memo is not None and type(value) is Decimal and exact_context is _EXACT_CONTEXT and value.is_finite():
         required = 2 * (value.adjusted() - value.as_tuple().exponent + 1) + 32
+        getcontext().prec = max(getcontext().prec, required)
+    else:
+        exact_context(value)
+    if memo is not None and len(memo) < 262144 and value.is_finite():
+        if required is None:
+            required = 2 * (value.adjusted() - value.as_tuple().exponent + 1) + 32
         precisions[v] = required
         memo[v] = value
     return value
@@ -106,6 +112,9 @@ def exact_context(*values):
     if values:
         span = max(v.adjusted() for v in values) - min(v.as_tuple().exponent for v in values) + 1
         getcontext().prec = max(getcontext().prec, 2 * span + 32)
+
+
+_EXACT_CONTEXT = exact_context
 
 
 def precise(function):
