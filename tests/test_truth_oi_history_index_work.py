@@ -98,6 +98,7 @@ def test_contiguous_history_preserves_decimal_state_and_boundary_values(case, pr
     if case == "gaps":
         for index, row in enumerate(rows):
             row["ts"] += timedelta(microseconds=index % 13)
+        rows[-1]["ts"] = end
         del rows[12:140:17]
     elif case == "zero":
         for index in (3, 5, 7):
