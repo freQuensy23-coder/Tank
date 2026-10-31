@@ -7422,6 +7422,7 @@ class MarketTruthService:
         anchor = None
         if event:
             anchor = event_anchor(event, at=_cutoff_value(cutoff))
+        compute_workers.prepare(compute_workers.ASSESSMENT)
         snapshot = await self.market.snapshot(token_id, cutoff, anchor=anchor)
         snapshot.update(event_id=event_id, token_id=token_id)
         if event.get("public_at") is not None:

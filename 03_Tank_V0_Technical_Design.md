@@ -1847,6 +1847,8 @@ Permanent automatic CI compares complete original and candidate packages on one 
 
 ### 11.9 Market Truth column transport and guarded numeric batches
 
+An assessment starts its existing lane worker before awaiting the snapshot, overlapping process startup and module imports with data reads. Initialization performs no calculation or baseline preparation. The same single worker computes the completed snapshot; reaction ownership, persisted results and cold-cache qualification remain unchanged.
+
 Qualified nonnegative fixed-text volume columns use arbitrary-precision integer prefixes with a separate preferred Decimal exponent at every endpoint. Money is materialized as exact Decimal values for current/previous totals and selected quantile operands; the existing Decimal interpolation remains unchanged. Unsupported contexts/literals retain the existing Decimal path. Mixed representations use a lazy, context-independent Decimal prefix view. No float monetary sums, new configuration switches, or cross-request caches are introduced.
 
 Selected BTC/ETH price-series reads start alongside the current instrument's price and volume reads, using the same request-owned future map and unchanged venue selection. Results are consumed in the original order; sector-boundary reads, output insertion, exception precedence and cancellation/draining remain under the existing snapshot lifecycle. No additional cache or runtime setting is introduced.

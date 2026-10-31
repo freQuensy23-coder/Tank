@@ -47,6 +47,25 @@ def executor(lane: str) -> Executor:
     return current
 
 
+def _initialize():
+    from tank.analysis import truth
+
+    return truth.__name__
+
+
+def prepare(lane: str) -> None:
+    if lane in _executors:
+        return
+    pool = executor(lane)
+    try:
+        pool.submit(_initialize)
+    except BrokenProcessPool:
+        if _executors.get(lane) is pool:
+            del _executors[lane]
+            pool.shutdown(wait=False, cancel_futures=True)
+        raise
+
+
 def pack(value: Any) -> tuple[str, Any]:
     """value as pickled parts small enough not to hold the GIL for long: a dict is packed
     key by key, so series nested in dicts are reached too, and a list longer than
