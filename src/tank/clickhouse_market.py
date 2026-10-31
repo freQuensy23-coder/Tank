@@ -615,8 +615,11 @@ async def dense_projection_page(
             selection = (
                 "SELECT toUnixTimestamp64Micro(open_time) AS open_us, open_time_prec, "
                 "CAST(isNull(recorded_at), 'Bool') AS recorded_unknown, complete, interval_s, c, volume_native, "
-                "if(row_number() OVER (ORDER BY open_time DESC, storage_key DESC) = 1, "
-                f"storage_key, NULL) AS _cursor_key FROM ({page}) ORDER BY open_time, storage_key"
+                "if(row_number() OVER page_order = count() OVER page_order, "
+                f"storage_key, NULL) AS _cursor_key FROM ({page}) "
+                "WINDOW page_order AS (ORDER BY open_time, storage_key "
+                "ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING) "
+                "ORDER BY open_time, storage_key"
             )
         else:
             selection = (
@@ -825,13 +828,23 @@ async def _sampled_history_state(
     )
     previous = cache.get(key)
     known = q.param(previous[0] if previous is not None else "", "String")
+    record = f"CAST(tuple({fields}) AS Tuple({', '.join(kinds)}))"
+    if collection == "mkt.oi_obs" and time_field == "ts" and group_fields == ("metric_key",):
+        selection = (
+            f"SELECT argMax({record}, tuple(`{time_field}`, storage_key)) AS sampled_record "
+            f"FROM {_table(collection)} WHERE {q.predicate()} GROUP BY {groups}"
+        )
+    else:
+        selection = (
+            f"SELECT {record} AS sampled_record FROM {_table(collection)} WHERE {q.predicate()} "
+            f"ORDER BY {groups}, `{time_field}` DESC, storage_key DESC LIMIT 1 BY {groups}"
+        )
+    wire_fields = ", ".join(f"x.{index + 1}" for index in range(len(names) - 2))
     sql = (
         f"WITH arraySort(x -> tuple({', '.join(sort_keys)}), groupArray(sampled_record)) AS population, "
         "hex(SHA256(toString(population))) AS fingerprint "
-        f"SELECT fingerprint, if(fingerprint = {known}, [], population) AS records FROM ("
-        f"SELECT CAST(tuple({fields}) AS Tuple({', '.join(kinds)})) AS sampled_record "
-        f"FROM {_table(collection)} WHERE {q.predicate()} "
-        f"ORDER BY {groups}, `{time_field}` DESC, storage_key DESC LIMIT 1 BY {groups})"
+        f"SELECT fingerprint, if(fingerprint = {known}, [], "
+        f"arrayMap(x -> tuple({wire_fields}), population)) AS records FROM ({selection})"
     )
     result = await ch.rows(sql, q.params)
     if len(result) != 1:
@@ -851,7 +864,7 @@ async def _sampled_history_state(
         if any(not isinstance(row, list) for row in payload):
             raise ValueError("invalid sampled history population")
         records = sorted(
-            await _sampled_records(collection, names, payload),
+            await _sampled_records(collection, names[:-2], payload),
             key=lambda row: row[time_field],
         )
     cache.pop(key, None)

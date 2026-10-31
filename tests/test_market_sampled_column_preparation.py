@@ -19,7 +19,7 @@ class Client:
 
 
 def population(count=64):
-    names = [*MARKET_COLUMNS[COLLECTION], "storage_key", "_version"]
+    names = list(MARKET_COLUMNS[COLLECTION])
     rows = [
         {
             "instrument_id": IID,
@@ -83,10 +83,10 @@ async def test_projected_sampled_payload_retains_full_decoder_values_and_flags(
     monkeypatch, count, capitals, fallback
 ):
     names, rows = population(count)
-    projected_names = names[:-2]
+    legacy_names = [*names, "storage_key", "_version"]
     if rows and fallback:
         rows[0]["oi_native"] = "1e-900"
-    payload = [[row.get(name) for name in projected_names] for row in rows]
+    payload = [[row.get(name) for name in legacy_names][:-2] for row in rows]
     with localcontext() as context:
         context.capitals = capitals
         context.clear_flags()
@@ -103,7 +103,7 @@ async def test_projected_sampled_payload_retains_full_decoder_values_and_flags(
     with localcontext() as context:
         context.capitals = capitals
         context.clear_flags()
-        actual = await chm._sampled_records(COLLECTION, projected_names, payload)
+        actual = await chm._sampled_records(COLLECTION, names, payload)
         assert actual == expected
         assert dict(context.flags) == expected_flags
     assert bool(calls) is (fallback and count > 0)
@@ -189,7 +189,7 @@ async def test_overridden_numeric_constructor_retains_row_major_callback_order(m
 
 async def test_sampled_json_population_and_aliases_remain_detached():
     collection, field = "mkt.flow_bars_1m", "minute_start"
-    names = [*MARKET_COLUMNS[collection], "storage_key", "_version"]
+    names = list(MARKET_COLUMNS[collection])
     row = {
         "instrument_id": IID,
         "minute_start": T0.isoformat(),
