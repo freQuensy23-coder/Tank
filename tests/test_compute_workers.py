@@ -3,6 +3,8 @@
 import asyncio
 import os
 import time
+import weakref
+from array import array
 from concurrent.futures import Future
 from concurrent.futures.process import BrokenProcessPool
 from decimal import Decimal
@@ -57,6 +59,40 @@ def test_snapshot_parts_restore_every_row_and_value(monkeypatch):
     assert series["values"][0] == "rows" and len(series["values"][1]) == 3
     assert all(len(part) < 400 for part in series["values"][1])
     assert compute_workers.unpack(compute_workers.pack(packet)) == packet
+
+
+def test_row_slices_share_one_pickle_memo(monkeypatch):
+    monkeypatch.setattr(compute_workers, "SLICE_ROWS", 2)
+    text = "retained-observation-" * 512
+    money = Decimal("-0.0000")
+    rows = [{"ordinal": index, "text": text, "money": money} for index in range(6)]
+    kind, parts = compute_workers.pack(rows)
+    assert kind == "rows" and len(parts) == 3
+    assert sum(map(len, parts)) < 2 * len(text)
+    restored = compute_workers.unpack((kind, parts))
+    assert restored == rows
+    assert restored[0]["text"] is restored[-1]["text"]
+    assert restored[0]["money"] is restored[-1]["money"]
+    assert restored[-1]["money"].as_tuple() == money.as_tuple()
+    assert compute_workers.pack(rows) == (kind, parts)
+
+
+def test_row_slice_memo_is_released_at_each_list_boundary(monkeypatch):
+    monkeypatch.setattr(compute_workers, "SLICE_ROWS", 2)
+    value = array("q", [1, 2, 3])
+    reference = weakref.ref(value)
+    rows = [{"value": value} for _ in range(6)]
+    packet = {"first": rows, "second": list(rows)}
+    packed = compute_workers.pack(packet)
+    del value, rows, packet
+    assert reference() is None
+    restored = compute_workers.unpack(packed)
+    first = restored["first"][0]["value"]
+    assert first is restored["first"][-1]["value"]
+    assert first is not restored["second"][0]["value"]
+    reference = weakref.ref(first)
+    del first, restored
+    assert reference() is None
 
 
 @pytest.mark.asyncio
