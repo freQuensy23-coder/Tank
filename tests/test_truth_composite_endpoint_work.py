@@ -199,6 +199,34 @@ def test_composite_endpoint_fold_keeps_parameter_callbacks_in_reference_order(mo
     assert actual_parameters.calls == expected_parameters.calls
 
 
+@pytest.mark.parametrize("helper,trigger", [("_history_nearest", 4), ("_history_present", 3)])
+def test_composite_endpoint_fold_preserves_context_changes_between_venues(monkeypatch, helper, trigger):
+    original = getattr(truth, helper)
+    history = venues()
+
+    def run(function):
+        calls = []
+
+        def observed(*args, **kwargs):
+            calls.append(getcontext().prec)
+            result = original(*args, **kwargs)
+            if len(calls) == trigger:
+                getcontext().prec = 2
+            return result
+
+        with monkeypatch.context() as patch:
+            patch.setattr(truth, helper, observed)
+            patch.setitem(reference.__globals__, helper, observed)
+            result = evaluate(function, history, monkeypatch)
+        return result, calls
+
+    expected, expected_calls = run(reference)
+    actual, actual_calls = run(truth._composite_history_vector)
+    assert actual[:4] == expected[:4]
+    assert actual_calls == expected_calls
+    assert actual[4:] == expected[4:]
+
+
 @pytest.mark.parametrize("size", [65535, 65536])
 def test_composite_prepared_index_boundary_preserves_unsigned_high_bits(monkeypatch, size):
     start = datetime(2026, 1, 1, tzinfo=UTC)
