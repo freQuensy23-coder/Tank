@@ -10,10 +10,15 @@ from tank.agents.sessions import SessionService
 from tank.storage import MemoryRepository
 
 
-async def test_busy_recovery_and_admission_are_not_blocked_by_idle_maintenance():
+@pytest.mark.parametrize("lost_acceptance", [False, True])
+async def test_busy_recovery_and_admission_are_not_blocked_by_idle_maintenance(lost_acceptance):
     repo = MemoryRepository()
     session = await seed(repo)
     session.update(session_id="z-busy", runtime_status="RUNNING")
+    if lost_acceptance:
+        intent = session["message_log"][0]
+        intent.update(turn_status="ACCEPTING", remote_event_id=None, native_input_attempts={})
+        intent.pop("sent_at")
     await repo.put("ops.agent_sessions", "z-busy", session)
     await repo.put("ops.agent_sessions", "s", {**session, "session_id": "s", "status": "ENDED"})
     for index in range(192):
@@ -25,11 +30,17 @@ async def test_busy_recovery_and_admission_are_not_blocked_by_idle_maintenance()
         )
     entered, block, recovered, woke = (asyncio.Event() for _ in range(4))
     stop = asyncio.Event()
-    results = []
+    results, accepted = [], []
 
     def handler(request):
         if request.method == "POST":
-            results.append(json.loads(request.content))
+            body = json.loads(request.content)
+            if body["events"][0]["type"] == "user.message":
+                assert lost_acceptance
+                assert request.headers["Idempotency-Key"] == "message:root"
+                accepted.append(body)
+                return httpx.Response(200, json={"data": [{"id": "input-root"}]})
+            results.append(body)
             recovered.set()
             return httpx.Response(200, json={"data": [{"id": "returned-result"}]})
         if request.url.path.endswith("/events/stream"):
@@ -94,7 +105,9 @@ async def test_busy_recovery_and_admission_are_not_blocked_by_idle_maintenance()
             stored = await repo.get("ops.tool_calls", "z-busy:pending-call")
             assert stored["result"] == {"item_id": "i", "text": "Retained source"}
             assert stored["remote_event_id"] == "returned-result"
-            assert len(results) == 1
+            assert len(results) == 1 and len(accepted) == int(lost_acceptance)
+            if accepted:
+                assert accepted[0]["events"] == [session["message_log"][0]["body"]]
             assert not block.is_set()
             assert (await repo.get("ops.agent_sessions", "z-busy"))["active_message_id"] == "root"
             stop.set()
@@ -161,46 +174,48 @@ async def test_idle_maintenance_failure_does_not_prevent_next_session_reconcilia
 
 async def test_completion_reconciliation_is_serialized_during_follower_handoff():
     repo = MemoryRepository()
-    await seed(repo)
+    session = await seed(repo)
+    session.update(runtime_status="IDLE", active_message_id=None)
+    await repo.put("ops.agent_sessions", "s", session)
     service = SessionService(repo, config(), None, http=object())
-    entered, release, second = (asyncio.Event() for _ in range(3))
-    calls = 0
+    entered, release, following = (asyncio.Event() for _ in range(3))
     active = 0
     maximum = 0
 
     async def complete(sid):
-        nonlocal calls, active, maximum
-        calls += 1
+        nonlocal active, maximum
         active += 1
         maximum = max(maximum, active)
-        if calls == 1:
-            entered.set()
-            await release.wait()
-        else:
-            second.set()
+        entered.set()
+        await release.wait()
         active -= 1
         return {"complete": False}
 
+    async def catch_up(sid):
+        nonlocal maximum
+        maximum = max(maximum, active + 1)
+        following.set()
+
+    async def stream(sid):
+        await release.wait()
+
     service.completed_turn = complete
-    attempting = asyncio.Event()
-
-    async def handoff():
-        attempting.set()
-        return await service.finish_if_idle("s")
-
-    tasks = [asyncio.create_task(service.finish_if_idle("s"))]
+    service.catch_up = catch_up
+    service.stream = stream
+    task = asyncio.create_task(service.reconcile_idle_sessions([session], 0))
     try:
         await asyncio.wait_for(entered.wait(), 1)
-        tasks.append(asyncio.create_task(handoff()))
-        await asyncio.wait_for(attempting.wait(), 1)
+        service.start_stream("s")
+        scheduled = asyncio.Event()
+        asyncio.get_running_loop().call_soon(scheduled.set)
+        await asyncio.wait_for(scheduled.wait(), 1)
+        assert not following.is_set()
         release.set()
-        await asyncio.wait_for(asyncio.gather(*tasks), 1)
-        assert second.is_set() and calls == 2
+        await asyncio.wait_for(following.wait(), 1)
+        await asyncio.wait_for(task, 1)
         assert maximum == 1
-        assert (await repo.get("ops.agent_sessions", "s"))["active_message_id"] == "root"
     finally:
         release.set()
-        for task in tasks:
-            task.cancel()
-        await asyncio.gather(*tasks, return_exceptions=True)
+        task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
         await service.close()
