@@ -19,6 +19,7 @@ import pickle
 import time
 from concurrent.futures import Executor, ProcessPoolExecutor
 from concurrent.futures.process import BrokenProcessPool
+from io import BytesIO
 from typing import Any
 
 ASSESSMENT = "ASSESSMENT"
@@ -49,17 +50,19 @@ def executor(lane: str) -> Executor:
 def pack(value: Any) -> tuple[str, Any]:
     """value as pickled parts small enough not to hold the GIL for long: a dict is packed
     key by key, so series nested in dicts are reached too, and a list longer than
-    SLICE_ROWS is cut into slices of SLICE_ROWS items."""
+    SLICE_ROWS is cut into slices sharing one per-list pickle memo."""
     if type(value) is dict:
         return ("dict", [(key, pack(item)) for key, item in value.items()])
     if type(value) is list and len(value) > SLICE_ROWS:
-        return (
-            "rows",
-            [
-                pickle.dumps(value[start : start + SLICE_ROWS], protocol=pickle.HIGHEST_PROTOCOL)
-                for start in range(0, len(value), SLICE_ROWS)
-            ],
-        )
+        stream = BytesIO()
+        pickler = pickle.Pickler(stream, protocol=pickle.HIGHEST_PROTOCOL)
+        parts = []
+        for start in range(0, len(value), SLICE_ROWS):
+            stream.seek(0)
+            stream.truncate()
+            pickler.dump(value[start : start + SLICE_ROWS])
+            parts.append(stream.getvalue())
+        return ("rows", parts)
     return ("value", pickle.dumps(value, protocol=pickle.HIGHEST_PROTOCOL))
 
 
@@ -68,9 +71,15 @@ def unpack(packed: tuple[str, Any]) -> Any:
     if kind == "dict":
         return {key: unpack(item) for key, item in body}
     if kind == "rows":
+        stream = BytesIO()
+        unpickler = pickle.Unpickler(stream)
         rows = []
         for part in body:
-            rows.extend(pickle.loads(part))
+            stream.seek(0)
+            stream.truncate()
+            stream.write(part)
+            stream.seek(0)
+            rows.extend(unpickler.load())
         return rows
     return pickle.loads(body)
 
