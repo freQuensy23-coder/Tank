@@ -68,9 +68,6 @@ def parameter(name, default):
     return (_PARAMETERS.get() or {}).get(name, default)
 
 
-_COMPOSITE_CALLBACKS = (parameter, getcontext)
-
-
 def lookback_days():
     return parameter("historical_lookback_days", parameter("base_retention_days", 90))
 
@@ -1648,6 +1645,9 @@ def _history_slice(times, rows, start):
     return times[lo:hi], selected
 
 
+_COMPOSITE_CALLBACKS = (parameter, getcontext, _history_nearest, _history_present)
+
+
 def _composite_history_vector(venue_history, window):
     prepared = []
     low, high = 0, 0
@@ -1676,6 +1676,8 @@ def _composite_history_vector(venue_history, window):
     packed = (
         parameter is _COMPOSITE_CALLBACKS[0]
         and getcontext is _COMPOSITE_CALLBACKS[1]
+        and _history_nearest is _COMPOSITE_CALLBACKS[2]
+        and _history_present is _COMPOSITE_CALLBACKS[3]
         and type(_PARAMETERS) is ContextVar
         and type(venue_history) in (list, tuple)
         and len(venue_history) <= 4

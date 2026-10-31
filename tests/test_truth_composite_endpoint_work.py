@@ -222,7 +222,8 @@ def test_composite_endpoint_fold_preserves_context_changes_between_venues(monkey
 
     expected, expected_calls = run(reference)
     actual, actual_calls = run(truth._composite_history_vector)
-    assert actual[:4] == expected[:4]
+    matches = actual[:4] == expected[:4]
+    assert matches, helper
     assert actual_calls == expected_calls
     assert actual[4:] == expected[4:]
 
