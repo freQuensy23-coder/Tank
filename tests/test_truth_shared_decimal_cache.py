@@ -6,10 +6,28 @@ import pytest
 from tank.analysis import truth
 
 
-@pytest.mark.parametrize("text,required", [("123.4500", 46), ("0.000", 34), ("0E-8", 34), ("-0.000", 34)])
+@pytest.mark.parametrize(
+    "text,tuple_calls",
+    [
+        ("123.4500", 0),
+        ("0.000", 0),
+        ("0E-8", 0),
+        ("001.2300", 0),
+        (".0012300", 0),
+        ("7" * 48, 0),
+        ("7" * 49, 1),
+        ("-0.000", 1),
+        ("+12.00", 1),
+        (" 12.00 ", 1),
+        ("１２.００", 1),
+        ("1e-90", 1),
+    ],
+)
 @pytest.mark.parametrize("precision", [9, 128])
 @pytest.mark.parametrize("sticky", [False, True])
-def test_scalar_cache_miss_extracts_decimal_tuple_once(text, required, precision, sticky):
+def test_scalar_miss_preserves_precision_without_fixed_text_tuple_expansion(
+    text, tuple_calls, precision, sticky
+):
     constructor = type(Decimal(0).as_tuple()).__new__.__code__
     calls = []
 
@@ -22,6 +40,7 @@ def test_scalar_cache_miss_extracts_decimal_tuple_once(text, required, precision
         context.clear_flags()
         context.flags[Rounded] = sticky
         reference = Decimal(text)
+        required = 2 * (reference.adjusted() - reference.as_tuple().exponent + 1) + 32
         expected = reference.as_tuple(), max(precision, required), dict(context.flags)
         inputs = {}
         token = truth._ASSESSMENT_INPUTS.set(inputs)
@@ -33,7 +52,7 @@ def test_scalar_cache_miss_extracts_decimal_tuple_once(text, required, precision
             finally:
                 sys.setprofile(original)
             assert (first.as_tuple(), context.prec, dict(context.flags)) == expected
-            assert len(calls) == 1
+            assert len(calls) == tuple_calls
             calls.clear()
             context.prec = 9
             sys.setprofile(profile)
