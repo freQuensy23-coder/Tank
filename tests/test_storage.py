@@ -1016,6 +1016,53 @@ async def test_lock_waiters_do_not_drain_the_pool(repo, monkeypatch):
     assert sorted(order) == list(range(40))
 
 
+async def test_one_market_truth_is_admitted_before_snapshot_loading(repo):
+    await _clear_queue(repo)
+    assessments = [
+        await repo.enqueue("RUN_MARKET_TRUTH", {"token_id": f"token-{n}"}, new_id("idem"), priority=0)
+        for n in range(3)
+    ]
+    delivery = await repo.enqueue("DELIVER", {}, new_id("idem"), priority=3)
+    first = await repo.claim_job()
+    assert first["job_id"] == assessments[0]["job_id"]
+    assert (await repo.claim_job())["job_id"] == delivery["job_id"]
+    assert await repo.claim_job() is None
+    pending = [await repo.get("ops.jobs", job["job_id"]) for job in assessments[1:]]
+    assert all(job["status"] == "QUEUED" and job["attempts"] == 0 for job in pending)
+    await repo.finish_job(first["job_id"])
+    assert (await repo.claim_job())["job_id"] == assessments[1]["job_id"]
+
+
+@pytest.mark.integration
+@pytest.mark.postgres
+@pytest.mark.parametrize("repo", ["postgres"], indirect=True)
+async def test_concurrent_claims_admit_one_full_market_snapshot(repo):
+    await _clear_queue(repo)
+    for n in range(6):
+        await repo.enqueue("RUN_MARKET_TRUTH", {"token_id": f"token-{n}"}, new_id("idem"), priority=0)
+    for _ in range(3):
+        await repo.enqueue("DELIVER", {}, new_id("idem"), priority=3)
+    claimed = [job for job in await asyncio.gather(*(repo.claim_job() for _ in range(8))) if job]
+    assert sorted(job["type"] for job in claimed) == ["DELIVER"] * 3 + ["RUN_MARKET_TRUTH"]
+
+
+async def test_restart_reclaims_market_truths_without_readmitting_all_snapshots(repo):
+    await _clear_queue(repo)
+    jobs = []
+    for n in range(3):
+        job = await repo.enqueue("RUN_MARKET_TRUTH", {"token_id": f"token-{n}"}, new_id("idem"), priority=0)
+        job.update(status="RUNNING", attempts=1)
+        await repo.put("ops.jobs", job["job_id"], job)
+        jobs.append(job)
+    assert await repo.recover_jobs() == 3
+    first = await repo.claim_job()
+    assert first["job_id"] == jobs[0]["job_id"] and first["attempts"] == 1
+    assert await repo.claim_job() is None
+    await repo.finish_job(first["job_id"])
+    next_job = await repo.claim_job()
+    assert next_job["job_id"] == jobs[1]["job_id"] and next_job["attempts"] == 1
+
+
 async def test_one_reaction_capture_runs_at_a_time_and_other_jobs_do_not_wait(repo):
     await _clear_queue(repo)
     captures = [
