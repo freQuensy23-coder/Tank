@@ -256,48 +256,80 @@ async def sample_retained_native(call, root, directory):
     with TemporaryDirectory(dir=directory, prefix="owned-native-sampling-") as temporary:
         folder = Path(temporary)
         inputs, output, profile = (folder / name for name in ("input.pickle", "result.json", "profile.json"))
+        begin, sampler_output = folder / "start", folder / "sampler-output.txt"
         inputs.write_bytes(
             pickle.dumps(
                 (args[0], kwargs["config"], context.run(getcontext).copy()), protocol=pickle.HIGHEST_PROTOCOL
             )
         )
-        process = await asyncio.create_subprocess_exec(
-            str(Path(sys.executable).parent / "py-spy"),
-            "record",
-            "--native",
-            "--rate",
-            "100",
-            "--format",
-            "speedscope",
-            "--output",
-            str(profile),
-            "--",
-            sys.executable,
-            str(Path(__file__).with_name("market_truth_native_profile_worker.py")),
-            str(root),
-            str(inputs),
-            str(output),
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-            start_new_session=True,
-        )
+        with sampler_output.open("wb") as stdout:
+            process = await asyncio.create_subprocess_exec(
+                str(Path(sys.executable).parent / "py-spy"),
+                "record",
+                "--native",
+                "--rate",
+                "100",
+                "--format",
+                "speedscope",
+                "--output",
+                str(profile),
+                "--",
+                sys.executable,
+                str(Path(__file__).with_name("market_truth_native_profile_worker.py")),
+                str(root),
+                str(inputs),
+                str(output),
+                str(begin),
+                stdout=stdout,
+                stderr=asyncio.subprocess.PIPE,
+                start_new_session=True,
+            )
+        communication = asyncio.create_task(process.communicate())
         collected = False
         try:
             async with asyncio.timeout(20):
-                _, stderr = await process.communicate()
+                while not communication.done():
+                    assert sampler_output.stat().st_size <= 1_000_000
+                    if not begin.exists() and b"Sampling process" in sampler_output.read_bytes():
+                        begin.touch()
+                    await asyncio.sleep(0.02)
+                _, stderr = await asyncio.shield(communication)
             result = None
             if output.exists():
                 assert output.stat().st_size <= 1_000_000
                 result = json.loads(output.read_bytes())
             if process.returncode or result is None or "failure" in result:
+                stdout = sampler_output.read_bytes()
+                messages = (stdout + stderr).lower()
+                markers = {
+                    name
+                    for name, text in (
+                        ("permission_denied", b"permission denied"),
+                        ("permission_denied", b"operation not permitted"),
+                        ("unsupported_python", b"unsupported version"),
+                        ("interpreter", b"interpreter"),
+                        ("python_version", b"python version"),
+                        ("no_stack_counts", b"no stack counts"),
+                        ("unwind", b"unwind"),
+                        ("no_such_file", b"no such file"),
+                        ("no_such_process", b"no such process"),
+                        ("symbols", b"symbol"),
+                        ("speedscope_written", b"wrote speedscope"),
+                    )
+                    if text in messages
+                }
                 raise NativeSamplingError(
                     {
                         "exit_code": process.returncode,
-                        "permission_denied": b"permission denied" in stderr.lower(),
+                        "permission_denied": "permission_denied" in markers,
+                        "sampler_ready": begin.exists(),
+                        "tool_markers": sorted(markers),
                         "stderr_sha256": hashlib.sha256(stderr).hexdigest(),
+                        "stdout_sha256": hashlib.sha256(stdout).hexdigest(),
                         "child_failure": result,
                     }
                 )
+            assert begin.exists()
             assert set(result) == {"result_sha256", "artifacts"}
             assert profile.stat().st_size <= 8_000_000
             result.update(native_profile_rows(json.loads(profile.read_bytes())))
@@ -308,7 +340,7 @@ async def sample_retained_native(call, root, directory):
                 with suppress(ProcessLookupError):
                     os.killpg(process.pid, signal.SIGKILL)
                 async with asyncio.timeout(2):
-                    await process.communicate()
+                    await asyncio.shield(communication)
 
 
 async def sample_retained_async(call):

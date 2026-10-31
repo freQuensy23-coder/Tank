@@ -113,6 +113,9 @@ async def test_native_sampler_failure_preserves_only_safe_evidence_and_removes_o
     assert receipt["native_sampling_failure"] == {
         "exit_code": 1,
         "permission_denied": True,
+        "sampler_ready": False,
+        "tool_markers": ["permission_denied"],
+        "stdout_sha256": hashlib.sha256(b"").hexdigest(),
         "stderr_sha256": hashlib.sha256(stderr).hexdigest(),
         "child_failure": None,
     }
@@ -129,11 +132,13 @@ async def test_native_sampler_deadline_kills_and_reaps_only_its_owned_group(
     before = set(tmp_path.iterdir())
     killed, waited = [], []
     original_timeout = worker.asyncio.timeout
+    stopped = worker.asyncio.Event()
 
     class Process:
         pid, returncode = 61742, initial_returncode
 
         async def communicate(self):
+            await stopped.wait()
             waited.append(self.pid)
             self.returncode = -9
             return b"", b""
@@ -149,11 +154,52 @@ async def test_native_sampler_deadline_kills_and_reaps_only_its_owned_group(
         async with original_timeout(seconds):
             yield
 
+    def kill(*args):
+        killed.append(args)
+        stopped.set()
+
     monkeypatch.setattr(worker.asyncio, "create_subprocess_exec", create)
     monkeypatch.setattr(worker.asyncio, "timeout", timeout)
-    monkeypatch.setattr(worker.os, "killpg", lambda *args: killed.append(args))
+    monkeypatch.setattr(worker.os, "killpg", kill)
     call = (copy_context(), worker.truth.compute_market_truth, ({},), {"config": {}})
     with pytest.raises(TimeoutError):
         await worker.sample_retained_native(call, tmp_path, tmp_path)
     assert killed == [(Process.pid, signal.SIGKILL)] and waited == [Process.pid]
     assert set(tmp_path.iterdir()) == before
+
+
+async def test_native_sampler_waits_for_sampler_ready_before_releasing_computation(monkeypatch, tmp_path):
+    before = set(tmp_path.iterdir())
+    killed = []
+
+    class Process:
+        pid, returncode = 61743, None
+
+        def __init__(self, args, stdout):
+            self.begin = worker.Path(args[-1])
+            self.output = worker.Path(args[-2])
+            self.profile = worker.Path(args[args.index("--output") + 1])
+            self.stdout = worker.Path(stdout.name)
+
+        async def communicate(self):
+            assert not self.begin.exists()
+            self.stdout.write_bytes(b"py-spy> Sampling process 100 times a second.\n")
+            for _ in range(100):
+                if self.begin.exists():
+                    break
+                await worker.asyncio.sleep(0.001)
+            assert self.begin.exists()
+            self.profile.write_text(json.dumps(native_profile()))
+            self.output.write_text(json.dumps({"artifacts": {}, "result_sha256": "unit-test-only"}))
+            self.returncode = 0
+            return b"", b""
+
+    async def create(*args, **kwargs):
+        return Process(args, kwargs["stdout"])
+
+    monkeypatch.setattr(worker.asyncio, "create_subprocess_exec", create)
+    monkeypatch.setattr(worker.os, "killpg", lambda *args: killed.append(args))
+    call = (copy_context(), worker.truth.compute_market_truth, ({},), {"config": {}})
+    receipt = await worker.sample_retained_native(call, tmp_path, tmp_path)
+    assert receipt["kind"] == "native_computation_stack_samples" and receipt["samples"] == 2
+    assert killed == [] and set(tmp_path.iterdir()) == before

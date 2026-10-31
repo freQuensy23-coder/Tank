@@ -4,14 +4,15 @@ import json
 import pickle
 import signal
 import sys
+import time
 from decimal import localcontext
 from importlib.machinery import ExtensionFileLoader
 from pathlib import Path
 
 
 def main():
-    signal.alarm(20)
-    root, inputs, output = (Path(value).resolve() for value in sys.argv[1:4])
+    signal.alarm(15)
+    root, inputs, output, begin = (Path(value).resolve() for value in sys.argv[1:5])
     sys.path.insert(0, str(root / "src"))
     from market_truth_request_worker import encode, failure_receipt, provenance
 
@@ -30,6 +31,8 @@ def main():
         snapshot, config, context = pickle.loads(inputs.read_bytes())
         from tank.analysis.truth import compute_market_truth
 
+        while not begin.exists():
+            time.sleep(0.02)
         assert sys.getprofile() is None
         with localcontext(context):
             result = compute_market_truth(snapshot, config=config, baseline_cache={})
