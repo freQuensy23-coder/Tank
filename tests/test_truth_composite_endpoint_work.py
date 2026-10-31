@@ -94,7 +94,6 @@ def reference(venue_history, window):
     return result[0], result[1]
 
 
-
 def venues(count=2):
     result = []
     for venue in range(count):
@@ -112,7 +111,9 @@ def venues(count=2):
     return result
 
 
-def evaluate(function, history, monkeypatch, rounding=ROUND_HALF_EVEN, parameters=None, precision=128, trap=False):
+def evaluate(
+    function, history, monkeypatch, rounding=ROUND_HALF_EVEN, parameters=None, precision=128, trap=False
+):
     add, divide, unique = np.add, np.divide, np.unique
     additions, endpoints, signatures = [], [], []
 

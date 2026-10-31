@@ -68,6 +68,9 @@ def parameter(name, default):
     return (_PARAMETERS.get() or {}).get(name, default)
 
 
+_COMPOSITE_CALLBACKS = (parameter, getcontext)
+
+
 def lookback_days():
     return parameter("historical_lookback_days", parameter("base_retention_days", 90))
 
@@ -1670,7 +1673,53 @@ def _composite_history_vector(venue_history, window):
     minimum = float(parameter("history_min_days", 7)) * 86400
     if (history[-1] - history[0]).total_seconds() < minimum:
         return [], []
-    totals = [np.full(len(history), Decimal(0), dtype=object) for _ in range(4)]
+    packed = (
+        parameter is _COMPOSITE_CALLBACKS[0]
+        and getcontext is _COMPOSITE_CALLBACKS[1]
+        and type(_PARAMETERS) is ContextVar
+        and type(venue_history) in (list, tuple)
+        and len(venue_history) <= 4
+        and all(
+            type(pair) in (list, tuple)
+            and len(pair) == 2
+            and all(type(part) in (list, tuple) for part in pair)
+            and len(pair[0]) == len(pair[1])
+            and all(type(value) is datetime and value.tzinfo is UTC for value in pair[0])
+            for pair in venue_history
+        )
+        and all(
+            type(values) is np.ndarray and values.dtype == object and len(values) <= 65535 for values in prepared
+        )
+        and all(
+            len(prepared[2 * venue]) == len(prepared[2 * venue + 1]) == len(pair[1])
+            for venue, pair in enumerate(venue_history)
+        )
+    )
+    if packed:
+        parameters = _PARAMETERS.get()
+        packed = parameters is None or (
+            type(parameters) is dict
+            and all(type(name) is str for name in parameters)
+            and all(
+                type(parameters.get(name, default)) in (str, int, float, bool)
+                for name, default in (("history_min_days", 7), ("oi_sync_tolerance_s", 60))
+            )
+        )
+    if packed:
+        native_context = getcontext()
+        packed = (
+            type(native_context) is Context
+            and native_context.prec >= 64
+            and high - low + len(str(max(len(venue_history), 1))) + 1 <= native_context.prec
+            and not native_context.traps[Inexact]
+            and not native_context.traps[Rounded]
+            and not native_context.clamp
+            and native_context.Emin <= -512
+            and native_context.Emax >= 512
+        )
+        del native_context
+    signatures = [np.zeros(len(history), dtype=np.uint64) for _ in range(4)] if packed else None
+    totals = [None] * 4 if packed else [np.full(len(history), Decimal(0), dtype=object) for _ in range(4)]
     covered = [np.zeros(len(history), dtype=bool) for _ in range(2)]
     for venue, (times, rows) in enumerate(venue_history):
         if not times:
@@ -1699,8 +1748,24 @@ def _composite_history_vector(venue_history, window):
             valid &= np.not_equal(values[old], 0)
             covered[measure] |= valid
             for endpoint, indices in enumerate((old, new)):
-                total = totals[2 * measure + endpoint]
-                total[valid] = np.add(total[valid], values[indices[valid]])
+                if signatures is None:
+                    total = totals[2 * measure + endpoint]
+                    total[valid] = np.add(total[valid], values[indices[valid]])
+                else:
+                    signatures[2 * measure + endpoint][valid] |= (indices[valid].astype(np.uint64) + 1) << (
+                        16 * venue
+                    )
+    if signatures is not None:
+        for measure in range(2):
+            keys, inverse = np.unique(np.concatenate(signatures[2 * measure : 2 * measure + 2]), return_inverse=True)
+            aggregate = np.full(len(keys), Decimal(0), dtype=object)
+            for venue in range(len(venue_history)):
+                indices = ((keys >> (16 * venue)) & 65535).astype(np.intp) - 1
+                valid = indices >= 0
+                values = prepared[2 * venue + measure]
+                aggregate[valid] = np.add(aggregate[valid], values[indices[valid]])
+            totals[2 * measure] = aggregate[inverse[: len(history)]]
+            totals[2 * measure + 1] = aggregate[inverse[len(history) :]]
     result = []
     for measure, valid in enumerate(covered):
         indices = np.flatnonzero(valid)
