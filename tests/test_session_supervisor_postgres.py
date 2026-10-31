@@ -71,7 +71,8 @@ async def test_restart_recovery_dispatches_pending_tool_and_releases_admission_o
             result = body["events"][0]
             assert result["type"] == "user.custom_tool_result"
             assert result["custom_tool_use_id"] == "pending-tool"
-            assert json.loads(result["content"][0]["text"])["item_id"] == "i"
+            assert json.loads(result["content"][0]["text"])["text"] == "Product announced"
+            assert not result.get("is_error")
             states["input-result"] = "COMPLETED"
             history.append(idle("current-end", "input-result"))
             return web.json_response({"data": [{"id": "input-result"}]})
@@ -137,6 +138,7 @@ async def test_restart_recovery_dispatches_pending_tool_and_releases_admission_o
             assert all(row["turn_status"] == "DONE" for row in current["message_log"])
             call = await repo.get("ops.tool_calls", "s:pending-tool")
             assert call["returned_at"] and call["remote_event_id"] == "input-result"
+            assert call["result"] == {"item_id": "i", "text": "Product announced"}
             await service.wake_waiting()
             awakened = await repo.get("ops.jobs", job["job_id"])
             assert awakened["run_after"] != job["run_after"]
