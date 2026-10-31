@@ -769,9 +769,7 @@ def _sampled_column_records(collection, names, payload):
             if kind == "numeric":
                 for value in columns.get(name, ()):
                     if value is not None and _canonical_numeric_text(value) is None:
-                        return _records(
-                            collection, [dict(zip(names, row, strict=True)) for row in payload]
-                        )
+                        return _records(collection, [dict(zip(names, row, strict=True)) for row in payload])
     parent = getcontext()
     with localcontext() as context:
         try:

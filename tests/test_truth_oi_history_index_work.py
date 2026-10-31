@@ -20,7 +20,7 @@ def observations(shape):
     return rows, first + timedelta(hours=192)
 
 
-def observe(rows, end, inputs, baseline):
+def observe(rows, end, inputs, baseline, *, window=timedelta(hours=2)):
     assessment = truth._ASSESSMENT_INPUTS.set(inputs)
     times = truth._TIMES.set(({}, inputs) if inputs is not None else None)
     cache = truth._BASELINE_CACHE.set(baseline)
@@ -30,13 +30,26 @@ def observe(rows, end, inputs, baseline):
             context.prec = 128
             context.clear_flags()
             context.flags[Rounded] = True
-            result = truth._oi_stats(rows, end - timedelta(hours=2), end, history_identity="venue")
+            result = truth._oi_stats(rows, end - window, end, history_identity="venue")
             return result, context.prec, dict(context.flags)
     finally:
         truth._BASELINE_DEPENDENCY.reset(dependency)
         truth._BASELINE_CACHE.reset(cache)
         truth._TIMES.reset(times)
         truth._ASSESSMENT_INPUTS.reset(assessment)
+
+
+@pytest.mark.parametrize("shape", ["regular", "duplicates", "unsorted"])
+def test_cold_windows_share_one_request_owned_history_time_axis(shape):
+    rows, end = observations(shape)
+    for row in rows:
+        row["ts"] += timedelta(microseconds=row["ts"].hour % 17)
+    windows = [timedelta(minutes=minutes) for minutes in (15, 60, 240, 1440)]
+    expected = [observe(rows, end, None, {}, window=window) for window in windows]
+    inputs = {}
+    actual = [observe(rows, end, inputs, {}, window=window) for window in windows]
+    assert actual == expected
+    assert len(inputs.get("oi_history_axes", {})) == 1
 
 
 @pytest.mark.parametrize("shape", ["regular", "duplicates", "unsorted"])
