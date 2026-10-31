@@ -1264,11 +1264,11 @@ def _oi_history_axis(times):
         return hit[1]
     result = None
     if all(type(t) is datetime and t.tzinfo is UTC for t in times) and all(
-        before <= after for before, after in zip(times, times[1:])
+        before <= after for before, after in zip(times, times[1:], strict=False)
     ):
         unique = list(dict.fromkeys(times))
         gaps = np.asarray(
-            [(after - before).total_seconds() for before, after in zip(unique, unique[1:])],
+            [(after - before).total_seconds() for before, after in zip(unique, unique[1:], strict=False)],
             dtype=np.float64,
         )
         result = unique, gaps
