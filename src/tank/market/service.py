@@ -1415,14 +1415,17 @@ class MarketService:
                             values.frombytes(points.tobytes())
                         else:
                             points = np.asarray(columns["value"], dtype=object)[indexes]
-                            numbers = np.asarray(columns["decimal_values"], dtype=object)[indexes]
-                            valid = full & np.fromiter(
-                                (number is not None for number in numbers), dtype=np.bool_
-                            )
-                            for number in numbers[valid]:
-                                if not number.is_finite():
-                                    norm.decimal(number)
-                            valid[valid] = numbers[valid] >= 0
+                            if "nonnegative" in columns:
+                                valid = full & np.asarray(columns["nonnegative"], dtype=np.bool_)[indexes]
+                            else:
+                                numbers = np.asarray(columns["decimal_values"], dtype=object)[indexes]
+                                valid = full & np.fromiter(
+                                    (number is not None for number in numbers), dtype=np.bool_
+                                )
+                                for number in numbers[valid]:
+                                    if not number.is_finite():
+                                        norm.decimal(number)
+                                valid[valid] = numbers[valid] >= 0
                             values.extend(points.tolist())
                         times.frombytes(selected.tobytes())
                         complete.extend(valid.astype(np.uint8).tobytes())
@@ -1491,6 +1494,7 @@ class MarketService:
                         assembled_at=assembled_at,
                         after=after,
                         raw_cache=columns_cache,
+                        series=True,
                     )
                     if not columns["open_us"]:
                         break

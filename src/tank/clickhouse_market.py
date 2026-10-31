@@ -574,7 +574,17 @@ async def projection_page(
 
 
 async def dense_projection_page(
-    ch, *, instrument_id, field, start, end, assembled_at, after=None, limit=200000, raw_cache=None
+    ch,
+    *,
+    instrument_id,
+    field,
+    start,
+    end,
+    assembled_at,
+    after=None,
+    limit=200000,
+    raw_cache=None,
+    series=False,
 ):
     if field not in {"c", "volume_native"}:
         raise ValueError("Unsupported dense numeric projection")
@@ -620,6 +630,21 @@ async def dense_projection_page(
     def convert():
         result = {name: raw.get(name, []) for name in names - {"c", "volume_native"}}
         result["open_us"] = [int(value) for value in result["open_us"]]
+        if series:
+            texts = []
+            for value in raw.get(field, []):
+                if value is None:
+                    texts.append(None)
+                    continue
+                canonical = _canonical_numeric_text(value)
+                if canonical is None or canonical.startswith("-"):
+                    break
+                texts.append(canonical)
+            else:
+                result["value"] = texts
+                if field == "volume_native":
+                    result["nonnegative"] = [value is not None for value in texts]
+                return result
         numbers = {}
         decimals = []
         texts = []
