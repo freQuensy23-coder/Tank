@@ -15,7 +15,7 @@ cdef object _MONEY_RADIX
 cdef int _fixed_decimal_text_metadata(object value)
 
 @cython.locals(inputs=dict, memo=dict, precisions=dict)
-cdef api object _scalar_decimal(object v)
+cdef api object _scalar_as_dec(object v)
 
 @cython.locals(times=dict, inputs=dict, memo=dict, owners=dict)
 cdef api object _row_time(object row)
@@ -52,3 +52,7 @@ cdef api object _fixed_decimal_column(object column)
     descriptor=cython.int,
 )
 cdef api object _prepared_history_decimal_arrays(object columns, object summands, object metadata)
+
+cdef api object _as_dec(object value)
+cdef api object _when(object row)
+cdef api object _can_admit(object row, object snapshot)

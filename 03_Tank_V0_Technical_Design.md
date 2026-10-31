@@ -1875,6 +1875,8 @@ Mutable non-serial record replacements may transfer only changed top-level docum
 
 Qualified composite OI history coalesces identical endpoint index tuples across the complete admitted timeline. Up to four builtin UTC venue lanes use disjoint unsigned 16-bit index fields; each distinct endpoint is summed once in original venue order starting with Decimal zero. All original timeline positions, coverage masks, endpoint quantum and ratio operations remain intact. The path requires bounded prepared columns and a native Decimal context with an exact aggregate precision envelope; custom parameter or history callbacks, unsupported containers, wider cohorts and index overflow retain the original endpoint fold.
 
+Hot row-time, availability and scalar Decimal callers use private native dispatchers. Each call checks the corresponding public wrapper identity: original wrappers reach the existing C helper directly, while replaced callbacks retain the public call and evaluation order. Python fallbacks retain the same guard. Arithmetic, row admission, flags and traps remain unchanged.
+
 Primitive-only JSON documents are independently cloned in the existing native `tank.util` module, with the original depth-64 boundary and exact built-in container/key checks. Unsupported values retain the existing `jsonable` and copy-isolation fallbacks; the clone neither converts monetary values nor runs subclass callbacks. Its companion source declaration participates in the wheel-cache key and the existing archived-source/native-artifact attestation. Cython translation and native-extension compilation are each bounded to two build workers without adding OpenMP or changing runtime parallelism, arithmetic flags, or acceptance timings.
 
 ## 12. Configuration baseline (⚙)
