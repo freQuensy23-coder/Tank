@@ -76,6 +76,39 @@ async def test_sampled_population_normalizes_columns_without_per_row_decimal_tem
     assert not calls
 
 
+@pytest.mark.parametrize("count", [0, 1, 1000, 1001])
+@pytest.mark.parametrize("capitals", [0, 1])
+@pytest.mark.parametrize("fallback", [False, True])
+async def test_projected_sampled_payload_retains_full_decoder_values_and_flags(
+    monkeypatch, count, capitals, fallback
+):
+    names, rows = population(count)
+    projected_names = names[:-2]
+    if rows and fallback:
+        rows[0]["oi_native"] = "1e-900"
+    payload = [[row.get(name) for name in projected_names] for row in rows]
+    with localcontext() as context:
+        context.capitals = capitals
+        context.clear_flags()
+        expected = chm._records(COLLECTION, rows)
+        expected_flags = dict(context.flags)
+    calls = []
+
+    def decimal(value):
+        calls.append(value)
+        return Decimal(value)
+
+    if fallback:
+        monkeypatch.setattr(chm, "Decimal", decimal)
+    with localcontext() as context:
+        context.capitals = capitals
+        context.clear_flags()
+        actual = await chm._sampled_records(COLLECTION, projected_names, payload)
+        assert actual == expected
+        assert dict(context.flags) == expected_flags
+    assert bool(calls) is (fallback and count > 0)
+
+
 @pytest.mark.parametrize("capitals", [0, 1])
 @pytest.mark.parametrize("value", ["0E-8", "-0.00", "1e-900", "bad", 0.1])
 async def test_sampled_column_preparation_preserves_legacy_context_and_errors(capitals, value):

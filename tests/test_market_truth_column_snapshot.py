@@ -18,9 +18,13 @@ async def test_dense_columns_preserve_admitted_values_nulls_and_raw_pagination(b
     _, repo, put = both
     rows = [
         dict(kline(IIDS[0], 0, "1e+3"), volume_native="3.000"),
-        dict(kline(IIDS[0], 1, None, complete=False), volume_native=None),
+        dict(
+            kline(IIDS[0], 1, None, complete=False, recorded=T0 + timedelta(minutes=5)),
+            volume_native=None,
+        ),
         dict(kline(IIDS[0], 2, "2.50", recorded=T0 + timedelta(minutes=10)), volume_native="7"),
         dict(kline(IIDS[0], 3, "-0.00"), volume_native="9"),
+        dict(kline(IIDS[0], 4, "1234"), volume_native="1234"),
         dict(kline(IIDS[1], 0, "999"), volume_native="999"),
     ]
     await put("mkt.klines_1m", rows)
@@ -33,7 +37,52 @@ async def test_dense_columns_preserve_admitted_values_nulls_and_raw_pagination(b
         limit=2,
         series=series,
     )
-    first = await chm.dense_projection_page(repo.clickhouse, after=None, **options)
+    selected = []
+    cursor = None
+    original_columns = repo.clickhouse.columns
+
+    async def columns(query, params=None):
+        q = chm.Query()
+        chm._ids(q, [options["instrument_id"]])
+        q.where("open_time IS NOT NULL")
+        q.where(f"open_time >= {q.param(options['start'], chm.DT)}")
+        q.where(f"open_time < {q.param(options['end'], chm.DT)}")
+        availability = q.param(parse_time(options["assembled_at"]), chm.DT)
+        q.where(f"(recorded_at IS NULL OR recorded_at <= {availability})")
+        if cursor is not None:
+            chm._after(
+                q,
+                ("open_time", cursor[0], chm.DT),
+                ("storage_key", cursor[1], "String"),
+            )
+        common = (
+            "SELECT toUnixTimestamp64Micro(open_time) AS open_us, open_time_prec, "
+            "CAST(isNull(recorded_at), 'Bool') AS recorded_unknown, complete, interval_s, c, volume_native, "
+        )
+        if series:
+            page = (
+                "SELECT open_time, open_time_prec, recorded_at, complete, interval_s, c, volume_native, "
+                f"storage_key FROM {chm._table('mkt.klines_1m')} WHERE {q.predicate()} "
+                f"ORDER BY open_time, storage_key LIMIT {options['limit']}"
+            )
+            legacy = (
+                common
+                + "if(row_number() OVER (ORDER BY open_time DESC, storage_key DESC) = 1, "
+                + f"storage_key, NULL) AS _cursor_key FROM ({page}) ORDER BY open_time, storage_key"
+            )
+        else:
+            legacy = (
+                common
+                + f"storage_key AS _cursor_key FROM {chm._table('mkt.klines_1m')} "
+                + f"WHERE {q.predicate()} ORDER BY open_time, storage_key LIMIT {options['limit']}"
+            )
+        actual = await original_columns(query, params)
+        assert actual == await original_columns(legacy, q.params)
+        selected.append(query)
+        return actual
+
+    repo.clickhouse.columns = columns
+    first = await chm.dense_projection_page(repo.clickhouse, after=cursor, **options)
     epoch = parse_time("1970-01-01T00:00:00Z")
     start_us = (T0 - epoch) // timedelta(microseconds=1)
     assert first["open_us"] == [start_us, start_us + 60000000]
@@ -45,14 +94,23 @@ async def test_dense_columns_preserve_admitted_values_nulls_and_raw_pagination(b
         assert isinstance(first["_cursor_key"][-1], str)
     else:
         assert all(isinstance(key, str) for key in first["_cursor_key"])
-    second = await chm.dense_projection_page(
-        repo.clickhouse,
-        after=(T0 + timedelta(minutes=1), first["_cursor_key"][-1]),
-        **options,
-    )
+    cursor = (T0 + timedelta(minutes=1), first["_cursor_key"][-1])
+    second = await chm.dense_projection_page(repo.clickhouse, after=cursor, **options)
     assert second["open_us"] == [start_us + 180000000]
     assert second["value"] == ["-0.00"]
     assert len(second["_cursor_key"]) == 1
+    cursor = (T0 + timedelta(minutes=3), second["_cursor_key"][-1])
+    third = await chm.dense_projection_page(repo.clickhouse, after=cursor, **options)
+    assert third["open_us"] == third["value"] == third["_cursor_key"] == []
+    options["assembled_at"] = (T0 + timedelta(minutes=10)).isoformat()
+    cursor = (T0 + timedelta(minutes=1), first["_cursor_key"][-1])
+    admitted = await chm.dense_projection_page(repo.clickhouse, after=cursor, **options)
+    assert admitted["open_us"] == [start_us + 120000000, start_us + 180000000]
+    assert admitted["value"] == ["2.50", "-0.00"]
+    assert admitted["_cursor_key"][-1] == second["_cursor_key"][-1]
+    if series:
+        assert all(" DESC" not in query for query in selected)
+        assert all("UNBOUNDED FOLLOWING" in query for query in selected)
 
 
 @pytest.mark.parametrize("kind", ["price", "volume"])
