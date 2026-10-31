@@ -56,11 +56,11 @@ def test_column_materialization_keeps_custom_sequence_iteration_order():
             return super().__len__()
 
     columns = {"instrument_id": Values(["retained"] * 3)}
-    expected = chm._records("mkt.oi", [{"instrument_id": "retained"} for _ in range(3)])
-    assert chm._column_records("mkt.oi", columns, 3) == expected
+    expected = chm._records("mkt.oi_obs", [{"instrument_id": "retained"} for _ in range(3)])
+    assert chm._column_records("mkt.oi_obs", columns, 3) == expected
     assert calls == ["iter"]
 
 
 def test_column_materialization_keeps_strict_ragged_column_failure():
     with pytest.raises(ValueError, match="zip"):
-        chm._column_records("mkt.oi", {"instrument_id": ["retained"] * 3}, 2)
+        chm._column_records("mkt.oi_obs", {"instrument_id": ["retained"] * 3}, 2)
