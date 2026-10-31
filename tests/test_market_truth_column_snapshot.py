@@ -13,7 +13,8 @@ from tank.util import parse_time
 pytestmark = pytest.mark.integration
 
 
-async def test_dense_columns_preserve_admitted_values_nulls_and_raw_pagination(both):
+@pytest.mark.parametrize("series", [False, True])
+async def test_dense_columns_preserve_admitted_values_nulls_and_raw_pagination(both, series):
     _, repo, put = both
     rows = [
         dict(kline(IIDS[0], 0, "1e+3"), volume_native="3.000"),
@@ -30,6 +31,7 @@ async def test_dense_columns_preserve_admitted_values_nulls_and_raw_pagination(b
         end=T0 + timedelta(minutes=4),
         assembled_at=(T0 + timedelta(minutes=5)).isoformat(),
         limit=2,
+        series=series,
     )
     first = await chm.dense_projection_page(repo.clickhouse, after=None, **options)
     epoch = parse_time("1970-01-01T00:00:00Z")
@@ -38,6 +40,11 @@ async def test_dense_columns_preserve_admitted_values_nulls_and_raw_pagination(b
     assert first["value"] == ["1E+3", None]
     assert first["complete"] == [True, False]
     assert first["recorded_unknown"] == [False, False]
+    if series:
+        assert first["_cursor_key"][0] is None
+        assert isinstance(first["_cursor_key"][-1], str)
+    else:
+        assert all(isinstance(key, str) for key in first["_cursor_key"])
     second = await chm.dense_projection_page(
         repo.clickhouse,
         after=(T0 + timedelta(minutes=1), first["_cursor_key"][-1]),
