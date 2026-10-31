@@ -141,6 +141,7 @@ class SessionService:
         self.owns_stream_http = stream_http is None and http is None
         self.tasks = {}
         self.event_locks = {}
+        self.reconciliation_locks = {}
         self.send_locks = {}
         self.execution_polls = {}
         self.history_polls = {}
@@ -2689,6 +2690,10 @@ class SessionService:
         return False
 
     async def follow(self, sid):
+        async with self.reconciliation_locks.setdefault(sid, asyncio.Lock()):
+            await self.follow_owned(sid)
+
+    async def follow_owned(self, sid):
         delay = 1
         failures = 0
         logged_at = None
@@ -2702,6 +2707,7 @@ class SessionService:
         while not self.closed:
             stream_task = None
             try:
+                await self.recover_outbound_inputs(sid)
                 stream_task = asyncio.create_task(self.stream(sid))
                 await self.catch_up(sid)
                 session = await self.repo.get("ops.agent_sessions", sid)
@@ -2893,11 +2899,14 @@ class SessionService:
             if following or session.get("followups_only") or kept or tick % IDLE_RECHECK_TICKS:
                 continue
             try:
-                current = await self.repo.get("ops.agent_sessions", sid)
-                if not current or current.get("status") != "OPEN":
-                    continue
-                if self.running(current) or not await self.finish_if_idle(sid):
-                    self.start_stream(sid)
+                async with self.reconciliation_locks.setdefault(sid, asyncio.Lock()):
+                    if sid in self.tasks and not self.tasks[sid].done():
+                        continue
+                    current = await self.repo.get("ops.agent_sessions", sid)
+                    if not current or current.get("status") != "OPEN":
+                        continue
+                    if self.running(current) or not await self.finish_if_idle(sid):
+                        self.start_stream(sid)
             except (httpx.HTTPError, ValueError, KeyError, RuntimeError) as exc:
                 log.warning("Agent session %s idle reconciliation failed: %s", sid, type(exc).__name__)
         if tick % IDLE_RECHECK_TICKS == 0:
