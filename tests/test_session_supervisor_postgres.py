@@ -32,7 +32,15 @@ async def test_restart_recovery_dispatches_pending_tool_and_releases_admission_o
         await repo.put(
             "ops.agent_sessions",
             "a-idle",
-            {"session_id": "a-idle", "status": "OPEN", "runtime_status": "IDLE"},
+            {
+                **copy.deepcopy(session),
+                "session_id": "a-idle",
+                "runtime_status": "IDLE",
+                "active_message_id": None,
+                "message_log": [],
+                "messages": [],
+                "native_execution_receipts": {},
+            },
         )
         job = await waiting_job(repo)
         history = [
