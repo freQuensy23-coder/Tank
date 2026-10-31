@@ -4,6 +4,7 @@ import httpx
 import pytest
 
 from tank.market.service import MarketService
+from tank.market_schema import MARKET_COLUMNS
 from tank.util import iso, utcnow
 
 
@@ -36,6 +37,7 @@ async def test_condition_history_larger_than_cache_budget_is_returned_but_not_re
             "volume_native": str(index + 1),
             "oi_native": str(index + 1),
         }
+        row = {key: value for key, value in row.items() if key in MARKET_COLUMNS[collection]}
         original.append(row)
         await repo.put(collection, f"row-{index}", row)
     async with httpx.AsyncClient() as http:
