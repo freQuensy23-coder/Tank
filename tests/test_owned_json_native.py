@@ -2,7 +2,7 @@ import cProfile
 import math
 from datetime import UTC, datetime
 from decimal import Decimal, localcontext
-from enum import Enum
+from enum import StrEnum
 from importlib.machinery import ExtensionFileLoader
 from types import CodeType
 
@@ -54,7 +54,7 @@ def test_owned_json_refuses_nonprimitive_values_before_running_any_user_callback
     class Number(int):
         pass
 
-    class Label(str, Enum):
+    class Label(StrEnum):
         ONE = "one"
 
     for value in (ForbiddenDict(a=1), Text("one"), Number(2), Label.ONE, (1,), {Text("key"): 1}):
@@ -79,7 +79,5 @@ def test_owned_json_does_not_enter_python_for_each_retained_document_leaf():
     profile = cProfile.Profile()
     supported, copied = profile.runcall(clone, value)
     assert supported and copied == value
-    python_nodes = sum(
-        row.callcount for row in profile.getstats() if isinstance(row.code, CodeType)
-    )
+    python_nodes = sum(row.callcount for row in profile.getstats() if isinstance(row.code, CodeType))
     assert isinstance(util.__loader__, ExtensionFileLoader) and python_nodes < 8
