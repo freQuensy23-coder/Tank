@@ -128,6 +128,4 @@ async def test_sampled_oi_state_suppresses_unchanged_payload_and_refreshes_inter
         routed.clickhouse, collection, "ts", ("metric_key",), IIDS, T0, T0, 300, cache={}
     )
     assert empty == []
-    assert selected[-1] == await actual_rows(
-        "SELECT hex(SHA256(toString([]))) AS fingerprint, [] AS records"
-    )
+    assert selected[-1] == await actual_rows("SELECT hex(SHA256(toString([]))) AS fingerprint, [] AS records")

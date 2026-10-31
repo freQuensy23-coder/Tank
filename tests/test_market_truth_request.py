@@ -347,6 +347,11 @@ def test_full_market_truth_original_candidate_same_worker(
 def test_full_market_truth_retains_named_native_diagnostic_phases(full_request_comparison):
     evidence = json.loads((full_request_comparison / "comparison.json").read_text())
     profile = evidence["post_measurement_profile"]
+    native = profile["native_samples"]
+    assert native["kind"] == "native_computation_stack_samples" and native["samples"] > 0
+    assert native["result_sha256"] == evidence["samples"]["candidate_warm"]["digests"]["result"]
+    assert native["artifacts"] == evidence["samples"]["candidate_cold"]["compute_worker"]["artifacts"]
+    assert any(row["function"].startswith("__pyx_") and "truth" in row["module"] for row in native["rows"])
     phases = profile["inclusive_nonadditive_phase_seconds"]
     calls = profile["phase_call_counts"]
     for name in ("relative_truth", "derivatives_truth", "support_features"):
