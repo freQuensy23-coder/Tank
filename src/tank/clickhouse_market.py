@@ -764,6 +764,14 @@ async def market_rows_recorded_since(ch, collection, time_field, instrument_ids,
 
 def _sampled_column_records(collection, names, payload):
     columns = dict(zip(names, zip(*payload, strict=True), strict=True))
+    if Decimal is not _DECIMAL_CONSTRUCTOR:
+        for name, kind in MARKET_COLUMNS[collection].items():
+            if kind == "numeric":
+                for value in columns.get(name, ()):
+                    if value is not None and _canonical_numeric_text(value) is None:
+                        return _records(
+                            collection, [dict(zip(names, row, strict=True)) for row in payload]
+                        )
     parent = getcontext()
     with localcontext() as context:
         try:
@@ -950,12 +958,6 @@ def _canonical_numeric_text(value):
 def _column_records(collection, columns, count):
     if any(type(name) is not str for name in columns):
         return None
-    if Decimal is not _DECIMAL_CONSTRUCTOR:
-        for name, kind in MARKET_COLUMNS[collection].items():
-            if kind == "numeric":
-                for value in columns.get(name, ()):
-                    if value is not None and _canonical_numeric_text(value) is None:
-                        return None
     empty = [None] * count
     fields, timestamps, numbers = {}, {}, {}
     for name, kind in MARKET_COLUMNS[collection].items():
