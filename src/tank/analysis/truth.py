@@ -20,9 +20,19 @@ from collections.abc import Mapping, Sequence
 from contextvars import ContextVar
 from copy import deepcopy
 from datetime import UTC, datetime, timedelta
-from decimal import Context, Decimal, DecimalException, Inexact, Rounded, getcontext, localcontext
+from decimal import (
+    ROUND_HALF_EVEN,
+    Context,
+    Decimal,
+    DecimalException,
+    Inexact,
+    Rounded,
+    getcontext,
+    localcontext,
+)
 from functools import wraps
 from math import isfinite, log
+from operator import index as integer_index
 from statistics import mean, median, stdev
 
 import numpy as np
@@ -207,7 +217,7 @@ def remember_latest(cache, key, head, build):
 def percentile(values, p):
     s = (
         values.ordered
-        if isinstance(values, StatisticalPopulation)
+        if isinstance(values, (StatisticalPopulation, _MonetaryPopulation))
         else sorted(v for v in values if v is not None)
     )
     return _percentile_ordered(s, p)
@@ -4678,6 +4688,114 @@ def data_confidence(snapshot, spot, derivatives, end):
     )
 
 
+class _ScaledMoneyValues:
+    """Exact coefficients plus preferred Decimal exponents, never float money."""
+
+    __slots__ = ("units", "quantums", "scale", "_decimal_values")
+
+    def __init__(self, units, quantums, scale):
+        self.units, self.quantums, self.scale = units, quantums, scale
+        self.units.flags.writeable = False
+        self.quantums.flags.writeable = False
+        self._decimal_values = None
+
+    def __len__(self):
+        return len(self.units)
+
+    def __iter__(self):
+        return (self[index] for index in range(len(self)))
+
+    @cython.locals(coefficient=object, remainder=object, radix=object, index=object, quantum=object)
+    def __getitem__(self, index):
+        if isinstance(index, slice):
+            return list(self)[index]
+        index = integer_index(index)
+        quantum = int(self.quantums[index])
+        radix = 10
+        coefficient, remainder = divmod(int(self.units[index]), radix ** (quantum - self.scale))
+        if remainder:
+            raise ValueError("Nonintegral monetary coefficient")
+        return Decimal(f"{coefficient}e{quantum}")
+
+    def __eq__(self, other):
+        if type(other) is list or isinstance(other, _ScaledMoneyValues):
+            return list(self) == list(other)
+        return NotImplemented
+
+    def as_decimals(self):
+        if self._decimal_values is None:
+            self._decimal_values = np.asarray(list(self), dtype=object)
+            self._decimal_values.flags.writeable = False
+        return self._decimal_values
+
+
+class _MonetaryPopulation(_ScaledMoneyValues):
+    __slots__ = ("ordered",)
+
+    def __init__(self, units, quantums, scale, order):
+        super().__init__(units, quantums, scale)
+        self.ordered = _ScaledMoneyValues(units[order], quantums[order], scale)
+
+
+@cython.locals(radix=object)
+def _fixed_volume_prefix(raw, complete, metadata):
+    radix = 10
+    context = getcontext()
+    kind = type(raw)
+    if (
+        type(context) is not Context
+        or context.prec < 128
+        or context.rounding != ROUND_HALF_EVEN
+        or context.traps[Inexact]
+        or context.traps[Rounded]
+        or context.clamp
+        or context.Emin > -512
+        or context.Emax < 512
+        or (kind is not list and kind is not tuple and kind is not np.ndarray)
+        or (kind is np.ndarray and raw.ndim != 1)
+        or complete.ndim != 1
+    ):
+        return None
+    coefficients, exponents = [], []
+    valid = complete.copy()
+    low, high = 0, 0
+    for index, value in enumerate(raw):
+        if value is None:
+            valid[index] = False
+            coefficients.append(0)
+            exponents.append(0)
+            continue
+        if type(value) is not str or len(value) > 160:
+            return None
+        code = _fixed_decimal_text_metadata(value)
+        if code < 0:
+            return None
+        exponent, significant = -(code >> 6), code & 63
+        if 2 * max(significant, 1) + 32 > context.prec:
+            return None
+        low = min(low, exponent)
+        high = max(high, exponent + max(significant, 1) - 1)
+        coefficients.append(int(value.replace(".", "")))
+        exponents.append(exponent)
+    if high - low + len(str(max(2 * len(raw), 1))) + 1 > context.prec:
+        return None
+    units = [
+        coefficient * radix ** (exponents[index] - low)
+        for index, coefficient in enumerate(coefficients)
+        if valid[index]
+    ]
+    prefixes = np.empty(len(units) + 1, dtype=object)
+    prefixes[0] = 0
+    prefixes[1:] = np.cumsum(np.asarray(units, dtype=object))
+    quantums = np.minimum.accumulate(
+        np.asarray(
+            [0] + [exponent for index, exponent in enumerate(exponents) if valid[index]], dtype=np.int16
+        )
+    )
+    metadata.update(low=low, high=high, context=_history_context_key())
+    return _ScaledMoneyValues(prefixes, quantums, low), valid
+
+
 def _native_volume_arrays(rows, projection, end, instrument=None):
     if _ASSESSMENT_INPUTS.get() is None:
         return None
@@ -4744,11 +4862,15 @@ def _native_volume_arrays(rows, projection, end, instrument=None):
     ):
         return None
     metadata = {}
-    prepared = _history_decimal_arrays((raw,), summands=2 * len(raw), metadata=metadata)
-    if prepared is None:
-        return None
-    values = prepared[0]
-    valid = complete & _history_present(values)
+    fixed = _fixed_volume_prefix(raw, complete, metadata)
+    if fixed is None:
+        prepared = _history_decimal_arrays((raw,), summands=2 * len(raw), metadata=metadata)
+        if prepared is None:
+            return None
+        values = prepared[0]
+        valid = complete & _history_present(values)
+    else:
+        prefixes, valid = fixed
     closes = starts + intervals
     if len(closes) and np.any(np.abs(closes) > 2**52):
         return None
@@ -4756,11 +4878,17 @@ def _native_volume_arrays(rows, projection, end, instrument=None):
     if len(starts) > 1:
         breaks[1:] = ~valid[1:] | ~valid[:-1] | (starts[1:] != closes[:-1])
     segments = np.cumsum(breaks, dtype=np.int64)[valid]
-    prefixes = np.cumsum(np.concatenate((np.asarray([Decimal(0)], dtype=object), values[valid])))
+    if fixed is None:
+        prefixes = np.cumsum(np.concatenate((np.asarray([Decimal(0)], dtype=object), values[valid])))
     endpoints = np.empty(2 * int(np.count_nonzero(valid)), dtype=np.int64)
     endpoints[0::2], endpoints[1::2] = starts[valid], closes[valid]
     totals = np.empty(len(endpoints), dtype=object)
-    totals[0::2], totals[1::2] = prefixes[:-1], prefixes[1:]
+    if fixed is None:
+        totals[0::2], totals[1::2] = prefixes[:-1], prefixes[1:]
+    else:
+        totals[0::2], totals[1::2] = prefixes.units[:-1], prefixes.units[1:]
+        quantums = np.empty(len(endpoints), dtype=np.int16)
+        quantums[0::2], quantums[1::2] = prefixes.quantums[:-1], prefixes.quantums[1:]
     labels = np.repeat(segments, 2)
     if np.all(endpoints[1:] >= endpoints[:-1]):
         last = np.ones(len(endpoints), dtype=bool)
@@ -4775,14 +4903,21 @@ def _native_volume_arrays(rows, projection, end, instrument=None):
         metadata["high"] + len(str(max(len(raw), 1))),
         metadata["context"],
     )
-    result = (times, totals[positions], labels[positions], len(raw), guard)
+    amounts = (
+        totals[positions]
+        if fixed is None
+        else _ScaledMoneyValues(totals[positions], quantums[positions], prefixes.scale)
+    )
+    result = (times, amounts, labels[positions], len(raw), guard)
     memo[key] = (source, result)
     if projection is not None and head is not None and cache is not None:
         remember(cache, cache_key, lambda: result)
     return result
 
 
+@cython.locals(radix=object)
 def _native_volume_windows(indexes, start, end):
+    radix = 10
     epoch = parse_time("1970-01-01T00:00:00Z")
 
     def micros(value):
@@ -4801,13 +4936,28 @@ def _native_volume_windows(indexes, start, end):
     high = max(index[4][1] for index in indexes)
     if high - low + len(str(2 * max(len(indexes), 1))) + 2 > getcontext().prec:
         return None
+    fixed_count = sum(type(index[1]) is _ScaledMoneyValues for index in indexes)
+    if fixed_count and fixed_count != len(indexes):
+        indexes = [
+            (
+                times,
+                values.as_decimals() if type(values) is _ScaledMoneyValues else values,
+                labels,
+                size,
+                guard,
+            )
+            for times, values, labels, size, guard in indexes
+        ]
+        fixed_count = 0
+    fixed = bool(fixed_count)
     endpoints = indexes[0][0]
     for index in indexes[1:]:
         endpoints = np.intersect1d(endpoints, index[0], assume_unique=True)
     endpoints = endpoints[(endpoints < first) & (endpoints - width >= lower)]
     targets = np.concatenate((np.asarray([last, first], dtype=np.int64), endpoints))
     origins = targets - width
-    totals = np.full(len(targets), Decimal(0), dtype=object)
+    totals = np.full(len(targets), 0 if fixed else Decimal(0), dtype=object)
+    quantums = np.zeros(len(targets), dtype=np.int16) if fixed else None
     covered = np.ones(len(targets), dtype=bool)
     for times, values, segments, _, _guard in indexes:
         if not len(times):
@@ -4816,7 +4966,29 @@ def _native_volume_windows(indexes, start, end):
         a, z = np.minimum(a, len(times) - 1), np.minimum(z, len(times) - 1)
         valid = (times[a] == origins) & (times[z] == targets) & (segments[a] == segments[z])
         covered &= valid
-        totals[valid] = np.add(totals[valid], np.subtract(values[z[valid]], values[a[valid]]))
+        if fixed:
+            differences = np.subtract(values.units[z[valid]], values.units[a[valid]])
+            totals[valid] = np.add(totals[valid], differences * radix ** (values.scale - low))
+            quantums[valid] = np.minimum(
+                quantums[valid], np.minimum(values.quantums[z[valid]], values.quantums[a[valid]])
+            )
+        else:
+            totals[valid] = np.add(totals[valid], np.subtract(values[z[valid]], values[a[valid]]))
+    if fixed:
+        observed = endpoints[covered[2:]]
+        history = []
+        if len(observed) and not (
+            (int(observed[-1]) - int(observed[0]) + width) / 1000000
+            < float(parameter("history_min_days", 7)) * 86400
+        ):
+            units, preferred = totals[2:][covered[2:]], quantums[2:][covered[2:]]
+            order = np.argsort(units, kind="stable")
+            ordered, ordered_quantums = units[order], preferred[order]
+            if np.any((ordered[1:] == ordered[:-1]) & (ordered_quantums[1:] != ordered_quantums[:-1])):
+                return None
+            history = _MonetaryPopulation(units, preferred, low, order)
+        amounts = _ScaledMoneyValues(totals[:2], quantums[:2], low)
+        return amounts[0] if covered[0] else None, amounts[1] if covered[1] else None, history
     history = totals[2:][covered[2:]].tolist()
     observed = endpoints[covered[2:]]
     if not len(observed) or (
