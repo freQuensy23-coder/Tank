@@ -64,6 +64,27 @@ def test_cold_windows_share_one_request_owned_history_time_axis(shape, monkeypat
 
 
 @pytest.mark.parametrize("shape", ["regular", "duplicates", "unsorted"])
+def test_cold_ordered_history_slices_avoid_row_identity_gathers(shape, monkeypatch):
+    rows, end = observations(shape)
+    windows = [timedelta(hours=hours) for hours in (1, 2, 4, 8)]
+    expected = [observe(rows, end, None, {}, window=window) for window in windows]
+    fromiter = truth.np.fromiter
+    gathers = []
+
+    def gathered(values, dtype, *args, **kwargs):
+        if dtype is truth.np.intp:
+            gathers.append(kwargs.get("count"))
+        return fromiter(values, dtype, *args, **kwargs)
+
+    monkeypatch.setattr(truth.np, "fromiter", gathered)
+    inputs = {}
+    actual = [observe(rows, end, inputs, {}, window=window) for window in windows]
+    assert actual == expected
+    assert all(value[0] is not None for value in actual)
+    assert len(gathers) == (0 if shape == "regular" else len(windows))
+
+
+@pytest.mark.parametrize("shape", ["regular", "duplicates", "unsorted"])
 def test_warm_oi_range_uses_temporal_index_without_rebuilding_row_dictionary(shape):
     rows, end = observations(shape)
     expected = observe(rows, end, None, {})
