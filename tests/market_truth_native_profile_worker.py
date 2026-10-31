@@ -38,10 +38,16 @@ def main():
             result = compute_market_truth(snapshot, config=config, baseline_cache={})
         full = {key: value for key, value in result.items() if key not in {"mta_id", "code_version"}}
         digest = hashlib.sha256(json.dumps(full, sort_keys=True, default=encode).encode()).hexdigest()
-        output.write_text(json.dumps({"result_sha256": digest, "artifacts": artifacts}, sort_keys=True))
+        receipt = {"result_sha256": digest, "artifacts": artifacts}
     except BaseException as error:
-        output.write_text(json.dumps(failure_receipt(error), sort_keys=True))
-        raise SystemExit(1) from None
+        receipt = failure_receipt(error)
+    pending = output.with_suffix(".pending")
+    pending.write_text(json.dumps(receipt, sort_keys=True))
+    pending.replace(output)
+    if "failure" in receipt:
+        raise SystemExit(1)
+    while True:
+        time.sleep(0.02)
 
 
 if __name__ == "__main__":

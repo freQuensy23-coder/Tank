@@ -170,7 +170,8 @@ async def test_native_sampler_deadline_kills_and_reaps_only_its_owned_group(
 
 async def test_native_sampler_waits_for_sampler_ready_before_releasing_computation(monkeypatch, tmp_path):
     before = set(tmp_path.iterdir())
-    killed = []
+    killed, signals = [], []
+    flushed = worker.asyncio.Event()
 
     class Process:
         pid, returncode = 61743, None
@@ -191,8 +192,15 @@ async def test_native_sampler_waits_for_sampler_ready_before_releasing_computati
             assert self.begin.exists()
             self.profile.write_text(json.dumps(native_profile()))
             self.output.write_text(json.dumps({"artifacts": {}, "result_sha256": "unit-test-only"}))
+            async with worker.asyncio.timeout(0.5):
+                await flushed.wait()
             self.returncode = 0
             return b"", b""
+
+        def send_signal(self, value):
+            assert self.output.exists() and value == signal.SIGINT
+            signals.append((self.pid, value))
+            flushed.set()
 
     async def create(*args, **kwargs):
         return Process(args, kwargs["stdout"])
@@ -202,4 +210,5 @@ async def test_native_sampler_waits_for_sampler_ready_before_releasing_computati
     call = (copy_context(), worker.truth.compute_market_truth, ({},), {"config": {}})
     receipt = await worker.sample_retained_native(call, tmp_path, tmp_path)
     assert receipt["kind"] == "native_computation_stack_samples" and receipt["samples"] == 2
+    assert signals == [(Process.pid, signal.SIGINT)]
     assert killed == [] and set(tmp_path.iterdir()) == before

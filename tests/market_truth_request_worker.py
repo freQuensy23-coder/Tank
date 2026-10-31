@@ -285,13 +285,17 @@ async def sample_retained_native(call, root, directory):
                 start_new_session=True,
             )
         communication = asyncio.create_task(process.communicate())
-        collected = False
+        collected, flushing = False, False
         try:
             async with asyncio.timeout(20):
                 while not communication.done():
                     assert sampler_output.stat().st_size <= 1_000_000
                     if not begin.exists() and b"Sampling process" in sampler_output.read_bytes():
                         begin.touch()
+                    if not flushing and output.exists():
+                        with suppress(ProcessLookupError):
+                            process.send_signal(signal.SIGINT)
+                        flushing = True
                     await asyncio.sleep(0.02)
                 _, stderr = await asyncio.shield(communication)
             result = None
