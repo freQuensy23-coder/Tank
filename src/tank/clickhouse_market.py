@@ -601,17 +601,30 @@ async def dense_projection_page(
         q.where(f"(recorded_at IS NULL OR recorded_at <= {q.param(assembled_at, DT)})")
     if after is not None:
         _after(q, ("open_time", after[0], DT), ("storage_key", str(after[1]), "String"))
-    key = (ch, ch.database, instrument_id, start, end, assembled_at, after, limit)
+    key = (ch, ch.database, instrument_id, start, end, assembled_at, after, limit, series)
     raw = raw_cache.get(key) if raw_cache is not None else None
     if raw is None:
-        raw = await ch.columns(
-            "SELECT toUnixTimestamp64Micro(open_time) AS open_us, open_time_prec, "
-            "CAST(isNull(recorded_at), 'Bool') AS recorded_unknown, complete, interval_s, "
-            "c, volume_native, storage_key AS _cursor_key "
-            f"FROM {_table('mkt.klines_1m')} WHERE {q.predicate()} "
-            f"ORDER BY open_time, storage_key LIMIT {int(limit)}",
-            q.params,
-        )
+        if series:
+            page = (
+                "SELECT open_time, open_time_prec, recorded_at, complete, interval_s, c, volume_native, "
+                f"storage_key FROM {_table('mkt.klines_1m')} WHERE {q.predicate()} "
+                f"ORDER BY open_time, storage_key LIMIT {int(limit)}"
+            )
+            selection = (
+                "SELECT toUnixTimestamp64Micro(open_time) AS open_us, open_time_prec, "
+                "CAST(isNull(recorded_at), 'Bool') AS recorded_unknown, complete, interval_s, c, volume_native, "
+                "if(row_number() OVER (ORDER BY open_time DESC, storage_key DESC) = 1, "
+                f"storage_key, NULL) AS _cursor_key FROM ({page}) ORDER BY open_time, storage_key"
+            )
+        else:
+            selection = (
+                "SELECT toUnixTimestamp64Micro(open_time) AS open_us, open_time_prec, "
+                "CAST(isNull(recorded_at), 'Bool') AS recorded_unknown, complete, interval_s, "
+                "c, volume_native, storage_key AS _cursor_key "
+                f"FROM {_table('mkt.klines_1m')} WHERE {q.predicate()} "
+                f"ORDER BY open_time, storage_key LIMIT {int(limit)}"
+            )
+        raw = await ch.columns(selection, q.params)
         if raw_cache is not None:
             raw_cache[key] = raw
     names = {

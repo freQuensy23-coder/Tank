@@ -9,7 +9,7 @@ from contextlib import suppress
 from contextvars import ContextVar
 from copy import deepcopy
 from datetime import timedelta
-from decimal import Decimal
+from decimal import Decimal, getcontext, localcontext
 from types import SimpleNamespace
 
 import httpx
@@ -2967,56 +2967,84 @@ class MarketService:
         async def read_collection(name, collection, field):
             window_rows, sampled, settled_history, settled_by_time = {}, {}, {}, {}
             supply_rows = None
+            sampled_read = sampled_context = None
+            try:
+                if name == "oi" and recent_start > history_start:
 
-            if name in bounded:
-                window_rows = {iid: [] for iid in ids}
-                for low, high in bounded[name]:
-                    part = await self._window_rows(
-                        token_id, collection, field, ids, low, high, books=name == "books"
+                    async def historical_rows():
+                        nonlocal sampled_context
+                        with localcontext() as sampled_context:
+                            return await self._shared_call(
+                                (
+                                    "sampled",
+                                    collection,
+                                    field,
+                                    tuple(sorted(ids)),
+                                    history_start,
+                                    recent_start,
+                                ),
+                                lambda: sampled_market_history(
+                                    self.repo,
+                                    collection,
+                                    field,
+                                    ("metric_key",),
+                                    sorted(ids),
+                                    history_start,
+                                    recent_start,
+                                    300,
+                                    cache=self._sampled_history_cache,
+                                ),
+                            )
+
+                    sampled_read = asyncio.create_task(historical_rows())
+                if name in bounded:
+                    window_rows = {iid: [] for iid in ids}
+                    for low, high in bounded[name]:
+                        part = await self._window_rows(
+                            token_id, collection, field, ids, low, high, books=name == "books"
+                        )
+                        for iid in ids:
+                            window_rows[iid].extend(part[iid])
+                elif name != "supply":
+                    window_rows = await self._window_rows(
+                        token_id, collection, field, ids, recent_start, snapshot_end, books=name == "books"
                     )
-                    for iid in ids:
-                        window_rows[iid].extend(part[iid])
-            elif name != "supply":
-                window_rows = await self._window_rows(
-                    token_id, collection, field, ids, recent_start, snapshot_end, books=name == "books"
-                )
-            if name == "oi" and recent_start > history_start:
-                sampled = {iid: [] for iid in ids}
-                for row in await self._shared_call(
-                    ("sampled", collection, field, tuple(sorted(ids)), history_start, recent_start),
-                    lambda collection=collection, field=field: sampled_market_history(
-                        self.repo,
+                if sampled_read is not None:
+                    try:
+                        history_rows = await sampled_read
+                    finally:
+                        if sampled_context is not None:
+                            for signal, raised in sampled_context.flags.items():
+                                if raised:
+                                    getcontext().flags[signal] = True
+                    sampled = {iid: [] for iid in ids}
+                    for row in history_rows:
+                        sampled[row["instrument_id"]].append(row)
+                if name == "funding":
+                    settled_history = (
+                        await self._ranged(
+                            collection, field, ids, history_start, recent_start, {"kind": "SETTLED"}
+                        )
+                        if recent_start > history_start
+                        else {}
+                    )
+                    settled_by_time = await self._ranged(
+                        collection, "funding_time", ids, history_start, snapshot_end
+                    )
+                if name == "supply":
+                    supply_rows = await self._range(
                         collection,
                         field,
-                        ("metric_key",),
-                        sorted(ids),
-                        history_start,
-                        recent_start,
-                        300,
-                        cache=self._sampled_history_cache,
-                    ),
-                ):
-                    sampled[row["instrument_id"]].append(row)
-            if name == "funding":
-                settled_history = (
-                    await self._ranged(
-                        collection, field, ids, history_start, recent_start, {"kind": "SETTLED"}
+                        start=history_start,
+                        end=snapshot_end,
+                        filters={"token_id": token_id},
                     )
-                    if recent_start > history_start
-                    else {}
-                )
-                settled_by_time = await self._ranged(
-                    collection, "funding_time", ids, history_start, snapshot_end
-                )
-            if name == "supply":
-                supply_rows = await self._range(
-                    collection,
-                    field,
-                    start=history_start,
-                    end=snapshot_end,
-                    filters={"token_id": token_id},
-                )
-            return window_rows, sampled, settled_history, settled_by_time, supply_rows
+                return window_rows, sampled, settled_history, settled_by_time, supply_rows
+            finally:
+                if sampled_read is not None:
+                    if not sampled_read.done():
+                        sampled_read.cancel()
+                    await asyncio.gather(sampled_read, return_exceptions=True)
 
         collection_reads = [
             asyncio.create_task(read_collection(name, collection, field))

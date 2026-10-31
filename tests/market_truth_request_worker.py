@@ -633,6 +633,10 @@ async def run(root, directory, fixtures, revision, reader):
                 "snapshot.latest_market_records", repo.latest_market_records
             )
 
+            service_module = sys.modules[MarketService.__module__]
+            service_module.sampled_market_history = measure_async(
+                "snapshot.sampled_market_history", service_module.sampled_market_history
+            )
             for name in (
                 "_ranged_read",
                 "_ranged_cached",
