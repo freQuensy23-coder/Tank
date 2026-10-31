@@ -95,7 +95,12 @@ def _scalar_decimal(v):
     value = v if isinstance(v, Decimal) else Decimal(str(v))
     required = None
     if memo is not None and type(value) is Decimal and exact_context is _EXACT_CONTEXT and value.is_finite():
-        required = 2 * (value.adjusted() - value.as_tuple().exponent + 1) + 32
+        metadata = _fixed_decimal_text_metadata(v)
+        required = (
+            2 * max(metadata & 63, 1) + 32
+            if metadata >= 0
+            else 2 * (value.adjusted() - value.as_tuple().exponent + 1) + 32
+        )
         getcontext().prec = max(getcontext().prec, required)
     else:
         exact_context(value)
