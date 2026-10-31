@@ -115,6 +115,78 @@ async def test_assessment_keeps_each_tokens_baseline_cache_in_its_worker(monkeyp
     assert seen == [("T", []), ("T", [0]), ("U", []), ("T", [0, 1])]
 
 
+async def test_assessment_starts_its_empty_worker_before_loading_the_snapshot():
+    packet = _spot_packet()
+    observed = []
+
+    class FetchingMarket:
+        async def snapshot(self, token_id, cutoff, anchor=None):
+            pool = compute_workers._executors.get(compute_workers.ASSESSMENT)
+            assert pool is not None
+            observed.append(await asyncio.wrap_future(pool.submit(lambda: dict(compute_workers._baselines))))
+            return dict(packet)
+
+    repo = Repo()
+    service = truth.MarketTruthService(repo, SETTINGS, FetchingMarket())
+    result = await service.assess(None, "T", packet["cutoff"])
+    assert observed == [{}]
+    assert compute_workers.REACTION not in compute_workers._executors
+    assert repo.rows[("ana.market_truth", result["mta_id"])] is result
+    assert _comparable(result) == _comparable(
+        truth.compute_market_truth(packet, config={"config_version": "cfg", "code_version": "code"})
+    )
+
+
+async def test_snapshot_failure_does_not_run_computation_or_publish_worker_baselines():
+    failure = ValueError("snapshot unavailable")
+
+    class FailingMarket:
+        async def snapshot(self, *args, **kwargs):
+            pool = compute_workers._executors.get(compute_workers.ASSESSMENT)
+            assert pool is not None
+            await asyncio.wrap_future(pool.submit(lambda: None))
+            raise failure
+
+    repo = Repo()
+    service = truth.MarketTruthService(repo, SETTINGS, FailingMarket())
+    with pytest.raises(ValueError) as caught:
+        await service.assess(None, "T", "2026-10-16T12:00:00Z")
+    assert caught.value is failure
+    assert compute_workers._baselines == compute_workers._used == compute_workers._active == {}
+    assert repo.rows == {}
+
+
+def _cold_worker_state():
+    return os.getpid(), dict(compute_workers._baselines), dict(compute_workers._active)
+
+
+@pytest.mark.integration
+@pytest.mark.process
+async def test_spawned_worker_is_empty_and_available_while_snapshot_is_loading(worker_processes):
+    observed = []
+    packet = _spot_packet()
+
+    class FetchingMarket:
+        async def snapshot(self, token_id, cutoff, anchor=None):
+            pool = compute_workers._executors.get(compute_workers.ASSESSMENT)
+            assert pool is not None
+            observed.append(await asyncio.wrap_future(pool.submit(_cold_worker_state)))
+            return dict(packet)
+
+    repo = Repo()
+    service = truth.MarketTruthService(repo, SETTINGS, FetchingMarket())
+    result = await service.assess(None, "T", packet["cutoff"])
+    assert len(observed) == 1
+    pid, baselines, active = observed[0]
+    assert pid != os.getpid() and baselines == active == {}
+    assert set(compute_workers._executors[compute_workers.ASSESSMENT]._processes) == {pid}
+    assert compute_workers.REACTION not in compute_workers._executors
+    assert _comparable(result) == _comparable(
+        truth.compute_market_truth(packet, config={"config_version": "cfg", "code_version": "code"})
+    )
+    assert repo.rows[("ana.market_truth", result["mta_id"])] is result
+
+
 @pytest.mark.asyncio
 async def test_lost_worker_fails_its_call_and_the_next_call_starts_a_new_worker(monkeypatch):
     class Lost:
