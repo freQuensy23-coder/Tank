@@ -1183,7 +1183,7 @@ def _history_context_key():
         context.Emin,
         context.Emax,
         context.clamp,
-        tuple(context.traps.values()) if type(context) is Context else tuple(context.traps.items()),
+        tuple(context.traps.copy().values()) if type(context) is Context else tuple(context.traps.items()),
     )
 
 

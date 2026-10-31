@@ -1,6 +1,6 @@
 import sys
 from collections.abc import ValuesView
-from decimal import ROUND_DOWN, ROUND_HALF_EVEN, localcontext
+from decimal import ROUND_DOWN, ROUND_HALF_EVEN, Context, localcontext
 
 import pytest
 
@@ -51,3 +51,20 @@ def test_native_context_signature_avoids_python_signal_view_iteration(precision,
         for signal in signals:
             context.flags[signal] = not context.flags[signal]
         assert truth._history_context_key() == actual
+
+
+def test_nonstandard_context_signature_retains_signal_items(monkeypatch):
+    class Derived(Context):
+        pass
+
+    context = Derived(prec=19, rounding=ROUND_DOWN)
+    monkeypatch.setattr(truth, "getcontext", lambda: context)
+    actual = truth._history_context_key()
+    assert actual == (
+        context.prec,
+        context.rounding,
+        context.Emin,
+        context.Emax,
+        context.clamp,
+        tuple(context.traps.items()),
+    )
