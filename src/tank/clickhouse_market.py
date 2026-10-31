@@ -15,15 +15,20 @@ digits), timestamps as DateTime64(6, UTC), JSON as text.
 import asyncio
 import json
 import re
+import sys
 import time
+from copy import deepcopy
 from datetime import UTC, datetime, timedelta
-from decimal import Decimal
+from decimal import Decimal, getcontext, localcontext
 from urllib.parse import urlsplit, urlunsplit
 
 import httpx
+from pydantic_core import from_json
 
 from tank.market_schema import MARKET_ALIASES, MARKET_COLUMNS, MARKET_IDENTITIES
-from tank.util import canonical_json, iso, parse_time
+from tank.util import canonical_json, iso, parse_time, unsigned_zero_scale
+
+_DECIMAL_CONSTRUCTOR = Decimal
 
 MARKET_TABLES = {
     "mkt.klines_1m": "open_time",
@@ -151,10 +156,14 @@ class ClickHouse:
         return response.content
 
     async def rows(self, query, params=None):
-        body = await self._post(query + " FORMAT JSONEachRow", params)
+        body = await self._post(query + " FORMAT JSONCompactEachRowWithNames", params)
         if len(body) > 1_000_000:
-            return await asyncio.to_thread(_json_lines, body)
-        return _json_lines(body)
+            return await asyncio.to_thread(_compact_json_rows, body)
+        return _compact_json_rows(body)
+
+    async def columns(self, query, params=None):
+        body = await self._post(query + " FORMAT JSONColumns", params)
+        return await asyncio.to_thread(_column_json, body)
 
     async def execute(self, query, params=None):
         await self._post(query, params)
@@ -165,8 +174,30 @@ class ClickHouse:
             await self._post(f"INSERT INTO {table} FORMAT JSONEachRow\n{body}", None)
 
 
-def _json_lines(body):
-    return [json.loads(line) for line in body.splitlines() if line]
+def _column_json(body):
+    if len(body) > 1_000_000 and sys.get_int_max_str_digits() == 4300:
+        try:
+            return from_json(body, allow_inf_nan=False, cache_strings="all", allow_partial=False)
+        except ValueError:
+            pass
+    return json.loads(body)
+
+
+def _compact_json_rows(body):
+    lines = (line for line in body.splitlines() if line)
+    first = next(lines, None)
+    if first is None:
+        return []
+    names = json.loads(first)
+    if not isinstance(names, list) or any(not isinstance(name, str) for name in names):
+        raise ValueError("Invalid compact column names")
+    result = []
+    for line in lines:
+        values = json.loads(line)
+        if not isinstance(values, list):
+            raise ValueError("Invalid compact row")
+        result.append(dict(zip(names, values, strict=True)))
+    return result
 
 
 def _literal(value):
@@ -249,24 +280,25 @@ def _ids(q, instrument_ids):
 
 def _record(collection, row):
     """A ClickHouse row as the typed values a PostgreSQL row carries (then decode)."""
-    from tank.market_storage import decode
-
     out = {}
     for name, kind in MARKET_COLUMNS[collection].items():
         value = row.get(name)
         if value is None:
             out[name] = None
         elif kind == "timestamptz":
-            out[name] = parse_time(value)
+            out[name] = iso(parse_time(value))
         elif kind == "jsonb":
             out[name] = json.loads(value)
         elif kind == "text[]":
             out[name] = list(value) or None
         elif kind == "numeric":
-            out[name] = Decimal(value)
+            out[name] = str(Decimal(value))
         else:
             out[name] = value
-    return decode(collection, out)
+    for alias, target in MARKET_ALIASES.get(collection, {}).items():
+        if target in out:
+            out[alias] = out[target]
+    return out
 
 
 def _records(collection, rows):
@@ -283,24 +315,23 @@ def _table(collection):
     return f"{collection} FINAL"
 
 
-async def _select(ch, collection, q, order, tail="", selected="*"):
+async def _select(ch, collection, q, order, tail="", selected="*", *, columnar=False):
     day = MARKET_TABLES[collection]
-    keys = await ch.rows(
-        f"SELECT storage_key, instrument_id, `{day}` AS _day FROM {_table(collection)} "
-        f"WHERE {q.predicate()} ORDER BY {order} {tail}",
+    table = _table(collection)
+    read = ch.columns if columnar else ch.rows
+    result = await read(
+        f"WITH (SELECT tuple(groupUniqArray(instrument_id), min(`{day}`), max(`{day}`), "
+        "groupUniqArray(storage_key)) FROM "
+        f"(SELECT storage_key, instrument_id, `{day}` FROM {table} "
+        f"WHERE {q.predicate()} ORDER BY {order} {tail})) AS _page "
+        f"SELECT {selected} FROM {table} "
+        "WHERE instrument_id IN (SELECT arrayJoin(tupleElement(_page, 1))) "
+        f"AND `{day}` >= tupleElement(_page, 2) AND `{day}` <= tupleElement(_page, 3) "
+        "AND storage_key IN (SELECT arrayJoin(tupleElement(_page, 4))) "
+        f"ORDER BY {order}",
         q.params,
     )
-    if not keys:
-        return []
-    days = [parse_time(r["_day"]) for r in keys]
-    k = Query()
-    k.where(f"instrument_id IN {k.param(sorted({r['instrument_id'] for r in keys}), 'Array(String)')}")
-    k.where(f"`{day}` >= {k.param(min(days), DT)}")
-    k.where(f"`{day}` <= {k.param(max(days), DT)}")
-    k.where(f"storage_key IN {k.param([r['storage_key'] for r in keys], 'Array(String)')}")
-    return await ch.rows(
-        f"SELECT {selected} FROM {_table(collection)} WHERE {k.predicate()} ORDER BY {order}", k.params
-    )
+    return {} if columnar and not any(result.values()) else result
 
 
 async def _narrow(ch, collection, q, time_field):
@@ -544,6 +575,112 @@ async def projection_page(
     return await asyncio.to_thread(convert) if len(rows) > 1000 else convert()
 
 
+async def dense_projection_page(
+    ch,
+    *,
+    instrument_id,
+    field,
+    start,
+    end,
+    assembled_at,
+    after=None,
+    limit=200000,
+    raw_cache=None,
+    series=False,
+):
+    if field not in {"c", "volume_native"}:
+        raise ValueError("Unsupported dense numeric projection")
+    start, end = parse_time(start), parse_time(end)
+    assembled_at = parse_time(assembled_at) if assembled_at is not None else None
+    if after is not None:
+        after = (parse_time(after[0]), after[1])
+    q = Query()
+    _ids(q, [instrument_id])
+    q.where("open_time IS NOT NULL")
+    q.where(f"open_time >= {q.param(start, DT)}")
+    q.where(f"open_time < {q.param(end, DT)}")
+    if assembled_at is not None:
+        q.where(f"(recorded_at IS NULL OR recorded_at <= {q.param(assembled_at, DT)})")
+    if after is not None:
+        _after(q, ("open_time", after[0], DT), ("storage_key", str(after[1]), "String"))
+    key = (ch, ch.database, instrument_id, start, end, assembled_at, after, limit, series)
+    raw = raw_cache.get(key) if raw_cache is not None else None
+    if raw is None:
+        if series:
+            page = (
+                "SELECT open_time, open_time_prec, recorded_at, complete, interval_s, c, volume_native, "
+                f"storage_key FROM {_table('mkt.klines_1m')} WHERE {q.predicate()} "
+                f"ORDER BY open_time, storage_key LIMIT {int(limit)}"
+            )
+            selection = (
+                "SELECT toUnixTimestamp64Micro(open_time) AS open_us, open_time_prec, "
+                "CAST(isNull(recorded_at), 'Bool') AS recorded_unknown, complete, interval_s, c, volume_native, "
+                "if(row_number() OVER (ORDER BY open_time DESC, storage_key DESC) = 1, "
+                f"storage_key, NULL) AS _cursor_key FROM ({page}) ORDER BY open_time, storage_key"
+            )
+        else:
+            selection = (
+                "SELECT toUnixTimestamp64Micro(open_time) AS open_us, open_time_prec, "
+                "CAST(isNull(recorded_at), 'Bool') AS recorded_unknown, complete, interval_s, "
+                "c, volume_native, storage_key AS _cursor_key "
+                f"FROM {_table('mkt.klines_1m')} WHERE {q.predicate()} "
+                f"ORDER BY open_time, storage_key LIMIT {int(limit)}"
+            )
+        raw = await ch.columns(selection, q.params)
+        if raw_cache is not None:
+            raw_cache[key] = raw
+    names = {
+        "open_us",
+        "open_time_prec",
+        "recorded_unknown",
+        "complete",
+        "interval_s",
+        "c",
+        "volume_native",
+        "_cursor_key",
+    }
+    if raw and (raw.keys() != names or len({len(value) for value in raw.values()}) != 1):
+        raise ValueError("Invalid dense projection columns")
+
+    def convert():
+        result = {name: raw.get(name, []) for name in names - {"c", "volume_native"}}
+        result["open_us"] = [int(value) for value in result["open_us"]]
+        if series:
+            texts = []
+            for value in raw.get(field, []):
+                if value is None:
+                    texts.append(None)
+                    continue
+                canonical = _canonical_numeric_text(value)
+                if canonical is None or canonical.startswith("-"):
+                    break
+                texts.append(canonical)
+            else:
+                result["value"] = texts
+                if field == "volume_native":
+                    result["nonnegative"] = [value is not None for value in texts]
+                return result
+        numbers = {}
+        decimals = []
+        texts = []
+        for value in raw.get(field, []):
+            if value is None:
+                decimals.append(None)
+                texts.append(None)
+                continue
+            pair = numbers.get(value)
+            if pair is None:
+                number = Decimal(value)
+                pair = numbers[value] = (number, str(number))
+            decimals.append(pair[0])
+            texts.append(pair[1])
+        result["value"] = texts
+        result["decimal_values"] = decimals
+        return result
+
+    return await asyncio.to_thread(convert)
+
+
 CLOSE_OK = "isFinite(toFloat64OrNull(c)) AND toFloat64OrNull(c) > 0"
 
 
@@ -625,9 +762,110 @@ async def market_rows_recorded_since(ch, collection, time_field, instrument_ids,
     return [(row["instrument_id"], rec, row["storage_key"]) for row, rec in zip(rows, records, strict=True)]
 
 
-async def sampled_market_history(
-    ch, collection, time_field, group_fields, instrument_ids, start, end, bucket_s
+def _sampled_column_records(collection, names, payload):
+    columns = dict(zip(names, zip(*payload, strict=True), strict=True))
+    parent = getcontext()
+    with localcontext() as context:
+        try:
+            records = _column_records(collection, columns, len(payload))
+        except (ArithmeticError, LookupError, OSError, RecursionError, TypeError, ValueError):
+            records = None
+    if records is None:
+        return _records(collection, [dict(zip(names, row, strict=True)) for row in payload])
+    for signal, raised in context.flags.items():
+        if raised:
+            parent.flags[signal] = True
+    return records
+
+
+async def _sampled_records(collection, names, payload):
+    if type(payload) is not list or any(type(row) is not list or len(row) != len(names) for row in payload):
+        return await _decode(collection, [dict(zip(names, row, strict=True)) for row in payload])
+    if not payload:
+        return []
+    if len(payload) > 1000:
+        return await asyncio.to_thread(_sampled_column_records, collection, names, payload)
+    return _sampled_column_records(collection, names, payload)
+
+
+async def _sampled_history_state(
+    ch, collection, time_field, group_fields, instrument_ids, start, end, bucket_s, cache
 ):
+    names = [*MARKET_COLUMNS[collection], "storage_key", "_version"]
+    identity = MARKET_IDENTITIES[collection]
+    kinds = [
+        TYPES[kind] if name in identity or kind == "text[]" else f"Nullable({TYPES[kind]})"
+        for name, kind in MARKET_COLUMNS[collection].items()
+    ] + ["String", "UInt64"]
+    q = Query()
+    _ids(q, instrument_ids)
+    q.where(f"`{time_field}` >= {q.param(start, DT)}")
+    q.where(f"`{time_field}` < {q.param(end, DT)}")
+    bucket = f"intDiv(toUnixTimestamp(`{time_field}`), {int(bucket_s)})"
+    groups = ", ".join(["instrument_id", *(f"`{g}`" for g in group_fields), bucket])
+    sort_keys = [f"x.{names.index(name) + 1}" for name in ("instrument_id", *group_fields)]
+    sort_keys.append(f"intDiv(toUnixTimestamp(x.{names.index(time_field) + 1}), {int(bucket_s)})")
+    fields = ", ".join(f"`{name}`" for name in names)
+    key = (
+        ch,
+        ch.database,
+        collection,
+        time_field,
+        tuple(group_fields),
+        tuple(sorted(instrument_ids)),
+        start,
+        end,
+        bucket_s,
+    )
+    previous = cache.get(key)
+    known = q.param(previous[0] if previous is not None else "", "String")
+    sql = (
+        f"WITH arraySort(x -> tuple({', '.join(sort_keys)}), groupArray(sampled_record)) AS population, "
+        "hex(SHA256(toString(population))) AS fingerprint "
+        f"SELECT fingerprint, if(fingerprint = {known}, [], population) AS records FROM ("
+        f"SELECT CAST(tuple({fields}) AS Tuple({', '.join(kinds)})) AS sampled_record "
+        f"FROM {_table(collection)} WHERE {q.predicate()} "
+        f"ORDER BY {groups}, `{time_field}` DESC, storage_key DESC LIMIT 1 BY {groups})"
+    )
+    result = await ch.rows(sql, q.params)
+    if len(result) != 1:
+        raise ValueError("invalid sampled history state response")
+    fingerprint, payload = result[0].get("fingerprint"), result[0].get("records")
+    if (
+        not isinstance(fingerprint, str)
+        or not re.fullmatch(r"[0-9A-F]{64}", fingerprint)
+        or not isinstance(payload, list)
+    ):
+        raise ValueError("invalid sampled history state response")
+    if previous is not None and fingerprint == previous[0]:
+        if payload:
+            raise ValueError("unchanged sampled history state returned a payload")
+        records = previous[1]
+    else:
+        if any(not isinstance(row, list) for row in payload):
+            raise ValueError("invalid sampled history population")
+        records = sorted(
+            await _sampled_records(collection, names, payload),
+            key=lambda row: row[time_field],
+        )
+    cache.pop(key, None)
+    cache[key] = (fingerprint, records)
+    while len(cache) > 32 or sum(len(entry[1]) for entry in cache.values()) > 300_000:
+        cache.pop(next(iter(cache)))
+    if any(kind in {"jsonb", "text[]"} for kind in MARKET_COLUMNS[collection].values()):
+        return deepcopy(records)
+    return [dict(record) for record in records]
+
+
+async def sampled_market_history(
+    ch, collection, time_field, group_fields, instrument_ids, start, end, bucket_s, *, cache=None
+):
+    if cache is not None:
+        if not instrument_ids:
+            return []
+        return await _sampled_history_state(
+            ch, collection, time_field, group_fields, instrument_ids, start, end, bucket_s, cache
+        )
     q = Query()
     _ids(q, instrument_ids)
     q.where(f"`{time_field}` >= {q.param(start, DT)}")
@@ -643,6 +881,203 @@ async def sampled_market_history(
     )
     records = await _decode(collection, rows)
     return sorted(records, key=lambda r: r[time_field])
+
+
+def _wide_column_records(collection, columns, time_field):
+    if type(columns) is not dict or any(type(values) not in (list, tuple) for values in columns.values()):
+        return _wide_row_records(collection, columns, time_field)
+    parent = getcontext()
+    with localcontext() as context:
+        try:
+            result = _column_wide_records(collection, columns, time_field)
+        except (ArithmeticError, LookupError, OSError, RecursionError, TypeError, ValueError):
+            result = None
+    if result is None:
+        return _wide_row_records(collection, columns, time_field)
+    for signal, raised in context.flags.items():
+        if raised:
+            parent.flags[signal] = True
+    return result
+
+
+def _canonical_numeric_text(value):
+    if type(value) is not str or not value or len(value) > 160:
+        return None
+    text = value
+    if text.startswith("0E-"):
+        return value if unsigned_zero_scale(text) is not None and getcontext().capitals else None
+    length = len(text)
+    index = 1 if text[0] == "-" else 0
+    start = index
+    if index == length:
+        return None
+    code = ord(text[index])
+    if code < 48 or code > 57:
+        return None
+    if code == 48:
+        index += 1
+        if index < length and 48 <= ord(text[index]) <= 57:
+            return None
+    else:
+        while index < length:
+            code = ord(text[index])
+            if code < 48 or code > 57:
+                break
+            index += 1
+    if index == length:
+        return value
+    if text[index] != ".":
+        return None
+    dot = index
+    index += 1
+    if index == length:
+        return None
+    first_nonzero = 0
+    while index < length:
+        code = ord(text[index])
+        if code < 48 or code > 57:
+            return None
+        if code != 48 and not first_nonzero:
+            first_nonzero = index - dot
+        index += 1
+    if text[start] != "0":
+        return value
+    if first_nonzero:
+        return value if first_nonzero <= 6 else None
+    return value if length - dot - 1 <= 6 else None
+
+
+def _column_records(collection, columns, count):
+    if any(type(name) is not str for name in columns):
+        return None
+    if Decimal is not _DECIMAL_CONSTRUCTOR:
+        for name, kind in MARKET_COLUMNS[collection].items():
+            if kind == "numeric":
+                for value in columns.get(name, ()):
+                    if value is not None and _canonical_numeric_text(value) is None:
+                        return None
+    empty = [None] * count
+    fields, timestamps, numbers = {}, {}, {}
+    for name, kind in MARKET_COLUMNS[collection].items():
+        values = columns.get(name, empty)
+        if kind == "timestamptz":
+            normalized = []
+            for value in values:
+                if value is None:
+                    normalized.append(None)
+                    continue
+                if type(value) is not str:
+                    return None
+                cached = timestamps.get(value)
+                if cached is None:
+                    cached = iso(parse_time(value))
+                    timestamps[value] = cached
+                normalized.append(cached)
+        elif kind == "numeric":
+            normalized = []
+            for value in values:
+                if value is None:
+                    normalized.append(None)
+                    continue
+                if type(value) not in (str, int, float, Decimal):
+                    return None
+                cached = numbers.get(value) if type(value) is str else None
+                if cached is None:
+                    cached = _canonical_numeric_text(value)
+                    if cached is None:
+                        cached = str(Decimal(value))
+                    if type(value) is str:
+                        numbers[value] = cached
+                normalized.append(cached)
+        elif kind == "jsonb":
+            if any(value is not None and type(value) not in (str, bytes, bytearray) for value in values):
+                return None
+            normalized = [json.loads(value) if value is not None else None for value in values]
+        elif kind == "text[]":
+            if any(value is not None and type(value) not in (list, tuple) for value in values):
+                return None
+            normalized = [(list(value) or None) if value is not None else None for value in values]
+        else:
+            normalized = values
+        fields[name] = normalized
+    for alias, target in MARKET_ALIASES.get(collection, {}).items():
+        if target in fields:
+            fields[alias] = fields[target]
+    names = tuple(fields)
+    return [dict(zip(names, values, strict=True)) for values in zip(*fields.values(), strict=True)]
+
+
+def _column_wide_records(collection, columns, time_field):
+    if not columns:
+        return []
+    sizes = {len(values) for values in columns.values()}
+    if len(sizes) != 1:
+        raise ValueError("Invalid wide page columns")
+    count = sizes.pop()
+    if any(type(value) is not str for value in columns[time_field]):
+        return None
+    records = _column_records(collection, columns, count)
+    if records is None:
+        return None
+    return [
+        (iid, record, key, parse_time(at))
+        for iid, key, at, record in zip(
+            columns["instrument_id"], columns["storage_key"], columns[time_field], records, strict=True
+        )
+    ]
+
+
+def _wide_row_records(collection, columns, time_field):
+    if not columns:
+        return []
+    sizes = {len(values) for values in columns.values()}
+    if len(sizes) != 1:
+        raise ValueError("Invalid wide page columns")
+    count = sizes.pop()
+    empty = [None] * count
+    fields = [(name, kind, columns.get(name, empty)) for name, kind in MARKET_COLUMNS[collection].items()]
+    aliases = MARKET_ALIASES.get(collection, {})
+    timestamps = {}
+    numbers = {}
+    result = []
+    for index in range(count):
+        out = {}
+        for name, kind, values in fields:
+            value = values[index]
+            if value is None:
+                out[name] = None
+            elif kind == "timestamptz":
+                cached = timestamps.get(value) if type(value) is str else None
+                if cached is None:
+                    cached = iso(parse_time(value))
+                    if type(value) is str:
+                        timestamps[value] = cached
+                out[name] = cached
+            elif kind == "numeric":
+                cached = numbers.get(value) if type(value) is str else None
+                if cached is None:
+                    cached = str(Decimal(value))
+                    if type(value) is str:
+                        numbers[value] = cached
+                out[name] = cached
+            elif kind == "jsonb":
+                out[name] = json.loads(value)
+            elif kind == "text[]":
+                out[name] = list(value) or None
+            else:
+                out[name] = value
+        for alias, target in aliases.items():
+            if target in out:
+                out[alias] = out[target]
+        result.append(
+            (
+                columns["instrument_id"][index],
+                out,
+                columns["storage_key"][index],
+                parse_time(columns[time_field][index]),
+            )
+        )
+    return result
 
 
 async def range_by_instrument_page(
@@ -664,14 +1099,18 @@ async def range_by_instrument_page(
             ("storage_key", after[2], "String"),
         )
     selected = "*" if levels else "* EXCEPT (bids, asks)" if collection == "mkt.book_summaries" else "*"
-    rows = await _select(
-        ch, collection, q, f"instrument_id, `{time_field}`, storage_key", f"LIMIT {int(limit)}", selected
+    columns = await _select(
+        ch,
+        collection,
+        q,
+        f"instrument_id, `{time_field}`, storage_key",
+        f"LIMIT {int(limit)}",
+        selected,
+        columnar=True,
     )
-    records = await _decode(collection, rows)
-    return [
-        (row["instrument_id"], rec, row["storage_key"], parse_time(row[time_field]))
-        for row, rec in zip(rows, records, strict=True)
-    ]
+    if columns and len(next(iter(columns.values()))) > 1000:
+        return await asyncio.to_thread(_wide_column_records, collection, columns, time_field)
+    return _wide_column_records(collection, columns, time_field)
 
 
 async def prune(ch, cutoff, preserved_days, *, book_cutoff=None, trades_cutoff=None):

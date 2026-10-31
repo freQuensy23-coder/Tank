@@ -13,6 +13,7 @@ from contextlib import AbstractAsyncContextManager, asynccontextmanager, suppres
 from contextvars import ContextVar
 from datetime import datetime, timedelta
 from decimal import Decimal
+from math import isfinite
 from pathlib import Path
 from typing import Protocol, Self, overload
 
@@ -1089,6 +1090,22 @@ async def _stable_transaction(conn):
             raise exit_cancelled
 
 
+def _same_json_value(left, right):
+    if type(left) is not type(right):
+        return False
+    if type(left) is dict:
+        return left.keys() == right.keys() and all(_same_json_value(left[key], right[key]) for key in left)
+    if type(left) is list:
+        return len(left) == len(right) and all(
+            _same_json_value(a, b) for a, b in zip(left, right, strict=True)
+        )
+    if type(left) is float:
+        return isfinite(left) and isfinite(right) and left.hex() == right.hex()
+    if left is None or type(left) in (str, int, bool):
+        return left == right
+    return False
+
+
 class PostgresRepository(QueueMixin):
     def __init__(self, database_url):
         self.database_url = database_url
@@ -1257,13 +1274,47 @@ class PostgresRepository(QueueMixin):
         from psycopg.types.json import Jsonb
 
         _table(collection)
-        key, record = str(key), jsonable(record)
+        key = str(key)
+        missing = object()
+
+        def owned_json(value, depth):
+            if depth >= 64:
+                return missing
+            kind = type(value)
+            if value is None or kind is str or kind is int or kind is float or kind is bool:
+                return value
+            if kind is dict:
+                result = {}
+                for name, item in value.items():
+                    if type(name) is not str:
+                        return missing
+                    cloned = owned_json(item, depth + 1)
+                    if cloned is missing:
+                        return missing
+                    result[name] = cloned
+                return result
+            if kind is list:
+                items = []
+                for item in value:
+                    cloned = owned_json(item, depth + 1)
+                    if cloned is missing:
+                        return missing
+                    items.append(cloned)
+                return items
+            return missing
+
+        cloned = owned_json(record, 0)
+        owned = cloned is not missing
+        record = cloned if owned else jsonable(record)
         async with self.lock(f"record:{collection}:{key}"):
             conn = self._conn()
             table = sql.Identifier(*collection.split("."))
             old = await (
                 await conn.execute(
-                    sql.SQL("SELECT document, immutable FROM {} WHERE storage_key=%s").format(table),
+                    sql.SQL(
+                        "SELECT document, immutable, xmin::text AS revision, ctid::text AS location "
+                        "FROM {} WHERE storage_key=%s"
+                    ).format(table),
                     (key,),
                 )
             ).fetchone()
@@ -1290,6 +1341,31 @@ class PostgresRepository(QueueMixin):
                         value = json.dumps(value, sort_keys=True)
                 values.append(value)
             names = ["storage_key", "document", "immutable", *projected]
+            if (
+                old
+                and type(old["document"]) is dict
+                and type(record) is dict
+                and collection not in SERIAL_TABLES
+            ):
+                previous = old["document"]
+                changed = {
+                    name: value
+                    for name, value in record.items()
+                    if name not in previous or not _same_json_value(previous[name], value)
+                }
+                removed = list(previous.keys() - record.keys())
+                setters = sql.SQL(",").join(
+                    sql.SQL("{}=%s").format(sql.Identifier(name)) for name in names[2:]
+                )
+                updated = await conn.execute(
+                    sql.SQL(
+                        "UPDATE {} SET document=(document - %s::text[]) || %s, {} "
+                        "WHERE storage_key=%s AND xmin::text=%s AND ctid::text=%s"
+                    ).format(table, setters),
+                    [removed, Jsonb(changed), *values[2:], key, old["revision"], old["location"]],
+                )
+                if updated.rowcount == 1:
+                    return record if owned else copy.deepcopy(record)
             columns = sql.SQL(",").join(map(sql.Identifier, names))
             assignments = sql.SQL(",").join(
                 sql.SQL("{}=EXCLUDED.{}").format(sql.Identifier(n), sql.Identifier(n)) for n in names[1:]
@@ -1298,7 +1374,7 @@ class PostgresRepository(QueueMixin):
                 "INSERT INTO {} ({}) VALUES ({}) ON CONFLICT(storage_key) DO UPDATE SET {}"
             ).format(table, columns, sql.SQL(",").join(sql.Placeholder() for _ in names), assignments)
             await conn.execute(query, values)
-            return copy.deepcopy(record)
+            return record if owned else copy.deepcopy(record)
 
     async def get(self, collection, key):
         from psycopg import sql

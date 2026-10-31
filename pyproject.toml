@@ -1,5 +1,5 @@
 [build-system]
-requires = ["hatchling>=1.27"]
+requires = ["hatchling>=1.27", "hatch-cython==0.6.0", "Cython==3.2.9", "setuptools==84.2.1"]
 build-backend = "hatchling.build"
 
 [project]
@@ -34,6 +34,22 @@ dev = ["pytest==9.1.1", "pytest-asyncio==1.4.0", "pytest-timeout==2.4.0", "pytes
 tank = "tank.cli:main"
 [tool.hatch.build.targets.wheel]
 packages = ["src/tank"]
+[tool.hatch.build.targets.wheel.hooks.cython.options]
+src = "tank"
+includes = ["src"]
+compile_args = ["-O1", "-g0", "-ffp-contract=off"]
+directives = { language_level = 3, binding = true, annotation_typing = false, profile = false }
+[tool.hatch.build.targets.wheel.hooks.cython.options.files]
+targets = ["*/analysis/truth.py", "*/clickhouse_market.py", "*/util.py"]
+[tool.uv]
+cache-keys = [
+  { file = "pyproject.toml" },
+  { file = "src/tank/analysis/truth.py" },
+  { file = "src/tank/analysis/truth.pxd" },
+  { file = "src/tank/clickhouse_market.py" },
+  { file = "src/tank/clickhouse_market.pxd" },
+  { file = "src/tank/util.py" },
+]
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]

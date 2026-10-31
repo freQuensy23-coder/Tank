@@ -3,20 +3,55 @@ import hashlib
 import json
 import secrets
 import time
+from contextvars import ContextVar
 from datetime import UTC, datetime
 from decimal import Decimal
 from enum import Enum
+from functools import lru_cache
 from pathlib import Path
 from typing import Any, cast
 
 UTC = UTC
 
 
+def unsigned_zero_scale(value: object) -> int | None:
+    if type(value) is not str or not 4 <= len(value) <= 6 or not value.startswith("0E-"):
+        return None
+    digits = value[3:]
+    if digits[0] == "0" or not digits.isascii() or not digits.isdecimal():
+        return None
+    scale = int(digits)
+    return scale if 7 <= scale <= 100 else None
+
+
 def utcnow() -> datetime:
     return datetime.now(UTC)
 
 
+@lru_cache(maxsize=65536)
+def _parse_text_time(value: str) -> datetime:
+    if value.replace(".", "", 1).isdigit():
+        return parse_time(float(value))
+    return parse_time(datetime.fromisoformat(value.replace("Z", "+00:00")))
+
+
+_TIME_PARSE_MEMO: ContextVar[dict[str, datetime] | None] = ContextVar(
+    "assessment_timestamp_texts", default=None
+)
+
+
 def parse_time(value: Any) -> datetime:
+    if type(value) is str and len(value) <= 64:
+        memo = _TIME_PARSE_MEMO.get()
+        if memo is None:
+            return _parse_text_time(value)
+        cached = memo.get(value)
+        if cached is not None:
+            return cached
+        parsed = _parse_text_time(value)
+        if len(memo) < 65536:
+            memo[value] = parsed
+        return parsed
     if isinstance(value, datetime):
         return value.replace(tzinfo=UTC) if value.tzinfo is None else value.astimezone(UTC)
     if isinstance(value, (int, float, Decimal)) or (
@@ -73,6 +108,8 @@ def new_id(prefix: str, *, timestamp: Any = None, entropy: int | None = None) ->
 
 
 def jsonable(value: Any) -> Any:
+    if value is None or type(value) in (str, int, float, bool):
+        return value
     if dataclasses.is_dataclass(value):
         return jsonable(dataclasses.asdict(cast(Any, value)))
     if hasattr(value, "model_dump"):
