@@ -149,3 +149,15 @@ async def test_real_series_uses_text_preparation_and_preserves_selected_masks(se
         )
     assert actual == expected
     assert calls == []
+
+
+@pytest.mark.parametrize("field", ["c", "volume_native"])
+@pytest.mark.parametrize("scale", [7, 8, 100])
+async def test_canonical_zero_exponents_keep_dense_text_without_decimal_population(field, scale):
+    values = [f"0E-{scale}", "1.000", None]
+    expected = await projection(values, field)
+    actual = await projection(values, field, series=True)
+    assert actual["value"] == expected["value"]
+    assert "decimal_values" not in actual
+    if field == "volume_native":
+        assert actual["nonnegative"] == [True, True, False]

@@ -132,3 +132,25 @@ def test_fixed_text_conversion_reuses_exact_text_only_inside_one_assessment(monk
         finally:
             truth._ASSESSMENT_INPUTS.reset(inputs)
         assert len(calls) - before == len({value for value in column if value is not None})
+
+
+@pytest.mark.parametrize("scale", [7, 8, 100])
+def test_canonical_zero_exponents_share_fixed_history_preparation(scale):
+    column = [f"0E-{scale}", "1.000"] * 256
+    inputs = {}
+    token = truth._ASSESSMENT_INPUTS.set(inputs)
+    try:
+        with localcontext() as context:
+            context.prec = 256
+            context.clear_flags()
+            fixed = truth._history_fixed_decimal_column(column)
+            assert fixed is not None
+            assert representation(fixed[0]) == representation([Decimal(value) for value in column])
+            assert fixed[1] == -scale
+            prepared = truth._history_decimal_arrays((column,))
+            assert prepared is not None
+            assert representation(prepared[0]) == representation(fixed[0])
+            assert not inputs.get("history_decimal_values")
+            assert not any(context.flags.values())
+    finally:
+        truth._ASSESSMENT_INPUTS.reset(token)

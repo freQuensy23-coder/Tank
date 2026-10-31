@@ -7,11 +7,14 @@ import pytest
 from tank.analysis import truth
 
 
-@pytest.mark.parametrize("mixed_quantum", [False, True, "large"])
+@pytest.mark.parametrize("mixed_quantum", [False, True, "large", "zero_exponent"])
 def test_fixed_volume_columns_avoid_decimal_arrays_without_changing_money(monkeypatch, mixed_quantum):
     start = datetime(2026, 1, 1, tzinfo=UTC)
     if mixed_quantum == "large":
         raw = [str(10**35 + i) + ".0000" for i in range(128)]
+        width, end_index = 20, 120
+    elif mixed_quantum == "zero_exponent":
+        raw = ["1.00", "0E-8", "3.0000", "0E-7"] * 32
         width, end_index = 20, 120
     else:
         raw = ["1.00", "2", "3.0000", "4.0"] * 32 if mixed_quantum else [f"{i + 1}.0000" for i in range(128)]

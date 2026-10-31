@@ -1,4 +1,4 @@
-import builtins
+import sys
 from datetime import UTC, datetime, timedelta
 from decimal import Rounded, localcontext
 
@@ -40,23 +40,24 @@ def observe(rows, end, inputs, baseline):
 
 
 @pytest.mark.parametrize("shape", ["regular", "duplicates", "unsorted"])
-def test_warm_oi_range_uses_temporal_index_without_rebuilding_row_dictionary(monkeypatch, shape):
+def test_warm_oi_range_uses_temporal_index_without_rebuilding_row_dictionary(shape):
     rows, end = observations(shape)
     expected = observe(rows, end, None, {})
     inputs = {}
     assessment = truth._ASSESSMENT_INPUTS.set(inputs)
     times = truth._TIMES.set(({}, inputs))
-    cache = truth._BASELINE_CACHE.set({})
+    references = []
+
+    class Ranges(dict):
+        probe = rows[0]
+
+        def get(self, key, default=None):
+            references.append(sys.getrefcount(self.probe))
+            return super().get(key, default)
+
+    ranges = Ranges()
+    cache = truth._BASELINE_CACHE.set(ranges)
     dependency = truth._BASELINE_DEPENDENCY.set("frozen-source")
-    rebuilt = []
-
-    def ordered(values, *args, **kwargs):
-        values = list(values)
-        if values and all(type(value) is int for value in values):
-            rebuilt.append(len(values))
-        return builtins.sorted(values, *args, **kwargs)
-
-    monkeypatch.setattr(truth, "sorted", ordered, raising=False)
     try:
         with localcontext() as context:
             context.prec = 128
@@ -64,13 +65,14 @@ def test_warm_oi_range_uses_temporal_index_without_rebuilding_row_dictionary(mon
             context.flags[Rounded] = True
             first = truth._oi_stats(rows, end - timedelta(hours=2), end, history_identity="venue")
             assert (first, context.prec, dict(context.flags)) == expected
-            rebuilt.clear()
+            references.clear()
+            retained = sys.getrefcount(ranges.probe)
             context.prec = 128
             context.clear_flags()
             context.flags[Rounded] = True
             second = truth._oi_stats(rows, end - timedelta(hours=2), end, history_identity="venue")
             assert (second, context.prec, dict(context.flags)) == expected
-            assert not rebuilt
+            assert references == [retained]
     finally:
         truth._BASELINE_DEPENDENCY.reset(dependency)
         truth._BASELINE_CACHE.reset(cache)
