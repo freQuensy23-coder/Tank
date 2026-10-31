@@ -20,16 +20,16 @@ def observations(shape):
     return rows, first + timedelta(hours=192)
 
 
-def observe(rows, end, inputs, baseline, *, window=timedelta(hours=2)):
+def observe(rows, end, inputs, baseline, *, window=timedelta(hours=2), sticky=True, precision=128):
     assessment = truth._ASSESSMENT_INPUTS.set(inputs)
     times = truth._TIMES.set(({}, inputs) if inputs is not None else None)
     cache = truth._BASELINE_CACHE.set(baseline)
     dependency = truth._BASELINE_DEPENDENCY.set("frozen-source")
     try:
         with localcontext() as context:
-            context.prec = 128
+            context.prec = precision
             context.clear_flags()
-            context.flags[Rounded] = True
+            context.flags[Rounded] = sticky
             result = truth._oi_stats(rows, end - window, end, history_identity="venue")
             return result, context.prec, dict(context.flags)
     finally:
@@ -68,20 +68,60 @@ def test_cold_ordered_history_slices_avoid_row_identity_gathers(shape, monkeypat
     rows, end = observations(shape)
     windows = [timedelta(hours=hours) for hours in (1, 2, 4, 8)]
     expected = [observe(rows, end, None, {}, window=window) for window in windows]
-    fromiter = truth.np.fromiter
-    gathers = []
+    fromiter, argsort = truth.np.fromiter, truth.np.argsort
+    gathers, sorts = [], []
 
     def gathered(values, dtype, *args, **kwargs):
         if dtype is truth.np.intp:
             gathers.append(kwargs.get("count"))
         return fromiter(values, dtype, *args, **kwargs)
 
+    def sorted_offsets(values, *args, **kwargs):
+        sorts.append(len(values))
+        return argsort(values, *args, **kwargs)
+
     monkeypatch.setattr(truth.np, "fromiter", gathered)
+    monkeypatch.setattr(truth.np, "argsort", sorted_offsets)
     inputs = {}
     actual = [observe(rows, end, inputs, {}, window=window) for window in windows]
     assert actual == expected
     assert all(value[0] is not None for value in actual)
-    assert len(gathers) == (0 if shape == "regular" else len(windows))
+    expected_work = 0 if shape == "regular" else len(windows)
+    assert len(gathers) == len(sorts) == expected_work
+
+
+@pytest.mark.parametrize("sticky", [False, True])
+@pytest.mark.parametrize("precision", [9, 128])
+@pytest.mark.parametrize("case", ["gaps", "zero", "missing_usd", "derived_usd", "invalid_outside"])
+def test_contiguous_history_preserves_decimal_state_and_boundary_values(case, precision, sticky):
+    rows, end = observations("regular")
+    if case == "gaps":
+        for index, row in enumerate(rows):
+            row["ts"] += timedelta(microseconds=index % 13)
+        del rows[12:140:17]
+    elif case == "zero":
+        for index in (3, 5, 7):
+            rows[index]["oi_native"] = "-0.000" if index == 5 else "0.00"
+    elif case == "missing_usd":
+        for row in rows[::3]:
+            row["oi_usd"] = None
+    elif case == "derived_usd":
+        for row in rows[::3]:
+            row["oi_usd_source"] = "DERIVED"
+    else:
+        rows.append({"ts": end + timedelta(days=1), "oi_native": "invalid", "oi_usd": "invalid"})
+    options = {"precision": precision, "sticky": sticky}
+    inputs = {}
+    for hours in (1, 2, 4, 8):
+        window = timedelta(hours=hours, microseconds=1)
+        expected = observe(rows, end, None, {}, window=window, **options)
+        actual = observe(rows, end, inputs, {}, window=window, **options)
+        assert actual == expected
+        for name in ("oi_native_start", "oi_native_end", "oi_usd_start", "oi_usd_end"):
+            value, reference = actual[0][name], expected[0][name]
+            assert (value.as_tuple() if value is not None else None) == (
+                reference.as_tuple() if reference is not None else None
+            )
 
 
 @pytest.mark.parametrize("shape", ["regular", "duplicates", "unsorted"])

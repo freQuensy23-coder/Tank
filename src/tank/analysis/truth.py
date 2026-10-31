@@ -1252,6 +1252,10 @@ def _oi_history_returns(times, native, usd, window, tolerance, *, prepared=None)
         return None
     old, paired = _history_nearest(ordered, offsets - width, tolerance)
     old = order[old]
+    return _oi_history_changes(times, prepared, old, paired)
+
+
+def _oi_history_changes(times, prepared, old, paired):
     returns, ends = [], []
     for values in prepared:
         present = _history_present(values)
@@ -1261,6 +1265,39 @@ def _oi_history_returns(times, native, usd, window, tolerance, *, prepared=None)
         returns.append(np.asarray(result, dtype=np.float64).tolist())
         ends.append([times[i] for i in np.flatnonzero(valid)])
     return returns[0], returns[1], ends[0], ends[1]
+
+
+def _oi_contiguous_history(rows, ordered, times, lo, hi, window, tolerance):
+    inputs = _ASSESSMENT_INPUTS.get()
+    if inputs is None or lo == hi:
+        return None
+    memo = inputs.setdefault("oi_contiguous_histories", {})
+    hit = memo.get(id(rows))
+    if hit is None or hit[0] is not rows or hit[1] is not times:
+        temporal = None
+        if (
+            all(type(row) is dict for row in rows)
+            and all(index == position for position, (_, index) in enumerate(ordered))
+            and all(before < after for before, after in zip(times, times[1:], strict=False))
+        ):
+            temporal = _history_time_array(times, timedelta(0))
+        hit = rows, times, temporal
+        memo[id(rows)] = hit
+    if hit[2] is None or type(window) is not timedelta:
+        return None
+    offsets = hit[2][0][lo:hi]
+    width = window.days * 86400000000 + window.seconds * 1000000 + window.microseconds
+    try:
+        _ = times[lo] - window, times[hi - 1] - window
+        if int(offsets[-1]) + abs(width) > 2**52:
+            return None
+    except (TypeError, ValueError, OverflowError):
+        return None
+    columns = _oi_history_arrays(rows)
+    if columns is None:
+        return None
+    old, paired = _history_nearest(offsets, offsets - width, tolerance)
+    return _oi_history_changes(times[lo:hi], [values[lo:hi] for values in columns[0]], old, paired)
 
 
 def _oi_history_axis(times):
@@ -1415,7 +1452,17 @@ def _oi_stats(rows, start, end, *, history_identity=None, venue_history=None, ti
     )
     ranges = cache.get(history_key) if cache is not None else None
     if ranges is None:
-        if venue_history is None and bytime is None:
+        vector = None
+        if (
+            venue_history is None
+            and bytime is None
+            and indexed_history
+            and history_times
+            and (history_times[-1] - history_times[0]).total_seconds()
+            >= float(parameter("history_min_days", 7)) * 86400
+        ):
+            vector = _oi_contiguous_history(rows, ordered, ordered_times, lo, hi, window, pair_tolerance)
+        if venue_history is None and bytime is None and vector is None:
             bytime = {_time(rows[i]): rows[i] for i in sorted(index for _, index in ordered[lo:hi])}
         hn = []
         hu = []
@@ -1425,24 +1472,25 @@ def _oi_stats(rows, start, end, *, history_identity=None, venue_history=None, ti
                     _history_slice(times, venue_rows, start) for times, venue_rows in venue_history
                 ]
             hn, hu = _composite_history(venue_history, window)
-        elif (
+        elif vector is not None or (
             bytime
             and (max(bytime) - min(bytime)).total_seconds() >= float(parameter("history_min_days", 7)) * 86400
         ):
             native_ends, usd_ends = [], []
-            prepared = _oi_history_column_views(rows, bytime.values())
-            if prepared is None:
-                vector = _oi_history_returns(
-                    list(bytime),
-                    [r.get("oi_native") for r in bytime.values()],
-                    [None if r.get("oi_usd_source") else r.get("oi_usd") for r in bytime.values()],
-                    window,
-                    pair_tolerance,
-                )
-            else:
-                vector = _oi_history_returns(
-                    list(bytime), prepared[0], prepared[1], window, pair_tolerance, prepared=prepared
-                )
+            if vector is None:
+                prepared = _oi_history_column_views(rows, bytime.values())
+                if prepared is None:
+                    vector = _oi_history_returns(
+                        list(bytime),
+                        [r.get("oi_native") for r in bytime.values()],
+                        [None if r.get("oi_usd_source") else r.get("oi_usd") for r in bytime.values()],
+                        window,
+                        pair_tolerance,
+                    )
+                else:
+                    vector = _oi_history_returns(
+                        list(bytime), prepared[0], prepared[1], window, pair_tolerance, prepared=prepared
+                    )
             if vector is not None:
                 hn, hu, native_ends, usd_ends = vector
             else:
