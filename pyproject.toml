@@ -51,6 +51,7 @@ cache-keys = [
   { file = "src/tank/clickhouse_market.py" },
   { file = "src/tank/clickhouse_market.pxd" },
   { file = "src/tank/util.py" },
+  { file = "src/tank/util.pxd" },
 ]
 [tool.pytest.ini_options]
 asyncio_mode = "auto"

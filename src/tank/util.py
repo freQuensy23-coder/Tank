@@ -107,6 +107,41 @@ def new_id(prefix: str, *, timestamp: Any = None, entropy: int | None = None) ->
     return prefix + "-" + "".join(reversed(chars))
 
 
+def _owned_json(value: Any, missing: object, depth: int) -> Any:
+    if depth >= 64:
+        return missing
+    kind = type(value)
+    if value is None or kind is str or kind is int or kind is float or kind is bool:
+        return value
+    if kind is dict:
+        dictionary = value
+        result = {}
+        for name, item in dictionary.items():
+            if type(name) is not str:
+                return missing
+            cloned = _owned_json(item, missing, depth + 1)
+            if cloned is missing:
+                return missing
+            result[name] = cloned
+        return result
+    if kind is list:
+        sequence = value
+        items = []
+        for item in sequence:
+            cloned = _owned_json(item, missing, depth + 1)
+            if cloned is missing:
+                return missing
+            items.append(cloned)
+        return items
+    return missing
+
+
+def owned_json(value: Any) -> tuple[bool, Any]:
+    missing = object()
+    cloned = _owned_json(value, missing, 0)
+    return (False, None) if cloned is missing else (True, cloned)
+
+
 def jsonable(value: Any) -> Any:
     if value is None or type(value) in (str, int, float, bool):
         return value

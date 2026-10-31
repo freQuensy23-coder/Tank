@@ -233,7 +233,7 @@ def native_profile_rows(value):
             )
     if not total or not helpers:
         raise ValueError("No native computation helpers sampled")
-    selected = sorted(inclusive, key=lambda row: (-own[row], -inclusive[row], row))[:80]
+    selected = sorted(inclusive, key=lambda row: (-inclusive[row], -own[row], row))[:80]
     return {
         "kind": "native_computation_stack_samples",
         "samples": total,

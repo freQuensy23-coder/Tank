@@ -48,6 +48,20 @@ def test_native_samples_count_only_real_compute_stacks_without_exporting_paths()
     ]
 
 
+def test_native_samples_retain_hot_callers_when_leaf_runtime_symbols_fill_the_row_budget():
+    source = native_profile()
+    source["shared"]["frames"] = source["shared"]["frames"][:2] + [
+        {"name": f"runtime_{index}", "file": "/owned/python3.13"} for index in range(100)
+    ]
+    source["profiles"][0]["samples"] = [[0, 1, index + 2] for index in range(100)]
+    source["profiles"][0]["weights"] = [1] * 100
+    rows = worker.native_profile_rows(source)["rows"]
+    assert len(rows) <= 80
+    for name in ("compute_market_truth", "_oi_stats"):
+        row = next(row for row in rows if row["function"] == name)
+        assert row["inclusive_samples"] == 100 and row["self_samples"] == 0
+
+
 @pytest.mark.parametrize("index", [-1, 3, True, "0"])
 def test_native_samples_refuse_invalid_frame_references(index):
     source = native_profile()

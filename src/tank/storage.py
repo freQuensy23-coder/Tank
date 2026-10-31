@@ -35,7 +35,7 @@ from tank.models import (
     Record,
 )
 from tank.time_precision import Timestamp, collection_clock, offset_schedule, propagate_timestamp
-from tank.util import iso, jsonable, new_id, parse_time, utcnow
+from tank.util import iso, jsonable, new_id, owned_json, parse_time, utcnow
 
 
 class ImmutableRecordError(ValueError):
@@ -1275,36 +1275,7 @@ class PostgresRepository(QueueMixin):
 
         _table(collection)
         key = str(key)
-        missing = object()
-
-        def owned_json(value, depth):
-            if depth >= 64:
-                return missing
-            kind = type(value)
-            if value is None or kind is str or kind is int or kind is float or kind is bool:
-                return value
-            if kind is dict:
-                result = {}
-                for name, item in value.items():
-                    if type(name) is not str:
-                        return missing
-                    cloned = owned_json(item, depth + 1)
-                    if cloned is missing:
-                        return missing
-                    result[name] = cloned
-                return result
-            if kind is list:
-                items = []
-                for item in value:
-                    cloned = owned_json(item, depth + 1)
-                    if cloned is missing:
-                        return missing
-                    items.append(cloned)
-                return items
-            return missing
-
-        cloned = owned_json(record, 0)
-        owned = cloned is not missing
+        owned, cloned = owned_json(record)
         record = cloned if owned else jsonable(record)
         async with self.lock(f"record:{collection}:{key}"):
             conn = self._conn()
