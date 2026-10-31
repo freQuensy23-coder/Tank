@@ -4,6 +4,8 @@ import gc
 import hashlib
 import json
 import logging
+import os
+import pickle
 import pstats
 import re
 import signal
@@ -13,9 +15,10 @@ from collections import Counter
 from contextlib import suppress
 from contextvars import copy_context
 from datetime import datetime
-from decimal import Decimal
+from decimal import Decimal, getcontext
 from functools import wraps
 from pathlib import Path
+from tempfile import TemporaryDirectory
 from time import perf_counter, process_time
 from urllib.parse import urlsplit
 from weakref import WeakKeyDictionary
@@ -201,6 +204,111 @@ async def profile_retained_async(call):
     finally:
         profiler.disable()
     return profile_rows(profiler)
+
+
+def native_profile_rows(value):
+    frames = [(Path(frame.get("file") or "~").name, frame["name"]) for frame in value["shared"]["frames"]]
+    target = {row for row in frames if row[0].startswith("truth.") and row[0].endswith((".so", ".c", ".cpp"))}
+    entry_points = {"compute_market_truth", "_compute_market_truth"}
+    names = {row: row[1].rsplit(".", 1)[-1] for row in target}
+    own, inclusive = Counter(), Counter()
+    total, helpers = 0, False
+    for profile in value["profiles"]:
+        if profile["type"] != "sampled" or len(profile["samples"]) != len(profile["weights"]):
+            raise ValueError("Invalid native sampling profile")
+        for sample in profile["samples"]:
+            if any(type(index) is not int or not 0 <= index < len(frames) for index in sample):
+                raise ValueError("Invalid native sampling frame")
+            stack = [frames[index] for index in sample]
+            if not any(names.get(row) in entry_points for row in stack):
+                continue
+            total += 1
+            own[stack[-1]] += 1
+            inclusive.update(set(stack))
+            helpers |= any(
+                (module, name) in target
+                and names[module, name] not in entry_points | {"wrapped"}
+                and not name.startswith("0x")
+                for module, name in stack
+            )
+    if not total or not helpers:
+        raise ValueError("No native computation helpers sampled")
+    selected = sorted(inclusive, key=lambda row: (-own[row], -inclusive[row], row))[:80]
+    return {
+        "kind": "native_computation_stack_samples",
+        "samples": total,
+        "rows": [
+            {
+                "module": module,
+                "function": name,
+                "self_samples": own[module, name],
+                "inclusive_samples": inclusive[module, name],
+            }
+            for module, name in selected
+        ],
+    }
+
+
+async def sample_retained_native(call, root, directory):
+    context, function, args, kwargs = call
+    assert function.__module__ == "tank.analysis.truth" and len(args) == 1
+    assert sys.getprofile() is None
+    with TemporaryDirectory(dir=directory, prefix="owned-native-sampling-") as temporary:
+        folder = Path(temporary)
+        inputs, output, profile = (folder / name for name in ("input.pickle", "result.json", "profile.json"))
+        inputs.write_bytes(
+            pickle.dumps(
+                (args[0], kwargs["config"], context.run(getcontext).copy()), protocol=pickle.HIGHEST_PROTOCOL
+            )
+        )
+        process = await asyncio.create_subprocess_exec(
+            str(Path(sys.executable).parent / "py-spy"),
+            "record",
+            "--native",
+            "--rate",
+            "100",
+            "--format",
+            "speedscope",
+            "--output",
+            str(profile),
+            "--",
+            sys.executable,
+            str(Path(__file__).with_name("market_truth_native_profile_worker.py")),
+            str(root),
+            str(inputs),
+            str(output),
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+            start_new_session=True,
+        )
+        collected = False
+        try:
+            async with asyncio.timeout(20):
+                _, stderr = await process.communicate()
+            result = None
+            if output.exists():
+                assert output.stat().st_size <= 1_000_000
+                result = json.loads(output.read_bytes())
+            if process.returncode or result is None or "failure" in result:
+                raise NativeSamplingError(
+                    {
+                        "exit_code": process.returncode,
+                        "permission_denied": b"permission denied" in stderr.lower(),
+                        "stderr_sha256": hashlib.sha256(stderr).hexdigest(),
+                        "child_failure": result,
+                    }
+                )
+            assert set(result) == {"result_sha256", "artifacts"}
+            assert profile.stat().st_size <= 8_000_000
+            result.update(native_profile_rows(json.loads(profile.read_bytes())))
+            collected = True
+            return result
+        finally:
+            if not collected or process.returncode != 0:
+                with suppress(ProcessLookupError):
+                    os.killpg(process.pid, signal.SIGKILL)
+                async with asyncio.timeout(2):
+                    await process.communicate()
 
 
 async def sample_retained_async(call):
@@ -781,11 +889,13 @@ async def run(root, directory, fixtures, revision, reader):
                     assessment_cache_entries.clear()
                     gc_receipt = {}
                     rows = profile_retained_call(diagnostic_call, gc_receipt=gc_receipt)
+                    native_samples = await sample_retained_native(diagnostic_call, root, directory)
                     emit(
                         {
                             "kind": "post_measurement_profile",
                             "stage": diagnostic_call[1].__name__,
                             "rows": rows,
+                            "native_samples": native_samples,
                             "garbage_collection": gc_receipt,
                             "assessment_cache_entries": dict(assessment_cache_entries),
                             "inclusive_nonadditive_phase_seconds": dict(phases),
@@ -947,6 +1057,10 @@ class ReturnBoundaryError(Exception):
     pass
 
 
+class NativeSamplingError(Exception):
+    pass
+
+
 def failure_receipt(error):
     frames, trace = [], error.__traceback__
     while trace:
@@ -959,6 +1073,8 @@ def failure_receipt(error):
     }
     if type(error) is ReturnBoundaryError:
         result["return_boundary_failures"] = error.args[0]
+    if type(error) is NativeSamplingError:
+        result["native_sampling_failure"] = error.args[0]
     return result
 
 

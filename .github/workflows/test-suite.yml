@@ -86,6 +86,9 @@ jobs:
           python-version: "3.13.13"
           enable-cache: true
       - run: uv sync --python 3.13.13 --frozen --extra dev
+      - name: Install the pinned native diagnostic sampler
+        if: matrix.shard == 'market-truth'
+        run: uv pip install --python .venv/bin/python py-spy==0.4.2
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e
         if: matrix.shard != 'market-truth'
         with:
