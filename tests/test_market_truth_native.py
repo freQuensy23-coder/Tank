@@ -1,8 +1,18 @@
+import tomllib
 from decimal import Decimal, localcontext
 from importlib.machinery import ExtensionFileLoader
+from pathlib import Path
 
 from tank import clickhouse_market, util
 from tank.analysis import truth
+
+
+def test_native_linux_build_uses_one_explicit_compiler_without_relaxing_arithmetic():
+    project = tomllib.loads((Path(__file__).resolve().parents[1] / "pyproject.toml").read_text())
+    options = project["tool"]["hatch"]["build"]["targets"]["wheel"]["hooks"]["cython"]["options"]
+    assert options.get("env", []) == [{"env": "CC", "arg": "clang", "platforms": ["linux"]}]
+    assert options["compile_args"] == ["-O1", "-g0", "-ffp-contract=off"]
+    assert options["directives"]["profile"] is False
 
 
 def test_truth_executes_native_code_without_changing_decimal_representation_or_precision():
