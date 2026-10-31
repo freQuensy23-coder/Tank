@@ -28,6 +28,8 @@ from pydantic_core import from_json
 from tank.market_schema import MARKET_ALIASES, MARKET_COLUMNS, MARKET_IDENTITIES
 from tank.util import canonical_json, iso, parse_time, unsigned_zero_scale
 
+_DECIMAL_CONSTRUCTOR = Decimal
+
 MARKET_TABLES = {
     "mkt.klines_1m": "open_time",
     "mkt.flow_bars_1m": "minute_start",
@@ -760,6 +762,32 @@ async def market_rows_recorded_since(ch, collection, time_field, instrument_ids,
     return [(row["instrument_id"], rec, row["storage_key"]) for row, rec in zip(rows, records, strict=True)]
 
 
+def _sampled_column_records(collection, names, payload):
+    columns = dict(zip(names, zip(*payload, strict=True), strict=True))
+    parent = getcontext()
+    with localcontext() as context:
+        try:
+            records = _column_records(collection, columns, len(payload))
+        except (ArithmeticError, LookupError, OSError, RecursionError, TypeError, ValueError):
+            records = None
+    if records is None:
+        return _records(collection, [dict(zip(names, row, strict=True)) for row in payload])
+    for signal, raised in context.flags.items():
+        if raised:
+            parent.flags[signal] = True
+    return records
+
+
+async def _sampled_records(collection, names, payload):
+    if type(payload) is not list or any(type(row) is not list or len(row) != len(names) for row in payload):
+        return await _decode(collection, [dict(zip(names, row, strict=True)) for row in payload])
+    if not payload:
+        return []
+    if len(payload) > 1000:
+        return await asyncio.to_thread(_sampled_column_records, collection, names, payload)
+    return _sampled_column_records(collection, names, payload)
+
+
 async def _sampled_history_state(
     ch, collection, time_field, group_fields, instrument_ids, start, end, bucket_s, cache
 ):
@@ -817,7 +845,7 @@ async def _sampled_history_state(
         if any(not isinstance(row, list) for row in payload):
             raise ValueError("invalid sampled history population")
         records = sorted(
-            await _decode(collection, [dict(zip(names, row, strict=True)) for row in payload]),
+            await _sampled_records(collection, names, payload),
             key=lambda row: row[time_field],
         )
     cache.pop(key, None)
@@ -919,15 +947,15 @@ def _canonical_numeric_text(value):
     return value if length - dot - 1 <= 6 else None
 
 
-def _column_wide_records(collection, columns, time_field):
-    if not columns:
-        return []
-    sizes = {len(values) for values in columns.values()}
-    if len(sizes) != 1:
-        raise ValueError("Invalid wide page columns")
-    count = sizes.pop()
-    if any(type(value) is not str for value in columns[time_field]):
+def _column_records(collection, columns, count):
+    if any(type(name) is not str for name in columns):
         return None
+    if Decimal is not _DECIMAL_CONSTRUCTOR:
+        for name, kind in MARKET_COLUMNS[collection].items():
+            if kind == "numeric":
+                for value in columns.get(name, ()):
+                    if value is not None and _canonical_numeric_text(value) is None:
+                        return None
     empty = [None] * count
     fields, timestamps, numbers = {}, {}, {}
     for name, kind in MARKET_COLUMNS[collection].items():
@@ -976,10 +1004,24 @@ def _column_wide_records(collection, columns, time_field):
         if target in fields:
             fields[alias] = fields[target]
     names = tuple(fields)
-    records = zip(*fields.values(), strict=True)
+    return [dict(zip(names, values, strict=True)) for values in zip(*fields.values(), strict=True)]
+
+
+def _column_wide_records(collection, columns, time_field):
+    if not columns:
+        return []
+    sizes = {len(values) for values in columns.values()}
+    if len(sizes) != 1:
+        raise ValueError("Invalid wide page columns")
+    count = sizes.pop()
+    if any(type(value) is not str for value in columns[time_field]):
+        return None
+    records = _column_records(collection, columns, count)
+    if records is None:
+        return None
     return [
-        (iid, dict(zip(names, values, strict=True)), key, parse_time(at))
-        for iid, key, at, values in zip(
+        (iid, record, key, parse_time(at))
+        for iid, key, at, record in zip(
             columns["instrument_id"], columns["storage_key"], columns[time_field], records, strict=True
         )
     ]
