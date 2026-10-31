@@ -1254,6 +1254,28 @@ def _oi_history_returns(times, native, usd, window, tolerance, *, prepared=None)
     return returns[0], returns[1], ends[0], ends[1]
 
 
+def _oi_history_axis(times):
+    inputs = _ASSESSMENT_INPUTS.get()
+    if inputs is None:
+        return None
+    memo = inputs.setdefault("oi_history_axes", {})
+    hit = memo.get(id(times))
+    if hit is not None and hit[0] is times:
+        return hit[1]
+    result = None
+    if all(type(t) is datetime and t.tzinfo is UTC for t in times) and all(
+        before <= after for before, after in zip(times, times[1:])
+    ):
+        unique = list(dict.fromkeys(times))
+        gaps = np.asarray(
+            [(after - before).total_seconds() for before, after in zip(unique, unique[1:])],
+            dtype=np.float64,
+        )
+        result = unique, gaps
+    memo[id(times)] = (times, result)
+    return result
+
+
 def _oi_stats(rows, start, end, *, history_identity=None, venue_history=None, timeline_times=None):
     rows, _, ordered, ordered_times = _oi_split(rows)
     tolerance = float(parameter("oi_sync_tolerance_s", 60))
@@ -1308,9 +1330,17 @@ def _oi_stats(rows, start, end, *, history_identity=None, venue_history=None, ti
         _time is _MEMO_TIME
         and type(memoized_times) is tuple
         and memoized_times[1] is _ASSESSMENT_INPUTS.get()
-        and all(type(at) is datetime and at.tzinfo is UTC for at in history_axis[lo:hi])
     )
-    if indexed_history or (
+    axis = _oi_history_axis(history_axis) if indexed_history else None
+    indexed_history = indexed_history and (
+        axis is not None or all(type(at) is datetime and at.tzinfo is UTC for at in history_axis[lo:hi])
+    )
+    if axis is not None:
+        unique, gap_axis = axis
+        axis_lo, axis_hi = bisect_left(unique, lower), bisect_left(unique, start)
+        history_times = unique[axis_lo:axis_hi]
+        bytime = None
+    elif indexed_history or (
         venue_history is not None and all(type(at) is datetime for at in history_axis[lo:hi])
     ):
         history_times = list(dict.fromkeys(history_axis[lo:hi]))
@@ -1339,10 +1369,18 @@ def _oi_stats(rows, start, end, *, history_identity=None, venue_history=None, ti
         bytime = {_time(rows[i]): rows[i] for i in sorted(index for _, index in ordered[lo:hi])}
     if venue_history is not None and not deferred_history:
         venue_history = [_history_slice(times, venue_rows, start) for times, venue_rows in venue_history]
-    gaps = sorted(
-        (b - a).total_seconds() for a, b in zip(history_times, history_times[1:], strict=False) if b > a
-    )
-    pair_tolerance = max(float(parameter("oi_sync_tolerance_s", 60)), gaps[len(gaps) // 2] / 2 if gaps else 0)
+    if axis is not None:
+        gaps = gap_axis[axis_lo : max(axis_lo, axis_hi - 1)]
+        middle = len(gaps) // 2
+        half_gap = float(np.partition(gaps, middle)[middle]) / 2 if len(gaps) else 0
+        pair_tolerance = max(float(parameter("oi_sync_tolerance_s", 60)), half_gap)
+    else:
+        gaps = sorted(
+            (b - a).total_seconds() for a, b in zip(history_times, history_times[1:], strict=False) if b > a
+        )
+        pair_tolerance = max(
+            float(parameter("oi_sync_tolerance_s", 60)), gaps[len(gaps) // 2] / 2 if gaps else 0
+        )
     history_key = (
         (
             "oi" if venue_history is None else "oi_composite",

@@ -40,16 +40,27 @@ def observe(rows, end, inputs, baseline, *, window=timedelta(hours=2)):
 
 
 @pytest.mark.parametrize("shape", ["regular", "duplicates", "unsorted"])
-def test_cold_windows_share_one_request_owned_history_time_axis(shape):
+def test_cold_windows_share_one_request_owned_history_time_axis(shape, monkeypatch):
     rows, end = observations(shape)
     for row in rows:
         row["ts"] += timedelta(microseconds=row["ts"].hour % 17)
-    windows = [timedelta(minutes=minutes) for minutes in (15, 60, 240, 1440)]
+    windows = [timedelta(minutes=minutes) for minutes in (60, 120, 240, 1440)]
     expected = [observe(rows, end, None, {}, window=window) for window in windows]
+    partition = truth.np.partition
+    spans = []
+
+    def partitioned(values, middle):
+        spans.append(len(values))
+        return partition(values, middle)
+
+    monkeypatch.setattr(truth.np, "partition", partitioned)
     inputs = {}
     actual = [observe(rows, end, inputs, {}, window=window) for window in windows]
     assert actual == expected
+    assert all(result[0] is not None for result in actual)
     assert len(inputs.get("oi_history_axes", {})) == 1
+    assert len(spans) == len(windows)
+    assert all(span > 0 for span in spans)
 
 
 @pytest.mark.parametrize("shape", ["regular", "duplicates", "unsorted"])
