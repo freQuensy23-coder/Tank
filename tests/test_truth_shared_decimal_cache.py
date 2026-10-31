@@ -1,8 +1,52 @@
+import sys
 from decimal import Decimal, Rounded, localcontext
 
 import pytest
 
 from tank.analysis import truth
+
+
+@pytest.mark.parametrize("text,required", [("123.4500", 46), ("0.000", 34), ("0E-8", 34), ("-0.000", 34)])
+@pytest.mark.parametrize("precision", [9, 128])
+@pytest.mark.parametrize("sticky", [False, True])
+def test_scalar_cache_miss_extracts_decimal_tuple_once(text, required, precision, sticky):
+    constructor = type(Decimal(0).as_tuple()).__new__.__code__
+    calls = []
+
+    def profile(frame, event, arg):
+        if event == "call" and frame.f_code is constructor:
+            calls.append(None)
+
+    with localcontext() as context:
+        context.prec = precision
+        context.clear_flags()
+        context.flags[Rounded] = sticky
+        reference = Decimal(text)
+        expected = reference.as_tuple(), max(precision, required), dict(context.flags)
+        inputs = {}
+        token = truth._ASSESSMENT_INPUTS.set(inputs)
+        try:
+            original = sys.getprofile()
+            sys.setprofile(profile)
+            try:
+                first = truth.decimal(text)
+            finally:
+                sys.setprofile(original)
+            assert (first.as_tuple(), context.prec, dict(context.flags)) == expected
+            assert len(calls) == 1
+            calls.clear()
+            context.prec = 9
+            sys.setprofile(profile)
+            try:
+                second = truth.decimal(text)
+            finally:
+                sys.setprofile(original)
+            assert second is first and not calls
+            assert inputs["finite_text_precisions"][text] == required
+            assert context.prec == max(9, required)
+            assert dict(context.flags) == expected[2]
+        finally:
+            truth._ASSESSMENT_INPUTS.reset(token)
 
 
 @pytest.mark.parametrize("length", [6, 64, 65, 160, 161])

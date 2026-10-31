@@ -193,7 +193,7 @@ def _compact_json_rows(body):
         raise ValueError("Invalid compact column names")
     result = []
     for line in lines:
-        values = json.loads(line)
+        values = _column_json(line)
         if not isinstance(values, list):
             raise ValueError("Invalid compact row")
         result.append(dict(zip(names, values, strict=True)))
