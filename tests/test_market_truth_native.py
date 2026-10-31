@@ -13,6 +13,7 @@ def test_native_linux_build_uses_one_explicit_compiler_without_relaxing_arithmet
     assert options.get("env", []) == [{"env": "CC", "arg": "clang", "platforms": ["linux"]}]
     assert options["compile_args"] == ["-O1", "-g0", "-ffp-contract=off"]
     assert options["cythonize_kwargs"] == {"nthreads": 2}
+    assert project["tool"]["distutils"]["build_ext"] == {"parallel": 2}
     assert options["directives"]["profile"] is False
 
 

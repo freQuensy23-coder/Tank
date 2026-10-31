@@ -43,6 +43,8 @@ cythonize_kwargs = { nthreads = 2 }
 directives = { language_level = 3, binding = true, annotation_typing = false, profile = false }
 [tool.hatch.build.targets.wheel.hooks.cython.options.files]
 targets = ["*/analysis/truth.py", "*/clickhouse_market.py", "*/util.py"]
+[tool.distutils.build_ext]
+parallel = 2
 [tool.uv]
 cache-keys = [
   { file = "pyproject.toml" },

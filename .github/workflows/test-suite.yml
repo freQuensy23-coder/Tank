@@ -48,7 +48,7 @@ jobs:
   python-integration:
     name: Python integration
     runs-on: ubuntu-24.04
-    timeout-minutes: ${{ github.event_name == 'pull_request' && (matrix.shard == 'market-truth' && 5 || 4) || 20 }}
+    timeout-minutes: ${{ github.event_name == 'pull_request' && 4 || 20 }}
     strategy:
       fail-fast: false
       matrix:
