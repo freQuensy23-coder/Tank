@@ -1,5 +1,5 @@
 from array import array
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal, getcontext, localcontext
 
 import pytest
@@ -9,7 +9,7 @@ from tank.analysis import truth
 
 @pytest.mark.parametrize("mixed_quantum", [False, True, "large"])
 def test_fixed_volume_columns_avoid_decimal_arrays_without_changing_money(monkeypatch, mixed_quantum):
-    start = datetime(2026, 1, 1, tzinfo=timezone.utc)
+    start = datetime(2026, 1, 1, tzinfo=UTC)
     if mixed_quantum == "large":
         raw = [str(10**35 + i) + ".0000" for i in range(128)]
         width, end_index = 20, 120
@@ -69,7 +69,7 @@ def test_fixed_volume_columns_avoid_decimal_arrays_without_changing_money(monkey
 def test_integer_and_legacy_volume_columns_match_quantum_and_flags(shape):
     import numpy as np
 
-    base = datetime(2026, 1, 1, tzinfo=timezone.utc)
+    base = datetime(2026, 1, 1, tzinfo=UTC)
     raw = [["1.00", "2", "0.0000", "4.0"] * 32, ["0.1", "0", "5.000", "3.00"] * 32]
     times = [int(base.timestamp()) * 1000000 + i * 60000000 for i in range(128)]
     complete = [True] * 128

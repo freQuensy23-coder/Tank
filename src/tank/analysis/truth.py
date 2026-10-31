@@ -4688,6 +4688,9 @@ def data_confidence(snapshot, spot, derivatives, end):
     )
 
 
+_MONEY_RADIX = 10
+
+
 class _ScaledMoneyValues:
     """Exact coefficients plus preferred Decimal exponents, never float money."""
 
@@ -4705,13 +4708,12 @@ class _ScaledMoneyValues:
     def __iter__(self):
         return (self[index] for index in range(len(self)))
 
-    @cython.locals(coefficient=object, remainder=object, radix=object, index=object, quantum=object)
     def __getitem__(self, index):
         if isinstance(index, slice):
             return list(self)[index]
         index = integer_index(index)
         quantum = int(self.quantums[index])
-        radix = 10
+        radix = _MONEY_RADIX
         coefficient, remainder = divmod(int(self.units[index]), radix ** (quantum - self.scale))
         if remainder:
             raise ValueError("Nonintegral monetary coefficient")
@@ -4737,9 +4739,8 @@ class _MonetaryPopulation(_ScaledMoneyValues):
         self.ordered = _ScaledMoneyValues(units[order], quantums[order], scale)
 
 
-@cython.locals(radix=object)
 def _fixed_volume_prefix(raw, complete, metadata):
-    radix = 10
+    radix = _MONEY_RADIX
     context = getcontext()
     kind = type(raw)
     if (
@@ -4915,9 +4916,8 @@ def _native_volume_arrays(rows, projection, end, instrument=None):
     return result
 
 
-@cython.locals(radix=object)
 def _native_volume_windows(indexes, start, end):
-    radix = 10
+    radix = _MONEY_RADIX
     epoch = parse_time("1970-01-01T00:00:00Z")
 
     def micros(value):

@@ -1,5 +1,8 @@
 import cython
 
+# Keep monetary powers in the arbitrary-precision Python integer domain.
+cdef object _MONEY_RADIX
+
 @cython.locals(
     text=str,
     length=cython.Py_ssize_t,
