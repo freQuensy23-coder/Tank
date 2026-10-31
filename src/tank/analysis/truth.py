@@ -1688,7 +1688,8 @@ def _composite_history_vector(venue_history, window):
             for pair in venue_history
         )
         and all(
-            type(values) is np.ndarray and values.dtype == object and len(values) <= 65535 for values in prepared
+            type(values) is np.ndarray and values.dtype == object and len(values) <= 65535
+            for values in prepared
         )
         and all(
             len(prepared[2 * venue]) == len(prepared[2 * venue + 1]) == len(pair[1])
@@ -1757,7 +1758,9 @@ def _composite_history_vector(venue_history, window):
                     )
     if signatures is not None:
         for measure in range(2):
-            keys, inverse = np.unique(np.concatenate(signatures[2 * measure : 2 * measure + 2]), return_inverse=True)
+            keys, inverse = np.unique(
+                np.concatenate(signatures[2 * measure : 2 * measure + 2]), return_inverse=True
+            )
             aggregate = np.full(len(keys), Decimal(0), dtype=object)
             for venue in range(len(venue_history)):
                 indices = ((keys >> (16 * venue)) & 65535).astype(np.intp) - 1
