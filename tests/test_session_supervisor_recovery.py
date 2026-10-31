@@ -157,3 +157,50 @@ async def test_idle_maintenance_failure_does_not_prevent_next_session_reconcilia
         assert "private provider diagnostic" not in caplog.text
     finally:
         await service.close()
+
+
+async def test_completion_reconciliation_is_serialized_during_follower_handoff():
+    repo = MemoryRepository()
+    await seed(repo)
+    service = SessionService(repo, config(), None, http=object())
+    entered, release, second = (asyncio.Event() for _ in range(3))
+    calls = 0
+    active = 0
+    maximum = 0
+
+    async def complete(sid):
+        nonlocal calls, active, maximum
+        calls += 1
+        active += 1
+        maximum = max(maximum, active)
+        if calls == 1:
+            entered.set()
+            await release.wait()
+        else:
+            second.set()
+        active -= 1
+        return {"complete": False}
+
+    service.completed_turn = complete
+    attempting = asyncio.Event()
+
+    async def handoff():
+        attempting.set()
+        return await service.finish_if_idle("s")
+
+    tasks = [asyncio.create_task(service.finish_if_idle("s"))]
+    try:
+        await asyncio.wait_for(entered.wait(), 1)
+        tasks.append(asyncio.create_task(handoff()))
+        await asyncio.wait_for(attempting.wait(), 1)
+        release.set()
+        await asyncio.wait_for(asyncio.gather(*tasks), 1)
+        assert second.is_set() and calls == 2
+        assert maximum == 1
+        assert (await repo.get("ops.agent_sessions", "s"))["active_message_id"] == "root"
+    finally:
+        release.set()
+        for task in tasks:
+            task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
+        await service.close()
