@@ -40,7 +40,7 @@ import numpy as np
 from tank.analysis import compute_workers
 from tank.market.capture import event_anchor
 from tank.time_precision import Timestamp, chosen_boundary, offset_schedule, propagate_timestamp
-from tank.util import _TIME_PARSE_MEMO, iso, jsonable, new_id, parse_time
+from tank.util import _TIME_PARSE_MEMO, iso, jsonable, new_id, parse_time, unsigned_zero_scale
 
 WINDOWS = {"W15M": 900, "W1H": 3600, "W4H": 14400, "W24H": 86400}
 RISK_ORDER = [
@@ -367,6 +367,9 @@ def repricing(value, event_history, day_history):
 
 def _time(row):
     return _row_time(row)
+
+
+_MEMO_TIME = _time
 
 
 def _row_time(row):
@@ -1022,6 +1025,9 @@ def _oi_split(rows):
 
 def _fixed_decimal_text_metadata(value):
     text = value
+    if text.startswith("0E-"):
+        scale = unsigned_zero_scale(text)
+        return scale << 6 if scale is not None else -1
     length = len(text)
     dot, digits, significant = -1, 0, 0
     for index in range(length):
@@ -1297,7 +1303,16 @@ def _oi_stats(rows, start, end, *, history_identity=None, venue_history=None, ti
         timeline_times if venue_history is not None and timeline_times is not None else ordered_times
     )
     lo, hi = bisect_left(history_axis, lower), bisect_left(history_axis, start)
-    if venue_history is not None and all(type(at) is datetime for at in history_axis[lo:hi]):
+    memoized_times = _TIMES.get()
+    indexed_history = (
+        _time is _MEMO_TIME
+        and type(memoized_times) is tuple
+        and memoized_times[1] is _ASSESSMENT_INPUTS.get()
+        and all(type(at) is datetime and at.tzinfo is UTC for at in history_axis[lo:hi])
+    )
+    if indexed_history or (
+        venue_history is not None and all(type(at) is datetime for at in history_axis[lo:hi])
+    ):
         history_times = list(dict.fromkeys(history_axis[lo:hi]))
         bytime = None
     else:
@@ -1314,6 +1329,14 @@ def _oi_stats(rows, start, end, *, history_identity=None, venue_history=None, ti
             if all(key is not None for key in cohort_keys):
                 cohort_key = cohort_keys
     deferred_history = cache is not None and dependency is not None
+    if (
+        venue_history is None
+        and bytime is None
+        and cache is not None
+        and dependency is None
+        and cohort_key is None
+    ):
+        bytime = {_time(rows[i]): rows[i] for i in sorted(index for _, index in ordered[lo:hi])}
     if venue_history is not None and not deferred_history:
         venue_history = [_history_slice(times, venue_rows, start) for times, venue_rows in venue_history]
     gaps = sorted(
@@ -1345,6 +1368,8 @@ def _oi_stats(rows, start, end, *, history_identity=None, venue_history=None, ti
     )
     ranges = cache.get(history_key) if cache is not None else None
     if ranges is None:
+        if venue_history is None and bytime is None:
+            bytime = {_time(rows[i]): rows[i] for i in sorted(index for _, index in ordered[lo:hi])}
         hn = []
         hu = []
         if venue_history is not None:
@@ -4776,7 +4801,7 @@ def _fixed_volume_prefix(raw, complete, metadata):
             return None
         low = min(low, exponent)
         high = max(high, exponent + max(significant, 1) - 1)
-        coefficients.append(int(value.replace(".", "")))
+        coefficients.append(int(value.replace(".", "")) if significant else 0)
         exponents.append(exponent)
     if high - low + len(str(max(2 * len(raw), 1))) + 1 > context.prec:
         return None

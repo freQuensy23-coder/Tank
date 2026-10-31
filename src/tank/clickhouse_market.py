@@ -26,7 +26,7 @@ import httpx
 from pydantic_core import from_json
 
 from tank.market_schema import MARKET_ALIASES, MARKET_COLUMNS, MARKET_IDENTITIES
-from tank.util import canonical_json, iso, parse_time
+from tank.util import canonical_json, iso, parse_time, unsigned_zero_scale
 
 MARKET_TABLES = {
     "mkt.klines_1m": "open_time",
@@ -863,6 +863,8 @@ def _canonical_numeric_text(value):
     if type(value) is not str or not value or len(value) > 160:
         return None
     text = value
+    if text.startswith("0E-"):
+        return value if unsigned_zero_scale(text) is not None and getcontext().capitals else None
     length = len(text)
     index = 1 if text[0] == "-" else 0
     start = index

@@ -8,6 +8,7 @@ from tank import clickhouse_market as market
 @pytest.mark.parametrize("capitals", [0, 1])
 def test_canonical_money_text_keeps_exact_standard_decimal_spelling(capitals):
     texts = ["", ".12", "12.", "+1.0", "00.1", "-00", "1E-8", "NaN", "Infinity", "١٢.٣"]
+    texts.extend(("0E-7", "0E-8", "0E-100", "0E-101", "0E-6", "0E-007", "0e-8", "-0E-8", "0E-٨"))
     for sign in ("", "-"):
         for integer in ("0", "1", "123456789"):
             for zeros in range(12):

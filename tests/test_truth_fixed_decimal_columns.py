@@ -86,6 +86,14 @@ def test_fixed_decimal_preparation_avoids_dense_character_array_passes(monkeypat
         (".", False),
         (".0", True),
         ("0.", True),
+        ("0E-7", True),
+        ("0E-100", True),
+        ("0E-101", False),
+        ("0E-6", False),
+        ("0E-007", False),
+        ("0e-8", False),
+        ("-0E-8", False),
+        ("0E-٨", False),
     ],
 )
 def test_fixed_decimal_metadata_admission_boundaries(tail, admitted):

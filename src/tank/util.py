@@ -14,6 +14,16 @@ from typing import Any, cast
 UTC = UTC
 
 
+def unsigned_zero_scale(value: object) -> int | None:
+    if type(value) is not str or not 4 <= len(value) <= 6 or not value.startswith("0E-"):
+        return None
+    digits = value[3:]
+    if digits[0] == "0" or not digits.isascii() or not digits.isdecimal():
+        return None
+    scale = int(digits)
+    return scale if 7 <= scale <= 100 else None
+
+
 def utcnow() -> datetime:
     return datetime.now(UTC)
 
