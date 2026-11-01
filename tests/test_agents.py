@@ -253,7 +253,7 @@ async def test_sse_resume_and_paginated_recovery_dedup_usage():
 async def test_message_running_session_posted_and_retry_failure():
     repo = MemoryRepository()
     opts, _ = settings()
-    await seed_session(repo, status="RUNNING")
+    await seed_session(repo, runtime_status="RUNNING")
     await repo.put("evt.events", "evt_1", {"event_id": "evt_1"})
     await repo.put("ingest.source_items", "itm_2", {"item_id": "itm_2", "text": "Update"})
     posts = []

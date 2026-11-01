@@ -35,6 +35,8 @@ jobs:
         run: |
           sha=$(git rev-parse --verify "${INPUT_SHA:-HEAD}^{commit}")
           git merge-base --is-ancestor "$sha" origin/main || { echo "$sha is not a commit of main"; exit 1; }
+          mkdir -p "$RUNNER_TEMP/tank-orchestrator"
+          cp scripts/deploy/deploy.sh "$RUNNER_TEMP/tank-orchestrator/deploy.sh"
           git checkout -q "$sha"
           echo "sha=$sha" >> "$GITHUB_OUTPUT"
       - name: Wait for the CI images of the commit
@@ -64,5 +66,5 @@ jobs:
           printf '%s\n' "$SSH_KEY" > ~/.ssh/id_deploy && chmod 600 ~/.ssh/id_deploy
           printf '%s\n' "$SSH_KNOWN_HOSTS" > ~/.ssh/known_hosts
           ssh_opts=(-i ~/.ssh/id_deploy -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes)
-          scp "${ssh_opts[@]}" compose.yaml scripts/deploy/deploy.sh "$SSH_USER@$SSH_HOST:/srv/tank-deploy/"
+          scp "${ssh_opts[@]}" compose.yaml "$RUNNER_TEMP/tank-orchestrator/deploy.sh" "$SSH_USER@$SSH_HOST:/srv/tank-deploy/"
           ssh "${ssh_opts[@]}" "$SSH_USER@$SSH_HOST" "/srv/tank-deploy/deploy.sh $SHA"
