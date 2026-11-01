@@ -1189,8 +1189,8 @@ def _prepared_history_decimal_arrays(columns, summands, metadata):
     if metadata is not None:
         metadata.update(low=low, high=high, context=_history_context_key())
         if type(metadata) is dict and type(columns) in (tuple, list):
-            for column, values in zip(columns, arrays, strict=True):
-                _cache_integer_column(column, values, low)
+            for column, array in zip(columns, arrays, strict=True):
+                _cache_integer_column(column, array, low)
     return arrays
 
 
