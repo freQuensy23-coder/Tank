@@ -9,11 +9,13 @@ from contextlib import suppress
 from contextvars import ContextVar
 from copy import deepcopy
 from datetime import timedelta
-from decimal import Decimal
+from decimal import Decimal, getcontext, localcontext
 from types import SimpleNamespace
 
 import httpx
+import numpy as np
 
+from tank import clickhouse_market as chm
 from tank.market import normalize as norm
 from tank.market.capture import event_anchor
 from tank.market.rate_gate import PriorityGate
@@ -258,6 +260,7 @@ class MarketService:
         }
         self.semantics = settings.load_config("semantics")["metrics"]
         self._reads = {}
+        self._sampled_history_cache = {}
         self._hot_since = {}
 
         self._kline_day_counts = {}
@@ -1266,6 +1269,7 @@ class MarketService:
         fixed_window=False,
         captured_rows=None,
         rolling=None,
+        columns_cache=None,
     ):
         """Compact exact typed projections; histories never retain wide kline records.
 
@@ -1383,6 +1387,124 @@ class MarketService:
                 for row in captured_rows:
                     if row.get("recorded_at") is None or parse_time(row["recorded_at"]) <= availability:
                         apply(row)
+            elif reset and (ch := chm.client(self.repo, "mkt.klines_1m")) is not None:
+                low_us, high_us, served_us = (
+                    microseconds(state_start),
+                    microseconds(state_upper),
+                    microseconds(start),
+                )
+
+                def extend_columns(columns):
+                    nonlocal unknown_availability
+                    unknown_availability |= any(columns["recorded_unknown"])
+                    stamps = np.asarray(columns["open_us"], dtype=np.int64)
+                    admitted = (stamps >= low_us) & (stamps <= high_us)
+                    admitted &= np.asarray(columns["interval_s"], dtype=object) == 60
+                    indexes = np.flatnonzero(admitted)
+                    selected = stamps[indexes]
+                    if (
+                        len(selected)
+                        and (not times or selected[0] > times[-1])
+                        and np.all(selected[1:] > selected[:-1])
+                    ):
+                        full = np.fromiter((columns["complete"][i] is True for i in indexes), dtype=np.bool_)
+                        known = np.asarray(columns["open_time_prec"], dtype=object)[indexes] == "BUCKET(60s)"
+                        if kind == "price":
+                            points = np.asarray([columns["value"][i] for i in indexes], dtype=np.float64)
+                            valid = full & np.isfinite(points) & (points > 0)
+                            values.frombytes(points.tobytes())
+                        else:
+                            points = np.asarray(columns["value"], dtype=object)[indexes]
+                            if "nonnegative" in columns:
+                                valid = full & np.asarray(columns["nonnegative"], dtype=np.bool_)[indexes]
+                            else:
+                                numbers = np.asarray(columns["decimal_values"], dtype=object)[indexes]
+                                valid = full & np.fromiter(
+                                    (number is not None for number in numbers), dtype=np.bool_
+                                )
+                                for number in numbers[valid]:
+                                    if not number.is_finite():
+                                        norm.decimal(number)
+                                valid[valid] = numbers[valid] >= 0
+                            values.extend(points.tolist())
+                        times.frombytes(selected.tobytes())
+                        complete.extend(valid.astype(np.uint8).tobytes())
+                        precise.extend(known.astype(np.uint8).tobytes())
+                        first = int(np.searchsorted(selected, served_us))
+                        if not changed and first < len(selected):
+                            value = points[first]
+                            changed.append(
+                                (
+                                    int(selected[first]),
+                                    value if kind == "volume" or isfinite(value) else None,
+                                    bool(valid[first]),
+                                    bool(known[first]),
+                                )
+                            )
+                        return
+                    for stamp, raw, full, known, interval, unknown in zip(
+                        columns["open_us"],
+                        columns["value"],
+                        columns["complete"],
+                        columns["open_time_prec"],
+                        columns["interval_s"],
+                        columns["recorded_unknown"],
+                        strict=True,
+                    ):
+                        unknown_availability |= unknown
+                        if not low_us <= stamp <= high_us or interval != 60:
+                            continue
+                        if kind == "price":
+                            value = float(raw) if raw is not None else float("nan")
+                            valid = full is True and isfinite(value) and value > 0
+                        else:
+                            value = str(raw) if raw is not None else None
+                            valid = full is True and value is not None and norm.decimal(value) >= 0
+                        known = known == "BUCKET(60s)"
+                        if times and stamp < times[-1]:
+                            raise ValueError("Unordered dense projection")
+                        if times and stamp == times[-1]:
+                            same = (
+                                values[-1] == value
+                                or kind == "price"
+                                and not isfinite(values[-1])
+                                and not isfinite(value)
+                            )
+                            if same and complete[-1] == valid and precise[-1] == known:
+                                continue
+                            values[-1], complete[-1], precise[-1] = value, valid, known
+                        else:
+                            times.append(stamp)
+                            values.append(value)
+                            complete.append(valid)
+                            precise.append(known)
+                        if not changed and stamp >= served_us:
+                            changed.append(
+                                (stamp, value if kind == "volume" or isfinite(value) else None, valid, known)
+                            )
+
+                after = None
+                while True:
+                    columns = await chm.dense_projection_page(
+                        ch,
+                        instrument_id=iid,
+                        field="c" if kind == "price" else "volume_native",
+                        start=state_start,
+                        end=upper_open + timedelta(microseconds=1),
+                        assembled_at=assembled_at,
+                        after=after,
+                        raw_cache=columns_cache,
+                        series=True,
+                    )
+                    if not columns["open_us"]:
+                        break
+                    await asyncio.to_thread(extend_columns, columns)
+                    after = (
+                        epoch + timedelta(microseconds=columns["open_us"][-1]),
+                        columns["_cursor_key"][-1],
+                    )
+                    if len(columns["open_us"]) < 200000:
+                        break
             elif reset:
                 page = []
                 async for row in self.repo.iter_market_projection(
@@ -1482,8 +1604,10 @@ class MarketService:
                         (point[0] for point in changed if opens and point[0] >= opens[0]), default=None
                     )
                 if kind == "price":
-                    output_times = array("q", (stamp + 60000000 for i, stamp in enumerate(opens) if valid[i]))
-                    output_values = array("d", (value for i, value in enumerate(points) if valid[i]))
+                    mask = np.frombuffer(valid, dtype=np.uint8).astype(np.bool_)
+                    output_times, output_values = array("q"), array("d")
+                    output_times.frombytes((np.frombuffer(opens, dtype=np.int64)[mask] + 60000000).tobytes())
+                    output_values.frombytes(np.frombuffer(points, dtype=np.float64)[mask].tobytes())
                     valid = bytearray([1]) * len(output_times)
                 else:
                     output_times, output_values = opens, points
@@ -2587,6 +2711,8 @@ class MarketService:
             )
 
         page = WIDE_PAGE_ROWS if collection == "mkt.tickers_24h" else 1000
+        if collection != "mkt.tickers_24h" and chm.client(self.repo, collection) is not None:
+            page = 20000
         return await market_range_by_instrument(
             self.repo, collection, field, ids, start, end, filters, batch_size=page, keys_out=keys_out
         )
@@ -2837,59 +2963,105 @@ class MarketService:
         ids = {r["instrument_id"] for r in instruments}
         result["flow_segments"] = []
         result["reference_points"] = []
-        for name, (collection, field) in COLLECTIONS.items():
-            values = []
 
-            if name in bounded:
-                window_rows = {iid: [] for iid in ids}
-                for low, high in bounded[name]:
-                    part = await self._window_rows(
-                        token_id, collection, field, ids, low, high, books=name == "books"
+        async def read_collection(name, collection, field):
+            window_rows, sampled, settled_history, settled_by_time = {}, {}, {}, {}
+            supply_rows = None
+            sampled_read = sampled_context = None
+            try:
+                if name == "oi" and recent_start > history_start:
+
+                    async def historical_rows():
+                        nonlocal sampled_context
+                        with localcontext() as sampled_context:
+                            return await self._shared_call(
+                                (
+                                    "sampled",
+                                    collection,
+                                    field,
+                                    tuple(sorted(ids)),
+                                    history_start,
+                                    recent_start,
+                                ),
+                                lambda: sampled_market_history(
+                                    self.repo,
+                                    collection,
+                                    field,
+                                    ("metric_key",),
+                                    sorted(ids),
+                                    history_start,
+                                    recent_start,
+                                    300,
+                                    cache=self._sampled_history_cache,
+                                ),
+                            )
+
+                    sampled_read = asyncio.create_task(historical_rows())
+                if name in bounded:
+                    window_rows = {iid: [] for iid in ids}
+                    for low, high in bounded[name]:
+                        part = await self._window_rows(
+                            token_id, collection, field, ids, low, high, books=name == "books"
+                        )
+                        for iid in ids:
+                            window_rows[iid].extend(part[iid])
+                elif name != "supply":
+                    window_rows = await self._window_rows(
+                        token_id, collection, field, ids, recent_start, snapshot_end, books=name == "books"
                     )
-                    for iid in ids:
-                        window_rows[iid].extend(part[iid])
-            elif name != "supply":
-                window_rows = await self._window_rows(
-                    token_id, collection, field, ids, recent_start, snapshot_end, books=name == "books"
-                )
-            if name == "oi" and recent_start > history_start:
-                sampled = {iid: [] for iid in ids}
-                for row in await self._shared_call(
-                    ("sampled", collection, field, tuple(sorted(ids)), history_start, recent_start),
-                    lambda collection=collection, field=field: sampled_market_history(
-                        self.repo,
-                        collection,
-                        field,
-                        ("metric_key",),
-                        sorted(ids),
-                        history_start,
-                        recent_start,
-                        300,
-                    ),
-                ):
-                    sampled[row["instrument_id"]].append(row)
-            if name == "funding":
-                settled_history = (
-                    await self._ranged(
-                        collection, field, ids, history_start, recent_start, {"kind": "SETTLED"}
+                if sampled_read is not None:
+                    try:
+                        history_rows = await sampled_read
+                    finally:
+                        if sampled_context is not None:
+                            for signal, raised in sampled_context.flags.items():
+                                if raised:
+                                    getcontext().flags[signal] = True
+                    sampled = {iid: [] for iid in ids}
+                    for row in history_rows:
+                        sampled[row["instrument_id"]].append(row)
+                if name == "funding":
+                    settled_history = (
+                        await self._ranged(
+                            collection, field, ids, history_start, recent_start, {"kind": "SETTLED"}
+                        )
+                        if recent_start > history_start
+                        else {}
                     )
-                    if recent_start > history_start
-                    else {}
-                )
-                settled_by_time = await self._ranged(
-                    collection, "funding_time", ids, history_start, snapshot_end
-                )
-            for iid in ids if name != "supply" else [None]:
-                if iid is None:
-                    rows = await self._range(
+                    settled_by_time = await self._ranged(
+                        collection, "funding_time", ids, history_start, snapshot_end
+                    )
+                if name == "supply":
+                    supply_rows = await self._range(
                         collection,
                         field,
                         start=history_start,
                         end=snapshot_end,
                         filters={"token_id": token_id},
                     )
-                else:
-                    rows = list(window_rows[iid])
+                return window_rows, sampled, settled_history, settled_by_time, supply_rows
+            finally:
+                if sampled_read is not None:
+                    if not sampled_read.done():
+                        sampled_read.cancel()
+                    await asyncio.gather(sampled_read, return_exceptions=True)
+
+        collection_reads = [
+            asyncio.create_task(read_collection(name, collection, field))
+            for name, (collection, field) in COLLECTIONS.items()
+        ]
+        try:
+            collections = await asyncio.gather(*collection_reads)
+        finally:
+            for task in collection_reads:
+                if not task.done():
+                    task.cancel()
+            await asyncio.gather(*collection_reads, return_exceptions=True)
+        for (name, (_collection, field)), loaded in zip(COLLECTIONS.items(), collections, strict=True):
+            window_rows, sampled, settled_history, settled_by_time, supply_rows = loaded
+            values = []
+            for iid in ids if name != "supply" else [None]:
+                rows = supply_rows if iid is None else list(window_rows[iid])
                 if name == "oi" and recent_start > history_start:
                     rows = sampled[iid] + rows
                 if name == "funding":
@@ -3015,19 +3187,37 @@ class MarketService:
                     present_closes.add(identity)
                     result["klines"].append(row)
 
-        async def dense_prices(inst):
+        columns_cache = {}
+
+        series_reads = {}
+
+        async def load_series(inst, kind):
             iid = inst["instrument_id"]
-            series = await self._condition_kline_series(
+            price = series_reads.get(("price", iid))
+            if kind == "volume" and price is not None:
+                await price
+            return await self._condition_kline_series(
                 inst,
                 history_start,
                 cutoff_dt,
                 assembled,
-                kind="price",
+                kind=kind,
                 coverage_count=counts.get(iid, 0),
                 fixed_window=True,
                 captured_rows=captured_klines.get(iid) if captured_klines is not None else None,
                 rolling=rolling,
+                columns_cache=columns_cache,
             )
+
+        async def projected(inst, kind):
+            key = (kind, inst["instrument_id"])
+            if key not in series_reads:
+                series_reads[key] = asyncio.create_task(load_series(inst, kind))
+            return await series_reads[key]
+
+        async def dense_prices(inst):
+            iid = inst["instrument_id"]
+            series = await projected(inst, "price")
             result["stat_price_series"][iid] = series
 
             wanted = set(series["times_us"][-1:])
@@ -3048,24 +3238,6 @@ class MarketService:
                     ):
                         await retain_close(row)
 
-        for inst in instruments:
-            iid = inst["instrument_id"]
-            await retain_close(latest_closes.get(iid))
-            if norm.venue_key(inst).endswith(".spot"):
-                await dense_prices(inst)
-            volume = await self._condition_kline_series(
-                inst,
-                history_start,
-                cutoff_dt,
-                assembled,
-                kind="volume",
-                coverage_count=counts.get(iid, 0),
-                fixed_window=True,
-                captured_rows=captured_klines.get(iid) if captured_klines is not None else None,
-                rolling=rolling,
-            )
-            if volume["times_us"]:
-                result["stat_volume_series"][iid] = volume
         chosen = {}
         for inst in all_spot:
             if inst["token_id"] not in peers:
@@ -3074,127 +3246,159 @@ class MarketService:
             if current is None or counts[inst["instrument_id"]] > counts[current["instrument_id"]]:
                 chosen[inst["token_id"]] = inst
 
-        from math import isfinite
-
-        boundaries = [cutoff_dt - timedelta(seconds=n) for n in (0, 900, 3600, 14400, 86400)]
-        if result["anchor"] and result["anchor"].get("ts"):
-            boundaries.append(parse_time(result["anchor"]["ts"]))
-        epoch = parse_time("1970-01-01T00:00:00Z")
-        sector_ids = [
-            inst["instrument_id"]
-            for inst in chosen.values()
-            if self.tokens[inst["token_id"]].get("symbol") not in {"BTC", "ETH"}
-        ]
-        sector_points = {iid: {} for iid in sector_ids}
-        for boundary in sorted(set(boundaries)):
-            upper_open = boundary - timedelta(minutes=1)
-            if upper_open < history_start or not sector_ids:
-                continue
-
-            pending = await self.repo.latest_market_records(
-                "mkt.klines_1m",
-                time_field="open_time",
-                instrument_ids=sector_ids,
-                filters={"complete": True, "interval_s": 60},
-                start=history_start,
-                cutoff=upper_open,
-                assembled_at=assembled,
-            )
-            for row in pending:
-                iid = row["instrument_id"]
-                while True:
-                    value = float(row["c"]) if row.get("c") is not None else float("nan")
-                    opened = parse_time(row["open_time"])
-                    if isfinite(value) and value > 0:
-                        delta = opened + timedelta(minutes=1) - epoch
-                        stamp = (delta.days * 86400 + delta.seconds) * 1000000 + delta.microseconds
-                        sector_points[iid][stamp] = value
-                        break
-                    before = opened - timedelta(microseconds=1)
-                    if before < history_start:
-                        break
-                    earlier = await self.repo.latest_market_records(
-                        "mkt.klines_1m",
-                        time_field="open_time",
-                        instrument_ids=[iid],
-                        filters={"complete": True, "interval_s": 60},
-                        start=history_start,
-                        cutoff=before,
-                        assembled_at=assembled,
+        try:
+            for inst in instruments:
+                if norm.venue_key(inst).endswith(".spot"):
+                    series_reads[("price", inst["instrument_id"])] = asyncio.create_task(
+                        load_series(inst, "price")
                     )
-                    if not earlier:
-                        break
-                    row = earlier[0]
-        for inst in self.instruments.values():
-            if inst["token_id"] not in peers or not norm.venue_key(inst).endswith(".spot"):
-                continue
-            instruments.append(inst)
-            if self.tokens[inst["token_id"]].get("symbol") not in {"BTC", "ETH"}:
-                if inst["instrument_id"] in latest_closes:
-                    await retain_close(latest_closes[inst["instrument_id"]])
-                if chosen[inst["token_id"]]["instrument_id"] != inst["instrument_id"]:
+            for inst in instruments:
+                series_reads[("volume", inst["instrument_id"])] = asyncio.create_task(
+                    load_series(inst, "volume")
+                )
+            for inst in chosen.values():
+                if self.tokens[inst["token_id"]].get("symbol") in {"BTC", "ETH"}:
+                    key = ("price", inst["instrument_id"])
+                    if key not in series_reads:
+                        series_reads[key] = asyncio.create_task(load_series(inst, "price"))
+            for inst in instruments:
+                iid = inst["instrument_id"]
+                await retain_close(latest_closes.get(iid))
+                if norm.venue_key(inst).endswith(".spot"):
+                    await dense_prices(inst)
+                volume = await projected(inst, "volume")
+                if volume["times_us"]:
+                    result["stat_volume_series"][iid] = volume
+
+            from math import isfinite
+
+            boundaries = [cutoff_dt - timedelta(seconds=n) for n in (0, 900, 3600, 14400, 86400)]
+            if result["anchor"] and result["anchor"].get("ts"):
+                boundaries.append(parse_time(result["anchor"]["ts"]))
+            epoch = parse_time("1970-01-01T00:00:00Z")
+            sector_ids = [
+                inst["instrument_id"]
+                for inst in chosen.values()
+                if self.tokens[inst["token_id"]].get("symbol") not in {"BTC", "ETH"}
+            ]
+            sector_points = {iid: {} for iid in sector_ids}
+            for boundary in sorted(set(boundaries)):
+                upper_open = boundary - timedelta(minutes=1)
+                if upper_open < history_start or not sector_ids:
                     continue
-                points = sector_points[inst["instrument_id"]]
-                times = sorted(points)
-                result["stat_price_series"][inst["instrument_id"]] = {
-                    "instrument_id": inst["instrument_id"],
-                    "token_id": inst["token_id"],
-                    "venue": inst["venue"],
-                    "market_type": inst["market_type"],
-                    "time_basis": "CLOSE_TIME",
-                    "coverage_count": counts[inst["instrument_id"]],
-                    "times_us": times,
-                    "values": [points[stamp] for stamp in times],
-                    "complete": [1] * len(times),
-                }
-                continue
-            await retain_close(latest_closes.get(inst["instrument_id"]))
-            if chosen[inst["token_id"]]["instrument_id"] == inst["instrument_id"]:
-                await dense_prices(inst)
-        result["semantics"] = self._instrument_semantics(instruments)
-        result["instruments"] = instruments
-        result["tokens"] = list(self.tokens.values())
-        result["sector_baskets"] = deepcopy(self.sector_baskets)
-        runs = await self._shared_call(
-            ("runs", token_id),
-            lambda: self.repo.list("mkt.backfill_runs", filters={"token_id": token_id}, limit=10000),
-        )
-        anchor_ts = (
-            anchor.get("ts") if isinstance(anchor, dict) else iso(anchor) if anchor is not None else None
-        )
-        runs = [r for r in runs if anchor_ts is None or parse_time(r["anchor"]) == parse_time(anchor_ts)]
-        result["backfill_runs"] = runs
-        latest = max(runs, key=lambda r: r["started_at"]) if runs else None
-        result["capture_status"] = {
-            "status": latest["status"] if latest else "NOT_REQUESTED",
-            "reason": latest.get("reason") if latest else "NO_DURABLE_CAPTURE_REQUEST",
-            "backfill_id": latest.get("backfill_id") if latest else None,
-            "observed_at": iso(),
-            "bounded_wait_s": 0,
-            "incomplete_windows_excluded": True,
-        }
-        if latest and latest["backfill_id"] in self._capture_waits:
-            waited = self._capture_waits[latest["backfill_id"]]
-            result["capture_status"]["bounded_wait_s"] = waited["bounded_wait_s"]
-            if latest["status"] in ("PENDING", "RUNNING"):
-                result["capture_status"].update(waited)
-        result["funding_source_observations"] = [
-            observation
-            for point in result["funding"]
-            for observation in (
-                list(point["source_observations"].values()) if point.get("source_observations") else [point]
+
+                pending = await self.repo.latest_market_records(
+                    "mkt.klines_1m",
+                    time_field="open_time",
+                    instrument_ids=sector_ids,
+                    filters={"complete": True, "interval_s": 60},
+                    start=history_start,
+                    cutoff=upper_open,
+                    assembled_at=assembled,
+                )
+                for row in pending:
+                    iid = row["instrument_id"]
+                    while True:
+                        value = float(row["c"]) if row.get("c") is not None else float("nan")
+                        opened = parse_time(row["open_time"])
+                        if isfinite(value) and value > 0:
+                            delta = opened + timedelta(minutes=1) - epoch
+                            stamp = (delta.days * 86400 + delta.seconds) * 1000000 + delta.microseconds
+                            sector_points[iid][stamp] = value
+                            break
+                        before = opened - timedelta(microseconds=1)
+                        if before < history_start:
+                            break
+                        earlier = await self.repo.latest_market_records(
+                            "mkt.klines_1m",
+                            time_field="open_time",
+                            instrument_ids=[iid],
+                            filters={"complete": True, "interval_s": 60},
+                            start=history_start,
+                            cutoff=before,
+                            assembled_at=assembled,
+                        )
+                        if not earlier:
+                            break
+                        row = earlier[0]
+            for inst in self.instruments.values():
+                if inst["token_id"] not in peers or not norm.venue_key(inst).endswith(".spot"):
+                    continue
+                instruments.append(inst)
+                if self.tokens[inst["token_id"]].get("symbol") not in {"BTC", "ETH"}:
+                    if inst["instrument_id"] in latest_closes:
+                        await retain_close(latest_closes[inst["instrument_id"]])
+                    if chosen[inst["token_id"]]["instrument_id"] != inst["instrument_id"]:
+                        continue
+                    points = sector_points[inst["instrument_id"]]
+                    times = sorted(points)
+                    result["stat_price_series"][inst["instrument_id"]] = {
+                        "instrument_id": inst["instrument_id"],
+                        "token_id": inst["token_id"],
+                        "venue": inst["venue"],
+                        "market_type": inst["market_type"],
+                        "time_basis": "CLOSE_TIME",
+                        "coverage_count": counts[inst["instrument_id"]],
+                        "times_us": times,
+                        "values": [points[stamp] for stamp in times],
+                        "complete": [1] * len(times),
+                    }
+                    continue
+                await retain_close(latest_closes.get(inst["instrument_id"]))
+                if chosen[inst["token_id"]]["instrument_id"] == inst["instrument_id"]:
+                    await dense_prices(inst)
+            result["semantics"] = self._instrument_semantics(instruments)
+            result["instruments"] = instruments
+            result["tokens"] = list(self.tokens.values())
+            result["sector_baskets"] = deepcopy(self.sector_baskets)
+            runs = await self._shared_call(
+                ("runs", token_id),
+                lambda: self.repo.list("mkt.backfill_runs", filters={"token_id": token_id}, limit=10000),
             )
-        ]
-        result["funding_confirmations"] = [
-            {**rest, "independent_path_verified": True, "primary_source_path": ws.get("source_path")}
-            for rest, ws in funding_confirmations(result["funding_source_observations"])
-        ]
-        result["capture_metadata"] = await self._shared_call(
-            ("capture_metadata", token_id, cutoff), lambda: self._capture_metadata(token_id, cutoff)
-        )
-        result["capture_tier"] = result["capture_metadata"]["tier"]
-        self._snapshot_heads(result, cutoff_dt)
-        result.update(collection_clock(iso()).fields("assembled_at"))
+            anchor_ts = (
+                anchor.get("ts") if isinstance(anchor, dict) else iso(anchor) if anchor is not None else None
+            )
+            runs = [r for r in runs if anchor_ts is None or parse_time(r["anchor"]) == parse_time(anchor_ts)]
+            result["backfill_runs"] = runs
+            latest = max(runs, key=lambda r: r["started_at"]) if runs else None
+            result["capture_status"] = {
+                "status": latest["status"] if latest else "NOT_REQUESTED",
+                "reason": latest.get("reason") if latest else "NO_DURABLE_CAPTURE_REQUEST",
+                "backfill_id": latest.get("backfill_id") if latest else None,
+                "observed_at": iso(),
+                "bounded_wait_s": 0,
+                "incomplete_windows_excluded": True,
+            }
+            if latest and latest["backfill_id"] in self._capture_waits:
+                waited = self._capture_waits[latest["backfill_id"]]
+                result["capture_status"]["bounded_wait_s"] = waited["bounded_wait_s"]
+                if latest["status"] in ("PENDING", "RUNNING"):
+                    result["capture_status"].update(waited)
+            result["funding_source_observations"] = [
+                observation
+                for point in result["funding"]
+                for observation in (
+                    list(point["source_observations"].values())
+                    if point.get("source_observations")
+                    else [point]
+                )
+            ]
+            result["funding_confirmations"] = [
+                {**rest, "independent_path_verified": True, "primary_source_path": ws.get("source_path")}
+                for rest, ws in funding_confirmations(result["funding_source_observations"])
+            ]
+            result["capture_metadata"] = await self._shared_call(
+                ("capture_metadata", token_id, cutoff), lambda: self._capture_metadata(token_id, cutoff)
+            )
+            result["capture_tier"] = result["capture_metadata"]["tier"]
+            self._snapshot_heads(result, cutoff_dt)
+            result.update(collection_clock(iso()).fields("assembled_at"))
+        finally:
+            for task in series_reads.values():
+                if not task.done():
+                    task.cancel()
+            if series_reads:
+                await asyncio.gather(*series_reads.values(), return_exceptions=True)
         return result
 
     @staticmethod

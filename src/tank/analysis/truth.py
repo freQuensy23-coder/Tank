@@ -11,22 +11,36 @@ import contextlib
 import hashlib
 import json
 import pickle
+import statistics
 import threading
 from array import array
 from bisect import bisect_left, bisect_right
 from collections import defaultdict
+from collections.abc import Mapping, Sequence
 from contextvars import ContextVar
 from copy import deepcopy
-from datetime import timedelta
-from decimal import Decimal, getcontext, localcontext
+from datetime import UTC, datetime, timedelta
+from decimal import (
+    ROUND_HALF_EVEN,
+    Context,
+    Decimal,
+    DecimalException,
+    Inexact,
+    Rounded,
+    getcontext,
+    localcontext,
+)
 from functools import wraps
-from math import log
+from math import isfinite, ldexp, log
+from operator import index as integer_index
 from statistics import mean, median, stdev
+
+import numpy as np
 
 from tank.analysis import compute_workers
 from tank.market.capture import event_anchor
 from tank.time_precision import Timestamp, chosen_boundary, offset_schedule, propagate_timestamp
-from tank.util import iso, jsonable, new_id, parse_time
+from tank.util import _TIME_PARSE_MEMO, iso, jsonable, new_id, parse_time, unsigned_zero_scale
 
 WINDOWS = {"W15M": 900, "W1H": 3600, "W4H": 14400, "W24H": 86400}
 RISK_ORDER = [
@@ -47,6 +61,7 @@ _BASELINE_DEPENDENCY = ContextVar("truth_baseline_dependency", default=None)
 _TIMES = ContextVar("truth_observation_times", default=None)
 _PARAMETERS = ContextVar("tank_truth_parameters", default=None)
 _ASSESSMENT_INPUTS = ContextVar("truth_assessment_inputs", default=None)
+_ROW_MEMO_MISSING = object()
 
 
 def parameter(name, default):
@@ -58,12 +73,42 @@ def lookback_days():
 
 
 def decimal(v):
+    return _scalar_decimal(v)
+
+
+def _scalar_decimal(v):
     if isinstance(v, dict):
         v = v.get("value")
     if v is None:
         return None
+    memo = None
+    if type(v) is str and len(v) <= 64:
+        inputs = _ASSESSMENT_INPUTS.get()
+        if inputs is not None:
+            memo = inputs.setdefault("finite_text_decimals", {})
+            precisions = inputs.setdefault("finite_text_precisions", {})
+            hit = memo.get(v)
+            if hit is not None:
+                context = getcontext()
+                context.prec = max(context.prec, precisions[v])
+                return hit
     value = v if isinstance(v, Decimal) else Decimal(str(v))
-    exact_context(value)
+    required = None
+    if memo is not None and type(value) is Decimal and exact_context is _EXACT_CONTEXT and value.is_finite():
+        metadata = _fixed_decimal_text_metadata(v)
+        required = (
+            2 * max(metadata & 63, 1) + 32
+            if metadata >= 0
+            else 2 * (value.adjusted() - value.as_tuple().exponent + 1) + 32
+        )
+        getcontext().prec = max(getcontext().prec, required)
+    else:
+        exact_context(value)
+    if memo is not None and len(memo) < 262144 and value.is_finite():
+        if required is None:
+            required = 2 * (value.adjusted() - value.as_tuple().exponent + 1) + 32
+        precisions[v] = required
+        memo[v] = value
     return value
 
 
@@ -72,6 +117,9 @@ def exact_context(*values):
     if values:
         span = max(v.adjusted() for v in values) - min(v.as_tuple().exponent for v in values) + 1
         getcontext().prec = max(getcontext().prec, 2 * span + 32)
+
+
+_EXACT_CONTEXT = exact_context
 
 
 def precise(function):
@@ -93,7 +141,7 @@ def number(v):
 def ratio(a, b):
     if a is None or not b:
         return None
-    return float(decimal(a) / decimal(b))
+    return float(_as_dec(a) / _as_dec(b))
 
 
 @precise
@@ -101,7 +149,7 @@ def strict_majority(part, total):
     """The §0 predicate, independent of rounded dimensionless display statistics."""
     if part is None or total is None:
         return None
-    part, total = decimal(part), decimal(total)
+    part, total = _as_dec(part), _as_dec(total)
     if total <= 0:
         return None
     exact_context(part, total)
@@ -183,21 +231,60 @@ def remember_latest(cache, key, head, build):
 def percentile(values, p):
     s = (
         values.ordered
-        if isinstance(values, StatisticalPopulation)
+        if isinstance(values, (StatisticalPopulation, _MonetaryPopulation))
         else sorted(v for v in values if v is not None)
     )
+    return _percentile_ordered(s, p)
+
+
+def _percentile_ordered(s, p):
     if not s:
         return None
     k = (len(s) - 1) * p
     i = int(k)
     return s[i] + (s[min(i + 1, len(s) - 1)] - s[i]) * (
-        decimal(k - i) if isinstance(s[i], Decimal) else k - i
+        _as_dec(k - i) if isinstance(s[i], Decimal) else k - i
     )
+
+
+def _finite_homogeneous_population(values):
+    kind = None
+    for value in values:
+        if value is None:
+            continue
+        current = type(value)
+        if kind is None:
+            kind = current
+        if current is not kind:
+            return False
+        if kind is Decimal:
+            if not value.is_finite():
+                return False
+        elif kind is float:
+            if not isfinite(value):
+                return False
+        else:
+            return False
+    return True
 
 
 def normal(values):
     qs = parameter("normal_range_quantiles", [0.025, 0.975])
-    return [percentile(values, float(qs[0])), percentile(values, float(qs[1]))] if values else None
+    if not values:
+        return None
+    if (
+        type(values) in (list, tuple)
+        and type(qs) in (list, tuple)
+        and len(qs) == 2
+        and type(qs[0]) is float
+        and type(qs[1]) is float
+        and isfinite(qs[0])
+        and isfinite(qs[1])
+        and _finite_homogeneous_population(values)
+    ):
+        ordered = sorted(value for value in values if value is not None)
+        return [_percentile_ordered(ordered, qs[0]), _percentile_ordered(ordered, qs[1])]
+    return [percentile(values, float(qs[0])), percentile(values, float(qs[1]))]
 
 
 def float_normal(values):
@@ -247,7 +334,7 @@ def oi_class(dn, du, dec, nrange, urange):
     if nb:
         if dec.get("pos_share") is None:
             return None
-        terms = [decimal(dec[k]) for k in ("position", "markup", "interaction")]
+        terms = [_as_dec(dec[k]) for k in ("position", "markup", "interaction")]
         exact_context(*terms)
         return "REAL_NATIVE" if 2 * abs(terms[0]) > sum(abs(v) for v in terms) else "MIXED"
     if ub is None:
@@ -293,7 +380,37 @@ def repricing(value, event_history, day_history):
 
 
 def _time(row):
-    times = _TIMES.get()
+    return _row_time(row)
+
+
+_MEMO_TIME = _time
+
+
+def _row_time(row):
+    state = _TIMES.get()
+    if type(state) is tuple:
+        memo = state[0]
+        identity = id(row)
+        value = memo.get(identity, _ROW_MEMO_MISSING)
+        if value is _ROW_MEMO_MISSING:
+            inputs = state[1]
+            inputs.setdefault("row_times", memo)
+            value = _observation_time(row)
+            owners = inputs.setdefault("row_owners", {})
+            owners[identity] = row
+            memo[identity] = value
+        return value
+    times = state
+    inputs = _ASSESSMENT_INPUTS.get()
+    if times is not None and inputs is not None:
+        memo = inputs.setdefault("row_times", {})
+        identity = id(row)
+        value = memo.get(identity, _ROW_MEMO_MISSING)
+        if value is _ROW_MEMO_MISSING:
+            value = _observation_time(row)
+            inputs.setdefault("row_owners", {})[identity] = row
+            memo[identity] = value
+        return value
     if times is not None:
         hit = times.get(id(row))
         if hit is not None:
@@ -360,7 +477,7 @@ def _market(row):
 
 @precise
 def _sum(rows, key):
-    vals = [decimal(r.get(key)) for r in rows]
+    vals = [_as_dec(r.get(key)) for r in rows]
     if not vals or None in vals:
         return None
     exact_context(*vals)
@@ -373,15 +490,15 @@ def _composite(venues):
         return dict(
             cvd=None, volume=None, buy_share=None, bs_ratio=None, venues=[], sign=0, reason="INCOMPLETE"
         )
-    exact_context(*(decimal(x[k]) for x in venues for k in ("volume_native", "cvd", "sum_sq_qty")))
-    v = sum((decimal(x["volume_native"]) for x in venues), Decimal(0))
-    cvd = sum((decimal(x["cvd"]) for x in venues), Decimal(0))
-    q = sum((decimal(x["sum_sq_qty"]) for x in venues), Decimal(0))
+    exact_context(*(_as_dec(x[k]) for x in venues for k in ("volume_native", "cvd", "sum_sq_qty")))
+    v = sum((_as_dec(x["volume_native"]) for x in venues), Decimal(0))
+    cvd = sum((_as_dec(x["cvd"]) for x in venues), Decimal(0))
+    q = sum((_as_dec(x["sum_sq_qty"]) for x in venues), Decimal(0))
     sign = (
         1
-        if cvd > 0 and cvd * cvd >= decimal(parameter("significant_flow_sigma", 2)) ** 2 * q
+        if cvd > 0 and cvd * cvd >= _as_dec(parameter("significant_flow_sigma", 2)) ** 2 * q
         else -1
-        if cvd < 0 and cvd * cvd >= decimal(parameter("significant_flow_sigma", 2)) ** 2 * q
+        if cvd < 0 and cvd * cvd >= _as_dec(parameter("significant_flow_sigma", 2)) ** 2 * q
         else 0
     )
     return dict(
@@ -395,6 +512,10 @@ def _composite(venues):
 
 
 def _available(row, snapshot):
+    return _row_available(row, snapshot)
+
+
+def _row_available(row, snapshot):
     assembled = snapshot.get("assembled_at")
     received = row.get("received_ts")
     if not assembled or not received:
@@ -402,12 +523,30 @@ def _available(row, snapshot):
     inputs = _ASSESSMENT_INPUTS.get()
     if inputs is None:
         return parse_time(received) <= parse_time(assembled)
-    memo = inputs.setdefault("available", {})
-    hit = memo.get((id(row), assembled))
-    if hit is None or hit[0] is not row:
-        hit = (row, parse_time(received) <= parse_time(assembled))
-        memo[(id(row), assembled)] = hit
-    return hit[1]
+    memo = inputs.setdefault("available", {}).setdefault(assembled, {})
+    identity = id(row)
+    value = memo.get(identity, _ROW_MEMO_MISSING)
+    if value is _ROW_MEMO_MISSING:
+        value = parse_time(received) <= parse_time(assembled)
+        inputs.setdefault("row_owners", {})[identity] = row
+        memo[identity] = value
+    return value
+
+
+_MEMO_DECIMAL = decimal
+_MEMO_AVAILABLE = _available
+
+
+def _as_dec(value):
+    return _scalar_decimal(value) if decimal is _MEMO_DECIMAL else decimal(value)
+
+
+def _when(row):
+    return _row_time(row) if _time is _MEMO_TIME else _time(row)
+
+
+def _can_admit(row, snapshot):
+    return _row_available(row, snapshot) if _available is _MEMO_AVAILABLE else _available(row, snapshot)
 
 
 def flow_segments(snapshot):
@@ -450,7 +589,7 @@ def segment_cover(pieces, iid, start, end, assembled_at=None):
         if r.get("instrument_id") == iid
         and r.get("complete") is True
         and start <= parse_time(r["start"]) < parse_time(r["end"]) <= end
-        and _available(r, {"assembled_at": assembled_at})
+        and _can_admit(r, {"assembled_at": assembled_at})
         and (
             assembled_at is None
             or r.get("observed_at") is None
@@ -473,13 +612,13 @@ def flow_window(snapshot, iid, start, end):
     bars = [
         r
         for r in snapshot.get("flow_bars", [])
-        if r.get("instrument_id") == iid and start <= _time(r) and _time(r) + timedelta(minutes=1) <= end
+        if r.get("instrument_id") == iid and start <= _when(r) and _when(r) + timedelta(minutes=1) <= end
     ]
     first = start.replace(second=0, microsecond=0)
     first = first + timedelta(minutes=1) if first < start else first
     last = end.replace(second=0, microsecond=0)
     expected = max(0, int((last - first).total_seconds() / 60))
-    if len({_time(r) for r in bars}) != expected or not all(r.get("complete") is True for r in bars):
+    if len({_when(r) for r in bars}) != expected or not all(r.get("complete") is True for r in bars):
         return None
     ranges = []
     if first > start:
@@ -500,7 +639,7 @@ def flow_reference(snapshot, iid, boundary):
         if bar.get("instrument_id") != iid:
             continue
         points.extend(dict(point, instrument_id=iid) for point in (bar.get("reference_points") or []))
-        if bar.get("complete") is True and _time(bar) + timedelta(minutes=1) == boundary:
+        if bar.get("complete") is True and _when(bar) + timedelta(minutes=1) == boundary:
             points.append(
                 dict(
                     instrument_id=iid, boundary=iso(boundary), complete=True, last_trade=bar.get("last_trade")
@@ -513,7 +652,7 @@ def flow_reference(snapshot, iid, boundary):
         and p.get("boundary")
         and parse_time(p["boundary"]) == boundary
         and p.get("complete") is True
-        and _available(p, snapshot)
+        and _can_admit(p, snapshot)
         and (
             snapshot.get("assembled_at") is None
             or p.get("observed_at") is None
@@ -526,12 +665,35 @@ def flow_reference(snapshot, iid, boundary):
         p["last_trade"]
         for p in eligible
         if p.get("last_trade")
-        and _time(p["last_trade"]) is not None
-        and _time(p["last_trade"]) < boundary
-        and _available(p["last_trade"], snapshot)
-        and decimal(p["last_trade"].get("price")) is not None
+        and _when(p["last_trade"]) is not None
+        and _when(p["last_trade"]) < boundary
+        and _can_admit(p["last_trade"], snapshot)
+        and _as_dec(p["last_trade"].get("price")) is not None
     ]
     return dict(max(trades, key=_time), instrument_id=iid) if trades else None
+
+
+def _spot_window_source(rows, start, end):
+    inputs = _ASSESSMENT_INPUTS.get()
+    if inputs is None or type(rows) not in (list, tuple):
+        return rows
+    memo = inputs.setdefault("spot_window_sources", {})
+    hit = memo.get(id(rows))
+    if hit is None or hit[0] is not rows:
+        selected = []
+        for index, row in enumerate(rows):
+            if _market(row) == "SPOT":
+                at = _when(row)
+                if not isinstance(at, datetime):
+                    return rows
+                selected.append((at, index))
+        selected.sort()
+        hit = rows, [at for at, _ in selected], [index for _, index in selected]
+        memo[id(rows)] = hit
+    _, times, indexes = hit
+    lo = bisect_right(times, start - timedelta(minutes=1))
+    hi = bisect_left(times, end)
+    return [rows[index] for index in sorted(indexes[lo:hi])]
 
 
 @precise
@@ -551,10 +713,10 @@ def spot_truth(
     for i in instruments:
         if _market(i) == "SPOT":
             ids[_venue(i)].add(i["instrument_id"])
-    for r in rows:
-        if _market(r) == "SPOT" and _time(r) < end and _time(r) + timedelta(minutes=1) > start:
+    for r in _spot_window_source(rows, start, end):
+        if _market(r) == "SPOT" and _when(r) < end and _when(r) + timedelta(minutes=1) > start:
             ids[_venue(r)].add(r["instrument_id"])
-            if start <= _time(r) and _time(r) + timedelta(minutes=1) <= end:
+            if start <= _when(r) and _when(r) + timedelta(minutes=1) <= end:
                 grouped[_venue(r)].append(r)
     registered = set(ids)
     venues = []
@@ -570,7 +732,7 @@ def spot_truth(
         partial.append((max(start, floor_end), end))
     for venue in sorted(registered):
         rs = list(grouped[venue])
-        minutes = {_time(r) for r in rs}
+        minutes = {_when(r) for r in rs}
         boundary_failed = False
         segments = []
         for segment_start, segment_end in partial:
@@ -629,9 +791,9 @@ def spot_truth(
         c = b - s
         sign = (
             1
-            if c > 0 and c * c >= decimal(parameter("significant_flow_sigma", 2)) ** 2 * q
+            if c > 0 and c * c >= _as_dec(parameter("significant_flow_sigma", 2)) ** 2 * q
             else -1
-            if c < 0 and c * c >= decimal(parameter("significant_flow_sigma", 2)) ** 2 * q
+            if c < 0 and c * c >= _as_dec(parameter("significant_flow_sigma", 2)) ** 2 * q
             else 0
         )
         venues.append(
@@ -654,10 +816,10 @@ def spot_truth(
     sign = c["sign"]
     estimated = []
     for ex in excluded:
-        ts = [r for r in tickers if _venue(r) == ex["venue"] and _time(r) and _time(r) <= end]
+        ts = [r for r in tickers if _venue(r) == ex["venue"] and _when(r) and _when(r) <= end]
         t = max(ts, key=_time) if ts else {}
-        n = decimal(t.get("volume_native", t.get("volume")))
-        estimated.append(n * decimal((end - start).total_seconds()) / 86400 if n is not None else None)
+        n = _as_dec(t.get("volume_native", t.get("volume")))
+        estimated.append(n * _as_dec((end - start).total_seconds()) / 86400 if n is not None else None)
     covered = ratio(v, v + sum(estimated)) if None not in estimated else None
     cwb = {
         name: ratio(sum(x["volume_native"] for x in venues if x["sign"] == s), v)
@@ -774,13 +936,53 @@ def oi_temporally_admissible(row):
     memo = inputs.setdefault("oi_admissible", {}) if inputs is not None else None
     identity = id(row)
     if memo is not None and identity in memo:
-        return memo[identity][1]
-    value = (
-        propagate_timestamp(row, "ts", precision_aliases=("timestamp_precision", "precision")).bucket_anchor
-        != "UNSPECIFIED"
-    )
+        return memo[identity]
+    resolved = None
+    if inputs is not None and type(row) is dict and type(raw) is str:
+        fields = (
+            "ts_prec",
+            "ts_precision",
+            "timestamp_precision",
+            "precision",
+            "ts_prec_reason",
+            "ts_precision_reason",
+            "timestamp_precision_reason",
+            "precision_reason",
+            "ts_bucket_size_s",
+            "ts_bucket_anchor",
+            "ts_reason",
+        )
+        values = tuple(row.get(name) for name in fields)
+        if all(value is None or type(value) in (str, int, float, bool) for value in values):
+            envelope = (_history_context_key(), tuple(map(type, values)), values)
+            envelopes = inputs.setdefault("oi_precision_envelopes", {})
+            if envelope not in envelopes:
+                candidate = None
+                try:
+                    with localcontext() as probe:
+                        probe.clear_flags()
+                        result = propagate_timestamp(
+                            row, "ts", precision_aliases=("timestamp_precision", "precision")
+                        )
+                        if not any(probe.flags.values()):
+                            candidate = result.bucket_anchor != "UNSPECIFIED"
+                except (DecimalException, ValueError, TypeError, OverflowError):
+                    pass
+                envelopes[envelope] = candidate
+            resolved = envelopes[envelope]
+    if resolved is None:
+        value = (
+            propagate_timestamp(
+                row, "ts", precision_aliases=("timestamp_precision", "precision")
+            ).bucket_anchor
+            != "UNSPECIFIED"
+        )
+    else:
+        parse_time(raw)
+        value = resolved
     if memo is not None:
-        memo[identity] = (row, value)
+        inputs.setdefault("row_owners", {})[identity] = row
+        memo[identity] = value
     return value
 
 
@@ -799,20 +1001,20 @@ def _oi_rows(snapshot, instrument_id):
         return memo[id(rows)][1]
     tolerance = float(parameter("oi_sync_tolerance_s", 60))
     marks = sorted(
-        (_time(t), decimal(t["mark_price"]))
+        (_when(t), _as_dec(t["mark_price"]))
         for t in _instrument_rows(snapshot, "tickers", instrument_id)
-        if t.get("mark_price") is not None and _time(t) is not None and decimal(t["mark_price"])
+        if t.get("mark_price") is not None and _when(t) is not None and _as_dec(t["mark_price"])
     )
     mark_times = [t for t, _ in marks]
     out = []
     for row in rows:
-        native = decimal(row.get("oi_native"))
+        native = _as_dec(row.get("oi_native"))
         if row.get("oi_usd") is not None or native is None:
             out.append(row)
             continue
-        mark, source = decimal(row.get("mark_price")), "OI_NATIVE_X_ROW_MARK"
+        mark, source = _as_dec(row.get("mark_price")), "OI_NATIVE_X_ROW_MARK"
         if not mark:
-            t = _time(row)
+            t = _when(row)
             i = bisect_left(mark_times, t)
             near = [
                 (abs((mark_times[j] - t).total_seconds()), j)
@@ -832,7 +1034,7 @@ def _oi_rows(snapshot, instrument_id):
 
 def _stored_usd(row):
     """oi_usd as stored by capture; None for a value derived from a mark at assessment time."""
-    return None if row.get("oi_usd_source") else decimal(row.get("oi_usd"))
+    return None if row.get("oi_usd_source") else _as_dec(row.get("oi_usd"))
 
 
 def _oi_split(rows):
@@ -844,14 +1046,479 @@ def _oi_split(rows):
     if hit is None or hit[0] is not rows:
         admissible = [row for row in rows if oi_temporally_admissible(row)]
         excluded = [row for row in rows if not oi_temporally_admissible(row)]
-        ordered = sorted((_time(r), i) for i, r in enumerate(admissible))
+        ordered = sorted((_when(r), i) for i, r in enumerate(admissible))
         hit = (rows, admissible, excluded, ordered, [t for t, _ in ordered])
         if memo is not None:
             memo[id(rows)] = hit
     return hit[1:]
 
 
-def _oi_stats(rows, start, end, *, history_identity=None, venue_history=None):
+def _fixed_decimal_text_metadata(value):
+    text = value
+    if text.startswith("0E-"):
+        scale = unsigned_zero_scale(text)
+        return scale << 6 if scale is not None else -1
+    length = len(text)
+    dot, digits, significant = -1, 0, 0
+    for index in range(length):
+        code = ord(text[index])
+        if code == 46:
+            if dot >= 0:
+                return -1
+            dot = index
+        elif 48 <= code <= 57:
+            digits += 1
+            if code != 48 or significant:
+                significant += 1
+        else:
+            return -1
+    exponent = dot - length + 1 if dot >= 0 else 0
+    if not digits or significant > 48 or exponent < -100:
+        return -1
+    return ((-exponent) << 6) | significant
+
+
+def _history_fixed_decimal_column(column):
+    return _fixed_decimal_column(column)
+
+
+def _fixed_decimal_column(column):
+    if len(column) < 256:
+        return None
+    inputs = _ASSESSMENT_INPUTS.get()
+    metadata = inputs.setdefault("fixed_text_metadata", {}) if inputs is not None else None
+    scalars = inputs.setdefault("finite_text_decimals", {}) if inputs is not None else None
+    precisions = inputs.setdefault("finite_text_precisions", {}) if inputs is not None else None
+    values = np.empty(len(column), dtype=object)
+    values.fill(None)
+    low, high = 0, 0
+    for index, value in enumerate(column):
+        if value is None:
+            continue
+        if type(value) is not str or len(value) > 160:
+            return None
+        prepared = metadata.get(value, -1) if metadata is not None else -1
+        missing = prepared < 0
+        if missing:
+            prepared = _fixed_decimal_text_metadata(value)
+            if prepared < 0:
+                return None
+        converted = scalars.get(value) if scalars is not None else None
+        if converted is None:
+            converted = Decimal(value)
+            if scalars is not None and len(scalars) < 262144:
+                precisions[value] = 2 * max(prepared & 63, 1) + 32
+                scalars[value] = converted
+        if missing and metadata is not None and len(metadata) < 262144:
+            metadata[value] = prepared
+        exponent = -(prepared >> 6)
+        significant = prepared & 63
+        adjusted = significant + exponent - 1 if significant else exponent
+        values[index] = converted
+        low, high = min(low, exponent), max(high, adjusted)
+    return values, low, high
+
+
+def _history_decimal_arrays(columns, *, summands=1, metadata=None):
+    return _prepared_history_decimal_arrays(columns, summands, metadata)
+
+
+def _prepared_history_decimal_arrays(columns, summands, metadata):
+    context = getcontext()
+    if (
+        context.prec < 128
+        or context.traps[Inexact]
+        or context.traps[Rounded]
+        or context.clamp
+        or context.Emin > -512
+        or context.Emax < 512
+    ):
+        return None
+    arrays = []
+    low, high = 0, 0
+    inputs = _ASSESSMENT_INPUTS.get()
+    memo = inputs.setdefault("history_decimal_values", {}) if inputs is not None else None
+    owners = inputs.setdefault("history_decimal_owners", {}) if inputs is not None else None
+    descriptors = inputs.setdefault("history_decimal_metadata", {}) if inputs is not None else None
+    with localcontext(context):
+        try:
+            for column in columns:
+                fixed = _history_fixed_decimal_column(column)
+                if fixed is not None:
+                    array, column_low, column_high = fixed
+                    arrays.append(array)
+                    low, high = min(low, column_low), max(high, column_high)
+                    continue
+                values = []
+                for value in column:
+                    if value is None:
+                        values.append(None)
+                        continue
+                    if type(value) not in (str, Decimal, int, float):
+                        return None
+                    identity = id(value)
+                    hit = memo.get(identity) if memo is not None else None
+                    if hit is None or owners.get(identity) is not value:
+                        raw = value
+                        value = value if type(value) is Decimal else Decimal(str(value))
+                        if not value.is_finite() or value < 0:
+                            return None
+                        parts = value.as_tuple()
+                        exponent = int(parts.exponent)
+                        if len(parts.digits) > 48 or not -100 <= exponent <= 100:
+                            return None
+                        adjusted = value.adjusted()
+                        if memo is not None:
+                            owners[identity] = raw
+                            descriptors[identity] = (exponent + 100) * 256 + adjusted + 100
+                            memo[identity] = value
+                    else:
+                        value = hit
+                        descriptor = descriptors[identity]
+                        exponent, adjusted = descriptor // 256 - 100, descriptor % 256 - 100
+                    if 2 * (adjusted - exponent + 1) + 32 > context.prec:
+                        return None
+                    low = min(low, exponent)
+                    high = max(high, adjusted)
+                    values.append(value)
+                arrays.append(np.asarray(values, dtype=object))
+        except (DecimalException, ValueError, OverflowError):
+            return None
+    if high - low + len(str(max(summands, 1))) + 1 > context.prec:
+        return None
+    if metadata is not None:
+        metadata.update(low=low, high=high, context=_history_context_key())
+        if type(metadata) is dict and type(columns) in (tuple, list):
+            for column, array in zip(columns, arrays, strict=True):
+                _cache_integer_column(column, array, low)
+    return arrays
+
+
+def _cache_integer_column(column, values, scale):
+    inputs = _ASSESSMENT_INPUTS.get()
+    if type(inputs) is not dict or len(values) < 256 or type(column) not in (list, tuple, np.ndarray):
+        return
+    if (
+        _history_fixed_decimal_column is not _INTEGER_COLUMN_CALLBACKS[0]
+        or Decimal is not _INTEGER_COLUMN_CALLBACKS[1]
+        or getcontext is not _COMPOSITE_CALLBACKS[1]
+    ):
+        return
+    if type(column) is np.ndarray and column.ndim != 1:
+        return
+    units = np.empty(len(values), dtype=np.int64)
+    for index, raw in enumerate(column):
+        if raw is None:
+            units[index] = 0
+            continue
+        if type(raw) is not str:
+            return
+        code = _fixed_decimal_text_metadata(raw)
+        if code < 0 or code & 63 > 19:
+            return
+        shift = -(code >> 6) - scale
+        coefficient = int(raw.replace(".", "")) if code & 63 else 0
+        if coefficient:
+            if not 0 <= shift <= 18:
+                return
+            coefficient *= 10**shift
+            if coefficient > 9223372036854775807:
+                return
+        units[index] = coefficient
+    units.flags.writeable = False
+    inputs.setdefault("history_integer_columns", {})[id(values)] = (values, values.copy(), units)
+
+
+def _validated_integer_units(values):
+    inputs = _ASSESSMENT_INPUTS.get()
+    if (
+        type(inputs) is not dict
+        or type(values) is not np.ndarray
+        or values.ndim != 1
+        or values.dtype != object
+        or not values.flags.c_contiguous
+        or not values.flags.writeable
+    ):
+        return None
+    memo = inputs.get("history_integer_columns", {})
+    source = values
+    while type(source) is np.ndarray:
+        hit = memo.get(id(source))
+        if hit is not None and hit[0] is source:
+            break
+        source = source.base
+    else:
+        return None
+    difference = values.ctypes.data - source.ctypes.data
+    offset, remainder = divmod(difference, values.itemsize)
+    if remainder or offset < 0 or offset + len(values) > min(len(source), len(hit[1]), len(hit[2])):
+        return None
+    view, saved = values, hit[1]
+    for index in range(len(values)):
+        if view[index] is not saved[offset + index]:
+            return None
+    return hit[2][offset : offset + len(values)]
+
+
+def _rounded_integer_change(current, old):
+    if old == 0:
+        raise ZeroDivisionError
+    numerator = int(current - old) if current >= old else int(old - current)
+    if numerator == 0:
+        return 0.0
+    denominator = int(old)
+    left, right, exponent = numerator, denominator, 0
+    while left:
+        left >>= 1
+        exponent += 1
+    while right:
+        right >>= 1
+        exponent -= 1
+    if exponent >= 0:
+        comparison = denominator
+        comparison <<= exponent
+        if numerator < comparison:
+            exponent -= 1
+    else:
+        comparison = numerator
+        comparison <<= -exponent
+        if comparison < denominator:
+            exponent -= 1
+    scaled_numerator, scaled_denominator = numerator, denominator
+    shift = 52 - exponent
+    if shift >= 0:
+        scaled_numerator <<= shift
+    else:
+        scaled_denominator <<= -shift
+    quotient = scaled_numerator // scaled_denominator
+    remainder = scaled_numerator % scaled_denominator
+    twice = remainder << 1
+    if twice > scaled_denominator or twice == scaled_denominator and quotient & 1:
+        quotient += 1
+    value = ldexp(float(quotient), exponent - 52)
+    return -value if current < old else value
+
+
+def _integer_return_values(units, previous, positions):
+    units_read, previous_read, positions_read = units, previous, positions
+    output = np.empty(len(positions), dtype=np.float64)
+    result = output
+    inexact = False
+    for index in range(len(positions)):
+        position = positions_read[index]
+        if position < 0 or position >= len(units):
+            return None
+        prior = previous_read[position]
+        if prior < 0 or prior >= len(units):
+            return None
+        current, old = units_read[position], units_read[prior]
+        if current < 0 or old <= 0:
+            return None
+        result[index] = _rounded_integer_change(current, old)
+        denominator = old
+        while denominator % 2 == 0:
+            denominator //= 2
+        while denominator % 5 == 0:
+            denominator //= 5
+        if current % denominator:
+            inexact = True
+    return output.tolist(), bool(inexact)
+
+
+def _integer_returns(units, previous, positions):
+    if any(type(value) is not np.ndarray or value.ndim != 1 for value in (units, previous, positions)):
+        return None
+    if units.dtype != np.int64 or previous.dtype != np.intp or positions.dtype != np.intp:
+        return None
+    if len(units) != len(previous) or not all(
+        value.flags.c_contiguous for value in (units, previous, positions)
+    ):
+        return None
+    return _integer_return_values(units, previous, positions)
+
+
+def _bounded_history_returns(values, old, valid):
+    if getcontext is not _COMPOSITE_CALLBACKS[1] or _history_present is not _COMPOSITE_CALLBACKS[3]:
+        return None
+    context = getcontext()
+    if (
+        type(context) is not Context
+        or context.prec < 128
+        or context.rounding != ROUND_HALF_EVEN
+        or context.traps[Inexact]
+        or context.traps[Rounded]
+        or context.clamp
+        or context.Emin > -512
+        or context.Emax < 512
+    ):
+        return None
+    units = _validated_integer_units(values)
+    if units is None:
+        return None
+    result = _integer_returns(units, old, np.flatnonzero(valid))
+    if result is not None:
+        if result[1]:
+            context.flags[Inexact] = context.flags[Rounded] = True
+        return result[0]
+    return None
+
+
+def _history_context_key():
+    context = getcontext()
+    return (
+        context.prec,
+        context.rounding,
+        context.Emin,
+        context.Emax,
+        context.clamp,
+        tuple(context.traps.copy().values()) if type(context) is Context else tuple(context.traps.items()),
+    )
+
+
+def _oi_cohort_key(rows):
+    inputs = _ASSESSMENT_INPUTS.get()
+    if inputs is None:
+        return None
+    memo = inputs.setdefault("oi_cohort_keys", {})
+    signature = _history_context_key()
+    hit = memo.get((id(rows), signature))
+    if hit is not None and hit[0] is rows:
+        return hit[1]
+    columns = (
+        [row.get("oi_native") for row in rows],
+        [None if row.get("oi_usd_source") else row.get("oi_usd") for row in rows],
+    )
+    prepared = _history_decimal_arrays(columns)
+    key = None
+    if prepared is not None:
+        key = history_fingerprint(
+            [(_when(row), native, usd) for row, native, usd in zip(rows, *columns, strict=True)]
+        )
+    memo[(id(rows), signature)] = (rows, key)
+    return key
+
+
+def _history_time_array(times, window):
+    if not times or type(window) is not timedelta or any(type(t) is not datetime for t in times):
+        return None
+    try:
+        origin, last = min(times), max(times)
+        _ = origin - window, last - window
+        offsets = [t - origin for t in times]
+        values = np.asarray(
+            [d.days * 86400000000 + d.seconds * 1000000 + d.microseconds for d in offsets],
+            dtype=np.int64,
+        )
+        width = window.days * 86400000000 + window.seconds * 1000000 + window.microseconds
+        if int(values.max()) + abs(width) > 2**52:
+            return None
+    except (TypeError, ValueError, OverflowError):
+        return None
+    return values, width, origin
+
+
+def _history_nearest(times, targets, tolerance):
+    right = np.searchsorted(times, targets, side="left")
+    left = np.maximum(right - 1, 0)
+    right = np.minimum(right, len(times) - 1)
+    left_distance = np.abs(times[left] - targets)
+    right_distance = np.abs(times[right] - targets)
+    chosen = np.where(left_distance <= right_distance, left, right)
+    valid = np.divide(np.minimum(left_distance, right_distance), 1000000) <= tolerance
+    return chosen, valid
+
+
+def _history_present(values):
+    return np.fromiter((value is not None for value in values), dtype=bool, count=len(values))
+
+
+def _oi_history_returns(times, native, usd, window, tolerance, *, prepared=None):
+    if prepared is None:
+        prepared = _history_decimal_arrays((native, usd))
+    temporal = _history_time_array(times, window)
+    if prepared is None or temporal is None or len(native) != len(times) or len(usd) != len(times):
+        return None
+    offsets, width, _ = temporal
+    order = np.argsort(offsets, kind="stable")
+    ordered = offsets[order]
+    if np.any(ordered[1:] == ordered[:-1]):
+        return None
+    old, paired = _history_nearest(ordered, offsets - width, tolerance)
+    old = order[old]
+    return _oi_history_changes(times, prepared, old, paired)
+
+
+def _oi_history_changes(times, prepared, old, paired):
+    returns, ends = [], []
+    for values in prepared:
+        present = _history_present(values)
+        valid = paired & present & present[old]
+        valid &= np.not_equal(values[old], 0)
+        result = _bounded_history_returns(values, old, valid)
+        if result is None:
+            changes = np.subtract(np.divide(values[valid], values[old[valid]]), 1)
+            result = np.asarray(changes, dtype=np.float64).tolist()
+        returns.append(result)
+        ends.append([times[i] for i in np.flatnonzero(valid)])
+    return returns[0], returns[1], ends[0], ends[1]
+
+
+def _oi_contiguous_history(rows, ordered, times, lo, hi, window, tolerance):
+    inputs = _ASSESSMENT_INPUTS.get()
+    if inputs is None or lo == hi:
+        return None
+    memo = inputs.setdefault("oi_contiguous_histories", {})
+    hit = memo.get(id(rows))
+    if hit is None or hit[0] is not rows or hit[1] is not times:
+        temporal = None
+        if (
+            all(type(row) is dict for row in rows)
+            and all(index == position for position, (_, index) in enumerate(ordered))
+            and all(before < after for before, after in zip(times, times[1:], strict=False))
+        ):
+            temporal = _history_time_array(times, timedelta(0))
+        hit = rows, times, temporal
+        memo[id(rows)] = hit
+    if hit[2] is None or type(window) is not timedelta:
+        return None
+    offsets = hit[2][0][lo:hi]
+    width = window.days * 86400000000 + window.seconds * 1000000 + window.microseconds
+    try:
+        _ = times[lo] - window, times[hi - 1] - window
+        if int(offsets[-1]) + abs(width) > 2**52:
+            return None
+    except (TypeError, ValueError, OverflowError):
+        return None
+    columns = _oi_history_arrays(rows)
+    if columns is None:
+        return None
+    old, paired = _history_nearest(offsets, offsets - width, tolerance)
+    return _oi_history_changes(times[lo:hi], [values[lo:hi] for values in columns[0]], old, paired)
+
+
+def _oi_history_axis(times):
+    inputs = _ASSESSMENT_INPUTS.get()
+    if inputs is None:
+        return None
+    memo = inputs.setdefault("oi_history_axes", {})
+    hit = memo.get(id(times))
+    if hit is not None and hit[0] is times:
+        return hit[1]
+    result = None
+    if all(type(t) is datetime and t.tzinfo is UTC for t in times) and all(
+        before <= after for before, after in zip(times, times[1:], strict=False)
+    ):
+        unique = list(dict.fromkeys(times))
+        gaps = np.asarray(
+            [(after - before).total_seconds() for before, after in zip(unique, unique[1:], strict=False)],
+            dtype=np.float64,
+        )
+        result = unique, gaps
+    memo[id(times)] = (times, result)
+    return result
+
+
+def _oi_stats(rows, start, end, *, history_identity=None, venue_history=None, timeline_times=None):
     rows, _, ordered, ordered_times = _oi_split(rows)
     tolerance = float(parameter("oi_sync_tolerance_s", 60))
 
@@ -872,13 +1539,13 @@ def _oi_stats(rows, start, end, *, history_identity=None, venue_history=None):
     if not a or not z:
         return None
     n0, n1, u0, u1 = (
-        decimal(r.get(k)) for r, k in [(a, "oi_native"), (z, "oi_native"), (a, "oi_usd"), (z, "oi_usd")]
+        _as_dec(r.get(k)) for r, k in [(a, "oi_native"), (z, "oi_native"), (a, "oi_usd"), (z, "oi_usd")]
     )
     if n0 is None or n1 is None or n0 <= 0 or n1 < 0:
         return None
     exact_context(n0, n1, u0, u1)
     p0 = u0 / n0 if u0 is not None else None
-    p1 = u1 / n1 if u1 is not None and n1 else decimal(z.get("mark_price", z.get("mark")))
+    p1 = u1 / n1 if u1 is not None and n1 else _as_dec(z.get("mark_price", z.get("mark")))
     usd_ready = u0 is not None and u1 is not None and u0 > 0
     dec = (
         decomposition(n0, n1, p0, p1)
@@ -892,19 +1559,70 @@ def _oi_stats(rows, start, end, *, history_identity=None, venue_history=None):
             detail="SYNCHRONIZED_MARK_OR_QUOTE_RATE_UNAVAILABLE",
         )
     )
-    length = _time(z) - _time(a)
+    length = _when(z) - _when(a)
 
     window = end - start
-    bytime = {_time(r): r for r in rows if start - timedelta(days=lookback_days()) <= _time(r) < start}
-    if venue_history is not None:
-        venue_history = [_history_slice(times, venue_rows, start) for times, venue_rows in venue_history]
-    history_times = sorted(bytime)
-    gaps = sorted(
-        (b - a).total_seconds() for a, b in zip(history_times, history_times[1:], strict=False) if b > a
+    lower = start - timedelta(days=lookback_days())
+    history_axis = (
+        timeline_times if venue_history is not None and timeline_times is not None else ordered_times
     )
-    pair_tolerance = max(float(parameter("oi_sync_tolerance_s", 60)), gaps[len(gaps) // 2] / 2 if gaps else 0)
+    lo, hi = bisect_left(history_axis, lower), bisect_left(history_axis, start)
+    memoized_times = _TIMES.get()
+    indexed_history = (
+        _time is _MEMO_TIME
+        and type(memoized_times) is tuple
+        and memoized_times[1] is _ASSESSMENT_INPUTS.get()
+    )
+    axis = _oi_history_axis(history_axis) if indexed_history else None
+    indexed_history = indexed_history and (
+        axis is not None or all(type(at) is datetime and at.tzinfo is UTC for at in history_axis[lo:hi])
+    )
+    if axis is not None:
+        unique, gap_axis = axis
+        axis_lo, axis_hi = bisect_left(unique, lower), bisect_left(unique, start)
+        history_times = unique[axis_lo:axis_hi]
+        bytime = None
+    elif indexed_history or (
+        venue_history is not None and all(type(at) is datetime for at in history_axis[lo:hi])
+    ):
+        history_times = list(dict.fromkeys(history_axis[lo:hi]))
+        bytime = None
+    else:
+        bytime = {_when(rows[i]): rows[i] for i in sorted(index for _, index in ordered[lo:hi])}
+        history_times = sorted(bytime)
+    cohort_key = None
     cache = _BASELINE_CACHE.get()
     dependency = _BASELINE_DEPENDENCY.get()
+    if cache is not None and dependency is None:
+        if venue_history is None:
+            cohort_key = _oi_cohort_key(rows)
+        else:
+            cohort_keys = tuple(_oi_cohort_key(venue_rows) for _, venue_rows in venue_history)
+            if all(key is not None for key in cohort_keys):
+                cohort_key = cohort_keys
+    deferred_history = cache is not None and dependency is not None
+    if (
+        venue_history is None
+        and bytime is None
+        and cache is not None
+        and dependency is None
+        and cohort_key is None
+    ):
+        bytime = {_when(rows[i]): rows[i] for i in sorted(index for _, index in ordered[lo:hi])}
+    if venue_history is not None and not deferred_history:
+        venue_history = [_history_slice(times, venue_rows, start) for times, venue_rows in venue_history]
+    if axis is not None:
+        gaps = gap_axis[axis_lo : max(axis_lo, axis_hi - 1)]
+        middle = len(gaps) // 2
+        half_gap = float(np.partition(gaps, middle)[middle]) / 2 if len(gaps) else 0
+        pair_tolerance = max(float(parameter("oi_sync_tolerance_s", 60)), half_gap)
+    else:
+        gaps = sorted(
+            (b - a).total_seconds() for a, b in zip(history_times, history_times[1:], strict=False) if b > a
+        )
+        pair_tolerance = max(
+            float(parameter("oi_sync_tolerance_s", 60)), gaps[len(gaps) // 2] / 2 if gaps else 0
+        )
     history_key = (
         (
             "oi" if venue_history is None else "oi_composite",
@@ -914,6 +1632,8 @@ def _oi_stats(rows, start, end, *, history_identity=None, venue_history=None):
             tuple(parameter("normal_range_quantiles", [0.025, 0.975])),
             (dependency, history_identity or tuple(sorted({r.get("instrument_id", "") for r in rows})))
             if dependency is not None
+            else (cohort_key, lower, start, _history_context_key())
+            if cohort_key is not None
             else history_fingerprint(
                 [(t, r.get("oi_native"), _stored_usd(r)) for t, r in sorted(bytime.items())]
                 if venue_history is None
@@ -928,34 +1648,67 @@ def _oi_stats(rows, start, end, *, history_identity=None, venue_history=None):
     )
     ranges = cache.get(history_key) if cache is not None else None
     if ranges is None:
+        vector = None
+        if (
+            venue_history is None
+            and bytime is None
+            and indexed_history
+            and history_times
+            and (history_times[-1] - history_times[0]).total_seconds()
+            >= float(parameter("history_min_days", 7)) * 86400
+        ):
+            vector = _oi_contiguous_history(rows, ordered, ordered_times, lo, hi, window, pair_tolerance)
+        if venue_history is None and bytime is None and vector is None:
+            bytime = {_when(rows[i]): rows[i] for i in sorted(index for _, index in ordered[lo:hi])}
         hn = []
         hu = []
         if venue_history is not None:
+            if deferred_history:
+                venue_history = [
+                    _history_slice(times, venue_rows, start) for times, venue_rows in venue_history
+                ]
             hn, hu = _composite_history(venue_history, window)
-        elif (
+        elif vector is not None or (
             bytime
             and (max(bytime) - min(bytime)).total_seconds() >= float(parameter("history_min_days", 7)) * 86400
         ):
             native_ends, usd_ends = [], []
-            for t, r in bytime.items():
-                target = t - window
-                i = bisect_left(history_times, target)
-                near = [
-                    (abs((history_times[j] - target).total_seconds()), j)
-                    for j in (i - 1, i)
-                    if 0 <= j < len(history_times)
-                    and abs((history_times[j] - target).total_seconds()) <= pair_tolerance
-                ]
-                old = bytime[history_times[min(near)[1]]] if near else None
-                if old:
-                    nn, oo = decimal(r.get("oi_native")), decimal(old.get("oi_native"))
-                    uu, ou = _stored_usd(r), _stored_usd(old)
-                    if nn is not None and oo:
-                        hn.append(float(nn / oo - 1))
-                        native_ends.append(t)
-                    if uu is not None and ou:
-                        hu.append(float(uu / ou - 1))
-                        usd_ends.append(t)
+            if vector is None:
+                prepared = _oi_history_column_views(rows, bytime.values())
+                if prepared is None:
+                    vector = _oi_history_returns(
+                        list(bytime),
+                        [r.get("oi_native") for r in bytime.values()],
+                        [None if r.get("oi_usd_source") else r.get("oi_usd") for r in bytime.values()],
+                        window,
+                        pair_tolerance,
+                    )
+                else:
+                    vector = _oi_history_returns(
+                        list(bytime), prepared[0], prepared[1], window, pair_tolerance, prepared=prepared
+                    )
+            if vector is not None:
+                hn, hu, native_ends, usd_ends = vector
+            else:
+                for t, r in bytime.items():
+                    target = t - window
+                    i = bisect_left(history_times, target)
+                    near = [
+                        (abs((history_times[j] - target).total_seconds()), j)
+                        for j in (i - 1, i)
+                        if 0 <= j < len(history_times)
+                        and abs((history_times[j] - target).total_seconds()) <= pair_tolerance
+                    ]
+                    old = bytime[history_times[min(near)[1]]] if near else None
+                    if old:
+                        nn, oo = _as_dec(r.get("oi_native")), _as_dec(old.get("oi_native"))
+                        uu, ou = _stored_usd(r), _stored_usd(old)
+                        if nn is not None and oo:
+                            hn.append(float(nn / oo - 1))
+                            native_ends.append(t)
+                        if uu is not None and ou:
+                            hu.append(float(uu / ou - 1))
+                            usd_ends.append(t)
 
             minimum = float(parameter("history_min_days", 7)) * 86400
             if not usd_ends or (max(usd_ends) - min(usd_ends) + window).total_seconds() < minimum:
@@ -991,8 +1744,8 @@ def _oi_stats(rows, start, end, *, history_identity=None, venue_history=None):
         usd_normal_range=ur,
         native_beyond=beyond(dn, nr),
         usd_beyond=beyond(du, ur),
-        start_observed_at=iso(_time(a)),
-        end_observed_at=iso(_time(z)),
+        start_observed_at=iso(_when(a)),
+        end_observed_at=iso(_when(z)),
     )
 
 
@@ -1007,9 +1760,9 @@ def window_usd_volume(snapshot, instrument, start, end):
     else:
         points = sorted(
             [
-                (_time(r), r)
+                (_when(r), r)
                 for r in snapshot.get("klines", [])
-                if r.get("instrument_id") == instrument and start <= _time(r) < end
+                if r.get("instrument_id") == instrument and start <= _when(r) < end
             ],
             key=lambda point: point[0],
         )
@@ -1019,7 +1772,7 @@ def window_usd_volume(snapshot, instrument, start, end):
         z = at + timedelta(seconds=int(row.get("interval_s", 60)))
         if at != cursor or z > end or row.get("complete") is not True or row.get("quote_volume_usd") is None:
             break
-        values.append(decimal(row["quote_volume_usd"]))
+        values.append(_as_dec(row["quote_volume_usd"]))
         cursor = z
     if cursor == end and values:
         return sum(values, Decimal(0))
@@ -1047,10 +1800,198 @@ def liquidation_side_evidence(rows, window_complete, coverage):
     return result
 
 
+def _oi_history_arrays(rows):
+    """Prepare stored history columns once for a retained source and Decimal context."""
+    inputs = _ASSESSMENT_INPUTS.get()
+    memo = inputs.setdefault("oi_history_arrays", {}) if inputs is not None else None
+    key = (id(rows), _history_context_key())
+    hit = memo.get(key) if memo is not None else None
+    if hit is not None and hit[0] is rows:
+        return hit[1]
+    columns = (
+        [row.get("oi_native") for row in rows],
+        [None if row.get("oi_usd_source") else row.get("oi_usd") for row in rows],
+    )
+    metadata = {}
+    arrays = _history_decimal_arrays(columns, metadata=metadata)
+    result = (arrays, metadata) if arrays is not None else None
+    if memo is not None:
+        memo[key] = (rows, result)
+    return result
+
+
 def _history_slice(times, rows, start):
     lo = bisect_left(times, start - timedelta(days=lookback_days()))
     hi = bisect_left(times, start)
-    return times[lo:hi], rows[lo:hi]
+    selected = rows[lo:hi]
+    inputs = _ASSESSMENT_INPUTS.get()
+    if inputs is not None:
+        prepared = _oi_history_arrays(rows)
+        if prepared is not None:
+            arrays, metadata = prepared
+            inputs["oi_history_arrays"][(id(selected), _history_context_key())] = (
+                selected,
+                ([values[lo:hi] for values in arrays], metadata),
+            )
+    return times[lo:hi], selected
+
+
+_COMPOSITE_CALLBACKS = (parameter, getcontext, _history_nearest, _history_present)
+_INTEGER_COLUMN_CALLBACKS = (_history_fixed_decimal_column, Decimal)
+
+
+def _composite_history_vector(venue_history, window):
+    prepared = []
+    low, high = 0, 0
+    for _, rows in venue_history:
+        columns = _oi_history_arrays(rows)
+        if columns is None:
+            return None
+        arrays, metadata = columns
+        prepared.extend(arrays)
+        low, high = min(low, metadata["low"]), max(high, metadata["high"])
+    if high - low + len(str(max(len(venue_history), 1))) + 1 > getcontext().prec:
+        return None
+    if any(type(t) is not datetime for times, _ in venue_history for t in times):
+        return None
+    try:
+        history = sorted({t for times, _ in venue_history for t in times})
+    except TypeError:
+        return None
+    temporal = _history_time_array(history, window)
+    if temporal is None:
+        return None
+    offsets, width, origin = temporal
+    minimum = float(parameter("history_min_days", 7)) * 86400
+    if (history[-1] - history[0]).total_seconds() < minimum:
+        return [], []
+    packed = (
+        parameter is _COMPOSITE_CALLBACKS[0]
+        and getcontext is _COMPOSITE_CALLBACKS[1]
+        and _history_nearest is _COMPOSITE_CALLBACKS[2]
+        and _history_present is _COMPOSITE_CALLBACKS[3]
+        and type(_PARAMETERS) is ContextVar
+        and type(venue_history) in (list, tuple)
+        and len(venue_history) <= 4
+        and all(
+            type(pair) in (list, tuple)
+            and len(pair) == 2
+            and all(type(part) in (list, tuple) for part in pair)
+            and len(pair[0]) == len(pair[1])
+            and all(type(value) is datetime and value.tzinfo is UTC for value in pair[0])
+            for pair in venue_history
+        )
+        and all(
+            type(values) is np.ndarray and values.dtype == object and len(values) <= 65535
+            for values in prepared
+        )
+        and all(
+            len(prepared[2 * venue]) == len(prepared[2 * venue + 1]) == len(pair[1])
+            for venue, pair in enumerate(venue_history)
+        )
+    )
+    if packed:
+        parameters = _PARAMETERS.get()
+        packed = parameters is None or (
+            type(parameters) is dict
+            and all(type(name) is str for name in parameters)
+            and all(
+                type(parameters.get(name, default)) in (str, int, float, bool)
+                for name, default in (("history_min_days", 7), ("oi_sync_tolerance_s", 60))
+            )
+        )
+    if packed:
+        native_context = getcontext()
+        packed = (
+            type(native_context) is Context
+            and native_context.prec >= 64
+            and high - low + len(str(max(len(venue_history), 1))) + 1 <= native_context.prec
+            and not native_context.traps[Inexact]
+            and not native_context.traps[Rounded]
+            and not native_context.clamp
+            and native_context.Emin <= -512
+            and native_context.Emax >= 512
+        )
+        del native_context
+    signatures = [np.zeros(len(history), dtype=np.uint64) for _ in range(4)] if packed else None
+    totals = [None] * 4 if packed else [np.full(len(history), Decimal(0), dtype=object) for _ in range(4)]
+    covered = [np.zeros(len(history), dtype=bool) for _ in range(2)]
+    for venue, (times, rows) in enumerate(venue_history):
+        if not times:
+            continue
+        if len(times) != len(rows) or any(type(t) is not datetime for t in times):
+            return None
+        delta = [t - origin for t in times]
+        at = np.asarray(
+            [d.days * 86400000000 + d.seconds * 1000000 + d.microseconds for d in delta],
+            dtype=np.int64,
+        )
+        if np.any(at[1:] < at[:-1]):
+            return None
+        gaps = np.divide(np.diff(at), 1000000)
+        gaps = np.sort(gaps[gaps > 0])
+        tolerance = max(
+            float(parameter("oi_sync_tolerance_s", 60)), gaps[len(gaps) // 2] / 2 if len(gaps) else 0
+        )
+        old, old_valid = _history_nearest(at, offsets - width, tolerance)
+        new, new_valid = _history_nearest(at, offsets, tolerance)
+        paired = old_valid & new_valid & (old != new)
+        for measure in range(2):
+            values = prepared[2 * venue + measure]
+            present = _history_present(values)
+            valid = paired & present[new] & present[old]
+            valid &= np.not_equal(values[old], 0)
+            covered[measure] |= valid
+            for endpoint, indices in enumerate((old, new)):
+                if signatures is None:
+                    total = totals[2 * measure + endpoint]
+                    total[valid] = np.add(total[valid], values[indices[valid]])
+                else:
+                    signatures[2 * measure + endpoint][valid] |= (indices[valid].astype(np.uint64) + 1) << (
+                        16 * venue
+                    )
+    if signatures is not None:
+        for measure in range(2):
+            keys, inverse = np.unique(
+                np.concatenate(signatures[2 * measure : 2 * measure + 2]), return_inverse=True
+            )
+            aggregate = np.full(len(keys), Decimal(0), dtype=object)
+            for venue in range(len(venue_history)):
+                indices = ((keys >> (16 * venue)) & 65535).astype(np.intp) - 1
+                valid = indices >= 0
+                values = prepared[2 * venue + measure]
+                aggregate[valid] = np.add(aggregate[valid], values[indices[valid]])
+            totals[2 * measure] = aggregate[inverse[: len(history)]]
+            totals[2 * measure + 1] = aggregate[inverse[len(history) :]]
+    result = []
+    for measure, valid in enumerate(covered):
+        indices = np.flatnonzero(valid)
+        changes = np.subtract(np.divide(totals[2 * measure + 1][valid], totals[2 * measure][valid]), 1)
+        values = np.asarray(changes, dtype=np.float64).tolist()
+        if (
+            not len(indices)
+            or (history[indices[-1]] - history[indices[0]] + window).total_seconds() < minimum
+        ):
+            result.append([])
+        else:
+            result.append(values)
+    return result[0], result[1]
+
+
+def _oi_history_column_views(rows, selected_rows):
+    inputs = _ASSESSMENT_INPUTS.get()
+    if inputs is None or not all(type(row) is dict for row in rows):
+        return None
+    prepared = _oi_history_arrays(rows)
+    if prepared is None:
+        return None
+    memo = inputs.setdefault("oi_history_positions", {})
+    hit = memo.get(id(rows))
+    if hit is None or hit[0] is not rows:
+        hit = (rows, {id(row): index for index, row in enumerate(rows)})
+        memo[id(rows)] = hit
+    indices = np.fromiter((hit[1][id(row)] for row in selected_rows), dtype=np.intp, count=len(selected_rows))
+    return [column[indices] for column in prepared[0]]
 
 
 def _composite_history(venue_history, window):
@@ -1065,12 +2006,15 @@ def _composite_history(venue_history, window):
     composite stayed under the 7 days §0 needs. A venue joining or leaving the cohort is never
     counted as an OI change.
     """
+    vector = _composite_history_vector(venue_history, window)
+    if vector is not None:
+        return vector
     series = []
     for times, rows in venue_history:
         gaps = sorted((b - a).total_seconds() for a, b in zip(times, times[1:], strict=False) if b > a)
 
         tolerance = max(float(parameter("oi_sync_tolerance_s", 60)), gaps[len(gaps) // 2] / 2 if gaps else 0)
-        values = [(decimal(r.get("oi_native")), _stored_usd(r)) for r in rows]
+        values = [(_as_dec(r.get("oi_native")), _stored_usd(r)) for r in rows]
         series.append((times, values, tolerance))
     history = sorted({t for times, _, _ in series for t in times})
 
@@ -1115,76 +2059,276 @@ def _composite_history(venue_history, window):
     return (hn if stored(native_ends) else []), (hu if stored(usd_ends) else [])
 
 
+def _oi_cutoff_index(rows, end):
+    """Retain one stable, admissible venue index at this assessment's cutoff."""
+    inputs = _ASSESSMENT_INPUTS.get()
+    memo = inputs.setdefault("oi_cutoff_indexes", {}) if inputs is not None else None
+    key = (id(rows), end)
+    hit = memo.get(key) if memo is not None else None
+    if hit is not None and hit[0] is rows:
+        return hit[1]
+    admissible, _, ordered, times = _oi_split(rows)
+    hi = bisect_right(times, end)
+    result = (times[:hi], [admissible[i] for _, i in ordered[:hi]])
+    if memo is not None:
+        memo[key] = (rows, result)
+    return result
+
+
+def _oi_combined_selection(indexed, timestamps, tolerance, prepared):
+    temporal = _history_time_array(timestamps, timedelta(0))
+    if temporal is None or any(not times for times, _ in indexed):
+        return None
+    targets, _, origin = temporal
+    selected = []
+    admitted = np.ones(len(targets), dtype=bool)
+    usd_ready = np.ones(len(targets), dtype=bool)
+    for lane, (times, _) in enumerate(indexed):
+        delta = times[0] - origin
+        shift = delta.days * 86400000000 + delta.seconds * 1000000 + delta.microseconds
+        column = _history_time_array(times, timedelta(0))
+        if column is None or abs(shift) + int(column[0].max()) > 2**52:
+            return None
+        offsets = column[0] + shift
+        if np.any(offsets[1:] < offsets[:-1]):
+            return None
+        chosen, paired = _history_nearest(offsets, targets, tolerance)
+        native, usd = prepared[2 * lane][chosen], prepared[2 * lane + 1][chosen]
+        admitted &= paired & _history_present(native)
+        usd_ready &= _history_present(usd)
+        selected.append((native, usd))
+    usd_ready &= admitted
+    return selected, admitted, usd_ready
+
+
+def _oi_combined_records(timestamps, selection, positions, *, context=None):
+    selected, _, usd_ready = selection
+    ready = usd_ready[positions]
+    native_totals = np.full(len(positions), Decimal(0), dtype=object)
+    usd_totals = np.full(len(positions), Decimal(0), dtype=object)
+    with localcontext(context) if context is not None else contextlib.nullcontext():
+        for native, usd in selected:
+            native_totals = np.add(native_totals, native[positions])
+            usd_totals[ready] = np.add(usd_totals[ready], usd[positions][ready])
+    return [
+        dict(
+            ts=iso(timestamps[position]),
+            oi_native=native_totals[index],
+            oi_usd=usd_totals[index] if ready[index] else None,
+        )
+        for index, position in enumerate(positions)
+    ]
+
+
+def _oi_combined_data(indexed, tolerance):
+    """Share exact endpoint sums only when conversions have no Decimal effects."""
+    context = getcontext()
+    inputs = _ASSESSMENT_INPUTS.get()
+    memo = inputs.setdefault("oi_combined_timelines", {}) if inputs is not None else None
+    key = (tuple(id(rows) for _, rows in indexed), tolerance, _history_context_key())
+    hit = memo.get(key) if memo is not None else None
+    if hit is not None and all(a[1] is b[1] for a, b in zip(hit[0], indexed, strict=True)):
+        return hit[1]
+    prepared = None
+    if memo is not None:
+        columns = [
+            [row.get(measure) for row in rows] for _, rows in indexed for measure in ("oi_native", "oi_usd")
+        ]
+        metadata = {}
+        if all(type(row) is dict for _, rows in indexed for row in rows):
+            prepared = []
+            low, high = 0, 0
+            for lane, (_, rows) in enumerate(indexed):
+                if all(row.get("oi_usd_source") is None for row in rows):
+                    pair = _oi_history_arrays(rows)
+                else:
+                    lane_metadata = {}
+                    arrays = _history_decimal_arrays(
+                        columns[2 * lane : 2 * lane + 2], summands=len(indexed), metadata=lane_metadata
+                    )
+                    pair = (arrays, lane_metadata) if arrays is not None else None
+                if pair is None:
+                    prepared = None
+                    break
+                arrays, lane_metadata = pair
+                prepared.extend(arrays)
+                low, high = min(low, lane_metadata["low"]), max(high, lane_metadata["high"])
+            metadata.update(low=low, high=high)
+            if high - low + len(str(max(len(indexed), 1))) + 1 > getcontext().prec:
+                prepared = None
+        else:
+            prepared = _history_decimal_arrays(columns, summands=len(indexed), metadata=metadata)
+        if (
+            prepared is not None
+            and metadata["high"] - metadata["low"] + len(str(max(len(indexed), 1))) + 1 > 128
+        ):
+            prepared = None
+    timestamps = sorted({t for times, _ in indexed for t in times})
+    selection = (
+        _oi_combined_selection(indexed, timestamps, tolerance, prepared) if prepared is not None else None
+    )
+    if selection is not None:
+        positions = np.flatnonzero(selection[1])
+        if (
+            type(context) is Context
+            and getcontext() is context
+            and _history_context_key() == key[-1]
+            and all(type(at) is datetime and at.tzinfo is UTC for at in timestamps)
+        ):
+            combined = dict(
+                timestamps=timestamps,
+                selection=selection,
+                positions=positions,
+                context=context.copy(),
+                records=None,
+            )
+        else:
+            combined = _oi_combined_records(timestamps, selection, positions)
+        memo[key] = (indexed, combined)
+        return combined
+    reusable = prepared is not None
+    combined = []
+    for t in timestamps:
+        selected = []
+        for times, rows in indexed:
+            idx = bisect_left(times, t)
+            candidates = [
+                rows[i]
+                for i in (idx - 1, idx)
+                if 0 <= i < len(rows) and abs((times[i] - t).total_seconds()) <= tolerance
+            ]
+            if not candidates:
+                break
+            selected.append(min(candidates, key=lambda r: abs((_when(r) - t).total_seconds())))
+        if len(selected) == len(indexed) and all(_as_dec(r.get("oi_native")) is not None for r in selected):
+            combined.append(
+                dict(ts=iso(t), oi_native=_sum(selected, "oi_native"), oi_usd=_sum(selected, "oi_usd"))
+            )
+    if reusable:
+        memo[key] = (indexed, combined)
+    return combined
+
+
+def _oi_combined_timeline(indexed, tolerance):
+    data = _oi_combined_data(indexed, tolerance)
+    if type(data) is not dict:
+        return data
+    if data["records"] is None:
+        data["records"] = _oi_combined_records(
+            data["timestamps"], data["selection"], data["positions"], context=data["context"]
+        )
+    return data["records"]
+
+
+def _oi_synchronized_points(indexed, tolerance, start, end):
+    data = _oi_combined_data(indexed, tolerance)
+    if type(data) is not dict:
+        return data, None
+    if (
+        type(start) is not datetime
+        or start.tzinfo is not UTC
+        or type(end) is not datetime
+        or end.tzinfo is not UTC
+    ):
+        return _oi_combined_timeline(indexed, tolerance), None
+    times = [data["timestamps"][position] for position in data["positions"]]
+    chosen = []
+    for endpoint in (start, end):
+        lo = bisect_left(times, endpoint - timedelta(seconds=tolerance))
+        hi = bisect_right(times, min(endpoint + timedelta(seconds=tolerance), end))
+        nearest = None
+        for index in range(lo, hi):
+            candidate = (abs((times[index] - endpoint).total_seconds()), index)
+            if nearest is None or candidate < nearest:
+                nearest = candidate
+        if nearest is None:
+            return [], times
+        chosen.append(int(data["positions"][nearest[1]]))
+    positions = np.asarray(sorted(set(chosen)), dtype=np.intp)
+    rows = _oi_combined_records(data["timestamps"], data["selection"], positions, context=data["context"])
+    return rows, times
+
+
 def synchronized_oi(sync, start, end):
     admissible = []
     tolerance = float(parameter("oi_sync_tolerance_s", 60))
     for p, rows, category in sync:
         if _venue(p) == "hyperliquid":
             continue
-        eligible = [r for r in rows if oi_temporally_admissible(r) and _time(r) <= end]
+        times, eligible = _oi_cutoff_index(rows, end)
         if all(
-            any(abs((_time(row) - endpoint).total_seconds()) <= tolerance for row in eligible)
+            any(
+                abs((times[i] - endpoint).total_seconds()) <= tolerance
+                for i in (bisect_left(times, endpoint) - 1, bisect_left(times, endpoint))
+                if 0 <= i < len(times)
+            )
             for endpoint in (start, end)
         ):
-            admissible.append((p, eligible, category))
+            admissible.append((p, (times, eligible), category))
     sync = admissible
     synchronized = None
     if sync and len({s[2] for s in sync}) == 1 and sync[0][2] is not None:
-        timestamps = sorted({_time(r) for _, rs, _ in sync for r in rs})
-        combined = []
-        indexed = []
-        for _, rs, _ in sync:
-            ordered = sorted(rs, key=_time)
-            indexed.append(([_time(r) for r in ordered], ordered))
-        for t in timestamps:
-            selected = []
-            for times, rs in indexed:
-                idx = bisect_left(times, t)
-                candidates = [
-                    rs[i]
-                    for i in (idx - 1, idx)
-                    if 0 <= i < len(rs)
-                    and abs((times[i] - t).total_seconds()) <= float(parameter("oi_sync_tolerance_s", 60))
-                    and times[i] <= end
-                ]
-                if not candidates:
-                    break
-                selected.append(min(candidates, key=lambda r: abs((_time(r) - t).total_seconds())))
-            if len(selected) == len(sync) and all(decimal(r.get("oi_native")) is not None for r in selected):
-                combined.append(
-                    dict(ts=iso(t), oi_native=_sum(selected, "oi_native"), oi_usd=_sum(selected, "oi_usd"))
-                )
+        indexed = [series for _, series, _ in sync]
+        combined, timeline_times = _oi_synchronized_points(indexed, tolerance, start, end)
         synchronized = _oi_stats(
             combined,
             start,
             end,
             history_identity=tuple(sorted(p[0]["instrument_id"] for p in sync)),
             venue_history=indexed,
+            timeline_times=timeline_times,
         )
         if synchronized:
             synchronized["venues"] = [p["venue"] for p, _, _ in sync]
     return synchronized
 
 
-@precise
-def derivatives_truth(snapshot, start, end):
-    groups = defaultdict(list)
-    instruments = {}
+def _derivative_universe(snapshot):
     target = snapshot.get("token_id")
+    names = ("instruments", "oi", "funding", "liquidations", "klines", "flow_bars", "semantics")
+    sources = tuple(snapshot.get(name, ()) for name in names)
+    inputs = _ASSESSMENT_INPUTS.get()
+    memo = inputs.setdefault("derivative_universe", {}) if inputs is not None else None
+    key = (id(target), tuple(map(id, sources)))
+    hit = memo.get(key) if memo is not None else None
+    if hit is not None and hit[0] is target and all(a is b for a, b in zip(hit[1], sources, strict=True)):
+        return hit[2]
+    instruments = {}
     for collection in ("instruments", "oi", "funding", "liquidations"):
         for row in snapshot.get(collection, []):
             iid = row.get("instrument_id")
             if iid and _market(row) != "SPOT" and row.get("token_id", target) == target:
                 instruments.setdefault(iid, row)
-                groups.setdefault(iid, [])
-    for iid in groups:
-        groups[iid] = _oi_rows(snapshot, iid)
-    sem = {(s.get("instrument_id"), s["metric_key"]): s for s in snapshot.get("semantics", [])}
+    semantics = {(row.get("instrument_id"), row["metric_key"]): row for row in snapshot.get("semantics", [])}
+    volumes = {}
+    for market in ("SPOT", "PERP"):
+        selected = {
+            row["instrument_id"]
+            for row in snapshot.get("instruments", [])
+            if row.get("token_id", target) == target and ((_market(row) == "SPOT") == (market == "SPOT"))
+        }
+        selected |= {
+            row["instrument_id"]
+            for collection in ("klines", "flow_bars")
+            for row in snapshot.get(collection, [])
+            if row.get("token_id", target) == target and ((_market(row) == "SPOT") == (market == "SPOT"))
+        }
+        volumes[market] = selected
+    result = instruments, semantics, volumes
+    if memo is not None:
+        memo[key] = (target, sources, result)
+    return result
+
+
+@precise
+def derivatives_truth(snapshot, start, end):
+    instruments, sem, volume_instruments = _derivative_universe(snapshot)
+    groups = {iid: _oi_rows(snapshot, iid) for iid in instruments}
     per = []
     sync = []
     for instrument, rs in groups.items():
         stats = _oi_stats(rs, start, end)
-        unresolved = [r for r in _oi_split(rs)[1] if _time(r) <= end]
+        unresolved = [r for r in _oi_split(rs)[1] if _when(r) <= end]
         venue = _venue(instruments[instrument])
         if stats is None:
             stats = {
@@ -1198,31 +2342,31 @@ def derivatives_truth(snapshot, start, end):
                 "reason": "INCOMPLETE",
                 "detail": "OI_BUCKET_EDGE_UNSPECIFIED" if unresolved else None,
             }
-        fs = [f for f in _instrument_rows(snapshot, "funding", instrument) if _time(f) and _time(f) <= end]
+        fs = [f for f in _instrument_rows(snapshot, "funding", instrument) if _when(f) and _when(f) <= end]
         settled = sorted([f for f in fs if f.get("kind") == "SETTLED"], key=_time)
         est = sorted([f for f in fs if f.get("kind") == "CURRENT_ESTIMATE"], key=_time)
         last = settled[-1] if settled else {}
-        interval = decimal(last.get("interval_h"))
-        rate = decimal(last.get("rate"))
+        interval = _as_dec(last.get("interval_h"))
+        rate = _as_dec(last.get("rate"))
         eq = rate * 8 / interval if rate is not None and interval else None
         funding_history = [
             f
             for f in settled
-            if _time(f) < start
-            and decimal(f.get("interval_h")) is not None
-            and decimal(f["interval_h"]) > 0
-            and decimal(f.get("rate")) is not None
+            if _when(f) < start
+            and _as_dec(f.get("interval_h")) is not None
+            and _as_dec(f["interval_h"]) > 0
+            and _as_dec(f.get("rate")) is not None
         ]
         fh = [
-            decimal(f.get("rate_8h_eq"))
+            _as_dec(f.get("rate_8h_eq"))
             if f.get("rate_8h_eq") is not None
-            else decimal(f.get("rate")) * 8 / decimal(f["interval_h"])
+            else _as_dec(f.get("rate")) * 8 / _as_dec(f["interval_h"])
             for f in funding_history
         ]
         settled_eq = eq
         estimate = est[-1] if est else {}
-        estimate_interval = decimal(estimate.get("interval_h"))
-        estimate_rate = decimal(estimate.get("rate"))
+        estimate_interval = _as_dec(estimate.get("interval_h"))
+        estimate_rate = _as_dec(estimate.get("rate"))
         estimate_eq = (
             estimate_rate * 8 / estimate_interval if estimate_rate is not None and estimate_interval else None
         )
@@ -1231,7 +2375,7 @@ def derivatives_truth(snapshot, start, end):
             interval = estimate_interval
         history_ready = (
             bool(funding_history)
-            and (_time(funding_history[-1]) - _time(funding_history[0])).total_seconds()
+            and (_when(funding_history[-1]) - _when(funding_history[0])).total_seconds()
             >= float(parameter("history_min_days", 7)) * 86400
         )
         baseline_cache = _BASELINE_CACHE.get()
@@ -1255,7 +2399,7 @@ def derivatives_truth(snapshot, start, end):
                 baseline_cache[funding_key] = (fr,)
                 if len(baseline_cache) > 128:
                     baseline_cache.pop(next(iter(baseline_cache)))
-        liqs = [r for r in _instrument_rows(snapshot, "liquidations", instrument) if start <= _time(r) < end]
+        liqs = [r for r in _instrument_rows(snapshot, "liquidations", instrument) if start <= _when(r) < end]
         cov = (rs[-1] if rs else instruments[instrument]).get("liq_coverage") or (
             "COMPLETE" if venue == "bybit" else "SAMPLED" if venue in ("binance", "okx") else "NOT_SUPPORTED"
         )
@@ -1270,17 +2414,17 @@ def derivatives_truth(snapshot, start, end):
         )
         if cov == "COMPLETE" and not liq_window_complete:
             cov = "UNKNOWN"
-        startfund = next((f for f in reversed(settled) if _time(f) <= start), {})
+        startfund = next((f for f in reversed(settled) if _when(f) <= start), {})
         p = dict(
             venue=venue,
             instrument_id=instrument,
             coverage={"venue": venue},
             **stats,
             funding_settled_last=rate,
-            funding_settled_interval_h=decimal(last.get("interval_h")),
-            funding_settled_last_observed_at=iso(_time(last)) if last else None,
-            funding_estimate_observed_at=iso(_time(est[-1])) if est else None,
-            funding_estimate=decimal(est[-1].get("rate")) if est else None,
+            funding_settled_interval_h=_as_dec(last.get("interval_h")),
+            funding_settled_last_observed_at=iso(_when(last)) if last else None,
+            funding_estimate_observed_at=iso(_when(est[-1])) if est else None,
+            funding_estimate=_as_dec(est[-1].get("rate")) if est else None,
             funding_estimate_interval_h=estimate_interval,
             interval_h=interval,
             funding_8h_eq=eq,
@@ -1290,9 +2434,9 @@ def derivatives_truth(snapshot, start, end):
             funding_vs_normal=("BELOW" if eq < fr[0] else "ABOVE" if eq > fr[1] else "WITHIN")
             if eq is not None and fr
             else None,
-            funding_start=decimal(startfund.get("rate")),
-            funding_start_interval_h=decimal(startfund.get("interval_h")),
-            funding_start_observed_at=iso(_time(startfund)) if startfund else None,
+            funding_start=_as_dec(startfund.get("rate")),
+            funding_start_interval_h=_as_dec(startfund.get("interval_h")),
+            funding_start_observed_at=iso(_when(startfund)) if startfund else None,
             **liquidation_side_evidence(liqs, liq_window_complete, cov),
             liq_coverage=cov,
             liq_source_coverage=liq_source_coverage,
@@ -1313,20 +2457,20 @@ def derivatives_truth(snapshot, start, end):
                     **propagate_timestamp(
                         latest_unresolved, "ts", precision_aliases=("timestamp_precision", "precision")
                     ).fields("ts"),
-                    "oi_native": decimal(latest_unresolved.get("oi_native")),
-                    "oi_usd": decimal(latest_unresolved.get("oi_usd")),
+                    "oi_native": _as_dec(latest_unresolved.get("oi_native")),
+                    "oi_usd": _as_dec(latest_unresolved.get("oi_usd")),
                     "scope": "SUPPLEMENTAL_PROVIDER_OBSERVATION_NOT_WINDOW_ENDPOINT",
                 },
             }
         lastoi = max(rs, key=_time) if rs else {}
-        mark = decimal(lastoi.get("mark_price", lastoi.get("mark")))
-        index = decimal(lastoi.get("index_price", lastoi.get("index")))
+        mark = _as_dec(lastoi.get("mark_price", lastoi.get("mark")))
+        index = _as_dec(lastoi.get("index_price", lastoi.get("index")))
         p["basis_bps"] = (mark / index - 1) * 10000 if mark is not None and index else None
         per.append(p)
         semantics = [
             sem.get((instrument, r.get("metric_key")), sem.get((None, r.get("metric_key")), {}))
             for r in rs
-            if start <= _time(r) <= end
+            if start <= _when(r) <= end
         ]
         if (
             venue in ("binance", "okx", "bybit")
@@ -1352,19 +2496,8 @@ def derivatives_truth(snapshot, start, end):
         }
     volumes = {}
     volume_coverage = {}
-    target = snapshot.get("token_id")
     for market in ("SPOT", "PERP"):
-        instruments = {
-            r["instrument_id"]
-            for r in snapshot.get("instruments", [])
-            if r.get("token_id", target) == target and ((_market(r) == "SPOT") == (market == "SPOT"))
-        }
-        instruments |= {
-            r["instrument_id"]
-            for collection in ("klines", "flow_bars")
-            for r in snapshot.get(collection, [])
-            if r.get("token_id", target) == target and ((_market(r) == "SPOT") == (market == "SPOT"))
-        }
+        instruments = volume_instruments[market]
         current = []
         previous = []
         for iid in instruments:
@@ -1398,6 +2531,180 @@ def derivatives_truth(snapshot, start, end):
     )
 
 
+_PRICE_EPOCH = datetime(1970, 1, 1, tzinfo=UTC)
+
+
+def _price_micros(value):
+    delta = value - _PRICE_EPOCH
+    return delta.days * 86400000000 + delta.seconds * 1000000 + delta.microseconds
+
+
+class _ColumnPriceTimes(Sequence):
+    def __init__(self, series, stop):
+        self.series = series
+        self.micros = series.micros[:stop]
+
+    def __len__(self):
+        return len(self.micros)
+
+    def __getitem__(self, index):
+        if isinstance(index, slice):
+            return [self[at] for at in range(*index.indices(len(self)))]
+        return _PRICE_EPOCH + timedelta(microseconds=int(self.micros[index]))
+
+
+class _ColumnPrices(Mapping):
+    def __init__(self, micros, values, order):
+        self.micros = micros
+        self.values_array = values
+        self.order = order
+        self.plain = None
+
+    @classmethod
+    def prepare(cls, rows, projected, cutoff):
+        if type(projected) is not dict or any(type(key) is not str for key in projected):
+            return None
+        times, values = projected.get("times_us"), projected.get("values")
+        if (
+            type(times) is not array
+            or type(values) is not array
+            or times.typecode != "q"
+            or values.typecode != "d"
+            or times.itemsize != 8
+            or values.itemsize != 8
+            or len(times) != len(values)
+            or not times
+        ):
+            return None
+        if any(
+            type(at) is not datetime or at.tzinfo is not UTC or at.fold or type(value) is not float
+            for at, value in rows.items()
+        ):
+            return None
+        stamps = np.frombuffer(times, dtype=np.int64)
+        prices = np.frombuffer(values, dtype=np.float64)
+        if np.any(stamps[1:] <= stamps[:-1]):
+            return None
+        try:
+            _ = _PRICE_EPOCH + timedelta(microseconds=int(stamps[0]))
+            _ = _PRICE_EPOCH + timedelta(microseconds=int(stamps[-1]))
+        except OverflowError:
+            return None
+        raw_times = np.fromiter((_price_micros(at) for at in rows), dtype=np.int64, count=len(rows))
+        raw_values = np.fromiter(rows.values(), dtype=np.float64, count=len(rows))
+        for column in (prices, raw_values):
+            if np.any(~np.isfinite(column)) or np.any(column < 2.0**-400) or np.any(column > 2.0**400):
+                return None
+        stop = int(np.searchsorted(stamps, _price_micros(cutoff), side="right"))
+        combined_times = np.concatenate((raw_times, stamps[:stop]))
+        combined_values = np.concatenate((raw_values, prices[:stop]))
+        if not len(combined_times):
+            return None
+        ordered = np.argsort(combined_times, kind="stable")
+        sorted_times = combined_times[ordered]
+        first = np.concatenate(([True], sorted_times[1:] != sorted_times[:-1]))
+        last = np.concatenate((sorted_times[1:] != sorted_times[:-1], [True]))
+        selected = ordered[last]
+        stamps = combined_times[selected]
+        if int(stamps[-1]) - int(stamps[0]) > 2**52:
+            return None
+        return cls(stamps, combined_values[selected], np.argsort(ordered[first], kind="stable"))
+
+    def __len__(self):
+        return len(self.micros)
+
+    def at(self, index):
+        return _PRICE_EPOCH + timedelta(microseconds=int(self.micros[index]))
+
+    def __iter__(self):
+        return (self.at(index) for index in self.order)
+
+    def items(self):
+        return ((self.at(index), float(self.values_array[index])) for index in self.order)
+
+    def __getitem__(self, key):
+        if type(key) is not datetime or key.tzinfo is not UTC:
+            if self.plain is None:
+                self.plain = dict(self.items())
+            return self.plain[key]
+        value = _price_micros(key)
+        index = int(np.searchsorted(self.micros, value))
+        if index == len(self) or int(self.micros[index]) != value:
+            raise KeyError(key)
+        return float(self.values_array[index])
+
+    def before(self, at):
+        return _ColumnPriceTimes(self, int(np.searchsorted(self.micros, _price_micros(at))))
+
+    def endpoint(self, at, fresh):
+        value = _price_micros(at)
+        index = int(np.searchsorted(self.micros, value, side="right")) - 1
+        if index < 0:
+            return None
+        if fresh:
+            step = (int(self.micros[index]) - int(self.micros[index - 1])) / 1000000 if index else 60
+            if (value - int(self.micros[index])) / 1000000 > max(step, 60):
+                return None
+        return float(self.values_array[index])
+
+
+def _hourly_prices(prices, *, exact_microseconds=False):
+    if type(prices) is _ColumnPrices:
+        stamps = prices.micros[prices.order]
+        mask = stamps % 3600000000 == 0 if exact_microseconds else (stamps // 1000000) % 3600 == 0
+        return {prices.at(index): float(prices.values_array[index]) for index in prices.order[mask]}
+    return {
+        at: value
+        for at, value in prices.items()
+        if at.minute == 0 and at.second == 0 and (not exact_microseconds or at.microsecond == 0)
+    }
+
+
+def _last_price_time(prices):
+    return prices.at(-1) if type(prices) is _ColumnPrices else max(prices)
+
+
+def _price_span_seconds(prices):
+    if type(prices) is _ColumnPrices:
+        return (int(prices.micros[-1]) - int(prices.micros[0])) / 1000000
+    return (max(prices) - min(prices)).total_seconds()
+
+
+def _statistical_price_groups(snapshot, token):
+    if type(snapshot) is not dict or any(type(key) is not str for key in snapshot):
+        return _price_groups(snapshot, token)
+    raw_cutoff = snapshot["cutoff"]
+    if type(raw_cutoff) not in (str, datetime) or (
+        type(raw_cutoff) is datetime and raw_cutoff.tzinfo is not UTC
+    ):
+        return _price_groups(snapshot, token)
+    cutoff = parse_time(raw_cutoff)
+    if type(cutoff) is not datetime or cutoff.tzinfo is not UTC:
+        return _price_groups(snapshot, token)
+    groups = _price_groups(dict(snapshot, stat_price_series={}), token)
+    projected_groups = snapshot.get("stat_price_series") or {}
+    plain_ids = type(projected_groups) is dict and all(type(key) is str for key in projected_groups)
+    for iid, projected in projected_groups.items():
+        if projected.get("time_basis") != "CLOSE_TIME":
+            continue
+        if token and projected.get("token_id") != token:
+            continue
+        columns = (
+            _ColumnPrices.prepare(groups.get(iid, {}), projected, cutoff)
+            if plain_ids and type(iid) is str and all(type(key) is str for key in groups)
+            else None
+        )
+        if columns is not None:
+            groups[iid] = columns
+            continue
+        for micros, value in zip(projected.get("times_us", ()), projected.get("values", ()), strict=False):
+            at = _PRICE_EPOCH + timedelta(microseconds=int(micros))
+            price = number(value)
+            if price and price > 0 and at <= cutoff:
+                groups[iid][at] = price
+    return groups
+
+
 def _prices(snapshot, token=None, *, exact=False, reference_only=False):
     inputs = _ASSESSMENT_INPUTS.get()
     if exact or inputs is None:
@@ -1407,7 +2714,7 @@ def _prices(snapshot, token=None, *, exact=False, reference_only=False):
     key = (id(candles), id(projected), snapshot["cutoff"], token)
     prices = inputs.setdefault("prices", {})
     if key not in prices:
-        prices[key] = (candles, projected, _price_groups(snapshot, token))
+        prices[key] = (candles, projected, _statistical_price_groups(snapshot, token))
     return prices[key][2]
 
 
@@ -1420,7 +2727,7 @@ def _price_groups(snapshot, token=None, *, exact=False, reference_only=False):
             continue
         if token and r.get("token_id") != token and token not in r.get("instrument_id", "").upper():
             continue
-        t = kline_close_time(r) or _time(r) + timedelta(seconds=int(r.get("interval_s", 60)))
+        t = kline_close_time(r) or _when(r) + timedelta(seconds=int(r.get("interval_s", 60)))
         raw = r.get("c", r.get("close"))
         if exact and reference_only:
             raw = raw.get("value") if isinstance(raw, dict) else raw
@@ -1438,7 +2745,7 @@ def _price_groups(snapshot, token=None, *, exact=False, reference_only=False):
                 groups[r["instrument_id"]][t] = price
     if exact and reference_only:
         return {
-            iid: {point[0]: decimal(point[1]) for point in points if point is not None}
+            iid: {point[0]: _as_dec(point[1]) for point in points if point is not None}
             for iid, points in references.items()
         }
     if not exact:
@@ -1456,6 +2763,90 @@ def _price_groups(snapshot, token=None, *, exact=False, reference_only=False):
                 if price and price > 0 and t <= cutoff:
                     groups[iid][t] = price
     return groups
+
+
+def _relative_history_arrays(times, prices, btc, benchmark, coefficient):
+    columnar = type(times) is _ColumnPriceTimes and times.series is prices and len(times) > 0
+    temporal = (
+        (times.micros - times.micros[0], 0, times[0])
+        if columnar
+        else _history_time_array(times, timedelta(0))
+    )
+    if temporal is None or type(coefficient) not in (int, float):
+        return None
+    if not np.isfinite(coefficient) or abs(coefficient) > 2.0**100:
+        return None
+    if coefficient and abs(coefficient) < 2.0**-100:
+        return None
+    if columnar and (type(btc) is _ColumnPrices or type(btc) is dict and not btc):
+        prices_array = prices.values_array[: len(times)]
+        if btc:
+            positions = np.searchsorted(btc.micros, times.micros)
+            bounded = np.minimum(positions, len(btc) - 1)
+            present = (positions < len(btc)) & (btc.micros[bounded] == times.micros)
+            btc_array = np.where(present, btc.values_array[bounded], 1.0)
+        else:
+            present = np.zeros(len(times), dtype=bool)
+            btc_array = np.ones(len(times), dtype=np.float64)
+        if benchmark:
+            btc_array = np.asarray([], dtype=np.float64)
+    else:
+        values = [prices[t] for t in times]
+        present = np.asarray([t in btc for t in times], dtype=bool)
+        benchmark_values = [btc.get(t, 1.0) for t in times] if not benchmark else []
+        if any(type(value) is not float for value in (*values, *benchmark_values)):
+            return None
+        prices_array = np.asarray(values, dtype=np.float64)
+        btc_array = np.asarray(benchmark_values, dtype=np.float64)
+    for column in (prices_array, btc_array):
+        if np.any(~np.isfinite(column)) or np.any(column < 2.0**-400) or np.any(column > 2.0**400):
+            return None
+    offsets, _, origin = temporal
+    if np.any(offsets[1:] <= offsets[:-1]):
+        return None
+    return offsets, origin, prices_array, btc_array, present
+
+
+def _relative_history_returns(prepared, times, start, length, resolution, benchmark, coefficient):
+    if resolution is None:
+        return None
+    offsets, origin, prices, btc, present = prepared
+    try:
+        window = timedelta(seconds=length)
+        _ = times[0] - window, times[-1] - window
+        width = window.days * 86400000000 + window.seconds * 1000000 + window.microseconds
+        if int(offsets[-1]) + abs(width) > 2**52:
+            return None
+        cutoff = start - timedelta(days=lookback_days()) - origin
+        cutoff_us = cutoff.days * 86400000000 + cutoff.seconds * 1000000 + cutoff.microseconds
+        if abs(cutoff_us) > 2**52:
+            return None
+    except (TypeError, ValueError, OverflowError):
+        return None
+    targets = offsets - width
+    old = np.searchsorted(offsets, targets, side="right") - 1
+    valid = old >= 0
+    old = np.maximum(old, 0)
+    lags = np.divide(targets - offsets[old], 1000000)
+    valid &= (offsets[old] >= cutoff_us) & (lags < resolution)
+    if not benchmark:
+        valid &= present & present[old]
+    indices = np.flatnonzero(valid)
+    old = old[valid]
+    result = np.subtract(np.divide(prices[valid], prices[old]), 1)
+    if not benchmark:
+        benchmark_return = np.subtract(np.divide(btc[valid], btc[old]), 1)
+        adjustment = np.multiply(coefficient, benchmark_return)
+        result = np.subtract(result, adjustment)
+    durations = np.divide(offsets[valid] - offsets[old], 1000000)
+    if type(times) is _ColumnPriceTimes:
+        return (
+            result.tolist(),
+            [float(durations.min()), float(durations.max())] if len(indices) else [],
+            [float(lags[valid].min()), float(lags[valid].max())] if len(indices) else [],
+            [times[int(indices[-1])]] if len(indices) else [],
+        )
+    return result.tolist(), durations.tolist(), lags[valid].tolist(), [times[i] for i in indices]
 
 
 def relative_truth(snapshot, start, end, *, include_outcome=True):
@@ -1534,7 +2925,7 @@ def relative_truth(snapshot, start, end, *, include_outcome=True):
 
     cutoff_row = flow_reference(snapshot, ref, end)
     anchor_row = flow_reference(snapshot, ref, start)
-    anchor_price = decimal(anchor_row.get("price")) if anchor_row else None
+    anchor_price = _as_dec(anchor_row.get("price")) if anchor_row else None
     btc = series("BTC")
     eth = series("ETH")
     history_end = start
@@ -1560,7 +2951,7 @@ def relative_truth(snapshot, start, end, *, include_outcome=True):
     def hourly_values(p):
         return {
             t: log(p[t] / p[t - timedelta(hours=1)])
-            for t in p
+            for t in (_hourly_prices(p) if type(p) is _ColumnPrices else p)
             if t.minute == 0
             and t.second == 0
             and t < history_end
@@ -1584,6 +2975,8 @@ def relative_truth(snapshot, start, end, *, include_outcome=True):
     price_times = {}
 
     def price(p, t):
+        if type(p) is _ColumnPrices and type(t) is datetime and t.tzinfo is UTC:
+            return p.endpoint(t, False)
         times = price_times.setdefault(id(p), sorted(p)) if id(p) not in price_times else price_times[id(p)]
         index = bisect_right(times, t) - 1
         return p[times[index]] if index >= 0 else None
@@ -1595,6 +2988,8 @@ def relative_truth(snapshot, start, end, *, include_outcome=True):
     def fresh_price(p, t):
         """A benchmark/peer price at t only if its last point is within that series' own bar
         spacing: a base-tier outage must not turn two copies of one old close into a 0 return."""
+        if type(p) is _ColumnPrices and type(t) is datetime and t.tzinfo is UTC:
+            return p.endpoint(t, True)
         times = price_times.setdefault(id(p), sorted(p)) if id(p) not in price_times else price_times[id(p)]
         index = bisect_right(times, t) - 1
         if index < 0:
@@ -1607,12 +3002,23 @@ def relative_truth(snapshot, start, end, *, include_outcome=True):
         return pz / pa - 1 if pa and pz else None
 
     benchmark = token_symbols.get(token_id) == "BTC"
-    historical_times = sorted(t for t in prices if t < start)
-    deltas = [
-        (b - a).total_seconds() for a, b in zip(historical_times, historical_times[1:], strict=False) if b > a
-    ]
+    historical_times = (
+        prices.before(start)
+        if type(prices) is _ColumnPrices and type(start) is datetime and start.tzinfo is UTC
+        else sorted(t for t in prices if t < start)
+    )
+    deltas = (
+        np.divide(np.diff(historical_times.micros), 1000000).tolist()
+        if type(historical_times) is _ColumnPriceTimes
+        else [
+            (b - a).total_seconds()
+            for a, b in zip(historical_times, historical_times[1:], strict=False)
+            if b > a
+        ]
+    )
     history_resolution_s = int(median(deltas)) if deltas else None
     history_diagnostics = {}
+    vector_history = _relative_history_arrays(historical_times, prices, btc, benchmark, bb)
 
     def hist_values(length):
         if (
@@ -1626,30 +3032,40 @@ def relative_truth(snapshot, start, end, *, include_outcome=True):
         stalenesses = []
         ends = []
 
-        for t in historical_times:
-            target = t - timedelta(seconds=length)
-            i = bisect_left(historical_times, target)
-            if i == len(historical_times) or historical_times[i] != target:
-                i -= 1
-            if i < 0:
-                continue
-            a = historical_times[i]
-            lag = (target - a).total_seconds()
-            if (
-                a < start - timedelta(days=lookback_days())
-                or lag >= history_resolution_s
-                or not benchmark
-                and (t not in btc or a not in btc)
-            ):
-                continue
-            out.append(
-                prices[t] / prices[a] - 1
-                if benchmark
-                else prices[t] / prices[a] - 1 - bb * (btc[t] / btc[a] - 1)
+        vector = (
+            _relative_history_returns(
+                vector_history, historical_times, start, length, history_resolution_s, benchmark, bb
             )
-            durations.append((t - a).total_seconds())
-            stalenesses.append(lag)
-            ends.append(t)
+            if vector_history is not None
+            else None
+        )
+        if vector is not None:
+            out, durations, stalenesses, ends = vector
+        else:
+            for t in historical_times:
+                target = t - timedelta(seconds=length)
+                i = bisect_left(historical_times, target)
+                if i == len(historical_times) or historical_times[i] != target:
+                    i -= 1
+                if i < 0:
+                    continue
+                a = historical_times[i]
+                lag = (target - a).total_seconds()
+                if (
+                    a < start - timedelta(days=lookback_days())
+                    or lag >= history_resolution_s
+                    or not benchmark
+                    and (t not in btc or a not in btc)
+                ):
+                    continue
+                out.append(
+                    prices[t] / prices[a] - 1
+                    if benchmark
+                    else prices[t] / prices[a] - 1 - bb * (btc[t] / btc[a] - 1)
+                )
+                durations.append((t - a).total_seconds())
+                stalenesses.append(lag)
+                ends.append(t)
         history_diagnostics[length] = dict(
             target_window_duration_s=length,
             observed_duration_bounds_s=[min(durations), max(durations)] if durations else None,
@@ -1683,7 +3099,7 @@ def relative_truth(snapshot, start, end, *, include_outcome=True):
             (
                 float(
                     (
-                        decimal(cutoff_row.get("price", cutoff_row.get("p")))
+                        _as_dec(cutoff_row.get("price", cutoff_row.get("p")))
                         if cutoff_row
                         else price(exact_groups.get(ref, {}), end)
                     )
@@ -1705,7 +3121,7 @@ def relative_truth(snapshot, start, end, *, include_outcome=True):
             window=name,
             start=iso(a),
             cutoff=iso(end),
-            observed_at=iso(max(prices)) if prices else None,
+            observed_at=iso(_last_price_time(prices)) if prices else None,
             precision=f"BUCKET({int(next((r.get('interval_s', 60) for r in reversed(snapshot.get('klines', [])) if r.get('instrument_id') == ref), 60))}s)"
             if prices
             else None,
@@ -1798,21 +3214,37 @@ def relative_truth(snapshot, start, end, *, include_outcome=True):
     bh = []
     rvhist = []
     rv = None
-    btc_hourly = {t: p for t, p in btc.items() if t.minute == 0 and t.second == 0 and t.microsecond == 0}
+    btc_hourly = _hourly_prices(btc, exact_microseconds=True)
 
     def btc_baseline():
         bh = []
         rvhist = []
-        for t in sorted(btc_hourly):
+        hourly_order = list(btc_hourly)
+        hourly_positions = {t: i for i, t in enumerate(hourly_order)}
+        ordered_times = sorted(btc_hourly)
+        try:
+            prepared = _reference_rv_series(btc_hourly)
+        except (OverflowError, ValueError):
+            prepared = None
+        prepared_rv = dict(zip(prepared[1], prepared[2], strict=True)) if prepared is not None else None
+        for t in ordered_times:
             if t >= start or t < start - timedelta(days=lookback_days()):
                 continue
             a = t - timedelta(days=1)
             if a in btc:
                 bh.append(btc[t] / btc[a] - 1)
+            if prepared_rv is not None:
+                value = prepared_rv.get(t)
+                if value is not None:
+                    rvhist.append(value)
+                continue
+            lo = bisect_right(ordered_times, a)
+            hi = bisect_right(ordered_times, t)
+            positions = sorted(hourly_positions[x] for x in ordered_times[lo:hi])
             lr = [
                 log(btc_hourly[x] / btc_hourly[x - timedelta(hours=1)])
-                for x in btc_hourly
-                if a < x <= t and x - timedelta(hours=1) in btc_hourly
+                for position in positions
+                if (x := hourly_order[position]) - timedelta(hours=1) in btc_hourly
             ]
             if len(lr) == 24:
                 rvhist.append(stdev(lr))
@@ -1831,7 +3263,7 @@ def relative_truth(snapshot, start, end, *, include_outcome=True):
     ]
     if len(lr) == 24:
         rv = stdev(lr)
-    if not btc or (max(btc) - min(btc)).total_seconds() < float(parameter("history_min_days", 7)) * 86400:
+    if not btc or _price_span_seconds(btc) < float(parameter("history_min_days", 7)) * 86400:
         bh = []
         rvhist = []
     context = market_context(br, rv, bh, rvhist)
@@ -1868,11 +3300,11 @@ def relative_truth(snapshot, start, end, *, include_outcome=True):
     btc_ids = {iid: p for iid, p in groups.items() if token_symbols.get(identities.get(iid)) == "BTC"}
     btc_iid = max(btc_ids, key=lambda iid: coverage_counts.get(iid, len(btc_ids[iid]))) if btc_ids else None
     btc_last = flow_reference(snapshot, btc_iid, end)
-    btc_entry = decimal(btc_last.get("price")) if btc_last else price(exact_groups.get(btc_iid, {}), end)
+    btc_entry = _as_dec(btc_last.get("price")) if btc_last else price(exact_groups.get(btc_iid, {}), end)
     outcome_btc = dict(
         instrument_id=btc_iid,
         entry_ref_price=btc_entry,
-        observed_at=iso(_time(btc_last)) if btc_last else iso(max(btc)) if btc else None,
+        observed_at=iso(_when(btc_last)) if btc_last else iso(_last_price_time(btc)) if btc else None,
         price_source="LAST_TRADE" if btc_last else "KLINE_CLOSE" if btc else None,
         reason=None if btc_entry is not None else "INCOMPLETE",
     )
@@ -1884,13 +3316,13 @@ def relative_truth(snapshot, start, end, *, include_outcome=True):
         repricing_sign=sign,
         outcome_btc_reference=outcome_btc,
         normal_ranges=horizon_ranges,
-        entry_ref_price=decimal(cutoff_row.get("price", cutoff_row.get("p")))
+        entry_ref_price=_as_dec(cutoff_row.get("price", cutoff_row.get("p")))
         if cutoff_row
         else price(exact_groups.get(ref, {}), end),
         entry_price_source="LAST_TRADE" if cutoff_row else "KLINE_CLOSE",
-        entry_price_observed_at=iso(_time(cutoff_row))
+        entry_price_observed_at=iso(_when(cutoff_row))
         if cutoff_row
-        else iso(max(prices))
+        else iso(_last_price_time(prices))
         if prices
         else None,
         close_1h_price=max(hourly_closes, key=lambda x: x[0])[1] if hourly_closes else None,
@@ -1903,7 +3335,7 @@ def relative_truth(snapshot, start, end, *, include_outcome=True):
             else "KNOWN_TO_US_AT",
             ts=iso(start),
             ref_price=anchor_price,
-            price_observed_at=iso(_time(anchor_row)) if anchor_row else None,
+            price_observed_at=iso(_when(anchor_row)) if anchor_row else None,
             evidence=anchor_row,
             price_reason=None if anchor_row else "INCOMPLETE",
             price_source="LAST_TRADE" if anchor_row else None,
@@ -1941,13 +3373,13 @@ def relative_truth(snapshot, start, end, *, include_outcome=True):
 
 @precise
 def walk_book(levels, notional, mid, side="ask"):
-    remaining = decimal(notional)
-    mid = decimal(mid)
+    remaining = _as_dec(notional)
+    mid = _as_dec(mid)
     native = Decimal(0)
     spent = Decimal(0)
     for level in levels:
         p, q = (
-            (decimal(level[k]) for k in ("price", "qty"))
+            (_as_dec(level[k]) for k in ("price", "qty"))
             if isinstance(level, dict)
             else map(decimal, level[:2])
         )
@@ -1965,7 +3397,7 @@ def depth_at_band(book, side, unit="usd"):
     coverage = number(covered.get(side)) if isinstance(covered, dict) else number(covered)
     band = float(parameter("depth_band_pct", 1))
     return (
-        decimal(
+        _as_dec(
             (
                 ((book.get("depth") or {}).get(side) or {}).get({0.5: "p0_5", 1.0: "p1", 2.0: "p2"}[band])
                 or {}
@@ -1983,7 +3415,7 @@ def liquidity_truth(snapshot, start, end, spot, relative):
         for b in snapshot.get("books", [])
         if _market(b) == "SPOT"
         and b.get("token_id", snapshot.get("token_id")) == snapshot.get("token_id")
-        and _time(b) <= end
+        and _when(b) <= end
         and b.get("integrity_ok") is True
     ]
     groups = defaultdict(list)
@@ -1995,8 +3427,8 @@ def liquidity_truth(snapshot, start, end, spot, relative):
         for r in snapshot.get("flow_bars", [])
         if _market(r) == "SPOT"
         and _venue(r) in eligible_venues
-        and start <= _time(r)
-        and _time(r) + timedelta(minutes=1) <= end
+        and start <= _when(r)
+        and _when(r) + timedelta(minutes=1) <= end
         and r.get("complete") is True
     ]
     for v in spot.get("venues", []):
@@ -2005,8 +3437,8 @@ def liquidity_truth(snapshot, start, end, spot, relative):
                 flow.append(dict(row, minute_start=row["start"], segment_end=row["end"], venue=v["venue"]))
     volume_buckets = defaultdict(list)
     for r in snapshot.get("flow_bars", []):
-        if _market(r) == "SPOT" and end - timedelta(days=1) <= _time(r) < end:
-            volume_buckets[int(_time(r).timestamp()) // 900].append(r)
+        if _market(r) == "SPOT" and end - timedelta(days=1) <= _when(r) < end:
+            volume_buckets[int(_when(r).timestamp()) // 900].append(r)
     covered_volumes = []
     expected_venues = {v["venue"] for v in spot["venues"]}
     for _bucket, rs in volume_buckets.items():
@@ -2014,15 +3446,15 @@ def liquidity_truth(snapshot, start, end, spot, relative):
         if (
             expected_venues
             and all(r.get("complete") is True for r in selected)
-            and all(len({_time(r) for r in selected if _venue(r) == v}) == 15 for v in expected_venues)
+            and all(len({_when(r) for r in selected if _venue(r) == v}) == 15 for v in expected_venues)
         ):
             buy, sell = _sum(selected, "buy_notional"), _sum(selected, "sell_notional")
             if buy is not None and sell is not None:
                 covered_volumes.append(buy + sell)
     impact_tiers = parameter("impact_tiers_usd", [100000, 1000000, 5000000])
-    k = min(Decimal(1), mean(covered_volumes) / decimal(impact_tiers[2])) if covered_volumes else None
+    k = min(Decimal(1), mean(covered_volumes) / _as_dec(impact_tiers[2])) if covered_volumes else None
     tiers = {
-        name: decimal(size) * k if k is not None else None
+        name: _as_dec(size) * k if k is not None else None
         for name, size in list(zip(("T1", "T2", "T3"), impact_tiers, strict=False))
     }
     per = []
@@ -2048,10 +3480,10 @@ def liquidity_truth(snapshot, start, end, spot, relative):
         venue_flow[_venue(f)].append(f)
     for venue, rs in groups.items():
         rs.sort(key=_time)
-        times = [_time(x) for x in rs]
+        times = [_when(x) for x in rs]
         flows = venue_flow.get(venue, [])
         by_time = sorted(flows, key=_time)
-        flow_times = [_time(x) for x in by_time]
+        flow_times = [_when(x) for x in by_time]
         b = rs[-1]
         bid, ask = depth(b, "bid"), depth(b, "ask")
         exact_context(bid, ask)
@@ -2088,8 +3520,8 @@ def liquidity_truth(snapshot, start, end, spot, relative):
         ps = [number(x["spread_bps"]) for x in pre if x.get("spread_bps") is not None]
         if ps:
             prespreads.append(mean(ps))
-        fx = Decimal(1) if b.get("quote_asset") == "USD" else decimal(b.get("quote_usd_rate"))
-        mid = decimal(b.get("mid"))
+        fx = Decimal(1) if b.get("quote_asset") == "USD" else _as_dec(b.get("quote_usd_rate"))
+        mid = _as_dec(b.get("mid"))
         levels = b.get("asks", b.get("levels", {}).get("asks", []))
         per.append(
             dict(
@@ -2099,7 +3531,7 @@ def liquidity_truth(snapshot, start, end, spot, relative):
                     "range_covered_pct": b.get("range_covered_pct"),
                     "integrity_ok": b.get("integrity_ok"),
                 },
-                observed_at=iso(_time(b)),
+                observed_at=iso(_when(b)),
                 precision=propagate_timestamp(
                     b, "exchange_ts", precision_aliases=("timestamp_precision",)
                 ).precision,
@@ -2116,13 +3548,13 @@ def liquidity_truth(snapshot, start, end, spot, relative):
             )
         )
         for f in flows:
-            t = _time(f)
+            t = _when(f)
             k = bisect_left(times, t) - 1
             if k < 0 or times[k] < t - book_interval:
                 continue
             baseline = rs[k]
             bd = depth(baseline, "bid")
-            sell, buy = decimal(f.get("sell_notional")), decimal(f.get("buy_notional"))
+            sell, buy = _as_dec(f.get("sell_notional")), _as_dec(f.get("buy_notional"))
             if sell is None or buy is None:
                 continue
             net = sell - buy
@@ -2135,18 +3567,18 @@ def liquidity_truth(snapshot, start, end, spot, relative):
             ]
             recovered = bool(after)
             future = [
-                decimal(x["low"])
+                _as_dec(x["low"])
                 for x in by_time[bisect_right(flow_times, t) : bisect_right(flow_times, t + resilience)]
                 if x.get("low") is not None
             ]
-            low = decimal(f.get("low"))
+            low = _as_dec(f.get("low"))
             resilient = (min(future) >= low) if future and low is not None and t + resilience <= end else None
             burst_results.append(
                 dict(
                     venue=venue,
                     ts=iso(t),
                     replenished=recovered if t + refill <= end else None,
-                    recovery_s=(_time(after[0]) - t).total_seconds() if after else None,
+                    recovery_s=(_when(after[0]) - t).total_seconds() if after else None,
                     resilient=resilient,
                 )
             )
@@ -2194,7 +3626,7 @@ def liquidity_truth(snapshot, start, end, spot, relative):
     if hit_side:
         for rs in groups.values():
             values = [
-                depth(b, hit_side) for b in rs if start <= _time(b) <= end and depth(b, hit_side) is not None
+                depth(b, hit_side) for b in rs if start <= _when(b) <= end and depth(b, hit_side) is not None
             ]
             if values:
                 average_hit_depth.append(mean(values))
@@ -2328,8 +3760,81 @@ def _usd_mid(row, mid):
         return None
     if _quote(row) == "USD":
         return mid
-    rate = decimal(row.get("quote_usd_rate"))
+    rate = _as_dec(row.get("quote_usd_rate"))
     return mid * rate if rate else None
+
+
+def _rv24_history(returns, ends):
+    square_root = getattr(statistics, "_float_sqrt_of_frac", None)
+    if square_root is None or type(returns) is not dict or type(ends) not in (list, tuple):
+        return None
+    if any(
+        type(at) is not datetime or type(value) is not float or not isfinite(value)
+        for at, value in returns.items()
+    ):
+        return None
+    if any(type(at) is not datetime for at in ends):
+        return None
+    ordered = sorted(returns)
+    ratios = [returns[at].as_integer_ratio() for at in ordered]
+    scale = max((denominator for _, denominator in ratios), default=1)
+    sums, squares = [0], [0]
+    for numerator, denominator in ratios:
+        value = numerator * (scale // denominator)
+        sums.append(sums[-1] + value)
+        squares.append(squares[-1] + value * value)
+    variance_denominator = 24 * 23 * scale * scale
+    times, values = [], []
+    for end in ends:
+        first = bisect_right(ordered, end - timedelta(hours=24))
+        last = bisect_right(ordered, end)
+        if last - first == 24:
+            total = sums[last] - sums[first]
+            square = squares[last] - squares[first]
+            times.append(end)
+            values.append(square_root(24 * square - total * total, variance_denominator))
+    return times, values
+
+
+def _reference_rv_series(prices):
+    inputs = _ASSESSMENT_INPUTS.get()
+    memo = inputs.setdefault("reference_rv_series", {}) if inputs is not None else None
+    hit = memo.get(id(prices)) if memo is not None else None
+    if hit is not None and hit[0] is prices:
+        return hit[1]
+    if type(prices) is not _ColumnPrices and (
+        type(prices) is not dict
+        or any(
+            type(t) is not datetime or type(p) is not float or not isfinite(p) or p <= 0
+            for t, p in prices.items()
+        )
+    ):
+        return None
+    hourly = _hourly_prices(prices)
+    returns = {
+        t: log(p / hourly[t - timedelta(hours=1)])
+        for t, p in hourly.items()
+        if t - timedelta(hours=1) in hourly
+    }
+    if any(not isfinite(value) for value in returns.values()):
+        return None
+    prepared = _rv24_history(returns, sorted(hourly))
+    if prepared is None:
+        return_times = sorted(returns)
+        times, values = [], []
+        for t in sorted(hourly):
+            first = bisect_right(return_times, t - timedelta(hours=24))
+            last = bisect_right(return_times, t)
+            observations = [returns[at] for at in return_times[first:last]]
+            if len(observations) == 24:
+                times.append(t)
+                values.append(stdev(observations))
+    else:
+        times, values = prepared
+    result = (hourly, times, values)
+    if memo is not None:
+        memo[id(prices)] = (prices, result)
+    return result
 
 
 def enrich_evidence(snapshot, start, end, spots, primary, deriv, relative, liquidity):
@@ -2364,8 +3869,8 @@ def enrich_evidence(snapshot, start, end, spots, primary, deriv, relative, liqui
     for v in spots[primary]["venues"]:
         if v["venue"] in aggregation:
             classes[aggregation[v["venue"]]].append(v["venue"])
-    large_threshold = decimal(parameter("large_ticket_usd", 100000))
-    bucket_edges = [decimal(v) for v in parameter("size_buckets_usd", [1000, 10000, 100000, 1000000])]
+    large_threshold = _as_dec(parameter("large_ticket_usd", 100000))
+    bucket_edges = [_as_dec(v) for v in parameter("size_buckets_usd", [1000, 10000, 100000, 1000000])]
     large_buckets = [f"B{i + 2}" for i, edge in enumerate(bucket_edges) if edge >= large_threshold]
     if classes and large_threshold in bucket_edges:
         compatible = max(classes.values(), key=len)
@@ -2392,8 +3897,8 @@ def enrich_evidence(snapshot, start, end, spots, primary, deriv, relative, liqui
                 if not b or b.get("buy_notional") is None or b.get("sell_notional") is None:
                     valid = False
                     break
-                buy += decimal(b["buy_notional"])
-                sell += decimal(b["sell_notional"])
+                buy += _as_dec(b["buy_notional"])
+                sell += _as_dec(b["sell_notional"])
         if valid and bars:
             total = _sum(bars, "buy_notional")
             sells = _sum(bars, "sell_notional")
@@ -2412,8 +3917,8 @@ def enrich_evidence(snapshot, start, end, spots, primary, deriv, relative, liqui
                     if bucket.get("buy_notional") is None or bucket.get("sell_notional") is None:
                         prev_valid = False
                         break
-                    prev_buy += decimal(bucket["buy_notional"])
-                    prev_sell += decimal(bucket["sell_notional"])
+                    prev_buy += _as_dec(bucket["buy_notional"])
+                    prev_sell += _as_dec(bucket["sell_notional"])
             old_share = ratio(prev_sell, prev_buy + prev_sell) if prev_valid else None
             new_share = ratio(sell, buy + sell)
             spots[primary]["size_profile"] = dict(
@@ -2435,7 +3940,7 @@ def enrich_evidence(snapshot, start, end, spots, primary, deriv, relative, liqui
     for r in snapshot.get("klines", []):
         if (
             r.get("token_id", snapshot.get("token_id")) == snapshot.get("token_id")
-            and snapshot.get("_lead_start", start) <= _time(r) < end
+            and snapshot.get("_lead_start", start) <= _when(r) < end
         ):
             groups[r["instrument_id"]].append(r)
     complete = True
@@ -2444,7 +3949,7 @@ def enrich_evidence(snapshot, start, end, spots, primary, deriv, relative, liqui
         if not all(r.get("complete") is True for r in rows):
             complete = False
             continue
-        if any((_time(b) - _time(a)).total_seconds() != 60 for a, b in zip(rows, rows[1:], strict=False)):
+        if any((_when(b) - _when(a)).total_seconds() != 60 for a, b in zip(rows, rows[1:], strict=False)):
             complete = False
             continue
         p0 = number(rows[0].get("o"))
@@ -2457,7 +3962,7 @@ def enrich_evidence(snapshot, start, end, spots, primary, deriv, relative, liqui
                     dict(
                         venue=_venue(r),
                         market="SPOT" if _market(r) == "SPOT" else "PERP",
-                        t_first=iso(_time(r)),
+                        t_first=iso(_when(r)),
                     )
                 )
                 break
@@ -2503,10 +4008,10 @@ def enrich_evidence(snapshot, start, end, spots, primary, deriv, relative, liqui
     for b in snapshot.get("books", []):
         if _market(b) != "SPOT" or b.get("token_id", snapshot.get("token_id")) != snapshot.get("token_id"):
             continue
-        if b.get("integrity_ok") is True and (_venue(b) not in latest or _time(b) > _time(latest[_venue(b)])):
+        if b.get("integrity_ok") is True and (_venue(b) not in latest or _when(b) > _when(latest[_venue(b)])):
             latest[_venue(b)] = b
     askdepth = {
-        v: decimal((b.get("depth", {}).get("ask", {}).get("p1") or {}).get("usd")) for v, b in latest.items()
+        v: _as_dec((b.get("depth", {}).get("ask", {}).get("p1") or {}).get("usd")) for v, b in latest.items()
     }
     total = sum(x for x in askdepth.values() if x is not None)
     for tier in ("T1", "T2", "T3"):
@@ -2515,8 +4020,8 @@ def enrich_evidence(snapshot, start, end, spots, primary, deriv, relative, liqui
             for venue, b in latest.items():
                 allocation = tiers[tier] * askdepth[venue] / total
                 levels = b.get("asks", b.get("levels", {}).get("asks", []))
-                mid = decimal(b.get("mid"))
-                fx = Decimal(1) if b.get("quote_asset") == "USD" else decimal(b.get("quote_usd_rate"))
+                mid = _as_dec(b.get("mid"))
+                fx = Decimal(1) if b.get("quote_asset") == "USD" else _as_dec(b.get("quote_usd_rate"))
                 impact = (
                     walk_book(levels, allocation / fx, mid) if levels and mid and allocation and fx else None
                 )
@@ -2542,14 +4047,14 @@ def enrich_evidence(snapshot, start, end, spots, primary, deriv, relative, liqui
         if _market(b) == "SPOT"
         and b.get("token_id", snapshot.get("token_id")) == snapshot.get("token_id")
         and b.get("integrity_ok") is True
-        and _time(b) <= end
+        and _when(b) <= end
     ]
     grouped = defaultdict(list)
     for book in books:
         grouped[_venue(book)].append(book)
     for rows in grouped.values():
         rows.sort(key=_time)
-    grouped_times = {venue: [_time(r) for r in rows] for venue, rows in grouped.items()}
+    grouped_times = {venue: [_when(r) for r in rows] for venue, rows in grouped.items()}
     frag_start = end - timedelta(minutes=15)
     cadence = float(parameter("book_interval_s", 10))
     pairs = []
@@ -2571,7 +4076,7 @@ def enrich_evidence(snapshot, start, end, spots, primary, deriv, relative, liqui
     )
     complete_venues = {v["venue"] for v in capture["venues"]}
 
-    conversion_bps = decimal(parameter("quote_conversion_uncertainty_bps", 2))
+    conversion_bps = _as_dec(parameter("quote_conversion_uncertainty_bps", 2))
     unevaluated = []
     for index, a in enumerate(sorted(grouped)):
         for b in sorted(grouped)[index + 1 :]:
@@ -2589,8 +4094,8 @@ def enrich_evidence(snapshot, start, end, spots, primary, deriv, relative, liqui
                     gaps = []
                     break
                 x, y = states
-                xm, ym = decimal(x.get("mid")), decimal(y.get("mid"))
-                xs, ys = decimal(x.get("spread_bps")), decimal(y.get("spread_bps"))
+                xm, ym = _as_dec(x.get("mid")), _as_dec(y.get("mid"))
+                xs, ys = _as_dec(x.get("spread_bps")), _as_dec(y.get("spread_bps"))
                 if None in (xm, ym, xs, ys) or not ym:
                     gaps = []
                     break
@@ -2610,15 +4115,15 @@ def enrich_evidence(snapshot, start, end, spots, primary, deriv, relative, liqui
                 for stream in (x, y):
                     independent = stream.get("independent_rest") or {}
                     rt = independent.get("ts")
-                    rm = decimal(independent.get("mid"))
-                    rs = decimal(independent.get("spread_bps"))
+                    rm = _as_dec(independent.get("mid"))
+                    rs = _as_dec(independent.get("spread_bps"))
                     good = (
                         stream.get("second_path_confirmed") is True
                         and independent.get("source") == "PUBLIC_REST"
                         and rt is not None
                         and parse_time(rt) <= end
-                        and _available(independent, snapshot)
-                        and abs((parse_time(rt) - _time(stream)).total_seconds()) <= cadence
+                        and _can_admit(independent, snapshot)
+                        and abs((parse_time(rt) - _when(stream)).total_seconds()) <= cadence
                         and rm is not None
                         and rm > 0
                         and rs is not None
@@ -2645,18 +4150,18 @@ def enrich_evidence(snapshot, start, end, spots, primary, deriv, relative, liqui
             for r in snapshot.get("funding", [])
             if r.get("instrument_id") in funding_groups
             and r.get("kind") == "SETTLED"
-            and _time(r) < start
-            and _time(r) >= start - timedelta(days=lookback_days())
+            and _when(r) < start
+            and _when(r) >= start - timedelta(days=lookback_days())
         ],
         key=_time,
     )
     for row in funding_rows:
-        rate, interval = decimal(row.get("rate")), decimal(row.get("interval_h"))
+        rate, interval = _as_dec(row.get("rate")), _as_dec(row.get("interval_h"))
         if rate is None or not interval:
             continue
         states[row["instrument_id"]] = rate * 8 / interval
         if len(states) == len(funding_groups) and len(states) >= 2:
-            historical.append((_time(row), max(states.values()) - min(states.values())))
+            historical.append((_when(row), max(states.values()) - min(states.values())))
     normal_dispersion = (
         normal([value for _, value in historical])
         if historical
@@ -2671,16 +4176,16 @@ def enrich_evidence(snapshot, start, end, spots, primary, deriv, relative, liqui
     for row in confirmations:
         if (
             row.get("instrument_id") not in funding_groups
-            or _time(row) is None
-            or _time(row) > end
-            or not _available(row, snapshot)
+            or _when(row) is None
+            or _when(row) > end
+            or not _can_admit(row, snapshot)
             or row.get("independent_path_verified") is not True
             or not row.get("source_path")
             or not row.get("primary_source_path")
             or row["source_path"] == row["primary_source_path"]
         ):
             continue
-        rate = decimal(row.get("rate_8h_eq"))
+        rate = _as_dec(row.get("rate_8h_eq"))
         if rate is not None:
             secondary[row["instrument_id"]] = rate
     secondary_dispersion = (
@@ -2754,24 +4259,33 @@ def enrich_evidence(snapshot, start, end, spots, primary, deriv, relative, liqui
 
     token = relative["ref_venue"]
     prices = _prices(snapshot).get(token, {})
-    hourly = {t: p for t, p in prices.items() if t.minute == 0 and t.second == 0}
-    hourly_returns = {
-        t: log(p / hourly[t - timedelta(hours=1)])
-        for t, p in hourly.items()
-        if t - timedelta(hours=1) in hourly
-    }
-    return_times = sorted(hourly_returns)
-    rvs = []
-    current = None
-    for t in sorted(hourly):
-        left = bisect_right(return_times, t - timedelta(hours=24))
-        right = bisect_right(return_times, t)
-        lr = [hourly_returns[x] for x in return_times[left:right]]
-        if len(lr) == 24:
-            if start - timedelta(days=lookback_days()) <= t < start:
-                rvs.append(stdev(lr))
-            if t <= end:
-                current = stdev(lr)
+    prepared_reference_rv = _reference_rv_series(prices)
+    if prepared_reference_rv is None:
+        hourly = {t: p for t, p in prices.items() if t.minute == 0 and t.second == 0}
+        hourly_returns = {
+            t: log(p / hourly[t - timedelta(hours=1)])
+            for t, p in hourly.items()
+            if t - timedelta(hours=1) in hourly
+        }
+        return_times = sorted(hourly_returns)
+        rvs = []
+        current = None
+        for t in sorted(hourly):
+            left = bisect_right(return_times, t - timedelta(hours=24))
+            right = bisect_right(return_times, t)
+            lr = [hourly_returns[x] for x in return_times[left:right]]
+            if len(lr) == 24:
+                if start - timedelta(days=lookback_days()) <= t < start:
+                    rvs.append(stdev(lr))
+                if t <= end:
+                    current = stdev(lr)
+    else:
+        hourly, rv_times, rv_values = prepared_reference_rv
+        lower = start - timedelta(days=lookback_days())
+        first, last = bisect_left(rv_times, lower), bisect_left(rv_times, start)
+        rvs = rv_values[first:last]
+        latest_rv = bisect_right(rv_times, end) - 1
+        current = rv_values[latest_rv] if latest_rv >= 0 else None
     if (
         hourly
         and (max(hourly) - min(hourly)).total_seconds() < float(parameter("history_min_days", 7)) * 86400
@@ -2794,7 +4308,7 @@ def enrich_evidence(snapshot, start, end, spots, primary, deriv, relative, liqui
 def supply_truth(snapshot, start, end):
     """Interpret captured supply wrappers; unknown wallets and APY never become inferred sales/APR."""
     rows = sorted(
-        [r for r in snapshot.get("supply", []) if _time(r) is not None and _time(r) <= end], key=_time
+        [r for r in snapshot.get("supply", []) if _when(r) is not None and _when(r) <= end], key=_time
     )
 
     def kind(r):
@@ -2804,7 +4318,7 @@ def supply_truth(snapshot, start, end):
         return next((r for r in reversed(rows) if kind(r) in k), None)
 
     def asof(rs, target, maxage=21600):
-        candidates = [r for r in rs if _time(r) <= target and (target - _time(r)).total_seconds() <= maxage]
+        candidates = [r for r in rs if _when(r) <= target and (target - _when(r)).total_seconds() <= maxage]
         return max(candidates, key=_time) if candidates else None
 
     unavailable = {}
@@ -2832,7 +4346,7 @@ def supply_truth(snapshot, start, end):
                 return {
                     (b.get("venue"), b.get("chainid"), b.get("contract"), b.get("wallet_list_commit")): b
                     for b in r.get("balances", [])
-                    if b.get("complete") is True and decimal(b.get("qty_native")) is not None
+                    if b.get("complete") is True and _as_dec(b.get("qty_native")) is not None
                 }
 
             now = balances(current)
@@ -2845,13 +4359,13 @@ def supply_truth(snapshot, start, end):
             def total(r, keys):
                 bs = balances(r)
                 return (
-                    sum((decimal(bs[k]["qty_native"]) for k in keys), Decimal(0))
+                    sum((_as_dec(bs[k]["qty_native"]) for k in keys), Decimal(0))
                     if keys and all(k in bs for k in keys)
                     else None
                 )
 
             for key in sorted(cohort, key=str):
-                n, o = decimal(now[key]["qty_native"]), decimal(old[key]["qty_native"])
+                n, o = _as_dec(now[key]["qty_native"]), _as_dec(old[key]["qty_native"])
                 per.append(
                     dict(
                         venue=key[0],
@@ -2865,13 +4379,13 @@ def supply_truth(snapshot, start, end):
             n0, n1 = total(previous, cohort) if previous else None, total(current, cohort)
             if (
                 inventories
-                and (_time(current) - _time(inventories[0])).total_seconds()
+                and (_when(current) - _when(inventories[0])).total_seconds()
                 >= float(parameter("history_min_days", 7)) * 86400
             ):
                 for r in inventories:
-                    if not end - timedelta(days=lookback_days()) <= _time(r) < start:
+                    if not end - timedelta(days=lookback_days()) <= _when(r) < start:
                         continue
-                    past = asof(inventories, _time(r) - timedelta(days=1))
+                    past = asof(inventories, _when(r) - timedelta(days=1))
                     n = total(r, cohort)
                     o = total(past, cohort) if past else None
                     if n is not None and o:
@@ -2892,7 +4406,7 @@ def supply_truth(snapshot, start, end):
                     unsupported_venues=current.get("unsupported_venues", []),
                 ),
                 reason=None if change is not None else "INCOMPLETE",
-                observed_at=iso(_time(current)),
+                observed_at=iso(_when(current)),
             )
             if pct is not None and nr and pct > nr[1]:
                 evidence = True
@@ -2907,7 +4421,7 @@ def supply_truth(snapshot, start, end):
                 continue
             flow = dict(f)
             flow["class"] = f.get("classification", "AMBIGUOUS")
-            flow["qty"] = decimal(f.get("qty_native"))
+            flow["qty"] = _as_dec(f.get("qty_native"))
             flows.append(flow)
             if (
                 flow["class"] in ("UNLOCK_DISTRIBUTION", "TREASURY_INTERNAL", "MM_INVENTORY")
@@ -2919,7 +4433,7 @@ def supply_truth(snapshot, start, end):
     elif not any(kind(r) in ("FLOW", "WALLET_FLOW") for r in rows):
         unavailable["flows"] = "INCOMPLETE"
     for r in rows:
-        if kind(r) in ("FLOW", "WALLET_FLOW") and r.get("available") is not False and start <= _time(r) < end:
+        if kind(r) in ("FLOW", "WALLET_FLOW") and r.get("available") is not False and start <= _when(r) < end:
             flow = dict(r)
             flow["class"] = r.get("class", "AMBIGUOUS")
             flows.append(flow)
@@ -3006,7 +4520,7 @@ def supply_truth(snapshot, start, end):
                 for p in series
                 if parse_time(p["ts"]) <= target and (target - parse_time(p["ts"])).total_seconds() <= 86400
             ]
-            return decimal(ps[-1].get("supply_usd")) if ps else None
+            return _as_dec(ps[-1].get("supply_usd")) if ps else None
 
         n = point(end)
         p1 = point(end - timedelta(days=1))
@@ -3038,7 +4552,7 @@ def supply_truth(snapshot, start, end):
     holders_revenue = dict(status="UNAVAILABLE", protocols=[], reason="NO_CAPTURED_FUNDAMENTALS")
     if fundamentals:
         cadence, cadence_basis = capture_cadence(snapshot, "supply", fundamentals)
-        age = (end - _time(fundamentals)).total_seconds()
+        age = (end - _when(fundamentals)).total_seconds()
         status = "STALE" if cadence is not None and age > cadence else "OBSERVED"
         protocols = []
         for slug, metrics in sorted((fundamentals.get("protocols") or {}).items()):
@@ -3046,7 +4560,7 @@ def supply_truth(snapshot, start, end):
             periods = []
             for field, period in (("total24h", "24h"), ("total30d", "30d")):
                 try:
-                    value = decimal(metric.get(field))
+                    value = _as_dec(metric.get(field))
                     if value is not None and not value.is_finite():
                         value = None
                 except (ArithmeticError, ValueError):
@@ -3067,7 +4581,7 @@ def supply_truth(snapshot, start, end):
                         stamp, raw_value = point
                         if isinstance(stamp, bool) or isinstance(raw_value, bool):
                             continue
-                        value = decimal(raw_value)
+                        value = _as_dec(raw_value)
                         point_time = parse_time(stamp)
                         if point_time <= end and value is not None and value.is_finite():
                             chart_points.append(
@@ -3117,7 +4631,7 @@ def supply_truth(snapshot, start, end):
             ),
             protocols=protocols,
             coverage=coverage,
-            as_of=iso(_time(fundamentals)),
+            as_of=iso(_when(fundamentals)),
             capture_received_at=fundamentals.get("received_ts"),
             capture_availability="KNOWN" if fundamentals.get("received_ts") is not None else "UNKNOWN",
             age_s=age,
@@ -3134,7 +4648,7 @@ def supply_truth(snapshot, start, end):
             ],
         )
     elif any(
-        r.get("kind", r.get("type")) == "FUNDAMENTALS" and _time(r) is not None and _time(r) > end
+        r.get("kind", r.get("type")) == "FUNDAMENTALS" and _when(r) is not None and _when(r) > end
         for r in snapshot.get("supply", [])
     ):
         holders_revenue["reason"] = "ONLY_FUTURE_FUNDAMENTALS"
@@ -3169,12 +4683,12 @@ def benchmark_reaction_values(snapshot, start, end):
     ]
 
     def close_time(r):
-        return kline_close_time(r) or _time(r) + timedelta(seconds=int(r.get("interval_s", 60)))
+        return kline_close_time(r) or _when(r) + timedelta(seconds=int(r.get("interval_s", 60)))
 
     volume = defaultdict(Decimal)
     for r in rows:
         if end - timedelta(hours=24) < close_time(r) <= end:
-            v = decimal(r.get("quote_volume_usd"))
+            v = _as_dec(r.get("quote_volume_usd"))
             volume[r["instrument_id"]] += v if v is not None else Decimal(0)
     venue = max(volume, key=volume.get) if volume and max(volume.values()) > 0 else None
 
@@ -3189,8 +4703,8 @@ def benchmark_reaction_values(snapshot, start, end):
         return latest
 
     first, last = (last_close(start), last_close(end)) if venue else (None, None)
-    p0 = decimal((first or {}).get("c", (first or {}).get("close")))
-    p1 = decimal((last or {}).get("c", (last or {}).get("close")))
+    p0 = _as_dec((first or {}).get("c", (first or {}).get("close")))
+    p1 = _as_dec((last or {}).get("c", (last or {}).get("close")))
     r_raw = float(p1 / p0 - 1) if p0 and p1 else None
     return {
         "r_raw": r_raw,
@@ -3295,9 +4809,9 @@ def interval_deadline(intervals, row):
     interval = float(sem["source_interval_s"])
     allowed = 2 * interval + float(sem.get("publish_lag_s") or 0)
     start = (
-        _time(row) - timedelta(seconds=interval)
+        _when(row) - timedelta(seconds=interval)
         if sem.get("timestamp_semantics") == "BUCKET_END"
-        else _time(row)
+        else _when(row)
     )
     return start + timedelta(seconds=allowed), allowed, start
 
@@ -3330,9 +4844,9 @@ def available_field_freshness(snapshot, end):
             if (
                 r.get("token_id", owners.get(r.get("instrument_id"), token)) != token
                 or r.get("available") is False
-                or _time(r) is None
-                or _time(r) > end
-                or not _available(r, snapshot)
+                or _when(r) is None
+                or _when(r) > end
+                or not _can_admit(r, snapshot)
             ):
                 continue
             key = (r.get("instrument_id"), r.get("metric_key"), r.get("kind", r.get("type")), r.get("chain"))
@@ -3341,19 +4855,19 @@ def available_field_freshness(snapshot, end):
         for key in sorted(groups, key=lambda k: tuple("" if v is None else str(v) for v in k)):
             rows = groups[key]
             row = max(rows, key=_time)
-            stamp = _time(row)
+            stamp = _when(row)
             cadence, source = capture_cadence(snapshot, collection, row)
             if collection in ("flow_bars", "klines"):
                 completed = [
                     r
                     for r in rows
                     if r.get("complete") is True
-                    and _time(r) + timedelta(seconds=int(r.get("interval_s", 60))) <= end
+                    and _when(r) + timedelta(seconds=int(r.get("interval_s", 60))) <= end
                 ]
                 if not completed:
                     continue
-                row = max(completed, key=lambda r: _time(r) + timedelta(seconds=int(r.get("interval_s", 60))))
-                stamp = _time(row) + timedelta(seconds=int(row.get("interval_s", 60)))
+                row = max(completed, key=lambda r: _when(r) + timedelta(seconds=int(r.get("interval_s", 60))))
+                stamp = _when(row) + timedelta(seconds=int(row.get("interval_s", 60)))
                 mark = observed_through(snapshot, collection, row.get("instrument_id"))
                 if mark is not None and stamp < mark <= end:
                     stamp = mark
@@ -3458,18 +4972,17 @@ def data_confidence(snapshot, spot, derivatives, end):
         venue = _venue(inst)
         market = _market(inst)
         if market == "SPOT" and venue in complete_venues:
-            required.extend(
-                (iid, venue, market, f, c)
-                for f, c in [("aggressor", "flow_bars"), ("depth", "books"), ("price", "klines")]
-            )
+            for field, collection in (("aggressor", "flow_bars"), ("depth", "books"), ("price", "klines")):
+                required.append((iid, venue, market, field, collection))
         elif market != "SPOT":
-            required.extend((iid, venue, market, f, c) for f, c in [("oi", "oi"), ("funding", "funding")])
+            for field, collection in (("oi", "oi"), ("funding", "funding")):
+                required.append((iid, venue, market, field, collection))
     cov = spot["coverage"]
     low = low or cov["n_complete"] < int(parameter("min_spot_venues", 2))
     if (
         cov.get("exact_majority") is not True
         if "exact_majority" in cov
-        else cov["covered_share_est"] is None or decimal(cov["covered_share_est"]) <= Decimal(".5")
+        else cov["covered_share_est"] is None or _as_dec(cov["covered_share_est"]) <= Decimal(".5")
     ) or cov["n_complete"] < int(parameter("min_spot_venues", 2)):
         failed.append(dict(condition="spot_coverage", reason="INCOMPLETE"))
     perp_ids = {iid for iid, r in instruments.items() if _market(r) != "SPOT"}
@@ -3480,10 +4993,10 @@ def data_confidence(snapshot, spot, derivatives, end):
         for r in snapshot.get("klines", []):
             if (
                 r.get("instrument_id") in perp_ids
-                and end - timedelta(hours=24) <= _time(r) < end
+                and end - timedelta(hours=24) <= _when(r) < end
                 and r.get("quote_volume_usd") is not None
             ):
-                perpvol[_venue(r)] += decimal(r["quote_volume_usd"])
+                perpvol[_venue(r)] += _as_dec(r["quote_volume_usd"])
         if (
             not synced
             or not perpvol
@@ -3498,15 +5011,12 @@ def data_confidence(snapshot, spot, derivatives, end):
     for iid, _unused_venue, _unused_market, family, collection in required:
         rows = [
             r
-            for r in snapshot.get(collection, [])
-            if r.get("instrument_id") == iid
-            and _time(r) is not None
-            and _time(r) <= end
-            and _available(r, snapshot)
+            for r in _instrument_rows(snapshot, collection, iid)
+            if _when(r) is not None and _when(r) <= end and _can_admit(r, snapshot)
         ]
         valid = []
         for r in rows:
-            stamp = _time(r)
+            stamp = _when(r)
             if collection in ("klines", "flow_bars"):
                 if r.get("complete") is not True:
                     continue
@@ -3521,7 +5031,7 @@ def data_confidence(snapshot, spot, derivatives, end):
                 continue
             if collection == "klines" and not number(r.get("c", r.get("close"))):
                 continue
-            if collection == "oi" and decimal(r.get("oi_native")) is None:
+            if collection == "oi" and _as_dec(r.get("oi_native")) is None:
                 continue
             if collection == "funding" and (number(r.get("rate")) is None or not number(r.get("interval_h"))):
                 continue
@@ -3565,17 +5075,393 @@ def data_confidence(snapshot, spot, derivatives, end):
     )
 
 
+_MONEY_RADIX = 10
+
+
+class _ScaledMoneyValues:
+    """Exact coefficients plus preferred Decimal exponents, never float money."""
+
+    __slots__ = ("units", "quantums", "scale", "_decimal_values")
+
+    def __init__(self, units, quantums, scale):
+        self.units, self.quantums, self.scale = units, quantums, scale
+        self.units.flags.writeable = False
+        self.quantums.flags.writeable = False
+        self._decimal_values = None
+
+    def __len__(self):
+        return len(self.units)
+
+    def __iter__(self):
+        return (self[index] for index in range(len(self)))
+
+    def __getitem__(self, index):
+        if isinstance(index, slice):
+            return list(self)[index]
+        index = integer_index(index)
+        quantum = int(self.quantums[index])
+        radix = _MONEY_RADIX
+        coefficient, remainder = divmod(int(self.units[index]), radix ** (quantum - self.scale))
+        if remainder:
+            raise ValueError("Nonintegral monetary coefficient")
+        return Decimal(f"{coefficient}e{quantum}")
+
+    def __eq__(self, other):
+        if type(other) is list or isinstance(other, _ScaledMoneyValues):
+            return list(self) == list(other)
+        return NotImplemented
+
+    def as_decimals(self):
+        if self._decimal_values is None:
+            self._decimal_values = np.asarray(list(self), dtype=object)
+            self._decimal_values.flags.writeable = False
+        return self._decimal_values
+
+
+class _MonetaryPopulation(_ScaledMoneyValues):
+    __slots__ = ("ordered",)
+
+    def __init__(self, units, quantums, scale, order):
+        super().__init__(units, quantums, scale)
+        self.ordered = _ScaledMoneyValues(units[order], quantums[order], scale)
+
+
+def _fixed_volume_prefix(raw, complete, metadata):
+    radix = _MONEY_RADIX
+    context = getcontext()
+    kind = type(raw)
+    if (
+        type(context) is not Context
+        or context.prec < 128
+        or context.rounding != ROUND_HALF_EVEN
+        or context.traps[Inexact]
+        or context.traps[Rounded]
+        or context.clamp
+        or context.Emin > -512
+        or context.Emax < 512
+        or (kind is not list and kind is not tuple and kind is not np.ndarray)
+        or (kind is np.ndarray and raw.ndim != 1)
+        or complete.ndim != 1
+    ):
+        return None
+    coefficients, exponents = [], []
+    valid = complete.copy()
+    low, high = 0, 0
+    for index, value in enumerate(raw):
+        if value is None:
+            valid[index] = False
+            coefficients.append(0)
+            exponents.append(0)
+            continue
+        if type(value) is not str or len(value) > 160:
+            return None
+        code = _fixed_decimal_text_metadata(value)
+        if code < 0:
+            return None
+        exponent, significant = -(code >> 6), code & 63
+        if 2 * max(significant, 1) + 32 > context.prec:
+            return None
+        low = min(low, exponent)
+        high = max(high, exponent + max(significant, 1) - 1)
+        coefficients.append(int(value.replace(".", "")) if significant else 0)
+        exponents.append(exponent)
+    if high - low + len(str(max(2 * len(raw), 1))) + 1 > context.prec:
+        return None
+    units = [
+        coefficient * radix ** (exponents[index] - low)
+        for index, coefficient in enumerate(coefficients)
+        if valid[index]
+    ]
+    prefixes = np.empty(len(units) + 1, dtype=object)
+    prefixes[0] = 0
+    prefixes[1:] = np.cumsum(np.asarray(units, dtype=object))
+    quantums = np.minimum.accumulate(
+        np.asarray(
+            [0] + [exponent for index, exponent in enumerate(exponents) if valid[index]], dtype=np.int16
+        )
+    )
+    metadata.update(low=low, high=high, context=_history_context_key())
+    return _ScaledMoneyValues(prefixes, quantums, low), valid
+
+
+def _native_volume_arrays(rows, projection, end, instrument=None):
+    if _ASSESSMENT_INPUTS.get() is None:
+        return None
+    signature = _history_context_key()
+    source = projection if projection is not None else rows
+    memo = _ASSESSMENT_INPUTS.get().setdefault("native_volume_arrays", {})
+    key = (id(source), end, signature)
+    hit = memo.get(key)
+    if hit is not None and hit[0] is source:
+        return hit[1]
+    epoch = parse_time("1970-01-01T00:00:00Z")
+    if projection is not None:
+        head = projection.get("dependency_fingerprint")
+        cache = _BASELINE_CACHE.get()
+        times = projection.get("times_us", ())
+        interval = projection.get("interval_s", 60)
+        if type(interval) is not int or not 0 < interval <= 2**52 // 1000000:
+            return None
+        if len(times) != len(projection["values"]) or len(times) != len(projection["complete"]):
+            return None
+        cache_key = (
+            "native-volume-arrays",
+            instrument,
+            head,
+            len(times),
+            end,
+            interval,
+            times[0] if len(times) else None,
+            times[-1] if len(times) else None,
+            signature,
+        )
+        if head is not None and cache is not None and cache_key in cache:
+            result = cache[cache_key]
+            memo[key] = (source, result)
+            return result
+        starts = np.asarray(times, dtype=np.int64)
+        intervals = np.full(len(starts), interval * 1000000, dtype=np.int64)
+        raw = projection["values"]
+        complete = np.asarray(projection["complete"], dtype=bool)
+    else:
+        points = []
+        for row in sorted(rows, key=_time):
+            at = _when(row)
+            interval = row.get("interval_s", 60)
+            if type(at) is not datetime or type(interval) is not int or not 0 < interval <= 2**52 // 1000000:
+                return None
+            if at + timedelta(seconds=interval) <= end:
+                delta = at - epoch
+                micros = delta.days * 86400000000 + delta.seconds * 1000000 + delta.microseconds
+                points.append(
+                    (
+                        micros,
+                        interval * 1000000,
+                        row.get("volume_native"),
+                        row.get("complete") is True,
+                    )
+                )
+        starts = np.asarray([point[0] for point in points], dtype=np.int64)
+        intervals = np.asarray([point[1] for point in points], dtype=np.int64)
+        raw = [point[2] for point in points]
+        complete = np.asarray([point[3] for point in points], dtype=bool)
+    if len(starts) and (
+        np.any(starts[1:] < starts[:-1]) or np.any(np.abs(starts) > 2**52) or np.any(intervals > 2**52)
+    ):
+        return None
+    metadata = {}
+    fixed = _fixed_volume_prefix(raw, complete, metadata)
+    if fixed is None:
+        prepared = _history_decimal_arrays((raw,), summands=2 * len(raw), metadata=metadata)
+        if prepared is None:
+            return None
+        values = prepared[0]
+        valid = complete & _history_present(values)
+    else:
+        prefixes, valid = fixed
+    closes = starts + intervals
+    if len(closes) and np.any(np.abs(closes) > 2**52):
+        return None
+    breaks = np.ones(len(starts), dtype=bool)
+    if len(starts) > 1:
+        breaks[1:] = ~valid[1:] | ~valid[:-1] | (starts[1:] != closes[:-1])
+    segments = np.cumsum(breaks, dtype=np.int64)[valid]
+    if fixed is None:
+        prefixes = np.cumsum(np.concatenate((np.asarray([Decimal(0)], dtype=object), values[valid])))
+    endpoints = np.empty(2 * int(np.count_nonzero(valid)), dtype=np.int64)
+    endpoints[0::2], endpoints[1::2] = starts[valid], closes[valid]
+    totals = np.empty(len(endpoints), dtype=object)
+    if fixed is None:
+        totals[0::2], totals[1::2] = prefixes[:-1], prefixes[1:]
+    else:
+        totals[0::2], totals[1::2] = prefixes.units[:-1], prefixes.units[1:]
+        quantums = np.empty(len(endpoints), dtype=np.int16)
+        quantums[0::2], quantums[1::2] = prefixes.quantums[:-1], prefixes.quantums[1:]
+    labels = np.repeat(segments, 2)
+    if np.all(endpoints[1:] >= endpoints[:-1]):
+        last = np.ones(len(endpoints), dtype=bool)
+        last[:-1] = endpoints[:-1] != endpoints[1:]
+        positions = np.flatnonzero(last)
+        times = endpoints[positions]
+    else:
+        times, first = np.unique(endpoints[::-1], return_index=True)
+        positions = len(endpoints) - 1 - first
+    guard = (
+        metadata["low"],
+        metadata["high"] + len(str(max(len(raw), 1))),
+        metadata["context"],
+    )
+    amounts = (
+        totals[positions]
+        if fixed is None
+        else _ScaledMoneyValues(totals[positions], quantums[positions], prefixes.scale)
+    )
+    result = (times, amounts, labels[positions], len(raw), guard)
+    memo[key] = (source, result)
+    if projection is not None and head is not None and cache is not None:
+        remember(cache, cache_key, lambda: result)
+    return result
+
+
+def _native_volume_windows(indexes, start, end):
+    radix = _MONEY_RADIX
+    epoch = parse_time("1970-01-01T00:00:00Z")
+
+    def micros(value):
+        delta = value - epoch
+        return delta.days * 86400000000 + delta.seconds * 1000000 + delta.microseconds
+
+    first, last = micros(start), micros(end)
+    width = last - first
+    lower = micros(start - timedelta(days=lookback_days()))
+    if width <= 0 or abs(width) > 2**52:
+        return None
+    signature = _history_context_key()
+    if any(index[4][2] != signature for index in indexes):
+        return None
+    low = min(index[4][0] for index in indexes)
+    high = max(index[4][1] for index in indexes)
+    if high - low + len(str(2 * max(len(indexes), 1))) + 2 > getcontext().prec:
+        return None
+    fixed_count = sum(type(index[1]) is _ScaledMoneyValues for index in indexes)
+    if fixed_count and fixed_count != len(indexes):
+        indexes = [
+            (
+                times,
+                values.as_decimals() if type(values) is _ScaledMoneyValues else values,
+                labels,
+                size,
+                guard,
+            )
+            for times, values, labels, size, guard in indexes
+        ]
+        fixed_count = 0
+    fixed = bool(fixed_count)
+    endpoints = indexes[0][0]
+    for index in indexes[1:]:
+        endpoints = np.intersect1d(endpoints, index[0], assume_unique=True)
+    endpoints = endpoints[(endpoints < first) & (endpoints - width >= lower)]
+    targets = np.concatenate((np.asarray([last, first], dtype=np.int64), endpoints))
+    origins = targets - width
+    totals = np.full(len(targets), 0 if fixed else Decimal(0), dtype=object)
+    quantums = np.zeros(len(targets), dtype=np.int16) if fixed else None
+    covered = np.ones(len(targets), dtype=bool)
+    for times, values, segments, _, _guard in indexes:
+        if not len(times):
+            return None, None, []
+        a, z = np.searchsorted(times, origins), np.searchsorted(times, targets)
+        a, z = np.minimum(a, len(times) - 1), np.minimum(z, len(times) - 1)
+        valid = (times[a] == origins) & (times[z] == targets) & (segments[a] == segments[z])
+        covered &= valid
+        if fixed:
+            differences = np.subtract(values.units[z[valid]], values.units[a[valid]])
+            totals[valid] = np.add(totals[valid], differences * radix ** (values.scale - low))
+            quantums[valid] = np.minimum(
+                quantums[valid], np.minimum(values.quantums[z[valid]], values.quantums[a[valid]])
+            )
+        else:
+            totals[valid] = np.add(totals[valid], np.subtract(values[z[valid]], values[a[valid]]))
+    if fixed:
+        observed = endpoints[covered[2:]]
+        history = []
+        if len(observed) and not (
+            (int(observed[-1]) - int(observed[0]) + width) / 1000000
+            < float(parameter("history_min_days", 7)) * 86400
+        ):
+            units, preferred = totals[2:][covered[2:]], quantums[2:][covered[2:]]
+            order = np.argsort(units, kind="stable")
+            ordered, ordered_quantums = units[order], preferred[order]
+            if np.any((ordered[1:] == ordered[:-1]) & (ordered_quantums[1:] != ordered_quantums[:-1])):
+                return None
+            history = _MonetaryPopulation(units, preferred, low, order)
+        amounts = _ScaledMoneyValues(totals[:2], quantums[:2], low)
+        return amounts[0] if covered[0] else None, amounts[1] if covered[1] else None, history
+    history = totals[2:][covered[2:]].tolist()
+    observed = endpoints[covered[2:]]
+    if not len(observed) or (
+        (int(observed[-1]) - int(observed[0]) + width) / 1000000
+        < float(parameter("history_min_days", 7)) * 86400
+    ):
+        history = []
+    ordered_history = sorted(history)
+    if any(a == b and a.compare_total(b) for a, b in zip(ordered_history, ordered_history[1:], strict=False)):
+        return None
+    return totals[0] if covered[0] else None, totals[1] if covered[1] else None, history
+
+
+def _basis_history(rows, end):
+    inputs = _ASSESSMENT_INPUTS.get()
+    if inputs is None:
+        return None
+    memo = inputs.setdefault("basis_history", {})
+    context = getcontext()
+    signature = _history_context_key()
+    key = (id(rows), end, signature, tuple(context.flags.items()))
+    hit = memo.get(key)
+    if hit is not None and hit[0] is rows:
+        for signal, raised in hit[2]:
+            if raised:
+                context.flags[signal] = True
+        return hit[1]
+    time_fields = (
+        "minute_start",
+        "open_time",
+        "exchange_ts",
+        "ts",
+        "as_of",
+        "settlement_time",
+        "funding_time",
+        "observed_at",
+    )
+    for row in rows:
+        if type(row) is not dict:
+            return None
+        if any(
+            type(row.get(field)) not in (str, int, float, Decimal, type(None))
+            for field in ("mark_price", "index_price")
+        ):
+            return None
+        for field in time_fields:
+            value = row.get(field)
+            if value is not None:
+                if type(value) is not str and not (type(value) is datetime and value.tzinfo is UTC):
+                    return None
+                break
+    admitted = [row for row in rows if _when(row) <= end]
+    result = []
+    for row in admitted:
+        mark, index = _as_dec(row.get("mark_price")), _as_dec(row.get("index_price"))
+        if mark is None or not index:
+            continue
+        basis = (mark / index - 1) * 10000
+        result.append((_when(row), basis))
+    if _history_context_key() == signature:
+        memo[key] = (rows, result, tuple(context.flags.items()))
+    return result
+
+
 @precise
 def support_features(snapshot, start, end, spot, deriv, liquidity, supply):
     """§5.8 support evidence. Unknown inputs remain None and never add support."""
     length = end - start
     token = snapshot.get("token_id")
     features = {}
+    inputs = _ASSESSMENT_INPUTS.get()
+    source_rows = snapshot.get("klines", [])
+    grouped_cache = inputs.setdefault("native_volume_groups", {}) if inputs is not None else None
+    grouped_hit = grouped_cache.get((id(source_rows), token)) if grouped_cache is not None else None
+    if grouped_hit is not None and grouped_hit[0] is source_rows:
+        grouped_markets = grouped_hit[1]
+    else:
+        grouped_markets = {market: defaultdict(list) for market in ("SPOT", "PERP")}
+        for row in source_rows:
+            if row.get("token_id", token) == token:
+                market = "SPOT" if _market(row) == "SPOT" else "PERP"
+                grouped_markets[market][row["instrument_id"]].append(row)
+        if grouped_cache is not None:
+            grouped_cache[(id(source_rows), token)] = (source_rows, grouped_markets)
     for market in ("SPOT", "PERP"):
-        grouped = defaultdict(list)
-        for row in snapshot.get("klines", []):
-            if row.get("token_id", token) == token and ((_market(row) == "SPOT") == (market == "SPOT")):
-                grouped[row["instrument_id"]].append(row)
+        grouped = grouped_markets[market]
         market_indexes = {}
         projected = {
             iid: row
@@ -3584,7 +5470,19 @@ def support_features(snapshot, start, end, spot, deriv, liquidity, supply):
             and row.get("market_type") == market
             and row.get("time_basis") == "OPEN_TIME"
         }
-        for iid in set(grouped) | set(projected):
+        instruments = set(grouped) | set(projected)
+        compact = []
+        for iid in instruments:
+            index = _native_volume_arrays(grouped[iid], projected.get(iid), end, iid)
+            if index is None:
+                break
+            compact.append(index)
+        batched = (
+            _native_volume_windows(compact, start, end)
+            if compact and len(compact) == len(instruments)
+            else None
+        )
+        for iid in instruments if batched is None else ():
             projection = projected.get(iid)
 
             def build_index():
@@ -3626,7 +5524,7 @@ def support_features(snapshot, start, end, spot, deriv, liquidity, supply):
                 else:
                     source = (
                         (
-                            _time(row),
+                            _when(row),
                             int(row.get("interval_s", 60)),
                             row.get("volume_native"),
                             row.get("complete") is True,
@@ -3640,7 +5538,7 @@ def support_features(snapshot, start, end, spot, deriv, liquidity, supply):
                         continue
                     if micros is not None:
                         last_open_us = micros
-                    value = decimal(raw)
+                    value = _as_dec(raw)
                     if not complete or value is None:
                         segment += 1
                         last = None
@@ -3693,6 +5591,8 @@ def support_features(snapshot, start, end, spot, deriv, liquidity, supply):
             < float(parameter("history_min_days", 7)) * 86400
         ):
             history = []
+        if batched is not None:
+            current, previous, history = batched
         nr = normal(history)
         up = (
             bool(current > previous and current > nr[1])
@@ -3737,19 +5637,25 @@ def support_features(snapshot, start, end, spot, deriv, liquidity, supply):
         perp_flags.append(complete)
         p["perp_volume_usd"] = window_usd_volume(snapshot, iid, start, end)
         p["perp_volume_reason"] = None if p["perp_volume_usd"] is not None else "INCOMPLETE"
-        oi = [r for r in _instrument_rows(snapshot, "oi", iid) if _time(r) <= end]
+        source = _instrument_rows(snapshot, "oi", iid)
+        points = _basis_history(source, end)
+        if points is None:
+            oi = [r for r in source if _when(r) <= end]
+            points = []
+            for row in oi:
+                mark, index = _as_dec(row.get("mark_price")), _as_dec(row.get("index_price"))
+                if mark is None or not index:
+                    continue
+                basis = (mark / index - 1) * 10000
+                points.append((_when(row), basis))
         historical = []
         initial = []
         tolerance = float(parameter("oi_sync_tolerance_s", 60))
-        for row in oi:
-            mark, index = decimal(row.get("mark_price")), decimal(row.get("index_price"))
-            if mark is None or not index:
-                continue
-            basis = (mark / index - 1) * 10000
-            if _time(row) < start:
-                historical.append((_time(row), basis))
-            if abs((_time(row) - start).total_seconds()) <= tolerance:
-                initial.append((_time(row), basis))
+        for when, basis in points:
+            if when < start:
+                historical.append((when, basis))
+            if abs((when - start).total_seconds()) <= tolerance:
+                initial.append((when, basis))
         br = (
             normal([v for _, v in historical])
             if historical
@@ -3778,14 +5684,14 @@ def support_features(snapshot, start, end, spot, deriv, liquidity, supply):
         first = p.get("funding_start")
         interval = p.get("funding_start_interval_h")
         p["funding_rising"] = (
-            p["funding_8h_eq"] > decimal(first) * 8 / decimal(interval)
+            p["funding_8h_eq"] > _as_dec(first) * 8 / _as_dec(interval)
             if first is not None and interval and p.get("funding_8h_eq") is not None
             else None
         )
     perp_complete = bool(perp_flags) and all(perp_flags)
     cvd = perp_buys - perp_sells
     features["perp_taker_flow_buy"] = (
-        bool(cvd > 0 and cvd * cvd >= decimal(parameter("significant_flow_sigma", 2)) ** 2 * perp_q)
+        bool(cvd > 0 and cvd * cvd >= _as_dec(parameter("significant_flow_sigma", 2)) ** 2 * perp_q)
         if perp_complete
         else None
     )
@@ -3807,12 +5713,12 @@ def support_features(snapshot, start, end, spot, deriv, liquidity, supply):
     liqs = [
         r
         for r in snapshot.get("liquidations", [])
-        if start <= _time(r) < end
+        if start <= _when(r) < end
         and r.get("instrument_id")
         in {p["instrument_id"] for p in deriv.get("per_venue", []) if p.get("liq_coverage") == "COMPLETE"}
     ]
     total = _sum(liqs, "notional_usd")
-    first = _sum([r for r in liqs if _time(r) < start + length / 2], "notional_usd")
+    first = _sum([r for r in liqs if _when(r) < start + length / 2], "notional_usd")
     features["liquidations_first_half_majority"] = (
         strict_majority(first or Decimal(0), total) if total is not None else None
     )
@@ -3821,7 +5727,7 @@ def support_features(snapshot, start, end, spot, deriv, liquidity, supply):
     features["large_tickets_minority"] = profile.get("large_tickets_minority")
     features["large_ticket_sell_share_rising"] = profile.get("sell_share_rising")
     inventory = supply.get("exchange_inventory") or {}
-    change = decimal(inventory.get("chg_native_24h"))
+    change = _as_dec(inventory.get("chg_native_24h"))
     features["exchange_inflows"] = (
         bool(change > 0)
         if change is not None
@@ -3851,15 +5757,15 @@ def support_features(snapshot, start, end, spot, deriv, liquidity, supply):
     refill = timedelta(seconds=float(parameter("refill_window_s", 60)))
     window_flows = defaultdict(list)
     for flow in snapshot.get("flow_bars", []):
-        if _market(flow) == "SPOT" and start <= _time(flow) < end and flow.get("complete") is True:
+        if _market(flow) == "SPOT" and start <= _when(flow) < end and flow.get("complete") is True:
             window_flows[_venue(flow)].append(flow)
 
     def ask(b):
-        return decimal((b.get("depth", {}).get("ask", {}).get("p1") or {}).get("usd"))
+        return _as_dec((b.get("depth", {}).get("ask", {}).get("p1") or {}).get("usd"))
 
     for venue, rows in books.items():
         rows.sort(key=_time)
-        times = [_time(r) for r in rows]
+        times = [_when(r) for r in rows]
         i = bisect_right(times, start) - 1
         j = bisect_right(times, end) - 1
         before = rows[i] if i >= 0 and times[i] >= start - book_interval else None
@@ -3867,8 +5773,8 @@ def support_features(snapshot, start, end, spot, deriv, liquidity, supply):
         if before is not None and after is not None and ask(before) is not None and ask(after) is not None:
             builds.append(ask(after) > ask(before))
         for flow in window_flows.get(venue, []):
-            buy, sell = decimal(flow.get("buy_notional")), decimal(flow.get("sell_notional"))
-            t = _time(flow)
+            buy, sell = _as_dec(flow.get("buy_notional")), _as_dec(flow.get("sell_notional"))
+            t = _when(flow)
             k = bisect_left(times, t) - 1
             pre = rows[k] if k >= 0 and times[k] >= t - book_interval else None
             if buy is None or sell is None or pre is None or ask(pre) is None or buy - sell < ask(pre):
@@ -4159,7 +6065,7 @@ def select_move(spot, deriv, liq, supply, relative, confidence, window):
 def _signed_native(value, token_id):
     """A signed native quantity with thousands separators and its ticker (03 L8), e.g.
     "+506,057.72 AERO"; below one unit it keeps three significant digits."""
-    amount = decimal(value)
+    amount = _as_dec(value)
     text = format(amount, "+,.2f") if abs(amount) >= 1 else format(amount, "+.3g")
     return text + " " + str(token_id).rsplit(":", 1)[-1]
 
@@ -4226,7 +6132,7 @@ def decisive_facts(
             if p.get("oi_class") is None or vdec.get("pos_share") is None:
                 continue
             chg = p.get("oi_native_chg_pct")
-            markup = decimal(vdec.get("markup"))
+            markup = _as_dec(vdec.get("markup"))
             venues_text.append(
                 f"{p['venue']} {p['oi_class']}"
                 + (f" (native {chg:+.2%}" if chg is not None else " (")
@@ -4695,7 +6601,7 @@ def timestamp_companions(result, snapshot):
         rows = snapshot.get(collection, [])
         rows = rows.values() if isinstance(rows, dict) else rows
         for row in rows:
-            observed = _time(row)
+            observed = _when(row)
             if observed is None:
                 continue
             interval = row.get("interval_s")
@@ -4816,7 +6722,7 @@ def timestamp_companions(result, snapshot):
 def bounded_market_snapshot(snapshot, end):
     snapshot = dict(snapshot)
     snapshot["flow_segments"] = [
-        r for r in flow_segments(snapshot) if parse_time(r["end"]) <= end and _available(r, snapshot)
+        r for r in flow_segments(snapshot) if parse_time(r["end"]) <= end and _can_admit(r, snapshot)
     ]
     snapshot["reference_points"] = list(snapshot.get("reference_points", [])) + [
         dict(point, instrument_id=bar["instrument_id"])
@@ -4828,13 +6734,13 @@ def bounded_market_snapshot(snapshot, end):
         snapshot[name] = [
             r
             for r in snapshot.get(name, [])
-            if _time(r) is not None
-            and _time(r) <= end
+            if _when(r) is not None
+            and _when(r) <= end
             and (
                 name not in ("klines", "flow_bars")
-                or _time(r) + timedelta(seconds=int(r.get("interval_s", 60))) <= end
+                or _when(r) + timedelta(seconds=int(r.get("interval_s", 60))) <= end
             )
-            and _available(r, snapshot)
+            and _can_admit(r, snapshot)
         ]
     return snapshot
 
@@ -4911,7 +6817,7 @@ def _compute_market_truth(snapshot, *, config=None):
 
     indexed = defaultdict(list)
     for row in snapshot.get("klines", []):
-        indexed[row.get("instrument_id")].append((_time(row), row))
+        indexed[row.get("instrument_id")].append((_when(row), row))
     snapshot["_kline_volume_index"] = {}
     for iid, points in indexed.items():
         points.sort(key=lambda point: point[0])
@@ -5068,11 +6974,14 @@ def _compute_market_truth_slot(snapshot, *, config=None, baseline_cache=None):
     token = _PARAMETERS.set(config)
     baselines = _BASELINE_CACHE.set(baseline_cache if baseline_cache is not None else {})
     dependency = _BASELINE_DEPENDENCY.set(None)
-    inputs = _ASSESSMENT_INPUTS.set({})
-    times = _TIMES.set({})
+    prepared_inputs = {}
+    inputs = _ASSESSMENT_INPUTS.set(prepared_inputs)
+    times = _TIMES.set(({}, prepared_inputs))
+    text_times = _TIME_PARSE_MEMO.set({})
     try:
         return _compute_market_truth(snapshot, config=config)
     finally:
+        _TIME_PARSE_MEMO.reset(text_times)
         _TIMES.reset(times)
         _ASSESSMENT_INPUTS.reset(inputs)
         _BASELINE_DEPENDENCY.reset(dependency)
@@ -5126,7 +7035,7 @@ def condition_reference_close(snapshot, end):
             if row.get("instrument_id") == ref
             and row.get("complete") is True
             and selected
-            and (kline_close_time(row) or _time(row) + timedelta(seconds=int(row.get("interval_s", 60))))
+            and (kline_close_time(row) or _when(row) + timedelta(seconds=int(row.get("interval_s", 60))))
             == selected[0]
         ),
         None,
@@ -5177,8 +7086,8 @@ def condition_confidence(snapshot, end):
         oi=[
             r
             for r in snapshot.get("oi", [])
-            if abs((_time(r) - start).total_seconds()) <= tolerance.total_seconds()
-            or end - tolerance <= _time(r) <= end
+            if abs((_when(r) - start).total_seconds()) <= tolerance.total_seconds()
+            or end - tolerance <= _when(r) <= end
         ],
     )
     groups = defaultdict(list)
@@ -5191,7 +7100,7 @@ def condition_confidence(snapshot, end):
         definitions = [
             semantics.get((iid, row.get("metric_key")), semantics.get((None, row.get("metric_key")), {}))
             for row in rows
-            if start <= _time(row) <= end
+            if start <= _when(row) <= end
         ]
         venue = _venue(rows[0])
         if (
@@ -5217,7 +7126,7 @@ def condition_depth(snapshot, end):
         if (
             _market(book) == "SPOT"
             and book.get("token_id", snapshot.get("token_id")) == snapshot.get("token_id")
-            and _time(book) <= end
+            and _when(book) <= end
             and book.get("integrity_ok") is True
         ):
             grouped[_venue(book)].append(book)
@@ -5237,7 +7146,7 @@ def condition_depth(snapshot, end):
         if spread is not None:
             spreads.append(spread)
         before = [
-            row for row in rows if start is not None and start - timedelta(hours=1) <= _time(row) < start
+            row for row in rows if start is not None and start - timedelta(hours=1) <= _when(row) < start
         ]
         old_spreads = [number(row["spread_bps"]) for row in before if row.get("spread_bps") is not None]
         if old_spreads:
@@ -5256,7 +7165,7 @@ def condition_depth(snapshot, end):
                 parameter("depth_band_pct", 1),
                 fingerprint(
                     [
-                        (iso(_time(row)), depth_at_band(row, "bid"), depth_at_band(row, "ask"))
+                        (iso(_when(row)), depth_at_band(row, "bid"), depth_at_band(row, "ask"))
                         for row in before
                     ]
                 ),
@@ -5274,10 +7183,10 @@ def condition_depth(snapshot, end):
         observations.append(
             dict(
                 venue=venue,
-                observed_at=iso(_time(latest)),
+                observed_at=iso(_when(latest)),
                 cadence_s=cadence,
                 cadence_source=source,
-                fresh=cadence is not None and (end - _time(latest)).total_seconds() <= cadence,
+                fresh=cadence is not None and (end - _when(latest)).total_seconds() <= cadence,
             )
         )
     return {
@@ -5589,7 +7498,7 @@ def compute_condition_values(snapshot, requirements, *, config=None, cache=None,
                             cadence_source=source,
                         )
                     )
-                    if latest is None or cadence is None or (end - _time(latest)).total_seconds() > cadence:
+                    if latest is None or cadence is None or (end - _when(latest)).total_seconds() > cadence:
                         fresh = False
                         if domain == "funding":
                             instrument["funding_vs_normal"] = None
@@ -5780,6 +7689,7 @@ class MarketTruthService:
         anchor = None
         if event:
             anchor = event_anchor(event, at=_cutoff_value(cutoff))
+        compute_workers.prepare(compute_workers.ASSESSMENT)
         snapshot = await self.market.snapshot(token_id, cutoff, anchor=anchor)
         snapshot.update(event_id=event_id, token_id=token_id)
         if event.get("public_at") is not None:

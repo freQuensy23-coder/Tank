@@ -1,13 +1,84 @@
 import importlib
 import json
+import os
 import runpy
+import subprocess
+import sys
 import xml.etree.ElementTree as ET
 from pathlib import Path
 
 import pytest
+import yaml
 
 CI_ROOT = Path(__file__).resolve().parents[1] / "scripts/ci"
 BUDGET = runpy.run_path(str(CI_ROOT / "ci_budget.py"))
+
+
+def test_native_qualification_uses_remaining_global_budget_without_extending_it():
+    workflow = (CI_ROOT.parents[1] / ".github/workflows/test-suite.yml").read_text()
+    native_job = workflow.split("  python-integration:", 1)[1]
+    assert (
+        "timeout-minutes: ${{ github.event_name == 'pull_request' && "
+        "(matrix.shard == 'market-truth' && 5 || 4) || 20 }}"
+    ) in native_job
+    assert BUDGET["BUDGET_SECONDS"] == 300
+
+
+@pytest.mark.process
+@pytest.mark.parametrize("selection", ["market-truth", "0/3", "1/3", "2/3"])
+def test_integration_runner_avoids_recollecting_unselected_files_for_native_shard(tmp_path, selection):
+    workflow = yaml.safe_load((CI_ROOT.parents[1] / ".github/workflows/test-suite.yml").read_text())
+    steps = workflow["jobs"]["python-integration"]["steps"]
+    command = next(step["run"] for step in steps if step.get("name") == "Run all integration cases")
+    uv = tmp_path / "uv"
+    uv.write_text(f"#!{sys.executable}\nimport json, sys\nprint(json.dumps(sys.argv[1:]))\n")
+    uv.chmod(0o700)
+    result = subprocess.run(
+        ["bash", "-euo", "pipefail", "-c", command],
+        env={
+            **os.environ,
+            "PATH": str(tmp_path) + os.pathsep + os.environ["PATH"],
+            "INTEGRATION_SHARD": selection,
+            "TANK_CI_SCHEMA_TEMPLATE": "tank_test_ci_schema_fixture",
+        },
+        capture_output=True,
+        text=True,
+        check=True,
+        timeout=5,
+    )
+    native = selection == "market-truth"
+    expected = [
+        "run",
+        "--frozen",
+        "--extra",
+        "dev",
+        "pytest",
+        "-p",
+        "parallel_postgres",
+        "-p",
+        "integration_shard",
+        "--ci-shard",
+        selection,
+        "-q",
+        "-n",
+        "1" if native else "auto",
+        "--dist",
+        "loadfile",
+        "-m",
+        "integration",
+        "--postgres-schema-template",
+        "tank_test_ci_schema_fixture",
+        "--timeout=300",
+        "--junitxml=.test-results/integration.xml",
+    ]
+    if native:
+        expected.append("tests/test_market_truth_request.py")
+    assert json.loads(result.stdout) == expected
+    assert any(step.get("name") == "Record the complete integration collection" for step in steps)
+    assert any(
+        step.get("name") == "Require the complete integration collection with zero skips" for step in steps
+    )
+    assert BUDGET["BUDGET_SECONDS"] == 300
 
 
 @pytest.fixture
@@ -50,6 +121,45 @@ def reports(tmp_path):
         ET.ElementTree(root).write(path)
         paths.append(path)
     return manifest, paths
+
+
+def test_request_partition_preserves_legacy_shards_and_complete_union(integration_checks):
+    shard, _ = integration_checks
+    legacy = [f"tests/test_integration_{index}.py" for index in range(500)]
+    request = "tests/test_market_truth_request.py"
+    paths = [*legacy, request]
+    selections = ["0/3", "1/3", "2/3", "market-truth"]
+    groups = [{path for path in paths if shard.selected_for(path, value)} for value in selections]
+    assert set.union(*groups) == set(paths)
+    assert sum(map(len, groups)) == len(paths)
+    assert groups[-1] == {request}
+    for index in range(3):
+        assert groups[index] == {path for path in legacy if shard.shard_for(path, 3) == index}
+
+
+def test_request_partition_report_cannot_omit_or_duplicate_cases(integration_checks, tmp_path):
+    _, check = integration_checks
+    manifest, paths = reports(tmp_path)
+    expected = json.loads(manifest.read_text())
+    expected.append(
+        {
+            "classname": "tests.test_market_truth_request",
+            "name": "cold",
+            "file": "tests/test_market_truth_request.py",
+        }
+    )
+    manifest.write_text(json.dumps(expected))
+    root = ET.Element("testsuite")
+    ET.SubElement(root, "testcase", classname=expected[-1]["classname"], name="cold")
+    request = tmp_path / "market-truth.xml"
+    ET.ElementTree(root).write(request)
+    assert check.verify([request], [manifest], "market-truth") == {"cases": 1, "passed": 1, "skipped": 0}
+    assert check.verify([*paths, request], [manifest]) == {"cases": 3, "passed": 3, "skipped": 0}
+    for invalid in (paths, [*paths, request, request]):
+        with pytest.raises(ValueError, match="full collected"):
+            check.verify(invalid, [manifest])
+    with pytest.raises(ValueError, match="full collected"):
+        check.verify([paths[0]], [manifest], "market-truth")
 
 
 def test_full_union_requires_every_case_once(integration_checks, tmp_path):
