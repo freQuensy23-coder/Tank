@@ -161,6 +161,19 @@ class ClickHouse:
             return await asyncio.to_thread(_compact_json_rows, body)
         return _compact_json_rows(body)
 
+    async def sampled_state_rows(self, query, params, kinds):
+        if (
+            getattr(self.rows, "__func__", None) is not _SAMPLED_JSON_ROWS
+            or _sampled_binary_schema(kinds) is None
+        ):
+            return await self.rows(query, params)
+        body = await self._post(query + " FORMAT RowBinary", params)
+        if len(body) > 1_000_000:
+            result = await asyncio.to_thread(_sampled_binary, body, kinds)
+        else:
+            result = _sampled_binary(body, kinds)
+        return await self.rows(query, params) if result is None else result
+
     async def columns(self, query, params=None):
         body = await self._post(query + " FORMAT JSONColumns", params)
         return await asyncio.to_thread(_column_json, body)
@@ -234,6 +247,143 @@ class Query:
 
 
 DT = "DateTime64(6, 'UTC')"
+
+
+_SAMPLED_CLIENT_TYPE = ClickHouse
+_SAMPLED_JSON_ROWS = ClickHouse.rows
+_BINARY_EPOCH = datetime(1970, 1, 1, tzinfo=UTC)
+_BINARY_KINDS = {"String": 0, "Bool": 1, "Int64": 2, "UInt64": 3, DT: 4, "Array(String)": 5}
+
+
+def _sampled_binary_schema(kinds):
+    if type(kinds) not in (list, tuple) or not kinds:
+        return None
+    schema = []
+    for kind in kinds:
+        if type(kind) is not str:
+            return None
+        nullable = kind.startswith("Nullable(") and kind.endswith(")")
+        base = kind[9:-1] if nullable else kind
+        code = _BINARY_KINDS.get(base)
+        if code is None:
+            return None
+        schema.append((code, nullable))
+    return tuple(schema)
+
+
+def _binary_varuint(body, position):
+    value = 0
+    for shift in range(0, 70, 7):
+        if position >= len(body):
+            raise ValueError("invalid sampled binary state")
+        byte = body[position]
+        position += 1
+        if shift == 63 and byte > 1:
+            raise ValueError("invalid sampled binary state")
+        part = byte & 127
+        part <<= shift
+        value |= part
+        if byte < 128:
+            if shift and byte == 0:
+                raise ValueError("invalid sampled binary state")
+            return value, position
+    raise ValueError("invalid sampled binary state")
+
+
+def _binary_string(body, position):
+    size, position = _binary_varuint(body, position)
+    if size > len(body) - position:
+        raise ValueError("invalid sampled binary state")
+    end = position + size
+    try:
+        value = body[position:end].decode("utf-8")
+    except UnicodeDecodeError:
+        value = None
+    return value, end
+
+
+def _binary_value(body, position, code, timestamps):
+    if code == 0:
+        value, position = _binary_string(body, position)
+        return value, position, value is not None
+    if code == 1:
+        if position >= len(body) or body[position] > 1:
+            raise ValueError("invalid sampled binary state")
+        return body[position] == 1, position + 1, True
+    if code in (2, 3, 4):
+        if len(body) - position < 8:
+            raise ValueError("invalid sampled binary state")
+        value = int.from_bytes(body[position : position + 8], "little", signed=code != 3)
+        position += 8
+        if code == 4:
+            text = timestamps.get(value)
+            if text is None:
+                try:
+                    instant = _BINARY_EPOCH + timedelta(microseconds=value)
+                except (OverflowError, ValueError):
+                    return None, position, False
+                text = instant.isoformat(timespec="microseconds")[:-6] + "Z"
+                timestamps[value] = text
+            value = text
+        return value, position, True
+    if code == 5:
+        count, position = _binary_varuint(body, position)
+        if count > len(body) - position:
+            raise ValueError("invalid sampled binary state")
+        values = []
+        compatible = True
+        for _index in range(count):
+            value, position = _binary_string(body, position)
+            compatible = compatible and value is not None
+            values.append(value)
+        return values, position, compatible
+    raise ValueError("invalid sampled binary state")
+
+
+def _decode_sampled_binary(body, schema):
+    fingerprint, position = _binary_string(body, 0)
+    if type(fingerprint) is not str or not re.fullmatch(r"[0-9A-F]{64}", fingerprint):
+        raise ValueError("invalid sampled binary state")
+    count, position = _binary_varuint(body, position)
+    minimum = 0
+    for code, nullable in schema:
+        minimum += 1 if nullable or code not in (2, 3, 4) else 8
+    if count > (len(body) - position) // minimum:
+        raise ValueError("invalid sampled binary state")
+    records = []
+    timestamps = {}
+    compatible = True
+    for _index in range(count):
+        record = []
+        for code, nullable in schema:
+            if nullable:
+                if position >= len(body):
+                    raise ValueError("invalid sampled binary state")
+                marker = body[position]
+                position += 1
+                if marker == 1:
+                    record.append(None)
+                    continue
+                if marker != 0:
+                    raise ValueError("invalid sampled binary state")
+            value, position, supported = _binary_value(body, position, code, timestamps)
+            compatible = compatible and supported
+            record.append(value)
+        records.append(record)
+    if position != len(body):
+        raise ValueError("invalid sampled binary state")
+    if not compatible:
+        return None
+    return [{"fingerprint": fingerprint, "records": records}]
+
+
+def _sampled_binary(body, kinds):
+    schema = _sampled_binary_schema(kinds)
+    if schema is None:
+        return None
+    if type(body) is not bytes:
+        raise ValueError("invalid sampled binary state")
+    return _decode_sampled_binary(body, schema)
 
 
 def _column(collection, name):
@@ -846,7 +996,10 @@ async def _sampled_history_state(
         f"SELECT fingerprint, if(fingerprint = {known}, [], "
         f"arrayMap(x -> tuple({wire_fields}), population)) AS records FROM ({selection})"
     )
-    result = await ch.rows(sql, q.params)
+    if type(ch) is _SAMPLED_CLIENT_TYPE:
+        result = await ch.sampled_state_rows(sql, q.params, kinds[:-2])
+    else:
+        result = await ch.rows(sql, q.params)
     if len(result) != 1:
         raise ValueError("invalid sampled history state response")
     fingerprint, payload = result[0].get("fingerprint"), result[0].get("records")

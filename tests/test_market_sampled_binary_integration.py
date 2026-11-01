@@ -13,10 +13,11 @@ async def test_real_sampled_binary_matches_json_types_quantum_and_timestamp_form
     client = routed.clickhouse
     kinds = ["String", "Nullable(String)", "Bool", "Int64", "UInt64", chm.DT, "Array(String)"]
     sql = (
-        "SELECT repeat('A', 64) AS fingerprint, [tuple("
+        "SELECT repeat('A', 64) AS fingerprint, arrayMap(t -> tuple("
         "{money:String}, CAST(NULL, 'Nullable(String)'), CAST(1, 'Bool'), "
         "CAST('-9223372036854775808', 'Int64'), CAST('18446744073709551615', 'UInt64'), "
-        "fromUnixTimestamp64Micro(CAST(-1, 'Int64'), 'UTC'), ['α', '', concat('a', char(0), 'b')])] AS records"
+        "fromUnixTimestamp64Micro(t, 'UTC'), ['α', '', concat('a', char(0), 'b')]), "
+        "[CAST(-1, 'Int64'), CAST(0, 'Int64'), CAST(1000001, 'Int64')]) AS records"
     )
     params = {"money": ("9" * 100 + ".00000000", "String")}
     queries = []

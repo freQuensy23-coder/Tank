@@ -112,6 +112,14 @@ def test_sampled_binary_rejects_an_invalid_nullable_marker():
         chm._sampled_binary(string(FINGERPRINT) + b"\x01\x02", ["Nullable(Bool)"])
 
 
+@pytest.mark.parametrize("timestamp", [-(2**63), 2**63 - 1])
+def test_sampled_binary_defers_timestamps_outside_python_datetime_to_json(timestamp):
+    body = population([chm.DT], [[timestamp]])
+    assert chm._sampled_binary(body, [chm.DT]) is None
+    with pytest.raises(ValueError):
+        chm._sampled_binary(body + b"trailing-data", [chm.DT])
+
+
 def test_sampled_binary_validates_later_fields_and_rows_after_unsupported_utf8():
     kinds = ["String", "Nullable(Bool)"]
     body = population(kinds, [[b"\xff", True]])
