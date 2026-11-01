@@ -63,7 +63,7 @@ jobs:
       - name: Python format
         run: uv run --frozen --no-sync --extra dev ruff format --check src tests scripts deploy apify/x-reader
       - name: CI policy regressions
-        run: uv run --frozen --no-sync --extra dev pytest -q tests/test_ci_no_comments.py
+        run: uv run --frozen --no-sync --extra dev pytest -q tests/test_ci_no_comments.py tests/test_ci_budget.py
 
   lint-go:
     runs-on: ubuntu-24.04

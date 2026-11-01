@@ -1,10 +1,14 @@
 import importlib
 import json
+import os
 import runpy
+import subprocess
+import sys
 import xml.etree.ElementTree as ET
 from pathlib import Path
 
 import pytest
+import yaml
 
 CI_ROOT = Path(__file__).resolve().parents[1] / "scripts/ci"
 BUDGET = runpy.run_path(str(CI_ROOT / "ci_budget.py"))
@@ -17,6 +21,61 @@ def test_native_qualification_uses_remaining_global_budget_without_extending_it(
         "timeout-minutes: ${{ github.event_name == 'pull_request' && "
         "(matrix.shard == 'market-truth' && 5 || 4) || 20 }}"
     ) in native_job
+    assert BUDGET["BUDGET_SECONDS"] == 300
+
+
+@pytest.mark.process
+@pytest.mark.parametrize("selection", ["market-truth", "0/3", "1/3", "2/3"])
+def test_integration_runner_avoids_recollecting_unselected_files_for_native_shard(tmp_path, selection):
+    workflow = yaml.safe_load((CI_ROOT.parents[1] / ".github/workflows/test-suite.yml").read_text())
+    steps = workflow["jobs"]["python-integration"]["steps"]
+    command = next(step["run"] for step in steps if step.get("name") == "Run all integration cases")
+    uv = tmp_path / "uv"
+    uv.write_text(f"#!{sys.executable}\nimport json, sys\nprint(json.dumps(sys.argv[1:]))\n")
+    uv.chmod(0o700)
+    result = subprocess.run(
+        ["bash", "-euo", "pipefail", "-c", command],
+        env={
+            **os.environ,
+            "PATH": str(tmp_path) + os.pathsep + os.environ["PATH"],
+            "INTEGRATION_SHARD": selection,
+            "TANK_CI_SCHEMA_TEMPLATE": "tank_test_ci_schema_fixture",
+        },
+        capture_output=True,
+        text=True,
+        check=True,
+        timeout=5,
+    )
+    native = selection == "market-truth"
+    expected = [
+        "run",
+        "--frozen",
+        "--extra",
+        "dev",
+        "pytest",
+        "-p",
+        "parallel_postgres",
+        "-p",
+        "integration_shard",
+        "--ci-shard",
+        selection,
+        "-q",
+        "-n",
+        "1" if native else "auto",
+        "--dist",
+        "loadfile",
+        "-m",
+        "integration",
+        "--postgres-schema-template",
+        "tank_test_ci_schema_fixture",
+        "--timeout=300",
+        "--junitxml=.test-results/integration.xml",
+    ]
+    if native:
+        expected.append("tests/test_market_truth_request.py")
+    assert json.loads(result.stdout) == expected
+    assert any(step.get("name") == "Record the complete integration collection" for step in steps)
+    assert any(step.get("name") == "Require the complete integration collection with zero skips" for step in steps)
     assert BUDGET["BUDGET_SECONDS"] == 300
 
 
