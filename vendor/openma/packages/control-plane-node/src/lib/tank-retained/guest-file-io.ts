@@ -1,5 +1,4 @@
 import { Buffer } from 'node:buffer';
-import { TextDecoder } from 'node:util';
 import { createHash } from 'node:crypto';
 import { open, mkdtemp, rename, rm } from 'node:fs/promises';
 import { dirname, join } from 'node:path';

@@ -90,38 +90,25 @@ verify() {
 
 previous=$(cat deployed 2>/dev/null || true)
 [[ -z "$previous" || "$previous" =~ ^[0-9a-f]{40}$ ]] || { echo "invalid previous release SHA"; exit 1; }
-release="releases/$SHA"
-worker() { python3 "$release/apify_deploy.py" "$1" "${2:-$SHA}" "$release"; }
 tank_started=no
-[ ! -f apify-state/pending.json ] || tank_started=yes
 recover() {
-  local status=$? recovery_sha=$SHA
+  local status=$?
   trap - EXIT INT TERM
-  if [ "$status" -ne 0 ]; then
-    if [ -f apify-state/pending.json ]; then
-      recovery_sha=$(worker recovery_release) || { echo "cannot resolve interrupted worker release"; exit 1; }
-      previous=$(worker previous_release "$recovery_sha") || { echo "cannot resolve rollback release"; exit 1; }
+  if [ "$status" -ne 0 ] && [ "$tank_started" = yes ] && [ -n "$previous" ]; then
+    echo "rollback to $previous $(date -u +%T)"
+    if roll "$previous"; then
+      printf '%s\n' "$previous" > deployed.next && mv deployed.next deployed
+      echo "rolled back to $previous"
+    else
+      echo "Tank rollback failed"
+      status=1
     fi
-    worker rollback "$recovery_sha" || { echo "worker rollback failed; Tank rollback refused"; exit 1; }
-    if [ "$tank_started" = yes ] && [ -n "$previous" ]; then
-      echo "rollback to $previous $(date -u +%T)"
-      if roll "$previous"; then
-        printf '%s\n' "$previous" > deployed.next && mv deployed.next deployed
-        echo "rolled back to $previous"
-      else
-        echo "Tank rollback failed"
-        exit 1
-      fi
-    fi
-    worker rollback_finish "$recovery_sha" || { echo "rollback markers not verified"; exit 1; }
   fi
   exit "$status"
 }
 trap recover EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM
-worker prepare
-worker activate
 start=$(date +%s)
 since=$(date -u +%FT%TZ)
 echo "deploy $SHA at $since; previous ${previous:-none}"
@@ -130,10 +117,7 @@ tank_started=yes
 if roll "$SHA"; then
   while [ $(( $(date +%s) - start )) -lt "$LIMIT" ]; do
     if out=$(verify "$since" 2>&1); then
-      worker commit
-      printf '%s\n' "$SHA" > deployed.next
-      mv deployed.next deployed
-      worker finish
+      printf '%s\n' "$SHA" > deployed.next && mv deployed.next deployed
       echo "VERIFIED $SHA after $(( $(date +%s) - start ))s"
       docker image ls --format '{{.Repository}}:{{.Tag}}' | grep '^ghcr.io/frequensy23-coder/tank/' \
         | grep -v -E ":(${SHA}|${previous:-none})\$" | xargs -r docker rmi >/dev/null 2>&1 || true

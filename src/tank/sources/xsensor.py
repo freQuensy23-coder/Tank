@@ -16,7 +16,6 @@ import httpx
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from tank.logging import redact_text
-from tank.sources.x_diagnostics import sanitize
 from tank.util import iso
 
 RUN_TIMEOUT_S = 130
@@ -111,7 +110,6 @@ class AccountFailure:
 
     account: str | None
     reason: str
-    diagnostics: dict | None = None
 
 
 @dataclass(frozen=True)
@@ -145,11 +143,7 @@ def scan(run: ApifyRun, accounts: list[str], cursors: Mapping[str, str], raw: by
         for post in run.posts
         if post.author.lower() in cursors and int(post.id) > int(cursors[post.author.lower()])
     ]
-    failures = [
-        AccountFailure(a.handle, a.error or "FAILED", a.diagnostics)
-        for a in run.accounts
-        if a.status == "failed"
-    ]
+    failures = [AccountFailure(a.handle, a.error or "FAILED") for a in run.accounts if a.status == "failed"]
     reported = {account.handle.lower(): account for account in run.accounts}
     for handle in accounts:
         account = reported.get(handle.lower())
@@ -200,12 +194,4 @@ class XSensor:
             message = redact_text(str(exc), (self.token, repr(self.token)[1:-1]))
             raise RuntimeError(f"Apify X run request failed: {message}") from None
         run = ApifyRun.model_validate_json(response.content)
-        run = run.model_copy(
-            update={
-                "accounts": [
-                    account.model_copy(update={"diagnostics": sanitize(account.diagnostics, self.token)})
-                    for account in run.accounts
-                ]
-            }
-        )
         return scan(run, accounts, cursors, response.content)

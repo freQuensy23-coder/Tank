@@ -461,15 +461,8 @@ async def test_new_posts_read_replied_and_linked_posts_from_their_status_pages(r
 @pytest.mark.integration
 @pytest.mark.parametrize("count", [86, 200])
 @pytest.mark.parametrize("kind", ["json_escaped", "binary"])
-async def test_actor_outage_bounds_aggregate_evidence_and_uploads_retained_prefixes(
-    reader, monkeypatch, clock, count, kind
-):
+async def test_actor_outage_bounds_aggregate_evidence(reader, monkeypatch, clock, count, kind):
     import tracemalloc
-
-    from test_x_diagnostics import multipart, notice_for, telegram_settings
-
-    from tank.delivery import DeliveryService
-    from tank.storage import MemoryRepository
 
     raw = (b"\x00\xff\x80" if kind == "binary" else b'"\\\t') * (reader.BODY_LIMIT // 3 + 1)
     raw = raw[: reader.BODY_LIMIT]
@@ -513,30 +506,3 @@ async def test_actor_outage_bounds_aggregate_evidence_and_uploads_retained_prefi
             assert response["serializedBodyLimitBytes"] == reader.RUN_EVIDENCE_LIMIT // (3 * count)
             total += len(json.dumps(body, ensure_ascii=True))
     assert total <= reader.RUN_EVIDENCE_LIMIT
-    evidence = output["accounts"][0]["diagnostics"]
-    repo = MemoryRepository()
-    notice = await notice_for(repo, evidence)
-    sent = []
-
-    def send(request):
-        if request.url.path.endswith("sendDocument"):
-            sent.append(multipart(request)["document"][1])
-        return httpx.Response(200, json={"ok": True, "result": {"message_id": len(sent) + 1}})
-
-    async with HTTP_CLIENT(transport=httpx.MockTransport(send)) as http:
-        await DeliveryService(repo, telegram_settings(), http=http).deliver(
-            {"notice_id": notice["notice_id"]}
-        )
-    expected = evidence["attempts"][0]["response"]
-    prefix = (
-        base64.b64decode(expected["body"])
-        if expected["bodyEncoding"] == "base64"
-        else expected["body"].encode()
-    )
-    assert sent[:3] == [prefix] * 3
-    metadata = json.loads(sent[3])
-    assert all(attempt["response"]["bodyTruncated"] for attempt in metadata["attempts"])
-    assert all(
-        attempt["response"]["captureLimitBytes"] == expected["captureLimitBytes"]
-        for attempt in metadata["attempts"]
-    )

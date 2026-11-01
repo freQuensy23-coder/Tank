@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createHash } from 'node:crypto';
 import { gzipSync } from 'node:zlib';
-import { executableImageIdentity, assertCompatible } from '../../../vendor/openma/packages/control-plane-node/src/lib/tank-retained/runtime-identity.ts';
+import { executableImageIdentity, assertCompatible, stableDigest } from '../../../vendor/openma/packages/control-plane-node/src/lib/tank-retained/runtime-identity.ts';
 
 async function layout(fn) {
   const root = await mkdtemp(join(tmpdir(), 'tank-image-identity-'));
@@ -88,4 +88,9 @@ test('compatibility comparison reports every changed or missing component withou
   const next = { version: 2, image: sha('b'), compatibility: { mounts: sha('b'), databasePolicy: sha('d') } };
   assert.throws(() => assertCompatible(old, next), /^Error: retained_configuration_changed:databasePolicy,network$/);
   assert.doesNotThrow(() => assertCompatible(old, { ...old, image: sha('b') }));
+});
+
+test('missing optional identity components retain the original serialization digest', () => {
+  assert.equal(stableDigest(undefined), 'sha256:' + createHash('sha256').update('undefined').digest('hex'));
+  assert.equal(stableDigest({ b: 2, a: 1 }), stableDigest({ a: 1, b: 2 }));
 });

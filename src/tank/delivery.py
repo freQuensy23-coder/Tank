@@ -2,8 +2,6 @@
 
 import asyncio
 import html
-import json
-import time
 from contextlib import AsyncExitStack
 from datetime import timedelta
 
@@ -12,7 +10,6 @@ import httpx
 from tank.analysis.cards import telegram_card_html
 from tank.delivery_jobs import NoticeDeliveryJob, ledger_filters, parse_delivery_job
 from tank.ops_progress import event_progress
-from tank.sources.x_diagnostics import verified_documents
 from tank.time_precision import collection_clock, offset_schedule, propagate_timestamp
 from tank.util import new_id, parse_time, sha256, utcnow
 
@@ -136,18 +133,6 @@ class DeliveryService:
             notice = await self.repo.get("out.ops_notices", job.notice_id)
             if notice and notice.get("kind") == "ITEM_PROGRESS":
                 error = await self._deliver_progress(notice)
-            elif notice and (
-                "document_manifest" in notice
-                or (
-                    notice.get("kind") == "ENTRY_ERRORS"
-                    and any(error.get("diagnostics") is not None for error in notice.get("entry_errors", []))
-                )
-            ):
-                async with AsyncExitStack() as locks:
-                    await self._enter_delivery_lock(locks, "ops-documents:" + notice["notice_id"])
-                    error = await self._deliver(job)
-                    if error is None:
-                        error = await self._deliver_documents(notice)
             else:
                 error = await self._deliver(job)
         else:
@@ -162,105 +147,6 @@ class DeliveryService:
             if getattr(error, "terminal", False):
                 await self.terminal_failure(payload, error, 5)
             raise error
-
-    async def _deliver_documents(self, notice):
-        deadline = time.monotonic() + 30
-        chat = str(self.settings.telegram_ops_chat or "")
-        ledger = await self._all(
-            "out.deliveries", filters={"notice_id": notice["notice_id"], "channel": "telegram:ops"}
-        )
-        messages = [row for row in ledger if row["status"] == "SENT" and row.get("method") != "sendDocument"]
-        if not messages:
-            raise DeliveryError("Ops diagnostic parent message was not delivered")
-        parent = messages[0]["message_ref"]
-        try:
-            attachments = verified_documents(notice)
-        except (ValueError, TypeError, KeyError) as exc:
-            raise DeliveryError("Ops diagnostic document manifest mismatch") from exc
-        terminal_failure = None
-        for document in attachments:
-            document_id = sha256({"filename": document["filename"], "sha256": document["sha256"]})
-            history = [row for row in ledger if row.get("document_id") == document_id]
-            if any(row["status"] == "SENT" for row in history):
-                continue
-            attempt = max((row.get("attempt", 0) for row in history), default=0) + 1
-            if attempt > 5 or any(row.get("terminal") for row in history):
-                terminal_failure = DeliveryError("Ops document delivery exhausted five attempts")
-                terminal_failure.terminal = True
-                continue
-            if time.monotonic() >= deadline:
-                return DeliveryDeferred(offset_schedule(collection_clock(), timedelta(seconds=1)))
-            transition = {
-                "notice_id": notice["notice_id"],
-                "channel": "telegram:ops",
-                "method": "sendDocument",
-                "document_id": document_id,
-                "document_sha256": document["sha256"],
-                "document_bytes": len(document["content"]),
-                "filename": document["filename"],
-                "attempt": attempt,
-                "request_reply_to_message_ref": parent,
-                **collection_clock().fields("at"),
-            }
-            await self.repo.put(
-                "out.deliveries", new_id("delivery"), {**transition, "status": "GENERATED"}, immutable=True
-            )
-            try:
-                response = await self.http.post(
-                    f"https://api.telegram.org/bot{self.settings.telegram_token}/sendDocument",
-                    data={
-                        "chat_id": chat,
-                        "reply_parameters": json.dumps({"message_id": int(parent)}),
-                        "caption": f"{notice['notice_id']} · {document['filename']}\nsha256={document['sha256']} · {len(document['content'])} bytes",
-                        "disable_content_type_detection": "true",
-                    },
-                    files={
-                        "document": (document["filename"], document["content"], "application/octet-stream")
-                    },
-                )
-                data = response.json()
-                if response.status_code != 200 or not data.get("ok"):
-                    raise DeliveryError(
-                        "Telegram rejected Ops document",
-                        max(2 ** (attempt - 1), (data.get("parameters") or {}).get("retry_after", 0)),
-                    )
-                message_ref = str(data["result"]["message_id"])
-            except Exception as exc:
-                await self.repo.put(
-                    "out.deliveries",
-                    new_id("delivery"),
-                    {
-                        **transition,
-                        **collection_clock().fields("at"),
-                        "status": "FAILED",
-                        "error": type(exc).__name__,
-                        "terminal": attempt == 5,
-                    },
-                    immutable=True,
-                )
-                if attempt == 5:
-                    terminal_failure = DeliveryError("Ops document delivery exhausted five attempts")
-                    terminal_failure.terminal = True
-                    continue
-                return DeliveryDeferred(
-                    offset_schedule(
-                        collection_clock(),
-                        timedelta(seconds=getattr(exc, "retry_after", 2 ** (attempt - 1))),
-                    )
-                )
-            await self.repo.put(
-                "out.deliveries",
-                new_id("delivery"),
-                {
-                    **transition,
-                    **collection_clock().fields("at"),
-                    "status": "SENT",
-                    "message_ref": message_ref,
-                    "chat_id": chat,
-                },
-                immutable=True,
-            )
-        return terminal_failure
 
     async def _deliver_progress(self, notice):
         from tank.ops_cards import render, snapshot, time_of
