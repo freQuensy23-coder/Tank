@@ -10,12 +10,10 @@ from pathlib import Path
 import httpx
 import pytest
 from test_sources import settings as source_settings
-from test_x_diagnostics import multipart
 
 from tank.delivery import DeliveryService
 from tank.sources import SourceService
 from tank.storage import MemoryRepository
-from tank.util import sha256
 
 pytestmark = pytest.mark.integration
 
@@ -107,7 +105,7 @@ class LoopbackTelegramTransport(httpx.AsyncBaseTransport):
         await self.transport.aclose()
 
 
-async def test_real_worker_http_errors_flow_through_source_checkpoint_to_multipart_ops_documents(
+async def test_real_worker_http_errors_keep_cursors_and_send_one_plain_ops_notice(
     tmp_path, wire_server
 ):
     origin, state = wire_server
@@ -136,20 +134,11 @@ async def test_real_worker_http_errors_flow_through_source_checkpoint_to_multipa
         delivery = DeliveryService(repo, config, http=http)
         await delivery.deliver(job["payload"])
         await delivery.deliver(job["payload"])
-    assert len(state["telegram"]) == 5
+    assert len(state["telegram"]) == 1
     assert state["telegram"][0][0].endswith("sendMessage")
-    uploads = [
-        multipart(httpx.Request("POST", origin + path, headers=headers, content=payload))
-        for path, headers, payload in state["telegram"][1:]
-    ]
-    assert [upload["document"][1] for upload in uploads[:3]] == [state["body"]] * 3
-    assert all(upload["chat_id"][1] == b"isolated-ops" for upload in uploads)
-    metadata = json.loads(uploads[3]["document"][1])
-    assert all(attempt["response"]["bodySha256"] == sha256(state["body"]) for attempt in metadata["attempts"])
-    assert all("set-cookie" not in attempt["response"]["headers"] for attempt in metadata["attempts"])
-    assert metadata["request"]["body"] is None
+    assert all("diagnostics" not in error for error in checkpoint["entry_errors"])
     receipts = await repo.list("out.deliveries", filters={"status": "SENT"})
-    assert len(receipts) == 5
+    assert len(receipts) == 1
 
 
 @pytest.mark.timeout(10)

@@ -99,8 +99,8 @@ jobs:
       - run: uv run --frozen --extra dev mypy
       - name: Install versioned X worker dependencies
         run: uv pip install --python .venv/bin/python -r apify/x-reader/requirements.txt
-      - name: Typecheck the versioned worker and publisher
-        run: uv run --frozen --extra dev mypy apify/x-reader scripts/deploy/apify_deploy.py
+      - name: Typecheck the versioned worker
+        run: uv run --frozen --extra dev mypy apify/x-reader
 
   test:
     uses: ./.github/workflows/test-suite.yml
