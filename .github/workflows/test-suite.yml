@@ -154,7 +154,14 @@ jobs:
         env:
           PYTHONPATH: scripts/ci:tests
       - name: Run all integration cases
-        run: uv run --frozen --extra dev pytest -p parallel_postgres -p integration_shard --ci-shard "$INTEGRATION_SHARD" -q -n auto --dist loadfile -m integration --postgres-schema-template "$TANK_CI_SCHEMA_TEMPLATE" --timeout=300 --junitxml=.test-results/integration.xml
+        run: |
+          workers=auto
+          paths=()
+          if [[ "$INTEGRATION_SHARD" == market-truth ]]; then
+            workers=1
+            paths=(tests/test_market_truth_request.py)
+          fi
+          uv run --frozen --extra dev pytest -p parallel_postgres -p integration_shard --ci-shard "$INTEGRATION_SHARD" -q -n "$workers" --dist loadfile -m integration --postgres-schema-template "$TANK_CI_SCHEMA_TEMPLATE" --timeout=300 --junitxml=.test-results/integration.xml "${paths[@]}"
         env:
           PYTHONPATH: scripts/ci:tests
           MARKET_TRUTH_CONTRACT_BASE: ${{ github.event.pull_request.base.sha || github.sha }}
