@@ -1,4 +1,4 @@
-import { executableImageIdentity } from '../lib/tank-retained/runtime-identity.js';
+import { executableImageIdentity, stableDigest as runtimeComponentDigest } from '../lib/tank-retained/runtime-identity.js';
 import { loadSessionContinuationSnapshot } from '@open-managed-agents/session-runtime-sql/continuation';
 
 /**
@@ -419,7 +419,7 @@ export async function createManagedNodeRuntime(foundation: NodeFoundation, compo
         databasePolicy: database ? { host: database.hostname, port: database.port, database: database.pathname, role: database.username } : null
       };
       return { version: 2, image: await executableImage,
-        compatibility: Object.fromEntries(Object.entries(components).map(([key, value]) => [key, stableDigest(value)])) };
+        compatibility: Object.fromEntries(Object.entries(components).map(([key, value]) => [key, runtimeComponentDigest(value)])) };
     },
   });
   await retainedLifecycle.reconcileOrphans();
