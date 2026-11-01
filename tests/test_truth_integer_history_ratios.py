@@ -1,12 +1,11 @@
 from datetime import UTC, datetime, timedelta
-from decimal import ROUND_DOWN, ROUND_HALF_EVEN, Decimal, Inexact, Rounded, localcontext
+from decimal import ROUND_DOWN, ROUND_HALF_EVEN, Decimal, DecimalException, Inexact, Rounded, localcontext
 from random import Random
 
 import numpy as np
 import pytest
 
 from tank.analysis import truth
-
 
 PAIRS = [
     (0, 1),
@@ -97,7 +96,15 @@ def reference_changes(times, prepared, old, paired):
     return returns[0], returns[1], ends[0], ends[1]
 
 
-def observed_history(function, monkeypatch, *, precision=128, rounding=ROUND_HALF_EVEN, mutate=False):
+def observed_history(
+    function,
+    monkeypatch,
+    *,
+    precision=128,
+    rounding=ROUND_HALF_EVEN,
+    mutate=False,
+    trap=None,
+):
     count = 512
     times = [datetime(2026, 10, 19, tzinfo=UTC) + timedelta(minutes=5 * i) for i in range(count)]
     native = [None if i % 29 == 0 else f"{1000000 + 7 * i}.00000000" for i in range(count)]
@@ -111,13 +118,15 @@ def observed_history(function, monkeypatch, *, precision=128, rounding=ROUND_HAL
             context.rounding = ROUND_HALF_EVEN
             context.clear_traps()
             context.clear_flags()
-            prepared = truth._history_decimal_arrays((native, usd))
+            prepared = truth._history_decimal_arrays((native, usd), metadata={})
             assert prepared is not None
             if mutate:
                 prepared[0][100] = Decimal("3.0000000000000000000000000000000000000001")
             context.prec = precision
             context.rounding = rounding
             context.flags[Rounded] = True
+            if trap is not None:
+                context.traps[trap] = True
             original = np.divide
             object_operands = []
 
@@ -127,7 +136,10 @@ def observed_history(function, monkeypatch, *, precision=128, rounding=ROUND_HAL
                 return original(left, right, *args, **kwargs)
 
             patch.setattr(np, "divide", divide)
-            result = function(times, prepared, old, paired)
+            try:
+                result = function(times, prepared, old, paired)
+            except DecimalException as error:
+                result = type(error).__name__
             return result, dict(context.flags), sum(object_operands)
     finally:
         truth._ASSESSMENT_INPUTS.reset(marker)
@@ -148,6 +160,8 @@ def test_history_uses_native_integer_ratios_without_object_decimal_division(monk
         {"precision": 9},
         {"rounding": ROUND_DOWN},
         {"mutate": True},
+        {"trap": Inexact},
+        {"trap": Rounded},
     ],
 )
 def test_history_preserves_scalar_fallback_context_and_changed_values(monkeypatch, options):
@@ -159,3 +173,8 @@ def test_history_preserves_scalar_fallback_context_and_changed_values(monkeypatc
         assert 0 < actual[2] <= expected[2]
     else:
         assert actual[2] == expected[2] > 0
+
+
+def test_integer_history_uses_native_dispatch_entries():
+    required = {"_validated_integer_units", "_rounded_integer_change", "_integer_return_values"}
+    assert required <= truth.__pyx_capi__.keys()

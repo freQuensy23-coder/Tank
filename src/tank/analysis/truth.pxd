@@ -1,4 +1,14 @@
 import cython
+from libc.stdint cimport int64_t, uint64_t
+
+cdef extern from *:
+    """
+    typedef unsigned __int128 tank_history_wide;
+    """
+    ctypedef unsigned long long tank_history_wide
+
+ctypedef const int64_t[::1] _HistoryUnits
+ctypedef const Py_ssize_t[::1] _HistoryPositions
 
 cdef object _MONEY_RADIX
 
@@ -56,3 +66,47 @@ cdef api object _prepared_history_decimal_arrays(object columns, object summands
 cdef api object _as_dec(object value)
 cdef api object _when(object row)
 cdef api object _can_admit(object row, object snapshot)
+
+@cython.locals(
+    view=object[::1],
+    saved=object[::1],
+    index=cython.Py_ssize_t,
+    offset=cython.Py_ssize_t,
+)
+cdef api object _validated_integer_units(object values)
+
+@cython.cdivision(True)
+@cython.locals(
+    numerator=uint64_t,
+    denominator=uint64_t,
+    left=uint64_t,
+    right=uint64_t,
+    exponent=cython.int,
+    shift=cython.int,
+    comparison=tank_history_wide,
+    scaled_numerator=tank_history_wide,
+    scaled_denominator=tank_history_wide,
+    quotient=uint64_t,
+    remainder=tank_history_wide,
+    twice=tank_history_wide,
+    value=cython.double,
+)
+cdef api double _rounded_integer_change(uint64_t current, uint64_t old) except? -1
+
+@cython.cdivision(True)
+@cython.boundscheck(False)
+@cython.wraparound(False)
+@cython.locals(
+    units_read=_HistoryUnits,
+    previous_read=_HistoryPositions,
+    positions_read=_HistoryPositions,
+    result=cython.double[::1],
+    index=cython.Py_ssize_t,
+    position=cython.Py_ssize_t,
+    prior=cython.Py_ssize_t,
+    current=int64_t,
+    old=int64_t,
+    denominator=int64_t,
+    inexact=cython.bint,
+)
+cdef api object _integer_return_values(object units, object previous, object positions)

@@ -31,7 +31,7 @@ from decimal import (
     localcontext,
 )
 from functools import wraps
-from math import isfinite, log
+from math import isfinite, ldexp, log
 from operator import index as integer_index
 from statistics import mean, median, stdev
 
@@ -1188,7 +1188,179 @@ def _prepared_history_decimal_arrays(columns, summands, metadata):
         return None
     if metadata is not None:
         metadata.update(low=low, high=high, context=_history_context_key())
+        if type(metadata) is dict and type(columns) in (tuple, list):
+            for column, values in zip(columns, arrays, strict=True):
+                _cache_integer_column(column, values, low)
     return arrays
+
+
+def _cache_integer_column(column, values, scale):
+    inputs = _ASSESSMENT_INPUTS.get()
+    if type(inputs) is not dict or len(values) < 256 or type(column) not in (list, tuple, np.ndarray):
+        return
+    if (
+        _history_fixed_decimal_column is not _INTEGER_COLUMN_CALLBACKS[0]
+        or Decimal is not _INTEGER_COLUMN_CALLBACKS[1]
+        or getcontext is not _COMPOSITE_CALLBACKS[1]
+    ):
+        return
+    if type(column) is np.ndarray and column.ndim != 1:
+        return
+    units = np.empty(len(values), dtype=np.int64)
+    for index, raw in enumerate(column):
+        if raw is None:
+            units[index] = 0
+            continue
+        if type(raw) is not str:
+            return
+        code = _fixed_decimal_text_metadata(raw)
+        if code < 0 or code & 63 > 19:
+            return
+        shift = -(code >> 6) - scale
+        coefficient = int(raw.replace(".", "")) if code & 63 else 0
+        if coefficient:
+            if not 0 <= shift <= 18:
+                return
+            coefficient *= 10**shift
+            if coefficient > 9223372036854775807:
+                return
+        units[index] = coefficient
+    units.flags.writeable = False
+    inputs.setdefault("history_integer_columns", {})[id(values)] = (values, values.copy(), units)
+
+
+def _validated_integer_units(values):
+    inputs = _ASSESSMENT_INPUTS.get()
+    if (
+        type(inputs) is not dict
+        or type(values) is not np.ndarray
+        or values.ndim != 1
+        or values.dtype != object
+        or not values.flags.c_contiguous
+        or not values.flags.writeable
+    ):
+        return None
+    memo = inputs.get("history_integer_columns", {})
+    source = values
+    while type(source) is np.ndarray:
+        hit = memo.get(id(source))
+        if hit is not None and hit[0] is source:
+            break
+        source = source.base
+    else:
+        return None
+    difference = values.ctypes.data - source.ctypes.data
+    offset, remainder = divmod(difference, values.itemsize)
+    if remainder or offset < 0 or offset + len(values) > min(len(source), len(hit[1]), len(hit[2])):
+        return None
+    view, saved = values, hit[1]
+    for index in range(len(values)):
+        if view[index] is not saved[offset + index]:
+            return None
+    return hit[2][offset : offset + len(values)]
+
+
+def _rounded_integer_change(current, old):
+    if old == 0:
+        raise ZeroDivisionError
+    numerator = int(current - old) if current >= old else int(old - current)
+    if numerator == 0:
+        return 0.0
+    denominator = int(old)
+    left, right, exponent = numerator, denominator, 0
+    while left:
+        left >>= 1
+        exponent += 1
+    while right:
+        right >>= 1
+        exponent -= 1
+    if exponent >= 0:
+        comparison = denominator
+        comparison <<= exponent
+        if numerator < comparison:
+            exponent -= 1
+    else:
+        comparison = numerator
+        comparison <<= -exponent
+        if comparison < denominator:
+            exponent -= 1
+    scaled_numerator, scaled_denominator = numerator, denominator
+    shift = 52 - exponent
+    if shift >= 0:
+        scaled_numerator <<= shift
+    else:
+        scaled_denominator <<= -shift
+    quotient = scaled_numerator // scaled_denominator
+    remainder = scaled_numerator % scaled_denominator
+    twice = remainder << 1
+    if twice > scaled_denominator or twice == scaled_denominator and quotient & 1:
+        quotient += 1
+    value = ldexp(float(quotient), exponent - 52)
+    return -value if current < old else value
+
+
+def _integer_return_values(units, previous, positions):
+    units_read, previous_read, positions_read = units, previous, positions
+    output = np.empty(len(positions), dtype=np.float64)
+    result = output
+    inexact = False
+    for index in range(len(positions)):
+        position = positions_read[index]
+        if position < 0 or position >= len(units):
+            return None
+        prior = previous_read[position]
+        if prior < 0 or prior >= len(units):
+            return None
+        current, old = units_read[position], units_read[prior]
+        if current < 0 or old <= 0:
+            return None
+        result[index] = _rounded_integer_change(current, old)
+        denominator = old
+        while denominator % 2 == 0:
+            denominator //= 2
+        while denominator % 5 == 0:
+            denominator //= 5
+        if current % denominator:
+            inexact = True
+    return output.tolist(), bool(inexact)
+
+
+def _integer_returns(units, previous, positions):
+    if any(type(value) is not np.ndarray or value.ndim != 1 for value in (units, previous, positions)):
+        return None
+    if units.dtype != np.int64 or previous.dtype != np.intp or positions.dtype != np.intp:
+        return None
+    if len(units) != len(previous) or not all(
+        value.flags.c_contiguous for value in (units, previous, positions)
+    ):
+        return None
+    return _integer_return_values(units, previous, positions)
+
+
+def _bounded_history_returns(values, old, valid):
+    if getcontext is not _COMPOSITE_CALLBACKS[1] or _history_present is not _COMPOSITE_CALLBACKS[3]:
+        return None
+    context = getcontext()
+    if (
+        type(context) is not Context
+        or context.prec < 128
+        or context.rounding != ROUND_HALF_EVEN
+        or context.traps[Inexact]
+        or context.traps[Rounded]
+        or context.clamp
+        or context.Emin > -512
+        or context.Emax < 512
+    ):
+        return None
+    units = _validated_integer_units(values)
+    if units is None:
+        return None
+    result = _integer_returns(units, old, np.flatnonzero(valid))
+    if result is not None:
+        if result[1]:
+            context.flags[Inexact] = context.flags[Rounded] = True
+        return result[0]
+    return None
 
 
 def _history_context_key():
@@ -1282,8 +1454,11 @@ def _oi_history_changes(times, prepared, old, paired):
         present = _history_present(values)
         valid = paired & present & present[old]
         valid &= np.not_equal(values[old], 0)
-        result = np.subtract(np.divide(values[valid], values[old[valid]]), 1)
-        returns.append(np.asarray(result, dtype=np.float64).tolist())
+        result = _bounded_history_returns(values, old, valid)
+        if result is None:
+            changes = np.subtract(np.divide(values[valid], values[old[valid]]), 1)
+            result = np.asarray(changes, dtype=np.float64).tolist()
+        returns.append(result)
         ends.append([times[i] for i in np.flatnonzero(valid)])
     return returns[0], returns[1], ends[0], ends[1]
 
@@ -1662,6 +1837,7 @@ def _history_slice(times, rows, start):
 
 
 _COMPOSITE_CALLBACKS = (parameter, getcontext, _history_nearest, _history_present)
+_INTEGER_COLUMN_CALLBACKS = (_history_fixed_decimal_column, Decimal)
 
 
 def _composite_history_vector(venue_history, window):
