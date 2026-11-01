@@ -75,7 +75,9 @@ def test_integration_runner_avoids_recollecting_unselected_files_for_native_shar
         expected.append("tests/test_market_truth_request.py")
     assert json.loads(result.stdout) == expected
     assert any(step.get("name") == "Record the complete integration collection" for step in steps)
-    assert any(step.get("name") == "Require the complete integration collection with zero skips" for step in steps)
+    assert any(
+        step.get("name") == "Require the complete integration collection with zero skips" for step in steps
+    )
     assert BUDGET["BUDGET_SECONDS"] == 300
 
 
