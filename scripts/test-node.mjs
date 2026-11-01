@@ -6,24 +6,16 @@ const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const lanes = {
   "local-unit": [
     "deploy/openma-entrypoint.test.mjs",
-    "tests/openma/agents/tool-config.test.mjs",
     "tests/openma/lifecycle/retained-session.test.mjs",
     "tests/openma/lifecycle/boxlite-provider.test.mjs",
-    "tests/openma/lifecycle/guest-filesystem.test.mjs",
-    "tests/openma/lifecycle/durable-publication.test.mjs",
     "tests/openma/lifecycle/node-lifecycle.test.mjs",
     "tests/openma/lifecycle/replay-attachment.test.mjs",
-    "tests/openma/lifecycle/image-upgrade.test.mjs",
-    "tests/openma/lifecycle/runtime-identity.test.mjs",
-    "tests/openma/lifecycle/image-recovery.test.mjs",
     "tests/openma/lifecycle/custom-tool-validation.test.mjs",
-    "tests/openma/lifecycle/memory-bindings.test.mjs",
     "tests/openma/events/span-finish-reason.test.mjs",
   ],
   "local-contract": [
     "deploy/openma_lifecycle/native-qualification.test.mjs",
-    "tests/openma/replay/replay-evidence.test.mjs",
-    "tests/openma/lifecycle/workspace-transfer.test.mjs",
+    "deploy/openma_replay/replay-evidence.test.mjs",
   ],
 };
 

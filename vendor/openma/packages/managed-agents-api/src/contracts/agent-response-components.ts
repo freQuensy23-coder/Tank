@@ -1,6 +1,7 @@
 import type {
   BetaManagedAgentsAdvisor,
   BetaManagedAgentsAgent,
+  BetaManagedAgentsAgentToolset20260401,
   BetaManagedAgentsAnthropicSkill,
   BetaManagedAgentsCustomSkill,
   BetaManagedAgentsCustomTool,
@@ -8,7 +9,6 @@ import type {
   BetaManagedAgentsModelConfig,
 } from "@anthropic-ai/sdk/resources/beta/agents/agents";
 import { z } from "zod";
-import type { OpenMaAgentToolset } from "./agent-tools";
 
 const permissionPolicySchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("always_allow") }).strict(),
@@ -87,7 +87,7 @@ const resolvedAgentToolsetSchema = z
     default_config: resolvedDefaultToolConfigSchema,
     type: z.literal("agent_toolset_20260401"),
   })
-  .strict() satisfies z.ZodType<OpenMaAgentToolset>;
+  .strict() satisfies z.ZodType<BetaManagedAgentsAgentToolset20260401>;
 
 const resolvedMcpToolsetSchema = z
   .object({

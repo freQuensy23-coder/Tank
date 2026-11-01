@@ -141,7 +141,6 @@ export interface DefaultNodeManagedSessionRunnerDependencies {
   sandboxMode?(input: ManagedRunnerContext): SessionSandboxMode | Promise<SessionSandboxMode>;
   buildSandbox(input: ManagedRunnerContext & { signal?: AbortSignal }): Promise<SandboxExecutor>;
   retainedLifecycle?: {
-    runtimeGeneration?(input: ManagedRunnerContext & { proposed: string; executionFence?: SessionExecutionFence; signal?: AbortSignal }): Promise<string>;
     bind(input: ManagedRunnerContext & { sandbox: SandboxExecutor; executionFence?: SessionExecutionFence; signal?: AbortSignal }): Promise<void>;
     idle(input: ManagedRunnerContext): Promise<void>;
     abandon(input: ManagedRunnerContext): Promise<void>;
@@ -277,14 +276,9 @@ export class DefaultNodeManagedSessionRunner
       }
       this.abortControllers.set(input, startup);
       registered = true;
-      let runtimeGeneration = this.dependencies.runtimeGenerations?.next()
+      const runtimeGeneration = this.dependencies.runtimeGenerations?.next()
         ?? `runtime_${randomUUID()}`;
       const context = { workspaceId: input.workspaceId, session: input.session, environment: input.environment };
-      if (this.dependencies.retainedLifecycle?.runtimeGeneration) {
-        runtimeGeneration = await untilAborted(this.dependencies.retainedLifecycle.runtimeGeneration({
-          ...context, proposed: runtimeGeneration, executionFence: input.executionFence, signal,
-        }), signal);
-      }
       const runtime = new SessionSandboxRuntime({
         mode: () => this.dependencies.sandboxMode?.(context) ?? "sandbox",
         create: () => {

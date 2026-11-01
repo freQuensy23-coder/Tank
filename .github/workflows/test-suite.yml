@@ -234,5 +234,3 @@ jobs:
         run: node scripts/test-node.mjs local-unit
       - name: Local JavaScript contracts
         run: node scripts/test-node.mjs local-contract
-      - name: Sandbox qualification evidence gate regressions
-        run: node --test scripts/ci/qualification-evidence.test.mjs

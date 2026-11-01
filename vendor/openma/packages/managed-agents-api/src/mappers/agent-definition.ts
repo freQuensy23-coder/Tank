@@ -13,7 +13,7 @@ import type {
   JsonValue,
 } from "@open-managed-agents/managed-agents-application";
 import type { AgentCreateBody } from "../contracts/agents";
-import { fromOpenMaAgentExtension } from "./openma-agent-extension.js";
+import { fromOpenMaAgentExtension } from "./openma-agent-extension";
 
 type WireMcpServer = NonNullable<AgentCreateBody["mcp_servers"]>[number];
 type WireMultiagent = Exclude<
@@ -166,29 +166,9 @@ function toToolConfig(config: WireToolConfig): AgentToolConfigInput {
         ...(config.type !== undefined && { type: config.type }),
       };
     case "browser":
-      return {
-        ...common,
-        name: config.name,
-        ...(config.type !== undefined && { type: config.type }),
-      };
     case "schedule":
-      return {
-        ...common,
-        name: config.name,
-        ...(config.type !== undefined && { type: config.type }),
-      };
     case "cancel_schedule":
-      return {
-        ...common,
-        name: config.name,
-        ...(config.type !== undefined && { type: config.type }),
-      };
     case "list_schedules":
-      return {
-        ...common,
-        name: config.name,
-        ...(config.type !== undefined && { type: config.type }),
-      };
     case "grep":
       return {
         ...common,

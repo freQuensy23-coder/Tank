@@ -6,7 +6,6 @@ import type {
 } from "@anthropic-ai/sdk/resources/beta/agents/agents";
 import type { VersionListParams } from "@anthropic-ai/sdk/resources/beta/agents/versions";
 import { z } from "zod";
-import type { OpenMaAgentToolInput } from "./agent-tools";
 import {
   agentMcpServerInputSchema,
   agentMultiagentInputSchema,
@@ -113,13 +112,13 @@ export interface OpenMaAgentExtensionBody {
 }
 
 export type AgentCreateBody = Omit<OfficialAgentCreateBody, "model" | "mcp_servers" | "tools"> & {
-  tools?: OpenMaAgentToolInput[];
+  tools?: z.infer<typeof agentToolInputSchema>[];
   model: OpenMaAgentModelBody;
   mcp_servers?: OpenMaMcpServerBody[];
   _oma?: OpenMaAgentExtensionBody;
 };
 export type AgentUpdateBody = Omit<OfficialAgentUpdateBody, "model" | "mcp_servers" | "tools"> & {
-  tools?: OpenMaAgentToolInput[] | null;
+  tools?: z.infer<typeof agentToolInputSchema>[] | null;
   model?: OpenMaAgentModelBody;
   mcp_servers?: OpenMaMcpServerBody[] | null;
   _oma?: OpenMaAgentExtensionBody;
