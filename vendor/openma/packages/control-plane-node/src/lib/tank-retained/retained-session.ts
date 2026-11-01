@@ -1,7 +1,9 @@
 import { createHash, randomUUID } from 'node:crypto';
+import { assertCompatible, stableDigest, validateRuntimeIdentity, type RuntimeIdentity } from './runtime-identity.js';
+type Manifest = { handle: Handle; state: string; archived: boolean; identity?: RuntimeIdentity; retired?: Handle[]; upgrade?: { source: Handle; target: Handle; owner: string; identity: RuntimeIdentity } };
 
 export type Scope = { workspaceId: string; environmentId: string; sessionId: string; workId: string };
-export type Handle = { provider: string; runtimeId: string };
+export type Handle = { provider: string; runtimeId: string; ownershipName?: string };
 export type Fence = Scope & { ownerId: string; generation: number; token: string; expiresAt: string };
 export type Candidate = { id: string; contentHash: string; metadata?: Record<string, string | number | boolean | null> };
 export interface Fences {
@@ -27,6 +29,7 @@ export interface Provider<R extends RetainedRuntime> {
 export interface Options<R extends RetainedRuntime> {
   scope: Omit<Scope, 'workId'>;
   fingerprint: string;
+  identity?: RuntimeIdentity;
   providerId: string;
   ownerId: string;
   leaseTtlMs: number;
@@ -52,6 +55,7 @@ export class RetainedSessionLifecycle<R extends RetainedRuntime> {
   private heartbeatPending: Promise<void> | null = null;
   private lost = false;
   private phase: 'idle' | 'starting' | 'active' | 'quiescing' | 'stopped' | 'archived' = 'idle';
+  private manifest: Manifest | null = null;
   private operations = new Set<Promise<unknown>>();
 
   constructor(options: Options<R>) {
@@ -59,6 +63,7 @@ export class RetainedSessionLifecycle<R extends RetainedRuntime> {
     if (!Number.isSafeInteger(options.leaseTtlMs) || options.leaseTtlMs < 300) fail('retained_lease_invalid');
     for (const value of Object.values(options.scope)) if (!value || typeof value !== 'string') fail('retained_scope_invalid');
     this.options = options;
+    if (options.identity) validateRuntimeIdentity(options.identity);
     this.ownerId = `${options.ownerId}:${randomUUID()}`;
     this.scope = { workspaceId: options.scope.workspaceId, environmentId: options.scope.environmentId,
       sessionId: options.scope.sessionId, workId: 'tank-retained-session-v1' };
@@ -95,8 +100,37 @@ export class RetainedSessionLifecycle<R extends RetainedRuntime> {
       throw error;
     }
   }
-  private decode(candidate: Candidate, archiveOnly = false): { handle: Handle; state: string; archived: boolean } {
+  private decode(candidate: Candidate, archiveOnly = false): Manifest {
     const metadata = candidate.metadata;
+    if (metadata?.schema === 2) {
+      if (metadata.scope !== JSON.stringify(this.scope) || typeof metadata.manifest !== 'string'
+          || candidate.contentHash !== stableDigest({ scope: this.scope, manifest: metadata.manifest })) fail('retained_manifest_invalid');
+      let manifest: Manifest;
+      try { manifest = JSON.parse(metadata.manifest); } catch { fail('retained_manifest_invalid'); }
+      if (!manifest || typeof manifest !== 'object') fail('retained_manifest_invalid');
+      const validHandle = (handle: Handle) => handle && handle.provider === this.options.providerId
+        && typeof handle.runtimeId === 'string' && handle.runtimeId.length > 0
+        && (handle.ownershipName === undefined || (typeof handle.ownershipName === 'string' && handle.ownershipName.length > 0));
+      if (!validHandle(manifest.handle) || !['allocating', 'aborted', 'retained', 'upgrading', 'archived'].includes(manifest.state)
+          || manifest.archived !== (manifest.state === 'archived') || !Array.isArray(manifest.retired)
+          || manifest.retired!.some(handle => !validHandle(handle))) fail('retained_manifest_invalid');
+      validateRuntimeIdentity(manifest.identity);
+      if (manifest.state === 'upgrading') {
+        const upgrade = manifest.upgrade;
+        if (!upgrade || !validHandle(upgrade.source) || !validHandle(upgrade.target) || typeof upgrade.owner !== 'string'
+            || !upgrade.owner || JSON.stringify(upgrade.source) !== JSON.stringify(manifest.handle)
+            || upgrade.target.runtimeId === upgrade.source.runtimeId) fail('retained_manifest_invalid');
+        validateRuntimeIdentity(upgrade.identity);
+        assertCompatible(manifest.identity!, upgrade.identity);
+      } else if (manifest.upgrade) fail('retained_manifest_invalid');
+      if (!archiveOnly && manifest.state !== 'archived') {
+        if (!this.options.identity) fail('retained_identity_required');
+        assertCompatible(manifest.identity!, this.options.identity);
+        if (manifest.identity!.image !== this.options.identity.image) fail('retained_configuration_changed:image');
+        if (manifest.state === 'upgrading') fail('retained_upgrade_incomplete');
+      }
+      return manifest;
+    }
     if (!metadata || metadata.schema !== 1 || metadata.scope !== JSON.stringify(this.scope)
         || metadata.provider !== this.options.providerId || typeof metadata.runtimeId !== 'string'
         || !metadata.runtimeId || !['allocating', 'aborted', 'retained', 'archived'].includes(String(metadata.state))) fail('retained_manifest_invalid');
@@ -107,6 +141,19 @@ export class RetainedSessionLifecycle<R extends RetainedRuntime> {
     return { handle: { provider: String(metadata.provider), runtimeId: metadata.runtimeId as string }, state: String(metadata.state), archived: metadata.state === 'archived' };
   }
   private async publish(state: 'allocating' | 'aborted' | 'retained' | 'archived'): Promise<void> {
+    if (this.manifest?.identity) {
+      const manifest = { ...this.manifest, handle: this.handle!, state, archived: state === 'archived',
+        ...(state === 'archived' ? { retired: [], upgrade: undefined } : {}) };
+      const encoded = JSON.stringify(manifest);
+      const result = await this.options.fences.publish({ fence: await this.current(), workspaceCandidate: {
+        id: `retained-${manifest.handle.runtimeId}`, contentHash: stableDigest({ scope: this.scope, manifest: encoded }),
+        metadata: { schema: 2, scope: JSON.stringify(this.scope), manifest: encoded,
+          provider: manifest.handle.provider, runtimeId: manifest.handle.runtimeId, state }
+      }, outputCandidate: null });
+      if (result.type === 'lost') { this.lost = true; fail('retained_fence_lost'); }
+      this.manifest = manifest;
+      return;
+    }
     const fence = await this.current();
     const handle = this.handle!;
     const identity = { scope: this.scope, provider: handle.provider, runtimeId: handle.runtimeId,
@@ -128,6 +175,7 @@ export class RetainedSessionLifecycle<R extends RetainedRuntime> {
       if (acquired.type !== 'acquired') fail('retained_resource_busy');
       this.fence = acquired.fence; this.lost = false; this.startHeartbeat();
       const manifest = acquired.publication ? this.decode(acquired.publication.workspaceCandidate) : null;
+      this.manifest = manifest;
       if (manifest?.archived) fail('retained_session_archived');
       if (manifest && manifest.state !== 'aborted') {
         this.handle = manifest.handle;
@@ -140,6 +188,7 @@ export class RetainedSessionLifecycle<R extends RetainedRuntime> {
         this.runtime = await this.options.provider.resume(this.handle, this.scope, await this.current(), signal);
         if (manifest.state === 'allocating') await this.publish('retained');
       } else {
+        this.manifest = null;
         this.handle = await this.options.provider.allocationIntent(this.scope, await this.current(), signal);
         await this.publish('allocating'); newIntent = true;
         this.runtime = await this.options.provider.create(this.scope, await this.current(), signal);
@@ -250,11 +299,17 @@ export class RetainedSessionLifecycle<R extends RetainedRuntime> {
       this.fence = acquired.fence; this.lost = false; this.startHeartbeat();
       if (acquired.publication) {
         const manifest = this.decode(acquired.publication.workspaceCandidate, true);
+        this.manifest = manifest;
         this.handle = manifest.handle;
         if (!manifest.archived) {
           await assertArchiveAuthorized();
           if (manifest.state === 'allocating') this.handle = await this.options.provider.resolveIntent(this.handle, this.scope, await this.current(), signal);
-          if (this.handle && manifest.state !== 'aborted') await this.options.provider.reap(this.handle, this.scope, await this.current(), signal);
+          const handles = [...manifest.retired ?? [], ...(manifest.upgrade ? [manifest.upgrade.target] : []),
+            ...(this.handle && manifest.state !== 'aborted' ? [this.handle] : [])];
+          for (const handle of handles) {
+            await assertArchiveAuthorized();
+            await this.options.provider.reap(handle, this.scope, await this.current(), signal);
+          }
           this.handle ??= manifest.handle;
           await this.publish('archived');
         }

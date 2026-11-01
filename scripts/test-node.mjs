@@ -8,6 +8,7 @@ const lanes = {
     "deploy/openma-entrypoint.test.mjs",
     "tests/openma/lifecycle/retained-session.test.mjs",
     "tests/openma/lifecycle/boxlite-provider.test.mjs",
+    "tests/openma/lifecycle/guest-filesystem.test.mjs",
     "tests/openma/lifecycle/node-lifecycle.test.mjs",
     "tests/openma/lifecycle/replay-attachment.test.mjs",
     "tests/openma/lifecycle/custom-tool-validation.test.mjs",

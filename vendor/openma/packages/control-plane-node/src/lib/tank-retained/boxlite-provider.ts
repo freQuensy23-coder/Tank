@@ -29,7 +29,7 @@ interface PublicProvider {
   resume(handle: Handle, context: { sessionId: string; workdir: string }, env: Record<string, string>, acquisition: Acquisition): Promise<BoxLiteRuntime>;
 }
 export interface PinnedBoxLiteModule {
-  createBoxLiteProvider(options: { providerId: 'litebox'; image: string }): PublicProvider;
+  createBoxLiteProvider(options: { providerId: 'litebox'; image: string; runtimeName?: (context: { sessionId: string; workdir: string }) => string }): PublicProvider;
   createBoxLiteManagedRuntime(options: { providerId: 'litebox'; image: string; leaseTtlMs: number }): {
     sandbox: { reap(input: { scope: Scope; lease: Handle; reason: 'completed' }): Promise<void> };
   };
@@ -98,6 +98,14 @@ export function pinnedBoxLiteProvider(input: {
       artifact: { type: 'image', reference: input.allocation.image } },
   });
   const expectedName = (scope: Scope) => 'oma-' + createHash('sha256').update(`litebox:${scope.sessionId}`).digest('hex').slice(0, 32);
+  const upgradePrefix = (scope: Scope) => 'oma-' + createHash('sha256').update(JSON.stringify(scope)).digest('hex').slice(0, 32) + '-upgrade-';
+  const ownershipName = (handle: Handle, scope: Scope): string => {
+    if (!handle.ownershipName) return expectedName(scope);
+    if (!handle.ownershipName.startsWith(upgradePrefix(scope)) || !/^[a-f0-9]{32}$/.test(handle.ownershipName.slice(upgradePrefix(scope).length))) throw Error('retained_cleanup_ownership_mismatch');
+    return handle.ownershipName;
+  };
+  const publicProvider = (handle: Handle, scope: Scope) => handle.ownershipName
+    ? input.module.createBoxLiteProvider({ ...options, runtimeName: () => ownershipName(handle, scope) }) : provider;
   const stopExactPublished = async (handle: Handle, scope: Scope, fence: Fence) => {
     await current(fence);
     const freshClient = client as unknown as { get(id: string): Promise<null | {
@@ -106,7 +114,7 @@ export function pinnedBoxLiteProvider(input: {
     const box = await freshClient.get(handle.runtimeId);
     if (!box) return;
     const info = box.info();
-    if (box.id !== handle.runtimeId || info.id !== handle.runtimeId || info.name !== expectedName(scope)) throw Error('retained_cleanup_ownership_mismatch');
+    if (box.id !== handle.runtimeId || info.id !== handle.runtimeId || info.name !== ownershipName(handle, scope)) throw Error('retained_cleanup_ownership_mismatch');
     await current(fence);
     if (info.state.running) await box.stop();
   };
@@ -151,16 +159,18 @@ export function pinnedBoxLiteProvider(input: {
     async resume(handle, scope, fence, signal) {
       const info = await inspect(handle.runtimeId);
       if (!info) throw Error('retained_runtime_missing');
+      if (handle.ownershipName && (info.id !== handle.runtimeId || info.name !== ownershipName(handle, scope))) throw Error('retained_cleanup_ownership_mismatch');
+      const selectedProvider = publicProvider(handle, scope);
       const context = { sessionId: scope.sessionId, workdir: '/workspace' };
       await current(fence);
       try {
       if (info.state.running) {
-        const previous = await provider.resume(handle, context, {}, acquisition(scope, fence, signal));
+        const previous = await selectedProvider.resume(handle, context, {}, acquisition(scope, fence, signal));
         await current(fence);
         await previous.suspend({ kind: 'filesystem' });
         await current(fence);
       }
-      return await provider.resume(handle, context, {}, acquisition(scope, fence, signal));
+      return await selectedProvider.resume(handle, context, {}, acquisition(scope, fence, signal));
       } catch (error) {
         try { await stopExactPublished(handle, scope, fence); }
         catch { throw Error('retained_resume_cleanup_failed'); }
@@ -169,7 +179,14 @@ export function pinnedBoxLiteProvider(input: {
     },
     async reap(handle, scope, fence, signal) {
       signal.throwIfAborted(); await current(fence);
-      await resource.sandbox.reap({ scope, lease: handle, reason: 'completed' });
+      if (handle.ownershipName) {
+        const name = ownershipName(handle, scope);
+        const info = await inspect(handle.runtimeId);
+        if (!info) return;
+        if (info.name !== name || (handle.runtimeId !== name && info.id !== handle.runtimeId)) throw Error('retained_cleanup_ownership_mismatch');
+        await current(fence);
+        await client.remove(info.id, true);
+      } else await resource.sandbox.reap({ scope, lease: handle, reason: 'completed' });
     },
   };
 }

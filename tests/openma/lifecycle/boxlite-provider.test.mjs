@@ -151,3 +151,14 @@ test('one original deadline bounds deferred stdin close and refuses new I/O whil
   await new Promise(resolve=>setImmediate(resolve));
   await assert.rejects(box.exec('still-poisoned-after-ack',[]),/retained_runtime_requires_stop/);
 });
+
+test('schema2 owner metadata permits only exact scope-owned archive and rejects foreign owner',async()=>{
+  const { createHash }=await import('node:crypto');
+  const name='oma-'+createHash('sha256').update(JSON.stringify(scope)).digest('hex').slice(0,32)+'-upgrade-'+'a'.repeat(32);
+  const removed=[];
+  const module={createBoxLiteProvider(){return {};},createBoxLiteManagedRuntime(){return {sandbox:{async reap(){assert.fail('must use exact owner cleanup');}}};}};
+  const p=pinnedBoxLiteProvider({module,client:{async getInfo(){return {id:'native',name,state:{running:false}};},async remove(id){removed.push(id);}},allocation:{image:'current'},leaseTtlMs:30000,isCurrent:async()=>true});
+  await assert.rejects(p.reap({provider:'litebox',runtimeId:'native',ownershipName:name.replace(/a$/,'b')},scope,fence,signal()),/retained_cleanup_ownership_mismatch/);
+  assert.deepEqual(removed,[]);
+  await p.reap({provider:'litebox',runtimeId:'native',ownershipName:name},scope,fence,signal());assert.deepEqual(removed,['native']);
+});

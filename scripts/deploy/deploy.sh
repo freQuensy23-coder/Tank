@@ -90,10 +90,30 @@ verify() {
 
 previous=$(cat deployed 2>/dev/null || true)
 [[ -z "$previous" || "$previous" =~ ^[0-9a-f]{40}$ ]] || { echo "invalid previous release SHA"; exit 1; }
+tank_started=no
+recover() {
+  local status=$?
+  trap - EXIT INT TERM
+  if [ "$status" -ne 0 ] && [ "$tank_started" = yes ] && [ -n "$previous" ]; then
+    echo "rollback to $previous $(date -u +%T)"
+    if roll "$previous"; then
+      printf '%s\n' "$previous" > deployed.next && mv deployed.next deployed
+      echo "rolled back to $previous"
+    else
+      echo "Tank rollback failed"
+      status=1
+    fi
+  fi
+  exit "$status"
+}
+trap recover EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
 start=$(date +%s)
 since=$(date -u +%FT%TZ)
 echo "deploy $SHA at $since; previous ${previous:-none}"
 out=""
+tank_started=yes
 if roll "$SHA"; then
   while [ $(( $(date +%s) - start )) -lt "$LIMIT" ]; do
     if out=$(verify "$since" 2>&1); then
@@ -108,11 +128,5 @@ if roll "$SHA"; then
   echo "NOT VERIFIED in ${LIMIT}s:"; echo "$out"
 else
   echo "roll of $SHA failed"
-fi
-[ -n "$previous" ] || exit 1
-echo "rollback to $previous $(date -u +%T)"
-if roll "$previous"; then
-  printf '%s\n' "$previous" > deployed.next && mv deployed.next deployed
-  echo "rolled back to $previous after $(( $(date +%s) - start ))s"
 fi
 exit 1

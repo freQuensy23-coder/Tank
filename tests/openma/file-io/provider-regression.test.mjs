@@ -1,5 +1,6 @@
 const openmaSource = process.env.TANK_AUDIT_OPENMA_ROOT ? pathToFileURL(process.env.TANK_AUDIT_OPENMA_ROOT.replace(/\/?$/, '/')) : new URL('../../../vendor/openma/', import.meta.url);
 import { pathToFileURL } from 'node:url';
+import { BoxLiteFilesystemDurability } from '../../../vendor/openma/packages/managed-runtime-boxlite/src/guest-filesystem.ts';
 import {spawn} from 'node:child_process';
 import {Readable,Writable} from 'node:stream';
 import { test } from 'node:test';
@@ -14,6 +15,7 @@ const signal=()=>new AbortController().signal;
 test('public provider bridge resumes a fresh handle and reaps without resume or allocating secret env',async()=>{
   const calls=[];
   const module={
+    BoxLiteFilesystemDurability,
     createBoxLiteProvider(options){calls.push(['options',options]);return {
       async create(...args){calls.push(['create',...args]);return {runtimeHandle:()=>({provider:'litebox',runtimeId:'box'})};},
       async resume(...args){calls.push(['resume',...args]);return {runtimeHandle:()=>({provider:'litebox',runtimeId:'box'})};},
@@ -71,6 +73,7 @@ test('command timeout kills the native process rather than leaving background wo
 test('crash recovery quiesces orphan processes then resumes using a second fresh native handle',async()=>{
   const calls=[];
   const module={
+    BoxLiteFilesystemDurability,
     createBoxLiteProvider(){return {async create(){throw Error('never allocate');},async resume(){calls.push('fresh-resume');return {async suspend(){calls.push('owned-stop');}};}};},
     createBoxLiteManagedRuntime(){return {sandbox:{async reap(){throw Error('never remove retained disk');}}};},
   };
@@ -81,7 +84,7 @@ test('crash recovery quiesces orphan processes then resumes using a second fresh
 
 test('unpublished existing native disk and missing published disk fail closed without provider allocation',async()=>{
   let effects=0;
-  const module={createBoxLiteProvider(){return {async create(){effects++;},async resume(){effects++;}};},createBoxLiteManagedRuntime(){return {sandbox:{async reap(){effects++;}}};}};
+  const module={BoxLiteFilesystemDurability,createBoxLiteProvider(){return {async create(){effects++;},async resume(){effects++;}};},createBoxLiteManagedRuntime(){return {sandbox:{async reap(){effects++;}}};}};
   const existing=pinnedBoxLiteProvider({module,client:{async getInfo(){return {state:{running:false}};}},allocation:{image:'pinned'},leaseTtlMs:30000});
   await assert.rejects(existing.create(scope,fence,signal()),/retained_unpublished_runtime_exists/);
   const missing=pinnedBoxLiteProvider({module,client:{async getInfo(){return null;}},allocation:{image:'pinned'},leaseTtlMs:30000});

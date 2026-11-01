@@ -108,6 +108,10 @@ To calibrate later, run `docker exec tank-tank-1 tank calibrate packet.json --ou
 - The packet format, the selection rules and the V0-B checks are in [OFFLINE_CALIBRATION.md](OFFLINE_CALIBRATION.md). The rules: the filter cutoff is the highest one that keeps ≥95% of relevant items; the routing cutoff is the highest one with precision and recall ≥0.90.
 - A run writes a report and `thresholds.proposed.yaml`. Cutoffs reach `config/thresholds.yaml` only as a recorded D6 checkpoint.
 
+## Retained-session rollback compatibility
+
+Automatic cross-image migration and workspace transfer are removed. Existing schema-2 publications keep integrity, scope, identity and runtime ownership checks and can resume only with the same executable image and compatible configuration. Interrupted upgrades refuse execution; authorized final archive can clean up the recorded current, retired and interrupted-target runtimes. Schema-2 orphan cleanup is deferred to final archive. Schema-1 publications keep their original fingerprint guard. No publication, session, file, browser profile or runtime volume is deleted by this source rollback.
+
 ## Vendored OpenMA compatibility
 
 Actual PostgreSQL16 integration exposed upstream defects despite a healthy HTTP endpoint. The vendored SQL adapter casts ten nullable SQL parameters to VARCHAR191 so PostgreSQL can infer parameter types, and normalizes bigint epoch strings at the SQL timestamp adapter boundary (thirteen substitutions across twelve files). Canonical agent tool codecs are extended consistently through schema/domain/mapper/resolver for browser and disabled scheduling names already supported by the pi harness. Register through canonical `/v1/agents`; the older `/v1/oma/agents` store is distinct and must not supply canonical session IDs. Skill creation uses canonical multipart `files[]` and the required `managed-agents-2026-04-01,skills-2025-10-02` beta flags. Model Cards use `/v1/oma/model_cards` with POST for create/update; list-before-update avoids the pinned duplicate-create500 defect.

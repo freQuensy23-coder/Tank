@@ -155,3 +155,41 @@ test('resource fence loss after allocation enqueues exact unpublished handle wit
   assert.equal(s.disks.size,1);assert.equal(orphans.length,1);assert.equal(orphans[0].sandbox.runtimeId,'box_1');
   assert.equal(s.calls.some(x=>x[0]==='stop'||x[0]==='remove-owned'),false);
 });
+
+const { stableDigest } = await import(new URL('packages/control-plane-node/src/lib/tank-retained/runtime-identity.ts', openmaSource));
+const schema2Identity = {version:2,image:'sha256:'+'d'.repeat(64),compatibility:{scope:'sha256:'+'e'.repeat(64)}};
+async function schema2Fixture() {
+  const s=setup(),c=s.controller();await c.begin(permitted,signal());await c.idle(permitted);
+  const row=[...s.rows.values()][0],scope=JSON.parse(row.publication.workspaceCandidate.metadata.scope);
+  const manifest={handle:{provider:'litebox',runtimeId:'box_1',ownershipName:'recorded-owner'},state:'retained',archived:false,identity:schema2Identity,retired:[]};
+  const save=()=>{const encoded=JSON.stringify(manifest);row.publication.workspaceCandidate={id:'retained-box_1',contentHash:stableDigest({scope,manifest:encoded}),metadata:{schema:2,scope:JSON.stringify(scope),manifest:encoded,provider:'litebox',runtimeId:'box_1',state:manifest.state}};};
+  save();return {s,manifest,save};
+}
+test('schema2 resumes exact disk and preserves identity and owner across idle and cold archive',async()=>{
+  const {s}=await schema2Fixture(),resume=s.provider.resume.bind(s.provider);
+  s.provider.resume=async(handle,...args)=>{assert.equal(handle.ownershipName,'recorded-owner');return resume(handle,...args);};
+  const c=s.controller({identity:schema2Identity});await c.begin(permitted,signal());await c.idle(permitted);
+  const candidate=[...s.rows.values()][0].publication.workspaceCandidate;
+  assert.equal(candidate.metadata.schema,2);assert.equal(JSON.parse(candidate.metadata.manifest).handle.ownershipName,'recorded-owner');
+  await s.controller().archive(permitted,signal());assert.equal(s.disks.size,0);assert.equal(s.creates,1);
+  await assert.rejects(s.controller().begin(permitted,signal()),/retained_session_archived/);
+});
+for(const kind of ['image','compatibility','missing','integrity','upgrading'])test(`schema2 refuses ${kind} without migration or allocation`,async()=>{
+  const {s,manifest,save}=await schema2Fixture();
+  let identity=structuredClone(schema2Identity);
+  if(kind==='image')identity.image='sha256:'+'f'.repeat(64);
+  if(kind==='compatibility')identity.compatibility.scope='sha256:'+'f'.repeat(64);
+  if(kind==='missing')identity=undefined;
+  if(kind==='upgrading'){manifest.state='upgrading';manifest.upgrade={source:manifest.handle,target:{provider:'litebox',runtimeId:'target'},owner:'old',identity:schema2Identity};save();}
+  if(kind==='integrity')[...s.rows.values()][0].publication.workspaceCandidate.metadata.manifest+=' ';
+  await assert.rejects(s.controller({identity}).begin(permitted,signal()),/retained_(configuration_changed|identity_required|manifest_invalid|upgrade_incomplete)/);
+  assert.equal(s.creates,1);assert.equal(s.calls.some(call=>call[0]==='fresh-get'),false);assert.equal(s.disks.size,1);
+});
+test('schema2 archive cleans retired and interrupted target handles without resuming',async()=>{
+  const {s,manifest,save}=await schema2Fixture();
+  manifest.state='upgrading';manifest.retired=[{provider:'litebox',runtimeId:'retired'}];
+  manifest.upgrade={source:manifest.handle,target:{provider:'litebox',runtimeId:'target'},owner:'old',identity:schema2Identity};save();
+  await s.controller().archive(permitted,signal());
+  assert.deepEqual(s.calls.filter(call=>call[0]==='remove-owned').map(call=>call[1]),['retired','target','box_1']);
+  assert.equal(s.calls.some(call=>call[0]==='fresh-get'),false);
+});

@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import type { RuntimeIdentity } from './runtime-identity.js';
 import { RetainedSessionLifecycle, type Fences, type Options, type Scope } from './retained-session.js';
 import { RetainedBoxOperations, pinnedBoxLiteProvider, type Allocation, type BoxLiteRuntime, type PinnedBoxLiteModule } from './boxlite-provider.js';
 
@@ -30,6 +31,7 @@ export interface NodeRetainedOptions {
   client: unknown;
   ownerId: string;
   leaseTtlMs: number;
+  identity?(context: Context, allocation: Allocation): Promise<RuntimeIdentity>;
   fingerprint(context: Context, allocation: Allocation): Promise<string>;
   assertExecutionCurrent(fence: unknown): Promise<void>;
 }
@@ -55,6 +57,7 @@ export class NodeRetainedLifecycle {
       if (acquired.type !== 'acquired') continue;
       try {
         const published = acquired.publication?.workspaceCandidate.metadata;
+        if (published?.schema === 2) throw Error('retained_schema2_orphan_cleanup_requires_archive');
         if (!await this.options.fences.isCurrent(acquired.fence)) throw Error('retained_fence_lost');
         const provider = pinnedBoxLiteProvider({ module: this.options.providerModule, client: this.options.client,
           allocation: { image: 'cleanup-only-no-allocation' }, leaseTtlMs: this.options.leaseTtlMs,
@@ -72,8 +75,8 @@ export class NodeRetainedLifecycle {
       }
     }
   }
-  private controller(scope: Omit<Scope, 'workId'>, fingerprint: string, allocation: Allocation): RetainedSessionLifecycle<BoxLiteRuntime> {
-    return new RetainedSessionLifecycle({ scope, fingerprint, providerId: 'litebox', ownerId: this.options.ownerId,
+  private controller(scope: Omit<Scope, 'workId'>, fingerprint: string, allocation: Allocation, identity?: RuntimeIdentity): RetainedSessionLifecycle<BoxLiteRuntime> {
+    return new RetainedSessionLifecycle({ scope, fingerprint, identity, providerId: 'litebox', ownerId: this.options.ownerId,
       leaseTtlMs: this.options.leaseTtlMs, fences: this.options.fences,
       orphans: this.options.orphans,
       provider: pinnedBoxLiteProvider({ module: this.options.providerModule, client: this.options.client,
@@ -130,7 +133,7 @@ export class NodeRetainedLifecycle {
       owned.allocation = allocation;
       const fingerprint = await this.options.fingerprint(owned.context, allocation);
       this.assertOpen(lifetime);
-      owned.controller = this.controller(scope, fingerprint, allocation);
+      owned.controller = this.controller(scope, fingerprint, allocation, await this.options.identity?.(owned.context, allocation));
       const use = async <T>(operation: (runtime: BoxLiteRuntime) => Promise<T>): Promise<T> => {
         await this.ensureActive(owned);
         return owned.controller!.use(operation);

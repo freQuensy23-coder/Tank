@@ -1,3 +1,4 @@
+import { executableImageIdentity } from '../lib/tank-retained/runtime-identity.js';
 import { loadSessionContinuationSnapshot } from '@open-managed-agents/session-runtime-sql/continuation';
 
 /**
@@ -352,6 +353,7 @@ export async function createManagedNodeRuntime(foundation: NodeFoundation, compo
       : item !== null && typeof item === "object" ? Object.fromEntries(Object.entries(item).sort(([a], [b]) => a.localeCompare(b)).map(([name, child]) => [name, normalize(child)])) : item;
     return "sha256:" + createHash("sha256").update(JSON.stringify(normalize(value))).digest("hex");
   };
+  const retainedImageIdentities = new Map<string, Promise<string>>();
   const retainedLifecycle = new NodeRetainedLifecycle({
     fences: new SqlRuntimeResourceFencePort(sql), orphans: new SqlRuntimeOrphanPort(sql), providerModule: retainedBoxLiteProvider,
     client: retainedSdk.JsBoxlite.withDefaultConfig(), ownerId: config.execution.ownerId, leaseTtlMs: 30000,
@@ -382,6 +384,42 @@ export async function createManagedNodeRuntime(foundation: NodeFoundation, compo
         resources: domain.session.resources, skills: domain.session.agent.skills, environmentName: domain.environment.name, environment: domain.environment.config, allocation, rootfsIndex,
         databasePolicy: database ? { host: database.hostname, port: database.port, database: database.pathname, role: database.username } : null
       });
+    },
+    identity: async (context, allocation) => {
+      const domain = context as typeof context & {
+        session: {
+          resources: unknown;
+          agent: {
+            skills: unknown;
+          };
+          metadata: Record<string, string>;
+        };
+        environment: {
+          config: unknown;
+          name: string;
+        };
+      };
+      await validateReplayAttachment(domain, allocation, verifyReplayEvidence, process.env.TANK_REPLAY_EVIDENCE_ROOT);
+      const databaseUrl = domain.environment.name === "tank-replay" ? process.env.TANK_SANDBOX_REPLAY_DB_URL : process.env.TANK_SANDBOX_DB_URL;
+      const database = databaseUrl ? new URL(databaseUrl) : null;
+      if (!allocation.rootfsPath) throw Error('retained_image_provenance_missing:oci_layout_required');
+      let executableImage = retainedImageIdentities.get(allocation.rootfsPath);
+      if (!executableImage) {
+        executableImage = executableImageIdentity(allocation.rootfsPath);
+        retainedImageIdentities.set(allocation.rootfsPath, executableImage);
+        void executableImage.catch(() => retainedImageIdentities.delete(allocation.rootfsPath!));
+      }
+      const { image, rootfsPath, name, volumes, network, security, ...runtimeResources } = allocation;
+      const components = {
+        runtimeAbi: "c4afefbdddba3e6f05634a3bb5a46db20d5636413f4f24909b2abcdfa8fa8654",
+        scope: [context.workspaceId, context.environment.id, context.sessionId],
+        resources: domain.session.resources, skills: domain.session.agent.skills,
+        environmentName: domain.environment.name, environment: domain.environment.config,
+        runtimeResources, mounts: volumes, network, security,
+        databasePolicy: database ? { host: database.hostname, port: database.port, database: database.pathname, role: database.username } : null
+      };
+      return { version: 2, image: await executableImage,
+        compatibility: Object.fromEntries(Object.entries(components).map(([key, value]) => [key, stableDigest(value)])) };
     },
   });
   await retainedLifecycle.reconcileOrphans();
