@@ -461,9 +461,7 @@ async def test_new_posts_read_replied_and_linked_posts_from_their_status_pages(r
 @pytest.mark.integration
 @pytest.mark.parametrize("count", [86, 200])
 @pytest.mark.parametrize("kind", ["json_escaped", "binary"])
-async def test_actor_outage_bounds_aggregate_evidence(
-    reader, monkeypatch, clock, count, kind
-):
+async def test_actor_outage_bounds_aggregate_evidence(reader, monkeypatch, clock, count, kind):
     import tracemalloc
 
     raw = (b"\x00\xff\x80" if kind == "binary" else b'"\\\t') * (reader.BODY_LIMIT // 3 + 1)
@@ -508,4 +506,3 @@ async def test_actor_outage_bounds_aggregate_evidence(
             assert response["serializedBodyLimitBytes"] == reader.RUN_EVIDENCE_LIMIT // (3 * count)
             total += len(json.dumps(body, ensure_ascii=True))
     assert total <= reader.RUN_EVIDENCE_LIMIT
-

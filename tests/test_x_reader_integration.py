@@ -105,9 +105,7 @@ class LoopbackTelegramTransport(httpx.AsyncBaseTransport):
         await self.transport.aclose()
 
 
-async def test_real_worker_http_errors_keep_cursors_and_send_one_plain_ops_notice(
-    tmp_path, wire_server
-):
+async def test_real_worker_http_errors_keep_cursors_and_send_one_plain_ops_notice(tmp_path, wire_server):
     origin, state = wire_server
     source = {"source_id": "S29", "name": "X", "feeds": [{"kind": "x", "url": origin + "/actor"}]}
     config = source_settings(tmp_path, [source])

@@ -15,7 +15,7 @@ const lanes = {
   ],
   "local-contract": [
     "deploy/openma_lifecycle/native-qualification.test.mjs",
-    "deploy/openma_replay/replay-evidence.test.mjs",
+    "tests/openma/replay/replay-evidence.test.mjs",
   ],
 };
 

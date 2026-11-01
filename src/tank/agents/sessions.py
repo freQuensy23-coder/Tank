@@ -699,7 +699,20 @@ class SessionService:
     async def post_message_intent(self, sid, key):
         session = await self.repo.get("ops.agent_sessions", sid)
         intent = next(row for row in session["message_log"] if row["message_id"] == key)
-        if intent.get("remote_event_id"):
+        initial_status = session.get("status")
+        remote = session.get("remote_state") or {}
+        if (
+            intent.get("remote_event_id")
+            or intent.get("turn_status") in {"DONE", "FAILED"}
+            or key in session.get("retired_message_ids", [])
+            or intent.get("native_input_attempts", {}) != {}
+            or type(intent.get("retry_count", 0)) is not int
+            or intent.get("retry_count", 0) != 0
+            or initial_status not in {"OPEN", "FAILED"}
+            or session.get("archived_at")
+            or remote.get("status") == "terminated"
+            or remote.get("archived_at")
+        ):
             return session
         accepted = await self.request(
             "POST",
@@ -724,7 +737,16 @@ class SessionService:
             )
             if key not in session.setdefault("messages", []):
                 session["messages"].append(key)
-            session["status"] = "OPEN"
+            remote = session.get("remote_state") or {}
+            if (
+                session.get("status") == initial_status
+                and intent.get("turn_status") not in {"DONE", "FAILED"}
+                and key not in session.get("retired_message_ids", [])
+                and not session.get("archived_at")
+                and remote.get("status") != "terminated"
+                and not remote.get("archived_at")
+            ):
+                session["status"] = "OPEN"
             if intent["payload"].get("item_id"):
                 session.update(accepted_at.fields("last_item_at"))
                 session.update(
@@ -912,7 +934,12 @@ class SessionService:
                     states[row["execution_id"]] = copy.deepcopy(row)
             async with self.repo.lock("session:" + session["session_id"]):
                 current = await self.repo.get("ops.agent_sessions", session["session_id"])
-                current.setdefault("native_execution_states", {}).update(states)
+                self.merge_event_changes(
+                    current.setdefault("native_execution_states", {}),
+                    session.get("native_execution_states", {}),
+                    states,
+                )
+                states = copy.deepcopy(current["native_execution_states"])
                 owners = {row["message_id"]: row for row in current.get("message_log", [])}
                 for call in calls:
                     identity = call.get("remote_event_id")
@@ -1871,6 +1898,24 @@ class SessionService:
             immutable=True,
         )
 
+    @staticmethod
+    def merge_event_changes(current, before, after):
+        missing = object()
+        for key, value in after.items():
+            old = before.get(key, missing)
+            if value == old:
+                continue
+            live = current.get(key, missing)
+            if isinstance(value, dict) and isinstance(live, dict):
+                SessionService.merge_event_changes(live, old if isinstance(old, dict) else {}, value)
+            elif isinstance(value, list) and isinstance(old, list) and isinstance(live, list):
+                if live == old:
+                    current[key] = copy.deepcopy(value)
+                else:
+                    live.extend(copy.deepcopy(item) for item in value if item not in old and item not in live)
+            elif live == old:
+                current[key] = copy.deepcopy(value)
+
     async def process_event(self, sid, event, seq=None):
         if event.get("type") in ("event_start", "event_delta") or not event.get("id"):
             return
@@ -1964,8 +2009,10 @@ class SessionService:
                 if session != before:
                     async with self.repo.lock("session:" + sid):
                         current = await self.repo.get("ops.agent_sessions", sid)
-                        current.setdefault("native_execution_receipts", {}).update(
-                            session.get("native_execution_receipts", {})
+                        self.merge_event_changes(
+                            current.setdefault("native_execution_receipts", {}),
+                            before.get("native_execution_receipts", {}),
+                            session.get("native_execution_receipts", {}),
                         )
                         if current.get("native_idle_receipt", {}).get("id") == event["id"]:
                             current["native_idle_receipt"].update(
@@ -2001,6 +2048,7 @@ class SessionService:
             if kind == "agent.custom_tool_use":
                 await self.tool(session, event)
                 session = await self.repo.get("ops.agent_sessions", sid)
+                before = copy.deepcopy(session)
                 call = await self.repo.get("ops.tool_calls", key)
                 if (
                     event["name"] == "record_event"
@@ -2086,6 +2134,7 @@ class SessionService:
                         )
                         durable["pending_retry_event"] = copy.deepcopy(event)
                         await self.repo.put("ops.agent_sessions", sid, durable)
+                        before["pending_retry_event"] = copy.deepcopy(event)
                     accepted = await self.request(
                         "POST",
                         f"sessions/{sid}/events",
@@ -2167,22 +2216,20 @@ class SessionService:
                         message["terminal_failure"] = copy.deepcopy(termination)
             async with self.repo.lock("session:" + sid):
                 current = await self.repo.get("ops.agent_sessions", sid)
-                current.update(
-                    {
-                        k: v
-                        for k, v in session.items()
-                        if k != "message_log" and (k not in before or v != before[k])
-                    }
+                self.merge_event_changes(
+                    current,
+                    {key: value for key, value in before.items() if key != "message_log"},
+                    {key: value for key, value in session.items() if key != "message_log"},
                 )
                 prior_messages = {row["message_id"]: row for row in before.get("message_log", [])}
                 live_messages = {row["message_id"]: row for row in current.get("message_log", [])}
                 for row in session.get("message_log", []):
-                    if row["message_id"] in live_messages:
-                        old = prior_messages.get(row["message_id"], {})
-                        live_messages[row["message_id"]].update(
-                            {key: value for key, value in row.items() if key not in old or old[key] != value}
+                    if row["message_id"] in live_messages and row["message_id"] in prior_messages:
+                        self.merge_event_changes(
+                            live_messages[row["message_id"]], prior_messages[row["message_id"]], row
                         )
-                current.setdefault("processed_events", []).append(event["id"])
+                if event["id"] not in current.setdefault("processed_events", []):
+                    current["processed_events"].append(event["id"])
                 cursor = max(int(seq) if seq is not None else 0, self.pending_seq.pop(sid, 0))
                 if cursor:
                     current["last_event_seq"] = max(int(current.get("last_event_seq", 0)), cursor)
