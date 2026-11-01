@@ -42,8 +42,12 @@ def scalar(kind, value):
 
 
 def population(kinds, records):
-    return string(FINGERPRINT) + varuint(len(records)) + b"".join(
-        scalar(kind, value) for record in records for kind, value in zip(kinds, record, strict=True)
+    return (
+        string(FINGERPRINT)
+        + varuint(len(records))
+        + b"".join(
+            scalar(kind, value) for record in records for kind, value in zip(kinds, record, strict=True)
+        )
     )
 
 
