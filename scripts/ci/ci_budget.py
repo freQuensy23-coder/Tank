@@ -27,6 +27,8 @@ def timestamp(value: str) -> float:
 
 
 def origin(event: dict, run: dict) -> float:
+    if run.get("run_attempt", 1) > 1:
+        return min(timestamp(run["created_at"]), timestamp(run["run_started_at"]))
     if event.get("action") == "opened" and "pull_request" in event:
         return timestamp(event["pull_request"]["created_at"])
     return timestamp(run["created_at"])
@@ -57,13 +59,17 @@ def result(jobs: list[dict], deadline: float) -> bool:
 
 def watch(event: dict, api, now=time.time, sleep=time.sleep) -> dict:
     run = api("", "GET", None)
+    attempt = run.get("run_attempt", 1)
+    attempt_path = f"/attempts/{attempt}" if attempt > 1 else ""
+    if attempt_path:
+        run = api(attempt_path, "GET", None)
     start = origin(event, run)
     deadline = start + BUDGET_SECONDS
     while now() < deadline - FINISH_RESERVE_SECONDS:
         jobs = []
         page = 1
         while True:
-            response = api(f"/jobs?per_page=100&page={page}", "GET", deadline)
+            response = api(f"{attempt_path}/jobs?per_page=100&page={page}", "GET", deadline)
             jobs.extend(response["jobs"])
             if len(jobs) >= response["total_count"]:
                 break
