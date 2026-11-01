@@ -75,7 +75,6 @@ cdef api object _can_admit(object row, object snapshot)
 )
 cdef api object _validated_integer_units(object values)
 
-@cython.cdivision(True)
 @cython.locals(
     numerator=uint64_t,
     denominator=uint64_t,
@@ -93,9 +92,6 @@ cdef api object _validated_integer_units(object values)
 )
 cdef api double _rounded_integer_change(uint64_t current, uint64_t old) except? -1
 
-@cython.cdivision(True)
-@cython.boundscheck(False)
-@cython.wraparound(False)
 @cython.locals(
     units_read=_HistoryUnits,
     previous_read=_HistoryPositions,

@@ -77,11 +77,14 @@ def test_integer_history_kernel_matches_seeded_full_width_population():
     ],
 )
 def test_integer_history_kernel_refuses_unsafe_coefficients_and_positions(units, previous, positions):
-    assert truth._integer_returns(
-        np.asarray(units, dtype=np.int64),
-        np.asarray(previous, dtype=np.intp),
-        np.asarray(positions, dtype=np.intp),
-    ) is None
+    assert (
+        truth._integer_returns(
+            np.asarray(units, dtype=np.int64),
+            np.asarray(previous, dtype=np.intp),
+            np.asarray(positions, dtype=np.intp),
+        )
+        is None
+    )
 
 
 def reference_changes(times, prepared, old, paired):
