@@ -48,7 +48,8 @@ jobs:
   python-integration:
     name: Python integration
     runs-on: ubuntu-24.04
-    timeout-minutes: ${{ github.event_name == 'pull_request' && 4 || 20 }}
+    # Native build plus full-request replay share the unchanged 300-second workflow gate.
+    timeout-minutes: ${{ github.event_name == 'pull_request' && (matrix.shard == 'market-truth' && 5 || 4) || 20 }}
     strategy:
       fail-fast: false
       matrix:

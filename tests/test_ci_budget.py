@@ -10,6 +10,16 @@ CI_ROOT = Path(__file__).resolve().parents[1] / "scripts/ci"
 BUDGET = runpy.run_path(str(CI_ROOT / "ci_budget.py"))
 
 
+def test_native_qualification_uses_remaining_global_budget_without_extending_it():
+    workflow = (CI_ROOT.parents[1] / ".github/workflows/test-suite.yml").read_text()
+    native_job = workflow.split("  python-integration:", 1)[1]
+    assert (
+        "timeout-minutes: ${{ github.event_name == 'pull_request' && "
+        "(matrix.shard == 'market-truth' && 5 || 4) || 20 }}"
+    ) in native_job
+    assert BUDGET["BUDGET_SECONDS"] == 300
+
+
 @pytest.fixture
 def integration_checks(monkeypatch):
     monkeypatch.syspath_prepend(str(CI_ROOT))
