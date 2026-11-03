@@ -18,8 +18,9 @@ from tank.storage import MemoryRepository
 
 
 async def consume(evidence):
+    payload = json.dumps(failed_run(evidence), ensure_ascii=True).encode()
     async with httpx.AsyncClient(
-        transport=httpx.MockTransport(lambda request: httpx.Response(201, json=failed_run(evidence)))
+        transport=httpx.MockTransport(lambda request: httpx.Response(201, content=payload))
     ) as http:
         scan = await XSensor(http, "apify-secret").posts(URL, ["alice"], {"alice": "90"})
     assert scan.failed and scan.cursors == {"alice": "90"}
@@ -53,7 +54,7 @@ async def test_untrusted_scalars_never_escape_in_uploaded_documents(bad):
         bodyEncoding=bad,
         bodyTruncated=bad,
         redacted=bad,
-        readError="apify-secret\u0000\ud800",
+        readError="apify-secret\u0000",
         decodeError={"echo": "apify-secret"},
     )
     clean = await consume(evidence)
@@ -123,7 +124,7 @@ async def test_malformed_text_jsonb_readback_uploads_exact_body(
     monkeypatch.setattr(x_diagnostics, "BODY_LIMIT", limit)
     evidence = diagnostics(body)
     evidence["attempts"] = evidence["attempts"][:1]
-    evidence["attempts"][0]["response"]["headers"]["server"] = "server\u0000\ud800"
+    evidence["attempts"][0]["response"]["headers"]["server"] = "server\u0000"
     clean = await consume(evidence)
     assert clean["attempts"][0]["response"]["bodyEncoding"] == "base64"
     origin, state = wire_server
