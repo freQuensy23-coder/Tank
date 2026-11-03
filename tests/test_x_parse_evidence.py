@@ -1,8 +1,12 @@
 import base64
+import gzip
+import importlib
 import json
 
+import httpx
 import pytest
 from test_x_diagnostics import diagnostics
+from test_x_reader import BodyStream
 from test_x_reader import clock as clock
 from test_x_reader import reader as reader
 from test_x_reader import sequence
@@ -13,12 +17,6 @@ from tank.util import sha256
 
 @pytest.mark.parametrize("kind", ["text", "binary", "gzip"])
 async def test_parse_failure_retains_original_bounded_response(reader, monkeypatch, clock, kind):
-    import gzip
-
-    import httpx
-
-    from test_x_reader import BodyStream
-
     raw = b"\xff\x00" + b"x" * 3000 if kind == "binary" else b"<title>blocked</title>" + b"x" * 3000
     wire = gzip.compress(raw) if kind == "gzip" else raw
     headers = {"Content-Length": str(len(wire))}
@@ -29,7 +27,11 @@ async def test_parse_failure_retains_original_bounded_response(reader, monkeypat
     with pytest.raises(reader.ProfileFailure, match="^PUBLIC_PROFILE_NOT_READABLE$") as failure:
         await reader.fetch_profile("alice", 100, evidence_limit=1200)
     evidence = failure.value.diagnostics["attempts"][0]["response"]
-    body = base64.b64decode(evidence["body"]) if evidence["bodyEncoding"] == "base64" else evidence["body"].encode()
+    body = (
+        base64.b64decode(evidence["body"])
+        if evidence["bodyEncoding"] == "base64"
+        else evidence["body"].encode()
+    )
     assert body == raw[:200]
     assert evidence["bodySha256"] == sha256(raw[:200])
     assert evidence["status"] == 202 and evidence["bodyBytes"] == 200
@@ -45,7 +47,8 @@ def test_parse_metadata_is_redacted_bounded_jsonb_safe_and_allowlisted(field):
     response = value["attempts"][0]["response"]
     response.update(
         {
-            field: "1.https://reader:db-password@host/path?token=query-secret configured-secret\x00\ud800" + "x" * 9000,
+            field: "1.https://reader:db-password@host/path?token=query-secret configured-secret\x00\ud800"
+            + "x" * 9000,
             "articleCount": 3,
             "statusLinkCount": 2,
             "textCount": 1,
@@ -55,12 +58,17 @@ def test_parse_metadata_is_redacted_bounded_jsonb_safe_and_allowlisted(field):
     )
     clean = sanitize(value, "configured-secret")
     captured = clean["attempts"][0]["response"]
-    assert captured[field].startswith("1.https://reader:[REDACTED]@host/path?token=[REDACTED] [REDACTED][NUL]")
+    assert captured[field].startswith(
+        "1.https://reader:[REDACTED]@host/path?token=[REDACTED] [REDACTED][NUL]"
+    )
     assert len(captured[field]) <= 8192
-    assert all(secret not in json.dumps(clean) for secret in ("db-password", "query-secret", "configured-secret", "must-not-survive"))
-    assert {key: captured[key] for key in ("articleCount", "statusLinkCount", "textCount", "scriptCount")} == {
-        "articleCount": 3, "statusLinkCount": 2, "textCount": 1, "scriptCount": 4
-    }
+    assert all(
+        secret not in json.dumps(clean)
+        for secret in ("db-password", "query-secret", "configured-secret", "must-not-survive")
+    )
+    assert {
+        key: captured[key] for key in ("articleCount", "statusLinkCount", "textCount", "scriptCount")
+    } == {"articleCount": 3, "statusLinkCount": 2, "textCount": 1, "scriptCount": 4}
     json.dumps(clean, ensure_ascii=False).encode()
     assert f"{field}[1]" in clean["invalidEvidence"]
 
@@ -73,3 +81,53 @@ def test_invalid_parse_counts_are_not_persisted(field, bad):
     clean = sanitize(value)
     assert clean["attempts"][0]["response"][field] is None
     assert f"{field}[1]" in clean["invalidEvidence"]
+
+
+@pytest.mark.parametrize("prefix", ["1.https", "+.-1.https", "https"])
+def test_actor_parse_metadata_redacts_numbered_urls_and_bounds_title(reader, monkeypatch, prefix):
+    monkeypatch.setenv("ACTOR_TOKEN", "configured-secret")
+    raw = (
+        f"<title>{prefix}://reader:db-password@host/path?token=query-secret configured-secret "
+        + "x" * 1000
+        + "</title><script>page</script>"
+    ).encode()
+    response = httpx.Response(
+        200,
+        request=httpx.Request("GET", "https://reader:db-password@x.com/alice?token=query-secret"),
+    )
+    evidence = reader.response_evidence(response, raw)
+    assert evidence["finalUrl"] == "https://reader:[REDACTED]@x.com/alice?token=[REDACTED]"
+    assert len(evidence["title"]) == 512 and evidence["scriptCount"] == 1
+    assert evidence["title"].startswith(
+        f"{prefix}://reader:[REDACTED]@host/path?token=[REDACTED] [REDACTED] "
+    )
+    assert all(
+        secret not in json.dumps(evidence)
+        for secret in ("db-password", "query-secret", "configured-secret")
+    )
+
+
+@pytest.mark.integration
+@pytest.mark.parametrize("kind", ["text", "binary"])
+async def test_many_parse_failures_share_existing_retention_budget(reader, monkeypatch, clock, kind):
+    raw = (b"\xff\x00" if kind == "binary" else b"<title>blocked</title>") + b"x" * 30_000
+    sequence(reader, monkeypatch, [raw] * 200, clock)
+    output = await importlib.import_module("direct_fetch").fetch_snapshot(
+        {"handles": [f"account{index}" for index in range(200)]}
+    )
+    assert output["health"] == "failed" and output["posts"] == [] and output["nextCursors"] == {}
+    assert len(output["failedAccounts"]) == 200
+    total = 0
+    for account in output["accounts"]:
+        assert account["error"] == "PUBLIC_PROFILE_NOT_READABLE"
+        evidence = account["diagnostics"]["attempts"][0]["response"]
+        body = (
+            base64.b64decode(evidence["body"])
+            if evidence["bodyEncoding"] == "base64"
+            else evidence["body"].encode()
+        )
+        assert body == raw[:3333] and evidence["bodyTruncated"]
+        assert evidence["bodySha256"] == sha256(raw[:3333])
+        assert evidence["serializedBodyLimitBytes"] == 20_000
+        total += len(json.dumps(evidence["body"], ensure_ascii=True))
+    assert total <= 12_000_000

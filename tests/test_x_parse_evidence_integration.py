@@ -2,6 +2,7 @@ import base64
 import gzip
 import importlib
 import json
+import os
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -12,20 +13,45 @@ from test_x_diagnostics import multipart, telegram_settings
 
 from tank.delivery import DeliveryService
 from tank.ops_entry_errors import report_entry_errors
+from tank.sources.x_diagnostics import documents
 from tank.sources.xsensor import XSensor
 from tank.storage import MemoryRepository
 from tank.util import sha256
 
 HTTP_CLIENT = httpx.AsyncClient
-SECRET_TEXT = b" configured-secret Cookie: cookie-secret\n1.https://reader:db-password@host/path?token=query-secret"
-SAFE_TEXT = b" [REDACTED] Cookie: [REDACTED]\n1.https://reader:[REDACTED]@host/path?token=[REDACTED]"
+SECRET_TEXT = (
+    b" configured-secret Cookie: cookie-secret\n"
+    b"1.https://reader:db-password@host/path?token=query-secret"
+)
+SAFE_TEXT = (
+    b" [REDACTED] Cookie: [REDACTED]\n"
+    b"1.https://reader:[REDACTED]@host/path?token=[REDACTED]"
+)
 CASES = [
     (200, b"<title>This page is down / X</title>", "PUBLIC_PROFILE_NOT_READABLE", False, 0),
     (200, b"", "PUBLIC_PROFILE_NOT_READABLE", False, 0),
     (204, b"", "PUBLIC_PROFILE_NOT_READABLE", False, 0),
-    (200, b"<title>Sign in / X</title><form>Blocked</form>", "PUBLIC_PROFILE_NOT_READABLE", False, 0),
-    (202, b"<title>Alice (@alice) / X</title><script>page</script>", "NO_PUBLIC_POSTS_VISIBLE", True, 0),
-    (200, b'<title>Alice (@alice) / X</title><article><a href="/alice/status/100">post</a></article>', "PUBLIC_POST_BODY_MISSING", False, 1),
+    (
+        200,
+        b"<title>Sign in / X</title><form>Blocked</form>",
+        "PUBLIC_PROFILE_NOT_READABLE",
+        False,
+        0,
+    ),
+    (
+        202,
+        b"<title>Alice (@alice) / X</title><script>page</script>",
+        "NO_PUBLIC_POSTS_VISIBLE",
+        True,
+        0,
+    ),
+    (
+        200,
+        b'<title>Alice (@alice) / X</title><article><a href="/alice/status/100">post</a></article>',
+        "PUBLIC_POST_BODY_MISSING",
+        False,
+        1,
+    ),
     (200, b"\xff\x00original", "PUBLIC_PROFILE_NOT_READABLE", False, None),
 ]
 
@@ -82,15 +108,30 @@ def parse_wire(monkeypatch):
 
         def do_POST(self):
             body = self.rfile.read(int(self.headers["Content-Length"]))
-            state["uploads"].append(httpx.Request("POST", "https://api.telegram.org" + self.path, headers=dict(self.headers), content=body))
-            self.respond(200, json.dumps({"ok": True, "result": {"message_id": len(state["uploads"])}}).encode(), {"Content-Type": "application/json"})
+            state["uploads"].append(
+                httpx.Request(
+                    "POST",
+                    "https://api.telegram.org" + self.path,
+                    headers=dict(self.headers),
+                    content=body,
+                )
+            )
+            self.respond(
+                200,
+                json.dumps({"ok": True, "result": {"message_id": len(state["uploads"])}}).encode(),
+                {"Content-Type": "application/json"},
+            )
 
     server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
     thread = threading.Thread(target=lambda: server.serve_forever(poll_interval=0.01), daemon=True)
     thread.start()
     origin = f"http://127.0.0.1:{server.server_port}"
     monkeypatch.setenv("APIFY_TOKEN", "configured-secret")
-    monkeypatch.setattr(reader.httpx, "AsyncClient", lambda **kwargs: HTTP_CLIENT(transport=ProfileTransport(origin), **kwargs))
+    monkeypatch.setattr(
+        reader.httpx,
+        "AsyncClient",
+        lambda **kwargs: HTTP_CLIENT(transport=ProfileTransport(origin), **kwargs),
+    )
     try:
         yield worker, origin, state
     finally:
@@ -119,7 +160,11 @@ async def test_real_actor_2xx_parse_failure_bytes_reach_ops_without_cursor_advan
     [attempt] = diagnostic["attempts"]
     assert attempt["error"] == reason and attempt["retryable"] is False and attempt["status"] == status
     response = attempt["response"]
-    retained = base64.b64decode(response["body"]) if response["bodyEncoding"] == "base64" else response["body"].encode()
+    retained = (
+        base64.b64decode(response["body"])
+        if response["bodyEncoding"] == "base64"
+        else response["body"].encode()
+    )
     assert retained == expected and response["bodySha256"] == sha256(expected)
     assert response["status"] == status and response["bodyBytes"] == len(expected)
     assert response["bodyTruncated"] is False
@@ -128,17 +173,39 @@ async def test_real_actor_2xx_parse_failure_bytes_reach_ops_without_cursor_advan
     if articles is not None:
         assert response["articleCount"] == response["statusLinkCount"] == articles
         assert response["textCount"] == 0 and response["scriptCount"] == int(compressed)
-        assert response["title"] == (raw.decode().split("<title>")[1].split("</title>")[0] if raw else "")
+        assert response["title"] == (
+            raw.decode().split("<title>")[1].split("</title>")[0] if raw else ""
+        )
     assert state["requests"] == ["/alice", "/alice?token=query-secret"]
-    assert all(secret not in json.dumps(output) for secret in ("configured-secret", "cookie-secret", "db-password", "query-secret", "header-secret"))
-    async with HTTP_CLIENT(transport=httpx.MockTransport(lambda request: httpx.Response(201, json=output))) as http:
-        scan = await XSensor(http, "configured-secret").posts("https://actor.invalid", ["alice"], {"alice": "90"})
+    assert all(
+        secret not in json.dumps(output)
+        for secret in (
+            "configured-secret",
+            "cookie-secret",
+            "db-password",
+            "query-secret",
+            "header-secret",
+        )
+    )
+    async with HTTP_CLIENT(
+        transport=httpx.MockTransport(lambda request: httpx.Response(201, json=output))
+    ) as http:
+        scan = await XSensor(http, "configured-secret").posts(
+            "https://actor.invalid", ["alice"], {"alice": "90"}
+        )
     assert scan.failed and scan.cursors == {"alice": "90"} and scan.rows == []
     [failure] = scan.failures
     assert failure.reason == reason
     assert failure.diagnostics["attempts"][0]["response"]["finalUrl"] == response["finalUrl"]
     repo = MemoryRepository()
-    notice_id = await report_entry_errors(repo, telegram_settings(), {"source_id": "S29", "name": "X"}, {"url": "https://actor.invalid"}, [{"account": "alice", "reason": reason, "diagnostics": failure.diagnostics}], "2026-11-03T20:00:00Z")
+    notice_id = await report_entry_errors(
+        repo,
+        telegram_settings(),
+        {"source_id": "S29", "name": "X"},
+        {"url": "https://actor.invalid"},
+        [{"account": "alice", "reason": reason, "diagnostics": failure.diagnostics}],
+        "2026-11-03T20:00:00Z",
+    )
     async with HTTP_CLIENT(transport=ProfileTransport(origin)) as http:
         await DeliveryService(repo, telegram_settings(), http=http).deliver({"notice_id": notice_id})
     uploads = [multipart(request)["document"][1] for request in state["uploads"][1:]]
@@ -148,4 +215,65 @@ async def test_real_actor_2xx_parse_failure_bytes_reach_ops_without_cursor_advan
     metadata = json.loads(uploads[-1])["attempts"][0]["response"]
     assert metadata["status"] == status and metadata["bodySha256"] == sha256(expected)
     assert metadata["finalUrl"] == response["finalUrl"]
-    assert all(secret not in b"".join(uploads) for secret in (b"configured-secret", b"cookie-secret", b"db-password", b"query-secret", b"header-secret"))
+    assert all(
+        secret not in b"".join(uploads)
+        for secret in (
+            b"configured-secret",
+            b"cookie-secret",
+            b"db-password",
+            b"query-secret",
+            b"header-secret",
+        )
+    )
+
+
+@pytest.mark.integration
+@pytest.mark.postgres
+async def test_parse_metadata_survives_jsonb_and_real_multipart_upload(postgres_template, parse_wire):
+    worker, origin, state = parse_wire
+    state["body"] = b"<title>Alice (@alice) / X</title>" + SECRET_TEXT
+    expected = b"<title>Alice (@alice) / X</title>" + SAFE_TEXT
+    output = await worker.fetch_snapshot({"handles": ["alice"], "cursors": {"alice": "90"}})
+    async with HTTP_CLIENT(
+        transport=httpx.MockTransport(lambda request: httpx.Response(201, json=output))
+    ) as http:
+        scan = await XSensor(http, "configured-secret").posts(
+            "https://actor.invalid", ["alice"], {"alice": "90"}
+        )
+    assert scan.failed and scan.cursors == {"alice": "90"} and scan.rows == []
+    [failure] = scan.failures
+    assert failure.reason == "NO_PUBLIC_POSTS_VISIBLE"
+    async with postgres_template.repository(os.environ["TANK_TEST_DATABASE_URL"]) as repo:
+        notice_id = await report_entry_errors(
+            repo,
+            telegram_settings(),
+            {"source_id": "S29", "name": "X"},
+            {"url": "https://actor.invalid"},
+            [{"account": "alice", "reason": failure.reason, "diagnostics": failure.diagnostics}],
+            "2026-11-03T20:00:00Z",
+        )
+        saved = await repo.get("out.ops_notices", notice_id)
+        retained_documents = documents(saved["entry_errors"])
+        assert retained_documents[0]["content"] == expected
+        async with HTTP_CLIENT(transport=ProfileTransport(origin)) as http:
+            await DeliveryService(repo, telegram_settings(), http=http).deliver({"notice_id": notice_id})
+        uploads = [multipart(request)["document"][1] for request in state["uploads"][1:]]
+        assert uploads == [document["content"] for document in retained_documents]
+        metadata = json.loads(uploads[1])["attempts"][0]["response"]
+        assert metadata["bodySha256"] == sha256(expected) and metadata["status"] == 200
+        assert metadata["title"] == "Alice (@alice) / X" and metadata["articleCount"] == 0
+        assert metadata["finalUrl"] == "https://x.com/alice?token=[REDACTED]"
+        assert all(
+            secret not in b"".join(uploads)
+            for secret in (
+                b"configured-secret",
+                b"cookie-secret",
+                b"db-password",
+                b"query-secret",
+                b"header-secret",
+            )
+        )
+        receipts = await repo.list(
+            "out.deliveries", filters={"status": "SENT", "method": "sendDocument"}
+        )
+        assert {row["document_sha256"] for row in receipts} == {sha256(expected), sha256(uploads[1])}

@@ -62,6 +62,16 @@ def redact(value):
         if secret := os.environ.get(name):
             value = value.replace(secret, "[REDACTED]")
     value = re.sub(r"(?i)(Bearer\s+)[A-Za-z0-9._~+/-]+", r"\1[REDACTED]", value)
+    value = re.sub(
+        r"(?i)([?&](?:api[-_]?key|access_token|token|password|secret)=)[^&\s'\"<>]*",
+        r"\1[REDACTED]",
+        value,
+    )
+    value = re.sub(
+        r"(?<![A-Za-z0-9+.-])([A-Za-z0-9+.-]+://[^/:@\s]+:)[^/@\s]+(@)",
+        r"\1[REDACTED]\2",
+        value,
+    )
     return re.sub(
         r"(?i)((?<![A-Za-z0-9_])(?:authorization|set-cookie|cookie|auth_token|ct0)[\"']?[ \t]*[:=][ \t]*)"
         r"(\"(?:\\[^\r\n]|[^\"\\\r\n])*\"?|'(?:\\[^\r\n]|[^'\\\r\n])*'?|"
@@ -127,7 +137,7 @@ def response_evidence(response, raw, read_error=None, limit=BODY_LIMIT, serializ
     length = headers.get("content-length", "")
     total = int(length) if length.isdecimal() and len(length) <= 20 else None
     truncated = truncated or (total is not None and total > len(raw))
-    return {
+    evidence = {
         "status": response.status_code,
         "headers": headers,
         "body": body,
@@ -143,6 +153,18 @@ def response_evidence(response, raw, read_error=None, limit=BODY_LIMIT, serializ
         "decodeError": encoding_error,
         "redacted": redacted,
     }
+    with suppress(RuntimeError):
+        evidence["finalUrl"] = redact(str(response.url))[:2048]
+    if response.status_code < 400 and textual and encoding_error is None:
+        soup = BeautifulSoup(body, "html.parser")
+        evidence.update(
+            title=redact(soup.title.get_text() if soup.title else "")[:512],
+            articleCount=len(soup.find_all("article")),
+            statusLinkCount=len(soup.find_all("a", href=LINK)),
+            textCount=len(soup.select(TEXT)),
+            scriptCount=len(soup.find_all("script")),
+        )
+    return evidence
 
 
 def run_deadline():
@@ -419,7 +441,7 @@ async def fetch_public(url, parse, subject, deadline=None, evidence_limit=BODY_L
     """GET one signed-out x.com page with bounded retries and parse it; failures carry diagnostics."""
     deadline = run_deadline() if deadline is None else deadline
     diagnostics = {
-        "request": {"method": "GET", "url": url, "body": None},
+        "request": {"method": "GET", "url": redact(url)[:2048], "body": None},
         "attempts": [],
         "attemptCount": 0,
         "outcome": "exhausted",
@@ -503,7 +525,7 @@ async def fetch_public(url, parse, subject, deadline=None, evidence_limit=BODY_L
             if response is not None and response.status_code >= 400:
                 reason = f"PUBLIC_{subject}_HTTP_{response.status_code}"
                 retryable = response.status_code in (408, 429) or 500 <= response.status_code <= 599
-            if response is not None and (response.status_code >= 400 or read_error):
+            if response is not None:
                 attempt["response"] = response_evidence(
                     response, b"".join(parts), read_error, capture_limit, evidence_limit
                 )

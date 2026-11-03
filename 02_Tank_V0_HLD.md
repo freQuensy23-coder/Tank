@@ -116,6 +116,8 @@ The consumer validates diagnostic containers and typed/ranged scalar metadata wi
 
 Failed actor accounts retain their reasons and sanitized HTTP evidence through source checkpoints into Ops notices. The existing DELIVER jobs send the notice followed by response-body and metadata documents; the existing delivery ledger records independent per-document attempts and receipts. No separate diagnostic recovery service is used.
 
+The same attempt evidence covers rejected 2xx pages, including empty, blocked and body-missing responses. It records the actual status, redacted final URL and, for retained UTF-8 bodies, a bounded title and counts of articles, status links, text nodes and scripts in that retained prefix. These counts describe captured evidence, not full-page coverage or an upstream root-cause diagnosis. Parser rules, retries, deadlines and high-water cursors are unchanged.
+
 - X always runs; there is no switch to turn it off. Every environment needs `APIFY_API_TOKEN` in `.env`.
 - Account set: the 86 handles in 01 §4.3, listed as `x_accounts` in `registry.yaml`.
 - Reader: the `xsensor` module makes one synchronous run of the Apify actor `fdfsfsdfasfa/tank-x-notifier` (build `direct`) every 120 s through its run-sync URL in `sources.yaml`, sending the handles and the per-account cursors; no X account or session. The actor reads each account's public profile page signed out and returns every visible own post, usually the latest five per account, with its complete text and the posts it quotes, replies to or links (reposts, replies to other accounts and protected accounts are not visible signed out), the next cursors and per-account health. A referenced post whose text the profile page lacks is read from its public status page, at most 24 per run.

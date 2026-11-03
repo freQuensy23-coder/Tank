@@ -194,6 +194,12 @@ def sanitize(value, token=None, budget=None):
             for key in ("readError", "decodeError"):
                 candidate = response.get(key)
                 clean_response[key] = text(candidate, f"{key}[{index}]") if candidate is not None else None
+            for key in ("finalUrl", "title"):
+                if key in response:
+                    clean_response[key] = text(response[key], f"{key}[{index}]")
+            for key in ("articleCount", "statusLinkCount", "textCount", "scriptCount"):
+                if key in response:
+                    clean_response[key] = scalar(response, key, int, f"{key}[{index}]", 0, BODY_LIMIT)
             attempt["response"] = clean_response
         result["attempts"].append(attempt)
     result["attemptCount"] = len(result["attempts"])

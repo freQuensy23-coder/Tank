@@ -407,6 +407,8 @@ WHAT TO DO: DON'T CHASE
 
 X HTTP failures include the retained response bodies as actual attached documents, with separate metadata for status, safe response headers, retries, empty bodies, redaction and capture truncation. Successful attachments have durable delivery receipts and are not resent on retry.
 
+When X returns 2xx but its page cannot be parsed, Tank retains the rejected response as sanitized bounded evidence with its actual HTTP status and original parser reason. This remains a failed account read and never advances its cursor.
+
 "Tank Ops" receives exactly these five notices:
 
 | Notice | When | What it contains |
