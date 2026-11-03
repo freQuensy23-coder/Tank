@@ -1388,9 +1388,11 @@ class SessionService:
             key += f":reanalysis:{source['reanalysis_attempt']}"
         jobs = await self.repo.list("ops.jobs", filters={"type": "AGENT_MESSAGE", "idem_key": key}, limit=1)
         source_identity = {key: value for key, value in source.items() if key != "session_id"}
-        if jobs and {
-            key: value for key, value in jobs[0]["payload"].items() if key != "session_id"
-        } != source_identity:
+        if (
+            jobs
+            and {key: value for key, value in jobs[0]["payload"].items() if key != "session_id"}
+            != source_identity
+        ):
             jobs = []
         if not jobs and source.get("kind") == "ITEM_ADDED" and source.get("event_id"):
             async for observation in self.repo.iter_all(
@@ -1402,9 +1404,11 @@ class SessionService:
                     filters={"type": "AGENT_MESSAGE", "idem_key": "merge:" + observation["obs_id"]},
                     limit=1,
                 )
-                if candidate and {
-                    key: value for key, value in candidate[0]["payload"].items() if key != "session_id"
-                } == source_identity:
+                if (
+                    candidate
+                    and {key: value for key, value in candidate[0]["payload"].items() if key != "session_id"}
+                    == source_identity
+                ):
                     jobs = candidate
                     break
         if not jobs:

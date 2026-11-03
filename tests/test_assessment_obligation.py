@@ -86,7 +86,8 @@ async def cached_source(repo, service, domain):
     await repo.put("ops.agent_sessions", "s", session)
     job = await repo.enqueue("AGENT_MESSAGE", session["message_log"][0]["payload"], "i:NEW_ITEM")
     job["status"] = "DONE"
-    job = await repo.put("ops.jobs", job["job_id"], job)
+    await repo.put("ops.jobs", job["job_id"], job)
+    job = await repo.get("ops.jobs", job["job_id"])
     return session, job
 
 
@@ -249,7 +250,9 @@ async def test_new_committed_refused_assessment_turn_spends_one_next_bounded_att
             assert job["payload"]["attempt"] == attempt
             with pytest.raises(ValueError):
                 await domain.dispatch(
-                    "set_assessment", {"event_id": original["event_id"], "assessment": {}}, {"session_id": "s"}
+                    "set_assessment",
+                    {"event_id": original["event_id"], "assessment": {}},
+                    {"session_id": "s"},
                 )
             current = await repo.get("ops.agent_sessions", "s")
             identity = "reminder-input-" + str(attempt)
@@ -277,7 +280,7 @@ async def test_new_committed_refused_assessment_turn_spends_one_next_bounded_att
         assert len(await reminders(repo)) == limit
         item = await repo.get("ingest.source_items", "i")
         assert item["extraction_status"] == "DONE" and item["assessment_incomplete"] is True
-        assert (await repo.get("evt.events", original["event_id"]))["current_ems_id"] is None
+        assert (await repo.get("evt.events", original["event_id"])).get("current_ems_id") is None
         assert not await repo.list("evt.ems_assessments")
 
 
@@ -330,7 +333,9 @@ async def test_merge_handoff_keeps_its_deadline_and_session_event_not_display_ev
         observations = await repo.list("evt.event_observations", filters={"item_id": "i", "event_id": owner})
         [observation] = observations
         expiry = iso(utcnow() + timedelta(hours=-1 if expired else 1))
-        merged = await repo.enqueue("AGENT_MESSAGE", source, "merge:" + observation["obs_id"], expires_at=expiry)
+        merged = await repo.enqueue(
+            "AGENT_MESSAGE", source, "merge:" + observation["obs_id"], expires_at=expiry
+        )
         event = await repo.get("evt.events", owner)
         await repo.put("evt.events", "foreign-display", dict(event, event_id="foreign-display"))
         await repo.put(
@@ -353,7 +358,7 @@ async def test_merge_handoff_keeps_its_deadline_and_session_event_not_display_ev
             assert job["payload"]["reminded_kind"] == "ITEM_ADDED"
             assert job["expires_at"] == merged["expires_at"]
         assert await repo.get("evt.events", owner) == event
-        assert (await repo.get("evt.events", "foreign-display"))["current_ems_id"] is None
+        assert await repo.get("evt.events", "foreign-display") == dict(event, event_id="foreign-display")
 
 
 @pytest.mark.integration
@@ -404,7 +409,9 @@ async def test_real_http_refused_tool_ack_barrier_then_obligation_and_other_job_
         )
         acknowledgement = asyncio.create_task(ack_waiting.wait())
         try:
-            done, _ = await asyncio.wait({tool, acknowledgement}, timeout=3, return_when=asyncio.FIRST_COMPLETED)
+            done, _ = await asyncio.wait(
+                {tool, acknowledgement}, timeout=3, return_when=asyncio.FIRST_COMPLETED
+            )
             if tool in done:
                 await tool
             assert acknowledgement in done
@@ -426,7 +433,7 @@ async def test_real_http_refused_tool_ack_barrier_then_obligation_and_other_job_
             [job] = await reminders(repo)
             assert job["payload"]["missing"] == "ASSESSMENT"
             assert (await repo.get("ingest.source_items", "i"))["extraction_status"] == "DONE"
-            assert (await repo.get("evt.events", original["event_id"]))["current_ems_id"] is None
+            assert (await repo.get("evt.events", original["event_id"])).get("current_ems_id") is None
             await service.admit(waiting)
             admitted = await repo.get("ops.jobs", waiting["job_id"])
             assert admitted["slot_admitted"] is True and admitted["attempts"] == 0
