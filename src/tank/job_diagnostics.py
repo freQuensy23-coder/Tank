@@ -20,7 +20,10 @@ def _typed_text(value, pattern, secrets):
 
 def failure_receipt(job, exc, *, settings, phase, started_at, finished_at, deadline_at):
     configured = getattr(settings, "configured_secrets", None)
-    secrets = configured() if configured else ()
+    secrets: list[str] = list(configured() if configured else ())
+    for secret in tuple(secrets):
+        with suppress(ValueError):
+            secrets.append(str(UUID(secret)))
     chain = []
     seen = set()
     error = exc

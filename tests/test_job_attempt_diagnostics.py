@@ -302,9 +302,7 @@ async def test_worker_rejects_configured_credential_echo_after_jsonb(
     def transport(request):
         if producer == "clickhouse":
             assert request.content == b"SELECT 1 FORMAT JSONEachRow"
-            expected_password = (
-                configured_id if credential in {"tank_db_password", "clickhouse_url"} else ""
-            )
+            expected_password = configured_id if credential in {"tank_db_password", "clickhouse_url"} else ""
             assert request.headers["x-clickhouse-key"] == expected_password
         return httpx.Response(
             503,
