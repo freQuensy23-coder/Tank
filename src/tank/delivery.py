@@ -12,7 +12,7 @@ import httpx
 from tank.analysis.cards import telegram_card_html
 from tank.delivery_jobs import NoticeDeliveryJob, ledger_filters, parse_delivery_job
 from tank.ops_progress import event_progress
-from tank.sources.x_diagnostics import documents
+from tank.sources.x_diagnostic_manifest import verified_documents
 from tank.time_precision import collection_clock, offset_schedule, propagate_timestamp
 from tank.util import new_id, parse_time, sha256, utcnow
 
@@ -166,13 +166,19 @@ class DeliveryService:
         if not messages:
             raise DeliveryError("Ops diagnostic parent message was not delivered")
         parent = messages[0]["message_ref"]
-        attachments = documents(notice["entry_errors"])
-        manifest = [
-            {"filename": row["filename"], "sha256": row["sha256"], "bytes": len(row["content"])}
-            for row in attachments
-        ]
-        if manifest != notice["document_manifest"]:
-            raise DeliveryError("Ops diagnostic document manifest mismatch")
+        secrets = (
+            self.settings.configured_secrets()
+            if hasattr(self.settings, "configured_secrets")
+            else tuple(
+                value
+                for key in ("apify_api_token", "telegram_token")
+                if (value := getattr(self.settings, key, None))
+            )
+        )
+        try:
+            attachments = verified_documents(notice, secrets)
+        except (ValueError, KeyError, TypeError, UnicodeError, IndexError):
+            raise DeliveryError("Ops diagnostic document manifest mismatch") from None
         terminal_failure = None
         for document in attachments:
             document_id = sha256({"filename": document["filename"], "sha256": document["sha256"]})

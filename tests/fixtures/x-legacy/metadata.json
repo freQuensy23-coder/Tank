@@ -1,0 +1,41 @@
+{
+  "request": {
+    "method": "GET",
+    "url": "https://x.com/example",
+    "body": null
+  },
+  "outcome": "exhausted",
+  "attempts": [
+    {
+      "attempt": 1,
+      "at": "2026-10-24T12:00:00Z",
+      "status": 503,
+      "retryable": true,
+      "error": "PUBLIC_PROFILE_HTTP_503",
+      "response": {
+        "status": 503,
+        "headers": {
+          "date": "Sat, 24 Oct 2026 12:00:00 GMT",
+          "content-type": "text/plain",
+          "server": "fixture",
+          "x-transaction-id": "public-fixture",
+          "content-encoding": "identity",
+          "cf-ray": "public-fixture"
+        },
+        "bodyEncoding": "utf-8",
+        "bodyBytes": 21,
+        "bodySha256": "254f62811e6241faff2c9a940b9dcbfe2bedd218db7810c05bbe6c94e8d5c932",
+        "bodyTruncated": false,
+        "omittedWireBytes": null,
+        "wireBytes": 21,
+        "captureLimitBytes": 2000000,
+        "serializedBodyLimitBytes": 2000000,
+        "readError": null,
+        "decodeError": null,
+        "redacted": false,
+        "bodyDocument": "x-example-1-attempt-1-254f62811e62.txt"
+      }
+    }
+  ],
+  "attemptCount": 1
+}

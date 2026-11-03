@@ -1,4 +1,5 @@
 import base64
+import copy
 import gzip
 import hashlib
 import importlib
@@ -8,6 +9,7 @@ import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from types import SimpleNamespace
+from unittest.mock import patch
 
 import httpx
 import pytest
@@ -15,6 +17,7 @@ from test_x_diagnostics import multipart, telegram_settings
 
 from tank.delivery import DeliveryService
 from tank.ops_entry_errors import report_entry_errors
+from tank.sources import x_diagnostic_manifest
 from tank.sources.x_diagnostics import documents
 from tank.sources.xsensor import XSensor
 from tank.storage import MemoryRepository
@@ -265,7 +268,7 @@ async def test_real_actor_2xx_parse_failure_bytes_reach_ops_without_cursor_advan
 @pytest.mark.postgres
 @pytest.mark.parametrize("consumer_input", ["actor", "unredacted"])
 async def test_parse_metadata_survives_jsonb_and_real_multipart_upload(
-    postgres_template, parse_wire, consumer_input
+    postgres_template, parse_wire, consumer_input, monkeypatch
 ):
     worker, origin, state = parse_wire
     state["body"] = ("<title>Alice (@alice) / X https://host/?" + QUERY + "</title>").encode() + SECRET_TEXT
@@ -296,7 +299,41 @@ async def test_parse_metadata_survives_jsonb_and_real_multipart_upload(
     assert scan.failed and scan.cursors == {"alice": "90"} and scan.rows == []
     [failure] = scan.failures
     assert failure.reason == "NO_PUBLIC_POSTS_VISIBLE"
+    expected_fields = {
+        "finalUrl": "https://x.com/alice?" + SAFE_QUERY,
+        "title": expected_title,
+        "articleCount": 0,
+        "statusLinkCount": 0,
+        "textCount": 0,
+        "scriptCount": 0,
+    }
+    consumer_response = failure.diagnostics["attempts"][0]["response"]
+    assert {key: consumer_response[key] for key in expected_fields} == expected_fields
+    body_hash = hashlib.sha256(expected).hexdigest()
+    body_filename = f"x-alice-1-attempt-1-{body_hash[:12]}.txt"
+    expected_metadata = copy.deepcopy(failure.diagnostics)
+    metadata_response = expected_metadata["attempts"][0]["response"]
+    assert metadata_response.pop("body").encode() == expected
+    metadata_response["bodyDocument"] = body_filename
+    metadata_bytes = json.dumps(expected_metadata, ensure_ascii=False, indent=2, sort_keys=True).encode()
+    expected_manifest = [
+        {"filename": body_filename, "sha256": body_hash, "bytes": len(expected)},
+        {
+            "filename": "x-alice-1-diagnostics.json",
+            "sha256": hashlib.sha256(metadata_bytes).hexdigest(),
+            "bytes": len(metadata_bytes),
+        },
+    ]
+    original_notices = []
     async with postgres_template.repository(os.environ["TANK_TEST_DATABASE_URL"]) as repo:
+        put = repo.put
+
+        async def retain_original(table, key, value, **kwargs):
+            if table == "out.ops_notices" and value.get("kind") == "ENTRY_ERRORS":
+                original_notices.append(copy.deepcopy(value))
+            return await put(table, key, value, **kwargs)
+
+        monkeypatch.setattr(repo, "put", retain_original)
         notice_id = await report_entry_errors(
             repo,
             telegram_settings(),
@@ -306,7 +343,14 @@ async def test_parse_metadata_survives_jsonb_and_real_multipart_upload(
             "2026-11-03T20:00:00Z",
         )
         saved = await repo.get("out.ops_notices", notice_id)
+        assert len(original_notices) == 1
+        original = original_notices[0]
+        assert "document_serialization_version" not in original
+        assert original["document_manifest"] == saved["document_manifest"] == expected_manifest
+        assert saved == original
+        assert list(saved["entry_errors"][0]["diagnostics"]) != list(failure.diagnostics)
         saved_response = saved["entry_errors"][0]["diagnostics"]["attempts"][0]["response"]
+        assert {key: saved_response[key] for key in expected_fields} == expected_fields
         assert saved_response["finalUrl"].encode() == ("https://x.com/alice?" + SAFE_QUERY).encode()
         assert saved_response["title"].encode() == expected_title.encode()
         assert saved_response["body"].encode() == expected
@@ -325,13 +369,27 @@ async def test_parse_metadata_survives_jsonb_and_real_multipart_upload(
             )
         )
         retained_documents = documents(saved["entry_errors"])
+        assert [row["content"] for row in retained_documents] == [expected, metadata_bytes]
+        with patch.object(
+            x_diagnostic_manifest, "_legacy_metadata", side_effect=AssertionError("historical")
+        ):
+            assert x_diagnostic_manifest.verified_documents(saved) == retained_documents
         assert retained_documents[0]["content"] == expected
         assert retained_documents[0]["sha256"] == hashlib.sha256(expected).hexdigest()
-        async with HTTP_CLIENT(transport=ProfileTransport(origin)) as http:
-            await DeliveryService(repo, telegram_settings(), http=http).deliver({"notice_id": notice_id})
+        with patch.object(
+            x_diagnostic_manifest, "_legacy_metadata", side_effect=AssertionError("historical")
+        ):
+            async with HTTP_CLIENT(transport=ProfileTransport(origin)) as http:
+                await DeliveryService(repo, telegram_settings(), http=http).deliver({"notice_id": notice_id})
         uploads = [multipart(request)["document"][1] for request in state["uploads"][1:]]
         assert uploads == [document["content"] for document in retained_documents]
+        assert uploads == [expected, metadata_bytes]
+        assert [multipart(request)["document"][0] for request in state["uploads"][1:]] == [
+            body_filename,
+            "x-alice-1-diagnostics.json",
+        ]
         metadata = json.loads(uploads[1])["attempts"][0]["response"]
+        assert {key: metadata[key] for key in expected_fields} == expected_fields
         assert metadata["bodySha256"] == sha256(expected) and metadata["status"] == 200
         assert metadata["title"] == expected_title and metadata["articleCount"] == 0
         assert metadata["finalUrl"].encode() == ("https://x.com/alice?" + SAFE_QUERY).encode()
@@ -351,3 +409,5 @@ async def test_parse_metadata_survives_jsonb_and_real_multipart_upload(
         )
         receipts = await repo.list("out.deliveries", filters={"status": "SENT", "method": "sendDocument"})
         assert {row["document_sha256"] for row in receipts} == {sha256(expected), sha256(uploads[1])}
+        assert len(receipts) == 2 and all(row["message_ref"] for row in receipts)
+        assert await repo.get("out.ops_notices", notice_id) == original
