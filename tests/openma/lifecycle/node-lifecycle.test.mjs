@@ -94,7 +94,7 @@ for(const legacy of [false,true])test(`Managed driver reopens persisted context 
     const models=createModels();models.setProvider(faux.provider);
     const requests=[],streamSimple=models.streamSimple.bind(models);
     const boundary=Object.create(models);
-    Object.defineProperty(boundary,'streamSimple',{value:(model,context,options)=>{requests.push(structuredClone(context));return streamSimple(model,context,options);}});
+    Object.defineProperty(boundary,'streamSimple',{value:(model,context,options)=>{requests.push({messages:structuredClone(context.messages)});return streamSimple(model,context,options);}});
     let sequence=0;
     const runner=new DefaultNodeManagedSessionRunner({
       harnessRetry:{attempts:1,delayMs:()=>0},confirmedTools:{execute:async()=>assert.fail('no tool reissue')},outcomes:{evaluate:async()=>assert.fail('no outcome')},
@@ -115,6 +115,7 @@ for(const legacy of [false,true])test(`Managed driver reopens persisted context 
     assert.ok(JSON.stringify(messages).includes('Remember the full context'));
     const calls=messages.flatMap(message=>Array.isArray(message.content)?message.content.filter(block=>block.type==='toolCall'):[]);
     assert.deepEqual(calls.map(call=>call.id),['bash-call','rejected','pending']);
+    assert.deepEqual(calls.map(call=>[call.name,call.arguments]),[['bash',{command:'pwd'}],['record_event',{precision:'MINUTE'}],['record_event',{precision:'HOUR'}]]);
     const results=messages.filter(message=>message.role==='toolResult');
     assert.deepEqual(results.map(result=>result.toolCallId),['bash-call','rejected','pending']);
     assert.ok(JSON.stringify(results[0]).includes('/workspace'));
