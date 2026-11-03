@@ -3,7 +3,7 @@ import json
 from datetime import UTC
 
 import pytest
-from model_fixture import audited_result, model_arguments
+from model_fixture import DeclaredNativeProtocol, audited_result, model_arguments
 
 from tank.replay import ReplayError, digest, load_inputs, original_replay_messages
 from tank.settings import Settings
@@ -1261,7 +1261,7 @@ async def test_actual_f24_phased_producers_keep_session_and_immutable_checkpoint
         DecisionEngine(config),
         reference_clock=TrustedFixtureClock(inputs),
     )
-    async with httpx.AsyncClient(transport=httpx.MockTransport(transport)) as http:
+    async with httpx.AsyncClient(transport=httpx.MockTransport(DeclaredNativeProtocol(transport))) as http:
         if fail_later:
             with pytest.raises(TimeoutError):
                 await replay_agent_session(

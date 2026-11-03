@@ -4,6 +4,7 @@ import json
 
 import httpx
 import pytest
+from model_fixture import DeclaredNativeProtocol
 
 from tank.agents import SessionService
 from tank.analysis.decisions import DecisionEngine
@@ -229,7 +230,7 @@ async def test_actual_replay_abort_finalizes_owned_turn_after_stopping_follower(
         raise AssertionError(str(request.url))
 
     output = tmp_path / "failed.json"
-    async with httpx.AsyncClient(transport=httpx.MockTransport(transport)) as http:
+    async with httpx.AsyncClient(transport=httpx.MockTransport(DeclaredNativeProtocol(transport))) as http:
         truth = MarketTruthService(repo, settings, ReplayMarketReader(load_inputs(packet, settings)))
         tools = EventToolService(repo, settings, truth, DecisionEngine(settings), http=http)
         task = asyncio.create_task(

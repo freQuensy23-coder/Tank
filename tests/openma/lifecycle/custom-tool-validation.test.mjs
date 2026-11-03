@@ -1,6 +1,7 @@
 import { test } from 'node:test';
+import { registerHooks } from 'node:module';
 import assert from 'node:assert/strict';
-import { planSessionContinuation } from '../../../vendor/openma/packages/session-runtime-contract/src/continuation.ts';
+import { planSessionContinuation, declaredCustomToolUses } from '../../../vendor/openma/packages/session-runtime-contract/src/continuation.ts';
 
 const text = value => [{ type: 'text', text: value }];
 const message = id => ({ id, type: 'user.message', content: text('Record the event') });
@@ -295,4 +296,103 @@ for (const boundary of ['missing', 'failed']) test(`local results cannot recover
   if (boundary === 'missing') output.splice(output.findIndex(event => event.type === 'span.model_request_end'), 1);
   else output.find(event => event.type === 'span.model_request_end').isError = true;
   assertFailure(journal(output, 'running'), 'original', /no complete model\/tool terminal boundary/);
+});
+
+for (const state of ['running', 'failed', 'cancelled']) test(`host projection refuses a merely streamed or ${state} call`, () => {
+  const snapshot = journal(span('model', [custom('speculative')]), state);
+  assert.deepEqual(declaredCustomToolUses(structuredClone(snapshot), 'original'), []);
+  append(snapshot, 'original', idle('declaration', requires(['speculative'])));
+  assert.deepEqual(declaredCustomToolUses(structuredClone(snapshot), 'original'), []);
+});
+
+for (const isError of [true, false, undefined]) test(`host projection excludes locally settled calls with isError=${isError}`, () => {
+  const snapshot = waiting();
+  const local = snapshot.orderedEvents.find(entry => entry.event.id === 'invalid-result').event;
+  if (isError === undefined) delete local.isError;
+  else local.isError = isError;
+  assert.deepEqual(declaredCustomToolUses(structuredClone(snapshot), 'original'), [{
+    declarationId: 'declaration', event: {
+      processedAt: '2026-10-27T00:00:00Z', ...custom('corrected'), executionId: 'original',
+    },
+  }]);
+  assert.deepEqual(declaredCustomToolUses(structuredClone(snapshot), 'foreign'), []);
+});
+
+for (const [name, corrupt] of [
+  ['foreign lane', snapshot => { snapshot.orderedEvents.find(entry => entry.event.id === 'corrected').event.sessionThreadId = 'sthr_other'; }],
+  ['foreign attempt', snapshot => { snapshot.orderedEvents.find(entry => entry.event.id === 'corrected').executionMetadata.attemptId = 'foreign'; }],
+  ['foreign generation', snapshot => { snapshot.orderedEvents.find(entry => entry.event.id === 'corrected').executionMetadata.generation = 2; }],
+  ['invalid declaration', snapshot => { snapshot.orderedEvents.at(-1).event.stopReason.eventIds = ['invalid', 'corrected']; }],
+  ['untrusted order', snapshot => { snapshot.orderedEvents.at(-1).position.index = -1; }],
+]) test(`host projection fails closed for ${name}`, () => {
+  const snapshot = waiting();
+  corrupt(snapshot);
+  assert.throws(() => declaredCustomToolUses(structuredClone(snapshot), 'original'), /custom-tool|journal/);
+});
+
+for (const cancelled of ['interrupt', 'failed dependency', 'cancelled dependency']) test(`host projection refuses a group after ${cancelled}`, () => {
+  const snapshot = waiting();
+  if (cancelled === 'interrupt') append(snapshot, undefined, { id: 'interrupt', type: 'user.interrupt' });
+  else admit(snapshot, 'reply', callback('reply', 'corrected'), cancelled.startsWith('failed') ? 'failed' : 'cancelled');
+  assert.deepEqual(declaredCustomToolUses(structuredClone(snapshot), 'original'), []);
+});
+
+test('host projection preserves a parallel group through partial callback intake and excludes closed groups', () => {
+  const snapshot = journal([...span('model', [custom('first'), custom('second')]), idle('declaration', requires(['first', 'second']))]);
+  assert.deepEqual(declaredCustomToolUses(structuredClone(snapshot), 'original').map(row => row.event.id), ['first', 'second']);
+  admit(snapshot, 'first-reply', callback('first-reply', 'first'), 'completed');
+  append(snapshot, 'first-reply', idle('partial', requires(['second'])));
+  assert.deepEqual(declaredCustomToolUses(structuredClone(snapshot), 'original').map(row => row.event.id), ['first', 'second']);
+  admit(snapshot, 'second-reply', callback('second-reply', 'second'), 'completed');
+  append(snapshot, 'second-reply', { id: 'answer', type: 'agent.message', content: text('Done') });
+  append(snapshot, 'second-reply', idle('done', { type: 'end_turn' }));
+  assert.deepEqual(declaredCustomToolUses(structuredClone(snapshot), 'original'), []);
+});
+
+test('host projection uses the actual terminal of a verified yielded phase', () => {
+  const snapshot = waiting();
+  yieldPhase(snapshot);
+  assert.deepEqual(declaredCustomToolUses(structuredClone(snapshot), 'original').map(row => [row.declarationId, row.event.id]), [['declaration', 'corrected']]);
+});
+
+registerHooks({ resolve(specifier, context, nextResolve) {
+  if (specifier === '@open-managed-agents/session-runtime-contract/continuation')
+    return nextResolve(new URL('../../../vendor/openma/packages/session-runtime-contract/src/continuation.ts', import.meta.url).href, context);
+  return nextResolve(specifier, context);
+} });
+const { sessionExecutionStatusStore } = await import('../../../vendor/openma/packages/control-plane-node/src/lib/node-session-execution-status.ts');
+
+for (const state of ['failed', 'cancelled']) test(`invalid declaration history retains committed ${state} status without host work`, async () => {
+  const snapshot = waiting();
+  snapshot.invalidReason = 'Continuation requires complete trusted ordered native history';
+  snapshot.executions[0].state = state;
+  const row = { ...snapshot.executions[0], workspaceId: 'workspace', sessionId: 'session', settledAt: '2026-10-27T00:00:00Z' };
+  const store = sessionExecutionStatusStore({ find: async () => row }, async () => snapshot);
+  assert.deepEqual(await store.list('workspace', 'session', ['original']), [{
+    execution_id: 'original', state: state.toUpperCase(), settled_outcome: state.toUpperCase(), custom_tool_uses: [],
+  }]);
+  assert.equal(planSessionContinuation(snapshot, 'original').mode, 'failure');
+});
+
+test('execution status exposes native-validated Managed calls without leaking private journal metadata', async () => {
+  const snapshot = waiting();
+  const row = { ...snapshot.executions[0], workspaceId: 'workspace', sessionId: 'session', settledAt: '2026-10-27T00:00:00Z' };
+  const store = sessionExecutionStatusStore({ find: async () => row }, async scope => {
+    assert.deepEqual(scope, { workspaceId: 'workspace', sessionId: 'session' });
+    return structuredClone(snapshot);
+  });
+  assert.deepEqual(await store.list('workspace', 'session', ['original']), [{
+    execution_id: 'original', state: 'COMPLETED', settled_outcome: 'COMPLETED',
+    custom_tool_uses: [{ declaration_id: 'declaration', event: {
+      id: 'corrected', type: 'agent.custom_tool_use', execution_id: 'original',
+      name: 'record_event', input: { precision: 'HOUR' }, processed_at: '2026-10-27T00:00:00Z',
+    } }],
+  }]);
+  row.revision++;
+  assert.deepEqual((await store.list('workspace', 'session', ['original']))[0].custom_tool_uses, []);
+  row.revision--;
+  row.state = 'failed';
+  assert.deepEqual((await store.list('workspace', 'session', ['original']))[0].custom_tool_uses, []);
+  row.sessionId = 'other';
+  assert.deepEqual(await store.list('workspace', 'session', ['original']), [{ execution_id: 'original', state: 'UNKNOWN', settled_outcome: null }]);
 });

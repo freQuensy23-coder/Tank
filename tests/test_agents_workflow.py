@@ -4,6 +4,7 @@ from datetime import timedelta
 
 import httpx
 import pytest
+from model_fixture import process_declared_event
 from test_agents_execution_barrier import config, idle
 from test_event_tools import unknown_assessment
 from test_session_binding_concurrency import fixture_repo, seed
@@ -113,7 +114,8 @@ async def test_actual_producer_consumer_workflow(tmp_path, backend, case, postgr
                 nonlocal count
                 count += 1
                 call_id = "tool-" + str(count)
-                await service.process_event(
+                await process_declared_event(
+                    service,
                     "s",
                     {
                         "id": call_id,
@@ -217,7 +219,7 @@ async def test_actual_producer_consumer_workflow(tmp_path, backend, case, postgr
                         for job in await repo.list("ops.jobs", filters={"type": "DELIVER"})
                     )
             last = (await repo.get("ops.tool_calls", "s:tool-" + str(count)))["remote_event_id"]
-            await service.process_event("s", idle("end", last))
+            await process_declared_event(service, "s", idle("end", last))
             result = await service.completed_turn("s")
             if case == "HYDRATE":
                 ledgers = await repo.list("ops.tool_calls")
@@ -292,7 +294,8 @@ async def test_native_idle_accepts_agent_chosen_order_without_semantic_retry(too
 
         service.hydrate_prompt_provenance = hydrate
         for index, tool in enumerate(tools):
-            await service.process_event(
+            await process_declared_event(
+                service,
                 "s",
                 {
                     "id": "call-" + str(index),
@@ -302,8 +305,8 @@ async def test_native_idle_accepts_agent_chosen_order_without_semantic_retry(too
                     "input": {},
                 },
             )
-        await service.process_event(
-            "s", idle("end", "ack-" + str(len(posts)) if posts else "accepted-message")
+        await process_declared_event(
+            service, "s", idle("end", "ack-" + str(len(posts)) if posts else "accepted-message")
         )
         assert (await service.completed_turn("s"))["complete"]
         current = await repo.get("ops.agent_sessions", "s")
@@ -321,7 +324,8 @@ async def test_native_idle_accepts_agent_chosen_order_without_semantic_retry(too
             assert (await service.completed_turn("s"))["complete"]
         assert not reads and len(posts) == len(tools)
 
-        await service.process_event(
+        await process_declared_event(
+            service,
             "s",
             {
                 "id": "error-one",
@@ -332,7 +336,8 @@ async def test_native_idle_accepts_agent_chosen_order_without_semantic_retry(too
         )
         retry = (await repo.get("ops.agent_sessions", "s"))["message_log"][0]
         assert retry["retry_count"] == 1 and retry["turn_status"] == "RUNNING"
-        await service.process_event(
+        await process_declared_event(
+            service,
             "s",
             {
                 "id": "error-two",

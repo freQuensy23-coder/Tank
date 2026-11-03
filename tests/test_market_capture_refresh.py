@@ -13,6 +13,7 @@ from unittest.mock import AsyncMock
 
 import httpx
 import pytest
+from model_fixture import process_declared_event
 from test_agents_session_audit import settings as session_settings
 from test_event_tools import complete_assessment_fixture, complete_event_fixture
 from test_session_binding_concurrency import fixture_repo
@@ -248,7 +249,7 @@ async def test_wait_data_watch_refreshes_truth_before_decision_and_replays_lost_
                 worker = asyncio.create_task(runtime.worker(stop))
                 async with asyncio.timeout(20):
                     with pytest.raises(httpx.ReadError):
-                        await sessions.process_event("s", event, 7)
+                        await process_declared_event(sessions, "s", event, 7)
                 ledger = await repo.get("ops.tool_calls", "s:decision")
                 assert ledger["status"] == "DONE" and not ledger.get("returned_at")
                 assert native_messages[0]["message"]["kind"] == "CONDITION_FIRED"
@@ -265,7 +266,7 @@ async def test_wait_data_watch_refreshes_truth_before_decision_and_replays_lost_
                 ]
                 before = await persisted_ids(repo)
                 logical_now[0] += timedelta(minutes=1)
-                await sessions.process_event("s", event, 7)
+                await process_declared_event(sessions, "s", event, 7)
                 assert sent[0] == sent[1]
                 assert (await repo.get("ops.tool_calls", "s:decision"))["returned_at"]
                 assert (await repo.get("ops.agent_sessions", "s"))["next_tool_call_ordinal"] == 1
@@ -374,7 +375,7 @@ async def test_cancelled_preflight_reuses_job_before_any_decision_ledger(
 
         async with httpx.AsyncClient(transport=httpx.MockTransport(accepted)) as http:
             sessions = SessionService(repo, session_settings(), tools.dispatch, http=http)
-            pending = asyncio.create_task(sessions.process_event("s", event, 8))
+            pending = asyncio.create_task(process_declared_event(sessions, "s", event, 8))
             async with asyncio.timeout(5):
                 while not [
                     row async for row in repo.iter_all("ops.jobs", filters={"type": "RUN_MARKET_TRUTH"})
@@ -399,7 +400,7 @@ async def test_cancelled_preflight_reuses_job_before_any_decision_ledger(
             worker = asyncio.create_task(runtime.worker(stop))
             try:
                 async with asyncio.timeout(20):
-                    await sessions.process_event("s", event, 8)
+                    await process_declared_event(sessions, "s", event, 8)
                 jobs = [row async for row in repo.iter_all("ops.jobs", filters={"type": "RUN_MARKET_TRUTH"})]
                 assert len(jobs) == 1 and jobs[0]["job_id"] == original_jobs[0]["job_id"]
                 ledger = await repo.get("ops.tool_calls", "s:cancelled")
@@ -483,7 +484,7 @@ async def test_condition_firing_during_refresh_wait_is_deferred_until_its_own_re
                 "name": "get_decision",
                 "input": {"token_id": "T"},
             }
-            pending = asyncio.create_task(sessions.process_event("s", event, 8))
+            pending = asyncio.create_task(process_declared_event(sessions, "s", event, 8))
             try:
                 await asyncio.wait_for(entering.wait(), 5)
 
@@ -497,7 +498,7 @@ async def test_condition_firing_during_refresh_wait_is_deferred_until_its_own_re
                 deferred = await repo.get("ana.watch_conditions", second["cond_id"])
                 assert deferred["status"] == "FIRED" and not deferred.get("consumed_by")
                 before = len(await repo.list("ana.market_truth"))
-                await sessions.process_event("s", {**event, "id": "second-condition"}, 9)
+                await process_declared_event(sessions, "s", {**event, "id": "second-condition"}, 9)
                 assert evaluated[-1] == [second["cond_id"]]
                 assert (await repo.get("ana.watch_conditions", second["cond_id"])).get("consumed_by")
                 assert len(await repo.list("ana.market_truth")) == before + 1

@@ -1,6 +1,7 @@
 from datetime import timedelta
 
 import pytest
+from model_fixture import process_declared_event
 
 from tank.agents.context import CONTEXT_VERSION
 from tank.event_tools import EventToolService, freshness, validate_schema
@@ -3916,13 +3917,13 @@ async def test_actual_fetch_http_error_returns_durably_then_card_or_native_faile
             "input": {"url": "https://evidence.invalid/unavailable"},
         }
         with pytest.raises(httpx.ConnectError, match="Synthetic lost acknowledgement"):
-            await first.process_event(sid, failed_call)
+            await process_declared_event(first, sid, failed_call)
         ledger = await service.repo.get("ops.tool_calls", sid + ":http-failure")
         assert ledger["status"] == "ERROR" and not ledger.get("returned_at")
         resumed = SessionService(service.repo, service.settings, service.dispatch, http=http)
         resumed.start_stream = lambda session_id: None
-        await resumed.process_event(sid, failed_call)
-        await resumed.process_event(sid, failed_call)
+        await process_declared_event(resumed, sid, failed_call)
+        await process_declared_event(resumed, sid, failed_call)
         ledger = await service.repo.get("ops.tool_calls", sid + ":http-failure")
         assert ledger["status"] == "ERROR" and ledger["returned_at"]
         assert ledger["result"]["error"]["category"] == "SOURCE_HTTP"
@@ -3945,8 +3946,8 @@ async def test_actual_fetch_http_error_returns_durably_then_card_or_native_faile
                 "replay_source_session_id": sid,
             }
         )
-        await replay.process_event(replay_sid, failed_call)
-        await replay.process_event(replay_sid, failed_call)
+        await process_declared_event(replay, replay_sid, failed_call)
+        await process_declared_event(replay, replay_sid, failed_call)
         replayed = await service.repo.get("ops.tool_calls", replay_sid + ":http-failure")
         assert replayed["status"] == "ERROR" and replayed["is_error"] is True and replayed["returned_at"]
         assert replayed["result"] == ledger["result"]
@@ -3960,8 +3961,8 @@ async def test_actual_fetch_http_error_returns_durably_then_card_or_native_faile
             from model_fixture import model_arguments
 
             args = model_arguments(name, args)
-            await resumed.process_event(
-                sid, {"id": call_id, "type": "agent.custom_tool_use", "name": name, "input": args}
+            await process_declared_event(
+                resumed, sid, {"id": call_id, "type": "agent.custom_tool_use", "name": name, "input": args}
             )
             stored = await service.repo.get("ops.tool_calls", sid + ":" + call_id)
             assert stored["status"] == "DONE", stored
@@ -4007,11 +4008,11 @@ async def test_actual_fetch_http_error_returns_durably_then_card_or_native_faile
         created = await tool("known-facts", "record_event", x)
         eid = created["event_id"]
         if outcome == "native_error_failed":
-            await resumed.process_event(sid, {"id": "native-error-1", "type": "session.error"})
+            await process_declared_event(resumed, sid, {"id": "native-error-1", "type": "session.error"})
             assert (await service.repo.get("ops.agent_sessions", sid))["status"] == "OPEN"
-            await resumed.process_event(sid, {"id": "native-error-2", "type": "session.error"})
-            await resumed.process_event(sid, {"id": "native-error-2", "type": "session.error"})
-            await resumed.process_event(sid, failed_call)
+            await process_declared_event(resumed, sid, {"id": "native-error-2", "type": "session.error"})
+            await process_declared_event(resumed, sid, {"id": "native-error-2", "type": "session.error"})
+            await process_declared_event(resumed, sid, failed_call)
             session = await service.repo.get("ops.agent_sessions", sid)
             event = await service.repo.get("evt.events", eid)
             assert (

@@ -1195,7 +1195,7 @@ export async function createManagedNodeRuntime(foundation: NodeFoundation, compo
     managedRuntimeRunner,
     managedRuntimeReaders,
     managedSessionExecutionWorker,
-    managedSessionExecutionStatuses: sessionExecutionStatusStore(managedSessionExecutionCoordinator),
+    managedSessionExecutionStatuses: sessionExecutionStatusStore(managedSessionExecutionCoordinator, scope => loadSessionContinuationSnapshot(sql, scope)),
     managedSessionRuntimeStream,
     nodeSessionLifecycleHooks,
     managedSessionsComposition,

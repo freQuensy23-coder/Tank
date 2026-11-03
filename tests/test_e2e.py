@@ -5,6 +5,7 @@ from datetime import UTC
 
 import httpx
 import pytest
+from model_fixture import DeclaredNativeProtocol
 
 from tank.agents.pipeline import Pipeline
 from tank.agents.sessions import SessionService
@@ -173,7 +174,7 @@ async def test_source_jev_sse_validated_read_restart_and_delivery(tmp_path):
             return httpx.Response(200, json={"ok": True, "result": {"message_id": 100 + len(sent)}})
         raise AssertionError(str(request.url))
 
-    async with httpx.AsyncClient(transport=httpx.MockTransport(transport)) as http:
+    async with httpx.AsyncClient(transport=httpx.MockTransport(DeclaredNativeProtocol(transport))) as http:
         source = SourceService(repo, settings, http=http)
         item_id, seen = "item-e2e-one", "2026-10-17T00:00:01Z"
         raw, sha = source.raw(
@@ -450,7 +451,9 @@ async def test_full_sse_pipeline_postgres(tmp_path, complete_market, monkeypatch
             }
 
     try:
-        async with httpx.AsyncClient(transport=httpx.MockTransport(transport)) as http:
+        async with httpx.AsyncClient(
+            transport=httpx.MockTransport(DeclaredNativeProtocol(transport))
+        ) as http:
             source = SourceService(repo, settings, http=http)
             text = f"Binance approved the synthetic $T listing {sid}."
             if complete_market:
@@ -1236,7 +1239,9 @@ async def test_runtime_autonomous_source_to_telegram(tmp_path, monkeypatch, capl
     error_capture = ErrorCapture()
     logging.getLogger("tank.runtime").addFilter(error_capture)
     try:
-        async with httpx.AsyncClient(transport=httpx.MockTransport(transport)) as http:
+        async with httpx.AsyncClient(
+            transport=httpx.MockTransport(DeclaredNativeProtocol(transport))
+        ) as http:
             market = CapturedMarket(http)
             truth = MarketTruthService(repo, settings, market)
             sources = SourceService(repo, settings, http=http)

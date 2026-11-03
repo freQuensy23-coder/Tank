@@ -4,6 +4,7 @@ from types import SimpleNamespace
 
 import httpx
 import pytest
+from model_fixture import process_declared_event
 
 from tank.agents import ConfigurationError, Pipeline, SessionService
 from tank.agents.context import CONTEXT_VERSION
@@ -167,7 +168,7 @@ async def test_tool_result_lost_reply_restart_reuses_completed_result():
     async with httpx.AsyncClient(transport=httpx.MockTransport(broken)) as http:
         service = SessionService(repo, opts, dispatch, http=http)
         with pytest.raises(httpx.ReadError):
-            await service.process_event("ses_1", event, 7)
+            await process_declared_event(service, "ses_1", event, 7)
     assert count == 1
     assert (await repo.get("ops.tool_calls", "ses_1:call_1"))["status"] == "DONE"
     assert (await repo.get("ops.agent_sessions", "ses_1"))["last_event_seq"] == 0
@@ -178,8 +179,8 @@ async def test_tool_result_lost_reply_restart_reuses_completed_result():
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(works)) as http:
         restarted = SessionService(repo, opts, dispatch, http=http)
-        await restarted.process_event("ses_1", event, 7)
-        await restarted.process_event("ses_1", event, 7)
+        await process_declared_event(restarted, "ses_1", event, 7)
+        await process_declared_event(restarted, "ses_1", event, 7)
     assert count == 1 and len(posts) == 2
     assert posts[0].headers["Idempotency-Key"] == posts[1].headers["Idempotency-Key"]
     body = json.loads(posts[1].content)["events"][0]
@@ -201,8 +202,10 @@ async def test_failed_dispatch_rolls_back_and_replays():
         transport=httpx.MockTransport(lambda r: httpx.Response(200, json={}))
     ) as http:
         service = SessionService(repo, opts, bad, http=http)
-        await service.process_event(
-            "ses_1", {"id": "c", "type": "agent.custom_tool_use", "name": "record_event", "input": {}}
+        await process_declared_event(
+            service,
+            "ses_1",
+            {"id": "c", "type": "agent.custom_tool_use", "name": "record_event", "input": {}},
         )
     assert await repo.get("evt.events", "oops") is None
     assert (await repo.get("ops.agent_sessions", "ses_1"))["processed_events"] == ["c"]
@@ -270,8 +273,8 @@ async def test_message_running_session_posted_and_retry_failure():
         await service.send_message(payload)
         assert len(posts) == 1
         assert posts[0]["events"][0]["type"] == "user.message"
-        await service.process_event("ses_1", {"id": "err1", "type": "session.error"})
-        await service.process_event("ses_1", {"id": "err2", "type": "session.error"})
+        await process_declared_event(service, "ses_1", {"id": "err1", "type": "session.error"})
+        await process_declared_event(service, "ses_1", {"id": "err2", "type": "session.error"})
     assert len(posts) == 2
     assert (await repo.get("ops.agent_sessions", "ses_1"))["status"] == "FAILED"
     assert "status" not in (await repo.get("evt.events", "evt_1"))
@@ -345,7 +348,8 @@ async def test_new_scout_session_wire_protocol_and_isolation():
         service.start_stream = lambda sid: None
         session = await service.scout_review({"proposal_id": "p"})
         await service.scout_review({"proposal_id": "p"})
-        await service.process_event(
+        await process_declared_event(
+            service,
             session["session_id"],
             {"id": "call_bad", "type": "agent.custom_tool_use", "name": "publish_card", "input": {}},
         )
@@ -383,8 +387,11 @@ async def test_stream_processing_preserves_concurrent_added_message():
             await original_usage(session, event)
 
         service.usage = usage
-        await service.process_event(
-            "ses_1", {"id": "u", "type": "span.model_request_end", "model_usage": {"input_tokens": 10}}, 9
+        await process_declared_event(
+            service,
+            "ses_1",
+            {"id": "u", "type": "span.model_request_end", "model_usage": {"input_tokens": 10}},
+            9,
         )
     record = await repo.get("ops.agent_sessions", "ses_1")
     assert len(record["messages"]) == 1 and len(record["message_log"]) == 1
@@ -484,7 +491,8 @@ async def test_slow_denial_turn_remains_until_exit_update_delivered(monkeypatch,
         monkeypatch.setattr(
             cards, "compose_card", lambda *a, **k: "Original product card" + "\n" + score_summary(a[1])
         )
-        await service.process_event(
+        await process_declared_event(
+            service,
             "ses_1",
             {
                 "id": "decision_original",
@@ -493,7 +501,8 @@ async def test_slow_denial_turn_remains_until_exit_update_delivered(monkeypatch,
                 "input": {"token_id": "world:WLD"},
             },
         )
-        await service.process_event(
+        await process_declared_event(
+            service,
             "ses_1",
             {
                 "id": "publish_original",
@@ -517,7 +526,8 @@ async def test_slow_denial_turn_remains_until_exit_update_delivered(monkeypatch,
         stored_session = await repo.get("ops.agent_sessions", "ses_1")
         stored_session["last_payload"] = {"kind": "ITEM_ADDED", "item_id": "denial"}
         await repo.put("ops.agent_sessions", "ses_1", stored_session)
-        await service.process_event(
+        await process_declared_event(
+            service,
             "ses_1",
             {
                 "id": "denial_call",
@@ -542,7 +552,8 @@ async def test_slow_denial_turn_remains_until_exit_update_delivered(monkeypatch,
         assert invalidated["lifecycle"] == "INVALIDATED"
 
         assert not await service.can_archive(await repo.get("ops.agent_sessions", "ses_1"), invalidated)
-        await service.process_event(
+        await process_declared_event(
+            service,
             "ses_1",
             {
                 "id": "decision_exit",
@@ -556,7 +567,8 @@ async def test_slow_denial_turn_remains_until_exit_update_delivered(monkeypatch,
         monkeypatch.setattr(
             cards, "compose_card", lambda *a, **k: "EXIT: Official cancellation" + "\n" + score_summary(a[1])
         )
-        await service.process_event(
+        await process_declared_event(
+            service,
             "ses_1",
             {
                 "id": "publish_exit",
@@ -578,8 +590,10 @@ async def test_slow_denial_turn_remains_until_exit_update_delivered(monkeypatch,
         invalidated = await repo.get("evt.events", "evt_1")
         invalidated["session_finalized_at"] = iso()
         await repo.put("evt.events", "evt_1", invalidated)
-        await service.process_event(
-            "ses_1", {"id": "idle", "type": "session.status_idle", "stop_reason": {"type": "end_turn"}}
+        await process_declared_event(
+            service,
+            "ses_1",
+            {"id": "idle", "type": "session.status_idle", "stop_reason": {"type": "end_turn"}},
         )
         assert not await service.can_archive(await repo.get("ops.agent_sessions", "ses_1"), invalidated)
         call = await repo.get("ana.calls", "call")
@@ -618,8 +632,10 @@ async def test_unpublished_invalidated_event_can_end_when_idle_without_marker():
     async with httpx.AsyncClient() as http:
         service = SessionService(repo, opts, None, http=http)
         assert not await service.can_archive(session, event)
-        await service.process_event(
-            "ses_1", {"id": "idle", "type": "session.status_idle", "stop_reason": {"type": "end_turn"}}
+        await process_declared_event(
+            service,
+            "ses_1",
+            {"id": "idle", "type": "session.status_idle", "stop_reason": {"type": "end_turn"}},
         )
         session = await repo.get("ops.agent_sessions", "ses_1")
         assert await service.can_archive(session, event)
@@ -695,12 +711,15 @@ async def test_live_slow_and_recovered_tool_context_keep_session_provenance():
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(transport)) as http:
         live = SessionService(repo, opts, dispatch, http=http)
-        await live.process_event(
-            "ses_1", {"id": "live", "type": "agent.custom_tool_use", "name": "get_item", "input": {}}
+        await process_declared_event(
+            live, "ses_1", {"id": "live", "type": "agent.custom_tool_use", "name": "get_item", "input": {}}
         )
-        await live.process_event(
-            "ses_1", {"id": "slow", "type": "agent.custom_tool_use", "name": "get_market_truth", "input": {}}
+        await process_declared_event(
+            live,
+            "ses_1",
+            {"id": "slow", "type": "agent.custom_tool_use", "name": "get_market_truth", "input": {}},
         )
+        live_call = await repo.get("ops.tool_calls", "ses_1:live")
         await repo.put(
             "ops.tool_calls",
             "ses_1:recover",
@@ -708,14 +727,21 @@ async def test_live_slow_and_recovered_tool_context_keep_session_provenance():
                 "call_id": "recover",
                 "session_id": "ses_1",
                 "tool": "get_item",
+                "native_source_execution_id": live_call["native_source_execution_id"],
+                "native_declaration_id": "fixture-declaration-recover",
+                "native_turn_message_id": live_call["native_turn_message_id"],
+                "native_turn_retry_count": live_call["native_turn_retry_count"],
+                "input_sha256": sha256({}),
                 "input": {},
                 "arguments": {},
                 "status": "PENDING",
             },
         )
         recovered = SessionService(repo, opts, dispatch, http=http)
-        await recovered.process_event(
-            "ses_1", {"id": "recover", "type": "agent.custom_tool_use", "name": "get_item", "input": {}}
+        await process_declared_event(
+            recovered,
+            "ses_1",
+            {"id": "recover", "type": "agent.custom_tool_use", "name": "get_item", "input": {}},
         )
     assert len(contexts) == 3
     for context in contexts:
@@ -762,7 +788,7 @@ async def test_market_truth_wire_omits_internal_metadata_full_result_survives_re
     async with httpx.AsyncClient(transport=httpx.MockTransport(lost)) as http:
         first = SessionService(repo, opts, dispatch, http=http)
         with pytest.raises(httpx.ReadError):
-            await first.process_event("ses_1", event, 7)
+            await process_declared_event(first, "ses_1", event, 7)
     stored = await repo.get("ops.tool_calls", "ses_1:mt_call")
     assert stored["result"] == full and "measurement_metadata" in stored["result"]["market_truth"][0]
 
@@ -772,7 +798,7 @@ async def test_market_truth_wire_omits_internal_metadata_full_result_survives_re
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(accepted)) as http:
         recovered = SessionService(repo, opts, dispatch, http=http)
-        await recovered.process_event("ses_1", event, 7)
+        await process_declared_event(recovered, "ses_1", event, 7)
     assert dispatched == 1 and requests[0] == requests[1]
     wire = json.loads(requests[1]["events"][0]["content"][0]["text"])
     assert wire["market_truth"][0]["cutoff"] == truth["cutoff"]
@@ -911,7 +937,8 @@ async def test_session_acceptance_and_tools_keep_clock_and_source_precision_sepa
         service = SessionService(repo, opts, dispatch, http=http)
         service.start_stream = lambda sid: None
         session = await service.send_message({"kind": "NEW_ITEM", "item_id": "item"})
-        await service.process_event(
+        await process_declared_event(
+            service,
             "fresh",
             {
                 "id": "call",
@@ -995,13 +1022,13 @@ async def test_tool_execution_error_is_durable_returned_and_never_redispatched_a
     async with httpx.AsyncClient(transport=httpx.MockTransport(control)) as http:
         first = SessionService(repo, opts, dispatch, http=http)
         with pytest.raises(httpx.ConnectError):
-            await first.process_event("ses_1", event)
+            await process_declared_event(first, "ses_1", event)
         failed = await repo.get("ops.tool_calls", "ses_1:failure")
         assert failed["status"] == "ERROR" and not failed.get("returned_at")
         assert "failure" not in (await repo.get("ops.agent_sessions", "ses_1")).get("processed_events", [])
         resumed = SessionService(repo, opts, dispatch, http=http)
-        await resumed.process_event("ses_1", event)
-        await resumed.process_event("ses_1", event)
+        await process_declared_event(resumed, "ses_1", event)
+        await process_declared_event(resumed, "ses_1", event)
     stored = await repo.get("ops.tool_calls", "ses_1:failure")
     assert invocations == 1
     assert stored["status"] == "ERROR" and stored["returned_at"]

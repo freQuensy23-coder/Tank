@@ -5,6 +5,7 @@ import json
 
 import httpx
 import pytest
+from model_fixture import process_declared_event
 from test_agents_execution_barrier import config, idle
 from test_session_binding_concurrency import fixture_repo, seed
 
@@ -179,7 +180,8 @@ async def test_settled_turn_reminds_an_item_left_without_an_outcome_and_keeps_th
                 mapped = await repo.get("ops.agent_sessions", "s")
                 native = mapped["message_log"][0]["remote_event_id"]
                 call_id = "producer-" + str(sequence)
-                await service.process_event(
+                await process_declared_event(
+                    service,
                     "s",
                     {
                         "id": call_id,
@@ -238,7 +240,9 @@ async def test_settled_turn_reminds_an_item_left_without_an_outcome_and_keeps_th
 
             if outcome in {"DONE", "SKIPPED"}:
                 await finish_source()
-            await service.process_event("s", idle("first-end", accepted[-1] if accepted else "initial"))
+            await process_declared_event(
+                service, "s", idle("first-end", accepted[-1] if accepted else "initial")
+            )
             legacy = await repo.get("ops.agent_sessions", "s")
             legacy["message_log"][0]["turn_status"] = "DONE"
             legacy["native_execution_states"] = {
@@ -363,7 +367,7 @@ async def test_ignored_item_keeps_event_and_call_for_next_native_update(tmp_path
             service = SessionService(repo, config(), domain.dispatch, http=http)
 
             service.start_stream = lambda sid: None
-            await service.process_event("s", idle("ignored-end", "input"))
+            await process_declared_event(service, "s", idle("ignored-end", "input"))
             assert await service.finish_if_idle("s")
             assert not accepted
             settled = await repo.get("ops.agent_sessions", "s")
@@ -380,7 +384,8 @@ async def test_ignored_item_keeps_event_and_call_for_next_native_update(tmp_path
             updated = await service.send_message({"kind": "ITEM_ADDED", "event_id": eid, "item_id": "launch"})
             assert updated["session_id"] == "s" and len(updated["message_log"]) == 2
             next_input = updated["message_log"][1]["remote_event_id"]
-            await service.process_event(
+            await process_declared_event(
+                service,
                 "s",
                 {
                     "id": "real-update",
@@ -409,7 +414,7 @@ async def test_ignored_item_keeps_event_and_call_for_next_native_update(tmp_path
             )
             tool = await repo.get("ops.tool_calls", "s:real-update")
             assert tool["status"] == "DONE", tool["result"]
-            await service.process_event("s", idle("updated-end", tool["remote_event_id"]))
+            await process_declared_event(service, "s", idle("updated-end", tool["remote_event_id"]))
             assert await service.finish_if_idle("s")
             final = await repo.get("ops.agent_sessions", "s")
             assert final["status"] == "OPEN" and final["event_id"] == eid

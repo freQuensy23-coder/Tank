@@ -2,7 +2,7 @@ import json
 from pathlib import Path
 
 import pytest
-from model_fixture import audited_result, model_arguments
+from model_fixture import DeclaredNativeProtocol, audited_result, model_arguments
 
 from tank.replay import ReplayClock, ReplayError, evaluate_frozen, load_inputs, replay_bundle
 from tank.settings import Settings
@@ -662,7 +662,7 @@ async def test_fresh_replay_session_reruns_market_and_decision_code(
             }
 
     repo = MemoryRepository()
-    async with httpx.AsyncClient(transport=httpx.MockTransport(transport)) as http:
+    async with httpx.AsyncClient(transport=httpx.MockTransport(DeclaredNativeProtocol(transport))) as http:
         tools = EventToolService(
             repo,
             config,
@@ -1374,7 +1374,7 @@ async def test_fresh_multi_message_replay_advances_prefix_without_future_domain_
             return httpx.Response(200, json={"data": [{"id": accepted_id}]})
         raise AssertionError("Unexpected request")
 
-    async with httpx.AsyncClient(transport=httpx.MockTransport(transport)) as http:
+    async with httpx.AsyncClient(transport=httpx.MockTransport(DeclaredNativeProtocol(transport))) as http:
         tools = EventToolService(
             repo,
             config,
@@ -2025,7 +2025,7 @@ async def test_native_replay_captured_delivery_creates_fresh_call_and_reruns_exp
         raise AssertionError("Unexpected control-plane request")
 
     repo = MemoryRepository()
-    async with httpx.AsyncClient(transport=httpx.MockTransport(control)) as http:
+    async with httpx.AsyncClient(transport=httpx.MockTransport(DeclaredNativeProtocol(control))) as http:
         tools = EventToolService(
             repo,
             config,
@@ -2380,7 +2380,7 @@ async def test_native_condition_replay_uses_tool_cause_and_actual_watch_predicat
             return httpx.Response(200, json={"data": [{"id": accepted_id}]})
         raise AssertionError("Unexpected request")
 
-    async with httpx.AsyncClient(transport=httpx.MockTransport(control)) as http:
+    async with httpx.AsyncClient(transport=httpx.MockTransport(DeclaredNativeProtocol(control))) as http:
         tools = EventToolService(
             repo,
             config,
@@ -2857,7 +2857,7 @@ async def test_actual_reference_publication_retains_unsent_intent_and_ordinary_r
             return httpx.Response(200, json={"data": [{"id": identity}]})
         raise AssertionError("Unexpected native control-plane request")
 
-    async with httpx.AsyncClient(transport=httpx.MockTransport(transport)) as http:
+    async with httpx.AsyncClient(transport=httpx.MockTransport(DeclaredNativeProtocol(transport))) as http:
         from tank.fixture_reference import TrustedFixtureClock
 
         inputs = load_inputs(path, config)

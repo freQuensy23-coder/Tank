@@ -213,6 +213,33 @@ function groups(snapshot: ContinuationSnapshot, laneId: string): Group[] {
   snapshotDerivedState(snapshot).groups.set(laneId, groups);
   return groups;
 }
+export function declaredCustomToolUses(snapshot: ContinuationSnapshot, executionId: string): {
+  declarationId: string;
+  event: Extract<SessionEventView, { type: 'agent.custom_tool_use' }>;
+}[] {
+  const owner = snapshot.executions.find(row => row.id === executionId);
+  if (!owner || owner.interruptRequestedAt !== null || ['failed', 'cancelled'].includes(owner.state))
+    return [];
+  if (snapshot.invalidReason)
+    throw new ContinuationProtocolError(snapshot.invalidReason);
+  assertTrustedJournalOrder(snapshot);
+  const result: ReturnType<typeof declaredCustomToolUses> = [];
+  for (const group of groups(snapshot, owner.laneId)) {
+    if (group.declaration.executionId !== executionId || group.cancelled || group.closed)
+      continue;
+    const phase = committedPhases(snapshot).find(row => row.terminal === group.declaration)!;
+    const uses = pendingCustomUses(snapshot.orderedEvents.slice(phase.start, group.position + 1)
+      .filter(entry => entry.executionId === executionId));
+    for (const use of uses) {
+      if (use.event.type !== 'agent.custom_tool_use' || eventLaneId(use.event) !== owner.laneId ||
+          use.executionMetadata?.attemptId !== group.declaration.executionMetadata?.attemptId ||
+          use.executionMetadata?.generation !== group.declaration.executionMetadata?.generation)
+        throw new ContinuationProtocolError('Invalid custom-tool declaration owner');
+      result.push({ declarationId: group.declaration.event.id, event: { ...use.event, executionId } });
+    }
+  }
+  return result;
+}
 function committedResults(snapshot: ContinuationSnapshot): SentSessionEvent[] {
   const cached = snapshotDerivedState(snapshot).results;
   if (cached)

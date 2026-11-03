@@ -6,6 +6,7 @@ from contextlib import asynccontextmanager
 
 import httpx
 import pytest
+from model_fixture import process_declared_event
 from test_agents import seed_session, settings
 
 from tank.agents import sessions as session_module
@@ -95,12 +96,12 @@ async def test_rest_ack_timeout_retains_result_and_reuses_native_ack_body():
     async with httpx.AsyncClient(transport=httpx.MockTransport(acknowledge), timeout=None) as http:
         first = SessionService(repo, opts, dispatch, http=http)
         with pytest.raises(httpx.ReadTimeout):
-            await first.process_event("ses_1", event)
+            await process_declared_event(first, "ses_1", event)
         stored = await repo.get("ops.tool_calls", "ses_1:call")
         assert stored["status"] == "DONE" and not stored.get("returned_at")
         resumed = SessionService(repo, opts, dispatch, http=http)
-        await resumed.process_event("ses_1", event)
-        await resumed.process_event("ses_1", event)
+        await process_declared_event(resumed, "ses_1", event)
+        await process_declared_event(resumed, "ses_1", event)
     assert dispatched == ["fetch_page"]
     assert len(posts) == 2 and posts[0] == posts[1]
     stored = await repo.get("ops.tool_calls", "ses_1:call")
