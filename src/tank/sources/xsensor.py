@@ -16,7 +16,7 @@ import httpx
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from tank.logging import redact_text
-from tank.sources.x_diagnostics import sanitize
+from tank.sources.x_diagnostics import redact, sanitize
 from tank.util import iso
 
 RUN_TIMEOUT_S = 130
@@ -126,6 +126,7 @@ class Scan:
     failures: list[AccountFailure]
     gaps: list[str]
     failed: bool = False
+    error: str | None = None
 
 
 def scan(run: ApifyRun, accounts: list[str], cursors: Mapping[str, str], raw: bytes) -> Scan:
@@ -133,7 +134,7 @@ def scan(run: ApifyRun, accounts: list[str], cursors: Mapping[str, str], raw: by
 
     The actor returns every visible post each time. An account without a cursor is a
     baseline: its posts are not ingested, so there is no backfill. After that a post
-    is new when its ID is above the account's cursor. A failed run raises, so the
+    is new when its ID is above the account's cursor. A failed run retains errors and the
     cursors stay where they were. Every requested account must come back: one
     missing from the run, or read with posts but without a next cursor, is a failure.
     A degraded run that names no failure or gap is recorded as a run-level failure.
@@ -171,7 +172,14 @@ def scan(run: ApifyRun, accounts: list[str], cursors: Mapping[str, str], raw: by
         rows = []
     else:
         rows = [row for row in rows if str(row["author"]).lower() not in failed_handles]
-    return Scan(rows=rows, cursors=next_cursors, failures=failures, gaps=gaps, failed=run.health == "failed")
+    return Scan(
+        rows=rows,
+        cursors=next_cursors,
+        failures=failures,
+        gaps=gaps,
+        failed=run.health == "failed",
+        error=run.error if run.health == "failed" else None,
+    )
 
 
 class XSensor:
@@ -201,6 +209,13 @@ class XSensor:
         budget = [12_000_000]
         run = run.model_copy(
             update={
+                "error": (
+                    "PUBLIC_SOURCE_UNAVAILABLE"
+                    if redact(run.error, self.token) == "PUBLIC_SOURCE_UNAVAILABLE"
+                    else "RUN_FAILED"
+                )
+                if run.health == "failed"
+                else run.error,
                 "accounts": [
                     account.model_copy(
                         update={"diagnostics": sanitize(account.diagnostics, self.token, budget)}

@@ -1,5 +1,6 @@
 import base64
 import json
+from datetime import UTC, datetime, timedelta
 from email import policy
 from email.parser import BytesParser
 from types import SimpleNamespace
@@ -7,7 +8,7 @@ from types import SimpleNamespace
 import httpx
 import pytest
 from test_sources import settings as source_settings
-from test_xsensor import URL, run
+from test_xsensor import URL, account, post, run
 
 from tank.delivery import DeliveryError, DeliveryService
 from tank.ops_entry_errors import report_entry_errors
@@ -125,7 +126,7 @@ def test_sanitization_removes_echoed_token_cookies_and_auth_headers(encoding):
     }
 
 
-async def test_all_failed_accounts_reach_checkpoint_ops_and_preserve_cursor(tmp_path):
+async def test_all_failed_accounts_reach_checkpoint_ops_and_preserve_cursor(tmp_path, monkeypatch):
     repo = MemoryRepository()
     config = source_settings(
         tmp_path, [{"source_id": "S29", "name": "X", "feeds": [{"kind": "x", "url": URL}]}]
@@ -133,14 +134,48 @@ async def test_all_failed_accounts_reach_checkpoint_ops_and_preserve_cursor(tmp_
     config.apify_api_token = "apify-secret"
     config.ops_progress_enabled = True
     evidence = diagnostics("full upstream diagnostic body")
+    now = datetime(2026, 10, 24, 12, tzinfo=UTC)
+    monkeypatch.setattr("tank.sources.utcnow", lambda: now)
+    broken = failed_run(evidence)
+    broken["posts"] = [post("999", "alice")]
+    responses = [
+        broken,
+        run([post("91", "alice")], [account("alice")], {"alice": "91"}),
+    ]
     async with httpx.AsyncClient(
-        transport=httpx.MockTransport(lambda request: httpx.Response(201, json=failed_run(evidence)))
+        transport=httpx.MockTransport(lambda request: httpx.Response(201, json=responses.pop(0)))
     ) as http:
         service = SourceService(repo, config, http=http)
         service.accounts = {"alice": {"handle": "alice", "role": "OTHER", "entity_id": "alice"}}
-        await repo.put("ops.source_checkpoints", "S29:0", {"account_cursors": {"alice": "90"}})
+        await repo.put(
+            "ops.source_checkpoints",
+            "S29:0",
+            {"account_cursors": {"alice": "90"}, "last_success_at": "2026-10-24T11:59:00Z"},
+        )
         result = await service.poll_once("S29")
-    state = await repo.get("ops.source_checkpoints", "S29:0")
+        state = await repo.get("ops.source_checkpoints", "S29:0")
+        assert state["acquisition_error"] == state["error"] == "PUBLIC_SOURCE_UNAVAILABLE"
+        assert state["reads"] == {"ok": 0, "failed": 1}
+        assert state["recent_reads"] == [["2026-10-24T12:00:00Z", False]]
+        assert state["last_failure_at"] == "2026-10-24T12:00:00Z"
+        assert state["last_success_at"] == "2026-10-24T11:59:00Z"
+        assert not await repo.list("ingest.source_items")
+        now += timedelta(minutes=1)
+        recovered = await service.poll_once("S29")
+        healthy = await repo.get("ops.source_checkpoints", "S29:0")
+        assert recovered["status"] == "HEALTHY" and recovered["items"] == 1
+        assert "acquisition_error" not in healthy and healthy["error"] is None
+        assert healthy["entry_errors"] == [] and healthy["history_gap"] == []
+        assert healthy["account_cursors"] == {"alice": "91"}
+        assert healthy["reads"] == {"ok": 1, "failed": 1}
+        assert healthy["recent_reads"] == [
+            ["2026-10-24T12:00:00Z", False],
+            ["2026-10-24T12:01:00Z", True],
+        ]
+        assert healthy["last_failure_at"] == "2026-10-24T12:00:00Z"
+        assert healthy["last_success_at"] == "2026-10-24T12:01:00Z"
+        [item] = await repo.list("ingest.source_items")
+        assert item["external_id"] == "91"
     assert result["status"] == "DEGRADED" and result["items"] == 0
     assert state["account_cursors"] == {"alice": "90"}
     assert (
@@ -152,6 +187,60 @@ async def test_all_failed_accounts_reach_checkpoint_ops_and_preserve_cursor(tmp_
     assert len(notice["document_manifest"]) == 4
     [job] = await repo.list("ops.jobs", filters={"type": "DELIVER"})
     assert job["payload"] == {"notice_id": notice["notice_id"], "channel": "telegram:ops"}
+    sent = []
+
+    def send(request):
+        sent.append(request)
+        return httpx.Response(200, json={"ok": True, "result": {"message_id": len(sent)}})
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(send)) as http:
+        await DeliveryService(repo, telegram_settings(), http=http).deliver(job["payload"])
+    assert len(sent) == 5 and sent[0].url.path.endswith("sendMessage")
+    uploads = [multipart(request)["document"][1] for request in sent[1:]]
+    assert uploads[:3] == [b"full upstream diagnostic body"] * 3
+    assert json.loads(uploads[3])["attemptCount"] == 3
+    receipts = await repo.list("out.deliveries", filters={"status": "SENT", "method": "sendDocument"})
+    assert len(receipts) == 4
+
+
+@pytest.mark.parametrize(
+    "error,token",
+    [
+        (None, "apify-secret"),
+        ("apify-secret", "apify-secret"),
+        ("PUBLIC_SOURCE_UNAVAILABLE", "PUBLIC_SOURCE_UNAVAILABLE"),
+        ("PUBLIC_SOURCE_UNAVAILABLE\x00", "apify-secret"),
+        ("Authorization: Bearer credential\x00" + "x" * 9000, "apify-secret"),
+    ],
+)
+async def test_failed_run_checkpoint_keeps_only_safe_run_error_codes(tmp_path, error, token):
+    repo = MemoryRepository()
+    config = source_settings(
+        tmp_path, [{"source_id": "S29", "name": "X", "feeds": [{"kind": "x", "url": URL}]}]
+    )
+    config.apify_api_token = token
+    broken = failed_run(diagnostics())
+    broken["error"] = error
+    broken["accounts"] = [{"handle": "alice", "status": "ok", "posts": 0}]
+    async with httpx.AsyncClient(
+        transport=httpx.MockTransport(
+            lambda request: httpx.Response(201, content=json.dumps(broken).encode())
+        )
+    ) as http:
+        service = SourceService(repo, config, http=http)
+        service.accounts = {"alice": {"handle": "alice", "role": "OTHER", "entity_id": "alice"}}
+        await repo.put("ops.source_checkpoints", "S29:0", {"account_cursors": {"alice": "90"}})
+        result = await service.poll_once("S29")
+    state = await repo.get("ops.source_checkpoints", "S29:0")
+    assert result["status"] == "DEGRADED" and result["items"] == 0
+    assert state["acquisition_error"] == state["error"] == "RUN_FAILED"
+    assert state["account_cursors"] == {"alice": "90"}
+    assert state["reads"] == {"ok": 0, "failed": 1}
+    assert "last_success_at" not in state
+    assert state["entry_errors"] == [{"account": None, "reason": "RUN_FAILED", "diagnostics": None}]
+    serialized = json.dumps(state, ensure_ascii=False).encode("utf-8")
+    assert token.encode() not in serialized and b"credential" not in serialized
+    assert b"\\u0000" not in serialized and b"\x00" not in serialized
 
 
 async def test_same_body_deduplicates_despite_new_attempt_time_and_request_id_but_changed_body_is_sent():

@@ -321,6 +321,7 @@ class SourcePoller:
                 entry_errors=[asdict(failure) for failure in result.failures],
                 history_gap=result.gaps,
                 run_failed=result.failed,
+                acquisition_error=result.error,
             )
             return result.rows, state, kind
         payload, fetched = await svc.fetch(feed, key, on_start=lambda: self.mark_request_start(key))
@@ -623,7 +624,10 @@ class SourcePoller:
                     ):
                         if field in acquired:
                             current[field] = acquired[field]
-                    current.pop("acquisition_error", None)
+                    if acquired.get("run_failed"):
+                        current["acquisition_error"] = acquired["acquisition_error"]
+                    else:
+                        current.pop("acquisition_error", None)
                     current.pop("instruments", None)
                     if not any(batch["rows"] for batch in current.get("pending_batches", [])):
                         current["article_errors"] = {}
@@ -637,9 +641,10 @@ class SourcePoller:
                         if current.get("article_errors")
                         or current.get("entry_errors")
                         or current.get("history_gap")
+                        or current.get("acquisition_error")
                         or acquired.get("scan_status") == "GAP_LIMIT"
                         else "HEALTHY",
-                        error=None,
+                        error=current.get("acquisition_error"),
                     )
                     if rows is None:
                         current["last_success_at"] = self.stamp()
@@ -936,9 +941,11 @@ class SourcePoller:
                         or current.get("acquisition_error")
                         or current.get("scan_status") == "GAP_LIMIT"
                         else "HEALTHY",
-                        error="X_HISTORY_GAP_LIMIT" if current.get("scan_status") == "GAP_LIMIT" else None,
-                        last_success_at=self.stamp(),
+                        error=current.get("acquisition_error")
+                        or ("X_HISTORY_GAP_LIMIT" if current.get("scan_status") == "GAP_LIMIT" else None),
                     )
+                    if not current.get("acquisition_error"):
+                        current["last_success_at"] = self.stamp()
                 await self.save(key, current)
             return {"items": count, "errors": errors}
 
