@@ -31,6 +31,7 @@ async def test_saved_identity_restores_without_post_and_releases_completed_slot(
             "call_id": "pending",
             "tool": "get_item",
             "arguments": {},
+            "input": {},
             "status": "PENDING",
             "native_turn_message_id": "root",
             "native_turn_retry_count": attempt,
@@ -156,6 +157,11 @@ async def test_legacy_committed_retry_replays_only_exact_saved_retry(backend, po
             opts.openma_url = url
             async with httpx.AsyncClient() as client:
                 service = SessionService(repo, opts, None, http=client)
+                if not missing:
+                    saved = await repo.get("ops.agent_sessions", "s")
+                    assert saved is not None
+                    assert saved["message_log"][0]["body"] == body
+                    body = saved["message_log"][0]["body"]
                 await service.request(
                     "POST", "sessions/s/events", json={"events": [body]}, idem="turn-retry:s:root"
                 )
@@ -175,3 +181,22 @@ async def test_legacy_committed_retry_replays_only_exact_saved_retry(backend, po
                     await service.recover_outbound_inputs("s")
                     assert len(requests) == 2
                 assert effects == [body]
+
+
+@pytest.mark.parametrize("turn_status", ["PENDING", "RUNNING"])
+async def test_failed_session_does_not_recover_separate_legacy_missing_identity(turn_status):
+    repo = MemoryRepository()
+    session = await seed(repo)
+    session["status"] = "FAILED"
+    session["active_message_id"] = None
+    session["message_log"][0]["turn_status"] = "FAILED"
+    session["message_log"].append(message("later", None, status=turn_status))
+    await repo.put("ops.agent_sessions", "s", session)
+
+    def refuse(request):
+        pytest.fail(f"Unexpected HTTP request: {request.method}")
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(refuse)) as client:
+        service = SessionService(repo, settings(), None, http=client)
+        await service.recover_outbound_inputs("s")
+        assert await repo.get("ops.agent_sessions", "s") == session

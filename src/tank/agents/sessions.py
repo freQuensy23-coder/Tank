@@ -780,7 +780,7 @@ class SessionService:
             or intent.get("native_input_attempts", {}) != {}
             or type(intent.get("retry_count", 0)) is not int
             or intent.get("retry_count", 0) != 0
-            or initial_status not in {"OPEN", "FAILED"}
+            or initial_status != "OPEN"
             or session.get("archived_at")
             or remote.get("status") == "terminated"
             or remote.get("archived_at")
@@ -923,16 +923,10 @@ class SessionService:
                 owners.append((message["message_id"], attempt))
         async for call in self.repo.iter_all("ops.tool_calls", filters={"session_id": session["session_id"]}):
             if call.get("remote_event_id") == execution_id:
-                owners.append(
-                    (call.get("native_turn_message_id"), call.get("native_turn_retry_count", 0))
-                )
+                owners.append((call.get("native_turn_message_id"), call.get("native_turn_retry_count", 0)))
         if len(owners) == 1:
             owner, attempt = owners[0]
-            if (
-                type(attempt) is int
-                and attempt >= 0
-                and any(row["message_id"] == owner for row in messages)
-            ):
+            if type(attempt) is int and attempt >= 0 and any(row["message_id"] == owner for row in messages):
                 return owner, attempt
         return None
 

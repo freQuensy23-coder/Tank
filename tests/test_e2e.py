@@ -944,6 +944,10 @@ async def test_runtime_autonomous_source_to_telegram(tmp_path, monkeypatch, capl
     wire = []
     state = {}
     stage = 0
+    accepted_inputs = {}
+    execution_states = {}
+    terminal_history = []
+    current_input = None
 
     class SSE(httpx.AsyncByteStream):
         async def __aiter__(self):
@@ -967,14 +971,16 @@ async def test_runtime_autonomous_source_to_telegram(tmp_path, monkeypatch, capl
         body = {
             "id": f"autonomous-tool-{stage}",
             "type": "agent.custom_tool_use",
+            "execution_id": current_input,
             "name": name,
             "input": arguments,
         }
+        execution_states[current_input] = "COMPLETED"
         wire.append(body)
         await queue.put({"seq": stage, "body": body})
 
     async def transport(request):
-        nonlocal stage
+        nonlocal stage, current_input
         path = request.url.path
         if request.url.host == "synthetic.invalid":
             rss = f'<rss version="2.0"><channel><title>Synthetic</title><item><guid>autonomous-input</guid><title>Autonomous synthetic listing</title><description>{text}</description><pubDate>{timestamp}</pubDate><link>https://synthetic.invalid/autonomous-input</link></item></channel></rss>'
@@ -997,11 +1003,35 @@ async def test_runtime_autonomous_source_to_telegram(tmp_path, monkeypatch, capl
             )
         if request.method == "GET" and path.endswith("/sessions/autonomous-session"):
             return httpx.Response(200, json=_native_session("autonomous-session"))
+        if request.method == "GET" and path == "/v1/sessions/autonomous-session/executions":
+            return httpx.Response(
+                200,
+                json={
+                    "data": [
+                        {
+                            "execution_id": identity,
+                            "state": execution_states.get(identity, "UNKNOWN"),
+                            "settled_outcome": "COMPLETED"
+                            if execution_states.get(identity) == "COMPLETED"
+                            else None,
+                        }
+                        for identity in request.url.params.get_list("ids[]")
+                    ]
+                },
+            )
         if path.endswith("/events/stream"):
             return httpx.Response(200, headers={"content-type": "text/event-stream"}, stream=SSE())
         if path.endswith("/events"):
             if request.method == "GET":
-                return httpx.Response(200, json={"data": []})
+                return httpx.Response(200, json={"data": terminal_history})
+            acceptance = _native_input_acceptance(request)
+            key = request.headers["Idempotency-Key"]
+            if key in accepted_inputs:
+                assert accepted_inputs[key] == request.content
+                return httpx.Response(200, json=acceptance)
+            accepted_inputs[key] = request.content
+            current_input = acceptance["data"][0]["id"]
+            execution_states[current_input] = "RUNNING"
             event = json.loads(request.content)["events"][0]
             if event["type"] == "user.message":
                 payload = json.loads(event["content"][0]["text"])
@@ -1042,6 +1072,7 @@ async def test_runtime_autonomous_source_to_telegram(tmp_path, monkeypatch, capl
                     },
                 )
             elif event["type"] == "user.custom_tool_result":
+                assert event["custom_tool_use_id"] == f"autonomous-tool-{stage}"
                 result = json.loads(event["content"][0]["text"])
                 if stage == 1:
                     assert "event_id" not in result and "claim_id" not in json.dumps(result)
@@ -1127,17 +1158,21 @@ async def test_runtime_autonomous_source_to_telegram(tmp_path, monkeypatch, capl
                     )
                 elif stage == 6:
                     assert result["published"], result
+                    execution_states[current_input] = "COMPLETED"
+                    terminal = {
+                        "id": "autonomous-end-turn",
+                        "type": "session.status_idle",
+                        "execution_id": current_input,
+                        "stop_reason": {"type": "end_turn"},
+                    }
+                    terminal_history.append(terminal)
                     await queue.put(
                         {
                             "seq": 7,
-                            "body": {
-                                "id": "autonomous-end-turn",
-                                "type": "session.status_idle",
-                                "stop_reason": {"type": "end_turn"},
-                            },
+                            "body": terminal,
                         }
                     )
-            return httpx.Response(200, json=_native_input_acceptance(request))
+            return httpx.Response(200, json=acceptance)
         if request.url.host == "api.telegram.org":
             if request.url.path.endswith("/getUpdates"):
                 return httpx.Response(200, json={"ok": True, "result": []})
