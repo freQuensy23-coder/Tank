@@ -1252,8 +1252,7 @@ class SessionService:
         AGENT_INCOMPLETE, which Ops shows as a processing error and tank reanalyse can queue again;
         it is never shown as a rejection. A replay sends the original inputs only and no reminder:
         its budget is zero, so a replayed turn without an outcome fails the item at once and the
-        replay reports it as incomplete. When every checked item has its outcome, the session's
-        recorded event is checked for a class (remind_unassessed).
+        replay reports it as incomplete. Assessment obligations are reconciled independently.
         """
         sid = session["session_id"]
         limit = self.completion_reminder_limit()
@@ -1388,15 +1387,34 @@ class SessionService:
         if source.get("reanalysis_attempt"):
             key += f":reanalysis:{source['reanalysis_attempt']}"
         jobs = await self.repo.list("ops.jobs", filters={"type": "AGENT_MESSAGE", "idem_key": key}, limit=1)
-        expiry = None
-        if jobs:
-            job = jobs[0]
-            if job.get("status") in {"FAILED", "EXPIRED"}:
-                return
-            if job.get("expires_at"):
-                expiry = propagate_timestamp(job, "expires_at")
-                if parse_time(expiry.value) <= utcnow():
-                    return
+        source_identity = {key: value for key, value in source.items() if key != "session_id"}
+        if jobs and {
+            key: value for key, value in jobs[0]["payload"].items() if key != "session_id"
+        } != source_identity:
+            jobs = []
+        if not jobs and source.get("kind") == "ITEM_ADDED" and source.get("event_id"):
+            async for observation in self.repo.iter_all(
+                "evt.event_observations",
+                filters={"event_id": source["event_id"], "item_id": source["item_id"]},
+            ):
+                candidate = await self.repo.list(
+                    "ops.jobs",
+                    filters={"type": "AGENT_MESSAGE", "idem_key": "merge:" + observation["obs_id"]},
+                    limit=1,
+                )
+                if candidate and {
+                    key: value for key, value in candidate[0]["payload"].items() if key != "session_id"
+                } == source_identity:
+                    jobs = candidate
+                    break
+        if not jobs:
+            return
+        job = jobs[0]
+        if job.get("status") in {"FAILED", "EXPIRED"} or not job.get("expires_at"):
+            return
+        expiry = propagate_timestamp(job, "expires_at")
+        if parse_time(expiry.value) <= utcnow():
+            return
         await self.remind_unassessed(session, message, self.completion_reminder_limit(), expires_at=expiry)
 
     async def remind_unassessed(self, session, message, limit, *, expires_at=None):

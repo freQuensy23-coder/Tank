@@ -11,8 +11,10 @@ from test_agents_execution_barrier import idle
 from test_session_admission import fixture_repo
 from test_session_binding_concurrency import seed
 
+from tank.agents.context import CONTEXT_VERSION
 from tank.agents.sessions import AdmissionDeferred, SessionService
 from tank.event_tools import EventToolService
+from tank.ops_cards import snapshot
 from tank.settings import Settings
 from tank.util import iso, utcnow
 
@@ -72,6 +74,7 @@ async def cached_source(repo, service, domain):
     session = await repo.get("ops.agent_sessions", "s")
     session["config_version"] = "test"
     session["code_version"] = "test"
+    session["model_context_version"] = CONTEXT_VERSION
     session["messages"] = ["m"]
     session["message_log"][0].update(turn_status="DONE", completion_checked=True)
     session["native_execution_states"] = {
@@ -152,7 +155,21 @@ async def test_cached_checked_source_reconciles_once_across_controllers_and_rest
 
 
 @pytest.mark.parametrize("backend", BACKENDS)
-@pytest.mark.parametrize("fence", ["assessed", "merged", "closed", "failed", "ended", "archived", "terminated", "expired", "reanalysed"])
+@pytest.mark.parametrize(
+    "fence",
+    [
+        "assessed",
+        "merged",
+        "closed",
+        "failed",
+        "ended",
+        "archived",
+        "terminated",
+        "expired",
+        "missing_job",
+        "reanalysed",
+    ],
+)
 async def test_fresh_state_before_obligation_commit_prevents_reminder(
     backend, fence, tmp_path, postgres_template, monkeypatch
 ):
@@ -194,6 +211,8 @@ async def test_fresh_state_before_obligation_commit_prevents_reminder(
         elif fence == "expired":
             job.update(status="EXPIRED", expires_at=iso(utcnow() - timedelta(seconds=1)))
             await repo.put("ops.jobs", job["job_id"], job)
+        elif fence == "missing_job":
+            await repo.delete("ops.jobs", job["job_id"])
         elif fence == "reanalysed":
             item = await repo.get("ingest.source_items", "i")
             item.update(reanalysis_attempt=1, extraction_status="PENDING")
@@ -210,7 +229,7 @@ async def test_fresh_state_before_obligation_commit_prevents_reminder(
         current = await repo.get("ops.agent_sessions", "s")
         assert current.get("completion_reminders_sent", 0) == 0
         assert await repo.get("evt.events", event["event_id"]) == event
-        assert await repo.get("ops.jobs", job["job_id"]) == job
+        assert await repo.get("ops.jobs", job["job_id"]) == (None if fence == "missing_job" else job)
 
 
 @pytest.mark.parametrize("backend", BACKENDS)
@@ -229,7 +248,9 @@ async def test_new_committed_refused_assessment_turn_spends_one_next_bounded_att
             job = (await reminders(repo))[-1]
             assert job["payload"]["attempt"] == attempt
             with pytest.raises(ValueError):
-                await domain.dispatch("set_assessment", {"assessment": {}}, {"session_id": "s"})
+                await domain.dispatch(
+                    "set_assessment", {"event_id": original["event_id"], "assessment": {}}, {"session_id": "s"}
+                )
             current = await repo.get("ops.agent_sessions", "s")
             identity = "reminder-input-" + str(attempt)
             current["message_log"].append(
@@ -242,7 +263,9 @@ async def test_new_committed_refused_assessment_turn_spends_one_next_bounded_att
                 }
             )
             current["native_execution_states"][identity] = {
-                "execution_id": identity, "state": "COMPLETED", "settled_outcome": "COMPLETED"
+                "execution_id": identity,
+                "state": "COMPLETED",
+                "settled_outcome": "COMPLETED",
             }
             await repo.put("ops.agent_sessions", "s", current)
             await service.process_event("s", idle("reminder-end-" + str(attempt), identity))
@@ -289,6 +312,50 @@ async def test_obligation_enqueue_and_receipt_roll_back_together(
         assert (await repo.get("ops.agent_sessions", "s"))["completion_reminders_sent"] == 1
 
 
+@pytest.mark.parametrize("backend", BACKENDS)
+@pytest.mark.parametrize("expired", [False, True])
+async def test_merge_handoff_keeps_its_deadline_and_session_event_not_display_event(
+    backend, expired, tmp_path, postgres_template
+):
+    async with fixture_repo(backend, postgres_template) as repo, peer(backend, native_handler) as (http, url):
+        config = settings()
+        config.openma_url = url
+        domain = EventToolService(repo, Settings(data_dir=tmp_path), None, None)
+        service = SessionService(repo, config, domain.dispatch, http=http)
+        original, _ = await cached_source(repo, service, domain)
+        owner = original["event_id"]
+        source = {"kind": "ITEM_ADDED", "item_id": "i", "event_id": owner, "session_id": "s"}
+        original["message_log"][0]["payload"] = source
+        await repo.put("ops.agent_sessions", "s", original)
+        observations = await repo.list("evt.event_observations", filters={"item_id": "i", "event_id": owner})
+        [observation] = observations
+        expiry = iso(utcnow() + timedelta(hours=-1 if expired else 1))
+        merged = await repo.enqueue("AGENT_MESSAGE", source, "merge:" + observation["obs_id"], expires_at=expiry)
+        event = await repo.get("evt.events", owner)
+        await repo.put("evt.events", "foreign-display", dict(event, event_id="foreign-display"))
+        await repo.put(
+            "evt.event_observations",
+            "zzz-display",
+            dict(observation, obs_id="zzz-display", event_id="foreign-display"),
+        )
+        displayed = await snapshot(repo, "i")
+        assert displayed is not None and displayed["event"]["event_id"] == "foreign-display"
+        assert (await service.settled_turn("s"))["complete"]
+        jobs = await reminders(repo)
+        current = await repo.get("ops.agent_sessions", "s")
+        assert current["assessment_obligation_verified"]["event_id"] == owner
+        assert current.get("completion_reminders_sent", 0) == (0 if expired else 1)
+        if expired:
+            assert not jobs
+        else:
+            [job] = jobs
+            assert job["payload"]["event_id"] == owner
+            assert job["payload"]["reminded_kind"] == "ITEM_ADDED"
+            assert job["expires_at"] == merged["expires_at"]
+        assert await repo.get("evt.events", owner) == event
+        assert (await repo.get("evt.events", "foreign-display"))["current_ems_id"] is None
+
+
 @pytest.mark.integration
 @pytest.mark.postgres
 async def test_real_http_refused_tool_ack_barrier_then_obligation_and_other_job_admission(
@@ -311,20 +378,36 @@ async def test_real_http_refused_tool_ack_barrier_then_obligation_and_other_job_
         config = settings()
         config.openma_url = url
         load_config = config.load_config
-        config.load_config = lambda name: {"max_running_sessions": 1} if name == "openma" else load_config(name)
+        config.load_config = lambda name: (
+            {"max_running_sessions": 1} if name == "openma" else load_config(name)
+        )
         domain = EventToolService(repo, Settings(data_dir=tmp_path), None, None)
         service = SessionService(repo, config, domain.dispatch, http=http)
         original, _ = await cached_source(repo, service, domain)
         current = await repo.get("ops.agent_sessions", "s")
         current.update(runtime_status="RUNNING", active_message_id="m")
         await repo.put("ops.agent_sessions", "s", current)
-        waiting = await repo.enqueue("SCOUT_REVIEW", {"kind": "SCOUT_REVIEW", "proposal_id": "other"}, "other", priority=0)
-        tool = asyncio.create_task(service.process_event("s", {
-            "id": "refused-assessment", "type": "agent.custom_tool_use", "execution_id": "input",
-            "name": "set_assessment", "input": {"assessment": {}},
-        }))
+        waiting = await repo.enqueue(
+            "SCOUT_REVIEW", {"kind": "SCOUT_REVIEW", "proposal_id": "other"}, "other", priority=0
+        )
+        tool = asyncio.create_task(
+            service.process_event(
+                "s",
+                {
+                    "id": "refused-assessment",
+                    "type": "agent.custom_tool_use",
+                    "execution_id": "input",
+                    "name": "set_assessment",
+                    "input": {"assessment": {}},
+                },
+            )
+        )
+        acknowledgement = asyncio.create_task(ack_waiting.wait())
         try:
-            await asyncio.wait_for(ack_waiting.wait(), 3)
+            done, _ = await asyncio.wait({tool, acknowledgement}, timeout=3, return_when=asyncio.FIRST_COMPLETED)
+            if tool in done:
+                await tool
+            assert acknowledgement in done
             call = await repo.get("ops.tool_calls", "s:refused-assessment")
             assert call["status"] == "REFUSED" and not call.get("returned_at")
             assert call["result"]["error"]["reason"]
@@ -352,4 +435,5 @@ async def test_real_http_refused_tool_ack_barrier_then_obligation_and_other_job_
         finally:
             release_ack.set()
             tool.cancel()
-            await asyncio.gather(tool, return_exceptions=True)
+            acknowledgement.cancel()
+            await asyncio.gather(tool, acknowledgement, return_exceptions=True)
