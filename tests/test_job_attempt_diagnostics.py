@@ -272,18 +272,19 @@ async def test_typed_metadata_rejects_secret_and_invalid_correlations(diagnostic
 @pytest.mark.parametrize(
     "credential", ["foundry_api_key", "tank_db_password", "oma_db_password", "clickhouse_url"]
 )
-@pytest.mark.parametrize("uppercase", [False, True], ids=["exact", "normalized"])
+@pytest.mark.parametrize("spelling", ["exact", "normalized", "canonical-secret"])
 async def test_worker_rejects_configured_credential_echo_after_jsonb(
-    diagnostic_repo, producer, credential, uppercase
+    diagnostic_repo, producer, credential, spelling
 ):
     from tank.clickhouse_market import ClickHouse
 
     repo = diagnostic_repo
     job = await repo.enqueue("RUN_MARKET_TRUTH", {}, "diagnostic-credential-echo", max_attempts=1)
     runtime = make_runtime(repo)
-    settings_values = {credential: REQUEST_ID}
+    configured_id = REQUEST_ID.upper() if spelling == "canonical-secret" else REQUEST_ID
+    settings_values = {credential: configured_id}
     if credential == "clickhouse_url":
-        settings_values[credential] = f"http://default:{REQUEST_ID}@example.test"
+        settings_values[credential] = f"http://default:{configured_id}@example.test"
     runtime.settings = Settings(
         _env_file=None,
         database_url="postgresql://tank:FAKE-pg-independent@postgres/tank_test_diagnostics",
@@ -293,7 +294,7 @@ async def test_worker_rejects_configured_credential_echo_after_jsonb(
         build_sha="c" * 40,
         **settings_values,
     )
-    echoed = REQUEST_ID.upper() if uppercase else REQUEST_ID
+    echoed = REQUEST_ID.upper() if spelling == "normalized" else REQUEST_ID
     secret_header = "x-request-id" if producer == "http" else "x-clickhouse-query-id"
     safe_header = "x-clickhouse-query-id" if producer == "http" else "x-request-id"
     safe_key = "query_id" if producer == "http" else "request_id"
@@ -301,7 +302,9 @@ async def test_worker_rejects_configured_credential_echo_after_jsonb(
     def transport(request):
         if producer == "clickhouse":
             assert request.content == b"SELECT 1 FORMAT JSONEachRow"
-            expected_password = REQUEST_ID if credential in {"tank_db_password", "clickhouse_url"} else ""
+            expected_password = (
+                configured_id if credential in {"tank_db_password", "clickhouse_url"} else ""
+            )
             assert request.headers["x-clickhouse-key"] == expected_password
         return httpx.Response(
             503,
@@ -345,7 +348,7 @@ async def test_worker_rejects_configured_credential_echo_after_jsonb(
         {"class": f"{error_module}.{error_class}", "http_status": 503, safe_key: QUERY_ID}
     ]
     serialized = json.dumps(receipts)
-    assert REQUEST_ID not in serialized and echoed not in serialized
+    assert REQUEST_ID not in serialized and echoed not in serialized and configured_id not in serialized
     assert SECRET not in serialized and "FAKE-" not in serialized
     assert await repo.claim_job() is None
 
