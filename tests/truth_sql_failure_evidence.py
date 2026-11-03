@@ -64,7 +64,7 @@ def failure_receipt(error, nodeid, query):
     code = re.search(r"\bCode: (\d+)\b", message)
     message = re.split(r"(?i)\b(?:while processing|in scope|stack trace)\b", message)[0]
     diagnostics = [phrase for phrase in _SAFE_PHRASES if phrase in message]
-    identifiers = set(re.findall(r"\b(?:spot|deriv|rel|lq)_[A-Za-z0-9_]+\b", query))
+    identifiers = set(re.findall(r"\b(?:spot|deriv|rel|lq|sup|res)_[A-Za-z0-9_]+\b", query))
     diagnostics.extend(sorted(identifiers.intersection(re.findall(r"\b[A-Za-z_][A-Za-z0-9_]*\b", message))))
     diagnostics.extend(re.findall(r"\bposition [0-9]{1,8}\b", message))
     safe = " | ".join(diagnostics)[:512] or "[redacted]"

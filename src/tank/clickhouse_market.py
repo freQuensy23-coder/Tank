@@ -138,14 +138,23 @@ class ClickHouse:
             "use_skip_indexes_if_final": "0",
             "max_query_size": str(256 << 20),
         }
-        for name, (value, _) in (params or {}).items():
-            request["param_" + name] = value
-        response = await self.http.post(
-            self.base,
-            params=request,
-            content=(query if self.database == "mkt" else re.sub(r"\bmkt\b", self.database, query)).encode(),
-            headers={"X-ClickHouse-User": self.user, "X-ClickHouse-Key": self.password},
-        )
+        parameters = {
+            "param_" + name: "" if value is None else str(value).lower() if isinstance(value, bool) else str(value)
+            for name, (value, _) in (params or {}).items()
+        }
+        query = query if self.database == "mkt" else re.sub(r"\bmkt\b", self.database, query)
+        headers = {"X-ClickHouse-User": self.user, "X-ClickHouse-Key": self.password}
+        if sum(len(name) + len(value) + 2 for name, value in parameters.items()) > 4096:
+            response = await self.http.post(
+                self.base,
+                params=request,
+                files=[("query", (None, query.encode()))]
+                + [(name, (None, value.encode())) for name, value in parameters.items()],
+                headers=headers,
+            )
+        else:
+            request.update(parameters)
+            response = await self.http.post(self.base, params=request, content=query.encode(), headers=headers)
         if response.status_code != 200:
             raise RuntimeError(f"ClickHouse {response.status_code}: {response.text[:500]}")
         return response.content
