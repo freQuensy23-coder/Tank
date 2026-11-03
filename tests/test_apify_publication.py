@@ -106,10 +106,7 @@ def test_worker_publication_transaction(tmp_path, mode):
             else:
                 tag = next(iter(body["taggedBuilds"]))
                 target = body["taggedBuilds"][tag]["buildId"]
-                if (
-                    mode in {"rollback_refused", "post_finish_term", "post_finish_crash"}
-                    and target == "old"
-                ):
+                if mode in {"rollback_refused", "post_finish_term", "post_finish_crash"} and target == "old":
                     self.send_error(503)
                     return
                 state[tag] = target
