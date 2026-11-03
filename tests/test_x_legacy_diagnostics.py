@@ -13,7 +13,7 @@ from test_x_diagnostics import multipart, telegram_settings
 from tank.delivery import DeliveryError, DeliveryService
 from tank.settings import Settings
 from tank.sources import x_diagnostic_manifest
-from tank.sources.x_diagnostics import BODY_LIMIT, documents
+from tank.sources.x_diagnostics import BODY_LIMIT, documents, sanitize
 from tank.storage import MemoryRepository
 
 BODY = b"Public fixture body.\n"
@@ -54,9 +54,15 @@ def retained_manifest(notice):
             response = attempt.get("response")
             if response is None:
                 continue
-            body = response.pop("body").encode()
+            encoded = response.pop("body")
+            body = base64.b64decode(encoded) if response["bodyEncoding"] == "base64" else encoded.encode()
+            if not body:
+                response["body"] = ""
+                response["bodyDocument"] = None
+                continue
             digest = hashlib.sha256(body).hexdigest()
-            filename = f"x-example-{index}-attempt-{attempt['attempt']}-{digest[:12]}.txt"
+            suffix = "bin" if response["bodyEncoding"] == "base64" else "txt"
+            filename = f"x-example-{index}-attempt-{attempt['attempt']}-{digest[:12]}.{suffix}"
             response["bodyDocument"] = filename
             manifest.append({"filename": filename, "sha256": digest, "bytes": len(body)})
         content = json.dumps(metadata, ensure_ascii=False, indent=2).encode()
@@ -70,19 +76,53 @@ def retained_manifest(notice):
     notice["document_manifest"] = manifest
 
 
+def legacy_byte_oracle(kind):
+    if kind == "utf8":
+        notice = legacy_notice()
+        return notice, [
+            (notice["document_manifest"][0]["filename"], BODY),
+            ("x-example-1-diagnostics.json", METADATA),
+        ]
+    content = (Path(__file__).parent / f"fixtures/x-legacy/{kind}.json").read_bytes()
+    length, digest = {
+        "binary": (1123, "9c60d8bcf24c45b181026e9d6cce6dc9addb05bd0fda7afd940150d9c5ab6e10"),
+        "empty": (1104, "19263fbf8036a03bedad2f12defd08d0dfbe0dae02060963059f4c0b6ea68a66"),
+    }[kind]
+    assert len(content) == length and hashlib.sha256(content).hexdigest() == digest
+    evidence = json.loads(content)
+    response = evidence["attempts"][0]["response"]
+    filename = response.pop("bodyDocument")
+    body = b"\xff\x00public binary fixture\n" if kind == "binary" else b""
+    response["body"] = base64.b64encode(body).decode() if kind == "binary" else ""
+    notice = legacy_notice()
+    notice["entry_errors"][0]["diagnostics"] = evidence
+    notice["document_manifest"] = []
+    expected = []
+    if body:
+        notice["document_manifest"].append(
+            {
+                "filename": filename,
+                "sha256": "940a32abb538dc43c8d014d89315466931aa59f9ef94263047cdc4e996785672",
+                "bytes": 24,
+            }
+        )
+        expected.append((filename, body))
+    notice["document_manifest"].append(
+        {"filename": "x-example-1-diagnostics.json", "sha256": digest, "bytes": length}
+    )
+    expected.append(("x-example-1-diagnostics.json", content))
+    return notice, expected
+
+
 def reordered(notice):
     return json.loads(json.dumps(notice, sort_keys=True))
 
 
-@pytest.mark.parametrize("response", [True, False])
-async def test_legacy_metadata_and_body_match_independent_original_bytes_after_reordering(response):
+@pytest.mark.parametrize("kind", ["utf8", "timeout", "binary", "empty"])
+async def test_legacy_metadata_and_body_match_independent_original_bytes_after_reordering(kind):
     repo = MemoryRepository()
-    notice = legacy_notice()
-    expected = [
-        (notice["document_manifest"][0]["filename"], BODY),
-        ("x-example-1-diagnostics.json", METADATA),
-    ]
-    if not response:
+    notice, expected = legacy_byte_oracle("utf8" if kind == "timeout" else kind)
+    if kind == "timeout":
         content = (Path(__file__).parent / "fixtures/x-legacy/timeout.json").read_bytes()
         notice["entry_errors"][0]["diagnostics"] = json.loads(content)
         notice["document_manifest"] = [
@@ -145,9 +185,7 @@ async def assert_refused(notice, secrets=(), settings=None):
     assert not await repo.list("out.deliveries", filters={"method": "sendDocument"})
     parents = await repo.list("out.deliveries", filters={"status": "SENT"})
     assert len(parents) == 1 and parents[0]["message_ref"] == "1"
-    assert not await repo.list(
-        "out.deliveries", filters={"method": "sendDocument", "status": "GENERATED"}
-    )
+    assert not await repo.list("out.deliveries", filters={"method": "sendDocument", "status": "GENERATED"})
     assert await repo.get("out.ops_notices", notice["notice_id"]) == notice
 
 
@@ -245,6 +283,10 @@ def oversized_legacy_notice(case):
         }[case]
         if case == "base64":
             response["bodyEncoding"] = "base64"
+        raw = base64.b64decode(response["body"]) if case == "base64" else response["body"].encode()
+        response["bodyBytes"] = len(raw)
+        response["wireBytes"] = len(raw)
+        response["bodySha256"] = hashlib.sha256(raw).hexdigest()
         if case == "aggregate":
             notice["entry_errors"] = [copy.deepcopy(notice["entry_errors"][0]) for _ in range(7)]
     elif case == "unknown_nested":
@@ -260,7 +302,17 @@ def oversized_legacy_notice(case):
 
 @pytest.mark.parametrize(
     "case",
-    ["attempts", "utf8", "base64", "multibyte", "aggregate", "unknown_nested", "known_container", "metadata_text", "entries"],
+    [
+        "attempts",
+        "utf8",
+        "base64",
+        "multibyte",
+        "aggregate",
+        "unknown_nested",
+        "known_container",
+        "metadata_text",
+        "entries",
+    ],
 )
 async def test_legacy_bounds_refuse_before_materialization_and_preserve_delivery_state(case):
     notice = oversized_legacy_notice(case)
@@ -287,7 +339,9 @@ async def test_real_settings_legacy_delivery_refuses_independent_configured_secr
 ):
     monkeypatch.setattr(os, "environ", {})
     sentinel = "legacy-independent-private-value"
-    value = f"http://reader:{sentinel}@clickhouse.invalid:8123" if credential == "clickhouse_url" else sentinel
+    value = (
+        f"http://reader:{sentinel}@clickhouse.invalid:8123" if credential == "clickhouse_url" else sentinel
+    )
     settings = Settings(
         _env_file=None,
         database_url="postgresql://tank:unrelated-tank-url-password@postgres.invalid/tank",
@@ -310,3 +364,31 @@ async def test_real_settings_legacy_delivery_refuses_independent_configured_secr
     retained_manifest(notice)
     await assert_refused(notice, settings=settings)
 
+
+@pytest.mark.parametrize("version", [1, 2])
+def test_valid_canonical_documents_keep_fast_path_with_large_header_permutation_space(version):
+    notice = legacy_notice()
+    evidence = notice["entry_errors"][0]["diagnostics"]
+    evidence["attempts"][0]["response"]["headers"]["retry-after"] = "1"
+    notice["entry_errors"][0]["diagnostics"] = sanitize(evidence)
+    expected = documents(notice["entry_errors"])
+    notice["document_serialization_version"] = version
+    notice["document_manifest"] = [
+        {"filename": row["filename"], "sha256": row["sha256"], "bytes": len(row["content"])}
+        for row in expected
+    ]
+    assert x_diagnostic_manifest.verified_documents(reordered(notice)) == expected
+
+
+def test_legacy_body_and_notice_budget_accept_exact_existing_limits():
+    notice = oversized_legacy_notice("aggregate")
+    notice["entry_errors"] = notice["entry_errors"][:6]
+    for error in notice["entry_errors"]:
+        error["diagnostics"]["attempts"][0]["response"]["headers"] = {}
+    retained_manifest(notice)
+    attachments = x_diagnostic_manifest.verified_documents(reordered(notice))
+    assert sum(len(row["content"]) for row in attachments if row["filename"].endswith(".txt")) == 12_000_000
+    assert [
+        {"filename": row["filename"], "sha256": row["sha256"], "bytes": len(row["content"])}
+        for row in attachments
+    ] == notice["document_manifest"]
