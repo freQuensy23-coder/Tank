@@ -35,6 +35,32 @@ def test_invalid_shard_is_rejected(integration_checks, value):
         shard.parse_shard(value)
 
 
+def test_integration_failure_receipt_survives_before_final_junit(integration_checks, tmp_path, capsys):
+    shard, _ = integration_checks
+    directory = tmp_path / "results"
+    recorder = shard.FailureReceipts(directory)
+    for number, outcome in enumerate(["passed", "failed", "failed"]):
+        report = pytest.TestReport(
+            nodeid=f"tests/test_native.py::case-{number}",
+            location=("tests/test_native.py", 1, f"case-{number}"),
+            keywords={},
+            outcome=outcome,
+            longrepr="Native declaration mismatch " + "x" * 40000 if outcome == "failed" else None,
+            when="call",
+            duration=0.25,
+        )
+        recorder.pytest_runtest_logreport(report)
+    records = [json.loads(line) for line in (directory / "integration-failures.jsonl").read_text().splitlines()]
+    assert [record["nodeid"] for record in records] == [
+        "tests/test_native.py::case-1", "tests/test_native.py::case-2"
+    ]
+    assert all(record["when"] == "call" and record["outcome"] == "failed" for record in records)
+    assert all(record["duration"] == 0.25 and len(record["longrepr"]) == 32768 for record in records)
+    output = capsys.readouterr().out
+    assert "tests/test_native.py::case-1" in output and "Native declaration mismatch" in output
+    assert "tests/test_native.py::case-0" not in output
+
+
 def reports(tmp_path):
     expected = [
         {"classname": "tests.test_a", "name": "first", "file": "tests/test_a.py"},

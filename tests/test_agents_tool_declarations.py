@@ -2,7 +2,9 @@ import asyncio
 import copy
 import json
 import os
+import subprocess
 from contextlib import asynccontextmanager
+from pathlib import Path
 from urllib.parse import parse_qs, urlsplit
 
 import httpx
@@ -226,6 +228,46 @@ async def test_committed_declaration_does_not_override_host_owner_fences(boundar
         await service.close()
 
 
+@pytest.mark.parametrize(
+    "invalid",
+    ["missing_projection", "duplicate_call", "foreign_execution", "missing_declaration", "failed_group"],
+)
+async def test_invalid_native_declaration_projection_fails_before_any_group_effect(invalid):
+    repo = MemoryRepository()
+    await seed(repo)
+    event = custom("untrusted")
+    projected = declaration(event)
+    if invalid == "missing_projection":
+        projected.pop("custom_tool_uses")
+    elif invalid == "duplicate_call":
+        projected["custom_tool_uses"] *= 2
+    elif invalid == "foreign_execution":
+        projected["custom_tool_uses"][0]["event"]["execution_id"] = "foreign"
+    elif invalid == "missing_declaration":
+        projected["custom_tool_uses"][0].pop("declaration_id")
+    else:
+        projected.update(state="FAILED", settled_outcome="FAILED")
+    effects, callbacks = [], []
+
+    async def dispatch(*arguments):
+        effects.append(arguments)
+        return {"is_event": False}
+
+    def handler(request):
+        if request.method == "POST":
+            callbacks.append(request.content)
+            return httpx.Response(200, json={"data": [{"id": "forbidden"}]})
+        return httpx.Response(200, json={"data": [projected]})
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http:
+        service = SessionService(repo, settings(), dispatch, http=http)
+        with pytest.raises(ValueError, match="native custom-tool declaration"):
+            await service.process_event("s", event)
+        assert effects == [] and callbacks == []
+        assert await repo.get("ops.tool_calls", "s:untrusted") is None
+        await service.close()
+
+
 async def test_declared_call_keeps_original_input_context_when_later_message_is_active():
     repo = MemoryRepository()
     session = await seed(repo)
@@ -265,8 +307,11 @@ async def test_declared_call_keeps_original_input_context_when_later_message_is_
 @asynccontextmanager
 async def native_peer(handler):
     failures = []
+    connections = set()
 
     async def accept(reader, writer):
+        task = asyncio.current_task()
+        connections.add(task)
         try:
             headers = await reader.readuntil(b"\r\n\r\n")
             lines = headers.decode().split("\r\n")
@@ -288,6 +333,7 @@ async def native_peer(handler):
         finally:
             writer.close()
             await writer.wait_closed()
+            connections.discard(task)
 
     server = await asyncio.start_server(accept, "127.0.0.1", 0)
     try:
@@ -295,16 +341,40 @@ async def native_peer(handler):
     finally:
         server.close()
         await server.wait_closed()
+        await asyncio.gather(*connections)
+        assert not connections
         assert failures == []
 
 
 @pytest.mark.integration
 @pytest.mark.postgres
+@pytest.mark.node
 async def test_postgres_native_http_declaration_effect_ack_and_admission_barrier(postgres_template):
     database = os.environ["TANK_TEST_DATABASE_URL"]
     async with postgres_template.repository(database) as repo:
         await seed(repo)
         event = custom("durable")
+        root = Path(__file__).resolve().parents[1]
+        native = subprocess.run(
+            [
+                "node",
+                "--import",
+                str(root / "scripts/node-typescript-loader.mjs"),
+                "--experimental-transform-types",
+                str(root / "tests/fixtures/native_tool_projection.mjs"),
+            ],
+            input=json.dumps(event),
+            text=True,
+            capture_output=True,
+            check=True,
+            timeout=5,
+            cwd=root,
+        )
+        projected = json.loads(native.stdout)
+        assert projected["execution_id"] == "input-root" and projected["state"] == "COMPLETED"
+        assert projected["custom_tool_uses"] == [
+            {"declaration_id": "declaration-input-root", "event": event}
+        ]
         declared = asyncio.Event()
         effect_started = asyncio.Event()
         effect_release = asyncio.Event()
@@ -324,7 +394,7 @@ async def test_postgres_native_http_declaration_effect_ack_and_admission_barrier
                             "execution_id": identity,
                             "state": states[identity],
                             "settled_outcome": "COMPLETED" if states[identity] == "COMPLETED" else None,
-                            "custom_tool_uses": declaration(event)["custom_tool_uses"]
+                            "custom_tool_uses": projected["custom_tool_uses"]
                             if declared.is_set() and identity == "input-root"
                             else [],
                         }

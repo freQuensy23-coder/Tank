@@ -362,6 +362,18 @@ registerHooks({ resolve(specifier, context, nextResolve) {
 } });
 const { sessionExecutionStatusStore } = await import('../../../vendor/openma/packages/control-plane-node/src/lib/node-session-execution-status.ts');
 
+for (const state of ['failed', 'cancelled']) test(`invalid declaration history retains committed ${state} status without host work`, async () => {
+  const snapshot = waiting();
+  snapshot.invalidReason = 'Continuation requires complete trusted ordered native history';
+  snapshot.executions[0].state = state;
+  const row = { ...snapshot.executions[0], workspaceId: 'workspace', sessionId: 'session', settledAt: '2026-10-27T00:00:00Z' };
+  const store = sessionExecutionStatusStore({ find: async () => row }, async () => snapshot);
+  assert.deepEqual(await store.list('workspace', 'session', ['original']), [{
+    execution_id: 'original', state: state.toUpperCase(), settled_outcome: state.toUpperCase(), custom_tool_uses: [],
+  }]);
+  assert.equal(planSessionContinuation(snapshot, 'original').mode, 'failure');
+});
+
 test('execution status exposes native-validated Managed calls without leaking private journal metadata', async () => {
   const snapshot = waiting();
   const row = { ...snapshot.executions[0], workspaceId: 'workspace', sessionId: 'session', settledAt: '2026-10-27T00:00:00Z' };
