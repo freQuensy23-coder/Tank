@@ -11,6 +11,7 @@ from tank import runtime as runtime_module
 from tank.agents.sessions import AdmissionDeferred
 from tank.job_diagnostics import MAX_CHAIN, MAX_HISTORY_BYTES, MAX_RECEIPT_BYTES
 from tank.runtime import Runtime
+from tank.settings import Settings
 from tank.storage import MemoryRepository
 from tank.time_precision import collection_clock, offset_schedule
 from tank.util import iso, parse_time, utcnow
@@ -265,6 +266,88 @@ async def test_typed_metadata_rejects_secret_and_invalid_correlations(diagnostic
     assert receipt["exception_chain"] == [{"class": "httpx.HTTPStatusError", "http_status": 503}]
     assert receipt["chain_truncated"]
     assert SECRET not in json.dumps(receipt) and REQUEST_ID not in json.dumps(receipt)
+
+
+@pytest.mark.parametrize("producer", ["http", "clickhouse"])
+@pytest.mark.parametrize(
+    "credential", ["foundry_api_key", "tank_db_password", "oma_db_password", "clickhouse_url"]
+)
+@pytest.mark.parametrize("uppercase", [False, True], ids=["exact", "normalized"])
+async def test_worker_rejects_configured_credential_echo_after_jsonb(
+    diagnostic_repo, producer, credential, uppercase
+):
+    from tank.clickhouse_market import ClickHouse
+
+    repo = diagnostic_repo
+    job = await repo.enqueue("RUN_MARKET_TRUTH", {}, "diagnostic-credential-echo", max_attempts=1)
+    runtime = make_runtime(repo)
+    settings_values = {credential: REQUEST_ID}
+    if credential == "clickhouse_url":
+        settings_values[credential] = f"http://default:{REQUEST_ID}@example.test"
+    runtime.settings = Settings(
+        _env_file=None,
+        database_url="postgresql://tank:FAKE-pg-independent@postgres/tank_test_diagnostics",
+        openma_database_url="postgresql://oma:FAKE-oma-independent@postgres/tank_test_diagnostics",
+        code_version="a" * 64,
+        config_version="dev." + "b" * 64,
+        build_sha="c" * 40,
+        **settings_values,
+    )
+    echoed = REQUEST_ID.upper() if uppercase else REQUEST_ID
+    secret_header = "x-request-id" if producer == "http" else "x-clickhouse-query-id"
+    safe_header = "x-clickhouse-query-id" if producer == "http" else "x-request-id"
+    safe_key = "query_id" if producer == "http" else "request_id"
+
+    def transport(request):
+        if producer == "clickhouse":
+            assert request.content == b"SELECT 1 FORMAT JSONEachRow"
+            expected_password = REQUEST_ID if credential in {"tank_db_password", "clickhouse_url"} else ""
+            assert request.headers["x-clickhouse-key"] == expected_password
+        return httpx.Response(
+            503,
+            request=request,
+            headers={secret_header: echoed, safe_header: QUERY_ID},
+            content=SECRET,
+        )
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(transport)) as http:
+        client = ClickHouse(
+            runtime.settings.clickhouse_url or "http://example.test",
+            password=runtime.settings.tank_db_password,
+            http=http,
+        )
+
+        async def fail(payload):
+            if producer == "clickhouse":
+                return await client.rows("SELECT 1")
+            response = await http.post("https://example.test/decision", content=SECRET)
+            response.raise_for_status()
+
+        await run_attempt(runtime, fail)
+    stored = await repo.get("ops.jobs", job["job_id"])
+    receipts = stored["attempt_diagnostics"]
+    if not isinstance(repo, MemoryRepository):
+        async with repo.transaction():
+            row = await (
+                await repo._conn().execute(
+                    "SELECT document->'attempt_diagnostics' AS receipts FROM ops.jobs WHERE job_id=%s",
+                    (job["job_id"],),
+                )
+            ).fetchone()
+        assert row["receipts"] == receipts
+        receipts = row["receipts"]
+    error_class = "HTTPStatusError" if producer == "http" else "RuntimeError"
+    error_module = "httpx" if producer == "http" else "builtins"
+    assert stored["status"] == "FAILED" and stored["attempts"] == 1
+    assert stored["last_error"] == error_class
+    assert len(receipts) == 1 and receipts[0]["phase"] == "handler"
+    assert receipts[0]["exception_chain"] == [
+        {"class": f"{error_module}.{error_class}", "http_status": 503, safe_key: QUERY_ID}
+    ]
+    serialized = json.dumps(receipts)
+    assert REQUEST_ID not in serialized and echoed not in serialized
+    assert SECRET not in serialized and "FAKE-" not in serialized
+    assert await repo.claim_job() is None
 
 
 async def test_exception_chain_and_retention_are_bounded(diagnostic_repo):
