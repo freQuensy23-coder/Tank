@@ -3,6 +3,7 @@ import os
 import httpx
 import pytest
 from test_x_diagnostics import diagnostics, multipart, notice_for, telegram_settings
+from test_x_legacy_diagnostics import BODY, BODY_HASH, METADATA, METADATA_HASH, legacy_notice
 from test_x_reader_integration import LoopbackTelegramTransport
 from test_x_reader_integration import wire_server as wire_server
 
@@ -56,3 +57,70 @@ async def test_jsonb_partial_retry_skips_durable_successful_documents(postgres_t
         receipts = await repo.list("out.deliveries", filters={"status": "SENT", "method": "sendDocument"})
         assert len(receipts) == 4
         assert len({row["document_id"] for row in receipts}) == 4
+
+
+async def test_legacy_jsonb_readback_uploads_exact_original_documents(postgres_template, wire_server):
+    origin, state = wire_server
+    async with postgres_template.repository(os.environ["TANK_TEST_DATABASE_URL"]) as repo:
+        notice = legacy_notice()
+        await repo.put("out.ops_notices", notice["notice_id"], notice, immutable=True)
+        saved = await repo.get("out.ops_notices", notice["notice_id"])
+        assert list(saved["entry_errors"][0]["diagnostics"]) != list(
+            notice["entry_errors"][0]["diagnostics"]
+        )
+        async with httpx.AsyncClient(transport=LoopbackTelegramTransport(origin)) as http:
+            await DeliveryService(repo, telegram_settings(), http=http).deliver(
+                {"notice_id": notice["notice_id"]}
+            )
+        uploads = [
+            multipart(httpx.Request("POST", origin, headers=headers, content=body))["document"]
+            for path, headers, body in state["telegram"][1:]
+        ]
+        assert uploads == [
+            ("x-example-1-attempt-1-254f62811e62.txt", BODY),
+            ("x-example-1-diagnostics.json", METADATA),
+        ]
+        receipts = await repo.list("out.deliveries", filters={"status": "SENT", "method": "sendDocument"})
+        assert {row["document_sha256"] for row in receipts} == {BODY_HASH, METADATA_HASH}
+        assert await repo.get("out.ops_notices", notice["notice_id"]) == saved
+
+
+async def test_legacy_jsonb_429_commits_parent_and_prior_receipt_across_restart(postgres_template):
+    async with postgres_template.repository(os.environ["TANK_TEST_DATABASE_URL"]) as repo:
+        notice = legacy_notice()
+        await repo.put("out.ops_notices", notice["notice_id"], notice, immutable=True)
+        saved = await repo.get("out.ops_notices", notice["notice_id"])
+        sent = []
+
+        def send(request):
+            sent.append(request)
+            if len(sent) == 3:
+                return httpx.Response(429, json={"ok": False, "parameters": {"retry_after": 7}})
+            return httpx.Response(200, json={"ok": True, "result": {"message_id": len(sent)}})
+
+        payload = {"notice_id": notice["notice_id"]}
+        async with httpx.AsyncClient(transport=httpx.MockTransport(send)) as http:
+            with pytest.raises(DeliveryError) as failure:
+                await DeliveryService(repo, telegram_settings(), http=http).deliver(payload)
+            assert failure.value.retry_after == pytest.approx(7, abs=0.1)
+        await repo.close()
+        await repo.open()
+        committed = await repo.list("out.deliveries", filters={"notice_id": notice["notice_id"]})
+        parents = [row for row in committed if row["status"] == "SENT" and row.get("method") != "sendDocument"]
+        assert len(parents) == 1 and parents[0]["message_ref"] == "1"
+        successful = [row for row in committed if row["status"] == "SENT" and row.get("method") == "sendDocument"]
+        assert len(successful) == 1 and successful[0]["document_sha256"] == BODY_HASH
+        failed = [row for row in committed if row["status"] == "FAILED"]
+        assert len(failed) == 1 and failed[0]["document_sha256"] == METADATA_HASH
+        async with httpx.AsyncClient(transport=httpx.MockTransport(send)) as http:
+            await DeliveryService(repo, telegram_settings(), http=http).deliver(payload)
+            await DeliveryService(repo, telegram_settings(), http=http).deliver(payload)
+        assert [request.url.path.rsplit("/", 1)[-1] for request in sent] == [
+            "sendMessage", "sendDocument", "sendDocument", "sendDocument"
+        ]
+        assert [multipart(request)["document"][1] for request in sent[1:]] == [BODY, METADATA, METADATA]
+        receipts = await repo.list("out.deliveries", filters={"status": "SENT", "method": "sendDocument"})
+        assert {(row["document_sha256"], row["attempt"]) for row in receipts} == {
+            (BODY_HASH, 1), (METADATA_HASH, 2)
+        }
+        assert await repo.get("out.ops_notices", notice["notice_id"]) == saved
