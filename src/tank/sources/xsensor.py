@@ -221,7 +221,7 @@ class XSensor:
                         update={"diagnostics": sanitize(account.diagnostics, self.token, budget)}
                     )
                     for account in run.accounts
-                ]
+                ],
             }
         )
         return scan(run, accounts, cursors, response.content)
