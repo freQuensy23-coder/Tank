@@ -8,10 +8,10 @@ from types import SimpleNamespace
 from typing import Any
 
 import pytest
+from truth_sql_failure_evidence import EvidenceClickHouse
 
 import tank.analysis.truth as reference
 from tank.analysis.truth_sql_relative import benchmark_query, ctes, query
-from tank.clickhouse_market import ClickHouse
 from tank.util import iso, parse_time
 
 pytestmark = pytest.mark.integration
@@ -25,10 +25,10 @@ def original_truth():
 
 
 @pytest.fixture
-async def native_clickhouse():
+async def native_clickhouse(request):
     url = os.environ.get("CLICKHOUSE_TEST_URL")
     assert url, "CLICKHOUSE_TEST_URL must identify the owned native CI service"
-    client = ClickHouse(url)
+    client = EvidenceClickHouse(url, request.node.nodeid)
     try:
         yield client
     finally:
@@ -92,7 +92,7 @@ def packet(*, secondary=False, fractional=False, history_days=10, benchmark=Fals
         times.add(start)
         times = sorted(times)
         values = []
-        for index, stamp in enumerate(times):
+        for index, _stamp in enumerate(times):
             value = Decimal(100 + ordinal * 20) + Decimal(index) / 100 + Decimal((index * (ordinal + 3)) % 19) / 50
             values.append(float(value))
         iid = instrument["instrument_id"]

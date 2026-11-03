@@ -8,10 +8,10 @@ from decimal import Decimal, localcontext
 from pathlib import Path
 
 import pytest
+from truth_sql_failure_evidence import EvidenceClickHouse
 
 from tank.analysis import truth as reference
 from tank.analysis import truth_sql_derivatives as native
-from tank.clickhouse_market import ClickHouse
 from tank.util import iso
 
 pytestmark = pytest.mark.integration
@@ -55,10 +55,10 @@ def frozen_reference_source():
 
 
 @pytest.fixture
-async def clickhouse():
+async def clickhouse(request):
     url = os.environ.get("CLICKHOUSE_TEST_URL")
     assert url, "CLICKHOUSE_TEST_URL must identify the owned native CI service"
-    client = ClickHouse(url)
+    client = EvidenceClickHouse(url, request.node.nodeid)
     try:
         yield client
     finally:

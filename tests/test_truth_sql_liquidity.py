@@ -8,9 +8,9 @@ from decimal import Decimal, localcontext
 from pathlib import Path
 
 import pytest
+from truth_sql_failure_evidence import EvidenceClickHouse
 
 from tank.analysis.truth_sql_liquidity import ctes, query, window_query, windows_query
-from tank.clickhouse_market import ClickHouse
 from tank.util import canonical_json, iso, parse_time
 
 pytestmark = pytest.mark.integration
@@ -34,10 +34,10 @@ def original_truth():
 
 
 @pytest.fixture
-async def native_client():
+async def native_client(request):
     url = os.environ.get("CLICKHOUSE_TEST_URL")
     assert url, "CLICKHOUSE_TEST_URL must identify the owned native CI service"
-    client = ClickHouse(url)
+    client = EvidenceClickHouse(url, request.node.nodeid)
     try:
         yield client
     finally:

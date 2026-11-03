@@ -9,9 +9,9 @@ from types import ModuleType
 from urllib.parse import urlparse
 
 import pytest
+from truth_sql_failure_evidence import EvidenceClickHouse, failure_receipt, retain_first_failure
 
 from tank.analysis import truth_sql_spot
-from tank.clickhouse_market import ClickHouse
 from tank.util import iso, jsonable, parse_time
 
 pytestmark = pytest.mark.integration
@@ -36,11 +36,11 @@ def original_spot():
 
 
 @pytest.fixture
-async def spot_client():
+async def spot_client(request):
     url = os.environ.get("CLICKHOUSE_TEST_URL")
     assert url, "CLICKHOUSE_TEST_URL must identify the owned native CI service"
     assert urlparse(url).hostname in {"localhost", "127.0.0.1", "::1"}
-    client = ClickHouse(url)
+    client = EvidenceClickHouse(url, request.node.nodeid)
     try:
         yield client
     finally:
@@ -122,6 +122,37 @@ def assert_complete_result(actual, expected, path=()):
         assert abs(Decimal(str(actual)) - Decimal(str(expected))) <= Decimal("1e-24"), path
     else:
         assert actual == expected, path
+
+
+def test_failure_receipt_is_private_atomic_and_keeps_first_error(tmp_path):
+    query = "SELECT {secret:String}"
+    error = RuntimeError(
+        "ClickHouse 400: Code: 47. DB::Exception: Unknown identifier 'private-account' "
+        "in scope SELECT 'password', https://credential@private-host (UNKNOWN_IDENTIFIER)"
+    )
+    receipt = failure_receipt(error, "tests/test_owned.py::test_case", query)
+    serialized = json.dumps(receipt)
+    assert receipt["http_status"] == 400
+    assert receipt["native_error_code"] == 47
+    assert "Unknown identifier" in receipt["server_message"]
+    assert all(secret not in serialized for secret in ("private-account", "password", "credential", query))
+    directory = tmp_path / "results"
+    retain_first_failure(directory, receipt)
+    retain_first_failure(directory, {**receipt, "native_error_code": 62})
+    files = list(directory.iterdir())
+    assert len(files) == 1
+    assert json.loads(files[0].read_text()) == receipt
+    alias = tmp_path / "alias"
+    alias.symlink_to(directory, target_is_directory=True)
+    with pytest.raises(ValueError, match="symlink"):
+        retain_first_failure(alias, receipt)
+    assert json.loads(files[0].read_text()) == receipt
+
+
+@pytest.mark.parametrize("url", ["https://example.com", "http://192.0.2.1:8123"])
+def test_native_client_refuses_nonloopback_before_http(url):
+    with pytest.raises(ValueError, match="loopback"):
+        EvidenceClickHouse(url, "tests/test_owned.py::test_case")
 
 
 async def native_result(client, original, snapshot, record_property, config=None):
