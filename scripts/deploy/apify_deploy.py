@@ -1,5 +1,6 @@
 import base64
 import json
+import os
 import re
 import shlex
 import signal
@@ -21,7 +22,12 @@ else:
         raise RuntimeError("selected source must identify exactly one worker")
     ACTOR = "/acts/" + TARGETS[0][0]
     TAG = TARGETS[0][1]
-DEADLINE = time.monotonic() + (300 if sys.argv[1] == "prepare" else 20)
+DEADLINE = min(
+    time.monotonic() + (300 if sys.argv[1] == "prepare" else 20),
+    float(os.environ.get("APIFY_PUBLICATION_DEADLINE", "inf"))
+    if sys.argv[1] in {"prepare", "activate"}
+    else float("inf"),
+)
 
 
 def timed_out(signum, frame):
@@ -132,6 +138,7 @@ def prepare():
                 "previous": previous,
                 "candidate": candidate,
                 "previous_release": Path("deployed").read_text().strip(),
+                "previous_compose": "worker.previous-compose.yaml",
                 "release": sys.argv[2],
                 "committed": False,
             }
@@ -165,6 +172,12 @@ def main():
     if action == "previous-release":
         require(re.fullmatch(r"[0-9a-f]{40}", pending["previous_release"]), "invalid recovery release")
         print(pending["previous_release"])
+    elif action == "previous-compose":
+        require(
+            pending.get("previous_compose") == "worker.previous-compose.yaml"
+            and Path("worker.previous-compose.yaml").is_file(),
+            "previous Compose input unavailable",
+        )
     elif action == "settled":
         require(
             pending["committed"]

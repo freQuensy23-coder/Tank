@@ -35,6 +35,7 @@ apify() { return 0; }
     script = tmp_path / "deploy.sh"
     script.write_text(source.replace(marker, hook + marker))
     (tmp_path / "deployed").write_text(PREVIOUS + "\n")
+    (tmp_path / "compose.yaml").write_text("fixture compose\n")
     result = subprocess.run(
         ["bash", str(script), CANDIDATE],
         capture_output=True,

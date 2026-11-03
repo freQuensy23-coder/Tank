@@ -13,11 +13,6 @@ SHA=${1:?usage: deploy.sh <git sha>}
 LIMIT=${LIMIT:-480}
 exec 9>.deploy.lock
 flock -n 9 || { echo "another deploy is running"; exit 1; }
-if [ "$bundle" != "$PWD" ]; then
-  cp "$bundle/compose.yaml" "$bundle/apify_deploy.py" "$bundle/worker-source.yaml" .
-  rm -rf worker
-  cp -a "$bundle/worker" worker
-fi
 
 compose() { TANK_VERSION=$1 docker compose -f compose.yaml "${@:2}"; }
 content() { docker inspect -f '{{index .Config.Labels "org.tank.content"}}' "$1" 2>/dev/null || true; }
@@ -95,7 +90,11 @@ verify() {
   return $fail
 }
 
-apify() { (set +x; python3 ./apify_deploy.py "$@" "$SHA"); }
+apify() { (set +x; python3 "$bundle/apify_deploy.py" "$@" "$SHA"); }
+restore_compose() {
+  apify previous-compose || return 1
+  cp worker.previous-compose.yaml compose.next && mv compose.next compose.yaml
+}
 previous=$(cat deployed 2>/dev/null || true)
 [[ -z "$previous" || "$previous" =~ ^[0-9a-f]{40}$ ]] || { echo "invalid previous release SHA"; exit 1; }
 tank_started=no
@@ -112,7 +111,7 @@ recover() {
   fi
   if [ "$status" -ne 0 ] && [ "$tank_started" = yes ] && [ -n "$previous" ]; then
     echo "rollback to $previous $(date -u +%T)"
-    if roll "$previous" && [ "$worker_restored" = yes ]; then
+    if restore_compose && roll "$previous" && [ "$worker_restored" = yes ]; then
       printf '%s\n' "$previous" > deployed.next && mv deployed.next deployed
       [ "$worker_started" = no ] || apify clear || status=1
       echo "rolled back to $previous"
@@ -122,7 +121,7 @@ recover() {
     fi
   fi
   if [ "$status" -ne 0 ] && [ "$tank_started" = no ] && [ "$worker_started" = yes ] && [ "$worker_restored" = yes ]; then
-    apify clear || status=1
+    if restore_compose; then apify clear || status=1; else status=1; fi
   fi
   exit "$status"
 }
@@ -135,6 +134,7 @@ if [ -f worker.pending ]; then
     worker_started=yes
     tank_started=yes
     apify rollback
+    restore_compose
     roll "$previous"
     printf '%s\n' "$previous" > deployed.next && mv deployed.next deployed
     apify clear
@@ -142,21 +142,35 @@ if [ -f worker.pending ]; then
     tank_started=no
   fi
 fi
+if [ "$bundle" != "$PWD" ]; then
+  cp "$bundle/worker-source.yaml" .
+  rm -rf worker
+  cp -a "$bundle/worker" worker
+fi
 start=$(date +%s)
 since=$(date -u +%FT%TZ)
 echo "deploy $SHA at $since; previous ${previous:-none}"
 out=""
 [ -n "$previous" ] || { echo "worker deployment requires a previous verified Tank release"; exit 1; }
+cp compose.yaml worker.previous-compose.next && mv worker.previous-compose.next worker.previous-compose.yaml
+export APIFY_PUBLICATION_DEADLINE=$(python3 -c 'import time; print(time.monotonic() + 300)')
 apify prepare
 worker_started=yes
+if [ "$bundle" != "$PWD" ]; then
+  cp "$bundle/compose.yaml" compose.next && mv compose.next compose.yaml
+fi
 apify activate
-start=$(date +%s)
 tank_started=yes
 if roll "$SHA"; then
   while [ $(( $(date +%s) - start )) -lt "$LIMIT" ]; do
     if out=$(verify "$since" 2>&1); then
       printf '%s\n' "$SHA" > deployed.next && mv deployed.next deployed
+      trap '' INT TERM
       apify finish
+      worker_started=no
+      tank_started=no
+      trap 'exit 130' INT
+      trap 'exit 143' TERM
       echo "VERIFIED $SHA after $(( $(date +%s) - start ))s"
       docker image ls --format '{{.Repository}}:{{.Tag}}' | grep '^ghcr.io/frequensy23-coder/tank/' \
         | grep -v -E ":(${SHA}|${previous:-none})\$" | xargs -r docker rmi >/dev/null 2>&1 || true

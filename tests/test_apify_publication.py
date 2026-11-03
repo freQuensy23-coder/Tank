@@ -1,5 +1,6 @@
 import json
 import os
+import shutil
 import subprocess
 import threading
 import time
@@ -30,6 +31,9 @@ ACTOR = "rbf5CQKQgKNVl4SfO"
         "crash_marker",
         "changed_actor",
         "ownership_unreadable",
+        "changed_compose",
+        "post_finish_term",
+        "post_finish_crash",
     ],
 )
 def test_worker_publication_transaction(tmp_path, mode):
@@ -102,7 +106,10 @@ def test_worker_publication_transaction(tmp_path, mode):
             else:
                 tag = next(iter(body["taggedBuilds"]))
                 target = body["taggedBuilds"][tag]["buildId"]
-                if mode == "rollback_refused" and target == "old":
+                if (
+                    mode in {"rollback_refused", "post_finish_term", "post_finish_crash"}
+                    and target == "old"
+                ):
                     self.send_error(503)
                     return
                 state[tag] = target
@@ -139,6 +146,7 @@ def test_worker_publication_transaction(tmp_path, mode):
         script = (ROOT / "scripts/deploy/deploy.sh").read_text()
         hook = """roll() {
   printf '%s\\n' "$1" >> rolls
+  cat compose.yaml >> compose-rolls
   if [ "$1" = "$SHA" ]; then
     case "$MODE" in
       roll_failed|rollback_refused) return 1 ;;
@@ -148,19 +156,35 @@ def test_worker_publication_transaction(tmp_path, mode):
   fi
 }
 verify() { return 0; }
-docker() { return 0; }
+docker() {
+  case "$MODE" in
+    post_finish_term) kill -TERM $$ ;;
+    post_finish_crash) kill -KILL $$ ;;
+  esac
+  return 0
+}
 """
         marker = "previous=$(cat deployed 2>/dev/null || true)"
         script = script.replace(marker, hook + marker)
-        if mode in {"crash_marker", "changed_actor"}:
+        if mode in {"crash_marker", "changed_actor", "changed_compose"}:
             script = script.replace(
                 "      apify finish",
                 '      if [ "$MODE" != success ]; then kill -KILL $$; fi\n      apify finish',
             )
         (tmp_path / "deploy.sh").write_text(script)
+        (tmp_path / "compose.yaml").write_text("prior compose\n")
+        entry = tmp_path / "deploy.sh"
+        if mode == "changed_compose":
+            stage = tmp_path / "incoming-first"
+            stage.mkdir()
+            for name in ("deploy.sh", "apify_deploy.py", "worker-source.yaml"):
+                shutil.copyfile(tmp_path / name, stage / name)
+            shutil.copytree(source, stage / "worker")
+            (stage / "compose.yaml").write_text("first candidate compose\n")
+            entry = stage / "deploy.sh"
         (tmp_path / "deployed").write_text("b" * 40 + "\n")
         result = subprocess.run(
-            ["bash", str(tmp_path / "deploy.sh"), "a" * 40],
+            ["bash", str(entry), "a" * 40],
             env={**os.environ, "MODE": mode},
             capture_output=True,
             text=True,
@@ -174,10 +198,19 @@ docker() { return 0; }
             "crash_marker",
             "changed_actor",
             "ownership_unreadable",
+            "changed_compose",
+            "post_finish_term",
+            "post_finish_crash",
         }
         assert state["direct"] == ("new" if remains_new else "old")
         assert not (tmp_path / "injected").exists()
-        marker_written = success or mode in {"crash_marker", "changed_actor"}
+        marker_written = success or mode in {
+            "crash_marker",
+            "changed_actor",
+            "changed_compose",
+            "post_finish_term",
+            "post_finish_crash",
+        }
         assert (tmp_path / "deployed").read_text().strip() == ("a" * 40 if marker_written else "b" * 40)
         if mode == "unchanged":
             assert state["writes"] == []
@@ -191,7 +224,7 @@ docker() { return 0; }
             assert not (tmp_path / "rolls").exists()
             tag_writes = [body for path, body in state["writes"] if path == f"/v2/acts/{ACTOR}"]
             assert tag_writes == [{"taggedBuilds": {"direct": {"buildId": "new"}}}]
-        if mode in {"crash_marker", "changed_actor"}:
+        if mode in {"crash_marker", "changed_actor", "changed_compose"}:
             pending = json.loads((tmp_path / "worker.pending").read_text())
             assert result.returncode == -9
             assert pending["committed"] is False
@@ -201,11 +234,34 @@ docker() { return 0; }
             (tmp_path / "worker-source.yaml").write_text(
                 "url: https://api.apify.com/v2/actors/otherActor/run-sync?build=next&memory=256\n"
             )
-        if mode in {"second", "readback_failed", "crash_marker", "changed_actor"}:
+        if mode in {"post_finish_term", "post_finish_crash"}:
+            pending = json.loads((tmp_path / "worker.pending").read_text())
+            assert pending["committed"] is True
+            assert (tmp_path / "rolls").read_text().splitlines() == ["a" * 40]
+            assert result.returncode == (143 if mode == "post_finish_term" else -9)
+            tag_writes = [body for path, body in state["writes"] if path == f"/v2/acts/{ACTOR}"]
+            assert tag_writes == [{"taggedBuilds": {"direct": {"buildId": "new"}}}]
+        if mode == "changed_compose":
+            stage = tmp_path / "incoming-next"
+            stage.mkdir()
+            for name in ("deploy.sh", "apify_deploy.py", "worker-source.yaml"):
+                shutil.copyfile(tmp_path / name, stage / name)
+            shutil.copytree(source, stage / "worker")
+            (stage / "compose.yaml").write_text("later candidate compose\n")
+            entry = stage / "deploy.sh"
+        if mode in {
+            "second",
+            "readback_failed",
+            "crash_marker",
+            "changed_actor",
+            "changed_compose",
+            "post_finish_term",
+            "post_finish_crash",
+        }:
             writes = len(state["writes"])
             reads = len(state["reads"])
             retry = subprocess.run(
-                ["bash", str(tmp_path / "deploy.sh"), "c" * 40],
+                ["bash", str(entry), "c" * 40],
                 env={**os.environ, "MODE": "success"},
                 capture_output=True,
                 text=True,
@@ -215,7 +271,12 @@ docker() { return 0; }
             assert (tmp_path / "deployed").read_text().strip() == "c" * 40
             if mode == "second":
                 assert len(state["writes"]) == writes
-            if mode in {"crash_marker", "changed_actor"}:
+            if mode in {"post_finish_term", "post_finish_crash"}:
+                assert (tmp_path / "rolls").read_text().splitlines() == ["a" * 40, "c" * 40]
+                pending = json.loads((tmp_path / "worker.pending").read_text())
+                assert pending["previous_release"] == "a" * 40
+                assert len(state["writes"]) == writes
+            if mode in {"crash_marker", "changed_actor", "changed_compose"}:
                 assert (tmp_path / "rolls").read_text().splitlines() == ["a" * 40, "b" * 40, "c" * 40]
                 assert state["writes"][writes] == (
                     f"/v2/acts/{ACTOR}",
@@ -225,6 +286,13 @@ docker() { return 0; }
                 pending = json.loads((tmp_path / "worker.pending").read_text())
                 assert pending["committed"] is True
                 assert pending["previous_release"] == "b" * 40
+                if mode == "changed_compose":
+                    assert (tmp_path / "compose-rolls").read_text().splitlines() == [
+                        "first candidate compose",
+                        "prior compose",
+                        "later candidate compose",
+                    ]
+                    assert (tmp_path / "worker.previous-compose.yaml").read_text() == "prior compose\n"
                 if mode == "changed_actor":
                     assert state["direct"] == "old"
                     assert state["next"] == "other-new"
