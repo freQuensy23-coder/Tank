@@ -66,6 +66,7 @@ async def test_restart_recovery_dispatches_pending_tool_and_releases_admission_o
         states = {"input-old": "COMPLETED", "input-root": "COMPLETED"}
         settled = asyncio.Event()
         tool_entered, tool_release = asyncio.Event(), asyncio.Event()
+        result_entered, result_release = asyncio.Event(), asyncio.Event()
         block = asyncio.Event()
         maintenance_entered = asyncio.Event()
 
@@ -79,6 +80,8 @@ async def test_restart_recovery_dispatches_pending_tool_and_releases_admission_o
                 assert request.headers["Idempotency-Key"] == "message:root"
                 accepted.append(body)
                 return web.json_response({"data": [{"id": "input-root"}]})
+            result_entered.set()
+            await result_release.wait()
             posts.append(body)
             result = body["events"][0]
             assert result["type"] == "user.custom_tool_result"
@@ -146,12 +149,21 @@ async def test_restart_recovery_dispatches_pending_tool_and_releases_admission_o
                 await tool_entered.wait()
                 with pytest.raises(AdmissionDeferred):
                     await service.admit(job)
+                assert not (await repo.get("ops.jobs", job["job_id"])).get("slot_admitted")
+                tool_release.set()
+                await result_entered.wait()
+                with pytest.raises(AdmissionDeferred):
+                    await service.admit(job)
+                pending = await repo.get("ops.tool_calls", "s:pending-tool")
+                assert pending is not None
+                assert pending["status"] == "DONE" and not pending.get("returned_at")
+                assert not pending.get("remote_event_id")
                 blocked = await repo.get("ops.agent_sessions", "s")
                 barrier = await service.execution_barrier(blocked, verify_remote=True)
                 assert barrier["complete"] is False
                 assert "unreturned-tool:pending-tool" in barrier["unidentified_inputs"]
                 assert not (await repo.get("ops.jobs", job["job_id"])).get("slot_admitted")
-                tool_release.set()
+                result_release.set()
                 await settled.wait()
             assert not block.is_set()
             current = await repo.get("ops.agent_sessions", "s")
@@ -180,6 +192,7 @@ async def test_restart_recovery_dispatches_pending_tool_and_releases_admission_o
             stop.set()
             block.set()
             tool_release.set()
+            result_release.set()
             if task is not None:
                 task.cancel()
                 await asyncio.gather(task, return_exceptions=True)
