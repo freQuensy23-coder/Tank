@@ -130,7 +130,11 @@ trap recover EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM
 if [ -f worker.pending ]; then
-  if ! apify settled; then
+  if apify settled; then
+    :
+  else
+    settlement_status=$?
+    [ "$settlement_status" -eq 2 ] || exit "$settlement_status"
     previous=$(apify previous-release)
     worker_started=yes
     tank_started=yes

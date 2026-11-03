@@ -223,12 +223,17 @@ def main():
             "previous Compose input unavailable",
         )
     elif action == "settled":
-        require(
-            pending["committed"] is True
-            and Path("deployed").read_text().strip() == pending["release"]
-            and current() == pending["candidate"],
-            "unfinished deployment",
-        )
+        if pending["committed"] is False:
+            print("Apify deployment failed: unfinished deployment; transaction retained", file=sys.stderr)
+            sys.exit(2)
+        try:
+            require(
+                Path("deployed").read_text().strip() == pending["release"]
+                and current() == pending["candidate"],
+                "committed deployment settlement refused",
+            )
+        except Exception:
+            raise RuntimeError("committed deployment settlement refused") from None
         PENDING.unlink()
     elif action == "activate":
         require(current() == pending["previous"], "worker changed before activation")
