@@ -1832,6 +1832,8 @@ Every input left open in earlier drafts is fixed in this version:
 | Exchange wallet lists (pinned commits) | 02 §4.8 |
 | Test cases | §11.3 |
 
+The main-only deployment workflow publishes changed `apify/x-reader` source from the selected main SHA using trusted current deployment helpers. Before activating and reading back `direct`, it waits for build success and compares the immutable build source snapshot with the selected bytes. Identical active source does not publish. Build or source verification failure precedes Tank rollout. EXIT/INT/TERM failures restore the previous worker and Tank; unresolved transactions block subsequent deployment. Automatic integration CI uses an isolated HTTP provider and the actual deploy shell, not paid publication.
+
 Values the operator provides at installation, kept outside the repository. Every secret below is a variable of the production host's single `.env` (`/srv/tank-deploy/.env`, 02 §8); there are no Docker secrets:
 
 | Value | Where it is stored |

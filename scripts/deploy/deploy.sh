@@ -88,16 +88,25 @@ verify() {
   return $fail
 }
 
+apify() { (set +x; . ./.env; export APIFY_API_TOKEN; python3 ./apify_deploy.py "$@" "$SHA"); }
 previous=$(cat deployed 2>/dev/null || true)
 [[ -z "$previous" || "$previous" =~ ^[0-9a-f]{40}$ ]] || { echo "invalid previous release SHA"; exit 1; }
 tank_started=no
+worker_started=no
 recover() {
   local status=$?
   trap - EXIT INT TERM
+  if [ "$status" -ne 0 ] && [ "$worker_started" = yes ]; then
+    if ! apify rollback; then
+      echo "Worker rollback failed; transaction retained"
+      exit 1
+    fi
+  fi
   if [ "$status" -ne 0 ] && [ "$tank_started" = yes ] && [ -n "$previous" ]; then
     echo "rollback to $previous $(date -u +%T)"
     if roll "$previous"; then
       printf '%s\n' "$previous" > deployed.next && mv deployed.next deployed
+      [ "$worker_started" = no ] || apify clear || status=1
       echo "rolled back to $previous"
     else
       echo "Tank rollback failed"
@@ -113,11 +122,16 @@ start=$(date +%s)
 since=$(date -u +%FT%TZ)
 echo "deploy $SHA at $since; previous ${previous:-none}"
 out=""
+apify prepare
+worker_started=yes
+apify activate
+start=$(date +%s)
 tank_started=yes
 if roll "$SHA"; then
   while [ $(( $(date +%s) - start )) -lt "$LIMIT" ]; do
     if out=$(verify "$since" 2>&1); then
       printf '%s\n' "$SHA" > deployed.next && mv deployed.next deployed
+      apify finish
       echo "VERIFIED $SHA after $(( $(date +%s) - start ))s"
       docker image ls --format '{{.Repository}}:{{.Tag}}' | grep '^ghcr.io/frequensy23-coder/tank/' \
         | grep -v -E ":(${SHA}|${previous:-none})\$" | xargs -r docker rmi >/dev/null 2>&1 || true

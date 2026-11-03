@@ -28,6 +28,7 @@ def test_actual_deploy_orchestration_rolls_back_failures_and_signals(tmp_path, m
 }
 verify() { return 0; }
 docker() { return 0; }
+apify() { return 0; }
 """
     marker = "previous=$(cat deployed 2>/dev/null || true)"
     assert source.count(marker) == 1
@@ -81,6 +82,10 @@ def test_historical_target_uses_current_main_deployment_helper(tmp_path):
     helper = repository / "scripts/deploy/deploy.sh"
     helper.parent.mkdir(parents=True)
     helper.write_text('python3 "releases/$SHA/apify_deploy.py" prepare\n')
+    (helper.parent / "apify_deploy.py").write_text("trusted helper\n")
+    worker = repository / "apify/x-reader/main.py"
+    worker.parent.mkdir(parents=True)
+    worker.write_text("historical worker\n")
     git("add", ".")
     git("commit", "-m", "historical deployment helper")
     historical = git("rev-parse", "HEAD")

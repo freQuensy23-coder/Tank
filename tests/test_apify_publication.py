@@ -1,6 +1,5 @@
 import json
 import os
-import shutil
 import subprocess
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -22,7 +21,7 @@ def test_worker_publication_transaction(tmp_path, mode):
     state = {"direct": "old", "files": files if mode == "unchanged" else [], "writes": []}
 
     class Provider(BaseHTTPRequestHandler):
-        def log_message(self, *args):
+        def log_message(self, format, *args):
             pass
 
         def do_GET(self):
