@@ -1,16 +1,18 @@
-import ast
+import builtins
 import hashlib
 import json
 import os
+import subprocess
+import sys
 from copy import deepcopy
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal, localcontext
 from pathlib import Path
+from types import ModuleType
 
 import pytest
 from truth_sql_failure_evidence import EvidenceClickHouse
 
-from tank.analysis import truth as reference
 from tank.analysis import truth_sql_derivatives as native
 from tank.util import iso
 
@@ -18,40 +20,87 @@ pytestmark = pytest.mark.integration
 
 CUTOFF = datetime(2026, 10, 21, 12, tzinfo=UTC)
 WINDOWS = {"W15M": 900, "W1H": 3600, "W4H": 14400, "W24H": 86400}
-REFERENCE_FUNCTIONS = {
-    "percentile",
-    "normal",
-    "beyond",
-    "decomposition",
-    "oi_class",
-    "oi_temporally_admissible",
-    "_oi_rows",
-    "_stored_usd",
-    "_oi_split",
-    "_oi_stats",
-    "window_usd_volume",
-    "liquidation_side_evidence",
-    "_history_slice",
-    "_composite_history",
-    "synchronized_oi",
-    "derivatives_truth",
-}
-REFERENCE_SHA256 = "b875e8ac3a0c77bd2b105fa705d975d1ace29b81e7b5de7fc95d34b1cb963994"
+REFERENCE_COMMIT = "ef3b43e8457622d2f3c2c86926de41aecee101d6"
+reference = None
 
 
 @pytest.fixture(scope="module", autouse=True)
 def frozen_reference_source():
-    source = Path(reference.__file__).read_text()
-    functions = [
-        node
-        for node in ast.parse(source).body
-        if isinstance(node, ast.FunctionDef) and node.name in REFERENCE_FUNCTIONS
+    global reference
+    root = Path(__file__).resolve().parents[1]
+    modules = {}
+    original_import = builtins.__import__
+
+    def load(name):
+        if name in modules:
+            return modules[name]
+        module = ModuleType("_deriv_original_" + name)
+        modules[name] = module
+        sys.modules[module.__name__] = module
+        path = "src/" + name.replace(".", "/")
+        result = subprocess.run(
+            ["git", "show", f"{REFERENCE_COMMIT}:{path}.py"],
+            cwd=root,
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+        if result.returncode:
+            assert name in {"tank", "tank.analysis", "tank.market"}, result.stderr
+            module.__path__ = []
+            return module
+        module.__file__ = f"{REFERENCE_COMMIT}/{path}.py"
+        module.__dict__["__builtins__"] = {**vars(builtins), "__import__": frozen_import}
+        exec(compile(result.stdout, module.__file__, "exec"), module.__dict__)
+        return module
+
+    def frozen_import(name, globals=None, locals=None, fromlist=(), level=0):
+        if name != "tank" and not name.startswith("tank."):
+            return original_import(name, globals, locals, fromlist, level)
+        module = load(name)
+        for child in fromlist:
+            if not hasattr(module, child):
+                setattr(module, child, load(name + "." + child))
+        return module
+
+    reference = load("tank.analysis.truth")
+    yield
+    reference = None
+    for module in modules.values():
+        sys.modules.pop(module.__name__, None)
+
+
+async def test_latest_oi_basis_tie_keeps_first_observation(clickhouse):
+    data = snapshot()
+    iid = add_instrument(data, "binance")
+    data["oi"] = [
+        oi_row(iid, CUTOFF - timedelta(hours=2), "10", "30"),
+        oi_row(iid, CUTOFF, "20", "60", mark_price="3", index_price="2"),
+        oi_row(iid, CUTOFF, "99", "297", mark_price="9", index_price="2"),
     ]
-    assert {node.name for node in functions} == REFERENCE_FUNCTIONS
-    segments = [ast.get_source_segment(source, node) for node in functions]
-    assert all(isinstance(segment, str) for segment in segments)
-    frozen = "\n".join(segment for segment in segments if segment is not None)
-    assert hashlib.sha256(frozen.encode()).hexdigest() == REFERENCE_SHA256
+    result = await execute(clickhouse, data)
+    assert Decimal(result["EVENT"]["per_venue"][0]["basis_bps"]) == 5000
+
+
+@pytest.mark.parametrize("unresolved", [False, True])
+async def test_nested_timestamp_precision_keeps_first_equivalent_text(clickhouse, unresolved):
+    data = snapshot()
+    iid = add_instrument(data, "binance")
+    data["oi"] = [
+        oi_row(
+            iid, at, "10", "30", ts_prec="BUCKET(5m)",
+            ts_bucket_anchor="UNSPECIFIED" if unresolved else "END",
+        )
+        for at in (CUTOFF - timedelta(hours=2), CUTOFF)
+    ]
+    for row in data["oi"]:
+        row["ts"] = {"value": row["ts"], "precision": "BUCKET(300s)"}
+    result = await execute(clickhouse, data)
+    venue = result["EVENT"]["per_venue"][0]
+    if unresolved:
+        assert venue["oi_temporal_exclusions"]["latest_observation"]["ts_prec"] == "BUCKET(300s)"
+    else:
+        assert venue["precision"] == "BUCKET(300s)"
 
 
 @pytest.fixture
@@ -197,7 +246,7 @@ async def test_native_ctes_are_independently_composable(clickhouse, record_prope
     assert rows[0]["other_domain_sentinel"] == 17
     assert_parity(json.loads(rows[0]["result"]), original(data, {}))
     record_property("sql_sha256", hashlib.sha256(sql.encode()).hexdigest())
-    record_property("oracle_sha256", REFERENCE_SHA256)
+    record_property("oracle_commit", REFERENCE_COMMIT)
 
 
 async def test_full_native_history_funding_volume_and_synchronized_cohort(clickhouse):
@@ -539,7 +588,8 @@ async def test_liquidation_observed_zero_missing_conversion_and_coverage_remain_
     assert result["EVENT"]["liquidations"]["sampled_venues_min"]["long"] is None
 
 
-async def test_fractional_native_volume_uses_complete_boundary_segments(clickhouse):
+@pytest.mark.parametrize("duplicate", ["none", "revised", "first_incomplete"])
+async def test_fractional_native_volume_uses_complete_boundary_segments(clickhouse, duplicate):
     data = snapshot()
     end = CUTOFF + timedelta(microseconds=500000)
     start = CUTOFF - timedelta(seconds=89, microseconds=750000)
@@ -574,6 +624,11 @@ async def test_fractional_native_volume_uses_complete_boundary_segments(clickhou
                     "observed_at": iso(CUTOFF + timedelta(seconds=1)),
                 }
             )
+    if duplicate != "none":
+        revised = deepcopy(data["flow_segments"][0])
+        revised["buy_notional"] = "999"
+        revised["complete"] = duplicate != "first_incomplete"
+        data["flow_segments"].insert(0, revised)
     result = await execute(clickhouse, data)
     share = result["EVENT"]["incremental_share"]
     assert share is not None
@@ -591,7 +646,7 @@ async def test_domain_refuses_unrepresentable_native_financial_values(clickhouse
         oi_row(iid, CUTOFF, "20", "60"),
     ]
     sql, parameters = native.query(data)
-    with pytest.raises(RuntimeError, match="ClickHouse"):
+    with pytest.raises(RuntimeError, match="Market Truth decimal input outside native financial range"):
         await clickhouse.rows(sql, parameters)
 
 
@@ -646,5 +701,5 @@ async def test_conflicting_precision_is_refused_instead_of_voting_in_the_cohort(
         for at in (CUTOFF - timedelta(hours=2), CUTOFF)
     ]
     sql, parameters = native.query(data)
-    with pytest.raises(RuntimeError, match="ClickHouse"):
+    with pytest.raises(RuntimeError, match="Conflicting or unsupported OI timestamp precision"):
         await clickhouse.rows(sql, parameters)

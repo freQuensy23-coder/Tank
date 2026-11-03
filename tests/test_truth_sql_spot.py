@@ -104,6 +104,9 @@ def assert_complete_result(actual, expected, path=()):
             assert_complete_result(actual[key], value, (*path, key))
     elif isinstance(expected, list):
         assert isinstance(actual, list), path
+        if path and path[-1] == "aggregates":
+            actual = sorted(actual, key=lambda row: row["instrument_id"])
+            expected = sorted(expected, key=lambda row: row["instrument_id"])
         assert len(actual) == len(expected), path
         for index, (left, right) in enumerate(zip(actual, expected, strict=True)):
             assert_complete_result(left, right, (*path, index))
@@ -341,6 +344,80 @@ async def test_native_spot_coverage_majority_compares_unrounded_estimated_sum(
     assert event["classification"] == "INSUFFICIENT_DATA"
 
 
+async def test_native_spot_large_admitted_native_unit_population(
+    spot_client, original_spot, record_property
+):
+    snapshot = packet(
+        {"A": ("200000000", "200000000", "400000000000000"),
+         "B": ("200000000", "200000000", "400000000000000")},
+        minutes=2880,
+        event_seconds=86400,
+    )
+    result = await native_result(spot_client, original_spot, snapshot, record_property)
+    window = result["spots"]["W24H"]
+    assert Decimal(window["composite_max"]["volume"]) == Decimal("1152000000000")
+    assert Decimal(window["composite_max"]["cvd"]) == 0
+    assert Decimal(window["composite_cohort"]["volume"]) == Decimal("1152000000000")
+
+
+async def test_native_spot_retained_parent_restores_admitted_embedded_piece(
+    spot_client, original_spot, record_property
+):
+    snapshot = fractional_packet("complete")
+    cutoff = parse_time(snapshot["cutoff"])
+    start = END - timedelta(seconds=55, microseconds=-1)
+    snapshot["anchor"]["ts"] = iso(start)
+    snapshot["flow_bars"] = []
+    snapshot["flow_segments"] = []
+    for venue in ("A", "B"):
+        piece = {
+            "start": iso(start), "end": iso(END), "complete": True,
+            "buy_qty": "3", "sell_qty": "1", "sum_sq_qty": "1", "n_buy": 2, "n_sell": 1,
+        }
+        snapshot["flow_bars"].append(
+            flow(venue, END - timedelta(minutes=1), boundary_segments=[piece])
+        )
+        snapshot["flow_segments"].append({
+            **piece, "instrument_id": f"{venue}:spot:T", "start": iso(END), "end": iso(cutoff),
+        })
+        if venue == "A":
+            snapshot["flow_segments"].append({
+                **piece, "instrument_id": "A:spot:T", "buy_qty": "999",
+                "received_ts": iso(cutoff + timedelta(seconds=2)),
+            })
+    raw = await native_result(spot_client, original_spot, snapshot, record_property)
+    bounded = original_spot.bounded_market_snapshot(deepcopy(snapshot), cutoff)
+    admitted = await native_result(spot_client, original_spot, bounded, record_property)
+    assert_complete_result(raw, admitted)
+    assert raw["spots"]["EVENT"]["coverage"]["n_complete"] == 2
+    assert Decimal(raw["spots"]["EVENT"]["venues"][0]["buy_qty"]) == 6
+
+
+async def test_native_spot_all_registered_instruments_cover_fractional_chain(
+    spot_client, original_spot, record_property
+):
+    snapshot = fractional_packet("complete")
+    snapshot["instruments"].append(instrument("A", suffix="T2"))
+    start = parse_time(snapshot["anchor"]["ts"])
+    middle = END + timedelta(seconds=12)
+    end = parse_time(snapshot["cutoff"])
+    for lower, upper, buy, count in ((start, middle, "1", 4), (middle, end, "2", 5)):
+        snapshot["flow_segments"].append({
+            "instrument_id": "A:spot:T2", "start": iso(lower), "end": iso(upper),
+            "complete": True, "buy_qty": buy, "sell_qty": "0", "sum_sq_qty": "1",
+            "n_buy": count, "n_sell": 0, "source_path": "OWNED_SECOND_INSTRUMENT",
+        })
+    result = await native_result(spot_client, original_spot, snapshot, record_property)
+    venue = result["spots"]["EVENT"]["venues"][0]
+    assert result["spots"]["EVENT"]["coverage"]["n_complete"] == 2
+    segment = venue["boundary_segments"][0]
+    assert segment["trade_count"] == 15
+    assert len(segment["aggregates"]) == 4
+    second = [row for row in segment["aggregates"] if row["instrument_id"] == "A:spot:T2"]
+    assert [row["buy_qty"] for row in second] == ["1", "2"]
+    assert all(row["source_path"] == "OWNED_SECOND_INSTRUMENT" for row in second)
+
+
 def fractional_packet(mode):
     start = END + timedelta(seconds=5, microseconds=1)
     midpoint = END + timedelta(seconds=12)
@@ -513,7 +590,7 @@ async def test_native_spot_primary_selection_and_empty_registered_instruments(
 @pytest.mark.parametrize(
     ("field", "value"),
     [
-        ("buy_qty", "1000000000000"),
+        ("buy_qty", "1000000000000000000000000"),
         ("buy_qty", "0.0000000000000000000000001"),
         ("sum_sq_qty", "1000000000000000000000000"),
         ("sell_qty", "NaN"),
@@ -523,5 +600,5 @@ async def test_native_spot_explicit_financial_range_refusal(field, value, spot_c
     snapshot = packet({"A": ("1", "0", "0"), "B": ("1", "0", "0")}, minutes=1, event_seconds=60)
     snapshot["flow_bars"][0][field] = value
     sql, params = truth_sql_spot.query(snapshot)
-    with pytest.raises(RuntimeError, match="ClickHouse"):
+    with pytest.raises(RuntimeError, match="Market Truth spot (financial input|squared quantity).*(native range)"):
         await spot_client.rows(sql, params)

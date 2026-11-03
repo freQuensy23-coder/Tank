@@ -284,10 +284,10 @@ def ctes():
         deriv_value = 'BUCKET', if(isNull(deriv_bucket_size), NULL, concat('BUCKET(', deriv_bucket_size, 's)')),
         deriv_value) AS deriv_normalize_precision,
     (deriv_raw) -> arrayMap(deriv_v -> deriv_normalize_precision(deriv_v, deriv_get(deriv_raw, 'ts_bucket_size_s')),
-        arrayFilter(deriv_v -> isNotNull(deriv_v), [deriv_get(deriv_raw, 'ts_prec'),
+        arrayFilter(deriv_v -> isNotNull(deriv_v), [deriv_get(JSONExtractRaw(deriv_raw, 'ts'), 'precision'),
+            deriv_get(JSONExtractRaw(deriv_raw, 'ts'), 'prec'), deriv_get(deriv_raw, 'ts_prec'),
             deriv_get(deriv_raw, 'ts_precision'), deriv_get(deriv_raw, 'timestamp_precision'),
-            deriv_get(deriv_raw, 'precision'), deriv_get(JSONExtractRaw(deriv_raw, 'ts'), 'precision'),
-            deriv_get(JSONExtractRaw(deriv_raw, 'ts'), 'prec')])) AS deriv_precision_declarations,
+            deriv_get(deriv_raw, 'precision')])) AS deriv_precision_declarations,
     (deriv_value) -> toFloat64OrZero(extract(ifNull(deriv_value, ''), '^BUCKET[(]([0-9]+(?:[.][0-9]+)?)'))
         * multiIf(endsWith(ifNull(deriv_value, ''), 'us)'), 0.000001,
             endsWith(ifNull(deriv_value, ''), 'ms)'), 0.001,
@@ -532,7 +532,7 @@ def ctes():
         arrayFilter(deriv_l -> deriv_get(deriv_l, 'instrument_id') = deriv_iid
             AND deriv_time(deriv_l) >= deriv_start AND deriv_time(deriv_l) < deriv_end,
             deriv_collection('liquidations')),
-        deriv_latest(arrayMap(deriv_r -> deriv_r.1, deriv_rows))) AS deriv_per_json,
+        arrayElement(arraySort(deriv_r -> tuple(-deriv_r.3, deriv_r.2), deriv_rows), 1).1) AS deriv_per_json,
     (deriv_iid, deriv_instrument, deriv_rows, deriv_start, deriv_end, deriv_excluded, deriv_funds, deriv_liqs, deriv_lastoi) ->
         deriv_merge(deriv_merge(deriv_merge(deriv_merge({per_venue},
         deriv_stats(deriv_rows, deriv_start, deriv_end, [deriv_rows])),
@@ -606,7 +606,7 @@ def ctes():
         AND arrayAll((deriv_r, deriv_next) -> deriv_time(deriv_r)
             + toInt64(coalesce(deriv_get(deriv_r, 'interval_s'), '60')) * 1000000 = deriv_time(deriv_next),
             arrayPopBack(deriv_rows), arraySlice(deriv_rows, 2)) AS deriv_candles_complete,
-    arrayConcat(deriv_collection('flow_segments'), arrayFlatten(arrayMap(deriv_bar -> arrayMap(deriv_piece ->
+    arrayConcat(arrayReverse(deriv_collection('flow_segments')), arrayFlatten(arrayMap(deriv_bar -> arrayMap(deriv_piece ->
         deriv_merge(deriv_piece, concat('{{\"instrument_id\":', toJSONString(deriv_get(deriv_bar, 'instrument_id')), '}}')),
         JSONExtractArrayRaw(deriv_bar, 'boundary_segments')), deriv_collection('flow_bars')))) AS deriv_segments_raw,
     (deriv_piece) -> tuple(deriv_get(deriv_piece, 'instrument_id'), deriv_get(deriv_piece, 'start'),

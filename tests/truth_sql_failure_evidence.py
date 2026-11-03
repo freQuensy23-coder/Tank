@@ -1,3 +1,4 @@
+import contextlib
 import hashlib
 import json
 import os
@@ -8,22 +9,17 @@ from urllib.parse import urlparse
 
 from tank.clickhouse_market import ClickHouse
 
-_SAFE_WORDS = frozenset(
-    "DB Exception Syntax error failed at position Expected one of end query expression "
-    "Unknown identifier function aggregate Missing columns column not found in scope "
-    "Illegal type types argument arguments for function There is no supertype because some "
-    "of them are String FixedString and other not Nullable Array Tuple Decimal Decimal256 "
-    "Float64 Float32 Int64 UInt64 UInt8 Nothing Cannot convert parse value from to "
-    "Nested inside Nullable argument must be constant Number does match Overflow "
-    "Division by zero division max maximum size depth exceeded Too large AST expanded "
-    "Unexpected character token before after Type mismatch incompatible scale precision "
-    "First second third fourth return result has different sizes JOIN ON AS WITH SELECT "
-    "IN IN_SCOPE UNKNOWN_IDENTIFIER UNKNOWN_FUNCTION SYNTAX_ERROR ILLEGAL_TYPE_OF_ARGUMENT "
-    "NO_COMMON_TYPE NUMBER_OF_ARGUMENTS_DOESNT_MATCH BAD_ARGUMENTS TYPE_MISMATCH "
-    "DECIMAL_OVERFLOW TOO_LARGE_QUERY TOO_DEEP_AST TOO_BIG_AST CANNOT_PARSE_TEXT "
-    "CANNOT_PARSE_NUMBER ATTEMPT_TO_READ_AFTER_EOF UNKNOWN_SETTING UNSUPPORTED_METHOD "
-    "native financial range Input scientific notation refused ClickHouse HTTP URI Request "
-    "Too Long Bad Gateway Service Unavailable Internal Server Error".split()
+_SAFE_PHRASES = (
+    "Unknown identifier", "Unknown expression or function identifier", "Unknown function",
+    "Syntax error", "Expected one of", "Illegal type", "Nested type", "inside Nullable",
+    "There is no supertype", "Cannot convert", "Cannot parse", "Division by zero",
+    "Decimal math overflow", "Too large", "Too deep", "AST", "scale", "precision",
+    "native financial range", "UNKNOWN_IDENTIFIER", "UNKNOWN_FUNCTION", "SYNTAX_ERROR",
+    "ILLEGAL_TYPE_OF_ARGUMENT", "NO_COMMON_TYPE", "NUMBER_OF_ARGUMENTS_DOESNT_MATCH",
+    "BAD_ARGUMENTS", "TYPE_MISMATCH", "DECIMAL_OVERFLOW", "TOO_LARGE_QUERY",
+    "TOO_DEEP_AST", "TOO_BIG_AST", "CANNOT_PARSE_TEXT", "CANNOT_PARSE_NUMBER",
+    "ATTEMPT_TO_READ_AFTER_EOF", "UNKNOWN_SETTING", "UNSUPPORTED_METHOD",
+    "URI", "Request", "Too Long", "Bad Gateway", "Service Unavailable", "Server Error",
 )
 
 
@@ -32,16 +28,17 @@ def failure_receipt(error, nodeid, query):
     status = re.match(r"ClickHouse (\d{3}):", message)
     code = re.search(r"\bCode: (\d+)\b", message)
     message = re.split(r"(?i)\b(?:while processing|in scope|stack trace)\b", message)[0]
-    message = re.sub(r"(['\"`]).*?\1", " [redacted] ", message, flags=re.DOTALL)
-    words = re.findall(r"[A-Za-z_]+", message)
-    safe = " ".join(word if word in _SAFE_WORDS else "[redacted]" for word in words)
-    safe = re.sub(r"(?:\[redacted\] ?)+", "[redacted] ", safe).strip()[:512]
+    diagnostics = [phrase for phrase in _SAFE_PHRASES if phrase in message]
+    identifiers = set(re.findall(r"\b(?:spot|deriv|rel|lq)_[A-Za-z0-9_]+\b", query))
+    diagnostics.extend(sorted(identifiers.intersection(re.findall(r"\b[A-Za-z_][A-Za-z0-9_]*\b", message))))
+    diagnostics.extend(re.findall(r"\bposition [0-9]{1,8}\b", message))
+    safe = " | ".join(diagnostics)[:512] or "[redacted]"
     return {
-        "exception_class": type(error).__name__,
+        "exception_class": type(error).__name__[:128],
         "http_status": int(status[1]) if status else None,
         "native_error_code": int(code[1]) if code else None,
         "server_message": safe,
-        "nodeid": nodeid,
+        "nodeid": nodeid[:512],
         "query_digest": hashlib.sha256(query.encode()).hexdigest(),
     }
 
@@ -61,10 +58,8 @@ def retain_first_failure(directory, receipt):
             json.dump(receipt, stream, sort_keys=True)
             stream.flush()
             os.fsync(stream.fileno())
-        try:
+        with contextlib.suppress(FileExistsError):
             os.link(temporary, destination)
-        except FileExistsError:
-            pass
     finally:
         os.unlink(temporary)
 
@@ -80,11 +75,9 @@ class EvidenceClickHouse(ClickHouse):
         try:
             return await super().rows(query, params)
         except Exception as error:
-            try:
+            with contextlib.suppress(OSError, ValueError):
                 retain_first_failure(
                     Path(__file__).resolve().parents[1] / ".test-results",
                     failure_receipt(error, self.nodeid, query),
                 )
-            except (OSError, ValueError):
-                pass
             raise
