@@ -50,6 +50,10 @@ def worker_journal(committed=False):
         "post_finish_crash",
         "finish_child_failed",
         "finish_child_killed",
+        "settlement_503",
+        "settlement_disconnected",
+        "settlement_marker_mismatch",
+        "settlement_ownership_mismatch",
     ],
 )
 def test_worker_publication_transaction(tmp_path, mode):
@@ -74,6 +78,13 @@ def test_worker_publication_transaction(tmp_path, mode):
 
         def do_GET(self):
             state["reads"].append(self.path)
+            if state.get("settlement_failure"):
+                failure = state.pop("settlement_failure")
+                if failure == "settlement_disconnected":
+                    self.close_connection = True
+                else:
+                    self.send_error(503)
+                return
             if mode == "ownership_unreadable" and state["direct"] == "new":
                 self.send_error(503)
                 return
@@ -227,7 +238,7 @@ docker() {
             text=True,
             timeout=8,
         )
-        success = mode in {"success", "unchanged", "ack_lost", "second"}
+        success = mode in {"success", "unchanged", "ack_lost", "second"} or mode.startswith("settlement_")
         assert (result.returncode == 0) == success, result.stdout + result.stderr
         remains_new = success and mode != "unchanged"
         remains_new = remains_new or mode in {
@@ -310,6 +321,51 @@ docker() {
             assert result.returncode == (143 if mode == "post_finish_term" else -9)
             tag_writes = [body for path, body in state["writes"] if path == f"/v2/acts/{ACTOR}"]
             assert tag_writes == [{"taggedBuilds": {"direct": {"buildId": "new"}}}]
+        if mode.startswith("settlement_"):
+            pending_path = tmp_path / "worker.pending"
+            journal = pending_path.read_bytes()
+            assert json.loads(journal) == worker_journal(True)
+            assert (tmp_path / "deployed").read_text() == "a" * 40 + "\n"
+            assert (tmp_path / "running-release").read_text() == "a" * 40 + "\n"
+            stage = tmp_path / "incoming"
+            stage.mkdir()
+            for name in ("deploy.sh", "apify_deploy.py"):
+                shutil.copyfile(tmp_path / name, stage / name)
+            (stage / "worker").mkdir()
+            (stage / "worker/main.py").write_text("incoming worker\n")
+            (stage / "worker-source.yaml").write_text(
+                "https://api.apify.com/v2/actors/otherActor/run-sync?build=next\n"
+            )
+            (stage / "compose.yaml").write_text("incoming compose\n")
+            if mode in {"settlement_503", "settlement_disconnected"}:
+                state["settlement_failure"] = mode
+            elif mode == "settlement_marker_mismatch":
+                (tmp_path / "deployed").write_text("d" * 40 + "\n")
+            else:
+                state["direct"] = "third-party"
+            entries = set(tmp_path.rglob("*"))
+            before = {path: path.read_bytes() for path in entries if path.is_file()}
+            writes = list(state["writes"])
+            reads = len(state["reads"])
+            active = state["direct"]
+            retry = subprocess.run(
+                ["bash", str(stage / "deploy.sh"), "c" * 40],
+                env={**os.environ, "MODE": "success"},
+                capture_output=True,
+                text=True,
+                timeout=8,
+            )
+            assert retry.returncode == 1, retry.stdout + retry.stderr
+            assert "committed deployment settlement refused" in retry.stderr
+            assert "fixture-only" not in retry.stdout + retry.stderr
+            assert "VERIFIED" not in retry.stdout
+            expected_reads = [] if mode == "settlement_marker_mismatch" else [f"/v2/acts/{ACTOR}"]
+            assert state["reads"][reads:] == expected_reads
+            assert state["writes"] == writes
+            assert state["direct"] == active
+            assert pending_path.read_bytes() == journal
+            assert set(tmp_path.rglob("*")) == entries
+            assert {path: path.read_bytes() for path in before} == before
         if mode == "changed_compose":
             stage = tmp_path / "incoming-next"
             stage.mkdir()
