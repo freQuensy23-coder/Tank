@@ -184,18 +184,38 @@ arrayConcat(arrayFilter(flow -> lq_is_spot(flow) AND has(lq_eligible, lq_venue(f
         JSONMergePatch(row, concat('{"minute_start":', JSONExtractRaw(row, 'start'),
             ',"segment_end":', JSONExtractRaw(row, 'end'), ',"venue":', toJSONString(JSONExtractString(v, 'venue')), '}')),
         JSONExtractArrayRaw(segment, 'aggregates')), JSONExtractArrayRaw(v, 'boundary_segments'))), JSONExtractArrayRaw(lq_spot, 'venues')))) AS lq_flows,
-arrayFilter(flow -> lq_is_spot(flow) AND lq_time(flow) >= lq_end - INTERVAL 1 DAY AND lq_time(flow) < lq_end, lq_all_flows) AS lq_volume_flows,
-arrayDistinct(arrayMap(flow -> intDiv(toUnixTimestamp(lq_time(flow)), 900), lq_volume_flows)) AS lq_buckets,
-arrayMap(bucket -> arrayFilter(flow -> has(lq_eligible, lq_venue(flow)) AND intDiv(toUnixTimestamp(lq_time(flow)), 900) = bucket, lq_volume_flows), lq_buckets) AS lq_bucket_rows,
-arrayFilter(rows -> notEmpty(lq_eligible) AND arrayAll(row -> JSONExtractRaw(row, 'complete') = 'true', rows)
-    AND arrayAll(venue -> length(arrayDistinct(arrayMap(row -> lq_time(row), arrayFilter(row -> lq_venue(row) = venue, rows)))) = 15, lq_eligible)
-    AND isNotNull(lq_sum(arrayMap(row -> lq_dec(JSONExtractRaw(row, 'buy_notional')), rows)))
-    AND isNotNull(lq_sum(arrayMap(row -> lq_dec(JSONExtractRaw(row, 'sell_notional')), rows))), lq_bucket_rows) AS lq_covered_buckets,
-arrayMap(rows -> lq_sum(arrayMap(row -> lq_dec(JSONExtractRaw(row, 'buy_notional')), rows))
-    + lq_sum(arrayMap(row -> lq_dec(JSONExtractRaw(row, 'sell_notional')), rows)), lq_covered_buckets) AS lq_volumes,
 arrayMap(x -> lq_dec(x), JSONExtractArrayRaw(lq_parameter('impact_tiers_usd', '[100000,1000000,5000000]'))) AS lq_base_tiers,
-arrayMap(n -> if(lq_mean(lq_volumes) >= lq_base_tiers[3], n,
-    divideDecimal(multiplyDecimal(n, lq_mean(lq_volumes), 24), nullIf(lq_base_tiers[3], lq_zero), 24)), lq_base_tiers) AS lq_tiers,
+lq_volume_population AS (
+    SELECT arrayFilter(flow -> lq_is_spot(flow) AND lq_time(flow) >= lq_end - INTERVAL 1 DAY AND lq_time(flow) < lq_end, lq_all_flows) AS lq_volume_flows
+),
+lq_volume_bucket_keys AS (
+    SELECT *, arrayDistinct(arrayMap(flow -> intDiv(toUnixTimestamp(lq_time(flow)), 900), lq_volume_flows)) AS lq_buckets
+    FROM lq_volume_population
+),
+lq_volume_bucket_groups AS (
+    SELECT arrayMap(bucket -> arrayFilter(flow -> has(lq_eligible, lq_venue(flow)) AND intDiv(toUnixTimestamp(lq_time(flow)), 900) = bucket, lq_volume_flows), lq_buckets) AS lq_bucket_rows
+    FROM lq_volume_bucket_keys
+),
+lq_volume_coverage AS (
+    SELECT arrayFilter(rows -> notEmpty(lq_eligible) AND arrayAll(row -> JSONExtractRaw(row, 'complete') = 'true', rows)
+        AND arrayAll(venue -> length(arrayDistinct(arrayMap(row -> lq_time(row), arrayFilter(row -> lq_venue(row) = venue, rows)))) = 15, lq_eligible)
+        AND isNotNull(lq_sum(arrayMap(row -> lq_dec(JSONExtractRaw(row, 'buy_notional')), rows)))
+        AND isNotNull(lq_sum(arrayMap(row -> lq_dec(JSONExtractRaw(row, 'sell_notional')), rows))), lq_bucket_rows) AS lq_covered_buckets
+    FROM lq_volume_bucket_groups
+),
+lq_volume_totals AS (
+    SELECT arrayMap(rows -> lq_sum(arrayMap(row -> lq_dec(JSONExtractRaw(row, 'buy_notional')), rows))
+        + lq_sum(arrayMap(row -> lq_dec(JSONExtractRaw(row, 'sell_notional')), rows)), lq_covered_buckets) AS lq_volumes
+    FROM lq_volume_coverage
+),
+lq_volume_average AS (
+    SELECT lq_mean(lq_volumes) AS lq_volume_mean FROM lq_volume_totals
+),
+lq_tier_values AS (
+    SELECT arrayMap(n -> if(lq_volume_mean >= lq_base_tiers[3], n,
+        divideDecimal(multiplyDecimal(n, lq_volume_mean, 24), nullIf(lq_base_tiers[3], lq_zero), 24)), lq_base_tiers) AS lq_tiers
+    FROM lq_volume_average
+),
 (level -> if(JSONType(level) = 'Object', lq_dec(JSONExtractRaw(level, 'price')), lq_dec(JSONExtractRaw(level, 1)))) AS lq_level_price,
 (level -> if(JSONType(level) = 'Object', lq_dec(JSONExtractRaw(level, 'qty')), lq_dec(JSONExtractRaw(level, 2)))) AS lq_level_qty,
 ((book, side) -> if(JSONHas(book, if(side = 'ask', 'asks', 'bids')),
@@ -246,7 +266,7 @@ lq_venue_stats AS (
 """
         + f"""
 lq_venues AS (
-    SELECT *, {per_venue} AS venue_json FROM lq_venue_stats
+    SELECT *, {per_venue} AS venue_json FROM lq_venue_stats CROSS JOIN lq_tier_values
 ),
 lq_burst_base AS (
     SELECT *, arrayFilter(book -> book.1 < lq_time(flow) AND dateDiff('microsecond', book.1, lq_time(flow)) <= lq_cadence * 1000000, series) AS baselines
@@ -308,14 +328,14 @@ def _state_ctes():
     lq_complete(side, 0, 0), lq_lower_bound(side, 0, 0) < lq_tiers[2],
     lq_lower_bound(side, 0, 0) >= lq_tiers[2], false, CAST(NULL, 'Nullable(Bool)'))) AS lq_thin_side,
 lq_state_inputs AS (
-    SELECT venues AS lq_venues_array, observations AS lq_observations,
+    SELECT venues AS lq_venues_array, observations AS lq_observations, lq_tiers,
         lq_sum(arrayMap(flow -> lq_dec(JSONExtractRaw(flow, 'buy_notional')), lq_flows))
             - lq_sum(arrayMap(flow -> lq_dec(JSONExtractRaw(flow, 'sell_notional')), lq_flows)) AS lq_net_usd,
         lq_sum(arrayMap(flow -> lq_dec(JSONExtractRaw(flow, 'buy_qty')), lq_flows))
             - lq_sum(arrayMap(flow -> lq_dec(JSONExtractRaw(flow, 'sell_qty')), lq_flows)) AS lq_net_native,
         JSONExtractRaw(lq_relative, 'windows', lq_primary) AS lq_relative_window,
         notEmpty(lq_books) AND notEmpty(lq_flows) AS lq_replenishment_available
-    FROM lq_collected CROSS JOIN lq_observed
+    FROM lq_collected CROSS JOIN lq_observed CROSS JOIN lq_tier_values
 ),
 lq_state_flow AS (
     SELECT *, if(isNotNull(lq_net_native), lq_net_native, lq_net_usd) AS lq_net,
