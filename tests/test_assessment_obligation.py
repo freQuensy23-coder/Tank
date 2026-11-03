@@ -11,7 +11,7 @@ from test_agents_execution_barrier import idle
 from test_session_admission import fixture_repo
 from test_session_binding_concurrency import seed
 
-from tank.agents.sessions import SessionService
+from tank.agents.sessions import AdmissionDeferred, SessionService
 from tank.event_tools import EventToolService
 from tank.settings import Settings
 from tank.util import iso, utcnow
@@ -83,7 +83,7 @@ async def cached_source(repo, service, domain):
     await repo.put("ops.agent_sessions", "s", session)
     job = await repo.enqueue("AGENT_MESSAGE", session["message_log"][0]["payload"], "i:NEW_ITEM")
     job["status"] = "DONE"
-    await repo.put("ops.jobs", job["job_id"], job)
+    job = await repo.put("ops.jobs", job["job_id"], job)
     return session, job
 
 
@@ -104,8 +104,9 @@ def native_handler(request):
 
 
 @pytest.mark.parametrize("backend", BACKENDS)
+@pytest.mark.parametrize("legacy_reminder", [False, True])
 async def test_cached_checked_source_reconciles_once_across_controllers_and_restart(
-    backend, tmp_path, postgres_template
+    backend, legacy_reminder, tmp_path, postgres_template
 ):
     async with fixture_repo(backend, postgres_template) as repo, peer(backend, native_handler) as (http, url):
         config = settings()
@@ -114,6 +115,11 @@ async def test_cached_checked_source_reconciles_once_across_controllers_and_rest
         first = SessionService(repo, config, domain.dispatch, http=http)
         second = SessionService(repo, config, domain.dispatch, http=http)
         original, source_job = await cached_source(repo, first, domain)
+        if legacy_reminder:
+            await first.remind_unassessed(
+                original, original["message_log"][0], 20, expires_at=source_job["expires_at"]
+            )
+            await repo.put("ops.agent_sessions", "s", original)
         item = await repo.get("ingest.source_items", "i")
         event = await repo.get("evt.events", original["event_id"])
         results = list(await asyncio.gather(first.settled_turn("s"), second.settled_turn("s")))
@@ -148,7 +154,7 @@ async def test_cached_checked_source_reconciles_once_across_controllers_and_rest
 @pytest.mark.parametrize("backend", BACKENDS)
 @pytest.mark.parametrize("fence", ["assessed", "merged", "closed", "failed", "ended", "archived", "terminated", "expired", "reanalysed"])
 async def test_fresh_state_before_obligation_commit_prevents_reminder(
-    backend, fence, tmp_path, postgres_template
+    backend, fence, tmp_path, postgres_template, monkeypatch
 ):
     async with fixture_repo(backend, postgres_template) as repo, peer(backend, native_handler) as (http, url):
         config = settings()
@@ -156,10 +162,26 @@ async def test_fresh_state_before_obligation_commit_prevents_reminder(
         domain = EventToolService(repo, Settings(data_dir=tmp_path), None, None)
         service = SessionService(repo, config, domain.dispatch, http=http)
         original, job = await cached_source(repo, service, domain)
+        waiting, release = asyncio.Event(), asyncio.Event()
+        lock = repo.lock
+        task = None
+
+        @asynccontextmanager
+        async def pause_lock(key):
+            if key == "session:s" and asyncio.current_task() is task:
+                waiting.set()
+                await release.wait()
+            async with lock(key):
+                yield repo
+
+        monkeypatch.setattr(repo, "lock", pause_lock)
+        task = asyncio.create_task(service.settled_turn("s"))
+        await asyncio.wait_for(waiting.wait(), 2)
         event = await repo.get("evt.events", original["event_id"])
         if fence == "assessed":
             event["current_ems_id"] = "already-accepted"
         elif fence == "merged":
+            await repo.put("evt.events", "earlier-parent", dict(event, event_id="earlier-parent"))
             event.update(lifecycle="MERGED", merged_into="earlier-parent")
         elif fence == "closed":
             event["lifecycle"] = "CLOSED"
@@ -178,7 +200,12 @@ async def test_fresh_state_before_obligation_commit_prevents_reminder(
             await repo.put("ingest.source_items", "i", item)
         await repo.put("evt.events", event["event_id"], event)
         await repo.put("ops.agent_sessions", "s", original)
-        await service.settled_turn("s")
+        release.set()
+        try:
+            await asyncio.wait_for(task, 3)
+        finally:
+            task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
         assert not await reminders(repo)
         current = await repo.get("ops.agent_sessions", "s")
         assert current.get("completion_reminders_sent", 0) == 0
@@ -187,41 +214,142 @@ async def test_fresh_state_before_obligation_commit_prevents_reminder(
 
 
 @pytest.mark.parametrize("backend", BACKENDS)
+@pytest.mark.parametrize("limit", [1, 2])
 async def test_new_committed_refused_assessment_turn_spends_one_next_bounded_attempt(
-    backend, tmp_path, postgres_template
+    backend, limit, tmp_path, postgres_template
 ):
     async with fixture_repo(backend, postgres_template) as repo, peer(backend, native_handler) as (http, url):
-        config = settings(limit=1)
+        config = settings(limit=limit)
         config.openma_url = url
         domain = EventToolService(repo, Settings(data_dir=tmp_path), None, None)
         service = SessionService(repo, config, domain.dispatch, http=http)
         original, _ = await cached_source(repo, service, domain)
         await service.settled_turn("s")
-        [job] = await reminders(repo)
-        with pytest.raises(ValueError):
-            await domain.dispatch("set_assessment", {"assessment": {}}, {"session_id": "s"})
-        current = await repo.get("ops.agent_sessions", "s")
-        current["message_log"].append(
-            {
-                "message_id": "reminder-turn",
-                "remote_event_id": "reminder-input",
-                "retry_count": 0,
-                "payload": copy.deepcopy(job["payload"]),
-                "turn_status": "RUNNING",
+        for attempt in range(1, limit + 1):
+            job = (await reminders(repo))[-1]
+            assert job["payload"]["attempt"] == attempt
+            with pytest.raises(ValueError):
+                await domain.dispatch("set_assessment", {"assessment": {}}, {"session_id": "s"})
+            current = await repo.get("ops.agent_sessions", "s")
+            identity = "reminder-input-" + str(attempt)
+            current["message_log"].append(
+                {
+                    "message_id": "reminder-turn-" + str(attempt),
+                    "remote_event_id": identity,
+                    "retry_count": 0,
+                    "payload": copy.deepcopy(job["payload"]),
+                    "turn_status": "RUNNING",
+                }
+            )
+            current["native_execution_states"][identity] = {
+                "execution_id": identity, "state": "COMPLETED", "settled_outcome": "COMPLETED"
             }
-        )
-        current["native_execution_states"]["reminder-input"] = {
-            "execution_id": "reminder-input", "state": "COMPLETED", "settled_outcome": "COMPLETED"
-        }
-        await repo.put("ops.agent_sessions", "s", current)
-        await service.process_event("s", idle("reminder-end", "reminder-input"))
-        assert (await service.settled_turn("s"))["complete"]
-        assert (await service.settled_turn("s"))["complete"]
+            await repo.put("ops.agent_sessions", "s", current)
+            await service.process_event("s", idle("reminder-end-" + str(attempt), identity))
+            assert (await service.settled_turn("s"))["complete"]
+            assert (await service.settled_turn("s"))["complete"]
         current = await repo.get("ops.agent_sessions", "s")
-        assert current["completion_reminders_sent"] == 1
-        assert current["assessment_obligation_verified"]["message_id"] == "reminder-turn"
-        assert len(await reminders(repo)) == 1
+        assert current["completion_reminders_sent"] == limit
+        assert current["assessment_obligation_verified"]["message_id"] == "reminder-turn-" + str(limit)
+        assert len(await reminders(repo)) == limit
         item = await repo.get("ingest.source_items", "i")
         assert item["extraction_status"] == "DONE" and item["assessment_incomplete"] is True
         assert (await repo.get("evt.events", original["event_id"]))["current_ems_id"] is None
         assert not await repo.list("evt.ems_assessments")
+
+
+@pytest.mark.parametrize("backend", BACKENDS)
+async def test_obligation_enqueue_and_receipt_roll_back_together(
+    backend, tmp_path, postgres_template, monkeypatch
+):
+    async with fixture_repo(backend, postgres_template) as repo, peer(backend, native_handler) as (http, url):
+        config = settings()
+        config.openma_url = url
+        domain = EventToolService(repo, Settings(data_dir=tmp_path), None, None)
+        service = SessionService(repo, config, domain.dispatch, http=http)
+        original, _ = await cached_source(repo, service, domain)
+        enqueue = repo.enqueue
+
+        async def interrupted(*args, **kwargs):
+            job = await enqueue(*args, **kwargs)
+            if job["payload"].get("missing") == "ASSESSMENT":
+                raise RuntimeError("interrupted obligation transaction")
+            return job
+
+        with monkeypatch.context() as context:
+            context.setattr(repo, "enqueue", interrupted)
+            with pytest.raises(RuntimeError, match="interrupted obligation transaction"):
+                await service.settled_turn("s")
+        assert not await reminders(repo)
+        assert await repo.get("ops.agent_sessions", "s") == original
+        restarted = SessionService(repo, config, domain.dispatch, http=http)
+        assert (await restarted.settled_turn("s"))["complete"]
+        [job] = await reminders(repo)
+        assert job["payload"]["attempt"] == 1
+        assert (await repo.get("ops.agent_sessions", "s"))["completion_reminders_sent"] == 1
+
+
+@pytest.mark.integration
+@pytest.mark.postgres
+async def test_real_http_refused_tool_ack_barrier_then_obligation_and_other_job_admission(
+    tmp_path, postgres_template
+):
+    ack_waiting, release_ack = asyncio.Event(), asyncio.Event()
+    posts = []
+
+    async def handler(request):
+        if request.method == "POST":
+            body = json.loads(request.content)["events"][0]
+            posts.append(body)
+            assert body["type"] == "user.custom_tool_result"
+            ack_waiting.set()
+            await release_ack.wait()
+            return httpx.Response(200, json={"data": [{"id": "callback"}]})
+        return native_handler(request)
+
+    async with fixture_repo("postgres", postgres_template) as repo, peer("postgres", handler) as (http, url):
+        config = settings()
+        config.openma_url = url
+        load_config = config.load_config
+        config.load_config = lambda name: {"max_running_sessions": 1} if name == "openma" else load_config(name)
+        domain = EventToolService(repo, Settings(data_dir=tmp_path), None, None)
+        service = SessionService(repo, config, domain.dispatch, http=http)
+        original, _ = await cached_source(repo, service, domain)
+        current = await repo.get("ops.agent_sessions", "s")
+        current.update(runtime_status="RUNNING", active_message_id="m")
+        await repo.put("ops.agent_sessions", "s", current)
+        waiting = await repo.enqueue("SCOUT_REVIEW", {"kind": "SCOUT_REVIEW", "proposal_id": "other"}, "other", priority=0)
+        tool = asyncio.create_task(service.process_event("s", {
+            "id": "refused-assessment", "type": "agent.custom_tool_use", "execution_id": "input",
+            "name": "set_assessment", "input": {"assessment": {}},
+        }))
+        try:
+            await asyncio.wait_for(ack_waiting.wait(), 3)
+            call = await repo.get("ops.tool_calls", "s:refused-assessment")
+            assert call["status"] == "REFUSED" and not call.get("returned_at")
+            assert call["result"]["error"]["reason"]
+            assert not (await service.settled_turn("s"))["complete"]
+            assert not await reminders(repo)
+            with pytest.raises(AdmissionDeferred):
+                await service.admit(waiting)
+            assert (await repo.get("ops.jobs", waiting["job_id"]))["attempts"] == 0
+            release_ack.set()
+            await asyncio.wait_for(tool, 3)
+            call = await repo.get("ops.tool_calls", "s:refused-assessment")
+            assert call["status"] == "REFUSED" and call["remote_event_id"] == "callback"
+            assert call["returned_at"] and len(posts) == 1
+            await service.process_event("s", idle("callback-end", "callback"))
+            assert (await service.settled_turn("s"))["complete"]
+            [job] = await reminders(repo)
+            assert job["payload"]["missing"] == "ASSESSMENT"
+            assert (await repo.get("ingest.source_items", "i"))["extraction_status"] == "DONE"
+            assert (await repo.get("evt.events", original["event_id"]))["current_ems_id"] is None
+            await service.admit(waiting)
+            admitted = await repo.get("ops.jobs", waiting["job_id"])
+            assert admitted["slot_admitted"] is True and admitted["attempts"] == 0
+            await service.settled_turn("s")
+            assert len(await reminders(repo)) == 1 and len(posts) == 1
+        finally:
+            release_ack.set()
+            tool.cancel()
+            await asyncio.gather(tool, return_exceptions=True)

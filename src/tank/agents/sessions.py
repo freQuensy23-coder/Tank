@@ -1160,7 +1160,25 @@ class SessionService:
             and session.get("verified_native_completion") == local
             and session.get("verified_source_completion") == source_outcomes
         ):
-            return local
+            async with self.repo.lock("session:" + sid):
+                current = await self.repo.get("ops.agent_sessions", sid)
+                after = await self.execution_barrier(current)
+                if (
+                    not after["complete"]
+                    or current.get("status") == "FAILED"
+                    or after != local
+                    or await self.source_completion_snapshot(current) != source_outcomes
+                ):
+                    return dict(after, complete=False)
+                async with (
+                    self.repo.lock("event:" + str(current.get("event_id"))),
+                    self.repo.transaction(),
+                ):
+                    previous = current.get("assessment_obligation_verified")
+                    await self.reconcile_assessment_obligation(current)
+                    if current.get("assessment_obligation_verified") != previous:
+                        await self.repo.put("ops.agent_sessions", sid, current)
+                return after
         if not local["accepted_input_ids"] and not local["unidentified_inputs"]:
             return local
         if local["unidentified_inputs"] or not any(
@@ -1200,26 +1218,30 @@ class SessionService:
             after = await self.execution_barrier(current)
             if not after["complete"] or after["accepted_input_ids"] != before["accepted_input_ids"]:
                 return dict(after, complete=False)
-            for message in current.get("message_log", []):
-                if message.get("turn_status") != "FAILED":
-                    message["turn_status"] = "DONE"
-            await self.remind_incomplete(current)
-            current["active_message_id"] = None
-            current["runtime_status"] = "IDLE"
-            outcomes = await self.source_completion_snapshot(current)
-            for message in current.get("message_log", []):
-                if message["message_id"] in outcomes:
-                    message["source_completion_verified"] = copy.deepcopy(outcomes[message["message_id"]])
+            async with (
+                self.repo.lock("event:" + str(current.get("event_id"))),
+                self.repo.transaction(),
+            ):
+                for message in current.get("message_log", []):
+                    if message.get("turn_status") != "FAILED":
+                        message["turn_status"] = "DONE"
+                await self.remind_incomplete(current)
+                current["active_message_id"] = None
+                current["runtime_status"] = "IDLE"
+                outcomes = await self.source_completion_snapshot(current)
+                for message in current.get("message_log", []):
+                    if message["message_id"] in outcomes:
+                        message["source_completion_verified"] = copy.deepcopy(outcomes[message["message_id"]])
 
-                    if "workflow_completion_verified" in message:
-                        message["legacy_workflow_completion_verified"] = message.pop(
-                            "workflow_completion_verified"
-                        )
-            current["verified_source_completion"] = outcomes
-            current["verified_native_completion"] = copy.deepcopy(after)
-            await self.repo.put("ops.agent_sessions", sid, current)
-            await session_progress(self.repo, self.settings, current)
-            return after
+                        if "workflow_completion_verified" in message:
+                            message["legacy_workflow_completion_verified"] = message.pop(
+                                "workflow_completion_verified"
+                            )
+                current["verified_source_completion"] = outcomes
+                current["verified_native_completion"] = copy.deepcopy(after)
+                await self.repo.put("ops.agent_sessions", sid, current)
+                await session_progress(self.repo, self.settings, current)
+                return after
 
     async def remind_incomplete(self, session):
         """A settled turn that left its source item without an outcome reminds the agent of its task.
@@ -1234,15 +1256,7 @@ class SessionService:
         recorded event is checked for a class (remind_unassessed).
         """
         sid = session["session_id"]
-        limit = (
-            0
-            if getattr(self.settings, "replay", False)
-            else int(
-                (self.settings.load_config("thresholds") or {}).get(
-                    "agent_completion_reminders_per_session", DEFAULT_COMPLETION_REMINDERS
-                )
-            )
-        )
+        limit = self.completion_reminder_limit()
         unchecked = {}
         for message in session.get("message_log", []):
             payload = message.get("payload") or {}
@@ -1301,10 +1315,91 @@ class SessionService:
                 event_id=session.get("event_id"),
                 key=f"{sid}:{item_id}:{attempt}",
             )
-        if unchecked and not outstanding:
-            await self.remind_unassessed(session, list(unchecked.values())[-1], limit)
+        if not outstanding:
+            await self.reconcile_assessment_obligation(session)
 
-    async def remind_unassessed(self, session, message, limit):
+    def completion_reminder_limit(self):
+        return (
+            0
+            if getattr(self.settings, "replay", False)
+            else int(
+                (self.settings.load_config("thresholds") or {}).get(
+                    "agent_completion_reminders_per_session", DEFAULT_COMPLETION_REMINDERS
+                )
+            )
+        )
+
+    async def reconcile_assessment_obligation(self, session):
+        if session.get("status") != "OPEN" or not self.routable_session(session):
+            return
+        messages = [
+            message
+            for message in session.get("message_log", [])
+            if (message.get("payload") or {}).get("kind") in SOURCE_MESSAGE_KINDS
+            and (message.get("payload") or {}).get("item_id")
+        ]
+        if not messages:
+            return
+        message = messages[-1]
+        obligation = {
+            "version": workflow.ASSESSMENT_OBLIGATION_VERSION,
+            "event_id": session.get("event_id"),
+            "message_id": message["message_id"],
+            "native_input_id": message.get("remote_event_id"),
+            "retry_attempt": message.get("retry_count", 0),
+        }
+        if session.get("assessment_obligation_verified") == obligation:
+            return
+        if message.get("turn_status") != "DONE" or message["message_id"] in session.get(
+            "retired_message_ids", []
+        ):
+            return
+        session["assessment_obligation_verified"] = obligation
+        attempt = session.get("assessment_reminder_attempts", {}).get(session.get("event_id"), 0)
+        if attempt:
+            key = f"{session['session_id']}:{session.get('event_id')}:ASSESSMENT_REMINDER:{attempt}"
+            existing = await self.repo.list(
+                "ops.jobs", filters={"type": "AGENT_MESSAGE", "idem_key": key}, limit=1
+            )
+            if existing and existing[0]["payload"].get("turn_message_id") == message["message_id"]:
+                return
+        payload = message["payload"]
+        item = await self.repo.get("ingest.source_items", payload["item_id"])
+        if not item or item.get("extraction_status") != "DONE":
+            return
+        root = message
+        visited = set()
+        while root["payload"].get("kind") == "COMPLETION_REMINDER":
+            parent = root["payload"].get("turn_message_id")
+            if not parent or parent in visited:
+                return
+            visited.add(parent)
+            root = next((row for row in messages if row["message_id"] == parent), None)
+            if root is None:
+                return
+        source = root["payload"]
+        if source.get("reanalysis_attempt", 0) != item.get("reanalysis_attempt", 0):
+            return
+        for row in messages:
+            outcome = await self.repo.get("ingest.source_items", row["payload"]["item_id"])
+            if outcome and outcome.get("extraction_status") in UNFINISHED:
+                return
+        key = source["item_id"] + ":" + source["kind"]
+        if source.get("reanalysis_attempt"):
+            key += f":reanalysis:{source['reanalysis_attempt']}"
+        jobs = await self.repo.list("ops.jobs", filters={"type": "AGENT_MESSAGE", "idem_key": key}, limit=1)
+        expiry = None
+        if jobs:
+            job = jobs[0]
+            if job.get("status") in {"FAILED", "EXPIRED"}:
+                return
+            if job.get("expires_at"):
+                expiry = propagate_timestamp(job, "expires_at")
+                if parse_time(expiry.value) <= utcnow():
+                    return
+        await self.remind_unassessed(session, message, self.completion_reminder_limit(), expires_at=expiry)
+
+    async def remind_unassessed(self, session, message, limit, *, expires_at=None):
         """A settled turn that left the session's recorded event without a class reminds the agent.
 
         The session's event is still open (not MERGED, CLOSED or INVALIDATED), was not merged into
@@ -1370,6 +1465,7 @@ class SessionService:
             },
             f"{sid}:{event_id}:ASSESSMENT_REMINDER:{attempt}",
             priority=1,
+            expires_at=expires_at,
         )
         if item:
             item.update(assessment_reminders=sent + 1, assessment_reminder_limit=limit)
