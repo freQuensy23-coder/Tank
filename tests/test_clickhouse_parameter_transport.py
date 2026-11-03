@@ -292,7 +292,7 @@ def test_native_diagnostics_do_not_copy_unknown_functions_or_private_values(tmp_
     files = list((tmp_path / "evidence").iterdir())
     assert len(files) == 1
     serialized = files[0].read_text()
-    assert json.loads(serialized)["server_message"] == "Illegal type | argument | type | function | Float64"
+    assert json.loads(serialized)["server_message"] == "Illegal type | type | argument | function | Float64"
     for forbidden in (
         "unknownPrivateFunction",
         "private_column",
@@ -306,6 +306,39 @@ def test_native_diagnostics_do_not_copy_unknown_functions_or_private_values(tmp_
         "plus",
         "Nullable",
         query,
+    ):
+        assert forbidden not in serialized
+
+
+def test_array_aggregation_diagnostic_keeps_only_static_native_scope_functions(tmp_path):
+    receipt = truth_sql_failure_evidence.failure_receipt(
+        RuntimeError(
+            "ClickHouse 500: Code: 43. array aggregation function cannot be performed on type "
+            "Nullable(Float64): In scope values -> arraySum(unknownPrivateFunction(private_column, "
+            "'credentialPrefix,credentialSuffix')) AS private_alias"
+        ),
+        "test_array_diagnostic",
+        "SELECT 1",
+    )
+    truth_sql_failure_evidence.retain_first_failure(tmp_path / "evidence", receipt)
+    files = list((tmp_path / "evidence").iterdir())
+    assert len(files) == 1
+    serialized = files[0].read_text()
+    actual = json.loads(serialized)
+    assert actual["native_error_code"] == 43
+    assert {
+        "arraySum",
+        "array aggregation function cannot be performed on type",
+        "Float64",
+        "Nullable",
+    } <= set(actual["server_message"].split(" | "))
+    for forbidden in (
+        "unknownPrivateFunction",
+        "private_column",
+        "credentialPrefix",
+        "credentialSuffix",
+        "private_alias",
+        "values",
     ):
         assert forbidden not in serialized
 

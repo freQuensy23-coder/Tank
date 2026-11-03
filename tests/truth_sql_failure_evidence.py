@@ -72,6 +72,7 @@ _SAFE_PHRASES = (
     "should take String argument",
     "cannot be converted",
     "cannot be Nullable",
+    "array aggregation function cannot be performed on type",
 )
 
 _SAFE_NATIVE_FUNCTIONS = frozenset(
@@ -221,10 +222,23 @@ def failure_receipt(error, nodeid, query):
     message = str(error)
     status = re.match(r"ClickHouse (\d{3}):", message)
     code = re.search(r"\bCode: (\d+)\b", message)
+    complete_message = message
     message = re.split(r"(?i)\b(?:while processing|in scope|stack trace)\b", message)[0]
     message_tokens = {word.casefold() for word in re.findall(r"\b[A-Za-z_][A-Za-z0-9_]*\b", message)}
     diagnostics = sorted(name for name in _SAFE_NATIVE_FUNCTIONS if name.casefold() in message_tokens)
-    diagnostics.extend(phrase for phrase in _SAFE_PHRASES if phrase.casefold() in message.casefold())
+    if "array aggregation function cannot be performed on type" in message.casefold():
+        native_calls = {
+            word.casefold()
+            for word in re.findall(r"\b([A-Za-z_][A-Za-z0-9_]*)\s*\(", complete_message)
+        }
+        diagnostics.extend(
+            sorted(name for name in _SAFE_NATIVE_FUNCTIONS if name.casefold() in native_calls)
+        )
+    diagnostics.extend(
+        phrase
+        for phrase in _SAFE_PHRASES
+        if re.search(r"(?<!\w)" + re.escape(phrase) + r"(?!\w)", message, re.IGNORECASE)
+    )
     diagnostics.extend(
         dict.fromkeys(
             word.lower() for word in re.findall(r"\b[A-Za-z_]+\b", message) if word.lower() in _SAFE_WORDS

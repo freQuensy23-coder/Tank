@@ -140,7 +140,7 @@ lq_number(lq_parameter('resilience_window_min', '15')) * 60 AS lq_resilience,
 (values -> if(notEmpty(values) AND arrayAll(x -> isNotNull(x), values),
     arraySum(arrayMap(x -> ifNull(x, lq_zero), values)), CAST(NULL, 'Nullable(Decimal256(24))'))) AS lq_sum,
 (values -> divideDecimal(lq_sum(values), toDecimal256(greatest(length(values), 1), 24), 24)) AS lq_mean,
-(values -> if(notEmpty(values), arraySum(values) / greatest(length(values), 1), CAST(NULL, 'Nullable(Float64)'))) AS lq_float_mean,
+(values -> if(notEmpty(values), arraySum(x -> ifNull(x, 0.), values) / greatest(length(values), 1), CAST(NULL, 'Nullable(Float64)'))) AS lq_float_mean,
 ((values, q) -> if(empty(values), CAST(NULL, 'Nullable(Float64)'),
     arraySort(values)[toUInt64(floor((length(values) - 1) * q)) + 1]
     + (arraySort(values)[toUInt64(ceil((length(values) - 1) * q)) + 1]
