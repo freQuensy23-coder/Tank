@@ -65,9 +65,26 @@ def reordered(notice):
     return json.loads(json.dumps(notice, sort_keys=True))
 
 
-async def test_legacy_metadata_and_body_match_independent_original_bytes_after_reordering():
+@pytest.mark.parametrize("response", [True, False])
+async def test_legacy_metadata_and_body_match_independent_original_bytes_after_reordering(response):
     repo = MemoryRepository()
-    notice = reordered(legacy_notice())
+    notice = legacy_notice()
+    expected = [
+        (notice["document_manifest"][0]["filename"], BODY),
+        ("x-example-1-diagnostics.json", METADATA),
+    ]
+    if not response:
+        content = (Path(__file__).parent / "fixtures/x-legacy/timeout.json").read_bytes()
+        notice["entry_errors"][0]["diagnostics"] = json.loads(content)
+        notice["document_manifest"] = [
+            {
+                "filename": "x-example-1-diagnostics.json",
+                "sha256": "9dbf8606d0f7406a2de387137b2acb131604971198b80dd4c5f7d2f23c855f05",
+                "bytes": 297,
+            }
+        ]
+        expected = [("x-example-1-diagnostics.json", content)]
+    notice = reordered(notice)
     await repo.put("out.ops_notices", notice["notice_id"], notice, immutable=True)
     requests = []
 
@@ -79,10 +96,7 @@ async def test_legacy_metadata_and_body_match_independent_original_bytes_after_r
         await DeliveryService(repo, telegram_settings(), http=http).deliver(
             {"notice_id": notice["notice_id"]}
         )
-    assert [multipart(request)["document"] for request in requests[1:]] == [
-        (notice["document_manifest"][0]["filename"], BODY),
-        ("x-example-1-diagnostics.json", METADATA),
-    ]
+    assert [multipart(request)["document"] for request in requests[1:]] == expected
     assert await repo.get("out.ops_notices", notice["notice_id"]) == notice
 
 
@@ -125,10 +139,25 @@ async def assert_refused(notice, secrets=()):
 @pytest.mark.parametrize(
     "part",
     [
-        "unknown_diagnostic", "unknown_response", "unknown_request", "unknown_attempt",
-        "outcome", "attempt_number", "attempt_count", "timestamp", "status", "retryable",
-        "response_status", "wire_bytes", "body_bytes", "redacted", "unsafe_header",
-        "body_secret", "metadata_secret", "credentials", "oversized_body",
+        "unknown_diagnostic",
+        "unknown_response",
+        "unknown_request",
+        "unknown_attempt",
+        "outcome",
+        "attempt_number",
+        "attempt_count",
+        "timestamp",
+        "status",
+        "retryable",
+        "response_status",
+        "wire_bytes",
+        "body_bytes",
+        "redacted",
+        "unsafe_header",
+        "body_secret",
+        "metadata_secret",
+        "credentials",
+        "oversized_body",
     ],
 )
 async def test_hash_matching_legacy_evidence_still_requires_typed_safe_schema(part):
@@ -170,9 +199,7 @@ async def test_hash_matching_legacy_evidence_still_requires_typed_safe_schema(pa
 async def test_legacy_header_candidate_budget_refuses_before_any_upload(scope):
     notice = legacy_notice()
     if scope == "document":
-        notice["entry_errors"][0]["diagnostics"]["attempts"][0]["response"]["headers"][
-            "retry-after"
-        ] = "1"
+        notice["entry_errors"][0]["diagnostics"]["attempts"][0]["response"]["headers"]["retry-after"] = "1"
     else:
         notice["entry_errors"] = [copy.deepcopy(notice["entry_errors"][0]) for _ in range(6)]
     retained_manifest(notice)

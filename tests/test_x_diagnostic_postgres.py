@@ -65,9 +65,7 @@ async def test_legacy_jsonb_readback_uploads_exact_original_documents(postgres_t
         notice = legacy_notice()
         await repo.put("out.ops_notices", notice["notice_id"], notice, immutable=True)
         saved = await repo.get("out.ops_notices", notice["notice_id"])
-        assert list(saved["entry_errors"][0]["diagnostics"]) != list(
-            notice["entry_errors"][0]["diagnostics"]
-        )
+        assert list(saved["entry_errors"][0]["diagnostics"]) != list(notice["entry_errors"][0]["diagnostics"])
         async with httpx.AsyncClient(transport=LoopbackTelegramTransport(origin)) as http:
             await DeliveryService(repo, telegram_settings(), http=http).deliver(
                 {"notice_id": notice["notice_id"]}
@@ -106,9 +104,13 @@ async def test_legacy_jsonb_429_commits_parent_and_prior_receipt_across_restart(
         await repo.close()
         await repo.open()
         committed = await repo.list("out.deliveries", filters={"notice_id": notice["notice_id"]})
-        parents = [row for row in committed if row["status"] == "SENT" and row.get("method") != "sendDocument"]
+        parents = [
+            row for row in committed if row["status"] == "SENT" and row.get("method") != "sendDocument"
+        ]
         assert len(parents) == 1 and parents[0]["message_ref"] == "1"
-        successful = [row for row in committed if row["status"] == "SENT" and row.get("method") == "sendDocument"]
+        successful = [
+            row for row in committed if row["status"] == "SENT" and row.get("method") == "sendDocument"
+        ]
         assert len(successful) == 1 and successful[0]["document_sha256"] == BODY_HASH
         failed = [row for row in committed if row["status"] == "FAILED"]
         assert len(failed) == 1 and failed[0]["document_sha256"] == METADATA_HASH
@@ -116,11 +118,15 @@ async def test_legacy_jsonb_429_commits_parent_and_prior_receipt_across_restart(
             await DeliveryService(repo, telegram_settings(), http=http).deliver(payload)
             await DeliveryService(repo, telegram_settings(), http=http).deliver(payload)
         assert [request.url.path.rsplit("/", 1)[-1] for request in sent] == [
-            "sendMessage", "sendDocument", "sendDocument", "sendDocument"
+            "sendMessage",
+            "sendDocument",
+            "sendDocument",
+            "sendDocument",
         ]
         assert [multipart(request)["document"][1] for request in sent[1:]] == [BODY, METADATA, METADATA]
         receipts = await repo.list("out.deliveries", filters={"status": "SENT", "method": "sendDocument"})
         assert {(row["document_sha256"], row["attempt"]) for row in receipts} == {
-            (BODY_HASH, 1), (METADATA_HASH, 2)
+            (BODY_HASH, 1),
+            (METADATA_HASH, 2),
         }
         assert await repo.get("out.ops_notices", notice["notice_id"]) == saved
