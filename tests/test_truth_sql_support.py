@@ -369,9 +369,7 @@ async def _compare(clickhouse, original_truth, data, spots=None, derivatives=Non
         "missing_anchor",
     ],
 )
-async def test_native_supply_complete_frozen_original(
-    clickhouse, original_truth, case, record_property
-):
+async def test_native_supply_complete_frozen_original(clickhouse, original_truth, case, record_property):
     data = _supply_snapshot()
     spots, derivatives = _inputs()
     fundamental = data["supply"][-1]
@@ -414,9 +412,7 @@ async def test_native_supply_complete_frozen_original(
     elif case == "unavailable_prior_inventory":
         data["supply"][8]["available"] = False
     elif case == "inventory_asof_expired":
-        data["supply"] = [
-            row for row in data["supply"] if row.get("ts") != iso(CUTOFF - timedelta(days=1))
-        ]
+        data["supply"] = [row for row in data["supply"] if row.get("ts") != iso(CUTOFF - timedelta(days=1))]
     elif case == "legacy_inventory":
         data["supply"][9] = {
             "kind": "INVENTORY",
@@ -427,8 +423,7 @@ async def test_native_supply_complete_frozen_original(
         }
     elif case == "no_lending_prior":
         data["supply"] = [
-            row for row in data["supply"]
-            if not (row.get("kind") == "LENDING" and row["ts"] != iso(CUTOFF))
+            row for row in data["supply"] if not (row.get("kind") == "LENDING" and row["ts"] != iso(CUTOFF))
         ]
     elif case == "chain_asof_expired":
         chain = next(row for row in data["supply"] if row.get("series"))
@@ -508,7 +503,12 @@ def _fresh_snapshot():
             {"instrument_id": iid, "minute_start": iso(CUTOFF - timedelta(minutes=1)), "complete": True}
         )
         data["klines"].append(
-            {"instrument_id": iid, "open_time": iso(CUTOFF - timedelta(minutes=1)), "complete": True, "c": "10"}
+            {
+                "instrument_id": iid,
+                "open_time": iso(CUTOFF - timedelta(minutes=1)),
+                "complete": True,
+                "c": "10",
+            }
         )
         data["books"].append(
             {
@@ -526,12 +526,34 @@ def _fresh_snapshot():
 @pytest.mark.parametrize(
     "case",
     [
-        "high", "low", "medium", "exact_half", "above_half", "stale_book", "cadence_boundary",
-        "cadence_exceeded", "foreign_history", "future", "late_assembled", "unknown_tier",
-        "numeric_metadata", "metric_metadata", "kind_metadata", "scoped_semantics", "settled_funding",
-        "source_interval_start", "source_interval_end", "watermark", "future_watermark", "shutdown",
-        "precision_alias", "bucket_anchor", "unknown_precision", "derivative_majority_equal",
-        "derivative_majority_above", "classification_unready",
+        "high",
+        "low",
+        "medium",
+        "exact_half",
+        "above_half",
+        "stale_book",
+        "cadence_boundary",
+        "cadence_exceeded",
+        "foreign_history",
+        "future",
+        "late_assembled",
+        "unknown_tier",
+        "numeric_metadata",
+        "metric_metadata",
+        "kind_metadata",
+        "scoped_semantics",
+        "settled_funding",
+        "source_interval_start",
+        "source_interval_end",
+        "watermark",
+        "future_watermark",
+        "shutdown",
+        "precision_alias",
+        "bucket_anchor",
+        "unknown_precision",
+        "derivative_majority_equal",
+        "derivative_majority_above",
+        "classification_unready",
     ],
 )
 async def test_native_primary_confidence_and_field_freshness(clickhouse, original_truth, case):
@@ -554,7 +576,13 @@ async def test_native_primary_confidence_and_field_freshness(clickhouse, origina
         )
     elif case == "foreign_history":
         data["klines"].append(
-            {"instrument_id": "X:spot:BTC", "token_id": "BTC", "open_time": iso(CUTOFF - timedelta(days=7)), "complete": True, "c": "1"}
+            {
+                "instrument_id": "X:spot:BTC",
+                "token_id": "BTC",
+                "open_time": iso(CUTOFF - timedelta(days=7)),
+                "complete": True,
+                "c": "1",
+            }
         )
     elif case == "future":
         data["books"].append({**data["books"][0], "exchange_ts": iso(CUTOFF + timedelta(seconds=1))})
@@ -577,18 +605,56 @@ async def test_native_primary_confidence_and_field_freshness(clickhouse, origina
             data["semantics"].append({"metric_key": "depth.p1", "instrument_id": "A:spot:T", "cadence_s": 20})
         data["capture_metadata"] = {"collections": {"books": entry}}
     elif case == "settled_funding":
-        data["funding"] = [{"instrument_id": "P:perp:T", "ts": iso(CUTOFF - timedelta(hours=7)), "kind": "SETTLED", "interval_h": 8, "rate": "0.001"}]
+        data["funding"] = [
+            {
+                "instrument_id": "P:perp:T",
+                "ts": iso(CUTOFF - timedelta(hours=7)),
+                "kind": "SETTLED",
+                "interval_h": 8,
+                "rate": "0.001",
+            }
+        ]
     elif case in {"source_interval_start", "source_interval_end"}:
-        data["oi"] = [{"instrument_id": "P:perp:T", "ts": iso(CUTOFF - timedelta(seconds=600)), "metric_key": "oi", "oi_native": "10"}]
-        data["semantics"] = [{"metric_key": "oi", "source_interval_s": 300, "publish_lag_s": 10, "timestamp_semantics": "BUCKET_END" if case.endswith("end") else "BUCKET_START"}]
+        data["oi"] = [
+            {
+                "instrument_id": "P:perp:T",
+                "ts": iso(CUTOFF - timedelta(seconds=600)),
+                "metric_key": "oi",
+                "oi_native": "10",
+            }
+        ]
+        data["semantics"] = [
+            {
+                "metric_key": "oi",
+                "source_interval_s": 300,
+                "publish_lag_s": 10,
+                "timestamp_semantics": "BUCKET_END" if case.endswith("end") else "BUCKET_START",
+            }
+        ]
     elif case in {"watermark", "future_watermark"}:
         for row in data["klines"]:
             row["open_time"] = iso(CUTOFF - timedelta(minutes=10))
         stamp = CUTOFF if case == "watermark" else CUTOFF + timedelta(microseconds=1)
-        data["capture_metadata"] = {"collections": {"klines": {"observed_through": {"A:spot:T": iso(stamp), "B:spot:T": iso(stamp)}}}}
+        data["capture_metadata"] = {
+            "collections": {"klines": {"observed_through": {"A:spot:T": iso(stamp), "B:spot:T": iso(stamp)}}}
+        }
     elif case == "shutdown":
-        data["liquidations"] = [{"instrument_id": "P:perp:T", "ts": iso(CUTOFF - timedelta(hours=1)), "side": "LONG_LIQ", "notional_usd": "1"}]
-        data["capture_metadata"] = {"collections": {"liquidations": {"cadence_s": 60, "coverage_status_by_instrument": {"P:perp:T": "DISCONNECTED"}}}}
+        data["liquidations"] = [
+            {
+                "instrument_id": "P:perp:T",
+                "ts": iso(CUTOFF - timedelta(hours=1)),
+                "side": "LONG_LIQ",
+                "notional_usd": "1",
+            }
+        ]
+        data["capture_metadata"] = {
+            "collections": {
+                "liquidations": {
+                    "cadence_s": 60,
+                    "coverage_status_by_instrument": {"P:perp:T": "DISCONNECTED"},
+                }
+            }
+        }
     elif case == "precision_alias":
         data["books"][0]["exchange_ts_prec"] = "BUCKET(1m)"
         data["books"][0]["timestamp_precision"] = "BUCKET(60s)"
@@ -602,9 +668,22 @@ async def test_native_primary_confidence_and_field_freshness(clickhouse, origina
             data["instruments"].append({"instrument_id": iid, "token_id": "T"})
             data["oi"].append({"instrument_id": iid, "ts": iso(CUTOFF), "oi_native": "10"})
             data["funding"].append({"instrument_id": iid, "ts": iso(CUTOFF), "rate": "0.01", "interval_h": 8})
-            data["klines"].append({"instrument_id": iid, "open_time": iso(CUTOFF - timedelta(minutes=1)), "complete": True, "c": "10", "quote_volume_usd": "1.000000000000000000000001" if venue == "P" and case == "derivative_majority_above" else "1"})
+            data["klines"].append(
+                {
+                    "instrument_id": iid,
+                    "open_time": iso(CUTOFF - timedelta(minutes=1)),
+                    "complete": True,
+                    "c": "10",
+                    "quote_volume_usd": "1.000000000000000000000001"
+                    if venue == "P" and case == "derivative_majority_above"
+                    else "1",
+                }
+            )
         for derivative in derivatives.values():
-            derivative["synchronized"] = {"venues": ["P"], "classification_ready": case != "classification_unready"}
+            derivative["synchronized"] = {
+                "venues": ["P"],
+                "classification_ready": case != "classification_unready",
+            }
     result = await _compare(clickhouse, original_truth, data, spots, derivatives, config)
     if case == "high":
         assert result["data_confidence"]["class_"] == "HIGH"
@@ -614,7 +693,21 @@ async def test_native_primary_confidence_and_field_freshness(clickhouse, origina
         assert result["data_confidence"]["class_"] == "MEDIUM"
 
 
-@pytest.mark.parametrize("case", ["normal", "missing_metric", "unconfigured", "missing_flow", "late_piece", "ask_not_recovered", "half_equal", "half_above", "funding_equal", "basis_equal"])
+@pytest.mark.parametrize(
+    "case",
+    [
+        "normal",
+        "missing_metric",
+        "unconfigured",
+        "missing_flow",
+        "late_piece",
+        "ask_not_recovered",
+        "half_equal",
+        "half_above",
+        "funding_equal",
+        "basis_equal",
+    ],
+)
 async def test_native_support_flow_basis_funding_and_ask_evidence(clickhouse, original_truth, case):
     data = _snapshot()
     spots, derivatives = _inputs()
@@ -622,22 +715,69 @@ async def test_native_support_flow_basis_funding_and_ask_evidence(clickhouse, or
     start = CUTOFF - timedelta(minutes=15)
     data["semantics"] = [{"venue": "P", "market_type": "PERP_LINEAR", "metric_family": "aggressor"}]
     for minute in range(15):
-        data["flow_bars"].append({"instrument_id": iid, "minute_start": iso(start + timedelta(minutes=minute)), "complete": True, "buy_qty": "4", "sell_qty": "1", "sum_sq_qty": "1", "buy_notional": "40", "sell_notional": "10"})
+        data["flow_bars"].append(
+            {
+                "instrument_id": iid,
+                "minute_start": iso(start + timedelta(minutes=minute)),
+                "complete": True,
+                "buy_qty": "4",
+                "sell_qty": "1",
+                "sum_sq_qty": "1",
+                "buy_notional": "40",
+                "sell_notional": "10",
+            }
+        )
     data["oi"] = [
         {"instrument_id": iid, "ts": iso(stamp), "mark_price": mark, "index_price": "100", "oi_native": "10"}
-        for stamp, mark in ((start - timedelta(days=8), "101"), (start - timedelta(days=1), "102"), (start, "101"), (CUTOFF, "103"))
+        for stamp, mark in (
+            (start - timedelta(days=8), "101"),
+            (start - timedelta(days=1), "102"),
+            (start, "101"),
+            (CUTOFF, "103"),
+        )
     ]
     for derivative in derivatives.values():
-        derivative["per_venue"] = [{"instrument_id": iid, "venue": "P", "basis_bps": "100" if case == "basis_equal" else "300", "funding_start": "0.001", "funding_start_interval_h": 4, "funding_8h_eq": "0.002" if case == "funding_equal" else "0.003", "liq_coverage": "COMPLETE"}]
+        derivative["per_venue"] = [
+            {
+                "instrument_id": iid,
+                "venue": "P",
+                "basis_bps": "100" if case == "basis_equal" else "300",
+                "funding_start": "0.001",
+                "funding_start_interval_h": 4,
+                "funding_8h_eq": "0.002" if case == "funding_equal" else "0.003",
+                "liq_coverage": "COMPLETE",
+            }
+        ]
     data["liquidations"] = [
-        {"instrument_id": iid, "ts": iso(start + timedelta(minutes=1)), "notional_usd": "1.000000000000000000000001" if case == "half_above" else "1"},
+        {
+            "instrument_id": iid,
+            "ts": iso(start + timedelta(minutes=1)),
+            "notional_usd": "1.000000000000000000000001" if case == "half_above" else "1",
+        },
         {"instrument_id": iid, "ts": iso(start + timedelta(minutes=10)), "notional_usd": "1"},
     ]
     data["books"] = [
-        {"instrument_id": "S:spot:T", "exchange_ts": iso(stamp), "integrity_ok": True, "depth": {"ask": {"p1": {"usd": ask}}}}
-        for stamp, ask in ((start - timedelta(seconds=5), "10"), (start + timedelta(seconds=30), "5" if case == "ask_not_recovered" else "10"), (CUTOFF, "20"))
+        {
+            "instrument_id": "S:spot:T",
+            "exchange_ts": iso(stamp),
+            "integrity_ok": True,
+            "depth": {"ask": {"p1": {"usd": ask}}},
+        }
+        for stamp, ask in (
+            (start - timedelta(seconds=5), "10"),
+            (start + timedelta(seconds=30), "5" if case == "ask_not_recovered" else "10"),
+            (CUTOFF, "20"),
+        )
     ]
-    data["flow_bars"].append({"instrument_id": "S:spot:T", "minute_start": iso(start), "complete": True, "buy_notional": "15", "sell_notional": "5"})
+    data["flow_bars"].append(
+        {
+            "instrument_id": "S:spot:T",
+            "minute_start": iso(start),
+            "complete": True,
+            "buy_notional": "15",
+            "sell_notional": "5",
+        }
+    )
     if case == "missing_metric":
         data["flow_bars"][0].pop("sum_sq_qty")
     elif case == "unconfigured":
@@ -646,7 +786,18 @@ async def test_native_support_flow_basis_funding_and_ask_evidence(clickhouse, or
         data["flow_bars"].pop(0)
     elif case == "late_piece":
         data["anchor"]["ts"] = iso(start + timedelta(seconds=30))
-        piece = {"instrument_id": iid, "start": iso(start + timedelta(seconds=30)), "end": iso(start + timedelta(minutes=1)), "complete": True, "buy_qty": "2", "sell_qty": "1", "sum_sq_qty": "1", "buy_notional": "20", "sell_notional": "10", "received_ts": iso(CUTOFF + timedelta(hours=1))}
+        piece = {
+            "instrument_id": iid,
+            "start": iso(start + timedelta(seconds=30)),
+            "end": iso(start + timedelta(minutes=1)),
+            "complete": True,
+            "buy_qty": "2",
+            "sell_qty": "1",
+            "sum_sq_qty": "1",
+            "buy_notional": "20",
+            "sell_notional": "10",
+            "received_ts": iso(CUTOFF + timedelta(hours=1)),
+        }
         data["flow_segments"] = [piece]
     result = await _compare(clickhouse, original_truth, data, spots, derivatives)
     feature = result["support_features"]["W15M"]
@@ -662,9 +813,7 @@ async def test_native_support_flow_basis_funding_and_ask_evidence(clickhouse, or
 
 
 @pytest.mark.parametrize("window", list(WINDOWS))
-async def test_native_supply_flow_admission_at_exact_window_bounds(
-    clickhouse, original_truth, window
-):
+async def test_native_supply_flow_admission_at_exact_window_bounds(clickhouse, original_truth, window):
     data = _snapshot()
     spots, derivatives = _inputs()
     start = CUTOFF - timedelta(seconds=WINDOWS[window])
@@ -685,14 +834,13 @@ async def test_native_supply_flow_admission_at_exact_window_bounds(
     ]
     result = await _compare(clickhouse, original_truth, data, spots, derivatives)
     assert [Decimal(row["qty"]) for row in result["supply"]["windows"][window]["flows"]] == [
-        Decimal(2), Decimal(3)
+        Decimal(2),
+        Decimal(3),
     ]
 
 
 @pytest.mark.parametrize("value", [".5", "1.", "+2.5e-4", "1e-24"])
-async def test_native_fundamentals_preserve_meaningful_numeric_spellings(
-    clickhouse, original_truth, value
-):
+async def test_native_fundamentals_preserve_meaningful_numeric_spellings(clickhouse, original_truth, value):
     data = _supply_snapshot()
     data["supply"][-1]["protocols"]["z-child"]["dailyHoldersRevenue"]["total24h"] = value
     spots, derivatives = _inputs()
@@ -708,9 +856,7 @@ async def test_native_meaningful_fundamentals_outside_policy_refused(clickhouse,
         await clickhouse.rows(statement, parameters)
 
 
-async def test_native_inventory_aggregate_is_not_rejected_as_an_input_quantity(
-    clickhouse, original_truth
-):
+async def test_native_inventory_aggregate_is_not_rejected_as_an_input_quantity(clickhouse, original_truth):
     data = _snapshot()
     spots, derivatives = _inputs()
     data["supply"] = [
@@ -763,9 +909,13 @@ async def test_native_support_accepts_actual_four_domain_sql_outputs(clickhouse,
     derivatives = json.loads((await clickhouse.rows(sql, parameters))[0]["result"])
     sql, parameters = truth_sql_relative.query(data)
     relative = json.loads((await clickhouse.rows(sql, parameters))[0]["result"])
-    sql, parameters = truth_sql_liquidity.windows_query(data, spots=spots, relative=relative, deriv=derivatives)
+    sql, parameters = truth_sql_liquidity.windows_query(
+        data, spots=spots, relative=relative, deriv=derivatives
+    )
     liquidity = json.loads((await clickhouse.rows(sql, parameters))[0]["result"])
-    sql, parameters = native.query(data, spots=spots, derivatives=derivatives, liquidity=liquidity, relative=relative)
+    sql, parameters = native.query(
+        data, spots=spots, derivatives=derivatives, liquidity=liquidity, relative=relative
+    )
     rows = await clickhouse.rows(sql, parameters)
     assert len(rows) == 1
     _assert_complete(json.loads(rows[0]["result"]), _expected(original_truth, data, spots, derivatives, {}))

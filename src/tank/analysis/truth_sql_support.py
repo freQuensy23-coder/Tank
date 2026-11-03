@@ -208,7 +208,8 @@ def _freshness():
         fresh=_bool("sup_fresh_flag"),
         reason="if(sup_fresh_flag, 'null', if(isNull(sup_fresh_cadence), '\"NOT_ESTIMABLE\"', '\"INCOMPLETE\"'))",
     )
-    return r"""
+    return (
+        r"""
 ['flow_bars', 'klines', 'books', 'oi', 'funding', 'liquidations', 'tickers', 'supply'] AS sup_collections,
 arrayFlatten(arrayMap((c, i) -> arrayMap((r, n) -> tuple(i, c, n, r), JSONExtractArrayRaw(sup_snapshot, c), arrayEnumerate(JSONExtractArrayRaw(sup_snapshot, c))), sup_collections, arrayEnumerate(sup_collections))) AS sup_all_rows,
 (r -> ifNull(sup_number(JSONExtractRaw(r, 'interval_s')), 60.)) AS sup_bar_interval,
@@ -280,7 +281,10 @@ sup_fresh_output AS (
         groupArray(tuple(sup_collection_order, sup_fresh_key, sup_fresh_json)))) AS sup_freshness
     FROM sup_fresh_checks
 )
-""".strip().replace("__OBSERVED__", observed).replace("__CHECK__", check)
+""".strip()
+        .replace("__OBSERVED__", observed)
+        .replace("__CHECK__", check)
+    )
 
 
 def _confidence():
@@ -298,10 +302,13 @@ def _confidence():
         failed="sup_array(sup_conf_failed)",
         limiting="if(empty(sup_conf_failed), 'null', sup_conf_failed[1])",
         derivatives_native_coverage_ready=_bool("NOT sup_derivative_coverage_failed"),
-        derivatives_classification_ready=_bool("empty(sup_perp_ids) OR JSONExtractBool(sup_primary_derivative, 'synchronized', 'classification_ready')"),
+        derivatives_classification_ready=_bool(
+            "empty(sup_perp_ids) OR JSONExtractBool(sup_primary_derivative, 'synchronized', 'classification_ready')"
+        ),
         freshness="sup_array(sup_freshness)",
     )
-    return r"""
+    return (
+        r"""
 if(JSONHas(sup_spots, sup_primary), JSONExtractRaw(sup_spots, sup_primary), '{}') AS sup_primary_spot,
 coalesce(nullIf(if(JSONHas(sup_derivatives, 'windows'), JSONExtractRaw(sup_derivatives, 'windows', sup_primary), JSONExtractRaw(sup_derivatives, sup_primary)), ''), '{}') AS sup_primary_derivative,
 arrayFilter(r -> sup_iid(r) != '' AND (NOT JSONHas(r, 'token_id') OR JSONExtractString(r, 'token_id') = sup_token), sup_instrument_rows) AS sup_owned_instruments,
@@ -346,7 +353,10 @@ sup_conf_output AS (
         __CONFIDENCE__ AS sup_confidence
     FROM sup_fresh_output
 )
-""".strip().replace("__REQUIRED_FAILURE__", required_failure).replace("__CONFIDENCE__", confidence)
+""".strip()
+        .replace("__REQUIRED_FAILURE__", required_failure)
+        .replace("__CONFIDENCE__", confidence)
+    )
 
 
 def _support():
@@ -360,13 +370,19 @@ def _support():
     )
     per_venue = _patch(
         "p",
-        perp_taker_buy_share=_json("if(sup_perp_flow_complete(p, a), sup_ratio(sup_flow_sum(sup_iid(p), a, 'buy_qty'), sup_flow_sum(sup_iid(p), a, 'buy_qty') + sup_flow_sum(sup_iid(p), a, 'sell_qty')), NULL)"),
+        perp_taker_buy_share=_json(
+            "if(sup_perp_flow_complete(p, a), sup_ratio(sup_flow_sum(sup_iid(p), a, 'buy_qty'), sup_flow_sum(sup_iid(p), a, 'buy_qty') + sup_flow_sum(sup_iid(p), a, 'sell_qty')), NULL)"
+        ),
         perp_volume_usd=_money("sup_usd_volume(sup_iid(p), a)"),
         perp_volume_reason="if(isNotNull(sup_usd_volume(sup_iid(p), a)), 'null', '\"INCOMPLETE\"')",
         basis_normal_range="sup_decimal_normal(sup_basis_history(sup_iid(p), a))",
         basis_vs_normal="toJSONString(if(isNotNull(sup_result_dec(JSONExtractRaw(p, 'basis_bps'))) AND notEmpty(sup_basis_history(sup_iid(p), a)), multiIf(sup_result_dec(JSONExtractRaw(p, 'basis_bps')) < sup_decimal_quantile(sup_basis_history(sup_iid(p), a), sup_number(sup_quantiles[1])), 'BELOW', sup_result_dec(JSONExtractRaw(p, 'basis_bps')) > sup_decimal_quantile(sup_basis_history(sup_iid(p), a), sup_number(sup_quantiles[2])), 'ABOVE', 'WITHIN'), NULL))",
-        basis_widening=_bool("sup_result_dec(JSONExtractRaw(p, 'basis_bps')) > sup_initial_basis(sup_iid(p), a)"),
-        funding_rising=_bool("if(isNotNull(sup_dec(JSONExtractRaw(p, 'funding_start'))) AND ifNull(sup_dec(JSONExtractRaw(p, 'funding_start_interval_h')), sup_zero) != sup_zero, sup_result_dec(JSONExtractRaw(p, 'funding_8h_eq')) > divideDecimal(multiplyDecimal(sup_dec(JSONExtractRaw(p, 'funding_start')), toDecimal256(8, 24), 24), nullIf(sup_dec(JSONExtractRaw(p, 'funding_start_interval_h')), sup_zero), 24), NULL)"),
+        basis_widening=_bool(
+            "sup_result_dec(JSONExtractRaw(p, 'basis_bps')) > sup_initial_basis(sup_iid(p), a)"
+        ),
+        funding_rising=_bool(
+            "if(isNotNull(sup_dec(JSONExtractRaw(p, 'funding_start'))) AND ifNull(sup_dec(JSONExtractRaw(p, 'funding_start_interval_h')), sup_zero) != sup_zero, sup_result_dec(JSONExtractRaw(p, 'funding_8h_eq')) > divideDecimal(multiplyDecimal(sup_dec(JSONExtractRaw(p, 'funding_start')), toDecimal256(8, 24), 24), nullIf(sup_dec(JSONExtractRaw(p, 'funding_start_interval_h')), sup_zero), 24), NULL)"
+        ),
     )
     features = _object(
         spot_volume_up_beyond_normal=_bool("sup_volume_up('SPOT', sup_window_start)"),
@@ -375,20 +391,45 @@ def _support():
         perp_volume_up_beyond_normal=_bool("sup_volume_up('PERP', sup_window_start)"),
         perp_volume_within_normal=_bool("sup_volume_within('PERP', sup_window_start)"),
         perp_volume="sup_volume_json('PERP', sup_window_start, sup_window)",
-        perp_taker_flow_buy=_bool("if(notEmpty(sup_per_venue) AND arrayAll(p -> sup_perp_flow_complete(p, sup_window_start), sup_per_venue), sup_perp_cvd > sup_zero AND multiplyDecimal(sup_perp_cvd, sup_perp_cvd, 24) >= multiplyDecimal(multiplyDecimal(sup_dec(sup_parameter('significant_flow_sigma', '2')), sup_dec(sup_parameter('significant_flow_sigma', '2')), 24), sup_perp_q, 24), NULL)"),
-        basis_within_normal=_bool("if(arrayAll(p -> JSONExtractRaw(p, 'basis_vs_normal') NOT IN ('', 'null'), sup_per_venue), notEmpty(sup_per_venue) AND arrayAll(p -> JSONExtractString(p, 'basis_vs_normal') = 'WITHIN', sup_per_venue), NULL)"),
-        basis_widening=_bool("if(arrayExists(p -> JSONExtractRaw(p, 'basis_widening') NOT IN ('', 'null'), sup_per_venue), arrayExists(p -> JSONExtractRaw(p, 'basis_widening') = 'true', sup_per_venue), NULL)"),
-        funding_rising=_bool("if(arrayExists(p -> JSONExtractRaw(p, 'funding_rising') NOT IN ('', 'null'), sup_per_venue), arrayExists(p -> JSONExtractRaw(p, 'funding_rising') = 'true', sup_per_venue), NULL)"),
-        liquidations_first_half_majority=_bool("if(isNotNull(sup_liquidation_total) AND sup_liquidation_total > sup_zero, 2 * ifNull(sup_liquidation_first, sup_zero) > sup_liquidation_total, NULL)"),
-        large_ticket_buy_majority=_raw("JSONExtractRaw(sup_window_spot, 'size_profile', 'large_ticket_buy_majority')"),
-        large_tickets_minority=_raw("JSONExtractRaw(sup_window_spot, 'size_profile', 'large_tickets_minority')"),
-        large_ticket_sell_share_rising=_raw("JSONExtractRaw(sup_window_spot, 'size_profile', 'sell_share_rising')"),
-        exchange_inflows=_bool("if(isNotNull(sup_result_dec(JSONExtractRaw(sup_supply, 'exchange_inventory', 'chg_native_24h'))), sup_result_dec(JSONExtractRaw(sup_supply, 'exchange_inventory', 'chg_native_24h')) > sup_zero, if(notEmpty(JSONExtractArrayRaw(sup_supply, 'flows')), arrayExists(f -> JSONExtractString(f, 'class') IN ('TREASURY_INTERNAL', 'MM_INVENTORY', 'UNLOCK_DISTRIBUTION') AND (JSONExtractRaw(f, 'reaches_exchange') = 'true' OR JSONExtractRaw(f, 'to_exchange') = 'true'), JSONExtractArrayRaw(sup_supply, 'flows')), NULL))"),
-        localized_inventory_transfer=_bool("if(notEmpty(JSONExtractArrayRaw(sup_supply, 'flows')), arrayExists(f -> JSONExtractString(f, 'class') = 'CEX_CUSTODY_MIGRATION', JSONExtractArrayRaw(sup_supply, 'flows')), NULL)"),
-        ask_depth_building=_bool("if(notEmpty(sup_ask_builds(sup_window_start)), arrayExists(x -> x, sup_ask_builds(sup_window_start)), NULL)"),
-        ask_replenishment=_bool("if(notEmpty(sup_ask_tests(sup_window_start)), arrayExists(p -> sup_ask_recovered(p.1, p.2), sup_ask_tests(sup_window_start)), NULL)"),
+        perp_taker_flow_buy=_bool(
+            "if(notEmpty(sup_per_venue) AND arrayAll(p -> sup_perp_flow_complete(p, sup_window_start), sup_per_venue), sup_perp_cvd > sup_zero AND multiplyDecimal(sup_perp_cvd, sup_perp_cvd, 24) >= multiplyDecimal(multiplyDecimal(sup_dec(sup_parameter('significant_flow_sigma', '2')), sup_dec(sup_parameter('significant_flow_sigma', '2')), 24), sup_perp_q, 24), NULL)"
+        ),
+        basis_within_normal=_bool(
+            "if(arrayAll(p -> JSONExtractRaw(p, 'basis_vs_normal') NOT IN ('', 'null'), sup_per_venue), notEmpty(sup_per_venue) AND arrayAll(p -> JSONExtractString(p, 'basis_vs_normal') = 'WITHIN', sup_per_venue), NULL)"
+        ),
+        basis_widening=_bool(
+            "if(arrayExists(p -> JSONExtractRaw(p, 'basis_widening') NOT IN ('', 'null'), sup_per_venue), arrayExists(p -> JSONExtractRaw(p, 'basis_widening') = 'true', sup_per_venue), NULL)"
+        ),
+        funding_rising=_bool(
+            "if(arrayExists(p -> JSONExtractRaw(p, 'funding_rising') NOT IN ('', 'null'), sup_per_venue), arrayExists(p -> JSONExtractRaw(p, 'funding_rising') = 'true', sup_per_venue), NULL)"
+        ),
+        liquidations_first_half_majority=_bool(
+            "if(isNotNull(sup_liquidation_total) AND sup_liquidation_total > sup_zero, 2 * ifNull(sup_liquidation_first, sup_zero) > sup_liquidation_total, NULL)"
+        ),
+        large_ticket_buy_majority=_raw(
+            "JSONExtractRaw(sup_window_spot, 'size_profile', 'large_ticket_buy_majority')"
+        ),
+        large_tickets_minority=_raw(
+            "JSONExtractRaw(sup_window_spot, 'size_profile', 'large_tickets_minority')"
+        ),
+        large_ticket_sell_share_rising=_raw(
+            "JSONExtractRaw(sup_window_spot, 'size_profile', 'sell_share_rising')"
+        ),
+        exchange_inflows=_bool(
+            "if(isNotNull(sup_result_dec(JSONExtractRaw(sup_supply, 'exchange_inventory', 'chg_native_24h'))), sup_result_dec(JSONExtractRaw(sup_supply, 'exchange_inventory', 'chg_native_24h')) > sup_zero, if(notEmpty(JSONExtractArrayRaw(sup_supply, 'flows')), arrayExists(f -> JSONExtractString(f, 'class') IN ('TREASURY_INTERNAL', 'MM_INVENTORY', 'UNLOCK_DISTRIBUTION') AND (JSONExtractRaw(f, 'reaches_exchange') = 'true' OR JSONExtractRaw(f, 'to_exchange') = 'true'), JSONExtractArrayRaw(sup_supply, 'flows')), NULL))"
+        ),
+        localized_inventory_transfer=_bool(
+            "if(notEmpty(JSONExtractArrayRaw(sup_supply, 'flows')), arrayExists(f -> JSONExtractString(f, 'class') = 'CEX_CUSTODY_MIGRATION', JSONExtractArrayRaw(sup_supply, 'flows')), NULL)"
+        ),
+        ask_depth_building=_bool(
+            "if(notEmpty(sup_ask_builds(sup_window_start)), arrayExists(x -> x, sup_ask_builds(sup_window_start)), NULL)"
+        ),
+        ask_replenishment=_bool(
+            "if(notEmpty(sup_ask_tests(sup_window_start)), arrayExists(p -> sup_ask_recovered(p.1, p.2), sup_ask_tests(sup_window_start)), NULL)"
+        ),
     )
-    return r"""
+    return (
+        r"""
 JSONExtractArrayRaw(sup_snapshot, 'klines') AS sup_klines,
 JSONExtractArrayRaw(sup_snapshot, 'flow_bars') AS sup_flow_bars,
 JSONExtractArrayRaw(sup_snapshot, 'oi') AS sup_oi_rows,
@@ -504,7 +545,11 @@ sup_support_stage AS (
         sup_patch(sup_window_derivative, ['per_venue', 'support_features'], [sup_array(sup_per_venue), sup_features]) AS sup_supported_derivative
     FROM sup_supply_stage
 )
-""".strip().replace("__VOLUME__", volume).replace("__PER_VENUE__", per_venue).replace("__FEATURES__", features)
+""".strip()
+        .replace("__VOLUME__", volume)
+        .replace("__PER_VENUE__", per_venue)
+        .replace("__FEATURES__", features)
+    )
 
 
 def _output():
@@ -562,8 +607,12 @@ def _supply():
         chainid=_raw("JSONExtractRaw(n, 'chainid')"),
         contract=_raw("JSONExtractRaw(n, 'contract')"),
         qty_native=_money("sup_dec(JSONExtractRaw(n, 'qty_native'))"),
-        chg_native_24h=_money("sup_dec(JSONExtractRaw(n, 'qty_native')) - sup_dec(JSONExtractRaw(o, 'qty_native'))"),
-        chg_pct=_json("sup_ratio(sup_dec(JSONExtractRaw(n, 'qty_native')) - sup_dec(JSONExtractRaw(o, 'qty_native')), sup_dec(JSONExtractRaw(o, 'qty_native')))"),
+        chg_native_24h=_money(
+            "sup_dec(JSONExtractRaw(n, 'qty_native')) - sup_dec(JSONExtractRaw(o, 'qty_native'))"
+        ),
+        chg_pct=_json(
+            "sup_ratio(sup_dec(JSONExtractRaw(n, 'qty_native')) - sup_dec(JSONExtractRaw(o, 'qty_native')), sup_dec(JSONExtractRaw(o, 'qty_native')))"
+        ),
     )
     inventory = _object(
         chg_native_24h=_money("sup_inventory_change"),
@@ -584,13 +633,19 @@ def _supply():
         "p",
         borrow_apr="'null'",
         borrow_apr_reason="'\"NOT_ESTIMABLE\"'",
-        chg_24h=_json("sup_number(JSONExtractRaw(p, 'utilization')) - sup_number(JSONExtractRaw(o, 'utilization'))"),
+        chg_24h=_json(
+            "sup_number(JSONExtractRaw(p, 'utilization')) - sup_number(JSONExtractRaw(o, 'utilization'))"
+        ),
     )
     chain = _object(
         chain=_raw("JSONExtractRaw(r, 'chain')"),
         supply_usd=_money("sup_chain_value(r, sup_end)"),
-        supply_chg_24h=_money("sup_chain_value(r, sup_end) - sup_chain_value(r, sup_offset(sup_end, -86400.))"),
-        supply_chg_7d=_money("sup_chain_value(r, sup_end) - sup_chain_value(r, sup_offset(sup_end, -604800.))"),
+        supply_chg_24h=_money(
+            "sup_chain_value(r, sup_end) - sup_chain_value(r, sup_offset(sup_end, -86400.))"
+        ),
+        supply_chg_7d=_money(
+            "sup_chain_value(r, sup_end) - sup_chain_value(r, sup_offset(sup_end, -604800.))"
+        ),
         reason="if(isNotNull(sup_chain_value(r, sup_end)), 'null', '\"INCOMPLETE\"')",
     )
     chart = _object(
@@ -600,7 +655,9 @@ def _supply():
     )
     period = _object(
         provider_period=_json("p.2"),
-        value=_money("if(sup_available(m) AND sup_available(sup_fundamental), sup_fundamental_dec(JSONExtractRaw(m, p.1)), NULL)"),
+        value=_money(
+            "if(sup_available(m) AND sup_available(sup_fundamental), sup_fundamental_dec(JSONExtractRaw(m, p.1)), NULL)"
+        ),
         status="if(sup_available(m) AND sup_available(sup_fundamental) AND isNotNull(sup_fundamental_dec(JSONExtractRaw(m, p.1))), '\"OBSERVED\"', '\"UNAVAILABLE\"')",
     )
     protocol = _object(
@@ -616,10 +673,12 @@ def _supply():
     coverage = _object(
         observed=_json("arrayCount(p -> JSONExtractRaw(p, 'periods', i, 'value') != 'null', sup_protocols)"),
         expected=_json("length(sup_protocols)"),
-        complete=_bool("notEmpty(sup_protocols) AND arrayAll(p -> JSONExtractRaw(p, 'periods', i, 'value') != 'null', sup_protocols)"),
+        complete=_bool(
+            "notEmpty(sup_protocols) AND arrayAll(p -> JSONExtractRaw(p, 'periods', i, 'value') != 'null', sup_protocols)"
+        ),
     )
     holders = _object(
-        status="toJSONString(if(empty(sup_protocols), 'UNAVAILABLE', if(isNotNull(sup_cadence('supply', sup_fundamental).1) AND sup_seconds(sup_time(sup_fundamental), sup_end) > sup_cadence('supply', sup_fundamental).1, 'STALE', 'OBSERVED')))" ,
+        status="toJSONString(if(empty(sup_protocols), 'UNAVAILABLE', if(isNotNull(sup_cadence('supply', sup_fundamental).1) AND sup_seconds(sup_time(sup_fundamental), sup_end) > sup_cadence('supply', sup_fundamental).1, 'STALE', 'OBSERVED')))",
         availability="toJSONString(multiIf(arrayAll(i -> JSONExtractBool(sup_revenue_coverage(i), 'complete'), [1, 2]), 'COMPLETE', arrayExists(p -> JSONExtractRaw(p, 'latest_chart_point') != 'null' OR arrayExists(v -> JSONExtractRaw(v, 'value') != 'null', JSONExtractArrayRaw(p, 'periods')), sup_protocols), 'PARTIAL', 'UNAVAILABLE'))",
         protocols="sup_array(sup_protocols)",
         coverage=_object(**{"24h": "sup_revenue_coverage(1)", "30d": "sup_revenue_coverage(2)"}),
@@ -630,15 +689,22 @@ def _supply():
         cadence_s=_json("sup_cadence('supply', sup_fundamental).1"),
         cadence_basis=_json("sup_cadence('supply', sup_fundamental).2"),
         identity_evidence=_raw("JSONExtractRaw(sup_fundamental, 'identity_evidence')"),
-        source_observation_sha256=_json("lower(hex(SHA256(JSONExtractString(sup_supply_preimages, toUInt64(sup_fundamental_index)))))"),
+        source_observation_sha256=_json(
+            "lower(hex(SHA256(JSONExtractString(sup_supply_preimages, toUInt64(sup_fundamental_index)))))"
+        ),
         reason=_raw("JSONExtractRaw(sup_fundamental, 'reason')"),
-        inference_limits="'[\"PROVIDER_REVENUE_IS_NOT_PROOF_OF_TOKEN_CAPTURE\",\"PER_PROTOCOL_VALUES_NOT_SUMMED_PARENT_CHILD_SCOPE_MAY_OVERLAP\"]'",
+        inference_limits='\'["PROVIDER_REVENUE_IS_NOT_PROOF_OF_TOKEN_CAPTURE","PER_PROTOCOL_VALUES_NOT_SUMMED_PARENT_CHILD_SCOPE_MAY_OVERLAP"]\'',
     )
     flow_wrapper = _patch(
         "f",
-        **{"class": "if(JSONHas(f, 'classification'), sup_raw(JSONExtractRaw(f, 'classification')), '\"AMBIGUOUS\"')", "qty": _money("sup_dec(JSONExtractRaw(f, 'qty_native'))")},
+        **{
+            "class": "if(JSONHas(f, 'classification'), sup_raw(JSONExtractRaw(f, 'classification')), '\"AMBIGUOUS\"')",
+            "qty": _money("sup_dec(JSONExtractRaw(f, 'qty_native'))"),
+        },
     )
-    direct_flow = _patch("r", **{"class": "if(JSONHas(r, 'class'), sup_raw(JSONExtractRaw(r, 'class')), '\"AMBIGUOUS\"')"})
+    direct_flow = _patch(
+        "r", **{"class": "if(JSONHas(r, 'class'), sup_raw(JSONExtractRaw(r, 'class')), '\"AMBIGUOUS\"')"}
+    )
     unlock = _patch(
         "u",
         inference="'\"POTENTIAL_SUPPLY_IS_NOT_A_SALE\"'",
@@ -648,16 +714,19 @@ def _supply():
     )
     supply = _object(
         holders_revenue="sup_holders_revenue",
-        exchange_inventory="if(sup_inventory_current != '' AND sup_available(sup_inventory_current), " + _patch("sup_inventory", window="'\"W24H\"'") + ", sup_missing)",
+        exchange_inventory="if(sup_inventory_current != '' AND sup_available(sup_inventory_current), "
+        + _patch("sup_inventory", window="'\"W24H\"'")
+        + ", sup_missing)",
         flows="sup_array(sup_flows(sup_window_start))",
         unlocks_next_14d="sup_array(sup_unlocks)",
         lending="sup_lending",
         stablecoin_chain="if(empty(sup_chains), sup_missing, sup_chains[1])",
         chain_contexts="sup_array(sup_chains)",
         unavailable="sup_unavailable",
-        supply_in_evidence="toJSONString(if(sup_inventory_evidence OR sup_flow_evidence(sup_window_start), 'TRUE', if(sup_supply_available(sup_window_start), 'FALSE', 'UNKNOWN')))" ,
+        supply_in_evidence="toJSONString(if(sup_inventory_evidence OR sup_flow_evidence(sup_window_start), 'TRUE', if(sup_supply_available(sup_window_start), 'FALSE', 'UNKNOWN')))",
     )
-    return r"""
+    return (
+        r"""
 sup_sorted(arrayFilter(r -> isNotNull(sup_time(r)) AND sup_time(r) <= sup_end, JSONExtractArrayRaw(sup_snapshot, 'supply'))) AS sup_supply_rows,
 ((k) -> arrayLast(r -> has(k, sup_kind(r)), sup_supply_rows)) AS sup_latest_kind,
 arrayFilter(r -> sup_kind(r) IN ('INVENTORY', 'EXCHANGE_INVENTORY'), sup_supply_rows) AS sup_inventories,
@@ -748,4 +817,18 @@ sup_supply_stage AS (
         __SUPPLY__ AS sup_supply
     FROM (SELECT arrayJoin(sup_windows) AS sup_window, sup_start(sup_window) AS sup_window_start)
 )
-""".strip().replace("__INVENTORY_PER__", inventory_per).replace("__INVENTORY__", inventory).replace("__POOL__", pool).replace("__CHAIN__", chain).replace("__PERIOD__", period).replace("__CHART__", chart).replace("__PROTOCOL__", protocol).replace("__COVERAGE__", coverage).replace("__HOLDERS__", holders).replace("__FLOW_WRAPPER__", flow_wrapper).replace("__DIRECT_FLOW__", direct_flow).replace("__UNLOCK__", unlock).replace("__SUPPLY__", supply)
+""".strip()
+        .replace("__INVENTORY_PER__", inventory_per)
+        .replace("__INVENTORY__", inventory)
+        .replace("__POOL__", pool)
+        .replace("__CHAIN__", chain)
+        .replace("__PERIOD__", period)
+        .replace("__CHART__", chart)
+        .replace("__PROTOCOL__", protocol)
+        .replace("__COVERAGE__", coverage)
+        .replace("__HOLDERS__", holders)
+        .replace("__FLOW_WRAPPER__", flow_wrapper)
+        .replace("__DIRECT_FLOW__", direct_flow)
+        .replace("__UNLOCK__", unlock)
+        .replace("__SUPPLY__", supply)
+    )

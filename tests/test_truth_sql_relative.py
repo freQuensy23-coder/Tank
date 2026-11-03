@@ -261,7 +261,9 @@ async def execute(native_clickhouse, snapshot, config=None, *, reaction=False, r
     return json.loads(rows[0]["result"])
 
 
-@pytest.mark.parametrize("mode", ["regular", "secondary", "fractional", "benchmark", "short", "empty", "scientific"])
+@pytest.mark.parametrize(
+    "mode", ["regular", "secondary", "fractional", "benchmark", "short", "empty", "scientific"]
+)
 async def test_native_relative_complete_original_output(
     native_clickhouse, original_truth, mode, record_property
 ):

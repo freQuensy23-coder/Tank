@@ -13,11 +13,15 @@ def _transport(value):
 
 
 def _object(**fields):
-    return "concat('{', " + ", ".join(
-        part
-        for index, (name, expression) in enumerate(fields.items())
-        for part in (("','",) if index else ()) + ("'\"" + name + "\":'", expression)
-    ) + ", '}')"
+    return (
+        "concat('{', "
+        + ", ".join(
+            part
+            for index, (name, expression) in enumerate(fields.items())
+            for part in (("','",) if index else ()) + ("'\"" + name + "\":'", expression)
+        )
+        + ", '}')"
+    )
 
 
 def _json(expression):
@@ -48,8 +52,12 @@ def _core_ctes():
     composite = _object(
         cvd=_money("res_vsum(vs, 'cvd')"),
         volume=_money("res_vsum(vs, 'volume_native')"),
-        buy_share=_json("res_flow_ratio(res_vsum(vs, 'volume_native') + res_vsum(vs, 'cvd'), 2 * res_vsum(vs, 'volume_native'))"),
-        bs_ratio=_json("res_flow_ratio(res_vsum(vs, 'volume_native') + res_vsum(vs, 'cvd'), res_vsum(vs, 'volume_native') - res_vsum(vs, 'cvd'))"),
+        buy_share=_json(
+            "res_flow_ratio(res_vsum(vs, 'volume_native') + res_vsum(vs, 'cvd'), 2 * res_vsum(vs, 'volume_native'))"
+        ),
+        bs_ratio=_json(
+            "res_flow_ratio(res_vsum(vs, 'volume_native') + res_vsum(vs, 'cvd'), res_vsum(vs, 'volume_native') - res_vsum(vs, 'cvd'))"
+        ),
         venues=_json("arrayMap(v -> JSONExtractString(v, 'venue'), vs)"),
         sign="toString(res_flow_sign(res_vsum(vs, 'cvd'), res_vsum(vs, 'sum_sq_qty')))",
     )
@@ -57,18 +65,26 @@ def _core_ctes():
         cohort=_json("arraySort(arrayMap(v -> JSONExtractString(v, 'venue'), a))"),
         current="if(valid, res_composite(a), 'null')",
         other="if(valid, res_composite(b), 'null')",
-        share_of_max=_json("res_flow_ratio(res_volume(a), res_money(res_get(left, 'composite_max'), 'volume'))"),
-        share_majority=_bool("res_flow_majority(res_volume(a), res_money(res_get(left, 'composite_max'), 'volume'))"),
+        share_of_max=_json(
+            "res_flow_ratio(res_volume(a), res_money(res_get(left, 'composite_max'), 'volume'))"
+        ),
+        share_majority=_bool(
+            "res_flow_majority(res_volume(a), res_money(res_get(left, 'composite_max'), 'volume'))"
+        ),
         reason="if(valid, 'null', '\"NOT_COHORT_CONSISTENT\"')",
     )
     size = _object(
         large_ticket_buy_share=_json("res_flow_ratio(res_large_buy, res_large_buy + res_large_sell)"),
         large_ticket_sell_share=_json("res_flow_ratio(res_large_sell, res_large_buy + res_large_sell)"),
         large_ticket_buy_majority=_bool("res_flow_majority(res_large_buy, res_large_buy + res_large_sell)"),
-        large_tickets_minority=_bool("if(res_size_total = 0 OR isNull(res_size_total), NULL, 2 * (res_large_buy + res_large_sell) < res_size_total)"),
+        large_tickets_minority=_bool(
+            "if(res_size_total = 0 OR isNull(res_size_total), NULL, 2 * (res_large_buy + res_large_sell) < res_size_total)"
+        ),
         large_ticket_buy_notional=_money("res_large_buy"),
         large_ticket_sell_notional=_money("res_large_sell"),
-        sell_share_rising=_bool("if(res_previous_valid AND res_previous_buy + res_previous_sell != 0 AND res_large_buy + res_large_sell != 0, multiplyDecimal(res_large_sell, res_previous_buy + res_previous_sell, 24) > multiplyDecimal(res_previous_sell, res_large_buy + res_large_sell, 24), NULL)"),
+        sell_share_rising=_bool(
+            "if(res_previous_valid AND res_previous_buy + res_previous_sell != 0 AND res_large_buy + res_large_sell != 0, multiplyDecimal(res_large_sell, res_previous_buy + res_previous_sell, 24) > multiplyDecimal(res_previous_sell, res_large_buy + res_large_sell, 24), NULL)"
+        ),
         compatible_venues=_json("res_compatible"),
     )
     lead = _object(
@@ -76,7 +92,9 @@ def _core_ctes():
         start=_json("res_flow_iso(res_lead_start)"),
         cutoff=_json("res_flow_iso(res_end)"),
         first_mover=_json("res_first_mover"),
-        spot_confirmed=_bool("if(isNull(res_lead_return) OR res_get(res_lead_spot, 'composite_cohort') = 'null', NULL, JSONExtractString(res_lead_spot, 'direction') = multiIf(res_lead_return > 0, 'BUY', res_lead_return < 0, 'SELL', 'NEUTRAL'))"),
+        spot_confirmed=_bool(
+            "if(isNull(res_lead_return) OR res_get(res_lead_spot, 'composite_cohort') = 'null', NULL, JSONExtractString(res_lead_spot, 'direction') = multiIf(res_lead_return > 0, 'BUY', res_lead_return < 0, 'SELL', 'NEUTRAL'))"
+        ),
         sequence=_array("res_sequence"),
     )
     sequence = _object(
@@ -100,7 +118,8 @@ def _core_ctes():
         funding_dispersion_normal_range_8h="res_get(res_get(res_liq, 'fragmentation'), 'funding_normal_range_8h')",
         funding_dispersion_beyond_normal="res_get(res_get(res_liq, 'fragmentation'), 'funding_beyond_normal')",
     )
-    return r"""
+    return (
+        r"""
 {res_snapshot:String} AS res_snapshot,
 {res_config:String} AS res_config,
 {res_spots:String} AS res_spots_input,
@@ -213,42 +232,148 @@ res_enriched AS (
         __DERIV__ AS res_deriv
     FROM res_windows_source
 )
-""".replace("__COMPOSITE__", composite).replace("__COMPARISON__", comparison).replace("__SEQUENCE__", sequence).replace("__SPOT__", spot).replace("__DERIV__", deriv)
+""".replace("__COMPOSITE__", composite)
+        .replace("__COMPARISON__", comparison)
+        .replace("__SEQUENCE__", sequence)
+        .replace("__SPOT__", spot)
+        .replace("__DERIV__", deriv)
+    )
 
 
 def _selection_ctes():
     gates = [
-        ("SPOT_LED_ACCUMULATION", "res_direction = 'BUY' AND res_broad AND res_notdown AND res_boolean(res_elasticity, 'weak_response') = false AND res_nwithin AND res_fundok", ["res_feature('spot_volume_up_beyond_normal')", "res_lead = 'SPOT'", "res_spotmost", "res_feature('large_ticket_buy_majority')", "res_drop <= 0"]),
-        ("ORGANIC_MIXED", "res_direction = 'BUY' AND res_class IN ('BROAD','CONCENTRATED') AND res_dn > 0 AND res_nwithin AND JSONExtractString(res_oi, 'oi_class') IN ('REAL_NATIVE','MIXED') AND res_fundok", ["res_feature('spot_volume_up_beyond_normal') AND res_feature('perp_volume_up_beyond_normal')", "res_feature('basis_within_normal')"]),
-        ("PERP_LED_CHASE", "res_up AND res_nup AND (res_perpmost OR res_lead = 'PERP') AND NOT (res_direction = 'BUY' AND res_broad)", ["has(res_funding, 'ABOVE')", "res_feature('basis_widening')", "res_direction IN ('SELL','NEUTRAL')", "res_feature('perp_taker_flow_buy')"]),
-        ("SHORT_SQUEEZE", "res_up AND (res_ndown OR res_money(res_liqs, 'short') > res_money(res_liqs, 'long')) AND res_fundnegative", ["res_feature('liquidations_first_half_majority')", "res_feature('perp_taker_flow_buy')"]),
-        ("SELL_SIDE_ABSORPTION", "res_direction = 'BUY' AND res_true(res_elasticity, 'weak_response')", ["res_feature('ask_replenishment')", "res_supplyyes", "res_native_not_up"]),
-        ("DISTRIBUTION", "res_notdown AND (res_buy_to_sell OR (res_direction = 'SELL' AND res_sell_majority)) AND res_supplyyes", ["res_feature('large_ticket_sell_share_rising')", "res_feature('ask_depth_building')", "res_feature('exchange_inflows')"]),
-        ("LIQUIDITY_VACUUM", "res_moved AND res_depth_lost AND res_true(res_elasticity, 'excess_response')", ["res_feature('large_tickets_minority')", "res_feature('spot_volume_within_normal')"]),
-        ("REAL_MARKET_FRAGMENTATION", "res_true(res_fragmentation, 'validated')", ["length(arrayDistinct(arrayMap(v -> JSONExtractInt(v, 'sign'), arrayFilter(v -> JSONExtractInt(v, 'sign') != 0, JSONExtractArrayRaw(res_spot, 'venues'))))) > 1", "res_true(res_fragmentation, 'gap_closed_quickly')"]),
+        (
+            "SPOT_LED_ACCUMULATION",
+            "res_direction = 'BUY' AND res_broad AND res_notdown AND res_boolean(res_elasticity, 'weak_response') = false AND res_nwithin AND res_fundok",
+            [
+                "res_feature('spot_volume_up_beyond_normal')",
+                "res_lead = 'SPOT'",
+                "res_spotmost",
+                "res_feature('large_ticket_buy_majority')",
+                "res_drop <= 0",
+            ],
+        ),
+        (
+            "ORGANIC_MIXED",
+            "res_direction = 'BUY' AND res_class IN ('BROAD','CONCENTRATED') AND res_dn > 0 AND res_nwithin AND JSONExtractString(res_oi, 'oi_class') IN ('REAL_NATIVE','MIXED') AND res_fundok",
+            [
+                "res_feature('spot_volume_up_beyond_normal') AND res_feature('perp_volume_up_beyond_normal')",
+                "res_feature('basis_within_normal')",
+            ],
+        ),
+        (
+            "PERP_LED_CHASE",
+            "res_up AND res_nup AND (res_perpmost OR res_lead = 'PERP') AND NOT (res_direction = 'BUY' AND res_broad)",
+            [
+                "has(res_funding, 'ABOVE')",
+                "res_feature('basis_widening')",
+                "res_direction IN ('SELL','NEUTRAL')",
+                "res_feature('perp_taker_flow_buy')",
+            ],
+        ),
+        (
+            "SHORT_SQUEEZE",
+            "res_up AND (res_ndown OR res_money(res_liqs, 'short') > res_money(res_liqs, 'long')) AND res_fundnegative",
+            ["res_feature('liquidations_first_half_majority')", "res_feature('perp_taker_flow_buy')"],
+        ),
+        (
+            "SELL_SIDE_ABSORPTION",
+            "res_direction = 'BUY' AND res_true(res_elasticity, 'weak_response')",
+            ["res_feature('ask_replenishment')", "res_supplyyes", "res_native_not_up"],
+        ),
+        (
+            "DISTRIBUTION",
+            "res_notdown AND (res_buy_to_sell OR (res_direction = 'SELL' AND res_sell_majority)) AND res_supplyyes",
+            [
+                "res_feature('large_ticket_sell_share_rising')",
+                "res_feature('ask_depth_building')",
+                "res_feature('exchange_inflows')",
+            ],
+        ),
+        (
+            "LIQUIDITY_VACUUM",
+            "res_moved AND res_depth_lost AND res_true(res_elasticity, 'excess_response')",
+            ["res_feature('large_tickets_minority')", "res_feature('spot_volume_within_normal')"],
+        ),
+        (
+            "REAL_MARKET_FRAGMENTATION",
+            "res_true(res_fragmentation, 'validated')",
+            [
+                "length(arrayDistinct(arrayMap(v -> JSONExtractInt(v, 'sign'), arrayFilter(v -> JSONExtractInt(v, 'sign') != 0, JSONExtractArrayRaw(res_spot, 'venues'))))) > 1",
+                "res_true(res_fragmentation, 'gap_closed_quickly')",
+            ],
+        ),
     ]
     candidates = [
-        ("PERP_LED_MARKUP", "res_nup OR res_perpmost", ["res_lead = 'PERP'", "res_feature('funding_rising') OR res_feature('basis_widening')", "res_class IN ('CONCENTRATED','DIVERGENT')", "res_feature('perp_taker_flow_buy')"], 3),
-        ("if(res_absorption_confirmed, 'ABSORPTION_CONFIRMED','ABSORPTION_CANDIDATE')", "NOT res_absorption_refuted", ["res_number(res_liq, 'spread_ratio') <= 1", "res_number(res_get(res_spot, 'size_profile'), 'large_ticket_sell_share') > 0.5 AND res_true(res_elasticity, 'weak_response')", "res_native_not_up"], "if(res_absorption_confirmed, 2, 1)"),
-        ("LIQUIDITY_VACUUM", "res_depth_lost OR res_true(res_elasticity, 'excess_response')", ["JSONExtractString(res_liq, 'liquidity_state') = 'THIN'", "res_true(res_elasticity, 'excess_response')"], 4),
-        ("FRAGMENTATION", "(res_true(res_fragmentation, 'persistent_gap') OR res_true(res_fragmentation, 'funding_beyond_normal') OR (res_class = 'DIVERGENT' AND res_true(res_fragmentation, 'top_sign_flips'))) AND NOT res_broad", ["res_feature('localized_inventory_transfer')", "res_true(res_fragmentation, 'gap_closed_quickly')"], 0),
+        (
+            "PERP_LED_MARKUP",
+            "res_nup OR res_perpmost",
+            [
+                "res_lead = 'PERP'",
+                "res_feature('funding_rising') OR res_feature('basis_widening')",
+                "res_class IN ('CONCENTRATED','DIVERGENT')",
+                "res_feature('perp_taker_flow_buy')",
+            ],
+            3,
+        ),
+        (
+            "if(res_absorption_confirmed, 'ABSORPTION_CONFIRMED','ABSORPTION_CANDIDATE')",
+            "NOT res_absorption_refuted",
+            [
+                "res_number(res_liq, 'spread_ratio') <= 1",
+                "res_number(res_get(res_spot, 'size_profile'), 'large_ticket_sell_share') > 0.5 AND res_true(res_elasticity, 'weak_response')",
+                "res_native_not_up",
+            ],
+            "if(res_absorption_confirmed, 2, 1)",
+        ),
+        (
+            "LIQUIDITY_VACUUM",
+            "res_depth_lost OR res_true(res_elasticity, 'excess_response')",
+            [
+                "JSONExtractString(res_liq, 'liquidity_state') = 'THIN'",
+                "res_true(res_elasticity, 'excess_response')",
+            ],
+            4,
+        ),
+        (
+            "FRAGMENTATION",
+            "(res_true(res_fragmentation, 'persistent_gap') OR res_true(res_fragmentation, 'funding_beyond_normal') OR (res_class = 'DIVERGENT' AND res_true(res_fragmentation, 'top_sign_flips'))) AND NOT res_broad",
+            [
+                "res_feature('localized_inventory_transfer')",
+                "res_true(res_fragmentation, 'gap_closed_quickly')",
+            ],
+            0,
+        ),
     ]
     def score(expressions):
         return " + ".join(f"toInt64(ifNull(({expression}), false))" for expression in expressions)
-    eligible = ",\n".join(f"('{name}', ifNull(({gate}), false), {score(features)})" for name, gate, features in gates)
-    candidate = ",\n".join(f"({name if name.startswith('if(') else repr(name)}, ifNull(({gate}), false), {score(features)}, toInt64({rank}))" for name, gate, features, rank in candidates)
+    eligible = ",\n".join(
+        f"('{name}', ifNull(({gate}), false), {score(features)})" for name, gate, features in gates
+    )
+    candidate = ",\n".join(
+        f"({name if name.startswith('if(') else repr(name)}, ifNull(({gate}), false), {score(features)}, toInt64({rank}))"
+        for name, gate, features, rank in candidates
+    )
     divergence = _object(
-        state=_json("if(res_low, if(res_triggered, 'UNKNOWN','NONE'), if(res_triggered, if(empty(res_candidates), 'UNKNOWN', res_chosen.1), 'NONE'))"),
+        state=_json(
+            "if(res_low, if(res_triggered, 'UNKNOWN','NONE'), if(res_triggered, if(empty(res_candidates), 'UNKNOWN', res_chosen.1), 'NONE'))"
+        ),
         triggered=_bool("res_triggered"),
         candidates=_array("if(res_triggered, res_candidate_details, [])"),
-        unresolved=_json("if(res_triggered, arrayMap(c -> c.1, arrayFilter(c -> c.1 != res_chosen.1, res_candidates)), [])"),
+        unresolved=_json(
+            "if(res_triggered, arrayMap(c -> c.1, arrayFilter(c -> c.1 != res_chosen.1, res_candidates)), [])"
+        ),
         confirmed=_bool("res_triggered AND res_chosen.1 = 'ABSORPTION_CONFIRMED'"),
     )
     candidate_detail = _object(
         state=_json("c.1"),
         eligible=_bool("c.2"),
-        refuted=_bool("multiIf(c.1 IN ('ABSORPTION_CANDIDATE','ABSORPTION_CONFIRMED'), res_absorption_refuted, c.1 = 'FRAGMENTATION', res_broad, false)"),
-        testable=_bool("multiIf(c.1 IN ('ABSORPTION_CANDIDATE','ABSORPTION_CONFIRMED'), true, c.1 = 'PERP_LED_MARKUP', isNotNull(res_nb) OR res_inc NOT IN ('null','{}'), c.1 = 'LIQUIDITY_VACUUM', isNotNull(res_drop) OR isNotNull(res_boolean(res_elasticity, 'excess_response')), res_fragmentation NOT IN ('null','{}'))"),
+        refuted=_bool(
+            "multiIf(c.1 IN ('ABSORPTION_CANDIDATE','ABSORPTION_CONFIRMED'), res_absorption_refuted, c.1 = 'FRAGMENTATION', res_broad, false)"
+        ),
+        testable=_bool(
+            "multiIf(c.1 IN ('ABSORPTION_CANDIDATE','ABSORPTION_CONFIRMED'), true, c.1 = 'PERP_LED_MARKUP', isNotNull(res_nb) OR res_inc NOT IN ('null','{}'), c.1 = 'LIQUIDITY_VACUUM', isNotNull(res_drop) OR isNotNull(res_boolean(res_elasticity, 'excess_response')), res_fragmentation NOT IN ('null','{}'))"
+        ),
         support="toString(if(c.2, c.3, 0))",
     )
     selected = _object(
@@ -256,12 +381,19 @@ def _selection_ctes():
         eligible_support_before_divergence="concat('{', arrayStringConcat(arrayMap(c -> concat(toJSONString(c.1), ':', toString(c.3)), res_eligible_before), ','), '}')",
         move_class=_json("res_move"),
         support="toString(if(res_move = 'UNKNOWN', if(notEmpty(res_ordered) AND res_ordered[1].1 = 'UNKNOWN', res_ordered[1].2, 0), res_ordered[1].2))",
-        alternatives=_json("arrayMap(c -> c.1, if(res_move = 'UNKNOWN', res_ordered, arraySlice(res_ordered, 2)))"),
+        alternatives=_json(
+            "arrayMap(c -> c.1, if(res_move = 'UNKNOWN', res_ordered, arraySlice(res_ordered, 2)))"
+        ),
         divergence=divergence,
-        class_confidence=_json("multiIf(res_move = 'UNKNOWN', 'LOW', length(res_ordered) > 1 OR (res_triggered AND length(res_candidates) > 1), 'MEDIUM', 'HIGH')"),
-        flags=_json("arrayConcat(if(arrayExists(o -> JSONExtractString(o, 'oi_class') = 'PRICE_MARKUP' AND res_number(o, 'oi_usd_chg_pct') > 0, arrayPushFront(res_per_venue, res_oi)), ['PRICE_MARKUP_OI'], []), if(arrayExists(kv -> kv.2 = 'false', JSONExtractKeysAndValuesRaw(res_get(res_spot, 'cohort_consistent'))), ['NOT_COHORT_CONSISTENT'], []), if(res_true(res_get(res_relative_input, 'pre_event_runup'), 'flag'), ['PRE_EVENT_RUNUP'], []), if(res_triggered AND arrayExists(c -> c.1 = 'FRAGMENTATION' AND (c.1 != res_chosen.1 OR NOT res_low), res_candidates) AND NOT res_true(res_fragmentation, 'validated'), ['FRAGMENTATION_INVESTIGATE'], []))"),
+        class_confidence=_json(
+            "multiIf(res_move = 'UNKNOWN', 'LOW', length(res_ordered) > 1 OR (res_triggered AND length(res_candidates) > 1), 'MEDIUM', 'HIGH')"
+        ),
+        flags=_json(
+            "arrayConcat(if(arrayExists(o -> JSONExtractString(o, 'oi_class') = 'PRICE_MARKUP' AND res_number(o, 'oi_usd_chg_pct') > 0, arrayPushFront(res_per_venue, res_oi)), ['PRICE_MARKUP_OI'], []), if(arrayExists(kv -> kv.2 = 'false', JSONExtractKeysAndValuesRaw(res_get(res_spot, 'cohort_consistent'))), ['NOT_COHORT_CONSISTENT'], []), if(res_true(res_get(res_relative_input, 'pre_event_runup'), 'flag'), ['PRE_EVENT_RUNUP'], []), if(res_triggered AND arrayExists(c -> c.1 = 'FRAGMENTATION' AND (c.1 != res_chosen.1 OR NOT res_low), res_candidates) AND NOT res_true(res_fragmentation, 'validated'), ['FRAGMENTATION_INVESTIGATE'], []))"
+        ),
     )
-    return r"""
+    return (
+        r"""
 res_gate_inputs AS (
     SELECT *, res_get(res_get(res_relative_input, 'windows'), res_name) AS res_relative_window,
         if(JSONHas(res_relative_window, 'relative_return'), res_number(res_relative_window, 'relative_return'), res_number(res_relative_window, 'r_btc_adj')) AS res_return,
@@ -327,68 +459,156 @@ res_selected AS (
     SELECT *, __SELECTED__ AS res_selected_json
     FROM res_eligible_rows
 )
-""".replace("__ELIGIBLE__", eligible).replace("__CANDIDATES__", candidate).replace("__CANDIDATE_DETAIL__", candidate_detail).replace("__SELECTED__", selected)
+""".replace("__ELIGIBLE__", eligible)
+        .replace("__CANDIDATES__", candidate)
+        .replace("__CANDIDATE_DETAIL__", candidate_detail)
+        .replace("__SELECTED__", selected)
+    )
 
 
 def _fact_ctes():
     def evidence(collection, instruments, *, venue=False):
         field = "venue" if venue else "instrument_id"
-        return _array("arrayMap(i -> " + _object(collection=repr('"' + collection + '"'), **{field: _json("i")}, start=_json("res_flow_iso(res_wstart)"), cutoff=_json("res_flow_iso(res_end)")) + ", " + instruments + ")")
+        return _array(
+            "arrayMap(i -> "
+            + _object(
+                collection=repr('"' + collection + '"'),
+                **{field: _json("i")},
+                start=_json("res_flow_iso(res_wstart)"),
+                cutoff=_json("res_flow_iso(res_end)"),
+            )
+            + ", "
+            + instruments
+            + ")"
+        )
 
     def fact(metric, value, unit, text, sources, coverage, *, window=None, start=None):
         return _object(
-            metric=_json(metric), value=value, unit=repr('"' + unit + '"'),
+            metric=_json(metric),
+            value=value,
+            unit=repr('"' + unit + '"'),
             window=_json(window or "res_name"),
             start=_json(start or "res_flow_iso(res_wstart)"),
             cutoff=_json("res_flow_iso(res_end)"),
-            text=_json(text), evidence=sources, coverage=coverage,
+            text=_json(text),
+            evidence=sources,
+            coverage=coverage,
         )
 
     spot_fact = fact(
-        "'spot.cvd'", _money("res_cvd"), "NATIVE_TOKEN",
+        "'spot.cvd'",
+        _money("res_cvd"),
+        "NATIVE_TOKEN",
         "concat(res_name, ' spot flow ', if(res_direction = '', 'unknown', res_direction), ': CVD ', res_signed_native(res_cvd), ' ', arrayElement(splitByChar(':', JSONExtractString(res_snapshot, 'token_id')), -1), ', ', res_class, '; ', res_count(JSONExtractInt(res_coverage, 'n_complete'), 'complete venue'), '.')",
-        evidence("mkt.flow_bars_1m", "JSONExtract(res_get(res_get(res_spot, 'composite_max'), 'venues'), 'Array(String)')", venue=True), "res_coverage",
+        evidence(
+            "mkt.flow_bars_1m",
+            "JSONExtract(res_get(res_get(res_spot, 'composite_max'), 'venues'), 'Array(String)')",
+            venue=True,
+        ),
+        "res_coverage",
     )
     oi_fact = fact(
-        "'derivatives.oi_native_chg_pct'", _raw("res_get(res_oi, 'oi_native_chg_pct')"), "DECIMAL_RETURN",
+        "'derivatives.oi_native_chg_pct'",
+        _raw("res_get(res_oi, 'oi_native_chg_pct')"),
+        "DECIMAL_RETURN",
         "concat(res_name, ' synchronized native OI ', res_pct(res_dn, 2), ', ', if(JSONExtractString(res_oi, 'native_oi_vs_normal') = '', 'normal range unavailable', JSONExtractString(res_oi, 'native_oi_vs_normal')), '; class ', res_oi_class_text, '.')",
-        evidence("mkt.oi_obs", "arrayMap(p -> JSONExtractString(p, 'instrument_id'), arrayFilter(p -> has(JSONExtract(res_get(res_oi, 'venues'), 'Array(String)'), JSONExtractString(p, 'venue')), res_per_venue))"),
-        _object(venues="res_get(res_oi, 'venues')", classification_ready="res_get(res_oi, 'classification_ready')"),
+        evidence(
+            "mkt.oi_obs",
+            "arrayMap(p -> JSONExtractString(p, 'instrument_id'), arrayFilter(p -> has(JSONExtract(res_get(res_oi, 'venues'), 'Array(String)'), JSONExtractString(p, 'venue')), res_per_venue))",
+        ),
+        _object(
+            venues="res_get(res_oi, 'venues')", classification_ready="res_get(res_oi, 'classification_ready')"
+        ),
     )
     relative_fact = fact(
         "if(JSONExtractString(res_relative_window, 'relative_measure') = 'R_RAW', 'relative.r_raw', 'relative.r_btc_adj')",
-        _json("res_return"), "DECIMAL_RETURN",
+        _json("res_return"),
+        "DECIMAL_RETURN",
         "concat(res_name, if(JSONExtractString(res_relative_window, 'relative_measure') = 'R_RAW', ' price move (benchmark, raw) ', ' BTC-adjusted price move '), res_pct(res_return, 2), '; ', if(res_normal NOT IN ('null','[]'), concat('normal range ', res_pct(JSONExtract(res_normal, 'Array(Float64)')[1], 2), ' to ', res_pct(JSONExtract(res_normal, 'Array(Float64)')[2], 2), '.'), concat('normal range unavailable (', if(JSONExtractString(res_relative_window, 'normal_range_reason') = '', 'INCOMPLETE', JSONExtractString(res_relative_window, 'normal_range_reason')), ').')))",
-        evidence("mkt.klines_1m", "if(res_get(res_relative_input, 'ref_venue') = 'null', [], [JSONExtractString(res_relative_input, 'ref_venue')])"),
+        evidence(
+            "mkt.klines_1m",
+            "if(res_get(res_relative_input, 'ref_venue') = 'null', [], [JSONExtractString(res_relative_input, 'ref_venue')])",
+        ),
         "if(JSONHas(res_relative_input, 'reference_coverage'), res_get(res_relative_input, 'reference_coverage'), '{}')",
     )
     depth_fact = fact(
-        "'liquidity.depth_drop'", _json("res_drop"), "DECIMAL_FRACTION",
+        "'liquidity.depth_drop'",
+        _json("res_drop"),
+        "DECIMAL_FRACTION",
         "concat(if(JSONExtractString(res_elasticity, 'hit_side') = '', 'unknown', JSONExtractString(res_elasticity, 'hit_side')), ' depth within 1% changed ', res_pct(-res_drop, 2), '; excess response ', res_python_bool(res_get(res_elasticity, 'excess_response')), '; weak response ', res_python_bool(res_get(res_elasticity, 'weak_response')), '.')",
-        evidence("mkt.book_summaries", "arrayMap(v -> JSONExtractString(v, 'venue'), JSONExtractArrayRaw(res_liq, 'per_venue'))", venue=True),
-        _object(hit_side="res_get(res_elasticity, 'hit_side')", depth_usd="res_get(res_elasticity, 'hit_side_depth_p1_usd')"),
+        evidence(
+            "mkt.book_summaries",
+            "arrayMap(v -> JSONExtractString(v, 'venue'), JSONExtractArrayRaw(res_liq, 'per_venue'))",
+            venue=True,
+        ),
+        _object(
+            hit_side="res_get(res_elasticity, 'hit_side')",
+            depth_usd="res_get(res_elasticity, 'hit_side_depth_p1_usd')",
+        ),
     )
     fragmentation_fact = fact(
-        "'liquidity.fragmentation'", "'true'", "BOOLEAN",
+        "'liquidity.fragmentation'",
+        "'true'",
+        "BOOLEAN",
         "'Venue price gap exceeded both spreads for 15 minutes and was confirmed by independent public REST books.'",
-        _array("arrayMap(pair -> " + _object(collection="'\"mkt.book_summaries\"'", venues="pair") + ", JSONExtractArrayRaw(res_fragmentation, 'venues'))"),
-        "'{\"independent_path\":\"PUBLIC_REST\",\"validated\":true}'", window="'W15M'", start="res_flow_iso(res_end - 900000000)",
+        _array(
+            "arrayMap(pair -> "
+            + _object(collection="'\"mkt.book_summaries\"'", venues="pair")
+            + ", JSONExtractArrayRaw(res_fragmentation, 'venues'))"
+        ),
+        '\'{"independent_path":"PUBLIC_REST","validated":true}\'',
+        window="'W15M'",
+        start="res_flow_iso(res_end - 900000000)",
     )
-    funding_value = "concat('{', arrayStringConcat(arrayMap(v -> concat(toJSONString(v), ':', " + _object(rate="res_get(arrayLast(p -> JSONExtractString(p, 'venue') = v, res_funding_start_rows), 'funding_start')", interval_h="res_get(arrayLast(p -> JSONExtractString(p, 'venue') = v, res_funding_start_rows), 'funding_start_interval_h')", observed_at="res_get(arrayLast(p -> JSONExtractString(p, 'venue') = v, res_funding_start_rows), 'funding_start_observed_at')") + "), res_funding_venues), ','), '}')"
+    funding_value = (
+        "concat('{', arrayStringConcat(arrayMap(v -> concat(toJSONString(v), ':', "
+        + _object(
+            rate="res_get(arrayLast(p -> JSONExtractString(p, 'venue') = v, res_funding_start_rows), 'funding_start')",
+            interval_h="res_get(arrayLast(p -> JSONExtractString(p, 'venue') = v, res_funding_start_rows), 'funding_start_interval_h')",
+            observed_at="res_get(arrayLast(p -> JSONExtractString(p, 'venue') = v, res_funding_start_rows), 'funding_start_observed_at')",
+        )
+        + "), res_funding_venues), ','), '}')"
+    )
     funding_fact = fact(
-        "'derivatives.funding_start'", funding_value, "RATE_PER_INTERVAL",
+        "'derivatives.funding_start'",
+        funding_value,
+        "RATE_PER_INTERVAL",
         "concat('Funding at window start: ', arrayStringConcat(arrayMap(v -> concat(v, ' ', res_pct(toFloat64(res_money(arrayLast(p -> JSONExtractString(p, 'venue') = v, res_funding_start_rows), 'funding_start')), 4), ' per ', res_flow_text(res_get(arrayLast(p -> JSONExtractString(p, 'venue') = v, res_funding_start_rows), 'funding_start_interval_h')), 'h'), arraySort(res_funding_venues)), '; '), '.')",
-        _array("arrayMap(p -> " + _object(collection="'\"mkt.funding_obs\"'", instrument_id=_json("JSONExtractString(p, 'instrument_id')"), ts="res_get(p, 'funding_start_observed_at')") + ", res_funding_start_rows)"),
+        _array(
+            "arrayMap(p -> "
+            + _object(
+                collection="'\"mkt.funding_obs\"'",
+                instrument_id=_json("JSONExtractString(p, 'instrument_id')"),
+                ts="res_get(p, 'funding_start_observed_at')",
+            )
+            + ", res_funding_start_rows)"
+        ),
         _object(venues=_json("res_funding_venues")),
     )
     supply_fact = fact(
-        "'supply.supply_in_evidence'", "'true'", "BOOLEAN",
+        "'supply.supply_in_evidence'",
+        "'true'",
+        "BOOLEAN",
         "concat('Supply in evidence: inventory change ', if(isNull(res_number(res_inventory, 'chg_pct')), 'unknown', res_pct(res_number(res_inventory, 'chg_pct'), 2)), '; labeled exchange transfers ', toString(length(res_classified_flows)), '.')",
-        _array("[" + _object(collection="'\"mkt.supply_context\"'", observed_at="res_get(res_inventory, 'observed_at')", flows=_array("arrayMap(f -> res_get(f, 'tx_hash'), res_classified_flows)")) + "]"),
+        _array(
+            "["
+            + _object(
+                collection="'\"mkt.supply_context\"'",
+                observed_at="res_get(res_inventory, 'observed_at')",
+                flows=_array("arrayMap(f -> res_get(f, 'tx_hash'), res_classified_flows)"),
+            )
+            + "]"
+        ),
         "if(JSONHas(res_inventory, 'coverage'), res_get(res_inventory, 'coverage'), concat('{\"classified_flows\":', toString(length(res_classified_flows)), '}'))",
     )
-    canonical = _patch("f", text=_json("concat(JSONExtractString(f, 'text'), ' [', JSONExtractString(f, 'window'), '; ', JSONExtractString(f, 'unit'), '; ', res_coverage_label(res_get(f, 'coverage')), ']')"))
-    return r"""
+    canonical = _patch(
+        "f",
+        text=_json(
+            "concat(JSONExtractString(f, 'text'), ' [', JSONExtractString(f, 'window'), '; ', JSONExtractString(f, 'unit'), '; ', res_coverage_label(res_get(f, 'coverage')), ']')"
+        ),
+    )
+    return (
+        r"""
 ((n, label) -> concat(toString(n), ' ', label, if(n = 1, '', 's'))) AS res_count,
 (v -> multiIf(v = 'true', 'True', v = 'false', 'False', 'None')) AS res_python_bool,
 ((x, n) -> concat(if(x < 0, '-', '+'), splitByChar('.', toString(toDecimal256(roundBankers(abs(ifNull(x, 0)), n), 8)))[1], if(n = 0, '', concat('.', substring(arrayElement(splitByChar('.', toString(toDecimal256(roundBankers(abs(ifNull(x, 0)), n), 8))), 2), 1, n))))) AS res_fixed,
@@ -432,30 +652,67 @@ res_fact_rows AS (
         arrayMap(f -> __CANONICAL__, arraySlice(res_sorted_facts, 1, 3)) AS res_facts
     FROM res_fact_inputs
 )
-""".replace("__SPOT_FACT__", spot_fact).replace("__OI_FACT__", oi_fact).replace("__RELATIVE_FACT__", relative_fact).replace("__DEPTH_FACT__", depth_fact).replace("__FRAGMENTATION_FACT__", fragmentation_fact).replace("__FUNDING_FACT__", funding_fact).replace("__SUPPLY_FACT__", supply_fact).replace("__CANONICAL__", canonical)
+""".replace("__SPOT_FACT__", spot_fact)
+        .replace("__OI_FACT__", oi_fact)
+        .replace("__RELATIVE_FACT__", relative_fact)
+        .replace("__DEPTH_FACT__", depth_fact)
+        .replace("__FRAGMENTATION_FACT__", fragmentation_fact)
+        .replace("__FUNDING_FACT__", funding_fact)
+        .replace("__SUPPLY_FACT__", supply_fact)
+        .replace("__CANONICAL__", canonical)
+    )
 
 
 def _result_ctes():
-    unavailable = _object(window=_json("res_name"), start="'null'", cutoff=_json("res_flow_iso(res_end)"), reason="'\"INCOMPLETE\"'")
-    empty_deriv = _patch("res_get(res_empty_map, 'EVENT')", window="'\"EVENT\"'", start="'null'", cutoff=_json("res_flow_iso(res_end)"), reason="'\"INCOMPLETE\"'")
+    unavailable = _object(
+        window=_json("res_name"),
+        start="'null'",
+        cutoff=_json("res_flow_iso(res_end)"),
+        reason="'\"INCOMPLETE\"'",
+    )
+    empty_deriv = _patch(
+        "res_get(res_empty_map, 'EVENT')",
+        window="'\"EVENT\"'",
+        start="'null'",
+        cutoff=_json("res_flow_iso(res_end)"),
+        reason="'\"INCOMPLETE\"'",
+    )
     readiness = _object(
         spot_ready=_bool("JSONExtractString(res_final_spot, 'classification') != 'INSUFFICIENT_DATA'"),
-        derivatives_native_ready=_bool("NOT res_has_perps OR res_get(res_final_deriv, 'synchronized') != 'null'"),
-        derivatives_classification_ready=_bool("NOT res_has_perps OR res_true(res_get(res_final_deriv, 'synchronized'), 'classification_ready')"),
-        book_depth_ready=_bool("notEmpty(JSONExtractArrayRaw(res_final_liq, 'per_venue')) AND arrayAll(v -> res_get(v, 'bid_depth_p1_usd') != 'null' AND res_get(v, 'ask_depth_p1_usd') != 'null', JSONExtractArrayRaw(res_final_liq, 'per_venue'))"),
-        reference_ready=_bool("res_get(res_relative_final, 'ref_venue') != 'null' AND res_get(res_get(res_relative_final, 'anchor'), 'ref_price') != 'null'"),
+        derivatives_native_ready=_bool(
+            "NOT res_has_perps OR res_get(res_final_deriv, 'synchronized') != 'null'"
+        ),
+        derivatives_classification_ready=_bool(
+            "NOT res_has_perps OR res_true(res_get(res_final_deriv, 'synchronized'), 'classification_ready')"
+        ),
+        book_depth_ready=_bool(
+            "notEmpty(JSONExtractArrayRaw(res_final_liq, 'per_venue')) AND arrayAll(v -> res_get(v, 'bid_depth_p1_usd') != 'null' AND res_get(v, 'ask_depth_p1_usd') != 'null', JSONExtractArrayRaw(res_final_liq, 'per_venue'))"
+        ),
+        reference_ready=_bool(
+            "res_get(res_relative_final, 'ref_venue') != 'null' AND res_get(res_get(res_relative_final, 'anchor'), 'ref_price') != 'null'"
+        ),
     )
-    backfill = _object(**{key: f"res_get(r, '{key}')" for key in ("backfill_id", "status", "started_at", "finished_at", "anchor")})
+    backfill = _object(
+        **{
+            key: f"res_get(r, '{key}')"
+            for key in ("backfill_id", "status", "started_at", "finished_at", "anchor")
+        }
+    )
     detail = _object(
         capture_status="res_capture",
-        backfill_runs=_array(f"arrayMap(r -> {backfill}, JSONExtractArrayRaw(res_snapshot, 'backfill_runs'))"),
+        backfill_runs=_array(
+            f"arrayMap(r -> {backfill}, JSONExtractArrayRaw(res_snapshot, 'backfill_runs'))"
+        ),
         windows="res_readiness_windows",
         incomplete_windows=_json("res_incomplete"),
         primary_window=_json("res_primary"),
         primary_window_ready=_bool("NOT has(res_incomplete, res_primary)"),
-        prerequisite_pending=_bool("JSONExtractString(res_capture, 'status') IN ('PENDING','RUNNING','PARTIAL','FAILED')"),
+        prerequisite_pending=_bool(
+            "JSONExtractString(res_capture, 'status') IN ('PENDING','RUNNING','PARTIAL','FAILED')"
+        ),
     )
-    return r"""
+    return (
+        r"""
 res_empty_derivative_map AS (SELECT res_empty_result AS res_empty_map FROM res_empty_output),
 res_final_windows AS (
     SELECT *, if(res_name = 'EVENT' AND NOT res_has_event,
@@ -489,7 +746,11 @@ res_assembly AS (
         __DETAIL__ AS res_detail
     FROM res_collected
 )
-""".replace("__UNAVAILABLE__", unavailable).replace("__EMPTY_DERIV__", empty_deriv).replace("__READINESS__", readiness).replace("__DETAIL__", detail)
+""".replace("__UNAVAILABLE__", unavailable)
+        .replace("__EMPTY_DERIV__", empty_deriv)
+        .replace("__READINESS__", readiness)
+        .replace("__DETAIL__", detail)
+    )
 
 
 def enrichment_ctes():
@@ -513,7 +774,7 @@ def assembly_ctes():
     empty_derivatives = truth_sql_derivatives.ctes().replace("deriv_", "res_empty_")
     empty_derivatives = empty_derivatives.replace(
         "{res_empty_snapshot:String}",
-        "JSONMergePatch({res_snapshot:String}, '{\"oi\":[],\"funding\":[],\"liquidations\":[],\"klines\":[]}')",
+        'JSONMergePatch({res_snapshot:String}, \'{"oi":[],"funding":[],"liquidations":[],"klines":[]}\')',
     ).replace("{res_empty_config:String}", "{res_config:String}")
     return empty_derivatives + ",\n" + _result_ctes()
 
@@ -533,7 +794,11 @@ def select_sql():
         requested_cutoff="if(JSONHas(res_snapshot, 'requested_cutoff'), res_get(res_snapshot, 'requested_cutoff'), res_get(res_snapshot, 'cutoff'))",
         event_public_at="res_get(res_snapshot, 'event_public_at')",
         primary_window=_json("res_primary"),
-        analysis_window=_object(window=_json("res_primary"), start=_json("res_flow_iso(res_start)"), end=_json("res_flow_iso(res_end)")),
+        analysis_window=_object(
+            window=_json("res_primary"),
+            start=_json("res_flow_iso(res_start)"),
+            end=_json("res_flow_iso(res_end)"),
+        ),
         decisive_facts=_json("arrayMap(f -> JSONExtractString(f, 'text'), res_primary_item.8)"),
         decisive_fact_details=_array("res_primary_item.8"),
         decisive_facts_reason="if(length(res_primary_item.8) >= 2, 'null', '\"INCOMPLETE\"')",
@@ -555,10 +820,26 @@ def select_sql():
         time_policy="'\"SEMANTIC_MARKET_TIME_WITH_ASSEMBLY_AVAILABILITY\"'",
         numeric_policy="'\"Native Decimal256(24) financial inputs admit magnitude below 1e24 and at most 24 fractional digits; each multiplication and division truncates toward zero at scale 24 with local error below 1e-24; significance and sell-share comparisons use these native rounded products; overflow and outside-range inputs are refused; dimensionless returns, beta, percentiles and display ratios use Float64 statistics\"'",
     )
-    return "SELECT res_put(res_put(" + result + ", res_primary_item.7), " + _object(measurement_context=context) + ") AS result FROM res_assembly"
+    return (
+        "SELECT res_put(res_put("
+        + result
+        + ", res_primary_item.7), "
+        + _object(measurement_context=context)
+        + ") AS result FROM res_assembly"
+    )
 
 
-def query(snapshot, config=None, *, spots=None, derivatives=None, liquidity=None, supply=None, relative=None, confidence=None):
+def query(
+    snapshot,
+    config=None,
+    *,
+    spots=None,
+    derivatives=None,
+    liquidity=None,
+    supply=None,
+    relative=None,
+    confidence=None,
+):
     inputs = {
         "res_spots": spots,
         "res_derivatives": derivatives,

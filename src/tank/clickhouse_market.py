@@ -139,7 +139,11 @@ class ClickHouse:
             "max_query_size": str(256 << 20),
         }
         parameters = {
-            "param_" + name: "" if value is None else str(value).lower() if isinstance(value, bool) else str(value)
+            "param_" + name: ""
+            if value is None
+            else str(value).lower()
+            if isinstance(value, bool)
+            else str(value)
             for name, (value, _) in (params or {}).items()
         }
         query = query if self.database == "mkt" else re.sub(r"\bmkt\b", self.database, query)
@@ -154,7 +158,9 @@ class ClickHouse:
             )
         else:
             request.update(parameters)
-            response = await self.http.post(self.base, params=request, content=query.encode(), headers=headers)
+            response = await self.http.post(
+                self.base, params=request, content=query.encode(), headers=headers
+            )
         if response.status_code != 200:
             raise RuntimeError(f"ClickHouse {response.status_code}: {response.text[:500]}")
         return response.content

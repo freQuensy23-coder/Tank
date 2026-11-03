@@ -46,9 +46,18 @@ async def test_parameter_bytes_auth_database_and_format(large, database):
         "number": (123, "Int64"),
         "null": ("\\N", "Nullable(Int64)"),
     }
-    expected = {"param_" + key: value for key, value in {
-        "text": text, "empty": "", "none": "", "true": "true", "false": "false", "number": "123", "null": "\\N"
-    }.items()}
+    expected = {
+        "param_" + key: value
+        for key, value in {
+            "text": text,
+            "empty": "",
+            "none": "",
+            "true": "true",
+            "false": "false",
+            "number": "123",
+            "null": "\\N",
+        }.items()
+    }
     query = "SELECT {text:String} AS text FROM mkt.flow_bars_1m"
     rewritten = query.replace("mkt.", database + ".") + " FORMAT JSONEachRow"
 
@@ -62,7 +71,10 @@ async def test_parameter_bytes_auth_database_and_format(large, database):
         assert "transport-key" not in str(request.url)
         if large:
             assert dict(request.url.params) == SETTINGS
-            assert fields(request) == {"query": rewritten.encode(), **{key: value.encode() for key, value in expected.items()}}
+            assert fields(request) == {
+                "query": rewritten.encode(),
+                **{key: value.encode() for key, value in expected.items()},
+            }
         else:
             assert dict(request.url.params) == SETTINGS | expected
             assert request.content == rewritten.encode()
@@ -70,7 +82,9 @@ async def test_parameter_bytes_auth_database_and_format(large, database):
         return httpx.Response(200, content=b'{"value":"independent-result"}\n')
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(respond)) as http:
-        client = ClickHouse("http://transport-user@localhost:8123", password="transport-key", http=http, database=database)
+        client = ClickHouse(
+            "http://transport-user@localhost:8123", password="transport-key", http=http, database=database
+        )
         assert client.http is http
         assert await client.rows(query, parameters) == [{"value": "independent-result"}]
 
@@ -116,7 +130,9 @@ async def test_complete_error_evidence_is_sanitized_before_client_truncation(tmp
         original_retain(evidence_directory, receipt)
 
     monkeypatch.setattr(truth_sql_failure_evidence, "retain_first_failure", retain)
-    async with httpx.AsyncClient(transport=httpx.MockTransport(lambda request: httpx.Response(400, text=text))) as http:
+    async with httpx.AsyncClient(
+        transport=httpx.MockTransport(lambda request: httpx.Response(400, text=text))
+    ) as http:
         client = EvidenceClickHouse("http://localhost:8123", "tests/test_transport.py::test_error", http=http)
         with pytest.raises(RuntimeError) as raised:
             await client.rows(query, {"payload": (secret, "String")})
@@ -134,7 +150,10 @@ async def test_complete_error_evidence_is_sanitized_before_client_truncation(tmp
 
 def test_transport_qualification_receipt_refuses_unbounded_fields(tmp_path):
     directory = tmp_path / "evidence"
-    checks = {key: {"bytes": 0, "characters": 0, "sha256": hashlib.sha256(b"").hexdigest()} for key in ("ascii", "unicode", "empty")}
+    checks = {
+        key: {"bytes": 0, "characters": 0, "sha256": hashlib.sha256(b"").hexdigest()}
+        for key in ("ascii", "unicode", "empty")
+    }
     truth_sql_failure_evidence.retain_transport_qualification(directory, "test_case", checks)
     files = list(directory.iterdir())
     assert len(files) == 1
@@ -155,18 +174,30 @@ async def test_real_native_large_multipart_values(request):
     ascii_text = "A0&=+%?'\\\n\t\r" * 7000
     unicode_text = "שלום α😀漢字\\\n'\t\r" * 5000
     values = {"ascii": ascii_text, "unicode": unicode_text, "empty": "", "null": "\\N"}
-    parameters = {key: (value, "Nullable(String)" if key == "null" else "String") for key, value in values.items()}
-    query = "SELECT " + ", ".join(
-        expression
-        for key in ("ascii", "unicode", "empty")
-        for expression in (
-            f"{{{key}:String}} AS {key}_value",
-            f"length({{{key}:String}}) AS {key}_bytes",
-            f"lengthUTF8({{{key}:String}}) AS {key}_characters",
-            f"lower(hex(SHA256({{{key}:String}}))) AS {key}_hash",
-            f"substringUTF8({{{key}:String}}, 2, 9) AS {key}_substring",
+    parameters = {
+        key: (
+            value
+            if key == "null"
+            else value.replace("\\", "\\\\").replace("\n", "\\n").replace("\t", "\\t").replace("\r", "\\r"),
+            "Nullable(String)" if key == "null" else "String",
         )
-    ) + ", {null:Nullable(String)} AS nullable_value"
+        for key, value in values.items()
+    }
+    query = (
+        "SELECT "
+        + ", ".join(
+            expression
+            for key in ("ascii", "unicode", "empty")
+            for expression in (
+                f"{{{key}:String}} AS {key}_value",
+                f"length({{{key}:String}}) AS {key}_bytes",
+                f"lengthUTF8({{{key}:String}}) AS {key}_characters",
+                f"lower(hex(SHA256({{{key}:String}}))) AS {key}_hash",
+                f"substringUTF8({{{key}:String}}, 2, 9) AS {key}_substring",
+            )
+        )
+        + ", {null:Nullable(String)} AS nullable_value"
+    )
     client = EvidenceClickHouse(url, request.node.nodeid)
     try:
         rows = await client.rows(query, parameters)
@@ -184,5 +215,12 @@ async def test_real_native_large_multipart_values(request):
     truth_sql_failure_evidence.retain_transport_qualification(
         Path(__file__).resolve().parents[1] / ".test-results",
         request.node.nodeid,
-        {key: {"bytes": len(values[key].encode()), "characters": len(values[key]), "sha256": hashlib.sha256(values[key].encode()).hexdigest()} for key in ("ascii", "unicode", "empty")},
+        {
+            key: {
+                "bytes": len(values[key].encode()),
+                "characters": len(values[key]),
+                "sha256": hashlib.sha256(values[key].encode()).hexdigest(),
+            }
+            for key in ("ascii", "unicode", "empty")
+        },
     )
