@@ -217,12 +217,12 @@ export function declaredCustomToolUses(snapshot: ContinuationSnapshot, execution
   declarationId: string;
   event: Extract<SessionEventView, { type: 'agent.custom_tool_use' }>;
 }[] {
-  if (snapshot.invalidReason)
-    throw new ContinuationProtocolError(snapshot.invalidReason);
-  assertTrustedJournalOrder(snapshot);
   const owner = snapshot.executions.find(row => row.id === executionId);
   if (!owner || owner.interruptRequestedAt !== null || ['failed', 'cancelled'].includes(owner.state))
     return [];
+  if (snapshot.invalidReason)
+    throw new ContinuationProtocolError(snapshot.invalidReason);
+  assertTrustedJournalOrder(snapshot);
   const result: ReturnType<typeof declaredCustomToolUses> = [];
   for (const group of groups(snapshot, owner.laneId)) {
     if (group.declaration.executionId !== executionId || group.cancelled || group.closed)

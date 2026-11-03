@@ -240,7 +240,9 @@ async def test_settled_turn_reminds_an_item_left_without_an_outcome_and_keeps_th
 
             if outcome in {"DONE", "SKIPPED"}:
                 await finish_source()
-            await process_declared_event(service, "s", idle("first-end", accepted[-1] if accepted else "initial"))
+            await process_declared_event(
+                service, "s", idle("first-end", accepted[-1] if accepted else "initial")
+            )
             legacy = await repo.get("ops.agent_sessions", "s")
             legacy["message_log"][0]["turn_status"] = "DONE"
             legacy["native_execution_states"] = {

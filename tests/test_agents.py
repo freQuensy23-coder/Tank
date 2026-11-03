@@ -204,7 +204,8 @@ async def test_failed_dispatch_rolls_back_and_replays():
         service = SessionService(repo, opts, bad, http=http)
         await process_declared_event(
             service,
-            "ses_1", {"id": "c", "type": "agent.custom_tool_use", "name": "record_event", "input": {}}
+            "ses_1",
+            {"id": "c", "type": "agent.custom_tool_use", "name": "record_event", "input": {}},
         )
     assert await repo.get("evt.events", "oops") is None
     assert (await repo.get("ops.agent_sessions", "ses_1"))["processed_events"] == ["c"]
@@ -388,7 +389,9 @@ async def test_stream_processing_preserves_concurrent_added_message():
         service.usage = usage
         await process_declared_event(
             service,
-            "ses_1", {"id": "u", "type": "span.model_request_end", "model_usage": {"input_tokens": 10}}, 9
+            "ses_1",
+            {"id": "u", "type": "span.model_request_end", "model_usage": {"input_tokens": 10}},
+            9,
         )
     record = await repo.get("ops.agent_sessions", "ses_1")
     assert len(record["messages"]) == 1 and len(record["message_log"]) == 1
@@ -589,7 +592,8 @@ async def test_slow_denial_turn_remains_until_exit_update_delivered(monkeypatch,
         await repo.put("evt.events", "evt_1", invalidated)
         await process_declared_event(
             service,
-            "ses_1", {"id": "idle", "type": "session.status_idle", "stop_reason": {"type": "end_turn"}}
+            "ses_1",
+            {"id": "idle", "type": "session.status_idle", "stop_reason": {"type": "end_turn"}},
         )
         assert not await service.can_archive(await repo.get("ops.agent_sessions", "ses_1"), invalidated)
         call = await repo.get("ana.calls", "call")
@@ -630,7 +634,8 @@ async def test_unpublished_invalidated_event_can_end_when_idle_without_marker():
         assert not await service.can_archive(session, event)
         await process_declared_event(
             service,
-            "ses_1", {"id": "idle", "type": "session.status_idle", "stop_reason": {"type": "end_turn"}}
+            "ses_1",
+            {"id": "idle", "type": "session.status_idle", "stop_reason": {"type": "end_turn"}},
         )
         session = await repo.get("ops.agent_sessions", "ses_1")
         assert await service.can_archive(session, event)
@@ -707,13 +712,14 @@ async def test_live_slow_and_recovered_tool_context_keep_session_provenance():
     async with httpx.AsyncClient(transport=httpx.MockTransport(transport)) as http:
         live = SessionService(repo, opts, dispatch, http=http)
         await process_declared_event(
-            live,
-            "ses_1", {"id": "live", "type": "agent.custom_tool_use", "name": "get_item", "input": {}}
+            live, "ses_1", {"id": "live", "type": "agent.custom_tool_use", "name": "get_item", "input": {}}
         )
         await process_declared_event(
             live,
-            "ses_1", {"id": "slow", "type": "agent.custom_tool_use", "name": "get_market_truth", "input": {}}
+            "ses_1",
+            {"id": "slow", "type": "agent.custom_tool_use", "name": "get_market_truth", "input": {}},
         )
+        live_call = await repo.get("ops.tool_calls", "ses_1:live")
         await repo.put(
             "ops.tool_calls",
             "ses_1:recover",
@@ -721,6 +727,11 @@ async def test_live_slow_and_recovered_tool_context_keep_session_provenance():
                 "call_id": "recover",
                 "session_id": "ses_1",
                 "tool": "get_item",
+                "native_source_execution_id": live_call["native_source_execution_id"],
+                "native_declaration_id": "fixture-declaration-recover",
+                "native_turn_message_id": live_call["native_turn_message_id"],
+                "native_turn_retry_count": live_call["native_turn_retry_count"],
+                "input_sha256": sha256({}),
                 "input": {},
                 "arguments": {},
                 "status": "PENDING",
@@ -729,7 +740,8 @@ async def test_live_slow_and_recovered_tool_context_keep_session_provenance():
         recovered = SessionService(repo, opts, dispatch, http=http)
         await process_declared_event(
             recovered,
-            "ses_1", {"id": "recover", "type": "agent.custom_tool_use", "name": "get_item", "input": {}}
+            "ses_1",
+            {"id": "recover", "type": "agent.custom_tool_use", "name": "get_item", "input": {}},
         )
     assert len(contexts) == 3
     for context in contexts:

@@ -255,7 +255,8 @@ async def test_settled_snapshot_drains_all_pages_and_rechecks_new_tool_ack():
                             "state": states[key],
                             "settled_outcome": "COMPLETED" if states[key] == "COMPLETED" else None,
                             "custom_tool_uses": [{"declaration_id": start["id"], "event": late}]
-                            if key == "accepted-message" else [],
+                            if key == "accepted-message"
+                            else [],
                         }
                         for key in request.url.params.get_list("ids[]")
                     ]

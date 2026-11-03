@@ -306,8 +306,7 @@ async def test_native_idle_accepts_agent_chosen_order_without_semantic_retry(too
                 },
             )
         await process_declared_event(
-            service,
-            "s", idle("end", "ack-" + str(len(posts)) if posts else "accepted-message")
+            service, "s", idle("end", "ack-" + str(len(posts)) if posts else "accepted-message")
         )
         assert (await service.completed_turn("s"))["complete"]
         current = await repo.get("ops.agent_sessions", "s")

@@ -451,7 +451,9 @@ async def test_full_sse_pipeline_postgres(tmp_path, complete_market, monkeypatch
             }
 
     try:
-        async with httpx.AsyncClient(transport=httpx.MockTransport(DeclaredNativeProtocol(transport))) as http:
+        async with httpx.AsyncClient(
+            transport=httpx.MockTransport(DeclaredNativeProtocol(transport))
+        ) as http:
             source = SourceService(repo, settings, http=http)
             text = f"Binance approved the synthetic $T listing {sid}."
             if complete_market:
@@ -1237,7 +1239,9 @@ async def test_runtime_autonomous_source_to_telegram(tmp_path, monkeypatch, capl
     error_capture = ErrorCapture()
     logging.getLogger("tank.runtime").addFilter(error_capture)
     try:
-        async with httpx.AsyncClient(transport=httpx.MockTransport(DeclaredNativeProtocol(transport))) as http:
+        async with httpx.AsyncClient(
+            transport=httpx.MockTransport(DeclaredNativeProtocol(transport))
+        ) as http:
             market = CapturedMarket(http)
             truth = MarketTruthService(repo, settings, market)
             sources = SourceService(repo, settings, http=http)

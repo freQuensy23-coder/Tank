@@ -1962,6 +1962,10 @@ class SessionService:
                 stored["native_result_body"] = copy.deepcopy(body)
                 await self.repo.put("ops.tool_calls", key, stored)
             body = copy.deepcopy(stored["native_result_body"])
+        if event.get("_host_declaration_id") and not self.current_tool_owner(
+            await self.repo.get("ops.agent_sessions", sid), event
+        ):
+            return
         accepted = await self.request(
             "POST", f"sessions/{sid}/events", json={"events": [body]}, idem="tool:" + sha256(key)
         )
@@ -2064,6 +2068,8 @@ class SessionService:
             if not event.get("execution_id"):
                 return
             session = await self.repo.get("ops.agent_sessions", sid)
+            if not self.routable_session(session):
+                return
             if not await self.native_input_owner(session, event["execution_id"]):
                 raise ValueError("Native execution has no acknowledged accepted-input owner")
             await self.dispatch_declared_tools(sid, [event["execution_id"]])

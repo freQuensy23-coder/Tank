@@ -30,16 +30,22 @@ class DeclaredNativeProtocol:
                 event = dict(event, execution_id=execution)
                 event.setdefault("processed_at", "2026-10-18T23:00:00Z")
                 self.calls[key] = {
-                    "declaration_id": "native-declaration-" + event["id"], "event": event,
+                    "declaration_id": "native-declaration-" + event["id"],
+                    "event": event,
                 }
                 self.states[execution] = "COMPLETED"
             use = self.calls[key]
             event = use["event"]
-            return [event, {
-                "id": use["declaration_id"], "type": "session.status_idle",
-                "execution_id": event["execution_id"], "processed_at": event["processed_at"],
-                "stop_reason": {"type": "requires_action", "event_ids": [event["id"]]},
-            }]
+            return [
+                event,
+                {
+                    "id": use["declaration_id"],
+                    "type": "session.status_idle",
+                    "execution_id": event["execution_id"],
+                    "processed_at": event["processed_at"],
+                    "stop_reason": {"type": "requires_action", "event_ids": [event["id"]]},
+                },
+            ]
         if kind == "session.status_idle":
             execution = event.get("execution_id") or self.current.get(sid)
             if execution:
@@ -54,17 +60,26 @@ class DeclaredNativeProtocol:
         if native and path.endswith("/executions") and sid in self.current:
             identities = request.url.params.get_list("ids[]")
             assert identities and len(identities) <= 64
-            return httpx.Response(200, json={"data": [
-                {
-                    "execution_id": identity, "state": self.states.get(identity, "UNKNOWN"),
-                    "settled_outcome": "COMPLETED" if self.states.get(identity) == "COMPLETED" else None,
-                    "custom_tool_uses": [
-                        use for (session, _), use in self.calls.items()
-                        if session == sid and use["event"]["execution_id"] == identity
-                    ],
-                }
-                for identity in identities
-            ]})
+            return httpx.Response(
+                200,
+                json={
+                    "data": [
+                        {
+                            "execution_id": identity,
+                            "state": self.states.get(identity, "UNKNOWN"),
+                            "settled_outcome": "COMPLETED"
+                            if self.states.get(identity) == "COMPLETED"
+                            else None,
+                            "custom_tool_uses": [
+                                use
+                                for (session, _), use in self.calls.items()
+                                if session == sid and use["event"]["execution_id"] == identity
+                            ],
+                        }
+                        for identity in identities
+                    ]
+                },
+            )
         response = self.handler(request)
         if inspect.isawaitable(response):
             response = await response
@@ -75,7 +90,9 @@ class DeclaredNativeProtocol:
             rows = body.get("data") if isinstance(body, dict) else None
             key = (sid, request.headers.get("idempotency-key", ""), request.content)
             if key not in self.accepted:
-                identity = rows[0]["id"] if rows and rows[0].get("id") else f"native-input-{len(self.accepted)}"
+                identity = (
+                    rows[0]["id"] if rows and rows[0].get("id") else f"native-input-{len(self.accepted)}"
+                )
                 self.accepted[key] = identity
                 self.current[sid] = identity
                 self.states[identity] = "RUNNING"
@@ -93,7 +110,9 @@ class DeclaredNativeProtocol:
                         while b"\n\n" in pending:
                             frame, pending = pending.split(b"\n\n", 1)
                             lines = frame.split(b"\n")
-                            data = next((line[5:].strip() for line in lines if line.startswith(b"data:")), None)
+                            data = next(
+                                (line[5:].strip() for line in lines if line.startswith(b"data:")), None
+                            )
                             if not data:
                                 yield frame + b"\n\n"
                                 continue
@@ -101,16 +120,26 @@ class DeclaredNativeProtocol:
                             wrapped = isinstance(envelope.get("event"), dict)
                             event = envelope["event"] if wrapped else envelope
                             for index, projected in enumerate(protocol.project(sid, event)):
-                                payload = dict(envelope, event=projected) if wrapped and index == 0 else projected
-                                prefix = [line for line in lines if not line.startswith(b"data:")] if index == 0 else []
-                                yield b"\n".join(prefix + [b"data: " + json.dumps(payload).encode()]) + b"\n\n"
+                                payload = (
+                                    dict(envelope, event=projected) if wrapped and index == 0 else projected
+                                )
+                                prefix = (
+                                    [line for line in lines if not line.startswith(b"data:")]
+                                    if index == 0
+                                    else []
+                                )
+                                yield (
+                                    b"\n".join(prefix + [b"data: " + json.dumps(payload).encode()]) + b"\n\n"
+                                )
                     if pending:
                         yield pending
 
                 async def aclose(self):
                     await source.aclose()
 
-            return httpx.Response(response.status_code, headers={"content-type": "text/event-stream"}, stream=DeclaredStream())
+            return httpx.Response(
+                response.status_code, headers={"content-type": "text/event-stream"}, stream=DeclaredStream()
+            )
         if request.method == "GET" and path.endswith("/events"):
             body = response.json()
             if isinstance(body.get("data"), list):
@@ -167,9 +196,15 @@ async def process_declared_event(service, sid, event, seq=None):
     owner = next((row for row in messages if row["message_id"] == owner_id), None)
     if owner is None and messages:
         owner = messages[-1]
+    if (
+        owner
+        and owner["message_id"].startswith("fixture-message-")
+        and owner.get("payload") != session.get("last_payload", {})
+    ):
+        owner = None
     if owner is None:
         owner = {
-            "message_id": "fixture-message",
+            "message_id": "fixture-message-" + event["id"],
             "payload": session.get("last_payload", {}),
             "body": {"type": "user.message", "content": []},
             "retry_count": 0,
@@ -177,7 +212,7 @@ async def process_declared_event(service, sid, event, seq=None):
         }
         messages.append(owner)
     if execution_id is None:
-        execution_id = owner.get("remote_event_id") or "fixture-input-" + sid
+        execution_id = owner.get("remote_event_id") or "fixture-input-" + sid + ":" + owner["message_id"]
     if not owner.get("remote_event_id"):
         owner["remote_event_id"] = execution_id
         owner.setdefault("native_input_attempts", {})[execution_id] = owner.get("retry_count", 0)
@@ -221,4 +256,3 @@ async def process_declared_event(service, sid, event, seq=None):
         return await service.process_event(sid, event, seq)
     finally:
         DECLARED_EVENT.reset(token)
-

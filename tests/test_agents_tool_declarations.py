@@ -31,8 +31,7 @@ def declaration(*events, execution="input-root"):
         "state": "COMPLETED",
         "settled_outcome": "COMPLETED",
         "custom_tool_uses": [
-            {"declaration_id": "declaration-" + execution, "event": copy.deepcopy(event)}
-            for event in events
+            {"declaration_id": "declaration-" + execution, "event": copy.deepcopy(event)} for event in events
         ],
     }
 
@@ -230,10 +229,15 @@ async def test_committed_declaration_does_not_override_host_owner_fences(boundar
 async def test_declared_call_keeps_original_input_context_when_later_message_is_active():
     repo = MemoryRepository()
     session = await seed(repo)
-    session["message_log"].append({
-        "message_id": "later", "remote_event_id": "later-input", "retry_count": 0,
-        "turn_status": "RUNNING", "payload": {"kind": "ITEM_ADDED", "item_id": "later-item"},
-    })
+    session["message_log"].append(
+        {
+            "message_id": "later",
+            "remote_event_id": "later-input",
+            "retry_count": 0,
+            "turn_status": "RUNNING",
+            "payload": {"kind": "ITEM_ADDED", "item_id": "later-item"},
+        }
+    )
     session["active_message_id"] = "later"
     await repo.put("ops.agent_sessions", "s", session)
     event = dict(custom("original"), name="get_item", input={})
@@ -274,7 +278,9 @@ async def native_peer(handler):
             encoded = json.dumps(result).encode()
             writer.write(
                 b"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nConnection: close\r\nContent-Length: "
-                + str(len(encoded)).encode() + b"\r\n\r\n" + encoded
+                + str(len(encoded)).encode()
+                + b"\r\n\r\n"
+                + encoded
             )
             await writer.drain()
         except Exception as error:
@@ -312,16 +318,19 @@ async def test_postgres_native_http_declaration_effect_ack_and_admission_barrier
             path = urlsplit(target)
             if method == "GET" and path.path.endswith("/executions"):
                 ids = parse_qs(path.query)["ids[]"]
-                return {"data": [
-                    {
-                        "execution_id": identity,
-                        "state": states[identity],
-                        "settled_outcome": "COMPLETED" if states[identity] == "COMPLETED" else None,
-                        "custom_tool_uses": declaration(event)["custom_tool_uses"]
-                        if declared.is_set() and identity == "input-root" else [],
-                    }
-                    for identity in ids
-                ]}
+                return {
+                    "data": [
+                        {
+                            "execution_id": identity,
+                            "state": states[identity],
+                            "settled_outcome": "COMPLETED" if states[identity] == "COMPLETED" else None,
+                            "custom_tool_uses": declaration(event)["custom_tool_uses"]
+                            if declared.is_set() and identity == "input-root"
+                            else [],
+                        }
+                        for identity in ids
+                    ]
+                }
             if method == "GET" and path.path.endswith("/events"):
                 return {"data": copy.deepcopy(history)}
             assert method == "POST" and path.path.endswith("/events")
@@ -364,16 +373,23 @@ async def test_postgres_native_http_declaration_effect_ack_and_admission_barrier
                     assert (await repo.get("evt.events", "effect"))["statement"] == "once"
                     current = await repo.get("ops.agent_sessions", "s")
                     barrier = await service.execution_barrier(current, verify_remote=True)
-                    assert not barrier["complete"] and barrier["unidentified_inputs"] == ["unreturned-tool:durable"]
+                    assert not barrier["complete"] and barrier["unidentified_inputs"] == [
+                        "unreturned-tool:durable"
+                    ]
                     assert await service.slot_state() == ({"s"}, [])
                     ack_release.set()
                     await task
                     assert not (await service.completed_turn("s"))["complete"]
                     states["accepted-durable"] = "COMPLETED"
-                    history.append({
-                        "id": "finished", "type": "session.status_idle", "execution_id": "accepted-durable",
-                        "stop_reason": {"type": "end_turn"}, "processed_at": AT,
-                    })
+                    history.append(
+                        {
+                            "id": "finished",
+                            "type": "session.status_idle",
+                            "execution_id": "accepted-durable",
+                            "stop_reason": {"type": "end_turn"},
+                            "processed_at": AT,
+                        }
+                    )
                     await service.process_event("s", history[-1])
                     service.execution_polls.clear()
                     assert (await service.completed_turn("s"))["complete"]
