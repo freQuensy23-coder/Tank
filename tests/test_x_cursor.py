@@ -235,6 +235,85 @@ async def test_pending_native_samples_cannot_regress_committed_cursor(
 
 
 @pytest.mark.integration
+async def test_pending_native_samples_merge_each_handle_and_preserve_a_live_sibling(
+    tmp_path, monkeypatch, native_reader, retained
+):
+    reader, worker = native_reader
+    profile_sequence(
+        monkeypatch,
+        reader,
+        [
+            retained["om0fAvrciMOvsZQtL"],
+            retained["JSgsP4TYqyEJRRHQS"],
+            retained["1FXDuSk4EdNCCzckj"],
+            retained["vy51uN2gcSkQeaRky"],
+        ],
+    )
+
+    async def actor(request):
+        return httpx.Response(201, json=await worker.fetch_snapshot(json.loads(request.content)))
+
+    svc, source = service(tmp_path, httpx.MockTransport(actor), "pancakeswap")
+    svc.accounts["wublockchain"] = {
+        "handle": "wublockchain",
+        "entity_id": "wublockchain",
+        "role": "ORGANIZATION",
+    }
+    initial = {
+        "pancakeswap": "2115435919771873495",
+        "wublockchain": "2115074036783009841",
+    }
+    await svc.repo.put("ops.source_checkpoints", "S29:0", {"account_cursors": initial})
+    try:
+        for _ in range(2):
+            assert await svc.poller.acquire(source, 0) == {"items": 0, "errors": []}
+        pending = await svc.repo.get("ops.source_checkpoints", "S29:0")
+        assert pending["account_cursors"] == initial
+        assert [batch["coverage"]["account_cursors"] for batch in pending["pending_batches"]] == [
+            {"pancakeswap": "2115795788685299930", "wublockchain": "2115085846248558689"},
+            {"pancakeswap": "2115676525345530213", "wublockchain": "2115085176413757842"},
+        ]
+        assert [
+            sorted(row["external_id"] for row in batch["rows"])
+            for batch in pending["pending_batches"]
+        ] == [
+            [
+                "2115085846248558689",
+                "2115676525345530213",
+                "2115723826915103199",
+                "2115775656671793518",
+                "2115795788685299930",
+            ],
+            ["2115085176413757842"],
+        ]
+        assert await svc.repo.list("ingest.source_items") == []
+        pending["account_cursors"]["avax"] = retained["4YYOjTU7cWwWoxhGK"]["nextCursor"]
+        await svc.repo.put("ops.source_checkpoints", "S29:0", pending)
+        assert await svc.poller.drain(source, 0, force=True) == {"items": 6, "errors": []}
+        checkpoint = await svc.repo.get("ops.source_checkpoints", "S29:0")
+        assert checkpoint["pending_batches"] == []
+        assert checkpoint["account_cursors"] == {
+            "pancakeswap": "2115795788685299930",
+            "wublockchain": "2115085846248558689",
+            "avax": "2117622878879490172",
+        }
+        items = await svc.repo.list("ingest.source_items")
+        assert sorted(item["external_id"] for item in items) == [
+            "2115085176413757842",
+            "2115085846248558689",
+            "2115676525345530213",
+            "2115723826915103199",
+            "2115775656671793518",
+            "2115795788685299930",
+        ]
+        assert await svc.poller.drain(source, 0, force=True) == {"items": 0, "errors": []}
+        assert await svc.repo.get("ops.source_checkpoints", "S29:0") == checkpoint
+        assert await svc.repo.list("ingest.source_items") == items
+    finally:
+        await svc.http.aclose()
+
+
+@pytest.mark.integration
 @pytest.mark.parametrize("start_with_stale", [False, True])
 async def test_native_new_posts_after_baseline_are_ingested_with_their_exact_ids(
     tmp_path, monkeypatch, native_reader, retained, start_with_stale
