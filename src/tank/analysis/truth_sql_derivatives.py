@@ -1,6 +1,5 @@
 from tank.util import canonical_json
 
-
 DECIMAL_SCALE = 24
 INPUT_INTEGER_DIGITS = 24
 INPUT_FRACTION_DIGITS = 24

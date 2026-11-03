@@ -1,0 +1,723 @@
+import json
+import os
+import subprocess
+import types
+from copy import deepcopy
+from datetime import timedelta
+from decimal import Decimal, localcontext
+from pathlib import Path
+
+import pytest
+
+from tank.analysis.truth_sql_liquidity import ctes, query, window_query, windows_query
+from tank.clickhouse_market import ClickHouse
+from tank.util import canonical_json, iso, parse_time
+
+pytestmark = pytest.mark.integration
+
+ORIGINAL_COMMIT = "ef3b43e8457622d2f3c2c86926de41aecee101d6"
+
+
+@pytest.fixture(scope="module")
+def original_truth():
+    root = Path(__file__).resolve().parents[1]
+    result = subprocess.run(
+        ["git", "show", f"{ORIGINAL_COMMIT}:src/tank/analysis/truth.py"],
+        cwd=root,
+        capture_output=True,
+        check=True,
+        timeout=15,
+    )
+    module = types.ModuleType("tank_liquidity_original_reference")
+    exec(compile(result.stdout, f"{ORIGINAL_COMMIT}/truth.py", "exec"), module.__dict__)
+    return module
+
+
+@pytest.fixture
+async def native_client():
+    url = os.environ.get("CLICKHOUSE_TEST_URL")
+    assert url, "CLICKHOUSE_TEST_URL must identify the owned native CI service"
+    client = ClickHouse(url)
+    try:
+        yield client
+    finally:
+        await client.close()
+
+
+def _book(venue, stamp, *, bid="200", ask="300", native=True):
+    return {
+        "instrument_id": f"{venue}:spot:T",
+        "token_id": "T",
+        "exchange_ts": iso(stamp),
+        "exchange_ts_prec": "EXACT",
+        "integrity_ok": True,
+        "mid": "100",
+        "quote_asset": "USD",
+        "spread_bps": 2,
+        "range_covered_pct": {"bid": 2, "ask": 2},
+        "depth": {
+            "bid": {"p1": {"usd": bid, "native": "2" if native else None}},
+            "ask": {"p1": {"usd": ask, "native": "3" if native else None}},
+        },
+        "bids": [["99", "5"], {"price": "98", "qty": "1000"}],
+        "asks": [["101", "5"], {"price": "102", "qty": "1000"}],
+    }
+
+
+def _packet():
+    end = parse_time("2026-10-16T12:00:00Z")
+    start = end - timedelta(minutes=15)
+    snapshot = {
+        "token_id": "T",
+        "cutoff": iso(end),
+        "_start": iso(start),
+        "_primary": "W15M",
+        "_event_anchor": iso(start),
+        "books": [],
+        "flow_bars": [],
+    }
+    for venue in ("B", "A"):
+        snapshot["books"].extend(
+            [
+                _book(venue, start - timedelta(minutes=30), bid="400", ask="600"),
+                _book(venue, end),
+            ]
+        )
+        for minute in range(15):
+            snapshot["flow_bars"].append(
+                {
+                    "instrument_id": f"{venue}:spot:T",
+                    "minute_start": iso(start + timedelta(minutes=minute)),
+                    "complete": True,
+                    "buy_notional": "100",
+                    "sell_notional": "20",
+                    "buy_qty": "1",
+                    "sell_qty": "0.2",
+                    "low": "99",
+                }
+            )
+    spot: dict = {"venues": [{"venue": "A"}, {"venue": "B"}]}
+    relative = {"windows": {"W15M": {"r_raw": 0.005, "beyond_normal": False}}}
+    return snapshot, spot, relative
+
+
+def _assert_complete(actual, expected, path="result"):
+    if isinstance(expected, dict):
+        assert isinstance(actual, dict), path
+        assert set(actual) == set(expected), path
+        for key, value in expected.items():
+            _assert_complete(actual[key], value, f"{path}.{key}")
+    elif isinstance(expected, (list, tuple)):
+        assert isinstance(actual, list), path
+        assert len(actual) == len(expected), path
+        for index, value in enumerate(expected):
+            _assert_complete(actual[index], value, f"{path}[{index}]")
+    elif isinstance(expected, Decimal):
+        assert isinstance(actual, str), path
+        with localcontext() as context:
+            context.prec = 100
+            error = abs(Decimal(actual) - expected)
+            assert error <= max(Decimal("1e-18"), abs(expected) * Decimal("1e-18")), path
+    elif isinstance(expected, bool):
+        assert actual is expected, path
+    elif isinstance(expected, float):
+        assert actual == pytest.approx(expected, rel=1e-10, abs=1e-12), path
+    else:
+        assert actual == expected, path
+
+
+async def _compare(native_client, original_truth, snapshot, spot, relative, config=None):
+    config = config or {}
+    token = original_truth._PARAMETERS.set(config)
+    try:
+        expected = original_truth.liquidity_truth(
+            deepcopy(snapshot),
+            parse_time(snapshot["_start"]),
+            parse_time(snapshot["cutoff"]),
+            deepcopy(spot),
+            deepcopy(relative),
+        )
+    finally:
+        original_truth._PARAMETERS.reset(token)
+    statement, parameters = query(snapshot, config, spot=spot, relative=relative)
+    rows = await native_client.rows(statement, parameters)
+    assert len(rows) == 1
+    actual = json.loads(rows[0]["result"])
+    _assert_complete(actual, expected)
+    return actual
+
+
+@pytest.mark.parametrize(
+    "case",
+    [
+        "complete",
+        "no_books",
+        "no_flows",
+        "bad_integrity",
+        "partial_ask",
+        "missing_usd_depth",
+        "missing_native_depth",
+        "zero_depth",
+        "missing_quantity",
+        "missing_notional",
+        "partial_volume_bucket",
+        "incomplete_volume_bucket",
+        "duplicate_volume_timestamp",
+        "foreign_token_perp_future",
+        "missing_fx",
+        "non_usd_fx",
+        "out_of_order",
+        "no_event_anchor",
+        "no_pre_event_books",
+        "scalar_coverage",
+        "nested_levels",
+        "inadequate_walk",
+        "unknown_precision",
+    ],
+)
+async def test_native_liquidity_complete_original_output(
+    native_client, original_truth, case, record_property
+):
+    snapshot, spot, relative = _packet()
+    if case == "no_books":
+        snapshot["books"] = []
+    elif case == "no_flows":
+        snapshot["flow_bars"] = []
+    elif case == "bad_integrity":
+        for book in snapshot["books"]:
+            book["integrity_ok"] = False
+    elif case == "partial_ask":
+        snapshot["books"][1]["range_covered_pct"]["ask"] = 0.5
+    elif case == "missing_usd_depth":
+        snapshot["books"][1]["depth"]["ask"]["p1"]["usd"] = None
+    elif case == "missing_native_depth":
+        snapshot["books"][1]["depth"]["ask"]["p1"]["native"] = None
+    elif case == "zero_depth":
+        for book in snapshot["books"]:
+            for side in ("bid", "ask"):
+                book["depth"][side]["p1"] = {"usd": "0", "native": "0"}
+    elif case == "missing_quantity":
+        snapshot["flow_bars"][0]["buy_qty"] = None
+    elif case == "missing_notional":
+        snapshot["flow_bars"][0]["sell_notional"] = None
+    elif case == "partial_volume_bucket":
+        snapshot["flow_bars"].pop(0)
+    elif case == "incomplete_volume_bucket":
+        snapshot["flow_bars"][0]["complete"] = False
+    elif case == "duplicate_volume_timestamp":
+        snapshot["flow_bars"].append(deepcopy(snapshot["flow_bars"][0]))
+    elif case == "foreign_token_perp_future":
+        for changes in (
+            {"token_id": "OTHER"},
+            {"market_type": "PERP_LINEAR"},
+            {"exchange_ts": "2026-10-16T12:00:00.000001Z"},
+            {"integrity_ok": "true"},
+        ):
+            snapshot["books"].append({**deepcopy(snapshot["books"][1]), **changes})
+    elif case in ("missing_fx", "non_usd_fx"):
+        snapshot["books"][1]["quote_asset"] = "EUR"
+        if case == "non_usd_fx":
+            snapshot["books"][1]["quote_usd_rate"] = "1.25"
+    elif case == "out_of_order":
+        snapshot["books"] = list(reversed(snapshot["books"]))
+    elif case == "no_event_anchor":
+        snapshot["_event_anchor"] = None
+    elif case == "no_pre_event_books":
+        snapshot["books"] = [snapshot["books"][1], snapshot["books"][3]]
+    elif case == "scalar_coverage":
+        for book in snapshot["books"]:
+            book["range_covered_pct"] = 2
+    elif case == "nested_levels":
+        for book in snapshot["books"]:
+            book["levels"] = {"asks": book.pop("asks"), "bids": book.pop("bids")}
+    elif case == "inadequate_walk":
+        snapshot["books"][1]["asks"] = [["101", "0.00001"]]
+    elif case == "unknown_precision":
+        for book in snapshot["books"]:
+            book.pop("exchange_ts_prec")
+    record_property("original_commit", ORIGINAL_COMMIT)
+    await _compare(native_client, original_truth, snapshot, spot, relative)
+
+
+@pytest.mark.parametrize("window", ["W15M", "W1H", "W4H", "W24H", "EVENT"])
+async def test_native_liquidity_window_and_pre_event_anchor_are_independent(
+    native_client, original_truth, window
+):
+    snapshot, spot, relative = _packet()
+    end = parse_time(snapshot["cutoff"])
+    seconds = {"W15M": 900, "W1H": 3600, "W4H": 14400, "W24H": 86400, "EVENT": 2700}
+    snapshot["_primary"] = window
+    snapshot["_start"] = iso(end - timedelta(seconds=seconds[window]))
+    relative["windows"][window] = relative["windows"]["W15M"]
+    await _compare(native_client, original_truth, snapshot, spot, relative)
+
+
+@pytest.mark.parametrize("side", ["bid", "ask"])
+@pytest.mark.parametrize("notional", ["0.000000001", "1", "495", "496", "1000000"])
+async def test_native_walk_consumes_actual_levels_on_both_sides(
+    native_client, original_truth, side, notional
+):
+    snapshot, spot, relative = _packet()
+    book = snapshot["books"][1]
+    levels = book["asks" if side == "ask" else "bids"]
+    expected = original_truth.walk_book(levels, notional, book["mid"], side=side)
+    _, parameters = query(snapshot, spot=spot, relative=relative)
+    parameters.update(
+        {
+            "lq_test_book": (canonical_json(book), "String"),
+            "lq_test_notional": (notional, "String"),
+            "lq_test_side": (side, "String"),
+        }
+    )
+    statement = (
+        "WITH "
+        + ctes()
+        + " SELECT lq_walk_book({lq_test_book:String}, "
+        "lq_dec({lq_test_notional:String}), {lq_test_side:String}) AS value"
+    )
+    rows = await native_client.rows(statement, parameters)
+    assert len(rows) == 1
+    if expected is None:
+        assert rows[0]["value"] is None
+    else:
+        assert rows[0]["value"] == pytest.approx(expected, rel=1e-10, abs=1e-12)
+
+
+@pytest.mark.parametrize("net_sign", [-1, 1])
+@pytest.mark.parametrize("offset", ["-0.000000000000000000000001", "0", "0.000000000000000000000001"])
+async def test_native_absorption_exact_financial_boundary(
+    native_client, original_truth, net_sign, offset
+):
+    snapshot, spot, relative = _packet()
+    snapshot["_start"] = "2026-10-16T11:59:00Z"
+    spot["venues"] = [{"venue": "B"}]
+    snapshot["books"] = snapshot["books"][:2]
+    for row in snapshot["flow_bars"]:
+        row["buy_qty"] = row["sell_qty"] = None
+    with localcontext() as context:
+        context.prec = 100
+        depth = Decimal("300" if net_sign > 0 else "200")
+        flow = depth + Decimal(offset)
+    final = snapshot["flow_bars"][14]
+    final["buy_notional"] = flow if net_sign > 0 else "0"
+    final["sell_notional"] = flow if net_sign < 0 else "0"
+    relative["windows"]["W15M"]["r_raw"] = 0.005 * net_sign
+    actual = await _compare(native_client, original_truth, snapshot, spot, relative)
+    assert actual["elasticity"]["depth_unit"] == "USD"
+    assert actual["elasticity"]["weak_response"] is (Decimal(offset) >= 0)
+    assert actual["elasticity"]["hit_side"] == ("ask" if net_sign > 0 else "bid")
+
+
+@pytest.mark.parametrize("refill_seconds", [59, 60, 61])
+@pytest.mark.parametrize("future_low", ["98", "99", None])
+async def test_native_replenishment_and_resilience_cutoff_boundaries(
+    native_client, original_truth, refill_seconds, future_low
+):
+    snapshot, spot, relative = _packet()
+    start = parse_time(snapshot["_start"])
+    spot["venues"] = [{"venue": "B"}]
+    snapshot["books"] = [
+        _book("B", start - timedelta(seconds=10), bid="100"),
+        _book("B", start + timedelta(seconds=refill_seconds), bid="100"),
+    ]
+    snapshot["flow_bars"] = snapshot["flow_bars"][:15]
+    for index, row in enumerate(snapshot["flow_bars"]):
+        row["buy_notional"] = "0"
+        row["sell_notional"] = "100" if index == 0 else "0"
+        row["low"] = "99" if index == 0 else future_low
+    actual = await _compare(
+        native_client,
+        original_truth,
+        snapshot,
+        spot,
+        relative,
+        {"resilience_window_min": 14},
+    )
+    observation = actual["replenishment"]["observations"][0]
+    assert observation["replenished"] is (refill_seconds <= 60)
+    assert observation["resilient"] is (
+        None if future_low is None else Decimal(future_low) >= Decimal("99")
+    )
+
+
+async def test_native_fractional_boundary_aggregate_is_not_full_minute(
+    native_client, original_truth
+):
+    snapshot, spot, relative = _packet()
+    snapshot["_start"] = "2026-10-16T11:59:30.123456Z"
+    snapshot["cutoff"] = "2026-10-16T12:00:00.123456Z"
+    spot["venues"] = [
+        {
+            "venue": "B",
+            "boundary_segments": [
+                {
+                    "aggregates": [
+                        {
+                            "start": snapshot["_start"],
+                            "end": snapshot["cutoff"],
+                            "buy_qty": "2",
+                            "sell_qty": "0",
+                            "buy_notional": "200",
+                            "sell_notional": "0",
+                        }
+                    ]
+                }
+            ],
+        }
+    ]
+    actual = await _compare(native_client, original_truth, snapshot, spot, relative)
+    assert Decimal(actual["elasticity"]["net_flow"]) == Decimal("2")
+
+
+@pytest.mark.parametrize("bad_value", ["NaN", "Infinity", "1" + "0" * 24, "0." + "0" * 24 + "1"])
+async def test_native_liquidity_refuses_outside_financial_admission(native_client, bad_value):
+    snapshot, spot, relative = _packet()
+    snapshot["books"][1]["depth"]["ask"]["p1"]["usd"] = bad_value
+    statement, parameters = query(snapshot, spot=spot, relative=relative)
+    with pytest.raises(RuntimeError, match="ClickHouse"):
+        await native_client.rows(statement, parameters)
+
+
+def _enrichment_inputs(original_truth, snapshot):
+    for row in snapshot["flow_bars"]:
+        row.setdefault("sum_sq_qty", "1")
+    snapshot.setdefault("instruments", [])
+    snapshot.setdefault("klines", [])
+    snapshot.setdefault("funding", [])
+    snapshot.setdefault("_has_event", False)
+    snapshot.setdefault("_lead_start", snapshot["_start"])
+    start = parse_time(snapshot["_start"])
+    end = parse_time(snapshot["cutoff"])
+    spot = original_truth.spot_truth(
+        snapshot["flow_bars"],
+        [],
+        snapshot["instruments"],
+        start,
+        end,
+        flow_segments=original_truth.flow_segments(snapshot),
+        assembled_at=snapshot.get("assembled_at"),
+    )
+    spot["composite_cohort"] = spot["composite_max"]
+    relative = {
+        "windows": {
+            "W15M": {
+                "r_raw": 0.005,
+                "beyond_normal": False,
+                "normal_range": [-0.01, 0.01],
+            }
+        },
+        "ref_venue": "B:spot:T",
+        "context_inputs": {"rv24": None, "rv_normal_range": None},
+    }
+    relative["windows"][snapshot["_primary"]] = relative["windows"]["W15M"]
+    deriv = {"per_venue": [], "funding_dispersion_8h": None}
+    return spot, relative, deriv
+
+
+def _original_enriched(original_truth, snapshot, spot, relative, deriv):
+    start = parse_time(snapshot["_start"])
+    end = parse_time(snapshot["cutoff"])
+    name = snapshot["_primary"]
+    expected = original_truth.liquidity_truth(snapshot, start, end, spot, relative)
+    timing = {"window": name, "start": iso(start), "cutoff": iso(end)}
+    expected.update(timing)
+    expected["elasticity"].update(timing)
+    expected["replenishment"].update(timing)
+    if expected["per_venue"]:
+        expected["coverage"] = {"venues": [v["venue"] for v in expected["per_venue"]]}
+        expected["observed_at"] = min(v["observed_at"] for v in expected["per_venue"])
+    spot_windows = {name: deepcopy(spot)}
+    if snapshot.get("_has_event") and name != "EVENT":
+        spot_windows["EVENT"] = original_truth.spot_truth(
+            snapshot["flow_bars"],
+            [],
+            snapshot.get("instruments", []),
+            parse_time(snapshot["_event_anchor"]),
+            end,
+            flow_segments=original_truth.flow_segments(snapshot),
+            assembled_at=snapshot.get("assembled_at"),
+        )
+    original_truth.enrich_evidence(
+        snapshot, start, end, spot_windows, name, deepcopy(deriv), relative, expected
+    )
+    if name == "EVENT" and snapshot.get("_event_anchor") is None:
+        return {"window": "EVENT", "start": None, "cutoff": iso(end), "reason": "INCOMPLETE"}
+    return expected
+
+
+@pytest.mark.parametrize(
+    "case",
+    [
+        "ordinary",
+        "empty",
+        "persistent_gap",
+        "rest_not_independent",
+        "gap_closed",
+        "cadence_hole",
+        "cross_quote_missing_fx",
+        "cross_quote_same_usd_price",
+        "cross_quote_dislocated",
+        "future_split_book",
+        "volatility_history",
+        "projected_volatility_history",
+        "top_sign_flips",
+        "top_sign_incomplete",
+        "funding_validation",
+        "funding_late_confirmation",
+    ],
+)
+async def test_native_enriched_liquidity_complete_frozen_output(
+    native_client, original_truth, case
+):
+    snapshot, _, _ = _packet()
+    start = parse_time(snapshot["_start"])
+    end = parse_time(snapshot["cutoff"])
+    config = {"history_min_days": 1}
+    if case == "empty":
+        snapshot["books"] = []
+        snapshot["flow_bars"] = []
+    elif case in {
+        "persistent_gap",
+        "rest_not_independent",
+        "gap_closed",
+        "cadence_hole",
+        "cross_quote_missing_fx",
+        "cross_quote_same_usd_price",
+        "cross_quote_dislocated",
+    }:
+        snapshot["books"] = []
+        for seconds in range(0, 901, 10):
+            stamp = start + timedelta(seconds=seconds)
+            for venue in ("A", "B"):
+                book = _book(venue, stamp)
+                book["mid"] = "101" if venue == "B" else "100"
+                if case == "gap_closed" and seconds == 900:
+                    book["mid"] = "100"
+                if case.startswith("cross_quote") and venue == "B":
+                    book["quote_asset"] = "EUR"
+                    book["quote_usd_rate"] = (
+                        None if case == "cross_quote_missing_fx" else "2"
+                    )
+                    if case == "cross_quote_same_usd_price":
+                        book["mid"] = "50"
+                book["second_path_confirmed"] = case != "rest_not_independent"
+                book["independent_rest"] = {
+                    "source": "PUBLIC_REST",
+                    "ts": iso(stamp),
+                    "mid": book["mid"],
+                    "spread_bps": "2",
+                }
+                if not (case == "cadence_hole" and seconds == 450 and venue == "B"):
+                    snapshot["books"].append(book)
+    elif case == "future_split_book":
+        future = _book("A", end + timedelta(seconds=1), ask="10000")
+        future["asks"] = [["105", "1000000"]]
+        snapshot["books"].append(future)
+    elif case in {"volatility_history", "projected_volatility_history"}:
+        points = []
+        for hour in range(-72, 1):
+            stamp = end + timedelta(hours=hour)
+            value = 100 + (hour % 7) * 0.25 + (hour % 3) * 0.125
+            points.append((stamp, value))
+        if case == "volatility_history":
+            snapshot["klines"] = [
+                {
+                    "instrument_id": "B:spot:T",
+                    "open_time": iso(stamp - timedelta(hours=1)),
+                    "interval_s": 3600,
+                    "complete": True,
+                    "c": value,
+                }
+                for stamp, value in points
+            ]
+        else:
+            snapshot["stat_price_series"] = {
+                "B:spot:T": {
+                    "time_basis": "CLOSE_TIME",
+                    "times_us": [int(stamp.timestamp()) * 1000000 for stamp, _ in points],
+                    "values": [value for _, value in points],
+                }
+            }
+    elif case in {"top_sign_flips", "top_sign_incomplete"}:
+        start = end - timedelta(minutes=45)
+        snapshot["_start"] = iso(start)
+        snapshot["flow_bars"] = []
+        for venue in ("A", "B"):
+            for minute in range(45):
+                positive = (minute // 15) % 2 == 0
+                snapshot["flow_bars"].append(
+                    {
+                        "instrument_id": f"{venue}:spot:T",
+                        "minute_start": iso(start + timedelta(minutes=minute)),
+                        "complete": not (
+                            case == "top_sign_incomplete" and minute == 20 and venue == "A"
+                        ),
+                        "buy_qty": "10" if positive else "1",
+                        "sell_qty": "1" if positive else "10",
+                        "buy_notional": "1000" if positive else "100",
+                        "sell_notional": "100" if positive else "1000",
+                        "sum_sq_qty": "1",
+                    }
+                )
+    spot, relative, deriv = _enrichment_inputs(original_truth, snapshot)
+    if case in {"funding_validation", "funding_late_confirmation"}:
+        deriv = {"per_venue": [], "funding_dispersion_8h": Decimal("0.1")}
+        snapshot["assembled_at"] = snapshot["cutoff"]
+        snapshot["funding_confirmations"] = []
+        for venue, rate in (("P", "0"), ("Q", "0.1")):
+            iid = f"{venue}:perp:T"
+            deriv["per_venue"].append({"instrument_id": iid, "funding_8h_eq": rate})
+            for hours in (48, 24, 1):
+                snapshot["funding"].append(
+                    {
+                        "instrument_id": iid,
+                        "kind": "SETTLED",
+                        "ts": iso(start - timedelta(hours=hours)),
+                        "rate": "0",
+                        "interval_h": "8",
+                    }
+                )
+            snapshot["funding_confirmations"].append(
+                {
+                    "instrument_id": iid,
+                    "ts": snapshot["cutoff"],
+                    "received_ts": iso(
+                        end + timedelta(seconds=1 if case == "funding_late_confirmation" else 0)
+                    ),
+                    "rate_8h_eq": rate,
+                    "independent_path_verified": True,
+                    "source_path": "REST",
+                    "primary_source_path": "WS",
+                }
+            )
+            for minute in range(15):
+                snapshot["flow_bars"].append(
+                    {
+                        "instrument_id": iid,
+                        "minute_start": iso(end - timedelta(minutes=minute + 1)),
+                        "complete": True,
+                    }
+                )
+    token = original_truth._PARAMETERS.set(config)
+    try:
+        expected = _original_enriched(original_truth, snapshot, spot, relative, deriv)
+    finally:
+        original_truth._PARAMETERS.reset(token)
+    statement, parameters = window_query(
+        snapshot, config, spot=spot, relative=relative, deriv=deriv
+    )
+    rows = await native_client.rows(statement, parameters)
+    assert len(rows) == 1
+    actual = json.loads(rows[0]["result"])
+    _assert_complete(actual, expected)
+    if case == "persistent_gap":
+        assert actual["fragmentation"]["price_path_validated"] is True
+    elif case == "funding_validation":
+        assert actual["fragmentation"]["funding_path_validated"] is True
+    elif case == "funding_late_confirmation":
+        assert actual["fragmentation"]["funding_path_validated"] is False
+    elif case == "top_sign_flips":
+        assert actual["fragmentation"]["top_sign_flips"] is True
+
+
+@pytest.mark.parametrize("factor", [1, 1000, 1000000])
+async def test_native_book_numeric_timestamp_units_preserve_observation(
+    native_client, original_truth, factor
+):
+    snapshot, spot, relative = _packet()
+    for book in snapshot["books"]:
+        book["exchange_ts"] = int(parse_time(book["exchange_ts"]).timestamp()) * factor
+    await _compare(native_client, original_truth, snapshot, spot, relative)
+
+
+@pytest.mark.parametrize("band", [0.5, 1, 2])
+async def test_native_depth_band_uses_only_covered_native_and_usd_fields(
+    native_client, original_truth, band
+):
+    snapshot, spot, relative = _packet()
+    key = {0.5: "p0_5", 1: "p1", 2: "p2"}[band]
+    for book in snapshot["books"]:
+        for side in ("bid", "ask"):
+            book["depth"][side][key] = deepcopy(book["depth"][side]["p1"])
+    snapshot["books"][1]["range_covered_pct"]["ask"] = band / 2
+    await _compare(
+        native_client, original_truth, snapshot, spot, relative, {"depth_band_pct": band}
+    )
+
+
+@pytest.mark.parametrize("offset", ["-0.000000000000000000000001", "0", "0.000000000000000000000001"])
+async def test_native_vacuum_keeps_strict_depth_majority_before_float_display(
+    native_client, original_truth, offset
+):
+    snapshot, spot, relative = _packet()
+    for row in snapshot["flow_bars"]:
+        row.update(buy_qty=None, sell_qty=None, buy_notional="1", sell_notional="0")
+    with localcontext() as context:
+        context.prec = 100
+        snapshot["books"][1]["depth"]["ask"]["p1"]["usd"] = Decimal("300") + Decimal(offset)
+    relative["windows"]["W15M"] = {"r_raw": 0.05, "beyond_normal": True}
+    actual = await _compare(native_client, original_truth, snapshot, spot, relative)
+    assert actual["depth_majority_lost"] is (Decimal(offset) < 0)
+    assert (actual["liquidity_state"] == "VACUUM") is (Decimal(offset) < 0)
+
+
+@pytest.mark.parametrize(
+    ("canonical", "alias", "size"),
+    [("EXACT", "EXACT", None), ("BUCKET_1M", "BUCKET(60s)", None), ("BUCKET", None, 60)],
+)
+async def test_native_book_precision_is_propagated_not_inferred(
+    native_client, original_truth, canonical, alias, size
+):
+    snapshot, spot, relative = _packet()
+    for book in snapshot["books"]:
+        book["exchange_ts_prec"] = canonical
+        if alias is not None:
+            book["exchange_ts_precision"] = alias
+        if size is not None:
+            book["exchange_ts_bucket_size_s"] = size
+    await _compare(native_client, original_truth, snapshot, spot, relative)
+
+
+async def test_native_conflicting_precision_is_refused(native_client):
+    snapshot, spot, relative = _packet()
+    snapshot["books"][1]["exchange_ts_precision"] = "BUCKET(1s)"
+    statement, parameters = query(snapshot, spot=spot, relative=relative)
+    with pytest.raises(RuntimeError, match="ClickHouse"):
+        await native_client.rows(statement, parameters)
+
+
+@pytest.mark.parametrize("has_event", [False, True])
+async def test_native_all_liquidity_windows_are_one_select(
+    native_client, original_truth, has_event
+):
+    snapshot, _, _ = _packet()
+    snapshot["_primary"] = "W4H"
+    snapshot["anchor"] = {"ts": snapshot["_start"]}
+    snapshot["_has_event"] = has_event
+    if not has_event:
+        snapshot["_event_anchor"] = None
+    _, relative, _ = _enrichment_inputs(original_truth, snapshot)
+    end = parse_time(snapshot["cutoff"])
+    spots = {}
+    derivatives = {}
+    expected_windows = {}
+    for name, seconds in {"W15M": 900, "W1H": 3600, "W4H": 14400, "W24H": 86400, "EVENT": 900}.items():
+        scoped = deepcopy(snapshot)
+        scoped["_primary"] = name
+        scoped["_start"] = iso(end - timedelta(seconds=seconds))
+        spot, scoped_relative, deriv = _enrichment_inputs(original_truth, scoped)
+        relative["windows"][name] = scoped_relative["windows"][name]
+        relative["windows"]["EVENT"] = relative["windows"]["W15M"]
+        spots[name] = spot
+        derivatives[name] = deriv
+        expected_windows[name] = _original_enriched(
+            original_truth, scoped, spot, relative, deriv
+        )
+    statement, parameters = windows_query(
+        snapshot, spots=spots, relative=relative, deriv=derivatives
+    )
+    rows = await native_client.rows(statement, parameters)
+    assert len(rows) == 1
+    actual = json.loads(rows[0]["result"])
+    expected = dict(expected_windows["W4H"], windows=expected_windows)
+    _assert_complete(actual, expected)
