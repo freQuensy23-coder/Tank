@@ -1,6 +1,7 @@
 import asyncio
 import json
 from contextlib import asynccontextmanager
+from urllib.parse import parse_qs, urlsplit
 
 import httpx
 import pytest
@@ -31,21 +32,28 @@ async def native_peer():
                 if key in accepted:
                     assert accepted[key][0] == body
                 else:
-                    accepted[key] = (body, "native-accepted")
+                    identity = "native-tool-accepted" if key.startswith("tool:") else "native-accepted"
+                    accepted[key] = (body, identity)
                     effects.append(json.loads(body)["events"][0])
                 response = {"data": [{"id": accepted[key][1]}]}
             elif "/executions" in path:
                 response = {
                     "data": [
                         {
-                            "execution_id": "native-accepted",
+                            "execution_id": identity,
                             "state": "COMPLETED",
                             "settled_outcome": "COMPLETED",
                         }
+                        for identity in parse_qs(urlsplit(path).query).get("ids[]", [])
                     ]
                 }
             else:
-                response = {"data": [idle("native-ended", "native-accepted")]}
+                identity = (
+                    "native-tool-accepted"
+                    if any(key.startswith("tool:") for key in accepted)
+                    else "native-accepted"
+                )
+                response = {"data": [idle("native-ended:" + identity, identity)]}
             payload = json.dumps(response).encode()
             writer.write(
                 b"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: "
