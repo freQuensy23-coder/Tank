@@ -78,6 +78,8 @@ async def test_busy_recovery_and_admission_are_not_blocked_by_idle_maintenance(l
             results.append(body)
             recovered.set()
             return httpx.Response(200, json={"data": [{"id": "returned-result"}]})
+        if request.method == "GET" and lost_acceptance:
+            assert len(accepted) == 1
         if request.url.path.endswith("/events/stream"):
             return httpx.Response(200, headers={"content-type": "text/event-stream"}, text="")
         if request.url.path.endswith("/events"):
@@ -253,4 +255,60 @@ async def test_completion_reconciliation_is_serialized_during_follower_handoff()
         release.set()
         task.cancel()
         await asyncio.gather(task, return_exceptions=True)
+        await service.close()
+
+
+async def test_supervisor_shutdown_joins_blocked_idle_maintenance():
+    repo = MemoryRepository()
+    await repo.put(
+        "ops.agent_sessions", "idle", {"session_id": "idle", "status": "OPEN", "runtime_status": "IDLE"}
+    )
+    service = SessionService(repo, config(), None, http=object())
+    entered, exited, stop = (asyncio.Event() for _ in range(3))
+    owner = None
+
+    async def finish(sid):
+        nonlocal owner
+        assert sid == "idle"
+        owner = asyncio.current_task()
+        entered.set()
+        try:
+            await asyncio.Event().wait()
+        finally:
+            exited.set()
+
+    async def wake():
+        await entered.wait()
+        stop.set()
+
+    service.finish_if_idle = finish
+    service.wake_waiting = wake
+    try:
+        await asyncio.wait_for(service.run(stop), 1)
+        assert exited.is_set()
+        assert owner is not None and owner.done() and owner.cancelled()
+        assert not service.reconciliation_locks["idle"].locked()
+    finally:
+        await service.close()
+
+
+async def test_failed_sweep_does_not_suppress_answer_reconciliation(caplog):
+    repo = MemoryRepository()
+    service = SessionService(repo, config(), None, http=object())
+    reconciled = []
+
+    async def sweep():
+        raise RuntimeError("private maintenance diagnostic")
+
+    async def answers():
+        reconciled.append("answers")
+
+    service.sweep_failed = sweep
+    service.reconcile_answers = answers
+    try:
+        await service.reconcile_idle_sessions([], 0)
+        assert reconciled == ["answers"]
+        assert "RuntimeError" in caplog.text
+        assert "private maintenance diagnostic" not in caplog.text
+    finally:
         await service.close()

@@ -13,13 +13,18 @@ from tank.agents.sessions import AdmissionDeferred, SessionService
 
 @pytest.mark.integration
 @pytest.mark.postgres
+@pytest.mark.parametrize("lost_acceptance", [False, True])
 async def test_restart_recovery_dispatches_pending_tool_and_releases_admission_over_real_http(
-    postgres_template,
+    postgres_template, lost_acceptance
 ):
     async with fixture_repo("postgres", postgres_template) as repo:
         session = await seed(repo)
         session["runtime_status"] = "RUNNING"
         session["message_log"][0]["payload"] = {"kind": "SCOUT_REVIEW", "session_id": "s"}
+        if lost_acceptance:
+            intent = session["message_log"][0]
+            intent.update(turn_status="ACCEPTING", remote_event_id=None, native_input_attempts={})
+            intent.pop("sent_at")
         old = message("old", "input-old", status="DONE")
         old["payload"] = {"kind": "SCOUT_REVIEW", "session_id": "s"}
         session["message_log"].insert(0, old)
@@ -57,7 +62,7 @@ async def test_restart_recovery_dispatches_pending_tool_and_releases_admission_o
                 "stop_reason": {"type": "requires_action", "event_ids": ["pending-tool"]},
             },
         ]
-        posts, dispatched = [], []
+        posts, dispatched, accepted = [], [], []
         states = {"input-old": "COMPLETED", "input-root": "COMPLETED"}
         settled = asyncio.Event()
         tool_entered, tool_release = asyncio.Event(), asyncio.Event()
@@ -66,8 +71,14 @@ async def test_restart_recovery_dispatches_pending_tool_and_releases_admission_o
 
         async def events(request):
             if request.method == "GET":
+                assert len(accepted) == int(lost_acceptance)
                 return web.json_response({"data": copy.deepcopy(history)})
             body = await request.json()
+            if body["events"][0]["type"] == "user.message":
+                assert lost_acceptance
+                assert request.headers["Idempotency-Key"] == "message:root"
+                accepted.append(body)
+                return web.json_response({"data": [{"id": "input-root"}]})
             posts.append(body)
             result = body["events"][0]
             assert result["type"] == "user.custom_tool_result"
@@ -135,6 +146,10 @@ async def test_restart_recovery_dispatches_pending_tool_and_releases_admission_o
                 await tool_entered.wait()
                 with pytest.raises(AdmissionDeferred):
                     await service.admit(job)
+                blocked = await repo.get("ops.agent_sessions", "s")
+                barrier = await service.execution_barrier(blocked, verify_remote=True)
+                assert barrier["complete"] is False
+                assert "unreturned-tool:pending-tool" in barrier["unidentified_inputs"]
                 assert not (await repo.get("ops.jobs", job["job_id"])).get("slot_admitted")
                 tool_release.set()
                 await settled.wait()
