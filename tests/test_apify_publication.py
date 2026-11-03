@@ -396,7 +396,15 @@ docker() {
     + [f"missing_{key}" for key in worker_journal()]
     + [
         f"invalid_{key}"
-        for key in ("actor", "tag", "previous", "candidate", "previous_release", "release", "previous_compose")
+        for key in (
+            "actor",
+            "tag",
+            "previous",
+            "candidate",
+            "previous_release",
+            "release",
+            "previous_compose",
+        )
     ],
 )
 def test_invalid_worker_journal_refuses_recovery_effects(tmp_path, action, damage):
