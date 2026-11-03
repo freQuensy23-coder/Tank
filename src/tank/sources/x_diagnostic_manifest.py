@@ -49,11 +49,7 @@ def _bounded_scalar(value, kind, minimum=0, maximum=2**63 - 1):
 
 def _safe_text(value, limit=8192):
     _bounded_text(value, limit)
-    if (
-        "\x00" in value
-        or any(0xD800 <= ord(char) <= 0xDFFF for char in value)
-        or redact(value) != value
-    ):
+    if "\x00" in value or any(0xD800 <= ord(char) <= 0xDFFF for char in value) or redact(value) != value:
         raise ValueError("Unsafe diagnostic text")
 
 
