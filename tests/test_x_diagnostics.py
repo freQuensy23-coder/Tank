@@ -485,3 +485,17 @@ async def test_job_runner_defers_large_successful_document_batches_without_spend
     receipts = await repo.list("out.deliveries", filters={"method": "sendDocument", "status": "SENT"})
     assert len(receipts) == 344 and all(row["attempt"] == 1 for row in receipts)
     assert not await repo.list("out.deliveries", filters={"status": "FAILED"})
+
+
+def test_metadata_document_bytes_do_not_depend_on_nested_json_object_order():
+    evidence = sanitize(diagnostics("body"))
+
+    def reorder(value):
+        if isinstance(value, dict):
+            return {key: reorder(value[key]) for key in reversed(value)}
+        if isinstance(value, list):
+            return [reorder(item) for item in value]
+        return value
+
+    errors = [{"account": "alice", "diagnostics": evidence}]
+    assert documents(errors) == documents(reorder(errors))

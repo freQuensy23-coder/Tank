@@ -405,6 +405,8 @@ WHAT TO DO: DON'T CHASE
 
 ### 7.2 "Tank Ops" notices
 
+X HTTP failures include the retained response bodies as actual attached documents, with separate metadata for status, safe response headers, retries, empty bodies, redaction and capture truncation. Successful attachments have durable delivery receipts and are not resent on retry.
+
 "Tank Ops" receives exactly these five notices:
 
 | Notice | When | What it contains |

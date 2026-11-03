@@ -105,7 +105,7 @@ class LoopbackTelegramTransport(httpx.AsyncBaseTransport):
         await self.transport.aclose()
 
 
-async def test_real_worker_http_errors_keep_cursors_and_send_one_plain_ops_notice(tmp_path, wire_server):
+async def test_real_worker_http_errors_keep_cursors_and_send_response_documents(tmp_path, wire_server):
     origin, state = wire_server
     source = {"source_id": "S29", "name": "X", "feeds": [{"kind": "x", "url": origin + "/actor"}]}
     config = source_settings(tmp_path, [source])
@@ -132,11 +132,18 @@ async def test_real_worker_http_errors_keep_cursors_and_send_one_plain_ops_notic
         delivery = DeliveryService(repo, config, http=http)
         await delivery.deliver(job["payload"])
         await delivery.deliver(job["payload"])
-    assert len(state["telegram"]) == 1
+    assert len(state["telegram"]) == 5
     assert state["telegram"][0][0].endswith("sendMessage")
-    assert all("diagnostics" not in error for error in checkpoint["entry_errors"])
+    from test_x_diagnostics import multipart
+
+    for path, headers, body in state["telegram"][1:4]:
+        assert path.endswith("sendDocument")
+        request = httpx.Request("POST", origin, headers=headers, content=body)
+        assert multipart(request)["document"][1] == state["body"]
+        assert b"forbidden-cookie" not in body
+    assert checkpoint["entry_errors"][0]["diagnostics"]["attemptCount"] == 3
     receipts = await repo.list("out.deliveries", filters={"status": "SENT"})
-    assert len(receipts) == 1
+    assert len(receipts) == 5
 
 
 @pytest.mark.timeout(10)

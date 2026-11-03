@@ -119,8 +119,9 @@ async def test_a_failed_or_unreadable_run_raises():
         (201, {"health": "healthy", "posts": [], "accounts": []}),
     )
     sensor = XSensor(httpx.AsyncClient(transport=httpx.MockTransport(actor)), "FAKE-token")
-    with pytest.raises(RuntimeError, match="PUBLIC_SOURCE_UNAVAILABLE"):
-        await sensor.posts(URL, ["ethereum"], {"ethereum": "1"})
+    result = await sensor.posts(URL, ["ethereum"], {"ethereum": "1"})
+    assert result.failed and result.rows == [] and result.cursors == {"ethereum": "1"}
+    assert result.failures == [AccountFailure("ethereum", "PUBLIC_PROFILE_HTTP_404")]
     with pytest.raises(RuntimeError, match="Apify X run request failed: Client error '400 Bad Request'"):
         await sensor.posts(URL, ["ethereum"], {"ethereum": "1"})
     with pytest.raises(pydantic.ValidationError):
