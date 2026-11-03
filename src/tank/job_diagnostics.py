@@ -30,8 +30,12 @@ def failure_receipt(job, exc, *, settings, phase, started_at, finished_at, deadl
         module = _typed_text(cls.__module__, r"[A-Za-z_][A-Za-z0-9_.]{0,63}", secrets)
         name = _typed_text(cls.__name__, r"[A-Za-z_][A-Za-z0-9_]{0,63}", secrets)
         entry = {"class": f"{module}.{name}" if module and name else "unknown"}
-        if isinstance(error, httpx.HTTPStatusError):
-            response = error.response
+        response = (
+            error.response
+            if isinstance(error, httpx.HTTPStatusError)
+            else vars(error).get("_tank_http_response")
+        )
+        if isinstance(response, httpx.Response):
             status = response.status_code
             if type(status) is int and 100 <= status <= 599:
                 entry["http_status"] = status

@@ -396,3 +396,34 @@ async def test_admission_deferral_keeps_attempt_refund_and_original_expiry(diagn
     assert deferred["run_after"] == not_before.value
     assert deferred["slot_waiting_since"] == job["created_at"]
     assert "attempt_diagnostics" not in deferred and deferred["last_error"] is None
+
+
+async def test_actual_clickhouse_http_status_retains_query_id_without_body(diagnostic_repo):
+    from tank.clickhouse_market import ClickHouse
+
+    repo = diagnostic_repo
+    job = await repo.enqueue("RUN_MARKET_TRUTH", {}, "diagnostic-clickhouse-status", max_attempts=1)
+    runtime = make_runtime(repo)
+
+    def transport(request):
+        return httpx.Response(
+            503,
+            request=request,
+            headers={"x-clickhouse-query-id": QUERY_ID, "authorization": SECRET},
+            content=SECRET,
+        )
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(transport)) as http:
+        client = ClickHouse("http://example.test", password=SECRET, http=http)
+
+        async def fail(payload):
+            return await client.rows("SELECT 1")
+
+        await run_attempt(runtime, fail)
+    stored = await repo.get("ops.jobs", job["job_id"])
+    assert stored["status"] == "FAILED" and stored["last_error"] == "RuntimeError"
+    receipt = stored["attempt_diagnostics"][0]
+    assert receipt["exception_chain"] == [
+        {"class": "builtins.RuntimeError", "http_status": 503, "query_id": QUERY_ID}
+    ]
+    assert SECRET not in json.dumps(receipt)
