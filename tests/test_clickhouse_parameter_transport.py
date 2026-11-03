@@ -10,7 +10,7 @@ import pytest
 import truth_sql_failure_evidence
 from truth_sql_failure_evidence import EvidenceClickHouse
 
-from tank.clickhouse_market import ClickHouse
+from tank.clickhouse_market import ClickHouse, parameter_string
 
 SETTINGS = {
     "date_time_output_format": "iso",
@@ -167,6 +167,71 @@ def test_transport_qualification_receipt_refuses_unbounded_fields(tmp_path):
     assert b"private-value" not in before
 
 
+def test_parameter_string_preserves_native_escaped_spelling():
+    value = "α😀\\\t\n\r\x00'\""
+    assert parameter_string(value) == "α😀\\\\\\t\\n\\r\\0'\""
+    assert parameter_string("") == ""
+
+
+@pytest.mark.integration
+async def test_real_native_domain_parameter_serializers_preserve_complete_json(request):
+    from tank.analysis import (
+        truth_sql_derivatives,
+        truth_sql_liquidity,
+        truth_sql_relative,
+        truth_sql_result,
+        truth_sql_spot,
+        truth_sql_support,
+    )
+
+    url = os.environ.get("CLICKHOUSE_TEST_URL")
+    assert url, "CLICKHOUSE_TEST_URL must identify the owned native CI service"
+    marker = "שלום α😀\\\n\t\r\x00\"'" * 4000
+    observation = {
+        "kind": "FUNDAMENTALS",
+        "identity_evidence": {"marker": marker},
+        "ts": "2026-01-01T00:00:00Z",
+    }
+    snapshot = {
+        "token_id": "T",
+        "cutoff": "2026-01-01T01:00:00Z",
+        "anchor": {"ts": "2026-01-01T00:00:00Z"},
+        "supply": [observation],
+        "stat_price_series": {"z-first": {"marker": marker}, "a-last": {}},
+    }
+    builders = (
+        (truth_sql_spot.query, "spot_snapshot", {}),
+        (truth_sql_derivatives.query, "deriv_snapshot", {}),
+        (truth_sql_relative.query, "rel_snapshot", {}),
+        (truth_sql_liquidity.query, "lq_snapshot", {}),
+        (truth_sql_support.query, "sup_snapshot", {}),
+        (
+            truth_sql_result.query,
+            "res_snapshot",
+            {name: {} for name in ("spots", "derivatives", "liquidity", "supply", "relative", "confidence")},
+        ),
+    )
+    client = EvidenceClickHouse(url, request.node.nodeid)
+    try:
+        for builder, name, kwargs in builders:
+            _, parameters = builder(snapshot, **kwargs)
+            selected = {name: parameters[name]}
+            query = f"SELECT {{{name}:String}} AS snapshot"
+            if name == "sup_snapshot":
+                selected["sup_supply_preimages"] = parameters["sup_supply_preimages"]
+                query += ", {sup_supply_preimages:String} AS preimages"
+            rows = await client.rows(query, selected)
+            assert len(rows) == 1
+            decoded = json.loads(rows[0]["snapshot"])
+            assert decoded == snapshot
+            if name in {"rel_snapshot", "sup_snapshot"}:
+                assert list(decoded["stat_price_series"]) == ["z-first", "a-last"]
+            if name == "sup_snapshot":
+                assert json.loads(rows[0]["preimages"]) == [json.dumps(observation, sort_keys=True)]
+    finally:
+        await client.close()
+
+
 @pytest.mark.integration
 async def test_real_native_large_multipart_values(request):
     url = os.environ.get("CLICKHOUSE_TEST_URL")
@@ -183,6 +248,8 @@ async def test_real_native_large_multipart_values(request):
         )
         for key, value in values.items()
     }
+    for key in ("ascii", "unicode", "empty"):
+        assert parameter_string(values[key]) == parameters[key][0]
     query = (
         "SELECT "
         + ", ".join(

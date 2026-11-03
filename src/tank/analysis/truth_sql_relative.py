@@ -1,6 +1,7 @@
 import json
 from array import array
 
+from tank.clickhouse_market import parameter_string
 from tank.util import iso, jsonable
 
 
@@ -667,8 +668,10 @@ def query(snapshot, config=None):
     quantiles = config.get("normal_range_quantiles", [0.025, 0.975])
     params = {
         "rel_snapshot": (
-            json.dumps(
-                jsonable(_transport(snapshot)), separators=(",", ":"), ensure_ascii=False, allow_nan=False
+            parameter_string(
+                json.dumps(
+                    jsonable(_transport(snapshot)), separators=(",", ":"), ensure_ascii=False, allow_nan=False
+                )
             ),
             "String",
         ),

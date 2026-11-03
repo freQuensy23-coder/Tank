@@ -1,6 +1,7 @@
 from array import array
 
 from tank.analysis import truth_sql_spot
+from tank.clickhouse_market import parameter_string
 from tank.util import canonical_json, jsonable
 
 
@@ -345,8 +346,10 @@ def _selection_ctes():
             0,
         ),
     ]
+
     def score(expressions):
         return " + ".join(f"toInt64(ifNull(({expression}), false))" for expression in expressions)
+
     eligible = ",\n".join(
         f"('{name}', ifNull(({gate}), false), {score(features)})" for name, gate, features in gates
     )
@@ -854,5 +857,7 @@ def query(
     _, flow_parameters = truth_sql_spot.query(_transport(snapshot), config)
     parameters = {name.replace("spot_", "res_flow_"): value for name, value in flow_parameters.items()}
     inputs.update(res_snapshot=snapshot, res_config=config or {})
-    parameters.update({name: (canonical_json(_transport(value)), "String") for name, value in inputs.items()})
+    parameters.update(
+        {name: (parameter_string(canonical_json(_transport(value))), "String") for name, value in inputs.items()}
+    )
     return "WITH " + ctes() + "\n" + select_sql(), parameters

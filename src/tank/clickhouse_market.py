@@ -180,6 +180,16 @@ class ClickHouse:
             await self._post(f"INSERT INTO {table} FORMAT JSONEachRow\n{body}", None)
 
 
+def parameter_string(value):
+    return (
+        value.replace("\\", "\\\\")
+        .replace("\t", "\\t")
+        .replace("\n", "\\n")
+        .replace("\r", "\\r")
+        .replace("\0", "\\0")
+    )
+
+
 def _json_lines(body):
     return [json.loads(line) for line in body.splitlines() if line]
 

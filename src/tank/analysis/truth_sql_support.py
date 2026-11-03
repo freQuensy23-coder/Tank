@@ -1,6 +1,7 @@
 import json
 from array import array
 
+from tank.clickhouse_market import parameter_string
 from tank.util import jsonable
 
 
@@ -591,11 +592,16 @@ def query(snapshot, config=None, *, spots=None, derivatives=None, liquidity=None
         "sup_relative": relative if relative is not None else snapshot.get("_relative", {}),
     }
     parameters = {
-        name: (json.dumps(_transport(value), ensure_ascii=False, allow_nan=False), "String")
+        name: (
+            parameter_string(json.dumps(_transport(value), ensure_ascii=False, allow_nan=False)),
+            "String",
+        )
         for name, value in inputs.items()
     }
     parameters["sup_supply_preimages"] = (
-        json.dumps([json.dumps(_transport(row), sort_keys=True) for row in snapshot.get("supply", [])]),
+        parameter_string(
+            json.dumps([json.dumps(_transport(row), sort_keys=True) for row in snapshot.get("supply", [])])
+        ),
         "String",
     )
     return f"WITH {ctes()}\n{select_sql()}", parameters

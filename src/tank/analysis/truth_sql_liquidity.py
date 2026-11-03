@@ -1,5 +1,6 @@
 from decimal import Decimal
 
+from tank.clickhouse_market import parameter_string
 from tank.util import canonical_json, jsonable
 
 
@@ -697,13 +698,13 @@ def window_select_sql():
 
 def window_query(snapshot, config=None, *, spot=None, relative=None, deriv=None):
     _, parameters = query(snapshot, config, spot=spot, relative=relative)
-    parameters["lq_deriv"] = (canonical_json(_transport(deriv or {})), "String")
+    parameters["lq_deriv"] = (parameter_string(canonical_json(_transport(deriv or {}))), "String")
     return "WITH " + ctes() + ",\n" + enrichment_ctes() + "\n" + window_select_sql(), parameters
 
 
 def windows_query(snapshot, config=None, *, spots=None, relative=None, deriv=None):
     _, parameters = query(snapshot, config, spot=spots, relative=relative)
-    parameters["lq_deriv"] = (canonical_json(_transport(deriv or {})), "String")
+    parameters["lq_deriv"] = (parameter_string(canonical_json(_transport(deriv or {}))), "String")
     selections = []
     for name in ("W15M", "W1H", "W4H", "W24H", "EVENT"):
         scoped_ctes = ctes().replace(
@@ -754,5 +755,7 @@ def query(snapshot, config=None, *, spot=None, relative=None):
         "lq_spot": spot if spot is not None else snapshot.get("_spot", {"venues": []}),
         "lq_relative": (relative if relative is not None else snapshot.get("_relative", {"windows": {}})),
     }
-    parameters = {name: (canonical_json(_transport(value)), "String") for name, value in inputs.items()}
+    parameters = {
+        name: (parameter_string(canonical_json(_transport(value))), "String") for name, value in inputs.items()
+    }
     return "WITH " + ctes() + "\n" + select_sql(), parameters

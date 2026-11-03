@@ -1,3 +1,4 @@
+from tank.clickhouse_market import parameter_string
 from tank.util import canonical_json
 
 
@@ -490,7 +491,7 @@ def query(snapshot, config=None):
     config = config or {}
     parameters = config.get("parameters", config)
     return "WITH " + ctes() + "\n" + select_sql(), {
-        "spot_snapshot": (canonical_json(snapshot), "String"),
+        "spot_snapshot": (parameter_string(canonical_json(snapshot)), "String"),
         "spot_sigma": (str(parameters.get("significant_flow_sigma", 2)), "String"),
         "spot_min_venues": (parameters.get("min_spot_venues", 2), "UInt64"),
     }

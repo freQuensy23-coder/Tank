@@ -1,3 +1,4 @@
+from tank.clickhouse_market import parameter_string
 from tank.util import canonical_json
 
 DECIMAL_SCALE = 24
@@ -698,6 +699,6 @@ def select_sql():
 
 def query(snapshot, config=None):
     return "WITH " + ctes() + "\n" + select_sql(), {
-        "deriv_snapshot": (canonical_json(snapshot), "String"),
-        "deriv_config": (canonical_json(config or {}), "String"),
+        "deriv_snapshot": (parameter_string(canonical_json(snapshot)), "String"),
+        "deriv_config": (parameter_string(canonical_json(config or {})), "String"),
     }
