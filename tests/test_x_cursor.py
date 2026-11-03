@@ -289,9 +289,10 @@ async def test_pending_native_samples_merge_each_handle_and_preserve_a_live_sibl
         assert await svc.repo.list("ingest.source_items") == []
         pending["account_cursors"]["avax"] = retained["4YYOjTU7cWwWoxhGK"]["nextCursor"]
         await svc.repo.put("ops.source_checkpoints", "S29:0", pending)
-        assert await svc.poller.drain(source, 0, force=True) == {"items": 6, "errors": []}
+        assert await svc.poller.drain(source, 0, force=True) == {"items": 5, "errors": []}
         checkpoint = await svc.repo.get("ops.source_checkpoints", "S29:0")
         assert checkpoint["pending_batches"] == []
+        assert checkpoint["duplicate_ids"] == ["2115085176413757842"]
         assert checkpoint["account_cursors"] == {
             "pancakeswap": "2115795788685299930",
             "wublockchain": "2115085846248558689",
@@ -299,7 +300,6 @@ async def test_pending_native_samples_merge_each_handle_and_preserve_a_live_sibl
         }
         items = await svc.repo.list("ingest.source_items")
         assert sorted(item["external_id"] for item in items) == [
-            "2115085176413757842",
             "2115085846248558689",
             "2115676525345530213",
             "2115723826915103199",
