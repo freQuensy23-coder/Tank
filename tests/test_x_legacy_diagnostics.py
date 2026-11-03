@@ -25,6 +25,9 @@ def legacy_notice():
         "notice_id": "legacy-public-fixture",
         "kind": "ENTRY_ERRORS",
         "text": "Public diagnostic fixture",
+        "created_at": "2026-10-24T12:00:00Z",
+        "created_at_prec": "COLLECTION_ONLY",
+        "created_by": "source-poller",
         "entry_errors": [{"account": "example", "diagnostics": evidence}],
         "document_manifest": [
             {"filename": filename, "sha256": BODY_HASH, "bytes": 21},
