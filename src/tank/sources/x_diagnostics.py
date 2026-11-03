@@ -26,9 +26,14 @@ HEADERS = {
 
 def redact(value, token=None, limit=8192):
     value = value[:limit] if isinstance(value, str) else "INVALID_DIAGNOSTIC_TEXT"
+    value = re.sub(
+        r"(?i)([?&](?:api[-_]?(?:key|token)|access_token|token|auth|password|secret)=)[^&\s'\"<>]*",
+        r"\1[REDACTED]",
+        value,
+    )
     text = redact_text(value, (token,) if token else ())
     return re.sub(
-        r"(?i)((?<![A-Za-z0-9_])(?:authorization|set-cookie|cookie|auth_token|ct0)[\"']?[ \t]*[:=][ \t]*)"
+        r"(?i)((?<![A-Za-z0-9_])(?:authorization|set-cookie|cookie|auth_token|api[-_]?token|auth|ct0)[\"']?[ \t]*[:=][ \t]*)"
         r"(\"(?:\\[^\r\n]|[^\"\\\r\n])*\"?|'(?:\\[^\r\n]|[^'\\\r\n])*'?|"
         r"(?:(?:Basic|Bearer)[ \t]+)?[^\s,;&<>{}\[\]\"']+)",
         lambda match: (
@@ -194,6 +199,12 @@ def sanitize(value, token=None, budget=None):
             for key in ("readError", "decodeError"):
                 candidate = response.get(key)
                 clean_response[key] = text(candidate, f"{key}[{index}]") if candidate is not None else None
+            for key in ("finalUrl", "title"):
+                if key in response:
+                    clean_response[key] = text(response[key], f"{key}[{index}]")
+            for key in ("articleCount", "statusLinkCount", "textCount", "scriptCount"):
+                if key in response:
+                    clean_response[key] = scalar(response, key, int, f"{key}[{index}]", 0, BODY_LIMIT)
             attempt["response"] = clean_response
         result["attempts"].append(attempt)
     result["attemptCount"] = len(result["attempts"])
