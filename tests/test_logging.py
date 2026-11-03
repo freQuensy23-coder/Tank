@@ -2,8 +2,9 @@ import io
 import logging
 
 import httpx
+import pytest
 
-from tank.logging import CredentialFilter, configure_logging
+from tank.logging import CredentialFilter, configure_logging, redact_text
 from tank.settings import Settings
 
 
@@ -46,6 +47,13 @@ def test_exception_trace_and_database_password_redacted():
         assert "[REDACTED]" in text
     finally:
         logger.removeHandler(handler)
+
+
+@pytest.mark.parametrize("scheme", ["postgresql", "postgresql+psycopg", "git+ssh", "x.custom-proto"])
+@pytest.mark.parametrize("prefix", ["", "+", "-", ".", "( "])
+def test_punctuated_scheme_credentials_are_redacted(scheme, prefix):
+    value = f"{prefix}{scheme}://reader:db-password@host/path"
+    assert redact_text(value) == f"{prefix}{scheme}://reader:[REDACTED]@host/path"
 
 
 def test_reload_preserves_old_and_new_credential_redaction():

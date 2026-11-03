@@ -231,9 +231,10 @@ async def test_empty_http_response_body_is_delivered_explicitly_without_invalid_
     )
 
 
-async def test_oversized_response_uploads_bounded_prefix_and_explicit_truncation_metadata():
+@pytest.mark.parametrize("pattern", [b"a", b"a+", b"a-", b"a."])
+async def test_oversized_response_uploads_bounded_prefix_and_explicit_truncation_metadata(pattern):
     repo = MemoryRepository()
-    raw = b"a" * 2_000_050
+    raw = pattern * (2_000_050 // len(pattern))
     evidence = diagnostics(raw.decode())
     evidence["attempts"] = evidence["attempts"][:1]
     evidence["attempts"][0]["response"].update(bodyTruncated=True, omittedWireBytes=50, wireBytes=2_000_000)
