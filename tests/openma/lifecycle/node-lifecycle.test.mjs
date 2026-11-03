@@ -81,7 +81,9 @@ for(const legacy of [false,true])test(`warm binding replaces updated runtime wit
   assert.deepEqual(JSON.parse((await sb.exec('read','FAKE_NEXT')).stdout),{key:'FAKE_NEXT'});
   await manager.idle(ctx);
   assert.equal(s.disks.has('box_1'),false);assert.equal(s.disks.size,1);
-  const after=planSessionContinuation(snapshot,'reply');assert.deepEqual(after,before);
+  const reopened={revision:documents.length,orderedEvents:documents.map(document=>decodeSessionEventDocument(document)),executions:structuredClone(snapshot.executions)};
+  const after=planSessionContinuation(reopened,'reply');assert.deepEqual(after,before);
+  assert.deepEqual(after.phaseInputIds,['callback']);assert.deepEqual(after.remaining,[]);
   assert.deepEqual(after.historyEvents.filter(event=>event.type.startsWith('agent.')).map(event=>event.id),['bash-call','bash-result','rejected','rejected-result','pending']);
   assert.deepEqual(after.historyEvents.filter(event=>event.type==='user.custom_tool_result').map(event=>event.customToolUseId),['pending']);
   assert.deepEqual(documents,events.map((event,index)=>encodeSessionEventDocument(event,{revision:index+1,index:0},index>0&&index<10?'original':undefined)));
