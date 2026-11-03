@@ -4,7 +4,14 @@ import os
 import httpx
 import pytest
 from test_x_diagnostics import diagnostics, multipart, notice_for, telegram_settings
-from test_x_legacy_diagnostics import BODY, BODY_HASH, METADATA, METADATA_HASH, legacy_notice, retained_manifest
+from test_x_legacy_diagnostics import (
+    BODY,
+    BODY_HASH,
+    METADATA,
+    METADATA_HASH,
+    legacy_notice,
+    retained_manifest,
+)
 from test_x_reader_integration import LoopbackTelegramTransport
 from test_x_reader_integration import wire_server as wire_server
 
