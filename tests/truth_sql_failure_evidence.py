@@ -38,6 +38,7 @@ _SAFE_PHRASES = (
     "NO_COMMON_TYPE",
     "NUMBER_OF_ARGUMENTS_DOESNT_MATCH",
     "BAD_ARGUMENTS",
+    "Query tree is too big",
     "TYPE_MISMATCH",
     "DECIMAL_OVERFLOW",
     "TOO_LARGE_QUERY",

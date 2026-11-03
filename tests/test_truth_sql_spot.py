@@ -1,6 +1,8 @@
+import builtins
 import json
 import os
 import subprocess
+import sys
 from copy import deepcopy
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
@@ -22,17 +24,44 @@ END = datetime(2026, 10, 21, 12, tzinfo=UTC)
 @pytest.fixture(scope="module")
 def original_spot():
     root = Path(__file__).resolve().parents[1]
-    source = subprocess.run(
-        ["git", "show", f"{BASELINE}:src/tank/analysis/truth.py"],
-        cwd=root,
-        capture_output=True,
-        text=True,
-        check=True,
-        timeout=30,
-    ).stdout
-    module = ModuleType("original_spot_truth")
-    exec(compile(source, f"{BASELINE}/src/tank/analysis/truth.py", "exec"), module.__dict__)
-    return module
+    modules = {}
+    original_import = builtins.__import__
+
+    def load(name):
+        if name in modules:
+            return modules[name]
+        module = ModuleType("_spot_original_" + name)
+        modules[name] = module
+        sys.modules[module.__name__] = module
+        path = "src/" + name.replace(".", "/")
+        result = subprocess.run(
+            ["git", "show", f"{BASELINE}:{path}.py"],
+            cwd=root,
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+        if result.returncode:
+            assert name in {"tank", "tank.analysis", "tank.market"}, result.stderr
+            module.__path__ = []
+            return module
+        module.__file__ = f"{BASELINE}/{path}.py"
+        module.__dict__["__builtins__"] = {**vars(builtins), "__import__": frozen_import}
+        exec(compile(result.stdout, module.__file__, "exec"), module.__dict__)
+        return module
+
+    def frozen_import(name, globals=None, locals=None, fromlist=(), level=0):
+        if name != "tank" and not name.startswith("tank."):
+            return original_import(name, globals, locals, fromlist, level)
+        module = load(name)
+        for child in fromlist:
+            if not hasattr(module, child):
+                setattr(module, child, load(name + "." + child))
+        return module
+
+    yield load("tank.analysis.truth")
+    for module in modules.values():
+        sys.modules.pop(module.__name__, None)
 
 
 @pytest.fixture

@@ -1,11 +1,13 @@
+import builtins
 import json
 import os
 import subprocess
-import types
+import sys
 from copy import deepcopy
 from datetime import timedelta
 from decimal import Decimal, localcontext
 from pathlib import Path
+from types import ModuleType
 
 import pytest
 from truth_sql_failure_evidence import EvidenceClickHouse
@@ -21,16 +23,44 @@ ORIGINAL_COMMIT = "ef3b43e8457622d2f3c2c86926de41aecee101d6"
 @pytest.fixture(scope="module")
 def original_truth():
     root = Path(__file__).resolve().parents[1]
-    result = subprocess.run(
-        ["git", "show", f"{ORIGINAL_COMMIT}:src/tank/analysis/truth.py"],
-        cwd=root,
-        capture_output=True,
-        check=True,
-        timeout=15,
-    )
-    module = types.ModuleType("tank_liquidity_original_reference")
-    exec(compile(result.stdout, f"{ORIGINAL_COMMIT}/truth.py", "exec"), module.__dict__)
-    return module
+    modules = {}
+    original_import = builtins.__import__
+
+    def load(name):
+        if name in modules:
+            return modules[name]
+        module = ModuleType("_liquidity_original_" + name)
+        modules[name] = module
+        sys.modules[module.__name__] = module
+        path = "src/" + name.replace(".", "/")
+        result = subprocess.run(
+            ["git", "show", f"{ORIGINAL_COMMIT}:{path}.py"],
+            cwd=root,
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+        if result.returncode:
+            assert name in {"tank", "tank.analysis", "tank.market"}, result.stderr
+            module.__path__ = []
+            return module
+        module.__file__ = f"{ORIGINAL_COMMIT}/{path}.py"
+        module.__dict__["__builtins__"] = {**vars(builtins), "__import__": frozen_import}
+        exec(compile(result.stdout, module.__file__, "exec"), module.__dict__)
+        return module
+
+    def frozen_import(name, globals=None, locals=None, fromlist=(), level=0):
+        if name != "tank" and not name.startswith("tank."):
+            return original_import(name, globals, locals, fromlist, level)
+        module = load(name)
+        for child in fromlist:
+            if not hasattr(module, child):
+                setattr(module, child, load(name + "." + child))
+        return module
+
+    yield load("tank.analysis.truth")
+    for module in modules.values():
+        sys.modules.pop(module.__name__, None)
 
 
 @pytest.fixture
