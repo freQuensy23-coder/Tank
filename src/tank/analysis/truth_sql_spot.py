@@ -91,9 +91,9 @@ def ctes():
 (x -> replaceRegexpOne(x, '^[+-]', '')) AS spot_unsigned,
 (x -> (if(startsWith(x, '-'), '-', ''),
     replaceAll(spot_unsigned(splitByRegexp('[eE]', x)[1]), '.', ''),
-    toInt64(if(position(spot_unsigned(splitByRegexp('[eE]', x)[1]), '.') = 0,
-        length(spot_unsigned(splitByRegexp('[eE]', x)[1])),
-        position(spot_unsigned(splitByRegexp('[eE]', x)[1]), '.') - 1))
+    if(position(spot_unsigned(splitByRegexp('[eE]', x)[1]), '.') = 0,
+        toInt64(length(spot_unsigned(splitByRegexp('[eE]', x)[1]))),
+        toInt64(position(spot_unsigned(splitByRegexp('[eE]', x)[1]), '.')) - 1)
         + toInt32OrZero(splitByRegexp('[eE]', x)[2]))) AS spot_scientific,
 (p -> concat(p.1, multiIf(p.3 <= 0,
     concat('0.', repeat('0', greatest(least(-p.3, 48), 0)), p.2),

@@ -90,8 +90,8 @@ toDecimal256(1, 24) AS lq_one,
 (x -> if(JSONType(x) = 'Object', JSONExtractRaw(x, 'value'), x)) AS lq_unwrap,
 (x -> arrayMap(text -> arrayMap(parts -> arrayMap(digits -> arrayMap(point ->
     if(length(parts) = 2,
-        if(throwIf(NOT match(text, '^[+-]?[0-9]+([.][0-9]+)?[eE][+-]?[0-9]+$')
-            OR isNull(toInt32OrNull(parts[2])) OR abs(ifNull(toInt32OrNull(parts[2]), 100)) > 48,
+        if(throwIf(length(parts) = 2 AND (NOT match(text, '^[+-]?[0-9]+([.][0-9]+)?[eE][+-]?[0-9]+$')
+            OR isNull(toInt32OrNull(parts[2])) OR abs(ifNull(toInt32OrNull(parts[2]), 100)) > 48),
             'Market Truth decimal input outside native financial range') = 0,
             concat(if(startsWith(parts[1], '-'), '-', ''), multiIf(
                 point <= 0, concat('0.', repeat('0', toUInt64(greatest(-point, 0))), digits),
@@ -101,7 +101,7 @@ toDecimal256(1, 24) AS lq_one,
         toInt64(length(digits))) + ifNull(toInt32OrNull(parts[2]), 0)])[1],
     [replaceRegexpAll(parts[1], '[^0-9]', '')])[1], [splitByRegexp('[eE]', text)])[1], [lq_text(lq_unwrap(x))])[1]) AS lq_decimal_text,
 (x -> arrayMap(text -> if(text IN ('', 'null'), CAST(NULL, 'Nullable(Decimal256(24))'),
-    if(throwIf(NOT match(text, '^[+-]?0*[0-9]{1,24}([.][0-9]{1,24})?$'),
+    if(throwIf(text NOT IN ('', 'null') AND NOT match(text, '^[+-]?0*[0-9]{1,24}([.][0-9]{1,24})?$'),
         'Market Truth decimal input outside native financial range') = 0,
         toDecimal256OrNull(text, 24), NULL)), [lq_decimal_text(x)])[1]) AS lq_dec,
 (x -> toFloat64OrNull(lq_text(lq_unwrap(x)))) AS lq_number,

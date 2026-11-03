@@ -210,7 +210,7 @@ def ctes():
     (deriv_text_value) -> if(positionCaseInsensitive(ifNull(deriv_text_value, ''), 'e') = 0,
         deriv_text_value,
         if(match(ifNull(deriv_text_value, ''), '^[+-]?[0-9]+([.][0-9]+)?[eE][+-]?[0-9]+$'),
-            deriv_expand_scientific(splitByChar('e', lowerASCII(ifNull(deriv_text_value, '')))),
+            deriv_expand_scientific(splitByChar('e', lower(ifNull(deriv_text_value, '')))),
             'INVALID_DECIMAL')) AS deriv_plain,
     (deriv_parts) -> deriv_expand_parts(deriv_parts[1], toInt32OrNull(deriv_parts[2])) AS deriv_expand_scientific,
     (deriv_mantissa, deriv_exponent) -> deriv_expand_digits(

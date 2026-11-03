@@ -178,7 +178,9 @@ def test_native_diagnostic_vocabulary_drops_unknown_error_words():
     assert receipt["native_error_code"] == 36
     assert all(word in receipt["server_message"] for word in ("maximum", "parse", "depth", "exceeded"))
     serialized = json.dumps(receipt)
-    assert all(word not in serialized for word in ("privatecredential", "arbitrarypayload", "hidden_snapshot"))
+    assert all(
+        word not in serialized for word in ("privatecredential", "arbitrarypayload", "hidden_snapshot")
+    )
 
 
 def test_parameter_string_preserves_native_escaped_spelling():

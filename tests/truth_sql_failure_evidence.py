@@ -167,9 +167,7 @@ def failure_receipt(error, nodeid, query):
     diagnostics = [phrase for phrase in _SAFE_PHRASES if phrase in message]
     diagnostics.extend(
         dict.fromkeys(
-            word.lower()
-            for word in re.findall(r"\b[A-Za-z_]+\b", message)
-            if word.lower() in _SAFE_WORDS
+            word.lower() for word in re.findall(r"\b[A-Za-z_]+\b", message) if word.lower() in _SAFE_WORDS
         )
     )
     identifiers = set(re.findall(r"\b(?:spot|deriv|rel|lq|sup|res)_[A-Za-z0-9_]+\b", query))
