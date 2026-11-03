@@ -200,6 +200,7 @@ async def test_fresh_state_before_obligation_commit_prevents_reminder(
             assessment = {
                 "class": "LOW",
                 "criterion": "LOW",
+                "criterion_claim_id": None,
                 "dims": {
                     name: {
                         "value": None,
