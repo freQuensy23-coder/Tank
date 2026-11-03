@@ -145,13 +145,25 @@ def scan(run: ApifyRun, accounts: list[str], cursors: Mapping[str, str], raw: by
     ]
     failures = [AccountFailure(a.handle, a.error or "FAILED") for a in run.accounts if a.status == "failed"]
     reported = {account.handle.lower(): account for account in run.accounts}
+    gaps = [account.handle for account in run.accounts if account.history_gap]
     for handle in accounts:
         account = reported.get(handle.lower())
         if account is None:
             failures.append(AccountFailure(handle, "MISSING_FROM_RUN"))
-        elif account.status == "ok" and account.posts and handle.lower() not in run.next_cursors:
-            failures.append(AccountFailure(handle, "NO_CURSOR"))
-    gaps = [account.handle for account in run.accounts if account.history_gap]
+        elif account.status == "ok":
+            candidate = run.next_cursors.get(handle.lower())
+            previous = cursors.get(handle.lower())
+            post_ids = {post.id for post in run.posts if post.author.lower() == handle.lower()}
+            if candidate is None:
+                if account.posts:
+                    failures.append(AccountFailure(handle, "NO_CURSOR"))
+            elif previous and int(candidate) < int(previous):
+                failures.append(AccountFailure(handle, "CURSOR_REGRESSION"))
+            elif (not previous or int(candidate) > int(previous)) and candidate not in post_ids:
+                failures.append(AccountFailure(handle, "CURSOR_NOT_IN_SAMPLE"))
+            elif previous and int(candidate) > int(previous) and previous not in post_ids:
+                if handle.lower() not in {gap.lower() for gap in gaps}:
+                    gaps.append(handle)
     if run.health == "degraded" and not failures and not gaps:
         failures.append(AccountFailure(None, run.error or "RUN_DEGRADED"))
     failed_handles = {failure.account.lower() for failure in failures if failure.account}
@@ -160,7 +172,9 @@ def scan(run: ApifyRun, accounts: list[str], cursors: Mapping[str, str], raw: by
         {
             handle: cursor
             for handle, cursor in run.next_cursors.items()
-            if handle.lower() not in failed_handles and run.health != "failed"
+            if handle.lower() not in failed_handles
+            and handle.lower() not in {gap.lower() for gap in gaps}
+            and run.health != "failed"
         }
     )
     if run.health == "failed":

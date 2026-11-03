@@ -73,7 +73,7 @@ async def fetch_snapshot(value: object) -> dict[str, Any]:
     accounts = report["accountResults"]
     next_cursors = dict(cursors)
     for account in accounts:
-        if account["status"] == "ok":
+        if account["status"] == "ok" and not account.get("historyGap"):
             next_cursors[account["handle"]] = account["lastMaxId"]
     health = (
         "failed"

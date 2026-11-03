@@ -5,10 +5,11 @@ from pathlib import Path
 
 import httpx
 import pytest
-from test_sources import Repo, settings
+from test_sources import settings
 
 from tank.sources import SourceService
 from tank.sources.xsensor import ApifyRun, scan
+from tank.storage import MemoryRepository
 
 FIXTURES = Path(__file__).parent / "fixtures" / "x-cursor" / "retained-accounts.json"
 GAPS = [
@@ -94,11 +95,26 @@ async def test_native_stale_sample_remains_failed_until_a_boundary_covering_samp
     assert stale["posts"] == [] and stale["health"] == "failed"
     assert stale["accounts"][0]["error"] == "PUBLIC_PROFILE_STALE_SAMPLE"
     assert stale["nextCursors"] == {"pancakeswap": cursor}
-    unchanged = await worker.fetch_snapshot(
-        {"handles": ["pancakeswap"], "cursors": stale["nextCursors"]}
-    )
+    unchanged = await worker.fetch_snapshot({"handles": ["pancakeswap"], "cursors": stale["nextCursors"]})
     assert unchanged["health"] == "healthy" and unchanged["coverageGaps"] == []
     assert unchanged["nextCursors"] == {"pancakeswap": cursor}
+
+
+def test_original_avax_stale_failure_does_not_become_a_successful_empty_scan(retained):
+    failure = retained["Ca2mLwMxhYLNnh92L"]
+    cursor = retained["4YYOjTU7cWwWoxhGK"]["nextCursor"]
+    output = ApifyRun.model_validate(
+        {
+            "health": "failed",
+            "posts": failure["posts"],
+            "accounts": [failure["account"]],
+            "nextCursors": {"avax": failure["nextCursor"]},
+            "error": "PUBLIC_SOURCE_UNAVAILABLE",
+        }
+    )
+    assert failure["nextCursor"] == cursor
+    with pytest.raises(RuntimeError, match="PUBLIC_SOURCE_UNAVAILABLE"):
+        scan(output, ["avax"], {"avax": cursor}, b"retained-failed-account-projection")
 
 
 def test_consumer_rejects_a_retained_sample_cursor_below_its_highwater(retained):
@@ -108,6 +124,17 @@ def test_consumer_rejects_a_retained_sample_cursor_below_its_highwater(retained)
     assert result.rows == [] and result.cursors == {"pancakeswap": cursor}
     assert [(failure.account, failure.reason) for failure in result.failures] == [
         ("pancakeswap", "CURSOR_REGRESSION")
+    ]
+
+
+def test_consumer_refuses_an_advance_beyond_the_retained_own_post_sample(retained):
+    older = retained["1FXDuSk4EdNCCzckj"]
+    output = retained_run(older).model_copy(update={"next_cursors": {"pancakeswap": "2115795788685299930"}})
+    cursor = "2115435919771873495"
+    result = scan(output, ["pancakeswap"], {"pancakeswap": cursor}, b"invalid-cursor-proposal")
+    assert result.cursors == {"pancakeswap": cursor} and result.rows == []
+    assert [(failure.account, failure.reason) for failure in result.failures] == [
+        ("pancakeswap", "CURSOR_NOT_IN_SAMPLE")
     ]
 
 
@@ -124,11 +151,12 @@ def service(tmp_path, transport, handle):
     source = {"source_id": "S29", "name": "X", "feeds": [{"kind": "x", "url": "https://actor.test/"}]}
     config = settings(tmp_path, [source])
     config.apify_api_token = "isolated-token"
-    svc = SourceService(Repo(), config, http=httpx.AsyncClient(transport=transport))
+    svc = SourceService(MemoryRepository(), config, http=httpx.AsyncClient(transport=transport))
     svc.accounts = {handle: {"handle": handle, "entity_id": handle, "role": "ORGANIZATION"}}
     return svc, source
 
 
+@pytest.mark.integration
 async def test_native_gap_replay_ingests_once_without_claiming_history_recovered(
     tmp_path, monkeypatch, native_reader, retained
 ):
@@ -159,6 +187,7 @@ async def test_native_gap_replay_ingests_once_without_claiming_history_recovered
         await svc.http.aclose()
 
 
+@pytest.mark.integration
 async def test_pending_native_samples_cannot_regress_committed_cursor(
     tmp_path, monkeypatch, native_reader, retained
 ):
@@ -178,7 +207,9 @@ async def test_pending_native_samples_cannot_regress_committed_cursor(
         await svc.poller.acquire(source, 0)
         pending = await svc.repo.get("ops.source_checkpoints", "S29:0")
         assert pending["account_cursors"] == {"pancakeswap": initial}
-        assert [batch["coverage"]["account_cursors"]["pancakeswap"] for batch in pending["pending_batches"]] == [
+        assert [
+            batch["coverage"]["account_cursors"]["pancakeswap"] for batch in pending["pending_batches"]
+        ] == [
             "2115795788685299930",
             "2115676525345530213",
         ]
@@ -197,6 +228,7 @@ async def test_pending_native_samples_cannot_regress_committed_cursor(
         await svc.http.aclose()
 
 
+@pytest.mark.integration
 async def test_native_new_posts_after_baseline_are_ingested_with_their_exact_ids(
     tmp_path, monkeypatch, native_reader, retained
 ):

@@ -244,7 +244,8 @@ async def test_recovered_actor_has_no_terminal_failure(reader, monkeypatch, cloc
     fetch_snapshot = importlib.import_module("direct_fetch").fetch_snapshot
     result = await fetch_snapshot({"handles": ["alice"], "cursors": {"alice": "90"}})
     assert result["health"] == "degraded" and result["failedAccounts"] == []
-    assert result["nextCursors"] == {"alice": "100"}
+    assert result["nextCursors"] == {"alice": "90"}
+    assert result["coverageGaps"] == ["alice"]
     assert "diagnostics" not in result["accounts"][0]
 
 
