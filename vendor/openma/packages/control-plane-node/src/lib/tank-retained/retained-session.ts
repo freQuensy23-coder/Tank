@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { assertCompatible, stableDigest, validateRuntimeIdentity, type RuntimeIdentity } from './runtime-identity.js';
-type Manifest = { handle: Handle; state: string; archived: boolean; identity?: RuntimeIdentity; retired?: Handle[]; upgrade?: { source: Handle; target: Handle; owner: string; identity: RuntimeIdentity } };
+type Manifest = { handle: Handle; state: string; archived: boolean; legacyFingerprint?: string; identity?: RuntimeIdentity; retired?: Handle[]; upgrade?: { source: Handle; target: Handle; owner: string; identity: RuntimeIdentity } };
 
 export type Scope = { workspaceId: string; environmentId: string; sessionId: string; workId: string };
 export type Handle = { provider: string; runtimeId: string; ownershipName?: string };
@@ -137,8 +137,10 @@ export class RetainedSessionLifecycle<R extends RetainedRuntime> {
     const identity = { scope: this.scope, provider: metadata.provider, runtimeId: metadata.runtimeId,
       fingerprint: metadata.fingerprint, state: metadata.state };
     if (candidate.contentHash !== digest(identity)) fail('retained_manifest_invalid');
-    if (!archiveOnly && metadata.state !== 'archived' && metadata.fingerprint !== this.options.fingerprint) fail('retained_configuration_changed');
-    return { handle: { provider: String(metadata.provider), runtimeId: metadata.runtimeId as string }, state: String(metadata.state), archived: metadata.state === 'archived' };
+    if (typeof metadata.fingerprint !== 'string' || !/^sha256:[a-f0-9]{64}$/.test(metadata.fingerprint)) fail('retained_manifest_invalid');
+    if (!archiveOnly && metadata.state !== 'archived' && metadata.fingerprint !== this.options.fingerprint
+        && (!this.options.identity || !['retained', 'aborted'].includes(String(metadata.state)))) fail('retained_configuration_changed');
+    return { handle: { provider: String(metadata.provider), runtimeId: metadata.runtimeId as string }, state: String(metadata.state), archived: metadata.state === 'archived', legacyFingerprint: metadata.fingerprint };
   }
   private async publish(state: 'allocating' | 'aborted' | 'retained' | 'archived'): Promise<void> {
     if (this.manifest?.identity) {
@@ -177,7 +179,8 @@ export class RetainedSessionLifecycle<R extends RetainedRuntime> {
       let manifest = acquired.publication ? this.decode(acquired.publication.workspaceCandidate) : null;
       this.manifest = manifest;
       if (manifest?.archived) fail('retained_session_archived');
-      if (manifest?.state === 'retained' && manifest.identity && manifest.identity.image !== this.options.identity!.image) {
+      if (manifest?.state === 'retained' && ((manifest.identity && manifest.identity.image !== this.options.identity!.image)
+          || (manifest.legacyFingerprint && manifest.legacyFingerprint !== this.options.fingerprint))) {
         this.handle = manifest.handle;
         for (const handle of [...manifest.retired ?? [], manifest.handle]) {
           signal.throwIfAborted(); await assertExecutionCurrent();

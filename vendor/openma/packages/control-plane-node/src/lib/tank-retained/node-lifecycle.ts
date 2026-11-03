@@ -119,7 +119,13 @@ export class NodeRetainedLifecycle {
       if (entry.allocation) {
         const fingerprint = await this.options.fingerprint(context, entry.allocation);
         this.assertOpen(lifetime);
-        if (entry.controller && fingerprint !== entry.controller.options.fingerprint) throw Error('retained_configuration_changed');
+        const identity = await this.options.identity?.(context, entry.allocation);
+        this.assertOpen(lifetime);
+        await this.options.assertExecutionCurrent(context.executionFence);
+        if (entry.controller && (fingerprint !== entry.controller.options.fingerprint
+            || JSON.stringify(identity) !== JSON.stringify(entry.controller.options.identity))) {
+          entry.controller = this.controller(scope, fingerprint, entry.allocation, identity);
+        }
       }
       entry.context = context;
       return;

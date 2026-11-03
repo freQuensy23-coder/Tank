@@ -188,6 +188,30 @@ test('image update replaces only the native runtime and discards files packages 
   const next=s.controller({identity});await next.begin(permitted,signal());await next.idle(permitted);assert.equal(s.creates,2);
 });
 
+test('legacy update retires the exact old disk without adopting its opaque configuration',async()=>{
+  const s=setup(),old=s.controller();await old.begin(permitted,signal());
+  await old.use(async runtime=>{const {disk}=await runtime.exec('write');disk.files.private='discard';});
+  await old.idle(permitted);
+  const updated=s.controller({fingerprint:'sha256:'+'b'.repeat(64),identity:schema2Identity});
+  await updated.begin(permitted,signal());
+  await updated.use(async runtime=>{const {disk}=await runtime.exec('read');assert.deepEqual(disk.files,{});assert.equal(disk.id,'box_2');});
+  await updated.idle(permitted);
+  assert.equal(s.disks.has('box_1'),false);assert.equal(s.calls.some(call=>call[0]==='fresh-get'),false);
+  assert.equal([...s.rows.values()][0].publication.workspaceCandidate.metadata.schema,2);
+});
+
+for(const fault of ['integrity','scope','provider','fingerprint','execution','resource'])test(`legacy replacement refuses ${fault} before deletion`,async()=>{
+  const s=setup(),old=s.controller();await old.begin(permitted,signal());await old.idle(permitted);
+  const candidate=[...s.rows.values()][0].publication.workspaceCandidate;
+  if(fault==='integrity')candidate.contentHash='sha256:'+'0'.repeat(64);
+  if(fault==='scope')candidate.metadata.scope='{}';
+  if(fault==='provider')candidate.metadata.provider='foreign';
+  if(fault==='fingerprint')candidate.metadata.fingerprint='broken';
+  if(fault==='resource')s.fences.isCurrent=async()=>false;
+  await assert.rejects(s.controller({fingerprint:'sha256:'+'b'.repeat(64),identity:schema2Identity}).begin(async()=>{if(fault==='execution')throw Error('unauthorized');},signal()));
+  assert.equal(s.disks.has('box_1'),true);assert.equal(s.creates,1);assert.equal(s.calls.some(call=>call[0]==='remove-owned'),false);
+});
+
 test('new identified runtimes publish schema2 without adopting legacy provenance',async()=>{
   const s=setup(),c=s.controller({identity:schema2Identity});await c.begin(permitted,signal());await c.idle(permitted);
   const candidate=[...s.rows.values()][0].publication.workspaceCandidate;

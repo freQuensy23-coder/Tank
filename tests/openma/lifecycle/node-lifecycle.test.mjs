@@ -49,6 +49,44 @@ test('runner bind is lazy, preserves per-exec hooks and same disk across two tur
   await replacement.archive({...newContext,reason:'archived'});assert.equal(s.disks.size,0);
 });
 
+for(const legacy of [false,true])test(`warm binding replaces updated runtime with unchanged native continuation (legacy=${legacy})`,async()=>{
+  const {planSessionContinuation}=await import('../../../vendor/openma/packages/session-runtime-contract/src/continuation.ts');
+  const {encodeSessionEventDocument,decodeSessionEventDocument}=await import('../../../vendor/openma/packages/session-runtime-contract/src/history.ts');
+  const s=fixture();let fingerprint=s.options.fingerprint;
+  let identity=legacy?undefined:{version:2,image:'sha256:'+'c'.repeat(64),compatibility:{scope:'sha256:'+'d'.repeat(64)}};
+  const manager=s.lifecycle({fingerprint:async()=>fingerprint,identity:async()=>identity}),sb=s.sandbox(),ctx=s.context(sb);
+  await manager.bind(ctx);await sb.exec('write','FAKE_FIRST');await manager.idle(ctx);
+  const content=value=>[{type:'text',text:value}];
+  const events=[
+    {id:'prompt',type:'user.message',content:content('Remember the full context')},
+    {id:'running',type:'session.status_running'},
+    {id:'model',type:'span.model_request_start'},
+    {id:'bash-call',type:'agent.tool_use',name:'bash',input:{command:'pwd'}},
+    {id:'bash-result',type:'agent.tool_result',toolUseId:'bash-call',content:content('/workspace'),isError:false},
+    {id:'rejected',type:'agent.custom_tool_use',name:'record_event',input:{precision:'MINUTE'}},
+    {id:'rejected-result',type:'agent.tool_result',toolUseId:'rejected',content:content('Use HOUR'),isError:true},
+    {id:'pending',type:'agent.custom_tool_use',name:'record_event',input:{precision:'HOUR'}},
+    {id:'model-end',type:'span.model_request_end',modelRequestStartId:'model',isError:false,modelUsage:{inputTokens:10,outputTokens:5,cacheReadInputTokens:0,cacheCreationInputTokens:0}},
+    {id:'waiting',type:'session.status_idle',stopReason:{type:'requires_action',eventIds:['pending']}},
+    {id:'callback',type:'user.custom_tool_result',customToolUseId:'pending',content:content('Recorded'),isError:false},
+  ].map(event=>({processedAt:'2026-11-03T00:00:00Z',...event}));
+  const documents=events.map((event,index)=>encodeSessionEventDocument(event,{revision:index+1,index:0},index>0&&index<10?'original':undefined));
+  const snapshot={revision:events.length,orderedEvents:documents.map(document=>decodeSessionEventDocument(document)),executions:[
+    {id:'original',laneId:'sthr_primary',state:'completed',revision:1,events:[events[0]],attemptCount:1,interruptRequestedAt:null},
+    {id:'reply',laneId:'sthr_primary',state:'running',revision:1,events:[events[10]],attemptCount:1,interruptRequestedAt:null},
+  ]};
+  const before=planSessionContinuation(snapshot,'reply');assert.equal(before.mode,'model');
+  fingerprint='sha256:'+'b'.repeat(64);identity={version:2,image:'sha256:'+'e'.repeat(64),compatibility:{scope:'sha256:'+'d'.repeat(64)}};
+  await manager.bind({...ctx,executionFence:{current:true}});
+  assert.deepEqual(JSON.parse((await sb.exec('read','FAKE_NEXT')).stdout),{key:'FAKE_NEXT'});
+  await manager.idle(ctx);
+  assert.equal(s.disks.has('box_1'),false);assert.equal(s.disks.size,1);
+  const after=planSessionContinuation(snapshot,'reply');assert.deepEqual(after,before);
+  assert.deepEqual(after.historyEvents.filter(event=>event.type.startsWith('agent.')).map(event=>event.id),['bash-call','bash-result','rejected','rejected-result','pending']);
+  assert.deepEqual(after.historyEvents.filter(event=>event.type==='user.custom_tool_result').map(event=>event.customToolUseId),['pending']);
+  assert.deepEqual(documents,events.map((event,index)=>encodeSessionEventDocument(event,{revision:index+1,index:0},index>0&&index<10?'original':undefined)));
+});
+
 test('no-guest-I/O turn does not allocate a VM and cold archive does not restore one',async()=>{
   const s=fixture(),manager=s.lifecycle(),sandbox=s.sandbox(),ctx=s.context(sandbox);
   await manager.bind(ctx);await manager.idle(ctx);assert.equal(s.disks.size,0);
