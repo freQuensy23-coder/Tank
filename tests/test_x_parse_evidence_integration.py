@@ -22,8 +22,12 @@ from tank.util import sha256
 HTTP_CLIENT = httpx.AsyncClient
 SECRET_TEXT = (
     b" configured-secret Cookie: cookie-secret\n1.https://reader:db-password@host/path?api_token=query-secret"
+    b"&auth=redirect-auth-credential"
 )
-SAFE_TEXT = b" [REDACTED] Cookie: [REDACTED]\n1.https://reader:[REDACTED]@host/path?api_token=[REDACTED]"
+SAFE_TEXT = (
+    b" [REDACTED] Cookie: [REDACTED]\n1.https://reader:[REDACTED]@host/path?api_token=[REDACTED]"
+    b"&auth=[REDACTED]"
+)
 CASES = [
     (200, b"<title>This page is down / X</title>", "PUBLIC_PROFILE_NOT_READABLE", False, 0),
     (200, b"", "PUBLIC_PROFILE_NOT_READABLE", False, 0),
@@ -95,7 +99,9 @@ def parse_wire(monkeypatch):
         def do_GET(self):
             state["requests"].append(self.path)
             if "?" not in self.path:
-                self.respond(302, b"", {"Location": "/alice?api_token=query-secret"})
+                self.respond(
+                    302, b"", {"Location": "/alice?api_token=query-secret&auth=redirect-auth-credential"}
+                )
                 return
             body = gzip.compress(state["body"]) if state["gzip"] else state["body"]
             headers = {"Content-Type": "text/html", "Set-Cookie": "header-secret"}
@@ -168,14 +174,14 @@ async def test_real_actor_2xx_parse_failure_bytes_reach_ops_without_cursor_advan
     assert retained == expected and response["bodySha256"] == sha256(expected)
     assert response["status"] == status and response["bodyBytes"] == len(expected)
     assert response["bodyTruncated"] is False
-    assert response["finalUrl"] == "https://x.com/alice?api_token=[REDACTED]"
+    assert response["finalUrl"] == "https://x.com/alice?api_token=[REDACTED]&auth=[REDACTED]"
     assert response["readError"] is None
     if articles is not None:
         assert response["articleCount"] == response["statusLinkCount"] == articles
         assert response["textCount"] == 0 and response["scriptCount"] == int(compressed)
         expected_title = raw.decode().split("<title>")[1].split("</title>")[0] if raw else ""
         assert response["title"] == expected_title
-    assert state["requests"] == ["/alice", "/alice?api_token=query-secret"]
+    assert state["requests"] == ["/alice", "/alice?api_token=query-secret&auth=redirect-auth-credential"]
     assert all(
         secret not in json.dumps(output)
         for secret in (
@@ -183,6 +189,7 @@ async def test_real_actor_2xx_parse_failure_bytes_reach_ops_without_cursor_advan
             "cookie-secret",
             "db-password",
             "query-secret",
+            "redirect-auth-credential",
             "header-secret",
         )
     )
@@ -221,6 +228,7 @@ async def test_real_actor_2xx_parse_failure_bytes_reach_ops_without_cursor_advan
             b"cookie-secret",
             b"db-password",
             b"query-secret",
+            b"redirect-auth-credential",
             b"header-secret",
         )
     )
@@ -228,11 +236,26 @@ async def test_real_actor_2xx_parse_failure_bytes_reach_ops_without_cursor_advan
 
 @pytest.mark.integration
 @pytest.mark.postgres
-async def test_parse_metadata_survives_jsonb_and_real_multipart_upload(postgres_template, parse_wire):
+@pytest.mark.parametrize("consumer_input", ["actor", "unredacted"])
+async def test_parse_metadata_survives_jsonb_and_real_multipart_upload(
+    postgres_template, parse_wire, consumer_input
+):
     worker, origin, state = parse_wire
     state["body"] = b"<title>Alice (@alice) / X</title>" + SECRET_TEXT
     expected = b"<title>Alice (@alice) / X</title>" + SAFE_TEXT
     output = await worker.fetch_snapshot({"handles": ["alice"], "cursors": {"alice": "90"}})
+    response = output["accounts"][0]["diagnostics"]["attempts"][0]["response"]
+    assert response["finalUrl"] == "https://x.com/alice?api_token=[REDACTED]&auth=[REDACTED]"
+    assert response["body"].encode() == expected and response["bodySha256"] == sha256(expected)
+    if consumer_input == "unredacted":
+        response.update(
+            finalUrl="https://x.com/alice?api_token=query-secret&auth=redirect-auth-credential",
+            title="Alice (@alice) / X https://host/?auth=redirect-auth-credential",
+            body=state["body"].decode(),
+            bodyBytes=len(state["body"]),
+            bodySha256=sha256(state["body"]),
+            redacted=False,
+        )
     async with HTTP_CLIENT(
         transport=httpx.MockTransport(lambda request: httpx.Response(201, json=output))
     ) as http:
@@ -252,6 +275,17 @@ async def test_parse_metadata_survives_jsonb_and_real_multipart_upload(postgres_
             "2026-11-03T20:00:00Z",
         )
         saved = await repo.get("out.ops_notices", notice_id)
+        assert all(
+            secret not in json.dumps(saved)
+            for secret in (
+                "configured-secret",
+                "cookie-secret",
+                "db-password",
+                "query-secret",
+                "redirect-auth-credential",
+                "header-secret",
+            )
+        )
         retained_documents = documents(saved["entry_errors"])
         assert retained_documents[0]["content"] == expected
         async with HTTP_CLIENT(transport=ProfileTransport(origin)) as http:
@@ -260,8 +294,11 @@ async def test_parse_metadata_survives_jsonb_and_real_multipart_upload(postgres_
         assert uploads == [document["content"] for document in retained_documents]
         metadata = json.loads(uploads[1])["attempts"][0]["response"]
         assert metadata["bodySha256"] == sha256(expected) and metadata["status"] == 200
-        assert metadata["title"] == "Alice (@alice) / X" and metadata["articleCount"] == 0
-        assert metadata["finalUrl"] == "https://x.com/alice?api_token=[REDACTED]"
+        expected_title = "Alice (@alice) / X"
+        if consumer_input == "unredacted":
+            expected_title += " https://host/?auth=[REDACTED]"
+        assert metadata["title"] == expected_title and metadata["articleCount"] == 0
+        assert metadata["finalUrl"] == "https://x.com/alice?api_token=[REDACTED]&auth=[REDACTED]"
         assert all(
             secret not in b"".join(uploads)
             for secret in (
@@ -269,6 +306,7 @@ async def test_parse_metadata_survives_jsonb_and_real_multipart_upload(postgres_
                 b"cookie-secret",
                 b"db-password",
                 b"query-secret",
+                b"redirect-auth-credential",
                 b"header-secret",
             )
         )

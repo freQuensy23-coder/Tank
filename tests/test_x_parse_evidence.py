@@ -41,12 +41,14 @@ async def test_parse_failure_retains_original_bounded_response(reader, monkeypat
 
 
 @pytest.mark.parametrize("field", ["finalUrl", "title"])
-def test_parse_metadata_is_redacted_bounded_jsonb_safe_and_allowlisted(field):
+@pytest.mark.parametrize("prefix", ["1.https", "+.-1.https", "https"])
+@pytest.mark.parametrize("query_key", ["token", "api_token", "api-token", "apiToken", "auth", "AuTh"])
+def test_parse_metadata_is_redacted_bounded_jsonb_safe_and_allowlisted(field, prefix, query_key):
     value = diagnostics("body")
     response = value["attempts"][0]["response"]
     response.update(
         {
-            field: "1.https://reader:db-password@host/path?api_token=query-secret configured-secret\x00\ud800"
+            field: f"{prefix}://reader:db-password@host/path?{query_key}=query-secret configured-secret\x00\ud800"
             + "x" * 9000,
             "articleCount": 3,
             "statusLinkCount": 2,
@@ -58,7 +60,7 @@ def test_parse_metadata_is_redacted_bounded_jsonb_safe_and_allowlisted(field):
     clean = sanitize(value, "configured-secret")
     captured = clean["attempts"][0]["response"]
     assert captured[field].startswith(
-        "1.https://reader:[REDACTED]@host/path?api_token=[REDACTED] [REDACTED][NUL]"
+        f"{prefix}://reader:[REDACTED]@host/path?{query_key}=[REDACTED] [REDACTED][NUL]"
     )
     assert len(captured[field]) <= 8192
     assert all(
@@ -82,7 +84,7 @@ def test_invalid_parse_counts_are_not_persisted(field, bad):
 
 
 @pytest.mark.parametrize("prefix", ["1.https", "+.-1.https", "https"])
-@pytest.mark.parametrize("query_key", ["token", "api_token", "api-token", "apiToken"])
+@pytest.mark.parametrize("query_key", ["token", "api_token", "api-token", "apiToken", "auth", "AuTh"])
 def test_actor_parse_metadata_redacts_numbered_urls_and_bounds_title(reader, monkeypatch, prefix, query_key):
     monkeypatch.setenv("ACTOR_TOKEN", "configured-secret")
     raw = (
