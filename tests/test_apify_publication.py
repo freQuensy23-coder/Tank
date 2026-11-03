@@ -148,11 +148,13 @@ def test_worker_publication_transaction(tmp_path, mode):
         )
         if mode in {"finish_child_failed", "finish_child_killed"}:
             helper_path = tmp_path / "apify_deploy.py"
-            failure = "os._exit(1)" if mode == "finish_child_failed" else "os.kill(os.getpid(), signal.SIGKILL)"
+            failure = (
+                "os._exit(1)" if mode == "finish_child_failed" else "os.kill(os.getpid(), signal.SIGKILL)"
+            )
             helper_path.write_text(
                 helper_path.read_text().replace(
                     '        temporary.replace(PENDING)\n    elif action == "clear":',
-                    '        temporary.replace(PENDING)\n'
+                    "        temporary.replace(PENDING)\n"
                     '        Path("finish-committed").write_text(PENDING.read_text())\n'
                     f'        {failure}\n    elif action == "clear":',
                 )
