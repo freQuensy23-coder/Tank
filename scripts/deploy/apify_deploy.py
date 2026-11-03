@@ -10,8 +10,49 @@ from pathlib import Path
 from urllib.request import Request, urlopen
 
 PENDING = Path("worker.pending")
+
+
+def validate_pending(pending):
+    patterns = {
+        "actor": r"/acts/[A-Za-z0-9]+",
+        "tag": r"[A-Za-z0-9][A-Za-z0-9_.-]*",
+        "previous": r"[A-Za-z0-9][A-Za-z0-9_-]*",
+        "candidate": r"[A-Za-z0-9][A-Za-z0-9_-]*",
+        "previous_release": r"[0-9a-f]{40}",
+        "release": r"[0-9a-f]{40}",
+    }
+    compose = Path("worker.previous-compose.yaml")
+    if (
+        type(pending) is not dict
+        or set(pending) != {*patterns, "version", "committed", "previous_compose"}
+        or type(pending["version"]) is not int
+        or pending["version"] != 1
+        or type(pending["committed"]) is not bool
+        or any(
+            type(pending[key]) is not str or not re.fullmatch(pattern, pending[key])
+            for key, pattern in patterns.items()
+        )
+        or pending["previous_compose"] != compose.name
+        or not compose.is_file()
+        or compose.is_symlink()
+    ):
+        raise RuntimeError("unsupported or invalid worker journal")
+    return pending
+
+
+def load_pending():
+    return validate_pending(json.loads(PENDING.read_text()))
+
+
 if PENDING.exists() and sys.argv[1] != "prepare":
-    retained = json.loads(PENDING.read_text())
+    try:
+        retained = load_pending()
+    except Exception:
+        print(
+            "Apify deployment failed: unsupported or invalid worker journal; transaction retained",
+            file=sys.stderr,
+        )
+        sys.exit(1)
     ACTOR, TAG = retained["actor"], retained["tag"]
 else:
     TARGETS = re.findall(
@@ -132,24 +173,27 @@ def prepare():
     temporary = PENDING.with_suffix(".next")
     temporary.write_text(
         json.dumps(
-            {
-                "actor": ACTOR,
-                "tag": TAG,
-                "previous": previous,
-                "candidate": candidate,
-                "previous_release": Path("deployed").read_text().strip(),
-                "previous_compose": "worker.previous-compose.yaml",
-                "release": sys.argv[2],
-                "committed": False,
-            }
+            validate_pending(
+                {
+                    "version": 1,
+                    "actor": ACTOR,
+                    "tag": TAG,
+                    "previous": previous,
+                    "candidate": candidate,
+                    "previous_release": Path("deployed").read_text().strip(),
+                    "previous_compose": "worker.previous-compose.yaml",
+                    "release": sys.argv[2],
+                    "committed": False,
+                }
+            )
         )
     )
     temporary.replace(PENDING)
 
 
 def tag(build_id):
+    pending = load_pending()
     active = current()
-    pending = json.loads(PENDING.read_text())
     require(active in {pending["previous"], pending["candidate"]}, "worker tag ownership lost")
     if active != build_id:
         try:
@@ -168,7 +212,7 @@ def main():
         return
     if action == "rollback" and not PENDING.exists():
         return
-    pending = json.loads(PENDING.read_text())
+    pending = load_pending()
     if action == "previous-release":
         require(re.fullmatch(r"[0-9a-f]{40}", pending["previous_release"]), "invalid recovery release")
         print(pending["previous_release"])
@@ -180,7 +224,7 @@ def main():
         )
     elif action == "settled":
         require(
-            pending["committed"]
+            pending["committed"] is True
             and Path("deployed").read_text().strip() == pending["release"]
             and current() == pending["candidate"],
             "unfinished deployment",
