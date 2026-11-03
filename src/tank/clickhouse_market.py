@@ -197,7 +197,7 @@ def _external_parameters(query, params, parameters):
         column = f"c{len(columns)}"
         columns.append(f"{column} {kind}")
         values.append(wire)
-        substitutions["{" + name + ":" + kind + "}"] = f"(SELECT {column} FROM {table})"
+        substitutions["{" + name + ":" + kind + "}"] = f"(SELECT tuple({column}) FROM {table}).1"
     if columns:
         tokens = (
             r"'(?:[^'\\]|\\.|'')*'|\"(?:[^\"\\]|\\.|\"\")*\"|`(?:[^`\\]|\\.|``)*`"

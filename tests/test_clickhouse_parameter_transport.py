@@ -29,11 +29,7 @@ def fields(request):
     parts = list(message.iter_parts())
     names = [part.get_param("name", header="content-disposition") for part in parts]
     assert len([name for name in names if name != "query"]) == len(set(names) - {"query"})
-    assert all(
-        len(part.get_payload(decode=True)) <= 32768
-        for part in parts
-        if part.get_filename() is None
-    )
+    assert all(len(part.get_payload(decode=True)) <= 32768 for part in parts if part.get_filename() is None)
     result = {}
     for name, part in zip(names, parts, strict=True):
         if part.get_filename() is not None:
@@ -83,7 +79,7 @@ async def test_parameter_bytes_auth_database_and_format(large, database):
             assert dict(request.url.params) == SETTINGS
             assert fields(request) == {
                 "query": rewritten.replace(
-                    "{text:String}", "(SELECT c0 FROM _tank_http_parameters)"
+                    "{text:String}", "(SELECT tuple(c0) FROM _tank_http_parameters).1"
                 ).encode(),
                 **{key: value.encode() for key, value in expected.items() if key != "param_text"},
                 "_tank_http_parameters_structure": b"c0 String",
@@ -141,7 +137,8 @@ async def test_large_query_chunks_preserve_literals_comments_and_parameter_bytes
             assert received == {
                 "query": (
                     query.replace(
-                        "{value:String} AS value", "(SELECT c0 FROM _tank_http_parameters) AS value"
+                        "{value:String} AS value",
+                        "(SELECT tuple(c0) FROM _tank_http_parameters).1 AS value",
                     )
                     + " FORMAT JSONEachRow"
                 ).encode(),
@@ -149,7 +146,7 @@ async def test_large_query_chunks_preserve_literals_comments_and_parameter_bytes
                 "_tank_http_parameters_format": b"TabSeparated",
                 "_tank_http_parameters": (wire + "\n").encode(),
             }
-        return httpx.Response(200, content=b"{\"value\":1}\n")
+        return httpx.Response(200, content=b'{"value":1}\n')
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(respond)) as http:
         await ClickHouse("http://localhost:8123", http=http).rows(query, parameters)
@@ -307,10 +304,7 @@ async def test_real_native_domain_parameter_serializers_preserve_complete_json(r
             {
                 "sup_snapshot": snapshot,
                 "sup_config": config,
-                **{
-                    "sup_" + name: domain
-                    for name in ("spots", "derivatives", "liquidity", "relative")
-                },
+                **{"sup_" + name: domain for name in ("spots", "derivatives", "liquidity", "relative")},
             },
             "ordered",
         ),
@@ -422,6 +416,7 @@ async def test_real_native_large_multipart_values(request):
     }
     parameters.update(
         array=(array_wire, "Array(String)"),
+        nullable=(parameters["ascii"][0], "Nullable(String)"),
         truth=(True, "Bool"),
         number=(-123, "Int64"),
         decimal=("123.125", "Decimal(12, 3)"),
@@ -442,6 +437,10 @@ async def test_real_native_large_multipart_values(request):
             )
         )
         + ", {null:Nullable(String)} AS nullable_value, {array:Array(String)} AS array_value"
+        + ", {nullable:Nullable(String)} AS nonnull_nullable_value"
+        + ", toTypeName({ascii:String}) AS string_type"
+        + ", toTypeName({array:Array(String)}) AS array_type"
+        + ", toTypeName({nullable:Nullable(String)}) AS nullable_type"
         + ", {truth:Bool} AS truth_value, {number:Int64} AS number_value"
         + ", toString({decimal:Decimal(12, 3)}) AS decimal_value"
         + f", '{query_text}' AS query_value"
@@ -462,6 +461,10 @@ async def test_real_native_large_multipart_values(request):
         assert rows[0][key + "_substring"] == value[1:10]
     assert rows[0]["nullable_value"] is None
     assert rows[0]["array_value"] == array_values
+    assert rows[0]["nonnull_nullable_value"] == ascii_text
+    assert rows[0]["string_type"] == "String"
+    assert rows[0]["array_type"] == "Array(String)"
+    assert rows[0]["nullable_type"] == "Nullable(String)"
     assert rows[0]["truth_value"] is True
     assert rows[0]["number_value"] == -123
     assert rows[0]["decimal_value"] == "123.125"
