@@ -343,6 +343,7 @@ async def _compare(clickhouse, original_truth, data, spots=None, derivatives=Non
     "case",
     [
         "normal",
+        "scientific_balances_and_revenue",
         "missing",
         "future_fundamental",
         "future_receipt",
@@ -373,7 +374,13 @@ async def test_native_supply_complete_frozen_original(clickhouse, original_truth
     data = _supply_snapshot()
     spots, derivatives = _inputs()
     fundamental = data["supply"][-1]
-    if case == "missing":
+    if case == "scientific_balances_and_revenue":
+        for row in data["supply"]:
+            for balance in row.get("balances", []):
+                balance["qty_native"] = format(Decimal(balance["qty_native"]), "E")
+        fundamental["protocols"]["z-child"]["dailyHoldersRevenue"]["total24h"] = "-9.99125e2"
+        fundamental["protocols"]["z-child"]["dailyHoldersRevenue"]["total30d"] = "0E-8"
+    elif case == "missing":
         data["supply"] = []
     elif case == "future_fundamental":
         fundamental["ts"] = iso(CUTOFF + timedelta(microseconds=1))

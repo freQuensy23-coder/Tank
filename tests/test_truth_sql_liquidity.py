@@ -181,6 +181,7 @@ async def _compare(native_client, original_truth, snapshot, spot, relative, conf
     "case",
     [
         "complete",
+        "scientific_book_and_flow",
         "no_books",
         "no_flows",
         "bad_integrity",
@@ -209,7 +210,17 @@ async def test_native_liquidity_complete_original_output(
     native_client, original_truth, case, record_property
 ):
     snapshot, spot, relative = _packet()
-    if case == "no_books":
+    if case == "scientific_book_and_flow":
+        for book in snapshot["books"]:
+            book["mid"] = "1e2"
+            book["bids"] = [["9.9e1", "5e0"], {"price": "9.8e1", "qty": "1e3"}]
+            book["asks"] = [["1.01e2", "5e0"], {"price": "1.02e2", "qty": "1e3"}]
+            for side in ("bid", "ask"):
+                for unit, value in book["depth"][side]["p1"].items():
+                    book["depth"][side]["p1"][unit] = format(Decimal(value), "E")
+        for row in snapshot["flow_bars"]:
+            row.update(buy_notional="1e2", sell_notional="2e1", buy_qty="1e0", sell_qty="2e-1")
+    elif case == "no_books":
         snapshot["books"] = []
     elif case == "no_flows":
         snapshot["flow_bars"] = []
