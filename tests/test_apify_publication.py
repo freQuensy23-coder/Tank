@@ -2,6 +2,7 @@ import json
 import os
 import subprocess
 import threading
+import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
@@ -26,6 +27,9 @@ ACTOR = "rbf5CQKQgKNVl4SfO"
         "readback_failed",
         "rollback_refused",
         "second",
+        "crash_marker",
+        "changed_actor",
+        "ownership_unreadable",
     ],
 )
 def test_worker_publication_transaction(tmp_path, mode):
@@ -36,32 +40,44 @@ def test_worker_publication_transaction(tmp_path, mode):
     (source / ".actor/actor.json").write_text('{"version":"0.2"}')
     files = [{"name": "main.py", "format": "TEXT", "content": "print('selected revision')\n"}]
     files.append({"name": ".actor/actor.json", "format": "TEXT", "content": '{"version":"0.2"}'})
-    state = {"direct": "old", "files": files if mode == "unchanged" else [], "writes": []}
+    state = {
+        "direct": "old",
+        "next": "other-old",
+        "files": files if mode == "unchanged" else [],
+        "writes": [],
+        "reads": [],
+    }
 
     class Provider(BaseHTTPRequestHandler):
         def log_message(self, format, *args):
             pass
 
         def do_GET(self):
+            state["reads"].append(self.path)
+            if mode == "ownership_unreadable" and state["direct"] == "new":
+                self.send_error(503)
+                return
             if mode == "readback_failed" and state.get("read_fail"):
                 state["read_fail"] = False
                 self.send_error(503)
                 return
-            if self.path == f"/v2/acts/{ACTOR}":
+            if self.path.startswith("/v2/acts/"):
+                actor = self.path.rsplit("/", 1)[-1]
+                tag = "direct" if actor == ACTOR else "next"
                 data = {
-                    "id": ACTOR,
+                    "id": actor,
                     "versions": [],
-                    "taggedBuilds": {"direct": {"buildId": state["direct"]}},
+                    "taggedBuilds": {tag: {"buildId": state[tag]}},
                 }
             else:
                 build = self.path.split("/")[-1].split("?")[0]
                 data = {
                     "id": build,
-                    "actId": ACTOR,
+                    "actId": "otherActor" if build.startswith("other-") else ACTOR,
                     "status": "FAILED" if mode == "failed" and build == "new" else "SUCCEEDED",
                     "actVersion": {
                         "sourceType": "SOURCE_FILES",
-                        "sourceFiles": state["files"] if build == "old" else state["uploaded"],
+                        "sourceFiles": state["files"] if build.endswith("old") else state["uploaded"],
                     },
                 }
                 if mode == "wrong_source" and build == "new":
@@ -81,13 +97,15 @@ def test_worker_publication_transaction(tmp_path, mode):
                 state["uploaded"] = body["sourceFiles"]
                 self.reply(body)
             elif "/builds" in self.path:
-                self.reply({"id": "new", "status": "READY"})
+                build = "other-new" if "/otherActor/" in self.path else "new"
+                self.reply({"id": build, "status": "READY"})
             else:
-                target = body["taggedBuilds"]["direct"]["buildId"]
+                tag = next(iter(body["taggedBuilds"]))
+                target = body["taggedBuilds"][tag]["buildId"]
                 if mode == "rollback_refused" and target == "old":
                     self.send_error(503)
                     return
-                state["direct"] = target
+                state[tag] = target
                 if target == "new" and mode == "ack_lost":
                     self.close_connection = True
                     return
@@ -134,6 +152,11 @@ docker() { return 0; }
 """
         marker = "previous=$(cat deployed 2>/dev/null || true)"
         script = script.replace(marker, hook + marker)
+        if mode in {"crash_marker", "changed_actor"}:
+            script = script.replace(
+                "      apify finish",
+                '      if [ "$MODE" != success ]; then kill -KILL $$; fi\n      apify finish',
+            )
         (tmp_path / "deploy.sh").write_text(script)
         (tmp_path / "deployed").write_text("b" * 40 + "\n")
         result = subprocess.run(
@@ -145,11 +168,17 @@ docker() { return 0; }
         )
         success = mode in {"success", "unchanged", "ack_lost", "second"}
         assert (result.returncode == 0) == success, result.stdout + result.stderr
-        assert state["direct"] == (
-            "new" if mode in {"success", "ack_lost", "rollback_refused", "second"} else "old"
-        )
+        remains_new = success and mode != "unchanged"
+        remains_new = remains_new or mode in {
+            "rollback_refused",
+            "crash_marker",
+            "changed_actor",
+            "ownership_unreadable",
+        }
+        assert state["direct"] == ("new" if remains_new else "old")
         assert not (tmp_path / "injected").exists()
-        assert (tmp_path / "deployed").read_text().strip() == ("a" * 40 if success else "b" * 40)
+        marker_written = success or mode in {"crash_marker", "changed_actor"}
+        assert (tmp_path / "deployed").read_text().strip() == ("a" * 40 if marker_written else "b" * 40)
         if mode == "unchanged":
             assert state["writes"] == []
         if mode in {"failed", "wrong_source"}:
@@ -157,8 +186,24 @@ docker() { return 0; }
         if mode == "rollback_refused":
             assert (tmp_path / "worker.pending").exists()
             assert (tmp_path / "rolls").read_text().splitlines() == ["a" * 40, "b" * 40]
-        if mode in {"second", "readback_failed"}:
+        if mode == "ownership_unreadable":
+            assert (tmp_path / "worker.pending").exists()
+            assert not (tmp_path / "rolls").exists()
+            tag_writes = [body for path, body in state["writes"] if path == f"/v2/acts/{ACTOR}"]
+            assert tag_writes == [{"taggedBuilds": {"direct": {"buildId": "new"}}}]
+        if mode in {"crash_marker", "changed_actor"}:
+            pending = json.loads((tmp_path / "worker.pending").read_text())
+            assert result.returncode == -9
+            assert pending["committed"] is False
+            assert pending["previous_release"] == "b" * 40
+            assert pending["release"] == "a" * 40
+        if mode == "changed_actor":
+            (tmp_path / "worker-source.yaml").write_text(
+                "url: https://api.apify.com/v2/actors/otherActor/run-sync?build=next&memory=256\n"
+            )
+        if mode in {"second", "readback_failed", "crash_marker", "changed_actor"}:
             writes = len(state["writes"])
+            reads = len(state["reads"])
             retry = subprocess.run(
                 ["bash", str(tmp_path / "deploy.sh"), "c" * 40],
                 env={**os.environ, "MODE": "success"},
@@ -170,7 +215,92 @@ docker() { return 0; }
             assert (tmp_path / "deployed").read_text().strip() == "c" * 40
             if mode == "second":
                 assert len(state["writes"]) == writes
+            if mode in {"crash_marker", "changed_actor"}:
+                assert (tmp_path / "rolls").read_text().splitlines() == ["a" * 40, "b" * 40, "c" * 40]
+                assert state["writes"][writes] == (
+                    f"/v2/acts/{ACTOR}",
+                    {"taggedBuilds": {"direct": {"buildId": "old"}}},
+                )
+                assert state["reads"][reads] == f"/v2/acts/{ACTOR}"
+                pending = json.loads((tmp_path / "worker.pending").read_text())
+                assert pending["committed"] is True
+                assert pending["previous_release"] == "b" * 40
+                if mode == "changed_actor":
+                    assert state["direct"] == "old"
+                    assert state["next"] == "other-new"
+                    assert pending["actor"] == "/acts/otherActor"
+                    assert pending["tag"] == "next"
     finally:
+        server.shutdown()
+        thread.join(timeout=2)
+        server.server_close()
+
+
+@pytest.mark.integration
+@pytest.mark.parametrize("phase", ["headers", "body", "chunk"])
+@pytest.mark.parametrize("action", ["prepare", "rollback"])
+def test_worker_http_wall_deadline_disconnects_dripping_peer(tmp_path, phase, action):
+    disconnected = threading.Event()
+    stopped = threading.Event()
+    requests = []
+
+    class Provider(BaseHTTPRequestHandler):
+        def log_message(self, format, *args):
+            pass
+
+        def do_GET(self):
+            requests.append((self.command, self.path))
+            prefixes = {
+                "headers": b"HTTP/1.1 200 OK\r\nX-Drip: ",
+                "body": b"HTTP/1.1 200 OK\r\nContent-Length: 100000\r\n\r\n",
+                "chunk": b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n",
+            }
+            try:
+                self.connection.sendall(prefixes[phase])
+                while not stopped.wait(0.01):
+                    self.connection.sendall(b"0" if phase == "chunk" else b" ")
+            except OSError:
+                disconnected.set()
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), Provider)
+    thread = threading.Thread(target=server.serve_forever, kwargs={"poll_interval": 0.01}, daemon=True)
+    thread.start()
+    try:
+        helper = (ROOT / "scripts/deploy/apify_deploy.py").read_text()
+        helper = helper.replace("https://api.apify.com", f"http://127.0.0.1:{server.server_port}")
+        helper = helper.replace('(300 if sys.argv[1] == "prepare" else 20)', "0.25")
+        (tmp_path / "apify_deploy.py").write_text(helper)
+        (tmp_path / ".env").write_text("APIFY_API_TOKEN=fixture-only\n")
+        (tmp_path / "worker-source.yaml").write_text(
+            f"https://api.apify.com/v2/actors/{ACTOR}/run-sync?build=direct\n"
+        )
+        (tmp_path / "worker").mkdir()
+        (tmp_path / "worker/main.py").write_text("selected\n")
+        journal = json.dumps(
+            {"actor": "/acts/" + ACTOR, "tag": "direct", "previous": "old", "candidate": "new"}
+        )
+        if action == "rollback":
+            (tmp_path / "worker.pending").write_text(journal)
+        entries = set(tmp_path.iterdir())
+        started = time.monotonic()
+        result = subprocess.run(
+            ["python3", str(tmp_path / "apify_deploy.py"), action, "a" * 40],
+            cwd=tmp_path,
+            capture_output=True,
+            text=True,
+            timeout=3,
+        )
+        assert time.monotonic() - started < 2
+        assert result.returncode == 1
+        assert "TimeoutError" in result.stderr
+        assert "fixture-only" not in result.stdout + result.stderr
+        assert disconnected.wait(1)
+        assert requests == [("GET", f"/v2/acts/{ACTOR}")]
+        assert set(tmp_path.iterdir()) == entries
+        if action == "rollback":
+            assert (tmp_path / "worker.pending").read_text() == journal
+    finally:
+        stopped.set()
         server.shutdown()
         thread.join(timeout=2)
         server.server_close()

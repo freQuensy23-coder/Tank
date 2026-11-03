@@ -141,14 +141,9 @@ def prepare():
 
 
 def tag(build_id):
-    try:
-        active = current()
-    except TimeoutError:
-        raise
-    except Exception:
-        active = None
+    active = current()
     pending = json.loads(PENDING.read_text())
-    require(active in {None, pending["previous"], pending["candidate"]}, "worker tag ownership lost")
+    require(active in {pending["previous"], pending["candidate"]}, "worker tag ownership lost")
     if active != build_id:
         try:
             request("PUT", ACTOR, {"taggedBuilds": {TAG: {"buildId": build_id}}})
