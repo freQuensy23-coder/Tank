@@ -15,7 +15,7 @@ from datetime import timedelta
 
 from tank.ops_cards import plain
 from tank.ops_progress import enabled
-from tank.sources.x_diagnostics import documents, evidence_identity, sanitize
+from tank.sources.x_diagnostics import documents, evidence_identity
 from tank.time_precision import collection_clock, offset_schedule
 from tank.util import parse_time, sha256
 
@@ -145,11 +145,6 @@ async def report_entry_errors(repo, settings, source, feed, errors, seen_at):
     feed_url = feed["url"]
     pending = {}
     for error in errors:
-        if error.get("diagnostics"):
-            error = {
-                **error,
-                "diagnostics": sanitize(error["diagnostics"], getattr(settings, "apify_api_token", None)),
-            }
         pending.setdefault(error_key(source_id, feed_url, error), error)
     async with repo.lock(f"ops-entry-errors:{source_id}:{sha256(feed_url)}"), repo.transaction():
         fresh = {

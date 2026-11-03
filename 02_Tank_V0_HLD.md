@@ -112,6 +112,8 @@ GitHub evidence is SOURCE_SIDE_SUPPORT: it can raise an integration claim to BUI
 
 ### 3.7 X (S29, SECONDARY)
 
+The consumer validates diagnostic container shapes without losing account failures, records invalidEvidence paths, and caps body decoding to 2,000,000 bytes per response and 12,000,000 bytes across an actor run before allocating decoded bodies. Sanitization happens once at the actor-consumer boundary; Ops consumes that evidence without rehashing or redacting bodies again.
+
 Failed actor accounts retain their reasons and sanitized HTTP evidence through source checkpoints into Ops notices. The existing DELIVER jobs send the notice followed by response-body and metadata documents; the existing delivery ledger records independent per-document attempts and receipts. No separate diagnostic recovery service is used.
 
 - X always runs; there is no switch to turn it off. Every environment needs `APIFY_API_TOKEN` in `.env`.

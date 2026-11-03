@@ -91,7 +91,7 @@ async def notice_for(repo, evidence):
         telegram_settings(),
         {"source_id": "S29", "name": "X"},
         {"url": URL},
-        [{"account": "alice", "reason": "PUBLIC_PROFILE_HTTP_503", "diagnostics": evidence}],
+        [{"account": "alice", "reason": "PUBLIC_PROFILE_HTTP_503", "diagnostics": sanitize(evidence)}],
         "2026-10-24T12:00:00Z",
     )
     return await repo.get("out.ops_notices", notice_id)
@@ -156,7 +156,7 @@ async def test_same_body_deduplicates_despite_new_attempt_time_and_request_id_bu
     error = {
         "account": "alice",
         "reason": "PUBLIC_PROFILE_HTTP_503",
-        "diagnostics": diagnostics("first", at="2026-10-24T12:05:00Z", request_id="two"),
+        "diagnostics": sanitize(diagnostics("first", at="2026-10-24T12:05:00Z", request_id="two")),
     }
     assert await report_entry_errors(repo, settings, source, feed, [error], "2026-10-24T12:05:00Z") is None
     second = await notice_for(repo, diagnostics("second"))

@@ -10,7 +10,7 @@ Signed-out profiles show no reposts and no replies to other accounts.
 
 from collections.abc import Mapping
 from dataclasses import dataclass
-from typing import Literal
+from typing import Any, Literal
 
 import httpx
 from pydantic import BaseModel, ConfigDict, Field, field_validator
@@ -94,7 +94,7 @@ class ApifyAccount(ApifyModel):
     posts: int = 0
     history_gap: bool = Field(default=False, alias="historyGap")
     error: str | None = None
-    diagnostics: dict | None = None
+    diagnostics: Any = None
 
 
 class ApifyRun(ApifyModel):
@@ -198,10 +198,13 @@ class XSensor:
             message = redact_text(str(exc), (self.token, repr(self.token)[1:-1]))
             raise RuntimeError(f"Apify X run request failed: {message}") from None
         run = ApifyRun.model_validate_json(response.content)
+        budget = [12_000_000]
         run = run.model_copy(
             update={
                 "accounts": [
-                    account.model_copy(update={"diagnostics": sanitize(account.diagnostics, self.token)})
+                    account.model_copy(
+                        update={"diagnostics": sanitize(account.diagnostics, self.token, budget)}
+                    )
                     for account in run.accounts
                 ]
             }

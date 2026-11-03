@@ -23,8 +23,9 @@ HEADERS = {
 }
 
 
-def redact(value, token=None):
-    text = redact_text(str(value), (token,) if token else ())
+def redact(value, token=None, limit=8192):
+    value = value[:limit] if isinstance(value, str) else "INVALID_DIAGNOSTIC_TEXT"
+    text = redact_text(value, (token,) if token else ())
     return re.sub(
         r"(?i)((?<![A-Za-z0-9_])(?:authorization|set-cookie|cookie|auth_token|ct0)[\"']?[ \t]*[:=][ \t]*)"
         r"(\"(?:\\[^\r\n]|[^\"\\\r\n])*\"?|'(?:\\[^\r\n]|[^'\\\r\n])*'?|"
@@ -39,10 +40,23 @@ def redact(value, token=None):
     )
 
 
-def sanitize(value, token=None):
-    if not isinstance(value, dict):
+def sanitize(value, token=None, budget=None):
+    if value is None:
         return None
+    invalid = []
+    if not isinstance(value, dict):
+        invalid.append("diagnostics")
+        value = {}
     request = value.get("request") or {}
+    if not isinstance(request, dict):
+        invalid.append("request")
+        request = {}
+    attempts = value.get("attempts") or []
+    if not isinstance(attempts, list):
+        invalid.append("attempts")
+        attempts = []
+    if budget is None:
+        budget = [12_000_000]
     result = {
         "request": {
             "method": "GET",
@@ -52,20 +66,48 @@ def sanitize(value, token=None):
         "outcome": redact(value.get("outcome", "unknown"), token),
         "attempts": [],
     }
-    for original in (value.get("attempts") or [])[:3]:
-        attempt = {key: original[key] for key in ("attempt", "at", "status", "retryable") if key in original}
+    for index, original in enumerate(attempts[:3], 1):
+        if not isinstance(original, dict):
+            invalid.append(f"attempts[{index}]")
+            original = {}
+        attempt = {
+            key: original[key][:8192] if isinstance(original[key], str) else original[key]
+            for key in ("at", "status", "retryable")
+            if isinstance(original.get(key), (str, int, bool, type(None)))
+        }
+        attempt["attempt"] = index
         attempt["error"] = redact(original.get("error", ""), token)
-        if response := original.get("response"):
+        response = original.get("response")
+        if response is not None:
+            if not isinstance(response, dict):
+                invalid.append(f"response[{index}]")
+                response = {}
+            headers = response.get("headers") or {}
+            if not isinstance(headers, dict):
+                invalid.append(f"headers[{index}]")
+                headers = {}
             encoding = response.get("bodyEncoding", "utf-8")
-            body = str(response.get("body", ""))
+            body = response.get("body", "")
+            if not isinstance(body, str):
+                invalid.append(f"body[{index}]")
+                body = "INVALID_DIAGNOSTIC_BODY"
+                encoding = "utf-8"
+            limit = min(BODY_LIMIT, budget[0])
+            encoded_limit = ((limit + 2) // 3) * 4
+            clipped = len(body) > (encoded_limit if encoding == "base64" else limit)
             try:
-                raw = base64.b64decode(body, validate=True) if encoding == "base64" else body.encode()
+                raw = (
+                    base64.b64decode(body[:encoded_limit], validate=True)
+                    if encoding == "base64"
+                    else body[:limit].encode()
+                )
             except (ValueError, binascii.Error):
                 raw = b"INVALID_DIAGNOSTIC_BODY_ENCODING"
                 encoding = "utf-8"
-            clipped = len(raw) > BODY_LIMIT
-            original_raw = raw[:BODY_LIMIT]
-            raw = redact(original_raw.decode("latin-1"), token).encode("latin-1")
+            clipped = clipped or len(raw) > limit
+            original_raw = raw[:limit]
+            budget[0] -= len(original_raw)
+            raw = redact(original_raw.decode("latin-1"), token, BODY_LIMIT).encode("latin-1")
             safe_body = (
                 base64.b64encode(raw).decode()
                 if encoding == "base64"
@@ -77,7 +119,7 @@ def sanitize(value, token=None):
                 "status": response.get("status"),
                 "headers": {
                     str(key).lower(): redact(val, token)
-                    for key, val in (response.get("headers") or {}).items()
+                    for key, val in headers.items()
                     if str(key).lower() in HEADERS
                 },
                 "body": safe_body,
@@ -97,6 +139,11 @@ def sanitize(value, token=None):
             }
         result["attempts"].append(attempt)
     result["attemptCount"] = len(result["attempts"])
+    inherited = value.get("invalidEvidence")
+    if isinstance(inherited, list):
+        invalid.extend(item for item in inherited[:20] if isinstance(item, str))
+    if invalid:
+        result["invalidEvidence"] = sorted(set(invalid))
     return result
 
 

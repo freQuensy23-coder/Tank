@@ -56,6 +56,7 @@ class DeliveryService:
         filters = ledger_filters(job)
         async with self.repo.lock("deliver:" + subject + ":" + job.channel), self.repo.transaction():
             ledger = await self._all("out.deliveries", filters=filters)
+            ledger = [row for row in ledger if row.get("method") != "sendDocument"]
             if any(row["status"] == "SENT" for row in ledger):
                 return
             source = payload
@@ -461,6 +462,7 @@ class DeliveryService:
             await self._enter_delivery_lock(locks, "deliver:" + subject + ":" + channel)
             filters = ledger_filters(job)
             ledger = await self._all("out.deliveries", filters=filters)
+            ledger = [row for row in ledger if row.get("method") != "sendDocument"]
             if any(row["status"] == "SENT" or row.get("terminal") for row in ledger):
                 return
             attempt = max((r["attempt"] for r in ledger), default=0) + 1
