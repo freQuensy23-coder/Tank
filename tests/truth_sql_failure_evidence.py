@@ -228,12 +228,9 @@ def failure_receipt(error, nodeid, query):
     diagnostics = sorted(name for name in _SAFE_NATIVE_FUNCTIONS if name.casefold() in message_tokens)
     if "array aggregation function cannot be performed on type" in message.casefold():
         native_calls = {
-            word.casefold()
-            for word in re.findall(r"\b([A-Za-z_][A-Za-z0-9_]*)\s*\(", complete_message)
+            word.casefold() for word in re.findall(r"\b([A-Za-z_][A-Za-z0-9_]*)\s*\(", complete_message)
         }
-        diagnostics.extend(
-            sorted(name for name in _SAFE_NATIVE_FUNCTIONS if name.casefold() in native_calls)
-        )
+        diagnostics.extend(sorted(name for name in _SAFE_NATIVE_FUNCTIONS if name.casefold() in native_calls))
     diagnostics.extend(
         phrase
         for phrase in _SAFE_PHRASES

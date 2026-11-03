@@ -290,15 +290,6 @@ def _state_ctes():
     tier_json = _object(**{name: _money(f"lq_tiers[{i}]") for i, name in enumerate(("T1", "T2", "T3"), 1)})
     return f"""
 {tier_json} AS lq_tier_json,
-(SELECT venues FROM lq_collected) AS lq_venues_array,
-(SELECT observations FROM lq_observed) AS lq_observations,
-lq_sum(arrayMap(flow -> lq_dec(JSONExtractRaw(flow, 'buy_notional')), lq_flows))
-    - lq_sum(arrayMap(flow -> lq_dec(JSONExtractRaw(flow, 'sell_notional')), lq_flows)) AS lq_net_usd,
-lq_sum(arrayMap(flow -> lq_dec(JSONExtractRaw(flow, 'buy_qty')), lq_flows))
-    - lq_sum(arrayMap(flow -> lq_dec(JSONExtractRaw(flow, 'sell_qty')), lq_flows)) AS lq_net_native,
-if(isNotNull(lq_net_native), lq_net_native, lq_net_usd) AS lq_net,
-if(isNotNull(lq_net_native), 'NATIVE', 'USD') AS lq_unit,
-multiIf(lq_net > 0, 'ask', lq_net < 0, 'bid', CAST(NULL, 'Nullable(String)')) AS lq_hit,
 ((v, side, native, previous) -> if(previous,
     if(native, if(side = 'bid', v.8, v.9), if(side = 'bid', v.6, v.7)),
     if(native, if(side = 'bid', v.4, v.5), if(side = 'bid', v.2, v.3)))) AS lq_side_value,
@@ -313,33 +304,62 @@ multiIf(lq_net > 0, 'ask', lq_net < 0, 'bid', CAST(NULL, 'Nullable(String)')) AS
 (side -> arraySum(arrayMap(v -> ifNull(lq_side_value(v, side, 0, 1), lq_zero), lq_cohort(side)))) AS lq_cohort_pre,
 (side -> if(notEmpty(lq_cohort(side)) AND lq_cohort_pre(side) != 0,
     toFloat64(lq_one - divideDecimal(lq_cohort_now(side), nullIf(lq_cohort_pre(side), lq_zero), 24)), CAST(NULL, 'Nullable(Float64)'))) AS lq_drop,
-if(isNotNull(lq_hit), lq_lower_bound(lq_hit, lq_unit = 'NATIVE', 0), CAST(NULL, 'Nullable(Decimal256(24))')) AS lq_bound,
-if(isNotNull(lq_hit), lq_lower_bound(lq_hit, lq_unit = 'NATIVE', 1), CAST(NULL, 'Nullable(Decimal256(24))')) AS lq_pre_bound,
-if(isNotNull(lq_hit), lq_complete(lq_hit, lq_unit = 'NATIVE', 0), false) AS lq_bound_complete,
-if(isNotNull(lq_hit), lq_complete(lq_hit, lq_unit = 'NATIVE', 1), false) AS lq_pre_complete,
-JSONExtractRaw(lq_relative, 'windows', lq_primary) AS lq_relative_window,
-lq_number(JSONExtractRaw(lq_relative_window, 'r_raw')) AS lq_raw_return,
-if(JSONExtractRaw(lq_relative_window, 'beyond_normal') IN ('true', 'false'),
-    JSONExtractRaw(lq_relative_window, 'beyond_normal') = 'true', CAST(NULL, 'Nullable(Bool)')) AS lq_beyond,
-if(lq_net != 0 AND isNotNull(lq_raw_return),
-    if(lq_net > 0, lq_raw_return, -lq_raw_return) < lq_band / 100, CAST(NULL, 'Nullable(Bool)')) AS lq_small_price,
-multiIf(isNull(lq_net) OR lq_net = 0 OR isNull(lq_bound), CAST(NULL, 'Nullable(Bool)'),
-    abs(lq_net) < lq_bound, false, lq_bound_complete, true, CAST(NULL, 'Nullable(Bool)')) AS lq_absorbed,
-multiIf(isNull(lq_net) OR lq_net = 0, CAST(NULL, 'Nullable(Bool)'),
-    lq_absorbed = false OR lq_small_price = false, false, lq_absorbed AND lq_small_price, true, CAST(NULL, 'Nullable(Bool)')) AS lq_weak,
-multiIf(lq_beyond = false, false, lq_beyond = true AND isNotNull(lq_net) AND isNotNull(lq_pre_bound),
-    multiIf(abs(lq_net) < lq_pre_bound, true, lq_pre_complete, false, CAST(NULL, 'Nullable(Bool)')), CAST(NULL, 'Nullable(Bool)')) AS lq_excess,
-if(isNotNull(lq_hit) AND notEmpty(lq_cohort(lq_hit)) AND lq_cohort_pre(lq_hit) != 0,
-    lq_cohort_now(lq_hit) * 2 < lq_cohort_pre(lq_hit), CAST(NULL, 'Nullable(Bool)')) AS lq_majority_lost,
-if(isNotNull(lq_hit), lq_sum(arrayMap(v -> if(lq_hit = 'bid', v.14, v.15), lq_venues_array)), CAST(NULL, 'Nullable(Decimal256(24))')) AS lq_average_hit,
-if(isNotNull(lq_drop(lq_hit)) AND isNotNull(lq_excess) AND isNotNull(lq_beyond),
-    lq_beyond AND ifNull(lq_majority_lost, false) AND lq_excess, CAST(NULL, 'Nullable(Bool)')) AS lq_vacuum,
 (side -> multiIf(isNull(lq_lower_bound(side, 0, 0)) OR isNull(lq_tiers[2]), CAST(NULL, 'Nullable(Bool)'),
     lq_complete(side, 0, 0), lq_lower_bound(side, 0, 0) < lq_tiers[2],
     lq_lower_bound(side, 0, 0) >= lq_tiers[2], false, CAST(NULL, 'Nullable(Bool)'))) AS lq_thin_side,
-multiIf(lq_thin_side('bid') = true OR lq_thin_side('ask') = true, true,
-    lq_thin_side('bid') = false AND lq_thin_side('ask') = false, false, CAST(NULL, 'Nullable(Bool)')) AS lq_thin,
-notEmpty(lq_books) AND notEmpty(lq_flows) AS lq_replenishment_available
+lq_state_inputs AS (
+    SELECT venues AS lq_venues_array, observations AS lq_observations,
+        lq_sum(arrayMap(flow -> lq_dec(JSONExtractRaw(flow, 'buy_notional')), lq_flows))
+            - lq_sum(arrayMap(flow -> lq_dec(JSONExtractRaw(flow, 'sell_notional')), lq_flows)) AS lq_net_usd,
+        lq_sum(arrayMap(flow -> lq_dec(JSONExtractRaw(flow, 'buy_qty')), lq_flows))
+            - lq_sum(arrayMap(flow -> lq_dec(JSONExtractRaw(flow, 'sell_qty')), lq_flows)) AS lq_net_native,
+        JSONExtractRaw(lq_relative, 'windows', lq_primary) AS lq_relative_window,
+        notEmpty(lq_books) AND notEmpty(lq_flows) AS lq_replenishment_available
+    FROM lq_collected CROSS JOIN lq_observed
+),
+lq_state_flow AS (
+    SELECT *, if(isNotNull(lq_net_native), lq_net_native, lq_net_usd) AS lq_net,
+        if(isNotNull(lq_net_native), 'NATIVE', 'USD') AS lq_unit,
+        lq_number(JSONExtractRaw(lq_relative_window, 'r_raw')) AS lq_raw_return,
+        if(JSONExtractRaw(lq_relative_window, 'beyond_normal') IN ('true', 'false'),
+            JSONExtractRaw(lq_relative_window, 'beyond_normal') = 'true', CAST(NULL, 'Nullable(Bool)')) AS lq_beyond
+    FROM lq_state_inputs
+),
+lq_state_direction AS (
+    SELECT *, multiIf(lq_net > 0, 'ask', lq_net < 0, 'bid', CAST(NULL, 'Nullable(String)')) AS lq_hit,
+        if(lq_net != 0 AND isNotNull(lq_raw_return),
+            if(lq_net > 0, lq_raw_return, -lq_raw_return) < lq_band / 100, CAST(NULL, 'Nullable(Bool)')) AS lq_small_price
+    FROM lq_state_flow
+),
+lq_state_depth AS (
+    SELECT *,
+        if(isNotNull(lq_hit), lq_lower_bound(lq_hit, lq_unit = 'NATIVE', 0), CAST(NULL, 'Nullable(Decimal256(24))')) AS lq_bound,
+        if(isNotNull(lq_hit), lq_lower_bound(lq_hit, lq_unit = 'NATIVE', 1), CAST(NULL, 'Nullable(Decimal256(24))')) AS lq_pre_bound,
+        if(isNotNull(lq_hit), lq_complete(lq_hit, lq_unit = 'NATIVE', 0), false) AS lq_bound_complete,
+        if(isNotNull(lq_hit), lq_complete(lq_hit, lq_unit = 'NATIVE', 1), false) AS lq_pre_complete,
+        if(isNotNull(lq_hit) AND notEmpty(lq_cohort(lq_hit)) AND lq_cohort_pre(lq_hit) != 0,
+            lq_cohort_now(lq_hit) * 2 < lq_cohort_pre(lq_hit), CAST(NULL, 'Nullable(Bool)')) AS lq_majority_lost,
+        if(isNotNull(lq_hit), lq_sum(arrayMap(v -> if(lq_hit = 'bid', v.14, v.15), lq_venues_array)), CAST(NULL, 'Nullable(Decimal256(24))')) AS lq_average_hit
+    FROM lq_state_direction
+),
+lq_state_response AS (
+    SELECT *,
+        multiIf(isNull(lq_net) OR lq_net = 0 OR isNull(lq_bound), CAST(NULL, 'Nullable(Bool)'),
+            abs(lq_net) < lq_bound, false, lq_bound_complete, true, CAST(NULL, 'Nullable(Bool)')) AS lq_absorbed,
+        multiIf(lq_beyond = false, false, lq_beyond = true AND isNotNull(lq_net) AND isNotNull(lq_pre_bound),
+            multiIf(abs(lq_net) < lq_pre_bound, true, lq_pre_complete, false, CAST(NULL, 'Nullable(Bool)')), CAST(NULL, 'Nullable(Bool)')) AS lq_excess
+    FROM lq_state_depth
+),
+lq_state AS (
+    SELECT *,
+        multiIf(isNull(lq_net) OR lq_net = 0, CAST(NULL, 'Nullable(Bool)'),
+            lq_absorbed = false OR lq_small_price = false, false, lq_absorbed AND lq_small_price, true, CAST(NULL, 'Nullable(Bool)')) AS lq_weak,
+        if(isNotNull(lq_drop(lq_hit)) AND isNotNull(lq_excess) AND isNotNull(lq_beyond),
+            lq_beyond AND ifNull(lq_majority_lost, false) AND lq_excess, CAST(NULL, 'Nullable(Bool)')) AS lq_vacuum,
+        multiIf(lq_thin_side('bid') = true OR lq_thin_side('ask') = true, true,
+            lq_thin_side('bid') = false AND lq_thin_side('ask') = false, false, CAST(NULL, 'Nullable(Bool)')) AS lq_thin
+    FROM lq_state_response
+)
 """
 
 
@@ -429,7 +449,7 @@ def _base_fields():
 
 
 def select_sql():
-    return "SELECT " + _object(**_base_fields()) + " AS result"
+    return "SELECT " + _object(**_base_fields()) + " AS result FROM lq_state"
 
 
 def enrichment_ctes():
@@ -692,7 +712,7 @@ def window_select_sql():
         "if(lq_primary = 'EVENT' AND JSONHas(lq_snapshot, '_event_anchor') "
         "AND JSONExtractRaw(lq_snapshot, '_event_anchor') = 'null', " + unavailable + ", " + result + ")"
     )
-    return "SELECT " + result + " AS result"
+    return "SELECT " + result + " AS result FROM lq_state"
 
 
 def window_query(snapshot, config=None, *, spot=None, relative=None, deriv=None):
