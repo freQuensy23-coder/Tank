@@ -21,11 +21,11 @@ from tank.util import sha256
 HTTP_CLIENT = httpx.AsyncClient
 SECRET_TEXT = (
     b" configured-secret Cookie: cookie-secret\n"
-    b"1.https://reader:db-password@host/path?token=query-secret"
+    b"1.https://reader:db-password@host/path?api_token=query-secret"
 )
 SAFE_TEXT = (
     b" [REDACTED] Cookie: [REDACTED]\n"
-    b"1.https://reader:[REDACTED]@host/path?token=[REDACTED]"
+    b"1.https://reader:[REDACTED]@host/path?api_token=[REDACTED]"
 )
 CASES = [
     (200, b"<title>This page is down / X</title>", "PUBLIC_PROFILE_NOT_READABLE", False, 0),
@@ -98,7 +98,7 @@ def parse_wire(monkeypatch):
         def do_GET(self):
             state["requests"].append(self.path)
             if "?" not in self.path:
-                self.respond(302, b"", {"Location": "/alice?token=query-secret"})
+                self.respond(302, b"", {"Location": "/alice?api_token=query-secret"})
                 return
             body = gzip.compress(state["body"]) if state["gzip"] else state["body"]
             headers = {"Content-Type": "text/html", "Set-Cookie": "header-secret"}
@@ -168,15 +168,14 @@ async def test_real_actor_2xx_parse_failure_bytes_reach_ops_without_cursor_advan
     assert retained == expected and response["bodySha256"] == sha256(expected)
     assert response["status"] == status and response["bodyBytes"] == len(expected)
     assert response["bodyTruncated"] is False
-    assert response["finalUrl"] == "https://x.com/alice?token=[REDACTED]"
+    assert response["finalUrl"] == "https://x.com/alice?api_token=[REDACTED]"
     assert response["readError"] is None
     if articles is not None:
         assert response["articleCount"] == response["statusLinkCount"] == articles
         assert response["textCount"] == 0 and response["scriptCount"] == int(compressed)
-        assert response["title"] == (
-            raw.decode().split("<title>")[1].split("</title>")[0] if raw else ""
-        )
-    assert state["requests"] == ["/alice", "/alice?token=query-secret"]
+        expected_title = raw.decode().split("<title>")[1].split("</title>")[0] if raw else ""
+        assert response["title"] == expected_title
+    assert state["requests"] == ["/alice", "/alice?api_token=query-secret"]
     assert all(
         secret not in json.dumps(output)
         for secret in (
@@ -262,7 +261,7 @@ async def test_parse_metadata_survives_jsonb_and_real_multipart_upload(postgres_
         metadata = json.loads(uploads[1])["attempts"][0]["response"]
         assert metadata["bodySha256"] == sha256(expected) and metadata["status"] == 200
         assert metadata["title"] == "Alice (@alice) / X" and metadata["articleCount"] == 0
-        assert metadata["finalUrl"] == "https://x.com/alice?token=[REDACTED]"
+        assert metadata["finalUrl"] == "https://x.com/alice?api_token=[REDACTED]"
         assert all(
             secret not in b"".join(uploads)
             for secret in (

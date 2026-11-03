@@ -6,10 +6,9 @@ import json
 import httpx
 import pytest
 from test_x_diagnostics import diagnostics
-from test_x_reader import BodyStream
+from test_x_reader import BodyStream, sequence
 from test_x_reader import clock as clock
 from test_x_reader import reader as reader
-from test_x_reader import sequence
 
 from tank.sources.x_diagnostics import sanitize
 from tank.util import sha256
@@ -47,7 +46,7 @@ def test_parse_metadata_is_redacted_bounded_jsonb_safe_and_allowlisted(field):
     response = value["attempts"][0]["response"]
     response.update(
         {
-            field: "1.https://reader:db-password@host/path?token=query-secret configured-secret\x00\ud800"
+            field: "1.https://reader:db-password@host/path?api_token=query-secret configured-secret\x00\ud800"
             + "x" * 9000,
             "articleCount": 3,
             "statusLinkCount": 2,
@@ -59,16 +58,17 @@ def test_parse_metadata_is_redacted_bounded_jsonb_safe_and_allowlisted(field):
     clean = sanitize(value, "configured-secret")
     captured = clean["attempts"][0]["response"]
     assert captured[field].startswith(
-        "1.https://reader:[REDACTED]@host/path?token=[REDACTED] [REDACTED][NUL]"
+        "1.https://reader:[REDACTED]@host/path?api_token=[REDACTED] [REDACTED][NUL]"
     )
     assert len(captured[field]) <= 8192
     assert all(
         secret not in json.dumps(clean)
         for secret in ("db-password", "query-secret", "configured-secret", "must-not-survive")
     )
-    assert {
+    counts = {
         key: captured[key] for key in ("articleCount", "statusLinkCount", "textCount", "scriptCount")
-    } == {"articleCount": 3, "statusLinkCount": 2, "textCount": 1, "scriptCount": 4}
+    }
+    assert counts == {"articleCount": 3, "statusLinkCount": 2, "textCount": 1, "scriptCount": 4}
     json.dumps(clean, ensure_ascii=False).encode()
     assert f"{field}[1]" in clean["invalidEvidence"]
 
@@ -84,22 +84,25 @@ def test_invalid_parse_counts_are_not_persisted(field, bad):
 
 
 @pytest.mark.parametrize("prefix", ["1.https", "+.-1.https", "https"])
-def test_actor_parse_metadata_redacts_numbered_urls_and_bounds_title(reader, monkeypatch, prefix):
+@pytest.mark.parametrize("query_key", ["token", "api_token", "api-token", "apiToken"])
+def test_actor_parse_metadata_redacts_numbered_urls_and_bounds_title(
+    reader, monkeypatch, prefix, query_key
+):
     monkeypatch.setenv("ACTOR_TOKEN", "configured-secret")
     raw = (
-        f"<title>{prefix}://reader:db-password@host/path?token=query-secret configured-secret "
+        f"<title>{prefix}://reader:db-password@host/path?{query_key}=query-secret configured-secret "
         + "x" * 1000
         + "</title><script>page</script>"
     ).encode()
     response = httpx.Response(
         200,
-        request=httpx.Request("GET", "https://reader:db-password@x.com/alice?token=query-secret"),
+        request=httpx.Request("GET", f"https://reader:db-password@x.com/alice?{query_key}=query-secret"),
     )
     evidence = reader.response_evidence(response, raw)
-    assert evidence["finalUrl"] == "https://reader:[REDACTED]@x.com/alice?token=[REDACTED]"
+    assert evidence["finalUrl"] == f"https://reader:[REDACTED]@x.com/alice?{query_key}=[REDACTED]"
     assert len(evidence["title"]) == 512 and evidence["scriptCount"] == 1
     assert evidence["title"].startswith(
-        f"{prefix}://reader:[REDACTED]@host/path?token=[REDACTED] [REDACTED] "
+        f"{prefix}://reader:[REDACTED]@host/path?{query_key}=[REDACTED] [REDACTED] "
     )
     assert all(
         secret not in json.dumps(evidence)
