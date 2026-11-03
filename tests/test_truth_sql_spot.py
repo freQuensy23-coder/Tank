@@ -648,3 +648,214 @@ async def test_native_spot_explicit_financial_range_refusal(field, value, spot_c
         RuntimeError, match="Market Truth spot (financial input|squared quantity).*(native range)"
     ):
         await spot_client.rows(sql, params)
+
+
+async def test_native_spot_numeric_stage_retains_nulls_and_skips_ineligible_money(
+    spot_client, original_spot, record_property
+):
+    snapshot = packet(
+        {"A": ("3", "1", "1"), "B": ("1", "1", "1"), "C": ("1", "0", "0")},
+        minutes=4,
+        event_seconds=120,
+    )
+    for row in snapshot["flow_bars"]:
+        if parse_time(row["minute_start"]) >= END - timedelta(minutes=2):
+            if row["instrument_id"] == "A:spot:T":
+                if parse_time(row["minute_start"]) == END - timedelta(minutes=2):
+                    row.update(buy_qty={"value": "1.25"}, sell_qty="0.5", sum_sq_qty="1e-24")
+                else:
+                    row.update(buy_qty="2.75", sell_qty="0.25", sum_sq_qty="2e-24")
+            elif row["instrument_id"] == "B:spot:T":
+                row.pop("sell_qty")
+            else:
+                row.update(complete=False, buy_qty="NaN", gap_reason="INELIGIBLE_MONEY")
+    result = await native_result(spot_client, original_spot, snapshot, record_property)
+    event = result["spots"]["EVENT"]
+    assert [row["venue"] for row in event["venues"]] == ["A"]
+    assert event["coverage"]["excluded"] == [
+        {
+            "venue": "B",
+            "reason": "INCOMPLETE",
+            "detail": "FLOW_AGGREGATE_FIELDS_MISSING",
+            "missing_metrics": ["sell_qty"],
+        },
+        {
+            "venue": "C",
+            "reason": "INCOMPLETE",
+            "detail": "FULL_MINUTE_COVERAGE_INCOMPLETE",
+            "source_reasons": ["INELIGIBLE_MONEY"],
+        },
+    ]
+    _, params = truth_sql_spot.query(snapshot)
+    rows = await spot_client.rows(
+        "WITH "
+        + truth_sql_spot.ctes()
+        + " SELECT spot_period, arrayMap((a, complete, sums) -> tuple(a.1, complete, "
+        "arrayMap(x -> if(x IS NULL, NULL, toString(x)), sums)), "
+        "spot_admissions, spot_complete, spot_sums) AS totals "
+        "FROM spot_numeric_sums WHERE spot_name = 'EVENT' ORDER BY spot_period",
+        params,
+    )
+    assert [row["spot_period"] for row in rows] == [0, 1]
+    totals = [
+        [
+            (venue, complete, [Decimal(value) if value is not None else None for value in sums])
+            for venue, complete, sums in row["totals"]
+        ]
+        for row in rows
+    ]
+    assert totals == [
+        [
+            ("A", True, [Decimal("4"), Decimal("0.75"), Decimal("3e-24")]),
+            ("B", True, [Decimal("2"), None, Decimal("2")]),
+            ("C", False, [None, None, None]),
+        ],
+        [
+            ("A", True, [Decimal("6"), Decimal("2"), Decimal("2")]),
+            ("B", True, [Decimal("2"), Decimal("2"), Decimal("2")]),
+            ("C", True, [Decimal("2"), Decimal("0"), Decimal("0")]),
+        ],
+    ]
+
+
+async def test_native_spot_typed_ticker_latest_tie_uses_first_source_row(
+    spot_client, original_spot, record_property
+):
+    snapshot = packet({"A": ("1", "0", "0"), "B": ("1", "0", "0")}, minutes=1, event_seconds=60)
+    snapshot["instruments"].append(instrument("C"))
+    snapshot["tickers"] = [
+        {"venue": "C", "ts": iso(END - timedelta(seconds=1)), "volume_native": "9999"},
+        {"venue": "C", "ts": iso(END), "volume_native": "1440"},
+        {"venue": "C", "ts": iso(END), "volume_native": "2880"},
+        {"venue": "C", "ts": iso(END + timedelta(microseconds=1)), "volume_native": "0"},
+        {
+            "venue": "C",
+            "ts": iso(END),
+            "volume_native": "0",
+            "received_ts": iso(END + timedelta(seconds=2)),
+        },
+    ]
+    result = await native_result(spot_client, original_spot, snapshot, record_property)
+    event = result["spots"]["EVENT"]
+    assert event["coverage"]["covered_share_est"] == pytest.approx(2 / 3)
+    assert event["coverage"]["exact_majority"] is True
+    assert event["classification"] == "BROAD"
+
+
+async def test_native_spot_typed_boundary_equal_instants_keep_first_piece(
+    spot_client, original_spot, record_property
+):
+    snapshot = fractional_packet("complete")
+    snapshot["flow_bars"] = []
+    snapshot["flow_segments"] = []
+    for venue in ("A", "B"):
+        piece = {
+            "instrument_id": f"{venue}:spot:T",
+            "start": snapshot["anchor"]["ts"],
+            "end": snapshot["cutoff"],
+            "complete": True,
+            "buy_qty": "3",
+            "sell_qty": "1",
+            "sum_sq_qty": "1",
+            "n_buy": 2,
+            "n_sell": 1,
+            "source_path": "FIRST_EQUAL_INSTANT",
+        }
+        snapshot["flow_segments"].extend(
+            [
+                piece,
+                {
+                    **piece,
+                    "start": piece["start"].replace("Z", "+00:00"),
+                    "end": piece["end"].replace("Z", "+00:00"),
+                    "buy_qty": "999",
+                    "source_path": "SECOND_EQUAL_INSTANT",
+                },
+            ]
+        )
+    result = await native_result(spot_client, original_spot, snapshot, record_property)
+    event = result["spots"]["EVENT"]
+    assert [Decimal(row["buy_qty"]) for row in event["venues"]] == [Decimal("3"), Decimal("3")]
+    assert [row["boundary_segments"][0]["trade_count"] for row in event["venues"]] == [3, 3]
+    assert [row["boundary_segments"][0]["aggregates"][0]["source_path"] for row in event["venues"]] == [
+        "FIRST_EQUAL_INSTANT",
+        "FIRST_EQUAL_INSTANT",
+    ]
+
+
+@pytest.mark.parametrize("source", ["minute", "boundary"])
+@pytest.mark.parametrize("field", ["buy_qty", "sell_qty", "sum_sq_qty"])
+@pytest.mark.parametrize("value", ["null", "", {"value": "null"}, {"value": ""}])
+async def test_native_spot_quoted_null_and_empty_financial_cells_are_refused(
+    source, field, value, spot_client, original_spot, record_property
+):
+    from decimal import InvalidOperation
+
+    snapshot = (
+        packet({"A": ("6", "2", "1"), "B": ("6", "2", "1")}, minutes=1, event_seconds=60)
+        if source == "minute"
+        else fractional_packet("complete")
+    )
+    row = snapshot["flow_bars"][0] if source == "minute" else snapshot["flow_segments"][1]
+    row[field] = deepcopy(value)
+    record_property("spot_original_sha", BASELINE)
+    with pytest.raises(InvalidOperation, match="ConversionSyntax"):
+        original_result(original_spot, snapshot)
+    sql, params = truth_sql_spot.query(snapshot)
+    record_property("spot_native_sql", sql)
+    with pytest.raises(RuntimeError, match="Market Truth spot financial input outside native range"):
+        await spot_client.rows(sql, params)
+
+
+@pytest.mark.parametrize("source", ["minute", "boundary"])
+@pytest.mark.parametrize("field", ["buy_qty", "sell_qty", "sum_sq_qty"])
+@pytest.mark.parametrize("missing", ["absent", "null", "wrapped_null"])
+async def test_native_spot_raw_missing_cells_preserve_complete_original_null_output(
+    source, field, missing, spot_client, original_spot, record_property
+):
+    snapshot = (
+        packet({"A": ("6", "2", "1"), "B": ("6", "2", "1")}, minutes=1, event_seconds=60)
+        if source == "minute"
+        else fractional_packet("complete")
+    )
+    row = snapshot["flow_bars"][0] if source == "minute" else snapshot["flow_segments"][1]
+    if missing == "absent":
+        row.pop(field)
+    else:
+        row[field] = None if missing == "null" else {"value": None}
+    result = await native_result(spot_client, original_spot, snapshot, record_property)
+    event = result["spots"]["EVENT"]
+    assert [venue["venue"] for venue in event["venues"]] == ["B"]
+    assert event["coverage"]["n_complete"] == 1
+    assert event["coverage"]["excluded"] == [
+        {
+            "venue": "A",
+            "reason": "INCOMPLETE",
+            "detail": "FLOW_AGGREGATE_FIELDS_MISSING",
+            "missing_metrics": [] if missing == "wrapped_null" else [field],
+        }
+    ]
+    assert event["classification"] == "INSUFFICIENT_DATA"
+
+
+@pytest.mark.parametrize("source", ["minute", "boundary"])
+@pytest.mark.parametrize("field", ["buy_qty", "sell_qty", "sum_sq_qty"])
+@pytest.mark.parametrize("value", ["null", "", {"value": "null"}, {"value": ""}])
+async def test_native_spot_ineligible_quoted_financial_cells_are_not_parsed(
+    source, field, value, spot_client, original_spot, record_property
+):
+    snapshot = (
+        packet({"A": ("6", "2", "1"), "B": ("6", "2", "1")}, minutes=1, event_seconds=60)
+        if source == "minute"
+        else fractional_packet("complete")
+    )
+    row = snapshot["flow_bars"][0] if source == "minute" else snapshot["flow_segments"][1]
+    row.update(complete=False)
+    row[field] = deepcopy(value)
+    result = await native_result(spot_client, original_spot, snapshot, record_property)
+    event = result["spots"]["EVENT"]
+    assert [venue["venue"] for venue in event["venues"]] == ["B"]
+    assert event["coverage"]["n_complete"] == 1
+    assert event["coverage"]["excluded"][0]["detail"] == (
+        "FULL_MINUTE_COVERAGE_INCOMPLETE" if source == "minute" else "BOUNDARY_AGGREGATE_UNAVAILABLE"
+    )

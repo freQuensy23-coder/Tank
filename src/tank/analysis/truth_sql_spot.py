@@ -81,7 +81,9 @@ def ctes():
                 "spot_sum_tuple(vs, 'volume') - spot_sum_tuple(vs, 'cvd'))"
             ),
             "venues": _json("arrayMap(v -> v.1, vs)"),
-            "sign": _json("spot_sign(spot_sum_tuple(vs, 'cvd'), spot_sum_tuple(vs, 'q'))"),
+            "sign": _json(
+                "spot_sign_for(spot_sum_tuple(vs, 'cvd'), spot_sum_tuple(vs, 'q'), spot_sigma_value)"
+            ),
         }
     )
     sql = r"""
@@ -139,10 +141,11 @@ toDecimal256(0, 24) AS spot_zero,
     NOT match(spot_decimal_text({spot_sigma:String}), '^[+]?[0-9]{1,3}([.][0-9]{1,12})?$')
     OR toDecimal256OrZero(spot_decimal_text({spot_sigma:String}), 24) > 100,
     'Market Truth spot sigma outside exact native range'), 24)) AS spot_sigma,
-((c, q) -> if(c = 0, toInt8(0), if(
+((c, q, sigma) -> if(c = 0, toInt8(0), if(
     multiplyDecimal(spot_bound(c), spot_bound(c), 24) >=
-    multiplyDecimal(multiplyDecimal(spot_sigma, spot_sigma, 24), spot_qbound(q), 24),
-    if(c > 0, toInt8(1), toInt8(-1)), toInt8(0)))) AS spot_sign,
+    multiplyDecimal(multiplyDecimal(sigma, sigma, 24), spot_qbound(q), 24),
+    if(c > 0, toInt8(1), toInt8(-1)), toInt8(0)))) AS spot_sign_for,
+((c, q) -> spot_sign_for(c, q, spot_sigma)) AS spot_sign,
 (r -> if(JSONExtractString(r, 'gap_reason') != '', JSONExtractString(r, 'gap_reason'),
     JSONExtractString(r, 'coverage_reason'))) AS spot_reason,
 ((r, assembled) -> assembled IS NULL OR JSONExtractRaw(r, 'received_ts') IN ('', 'null')
@@ -175,171 +178,300 @@ toDecimal256(0, 24) AS spot_zero,
      concat('"market_type":', toJSONString(spot_market(b)))]), ','), '}'),
     JSONExtractArrayRaw(b, 'boundary_segments')), bars))) AS spot_embedded_for,
 spot_source AS (SELECT {spot_snapshot:String} AS spot_document),
-spot_input AS (
-    SELECT spot_document,
-        spot_timestamp(JSONExtractRaw(spot_document, 'cutoff')) AS spot_cutoff,
-        spot_timestamp(JSONExtractRaw(spot_document, 'assembled_at')) AS spot_assembled,
-        if(startsWith(JSONExtractRaw(spot_document, 'anchor'), '{'),
-            JSONExtractRaw(JSONExtractRaw(spot_document, 'anchor'), 'ts'),
-            JSONExtractRaw(spot_document, 'anchor')) AS spot_anchor_text,
-        spot_anchor_text NOT IN ('', 'null', '""', '0', 'false') AS spot_anchor_present,
-        if(NOT spot_anchor_present, spot_cutoff - 14400000000,
-            spot_timestamp(spot_anchor_text)) AS spot_start,
-        JSONExtractArrayRaw(spot_document, 'flow_bars') AS spot_all_bars,
+spot_document_fields AS (
+    SELECT s.spot_document, spot_sigma AS spot_sigma_value,
+        spot_timestamp(JSONExtractRaw(s.spot_document, 'cutoff')) AS spot_cutoff,
+        spot_timestamp(JSONExtractRaw(s.spot_document, 'assembled_at')) AS spot_assembled,
+        if(startsWith(JSONExtractRaw(s.spot_document, 'anchor'), '{'),
+            JSONExtractRaw(JSONExtractRaw(s.spot_document, 'anchor'), 'ts'),
+            JSONExtractRaw(s.spot_document, 'anchor')) AS spot_anchor_text,
+        JSONExtractArrayRaw(s.spot_document, 'flow_bars') AS spot_all_bars,
         arrayFilter(r -> (JSONExtractRaw(r, 'token_id') IN ('', 'null')
-            OR JSONExtractRaw(r, 'token_id') = JSONExtractRaw(spot_document, 'token_id')),
-            JSONExtractArrayRaw(spot_document, 'instruments')) AS spot_instruments,
-        arrayFilter(r -> spot_time(r) <= spot_cutoff AND spot_admitted(r, spot_assembled),
-            JSONExtractArrayRaw(spot_document, 'tickers')) AS spot_tickers,
-        arrayFilter(r -> spot_time(r) + 1000000 * if(JSONHas(r, 'interval_s'),
-            JSONExtractInt(r, 'interval_s'), 60) <= spot_cutoff
-            AND spot_admitted(r, spot_assembled), spot_all_bars) AS spot_bars,
-        JSONExtractArrayRaw(spot_document, 'flow_segments') AS spot_explicit_pieces,
-        spot_embedded_for(spot_all_bars) AS spot_embedded_pieces,
-        arrayConcat(spot_explicit_pieces, spot_embedded_pieces) AS spot_piece_candidates,
-        arrayDistinct(arrayMap(r -> spot_piece_key(r), spot_piece_candidates)) AS spot_piece_keys,
-        arrayMap(key -> if(arrayExists(r -> spot_piece_key(r) = key, spot_explicit_pieces),
-            arrayElement(arrayReverse(arrayFilter(r -> spot_piece_key(r) = key, spot_explicit_pieces)), 1),
-            arrayFirst(r -> spot_piece_key(r) = key, spot_embedded_pieces)), spot_piece_keys) AS spot_unique_pieces,
-        arrayFilter(r -> spot_timestamp(JSONExtractRaw(r, 'end')) <= spot_cutoff
-            AND spot_admitted(r, spot_assembled), spot_unique_pieces) AS spot_bounded_pieces,
-        spot_embedded_for(spot_bars) AS spot_retained_embedded,
-        arrayConcat(spot_bounded_pieces, arrayMap(key -> arrayFirst(r -> spot_piece_key(r) = key,
-            spot_retained_embedded), arrayFilter(key -> NOT arrayExists(r -> spot_piece_key(r) = key,
-                spot_bounded_pieces), arrayDistinct(arrayMap(r -> spot_piece_key(r),
-                    spot_retained_embedded))))) AS spot_pieces,
+            OR JSONExtractRaw(r, 'token_id') = JSONExtractRaw(s.spot_document, 'token_id')),
+            JSONExtractArrayRaw(s.spot_document, 'instruments')) AS spot_instruments,
+        JSONExtractArrayRaw(s.spot_document, 'tickers') AS spot_all_tickers,
+        JSONExtractArrayRaw(s.spot_document, 'flow_segments') AS spot_explicit_pieces
+    FROM spot_source AS s
+),
+spot_source_records AS (
+    SELECT s.*,
+        s.spot_anchor_text NOT IN ('', 'null', '""', '0', 'false') AS spot_anchor_present,
+        arrayMap(r -> (r, spot_time(r), spot_venue(r), spot_market(r),
+            JSONExtractString(r, 'instrument_id'), spot_admitted(r, s.spot_assembled),
+            if(JSONHas(r, 'interval_s'), JSONExtractInt(r, 'interval_s'), 60)),
+            s.spot_all_bars) AS spot_all_bar_records,
+        arrayMap((r, idx) -> (r, spot_time(r), spot_venue(r), spot_admitted(r, s.spot_assembled), idx),
+            s.spot_all_tickers, arrayEnumerate(s.spot_all_tickers)) AS spot_all_ticker_records,
+        arrayMap(r -> (spot_venue(r), JSONExtractString(r, 'instrument_id')),
+            arrayFilter(r -> spot_market(r) = 'SPOT', s.spot_instruments)) AS spot_registry_records,
+        spot_embedded_for(s.spot_all_bars) AS spot_embedded_pieces
+    FROM spot_document_fields AS s
+),
+spot_bounded_records AS (
+    SELECT s.*,
+        if(NOT s.spot_anchor_present, s.spot_cutoff - 14400000000,
+            spot_timestamp(s.spot_anchor_text)) AS spot_start,
+        arrayFilter(r -> r.2 + 1000000 * r.7 <= s.spot_cutoff AND r.6,
+            s.spot_all_bar_records) AS spot_bar_records,
+        arrayFilter(r -> r.2 <= s.spot_cutoff AND r.4,
+            s.spot_all_ticker_records) AS spot_ticker_records,
+        arrayConcat(s.spot_explicit_pieces, s.spot_embedded_pieces) AS spot_piece_candidates
+    FROM spot_source_records AS s
+),
+spot_piece_keys_stage AS (
+    SELECT s.*, arrayDistinct(arrayMap(r -> spot_piece_key(r), s.spot_piece_candidates)) AS spot_piece_keys,
+        arrayMap(r -> r.1, s.spot_bar_records) AS spot_bars,
+        arrayMap(r -> r.1, s.spot_ticker_records) AS spot_tickers
+    FROM spot_bounded_records AS s
+),
+spot_piece_selection AS (
+    SELECT s.*,
+        arrayMap(key -> if(arrayExists(r -> spot_piece_key(r) = key, s.spot_explicit_pieces),
+            arrayElement(arrayReverse(arrayFilter(r -> spot_piece_key(r) = key, s.spot_explicit_pieces)), 1),
+            arrayFirst(r -> spot_piece_key(r) = key, s.spot_embedded_pieces)), s.spot_piece_keys) AS spot_unique_pieces,
+        spot_embedded_for(s.spot_bars) AS spot_retained_embedded
+    FROM spot_piece_keys_stage AS s
+),
+spot_piece_bounds AS (
+    SELECT s.*,
+        arrayFilter(r -> spot_timestamp(JSONExtractRaw(r, 'end')) <= s.spot_cutoff
+            AND spot_admitted(r, s.spot_assembled), s.spot_unique_pieces) AS spot_bounded_pieces,
+        arrayDistinct(arrayMap(r -> spot_piece_key(r), s.spot_retained_embedded)) AS spot_retained_keys
+    FROM spot_piece_selection AS s
+),
+spot_restored_pieces AS (
+    SELECT s.*,
+        arrayConcat(s.spot_bounded_pieces, arrayMap(key -> arrayFirst(r -> spot_piece_key(r) = key,
+            s.spot_retained_embedded), arrayFilter(key -> NOT arrayExists(r -> spot_piece_key(r) = key,
+                s.spot_bounded_pieces), s.spot_retained_keys))) AS spot_pieces
+    FROM spot_piece_bounds AS s
+),
+spot_input AS (
+    SELECT s.spot_document, s.spot_sigma_value, s.spot_cutoff, s.spot_assembled, s.spot_anchor_text,
+        s.spot_anchor_present, s.spot_start, s.spot_all_bars, s.spot_instruments,
+        s.spot_tickers, s.spot_bars, s.spot_pieces, s.spot_bar_records,
+        s.spot_ticker_records, s.spot_registry_records,
+        arrayMap((r, idx) -> (r, spot_timestamp(JSONExtractRaw(r, 'start')),
+            spot_timestamp(JSONExtractRaw(r, 'end')), JSONExtractString(r, 'instrument_id'),
+            JSONExtractRaw(r, 'complete') = 'true' AND spot_admitted(r, s.spot_assembled)
+                AND spot_observed(r, s.spot_assembled), idx),
+            s.spot_pieces, arrayEnumerate(s.spot_pieces)) AS spot_piece_records,
         [('W15M', toInt64(900000000)), ('W1H', toInt64(3600000000)),
             ('W4H', toInt64(14400000000)), ('W24H', toInt64(86400000000)),
             ('EVENT', assumeNotNull(spot_cutoff - spot_start))] AS spot_window_defs,
-        if(spot_anchor_present AND spot_cutoff - spot_start BETWEEN 900000000 AND 86400000000,
+        if(s.spot_anchor_present AND s.spot_cutoff - s.spot_start BETWEEN 900000000 AND 86400000000,
             'EVENT', 'W4H') AS spot_primary
-    FROM spot_source
+    FROM spot_restored_pieces AS s
     WHERE throwIf(spot_start >= spot_cutoff OR spot_start IS NULL OR spot_cutoff IS NULL,
         'Market Truth anchor must precede cutoff') = 0
 ),
+spot_period_rows AS (
+    SELECT s.*, spot_window_period
+    FROM spot_input AS s
+    ARRAY JOIN arrayFlatten(arrayMap(w -> [(w, toUInt8(0)), (w, toUInt8(1))],
+        s.spot_window_defs)) AS spot_window_period
+),
+spot_period_fields AS (
+    SELECT s.*, s.spot_window_period.1 AS spot_window, s.spot_window_period.2 AS spot_period
+    FROM spot_period_rows AS s
+),
+spot_period_names AS (
+    SELECT s.*, s.spot_window.1 AS spot_name, s.spot_window.2 AS spot_duration
+    FROM spot_period_fields AS s
+),
+spot_period_ends AS (
+    SELECT s.*, assumeNotNull(s.spot_cutoff - s.spot_period * s.spot_duration) AS spot_hi
+    FROM spot_period_names AS s
+),
+spot_period_starts AS (
+    SELECT s.*, s.spot_hi - s.spot_duration AS spot_lo,
+        intDiv(s.spot_hi, 60000000) * 60000000 AS spot_floor_hi
+    FROM spot_period_ends AS s
+),
+spot_period_floors AS (
+    SELECT s.*, intDiv(s.spot_lo, 60000000) * 60000000 AS spot_floor_lo,
+        arrayFilter(r -> r.4 = 'SPOT' AND r.2 < s.spot_hi
+            AND r.2 + 60000000 > s.spot_lo, s.spot_bar_records) AS spot_overlapping_records
+    FROM spot_period_starts AS s
+),
+spot_period_ceils AS (
+    SELECT s.*, s.spot_floor_lo + if(s.spot_lo = s.spot_floor_lo, 0, 60000000) AS spot_ceil_lo,
+        arrayFilter(r -> s.spot_lo <= r.2 AND r.2 + 60000000 <= s.spot_hi,
+            s.spot_overlapping_records) AS spot_full_records,
+        arrayConcat(s.spot_registry_records, arrayMap(r -> (r.3, r.5),
+            s.spot_overlapping_records)) AS spot_registration
+    FROM spot_period_floors AS s
+),
 spot_periods AS (
-    SELECT *, spot_window_period.1 AS spot_window, spot_window_period.2 AS spot_period,
-        spot_window.1 AS spot_name, spot_window.2 AS spot_duration,
-        assumeNotNull(spot_cutoff - spot_period * spot_duration) AS spot_hi,
-        spot_hi - spot_duration AS spot_lo,
-        intDiv(spot_lo, 60000000) * 60000000 AS spot_floor_lo,
-        intDiv(spot_hi, 60000000) * 60000000 AS spot_floor_hi,
-        spot_floor_lo + if(spot_lo = spot_floor_lo, 0, 60000000) AS spot_ceil_lo,
-        greatest(toInt64(0), intDiv(spot_floor_hi - spot_ceil_lo, 60000000)) AS spot_expected,
+    SELECT s.*,
+        greatest(toInt64(0), intDiv(s.spot_floor_hi - s.spot_ceil_lo, 60000000)) AS spot_expected,
         arrayFilter(p -> p.1 < p.2, arrayConcat(
-            if(spot_lo != spot_floor_lo, [(spot_lo, least(spot_ceil_lo, spot_hi))], []),
-            if(spot_hi != spot_floor_hi AND NOT (spot_lo != spot_floor_lo AND spot_floor_hi = spot_floor_lo),
-                [(greatest(spot_lo, spot_floor_hi), spot_hi)], []))) AS spot_partial,
-        arrayFilter(r -> spot_market(r) = 'SPOT' AND spot_time(r) < spot_hi
-            AND spot_time(r) + 60000000 > spot_lo, spot_bars) AS spot_overlapping,
-        arrayFilter(r -> spot_lo <= spot_time(r) AND spot_time(r) + 60000000 <= spot_hi,
-            spot_overlapping) AS spot_full,
-        arraySort(arrayDistinct(arrayMap(r -> spot_venue(r), arrayConcat(
-            arrayFilter(r -> spot_market(r) = 'SPOT', spot_instruments), spot_overlapping)))) AS spot_registered
-    FROM spot_input ARRAY JOIN arrayFlatten(arrayMap(w -> [(w, toUInt8(0)), (w, toUInt8(1))],
-        spot_window_defs)) AS spot_window_period
+            if(s.spot_lo != s.spot_floor_lo, [(s.spot_lo, least(s.spot_ceil_lo, s.spot_hi))], []),
+            if(s.spot_hi != s.spot_floor_hi AND NOT (s.spot_lo != s.spot_floor_lo AND s.spot_floor_hi = s.spot_floor_lo),
+                [(greatest(s.spot_lo, s.spot_floor_hi), s.spot_hi)], []))) AS spot_partial,
+        arraySort(arrayDistinct(arrayMap(r -> r.1, s.spot_registration))) AS spot_registered
+    FROM spot_period_ceils AS s
 ),
 spot_grouped AS (
-    SELECT *, arrayMap(ex -> (ex,
-        arraySort(arrayDistinct(arrayMap(r -> JSONExtractString(r, 'instrument_id'),
-            arrayFilter(r -> spot_venue(r) = ex, arrayConcat(
-                arrayFilter(r -> spot_market(r) = 'SPOT', spot_instruments), spot_overlapping))))),
-        arrayFilter(r -> spot_venue(r) = ex, spot_full)), spot_registered) AS spot_groups
-    FROM spot_periods
+    SELECT s.*, arrayMap(ex -> (ex,
+        arraySort(arrayDistinct(arrayMap(r -> r.2, arrayFilter(r -> r.1 = ex, s.spot_registration)))),
+        arrayMap(r -> r.1, arrayFilter(r -> r.3 = ex, s.spot_full_records)),
+        arrayMap(r -> r.2, arrayFilter(r -> r.3 = ex, s.spot_full_records))),
+        s.spot_registered) AS spot_groups
+    FROM spot_periods AS s
 ),
 spot_boundaries AS (
-    SELECT *, arrayMap(g -> (g.1, g.2, g.3,
+    SELECT s.*, arrayMap(g -> (g.1, g.2, g.3,
         arrayMap(p -> (p.1, p.2,
-            arrayMap(iid -> spot_cover(spot_pieces, iid, p.1, p.2, spot_assembled), g.2)), spot_partial)),
-        spot_groups) AS spot_covers
-    FROM spot_grouped
+            arrayMap(iid -> arrayFold((state, r) -> if(r.2 = state.1,
+                (assumeNotNull(r.3), arrayPushBack(state.2, r.1)), state),
+                arraySort(r -> (r.2, -r.3, r.6), arrayFilter(r -> r.4 = iid AND r.5
+                    AND p.1 <= r.2 AND r.2 < r.3 AND r.3 <= p.2, s.spot_piece_records)),
+                (toInt64(p.1), CAST([], 'Array(String)'))), g.2)), s.spot_partial), g.4),
+        s.spot_groups) AS spot_covers
+    FROM spot_grouped AS s
 ),
 spot_admission AS (
-    SELECT *, arrayMap(g -> (g.1, g.2, g.3,
+    SELECT s.*, arrayMap(g -> (g.1, g.2, g.3,
         arrayExists(p -> arrayExists(c -> c.1 != p.2, p.3), g.4),
         arrayConcat(g.3, arrayFlatten(arrayMap(p -> arrayFlatten(arrayMap(c -> c.2, p.3)), g.4))),
-        arrayMap(p -> (p.1, p.2, arrayFlatten(arrayMap(c -> c.2, p.3))), g.4)), spot_covers) AS spot_admissions
-    FROM spot_boundaries
+        arrayMap(p -> (p.1, p.2, arrayFlatten(arrayMap(c -> c.2, p.3))), g.4),
+        length(arrayDistinct(g.5)) >= s.spot_expected), s.spot_covers) AS spot_admissions
+    FROM spot_boundaries AS s
+),
+spot_eligibility AS (
+    SELECT s.*, arrayMap(a -> NOT a.4 AND a.7
+        AND arrayAll(r -> JSONExtractRaw(r, 'complete') = 'true', a.5),
+        s.spot_admissions) AS spot_complete
+    FROM spot_admission AS s
 ),
 spot_eligible AS (
-    SELECT *, arrayMap(a -> if(NOT a.4
-        AND length(arrayDistinct(arrayMap(r -> spot_time(r), a.3))) >= spot_expected
-        AND arrayAll(r -> JSONExtractRaw(r, 'complete') = 'true', a.5), a.5, []),
-        spot_admissions) AS spot_eligible_rows
-    FROM spot_admission
+    SELECT s.*, arrayMap((a, complete) -> if(complete, a.5, []),
+        s.spot_admissions, s.spot_complete) AS spot_eligible_rows
+    FROM spot_eligibility AS s
+),
+spot_numeric_raw AS (
+    SELECT s.*, arrayMap(rs -> arrayMap(r -> arrayMap(k -> spot_raw(r, k),
+        ['buy_qty', 'sell_qty', 'sum_sq_qty']), rs), s.spot_eligible_rows) AS spot_raw_numbers
+    FROM spot_eligible AS s
+),
+spot_numeric_text AS (
+    SELECT s.*, arrayMap(rs -> arrayMap(r -> arrayMap(x -> spot_text(x), r), rs),
+        s.spot_raw_numbers) AS spot_number_texts
+    FROM spot_numeric_raw AS s
+),
+spot_numeric_fixed AS (
+    SELECT s.*, arrayMap(rs -> arrayMap(r -> arrayMap(x -> spot_decimal_text(x), r), rs),
+        s.spot_number_texts) AS spot_fixed_numbers
+    FROM spot_numeric_text AS s
+),
+spot_numeric_values AS (
+    SELECT s.*, arrayMap((rs, raw_rs) -> arrayMap((r, raw_r) -> arrayMap((x, raw) ->
+        if(raw IN ('', 'null'), CAST(NULL, 'Nullable(Decimal256(24))'),
+            toDecimal256OrZero(x, 24) + toDecimal256(throwIf(
+                raw NOT IN ('', 'null') AND NOT match(x, '^[+-]?0*[0-9]{1,24}([.][0-9]{1,24})?$'),
+                'Market Truth spot financial input outside native range'), 24)), r, raw_r), rs, raw_rs),
+        s.spot_fixed_numbers, s.spot_raw_numbers) AS spot_values
+    FROM spot_numeric_fixed AS s
+),
+spot_numeric_sums AS (
+    SELECT s.*, arrayMap(rs -> arrayMap(k -> if(empty(rs) OR arrayExists(r -> r[k] IS NULL, rs),
+        CAST(NULL, 'Nullable(Decimal256(24))'),
+        arrayReduce('sum', arrayMap(r -> ifNull(r[k], spot_zero), rs))), [1, 2, 3]),
+        s.spot_values) AS spot_sums
+    FROM spot_numeric_values AS s
 ),
 spot_aggregated AS (
-    SELECT *, arrayMap((a, rs) -> (a.1,
-        spot_bound(spot_sum(rs, 'buy_qty') + spot_sum(rs, 'sell_qty')),
-        spot_bound(spot_sum(rs, 'buy_qty')), spot_bound(spot_sum(rs, 'sell_qty')),
-        spot_bound(spot_sum(rs, 'buy_qty') - spot_sum(rs, 'sell_qty')),
-        spot_qbound(spot_sum(rs, 'sum_sq_qty')),
-        NOT a.4 AND length(arrayDistinct(arrayMap(r -> spot_time(r), a.3))) >= spot_expected
-            AND arrayAll(r -> JSONExtractRaw(r, 'complete') = 'true', a.5),
-        __SEGMENTS__), spot_admissions, spot_eligible_rows) AS spot_aggregates
-    FROM spot_eligible
+    SELECT s.*, arrayMap((a, sums, complete) -> (a.1,
+        spot_bound(sums[1] + sums[2]), spot_bound(sums[1]), spot_bound(sums[2]),
+        spot_bound(sums[1] - sums[2]), spot_qbound(sums[3]), complete, __SEGMENTS__),
+        s.spot_admissions, s.spot_sums, s.spot_complete) AS spot_aggregates
+    FROM spot_numeric_sums AS s
 ),
 spot_results AS (
-    SELECT *, arrayMap(v -> (v.1, assumeNotNull(v.2), assumeNotNull(v.3), assumeNotNull(v.4),
-        assumeNotNull(v.5), assumeNotNull(v.6), spot_sign(assumeNotNull(v.5), assumeNotNull(v.6)), v.8),
-        arrayFilter(v -> v.7 AND v.2 IS NOT NULL AND v.6 IS NOT NULL, spot_aggregates)) AS spot_venues,
+    SELECT s.*, arrayMap(v -> (v.1, assumeNotNull(v.2), assumeNotNull(v.3), assumeNotNull(v.4),
+        assumeNotNull(v.5), assumeNotNull(v.6), spot_sign_for(assumeNotNull(v.5), assumeNotNull(v.6), s.spot_sigma_value), v.8),
+        arrayFilter(v -> v.7 AND v.2 IS NOT NULL AND v.6 IS NOT NULL, s.spot_aggregates)) AS spot_venues,
         arrayMap((a, v) -> if(NOT v.7, __COVERAGE_EXCLUSION__, __FIELD_EXCLUSION__),
-            arrayFilter((a, v) -> NOT v.7 OR v.2 IS NULL OR v.6 IS NULL, spot_admissions, spot_aggregates),
-            arrayFilter(v -> NOT v.7 OR v.2 IS NULL OR v.6 IS NULL, spot_aggregates)) AS spot_excluded,
+            arrayFilter((a, v) -> NOT v.7 OR v.2 IS NULL OR v.6 IS NULL, s.spot_admissions, s.spot_aggregates),
+            arrayFilter(v -> NOT v.7 OR v.2 IS NULL OR v.6 IS NULL, s.spot_aggregates)) AS spot_excluded,
         arrayMap(v -> v.1, arrayFilter(v -> NOT v.7 OR v.2 IS NULL OR v.6 IS NULL,
-            spot_aggregates)) AS spot_excluded_names
-    FROM spot_aggregated
+            s.spot_aggregates)) AS spot_excluded_names
+    FROM spot_aggregated AS s
 ),
 spot_totals AS (
-    SELECT *, spot_bound(spot_sum_tuple(spot_venues, 'volume')) AS spot_volume,
-        spot_bound(spot_sum_tuple(spot_venues, 'cvd')) AS spot_cvd,
-        spot_qbound(spot_sum_tuple(spot_venues, 'q')) AS spot_q,
-        spot_sign(spot_cvd, spot_q) AS spot_direction,
-        arrayMap(ex -> arrayElement(arrayReverseSort(r -> spot_time(r), arrayFilter(r -> spot_venue(r) = ex
-            AND spot_time(r) <= spot_hi, spot_tickers)), 1), spot_excluded_names) AS spot_estimate_tickers,
+    SELECT s.*, spot_bound(spot_sum_tuple(s.spot_venues, 'volume')) AS spot_volume,
+        spot_bound(spot_sum_tuple(s.spot_venues, 'cvd')) AS spot_cvd,
+        spot_qbound(spot_sum_tuple(s.spot_venues, 'q')) AS spot_q,
+        arrayMap(ex -> arrayElement(arraySort(r -> (-r.2, r.5), arrayFilter(r -> r.3 = ex
+            AND r.2 <= s.spot_hi, s.spot_ticker_records)), 1).1,
+            s.spot_excluded_names) AS spot_estimate_tickers,
+        arraySort(v -> (-v.2, v.1), s.spot_venues) AS spot_ranked
+    FROM spot_results AS s
+),
+spot_direction_stage AS (
+    SELECT s.*, spot_sign_for(s.spot_cvd, s.spot_q, s.spot_sigma_value) AS spot_direction,
         arrayMap(r -> if(r = '', CAST(NULL, 'Nullable(Decimal256(24))'),
             spot_money(r, if(JSONHas(r, 'volume_native'), 'volume_native', 'volume'))),
-            spot_estimate_tickers) AS spot_daily_estimates,
-        if(arrayExists(x -> x IS NULL, spot_daily_estimates), CAST(NULL, 'Nullable(Decimal256(24))'),
-            spot_qbound(arrayReduce('sum', arrayMap(x -> ifNull(x, spot_zero), spot_daily_estimates)))) AS spot_daily_estimated,
-        multiplyDecimal(ifNull(spot_daily_estimated, spot_zero), toDecimal256(spot_duration, 24), 24)
-            + if(spot_daily_estimated IS NULL, CAST(NULL, 'Nullable(Decimal256(24))'), spot_zero) AS spot_estimated_numerator,
-        multiplyDecimal(spot_volume, toDecimal256('86400000000', 24), 24) AS spot_scaled_volume,
-        arraySort(v -> (-v.2, v.1), spot_venues) AS spot_ranked,
-        arrayMap(v -> greatest(spot_zero, spot_direction * v.5), spot_venues) AS spot_contributions,
-        arrayReduce('sum', spot_contributions) AS spot_total_contribution,
-        indexOf(spot_contributions, arrayMax(spot_contributions)) AS spot_contributor_index,
-        arrayFilter((v, idx) -> idx != spot_contributor_index, spot_venues, arrayEnumerate(spot_venues)) AS spot_others,
-        arrayReduce('sum', arrayMap(v -> v.2, spot_others)) AS spot_other_volume,
-        arrayReduce('sum', arrayMap(v -> if(v.7 = spot_direction, v.2, spot_zero), spot_others)) AS spot_other_direction,
-        arrayReduce('sum', arrayMap(v -> if(v.7 = spot_direction, v.2, spot_zero), spot_venues)) AS spot_direction_volume,
-        arrayMap(idx -> arrayReduce('sum', arrayMap(v -> v.2, arraySlice(spot_ranked, 1, idx))),
-            arrayEnumerate(spot_ranked)) AS spot_cumulative,
-        if(empty(spot_ranked), toUInt64(0), if(arrayExists(x -> 2 * x > spot_volume, spot_cumulative),
-            arrayFirstIndex(x -> 2 * x > spot_volume, spot_cumulative), length(spot_ranked))) AS spot_top_n,
-        arraySlice(spot_ranked, 1, spot_top_n) AS spot_top,
-        arrayMap(v -> __VENUE__, spot_venues) AS spot_venue_json
-    FROM spot_results
+            s.spot_estimate_tickers) AS spot_daily_estimates,
+        multiplyDecimal(s.spot_volume, toDecimal256('86400000000', 24), 24) AS spot_scaled_volume,
+        arrayMap(idx -> arrayReduce('sum', arrayMap(v -> v.2, arraySlice(s.spot_ranked, 1, idx))),
+            arrayEnumerate(s.spot_ranked)) AS spot_cumulative,
+        arrayMap(v -> __VENUE__, s.spot_venues) AS spot_venue_json
+    FROM spot_totals AS s
+),
+spot_contribution_stage AS (
+    SELECT s.*, arrayMap(v -> greatest(spot_zero, s.spot_direction * v.5), s.spot_venues) AS spot_contributions,
+        if(arrayExists(x -> x IS NULL, s.spot_daily_estimates), CAST(NULL, 'Nullable(Decimal256(24))'),
+            spot_qbound(arrayReduce('sum', arrayMap(x -> ifNull(x, spot_zero), s.spot_daily_estimates)))) AS spot_daily_estimated,
+        if(empty(s.spot_ranked), toUInt64(0), if(arrayExists(x -> 2 * x > s.spot_volume, s.spot_cumulative),
+            arrayFirstIndex(x -> 2 * x > s.spot_volume, s.spot_cumulative), length(s.spot_ranked))) AS spot_top_n,
+        arrayReduce('sum', arrayMap(v -> if(v.7 = s.spot_direction, v.2, spot_zero), s.spot_venues)) AS spot_direction_volume
+    FROM spot_direction_stage AS s
+),
+spot_contributor_stage AS (
+    SELECT s.*, arrayReduce('sum', s.spot_contributions) AS spot_total_contribution,
+        indexOf(s.spot_contributions, arrayMax(s.spot_contributions)) AS spot_contributor_index,
+        multiplyDecimal(ifNull(s.spot_daily_estimated, spot_zero), toDecimal256(s.spot_duration, 24), 24)
+            + if(s.spot_daily_estimated IS NULL, CAST(NULL, 'Nullable(Decimal256(24))'), spot_zero) AS spot_estimated_numerator,
+        arraySlice(s.spot_ranked, 1, s.spot_top_n) AS spot_top,
+        arrayFlatten(groupArrayIf(arrayMap(v -> v.1, s.spot_venues), s.spot_period = 0)
+            OVER (ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING)) AS spot_cohort_names
+    FROM spot_contribution_stage AS s
 ),
 spot_cohort_set AS (
-    SELECT arraySort(arrayFilter(ex -> countEqual(arrayFlatten(groupArray(arrayMap(v -> v.1, spot_venues))), ex) = 5,
-        arrayDistinct(arrayFlatten(groupArray(arrayMap(v -> v.1, spot_venues)))))) AS spot_cohort
-    FROM spot_totals WHERE spot_period = 0
+    SELECT s.*, arraySort(arrayFilter(ex -> countEqual(s.spot_cohort_names, ex) = 5,
+        arrayDistinct(s.spot_cohort_names))) AS spot_cohort,
+        arrayFilter((v, idx) -> idx != s.spot_contributor_index,
+            s.spot_venues, arrayEnumerate(s.spot_venues)) AS spot_others
+    FROM spot_contributor_stage AS s
+),
+spot_cohort_selected AS (
+    SELECT s.*, arrayFilter(v -> has(s.spot_cohort, v.1), s.spot_venues) AS spot_selected,
+        arrayReduce('sum', arrayMap(v -> v.2, s.spot_others)) AS spot_other_volume,
+        arrayReduce('sum', arrayMap(v -> if(v.7 = s.spot_direction, v.2, spot_zero), s.spot_others)) AS spot_other_direction
+    FROM spot_cohort_set AS s
+),
+spot_cohort_totals AS (
+    SELECT s.*, spot_bound(spot_sum_tuple(s.spot_selected, 'volume')) AS spot_cohort_volume
+    FROM spot_cohort_selected AS s
+),
+spot_cohort_majorities AS (
+    SELECT s.*, spot_majority(s.spot_cohort_volume, s.spot_volume) AS spot_cohort_majority,
+        groupArrayIf(tuple(s.spot_cohort_volume, length(s.spot_selected) = length(s.spot_cohort)),
+            s.spot_period = 1) OVER (PARTITION BY s.spot_name
+                ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING) AS spot_previous_values
+    FROM spot_cohort_totals AS s
 ),
 spot_cohorts AS (
-    SELECT *, arrayFilter(v -> has(spot_cohort, v.1), spot_venues) AS spot_selected,
-        spot_bound(spot_sum_tuple(spot_selected, 'volume')) AS spot_cohort_volume,
-        spot_majority(spot_cohort_volume, spot_volume) AS spot_cohort_majority,
-        length(spot_cohort) >= {spot_min_venues:UInt64} AND ifNull(spot_cohort_majority, false) AS spot_cohort_valid
-    FROM spot_totals CROSS JOIN spot_cohort_set
-),
-spot_previous AS (
-    SELECT spot_name, spot_cohort_volume AS spot_previous_volume,
-        length(spot_selected) = length(spot_cohort) AS spot_previous_complete
-    FROM spot_cohorts WHERE spot_period = 1
+    SELECT s.*, length(s.spot_cohort) >= {spot_min_venues:UInt64}
+            AND ifNull(s.spot_cohort_majority, false) AS spot_cohort_valid,
+        s.spot_previous_values[1].1 AS spot_previous_volume,
+        s.spot_previous_values[1].2 AS spot_previous_complete
+    FROM spot_cohort_majorities AS s
 ),
 spot_final AS (
-    SELECT * FROM spot_cohorts LEFT JOIN spot_previous USING (spot_name) WHERE spot_period = 0
+    SELECT * FROM spot_cohorts WHERE spot_period = 0
 )
 """
     replacements = {
