@@ -38,9 +38,7 @@ async def persist(repo, clean):
     )
 
 
-@pytest.mark.parametrize(
-    "bad", ["apify-secret", {"echo": "apify-secret"}, ["apify-secret"], -1, True]
-)
+@pytest.mark.parametrize("bad", ["apify-secret", {"echo": "apify-secret"}, ["apify-secret"], -1, True])
 async def test_untrusted_scalars_never_escape_in_uploaded_documents(bad):
     evidence = diagnostics("safe body")
     evidence["invalidEvidence"] = ["apify-secret" * 10000]
@@ -83,9 +81,7 @@ async def test_falsey_malformed_containers_are_explicit(field, value):
     assert field in clean["invalidEvidence"]
 
 
-@pytest.mark.parametrize(
-    "body,expected", [("éé", b"\xc3\xa9\xc3"), ("🙂", b"\xf0\x9f\x99")]
-)
+@pytest.mark.parametrize("body,expected", [("éé", b"\xc3\xa9\xc3"), ("🙂", b"\xf0\x9f\x99")])
 def test_clipped_utf8_preserves_exact_prefix_without_claiming_redaction(body, expected):
     evidence = diagnostics(body)
     evidence["attempts"] = evidence["attempts"][:1]
@@ -144,12 +140,8 @@ async def test_malformed_text_jsonb_readback_uploads_exact_body(
         assert len(uploaded) == 2
         assert uploaded[0][1] == expected
         metadata = json.loads(uploaded[1][1])
-        assert metadata["attempts"][0]["response"]["bodySha256"] == hashlib.sha256(
-            expected
-        ).hexdigest()
-        receipts = await repo.list(
-            "out.deliveries", filters={"status": "SENT", "method": "sendDocument"}
-        )
+        assert metadata["attempts"][0]["response"]["bodySha256"] == hashlib.sha256(expected).hexdigest()
+        receipts = await repo.list("out.deliveries", filters={"status": "SENT", "method": "sendDocument"})
         assert {row["document_sha256"] for row in receipts} == {
             hashlib.sha256(content).hexdigest() for _, content in uploaded
         }

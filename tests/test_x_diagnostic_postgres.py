@@ -31,9 +31,7 @@ async def test_jsonb_readback_preserves_manifest_multipart_bytes_and_durable_rec
             assert path.endswith("sendDocument")
             request = httpx.Request("POST", origin, headers=headers, content=body)
             assert multipart(request)["document"] == (document["filename"], document["content"])
-        receipts = await repo.list(
-            "out.deliveries", filters={"status": "SENT", "method": "sendDocument"}
-        )
+        receipts = await repo.list("out.deliveries", filters={"status": "SENT", "method": "sendDocument"})
         assert {row["document_sha256"] for row in receipts} == {row["sha256"] for row in expected}
         assert all(row["message_ref"] and row["chat_id"] == "ops" for row in receipts)
 
@@ -55,8 +53,6 @@ async def test_jsonb_partial_retry_skips_durable_successful_documents(postgres_t
                 await DeliveryService(repo, telegram_settings(), http=http).deliver(payload)
             await DeliveryService(repo, telegram_settings(), http=http).deliver(payload)
         assert len(sent) == 6
-        receipts = await repo.list(
-            "out.deliveries", filters={"status": "SENT", "method": "sendDocument"}
-        )
+        receipts = await repo.list("out.deliveries", filters={"status": "SENT", "method": "sendDocument"})
         assert len(receipts) == 4
         assert len({row["document_id"] for row in receipts}) == 4

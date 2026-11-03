@@ -153,9 +153,7 @@ def sanitize(value, token=None, budget=None):
             else:
                 original_raw, clipped = text_prefix(body, limit)
             byte_token = token.encode("utf-8").decode("latin-1") if token else None
-            transformed = redact(original_raw.decode("latin-1"), byte_token, BODY_LIMIT).encode(
-                "latin-1"
-            )
+            transformed = redact(original_raw.decode("latin-1"), byte_token, BODY_LIMIT).encode("latin-1")
             raw = transformed[:limit]
             transformed_clipped = len(transformed) > limit
             budget[0] -= max(len(original_raw), len(raw))
