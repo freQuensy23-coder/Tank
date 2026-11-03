@@ -343,18 +343,20 @@ def test_array_aggregation_diagnostic_keeps_only_static_native_scope_functions(t
         assert forbidden not in serialized
 
 
-def test_liquidity_phase_receipts_are_bounded_and_reject_unknown_labels(tmp_path):
+@pytest.mark.parametrize(
+    "phase",
+    ["tier_values", "venue_depth", "venue_precision", "venue_walk_t1", "venue_walk_t2", "venue_walk_t3"],
+)
+def test_liquidity_phase_receipts_are_bounded_and_reject_unknown_labels(tmp_path, phase):
     directory = tmp_path / "evidence"
     for status in ("STARTED", "PASS"):
-        truth_sql_failure_evidence.retain_liquidity_phase(
-            directory, "test_phases", "tier_values", status=status
-        )
+        truth_sql_failure_evidence.retain_liquidity_phase(directory, "test_phases", phase, status=status)
     receipts = sorted(
         (json.loads(path.read_text()) for path in directory.iterdir()), key=lambda r: r["status"]
     )
     assert receipts == [
-        {"nodeid": "test_phases::tier_values", "phase": "tier_values", "status": "PASS"},
-        {"nodeid": "test_phases::tier_values", "phase": "tier_values", "status": "STARTED"},
+        {"nodeid": "test_phases::" + phase, "phase": phase, "status": "PASS"},
+        {"nodeid": "test_phases::" + phase, "phase": phase, "status": "STARTED"},
     ]
     before = {path.name: path.read_bytes() for path in directory.iterdir()}
     with pytest.raises(ValueError, match="phase"):

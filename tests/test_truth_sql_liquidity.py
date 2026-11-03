@@ -772,6 +772,42 @@ async def test_native_liquidity_absence_relational_phase_contracts(native_client
             [["A", None], ["B", None]],
         ),
         (
+            "venue_depth",
+            "SELECT arraySort(groupArray(tuple(venue, toString(bid), toString(ask), "
+            "toString(current_total), spread))) AS value FROM lq_venue_stats",
+            [
+                [
+                    v["venue"],
+                    v["bid_depth_p1_usd"],
+                    v["ask_depth_p1_usd"],
+                    v["depth_p1_usd"],
+                    v["spread_bps"],
+                ]
+                for v in sorted(expected["per_venue"], key=lambda v: v["venue"])
+            ],
+        ),
+        (
+            "venue_precision",
+            "SELECT arraySort(groupArray(tuple(venue, lq_precision(current.3)))) AS value FROM lq_venue_stats",
+            [[v["venue"], v["precision"]] for v in sorted(expected["per_venue"], key=lambda v: v["venue"])],
+        ),
+        *(
+            (
+                phase,
+                f"SELECT arraySort(groupArray(tuple(venue, lq_walk_book(current.3, lq_tiers[{index}], 'ask')))) "
+                "AS value FROM lq_venue_stats CROSS JOIN lq_tier_values",
+                [
+                    [v["venue"], v["slippage_bps"][tier]]
+                    for v in sorted(expected["per_venue"], key=lambda v: v["venue"])
+                ],
+            )
+            for index, tier, phase in (
+                (1, "T1", "venue_walk_t1"),
+                (2, "T2", "venue_walk_t2"),
+                (3, "T3", "venue_walk_t3"),
+            )
+        ),
+        (
             "venue_output",
             "SELECT arraySort(x -> JSONExtractString(x, 'venue'), groupArray(venue_json)) AS value FROM lq_venues",
             sorted(expected["per_venue"], key=lambda v: v["venue"]),
