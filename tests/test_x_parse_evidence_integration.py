@@ -6,6 +6,7 @@ import os
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from types import SimpleNamespace
 
 import httpx
 import pytest
@@ -124,9 +125,12 @@ def parse_wire(monkeypatch):
     origin = f"http://127.0.0.1:{server.server_port}"
     monkeypatch.setenv("APIFY_TOKEN", "configured-secret")
     monkeypatch.setattr(
-        reader.httpx,
-        "AsyncClient",
-        lambda **kwargs: HTTP_CLIENT(transport=ProfileTransport(origin), **kwargs),
+        reader,
+        "httpx",
+        SimpleNamespace(
+            AsyncClient=lambda **kwargs: HTTP_CLIENT(transport=ProfileTransport(origin), **kwargs),
+            HTTPError=httpx.HTTPError,
+        ),
     )
     try:
         yield worker, origin, state
