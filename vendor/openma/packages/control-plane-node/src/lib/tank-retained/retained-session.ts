@@ -126,7 +126,7 @@ export class RetainedSessionLifecycle<R extends RetainedRuntime> {
       if (!archiveOnly && manifest.state !== 'archived') {
         if (!this.options.identity) fail('retained_identity_required');
         assertCompatible(manifest.identity!, this.options.identity);
-        if (manifest.identity!.image !== this.options.identity.image) fail('retained_configuration_changed:image');
+        if (manifest.identity!.image !== this.options.identity.image && !['retained', 'aborted'].includes(manifest.state)) fail('retained_configuration_changed:image');
         if (manifest.state === 'upgrading') fail('retained_upgrade_incomplete');
       }
       return manifest;
@@ -174,9 +174,19 @@ export class RetainedSessionLifecycle<R extends RetainedRuntime> {
       const acquired = await this.options.fences.acquire({ scope: this.scope, ownerId: this.ownerId, ttlMs: this.options.leaseTtlMs });
       if (acquired.type !== 'acquired') fail('retained_resource_busy');
       this.fence = acquired.fence; this.lost = false; this.startHeartbeat();
-      const manifest = acquired.publication ? this.decode(acquired.publication.workspaceCandidate) : null;
+      let manifest = acquired.publication ? this.decode(acquired.publication.workspaceCandidate) : null;
       this.manifest = manifest;
       if (manifest?.archived) fail('retained_session_archived');
+      if (manifest?.state === 'retained' && manifest.identity && manifest.identity.image !== this.options.identity!.image) {
+        this.handle = manifest.handle;
+        for (const handle of [...manifest.retired ?? [], manifest.handle]) {
+          signal.throwIfAborted(); await assertExecutionCurrent();
+          await this.options.provider.reap(handle, this.scope, await this.current(), signal);
+        }
+        signal.throwIfAborted(); await assertExecutionCurrent();
+        await this.publish('aborted');
+        manifest = this.manifest;
+      }
       if (manifest && manifest.state !== 'aborted') {
         this.handle = manifest.handle;
         if (manifest.state === 'allocating') {
@@ -189,7 +199,9 @@ export class RetainedSessionLifecycle<R extends RetainedRuntime> {
         if (manifest.state === 'allocating') await this.publish('retained');
       } else {
         this.manifest = null;
+        signal.throwIfAborted(); await assertExecutionCurrent();
         this.handle = await this.options.provider.allocationIntent(this.scope, await this.current(), signal);
+        if (this.options.identity) this.manifest = { handle: this.handle, state: 'allocating', archived: false, identity: this.options.identity, retired: [] };
         await this.publish('allocating'); newIntent = true;
         this.runtime = await this.options.provider.create(this.scope, await this.current(), signal);
         this.handle = this.runtime.runtimeHandle(); created = true;

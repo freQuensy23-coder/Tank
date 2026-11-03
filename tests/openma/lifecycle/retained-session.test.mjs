@@ -194,10 +194,32 @@ test('new identified runtimes publish schema2 without adopting legacy provenance
   assert.equal(candidate.metadata.schema,2);assert.deepEqual(JSON.parse(candidate.metadata.manifest).identity,schema2Identity);
 });
 
+for(const boundary of ['cancelled','execution_lost','resource_lost'])test(`image replacement refuses ${boundary} before deleting old runtime`,async()=>{
+  const {s}=await schema2Fixture(),before=JSON.stringify([...s.rows.values()][0].publication);
+  const identity={...schema2Identity,image:'sha256:'+'f'.repeat(64)},abort=new AbortController();
+  if(boundary==='cancelled')abort.abort(Error('cancelled'));
+  let checks=0;
+  const authorized=async()=>{checks++;if(boundary==='execution_lost'&&checks>1)throw Error('execution_lost');};
+  if(boundary==='resource_lost')s.fences.isCurrent=async()=>false;
+  await assert.rejects(s.controller({identity}).begin(authorized,abort.signal));
+  assert.equal(s.disks.has('box_1'),true);assert.equal(s.creates,1);
+  assert.equal(JSON.stringify([...s.rows.values()][0].publication),before);
+  assert.equal(s.calls.some(call=>call[0]==='remove-owned'),false);
+});
+
+test('replacement retries deletion acknowledgement failure without resuming or copying old runtime',async()=>{
+  const {s}=await schema2Fixture(),reap=s.provider.reap.bind(s.provider);
+  let fail=true;s.provider.reap=async(...args)=>{await reap(...args);if(fail){fail=false;throw Error('cleanup acknowledgement lost');}};
+  const identity={...schema2Identity,image:'sha256:'+'f'.repeat(64)};
+  await assert.rejects(s.controller({identity}).begin(permitted,signal()),/cleanup acknowledgement lost/);
+  assert.equal(s.disks.size,0);assert.equal(s.creates,1);
+  const retry=s.controller({identity});await retry.begin(permitted,signal());await retry.idle(permitted);
+  assert.equal(s.disks.size,1);assert.equal(s.creates,2);assert.equal(s.calls.some(call=>call[0]==='fresh-get'),false);
+});
+
 for(const kind of ['compatibility','missing','integrity','upgrading'])test(`schema2 refuses ${kind} without migration or allocation`,async()=>{
   const {s,manifest,save}=await schema2Fixture();
   let identity=structuredClone(schema2Identity);
-  if(kind==='image')identity.image='sha256:'+'f'.repeat(64);
   if(kind==='compatibility')identity.compatibility.scope='sha256:'+'f'.repeat(64);
   if(kind==='missing')identity=undefined;
   if(kind==='upgrading'){manifest.state='upgrading';manifest.upgrade={source:manifest.handle,target:{provider:'litebox',runtimeId:'target'},owner:'old',identity:schema2Identity};save();}
