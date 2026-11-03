@@ -36,6 +36,16 @@ def _native_session(session_id, agent_id="synthetic"):
     }
 
 
+def _native_input_acceptance(request):
+    if request.method == "GET":
+        return {"data": []}
+    assert request.method == "POST"
+    events = json.loads(request.content)["events"]
+    assert len(events) == 1
+    assert events[0]["type"] in {"user.message", "user.custom_tool_result"}
+    return {"data": [{"id": "native-input:" + request.headers["Idempotency-Key"]}]}
+
+
 def _fixture_api_limits():
     from pathlib import Path
 
@@ -165,7 +175,7 @@ async def test_source_jev_sse_validated_read_restart_and_delivery(tmp_path):
             )
         if path.endswith("/events"):
             event_posts.append(json.loads(request.content))
-            return httpx.Response(200, json={})
+            return httpx.Response(200, json=_native_input_acceptance(request))
         if request.url.host == "api.telegram.org":
             sent.append(json.loads(request.content))
             if failures.pop() if failures else False:
@@ -400,7 +410,7 @@ async def test_full_sse_pipeline_postgres(tmp_path, complete_market, monkeypatch
             )
         if path.endswith("/events"):
             posted.append(json.loads(req.content))
-            return httpx.Response(200, json={})
+            return httpx.Response(200, json=_native_input_acceptance(req))
         if req.url.host == "api.telegram.org":
             sends.append(json.loads(req.content))
             return httpx.Response(200, json={"ok": True, "result": {"message_id": 900 + len(sends)}})
@@ -1127,7 +1137,7 @@ async def test_runtime_autonomous_source_to_telegram(tmp_path, monkeypatch, capl
                             },
                         }
                     )
-            return httpx.Response(200, json={})
+            return httpx.Response(200, json=_native_input_acceptance(request))
         if request.url.host == "api.telegram.org":
             if request.url.path.endswith("/getUpdates"):
                 return httpx.Response(200, json={"ok": True, "result": []})
