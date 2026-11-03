@@ -353,6 +353,10 @@ LiquidationObservation
 
 ### 2.6 Analysis outputs
 
+The ClickHouse analytical migration uses native `Decimal256(24)`, not arbitrary-precision digit arithmetic. Financial source values must be finite, have magnitude below `10^24`, and be exactly representable at scale 24. Plain signed decimal input is admitted; unsupported notation, excess nonzero fractional precision and out-of-range values fail explicitly rather than becoming zero, NULL, FLOAT64, or clipped amounts. The initial native query boundary accepts at most 24 fractional digits, including trailing zeros; scientific-notation normalization remains a migration prerequisite.
+
+Addition and comparisons are exact within that representation. Native `multiplyDecimal` and `divideDecimal` truncate toward zero at scale 24; each such rounding introduces absolute error strictly below `10^-24` in the result's unit. Division by zero is refused. Multiplication of two admitted operands fits the 52-digit integer capacity, including funding normalization `rate * 8 / interval_h`; chained expressions and aggregates require their own intermediate-range qualification before activation. Analytical monetary outputs use fixed-scale decimal text; the former 128-significant-digit spelling and synthetic `1E150 + 1E-40` equality are not native-migration acceptance criteria. Realistic comparison oracles must apply the same operation-level truncation and preserve economically meaningful strict-majority decisions at representable precision. FLOAT64 remains restricted to existing statistical outputs; time windows, cohort selection, missing-data reasons, measurement metadata and privacy projection are unchanged. This contract does not assert that the complete assessment has migrated or met its four-second deadline.
+
 ```
 SpotTruth                            # per token × window × cutoff
   window: W15M | W1H | W4H | W24H | EVENT
