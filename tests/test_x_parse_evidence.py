@@ -1,5 +1,6 @@
 import base64
 import gzip
+import hashlib
 import importlib
 import json
 
@@ -71,6 +72,42 @@ def test_parse_metadata_is_redacted_bounded_jsonb_safe_and_allowlisted(field, pr
     assert counts == {"articleCount": 3, "statusLinkCount": 2, "textCount": 1, "scriptCount": 4}
     json.dumps(clean, ensure_ascii=False).encode()
     assert f"{field}[1]" in clean["invalidEvidence"]
+
+
+@pytest.mark.parametrize("delimiter", [",", ";"])
+@pytest.mark.parametrize(
+    "query_key",
+    [
+        "auth",
+        "AuTh",
+        "api_token",
+        "api-token",
+        "apiToken",
+        "api_key",
+        "api-key",
+        "apiKey",
+        "access_token",
+        "token",
+        "password",
+        "secret",
+    ],
+)
+def test_consumer_query_credentials_remove_full_value_and_preserve_safe_parameters(query_key, delimiter):
+    raw_url = f"https://host/path?{query_key}=query-prefix{delimiter}private-suffix&view=public"
+    safe_url = f"https://host/path?{query_key}=[REDACTED]&view=public"
+    raw = f"<title>{raw_url}</title>".encode()
+    expected = f"<title>{safe_url}</title>".encode()
+    value = diagnostics(raw.decode())
+    value["attempts"][0]["response"].update(finalUrl=raw_url, title=raw_url)
+    clean = sanitize(value, "configured-secret")
+    response = clean["attempts"][0]["response"]
+    assert response["finalUrl"].encode() == response["title"].encode() == safe_url.encode()
+    assert response["body"].encode() == expected
+    assert response["bodyBytes"] == len(expected)
+    assert response["bodySha256"] == hashlib.sha256(expected).hexdigest()
+    assert response["consumerCapturedBytes"] == len(raw)
+    assert response["redacted"] and not response["consumerTransformTruncated"]
+    assert all(part not in json.dumps(clean) for part in ("query-prefix", "private-suffix"))
 
 
 @pytest.mark.parametrize("bad", [True, -1, 2_000_001, "3", {}, []])

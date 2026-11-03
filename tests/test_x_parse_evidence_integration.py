@@ -1,5 +1,6 @@
 import base64
 import gzip
+import hashlib
 import importlib
 import json
 import os
@@ -20,14 +21,36 @@ from tank.storage import MemoryRepository
 from tank.util import sha256
 
 HTTP_CLIENT = httpx.AsyncClient
-SECRET_TEXT = (
-    b" configured-secret Cookie: cookie-secret\n1.https://reader:db-password@host/path?api_token=query-secret"
-    b"&auth=redirect-auth-credential"
+QUERY = (
+    "api_token=query-secret,token-comma;token-tail"
+    "&auth=redirect-auth-credential,auth-comma;auth-tail"
+    "&AuTh=mixed-prefix,mixed-comma;mixed-tail"
+    "&api-token=dash-prefix,dash-comma;dash-tail"
+    "&apiToken=camel-prefix,camel-comma;camel-tail&view=public"
 )
-SAFE_TEXT = (
-    b" [REDACTED] Cookie: [REDACTED]\n1.https://reader:[REDACTED]@host/path?api_token=[REDACTED]"
-    b"&auth=[REDACTED]"
+SAFE_QUERY = (
+    "api_token=[REDACTED]&auth=[REDACTED]&AuTh=[REDACTED]"
+    "&api-token=[REDACTED]&apiToken=[REDACTED]&view=public"
 )
+QUERY_SECRET_PARTS = (
+    "query-secret",
+    "token-comma",
+    "token-tail",
+    "redirect-auth-credential",
+    "auth-comma",
+    "auth-tail",
+    "mixed-prefix",
+    "mixed-comma",
+    "mixed-tail",
+    "dash-prefix",
+    "dash-comma",
+    "dash-tail",
+    "camel-prefix",
+    "camel-comma",
+    "camel-tail",
+)
+SECRET_TEXT = b" configured-secret Cookie: cookie-secret\n1.https://reader:db-password@host/path?" + QUERY.encode()
+SAFE_TEXT = b" [REDACTED] Cookie: [REDACTED]\n1.https://reader:[REDACTED]@host/path?" + SAFE_QUERY.encode()
 CASES = [
     (200, b"<title>This page is down / X</title>", "PUBLIC_PROFILE_NOT_READABLE", False, 0),
     (200, b"", "PUBLIC_PROFILE_NOT_READABLE", False, 0),
@@ -99,9 +122,7 @@ def parse_wire(monkeypatch):
         def do_GET(self):
             state["requests"].append(self.path)
             if "?" not in self.path:
-                self.respond(
-                    302, b"", {"Location": "/alice?api_token=query-secret&auth=redirect-auth-credential"}
-                )
+                self.respond(302, b"", {"Location": "/alice?" + QUERY})
                 return
             body = gzip.compress(state["body"]) if state["gzip"] else state["body"]
             headers = {"Content-Type": "text/html", "Set-Cookie": "header-secret"}
@@ -174,14 +195,15 @@ async def test_real_actor_2xx_parse_failure_bytes_reach_ops_without_cursor_advan
     assert retained == expected and response["bodySha256"] == sha256(expected)
     assert response["status"] == status and response["bodyBytes"] == len(expected)
     assert response["bodyTruncated"] is False
-    assert response["finalUrl"] == "https://x.com/alice?api_token=[REDACTED]&auth=[REDACTED]"
+    assert response["finalUrl"].encode() == ("https://x.com/alice?" + SAFE_QUERY).encode()
     assert response["readError"] is None
     if articles is not None:
         assert response["articleCount"] == response["statusLinkCount"] == articles
         assert response["textCount"] == 0 and response["scriptCount"] == int(compressed)
         expected_title = raw.decode().split("<title>")[1].split("</title>")[0] if raw else ""
         assert response["title"] == expected_title
-    assert state["requests"] == ["/alice", "/alice?api_token=query-secret&auth=redirect-auth-credential"]
+    assert state["requests"] == ["/alice", "/alice?" + QUERY]
+    assert all(part not in json.dumps(output) for part in QUERY_SECRET_PARTS)
     assert all(
         secret not in json.dumps(output)
         for secret in (
@@ -221,6 +243,9 @@ async def test_real_actor_2xx_parse_failure_bytes_reach_ops_without_cursor_advan
     metadata = json.loads(uploads[-1])["attempts"][0]["response"]
     assert metadata["status"] == status and metadata["bodySha256"] == sha256(expected)
     assert metadata["finalUrl"] == response["finalUrl"]
+    assert metadata["bodyBytes"] == len(expected)
+    assert metadata["bodySha256"] == hashlib.sha256(expected).hexdigest()
+    assert all(part.encode() not in b"".join(uploads) for part in QUERY_SECRET_PARTS)
     assert all(
         secret not in b"".join(uploads)
         for secret in (
@@ -241,16 +266,20 @@ async def test_parse_metadata_survives_jsonb_and_real_multipart_upload(
     postgres_template, parse_wire, consumer_input
 ):
     worker, origin, state = parse_wire
-    state["body"] = b"<title>Alice (@alice) / X</title>" + SECRET_TEXT
-    expected = b"<title>Alice (@alice) / X</title>" + SAFE_TEXT
+    state["body"] = ("<title>Alice (@alice) / X https://host/?" + QUERY + "</title>").encode() + SECRET_TEXT
+    expected_title = "Alice (@alice) / X https://host/?" + SAFE_QUERY
+    expected = ("<title>" + expected_title + "</title>").encode() + SAFE_TEXT
     output = await worker.fetch_snapshot({"handles": ["alice"], "cursors": {"alice": "90"}})
     response = output["accounts"][0]["diagnostics"]["attempts"][0]["response"]
-    assert response["finalUrl"] == "https://x.com/alice?api_token=[REDACTED]&auth=[REDACTED]"
+    assert response["finalUrl"].encode() == ("https://x.com/alice?" + SAFE_QUERY).encode()
     assert response["body"].encode() == expected and response["bodySha256"] == sha256(expected)
+    assert response["title"].encode() == expected_title.encode()
+    assert state["requests"] == ["/alice", "/alice?" + QUERY]
+    assert all(part not in json.dumps(output) for part in QUERY_SECRET_PARTS)
     if consumer_input == "unredacted":
         response.update(
-            finalUrl="https://x.com/alice?api_token=query-secret&auth=redirect-auth-credential",
-            title="Alice (@alice) / X https://host/?auth=redirect-auth-credential",
+            finalUrl="https://x.com/alice?" + QUERY,
+            title="Alice (@alice) / X https://host/?" + QUERY,
             body=state["body"].decode(),
             bodyBytes=len(state["body"]),
             bodySha256=sha256(state["body"]),
@@ -275,6 +304,13 @@ async def test_parse_metadata_survives_jsonb_and_real_multipart_upload(
             "2026-11-03T20:00:00Z",
         )
         saved = await repo.get("out.ops_notices", notice_id)
+        saved_response = saved["entry_errors"][0]["diagnostics"]["attempts"][0]["response"]
+        assert saved_response["finalUrl"].encode() == ("https://x.com/alice?" + SAFE_QUERY).encode()
+        assert saved_response["title"].encode() == expected_title.encode()
+        assert saved_response["body"].encode() == expected
+        assert saved_response["bodyBytes"] == len(expected)
+        assert saved_response["bodySha256"] == hashlib.sha256(expected).hexdigest()
+        assert all(part not in json.dumps(saved) for part in QUERY_SECRET_PARTS)
         assert all(
             secret not in json.dumps(saved)
             for secret in (
@@ -288,17 +324,18 @@ async def test_parse_metadata_survives_jsonb_and_real_multipart_upload(
         )
         retained_documents = documents(saved["entry_errors"])
         assert retained_documents[0]["content"] == expected
+        assert retained_documents[0]["sha256"] == hashlib.sha256(expected).hexdigest()
         async with HTTP_CLIENT(transport=ProfileTransport(origin)) as http:
             await DeliveryService(repo, telegram_settings(), http=http).deliver({"notice_id": notice_id})
         uploads = [multipart(request)["document"][1] for request in state["uploads"][1:]]
         assert uploads == [document["content"] for document in retained_documents]
         metadata = json.loads(uploads[1])["attempts"][0]["response"]
         assert metadata["bodySha256"] == sha256(expected) and metadata["status"] == 200
-        expected_title = "Alice (@alice) / X"
-        if consumer_input == "unredacted":
-            expected_title += " https://host/?auth=[REDACTED]"
         assert metadata["title"] == expected_title and metadata["articleCount"] == 0
-        assert metadata["finalUrl"] == "https://x.com/alice?api_token=[REDACTED]&auth=[REDACTED]"
+        assert metadata["finalUrl"].encode() == ("https://x.com/alice?" + SAFE_QUERY).encode()
+        assert metadata["bodyBytes"] == len(expected)
+        assert metadata["bodySha256"] == hashlib.sha256(expected).hexdigest()
+        assert all(part.encode() not in b"".join(uploads) for part in QUERY_SECRET_PARTS)
         assert all(
             secret not in b"".join(uploads)
             for secret in (

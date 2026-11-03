@@ -26,6 +26,11 @@ HEADERS = {
 
 def redact(value, token=None, limit=8192):
     value = value[:limit] if isinstance(value, str) else "INVALID_DIAGNOSTIC_TEXT"
+    value = re.sub(
+        r"(?i)([?&](?:api[-_]?(?:key|token)|access_token|token|auth|password|secret)=)[^&\s'\"<>]*",
+        r"\1[REDACTED]",
+        value,
+    )
     text = redact_text(value, (token,) if token else ())
     return re.sub(
         r"(?i)((?<![A-Za-z0-9_])(?:authorization|set-cookie|cookie|auth_token|api[-_]?token|auth|ct0)[\"']?[ \t]*[:=][ \t]*)"
