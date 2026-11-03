@@ -103,6 +103,7 @@ recover() {
   local status=$? worker_restored=yes
   trap - EXIT INT TERM
   if [ "$status" -ne 0 ] && [ "$worker_started" = yes ]; then
+    apify rollback-intent || exit 1
     if ! apify rollback; then
       echo "Worker rollback failed; transaction retained"
       worker_restored=no

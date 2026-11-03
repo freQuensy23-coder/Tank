@@ -34,6 +34,8 @@ ACTOR = "rbf5CQKQgKNVl4SfO"
         "changed_compose",
         "post_finish_term",
         "post_finish_crash",
+        "finish_child_failed",
+        "finish_child_killed",
     ],
 )
 def test_worker_publication_transaction(tmp_path, mode):
@@ -106,7 +108,17 @@ def test_worker_publication_transaction(tmp_path, mode):
             else:
                 tag = next(iter(body["taggedBuilds"]))
                 target = body["taggedBuilds"][tag]["buildId"]
-                if mode in {"rollback_refused", "post_finish_term", "post_finish_crash"} and target == "old":
+                if target == "old" and mode in {"finish_child_failed", "finish_child_killed"}:
+                    state.setdefault("rollback_committed", []).append(
+                        json.loads((tmp_path / "worker.pending").read_text())["committed"]
+                    )
+                if target == "old" and mode in {
+                    "rollback_refused",
+                    "post_finish_term",
+                    "post_finish_crash",
+                    "finish_child_failed",
+                    "finish_child_killed",
+                }:
                     self.send_error(503)
                     return
                 state[tag] = target
@@ -134,6 +146,17 @@ def test_worker_publication_transaction(tmp_path, mode):
         (tmp_path / "apify_deploy.py").write_text(
             helper.read_text().replace("https://api.apify.com", f"http://127.0.0.1:{server.server_port}")
         )
+        if mode in {"finish_child_failed", "finish_child_killed"}:
+            helper_path = tmp_path / "apify_deploy.py"
+            failure = "os._exit(1)" if mode == "finish_child_failed" else "os.kill(os.getpid(), signal.SIGKILL)"
+            helper_path.write_text(
+                helper_path.read_text().replace(
+                    '        temporary.replace(PENDING)\n    elif action == "clear":',
+                    '        temporary.replace(PENDING)\n'
+                    '        Path("finish-committed").write_text(PENDING.read_text())\n'
+                    f'        {failure}\n    elif action == "clear":',
+                )
+            )
         (tmp_path / ".env").write_text(
             "UNRELATED=$(touch injected)\nAPIFY_API_TOKEN='fixture-only' # literal dotenv\n"
         )
@@ -151,6 +174,7 @@ def test_worker_publication_transaction(tmp_path, mode):
       int) kill -INT $$ ;;
     esac
   fi
+  printf '%s\\n' "$1" > running-release
 }
 verify() { return 0; }
 docker() {
@@ -198,6 +222,8 @@ docker() {
             "changed_compose",
             "post_finish_term",
             "post_finish_crash",
+            "finish_child_failed",
+            "finish_child_killed",
         }
         assert state["direct"] == ("new" if remains_new else "old")
         assert not (tmp_path / "injected").exists()
@@ -207,6 +233,8 @@ docker() {
             "changed_compose",
             "post_finish_term",
             "post_finish_crash",
+            "finish_child_failed",
+            "finish_child_killed",
         }
         assert (tmp_path / "deployed").read_text().strip() == ("a" * 40 if marker_written else "b" * 40)
         if mode == "unchanged":
@@ -216,6 +244,33 @@ docker() {
         if mode == "rollback_refused":
             assert (tmp_path / "worker.pending").exists()
             assert (tmp_path / "rolls").read_text().splitlines() == ["a" * 40, "b" * 40]
+        if mode in {"finish_child_failed", "finish_child_killed"}:
+            committed = json.loads((tmp_path / "finish-committed").read_text())
+            assert committed["committed"] is True
+            pending_path = tmp_path / "worker.pending"
+            pending = pending_path.read_bytes()
+            assert json.loads(pending)["committed"] is False
+            assert (tmp_path / "rolls").read_text().splitlines() == ["a" * 40, "b" * 40]
+            assert (tmp_path / "running-release").read_text().strip() == "b" * 40
+            retry = subprocess.run(
+                ["bash", str(entry), "c" * 40],
+                env={**os.environ, "MODE": "success"},
+                capture_output=True,
+                text=True,
+                timeout=8,
+            )
+            assert retry.returncode != 0
+            assert "unfinished deployment" in retry.stderr
+            assert "VERIFIED" not in retry.stdout
+            assert pending_path.read_bytes() == pending
+            assert state["direct"] == "new"
+            assert (tmp_path / "running-release").read_text().strip() == "b" * 40
+            assert state["rollback_committed"] and not any(state["rollback_committed"])
+            assert (tmp_path / "deployed").read_text().strip() == "a" * 40
+            assert (tmp_path / "rolls").read_text().splitlines() == ["a" * 40, "b" * 40, "b" * 40]
+            tag_writes = [body for path, body in state["writes"] if path == f"/v2/acts/{ACTOR}"]
+            assert tag_writes[0] == {"taggedBuilds": {"direct": {"buildId": "new"}}}
+            assert all(body == {"taggedBuilds": {"direct": {"buildId": "old"}}} for body in tag_writes[1:])
         if mode == "ownership_unreadable":
             assert (tmp_path / "worker.pending").exists()
             assert not (tmp_path / "rolls").exists()

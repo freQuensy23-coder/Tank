@@ -189,8 +189,13 @@ def main():
     elif action == "activate":
         require(current() == pending["previous"], "worker changed before activation")
         tag(pending["candidate"])
-    elif action == "rollback":
-        tag(pending["previous"])
+    elif action in {"rollback-intent", "rollback"}:
+        pending["committed"] = False
+        temporary = PENDING.with_suffix(".next")
+        temporary.write_text(json.dumps(pending))
+        temporary.replace(PENDING)
+        if action == "rollback":
+            tag(pending["previous"])
     elif action == "finish":
         require(current() == pending["candidate"], "worker changed before commit")
         pending["committed"] = True
