@@ -38,8 +38,9 @@ jobs:
           mkdir -p "$RUNNER_TEMP/tank-orchestrator"
           cp scripts/deploy/deploy.sh scripts/deploy/apify_deploy.py "$RUNNER_TEMP/tank-orchestrator/"
           git checkout -q "$sha"
-          git archive "$sha" apify/x-reader | tar -x -C "$RUNNER_TEMP/tank-orchestrator"
+          git archive "$sha" apify/x-reader config/sources.yaml | tar -x -C "$RUNNER_TEMP/tank-orchestrator"
           mv "$RUNNER_TEMP/tank-orchestrator/apify/x-reader" "$RUNNER_TEMP/tank-orchestrator/worker"
+          mv "$RUNNER_TEMP/tank-orchestrator/config/sources.yaml" "$RUNNER_TEMP/tank-orchestrator/worker-source.yaml"
           echo "sha=$sha" >> "$GITHUB_OUTPUT"
       - name: Wait for the CI images of the commit
         env:
@@ -68,7 +69,7 @@ jobs:
           printf '%s\n' "$SSH_KEY" > ~/.ssh/id_deploy && chmod 600 ~/.ssh/id_deploy
           printf '%s\n' "$SSH_KNOWN_HOSTS" > ~/.ssh/known_hosts
           ssh_opts=(-i ~/.ssh/id_deploy -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes)
-          scp "${ssh_opts[@]}" compose.yaml "$RUNNER_TEMP/tank-orchestrator/deploy.sh" "$RUNNER_TEMP/tank-orchestrator/apify_deploy.py" "$SSH_USER@$SSH_HOST:/srv/tank-deploy/"
+          scp "${ssh_opts[@]}" compose.yaml "$RUNNER_TEMP/tank-orchestrator/deploy.sh" "$RUNNER_TEMP/tank-orchestrator/apify_deploy.py" "$RUNNER_TEMP/tank-orchestrator/worker-source.yaml" "$SSH_USER@$SSH_HOST:/srv/tank-deploy/"
           ssh "${ssh_opts[@]}" "$SSH_USER@$SSH_HOST" "rm -rf /srv/tank-deploy/worker"
           scp -r "${ssh_opts[@]}" "$RUNNER_TEMP/tank-orchestrator/worker" "$SSH_USER@$SSH_HOST:/srv/tank-deploy/"
           ssh "${ssh_opts[@]}" "$SSH_USER@$SSH_HOST" "/srv/tank-deploy/deploy.sh $SHA"

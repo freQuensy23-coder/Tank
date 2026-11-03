@@ -94,17 +94,18 @@ previous=$(cat deployed 2>/dev/null || true)
 tank_started=no
 worker_started=no
 recover() {
-  local status=$?
+  local status=$? worker_restored=yes
   trap - EXIT INT TERM
   if [ "$status" -ne 0 ] && [ "$worker_started" = yes ]; then
     if ! apify rollback; then
       echo "Worker rollback failed; transaction retained"
-      exit 1
+      worker_restored=no
+      status=1
     fi
   fi
   if [ "$status" -ne 0 ] && [ "$tank_started" = yes ] && [ -n "$previous" ]; then
     echo "rollback to $previous $(date -u +%T)"
-    if roll "$previous"; then
+    if roll "$previous" && [ "$worker_restored" = yes ]; then
       printf '%s\n' "$previous" > deployed.next && mv deployed.next deployed
       [ "$worker_started" = no ] || apify clear || status=1
       echo "rolled back to $previous"
@@ -122,6 +123,7 @@ start=$(date +%s)
 since=$(date -u +%FT%TZ)
 echo "deploy $SHA at $since; previous ${previous:-none}"
 out=""
+[ -n "$previous" ] || { echo "worker deployment requires a previous verified Tank release"; exit 1; }
 apify prepare
 worker_started=yes
 apify activate

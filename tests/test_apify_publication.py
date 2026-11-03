@@ -12,12 +12,17 @@ ACTOR = "rbf5CQKQgKNVl4SfO"
 
 
 @pytest.mark.integration
-@pytest.mark.parametrize("mode", ["success", "unchanged", "failed", "wrong_source", "roll_failed", "term"])
+@pytest.mark.parametrize(
+    "mode", ["success", "unchanged", "failed", "wrong_source", "roll_failed", "term"]
+)
 def test_worker_publication_transaction(tmp_path, mode):
     source = tmp_path / "worker"
     source.mkdir()
     (source / "main.py").write_text("print('selected revision')\n")
+    (source / ".actor").mkdir()
+    (source / ".actor/actor.json").write_text('{"version":"0.2"}')
     files = [{"name": "main.py", "format": "TEXT", "content": "print('selected revision')\n"}]
+    files.append({"name": ".actor/actor.json", "format": "TEXT", "content": '{"version":"0.2"}'})
     state = {"direct": "old", "files": files if mode == "unchanged" else [], "writes": []}
 
     class Provider(BaseHTTPRequestHandler):
@@ -26,14 +31,21 @@ def test_worker_publication_transaction(tmp_path, mode):
 
         def do_GET(self):
             if self.path == f"/v2/acts/{ACTOR}":
-                data = {"id": ACTOR, "versions": [], "taggedBuilds": {"direct": {"buildId": state["direct"]}}}
+                data = {
+                    "id": ACTOR,
+                    "versions": [],
+                    "taggedBuilds": {"direct": {"buildId": state["direct"]}},
+                }
             else:
                 build = self.path.split("/")[-1].split("?")[0]
                 data = {
                     "id": build,
                     "actId": ACTOR,
                     "status": "FAILED" if mode == "failed" and build == "new" else "SUCCEEDED",
-                    "actVersion": {"sourceType": "SOURCE_FILES", "sourceFiles": state["files"] if build == "old" else state["uploaded"]},
+                    "actVersion": {
+                        "sourceType": "SOURCE_FILES",
+                        "sourceFiles": state["files"] if build == "old" else state["uploaded"],
+                    },
                 }
                 if mode == "wrong_source" and build == "new":
                     data["actVersion"]["sourceFiles"] = []
@@ -46,7 +58,9 @@ def test_worker_publication_transaction(tmp_path, mode):
             self.mutate()
 
         def mutate(self):
-            body = json.loads(self.rfile.read(int(self.headers.get("Content-Length", "0"))) or b"{}")
+            body = json.loads(
+                self.rfile.read(int(self.headers.get("Content-Length", "0"))) or b"{}"
+            )
             state["writes"].append((self.path, body))
             if "/versions" in self.path:
                 state["uploaded"] = body["sourceFiles"]
@@ -74,6 +88,9 @@ def test_worker_publication_transaction(tmp_path, mode):
             helper.read_text().replace("https://api.apify.com", f"http://127.0.0.1:{server.server_port}")
         )
         (tmp_path / ".env").write_text("APIFY_API_TOKEN=fixture-only\n")
+        (tmp_path / "worker-source.yaml").write_text(
+            f"url: https://api.apify.com/v2/actors/{ACTOR}/run-sync?build=direct&memory=256\n"
+        )
         script = (ROOT / "scripts/deploy/deploy.sh").read_text()
         hook = """roll() {
   printf '%s\\n' "$1" >> rolls
@@ -87,7 +104,8 @@ def test_worker_publication_transaction(tmp_path, mode):
 verify() { return 0; }
 docker() { return 0; }
 """
-        script = script.replace("previous=$(cat deployed 2>/dev/null || true)", hook + "previous=$(cat deployed 2>/dev/null || true)")
+        marker = "previous=$(cat deployed 2>/dev/null || true)"
+        script = script.replace(marker, hook + marker)
         (tmp_path / "deploy.sh").write_text(script)
         (tmp_path / "deployed").write_text("b" * 40 + "\n")
         result = subprocess.run(

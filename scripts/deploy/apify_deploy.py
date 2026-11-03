@@ -1,12 +1,20 @@
 import base64
 import json
 import os
+import re
 import sys
 import time
 from pathlib import Path
 from urllib.request import Request, urlopen
 
-ACTOR = "/acts/rbf5CQKQgKNVl4SfO"
+TARGETS = re.findall(
+    r"https://api\.apify\.com/v2/actors/([A-Za-z0-9]+)/run-sync\?build=([^&\s]+)",
+    Path("worker-source.yaml").read_text(),
+)
+if len(TARGETS) != 1:
+    raise RuntimeError("selected source must identify exactly one worker")
+ACTOR = "/acts/" + TARGETS[0][0]
+TAG = TARGETS[0][1]
 PENDING = Path("worker.pending")
 
 
@@ -33,7 +41,7 @@ def require(condition, message):
 def current():
     actor = request("GET", ACTOR)
     require(actor["id"] == ACTOR.split("/")[-1], "actor identity mismatch")
-    return actor["taggedBuilds"]["direct"]["buildId"]
+    return actor["taggedBuilds"][TAG]["buildId"]
 
 
 def snapshot(build_id):
@@ -59,18 +67,29 @@ def snapshot(build_id):
 
 
 def prepare():
-    require(not PENDING.exists(), "unfinished worker deployment requires recovery")
+    if PENDING.exists():
+        pending = json.loads(PENDING.read_text())
+        require(
+            Path("deployed").read_text().strip() == pending["release"]
+            and current() == pending["candidate"],
+            "unfinished worker deployment requires recovery",
+        )
+        PENDING.unlink()
     root = Path("worker")
     require(root.is_dir(), "selected revision has no versioned worker")
     paths = sorted(path for path in root.rglob("*") if path.is_file())
-    require(paths and not any(path.is_symlink() for path in root.rglob("*")), "invalid worker source")
+    require(
+        paths and not any(path.is_symlink() for path in root.rglob("*")), "invalid worker source"
+    )
     files = {path.relative_to(root).as_posix(): path.read_bytes() for path in paths}
     previous = current()
     candidate = previous
     if snapshot(previous) != files:
         actor = request("GET", ACTOR)
+        version_number = json.loads(files[".actor/actor.json"])["version"]
+        require(re.fullmatch(r"\d+\.\d+", version_number), "invalid worker version")
         version = {
-            "versionNumber": "0.3",
+            "versionNumber": version_number,
             "sourceType": "SOURCE_FILES",
             "buildTag": None,
             "envVars": [],
@@ -80,9 +99,13 @@ def prepare():
                 for name, body in files.items()
             ],
         }
-        exists = any(item["versionNumber"] == "0.3" for item in actor["versions"])
-        request("PUT" if exists else "POST", ACTOR + ("/versions/0.3" if exists else "/versions"), version)
-        build = request("POST", ACTOR + "/builds?version=0.3&tag=tank-" + sys.argv[2])
+        exists = any(item["versionNumber"] == version_number for item in actor["versions"])
+        request(
+            "PUT" if exists else "POST",
+            ACTOR + ("/versions/" + version_number if exists else "/versions"),
+            version,
+        )
+        build = request("POST", ACTOR + "/builds?version=" + version_number + "&tag=tank-" + sys.argv[2])
         candidate = build["id"]
         deadline = time.monotonic() + 600
         while build["status"] in {"READY", "RUNNING"} and time.monotonic() < deadline:
@@ -91,13 +114,15 @@ def prepare():
         require(snapshot(candidate) == files, "immutable build source mismatch")
     require(current() == previous, "worker tag changed during preparation")
     temporary = PENDING.with_suffix(".next")
-    temporary.write_text(json.dumps({"previous": previous, "candidate": candidate}))
+    temporary.write_text(
+        json.dumps({"previous": previous, "candidate": candidate, "release": sys.argv[2]})
+    )
     temporary.replace(PENDING)
 
 
 def tag(build_id):
     if current() != build_id:
-        request("PUT", ACTOR, {"taggedBuilds": {"direct": {"buildId": build_id}}})
+        request("PUT", ACTOR, {"taggedBuilds": {TAG: {"buildId": build_id}}})
     require(current() == build_id, "worker tag verification failed")
 
 
@@ -116,7 +141,6 @@ def main():
         tag(pending["previous"])
     elif action == "finish":
         require(current() == pending["candidate"], "worker changed before commit")
-        PENDING.unlink()
     elif action == "clear":
         PENDING.unlink(missing_ok=True)
     else:

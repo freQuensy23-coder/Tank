@@ -86,6 +86,9 @@ def test_historical_target_uses_current_main_deployment_helper(tmp_path):
     worker = repository / "apify/x-reader/main.py"
     worker.parent.mkdir(parents=True)
     worker.write_text("historical worker\n")
+    config = repository / "config/sources.yaml"
+    config.parent.mkdir()
+    config.write_text("historical source config\n")
     git("add", ".")
     git("commit", "-m", "historical deployment helper")
     historical = git("rev-parse", "HEAD")
@@ -114,4 +117,6 @@ def test_historical_target_uses_current_main_deployment_helper(tmp_path):
     assert git("rev-parse", "HEAD") == historical
     assert "apify_deploy.py" in helper.read_text()
     assert (runner / "tank-orchestrator/deploy.sh").read_text() == current_helper
+    assert (runner / "tank-orchestrator/worker/main.py").read_text() == "historical worker\n"
+    assert (runner / "tank-orchestrator/worker-source.yaml").read_text() == "historical source config\n"
     assert output.read_text() == f"sha={historical}\n"
