@@ -197,10 +197,50 @@ async def test_fresh_state_before_obligation_commit_prevents_reminder(
         await asyncio.wait_for(waiting.wait(), 2)
         event = await repo.get("evt.events", original["event_id"])
         if fence == "assessed":
-            event["current_ems_id"] = "already-accepted"
+            assessment = {
+                "class": "LOW",
+                "criterion": "LOW",
+                "dims": {
+                    name: {
+                        "value": None,
+                        "reason": "NOT_ESTIMABLE",
+                        "rationale": "No supported magnitude in this fixture",
+                        "evidence": [],
+                    }
+                    for name in (
+                        "economic_directness",
+                        "magnitude",
+                        "permanence",
+                        "distribution_expansion",
+                        "mechanical_flows",
+                        "surprise",
+                        "implementation",
+                    )
+                },
+                "impact_horizon": {
+                    "impact_start": "WEEKS",
+                    "ramp_shape": "GRADUAL",
+                    "dependencies": [],
+                    "time_to_materiality": "Unknown",
+                    "timing_confidence": "LOW",
+                },
+            }
+            accepted = await domain.dispatch(
+                "set_assessment",
+                {"event_id": event["event_id"], "assessment": assessment},
+                {"session_id": "s"},
+            )
+            event = await repo.get("evt.events", event["event_id"])
+            stored = await repo.get("evt.ems_assessments", event["current_ems_id"])
+            assert stored["ems_id"] == accepted["ems_id"] and stored["class"] == "LOW"
         elif fence == "merged":
-            await repo.put("evt.events", "earlier-parent", dict(event, event_id="earlier-parent"))
-            event.update(lifecycle="MERGED", merged_into="earlier-parent")
+            await repo.put(
+                "evt.events", "earlier-parent", dict(event, event_id="earlier-parent", session_id=None)
+            )
+            merged = await domain.dispatch("merge_into", {"event_id": "earlier-parent"}, {"session_id": "s"})
+            assert merged["event_id"] == "earlier-parent"
+            event = await repo.get("evt.events", original["event_id"])
+            assert event["lifecycle"] == "MERGED" and event["merged_into"] == "earlier-parent"
         elif fence == "closed":
             event["lifecycle"] = "CLOSED"
         elif fence in {"failed", "ended"}:
