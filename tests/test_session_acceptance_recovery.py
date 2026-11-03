@@ -104,6 +104,10 @@ async def test_restart_recovers_sent_input_identity_without_reexecuting_native_t
         intent = session["message_log"][0]
         intent.update(remote_event_id=None, native_input_attempts={}, turn_status=turn_status)
         await repo.put("ops.agent_sessions", "s", session)
+        durable = await repo.get("ops.agent_sessions", "s")
+        assert durable is not None
+        durable_body = durable["message_log"][0]["body"]
+        assert durable_body == intent["body"]
         item = await repo.get("ingest.source_items", "i")
         item["extraction_status"] = "DONE"
         await repo.put("ingest.source_items", "i", item)
@@ -115,7 +119,7 @@ async def test_restart_recovers_sent_input_identity_without_reexecuting_native_t
                 await first.request(
                     "POST",
                     "sessions/s/events",
-                    json={"events": [intent["body"]]},
+                    json={"events": [durable_body]},
                     idem="message:root",
                 )
                 restarted = SessionService(repo, settings, None, http=client)
