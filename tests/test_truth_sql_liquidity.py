@@ -10,7 +10,7 @@ from pathlib import Path
 from types import ModuleType
 
 import pytest
-from truth_sql_failure_evidence import EvidenceClickHouse
+from truth_sql_failure_evidence import EvidenceClickHouse, retain_liquidity_phase
 
 from tank.analysis.truth_sql_liquidity import ctes, query, window_query, windows_query
 from tank.util import canonical_json, iso, parse_time
@@ -736,3 +736,67 @@ async def test_native_all_liquidity_windows_are_one_select(native_client, origin
     actual = json.loads(rows[0]["result"])
     expected = dict(expected_windows["W4H"], windows=expected_windows)
     _assert_complete(actual, expected)
+
+
+async def test_native_liquidity_absence_relational_phase_contracts(native_client, original_truth, request):
+    snapshot, spot, relative = _packet()
+    snapshot["_event_anchor"] = None
+    token = original_truth._PARAMETERS.set({})
+    try:
+        expected = original_truth.liquidity_truth(
+            deepcopy(snapshot),
+            parse_time(snapshot["_start"]),
+            parse_time(snapshot["cutoff"]),
+            deepcopy(spot),
+            deepcopy(relative),
+        )
+    finally:
+        original_truth._PARAMETERS.reset(token)
+    _, parameters = query(snapshot, spot=spot, relative=relative)
+    statements = (
+        ("volume_population", "SELECT length(lq_volume_flows) AS value FROM lq_volume_population", 30),
+        ("volume_coverage", "SELECT length(lq_covered_buckets) AS value FROM lq_volume_coverage", 1),
+        (
+            "volume_totals",
+            "SELECT arrayMap(x -> toString(x), lq_volumes) AS value FROM lq_volume_totals",
+            [Decimal("3600")],
+        ),
+        (
+            "tier_values",
+            "SELECT arrayMap(x -> toString(x), lq_tiers) AS value FROM lq_tier_values",
+            [Decimal("72"), Decimal("720"), Decimal("3600")],
+        ),
+        (
+            "venue_stats",
+            "SELECT arraySort(groupArray(tuple(venue, pre_spread))) AS value FROM lq_venue_stats",
+            [["A", None], ["B", None]],
+        ),
+        (
+            "venue_output",
+            "SELECT arraySort(x -> JSONExtractString(x, 'venue'), groupArray(venue_json)) AS value FROM lq_venues",
+            sorted(expected["per_venue"], key=lambda v: v["venue"]),
+        ),
+        (
+            "burst_output",
+            "SELECT observations AS value FROM lq_observed",
+            expected["replenishment"]["observations"],
+        ),
+        ("state", "SELECT toString(lq_net) AS value FROM lq_state", expected["elasticity"]["net_flow"]),
+    )
+    for phase, selection, reference in statements:
+        native_client.nodeid = request.node.nodeid + "::" + phase
+        retain_liquidity_phase(
+            Path(__file__).resolve().parents[1] / ".test-results",
+            request.node.nodeid,
+            phase,
+            status="STARTED",
+        )
+        rows = await native_client.rows("WITH " + ctes() + " " + selection, parameters)
+        assert len(rows) == 1
+        actual = rows[0]["value"]
+        if phase in {"venue_output", "burst_output"}:
+            actual = [json.loads(value) for value in actual]
+        _assert_complete(actual, reference)
+        retain_liquidity_phase(
+            Path(__file__).resolve().parents[1] / ".test-results", request.node.nodeid, phase
+        )

@@ -278,6 +278,27 @@ def retain_first_failure(directory, receipt):
     _retain_first_receipt(directory, receipt, "truth-sql-failure-")
 
 
+def retain_liquidity_phase(directory, nodeid, phase, *, status="PASS"):
+    if status not in {"STARTED", "PASS"}:
+        raise ValueError("unexpected liquidity qualification status")
+    if phase not in {
+        "volume_population",
+        "volume_coverage",
+        "volume_totals",
+        "tier_values",
+        "venue_stats",
+        "venue_output",
+        "burst_output",
+        "state",
+    }:
+        raise ValueError("unexpected liquidity qualification phase")
+    _retain_first_receipt(
+        directory,
+        {"nodeid": (nodeid + "::" + phase)[:512], "phase": phase, "status": status},
+        "truth-sql-liquidity-phase-" + status.lower() + "-",
+    )
+
+
 def retain_transport_qualification(directory, nodeid, checks):
     domain_parameters = {
         "spot_snapshot",

@@ -343,6 +343,32 @@ def test_array_aggregation_diagnostic_keeps_only_static_native_scope_functions(t
         assert forbidden not in serialized
 
 
+def test_liquidity_phase_receipts_are_bounded_and_reject_unknown_labels(tmp_path):
+    directory = tmp_path / "evidence"
+    for status in ("STARTED", "PASS"):
+        truth_sql_failure_evidence.retain_liquidity_phase(
+            directory, "test_phases", "tier_values", status=status
+        )
+    receipts = sorted(
+        (json.loads(path.read_text()) for path in directory.iterdir()), key=lambda r: r["status"]
+    )
+    assert receipts == [
+        {"nodeid": "test_phases::tier_values", "phase": "tier_values", "status": "PASS"},
+        {"nodeid": "test_phases::tier_values", "phase": "tier_values", "status": "STARTED"},
+    ]
+    before = {path.name: path.read_bytes() for path in directory.iterdir()}
+    with pytest.raises(ValueError, match="phase"):
+        truth_sql_failure_evidence.retain_liquidity_phase(directory, "test_phases", "private_payload")
+    with pytest.raises(ValueError, match="status"):
+        truth_sql_failure_evidence.retain_liquidity_phase(
+            directory, "test_phases", "state", status="private_secret"
+        )
+    assert {path.name: path.read_bytes() for path in directory.iterdir()} == before
+    assert all(
+        b"private_payload" not in content and b"private_secret" not in content for content in before.values()
+    )
+
+
 def test_parameter_string_preserves_native_escaped_spelling():
     value = "α😀\\\t\n\r\x00'\""
     assert parameter_string(value) == "α😀\\\\\\t\\n\\r\\0'\""
