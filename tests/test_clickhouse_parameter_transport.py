@@ -248,6 +248,68 @@ def test_native_diagnostic_vocabulary_drops_unknown_error_words():
     )
 
 
+@pytest.mark.parametrize(
+    ("message", "expected"),
+    [
+        ("Illegal type Nullable(Float64) of argument of function _cast", {"_CAST", "Float64", "Nullable"}),
+        ("Illegal type Float64 of argument of function PLUS", {"plus", "Float64"}),
+        (
+            "Nested type Array(Float64) cannot be inside Nullable type of function arrayelement",
+            {"arrayElement", "Array", "Float64", "Nullable", "cannot be inside Nullable"},
+        ),
+        (
+            "Cannot convert NULL value to non-Nullable type in function tupleelement",
+            {"tupleElement", "Nullable", "Cannot convert NULL value to non-Nullable type"},
+        ),
+    ],
+)
+def test_static_native_diagnostics_preserve_desugared_functions(message, expected, tmp_path):
+    receipt = truth_sql_failure_evidence.failure_receipt(
+        RuntimeError("ClickHouse 500: Code: 43. " + message), "test_static_diagnostic", "SELECT 1"
+    )
+    truth_sql_failure_evidence.retain_first_failure(tmp_path / "evidence", receipt)
+    files = list((tmp_path / "evidence").iterdir())
+    assert len(files) == 1
+    actual = json.loads(files[0].read_text())
+    assert actual["native_error_code"] == 43
+    assert actual["http_status"] == 500
+    assert expected <= set(actual["server_message"].split(" | "))
+    assert len(actual["server_message"]) <= 512
+
+
+def test_native_diagnostics_do_not_copy_unknown_functions_or_private_values(tmp_path):
+    query = "SELECT unknownPrivateFunction(private_column, 'credentialPrefix,credentialSuffix')"
+    receipt = truth_sql_failure_evidence.failure_receipt(
+        RuntimeError(
+            "ClickHouse 500: Code: 43. Illegal type Float64 of argument of function unknownPrivateFunction "
+            "private_column credentialPrefix,credentialSuffix https://private-host/private-path "
+            "_CASTprivateSuffix privatePrefix_CAST While processing plus Nullable(String) private_scope"
+        ),
+        "test_private_diagnostic",
+        query,
+    )
+    truth_sql_failure_evidence.retain_first_failure(tmp_path / "evidence", receipt)
+    files = list((tmp_path / "evidence").iterdir())
+    assert len(files) == 1
+    serialized = files[0].read_text()
+    assert json.loads(serialized)["server_message"] == "Illegal type | argument | type | function | Float64"
+    for forbidden in (
+        "unknownPrivateFunction",
+        "private_column",
+        "credentialPrefix",
+        "credentialSuffix",
+        "private-host",
+        "private-path",
+        "_CASTprivateSuffix",
+        "privatePrefix_CAST",
+        "private_scope",
+        "plus",
+        "Nullable",
+        query,
+    ):
+        assert forbidden not in serialized
+
+
 def test_parameter_string_preserves_native_escaped_spelling():
     value = "α😀\\\t\n\r\x00'\""
     assert parameter_string(value) == "α😀\\\\\\t\\n\\r\\0'\""

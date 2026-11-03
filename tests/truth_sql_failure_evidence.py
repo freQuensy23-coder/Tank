@@ -66,6 +66,64 @@ _SAFE_PHRASES = (
     "cannot be parsed",
     "must be the same",
     "accumulator",
+    "cannot be inside Nullable",
+    "Cannot convert NULL value to non-Nullable type",
+    "Conversion functions with postfix",
+    "should take String argument",
+    "cannot be converted",
+    "cannot be Nullable",
+)
+
+_SAFE_NATIVE_FUNCTIONS = frozenset(
+    {
+        "_CAST",
+        "CAST",
+        "accurateCast",
+        "accurateCastOrNull",
+        "plus",
+        "minus",
+        "multiply",
+        "divide",
+        "intDiv",
+        "modulo",
+        "positiveModulo",
+        "negate",
+        "equals",
+        "notEquals",
+        "less",
+        "lessOrEquals",
+        "greater",
+        "greaterOrEquals",
+        "and",
+        "or",
+        "not",
+        "in",
+        "notIn",
+        "isNull",
+        "isNotNull",
+        "ifNull",
+        "nullIf",
+        "assumeNotNull",
+        "coalesce",
+        "if",
+        "multiIf",
+        "array",
+        "arrayElement",
+        "arrayElementOrNull",
+        "arrayMap",
+        "arrayFilter",
+        "arrayFold",
+        "arraySum",
+        "arrayMin",
+        "arrayMax",
+        "arraySort",
+        "tuple",
+        "tupleElement",
+        "toNullable",
+        "toFloat64",
+        "toFloat64OrNull",
+        "toFloat64OrZero",
+    }
 )
 
 _SAFE_WORDS = frozenset(
@@ -164,14 +222,15 @@ def failure_receipt(error, nodeid, query):
     status = re.match(r"ClickHouse (\d{3}):", message)
     code = re.search(r"\bCode: (\d+)\b", message)
     message = re.split(r"(?i)\b(?:while processing|in scope|stack trace)\b", message)[0]
-    diagnostics = [phrase for phrase in _SAFE_PHRASES if phrase in message]
+    message_tokens = {word.casefold() for word in re.findall(r"\b[A-Za-z_][A-Za-z0-9_]*\b", message)}
+    diagnostics = sorted(name for name in _SAFE_NATIVE_FUNCTIONS if name.casefold() in message_tokens)
+    diagnostics.extend(phrase for phrase in _SAFE_PHRASES if phrase.casefold() in message.casefold())
     diagnostics.extend(
         dict.fromkeys(
             word.lower() for word in re.findall(r"\b[A-Za-z_]+\b", message) if word.lower() in _SAFE_WORDS
         )
     )
     identifiers = set(re.findall(r"\b(?:spot|deriv|rel|lq|sup|res)_[A-Za-z0-9_]+\b", query))
-    identifiers.update(re.findall(r"\b([A-Za-z_][A-Za-z0-9_]*)\s*\(", query))
     identifiers.update(
         {
             "UInt8",
@@ -191,7 +250,7 @@ def failure_receipt(error, nodeid, query):
             "Bool",
         }
     )
-    diagnostics.extend(sorted(identifiers.intersection(re.findall(r"\b[A-Za-z_][A-Za-z0-9_]*\b", message))))
+    diagnostics.extend(sorted(name for name in identifiers if name.casefold() in message_tokens))
     diagnostics.extend(re.findall(r"\bposition [0-9]{1,8}\b", message))
     safe = " | ".join(diagnostics)[:512] or "[redacted]"
     return {
