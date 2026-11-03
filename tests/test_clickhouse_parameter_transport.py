@@ -1,14 +1,16 @@
 import email.parser
 import email.policy
 import hashlib
+import json
 import os
+from pathlib import Path
 
 import httpx
 import pytest
+import truth_sql_failure_evidence
 from truth_sql_failure_evidence import EvidenceClickHouse
 
 from tank.clickhouse_market import ClickHouse
-
 
 SETTINGS = {
     "date_time_output_format": "iso",
@@ -101,6 +103,51 @@ async def test_execute_and_insert_retain_original_body_protocol():
     assert not expected
 
 
+async def test_complete_error_evidence_is_sanitized_before_client_truncation(tmp_path, monkeypatch):
+    secret = "private-payload-value"
+    text = "Code: 46. DB::Exception: " + secret * 100 + " Function with name sup_missing does not exist"
+    query = "SELECT sup_missing({payload:String})"
+    receipts = []
+    evidence_directory = tmp_path / "evidence"
+    original_retain = truth_sql_failure_evidence.retain_first_failure
+
+    def retain(directory, receipt):
+        receipts.append(receipt)
+        original_retain(evidence_directory, receipt)
+
+    monkeypatch.setattr(truth_sql_failure_evidence, "retain_first_failure", retain)
+    async with httpx.AsyncClient(transport=httpx.MockTransport(lambda request: httpx.Response(400, text=text))) as http:
+        client = EvidenceClickHouse("http://localhost:8123", "tests/test_transport.py::test_error", http=http)
+        with pytest.raises(RuntimeError) as raised:
+            await client.rows(query, {"payload": (secret, "String")})
+    assert str(raised.value) == "ClickHouse 400: " + text[:500]
+    persisted = list(evidence_directory.iterdir())
+    assert len(persisted) == 1
+    receipt = json.loads(persisted[0].read_text())
+    assert receipt == receipts[0]
+    assert receipt["native_error_code"] == 46
+    assert "sup_missing" in receipt["server_message"]
+    assert "does not exist" in receipt["server_message"]
+    assert secret not in persisted[0].read_text()
+    assert query not in persisted[0].read_text()
+
+
+def test_transport_qualification_receipt_refuses_unbounded_fields(tmp_path):
+    directory = tmp_path / "evidence"
+    checks = {key: {"bytes": 0, "characters": 0, "sha256": hashlib.sha256(b"").hexdigest()} for key in ("ascii", "unicode", "empty")}
+    truth_sql_failure_evidence.retain_transport_qualification(directory, "test_case", checks)
+    files = list(directory.iterdir())
+    assert len(files) == 1
+    before = files[0].read_bytes()
+    assert json.loads(before) == {"nodeid": "test_case", "status": "PASS", "checks": checks}
+    checks["ascii"]["raw_value"] = "private-value"
+    with pytest.raises(ValueError, match="fields"):
+        truth_sql_failure_evidence.retain_transport_qualification(directory, "test_case", checks)
+    assert list(directory.iterdir()) == files
+    assert files[0].read_bytes() == before
+    assert b"private-value" not in before
+
+
 @pytest.mark.integration
 async def test_real_native_large_multipart_values(request):
     url = os.environ.get("CLICKHOUSE_TEST_URL")
@@ -134,3 +181,8 @@ async def test_real_native_large_multipart_values(request):
         assert rows[0][key + "_hash"] == hashlib.sha256(value.encode()).hexdigest()
         assert rows[0][key + "_substring"] == value[1:10]
     assert rows[0]["nullable_value"] is None
+    truth_sql_failure_evidence.retain_transport_qualification(
+        Path(__file__).resolve().parents[1] / ".test-results",
+        request.node.nodeid,
+        {key: {"bytes": len(values[key].encode()), "characters": len(values[key]), "sha256": hashlib.sha256(values[key].encode()).hexdigest()} for key in ("ascii", "unicode", "empty")},
+    )

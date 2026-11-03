@@ -553,7 +553,7 @@ def select_sql():
         shape_policy="'\"Literal TDD §2 bare fields retained; all quantitative and null derived leaves described in measurement_metadata\"'",
         unknown_precision="'\"Null with NOT_ESTIMABLE; no fabricated timestamp precision\"'",
         time_policy="'\"SEMANTIC_MARKET_TIME_WITH_ASSEMBLY_AVAILABILITY\"'",
-        numeric_policy="'\"Native Decimal256(24) quantities, USD amounts and funding rates with explicit range admission; dimensionless returns, beta, percentiles and ratios use FLOAT64 statistics; significance uses exact squared comparisons within admitted native ranges\"'",
+        numeric_policy="'\"Native Decimal256(24) financial inputs admit magnitude below 1e24 and at most 24 fractional digits; each multiplication and division truncates toward zero at scale 24 with local error below 1e-24; significance and sell-share comparisons use these native rounded products; overflow and outside-range inputs are refused; dimensionless returns, beta, percentiles and display ratios use Float64 statistics\"'",
     )
     return "SELECT res_put(res_put(" + result + ", res_primary_item.7), " + _object(measurement_context=context) + ") AS result FROM res_assembly"
 

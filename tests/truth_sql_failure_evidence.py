@@ -57,6 +57,14 @@ _SAFE_PHRASES = (
     "Bad Gateway",
     "Service Unavailable",
     "Server Error",
+    "Field value too long",
+    "Query parameter",
+    "Substitution",
+    "not set",
+    "constant",
+    "cannot be parsed",
+    "must be the same",
+    "accumulator",
 )
 
 
@@ -83,12 +91,29 @@ def failure_receipt(error, nodeid, query):
 
 
 def retain_first_failure(directory, receipt):
+    _retain_first_receipt(directory, receipt, "truth-sql-failure-")
+
+
+def retain_transport_qualification(directory, nodeid, checks):
+    if set(checks) != {"ascii", "unicode", "empty"}:
+        raise ValueError("unexpected transport qualification population")
+    for check in checks.values():
+        if set(check) != {"bytes", "characters", "sha256"}:
+            raise ValueError("unexpected transport qualification fields")
+        if any(type(check[name]) is not int or check[name] < 0 for name in ("bytes", "characters")):
+            raise ValueError("invalid transport qualification length")
+        if not isinstance(check["sha256"], str) or re.fullmatch("[a-f0-9]{64}", check["sha256"]) is None:
+            raise ValueError("invalid transport qualification digest")
+    _retain_first_receipt(directory, {"nodeid": nodeid[:512], "status": "PASS", "checks": checks}, "truth-sql-transport-qualified-")
+
+
+def _retain_first_receipt(directory, receipt, prefix):
     directory = Path(directory)
     if directory.is_symlink():
         raise ValueError("SQL failure evidence directory must not be a symlink")
     directory.mkdir(parents=True, exist_ok=True)
     digest = hashlib.sha256(receipt["nodeid"].encode()).hexdigest()
-    destination = directory / f"truth-sql-failure-{digest}.json"
+    destination = directory / f"{prefix}{digest}.json"
     if destination.is_symlink():
         raise ValueError("SQL failure evidence destination must not be a symlink")
     descriptor, temporary = tempfile.mkstemp(prefix=".truth-sql-failure-", dir=directory)
@@ -104,13 +129,30 @@ def retain_first_failure(directory, receipt):
 
 
 class EvidenceClickHouse(ClickHouse):
-    def __init__(self, url, nodeid):
+    def __init__(self, url, nodeid, *, http=None):
         if urlparse(url).hostname not in {"localhost", "127.0.0.1", "::1"}:
             raise ValueError("native SQL qualification requires a loopback service")
-        super().__init__(url)
+        super().__init__(url, http=http)
         self.nodeid = nodeid
+        self._evidence_query = None
+        self.http.event_hooks["response"].append(self._response_evidence)
+
+    async def _response_evidence(self, response):
+        if response.status_code == 200 or self._evidence_query is None:
+            return
+        await response.aread()
+        with contextlib.suppress(OSError, ValueError):
+            retain_first_failure(
+                Path(__file__).resolve().parents[1] / ".test-results",
+                failure_receipt(
+                    RuntimeError(f"ClickHouse {response.status_code}: {response.text}"),
+                    self.nodeid,
+                    self._evidence_query,
+                ),
+            )
 
     async def rows(self, query, params=None):
+        self._evidence_query = query
         try:
             return await super().rows(query, params)
         except Exception as error:
@@ -120,3 +162,5 @@ class EvidenceClickHouse(ClickHouse):
                     failure_receipt(error, self.nodeid, query),
                 )
             raise
+        finally:
+            self._evidence_query = None
