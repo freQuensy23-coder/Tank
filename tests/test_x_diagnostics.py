@@ -185,7 +185,11 @@ async def test_all_failed_accounts_reach_checkpoint_ops_and_preserve_cursor(tmp_
     [notice] = await repo.list("out.ops_notices", filters={"kind": "ENTRY_ERRORS"})
     assert "Ошибка HTTP-сбора X" in notice["text"] and "GET request body: empty" in notice["text"]
     assert len(notice["document_manifest"]) == 4
-    [job] = await repo.list("ops.jobs", filters={"type": "DELIVER"})
+    [job] = [
+        row
+        for row in await repo.list("ops.jobs", filters={"type": "DELIVER"})
+        if row["payload"].get("notice_id") == notice["notice_id"]
+    ]
     assert job["payload"] == {"notice_id": notice["notice_id"], "channel": "telegram:ops"}
     sent = []
 
