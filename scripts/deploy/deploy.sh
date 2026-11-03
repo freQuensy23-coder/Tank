@@ -5,12 +5,19 @@
 # commit. PostgreSQL, ClickHouse and OpenMA restart only when their image content changed;
 # tank-capture is replaced make-before-break so no minute of prints is lost.
 set -euo pipefail
-cd "$(dirname "$(readlink -f "$0")")"
+bundle=$(dirname "$(readlink -f "$0")")
+cd "$bundle"
+if [ ! -f .env ] && [ -f ../.env ]; then cd ..; fi
 SHA=${1:?usage: deploy.sh <git sha>}
 [[ "$SHA" =~ ^[0-9a-f]{40}$ ]] || { echo "invalid release SHA"; exit 1; }
 LIMIT=${LIMIT:-480}
 exec 9>.deploy.lock
 flock -n 9 || { echo "another deploy is running"; exit 1; }
+if [ "$bundle" != "$PWD" ]; then
+  cp "$bundle/compose.yaml" "$bundle/apify_deploy.py" "$bundle/worker-source.yaml" .
+  rm -rf worker
+  cp -a "$bundle/worker" worker
+fi
 
 compose() { TANK_VERSION=$1 docker compose -f compose.yaml "${@:2}"; }
 content() { docker inspect -f '{{index .Config.Labels "org.tank.content"}}' "$1" 2>/dev/null || true; }
@@ -88,7 +95,7 @@ verify() {
   return $fail
 }
 
-apify() { (set +x; . ./.env; export APIFY_API_TOKEN; python3 ./apify_deploy.py "$@" "$SHA"); }
+apify() { (set +x; python3 ./apify_deploy.py "$@" "$SHA"); }
 previous=$(cat deployed 2>/dev/null || true)
 [[ -z "$previous" || "$previous" =~ ^[0-9a-f]{40}$ ]] || { echo "invalid previous release SHA"; exit 1; }
 tank_started=no
@@ -114,11 +121,27 @@ recover() {
       status=1
     fi
   fi
+  if [ "$status" -ne 0 ] && [ "$tank_started" = no ] && [ "$worker_started" = yes ] && [ "$worker_restored" = yes ]; then
+    apify clear || status=1
+  fi
   exit "$status"
 }
 trap recover EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM
+if [ -f worker.pending ]; then
+  if ! apify settled; then
+    previous=$(apify previous-release)
+    worker_started=yes
+    tank_started=yes
+    apify rollback
+    roll "$previous"
+    printf '%s\n' "$previous" > deployed.next && mv deployed.next deployed
+    apify clear
+    worker_started=no
+    tank_started=no
+  fi
+fi
 start=$(date +%s)
 since=$(date -u +%FT%TZ)
 echo "deploy $SHA at $since; previous ${previous:-none}"

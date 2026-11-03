@@ -69,7 +69,8 @@ jobs:
           printf '%s\n' "$SSH_KEY" > ~/.ssh/id_deploy && chmod 600 ~/.ssh/id_deploy
           printf '%s\n' "$SSH_KNOWN_HOSTS" > ~/.ssh/known_hosts
           ssh_opts=(-i ~/.ssh/id_deploy -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes)
-          scp "${ssh_opts[@]}" compose.yaml "$RUNNER_TEMP/tank-orchestrator/deploy.sh" "$RUNNER_TEMP/tank-orchestrator/apify_deploy.py" "$RUNNER_TEMP/tank-orchestrator/worker-source.yaml" "$SSH_USER@$SSH_HOST:/srv/tank-deploy/"
-          ssh "${ssh_opts[@]}" "$SSH_USER@$SSH_HOST" "rm -rf /srv/tank-deploy/worker"
-          scp -r "${ssh_opts[@]}" "$RUNNER_TEMP/tank-orchestrator/worker" "$SSH_USER@$SSH_HOST:/srv/tank-deploy/"
-          ssh "${ssh_opts[@]}" "$SSH_USER@$SSH_HOST" "/srv/tank-deploy/deploy.sh $SHA"
+          stage="/srv/tank-deploy/incoming-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          ssh "${ssh_opts[@]}" "$SSH_USER@$SSH_HOST" "mkdir '$stage'"
+          scp "${ssh_opts[@]}" compose.yaml "$RUNNER_TEMP/tank-orchestrator/deploy.sh" "$RUNNER_TEMP/tank-orchestrator/apify_deploy.py" "$RUNNER_TEMP/tank-orchestrator/worker-source.yaml" "$SSH_USER@$SSH_HOST:$stage/"
+          scp -r "${ssh_opts[@]}" "$RUNNER_TEMP/tank-orchestrator/worker" "$SSH_USER@$SSH_HOST:$stage/"
+          ssh "${ssh_opts[@]}" "$SSH_USER@$SSH_HOST" "bash '$stage/deploy.sh' $SHA"
