@@ -174,7 +174,27 @@ test('schema2 resumes exact disk and preserves identity and owner across idle an
   await s.controller().archive(permitted,signal());assert.equal(s.disks.size,0);assert.equal(s.creates,1);
   await assert.rejects(s.controller().begin(permitted,signal()),/retained_session_archived/);
 });
-for(const kind of ['image','compatibility','missing','integrity','upgrading'])test(`schema2 refuses ${kind} without migration or allocation`,async()=>{
+test('image update replaces only the native runtime and discards files packages and browser profile',async()=>{
+  const {s}=await schema2Fixture();
+  const old=s.disks.get('box_1');old.files['/workspace/value']='private';old.files['/usr/local/package']='installed';old.profile.cookie='secret';
+  const identity={...schema2Identity,image:'sha256:'+'f'.repeat(64)};
+  const updated=s.controller({identity});await updated.begin(permitted,signal());
+  await updated.use(async runtime=>{const {disk}=await runtime.exec('read');assert.notEqual(disk.id,'box_1');assert.deepEqual(disk.files,{});assert.deepEqual(disk.profile,{});assert.equal(JSON.parse(disk.scope).sessionId,'session_A');});
+  await updated.idle(permitted);
+  assert.equal(s.creates,2);assert.equal(s.disks.has('box_1'),false);
+  assert.equal(s.calls.some(call=>call[0]==='fresh-get'),false);
+  const manifest=JSON.parse([...s.rows.values()][0].publication.workspaceCandidate.metadata.manifest);
+  assert.deepEqual(manifest.identity,identity);
+  const next=s.controller({identity});await next.begin(permitted,signal());await next.idle(permitted);assert.equal(s.creates,2);
+});
+
+test('new identified runtimes publish schema2 without adopting legacy provenance',async()=>{
+  const s=setup(),c=s.controller({identity:schema2Identity});await c.begin(permitted,signal());await c.idle(permitted);
+  const candidate=[...s.rows.values()][0].publication.workspaceCandidate;
+  assert.equal(candidate.metadata.schema,2);assert.deepEqual(JSON.parse(candidate.metadata.manifest).identity,schema2Identity);
+});
+
+for(const kind of ['compatibility','missing','integrity','upgrading'])test(`schema2 refuses ${kind} without migration or allocation`,async()=>{
   const {s,manifest,save}=await schema2Fixture();
   let identity=structuredClone(schema2Identity);
   if(kind==='image')identity.image='sha256:'+'f'.repeat(64);
