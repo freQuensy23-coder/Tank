@@ -49,7 +49,9 @@ QUERY_SECRET_PARTS = (
     "camel-comma",
     "camel-tail",
 )
-SECRET_TEXT = b" configured-secret Cookie: cookie-secret\n1.https://reader:db-password@host/path?" + QUERY.encode()
+SECRET_TEXT = (
+    b" configured-secret Cookie: cookie-secret\n1.https://reader:db-password@host/path?" + QUERY.encode()
+)
 SAFE_TEXT = b" [REDACTED] Cookie: [REDACTED]\n1.https://reader:[REDACTED]@host/path?" + SAFE_QUERY.encode()
 CASES = [
     (200, b"<title>This page is down / X</title>", "PUBLIC_PROFILE_NOT_READABLE", False, 0),
