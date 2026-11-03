@@ -204,3 +204,10 @@ async def test_legacy_header_candidate_budget_refuses_before_any_upload(scope):
         notice["entry_errors"] = [copy.deepcopy(notice["entry_errors"][0]) for _ in range(6)]
     retained_manifest(notice)
     await assert_refused(notice)
+
+
+@pytest.mark.parametrize("version", [0, True, 3, "1"])
+async def test_unknown_legacy_serialization_version_refuses_before_upload(version):
+    notice = legacy_notice()
+    notice["document_serialization_version"] = version
+    await assert_refused(notice)

@@ -1,9 +1,10 @@
+import copy
 import os
 
 import httpx
 import pytest
 from test_x_diagnostics import diagnostics, multipart, notice_for, telegram_settings
-from test_x_legacy_diagnostics import BODY, BODY_HASH, METADATA, METADATA_HASH, legacy_notice
+from test_x_legacy_diagnostics import BODY, BODY_HASH, METADATA, METADATA_HASH, legacy_notice, retained_manifest
 from test_x_reader_integration import LoopbackTelegramTransport
 from test_x_reader_integration import wire_server as wire_server
 
@@ -129,4 +130,40 @@ async def test_legacy_jsonb_429_commits_parent_and_prior_receipt_across_restart(
             (BODY_HASH, 1),
             (METADATA_HASH, 2),
         }
+        assert await repo.get("out.ops_notices", notice["notice_id"]) == saved
+
+
+@pytest.mark.parametrize("case", ["corruption", "shape", "privacy", "document_budget", "notice_budget"])
+async def test_legacy_jsonb_refusal_precedes_every_attachment_upload(postgres_template, case):
+    async with postgres_template.repository(os.environ["TANK_TEST_DATABASE_URL"]) as repo:
+        notice = legacy_notice()
+        evidence = notice["entry_errors"][0]["diagnostics"]
+        if case == "shape":
+            evidence["untrusted"] = "refuse"
+        elif case == "privacy":
+            evidence["attempts"][0]["response"]["headers"]["server"] = "apify-secret"
+        elif case == "document_budget":
+            evidence["attempts"][0]["response"]["headers"]["retry-after"] = "1"
+        elif case == "notice_budget":
+            notice["entry_errors"] = [copy.deepcopy(notice["entry_errors"][0]) for _ in range(6)]
+        retained_manifest(notice)
+        if case == "corruption":
+            notice["document_manifest"][-1]["sha256"] = "0" * 64
+        await repo.put("out.ops_notices", notice["notice_id"], notice, immutable=True)
+        saved = await repo.get("out.ops_notices", notice["notice_id"])
+        sent = []
+
+        def send(request):
+            sent.append(request)
+            return httpx.Response(200, json={"ok": True, "result": {"message_id": len(sent)}})
+
+        async with httpx.AsyncClient(transport=httpx.MockTransport(send)) as http:
+            with pytest.raises(DeliveryError):
+                await DeliveryService(repo, telegram_settings(), http=http).deliver(
+                    {"notice_id": notice["notice_id"]}
+                )
+        assert [request.url.path.rsplit("/", 1)[-1] for request in sent] == ["sendMessage"]
+        assert not await repo.list("out.deliveries", filters={"method": "sendDocument"})
+        parents = await repo.list("out.deliveries", filters={"status": "SENT"})
+        assert len(parents) == 1 and parents[0]["message_ref"] == "1"
         assert await repo.get("out.ops_notices", notice["notice_id"]) == saved
