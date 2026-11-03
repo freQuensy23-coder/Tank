@@ -6,10 +6,9 @@ import pytest
 from test_agents_execution_barrier import config
 from test_session_binding_concurrency import seed as binding_seed
 
-from tank.util import iso
-
 from tank.agents.sessions import SessionService
 from tank.storage import MemoryRepository
+from tank.util import iso
 
 
 async def seed(repo):
