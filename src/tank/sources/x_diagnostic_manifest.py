@@ -37,9 +37,7 @@ def _ordered(value, fields, required=None):
 
 def _secret_free(value, secrets):
     if isinstance(value, dict):
-        return all(
-            _secret_free(key, secrets) and _secret_free(item, secrets) for key, item in value.items()
-        )
+        return all(_secret_free(key, secrets) and _secret_free(item, secrets) for key, item in value.items())
     if isinstance(value, list):
         return all(_secret_free(item, secrets) for item in value)
     return not isinstance(value, str) or not any(secret in value for secret in secrets if secret)
@@ -113,7 +111,11 @@ def verified_documents(notice, secrets=()):
     if len({row["filename"] for row in manifest}) != len(manifest):
         raise ValueError("Duplicate diagnostic manifest filename")
     errors = notice.get("entry_errors")
-    if not isinstance(errors, list) or len(errors) > 4096 or any(not isinstance(error, dict) for error in errors):
+    if (
+        not isinstance(errors, list)
+        or len(errors) > 4096
+        or any(not isinstance(error, dict) for error in errors)
+    ):
         raise ValueError("Invalid diagnostic entries")
     attachments = documents(errors)
     if len(attachments) != len(manifest):
