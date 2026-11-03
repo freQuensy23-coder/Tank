@@ -209,7 +209,33 @@ def retain_first_failure(directory, receipt):
 
 
 def retain_transport_qualification(directory, nodeid, checks):
-    if set(checks) != {"ascii", "unicode", "empty"}:
+    domain_parameters = {
+        "spot_snapshot",
+        "deriv_snapshot",
+        "deriv_config",
+        "rel_snapshot",
+        "lq_snapshot",
+        "lq_config",
+        "lq_spot",
+        "lq_relative",
+        "sup_snapshot",
+        "sup_config",
+        "sup_spots",
+        "sup_derivatives",
+        "sup_liquidity",
+        "sup_relative",
+        "sup_supply_preimages",
+        "res_flow_snapshot",
+        "res_snapshot",
+        "res_config",
+        "res_spots",
+        "res_derivatives",
+        "res_liquidity",
+        "res_supply",
+        "res_relative",
+        "res_confidence",
+    }
+    if set(checks) not in ({"ascii", "unicode", "empty"}, domain_parameters):
         raise ValueError("unexpected transport qualification population")
     for check in checks.values():
         if set(check) != {"bytes", "characters", "sha256"}:

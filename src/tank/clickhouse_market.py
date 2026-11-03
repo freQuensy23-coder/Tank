@@ -149,11 +149,12 @@ class ClickHouse:
         query = query if self.database == "mkt" else re.sub(r"\bmkt\b", self.database, query)
         headers = {"X-ClickHouse-User": self.user, "X-ClickHouse-Key": self.password}
         if sum(len(name) + len(value) + 2 for name, value in parameters.items()) > 4096:
+            query, files = _external_parameters(query, params, parameters)
             response = await self.http.post(
                 self.base,
                 params=request,
-                files=[("query", (None, query.encode()))]
-                + [(name, (None, value.encode())) for name, value in parameters.items()],
+                files=[("query", (None, query[i : i + 8192].encode())) for i in range(0, len(query), 8192)]
+                + files,
                 headers=headers,
             )
         else:
@@ -178,6 +179,40 @@ class ClickHouse:
         if rows:
             body = "\n".join(json.dumps(row) for row in rows)
             await self._post(f"INSERT INTO {table} FORMAT JSONEachRow\n{body}", None)
+
+
+def _external_parameters(query, params, parameters):
+    table = "_tank_http_parameters"
+    while table in query:
+        table += "_"
+    substitutions = {}
+    columns = []
+    values = []
+    files = []
+    for name, (_, kind) in params.items():
+        wire = parameters["param_" + name]
+        if len(wire.encode()) <= 4096 or kind == "Identifier":
+            files.append(("param_" + name, (None, wire.encode())))
+            continue
+        column = f"c{len(columns)}"
+        columns.append(f"{column} {kind}")
+        values.append(wire)
+        substitutions["{" + name + ":" + kind + "}"] = f"(SELECT {column} FROM {table})"
+    if columns:
+        tokens = (
+            r"'(?:[^'\\]|\\.|'')*'|\"(?:[^\"\\]|\\.|\"\")*\"|`(?:[^`\\]|\\.|``)*`"
+            r"|--[^\n]*|\#[^\n]*|/\*.*?\*/|(?P<tag>\$\w*\$).*?(?P=tag)|"
+            + "|".join(re.escape(token) for token in substitutions)
+        )
+        query = re.sub(tokens, lambda match: substitutions.get(match[0], match[0]), query, flags=re.S)
+        files.extend(
+            [
+                (table + "_structure", (None, ", ".join(columns).encode())),
+                (table + "_format", (None, b"TabSeparated")),
+                (table, ("parameters.tsv", ("\t".join(values) + "\n").encode())),
+            ]
+        )
+    return query, files
 
 
 def parameter_string(value):
