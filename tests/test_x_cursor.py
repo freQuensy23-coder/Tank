@@ -274,8 +274,7 @@ async def test_pending_native_samples_merge_each_handle_and_preserve_a_live_sibl
             {"pancakeswap": "2115676525345530213", "wublockchain": "2115085176413757842"},
         ]
         assert [
-            sorted(row["external_id"] for row in batch["rows"])
-            for batch in pending["pending_batches"]
+            sorted(row["external_id"] for row in batch["rows"]) for batch in pending["pending_batches"]
         ] == [
             [
                 "2115085846248558689",
