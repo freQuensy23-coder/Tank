@@ -143,6 +143,8 @@ def prepare():
 def tag(build_id):
     try:
         active = current()
+    except TimeoutError:
+        raise
     except Exception:
         active = None
     pending = json.loads(PENDING.read_text())
@@ -150,6 +152,8 @@ def tag(build_id):
     if active != build_id:
         try:
             request("PUT", ACTOR, {"taggedBuilds": {TAG: {"buildId": build_id}}})
+        except TimeoutError:
+            raise
         except Exception:
             pass
     require(current() == build_id, "worker tag verification failed")
