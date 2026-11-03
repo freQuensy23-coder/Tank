@@ -180,7 +180,8 @@ async def test_settled_turn_reminds_an_item_left_without_an_outcome_and_keeps_th
                 mapped = await repo.get("ops.agent_sessions", "s")
                 native = mapped["message_log"][0]["remote_event_id"]
                 call_id = "producer-" + str(sequence)
-                await process_declared_event(service, 
+                await process_declared_event(
+                    service,
                     "s",
                     {
                         "id": call_id,
@@ -381,7 +382,8 @@ async def test_ignored_item_keeps_event_and_call_for_next_native_update(tmp_path
             updated = await service.send_message({"kind": "ITEM_ADDED", "event_id": eid, "item_id": "launch"})
             assert updated["session_id"] == "s" and len(updated["message_log"]) == 2
             next_input = updated["message_log"][1]["remote_event_id"]
-            await process_declared_event(service, 
+            await process_declared_event(
+                service,
                 "s",
                 {
                     "id": "real-update",

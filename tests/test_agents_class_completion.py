@@ -86,7 +86,8 @@ async def test_legacy_origin_completion_does_not_require_class_or_card(
                 current = await repo.get("ops.agent_sessions", "s")
                 native = current["message_log"][0]["remote_event_id"]
                 identity = "producer-" + str(count)
-                await process_declared_event(service, 
+                await process_declared_event(
+                    service,
                     "s",
                     {
                         "id": identity,

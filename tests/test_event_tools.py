@@ -3961,7 +3961,8 @@ async def test_actual_fetch_http_error_returns_durably_then_card_or_native_faile
             from model_fixture import model_arguments
 
             args = model_arguments(name, args)
-            await process_declared_event(resumed, 
+            await process_declared_event(
+                resumed,
                 sid, {"id": call_id, "type": "agent.custom_tool_use", "name": name, "input": args}
             )
             stored = await service.repo.get("ops.tool_calls", sid + ":" + call_id)

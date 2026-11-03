@@ -114,7 +114,8 @@ async def test_actual_producer_consumer_workflow(tmp_path, backend, case, postgr
                 nonlocal count
                 count += 1
                 call_id = "tool-" + str(count)
-                await process_declared_event(service, 
+                await process_declared_event(
+                    service,
                     "s",
                     {
                         "id": call_id,
@@ -293,7 +294,8 @@ async def test_native_idle_accepts_agent_chosen_order_without_semantic_retry(too
 
         service.hydrate_prompt_provenance = hydrate
         for index, tool in enumerate(tools):
-            await process_declared_event(service, 
+            await process_declared_event(
+                service,
                 "s",
                 {
                     "id": "call-" + str(index),
@@ -303,7 +305,8 @@ async def test_native_idle_accepts_agent_chosen_order_without_semantic_retry(too
                     "input": {},
                 },
             )
-        await process_declared_event(service, 
+        await process_declared_event(
+            service,
             "s", idle("end", "ack-" + str(len(posts)) if posts else "accepted-message")
         )
         assert (await service.completed_turn("s"))["complete"]
@@ -322,7 +325,8 @@ async def test_native_idle_accepts_agent_chosen_order_without_semantic_retry(too
             assert (await service.completed_turn("s"))["complete"]
         assert not reads and len(posts) == len(tools)
 
-        await process_declared_event(service, 
+        await process_declared_event(
+            service,
             "s",
             {
                 "id": "error-one",
@@ -333,7 +337,8 @@ async def test_native_idle_accepts_agent_chosen_order_without_semantic_retry(too
         )
         retry = (await repo.get("ops.agent_sessions", "s"))["message_log"][0]
         assert retry["retry_count"] == 1 and retry["turn_status"] == "RUNNING"
-        await process_declared_event(service, 
+        await process_declared_event(
+            service,
             "s",
             {
                 "id": "error-two",

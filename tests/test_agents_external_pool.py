@@ -52,7 +52,8 @@ async def exercise_external_tool_burst(repo, tool):
         controller = SessionService(repo, opts, dispatch, http=http)
         tasks = [
             asyncio.create_task(
-                process_declared_event(controller, 
+                process_declared_event(
+                    controller,
                     session["session_id"],
                     {"id": "call", "type": "agent.custom_tool_use", "name": tool, "input": {}},
                 )
@@ -75,7 +76,8 @@ async def exercise_external_tool_burst(repo, tool):
             call = await repo.get("ops.tool_calls", session["session_id"] + ":call")
             assert call["status"] == "DONE" and call["returned_at"]
             assert call["native_turn_call_index"] == 0
-            await process_declared_event(controller, 
+            await process_declared_event(
+                controller,
                 session["session_id"],
                 {"id": "call", "type": "agent.custom_tool_use", "name": tool, "input": {}},
             )

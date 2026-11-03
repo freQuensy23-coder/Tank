@@ -161,7 +161,8 @@ async def test_replay_runs_verdict_code_and_uses_fresh_remote_session():
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http:
         service = SessionService(repo, settings(replay=True), dispatch, http=http)
-        await process_declared_event(service, 
+        await process_declared_event(
+            service,
             "s", {"id": "verdict", "type": "agent.custom_tool_use", "name": "get_decision", "input": {}}
         )
         replay = await service.resolve({"event_id": "e", "replay_run_id": "run1"})
@@ -222,7 +223,8 @@ async def test_follow_retains_open_idle_sse_and_keeps_rejected_material_session_
 
         async def catchup(sid):
             await asyncio.sleep(0)
-            await process_declared_event(service, 
+            await process_declared_event(
+            service,
                 sid,
                 {
                     "id": "idle",
@@ -294,7 +296,8 @@ async def test_credential_url_never_reaches_tool_ledger_or_callback():
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http:
         service = SessionService(repo, settings(), dispatch, http=http)
-        await process_declared_event(service, 
+        await process_declared_event(
+            service,
             "s",
             {
                 "id": "credential",
@@ -337,7 +340,8 @@ async def test_configured_tokens_and_dsn_userinfo_never_enter_session_ledger(cas
         return httpx.Response(200, json={})
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http:
-        await process_declared_event(SessionService(repo, opts, dispatch, http=http), 
+        await process_declared_event(
+            SessionService(repo, opts, dispatch, http=http),
             "s",
             {
                 "id": "secret_" + case,
@@ -386,7 +390,10 @@ async def test_legacy_prompt_label_requires_exact_native_snapshot():
 async def test_native_queued_tool_result_executions_continue_after_transient_idle():
     """Native r8 rev30 idle preceded queued executions rev31..52, not session completion."""
     repo = MemoryRepository()
-    await seed(repo)
+    await seed(repo, active_message_id="root", message_log=[{
+        "message_id": "root", "remote_event_id": "native-root", "retry_count": 0,
+        "turn_status": "RUNNING", "payload": {},
+    }])
     queue = asyncio.Queue()
     first_idle = asyncio.Event()
     all_results = asyncio.Event()
@@ -401,6 +408,19 @@ async def test_native_queued_tool_result_executions_continue_after_transient_idl
         "search_tank_items",
     ]
 
+    native_calls = [
+        {
+            "id": f"call-{number}", "type": "agent.custom_tool_use", "execution_id": "native-root",
+            "name": name, "input": {}, "processed_at": "2026-10-18T23:00:00Z",
+        }
+        for number, name in enumerate(names)
+    ]
+    history.extend(native_calls)
+    history.append({
+        "id": "native-declaration", "type": "session.status_idle", "execution_id": "native-root",
+        "stop_reason": {"type": "requires_action", "event_ids": [event["id"] for event in native_calls]},
+    })
+
     async def dispatch(name, arguments, context):
         calls.append(name)
         if name == "record_event":
@@ -408,7 +428,12 @@ async def test_native_queued_tool_result_executions_continue_after_transient_idl
         return {"accepted": name}
 
     async def emit(event):
-        history.append(event)
+        if event["type"] == "agent.custom_tool_use":
+            event = native_calls[int(event["id"].split("-")[1])]
+        elif event["type"] == "session.status_idle":
+            event = dict(event, execution_id="accepted-" + str(len(responses)))
+        if event["id"] not in {row["id"] for row in history}:
+            history.append(event)
         await queue.put(("data: " + json.dumps(event) + "\n\n").encode())
 
     class Stream(httpx.AsyncByteStream):
@@ -417,6 +442,18 @@ async def test_native_queued_tool_result_executions_continue_after_transient_idl
                 yield await queue.get()
 
     async def transport(request):
+        if request.url.path.endswith("/executions"):
+            return httpx.Response(200, json={"data": [
+                {
+                    "execution_id": identity,
+                    "state": "COMPLETED" if identity == "native-root" else "RUNNING",
+                    "settled_outcome": "COMPLETED" if identity == "native-root" else None,
+                    "custom_tool_uses": [
+                        {"declaration_id": "native-declaration", "event": event} for event in native_calls
+                    ] if identity == "native-root" else [],
+                }
+                for identity in request.url.params.get_list("ids[]")
+            ]})
         if request.url.path.endswith("/events/stream"):
             return httpx.Response(200, stream=Stream(), headers={"content-type": "text/event-stream"})
         if request.url.path.endswith("/events") and request.method == "GET":
@@ -430,7 +467,7 @@ async def test_native_queued_tool_result_executions_continue_after_transient_idl
                 )
             if len(responses) == 7:
                 all_results.set()
-            return httpx.Response(200, json={})
+            return httpx.Response(200, json={"data": [{"id": "accepted-" + str(len(responses))}]})
         raise AssertionError("Unexpected native request")
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(transport)) as http:

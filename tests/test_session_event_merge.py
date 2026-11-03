@@ -146,7 +146,8 @@ async def test_event_reload_cannot_overwrite_ack_of_message_absent_from_initial_
             try:
                 async with asyncio.timeout(5):
                     event_task = asyncio.create_task(
-                        process_declared_event(service, 
+                        process_declared_event(
+                            service,
                             "s",
                             {
                                 "id": "old-tool",

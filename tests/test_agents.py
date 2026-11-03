@@ -202,7 +202,8 @@ async def test_failed_dispatch_rolls_back_and_replays():
         transport=httpx.MockTransport(lambda r: httpx.Response(200, json={}))
     ) as http:
         service = SessionService(repo, opts, bad, http=http)
-        await process_declared_event(service, 
+        await process_declared_event(
+            service,
             "ses_1", {"id": "c", "type": "agent.custom_tool_use", "name": "record_event", "input": {}}
         )
     assert await repo.get("evt.events", "oops") is None
@@ -346,7 +347,8 @@ async def test_new_scout_session_wire_protocol_and_isolation():
         service.start_stream = lambda sid: None
         session = await service.scout_review({"proposal_id": "p"})
         await service.scout_review({"proposal_id": "p"})
-        await process_declared_event(service, 
+        await process_declared_event(
+            service,
             session["session_id"],
             {"id": "call_bad", "type": "agent.custom_tool_use", "name": "publish_card", "input": {}},
         )
@@ -384,7 +386,8 @@ async def test_stream_processing_preserves_concurrent_added_message():
             await original_usage(session, event)
 
         service.usage = usage
-        await process_declared_event(service, 
+        await process_declared_event(
+            service,
             "ses_1", {"id": "u", "type": "span.model_request_end", "model_usage": {"input_tokens": 10}}, 9
         )
     record = await repo.get("ops.agent_sessions", "ses_1")
@@ -485,7 +488,8 @@ async def test_slow_denial_turn_remains_until_exit_update_delivered(monkeypatch,
         monkeypatch.setattr(
             cards, "compose_card", lambda *a, **k: "Original product card" + "\n" + score_summary(a[1])
         )
-        await process_declared_event(service, 
+        await process_declared_event(
+            service,
             "ses_1",
             {
                 "id": "decision_original",
@@ -494,7 +498,8 @@ async def test_slow_denial_turn_remains_until_exit_update_delivered(monkeypatch,
                 "input": {"token_id": "world:WLD"},
             },
         )
-        await process_declared_event(service, 
+        await process_declared_event(
+            service,
             "ses_1",
             {
                 "id": "publish_original",
@@ -518,7 +523,8 @@ async def test_slow_denial_turn_remains_until_exit_update_delivered(monkeypatch,
         stored_session = await repo.get("ops.agent_sessions", "ses_1")
         stored_session["last_payload"] = {"kind": "ITEM_ADDED", "item_id": "denial"}
         await repo.put("ops.agent_sessions", "ses_1", stored_session)
-        await process_declared_event(service, 
+        await process_declared_event(
+            service,
             "ses_1",
             {
                 "id": "denial_call",
@@ -543,7 +549,8 @@ async def test_slow_denial_turn_remains_until_exit_update_delivered(monkeypatch,
         assert invalidated["lifecycle"] == "INVALIDATED"
 
         assert not await service.can_archive(await repo.get("ops.agent_sessions", "ses_1"), invalidated)
-        await process_declared_event(service, 
+        await process_declared_event(
+            service,
             "ses_1",
             {
                 "id": "decision_exit",
@@ -557,7 +564,8 @@ async def test_slow_denial_turn_remains_until_exit_update_delivered(monkeypatch,
         monkeypatch.setattr(
             cards, "compose_card", lambda *a, **k: "EXIT: Official cancellation" + "\n" + score_summary(a[1])
         )
-        await process_declared_event(service, 
+        await process_declared_event(
+            service,
             "ses_1",
             {
                 "id": "publish_exit",
@@ -579,7 +587,8 @@ async def test_slow_denial_turn_remains_until_exit_update_delivered(monkeypatch,
         invalidated = await repo.get("evt.events", "evt_1")
         invalidated["session_finalized_at"] = iso()
         await repo.put("evt.events", "evt_1", invalidated)
-        await process_declared_event(service, 
+        await process_declared_event(
+            service,
             "ses_1", {"id": "idle", "type": "session.status_idle", "stop_reason": {"type": "end_turn"}}
         )
         assert not await service.can_archive(await repo.get("ops.agent_sessions", "ses_1"), invalidated)
@@ -619,7 +628,8 @@ async def test_unpublished_invalidated_event_can_end_when_idle_without_marker():
     async with httpx.AsyncClient() as http:
         service = SessionService(repo, opts, None, http=http)
         assert not await service.can_archive(session, event)
-        await process_declared_event(service, 
+        await process_declared_event(
+            service,
             "ses_1", {"id": "idle", "type": "session.status_idle", "stop_reason": {"type": "end_turn"}}
         )
         session = await repo.get("ops.agent_sessions", "ses_1")
@@ -696,10 +706,12 @@ async def test_live_slow_and_recovered_tool_context_keep_session_provenance():
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(transport)) as http:
         live = SessionService(repo, opts, dispatch, http=http)
-        await process_declared_event(live, 
+        await process_declared_event(
+            live,
             "ses_1", {"id": "live", "type": "agent.custom_tool_use", "name": "get_item", "input": {}}
         )
-        await process_declared_event(live, 
+        await process_declared_event(
+            live,
             "ses_1", {"id": "slow", "type": "agent.custom_tool_use", "name": "get_market_truth", "input": {}}
         )
         await repo.put(
@@ -715,7 +727,8 @@ async def test_live_slow_and_recovered_tool_context_keep_session_provenance():
             },
         )
         recovered = SessionService(repo, opts, dispatch, http=http)
-        await process_declared_event(recovered, 
+        await process_declared_event(
+            recovered,
             "ses_1", {"id": "recover", "type": "agent.custom_tool_use", "name": "get_item", "input": {}}
         )
     assert len(contexts) == 3
@@ -912,7 +925,8 @@ async def test_session_acceptance_and_tools_keep_clock_and_source_precision_sepa
         service = SessionService(repo, opts, dispatch, http=http)
         service.start_stream = lambda sid: None
         session = await service.send_message({"kind": "NEW_ITEM", "item_id": "item"})
-        await process_declared_event(service, 
+        await process_declared_event(
+            service,
             "fresh",
             {
                 "id": "call",

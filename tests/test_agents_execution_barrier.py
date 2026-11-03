@@ -5,6 +5,7 @@ from types import SimpleNamespace
 
 import httpx
 import pytest
+from model_fixture import process_declared_event
 
 from tank.agents.sessions import SessionService
 from tank.replay import semantic_verdict_output
@@ -107,7 +108,8 @@ async def test_actual_r11_intermediate_idle_does_not_complete_tool_result_execut
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http:
         service = SessionService(repo, config(), dispatch, http=http)
-        await service.process_event(
+        await process_declared_event(
+            service,
             "s",
             {
                 "id": "native-tool",
@@ -231,10 +233,12 @@ async def test_settled_snapshot_drains_all_pages_and_rechecks_new_tool_ack():
     states = {"accepted-message": "COMPLETED", "accepted-late-tool": "RUNNING"}
     pages = []
     dispatched = []
-    start = idle("initial-ended", "accepted-message")
+    start = idle("initial-ended", "accepted-message", "requires_action")
+    start["stop_reason"]["event_ids"] = ["same-time-late-tool"]
     late = {
         "id": "same-time-late-tool",
         "type": "agent.custom_tool_use",
+        "execution_id": "accepted-message",
         "name": "get_item",
         "input": {},
         "processed_at": start["processed_at"],
@@ -250,6 +254,8 @@ async def test_settled_snapshot_drains_all_pages_and_rechecks_new_tool_ack():
                             "execution_id": key,
                             "state": states[key],
                             "settled_outcome": "COMPLETED" if states[key] == "COMPLETED" else None,
+                            "custom_tool_uses": [{"declaration_id": start["id"], "event": late}]
+                            if key == "accepted-message" else [],
                         }
                         for key in request.url.params.get_list("ids[]")
                     ]
@@ -270,6 +276,7 @@ async def test_settled_snapshot_drains_all_pages_and_rechecks_new_tool_ack():
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http:
         service = SessionService(repo, config(), dispatch, http=http)
         await service.process_event("s", start)
+        await service.catch_up("s")
         assert not (await service.completed_turn("s"))["complete"]
         assert pages == [None, "late-page"] and dispatched == [True]
         assert (await repo.get("ops.agent_sessions", "s"))["active_message_id"] == "message"
@@ -344,9 +351,9 @@ async def test_tool_result_lost_ack_restart_reuses_result_and_records_original_a
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http:
         service = SessionService(repo, config(), dispatch, http=http)
         with pytest.raises(httpx.ReadError):
-            await service.process_event("s", event)
+            await process_declared_event(service, "s", event)
         restarted = SessionService(repo, config(), dispatch, http=http)
-        await restarted.process_event("s", event)
+        await process_declared_event(restarted, "s", event)
         assert dispatched == [True] and bodies[0] == bodies[1]
         assert (await repo.get("ops.tool_calls", "s:tool-once"))[
             "remote_event_id"
@@ -398,14 +405,14 @@ async def test_correlated_tool_before_ack_defers_instead_of_using_previous_messa
             remote_event_id="new-input", turn_status="RUNNING", native_input_attempts={"new-input": 0}
         )
         await repo.put("ops.agent_sessions", "s", current)
-        await service.process_event("s", event)
+        await process_declared_event(service, "s", event)
         assert len(dispatched) == 1
         call = await repo.get("ops.tool_calls", "s:early-tool")
         assert call["native_turn_message_id"] == "new-message" and call["native_turn_retry_count"] == 0
         await service.close()
 
 
-async def test_late_previous_attempt_tool_retains_immutable_attempt_lineage():
+async def test_late_previous_attempt_tool_is_suppressed_with_immutable_attempt_lineage():
     repo = MemoryRepository()
     session = await seeded(repo, "retry-input")
     session["message_log"][0].update(
@@ -424,7 +431,8 @@ async def test_late_previous_attempt_tool_retains_immutable_attempt_lineage():
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http:
         service = SessionService(repo, config(), dispatch, http=http)
-        await service.process_event(
+        await process_declared_event(
+            service,
             "s",
             {
                 "id": "late-old-tool",
@@ -435,13 +443,15 @@ async def test_late_previous_attempt_tool_retains_immutable_attempt_lineage():
             },
         )
         call = await repo.get("ops.tool_calls", "s:late-old-tool")
-        assert call["native_turn_retry_count"] == 0 and call["native_turn_message_id"] == "message"
+        assert call is None
+        current = await repo.get("ops.agent_sessions", "s")
+        assert await service.native_input_owner(current, "old-input") == ("message", 0)
         await service.process_event(
             "s",
             {
                 "id": "late-old-error",
                 "type": "session.error",
-                "execution_id": "late-result",
+                "execution_id": "old-input",
                 "error": {"message": "old failed attempt"},
             },
         )

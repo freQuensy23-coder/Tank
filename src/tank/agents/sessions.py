@@ -1557,6 +1557,7 @@ class SessionService:
             context["_decision_market_refresh_completed"] = True
             context["_decision_prepared_condition_ids"] = decision_prepared_condition_ids
         fresh = await self.repo.get("ops.agent_sessions", session["session_id"]) or session
+        fresh = dict(fresh, active_message_id=session.get("active_message_id"))
         arguments = await ModelContext(self.repo, self.settings, fresh).arguments(tool, arguments)
         if resolved_arguments is not None:
             resolved_arguments.update(copy.deepcopy(arguments))
@@ -1613,16 +1614,22 @@ class SessionService:
             if not self.routable_session(session):
                 return
             pending = set((await self.execution_barrier(session))["pending_action_ids"])
-            identities = sorted(set(execution_ids or [
-                receipt["execution_id"]
-                for receipt in session.get("native_execution_receipts", {}).values()
-                if receipt.get("stop_reason", {}).get("type") == "requires_action"
-                and pending.intersection(receipt["stop_reason"].get("event_ids", []))
-            ]))
+            identities = sorted(
+                set(
+                    execution_ids
+                    or [
+                        receipt["execution_id"]
+                        for receipt in session.get("native_execution_receipts", {}).values()
+                        if receipt.get("stop_reason", {}).get("type") == "requires_action"
+                        and pending.intersection(receipt["stop_reason"].get("event_ids", []))
+                    ]
+                )
+            )
             for offset in range(0, len(identities), 64):
                 requested = identities[offset : offset + 64]
                 response = await self.request(
-                    "GET", f"sessions/{sid}/executions",
+                    "GET",
+                    f"sessions/{sid}/executions",
                     params=[("ids[]", identity) for identity in requested],
                 )
                 rows = response.get("data") if isinstance(response, dict) else None
@@ -1663,11 +1670,14 @@ class SessionService:
                         if not owner:
                             raise ValueError("Native execution has no acknowledged accepted-input owner")
                         event = dict(
-                            event, _host_turn_message_id=owner[0], _host_turn_retry_count=owner[1],
+                            event,
+                            _host_turn_message_id=owner[0],
+                            _host_turn_retry_count=owner[1],
                             _host_declaration_id=use["declaration_id"],
                         )
                         if not self.current_tool_owner(current, event):
                             continue
+                        current = dict(current, active_message_id=owner[0])
                         await self.tool(current, event)
                         call = await self.repo.get("ops.tool_calls", sid + ":" + event["id"])
                         if (
@@ -1681,10 +1691,14 @@ class SessionService:
                                 await self.repo.put("ops.agent_sessions", sid, current)
 
     def current_tool_owner(self, session, event):
-        owner = next((
-            row for row in session.get("message_log", [])
-            if row["message_id"] == event.get("_host_turn_message_id")
-        ), None)
+        owner = next(
+            (
+                row
+                for row in session.get("message_log", [])
+                if row["message_id"] == event.get("_host_turn_message_id")
+            ),
+            None,
+        )
         return bool(
             self.routable_session(session)
             and owner
@@ -1703,16 +1717,25 @@ class SessionService:
         requested_at = self.clock_timestamp()
         key = sid + ":" + call_id
         prior = await self.repo.get("ops.tool_calls", key)
-        if prior and event.get("_host_declaration_id") and (
-            prior.get("native_source_execution_id") != event.get("execution_id")
-            or prior.get("native_declaration_id", event["_host_declaration_id"]) != event["_host_declaration_id"]
-            or prior.get("tool") != event["name"]
-            or prior.get("input_sha256") != sha256(event["input"])
-            or prior.get("native_turn_message_id") != event.get("_host_turn_message_id")
-            or prior.get("native_turn_retry_count", 0) != event.get("_host_turn_retry_count")
+        if (
+            prior
+            and event.get("_host_declaration_id")
+            and (
+                prior.get("native_source_execution_id") != event.get("execution_id")
+                or prior.get("native_declaration_id", event["_host_declaration_id"])
+                != event["_host_declaration_id"]
+                or prior.get("tool") != event["name"]
+                or prior.get("input_sha256") != sha256(event["input"])
+                or prior.get("native_turn_message_id") != event.get("_host_turn_message_id")
+                or prior.get("native_turn_retry_count", 0) != event.get("_host_turn_retry_count")
+            )
         ):
             raise ValueError("Native custom-tool declaration changed durable call ownership")
         if prior and prior.get("returned_at"):
+            return
+        if event.get("_host_declaration_id") and not self.current_tool_owner(
+            await self.repo.get("ops.agent_sessions", sid), event
+        ):
             return
         original_hash = sha256(event["input"])
         safe_arguments, credential_reason = redact_tool_arguments(event["input"], self.settings)

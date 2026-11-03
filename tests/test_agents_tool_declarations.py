@@ -190,6 +190,74 @@ async def test_restart_keeps_committed_call_effect_and_exact_callback_owned_once
         await restarted.close()
 
 
+@pytest.mark.parametrize("boundary", ["stale_attempt", "retired", "foreign_lane", "terminal_during_read"])
+async def test_committed_declaration_does_not_override_host_owner_fences(boundary):
+    repo = MemoryRepository()
+    session = await seed(repo)
+    event = custom("fenced")
+    if boundary == "stale_attempt":
+        session["message_log"][0].update(retry_count=1, native_input_attempts={"input-root": 0})
+    elif boundary == "retired":
+        session["retired_message_ids"] = ["root"]
+    elif boundary == "foreign_lane":
+        event["session_thread_id"] = "sthr_foreign"
+    await repo.put("ops.agent_sessions", "s", session)
+    effects, callbacks = [], []
+
+    async def dispatch(*arguments):
+        effects.append(arguments)
+        return {"is_event": False}
+
+    async def handler(request):
+        if request.method == "POST":
+            callbacks.append(request.content)
+            return httpx.Response(200, json={"data": [{"id": "forbidden"}]})
+        assert request.url.path.endswith("/executions")
+        if boundary == "terminal_during_read":
+            current = await repo.get("ops.agent_sessions", "s")
+            current["status"] = "ENDED"
+            await repo.put("ops.agent_sessions", "s", current)
+        return httpx.Response(200, json={"data": [declaration(event)]})
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http:
+        service = SessionService(repo, settings(), dispatch, http=http)
+        await service.process_event("s", event)
+        assert effects == [] and callbacks == []
+        assert await repo.get("ops.tool_calls", "s:fenced") is None
+        await service.close()
+
+
+async def test_declared_call_keeps_original_input_context_when_later_message_is_active():
+    repo = MemoryRepository()
+    session = await seed(repo)
+    session["message_log"].append({
+        "message_id": "later", "remote_event_id": "later-input", "retry_count": 0,
+        "turn_status": "RUNNING", "payload": {"kind": "ITEM_ADDED", "item_id": "later-item"},
+    })
+    session["active_message_id"] = "later"
+    await repo.put("ops.agent_sessions", "s", session)
+    event = dict(custom("original"), name="get_item", input={})
+    received = []
+
+    async def dispatch(name, arguments, context):
+        received.append((name, arguments["item_id"], context["item_id"]))
+        return {"text": "Original item"}
+
+    def handler(request):
+        if request.method == "POST":
+            return httpx.Response(200, json={"data": [{"id": "original-result"}]})
+        return httpx.Response(200, json={"data": [declaration(event)]})
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http:
+        service = SessionService(repo, settings(), dispatch, http=http)
+        await service.process_event("s", event)
+        assert received == [("get_item", "i", "i")]
+        row = await repo.get("ops.tool_calls", "s:original")
+        assert row["native_turn_message_id"] == "root"
+        assert row["remote_event_id"] == "original-result"
+        await service.close()
+
+
 @asynccontextmanager
 async def native_peer(handler):
     failures = []

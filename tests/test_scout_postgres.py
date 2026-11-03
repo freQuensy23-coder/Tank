@@ -259,7 +259,8 @@ async def test_scout_writes_only_proposals_and_its_logs_on_postgres(repo, tmp_pa
             ),
         ]
         for number, (name, arguments) in enumerate(attempts):
-            await process_declared_event(sessions, 
+            await process_declared_event(
+                sessions,
                 scout["session_id"],
                 {
                     "id": f"scout_call_{number}",
