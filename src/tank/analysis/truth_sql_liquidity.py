@@ -756,6 +756,7 @@ def query(snapshot, config=None, *, spot=None, relative=None):
         "lq_relative": (relative if relative is not None else snapshot.get("_relative", {"windows": {}})),
     }
     parameters = {
-        name: (parameter_string(canonical_json(_transport(value))), "String") for name, value in inputs.items()
+        name: (parameter_string(canonical_json(_transport(value))), "String")
+        for name, value in inputs.items()
     }
     return "WITH " + ctes() + "\n" + select_sql(), parameters

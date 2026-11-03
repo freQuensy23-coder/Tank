@@ -858,6 +858,9 @@ def query(
     parameters = {name.replace("spot_", "res_flow_"): value for name, value in flow_parameters.items()}
     inputs.update(res_snapshot=snapshot, res_config=config or {})
     parameters.update(
-        {name: (parameter_string(canonical_json(_transport(value))), "String") for name, value in inputs.items()}
+        {
+            name: (parameter_string(canonical_json(_transport(value))), "String")
+            for name, value in inputs.items()
+        }
     )
     return "WITH " + ctes() + "\n" + select_sql(), parameters
