@@ -69,17 +69,32 @@ def packet(*, secondary=False, fractional=False, history_days=10, benchmark=Fals
     if not benchmark:
         identities.insert(1, ("chain:BTC", "BTC"))
     instruments = [
-        dict(instrument_id="A:spot:" + symbol, token_id=identity,
-             market_type="SPOT", venue="A", base_asset=symbol)
+        dict(
+            instrument_id="A:spot:" + symbol,
+            token_id=identity,
+            market_type="SPOT",
+            venue="A",
+            base_asset=symbol,
+        )
         for identity, symbol in identities
     ]
     if secondary:
         instruments.insert(1, dict(instruments[0], instrument_id="B:spot:" + identities[0][1], venue="B"))
     result: dict[str, Any] = dict(
-        token_id=token, cutoff=iso(end), assembled_at=iso(end + timedelta(minutes=1)),
-        anchor=dict(type="KNOWN_TO_US_AT", ts=iso(start)), expected_direction="BULLISH",
-        tokens=[dict(token_id=identity, symbol=symbol, sector="DEX_EXECUTION") for identity, symbol in identities],
-        instruments=instruments, klines=[], stat_price_series={}, flow_bars=[], flow_segments=[], reference_points=[],
+        token_id=token,
+        cutoff=iso(end),
+        assembled_at=iso(end + timedelta(minutes=1)),
+        anchor=dict(type="KNOWN_TO_US_AT", ts=iso(start)),
+        expected_direction="BULLISH",
+        tokens=[
+            dict(token_id=identity, symbol=symbol, sector="DEX_EXECUTION") for identity, symbol in identities
+        ],
+        instruments=instruments,
+        klines=[],
+        stat_price_series={},
+        flow_bars=[],
+        flow_segments=[],
+        reference_points=[],
     )
     epoch = datetime(1970, 1, 1, tzinfo=UTC)
     own = [item for item in instruments if item["token_id"] == token]
@@ -93,21 +108,34 @@ def packet(*, secondary=False, fractional=False, history_days=10, benchmark=Fals
         times = sorted(times)
         values = []
         for index, _stamp in enumerate(times):
-            value = Decimal(100 + ordinal * 20) + Decimal(index) / 100 + Decimal((index * (ordinal + 3)) % 19) / 50
+            value = (
+                Decimal(100 + ordinal * 20)
+                + Decimal(index) / 100
+                + Decimal((index * (ordinal + 3)) % 19) / 50
+            )
             values.append(float(value))
         iid = instrument["instrument_id"]
         result["stat_price_series"][iid] = dict(
-            token_id=instrument["token_id"], time_basis="CLOSE_TIME", coverage_count=len(times),
+            token_id=instrument["token_id"],
+            time_basis="CLOSE_TIME",
+            coverage_count=len(times),
             times_us=array("q", (int((stamp - epoch).total_seconds() * 1000000) for stamp in times)),
-            values=array("d", values), complete=bytearray([1]) * len(times),
+            values=array("d", values),
+            complete=bytearray([1]) * len(times),
         )
         hourly = max(stamp for stamp in times if stamp.minute == 0 and stamp.second == 0)
         for stamp, value in zip(times, values, strict=True):
             if stamp in {times[-1], hourly, start}:
-                result["klines"].append(dict(
-                    instrument, open_time=iso(stamp - timedelta(minutes=1)), interval_s=60,
-                    c=format(Decimal(str(value)), "f"), complete=True, quote_volume_usd="1",
-                ))
+                result["klines"].append(
+                    dict(
+                        instrument,
+                        open_time=iso(stamp - timedelta(minutes=1)),
+                        interval_s=60,
+                        c=format(Decimal(str(value)), "f"),
+                        complete=True,
+                        quote_volume_usd="1",
+                    )
+                )
     for instrument in own:
         iid = instrument["instrument_id"]
         left = end - timedelta(days=1)
@@ -117,23 +145,52 @@ def packet(*, secondary=False, fractional=False, history_days=10, benchmark=Fals
         last = end.replace(second=0, microsecond=0)
         multiplier = 2 if instrument["venue"] == "B" else 1
         for minute in range(int((last - first).total_seconds() / 60)):
-            result["flow_bars"].append(dict(
-                instrument_id=iid, minute_start=iso(first + timedelta(minutes=minute)), complete=True,
-                buy_qty=str(3 * multiplier), sell_qty=str(2 * multiplier), sum_sq_qty="5",
-            ))
+            result["flow_bars"].append(
+                dict(
+                    instrument_id=iid,
+                    minute_start=iso(first + timedelta(minutes=minute)),
+                    complete=True,
+                    buy_qty=str(3 * multiplier),
+                    sell_qty=str(2 * multiplier),
+                    sum_sq_qty="5",
+                )
+            )
         if fractional:
             for lower, upper in ((left, first), (last, end)):
-                result["flow_segments"].append(dict(
-                    instrument, start=iso(lower), end=iso(upper), complete=True,
-                    buy_qty=str(3 * multiplier), sell_qty=str(2 * multiplier), sum_sq_qty="5", n_buy=1, n_sell=1,
-                    observed_at=iso(end), received_ts=iso(end),
-                ))
-        for boundary, price in ((start, "100.000000000000000000000001"), (end, "103.000000000000000000000001")):
-            result["reference_points"].append(dict(
-                instrument_id=iid, boundary=iso(boundary), complete=True, observed_at=iso(end), received_ts=iso(end),
-                last_trade=dict(ts=iso(boundary - timedelta(microseconds=1)), price=price,
-                                received_ts=iso(end), trade_id="captured-" + iso(boundary)),
-            ))
+                result["flow_segments"].append(
+                    dict(
+                        instrument,
+                        start=iso(lower),
+                        end=iso(upper),
+                        complete=True,
+                        buy_qty=str(3 * multiplier),
+                        sell_qty=str(2 * multiplier),
+                        sum_sq_qty="5",
+                        n_buy=1,
+                        n_sell=1,
+                        observed_at=iso(end),
+                        received_ts=iso(end),
+                    )
+                )
+        for boundary, price in (
+            (start, "100.000000000000000000000001"),
+            (end, "103.000000000000000000000001"),
+        ):
+            result["reference_points"].append(
+                dict(
+                    instrument_id=iid,
+                    boundary=iso(boundary),
+                    complete=True,
+                    observed_at=iso(end),
+                    received_ts=iso(end),
+                    last_trade=dict(
+                        ts=iso(boundary - timedelta(microseconds=1)),
+                        price=price,
+                        received_ts=iso(end),
+                        trade_id="captured-" + iso(boundary),
+                    ),
+                )
+            )
     return result
 
 
@@ -143,8 +200,12 @@ def oracle(original, snapshot, config=None, *, reaction=False):
     try:
         method = original.benchmark_reaction_values if reaction else original.relative_truth
         kwargs = {} if reaction else {"include_outcome": config.get("include_outcome", True)}
-        return method(snapshot, parse_time(config.get("start", snapshot["anchor"]["ts"])),
-                      parse_time(config.get("end", snapshot["cutoff"])), **kwargs)
+        return method(
+            snapshot,
+            parse_time(config.get("start", snapshot["anchor"]["ts"])),
+            parse_time(config.get("end", snapshot["cutoff"])),
+            **kwargs,
+        )
     finally:
         original._PARAMETERS.reset(context)
 
@@ -161,9 +222,15 @@ async def execute(native_clickhouse, snapshot, config=None, *, reaction=False, r
 
 
 @pytest.mark.parametrize("mode", ["regular", "secondary", "fractional", "benchmark", "short", "empty"])
-async def test_native_relative_complete_original_output(native_clickhouse, original_truth, mode, record_property):
-    snapshot = packet(secondary=mode == "secondary", fractional=mode == "fractional",
-                      benchmark=mode == "benchmark", history_days=2 if mode == "short" else 10)
+async def test_native_relative_complete_original_output(
+    native_clickhouse, original_truth, mode, record_property
+):
+    snapshot = packet(
+        secondary=mode == "secondary",
+        fractional=mode == "fractional",
+        benchmark=mode == "benchmark",
+        history_days=2 if mode == "short" else 10,
+    )
     if mode == "empty":
         snapshot.update(klines=[], stat_price_series={}, flow_bars=[], reference_points=[])
     actual = await execute(native_clickhouse, snapshot, record_property=record_property)
@@ -184,11 +251,16 @@ async def test_native_relative_complete_original_output(native_clickhouse, origi
         assert actual["windows"]["W15M"]["historical_measurement"]["sample_count"] > 200
 
 
-@pytest.mark.parametrize("control", ["no_anchor", "late_anchor", "late_trade", "no_btc", "missing_flow", "missing_metric", "late_segment"])
+@pytest.mark.parametrize(
+    "control",
+    ["no_anchor", "late_anchor", "late_trade", "no_btc", "missing_flow", "missing_metric", "late_segment"],
+)
 async def test_native_relative_missing_and_availability_controls(native_clickhouse, original_truth, control):
     snapshot = packet(fractional=control == "late_segment")
     if control == "no_anchor":
-        snapshot["reference_points"] = [row for row in snapshot["reference_points"] if row["boundary"] != snapshot["anchor"]["ts"]]
+        snapshot["reference_points"] = [
+            row for row in snapshot["reference_points"] if row["boundary"] != snapshot["anchor"]["ts"]
+        ]
     elif control in {"late_anchor", "late_trade"}:
         row = next(row for row in snapshot["reference_points"] if row["boundary"] == snapshot["anchor"]["ts"])
         target = row["last_trade"] if control == "late_trade" else row
@@ -201,7 +273,9 @@ async def test_native_relative_missing_and_availability_controls(native_clickhou
     elif control == "missing_metric":
         snapshot["flow_bars"][0].pop("sum_sq_qty")
     else:
-        snapshot["flow_segments"][0]["observed_at"] = iso(parse_time(snapshot["assembled_at"]) + timedelta(microseconds=1))
+        snapshot["flow_segments"][0]["observed_at"] = iso(
+            parse_time(snapshot["assembled_at"]) + timedelta(microseconds=1)
+        )
     actual = await execute(native_clickhouse, snapshot)
     assert_complete(actual, oracle(original_truth, snapshot))
     if control in {"no_anchor", "late_anchor", "late_trade"}:
@@ -212,11 +286,16 @@ async def test_native_relative_missing_and_availability_controls(native_clickhou
         assert actual["reference_coverage"]["A:spot:AAA"]["excluded"]
 
 
-@pytest.mark.parametrize("control", ["basket", "fallback", "identity_payments", "no_sector", "coverage_choice", "stale_btc", "degenerate"])
+@pytest.mark.parametrize(
+    "control",
+    ["basket", "fallback", "identity_payments", "no_sector", "coverage_choice", "stale_btc", "degenerate"],
+)
 async def test_native_relative_selection_and_history_controls(native_clickhouse, original_truth, control):
     snapshot = packet()
     if control == "basket":
-        snapshot["sector_baskets"] = [dict(sector="CAPTURED", weighting="EQUAL", constituents=["chain:AAA", "chain:P1", "chain:P2"])]
+        snapshot["sector_baskets"] = [
+            dict(sector="CAPTURED", weighting="EQUAL", constituents=["chain:AAA", "chain:P1", "chain:P2"])
+        ]
         for row in snapshot["tokens"]:
             row.pop("sector")
     elif control == "fallback":
@@ -228,7 +307,9 @@ async def test_native_relative_selection_and_history_controls(native_clickhouse,
             row.pop("sector")
     elif control == "coverage_choice":
         source = copy.deepcopy(snapshot["stat_price_series"]["A:spot:BTC"])
-        source["values"] = array("d", (value * 1.001 + index / 100 for index, value in enumerate(source["values"])))
+        source["values"] = array(
+            "d", (value * 1.001 + index / 100 for index, value in enumerate(source["values"]))
+        )
         source["coverage_count"] = 999999
         snapshot["stat_price_series"]["preferred:spot:BTC"] = source
         snapshot["series_coverage_counts"] = {"A:spot:BTC": 1000000, "preferred:spot:BTC": 1}
@@ -236,13 +317,21 @@ async def test_native_relative_selection_and_history_controls(native_clickhouse,
         end = parse_time(snapshot["cutoff"])
         cutoff_us = int((end - timedelta(hours=3)).timestamp() * 1000000)
         source = snapshot["stat_price_series"]["A:spot:BTC"]
-        pairs = [(stamp, value) for stamp, value in zip(source["times_us"], source["values"], strict=True) if stamp < cutoff_us]
+        pairs = [
+            (stamp, value)
+            for stamp, value in zip(source["times_us"], source["values"], strict=True)
+            if stamp < cutoff_us
+        ]
         source["times_us"] = array("q", (stamp for stamp, _ in pairs))
         source["values"] = array("d", (value for _, value in pairs))
-        snapshot["klines"] = [row for row in snapshot["klines"] if row["token_id"] != "chain:BTC" or parse_time(row["open_time"]) < end - timedelta(hours=3)]
+        snapshot["klines"] = [
+            row
+            for row in snapshot["klines"]
+            if row["token_id"] != "chain:BTC" or parse_time(row["open_time"]) < end - timedelta(hours=3)
+        ]
     else:
         for source in snapshot["stat_price_series"].values():
-            source["values"] = array("d", [100.] * len(source["values"]))
+            source["values"] = array("d", [100.0] * len(source["values"]))
         for row in snapshot["klines"]:
             row["c"] = "100"
     actual = await execute(native_clickhouse, snapshot)
@@ -262,7 +351,9 @@ async def test_native_relative_selection_and_history_controls(native_clickhouse,
         assert actual["beta_flags"]["btc"] == "NOT_ESTIMABLE"
 
 
-async def test_native_relative_preserves_columnar_population_and_pre_event_cutoff(native_clickhouse, original_truth):
+async def test_native_relative_preserves_columnar_population_and_pre_event_cutoff(
+    native_clickhouse, original_truth
+):
     snapshot = packet()
     first = await execute(native_clickhouse, snapshot)
     changed = copy.deepcopy(snapshot)
@@ -270,7 +361,7 @@ async def test_native_relative_preserves_columnar_population_and_pre_event_cutof
     start_us = int(parse_time(snapshot["anchor"]["ts"]).timestamp() * 1000000)
     for source in changed["stat_price_series"].values():
         source["times_us"].append(cutoff_us + 1)
-        source["values"].append(999999.)
+        source["values"].append(999999.0)
         for index, stamp in enumerate(source["times_us"]):
             if start_us <= stamp <= cutoff_us:
                 source["values"][index] *= 1.03
@@ -280,11 +371,16 @@ async def test_native_relative_preserves_columnar_population_and_pre_event_cutof
     assert second["beta_eth"] == first["beta_eth"]
     assert second["normal_ranges"] == first["normal_ranges"]
     for name in first["windows"]:
-        assert second["windows"][name]["historical_measurement"] == first["windows"][name]["historical_measurement"]
+        assert (
+            second["windows"][name]["historical_measurement"]
+            == first["windows"][name]["historical_measurement"]
+        )
         assert second["windows"][name]["normal_range"] == first["windows"][name]["normal_range"]
 
 
-@pytest.mark.parametrize("mode", ["embedded_references", "segment_chain", "projected_tie", "parallel_unequal_arrays"])
+@pytest.mark.parametrize(
+    "mode", ["embedded_references", "segment_chain", "projected_tie", "parallel_unequal_arrays"]
+)
 async def test_native_relative_native_input_shapes(native_clickhouse, original_truth, mode):
     snapshot = packet(fractional=mode == "segment_chain")
     if mode == "embedded_references":
@@ -322,7 +418,8 @@ async def test_native_relative_exact_large_reference_return(native_clickhouse, o
     snapshot = packet()
     for point in snapshot["reference_points"]:
         point["last_trade"]["price"] = (
-            "10000000000000000.01" if point["boundary"] == snapshot["anchor"]["ts"]
+            "10000000000000000.01"
+            if point["boundary"] == snapshot["anchor"]["ts"]
             else "10000000000000000.02"
         )
     actual = await execute(native_clickhouse, snapshot)
@@ -335,25 +432,42 @@ async def test_native_relative_exact_large_reference_return(native_clickhouse, o
 
 async def test_native_relative_custom_parameters_and_no_outcomes(native_clickhouse, original_truth):
     snapshot = packet()
-    config = dict(history_min_days=3, historical_lookback_days=5, beta_blume_weight=0.25,
-                  normal_range_quantiles=[0.1, 0.9], include_outcome=False)
+    config = dict(
+        history_min_days=3,
+        historical_lookback_days=5,
+        beta_blume_weight=0.25,
+        normal_range_quantiles=[0.1, 0.9],
+        include_outcome=False,
+    )
     actual = await execute(native_clickhouse, snapshot, config)
     assert_complete(actual, oracle(original_truth, snapshot, config))
     assert actual["normal_ranges"] == {}
     assert actual["windows"]["EVENT"]["historical_measurement"]["sample_count"] > 0
 
 
-@pytest.mark.parametrize("control", ["selected", "stale_start", "stale_end", "zero_volume", "incomplete", "nonspot"])
-async def test_native_benchmark_reaction_complete_original_output(native_clickhouse, original_truth, control, record_property):
+@pytest.mark.parametrize(
+    "control", ["selected", "stale_start", "stale_end", "zero_volume", "incomplete", "nonspot"]
+)
+async def test_native_benchmark_reaction_complete_original_output(
+    native_clickhouse, original_truth, control, record_property
+):
     snapshot = packet(secondary=True, benchmark=True)
     for row in snapshot["klines"]:
         if row["token_id"] == snapshot["token_id"]:
             row["quote_volume_usd"] = "10" if row["venue"] == "B" else "1"
     if control in {"stale_start", "stale_end"}:
         boundary = parse_time(snapshot["anchor"]["ts"] if control == "stale_start" else snapshot["cutoff"])
-        snapshot["klines"] = [row for row in snapshot["klines"] if not
-            (row["venue"] == "B" and row["token_id"] == snapshot["token_id"] and
-             boundary - timedelta(minutes=2) <= parse_time(row["open_time"]) + timedelta(minutes=1) <= boundary)]
+        snapshot["klines"] = [
+            row
+            for row in snapshot["klines"]
+            if not (
+                row["venue"] == "B"
+                and row["token_id"] == snapshot["token_id"]
+                and boundary - timedelta(minutes=2)
+                <= parse_time(row["open_time"]) + timedelta(minutes=1)
+                <= boundary
+            )
+        ]
     elif control == "zero_volume":
         for row in snapshot["klines"]:
             row["quote_volume_usd"] = "0"
@@ -374,19 +488,28 @@ async def test_native_benchmark_reaction_complete_original_output(native_clickho
         assert actual["r_raw_reason"] == "INCOMPLETE"
 
 
-@pytest.mark.parametrize(("values", "value", "reason", "beyond"), [
-    ([], 0., "INCOMPLETE", None),
-    ([1., 1. + 5e-13], 1.01, "DEGENERATE_HISTORY", None),
-    ([-1., 1.], -0.95, None, False),
-    ([-1., 1.], 0.95, None, False),
-    ([-1., 1.], -0.950000001, None, True),
-    ([-1., 1.], 0.950000001, None, True),
-])
-async def test_native_relative_statistical_classification_boundaries(native_clickhouse, values, value, reason, beyond):
+@pytest.mark.parametrize(
+    ("values", "value", "reason", "beyond"),
+    [
+        ([], 0.0, "INCOMPLETE", None),
+        ([1.0, 1.0 + 5e-13], 1.01, "DEGENERATE_HISTORY", None),
+        ([-1.0, 1.0], -0.95, None, False),
+        ([-1.0, 1.0], 0.95, None, False),
+        ([-1.0, 1.0], -0.950000001, None, True),
+        ([-1.0, 1.0], 0.950000001, None, True),
+    ],
+)
+async def test_native_relative_statistical_classification_boundaries(
+    native_clickhouse, values, value, reason, beyond
+):
     _, params = query(packet(history_days=0))
-    sql = "WITH " + ctes() + (
-        " SELECT concat('{\"reason\":', toJSONString(rel_range_reason({rel_test_values:Array(Float64)})), "
-        "',\"beyond\":', rel_beyond_json({rel_test_value:Float64}, {rel_test_values:Array(Float64)}), '}') AS result"
+    sql = (
+        "WITH "
+        + ctes()
+        + (
+            " SELECT concat('{\"reason\":', toJSONString(rel_range_reason({rel_test_values:Array(Float64)})), "
+            "',\"beyond\":', rel_beyond_json({rel_test_value:Float64}, {rel_test_values:Array(Float64)}), '}') AS result"
+        )
     )
     params.update(rel_test_values=(json.dumps(values), "Array(Float64)"), rel_test_value=(value, "Float64"))
     rows = await native_clickhouse.rows(sql, params)
@@ -396,24 +519,28 @@ async def test_native_relative_statistical_classification_boundaries(native_clic
 @pytest.mark.parametrize(
     ("value", "event_history", "day_history", "expected"),
     [
-        (10., [-1., 0., 1.], [-10., 0., 10.], "HEAVY"),
-        (-2., [-1., 0., 1.], [-10., 0., 10.], "NEGATIVE"),
-        (2., [-1., 0., 1.], [-10., 0., 10.], "SUBSTANTIAL"),
-        (0.75, [-1., 0., 1.], [-10., 0., 10.], "EARLY"),
-        (0., [-1., 0., 1.], [-10., 0., 10.], "UNPRICED"),
-        (0., [], [-10., 0., 10.], None),
-        (0.1, [0., 0.], [0., 0.], None),
-        (2., [], [-1., 0., 1.], "HEAVY"),
-        (0.5, [-1., 0., 1.], [-10., 0., 10.], "UNPRICED"),
+        (10.0, [-1.0, 0.0, 1.0], [-10.0, 0.0, 10.0], "HEAVY"),
+        (-2.0, [-1.0, 0.0, 1.0], [-10.0, 0.0, 10.0], "NEGATIVE"),
+        (2.0, [-1.0, 0.0, 1.0], [-10.0, 0.0, 10.0], "SUBSTANTIAL"),
+        (0.75, [-1.0, 0.0, 1.0], [-10.0, 0.0, 10.0], "EARLY"),
+        (0.0, [-1.0, 0.0, 1.0], [-10.0, 0.0, 10.0], "UNPRICED"),
+        (0.0, [], [-10.0, 0.0, 10.0], None),
+        (0.1, [0.0, 0.0], [0.0, 0.0], None),
+        (2.0, [], [-1.0, 0.0, 1.0], "HEAVY"),
+        (0.5, [-1.0, 0.0, 1.0], [-10.0, 0.0, 10.0], "UNPRICED"),
     ],
 )
 async def test_native_relative_repricing_classification_priority(
     native_clickhouse, original_truth, value, event_history, day_history, expected
 ):
     _, params = query(packet(history_days=0))
-    sql = "WITH " + ctes() + (
-        " SELECT toJSONString(rel_repricing_for({rel_test_value:Float64}, "
-        "{rel_test_event:Array(Float64)}, {rel_test_day:Array(Float64)})) AS result"
+    sql = (
+        "WITH "
+        + ctes()
+        + (
+            " SELECT toJSONString(rel_repricing_for({rel_test_value:Float64}, "
+            "{rel_test_event:Array(Float64)}, {rel_test_day:Array(Float64)})) AS result"
+        )
     )
     params.update(
         rel_test_value=(value, "Float64"),
@@ -430,25 +557,29 @@ async def test_native_relative_repricing_classification_priority(
     ("value", "volatility", "expected"),
     [
         (-0.1, 0.02, "STRESS"),
-        (0., 0.03, "STRESS"),
+        (0.0, 0.03, "STRESS"),
         (-0.050001, 0.02, "HEADWIND"),
         (-0.05, 0.02, "NEUTRAL"),
-        (0., 0.02, "NEUTRAL"),
+        (0.0, 0.02, "NEUTRAL"),
     ],
 )
 async def test_native_relative_market_context_classification(
     native_clickhouse, original_truth, value, volatility, expected
 ):
     _, params = query(packet(history_days=0))
-    sql = "WITH " + ctes() + (
-        " SELECT toJSONString(rel_market_context_for({rel_test_value:Float64}, "
-        "{rel_test_volatility:Float64}, [-0.1, 0., 0.1], [0.01, 0.02, 0.03])) AS result"
+    sql = (
+        "WITH "
+        + ctes()
+        + (
+            " SELECT toJSONString(rel_market_context_for({rel_test_value:Float64}, "
+            "{rel_test_volatility:Float64}, [-0.1, 0., 0.1], [0.01, 0.02, 0.03])) AS result"
+        )
     )
     params.update(rel_test_value=(value, "Float64"), rel_test_volatility=(volatility, "Float64"))
     rows = await native_clickhouse.rows(sql, params)
     actual = json.loads(rows[0]["result"])
     assert actual == expected
-    assert actual == original_truth.market_context(value, volatility, [-0.1, 0., 0.1], [0.01, 0.02, 0.03])
+    assert actual == original_truth.market_context(value, volatility, [-0.1, 0.0, 0.1], [0.01, 0.02, 0.03])
 
 
 @pytest.mark.parametrize("direction", ["BEARISH", "LOSER", -1])

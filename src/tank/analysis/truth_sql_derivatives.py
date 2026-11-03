@@ -65,9 +65,7 @@ def ctes():
         oi_usd_end=_money("deriv_z.5"),
         oi_usd_chg_pct=_json("deriv_du"),
         oi_usd_reason=_json("if(deriv_usd_ready, NULL, 'INCOMPLETE')"),
-        oi_usd_detail=_json(
-            "if(deriv_usd_ready, NULL, 'SYNCHRONIZED_MARK_OR_QUOTE_RATE_UNAVAILABLE')"
-        ),
+        oi_usd_detail=_json("if(deriv_usd_ready, NULL, 'SYNCHRONIZED_MARK_OR_QUOTE_RATE_UNAVAILABLE')"),
         decomposition=f"if(deriv_decomp_ready, {decomposition}, {incomplete_decomposition})",
         oi_class=_json("deriv_classification"),
         classification_ready=_json("toBool(isNotNull(deriv_classification))"),
@@ -190,7 +188,7 @@ def ctes():
             f"AND deriv_spot.1 + deriv_perp.1 != 0, {increments}, 'null')"
         ),
         incremental_volume_coverage=_object(spot="deriv_spot.2", perp="deriv_perp.2"),
-        lead_lag="'{\"first_mover\":\"UNKNOWN\",\"spot_confirmed\":null,\"sequence\":[]}'",
+        lead_lag='\'{"first_mover":"UNKNOWN","spot_confirmed":null,"sequence":[]}\'',
     )
     return f"""
     {{deriv_snapshot:String}} AS deriv_snapshot,
@@ -652,7 +650,7 @@ def ctes():
                 deriv_sum(arrayMap(deriv_r -> deriv_dec(deriv_r, 'buy_notional'), deriv_bars))
                 + deriv_sum(arrayMap(deriv_r -> deriv_dec(deriv_r, 'sell_notional'), deriv_bars)))
             + if(deriv_first = deriv_start, deriv_zero, deriv_left.2)
-            + if(deriv_last = deriv_end OR deriv_last < deriv_first, deriv_zero, deriv_right.2),
+            + if(deriv_last = deriv_end OR deriv_last < deriv_first, deriv_zero, deriv_right.2)),
         deriv_null_decimal) AS deriv_flow_volume_parts,
     (deriv_iid, deriv_start, deriv_end) -> deriv_observed_volume(deriv_iid, deriv_start, deriv_end,
         deriv_volume_candles(deriv_iid, deriv_start, deriv_end)) AS deriv_volume,

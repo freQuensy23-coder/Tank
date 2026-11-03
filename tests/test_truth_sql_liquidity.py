@@ -270,9 +270,7 @@ async def test_native_walk_consumes_actual_levels_on_both_sides(
         }
     )
     statement = (
-        "WITH "
-        + ctes()
-        + " SELECT lq_walk_book({lq_test_book:String}, "
+        "WITH " + ctes() + " SELECT lq_walk_book({lq_test_book:String}, "
         "lq_dec({lq_test_notional:String}), {lq_test_side:String}) AS value"
     )
     rows = await native_client.rows(statement, parameters)
@@ -285,9 +283,7 @@ async def test_native_walk_consumes_actual_levels_on_both_sides(
 
 @pytest.mark.parametrize("net_sign", [-1, 1])
 @pytest.mark.parametrize("offset", ["-0.000000000000000000000001", "0", "0.000000000000000000000001"])
-async def test_native_absorption_exact_financial_boundary(
-    native_client, original_truth, net_sign, offset
-):
+async def test_native_absorption_exact_financial_boundary(native_client, original_truth, net_sign, offset):
     snapshot, spot, relative = _packet()
     snapshot["_start"] = "2026-10-16T11:59:00Z"
     spot["venues"] = [{"venue": "B"}]
@@ -335,14 +331,10 @@ async def test_native_replenishment_and_resilience_cutoff_boundaries(
     )
     observation = actual["replenishment"]["observations"][0]
     assert observation["replenished"] is (refill_seconds <= 60)
-    assert observation["resilient"] is (
-        None if future_low is None else Decimal(future_low) >= Decimal("99")
-    )
+    assert observation["resilient"] is (None if future_low is None else Decimal(future_low) >= Decimal("99"))
 
 
-async def test_native_fractional_boundary_aggregate_is_not_full_minute(
-    native_client, original_truth
-):
+async def test_native_fractional_boundary_aggregate_is_not_full_minute(native_client, original_truth):
     snapshot, spot, relative = _packet()
     snapshot["_start"] = "2026-10-16T11:59:30.123456Z"
     snapshot["cutoff"] = "2026-10-16T12:00:00.123456Z"
@@ -466,9 +458,7 @@ def _original_enriched(original_truth, snapshot, spot, relative, deriv):
         "funding_late_confirmation",
     ],
 )
-async def test_native_enriched_liquidity_complete_frozen_output(
-    native_client, original_truth, case
-):
+async def test_native_enriched_liquidity_complete_frozen_output(native_client, original_truth, case):
     snapshot, _, _ = _packet()
     start = parse_time(snapshot["_start"])
     end = parse_time(snapshot["cutoff"])
@@ -495,9 +485,7 @@ async def test_native_enriched_liquidity_complete_frozen_output(
                     book["mid"] = "100"
                 if case.startswith("cross_quote") and venue == "B":
                     book["quote_asset"] = "EUR"
-                    book["quote_usd_rate"] = (
-                        None if case == "cross_quote_missing_fx" else "2"
-                    )
+                    book["quote_usd_rate"] = None if case == "cross_quote_missing_fx" else "2"
                     if case == "cross_quote_same_usd_price":
                         book["mid"] = "50"
                 book["second_path_confirmed"] = case != "rest_not_independent"
@@ -549,9 +537,7 @@ async def test_native_enriched_liquidity_complete_frozen_output(
                     {
                         "instrument_id": f"{venue}:spot:T",
                         "minute_start": iso(start + timedelta(minutes=minute)),
-                        "complete": not (
-                            case == "top_sign_incomplete" and minute == 20 and venue == "A"
-                        ),
+                        "complete": not (case == "top_sign_incomplete" and minute == 20 and venue == "A"),
                         "buy_qty": "10" if positive else "1",
                         "sell_qty": "1" if positive else "10",
                         "buy_notional": "1000" if positive else "100",
@@ -603,9 +589,7 @@ async def test_native_enriched_liquidity_complete_frozen_output(
         expected = _original_enriched(original_truth, snapshot, spot, relative, deriv)
     finally:
         original_truth._PARAMETERS.reset(token)
-    statement, parameters = window_query(
-        snapshot, config, spot=spot, relative=relative, deriv=deriv
-    )
+    statement, parameters = window_query(snapshot, config, spot=spot, relative=relative, deriv=deriv)
     rows = await native_client.rows(statement, parameters)
     assert len(rows) == 1
     actual = json.loads(rows[0]["result"])
@@ -631,18 +615,14 @@ async def test_native_book_numeric_timestamp_units_preserve_observation(
 
 
 @pytest.mark.parametrize("band", [0.5, 1, 2])
-async def test_native_depth_band_uses_only_covered_native_and_usd_fields(
-    native_client, original_truth, band
-):
+async def test_native_depth_band_uses_only_covered_native_and_usd_fields(native_client, original_truth, band):
     snapshot, spot, relative = _packet()
     key = {0.5: "p0_5", 1: "p1", 2: "p2"}[band]
     for book in snapshot["books"]:
         for side in ("bid", "ask"):
             book["depth"][side][key] = deepcopy(book["depth"][side]["p1"])
     snapshot["books"][1]["range_covered_pct"]["ask"] = band / 2
-    await _compare(
-        native_client, original_truth, snapshot, spot, relative, {"depth_band_pct": band}
-    )
+    await _compare(native_client, original_truth, snapshot, spot, relative, {"depth_band_pct": band})
 
 
 @pytest.mark.parametrize("offset", ["-0.000000000000000000000001", "0", "0.000000000000000000000001"])
@@ -687,9 +667,7 @@ async def test_native_conflicting_precision_is_refused(native_client):
 
 
 @pytest.mark.parametrize("has_event", [False, True])
-async def test_native_all_liquidity_windows_are_one_select(
-    native_client, original_truth, has_event
-):
+async def test_native_all_liquidity_windows_are_one_select(native_client, original_truth, has_event):
     snapshot, _, _ = _packet()
     snapshot["_primary"] = "W4H"
     snapshot["anchor"] = {"ts": snapshot["_start"]}
@@ -710,12 +688,8 @@ async def test_native_all_liquidity_windows_are_one_select(
         relative["windows"]["EVENT"] = relative["windows"]["W15M"]
         spots[name] = spot
         derivatives[name] = deriv
-        expected_windows[name] = _original_enriched(
-            original_truth, scoped, spot, relative, deriv
-        )
-    statement, parameters = windows_query(
-        snapshot, spots=spots, relative=relative, deriv=derivatives
-    )
+        expected_windows[name] = _original_enriched(original_truth, scoped, spot, relative, deriv)
+    statement, parameters = windows_query(snapshot, spots=spots, relative=relative, deriv=derivatives)
     rows = await native_client.rows(statement, parameters)
     assert len(rows) == 1
     actual = json.loads(rows[0]["result"])

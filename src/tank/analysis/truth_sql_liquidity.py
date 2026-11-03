@@ -69,8 +69,7 @@ def ctes():
             "<= lq_end, notEmpty(recovery), NULL)"
         ),
         recovery_s=_json(
-            "if(notEmpty(recovery), dateDiff('microsecond', lq_time(flow), "
-            "recovery[1].1) / 1000000., NULL)"
+            "if(notEmpty(recovery), dateDiff('microsecond', lq_time(flow), recovery[1].1) / 1000000., NULL)"
         ),
         resilient=_bool(
             "if(notEmpty(future_lows) AND isNotNull(lq_dec(JSONExtractRaw(flow, 'low'))) "
@@ -78,7 +77,8 @@ def ctes():
             "<= lq_end, arrayMin(future_lows) >= lq_dec(JSONExtractRaw(flow, 'low')), NULL)"
         ),
     )
-    return r"""
+    return (
+        r"""
 {lq_snapshot:String} AS lq_snapshot,
 {lq_config:String} AS lq_config,
 {lq_spot:String} AS lq_spot,
@@ -243,7 +243,8 @@ lq_venue_stats AS (
         lq_mean(arrayFilter(x -> isNotNull(x), arrayMap(book -> lq_depth(book.3, 'ask', 'usd'), arrayFilter(book -> book.1 >= lq_start, series)))) AS avg_ask
     FROM lq_venue_base
 ),
-""" + f"""
+"""
+        + f"""
 lq_venues AS (
     SELECT *, {per_venue} AS venue_json FROM lq_venue_stats
 ),
@@ -280,16 +281,13 @@ lq_observed AS (
     SELECT arrayMap(x -> x.3, arraySort(x -> tuple(x.1, x.2), groupArray(tuple(first_ordinal, flow_ordinal, observation)))) AS observations
     FROM lq_burst_results
 ),
-""" + _state_ctes()
+"""
+        + _state_ctes()
+    )
 
 
 def _state_ctes():
-    tier_json = _object(
-        **{
-            name: _money(f"lq_tiers[{i}]")
-            for i, name in enumerate(("T1", "T2", "T3"), 1)
-        }
-    )
+    tier_json = _object(**{name: _money(f"lq_tiers[{i}]") for i, name in enumerate(("T1", "T2", "T3"), 1)})
     return f"""
 {tier_json} AS lq_tier_json,
 (SELECT venues FROM lq_collected) AS lq_venues_array,
@@ -385,9 +383,7 @@ def _base_fields():
             "if(isNull(lq_hit), [], lq_covered_names(lq_hit, lq_unit = 'NATIVE', 1))"
         ),
         hit_side_depth_p1_usd=_money("if(isNull(lq_hit), NULL, lq_total(lq_hit, 0))"),
-        pre_event_hit_side_depth_p1_usd=_money(
-            "if(isNull(lq_hit), NULL, lq_total(lq_hit, 1))"
-        ),
+        pre_event_hit_side_depth_p1_usd=_money("if(isNull(lq_hit), NULL, lq_total(lq_hit, 1))"),
         avg_hit_side_depth_p1_usd=_money("lq_average_hit"),
     )
     pre_window = _object(
@@ -398,9 +394,7 @@ def _base_fields():
     absent_window = _object(start="'null'", cutoff="'null'", reason="'\"INCOMPLETE\"'")
     return dict(
         depth_measurement_band_pct="lq_parameter('depth_band_pct', '1')",
-        per_venue=(
-            "concat('[', arrayStringConcat(arrayMap(v -> v.16, lq_venues_array), ','), ']')"
-        ),
+        per_venue=("concat('[', arrayStringConcat(arrayMap(v -> v.16, lq_venues_array), ','), ']')"),
         aggregate_depth_p1_usd=_money("lq_sum(arrayMap(v -> v.10, lq_venues_array))"),
         aggregate_bid_depth_p1_usd=_money("lq_total('bid', 0)"),
         aggregate_ask_depth_p1_usd=_money("lq_total('ask', 0)"),
@@ -409,9 +403,7 @@ def _base_fields():
         pre_event_side_depth_p1_usd=_object(
             bid=_money("lq_total('bid', 1)"), ask=_money("lq_total('ask', 1)")
         ),
-        depth_drop_by_side=_object(
-            bid=_json("lq_drop('bid')"), ask=_json("lq_drop('ask')")
-        ),
+        depth_drop_by_side=_object(bid=_json("lq_drop('bid')"), ask=_json("lq_drop('ask')")),
         depth_drop=_json("if(isNull(lq_hit), NULL, lq_drop(lq_hit))"),
         depth_majority_lost=_bool("lq_majority_lost"),
         depth_drop_cohort=_object(
@@ -650,8 +642,12 @@ def window_select_sql():
             cutoff=_json("lq_iso(lq_end)"),
             rv24=_json("lq_current_rv"),
             normal_range="if(empty(lq_rv_normal), 'null', toJSONString(lq_rv_normal))",
-            state=_json("multiIf(isNull(lq_current_rv) OR empty(lq_rv_normal), CAST(NULL, 'Nullable(String)'), lq_current_rv < lq_rv_normal[1], 'COMPRESSED', lq_current_rv > lq_rv_normal[2], 'EXPANDED', 'NORMAL')"),
-            reason=_json("if(isNotNull(lq_current_rv) AND notEmpty(lq_rv_normal), CAST(NULL, 'Nullable(String)'), 'INCOMPLETE')"),
+            state=_json(
+                "multiIf(isNull(lq_current_rv) OR empty(lq_rv_normal), CAST(NULL, 'Nullable(String)'), lq_current_rv < lq_rv_normal[1], 'COMPRESSED', lq_current_rv > lq_rv_normal[2], 'EXPANDED', 'NORMAL')"
+            ),
+            reason=_json(
+                "if(isNotNull(lq_current_rv) AND notEmpty(lq_rv_normal), CAST(NULL, 'Nullable(String)'), 'INCOMPLETE')"
+            ),
         ),
         fragmentation=_object(
             window="'\"W15M\"'",
@@ -668,14 +664,18 @@ def window_select_sql():
             cross_quote_not_evaluated=_json("arrayMap(pair -> [pair.1, pair.2], lq_unevaluated_pairs)"),
             quote_conversion_uncertainty_bps=_money("lq_conversion_bps"),
             complete_venues=_json("lq_capture_venues"),
-            reason=_json("if(notEmpty(lq_books) OR isNotNull(lq_funding_dispersion), CAST(NULL, 'Nullable(String)'), 'INCOMPLETE')"),
+            reason=_json(
+                "if(notEmpty(lq_books) OR isNotNull(lq_funding_dispersion), CAST(NULL, 'Nullable(String)'), 'INCOMPLETE')"
+            ),
         ),
     )
     timing = _object(
         window=_json("lq_primary"), start=_json("lq_iso(lq_start)"), cutoff=_json("lq_iso(lq_end)")
     )
     for name in ("elasticity", "replenishment"):
-        fields[name] = f"concat(substring({fields[name]}, 1, length({fields[name]}) - 1), ',', substring({timing}, 2))"
+        fields[name] = (
+            f"concat(substring({fields[name]}, 1, length({fields[name]}) - 1), ',', substring({timing}, 2))"
+        )
     result = _object(**fields)
     with_coverage = _object(
         coverage=_object(venues=_json("arrayMap(v -> v.1, lq_venues_array)")),
@@ -690,8 +690,7 @@ def window_select_sql():
     )
     result = (
         "if(lq_primary = 'EVENT' AND JSONHas(lq_snapshot, '_event_anchor') "
-        "AND JSONExtractRaw(lq_snapshot, '_event_anchor') = 'null', "
-        + unavailable + ", " + result + ")"
+        "AND JSONExtractRaw(lq_snapshot, '_event_anchor') = 'null', " + unavailable + ", " + result + ")"
     )
     return "SELECT " + result + " AS result"
 
@@ -722,8 +721,15 @@ def windows_query(snapshot, config=None, *, spots=None, relative=None, deriv=Non
             f"JSONExtractRaw({{lq_deriv:String}}, '{name}') AS lq_deriv",
         )
         selections.append(
-            "SELECT '" + name + "' AS name, result FROM (WITH "
-            + scoped_ctes + ",\n" + scoped_enrichment + "\n" + window_select_sql() + ")"
+            "SELECT '"
+            + name
+            + "' AS name, result FROM (WITH "
+            + scoped_ctes
+            + ",\n"
+            + scoped_enrichment
+            + "\n"
+            + window_select_sql()
+            + ")"
         )
     statement = (
         "WITH lq_window_rows AS (" + " UNION ALL ".join(selections) + "), "
@@ -746,12 +752,7 @@ def query(snapshot, config=None, *, spot=None, relative=None):
         "lq_snapshot": snapshot,
         "lq_config": config or {},
         "lq_spot": spot if spot is not None else snapshot.get("_spot", {"venues": []}),
-        "lq_relative": (
-            relative if relative is not None else snapshot.get("_relative", {"windows": {}})
-        ),
+        "lq_relative": (relative if relative is not None else snapshot.get("_relative", {"windows": {}})),
     }
-    parameters = {
-        name: (canonical_json(_transport(value)), "String")
-        for name, value in inputs.items()
-    }
+    parameters = {name: (canonical_json(_transport(value)), "String") for name, value in inputs.items()}
     return "WITH " + ctes() + "\n" + select_sql(), parameters

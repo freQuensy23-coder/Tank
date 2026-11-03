@@ -88,7 +88,11 @@ async def test_nested_timestamp_precision_keeps_first_equivalent_text(clickhouse
     iid = add_instrument(data, "binance")
     data["oi"] = [
         oi_row(
-            iid, at, "10", "30", ts_prec="BUCKET(5m)",
+            iid,
+            at,
+            "10",
+            "30",
+            ts_prec="BUCKET(5m)",
             ts_bucket_anchor="UNSPECIFIED" if unresolved else "END",
         )
         for at in (CUTOFF - timedelta(hours=2), CUTOFF)
@@ -134,9 +138,7 @@ def snapshot():
 
 def add_instrument(data, venue, *, market="PERP_LINEAR", category="BASE_SINGLE_SIDED"):
     iid = f"{venue}:{'spot' if market == 'SPOT' else 'perp'}:T"
-    data["instruments"].append(
-        {"instrument_id": iid, "token_id": "T", "venue": venue, "market_type": market}
-    )
+    data["instruments"].append({"instrument_id": iid, "token_id": "T", "venue": venue, "market_type": market})
     data["semantics"].append(
         {
             "instrument_id": iid,
@@ -261,9 +263,7 @@ async def test_full_native_history_funding_volume_and_synchronized_cohort(clickh
             )
         for minutes in (240, 120, 60, 45, 30, 15, 0):
             value = 1200 + (240 - minutes) * (index + 1)
-            data["oi"].append(
-                oi_row(iid, CUTOFF - timedelta(minutes=minutes), str(value), str(value * 105))
-            )
+            data["oi"].append(oi_row(iid, CUTOFF - timedelta(minutes=minutes), str(value), str(value * 105)))
         for hour in range(80, -1, -8):
             data["funding"].append(
                 {
@@ -402,21 +402,14 @@ async def test_unspecified_bucket_edges_remain_supplemental_not_endpoints(clickh
     iid = add_instrument(data, "bybit")
     for at, amount in ((CUTOFF - timedelta(hours=2), "10"), (CUTOFF, "20")):
         if resolved:
-            data["oi"].append(
-                oi_row(iid, at - timedelta(seconds=30), amount, str(Decimal(amount) * 3))
-            )
-        data["oi"].append(
-            oi_row(iid, at, "999", "2997", ts_prec="BUCKET(5m)", ts_bucket_anchor=None)
-        )
+            data["oi"].append(oi_row(iid, at - timedelta(seconds=30), amount, str(Decimal(amount) * 3)))
+        data["oi"].append(oi_row(iid, at, "999", "2997", ts_prec="BUCKET(5m)", ts_bucket_anchor=None))
     result = await execute(clickhouse, data)
     venue = result["EVENT"]["per_venue"][0]
     exclusion = venue["oi_temporal_exclusions"]
     assert exclusion["count"] == 2
     assert exclusion["latest_observation"]["ts_bucket_anchor"] == "UNSPECIFIED"
-    assert (
-        exclusion["latest_observation"]["scope"]
-        == "SUPPLEMENTAL_PROVIDER_OBSERVATION_NOT_WINDOW_ENDPOINT"
-    )
+    assert exclusion["latest_observation"]["scope"] == "SUPPLEMENTAL_PROVIDER_OBSERVATION_NOT_WINDOW_ENDPOINT"
     if resolved:
         assert Decimal(venue["oi_native_end"]) == 20
     else:

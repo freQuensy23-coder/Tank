@@ -48,10 +48,7 @@ def ctes():
         {
             "venue": _json("a.1"),
             "reason": "'\"INCOMPLETE\"'",
-            "detail": _json(
-                "if(a.4, 'BOUNDARY_AGGREGATE_UNAVAILABLE', "
-                "'FULL_MINUTE_COVERAGE_INCOMPLETE')"
-            ),
+            "detail": _json("if(a.4, 'BOUNDARY_AGGREGATE_UNAVAILABLE', 'FULL_MINUTE_COVERAGE_INCOMPLETE')"),
             "source_reasons": _json(
                 "arraySort(arrayDistinct(arrayMap(r -> spot_reason(r), "
                 "arrayFilter(r -> has(a.2, JSONExtractString(r, 'instrument_id')) "
@@ -83,9 +80,7 @@ def ctes():
                 "spot_sum_tuple(vs, 'volume') - spot_sum_tuple(vs, 'cvd'))"
             ),
             "venues": _json("arrayMap(v -> v.1, vs)"),
-            "sign": _json(
-                "spot_sign(spot_sum_tuple(vs, 'cvd'), spot_sum_tuple(vs, 'q'))"
-            ),
+            "sign": _json("spot_sign(spot_sum_tuple(vs, 'cvd'), spot_sum_tuple(vs, 'q'))"),
         }
     )
     sql = r"""
@@ -405,10 +400,7 @@ def select_sql():
         }
     )
     cw = _object(
-        {
-            name: _json(f"spot_ratio({amount}, spot_volume)")
-            for name, amount in directional_sums.items()
-        }
+        {name: _json(f"spot_ratio({amount}, spot_volume)") for name, amount in directional_sums.items()}
     )
     topn = _object(
         {
@@ -430,12 +422,8 @@ def select_sql():
             "top_volume_share": _json(
                 "if(empty(spot_ranked), NULL, spot_ratio(spot_ranked[1].2, spot_volume))"
             ),
-            "top_contrib_venue": _json(
-                "if(empty(spot_venues), NULL, spot_venues[spot_contributor_index].1)"
-            ),
-            "top_contrib_share": _json(
-                "spot_ratio(arrayMax(spot_contributions), spot_total_contribution)"
-            ),
+            "top_contrib_venue": _json("if(empty(spot_venues), NULL, spot_venues[spot_contributor_index].1)"),
+            "top_contrib_share": _json("spot_ratio(arrayMax(spot_contributions), spot_total_contribution)"),
             "others_cwb_dir": _json("spot_ratio(spot_other_direction, spot_other_volume)"),
         }
     )

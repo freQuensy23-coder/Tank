@@ -15,7 +15,7 @@ def _transport(value):
 def _object(**fields):
     parts = []
     for key, expression in fields.items():
-        parts.extend([repr((',' if parts else '') + '"' + key + '":'), expression])
+        parts.extend([repr(("," if parts else "") + '"' + key + '":'), expression])
     return "concat('{', " + ", ".join(parts) + ", '}')"
 
 
@@ -345,9 +345,7 @@ def _coverage_ctes():
     coverage = _object(
         complete=_bool("NOT empty(rel_observed_venues(rel_i))"),
         expected_duration_s="'86400'",
-        boundary_segments=(
-            "if(empty(rel_observed_venues(rel_i)), '[]', rel_boundary_json(rel_i))"
-        ),
+        boundary_segments=("if(empty(rel_observed_venues(rel_i)), '[]', rel_boundary_json(rel_i))"),
         excluded=(
             "concat('[', arrayStringConcat(arrayMap(rel_v -> "
             f"if(rel_incomplete(rel_i, rel_v), {excluded_coverage}, {excluded_metrics}), "
@@ -540,7 +538,9 @@ def _result_ctes():
             "if(empty(rel_history_rows(rel_h.2)), NULL, "
             "rel_iso(arrayMax(arrayMap(rel_x -> rel_x.4, rel_history_rows(rel_h.2)))))"
         ),
-        precision=_j("if(isNull(rel_resolution) OR rel_resolution = 0, NULL, concat('BUCKET(', toString(rel_resolution), 's)'))"),
+        precision=_j(
+            "if(isNull(rel_resolution) OR rel_resolution = 0, NULL, concat('BUCKET(', toString(rel_resolution), 's)'))"
+        ),
         coverage=_object(sample_count=_j("length(rel_hist(rel_h.2))")),
         reason=_j("if(empty(rel_hist(rel_h.2)), 'NOT_ESTIMABLE', NULL)"),
         historical_measurement=_history_json("rel_h.2"),
@@ -552,9 +552,7 @@ def _result_ctes():
             "if(rel_btc_last != '', rel_iso(rel_time(rel_btc_last)), "
             "if(empty(rel_btc), NULL, rel_iso(arrayElement(rel_btc, -1).1)))"
         ),
-        price_source=_j(
-            "if(rel_btc_last != '', 'LAST_TRADE', if(empty(rel_btc), NULL, 'KLINE_CLOSE'))"
-        ),
+        price_source=_j("if(rel_btc_last != '', 'LAST_TRADE', if(empty(rel_btc), NULL, 'KLINE_CLOSE'))"),
         reason=_j("if(isNull(rel_btc_entry), 'INCOMPLETE', NULL)"),
     )
     anchor = _object(
@@ -655,7 +653,9 @@ def query(snapshot, config=None):
     quantiles = config.get("normal_range_quantiles", [0.025, 0.975])
     params = {
         "rel_snapshot": (
-            json.dumps(jsonable(_transport(snapshot)), separators=(",", ":"), ensure_ascii=False, allow_nan=False),
+            json.dumps(
+                jsonable(_transport(snapshot)), separators=(",", ":"), ensure_ascii=False, allow_nan=False
+            ),
             "String",
         ),
         "rel_start": (iso(start), "String"),
@@ -680,17 +680,15 @@ def benchmark_ctes():
         r_raw_method="'\"BASE_KLINE_CLOSE_LARGEST_SPOT_VENUE\"'",
         r_raw_venue=_j("rel_reaction_venue"),
         price_start=_money("rel_reaction_first.3"),
-        price_start_observed_at=_j(
-            "if(isNull(rel_reaction_first.3), NULL, rel_iso(rel_reaction_first.2))"
-        ),
+        price_start_observed_at=_j("if(isNull(rel_reaction_first.3), NULL, rel_iso(rel_reaction_first.2))"),
         price_end=_money("rel_reaction_last.3"),
-        price_end_observed_at=_j(
-            "if(isNull(rel_reaction_last.3), NULL, rel_iso(rel_reaction_last.2))"
-        ),
-        not_applicable="'[\"r_btc_adj\",\"pctile\",\"spot_cvd\",\"oi\",\"funding\",\"liquidations\"]'",
+        price_end_observed_at=_j("if(isNull(rel_reaction_last.3), NULL, rel_iso(rel_reaction_last.2))"),
+        not_applicable='\'["r_btc_adj","pctile","spot_cvd","oi","funding","liquidations"]\'',
         reason="'\"NOT_APPLICABLE\"'",
     )
-    return _CORE + f""",
+    return (
+        _CORE
+        + f""",
 arrayFilter(rel_r -> rel_market(rel_r) = 'SPOT' AND rel_complete(rel_r)
     AND (NOT JSONHas(rel_r, 'token_id') OR JSONExtractString(rel_r, 'token_id') = rel_token)
     AND coalesce(rel_number(rel_close_raw(rel_r)) != 0, 0), rel_klines) AS rel_reaction_rows,
@@ -725,6 +723,7 @@ if(isNull(rel_reaction_first.3) OR isNull(rel_reaction_last.3)
         ifNull(nullIf(rel_reaction_first.3, 0), toDecimal256(1, 24)), 24) - toDecimal256(1, 24))) AS rel_reaction_return,
 {result} AS rel_benchmark_result
 """
+    )
 
 
 def benchmark_select_sql():
