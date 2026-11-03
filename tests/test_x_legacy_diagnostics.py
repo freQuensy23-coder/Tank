@@ -1,13 +1,19 @@
+import base64
 import copy
 import hashlib
 import json
+import os
 from pathlib import Path
+from unittest.mock import patch
 
 import httpx
 import pytest
 from test_x_diagnostics import multipart, telegram_settings
 
 from tank.delivery import DeliveryError, DeliveryService
+from tank.settings import Settings
+from tank.sources import x_diagnostic_manifest
+from tank.sources.x_diagnostics import BODY_LIMIT, documents
 from tank.storage import MemoryRepository
 
 BODY = b"Public fixture body.\n"
@@ -119,13 +125,14 @@ async def test_corrupt_legacy_manifest_refuses_before_any_document_upload(part):
     await assert_refused(notice)
 
 
-async def assert_refused(notice, secrets=()):
+async def assert_refused(notice, secrets=(), settings=None):
     repo = MemoryRepository()
     notice = reordered(notice)
     await repo.put("out.ops_notices", notice["notice_id"], notice, immutable=True)
     requests = []
-    settings = telegram_settings()
-    settings.configured_secrets = lambda: secrets
+    if settings is None:
+        settings = telegram_settings()
+        settings.configured_secrets = lambda: secrets
 
     def send(request):
         requests.append(request)
@@ -136,6 +143,11 @@ async def assert_refused(notice, secrets=()):
             await DeliveryService(repo, settings, http=http).deliver({"notice_id": notice["notice_id"]})
     assert [request.url.path.rsplit("/", 1)[-1] for request in requests] == ["sendMessage"]
     assert not await repo.list("out.deliveries", filters={"method": "sendDocument"})
+    parents = await repo.list("out.deliveries", filters={"status": "SENT"})
+    assert len(parents) == 1 and parents[0]["message_ref"] == "1"
+    assert not await repo.list(
+        "out.deliveries", filters={"method": "sendDocument", "status": "GENERATED"}
+    )
     assert await repo.get("out.ops_notices", notice["notice_id"]) == notice
 
 
@@ -214,3 +226,87 @@ async def test_unknown_legacy_serialization_version_refuses_before_upload(versio
     notice = legacy_notice()
     notice["document_serialization_version"] = version
     await assert_refused(notice)
+
+
+def oversized_legacy_notice(case):
+    notice = legacy_notice()
+    evidence = notice["entry_errors"][0]["diagnostics"]
+    attempt = evidence["attempts"][0]
+    response = attempt["response"]
+    if case == "attempts":
+        evidence["attempts"] = [attempt] * 10_000
+        evidence["attemptCount"] = 10_000
+    elif case in {"utf8", "base64", "multibyte", "aggregate"}:
+        response["body"] = {
+            "utf8": "x" * (BODY_LIMIT + 1),
+            "base64": "eHh4" * (BODY_LIMIT // 3 + 1),
+            "multibyte": "\U0001f600" * (BODY_LIMIT // 4 + 1),
+            "aggregate": "x" * BODY_LIMIT,
+        }[case]
+        if case == "base64":
+            response["bodyEncoding"] = "base64"
+        if case == "aggregate":
+            notice["entry_errors"] = [copy.deepcopy(notice["entry_errors"][0]) for _ in range(7)]
+    elif case == "unknown_nested":
+        evidence["unknown"] = {"nested": ["x" * 100_000] * 10}
+    elif case == "known_container":
+        attempt["error"] = {"nested": ["x" * 100_000] * 10}
+    elif case == "metadata_text":
+        attempt["error"] = "x" * 100_000
+    elif case == "entries":
+        notice["entry_errors"] = [notice["entry_errors"][0]] * 4097
+    return notice
+
+
+@pytest.mark.parametrize(
+    "case",
+    ["attempts", "utf8", "base64", "multibyte", "aggregate", "unknown_nested", "known_container", "metadata_text", "entries"],
+)
+async def test_legacy_bounds_refuse_before_materialization_and_preserve_delivery_state(case):
+    notice = oversized_legacy_notice(case)
+    with patch.object(x_diagnostic_manifest, "documents", wraps=documents) as materialize:
+        await assert_refused(notice)
+    materialize.assert_not_called()
+
+
+async def test_hash_matching_unknown_legacy_container_cannot_use_canonical_fast_path():
+    notice = oversized_legacy_notice("unknown_nested")
+    notice["document_manifest"] = [
+        {"filename": row["filename"], "sha256": row["sha256"], "bytes": len(row["content"])}
+        for row in documents(notice["entry_errors"])
+    ]
+    with patch.object(x_diagnostic_manifest, "documents", wraps=documents) as materialize:
+        await assert_refused(notice)
+    materialize.assert_not_called()
+
+
+@pytest.mark.parametrize("credential", ["tank_db_password", "oma_db_password", "clickhouse_url"])
+@pytest.mark.parametrize("location", ["body", "header"])
+async def test_real_settings_legacy_delivery_refuses_independent_configured_secrets(
+    monkeypatch, credential, location
+):
+    monkeypatch.setattr(os, "environ", {})
+    sentinel = "legacy-independent-private-value"
+    value = f"http://reader:{sentinel}@clickhouse.invalid:8123" if credential == "clickhouse_url" else sentinel
+    settings = Settings(
+        _env_file=None,
+        database_url="postgresql://tank:unrelated-tank-url-password@postgres.invalid/tank",
+        openma_database_url="postgresql://oma:unrelated-oma-url-password@postgres.invalid/oma",
+        telegram_token="telegram-fixture-token",
+        telegram_ops_chat="ops",
+        **{credential: value},
+    )
+    assert settings.database_url.endswith("@postgres.invalid/tank")
+    assert settings.openma_database_url.endswith("@postgres.invalid/oma")
+    notice = legacy_notice()
+    response = notice["entry_errors"][0]["diagnostics"]["attempts"][0]["response"]
+    if location == "body":
+        response["body"] = sentinel
+        response["bodyBytes"] = len(sentinel)
+        response["wireBytes"] = len(sentinel)
+        response["bodySha256"] = hashlib.sha256(sentinel.encode()).hexdigest()
+    else:
+        response["headers"]["server"] = sentinel
+    retained_manifest(notice)
+    await assert_refused(notice, settings=settings)
+
