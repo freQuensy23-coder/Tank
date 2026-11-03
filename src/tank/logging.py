@@ -21,7 +21,7 @@ def redact_text(value: str, secrets: tuple[str, ...] = ()) -> str:
     )
     text = re.sub(r"(?i)(Bearer\s+)[A-Za-z0-9._~+/-]+", r"\1[REDACTED]", text)
     text = re.sub(
-        r"(?<![A-Za-z0-9_+.-])([+.-]*[A-Za-z][A-Za-z0-9+.-]*://[^/:@\s]+:)[^/@\s]+(@)",
+        r"(?<![A-Za-z0-9+.-])([A-Za-z0-9+.-]+://[^/:@\s]+:)[^/@\s]+(@)",
         r"\1[REDACTED]\2",
         text,
     )

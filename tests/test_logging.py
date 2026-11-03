@@ -50,7 +50,7 @@ def test_exception_trace_and_database_password_redacted():
 
 
 @pytest.mark.parametrize("scheme", ["postgresql", "postgresql+psycopg", "git+ssh", "x.custom-proto"])
-@pytest.mark.parametrize("prefix", ["", "+", "-", ".", "( "])
+@pytest.mark.parametrize("prefix", ["", "+", "-", ".", "( ", "1.", "12-", "9+", "_1.", "1._"])
 def test_punctuated_scheme_credentials_are_redacted(scheme, prefix):
     value = f"{prefix}{scheme}://reader:db-password@host/path"
     assert redact_text(value) == f"{prefix}{scheme}://reader:[REDACTED]@host/path"

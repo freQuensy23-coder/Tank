@@ -258,6 +258,25 @@ async def test_oversized_response_uploads_bounded_prefix_and_explicit_truncation
     assert response["bodySha256"] == sha256(raw[:2_000_000])
 
 
+async def test_numbered_credential_url_is_redacted_in_uploaded_response_document():
+    repo = MemoryRepository()
+    notice = await notice_for(repo, diagnostics("1.https://reader:db-password@host/path"))
+    captured = []
+
+    def send(request):
+        captured.append(request)
+        return httpx.Response(200, json={"ok": True, "result": {"message_id": len(captured)}})
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(send)) as http:
+        await DeliveryService(repo, telegram_settings(), http=http).deliver(
+            {"notice_id": notice["notice_id"]}
+        )
+    uploads = [multipart(request)["document"][1] for request in captured[1:]]
+    assert uploads[:3] == [b"1.https://reader:[REDACTED]@host/path"] * 3
+    assert len(uploads) == 4
+    assert all(isinstance(body, bytes) and b"db-password" not in body for body in uploads)
+
+
 async def test_partial_document_delivery_retry_does_not_duplicate_successful_message_or_documents():
     repo = MemoryRepository()
     notice = await notice_for(repo, diagnostics("complete body"))
