@@ -10,6 +10,7 @@ from test_x_legacy_diagnostics import (
     BODY_HASH,
     METADATA,
     METADATA_HASH,
+    canonical_manifest,
     legacy_byte_oracle,
     legacy_notice,
     oversized_legacy_notice,
@@ -209,3 +210,36 @@ async def test_legacy_jsonb_oversize_refuses_without_materialization_or_document
         assert len(parents) == 1 and parents[0]["message_ref"] == "1"
         assert await repo.get("out.ops_notices", notice["notice_id"]) == saved
         materialize.assert_not_called()
+
+
+@pytest.mark.parametrize("kind", ["binary", "empty"])
+async def test_canonical_jsonb_corrupt_base64_keeps_original_manifest_and_refuses(
+    postgres_template, wire_server, kind
+):
+    origin, state = wire_server
+    notice, _ = legacy_byte_oracle(kind)
+    response = notice["entry_errors"][0]["diagnostics"]["attempts"][0]["response"]
+    response["bodyEncoding"] = "base64"
+    canonical_manifest(notice)
+    original_manifest = copy.deepcopy(notice["document_manifest"])
+    response["body"] = "!!!!" + response["body"]
+    async with postgres_template.repository(os.environ["TANK_TEST_DATABASE_URL"]) as repo:
+        await repo.put("out.ops_notices", notice["notice_id"], notice, immutable=True)
+        saved = await repo.get("out.ops_notices", notice["notice_id"])
+        assert saved["document_manifest"] == original_manifest
+        stored_response = saved["entry_errors"][0]["diagnostics"]["attempts"][0]["response"]
+        assert stored_response["body"].startswith("!!!!")
+        with patch.object(x_diagnostic_manifest, "documents", wraps=documents) as materialize:
+            async with httpx.AsyncClient(transport=LoopbackTelegramTransport(origin)) as http:
+                with pytest.raises(DeliveryError):
+                    await DeliveryService(repo, telegram_settings(), http=http).deliver(
+                        {"notice_id": notice["notice_id"]}
+                    )
+        materialize.assert_not_called()
+        assert [path.rsplit("/", 1)[-1] for path, _, _ in state["telegram"]] == ["sendMessage"]
+        await repo.close()
+        await repo.open()
+        assert not await repo.list("out.deliveries", filters={"method": "sendDocument"})
+        parents = await repo.list("out.deliveries", filters={"status": "SENT"})
+        assert len(parents) == 1 and parents[0]["message_ref"] == "1"
+        assert await repo.get("out.ops_notices", notice["notice_id"]) == saved

@@ -8,7 +8,7 @@ from unittest.mock import patch
 
 import httpx
 import pytest
-from test_x_diagnostics import multipart, telegram_settings
+from test_x_diagnostics import diagnostics, multipart, telegram_settings
 
 from tank.delivery import DeliveryError, DeliveryService
 from tank.settings import Settings
@@ -363,6 +363,134 @@ async def test_real_settings_legacy_delivery_refuses_independent_configured_secr
         response["headers"]["server"] = sentinel
     retained_manifest(notice)
     await assert_refused(notice, settings=settings)
+
+
+def canonical_manifest(notice):
+    expected = documents(notice["entry_errors"])
+    notice["document_manifest"] = [
+        {"filename": row["filename"], "sha256": row["sha256"], "bytes": len(row["content"])}
+        for row in expected
+    ]
+    return expected
+
+
+@pytest.mark.parametrize("shape", ["optional_response_fields", "current_invalid_evidence"])
+async def test_canonical_current_shapes_deliver_original_documents_without_rewriting(shape):
+    notice = legacy_notice()
+    evidence = diagnostics()
+    if shape == "current_invalid_evidence":
+        evidence["attempts"][0].update(at="bad timestamp", status={"unsafe": "value"})
+        evidence["attempts"][0]["response"]["headers"]["server"] = "server\u0000"
+        evidence = sanitize(evidence)
+    notice["entry_errors"][0]["diagnostics"] = evidence
+    expected = canonical_manifest(notice)
+    frozen = copy.deepcopy(notice)
+    repo = MemoryRepository()
+    await repo.put("out.ops_notices", notice["notice_id"], notice, immutable=True)
+    uploads = []
+
+    def send(request):
+        if request.url.path.endswith("sendDocument"):
+            uploads.append(multipart(request)["document"])
+        return httpx.Response(200, json={"ok": True, "result": {"message_id": len(uploads) + 1}})
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(send)) as http:
+        await DeliveryService(repo, telegram_settings(), http=http).deliver(
+            {"notice_id": notice["notice_id"]}
+        )
+    assert uploads == [(row["filename"], row["content"]) for row in expected]
+    assert await repo.get("out.ops_notices", notice["notice_id"]) == frozen
+    receipts = await repo.list("out.deliveries", filters={"method": "sendDocument", "status": "SENT"})
+    assert len(receipts) == len(expected)
+
+
+@pytest.mark.parametrize(
+    "case",
+    [
+        "attempts",
+        "utf8",
+        "unknown_nested",
+        "invalid_path",
+        "invalid_paths_limit",
+        "timestamp",
+        "credentials",
+    ],
+)
+async def test_matching_canonical_manifest_still_refuses_unsafe_or_unbounded_evidence(case):
+    if case in {"attempts", "utf8", "unknown_nested"}:
+        notice = oversized_legacy_notice(case)
+        if case == "attempts":
+            evidence = notice["entry_errors"][0]["diagnostics"]
+            evidence["attempts"] = [copy.deepcopy(evidence["attempts"][0]) for _ in range(4)]
+            for index, attempt in enumerate(evidence["attempts"], 1):
+                attempt["attempt"] = index
+            evidence["attemptCount"] = 4
+    else:
+        notice = legacy_notice()
+        evidence = notice["entry_errors"][0]["diagnostics"]
+        if case == "invalid_path":
+            evidence["invalidEvidence"] = ["arbitrary free-form data"]
+        elif case == "invalid_paths_limit":
+            evidence["invalidEvidence"] = ["at[1]"] * 10_000
+        elif case == "timestamp":
+            evidence["attempts"][0]["at"] = "not-a-date"
+        else:
+            evidence["attempts"][0]["response"]["body"] = "1.https://reader:private-password@host/path"
+    canonical_manifest(notice)
+    with patch.object(x_diagnostic_manifest, "documents", wraps=documents) as materialize:
+        await assert_refused(notice)
+    materialize.assert_not_called()
+
+
+@pytest.mark.parametrize("body", [b"\xff\x00public binary fixture\n", b""])
+async def test_corrupt_canonical_base64_refuses_with_original_manifest(body):
+    notice = legacy_notice()
+    response = notice["entry_errors"][0]["diagnostics"]["attempts"][0]["response"]
+    response.update(body=base64.b64encode(body).decode(), bodyEncoding="base64")
+    response["bodyBytes"] = len(body)
+    response["bodySha256"] = hashlib.sha256(body).hexdigest()
+    canonical_manifest(notice)
+    response["body"] = "!!!!" + response["body"]
+    with patch.object(x_diagnostic_manifest, "documents", wraps=documents) as materialize:
+        await assert_refused(notice)
+    materialize.assert_not_called()
+
+
+@pytest.mark.parametrize("credential", ["tank_db_password", "oma_db_password", "clickhouse_url"])
+@pytest.mark.parametrize("location", ["body", "header", "binary"])
+async def test_real_settings_canonical_match_refuses_secrets_before_materialization(
+    monkeypatch, credential, location
+):
+    monkeypatch.setattr(os, "environ", {})
+    sentinel = "canonical-independent-private-value"
+    settings = Settings(
+        _env_file=None,
+        database_url="postgresql://tank:unrelated-tank-url-password@postgres.invalid/tank",
+        openma_database_url="postgresql://oma:unrelated-oma-url-password@postgres.invalid/oma",
+        telegram_token="telegram-fixture-token",
+        telegram_ops_chat="ops",
+        **{
+            credential: (
+                f"http://reader:{sentinel}@clickhouse.invalid:8123"
+                if credential == "clickhouse_url"
+                else sentinel
+            )
+        },
+    )
+    notice = legacy_notice()
+    response = notice["entry_errors"][0]["diagnostics"]["attempts"][0]["response"]
+    if location == "header":
+        response["headers"]["server"] = sentinel
+    else:
+        raw = b"\xff\x00" + sentinel.encode() if location == "binary" else sentinel.encode()
+        response["body"] = base64.b64encode(raw).decode() if location == "binary" else raw.decode()
+        response["bodyEncoding"] = "base64" if location == "binary" else "utf-8"
+        response["bodyBytes"] = len(raw)
+        response["bodySha256"] = hashlib.sha256(raw).hexdigest()
+    canonical_manifest(notice)
+    with patch.object(x_diagnostic_manifest, "documents", wraps=documents) as materialize:
+        await assert_refused(notice, settings=settings)
+    materialize.assert_not_called()
 
 
 @pytest.mark.parametrize("version", [1, 2])

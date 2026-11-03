@@ -1,10 +1,11 @@
 import base64
 import json
 import re
+from datetime import datetime
 from itertools import permutations, product
 from math import factorial, prod
 
-from tank.sources.x_diagnostics import BODY_LIMIT, HEADERS, documents, sanitize
+from tank.sources.x_diagnostics import BODY_LIMIT, HEADERS, documents, redact, sanitize
 from tank.util import sha256
 
 RESPONSE_FIELDS = (
@@ -46,13 +47,52 @@ def _bounded_scalar(value, kind, minimum=0, maximum=2**63 - 1):
         raise ValueError("Invalid legacy diagnostic scalar")
 
 
-def _preflight(errors):
+def _safe_text(value, limit=8192):
+    _bounded_text(value, limit)
+    if (
+        "\x00" in value
+        or any(0xD800 <= ord(char) <= 0xDFFF for char in value)
+        or redact(value) != value
+    ):
+        raise ValueError("Unsafe diagnostic text")
+
+
+def _preflight(errors, secrets):
     budget = 12_000_000
     consumer_fields = (
         "consumerCapturedBytes",
         "consumerCaptureTruncated",
         "consumerTransformTruncated",
         "consumerBodyLimitBytes",
+    )
+    invalid_paths = (
+        {"diagnostics", "request", "request.url", "attempts", "outcome", "invalidEvidence"}
+        | {
+            f"{field}[{index}]"
+            for index in range(1, 4)
+            for field in (
+                "attempts",
+                "error",
+                "at",
+                "status",
+                "retryable",
+                "response",
+                "headers",
+                "bodyEncoding",
+                "body",
+                "bodyText",
+                "response.status",
+                "bodyTruncated",
+                "redacted",
+                "omittedWireBytes",
+                "wireBytes",
+                "captureLimitBytes",
+                "serializedBodyLimitBytes",
+                "readError",
+                "decodeError",
+            )
+        }
+        | {f"headers[{index}].{header}" for index in range(1, 4) for header in HEADERS}
     )
     for error in errors:
         account = error.get("account")
@@ -61,10 +101,24 @@ def _preflight(errors):
         value = error.get("diagnostics")
         if value is None:
             continue
-        metadata = _ordered(value, ("request", "outcome", "attempts", "attemptCount"))
+        metadata = _ordered(
+            value,
+            ("request", "outcome", "attempts", "attemptCount", "invalidEvidence"),
+            ("request", "outcome", "attempts", "attemptCount"),
+        )
+        if "invalidEvidence" in metadata:
+            paths = metadata["invalidEvidence"]
+            if not isinstance(paths, list) or len(paths) > len(invalid_paths):
+                raise ValueError("Invalid diagnostic evidence paths")
+            for path in paths:
+                _bounded_text(path, 64)
+                if path not in invalid_paths:
+                    raise ValueError("Invalid diagnostic evidence path")
+            if paths != sorted(set(paths)):
+                raise ValueError("Invalid diagnostic evidence paths")
         request = _ordered(metadata["request"], ("method", "url", "body"))
-        _bounded_text(request["method"])
-        _bounded_text(request["url"])
+        _safe_text(request["method"])
+        _safe_text(request["url"])
         if request["method"] != "GET" or request["body"] is not None:
             raise ValueError("Invalid legacy diagnostic request")
         _bounded_text(metadata["outcome"])
@@ -84,21 +138,27 @@ def _preflight(errors):
             )
             if type(attempt["attempt"]) is not int or attempt["attempt"] != index:
                 raise ValueError("Invalid legacy diagnostic attempt number")
-            _bounded_text(attempt["error"])
+            _safe_text(attempt["error"])
             if "at" in attempt:
-                _bounded_text(attempt["at"], 64)
+                _safe_text(attempt["at"], 64)
+                if datetime.fromisoformat(attempt["at"]).tzinfo is None:
+                    raise ValueError("Invalid diagnostic timestamp")
             _bounded_scalar(attempt.get("status"), int, 100, 599)
             _bounded_scalar(attempt.get("retryable"), bool)
             if "response" not in attempt:
                 continue
-            response = _ordered(attempt["response"], RESPONSE_FIELDS + consumer_fields, RESPONSE_FIELDS)
+            response = _ordered(
+                attempt["response"],
+                RESPONSE_FIELDS + consumer_fields,
+                ("status", "headers", "body", "bodyEncoding", "bodyTruncated"),
+            )
             headers = response["headers"]
             if not isinstance(headers, dict) or len(headers) > len(HEADERS):
                 raise ValueError("Invalid legacy diagnostic headers")
             for key, item in headers.items():
                 if not isinstance(key, str) or len(key) > 8192 or key not in HEADERS:
                     raise ValueError("Invalid legacy diagnostic header")
-                _bounded_text(item)
+                _safe_text(item)
             _bounded_scalar(response["status"], int, 100, 599)
             for key in (
                 "bodyBytes",
@@ -107,19 +167,20 @@ def _preflight(errors):
                 "captureLimitBytes",
                 "serializedBodyLimitBytes",
             ):
-                _bounded_scalar(response[key], int)
+                _bounded_scalar(response.get(key), int)
             for key in ("bodyTruncated", "redacted"):
-                if type(response[key]) is not bool:
+                if key in response and type(response[key]) is not bool:
                     raise ValueError("Invalid legacy diagnostic flag")
             for key in ("readError", "decodeError"):
-                if response[key] is not None:
-                    _bounded_text(response[key])
+                if response.get(key) is not None:
+                    _safe_text(response[key])
             for key in consumer_fields:
                 if key in response:
                     _bounded_scalar(response[key], bool if "Truncated" in key else int)
-            _bounded_text(response["bodySha256"], 64)
-            if re.fullmatch(r"[0-9a-f]{64}", response["bodySha256"]) is None:
-                raise ValueError("Invalid legacy diagnostic body hash")
+            if "bodySha256" in response:
+                _bounded_text(response["bodySha256"], 64)
+                if re.fullmatch(r"[0-9a-f]{64}", response["bodySha256"]) is None:
+                    raise ValueError("Invalid legacy diagnostic body hash")
             encoding = response["bodyEncoding"]
             _bounded_text(encoding)
             body = response["body"]
@@ -141,6 +202,22 @@ def _preflight(errors):
             if size > limit:
                 raise ValueError("Legacy diagnostic body budget exhausted")
             budget -= size
+            raw = base64.b64decode(body, validate=True) if encoding == "base64" else body.encode()
+            if encoding == "base64" and base64.b64encode(raw).decode() != body:
+                raise ValueError("Invalid diagnostic body encoding")
+            if encoding == "utf-8" and "\x00" in body:
+                raise ValueError("Invalid diagnostic body text")
+            if "bodyBytes" in response and response["bodyBytes"] != len(raw):
+                raise ValueError("Invalid diagnostic body length")
+            if "bodySha256" in response and response["bodySha256"] != sha256(raw):
+                raise ValueError("Invalid diagnostic body hash")
+            if any(secret.encode() in raw for secret in secrets if secret):
+                raise ValueError("Unsafe diagnostic body")
+            text = raw.decode("latin-1")
+            if redact(text, limit=BODY_LIMIT) != text:
+                raise ValueError("Unsafe diagnostic body")
+        if not _secret_free(metadata, secrets):
+            raise ValueError("Unsafe diagnostic evidence")
 
 
 def _secret_free(value, secrets):
@@ -227,7 +304,7 @@ def verified_documents(notice, secrets=()):
     ):
         raise ValueError("Invalid diagnostic entries")
     if version == 1 and notice.get("kind") == "ENTRY_ERRORS":
-        _preflight(errors)
+        _preflight(errors, secrets)
     attachments = documents(errors)
     if len(attachments) != len(manifest):
         raise ValueError("Diagnostic manifest count mismatch")
