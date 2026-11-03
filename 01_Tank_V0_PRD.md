@@ -319,6 +319,8 @@ Each requirement describes behavior the operator can observe or a test can check
 | FR-T-12 | Each analysis MUST carry a data confidence — high, medium or low — and name its weakest input as the main unknown; START is allowed only when data confidence is high. (03 §5.10.) |
 | FR-T-13 | Tank MUST show supply context: exchange balances where public wallet lists exist (Binance, OKX), upcoming unlocks (an unlock is potential supply, never a sale), lending utilization, and stablecoin supply on the event's chain; missing items show "n/a" with the reason. |
 
+Market-history reuse must not turn an interrupted read into incomplete evidence. A failed or cancelled read returns no partial window and does not discard previously completed reusable windows; ordinary cache expiry and capacity limits still apply. The next read includes corrections and late arrivals under the existing analysis time and job expiry.
+
 ### 6.6 Movement outlook
 
 | ID | Requirement |

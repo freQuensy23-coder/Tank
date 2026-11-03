@@ -164,16 +164,22 @@ async def test_other_key_eviction_is_not_rolled_back(warmed, monkeypatch, failur
     task = asyncio.create_task(read(service, 0, 40))
     try:
         await asyncio.wait_for(reached.wait(), 1)
+        row_limit = service_module.WINDOW_ROWS
         monkeypatch.setattr(service_module, "WINDOW_ROWS", 1)
         service_module._bound_windows(service._windows)
         assert key not in service._windows
+        monkeypatch.setattr(service_module, "WINDOW_ROWS", row_limit)
         release.set()
         if failure:
             with pytest.raises(httpx.ReadError):
                 await asyncio.wait_for(task, 1)
         else:
             assert await asyncio.wait_for(task, 1)
-        assert key not in service._windows
+        if failure:
+            assert key not in service._windows
+        else:
+            assert len(service._windows[key]) == 1
+            assert service._windows[key][0]["start"] == BASE
         assert all(not lock.locked() for lock in service._window_locks.values())
     finally:
         task.cancel()
