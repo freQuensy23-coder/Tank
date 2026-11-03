@@ -46,11 +46,11 @@ def failure_receipt(job, exc, *, settings, phase, started_at, finished_at, deadl
                 value = _typed_text(response.headers.get(header), r"[0-9a-fA-F-]{36}", secrets)
                 if value is not None:
                     with suppress(ValueError):
-                        entry[key] = str(UUID(value))
+                        normalized = _typed_text(str(UUID(value)), r"[0-9a-f-]{36}", secrets)
+                        if normalized is not None:
+                            entry[key] = normalized
         if isinstance(error, psycopg.Error):
-            constraint = _typed_text(
-                error.diag.constraint_name, r"[A-Za-z_][A-Za-z0-9_]{0,62}", secrets
-            )
+            constraint = _typed_text(error.diag.constraint_name, r"[A-Za-z_][A-Za-z0-9_]{0,62}", secrets)
             sqlstate = _typed_text(error.sqlstate, r"[0-9A-Z]{5}", secrets)
             if constraint:
                 entry["db_constraint"] = constraint
