@@ -167,6 +167,20 @@ def test_transport_qualification_receipt_refuses_unbounded_fields(tmp_path):
     assert b"private-value" not in before
 
 
+def test_native_diagnostic_vocabulary_drops_unknown_error_words():
+    receipt = truth_sql_failure_evidence.failure_receipt(
+        RuntimeError(
+            "ClickHouse 400: Code: 36. Maximum parse depth exceeded privatecredential arbitrarypayload in scope SELECT hidden_snapshot"
+        ),
+        "test_case",
+        "SELECT 1",
+    )
+    assert receipt["native_error_code"] == 36
+    assert all(word in receipt["server_message"] for word in ("maximum", "parse", "depth", "exceeded"))
+    serialized = json.dumps(receipt)
+    assert all(word not in serialized for word in ("privatecredential", "arbitrarypayload", "hidden_snapshot"))
+
+
 def test_parameter_string_preserves_native_escaped_spelling():
     value = "α😀\\\t\n\r\x00'\""
     assert parameter_string(value) == "α😀\\\\\\t\\n\\r\\0'\""

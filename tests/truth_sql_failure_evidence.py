@@ -67,6 +67,16 @@ _SAFE_PHRASES = (
     "accumulator",
 )
 
+_SAFE_WORDS = frozenset(
+    "maximum minimum parse parser depth recursion exceeded limit setting settings unexpected argument arguments "
+    "lambda parameters parameter requires expression expressions constant constants fold subquery subqueries "
+    "type types regex regexp pattern regular invalid empty supported unsupported query named alias aliases "
+    "conflict conflicting duplicate multiple definition defined already different differ text format function "
+    "functions aggregate unknown found name names expected too many size range length must equal same number "
+    "not allowed allow cannot disabled enabled enable disable nested identifier identifiers one two three "
+    "max_parser_depth max_ast_depth max_expanded_ast_elements max_query_size http_max_field_value_size".split()
+)
+
 
 def failure_receipt(error, nodeid, query):
     message = str(error)
@@ -74,6 +84,13 @@ def failure_receipt(error, nodeid, query):
     code = re.search(r"\bCode: (\d+)\b", message)
     message = re.split(r"(?i)\b(?:while processing|in scope|stack trace)\b", message)[0]
     diagnostics = [phrase for phrase in _SAFE_PHRASES if phrase in message]
+    diagnostics.extend(
+        dict.fromkeys(
+            word.lower()
+            for word in re.findall(r"\b[A-Za-z_]+\b", message)
+            if word.lower() in _SAFE_WORDS
+        )
+    )
     identifiers = set(re.findall(r"\b(?:spot|deriv|rel|lq|sup|res)_[A-Za-z0-9_]+\b", query))
     identifiers.update(re.findall(r"\b([A-Za-z_][A-Za-z0-9_]*)\s*\(", query))
     identifiers.update(
