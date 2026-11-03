@@ -261,6 +261,8 @@ Every token has at least three spot venues and two perpetual venues. Binance spo
 
 Tank is one service: a single Python 3.13 asyncio process, `tank serve`, built as a modular monolith. Modules call each other directly. Long-lived loops read the sources; the exchange streams and pollers run in tank-capture (§5.1). Every piece of work that must survive a restart or wait for its turn is a job in PostgreSQL (`ops.jobs`), run by the service's own async workers (03 §3.8). CPU-heavy steps (Market Truth) run in a thread pool, so ingestion never stalls.
 
+MarketService serializes each reusable market-history window key and publishes a replacement only after all reads and row preparation succeed. Failure or cancellation leaves committed lanes unchanged, without undoing concurrent ordinary capacity or age eviction. This is an in-process cache guarantee, not a transport retry or a deadline extension (03 §5).
+
 | Module | Libraries | Runs as | Responsibility |
 |---|---|---|---|
 | `sources` | `httpx`, `feedparser`, `selectolax` | One polling loop per source | S01–S28, S30–S34 at each source's cadence (15 s while escalated): conditional GET (exchange hosts through tank-capture, §3), raw capture, `source_items` row + FILTER_ITEM or ROUTE_ITEM job; S14 diffs |

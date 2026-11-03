@@ -2600,7 +2600,7 @@ class MarketService:
         windows = self.__dict__.setdefault("_windows", {})
         locks = self.__dict__.setdefault("_window_locks", {})
         async with locks.setdefault(key, asyncio.Lock()):
-            lanes = windows.pop(key, [])
+            lanes = windows.get(key, [])
             entry = next(
                 (
                     lane
@@ -2609,8 +2609,7 @@ class MarketService:
                 ),
                 None,
             )
-            if entry is not None:
-                lanes.remove(entry)
+            previous = entry
             clock = utcnow()
             if entry is None:
                 keys = {}
@@ -2641,7 +2640,8 @@ class MarketService:
                     fresh = await self._ranged_read(
                         collection, field, ids, entry["end"], end, filters, books=books, keys_out=(keys := {})
                     )
-                rows = entry["rows"]
+                entry = dict(entry)
+                rows = entry["rows"] = dict(entry["rows"])
 
                 now = time.monotonic()
                 entry["starts"] = [(at, s) for at, s in entry["starts"] if now - at < WINDOW_KEEP_S]
@@ -2677,9 +2677,7 @@ class MarketService:
                         _place_levels(held)
             entry["used"] = time.monotonic()
             entry["size"] = sum(len(held) for held in entry["rows"].values())
-            windows[key] = [entry, *lanes][:WINDOW_LANES]
-            _bound_windows(windows)
-            return {
+            result = {
                 iid: [
                     point[2]
                     for point in held[bisect_left(held, start, key=lambda point: point[0]) :]
@@ -2687,6 +2685,10 @@ class MarketService:
                 ]
                 for iid, held in entry["rows"].items()
             }
+            lanes = [lane for lane in windows.get(key, []) if lane is not previous]
+            windows[key] = [entry, *lanes][:WINDOW_LANES]
+            _bound_windows(windows)
+            return result
 
     async def snapshot_anchors(self, token_id, cutoff, anchors):
         """Snapshots of one token and cutoff for several anchors (e.g. PRE_24H/4H/1H) with
