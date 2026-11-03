@@ -380,9 +380,7 @@ async def test_parse_metadata_survives_jsonb_and_real_multipart_upload(
             x_diagnostic_manifest, "_legacy_metadata", side_effect=AssertionError("historical")
         ):
             async with HTTP_CLIENT(transport=ProfileTransport(origin)) as http:
-                await DeliveryService(repo, telegram_settings(), http=http).deliver(
-                    {"notice_id": notice_id}
-                )
+                await DeliveryService(repo, telegram_settings(), http=http).deliver({"notice_id": notice_id})
         uploads = [multipart(request)["document"][1] for request in state["uploads"][1:]]
         assert uploads == [document["content"] for document in retained_documents]
         assert uploads == [expected, metadata_bytes]

@@ -61,6 +61,8 @@ def _preflight(errors, secrets):
         "consumerTransformTruncated",
         "consumerBodyLimitBytes",
     )
+    text_fields = ("finalUrl", "title")
+    count_fields = ("articleCount", "statusLinkCount", "textCount", "scriptCount")
     invalid_paths = (
         {"diagnostics", "request", "request.url", "attempts", "outcome", "invalidEvidence"}
         | {
@@ -87,6 +89,8 @@ def _preflight(errors, secrets):
                 "readError",
                 "decodeError",
             )
+            + text_fields
+            + count_fields
         }
         | {f"headers[{index}].{header}" for index in range(1, 4) for header in HEADERS}
     )
@@ -145,7 +149,7 @@ def _preflight(errors, secrets):
                 continue
             response = _ordered(
                 attempt["response"],
-                RESPONSE_FIELDS + consumer_fields,
+                RESPONSE_FIELDS + consumer_fields + text_fields + count_fields,
                 ("status", "headers", "body", "bodyEncoding", "bodyTruncated"),
             )
             headers = response["headers"]
@@ -170,6 +174,11 @@ def _preflight(errors, secrets):
             for key in ("readError", "decodeError"):
                 if response.get(key) is not None:
                     _safe_text(response[key])
+            for key in text_fields:
+                if key in response:
+                    _safe_text(response[key])
+            for key in count_fields:
+                _bounded_scalar(response.get(key), int, 0, BODY_LIMIT)
             for key in consumer_fields:
                 if key in response:
                     _bounded_scalar(response[key], bool if "Truncated" in key else int)
