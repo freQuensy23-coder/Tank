@@ -1643,6 +1643,7 @@ class SessionService:
                         state not in {"QUEUED", "RUNNING", "COMPLETED", "FAILED", "CANCELLED", "UNKNOWN"}
                         or row.get("settled_outcome") != expected
                         or not isinstance(uses, list)
+                        or (state in {"RUNNING", "COMPLETED"} and "custom_tool_uses" not in row)
                         or (uses and state not in {"RUNNING", "COMPLETED"})
                     ):
                         raise ValueError("Invalid native custom-tool declaration projection")
@@ -2070,12 +2071,13 @@ class SessionService:
             session = await self.repo.get("ops.agent_sessions", sid)
             if not self.routable_session(session):
                 return
-            if not await self.native_input_owner(session, event["execution_id"]):
-                raise ValueError("Native execution has no acknowledged accepted-input owner")
-            await self.dispatch_declared_tools(sid, [event["execution_id"]])
-            call = await self.repo.get("ops.tool_calls", sid + ":" + event["id"])
-            if not call or not call.get("returned_at"):
-                return
+            if event["id"] not in session.get("processed_events", []):
+                if not await self.native_input_owner(session, event["execution_id"]):
+                    raise ValueError("Native execution has no acknowledged accepted-input owner")
+                await self.dispatch_declared_tools(sid, [event["execution_id"]])
+                call = await self.repo.get("ops.tool_calls", sid + ":" + event["id"])
+                if not call or not call.get("returned_at"):
+                    return
         async with self.event_locks.setdefault(sid, asyncio.Lock()):
             session = await self.repo.get("ops.agent_sessions", sid)
             if session.get("status") in ("FAILED", "ENDED"):

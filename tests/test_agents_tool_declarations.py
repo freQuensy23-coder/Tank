@@ -228,6 +228,42 @@ async def test_committed_declaration_does_not_override_host_owner_fences(boundar
         await service.close()
 
 
+async def test_restart_does_not_rediscover_durably_processed_tool_history():
+    repo = MemoryRepository()
+    await seed(repo)
+    event = custom("finished-tool")
+    history = [event, terminal("finished-tool")]
+    callbacks, effects = [], []
+    finished = False
+
+    async def dispatch(name, arguments, context):
+        effects.append(arguments["no_event_reason"])
+        return {"is_event": False}
+
+    def handler(request):
+        if request.method == "POST":
+            callbacks.append(request.content)
+            return httpx.Response(200, json={"data": [{"id": "accepted-finished"}]})
+        if request.url.path.endswith("/events"):
+            return httpx.Response(200, json={"data": history})
+        assert not finished, "Durably handled historical calls must not reload native continuation history"
+        return httpx.Response(200, json={"data": [declaration(event)]})
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http:
+        service = SessionService(repo, settings(), dispatch, http=http)
+        for native in history:
+            await service.process_event("s", native)
+        await service.close()
+        finished = True
+        restarted = SessionService(repo, settings(), dispatch, http=http)
+        await restarted.catch_up("s")
+        assert effects == ["finished-tool"] and len(callbacks) == 1
+        row = await repo.get("ops.tool_calls", "s:finished-tool")
+        assert row["remote_event_id"] == "accepted-finished"
+        assert row["native_declaration_id"] == "declaration-input-root"
+        await restarted.close()
+
+
 @pytest.mark.parametrize(
     "invalid",
     ["missing_projection", "duplicate_call", "foreign_execution", "missing_declaration", "failed_group"],
@@ -372,9 +408,7 @@ async def test_postgres_native_http_declaration_effect_ack_and_admission_barrier
         )
         projected = json.loads(native.stdout)
         assert projected["execution_id"] == "input-root" and projected["state"] == "COMPLETED"
-        assert projected["custom_tool_uses"] == [
-            {"declaration_id": "declaration-input-root", "event": event}
-        ]
+        assert projected["custom_tool_uses"] == [{"declaration_id": "declaration-input-root", "event": event}]
         declared = asyncio.Event()
         effect_started = asyncio.Event()
         effect_release = asyncio.Event()

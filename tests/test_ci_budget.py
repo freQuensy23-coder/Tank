@@ -50,9 +50,12 @@ def test_integration_failure_receipt_survives_before_final_junit(integration_che
             duration=0.25,
         )
         recorder.pytest_runtest_logreport(report)
-    records = [json.loads(line) for line in (directory / "integration-failures.jsonl").read_text().splitlines()]
+    records = [
+        json.loads(line) for line in (directory / "integration-failures.jsonl").read_text().splitlines()
+    ]
     assert [record["nodeid"] for record in records] == [
-        "tests/test_native.py::case-1", "tests/test_native.py::case-2"
+        "tests/test_native.py::case-1",
+        "tests/test_native.py::case-2",
     ]
     assert all(record["when"] == "call" and record["outcome"] == "failed" for record in records)
     assert all(record["duration"] == 0.25 and len(record["longrepr"]) == 32768 for record in records)
