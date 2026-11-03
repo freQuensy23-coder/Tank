@@ -6,7 +6,7 @@ import httpx
 import pytest
 from test_agents_execution_barrier import config, idle
 from test_session_binding_concurrency import fixture_repo
-from test_session_event_merge import seed
+from test_session_event_merge import AT, message, seed, settings
 
 from tank.agents.sessions import SessionService
 from tank.storage import MemoryRepository
@@ -124,3 +124,105 @@ async def test_restart_recovers_sent_input_identity_without_reexecuting_native_t
                 assert current["message_log"][0]["turn_status"] == "DONE"
                 await restarted.recover_outbound_inputs("s")
                 assert len(requests) == 2
+
+
+async def test_invalid_retry_ack_retains_original_failure_for_exact_replay():
+    repo = MemoryRepository()
+    await seed(repo)
+    posts = []
+
+    def handler(request):
+        posts.append((request.headers["idempotency-key"], request.content))
+        return httpx.Response(200, json={} if len(posts) == 1 else {"data": [{"id": "retry-input"}]})
+
+    error = {"id": "failure", "type": "session.error", "execution_id": "input-root"}
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        service = SessionService(repo, config(), None, http=client)
+        with pytest.raises(ValueError, match="acceptance"):
+            await service.process_event("s", error)
+        before = await repo.get("ops.agent_sessions", "s")
+        assert before["message_log"][0]["remote_event_id"] == "input-root"
+        assert before["message_log"][0]["retry_count"] == 0
+        assert before["pending_retry_event"]["id"] == "failure"
+        restarted = SessionService(repo, config(), None, http=client)
+        await restarted.recover_outbound_inputs("s")
+        after = await repo.get("ops.agent_sessions", "s")
+        assert posts[0] == posts[1]
+        assert after["message_log"][0]["remote_event_id"] == "retry-input"
+        assert after["message_log"][0]["retry_count"] == 1
+        assert after["pending_retry_event"] is None
+
+
+async def test_historical_failed_attempt_and_pending_tool_settle_before_slot_release():
+    repo = MemoryRepository()
+    session = await seed(repo)
+    session["message_log"][0].update(
+        retry_count=1,
+        remote_event_id="retry-input",
+        superseded_native_input_ids=["input-root"],
+        native_input_attempts={"input-root": 0, "retry-input": 1},
+    )
+    session["superseded_native_inputs"] = {"input-root": {"reason": "TURN_FAILED_AND_RETRIED"}}
+    session["message_log"].append(message("later", "later-input"))
+    session["active_message_id"] = "later"
+    session["native_execution_receipts"] = {
+        "later-end": idle("later-end", "later-input"),
+        "retry-end": idle("retry-end", "retry-input"),
+    }
+    await repo.put("ops.agent_sessions", "s", session)
+    old = {
+        "session_id": "s",
+        "call_id": "old-tool",
+        "tool": "get_item",
+        "arguments": {},
+        "result": {},
+        "status": "DONE",
+        "returned_at": AT,
+        "remote_event_id": "old-tool-input",
+        "native_turn_message_id": "root",
+        "native_turn_retry_count": 0,
+    }
+    await repo.put("ops.tool_calls", "s:old-tool", old)
+    pending = {**old, "call_id": "pending", "native_turn_message_id": "later", "status": "PENDING"}
+    pending.pop("returned_at")
+    pending.pop("remote_event_id")
+    await repo.put("ops.tool_calls", "s:pending", pending)
+    history = []
+
+    def handler(request):
+        if request.url.path.endswith("/executions"):
+            return httpx.Response(
+                200,
+                json={
+                    "data": [
+                        {
+                            "execution_id": identity,
+                            "state": "FAILED" if identity == "old-tool-input" else "COMPLETED",
+                            "settled_outcome": "FAILED" if identity == "old-tool-input" else "COMPLETED",
+                        }
+                        for identity in request.url.params.get_list("ids[]")
+                    ]
+                },
+            )
+        assert request.method == "GET"
+        return httpx.Response(200, json={"data": history})
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        service = SessionService(repo, settings(), None, http=client)
+        blocked = await service.completed_turn("s")
+        assert not blocked["complete"]
+        assert blocked["unidentified_inputs"] == ["unreturned-tool:pending"]
+        assert (await service.slot_state())[0] == {"s"}
+        pending.update(status="DONE", returned_at=AT, remote_event_id="pending-result")
+        await repo.put("ops.tool_calls", "s:pending", pending)
+        history.append(idle("pending-end", "pending-result"))
+        service.execution_polls.clear()
+        assert (await service.completed_turn("s"))["complete"]
+        after = await repo.get("ops.agent_sessions", "s")
+        assert after["active_message_id"] is None
+        assert after["runtime_status"] == "IDLE"
+        assert after["superseded_native_inputs"]["old-tool-input"]["reason"] == "FAILED_PRIOR_TURN_ATTEMPT"
+        assert (await service.slot_state())[0] == set()
+        assert after["message_log"][1]["turn_status"] == "DONE"
+        restarted = SessionService(repo, settings(), None, http=client)
+        assert (await restarted.completed_turn("s"))["complete"]

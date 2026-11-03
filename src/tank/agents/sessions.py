@@ -805,7 +805,7 @@ class SessionService:
         async with self.send_locks.setdefault(sid, asyncio.Lock()):
             session = await self.repo.get("ops.agent_sessions", sid)
             for message in session.get("message_log", []):
-                if message.get("turn_status") == "ACCEPTING" and not message.get("sent_at"):
+                if not message.get("remote_event_id"):
                     await self.post_message_intent(sid, message["message_id"])
         session = await self.repo.get("ops.agent_sessions", sid)
         await session_progress(self.repo, self.settings, session)
@@ -824,7 +824,7 @@ class SessionService:
             and events[0]["id"]
         ):
             return events[0]["id"]
-        return None
+        raise ValueError("Missing native executable input acceptance identity")
 
     async def native_input_owner(self, session, execution_id):
         """Resolve exact accepted-input lineage, including tool-result continuations."""
