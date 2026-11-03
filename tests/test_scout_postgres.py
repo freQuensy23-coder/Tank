@@ -11,6 +11,7 @@ import uuid
 
 import httpx
 import pytest
+from model_fixture import process_declared_event
 
 from tank.agents import SessionService
 from tank.agents.context import CONTEXT_VERSION
@@ -258,7 +259,7 @@ async def test_scout_writes_only_proposals_and_its_logs_on_postgres(repo, tmp_pa
             ),
         ]
         for number, (name, arguments) in enumerate(attempts):
-            await sessions.process_event(
+            await process_declared_event(sessions, 
                 scout["session_id"],
                 {
                     "id": f"scout_call_{number}",

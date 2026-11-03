@@ -1,6 +1,9 @@
 import asyncio
 import copy
 import json
+import os
+from contextlib import asynccontextmanager
+from urllib.parse import parse_qs, urlsplit
 
 import httpx
 import pytest
@@ -171,7 +174,7 @@ async def test_restart_keeps_committed_call_effect_and_exact_callback_owned_once
         elif boundary == "before_effect":
             current = await repo.get("ops.agent_sessions", "s")
             current["native_execution_receipts"] = {"declaration-input-root": terminal("once")}
-            current["processed_events"].append("declaration-input-root")
+            current.setdefault("processed_events", []).append("declaration-input-root")
             await repo.put("ops.agent_sessions", "s", current)
         await service.close()
         restarted = SessionService(repo, settings(), dispatch, http=http)
@@ -185,3 +188,139 @@ async def test_restart_keeps_committed_call_effect_and_exact_callback_owned_once
         assert row["remote_event_id"] == "accepted-once" and row["returned_at"]
         assert json.loads(posts[-1][1])["events"][0] == row["native_result_body"]
         await restarted.close()
+
+
+@asynccontextmanager
+async def native_peer(handler):
+    failures = []
+
+    async def accept(reader, writer):
+        try:
+            headers = await reader.readuntil(b"\r\n\r\n")
+            lines = headers.decode().split("\r\n")
+            method, target, _ = lines[0].split(" ")
+            fields = dict(line.lower().split(": ", 1) for line in lines[1:] if line)
+            body = await reader.readexactly(int(fields.get("content-length", 0)))
+            assert "managed-agents-2026-04-01" in fields["anthropic-beta"]
+            result = await handler(method, target, fields, body)
+            encoded = json.dumps(result).encode()
+            writer.write(
+                b"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nConnection: close\r\nContent-Length: "
+                + str(len(encoded)).encode() + b"\r\n\r\n" + encoded
+            )
+            await writer.drain()
+        except Exception as error:
+            failures.append(error)
+        finally:
+            writer.close()
+            await writer.wait_closed()
+
+    server = await asyncio.start_server(accept, "127.0.0.1", 0)
+    try:
+        yield "http://127.0.0.1:" + str(server.sockets[0].getsockname()[1])
+    finally:
+        server.close()
+        await server.wait_closed()
+        assert failures == []
+
+
+@pytest.mark.integration
+@pytest.mark.postgres
+async def test_postgres_native_http_declaration_effect_ack_and_admission_barrier(postgres_template):
+    database = os.environ["TANK_TEST_DATABASE_URL"]
+    async with postgres_template.repository(database) as repo:
+        await seed(repo)
+        event = custom("durable")
+        declared = asyncio.Event()
+        effect_started = asyncio.Event()
+        effect_release = asyncio.Event()
+        ack_started = asyncio.Event()
+        ack_release = asyncio.Event()
+        callbacks = []
+        states = {"input-root": "RUNNING"}
+        history = [event]
+
+        async def handler(method, target, headers, body):
+            path = urlsplit(target)
+            if method == "GET" and path.path.endswith("/executions"):
+                ids = parse_qs(path.query)["ids[]"]
+                return {"data": [
+                    {
+                        "execution_id": identity,
+                        "state": states[identity],
+                        "settled_outcome": "COMPLETED" if states[identity] == "COMPLETED" else None,
+                        "custom_tool_uses": declaration(event)["custom_tool_uses"]
+                        if declared.is_set() and identity == "input-root" else [],
+                    }
+                    for identity in ids
+                ]}
+            if method == "GET" and path.path.endswith("/events"):
+                return {"data": copy.deepcopy(history)}
+            assert method == "POST" and path.path.endswith("/events")
+            callback = json.loads(body)["events"][0]
+            assert callback["custom_tool_use_id"] == "durable"
+            callbacks.append((headers["idempotency-key"], body))
+            states["accepted-durable"] = "RUNNING"
+            ack_started.set()
+            await ack_release.wait()
+            return {"data": [{"id": "accepted-durable"}]}
+
+        async def dispatch(name, arguments, context):
+            effect_started.set()
+            await effect_release.wait()
+            await repo.put("evt.events", "effect", {"event_id": "effect", "statement": "once"})
+            return {"is_event": False, "reason": "durable"}
+
+        async with native_peer(handler) as url, httpx.AsyncClient() as http:
+            opts = settings()
+            opts.openma_url = url
+            service = SessionService(repo, opts, dispatch, http=http)
+            task = None
+            try:
+                async with asyncio.timeout(5):
+                    await service.process_event("s", event, seq=1)
+                    assert not effect_started.is_set()
+                    assert await repo.get("ops.tool_calls", "s:durable") is None
+                    declared.set()
+                    states["input-root"] = "COMPLETED"
+                    history.append(terminal("durable"))
+                    task = asyncio.create_task(service.process_event("s", terminal("durable"), seq=2))
+                    await effect_started.wait()
+                    current = await repo.get("ops.agent_sessions", "s")
+                    assert not (await service.execution_barrier(current, verify_remote=True))["complete"]
+                    assert await service.slot_state() == ({"s"}, [])
+                    effect_release.set()
+                    await ack_started.wait()
+                    call = await repo.get("ops.tool_calls", "s:durable")
+                    assert call["status"] == "DONE" and not call.get("returned_at")
+                    assert (await repo.get("evt.events", "effect"))["statement"] == "once"
+                    current = await repo.get("ops.agent_sessions", "s")
+                    barrier = await service.execution_barrier(current, verify_remote=True)
+                    assert not barrier["complete"] and barrier["unidentified_inputs"] == ["unreturned-tool:durable"]
+                    assert await service.slot_state() == ({"s"}, [])
+                    ack_release.set()
+                    await task
+                    assert not (await service.completed_turn("s"))["complete"]
+                    states["accepted-durable"] = "COMPLETED"
+                    history.append({
+                        "id": "finished", "type": "session.status_idle", "execution_id": "accepted-durable",
+                        "stop_reason": {"type": "end_turn"}, "processed_at": AT,
+                    })
+                    await service.process_event("s", history[-1])
+                    service.execution_polls.clear()
+                    assert (await service.completed_turn("s"))["complete"]
+                    assert await service.slot_state() == (set(), [])
+                    assert len(callbacks) == 1
+                    row = await repo.get("ops.tool_calls", "s:durable")
+                    assert row["native_turn_message_id"] == "root"
+                    assert row["native_source_execution_id"] == "input-root"
+                    assert row["native_declaration_id"] == "declaration-input-root"
+                    assert row["remote_event_id"] == "accepted-durable"
+            finally:
+                effect_release.set()
+                ack_release.set()
+                if task is not None:
+                    if not task.done():
+                        task.cancel()
+                    await asyncio.gather(task, return_exceptions=True)
+                await service.close()

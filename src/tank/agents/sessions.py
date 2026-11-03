@@ -1172,6 +1172,9 @@ class SessionService:
             await self.catch_up(sid)
             self.history_polls[sid] = (time.monotonic() + delay, min(delay * 2, 1))
             session = await self.repo.get("ops.agent_sessions", sid)
+        if local["pending_action_ids"]:
+            await self.dispatch_declared_tools(sid)
+            session = await self.repo.get("ops.agent_sessions", sid)
         before = await self.execution_barrier(session, verify_remote=True)
         if not before["complete"]:
             for identity in before.get("failed_input_ids", []):
@@ -1604,11 +1607,111 @@ class SessionService:
             )
         return {"type": type(error).__name__, "reason": reason, "category": category}, "ERROR"
 
+    async def dispatch_declared_tools(self, sid, execution_ids=None):
+        async with self.event_locks.setdefault(sid, asyncio.Lock()):
+            session = await self.repo.get("ops.agent_sessions", sid)
+            if not self.routable_session(session):
+                return
+            pending = set((await self.execution_barrier(session))["pending_action_ids"])
+            identities = sorted(set(execution_ids or [
+                receipt["execution_id"]
+                for receipt in session.get("native_execution_receipts", {}).values()
+                if receipt.get("stop_reason", {}).get("type") == "requires_action"
+                and pending.intersection(receipt["stop_reason"].get("event_ids", []))
+            ]))
+            for offset in range(0, len(identities), 64):
+                requested = identities[offset : offset + 64]
+                response = await self.request(
+                    "GET", f"sessions/{sid}/executions",
+                    params=[("ids[]", identity) for identity in requested],
+                )
+                rows = response.get("data") if isinstance(response, dict) else None
+                if not isinstance(rows, list) or [row.get("execution_id") for row in rows] != requested:
+                    raise ValueError("Invalid native custom-tool execution correlation")
+                for row in rows:
+                    uses = row.get("custom_tool_uses", [])
+                    state = row.get("state")
+                    expected = state if state in {"COMPLETED", "FAILED", "CANCELLED"} else None
+                    if (
+                        state not in {"QUEUED", "RUNNING", "COMPLETED", "FAILED", "CANCELLED", "UNKNOWN"}
+                        or row.get("settled_outcome") != expected
+                        or not isinstance(uses, list)
+                        or (uses and state not in {"RUNNING", "COMPLETED"})
+                    ):
+                        raise ValueError("Invalid native custom-tool declaration projection")
+                    seen = set()
+                    for use in uses:
+                        event = use.get("event") if isinstance(use, dict) else None
+                        if (
+                            not isinstance(event, dict)
+                            or event.get("type") != "agent.custom_tool_use"
+                            or not isinstance(event.get("id"), str)
+                            or not event["id"]
+                            or event["id"] in seen
+                            or event.get("execution_id") != row["execution_id"]
+                            or not isinstance(use.get("declaration_id"), str)
+                            or not use["declaration_id"]
+                            or not isinstance(event.get("name"), str)
+                            or not isinstance(event.get("input"), dict)
+                        ):
+                            raise ValueError("Invalid native custom-tool declaration identity")
+                        seen.add(event["id"])
+                    for use in uses:
+                        current = await self.repo.get("ops.agent_sessions", sid)
+                        event = use["event"]
+                        owner = await self.native_input_owner(current, event["execution_id"])
+                        if not owner:
+                            raise ValueError("Native execution has no acknowledged accepted-input owner")
+                        event = dict(
+                            event, _host_turn_message_id=owner[0], _host_turn_retry_count=owner[1],
+                            _host_declaration_id=use["declaration_id"],
+                        )
+                        if not self.current_tool_owner(current, event):
+                            continue
+                        await self.tool(current, event)
+                        call = await self.repo.get("ops.tool_calls", sid + ":" + event["id"])
+                        if (
+                            event["name"] == "record_event"
+                            and call
+                            and call.get("result", {}).get("is_event") is False
+                        ):
+                            async with self.repo.lock("session:" + sid):
+                                current = await self.repo.get("ops.agent_sessions", sid)
+                                current["no_event"] = True
+                                await self.repo.put("ops.agent_sessions", sid, current)
+
+    def current_tool_owner(self, session, event):
+        owner = next((
+            row for row in session.get("message_log", [])
+            if row["message_id"] == event.get("_host_turn_message_id")
+        ), None)
+        return bool(
+            self.routable_session(session)
+            and owner
+            and owner.get("turn_status") not in {"DONE", "FAILED"}
+            and owner.get("retry_count", 0) == event.get("_host_turn_retry_count")
+            and owner["message_id"] not in session.get("retired_message_ids", [])
+            and event.get("execution_id") not in session.get("superseded_native_inputs", {})
+            and session.get("native_execution_states", {}).get(event.get("execution_id"), {}).get("state")
+            not in {"FAILED", "CANCELLED"}
+            and (event.get("session_thread_id") or "sthr_primary")
+            == (owner.get("body", {}).get("session_thread_id") or "sthr_primary")
+        )
+
     async def tool(self, session, event):
         sid, call_id = session["session_id"], event["id"]
         requested_at = self.clock_timestamp()
         key = sid + ":" + call_id
         prior = await self.repo.get("ops.tool_calls", key)
+        if prior and event.get("_host_declaration_id") and (
+            prior.get("native_source_execution_id") != event.get("execution_id")
+            or prior.get("native_declaration_id", event["_host_declaration_id"]) != event["_host_declaration_id"]
+            or prior.get("tool") != event["name"]
+            or prior.get("input_sha256") != sha256(event["input"])
+            or prior.get("native_turn_message_id") != event.get("_host_turn_message_id")
+            or prior.get("native_turn_retry_count", 0) != event.get("_host_turn_retry_count")
+        ):
+            raise ValueError("Native custom-tool declaration changed durable call ownership")
         if prior and prior.get("returned_at"):
             return
         original_hash = sha256(event["input"])
@@ -1652,6 +1755,10 @@ class SessionService:
 
             slow_ready = not decision_market_refresh_completed
         async with self.repo.lock("tool:" + key):
+            if event.get("_host_declaration_id") and not self.current_tool_owner(
+                await self.repo.get("ops.agent_sessions", sid), event
+            ):
+                return
             stored = await self.repo.get("ops.tool_calls", key)
             if not stored:
                 context = self.tool_context(session, call_id)
@@ -1668,6 +1775,7 @@ class SessionService:
                     "item_id": session.get("item_id"),
                     "tool": event["name"],
                     "native_source_execution_id": event.get("execution_id"),
+                    "native_declaration_id": event.get("_host_declaration_id"),
                     "native_turn_message_id": event.get(
                         "_host_turn_message_id", session.get("active_message_id")
                     ),
@@ -1726,6 +1834,10 @@ class SessionService:
                             "record_review",
                         }:
                             await mutation.enter_async_context(self.repo.lock("session:" + sid))
+                        if event.get("_host_declaration_id") and not self.current_tool_owner(
+                            await self.repo.get("ops.agent_sessions", sid), event
+                        ):
+                            return
                         await mutation.enter_async_context(self.repo.transaction())
                         result = (
                             slow_result
@@ -1784,6 +1896,8 @@ class SessionService:
                 )
                 await self.repo.put("ops.tool_calls", key, stored)
         current = await self.repo.get("ops.agent_sessions", sid) or session
+        if event.get("_host_declaration_id") and not self.current_tool_owner(current, event):
+            return
         if current.get("model_context_version", 0) < CONTEXT_VERSION:
             await self.sync_tools(sid, resume=True)
             current = await self.repo.get("ops.agent_sessions", sid) or session
@@ -1923,7 +2037,16 @@ class SessionService:
             if seq is not None:
                 self.pending_seq[sid] = max(int(seq), self.pending_seq.get(sid, 0))
             return
-        key = sid + ":" + event["id"]
+        if event.get("type") == "agent.custom_tool_use":
+            if not event.get("execution_id"):
+                return
+            session = await self.repo.get("ops.agent_sessions", sid)
+            if not await self.native_input_owner(session, event["execution_id"]):
+                raise ValueError("Native execution has no acknowledged accepted-input owner")
+            await self.dispatch_declared_tools(sid, [event["execution_id"]])
+            call = await self.repo.get("ops.tool_calls", sid + ":" + event["id"])
+            if not call or not call.get("returned_at"):
+                return
         async with self.event_locks.setdefault(sid, asyncio.Lock()):
             session = await self.repo.get("ops.agent_sessions", sid)
             if session.get("status") in ("FAILED", "ENDED"):
@@ -2045,18 +2168,7 @@ class SessionService:
                     "execution.status_failed",
                 }:
                     raise ValueError("Native execution has no acknowledged accepted-input owner")
-            if kind == "agent.custom_tool_use":
-                await self.tool(session, event)
-                session = await self.repo.get("ops.agent_sessions", sid)
-                before = copy.deepcopy(session)
-                call = await self.repo.get("ops.tool_calls", key)
-                if (
-                    event["name"] == "record_event"
-                    and call
-                    and call.get("result", {}).get("is_event") is False
-                ):
-                    session["no_event"] = True
-            elif kind == "session.status_running":
+            if kind == "session.status_running":
                 session["runtime_status"] = "RUNNING"
                 active = next(
                     (
@@ -2249,6 +2361,12 @@ class SessionService:
                 )
             ):
                 await self.deliver_answers(sid)
+        if (
+            event.get("execution_id")
+            and kind == "session.status_idle"
+            and (event.get("stop_reason") or {}).get("type") == "requires_action"
+        ):
+            await self.dispatch_declared_tools(sid, [event["execution_id"]])
 
     async def catch_up(self, sid):
 
@@ -2263,6 +2381,7 @@ class SessionService:
             page = data.get("next_page")
             if not page:
                 break
+        await self.dispatch_declared_tools(sid)
 
     async def stream(self, sid):
         session = await self.repo.get("ops.agent_sessions", sid)

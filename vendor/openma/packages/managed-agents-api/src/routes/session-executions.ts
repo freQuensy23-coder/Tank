@@ -9,6 +9,14 @@ export interface PublicSessionExecution {
   execution_id: string;
   state: "QUEUED" | "RUNNING" | "COMPLETED" | "FAILED" | "CANCELLED" | "UNKNOWN";
   settled_outcome: "COMPLETED" | "FAILED" | "CANCELLED" | null;
+  custom_tool_uses?: {
+    declaration_id: string;
+    event: {
+      id: string; type: "agent.custom_tool_use"; execution_id: string;
+      name: string; input: Record<string, unknown>; processed_at: string;
+      session_thread_id?: string | null;
+    };
+  }[];
 }
 export interface ManagedSessionExecutionsExtension {
   workspaceId(context: Context): string;
@@ -19,6 +27,14 @@ const rowSchema = z.object({
   execution_id: z.string().min(1).max(191),
   state: z.enum(["QUEUED", "RUNNING", "COMPLETED", "FAILED", "CANCELLED", "UNKNOWN"]),
   settled_outcome: z.enum(["COMPLETED", "FAILED", "CANCELLED"]).nullable(),
+  custom_tool_uses: z.array(z.object({
+    declaration_id: z.string().min(1),
+    event: z.object({
+      id: z.string().min(1), type: z.literal("agent.custom_tool_use"), execution_id: z.string().min(1),
+      name: z.string(), input: z.record(z.string(), z.unknown()), processed_at: z.string(),
+      session_thread_id: z.string().nullable().optional(),
+    }).strict(),
+  }).strict()).optional(),
 }).strict();
 export function buildManagedSessionExecutionRoutes(sessions: ApplicationPortSource<SessionsApplicationPort>, extension: ManagedSessionExecutionsExtension): Hono {
   const app = new Hono();

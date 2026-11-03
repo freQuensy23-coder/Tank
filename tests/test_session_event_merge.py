@@ -3,6 +3,7 @@ import json
 
 import httpx
 import pytest
+from model_fixture import process_declared_event
 from test_agents_execution_barrier import config, idle
 from test_session_binding_concurrency import fixture_repo
 
@@ -145,7 +146,7 @@ async def test_event_reload_cannot_overwrite_ack_of_message_absent_from_initial_
             try:
                 async with asyncio.timeout(5):
                     event_task = asyncio.create_task(
-                        service.process_event(
+                        process_declared_event(service, 
                             "s",
                             {
                                 "id": "old-tool",

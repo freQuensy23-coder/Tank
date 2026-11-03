@@ -5,6 +5,7 @@ import json
 
 import httpx
 import pytest
+from model_fixture import process_declared_event
 from test_agents_execution_barrier import config, idle
 from test_event_tools import extraction, unknown_assessment
 from test_session_binding_concurrency import fixture_repo, seed
@@ -85,7 +86,7 @@ async def test_legacy_origin_completion_does_not_require_class_or_card(
                 current = await repo.get("ops.agent_sessions", "s")
                 native = current["message_log"][0]["remote_event_id"]
                 identity = "producer-" + str(count)
-                await service.process_event(
+                await process_declared_event(service, 
                     "s",
                     {
                         "id": identity,
@@ -163,7 +164,7 @@ async def test_legacy_origin_completion_does_not_require_class_or_card(
                         else:
                             corrupted["result"]["class"] = "NOT_A_CLASS"
                         await repo.put("ops.tool_calls", "s:" + assessment["call_id"], corrupted)
-            await service.process_event("s", idle("end-initial", accepted[-1]))
+            await process_declared_event(service, "s", idle("end-initial", accepted[-1]))
 
             legacy = await repo.get("ops.agent_sessions", "s")
             legacy["message_log"][0]["turn_status"] = "DONE"

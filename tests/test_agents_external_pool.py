@@ -5,6 +5,7 @@ import json
 
 import httpx
 import pytest
+from model_fixture import process_declared_event
 from test_agents import seed_session, settings
 from test_session_binding_concurrency import fixture_repo, seed
 
@@ -51,7 +52,7 @@ async def exercise_external_tool_burst(repo, tool):
         controller = SessionService(repo, opts, dispatch, http=http)
         tasks = [
             asyncio.create_task(
-                controller.process_event(
+                process_declared_event(controller, 
                     session["session_id"],
                     {"id": "call", "type": "agent.custom_tool_use", "name": tool, "input": {}},
                 )
@@ -74,7 +75,7 @@ async def exercise_external_tool_burst(repo, tool):
             call = await repo.get("ops.tool_calls", session["session_id"] + ":call")
             assert call["status"] == "DONE" and call["returned_at"]
             assert call["native_turn_call_index"] == 0
-            await controller.process_event(
+            await process_declared_event(controller, 
                 session["session_id"],
                 {"id": "call", "type": "agent.custom_tool_use", "name": tool, "input": {}},
             )
@@ -108,13 +109,13 @@ async def test_external_error_survives_lost_ack_without_refetch_or_new_ordinal(s
     async with httpx.AsyncClient(transport=httpx.MockTransport(acknowledge)) as http:
         first = SessionService(repo, opts, dispatch, http=http)
         with pytest.raises(httpx.ConnectError):
-            await first.process_event("ses_1", event)
+            await process_declared_event(first, "ses_1", event)
         stored = await repo.get("ops.tool_calls", "ses_1:call")
         assert stored["status"] == "ERROR" and stored["is_error"]
         assert not stored.get("returned_at")
         resumed = SessionService(repo, opts, dispatch, http=http)
-        await resumed.process_event("ses_1", event)
-        await resumed.process_event("ses_1", event)
+        await process_declared_event(resumed, "ses_1", event)
+        await process_declared_event(resumed, "ses_1", event)
     assert dispatched == ["fetch_page"]
     assert len(posts) == 2 and posts[0] == posts[1]
     assert posts[1]["is_error"] is True
