@@ -161,9 +161,10 @@ async def test_native_gap_replay_ingests_once_without_claiming_history_recovered
     tmp_path, monkeypatch, native_reader, retained
 ):
     reader, worker = native_reader
-    gap = retained["JSgsP4TYqyEJRRHQS"]
-    cursor = "2115085176413757842"
-    profile_sequence(monkeypatch, reader, [gap, gap])
+    gap = retained["1FXDuSk4EdNCCzckj"]
+    newer = retained["om0fAvrciMOvsZQtL"]
+    cursor = "2115675420469375097"
+    profile_sequence(monkeypatch, reader, [gap, gap, newer])
     requests = []
 
     async def actor(request):
@@ -171,18 +172,23 @@ async def test_native_gap_replay_ingests_once_without_claiming_history_recovered
         requests.append(value)
         return httpx.Response(201, json=await worker.fetch_snapshot(value))
 
-    svc, _ = service(tmp_path, httpx.MockTransport(actor), "wublockchain")
-    await svc.repo.put("ops.source_checkpoints", "S29:0", {"account_cursors": {"wublockchain": cursor}})
+    svc, _ = service(tmp_path, httpx.MockTransport(actor), "pancakeswap")
+    await svc.repo.put("ops.source_checkpoints", "S29:0", {"account_cursors": {"pancakeswap": cursor}})
     try:
-        for expected_items in (1, 0):
+        for expected_items in (1, 0, 3):
             result = await svc.poll_once("S29")
             checkpoint = await svc.repo.get("ops.source_checkpoints", "S29:0")
             assert result["items"] == expected_items and result["status"] == "DEGRADED"
-            assert checkpoint["history_gap"] == ["wublockchain"]
-            assert checkpoint["account_cursors"] == {"wublockchain": cursor}
-        assert [value["cursors"] for value in requests] == [{"wublockchain": cursor}] * 2
+            assert checkpoint["history_gap"] == ["pancakeswap"]
+            assert checkpoint["account_cursors"] == {"pancakeswap": cursor}
+        assert [value["cursors"] for value in requests] == [{"pancakeswap": cursor}] * 3
         items = await svc.repo.list("ingest.source_items")
-        assert [item["external_id"] for item in items] == ["2115085846248558689"]
+        assert sorted(item["external_id"] for item in items) == [
+            "2115676525345530213",
+            "2115723826915103199",
+            "2115775656671793518",
+            "2115795788685299930",
+        ]
     finally:
         await svc.http.aclose()
 
@@ -229,22 +235,32 @@ async def test_pending_native_samples_cannot_regress_committed_cursor(
 
 
 @pytest.mark.integration
+@pytest.mark.parametrize("start_with_stale", [False, True])
 async def test_native_new_posts_after_baseline_are_ingested_with_their_exact_ids(
-    tmp_path, monkeypatch, native_reader, retained
+    tmp_path, monkeypatch, native_reader, retained, start_with_stale
 ):
     reader, worker = native_reader
     older = retained["1FXDuSk4EdNCCzckj"]
     newer = retained["om0fAvrciMOvsZQtL"]
-    profile_sequence(monkeypatch, reader, [older, newer, newer])
+    first = retained["kDlbmzHpGBOxqQqIZ"] if start_with_stale else older
+    profile_sequence(monkeypatch, reader, [first, newer, newer])
 
     async def actor(request):
         return httpx.Response(201, json=await worker.fetch_snapshot(json.loads(request.content)))
 
     svc, _ = service(tmp_path, httpx.MockTransport(actor), "pancakeswap")
+    if start_with_stale:
+        await svc.repo.put(
+            "ops.source_checkpoints", "S29:0", {"account_cursors": {"pancakeswap": older["nextCursor"]}}
+        )
     try:
-        for expected_items in (0, 3, 0):
+        for index, expected_items in enumerate((0, 3, 0)):
             result = await svc.poll_once("S29")
-            assert result["items"] == expected_items and result["status"] == "HEALTHY"
+            expected_status = "DEGRADED" if start_with_stale and index == 0 else "HEALTHY"
+            assert result["items"] == expected_items and result["status"] == expected_status
+            if index == 0:
+                checkpoint = await svc.repo.get("ops.source_checkpoints", "S29:0")
+                assert checkpoint["account_cursors"] == {"pancakeswap": "2115676525345530213"}
         checkpoint = await svc.repo.get("ops.source_checkpoints", "S29:0")
         assert checkpoint["account_cursors"] == {"pancakeswap": "2115795788685299930"}
         items = await svc.repo.list("ingest.source_items")
