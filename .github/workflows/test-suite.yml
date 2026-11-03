@@ -88,6 +88,23 @@ jobs:
           cache-dependency-path: capture/go.sum
       - name: Prepare the isolated ClickHouse schema
         run: uv run --frozen --extra dev python scripts/ci/prepare_clickhouse.py
+      - name: Qualify native ClickHouse parameter body transport
+        run: uv run --frozen --extra dev pytest tests/test_clickhouse_parameter_transport.py -q -n auto --dist loadfile -m integration --timeout=300 --junitxml=.test-results/parameter-transport.xml
+      - name: Require both native parameter transport cases with zero skips
+        run: |
+          uv run --frozen --extra dev python - <<'PY'
+          import xml.etree.ElementTree as ET
+          from collections import Counter
+
+          cases = ET.parse('.test-results/parameter-transport.xml').getroot().findall('.//testcase')
+          expected = Counter(("tests.test_clickhouse_parameter_transport", name) for name in (
+              "test_real_native_domain_parameter_serializers_preserve_complete_json",
+              "test_real_native_large_multipart_values",
+          ))
+          assert Counter((case.get('classname'), case.get('name')) for case in cases) == expected
+          assert not any(case.find(tag) is not None for case in cases for tag in ('failure', 'error', 'skipped'))
+          print('Native parameter transport: 2 passed, 0 failures, 0 errors, 0 skips')
+          PY
       - name: Install versioned X worker dependencies
         run: uv pip install --python .venv/bin/python -r apify/x-reader/requirements.txt
       - name: Prepare the pinned Go modules and offline build cache
