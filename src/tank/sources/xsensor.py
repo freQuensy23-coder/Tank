@@ -161,9 +161,13 @@ def scan(run: ApifyRun, accounts: list[str], cursors: Mapping[str, str], raw: by
                 failures.append(AccountFailure(handle, "CURSOR_REGRESSION"))
             elif (not previous or int(candidate) > int(previous)) and candidate not in post_ids:
                 failures.append(AccountFailure(handle, "CURSOR_NOT_IN_SAMPLE"))
-            elif previous and int(candidate) > int(previous) and previous not in post_ids:
-                if handle.lower() not in {gap.lower() for gap in gaps}:
-                    gaps.append(handle)
+            elif (
+                previous
+                and int(candidate) > int(previous)
+                and previous not in post_ids
+                and handle.lower() not in {gap.lower() for gap in gaps}
+            ):
+                gaps.append(handle)
     if run.health == "degraded" and not failures and not gaps:
         failures.append(AccountFailure(None, run.error or "RUN_DEGRADED"))
     failed_handles = {failure.account.lower() for failure in failures if failure.account}
