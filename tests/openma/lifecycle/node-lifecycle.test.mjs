@@ -29,7 +29,7 @@ function fixture() {
     async exec(command,key){this.box??=await this.factory(allocation);return this.box.exec(command,[],{OPENROUTER_API_KEY:key});}
   }();
   const context=sb=>({workspaceId:'workspace_A',sessionId:'session_A',session:{id:'session_A',environmentId:'production_A'},
-    environment:{id:'production_A'},sandbox:sb,executionFence:{current:true}});
+    environment:{id:'production_A'},sandbox:sb,executionFence:{workspaceId:'workspace_A',sessionId:'session_A',current:true}});
   return {...s,allocations,allocation,lifecycle,sandbox,context};
 }
 
@@ -38,7 +38,7 @@ test('runner bind is lazy, preserves per-exec hooks and same disk across two tur
   await manager.bind(ctx);assert.equal(s.disks.size,0);
   assert.equal((await sandbox.exec('write','FAKE_FIRST')).stdout,'FAKE_FIRST');
   await manager.idle(ctx);assert.equal([...s.disks.values()][0].running,false);
-  await manager.bind({...ctx,executionFence:{current:true}});
+  await manager.bind({...ctx,executionFence:{workspaceId:'workspace_A',sessionId:'session_A',current:true}});
   assert.deepEqual(JSON.parse((await sandbox.exec('read','FAKE_SECOND')).stdout),{workspace:'persisted',profile:'saved',key:'FAKE_SECOND'});
   await manager.idle(ctx);
   const replacement=s.lifecycle(),newSandbox=s.sandbox(),newContext=s.context(newSandbox);
@@ -49,7 +49,7 @@ test('runner bind is lazy, preserves per-exec hooks and same disk across two tur
   await replacement.archive({...newContext,reason:'archived'});assert.equal(s.disks.size,0);
 });
 
-for(const legacy of [false,true])test(`warm binding replaces updated runtime with unchanged native continuation (legacy=${legacy})`,async()=>{
+for(const legacy of [false,true])test(`Managed driver reopens persisted context through Pi streamSimple after clean replacement (legacy=${legacy})`,async()=>{
   const {planSessionContinuation}=await import('../../../vendor/openma/packages/session-runtime-contract/src/continuation.ts');
   const {encodeSessionEventDocument,decodeSessionEventDocument}=await import('../../../vendor/openma/packages/session-runtime-contract/src/history.ts');
   const s=fixture();let fingerprint=s.options.fingerprint;
@@ -77,16 +77,54 @@ for(const legacy of [false,true])test(`warm binding replaces updated runtime wit
   ]};
   const before=planSessionContinuation(snapshot,'reply');assert.equal(before.mode,'model');
   fingerprint='sha256:'+'b'.repeat(64);identity={version:2,image:'sha256:'+'e'.repeat(64),compatibility:{scope:'sha256:'+'d'.repeat(64)}};
-  await manager.bind({...ctx,executionFence:{current:true}});
-  assert.deepEqual(JSON.parse((await sb.exec('read','FAKE_NEXT')).stdout),{key:'FAKE_NEXT'});
-  await manager.idle(ctx);
-  assert.equal(s.disks.has('box_1'),false);assert.equal(s.disks.size,1);
-  const reopened={revision:documents.length,orderedEvents:documents.map(document=>decodeSessionEventDocument(document)),executions:structuredClone(snapshot.executions)};
-  const after=planSessionContinuation(reopened,'reply');assert.deepEqual(after,before);
-  assert.deepEqual(after.phaseInputIds,['callback']);assert.deepEqual(after.remaining,[]);
-  assert.deepEqual(after.historyEvents.filter(event=>event.type.startsWith('agent.')).map(event=>event.id),['bash-call','bash-result','rejected','rejected-result','pending']);
-  assert.deepEqual(after.historyEvents.filter(event=>event.type==='user.custom_tool_result').map(event=>event.customToolUseId),['pending']);
-  assert.deepEqual(documents,events.map((event,index)=>encodeSessionEventDocument(event,{revision:index+1,index:0},index>0&&index<10?'original':undefined)));
+  const {mkdtemp,writeFile,readFile,rm}=await import('node:fs/promises');
+  const {tmpdir}=await import('node:os');const {join}=await import('node:path');
+  const {createRequire}=await import('node:module');
+  const require=createRequire(new URL('../../../vendor/openma/apps/agent/package.json',import.meta.url));
+  const {createModels,fauxProvider,fauxAssistantMessage}=await import(require.resolve('@earendil-works/pi-ai'));
+  const {PiHarness}=await import('../../../vendor/openma/apps/agent/src/harness/pi-loop.ts');
+  const {DefaultNodeManagedSessionRunner}=await import('../../../vendor/openma/packages/control-plane-node/src/lib/node-managed-session-runner.ts');
+  const {DefaultNodeManagedSessionRuntimeDriver,ApplicationBackedNodeManagedSessionRuntimeEngine}=await import('../../../vendor/openma/packages/control-plane-node/src/lib/node-managed-session-runtime.ts');
+  const root=await mkdtemp(join(tmpdir(),'tank-model-context-')),journal=join(root,'history.json');
+  try{
+    await writeFile(journal,JSON.stringify({documents,executions:snapshot.executions}));
+    const original=await readFile(journal,'utf8');
+    const reopen=async()=>{const saved=JSON.parse(await readFile(journal,'utf8'));return {revision:saved.documents.length,orderedEvents:saved.documents.map(document=>decodeSessionEventDocument(document)),executions:saved.executions};};
+    const faux=fauxProvider({tokensPerSecond:100000});faux.setResponses([fauxAssistantMessage('Context continued')]);
+    const models=createModels();models.setProvider(faux.provider);
+    const requests=[],streamSimple=models.streamSimple.bind(models);
+    const boundary=Object.create(models);
+    Object.defineProperty(boundary,'streamSimple',{value:(model,context,options)=>{requests.push(structuredClone(context));return streamSimple(model,context,options);}});
+    let sequence=0;
+    const runner=new DefaultNodeManagedSessionRunner({
+      harnessRetry:{attempts:1,delayMs:()=>0},confirmedTools:{execute:async()=>assert.fail('no tool reissue')},outcomes:{evaluate:async()=>assert.fail('no outcome')},
+      buildSandbox:async()=>sb,
+      retainedLifecycle:{bind:input=>manager.bind({...input,sessionId:input.session.id}),idle:input=>manager.idle({...input,sessionId:input.session.id}),abandon:input=>manager.abandon({...input,sessionId:input.session.id}),archive:input=>manager.archive(input)},
+      buildModel:async()=>({}),buildTools:async()=>({}),buildHarness:()=>new PiHarness(),
+      buildHarnessContext:async input=>{assert.deepEqual(JSON.parse((await sb.exec('read','FAKE_MODEL')).stdout),{key:'FAKE_MODEL'});return {agent:input.session.agent,userMessage:events[10],session_id:ctx.sessionId,tools:input.tools,model:input.model,pi:{models:boundary,model:faux.getModel(),thinkingLevel:'off',speed:'standard'},systemPrompt:'Continue the conversation',env:{},runtime:input.runtime};},
+      clock:{now:()=>new Date('2026-11-03T00:01:00Z')},ids:{nextEventId:()=>`produced_${++sequence}`},
+    });
+    const engine=new ApplicationBackedNodeManagedSessionRuntimeEngine({runner,continuationSnapshot:reopen,historyFor:()=>({loadSessionRuntimeHistory:async()=>({type:'found',initialEvents:[],events:(await reopen()).orderedEvents.map(row=>row.event)})})});
+    const emitted=[];
+    const driver=new DefaultNodeManagedSessionRuntimeDriver({engine,realtime:{publish(){},closeSession(){}},projectionFor:()=>({recordSessionRuntimeEvents:async input=>{emitted.push(...input.events);return {type:'recorded'};}}),startRetry:{attempts:1,delayMs:()=>0}});
+    await driver.accept({workspaceId:ctx.workspaceId,sessionId:ctx.sessionId,session:{...ctx.session,agent:{id:'agent-test',model:faux.getModel().id,skills:[]},resources:[]},environment:{...ctx.environment,config:{}},events:[events[10]],executionFence:{...ctx.executionFence,executionId:'reply'}});
+    assert.equal(requests.length,1);
+    assert.equal(s.disks.has('box_1'),false);assert.equal(s.disks.size,1);
+    assert.equal(s.calls.some(call=>call[0]==='fresh-get'),false);
+    const messages=requests[0].messages;
+    assert.ok(JSON.stringify(messages).includes('Remember the full context'));
+    const calls=messages.flatMap(message=>Array.isArray(message.content)?message.content.filter(block=>block.type==='toolCall'):[]);
+    assert.deepEqual(calls.map(call=>call.id),['bash-call','rejected','pending']);
+    const results=messages.filter(message=>message.role==='toolResult');
+    assert.deepEqual(results.map(result=>result.toolCallId),['bash-call','rejected','pending']);
+    assert.ok(JSON.stringify(results[0]).includes('/workspace'));
+    assert.equal(results[1].isError,true);assert.ok(JSON.stringify(results[1]).includes('Use HOUR'));
+    assert.ok(JSON.stringify(results[2]).includes('Recorded'));
+    assert.equal(results.filter(result=>result.toolCallId==='pending').length,1);
+    assert.equal(emitted.some(event=>event.type==='agent.custom_tool_use'),false);
+    assert.equal(emitted.some(event=>event.type==='session.status_idle'&&event.stopReason?.type==='requires_action'),false);
+    assert.equal(await readFile(journal,'utf8'),original);
+  }finally{await manager.shutdown();await rm(root,{recursive:true,force:true});}
 });
 
 test('no-guest-I/O turn does not allocate a VM and cold archive does not restore one',async()=>{
@@ -106,7 +144,14 @@ test('scope mismatch and absent execution fence fail before allocation',async()=
   const s=fixture(),manager=s.lifecycle(),sandbox=s.sandbox(),ctx=s.context(sandbox);
   await assert.rejects(manager.bind({...ctx,environment:{id:'replay'}}),/retained_scope_mismatch/);
   await assert.rejects(manager.bind({...ctx,executionFence:undefined}),/retained_execution_fence_required/);
+  for(const foreign of [{workspaceId:'foreign'},{sessionId:'foreign'}])
+    await assert.rejects(manager.bind({...ctx,executionFence:{...ctx.executionFence,...foreign}}),/retained_execution_fence_scope_mismatch/);
   assert.equal(s.disks.size,0);
+  await manager.bind(ctx);await sandbox.exec('write','FAKE_FIRST');await manager.idle(ctx);
+  const before=JSON.stringify([...s.rows.values()][0].publication);
+  await assert.rejects(manager.bind({...ctx,executionFence:{...ctx.executionFence,sessionId:'foreign'}}),/retained_execution_fence_scope_mismatch/);
+  assert.equal(s.disks.has('box_1'),true);assert.equal(JSON.stringify([...s.rows.values()][0].publication),before);
+  assert.equal(s.calls.some(call=>call[0]==='remove-owned'),false);
 });
 
 test('durable orphan reconciliation removes only unpublished owned allocation, preserving published retained disk',async()=>{
@@ -129,7 +174,7 @@ for(const failure of ['publish','release'])test(`new native turn finalizes stopp
   await assert.rejects(manager.idle(ctx),/transient finalization failure/);
   ctx.executionFence.current=false;
   await assert.rejects(manager.bind(ctx));
-  const next={...ctx,executionFence:{current:true}};
+  const next={...ctx,executionFence:{workspaceId:'workspace_A',sessionId:'session_A',current:true}};
   await manager.bind(next);
   assert.equal(s.calls.filter(c=>c[0]==='stop').length,1);
   assert.equal(JSON.parse((await sandbox.exec('read','FAKE_ROTATED')).stdout).workspace,'persisted');
@@ -145,7 +190,7 @@ test('lost native execution finalization abandons only current resource and allo
   assert.equal([...s.disks.values()][0].running,false);
   assert.equal([...s.rows.values()][0].active,false);
   assert.equal(JSON.stringify([...s.rows.values()][0].publication),publication);
-  const next={...ctx,executionFence:{current:true}};
+  const next={...ctx,executionFence:{workspaceId:'workspace_A',sessionId:'session_A',current:true}};
   await manager.bind(next);await sandbox.exec('read','FAKE_SECOND');await manager.idle(next);
   assert.equal(s.nativeHandles.length,2);
 });
@@ -178,7 +223,7 @@ test('warm current-prefix metadata advances preserve allocation/workspace and st
   await manager.bind(ctx);await sb.exec('write','FAKE_FIRST');await manager.idle(ctx);
   const id=[...s.disks.keys()][0],old=structuredClone(ctx.session.metadata);
   currentHash='prefix_2';currentCutoff='cutoff_2';
-  const next={...ctx,session:{...ctx.session,metadata:{...old,tank_replay_evidence_sha256:currentHash,tank_replay_cutoff:currentCutoff}},executionFence:{current:true}};
+  const next={...ctx,session:{...ctx.session,metadata:{...old,tank_replay_evidence_sha256:currentHash,tank_replay_cutoff:currentCutoff}},executionFence:{workspaceId:'workspace_A',sessionId:'session_A',current:true}};
   await manager.bind(next);assert.equal(validations,2);
   assert.equal(JSON.parse((await sb.exec('read','FAKE_ROTATED')).stdout).workspace,'persisted');await manager.idle(next);
   await assert.rejects(manager.bind({...next,session:{...next.session,metadata:old}}),/current prefix mismatch/);

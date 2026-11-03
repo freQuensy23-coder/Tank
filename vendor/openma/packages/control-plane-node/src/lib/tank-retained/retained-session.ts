@@ -125,8 +125,8 @@ export class RetainedSessionLifecycle<R extends RetainedRuntime> {
       } else if (manifest.upgrade) fail('retained_manifest_invalid');
       if (!archiveOnly && manifest.state !== 'archived') {
         if (!this.options.identity) fail('retained_identity_required');
-        assertCompatible(manifest.identity!, this.options.identity);
-        if (manifest.identity!.image !== this.options.identity.image && !['retained', 'aborted'].includes(manifest.state)) fail('retained_configuration_changed:image');
+        if (stableDigest(manifest.identity) !== stableDigest(this.options.identity)
+            && !['retained', 'aborted'].includes(manifest.state)) fail('retained_configuration_changed');
         if (manifest.state === 'upgrading') fail('retained_upgrade_incomplete');
       }
       return manifest;
@@ -165,6 +165,7 @@ export class RetainedSessionLifecycle<R extends RetainedRuntime> {
         metadata: { schema: 1, scope: JSON.stringify(this.scope), provider: handle.provider,
           runtimeId: handle.runtimeId, fingerprint: this.options.fingerprint, state } }, outputCandidate: null });
     if (result.type === 'lost') { this.lost = true; fail('retained_fence_lost'); }
+    this.manifest = { handle, state, archived: state === 'archived', legacyFingerprint: this.options.fingerprint };
   }
   async begin(assertExecutionCurrent: () => Promise<void>, signal: AbortSignal): Promise<void> {
     if (this.phase !== 'idle') fail('retained_already_active');
@@ -179,7 +180,7 @@ export class RetainedSessionLifecycle<R extends RetainedRuntime> {
       let manifest = acquired.publication ? this.decode(acquired.publication.workspaceCandidate) : null;
       this.manifest = manifest;
       if (manifest?.archived) fail('retained_session_archived');
-      if (manifest?.state === 'retained' && ((manifest.identity && manifest.identity.image !== this.options.identity!.image)
+      if (manifest?.state === 'retained' && ((manifest.identity && stableDigest(manifest.identity) !== stableDigest(this.options.identity))
           || (manifest.legacyFingerprint && manifest.legacyFingerprint !== this.options.fingerprint))) {
         this.handle = manifest.handle;
         for (const handle of [...manifest.retired ?? [], manifest.handle]) {

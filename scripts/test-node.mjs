@@ -25,7 +25,7 @@ const lane = process.argv[2];
 if (process.argv.length !== 3 || !Object.hasOwn(lanes, lane)) {
   console.error(
     "Usage: node scripts/test-node.mjs <local-unit|local-contract>\n" +
-      "These dependency-free lanes exclude upstream Vitest/SQLite, file-worker, " +
+      "These lanes exclude upstream Vitest/SQLite, file-worker, " +
       "Chromium and native qualification tests.",
   );
   process.exit(2);

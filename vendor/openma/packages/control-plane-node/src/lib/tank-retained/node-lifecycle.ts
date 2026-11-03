@@ -104,6 +104,8 @@ export class NodeRetainedLifecycle {
   private async bindOpen(context: Context, scope: Omit<Scope, 'workId'>, lifetime: Lifetime): Promise<void> {
     this.assertOpen(lifetime);
     if (!context.executionFence) throw Error('retained_execution_fence_required');
+    const fence = context.executionFence as { workspaceId?: string; sessionId?: string };
+    if (fence.workspaceId !== scope.workspaceId || fence.sessionId !== scope.sessionId) throw Error('retained_execution_fence_scope_mismatch');
     await this.options.assertExecutionCurrent(context.executionFence);
     this.assertOpen(lifetime);
     let entry = this.sandboxes.get(context.sandbox);

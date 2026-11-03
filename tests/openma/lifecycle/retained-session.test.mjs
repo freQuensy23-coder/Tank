@@ -188,11 +188,18 @@ test('image update replaces only the native runtime and discards files packages 
   const next=s.controller({identity});await next.begin(permitted,signal());await next.idle(permitted);assert.equal(s.creates,2);
 });
 
-test('legacy update retires the exact old disk without adopting its opaque configuration',async()=>{
+for(const acknowledgement of ['success','lost'])test(`legacy update retires the exact old disk with ${acknowledgement} aborted publication acknowledgement`,async()=>{
   const s=setup(),old=s.controller();await old.begin(permitted,signal());
   await old.use(async runtime=>{const {disk}=await runtime.exec('write');disk.files.private='discard';});
   await old.idle(permitted);
   const updated=s.controller({fingerprint:'sha256:'+'b'.repeat(64),identity:schema2Identity});
+  if(acknowledgement==='lost'){
+    const publish=s.fences.publish.bind(s.fences);let lose=true;
+    s.fences.publish=async input=>{const result=await publish(input);if(lose&&input.workspaceCandidate.metadata.state==='aborted'){lose=false;throw Error('aborted acknowledgement lost');}return result;};
+    await assert.rejects(updated.begin(permitted,signal()),/aborted acknowledgement lost/);
+    assert.equal(s.disks.size,0);assert.equal(s.creates,1);
+    assert.equal([...s.rows.values()][0].publication.workspaceCandidate.metadata.state,'aborted');
+  }
   await updated.begin(permitted,signal());
   await updated.use(async runtime=>{const {disk}=await runtime.exec('read');assert.deepEqual(disk.files,{});assert.equal(disk.id,'box_2');});
   await updated.idle(permitted);
@@ -241,10 +248,20 @@ test('replacement retries deletion acknowledgement failure without resuming or c
   assert.equal(s.disks.size,1);assert.equal(s.creates,2);assert.equal(s.calls.some(call=>call[0]==='fresh-get'),false);
 });
 
-for(const kind of ['compatibility','missing','integrity','upgrading'])test(`schema2 refuses ${kind} without migration or allocation`,async()=>{
+for(const component of ['environment','runtimeAbi','resources','mounts','network','security','databasePolicy'])test(`authorized ${component} update starts clean without adopting old configuration`,async()=>{
+  const {s}=await schema2Fixture();s.disks.get('box_1').files.marker='old';
+  const identity={...schema2Identity,compatibility:{...schema2Identity.compatibility,[component]:'sha256:'+'f'.repeat(64)}};
+  const updated=s.controller({identity});await updated.begin(permitted,signal());
+  await updated.use(async runtime=>{const {disk}=await runtime.exec('read');assert.equal(disk.id,'box_2');assert.deepEqual(disk.files,{});});
+  await updated.idle(permitted);assert.equal(s.disks.has('box_1'),false);
+  assert.equal(s.calls.some(call=>call[0]==='fresh-get'),false);
+  assert.deepEqual(JSON.parse([...s.rows.values()][0].publication.workspaceCandidate.metadata.manifest).identity,identity);
+});
+
+for(const kind of ['missing','integrity','upgrading'])test(`schema2 refuses ${kind} without migration or allocation`,async()=>{
   const {s,manifest,save}=await schema2Fixture();
   let identity=structuredClone(schema2Identity);
-  if(kind==='compatibility')identity.compatibility.scope='sha256:'+'f'.repeat(64);
+
   if(kind==='missing')identity=undefined;
   if(kind==='upgrading'){manifest.state='upgrading';manifest.upgrade={source:manifest.handle,target:{provider:'litebox',runtimeId:'target'},owner:'old',identity:schema2Identity};save();}
   if(kind==='integrity')[...s.rows.values()][0].publication.workspaceCandidate.metadata.manifest+=' ';
