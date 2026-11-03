@@ -223,10 +223,12 @@ lq_tier_values AS (
     JSONExtractArrayRaw(book, 'levels', if(side = 'ask', 'asks', 'bids')))) AS lq_levels,
 ((levels, notional) -> arrayFold((state, level) ->
     if(state.1 <= toDecimal256('0.00000001', 24) AND state.4, state,
-        tuple(state.1 - least(state.1, multiplyDecimal(ifNull(lq_level_price(level), lq_zero), ifNull(lq_level_qty(level), lq_zero), 24)),
-            state.2 + least(state.1, multiplyDecimal(ifNull(lq_level_price(level), lq_zero), ifNull(lq_level_qty(level), lq_zero), 24)),
-            state.3 + divideDecimal(least(state.1, multiplyDecimal(ifNull(lq_level_price(level), lq_zero), ifNull(lq_level_qty(level), lq_zero), 24)),
-                nullIf(ifNull(lq_level_price(level), lq_zero), lq_zero), 24), toUInt8(1))), levels,
+        arrayMap(parsed -> tuple(
+            state.1 - least(state.1, multiplyDecimal(ifNull(parsed.1, lq_zero), ifNull(parsed.2, lq_zero), 24)),
+            state.2 + least(state.1, multiplyDecimal(ifNull(parsed.1, lq_zero), ifNull(parsed.2, lq_zero), 24)),
+            state.3 + divideDecimal(least(state.1, multiplyDecimal(ifNull(parsed.1, lq_zero), ifNull(parsed.2, lq_zero), 24)),
+                nullIf(ifNull(parsed.1, lq_zero), lq_zero), 24), toUInt8(1)),
+            [tuple(lq_level_price(level), lq_level_qty(level))])[1]), levels,
     tuple(ifNull(notional, lq_zero), lq_zero, CAST(lq_zero, 'Nullable(Decimal256(24))'), toUInt8(0)))) AS lq_walk_state,
 ((book, n, side) -> if(JSONExtractString(book, 'quote_asset') = 'USD', lq_one, lq_dec(JSONExtractRaw(book, 'quote_usd_rate')))) AS lq_fx,
 ((book, n, side) -> lq_walk_state(lq_levels(book, side), divideDecimal(n, nullIf(lq_fx(book, n, side), lq_zero), 24))) AS lq_fill,
