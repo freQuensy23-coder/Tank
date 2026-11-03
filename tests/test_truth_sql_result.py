@@ -1,7 +1,9 @@
 import ast
+import builtins
 import json
 import os
 import subprocess
+import sys
 from copy import deepcopy
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
@@ -23,17 +25,45 @@ WINDOWS = {"W15M": 900, "W1H": 3600, "W4H": 14400, "W24H": 86400, "EVENT": 3600}
 
 @pytest.fixture(scope="module")
 def original_result():
-    source = subprocess.run(
-        ["git", "show", f"{BASELINE}:src/tank/analysis/truth.py"],
-        cwd=Path(__file__).resolve().parents[1],
-        capture_output=True,
-        text=True,
-        check=True,
-        timeout=30,
-    ).stdout
-    module = ModuleType("frozen_result_truth")
-    exec(compile(source, f"{BASELINE}/src/tank/analysis/truth.py", "exec"), module.__dict__)
-    return module
+    root = Path(__file__).resolve().parents[1]
+    modules = {}
+    original_import = builtins.__import__
+
+    def load(name):
+        if name in modules:
+            return modules[name]
+        module = ModuleType("_result_original_" + name)
+        modules[name] = module
+        sys.modules[module.__name__] = module
+        path = "src/" + name.replace(".", "/")
+        result = subprocess.run(
+            ["git", "show", f"{BASELINE}:{path}.py"],
+            cwd=root,
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+        if result.returncode:
+            assert name in {"tank", "tank.analysis", "tank.market"}, result.stderr
+            module.__path__ = []
+            return module
+        module.__file__ = f"{BASELINE}/{path}.py"
+        module.__dict__["__builtins__"] = {**vars(builtins), "__import__": frozen_import}
+        exec(compile(result.stdout, module.__file__, "exec"), module.__dict__)
+        return module
+
+    def frozen_import(name, globals=None, locals=None, fromlist=(), level=0):
+        if name != "tank" and not name.startswith("tank."):
+            return original_import(name, globals, locals, fromlist, level)
+        module = load(name)
+        for child in fromlist:
+            if not hasattr(module, child):
+                setattr(module, child, load(name + "." + child))
+        return module
+
+    yield load("tank.analysis.truth")
+    for module in modules.values():
+        sys.modules.pop(module.__name__, None)
 
 
 @pytest.fixture
@@ -212,14 +242,14 @@ async def rows_for(client, snapshot, inputs, *, table, fields, config=None):
 async def test_native_selection_matches_frozen_priority(result_client, original_result, scenario):
     inputs = domains()
     for name in WINDOWS:
-        s, d, l, su, p = (
+        s, d, liquidity, su, p = (
             inputs["spots"][name], inputs["derivatives"][name],
             inputs["liquidity"][name], inputs["supply"][name],
             inputs["relative"]["windows"][name],
         )
         if scenario == "organic":
             d["support_features"] = {"spot_volume_up_beyond_normal": True, "perp_volume_up_beyond_normal": True, "basis_within_normal": True}
-            l["elasticity"]["weak_response"] = None
+            liquidity["elasticity"]["weak_response"] = None
         elif scenario == "chase":
             p["relative_return"] = 0.03
             d["synchronized"]["oi_native_chg_pct"] = 0.04
@@ -231,7 +261,7 @@ async def test_native_selection_matches_frozen_priority(result_client, original_
             d["synchronized"]["oi_native_chg_pct"] = -0.04
             d["support_features"] = {"liquidations_first_half_majority": True, "perp_taker_flow_buy": True}
         elif scenario == "sell_absorption":
-            l["elasticity"]["weak_response"] = True
+            liquidity["elasticity"]["weak_response"] = True
             d["support_features"] = {"ask_replenishment": True}
         elif scenario == "distribution":
             su["supply_in_evidence"] = "TRUE"
@@ -240,14 +270,14 @@ async def test_native_selection_matches_frozen_priority(result_client, original_
             d["support_features"] = {"ask_depth_building": True, "exchange_inflows": True}
         elif scenario == "vacuum":
             p["relative_return"] = -0.03
-            l["depth_drop"] = 0.6
-            l["depth_majority_lost"] = True
-            l["elasticity"]["excess_response"] = True
+            liquidity["depth_drop"] = 0.6
+            liquidity["depth_majority_lost"] = True
+            liquidity["elasticity"]["excess_response"] = True
             d["support_features"] = {"large_tickets_minority": True, "spot_volume_within_normal": True}
         elif scenario == "fragmentation":
-            l["fragmentation"]["validated"] = True
-            l["fragmentation"]["gap_closed_quickly"] = True
-            l["elasticity"]["weak_response"] = None
+            liquidity["fragmentation"]["validated"] = True
+            liquidity["fragmentation"]["gap_closed_quickly"] = True
+            liquidity["elasticity"]["weak_response"] = None
             d["synchronized"]["oi_native_chg_pct"] = None
         elif scenario == "fake_oi":
             s["direction"] = "NEUTRAL"
@@ -282,10 +312,10 @@ async def test_native_divergence_candidates_refutations_and_ties(result_client, 
         d = inputs["derivatives"][name]
         d["incremental_share"]["increment_usd"]["perp"] = perp_increment
         d["support_features"] = {"basis_widening": True, "localized_inventory_transfer": True}
-        l = inputs["liquidity"][name]
-        l["depth_majority_lost"] = depth_lost
-        l["replenishment"] = {"bursts": bursts, "replenished": replenished, "resilient_bursts": resilient}
-        l["fragmentation"].update(persistent_gap=True, validated=validated)
+        liquidity = inputs["liquidity"][name]
+        liquidity["depth_majority_lost"] = depth_lost
+        liquidity["replenishment"] = {"bursts": bursts, "replenished": replenished, "resilient_bursts": resilient}
+        liquidity["fragmentation"].update(persistent_gap=True, validated=validated)
     snapshot = packet()
     spots, derivs, _, _ = reference_enriched(original_result, snapshot, inputs)
     rows = await rows_for(result_client, snapshot, inputs, table="res_selected", fields="res_name, res_selected_json AS result")
@@ -462,7 +492,8 @@ async def test_native_full_business_body_matches_frozen_assembly(result_client, 
 
 
 @pytest.mark.parametrize("gap", [False, True])
-async def test_primary_size_profile_uses_complete_compatible_buckets(result_client, original_result, gap):
+@pytest.mark.parametrize("scale", ["1", "10000000000"])
+async def test_primary_size_profile_uses_complete_compatible_buckets(result_client, original_result, gap, scale):
     snapshot = packet()
     snapshot["semantics"] = [{"venue": "A", "trade_aggregation": "RAW"}, {"venue": "B", "trade_aggregation": "RAW"}]
     snapshot["flow_bars"] = [
@@ -477,6 +508,11 @@ async def test_primary_size_profile_uses_complete_compatible_buckets(result_clie
         for venue_name in ("A", "B") for index in range(1, 2881)
         if not (gap and venue_name == "B" and index == 10)
     ]
+    for row in snapshot["flow_bars"]:
+        for key in ("buy_notional", "sell_notional"):
+            row[key] = str(Decimal(row[key]) * Decimal(scale))
+            for bucket in row["size_buckets"].values():
+                bucket[key] = str(Decimal(bucket[key]) * Decimal(scale))
     inputs = domains()
     spots, _, _, _ = reference_enriched(original_result, snapshot, inputs)
     rows = await rows_for(result_client, snapshot, inputs, table="res_enriched", fields="res_name, JSONExtractRaw(res_spot, 'size_profile') AS result")

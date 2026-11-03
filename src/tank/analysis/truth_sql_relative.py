@@ -80,10 +80,24 @@ rel_r -> if(JSONType(rel_r) = 'Object', JSONExtractRaw(rel_r, 'value'), rel_r) A
 rel_r -> if(JSONType(rel_unwrap(rel_r)) = 'String', JSONExtractString(rel_unwrap(rel_r)),
     rel_unwrap(rel_r)) AS rel_numeric_text,
 rel_r -> toFloat64OrNull(nullIf(rel_numeric_text(rel_r), 'null')) AS rel_number,
+rel_x -> replaceRegexpOne(rel_x, '^[+-]', '') AS rel_unsigned,
+rel_x -> (if(startsWith(rel_x, '-'), '-', ''),
+    replaceAll(rel_unsigned(splitByRegexp('[eE]', rel_x)[1]), '.', ''),
+    toInt64(if(position(rel_unsigned(splitByRegexp('[eE]', rel_x)[1]), '.') = 0,
+        length(rel_unsigned(splitByRegexp('[eE]', rel_x)[1])),
+        position(rel_unsigned(splitByRegexp('[eE]', rel_x)[1]), '.') - 1))
+        + toInt32OrZero(splitByRegexp('[eE]', rel_x)[2])) AS rel_scientific,
+rel_p -> concat(rel_p.1, multiIf(rel_p.3 <= 0,
+    concat('0.', repeat('0', greatest(least(-rel_p.3, 48), 0)), rel_p.2),
+    rel_p.3 >= length(rel_p.2), concat(rel_p.2, repeat('0', greatest(least(rel_p.3 - toInt64(length(rel_p.2)), 48), 0))),
+    concat(substring(rel_p.2, 1, greatest(rel_p.3, 0)), '.', substring(rel_p.2, greatest(rel_p.3 + 1, 1))))) AS rel_fixed,
+rel_x -> if(match(rel_x, '^[+-]?[0-9]{1,24}([.][0-9]{1,24})?[eE][+-]?[0-9]{1,2}$')
+    AND abs(toInt32OrZero(splitByRegexp('[eE]', rel_x)[2])) <= 48,
+    rel_fixed(rel_scientific(rel_x)), rel_x) AS rel_decimal_text,
 rel_r -> if(throwIf(rel_numeric_text(rel_r) NOT IN ('', 'null')
-    AND NOT match(rel_numeric_text(rel_r), '^[+-]?0*[0-9]{1,24}(\\.[0-9]{1,24})?$'),
+    AND NOT match(rel_decimal_text(rel_numeric_text(rel_r)), '^[+-]?0*[0-9]{1,24}(\\.[0-9]{1,24})?$'),
     'Market Truth decimal input outside native financial range') = 0,
-    toDecimal256OrNull(nullIf(rel_numeric_text(rel_r), 'null'), 24),
+    toDecimal256OrNull(nullIf(rel_decimal_text(rel_numeric_text(rel_r)), 'null'), 24),
     CAST(NULL, 'Nullable(Decimal256(24))')) AS rel_decimal,
 rel_r -> if(JSONHas(rel_r, 'c'), JSONExtractRaw(rel_r, 'c'), JSONExtractRaw(rel_r, 'close')) AS rel_close_raw,
 rel_r -> (isNull(rel_assembled) OR

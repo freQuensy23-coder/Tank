@@ -221,7 +221,7 @@ async def execute(native_clickhouse, snapshot, config=None, *, reaction=False, r
     return json.loads(rows[0]["result"])
 
 
-@pytest.mark.parametrize("mode", ["regular", "secondary", "fractional", "benchmark", "short", "empty"])
+@pytest.mark.parametrize("mode", ["regular", "secondary", "fractional", "benchmark", "short", "empty", "scientific"])
 async def test_native_relative_complete_original_output(
     native_clickhouse, original_truth, mode, record_property
 ):
@@ -231,6 +231,13 @@ async def test_native_relative_complete_original_output(
         benchmark=mode == "benchmark",
         history_days=2 if mode == "short" else 10,
     )
+    if mode == "scientific":
+        for row in snapshot["klines"]:
+            for key in ("c", "close"):
+                if key in row:
+                    row[key] = format(Decimal(str(row[key])), "E")
+        zero = dict(snapshot["klines"][0], c="0E-8", close="0E-8")
+        snapshot["klines"].append(zero)
     if mode == "empty":
         snapshot.update(klines=[], stat_price_series={}, flow_bars=[], reference_points=[])
     actual = await execute(native_clickhouse, snapshot, record_property=record_property)

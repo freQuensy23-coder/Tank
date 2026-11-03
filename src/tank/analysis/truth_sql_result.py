@@ -68,7 +68,7 @@ def _core_ctes():
         large_tickets_minority=_bool("if(res_size_total = 0 OR isNull(res_size_total), NULL, 2 * (res_large_buy + res_large_sell) < res_size_total)"),
         large_ticket_buy_notional=_money("res_large_buy"),
         large_ticket_sell_notional=_money("res_large_sell"),
-        sell_share_rising=_bool("if(res_previous_valid AND res_previous_buy + res_previous_sell != 0 AND res_large_buy + res_large_sell != 0, multiplyDecimal(res_large_sell, res_previous_buy + res_previous_sell, 48) > multiplyDecimal(res_previous_sell, res_large_buy + res_large_sell, 48), NULL)"),
+        sell_share_rising=_bool("if(res_previous_valid AND res_previous_buy + res_previous_sell != 0 AND res_large_buy + res_large_sell != 0, multiplyDecimal(res_large_sell, res_previous_buy + res_previous_sell, 24) > multiplyDecimal(res_previous_sell, res_large_buy + res_large_sell, 24), NULL)"),
         compatible_venues=_json("res_compatible"),
     )
     lead = _object(

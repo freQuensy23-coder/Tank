@@ -12,6 +12,8 @@ from tank.clickhouse_market import ClickHouse
 _SAFE_PHRASES = (
     "Unknown identifier",
     "Unknown expression or function identifier",
+    "Function with name",
+    "does not exist",
     "Unknown function",
     "Syntax error",
     "Expected one of",
@@ -65,6 +67,8 @@ def failure_receipt(error, nodeid, query):
     message = re.split(r"(?i)\b(?:while processing|in scope|stack trace)\b", message)[0]
     diagnostics = [phrase for phrase in _SAFE_PHRASES if phrase in message]
     identifiers = set(re.findall(r"\b(?:spot|deriv|rel|lq|sup|res)_[A-Za-z0-9_]+\b", query))
+    identifiers.update(re.findall(r"\b([A-Za-z_][A-Za-z0-9_]*)\s*\(", query))
+    identifiers.update({"UInt8", "UInt32", "UInt64", "Int8", "Int32", "Int64", "Float64", "Decimal", "Decimal256", "Nothing", "String", "Nullable", "Array", "Tuple", "Bool"})
     diagnostics.extend(sorted(identifiers.intersection(re.findall(r"\b[A-Za-z_][A-Za-z0-9_]*\b", message))))
     diagnostics.extend(re.findall(r"\bposition [0-9]{1,8}\b", message))
     safe = " | ".join(diagnostics)[:512] or "[redacted]"

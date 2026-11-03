@@ -1,7 +1,7 @@
+import email.parser
+import email.policy
 import hashlib
 import os
-from email import policy
-from email.parser import BytesParser
 
 import httpx
 import pytest
@@ -21,7 +21,7 @@ SETTINGS = {
 
 
 def fields(request):
-    message = BytesParser(policy=policy.default).parsebytes(
+    message = email.parser.BytesParser(policy=email.policy.default).parsebytes(
         b"Content-Type: " + request.headers["content-type"].encode() + b"\r\n\r\n" + request.content
     )
     parts = list(message.iter_parts())
