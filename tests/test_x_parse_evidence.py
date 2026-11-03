@@ -65,9 +65,7 @@ def test_parse_metadata_is_redacted_bounded_jsonb_safe_and_allowlisted(field):
         secret not in json.dumps(clean)
         for secret in ("db-password", "query-secret", "configured-secret", "must-not-survive")
     )
-    counts = {
-        key: captured[key] for key in ("articleCount", "statusLinkCount", "textCount", "scriptCount")
-    }
+    counts = {key: captured[key] for key in ("articleCount", "statusLinkCount", "textCount", "scriptCount")}
     assert counts == {"articleCount": 3, "statusLinkCount": 2, "textCount": 1, "scriptCount": 4}
     json.dumps(clean, ensure_ascii=False).encode()
     assert f"{field}[1]" in clean["invalidEvidence"]
@@ -85,9 +83,7 @@ def test_invalid_parse_counts_are_not_persisted(field, bad):
 
 @pytest.mark.parametrize("prefix", ["1.https", "+.-1.https", "https"])
 @pytest.mark.parametrize("query_key", ["token", "api_token", "api-token", "apiToken"])
-def test_actor_parse_metadata_redacts_numbered_urls_and_bounds_title(
-    reader, monkeypatch, prefix, query_key
-):
+def test_actor_parse_metadata_redacts_numbered_urls_and_bounds_title(reader, monkeypatch, prefix, query_key):
     monkeypatch.setenv("ACTOR_TOKEN", "configured-secret")
     raw = (
         f"<title>{prefix}://reader:db-password@host/path?{query_key}=query-secret configured-secret "
@@ -105,8 +101,7 @@ def test_actor_parse_metadata_redacts_numbered_urls_and_bounds_title(
         f"{prefix}://reader:[REDACTED]@host/path?{query_key}=[REDACTED] [REDACTED] "
     )
     assert all(
-        secret not in json.dumps(evidence)
-        for secret in ("db-password", "query-secret", "configured-secret")
+        secret not in json.dumps(evidence) for secret in ("db-password", "query-secret", "configured-secret")
     )
 
 

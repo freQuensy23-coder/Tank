@@ -20,13 +20,9 @@ from tank.util import sha256
 
 HTTP_CLIENT = httpx.AsyncClient
 SECRET_TEXT = (
-    b" configured-secret Cookie: cookie-secret\n"
-    b"1.https://reader:db-password@host/path?api_token=query-secret"
+    b" configured-secret Cookie: cookie-secret\n1.https://reader:db-password@host/path?api_token=query-secret"
 )
-SAFE_TEXT = (
-    b" [REDACTED] Cookie: [REDACTED]\n"
-    b"1.https://reader:[REDACTED]@host/path?api_token=[REDACTED]"
-)
+SAFE_TEXT = b" [REDACTED] Cookie: [REDACTED]\n1.https://reader:[REDACTED]@host/path?api_token=[REDACTED]"
 CASES = [
     (200, b"<title>This page is down / X</title>", "PUBLIC_PROFILE_NOT_READABLE", False, 0),
     (200, b"", "PUBLIC_PROFILE_NOT_READABLE", False, 0),
@@ -272,7 +268,5 @@ async def test_parse_metadata_survives_jsonb_and_real_multipart_upload(postgres_
                 b"header-secret",
             )
         )
-        receipts = await repo.list(
-            "out.deliveries", filters={"status": "SENT", "method": "sendDocument"}
-        )
+        receipts = await repo.list("out.deliveries", filters={"status": "SENT", "method": "sendDocument"})
         assert {row["document_sha256"] for row in receipts} == {sha256(expected), sha256(uploads[1])}
