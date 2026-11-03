@@ -91,7 +91,13 @@ async def notice_for(repo, evidence):
         telegram_settings(),
         {"source_id": "S29", "name": "X"},
         {"url": URL},
-        [{"account": "alice", "reason": "PUBLIC_PROFILE_HTTP_503", "diagnostics": sanitize(evidence)}],
+        [
+            {
+                "account": "alice",
+                "reason": "PUBLIC_PROFILE_HTTP_503",
+                "diagnostics": sanitize(evidence),
+            }
+        ],
         "2026-10-24T12:00:00Z",
     )
     return await repo.get("out.ops_notices", notice_id)

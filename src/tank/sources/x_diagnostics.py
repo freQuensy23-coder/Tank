@@ -73,7 +73,7 @@ def sanitize(value, token=None, budget=None):
         attempt = {
             key: original[key][:8192] if isinstance(original[key], str) else original[key]
             for key in ("at", "status", "retryable")
-            if isinstance(original.get(key), (str, int, bool, type(None)))
+            if key in original and isinstance(original[key], (str, int, bool, type(None)))
         }
         attempt["attempt"] = index
         attempt["error"] = redact(original.get("error", ""), token)
