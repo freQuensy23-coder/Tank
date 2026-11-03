@@ -8,9 +8,11 @@ import httpx
 import pytest
 
 from tank import runtime as runtime_module
+from tank.agents.sessions import AdmissionDeferred
 from tank.job_diagnostics import MAX_CHAIN, MAX_HISTORY_BYTES, MAX_RECEIPT_BYTES
 from tank.runtime import Runtime
 from tank.storage import MemoryRepository
+from tank.time_precision import collection_clock, offset_schedule
 from tank.util import iso, parse_time, utcnow
 
 REQUEST_ID = "4864396e-205b-41c0-a078-4255bb529d08"
@@ -368,3 +370,29 @@ async def test_actual_clickhouse_transport_failure_reaches_worker_receipt(diagno
     receipt = stored["attempt_diagnostics"][0]
     assert receipt["exception_chain"] == [{"class": "httpx.ReadError"}]
     assert SECRET not in json.dumps(receipt) and "SELECT" not in json.dumps(receipt)
+
+
+async def test_admission_deferral_keeps_attempt_refund_and_original_expiry(diagnostic_repo):
+    repo = diagnostic_repo
+    expires = iso(utcnow() + timedelta(hours=1))
+    job = await repo.enqueue("AGENT_MESSAGE", {}, "diagnostic-admission", expires_at=expires)
+    runtime = make_runtime(repo)
+    stop = asyncio.Event()
+    not_before = offset_schedule(collection_clock(), timedelta(seconds=5))
+
+    async def admit(job):
+        stop.set()
+        raise AdmissionDeferred(not_before)
+
+    async def handler(payload):
+        pytest.fail("Admission deferral must prevent handler effects")
+
+    runtime.sessions = SimpleNamespace(admit=admit)
+    runtime.handlers = {"AGENT_MESSAGE": handler}
+    await runtime.worker(stop)
+    deferred = await repo.get("ops.jobs", job["job_id"])
+    assert deferred["status"] == "QUEUED" and deferred["attempts"] == 0
+    assert deferred["expires_at"] == expires
+    assert deferred["run_after"] == not_before.value
+    assert deferred["slot_waiting_since"] == job["created_at"]
+    assert "attempt_diagnostics" not in deferred and deferred["last_error"] is None
