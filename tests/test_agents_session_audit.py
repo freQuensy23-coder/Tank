@@ -390,6 +390,7 @@ async def test_native_queued_tool_result_executions_continue_after_transient_idl
     first_idle = asyncio.Event()
     all_results = asyncio.Event()
     calls, responses, history = [], [], []
+    accepted_inputs, execution_reads = {}, []
     names = [
         "get_item",
         "get_registry",
@@ -416,11 +417,32 @@ async def test_native_queued_tool_result_executions_continue_after_transient_idl
                 yield await queue.get()
 
     async def transport(request):
+        if request.url.path.endswith("/executions"):
+            identities = request.url.params.get_list("ids[]")
+            execution_reads.append(identities)
+            return httpx.Response(
+                200,
+                json={
+                    "data": [
+                        {
+                            "execution_id": identity,
+                            "state": "RUNNING" if identity in accepted_inputs else "UNKNOWN",
+                            "settled_outcome": None,
+                        }
+                        for identity in identities
+                    ]
+                },
+            )
         if request.url.path.endswith("/events/stream"):
             return httpx.Response(200, stream=Stream(), headers={"content-type": "text/event-stream"})
         if request.url.path.endswith("/events") and request.method == "GET":
             return httpx.Response(200, json={"data": list(history)})
         if request.url.path.endswith("/events"):
+            identity = request.headers["idempotency-key"]
+            if identity in accepted_inputs:
+                assert accepted_inputs[identity] == request.content
+            else:
+                accepted_inputs[identity] = request.content
             result = json.loads(request.content)["events"][0]
             responses.append(result["custom_tool_use_id"])
             if len(responses) == 3:
@@ -460,6 +482,13 @@ async def test_native_queued_tool_result_executions_continue_after_transient_idl
             assert len(set(responses)) == 7
             rows = await repo.list("ops.tool_calls")
             assert len(rows) == 7 and all(row["status"] == "DONE" and row.get("returned_at") for row in rows)
+            assert {row["remote_event_id"] for row in rows} == set(accepted_inputs)
+            assert execution_reads and all(
+                set(identities) <= accepted_inputs.keys() for identities in execution_reads
+            )
+            barrier = await service.execution_barrier(await repo.get("ops.agent_sessions", "s"))
+            assert not barrier["complete"]
+            assert barrier["pending_input_ids"] == sorted(accepted_inputs)
             assert (await repo.get("ops.agent_sessions", "s"))["last_event_id"] == "idle-6"
             assert not service.tasks["s"].done()
         finally:
