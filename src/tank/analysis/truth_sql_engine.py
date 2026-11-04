@@ -1,3 +1,4 @@
+import asyncio
 import json
 import math
 import re
@@ -420,15 +421,14 @@ def condition_query(snapshot, requirements, config=None, *, cache_records=None, 
     return statement, parameters
 
 
-async def evaluate_conditions(client, snapshot, requirements, config=None, *, cache=None):
-    if client is None or not callable(getattr(client, "rows", None)):
-        raise RuntimeError("Market Truth conditions require the repository ClickHouse native provider")
-    requirements = list(requirements)
-    records = [] if cache is None else [{"key": key, "value": deepcopy(value)} for key, value in cache.items()]
-    statement, parameters = condition_query(
+def _prepare_conditions(snapshot, requirements, config, cache_items):
+    records = [{"key": key, "value": deepcopy(value)} for key, value in cache_items]
+    return condition_query(
         snapshot, requirements, config, cache_records=records, cache_transport=True
     )
-    rows = await client.rows(statement, parameters)
+
+
+def _decode_conditions(rows, snapshot, requirements):
     if len(rows) != 1 or set(rows[0]) != {"result", "condition_cache"}:
         raise ValueError("native Market Truth conditions require one complete result row")
     result = json.loads(rows[0]["result"], object_pairs_hook=_condition_pairs)
@@ -437,6 +437,19 @@ async def evaluate_conditions(client, snapshot, requirements, config=None, *, ca
     _validate_condition_json(records)
     _validate_conditions(result, snapshot, requirements)
     replacement = deepcopy(_validate_condition_cache(records))
+    return result, replacement
+
+
+async def evaluate_conditions(client, snapshot, requirements, config=None, *, cache=None):
+    if client is None or not callable(getattr(client, "rows", None)):
+        raise RuntimeError("Market Truth conditions require the repository ClickHouse native provider")
+    requirements = list(requirements)
+    cache_items = () if cache is None else tuple(cache.items())
+    statement, parameters = await asyncio.to_thread(
+        _prepare_conditions, snapshot, requirements, config, cache_items
+    )
+    rows = await client.rows(statement, parameters)
+    result, replacement = await asyncio.to_thread(_decode_conditions, rows, snapshot, requirements)
     if cache is not None:
         cache.clear()
         cache.update(replacement)
@@ -1282,11 +1295,7 @@ def decode_decimals(value, field=None):
     return value
 
 
-async def evaluate(client, snapshot, config=None):
-    if client is None or not callable(getattr(client, "rows", None)):
-        raise RuntimeError("Market Truth requires the repository ClickHouse native provider")
-    statement, parameters = _query(snapshot, config, _provenance_select)
-    rows = await client.rows(statement, parameters)
+def _decode_result(rows):
     if len(rows) != 1 or set(rows[0]) != {"result", "provenance_snapshot"}:
         raise ValueError("native Market Truth requires one complete result row")
     result = json.loads(rows[0]["result"])
@@ -1303,3 +1312,11 @@ async def evaluate(client, snapshot, config=None):
     result = timestamp_companions(decode_decimals(result), provenance)
     result["measurement_metadata"] = measurement_metadata(result)
     return jsonable(result)
+
+
+async def evaluate(client, snapshot, config=None):
+    if client is None or not callable(getattr(client, "rows", None)):
+        raise RuntimeError("Market Truth requires the repository ClickHouse native provider")
+    statement, parameters = await asyncio.to_thread(_query, snapshot, config, _provenance_select)
+    rows = await client.rows(statement, parameters)
+    return await asyncio.to_thread(_decode_result, rows)
