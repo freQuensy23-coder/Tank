@@ -6,6 +6,7 @@ from functools import lru_cache
 from math import sin
 
 import pytest
+from truth_service_unit_seam import assert_input, bind_evaluator
 
 from tank.analysis.truth import compute_market_truth
 from tank.util import iso, parse_time
@@ -361,16 +362,19 @@ def test_missing_instrument_registry_and_selftest_records_do_not_cap_observed_co
     assert stale["data_confidence"]["limiting"]["collection"] == "books"
 
 
-async def _assess_loser_snapshot():
+async def _assess_loser_snapshot(monkeypatch):
     from types import SimpleNamespace
 
     from tank.analysis.truth import MarketTruthService
 
     class Repo:
         async def get(self, *args):
+            assert args == ("evt.events", "EVT")
             return {"public_at": "2026-10-16T08:00:00Z"}
 
         async def list(self, *args, **kwargs):
+            assert args == ("evt.beneficiary_edges",)
+            assert kwargs == {"filters": {"event_id": "EVT", "token_id": "T"}, "limit": 10000}
             return [
                 {"map_version": 1, "edge_id": "old", "role": "PRIMARY"},
                 {"map_version": 2, "edge_id": "new", "role": "LOSER"},
@@ -378,21 +382,35 @@ async def _assess_loser_snapshot():
 
         async def put(self, collection, key, record, **kwargs):
             assert collection == "ana.market_truth" and kwargs["immutable"] is True
+            assert key == record["mta_id"] and key.startswith("MTA")
 
     class Market:
         async def snapshot(self, token_id, cutoff, anchor=None):
             return compact_start_snapshot()
 
+    repo = Repo()
+
+    async def evaluate(client, snapshot, config=None):
+        expected = compact_start_snapshot()
+        expected.update(event_id="EVT", token_id="T", expected_direction="LOSER",
+                        event_public_at="2026-10-16T08:00:00Z", event_public_at_prec=None,
+                        event_public_at_prec_reason="INCOMPLETE")
+        assert_input(client, snapshot, config, provider, expected, ("test", "test"))
+        return {"relative": {"expected_direction": "LOSER", "repricing_sign": -1, "repricing_band": "UNPRICED"}}
+
+    provider = bind_evaluator(monkeypatch, repo, evaluate)
     return await MarketTruthService(
-        Repo(), SimpleNamespace(config_version="test", code_version="test"), Market()
+        repo, SimpleNamespace(config_version="test", code_version="test"), Market()
     ).assess("EVT", "T", "2026-10-16T12:00:00Z")
 
 
-def test_latest_durable_beneficiary_role_sets_loser_repricing_direction():
+
+def test_latest_durable_beneficiary_role_sets_loser_repricing_direction(monkeypatch):
     import asyncio
 
-    result = asyncio.run(_assess_loser_snapshot())
+    result = asyncio.run(_assess_loser_snapshot(monkeypatch))
     assert result["relative"]["expected_direction"] == "LOSER"
     assert result["relative"]["repricing_sign"] == -1
     assert result["relative"]["repricing_band"] == "UNPRICED"
     assert compute_market_truth(compact_start_snapshot())["relative"]["repricing_band"] == "EARLY"
+

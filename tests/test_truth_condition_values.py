@@ -5,6 +5,7 @@ from decimal import Decimal
 from types import SimpleNamespace
 
 import pytest
+from truth_service_unit_seam import assert_input, bind_evaluator
 from test_truth_start_fixture import compact_start_snapshot
 
 import tank.analysis.truth as module
@@ -105,7 +106,7 @@ def test_native_baseline_reused_when_only_current_observation_changes(monkeypatc
 
 
 @pytest.mark.asyncio
-async def test_service_uses_only_light_loader_and_never_writes_assessments():
+async def test_service_uses_only_light_loader_and_never_writes_assessments(monkeypatch):
     packet = snapshot()
     reads = []
 
@@ -128,12 +129,25 @@ async def test_service_uses_only_light_loader_and_never_writes_assessments():
         async def snapshot(self, *args, **kwargs):
             raise AssertionError("No full market snapshot")
 
+    repo = Repo()
+    seen = []
+
+    async def evaluate(client, loaded, requirements, config=None, *, cache):
+        assert_input(client, loaded, config, provider, dict(deepcopy(packet), event_id="E", token_id="T"), ("t", "t"))
+        assert requirements == REQUIREMENTS[:2] and cache is service._condition_cache
+        seen.append(deepcopy(loaded))
+        return {"spot": {"W1H": {"direction": "BUY"}}}
+
+    provider = bind_evaluator(monkeypatch, repo, evaluate, conditions=True)
     service = module.MarketTruthService(
-        Repo(), SimpleNamespace(config_version="t", code_version="t"), Market()
+        repo, SimpleNamespace(config_version="t", code_version="t"), Market()
     )
     result = await service.condition_values("E", "T", packet["cutoff"], REQUIREMENTS[:2])
     assert reads == ["evt.events"] and "mta_id" not in result
     assert result["spot"]["W1H"]["direction"] == "BUY"
+
+    assert seen == [dict(packet, event_id="E", token_id="T")]
+
 
 
 def test_composite_requests_do_not_execute_full_assessment(monkeypatch):
@@ -259,6 +273,17 @@ async def test_actual_market_loader_selective_sql_footprint_and_no_assessment_wr
         "mkt.klines_1m", [row for row in packet["klines"] if row.get("interval_s") == 60]
     )
     original_range = repo.iter_range
+    expected_bars, expected_klines = [], []
+    for instrument in packet["instruments"]:
+        if instrument["market_type"] != "SPOT":
+            continue
+        filters = {"instrument_id": instrument["instrument_id"]}
+        expected_bars.extend([row async for row in original_range(
+            "mkt.flow_bars_1m", "minute_start", start="2026-10-15T12:00:00Z",
+            end="2026-10-16T12:00:00.000001Z", filters=filters)])
+        expected_klines.extend([row async for row in original_range(
+            "mkt.klines_1m", "open_time", start="2026-10-16T11:59:00Z",
+            end="2026-10-16T12:00:00Z", filters=filters)])
 
     async def ranges(collection, field, **kwargs):
         reads.append(collection)
@@ -299,16 +324,42 @@ async def test_actual_market_loader_selective_sql_footprint_and_no_assessment_wr
         monkeypatch.setattr(market, "snapshot", forbidden)
         monkeypatch.setattr(market, "_put", forbidden)
         monkeypatch.setattr(market, "flush_market", forbidden)
-        truth = module.MarketTruthService(repo, settings, market)
+        service_repo = SimpleNamespace(get=repo.get, put=forbidden)
+        truth = module.MarketTruthService(service_repo, settings, market)
         req = [
             dict(metric="spot.cohort.direction", window="W1H"),
             dict(metric="price.close_vs_level", window="W1H"),
         ]
+        captured = []
+        original_snapshot = market.condition_snapshot
+
+        async def observed(*args, **kwargs):
+            assert args == ("T", packet["cutoff"])
+            assert kwargs["requirements"] == req
+            assert kwargs["anchor"]["type"] == "T1"
+            assert kwargs["anchor"]["ts"] == "2026-10-16T08:00:00Z"
+            value = await original_snapshot(*args, **kwargs)
+            captured.append(deepcopy(value))
+            return value
+
+        monkeypatch.setattr(market, "condition_snapshot", observed)
+
+        async def evaluate(client, loaded, requirements, config=None, *, cache):
+            assert_input(client, loaded, config, provider,
+                         dict(deepcopy(captured[0]), event_id="E", token_id="T"), ("t", "t"))
+            assert requirements == req and cache is truth._condition_cache
+            assert loaded["flow_bars"] == expected_bars
+            assert loaded["klines"] == expected_klines
+            assert not loaded.get("books") and not loaded.get("oi") and not loaded.get("funding")
+            return {"spot": {"W1H": {"direction": "BUY"}}, "relative": {"close_1h_price": "101.1"}}
+
+        provider = bind_evaluator(monkeypatch, service_repo, evaluate, conditions=True)
         result = await truth.condition_values("E", "T", packet["cutoff"], req)
     assert result["spot"]["W1H"]["direction"] == "BUY"
     assert Decimal(result["relative"]["close_1h_price"]) == Decimal("101.1")
     assert set(reads) == {"mkt.flow_bars_1m", "mkt.klines_1m"}
     assert "mta_id" not in result
+
 
 
 @pytest.mark.parametrize(
@@ -539,7 +590,7 @@ def test_composite_conditions_change_from_unknown_when_actual_evidence_arrives()
 
 
 @pytest.mark.asyncio
-async def test_selective_relative_uses_canonical_latest_beneficiary_direction():
+async def test_selective_relative_uses_canonical_latest_beneficiary_direction(monkeypatch):
     packet = snapshot()
 
     class Repo:
@@ -548,6 +599,7 @@ async def test_selective_relative_uses_canonical_latest_beneficiary_direction():
 
         async def list(self, collection, **kwargs):
             assert collection == "evt.beneficiary_edges"
+            assert kwargs == {"filters": {"event_id": "E", "token_id": "T"}, "limit": 10000}
             return [
                 {"map_version": 1, "edge_id": "old", "role": "BENEFICIARY"},
                 {"map_version": 2, "edge_id": "new", "role": "LOSER"},
@@ -560,8 +612,18 @@ async def test_selective_relative_uses_canonical_latest_beneficiary_direction():
         async def condition_snapshot(self, *args, **kwargs):
             return deepcopy(packet)
 
+    repo = Repo()
+
+    async def evaluate(client, loaded, requirements, config=None, *, cache):
+        assert_input(client, loaded, config, provider,
+                     dict(deepcopy(packet), event_id="E", token_id="T", expected_direction="LOSER"), ("t", "t"))
+        assert requirements == [{"metric": "price.repricing_band", "window": "EVENT"}]
+        assert cache is service._condition_cache
+        return {"relative": {"expected_direction": "LOSER", "repricing_band": "UNPRICED"}}
+
+    provider = bind_evaluator(monkeypatch, repo, evaluate, conditions=True)
     service = module.MarketTruthService(
-        Repo(), SimpleNamespace(config_version="t", code_version="t"), Market()
+        repo, SimpleNamespace(config_version="t", code_version="t"), Market()
     )
     actual = await service.condition_values(
         "E", "T", packet["cutoff"], [{"metric": "price.repricing_band", "window": "EVENT"}]
@@ -571,6 +633,7 @@ async def test_selective_relative_uses_canonical_latest_beneficiary_direction():
     )
     assert actual["relative"]["expected_direction"] == "LOSER"
     assert actual["relative"]["repricing_band"] == expected["relative"]["repricing_band"]
+
 
 
 def test_beneficiary_direction_invalidates_market_head_cache():

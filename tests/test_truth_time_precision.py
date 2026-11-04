@@ -1,8 +1,10 @@
 """TDD §0 timestamp siblings distinguish chosen bounds from source provenance."""
 
+from copy import deepcopy
 from types import SimpleNamespace
 
 import pytest
+from truth_service_unit_seam import assert_input, bind_evaluator
 from test_truth_start_fixture import synthetic_start_snapshot
 
 from tank.analysis.truth import MarketTruthService, compute_market_truth
@@ -64,15 +66,18 @@ def test_pure_truth_selected_bounds_exact_and_source_precision_propagated():
 
 
 @pytest.mark.asyncio
-async def test_actual_service_preserves_event_public_and_anchor_precision_without_iso_inference():
+async def test_actual_service_preserves_event_public_and_anchor_precision_without_iso_inference(monkeypatch):
     event = {"public_at": "2026-10-16T08:00:00Z", "public_at_prec": "BUCKET(1h)"}
 
     class Repo:
         async def get(self, *args):
+            assert args == ("evt.events", "E")
             return event
 
         async def put(self, *args, **kwargs):
-            pass
+            assert args[0] == "ana.market_truth" and args[1] == args[2]["mta_id"]
+            assert kwargs == {"immutable": True}
+            writes.append(deepcopy(args[2]))
 
     class Market:
         async def snapshot(self, token_id, cutoff, anchor=None):
@@ -80,17 +85,42 @@ async def test_actual_service_preserves_event_public_and_anchor_precision_withou
             value["anchor"] = anchor
             return value
 
+    repo = Repo()
+    inputs, writes = [], []
+
+    async def evaluate(client, snapshot, config=None):
+        expected = packet()
+        expected.update(event_id="E", token_id="T", event_public_at="2026-10-16T08:00:00Z")
+        anchor = {"type": "T1", "ts": "2026-10-16T08:00:00Z"}
+        if not inputs:
+            anchor.update(ts_prec="BUCKET(1h)", ts_prec_reason=None)
+            expected.update(event_public_at_prec="BUCKET(1h)", event_public_at_prec_reason=None)
+        else:
+            anchor.update(ts_prec=None, ts_prec_reason="INCOMPLETE")
+            expected.update(event_public_at_prec=None, event_public_at_prec_reason="INCOMPLETE")
+        expected["anchor"] = anchor
+        assert_input(client, snapshot, config, provider, expected, ("t", "t"))
+        inputs.append(deepcopy(snapshot))
+        return {"event_public_at_prec": snapshot["event_public_at_prec"],
+                "relative": {"anchor": deepcopy(snapshot["anchor"])}}
+
+    provider = bind_evaluator(monkeypatch, repo, evaluate)
     result = await MarketTruthService(
-        Repo(), SimpleNamespace(config_version="t", code_version="t"), Market()
+        repo, SimpleNamespace(config_version="t", code_version="t"), Market()
     ).assess("E", "T", "2026-10-16T12:00:00Z")
     assert result["event_public_at_prec"] == "BUCKET(1h)"
     assert result["relative"]["anchor"]["ts_prec"] == "BUCKET(1h)"
     del event["public_at_prec"]
     legacy = await MarketTruthService(
-        Repo(), SimpleNamespace(config_version="t", code_version="t"), Market()
+        repo, SimpleNamespace(config_version="t", code_version="t"), Market()
     ).assess("E", "T", "2026-10-16T12:00:00Z")
     assert legacy["event_public_at_prec"] is None
     assert legacy["relative"]["anchor"]["ts_prec"] is None
+
+    assert writes == [result, legacy]
+    assert result["mta_id"] != legacy["mta_id"]
+    assert len(inputs) == 2
+
 
 
 @pytest.mark.parametrize("precision", ["BUCKET(1h)", None])

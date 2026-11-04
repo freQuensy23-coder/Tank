@@ -18,6 +18,7 @@ from test_event_tools import complete_assessment_fixture, complete_event_fixture
 from test_session_binding_concurrency import fixture_repo
 from test_session_binding_concurrency import seed as seed_typed_session
 from test_truth_start_fixture import compact_start_snapshot
+from truth_native_memory_dependencies import native_memory_analytics
 
 from tank.agents import SessionService
 from tank.analysis.decisions import DecisionEngine
@@ -125,7 +126,7 @@ async def persisted_ids(repo):
 
 
 @asynccontextmanager
-async def _refresh_repository(backend, postgres_template):
+async def _refresh_repository(backend, postgres_template, monkeypatch, request):
     if backend == "postgres":
         url = os.getenv("TANK_TEST_DATABASE_URL")
         if not url:
@@ -133,7 +134,7 @@ async def _refresh_repository(backend, postgres_template):
         async with postgres_template.repository(url) as repo:
             yield repo
     else:
-        async with fixture_repo(backend) as repo:
+        async with native_memory_analytics(monkeypatch, request), fixture_repo(backend) as repo:
             yield repo
 
 
@@ -184,9 +185,9 @@ async def seed_domain(repo, settings, end):
     "backend", ["memory", pytest.param("postgres", marks=[pytest.mark.integration, pytest.mark.postgres])]
 )
 async def test_wait_data_watch_refreshes_truth_before_decision_and_replays_lost_ack(
-    tmp_path, backend, postgres_template, monkeypatch
+    tmp_path, backend, postgres_template, monkeypatch, request
 ):
-    async with _refresh_repository(backend, postgres_template) as repo:
+    async with _refresh_repository(backend, postgres_template, monkeypatch, request) as repo:
         settings = Settings(data_dir=tmp_path, _env_file=None)
         end = utcnow().replace(second=0, microsecond=0)
         logical_now = [end]
@@ -343,9 +344,9 @@ async def test_runtime_checks_the_capture_at_t1_before_a_scheduled_t0():
 )
 @pytest.mark.integration
 async def test_cancelled_preflight_reuses_job_before_any_decision_ledger(
-    tmp_path, backend, postgres_template
+    tmp_path, backend, postgres_template, monkeypatch, request
 ):
-    async with _refresh_repository(backend, postgres_template) as repo:
+    async with _refresh_repository(backend, postgres_template, monkeypatch, request) as repo:
         settings = Settings(data_dir=tmp_path, _env_file=None)
         end = utcnow().replace(second=0, microsecond=0)
         market = ReleasedMarket(shifted_snapshot(end, full_flow_history=False))
@@ -417,9 +418,9 @@ async def test_cancelled_preflight_reuses_job_before_any_decision_ledger(
 )
 @pytest.mark.integration
 async def test_condition_firing_during_refresh_wait_is_deferred_until_its_own_refresh(
-    tmp_path, backend, postgres_template
+    tmp_path, backend, postgres_template, monkeypatch, request
 ):
-    async with _refresh_repository(backend, postgres_template) as repo:
+    async with _refresh_repository(backend, postgres_template, monkeypatch, request) as repo:
         settings = Settings(data_dir=tmp_path, _env_file=None)
         end = utcnow().replace(second=0, microsecond=0)
 
@@ -518,49 +519,52 @@ async def test_condition_firing_during_refresh_wait_is_deferred_until_its_own_re
     ],
 )
 @pytest.mark.integration
-async def test_event_only_risk_watch_never_waits_for_market_refresh(tmp_path, role, metric, value, expected):
-    repo = MemoryRepository()
-    settings = Settings(data_dir=tmp_path, _env_file=None)
-    end = utcnow().replace(second=0, microsecond=0)
-    market = ReleasedMarket(shifted_snapshot(end, full_flow_history=False))
-    truth = MarketTruthService(repo, settings, market)
-    tools = EventToolService(repo, settings, truth, DecisionEngine())
-    await seed_domain(repo, settings, end)
-    first = await truth.assess("e", "T", chosen_boundary(end - timedelta(minutes=1), precision="BUCKET(1m)"))
-    await repo.put(
-        "ana.calls",
-        "open",
-        {
-            "call_id": "open",
-            "event_id": "e",
-            "token_id": "T",
-            "status": "OPEN",
-            "opened_at": iso(),
-            "opened_at_prec": "COLLECTION_ONLY",
-            "invalidation_price": "90",
-        },
-    )
-    await repo.put(
-        "ana.watch_conditions",
-        "risk",
-        {
-            "cond_id": "risk",
-            "event_id": "e",
-            "token_id": "T",
-            "role": role,
-            "status": "FIRED",
-            "expr": {"metric": metric, "op": "==", "value": value},
-            "created_at": iso(),
-            "fired_at": iso(),
-            "expires_at": iso(end + timedelta(days=1)),
-        },
-    )
-    tools.get_market_truth = AsyncMock(
-        side_effect=AssertionError("Event risk cannot depend on unavailable market")
-    )
-    result = await tools.dispatch("get_decision", {"event_id": "e", "token_id": "T"}, {})
-    assert result["action"] == expected
-    assert result["mta_id"] == first["mta_id"]
-    tools.get_market_truth.assert_not_called()
-    assert (await repo.get("ana.watch_conditions", "risk"))["consumed_by"] == result["dec_id"]
-    assert not await repo.list("ops.jobs")
+async def test_event_only_risk_watch_never_waits_for_market_refresh(
+    tmp_path, role, metric, value, expected, monkeypatch, request
+):
+    async with native_memory_analytics(monkeypatch, request):
+        repo = MemoryRepository()
+        settings = Settings(data_dir=tmp_path, _env_file=None)
+        end = utcnow().replace(second=0, microsecond=0)
+        market = ReleasedMarket(shifted_snapshot(end, full_flow_history=False))
+        truth = MarketTruthService(repo, settings, market)
+        tools = EventToolService(repo, settings, truth, DecisionEngine())
+        await seed_domain(repo, settings, end)
+        first = await truth.assess("e", "T", chosen_boundary(end - timedelta(minutes=1), precision="BUCKET(1m)"))
+        await repo.put(
+            "ana.calls",
+            "open",
+            {
+                "call_id": "open",
+                "event_id": "e",
+                "token_id": "T",
+                "status": "OPEN",
+                "opened_at": iso(),
+                "opened_at_prec": "COLLECTION_ONLY",
+                "invalidation_price": "90",
+            },
+        )
+        await repo.put(
+            "ana.watch_conditions",
+            "risk",
+            {
+                "cond_id": "risk",
+                "event_id": "e",
+                "token_id": "T",
+                "role": role,
+                "status": "FIRED",
+                "expr": {"metric": metric, "op": "==", "value": value},
+                "created_at": iso(),
+                "fired_at": iso(),
+                "expires_at": iso(end + timedelta(days=1)),
+            },
+        )
+        tools.get_market_truth = AsyncMock(
+            side_effect=AssertionError("Event risk cannot depend on unavailable market")
+        )
+        result = await tools.dispatch("get_decision", {"event_id": "e", "token_id": "T"}, {})
+        assert result["action"] == expected
+        assert result["mta_id"] == first["mta_id"]
+        tools.get_market_truth.assert_not_called()
+        assert (await repo.get("ana.watch_conditions", "risk"))["consumed_by"] == result["dec_id"]
+        assert not await repo.list("ops.jobs")
