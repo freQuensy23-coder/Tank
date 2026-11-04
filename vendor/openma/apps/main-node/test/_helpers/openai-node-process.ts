@@ -2,14 +2,19 @@ import { createServer } from "node:http";
 import { spawn, type ChildProcess } from "node:child_process";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
+import { createRequire } from "node:module";
 import type { Socket } from "node:net";
 import OpenAI from "openai";
 import { detachedProcessOptions, killProcessTree } from "../helpers/process-tree";
 
 export type ModelReply = { text: string } | { name: string; input: Record<string, unknown> } | null;
 export type OpenAINodeModel = (input: Record<string, any>) => Promise<ModelReply> | ModelReply;
-export interface OpenAINodeOptions { startupTimeoutMs?: number }
+export interface OpenAINodeOptions {
+  startupTimeoutMs?: number;
+  native?: { rootfsPath(): string; runtimeDirectory: string; stopTimeoutMs: number };
+}
 
 export interface OpenAINodeProcess {
   /** These getters follow the new listening port after restart(). */
@@ -20,6 +25,7 @@ export interface OpenAINodeProcess {
   readonly logs: string[];
   /** Kill the Node process, then start it against the same native SQLite/blob data. */
   restart(): Promise<void>;
+  stop(): Promise<void>;
   dispose(): Promise<void>;
 }
 
@@ -35,7 +41,7 @@ function defaultReply(input: Record<string, any>): ModelReply {
  * Callers own cleanup: register fixture.dispose() in their afterEach/finally.
  * No Vitest hooks are registered here, so fixtures cannot affect other files. */
 export async function bootOpenAINode(reply: OpenAINodeModel = defaultReply, options: OpenAINodeOptions = {}): Promise<OpenAINodeProcess> {
-  const root = resolve(__dirname, "../../../..");
+  const root = resolve(dirname(fileURLToPath(import.meta.url)), "../../../..");
   const directory = await mkdtemp(join(tmpdir(), "openma-openai-node-"));
   const requests: Array<Record<string, any>> = [];
   const logs: string[] = [];
@@ -89,7 +95,24 @@ export async function bootOpenAINode(reply: OpenAINodeModel = defaultReply, opti
   };
   const stop = async () => {
     if (processHandle !== undefined) {
-      if (processHandle.pid !== undefined) await killProcessTree(processHandle);
+      if (processHandle.pid !== undefined) {
+        if (options.native === undefined) await killProcessTree(processHandle);
+        else {
+          let timer: ReturnType<typeof setTimeout> | undefined;
+          try {
+            await Promise.race([
+              killProcessTree(processHandle, "SIGTERM"),
+              new Promise<never>((_, reject) => {
+                timer = setTimeout(() => reject(new Error("Native controller did not stop cleanly")), options.native!.stopTimeoutMs);
+              }),
+            ]);
+            if (processHandle.exitCode !== 0) throw new Error("Native controller shutdown was not successful");
+          } catch (error) {
+            await killProcessTree(processHandle);
+            throw error;
+          } finally { clearTimeout(timer); }
+        }
+      }
       processHandle = undefined;
     }
     disconnectModelClients();
@@ -123,12 +146,23 @@ export async function bootOpenAINode(reply: OpenAINodeModel = defaultReply, opti
     const start = async () => {
       const currentLogs: string[] = [];
       let spawnError: Error | undefined;
-      const child = spawn(join(root, "apps/main-node/node_modules/.bin/tsx"), [join(root, "apps/main-node/src/index.ts")], {
+      const entry = join(root, "apps/main-node/src/index.ts");
+      const executable = options.native === undefined ? join(root, "apps/main-node/node_modules/.bin/tsx") : process.execPath;
+      const args = options.native === undefined ? [entry] : ["--import", createRequire(join(root, "apps/main-node/package.json")).resolve("tsx"), entry];
+      const child = spawn(executable, args, {
         ...detachedProcessOptions, cwd: root, env: {
           ...inherited, PORT: "0", HOST: "127.0.0.1", DATABASE_URL: "", OPENMA_PROCESS_MODE: "standalone",
           DATABASE_PATH: join(directory, "oma.db"), AUTH_DATABASE_PATH: join(directory, "auth.db"), SANDBOX_WORKDIR: join(directory, "sandboxes"), MEMORY_BLOB_DIR: join(directory, "memories"), FILES_BLOB_DIR: join(directory, "files"), SESSION_OUTPUTS_DIR: join(directory, "outputs"),
           AUTH_DISABLED: "1", PLATFORM_ROOT_SECRET: "openai-node-test-configuration-secret", NODE_ENV: "test", DREAM_CURATOR_MODE: "dedup", ANTHROPIC_API_KEY: "local-test-model-key", ANTHROPIC_BASE_URL: `http://127.0.0.1:${modelPort}`,
           MEMORY_S3_ENDPOINT: "", FILES_S3_ENDPOINT: "", SANDBOX_PROVIDER: "litebox",
+          ...(options.native === undefined ? {} : {
+            BOXLITE_HOME: join(directory, "boxlite"),
+            BOXLITE_RUNTIME_DIR: options.native.runtimeDirectory,
+            LD_LIBRARY_PATH: options.native.runtimeDirectory,
+            SANDBOX_IMAGE: "native-context-test-owned",
+            SANDBOX_ROOTFS_PATH: options.native.rootfsPath(),
+            LITEBOX_CPUS: "1", LITEBOX_MEMORY_MIB: "2048",
+          }),
         }, stdio: ["ignore", "pipe", "pipe"],
       });
       processHandle = child;
@@ -160,6 +194,11 @@ export async function bootOpenAINode(reply: OpenAINodeModel = defaultReply, opti
       restart() {
         if (disposed) return Promise.reject(new Error("Cannot restart a disposed Node fixture"));
         lifecycle = lifecycle.then(async () => { await stop(); await start(); });
+        return lifecycle;
+      },
+      stop() {
+        if (disposed) return Promise.reject(new Error("Cannot stop a disposed Node fixture"));
+        lifecycle = lifecycle.then(stop);
         return lifecycle;
       },
       dispose,
