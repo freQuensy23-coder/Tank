@@ -157,7 +157,7 @@ async def test_real_record_and_followup_tools_take_ids_and_reply_without_them(co
 
     def receive(request):
         requests.append(json.loads(request.content))
-        return httpx.Response(200, json={"data": []})
+        return httpx.Response(200, json={"data": [{"id": request.headers["idempotency-key"]}]})
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(receive)) as http:
         service = SessionService(repo, settings, tools.dispatch, http=http)
@@ -495,7 +495,7 @@ async def test_merge_into_by_event_id_works_when_the_session_never_displayed_the
 
     def receive(request):
         posts.append(json.loads(request.content))
-        return httpx.Response(200, json={"data": []})
+        return httpx.Response(200, json={"data": [{"id": request.headers["idempotency-key"]}]})
 
     tools = EventToolService(repo, settings, None, None)
     async with httpx.AsyncClient(transport=httpx.MockTransport(receive)) as http:
@@ -708,7 +708,7 @@ async def test_real_domain_refusal_uses_display_names_and_keeps_raw_audit(contex
 
     def receive(request):
         posts.append(json.loads(request.content))
-        return httpx.Response(200, json={"data": []})
+        return httpx.Response(200, json={"data": [{"id": request.headers["idempotency-key"]}]})
 
     tools = EventToolService(repo, settings, None, None)
     async with httpx.AsyncClient(transport=httpx.MockTransport(receive)) as http:
@@ -938,7 +938,7 @@ async def test_milestone_callback_confirms_from_the_fetched_official_document_by
                 200, text=f"<html><body>{quote}</body></html>", headers={"content-type": "text/html"}
             )
         posts.append(json.loads(request.content))
-        return httpx.Response(200, json={"data": []})
+        return httpx.Response(200, json={"data": [{"id": request.headers["idempotency-key"]}]})
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(receive)) as http:
         domain = EventToolService(repo, settings, None, None, http=http)

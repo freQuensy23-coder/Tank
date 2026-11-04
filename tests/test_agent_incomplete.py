@@ -303,7 +303,9 @@ async def test_a_retained_session_receives_changed_tool_schemas_at_its_next_inpu
             return httpx.Response(200, json={"id": "kept", "status": "idle", "agent": {"id": "agt"}})
         if request.method == "GET":
             return httpx.Response(200, json={"data": [], "next_page": None})
-        return httpx.Response(200, json={"id": "evt-input"})
+        if request.url.path.endswith("/events"):
+            return httpx.Response(200, json={"data": [{"id": request.headers["idempotency-key"]}]})
+        return httpx.Response(200, json={"id": "kept"})
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http:
         service = SessionService(repo, settings, lambda *args: None, http=http)
@@ -392,7 +394,7 @@ async def test_session_failure_on_a_reminded_item_fails_it_as_session_failed_and
 
     def transport(request):
         posts.append(json.loads(request.content))
-        return httpx.Response(200, json={})
+        return httpx.Response(200, json={"data": [{"id": request.headers["idempotency-key"]}]})
 
     error = {
         "id": "native-error",
