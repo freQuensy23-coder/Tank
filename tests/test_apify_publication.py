@@ -346,9 +346,7 @@ docker() {
         if mode != "post_finish_crash":
             assert list(tmp_path.glob(".deploy-images.*")) == []
         if cleanup_mode:
-            commands = [
-                json.loads(line) for line in (tmp_path / "image-commands").read_text().splitlines()
-            ]
+            commands = [json.loads(line) for line in (tmp_path / "image-commands").read_text().splitlines()]
             assert commands[0] == ["image", "ls", "--format", "{{.Repository}}:{{.Tag}}"]
             assert all(command[0] == "rmi" and len(command) > 1 for command in commands[1:])
             assert [image for command in commands[1:] for image in command[1:]] == selected
