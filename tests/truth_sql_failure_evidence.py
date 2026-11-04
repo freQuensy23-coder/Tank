@@ -437,7 +437,7 @@ _OBSERVER_INSTANCES = itertools.count()
 def _liquidity_observation(nodeid, query):
     if nodeid == _LIQUIDITY_BASELINE:
         if hashlib.sha256(query.encode()).hexdigest() == (
-            "0fab638e168c4c8f0f6b601b05e4cf2f8a00d65ebf429cae18c606da8b56c897"
+            "afcb52a01ebe4efde352422f78015300c0153b142b90807f37f1491fdb9a5f7c"
         ):
             return "baseline"
         return None

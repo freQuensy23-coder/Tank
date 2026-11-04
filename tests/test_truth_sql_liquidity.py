@@ -970,9 +970,7 @@ async def test_native_relational_root_demanded_refusals(native_client, original_
         await native_client.rows(statement, parameters)
 
 
-async def test_native_relational_root_filtered_ordinals_and_duplicate_series(
-    native_client, original_truth
-):
+async def test_native_relational_root_filtered_ordinals_and_duplicate_series(native_client, original_truth):
     snapshot, spot, relative = _packet()
     b0, b1, a0, a1 = snapshot["books"]
     foreign = dict(b0, token_id="OTHER", exchange_ts="invalid")
@@ -1061,7 +1059,9 @@ async def test_native_relational_root_first_present_timestamp(native_client, ori
     assert original_truth._observation_time(book) == parse_time("2026-10-16T12:00:00Z")
     _, parameters = query(snapshot, spot=spot, relative=relative)
     rows = await native_client.rows(
-        "WITH " + ctes() + " SELECT arrayMap(book -> tuple(lq_iso(book.1), book.2, book.4), ordered_books) AS value FROM lq_book_ordinals",
+        "WITH "
+        + ctes()
+        + " SELECT arrayMap(book -> tuple(lq_iso(book.1), book.2, book.4), ordered_books) AS value FROM lq_book_ordinals",
         parameters,
     )
     assert rows == [{"value": [["2026-10-16T12:00:00Z", 1, "B"]]}]

@@ -857,10 +857,38 @@ async def test_real_native_large_multipart_values(request):
 
 
 @pytest.mark.parametrize("status", [200, 500])
-async def test_ci_native_deep_summary_preserves_original_response(native_observer_receipts, status):
+@pytest.mark.parametrize("decoder_failure", [False, True])
+async def test_ci_native_deep_summary_preserves_original_response(
+    native_observer_receipts, monkeypatch, status, decoder_failure
+):
     nodeid, query = synthetic_phase_request()
     summary = '{"unknownSecretName":' + "[" * 2000 + '"credentialPrefix;credentialSuffix"' + "]" * 2000 + "}"
     assert len(summary) < 16384
+    original_loads = json.loads
+    try:
+        original_loads(summary)
+    except RecursionError:
+        expected_summary = {"status": "invalid"}
+    else:
+        expected_summary = {
+            "status": "observed",
+            "read_rows_present": 0,
+            "read_bytes_present": 0,
+            "written_rows_present": 0,
+            "written_bytes_present": 0,
+            "total_rows_to_read_present": 0,
+            "result_rows_present": 0,
+            "result_bytes_present": 0,
+            "elapsed_ns_present": 0,
+        }
+    if decoder_failure:
+        def decode(value, *args, **kwargs):
+            if value == summary:
+                raise RecursionError("privateRecursionPrefix;privateRecursionSuffix")
+            return original_loads(value, *args, **kwargs)
+
+        monkeypatch.setattr(json, "loads", decode)
+        expected_summary = {"status": "invalid"}
     calls = []
 
     def respond(request):
@@ -885,9 +913,17 @@ async def test_ci_native_deep_summary_preserves_original_response(native_observe
         assert client._evidence_query is None
     receipts = native_receipts(native_observer_receipts)
     assert len(calls) == len(receipts) == 1
-    assert receipts[0]["summary"] == {"status": "invalid"}
+    assert receipts[0]["summary"] == expected_summary
     assert receipts[0]["outcome"] == ("decoded" if status == 200 else "exception")
     assert receipts[0]["own_query"] == {"status": "not_requested"}
     persisted = "".join(path.read_text() for path in native_observer_receipts.iterdir())
-    for forbidden in ("unknownSecretName", "credentialPrefix", "credentialSuffix", summary, query):
+    for forbidden in (
+        "unknownSecretName",
+        "credentialPrefix",
+        "credentialSuffix",
+        "privateRecursionPrefix",
+        "privateRecursionSuffix",
+        summary,
+        query,
+    ):
         assert forbidden not in persisted
