@@ -113,8 +113,8 @@ def test_query_redaction_removes_each_credential_piece_and_preserves_safe_neighb
     "value,replacement,boundary",
     [
         (
-            "\"query-prefix,query-suffix;query-tail\"",
-            "\"[REDACTED]\"",
+            '"query-prefix,query-suffix;query-tail"',
+            '"[REDACTED]"',
             "&detail=after+%2C%3B\r\nsafe body",
         ),
         (
@@ -123,8 +123,8 @@ def test_query_redaction_removes_each_credential_piece_and_preserves_safe_neighb
             "&detail=after+%2C%3B\r\nsafe body",
         ),
         (
-            "\"query-prefix\\\",query-suffix;query-tail\"",
-            "\"[REDACTED]\"",
+            '"query-prefix\\",query-suffix;query-tail"',
+            '"[REDACTED]"',
             "&detail=after+%2C%3B\r\nsafe body",
         ),
         (
@@ -133,13 +133,13 @@ def test_query_redaction_removes_each_credential_piece_and_preserves_safe_neighb
             "&detail=after+%2C%3B\r\nsafe body",
         ),
         (
-            "\"query-prefix&inner=query-suffix;query-tail\"",
-            "\"[REDACTED]\"",
+            '"query-prefix&inner=query-suffix;query-tail"',
+            '"[REDACTED]"',
             "&detail=after+%2C%3B\r\nsafe body",
         ),
         (
-            "Basic \"query-prefix,query-suffix;query-tail\"",
-            "\"[REDACTED]\"",
+            'Basic "query-prefix,query-suffix;query-tail"',
+            '"[REDACTED]"',
             "&detail=after+%2C%3B\r\nsafe body",
         ),
         (
@@ -148,23 +148,23 @@ def test_query_redaction_removes_each_credential_piece_and_preserves_safe_neighb
             "&detail=after+%2C%3B\r\nsafe body",
         ),
         (
-            "Bearer\n\"query-prefix,query-suffix;query-tail\"",
-            "\"[REDACTED]\"",
+            'Bearer\n"query-prefix,query-suffix;query-tail"',
+            '"[REDACTED]"',
             "&detail=after+%2C%3B\r\nsafe body",
         ),
         (
-            " \t\"query-prefix,query-suffix;query-tail\"",
-            "\"[REDACTED]\"",
+            ' \t"query-prefix,query-suffix;query-tail"',
+            '"[REDACTED]"',
             "&detail=after+%2C%3B\r\nsafe body",
         ),
         (
-            "\"query-prefix,query-suffix;query-tail",
-            "\"[REDACTED]",
+            '"query-prefix,query-suffix;query-tail',
+            '"[REDACTED]',
             "\r\nsafe body",
         ),
         (
-            "\"\"",
-            "\"[REDACTED]\"",
+            '""',
+            '"[REDACTED]"',
             "&detail=after+%2C%3B\r\nsafe body",
         ),
         (
@@ -173,8 +173,8 @@ def test_query_redaction_removes_each_credential_piece_and_preserves_safe_neighb
             "&detail=after+%2C%3B\r\nsafe body",
         ),
         (
-            "Basic \"\"",
-            "\"[REDACTED]\"",
+            'Basic ""',
+            '"[REDACTED]"',
             "&detail=after+%2C%3B\r\nsafe body",
         ),
         (

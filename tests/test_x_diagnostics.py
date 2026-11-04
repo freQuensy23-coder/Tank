@@ -536,9 +536,7 @@ def test_unredacted_query_suffixes_are_removed_at_consumer_boundary(encoding, sc
     assert [attachment["content"] for attachment in attachments[:3]] == [expected] * 3
     assert len(attachments) == 4
     for response in (attempt["response"] for attempt in clean["attempts"]):
-        content = (
-            base64.b64decode(response["body"]) if encoding == "base64" else response["body"].encode()
-        )
+        content = base64.b64decode(response["body"]) if encoding == "base64" else response["body"].encode()
         assert content == expected
         assert response["bodyEncoding"] == encoding
         assert response["bodyBytes"] == len(expected)
@@ -583,8 +581,8 @@ def test_query_consumer_preserves_legacy_header_delimiters(encoding):
     "value,replacement,boundary",
     [
         (
-            "\"query-prefix,query-suffix;query-tail\"",
-            "\"[REDACTED]\"",
+            '"query-prefix,query-suffix;query-tail"',
+            '"[REDACTED]"',
             "&detail=after+%2C%3B\r\nsafe body",
         ),
         (
@@ -593,8 +591,8 @@ def test_query_consumer_preserves_legacy_header_delimiters(encoding):
             "&detail=after+%2C%3B\r\nsafe body",
         ),
         (
-            "\"query-prefix\\\",query-suffix;query-tail\"",
-            "\"[REDACTED]\"",
+            '"query-prefix\\",query-suffix;query-tail"',
+            '"[REDACTED]"',
             "&detail=after+%2C%3B\r\nsafe body",
         ),
         (
@@ -603,13 +601,13 @@ def test_query_consumer_preserves_legacy_header_delimiters(encoding):
             "&detail=after+%2C%3B\r\nsafe body",
         ),
         (
-            "\"query-prefix&inner=query-suffix;query-tail\"",
-            "\"[REDACTED]\"",
+            '"query-prefix&inner=query-suffix;query-tail"',
+            '"[REDACTED]"',
             "&detail=after+%2C%3B\r\nsafe body",
         ),
         (
-            "Basic \"query-prefix,query-suffix;query-tail\"",
-            "\"[REDACTED]\"",
+            'Basic "query-prefix,query-suffix;query-tail"',
+            '"[REDACTED]"',
             "&detail=after+%2C%3B\r\nsafe body",
         ),
         (
@@ -618,23 +616,23 @@ def test_query_consumer_preserves_legacy_header_delimiters(encoding):
             "&detail=after+%2C%3B\r\nsafe body",
         ),
         (
-            "Bearer\n\"query-prefix,query-suffix;query-tail\"",
-            "\"[REDACTED]\"",
+            'Bearer\n"query-prefix,query-suffix;query-tail"',
+            '"[REDACTED]"',
             "&detail=after+%2C%3B\r\nsafe body",
         ),
         (
-            " \t\"query-prefix,query-suffix;query-tail\"",
-            "\"[REDACTED]\"",
+            ' \t"query-prefix,query-suffix;query-tail"',
+            '"[REDACTED]"',
             "&detail=after+%2C%3B\r\nsafe body",
         ),
         (
-            "\"query-prefix,query-suffix;query-tail",
-            "\"[REDACTED]",
+            '"query-prefix,query-suffix;query-tail',
+            '"[REDACTED]',
             "\r\nsafe body",
         ),
         (
-            "\"\"",
-            "\"[REDACTED]\"",
+            '""',
+            '"[REDACTED]"',
             "&detail=after+%2C%3B\r\nsafe body",
         ),
         (
@@ -643,8 +641,8 @@ def test_query_consumer_preserves_legacy_header_delimiters(encoding):
             "&detail=after+%2C%3B\r\nsafe body",
         ),
         (
-            "Basic \"\"",
-            "\"[REDACTED]\"",
+            'Basic ""',
+            '"[REDACTED]"',
             "&detail=after+%2C%3B\r\nsafe body",
         ),
         (
@@ -693,9 +691,7 @@ def test_unredacted_query_value_grammar_is_safe_at_consumer_boundary(
     assert [attachment["content"] for attachment in attachments[:3]] == [expected] * 3
     assert len(attachments) == 4
     for response in (attempt["response"] for attempt in clean["attempts"]):
-        content = (
-            base64.b64decode(response["body"]) if encoding == "base64" else response["body"].encode()
-        )
+        content = base64.b64decode(response["body"]) if encoding == "base64" else response["body"].encode()
         assert content == expected
         assert response["bodyEncoding"] == encoding
         assert response["bodyBytes"] == len(expected)

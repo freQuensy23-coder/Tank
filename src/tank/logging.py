@@ -22,13 +22,9 @@ def redact_text(value: str, secrets: tuple[str, ...] = ()) -> str:
         r"[^&\s'\"<>]+|(?=[&\s<>]|$))",
         lambda match: (
             match[1]
-            + (match[2][:1] if match[2][:1] in ("\"", "'") else "")
+            + (match[2][:1] if match[2][:1] in ('"', "'") else "")
             + "[REDACTED]"
-            + (
-                match[2][:1]
-                if match[2][:1] in ("\"", "'") and match[2][-1:] == match[2][:1]
-                else ""
-            )
+            + (match[2][:1] if match[2][:1] in ('"', "'") and match[2][-1:] == match[2][:1] else "")
         ),
         text,
     )

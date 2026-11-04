@@ -156,9 +156,7 @@ async def test_jsonb_query_credentials_redact_suffixes_before_manifest_and_wire_
         assert saved["document_manifest"][:3] == [
             {"filename": filename, "sha256": digest, "bytes": len(expected)} for filename in filenames
         ]
-        responses = [
-            attempt["response"] for attempt in saved["entry_errors"][0]["diagnostics"]["attempts"]
-        ]
+        responses = [attempt["response"] for attempt in saved["entry_errors"][0]["diagnostics"]["attempts"]]
         for response in responses:
             persisted_body = (
                 base64.b64decode(response["body"], validate=True)
@@ -210,9 +208,7 @@ async def test_jsonb_query_credentials_redact_suffixes_before_manifest_and_wire_
         ]
         assert len(parents) == 1 and len(receipts) == 4
         assert all(row["message_ref"] and row["chat_id"] == "ops" and row["attempt"] == 1 for row in receipts)
-        assert {
-            row["filename"]: (row["document_sha256"], row["document_bytes"]) for row in receipts
-        } == {
+        assert {row["filename"]: (row["document_sha256"], row["document_bytes"]) for row in receipts} == {
             item["filename"]: (item["sha256"], item["bytes"]) for item in saved["document_manifest"]
         }
         assert all(row["request_reply_to_message_ref"] == parents[0]["message_ref"] for row in receipts)

@@ -207,9 +207,7 @@ async def test_real_actor_http_redacts_query_credential_suffixes_before_consumer
         expected += b"\x00\xff"
     state["body"] = raw
     async with httpx.AsyncClient(timeout=20) as http:
-        response = await http.post(
-            origin + "/actor", json={"handles": ["alice"], "cursors": {"alice": "90"}}
-        )
+        response = await http.post(origin + "/actor", json={"handles": ["alice"], "cursors": {"alice": "90"}})
     assert response.status_code == 201
     output = response.json()
     assert output["health"] == "failed" and output["posts"] == []
@@ -230,10 +228,7 @@ async def test_real_actor_http_redacts_query_credential_suffixes_before_consumer
         assert captured["bodySha256"] == hashlib.sha256(expected).hexdigest()
         assert captured["redacted"] and not captured["bodyTruncated"]
         assert captured["status"] == 503
-        assert all(
-            piece not in body and piece not in response.content
-            for piece in secret_pieces
-        )
+        assert all(piece not in body and piece not in response.content for piece in secret_pieces)
     assert state["telegram"] == []
 
 
