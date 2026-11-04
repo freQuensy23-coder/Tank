@@ -738,6 +738,54 @@ async def test_native_all_liquidity_windows_are_one_select(native_client, origin
     _assert_complete(actual, expected)
 
 
+@pytest.mark.parametrize(
+    ("relation", "source", "alias", "result"),
+    [
+        ("lq_flow_context", "lq_tier_values", "s", "ctx_flows"),
+        ("lq_book_metadata", "lq_flow_context", "c", "book_metadata"),
+        ("lq_book_times", "lq_book_metadata", "m", "book_times"),
+        ("lq_book_admitted", "lq_book_times", "t", "admitted_books"),
+        ("lq_book_ordinals", "lq_book_admitted", "a", "ordered_books"),
+    ],
+)
+def test_liquidity_book_frontier_projects_only_consumed_columns(relation, source, alias, result):
+    statement = ctes()
+    body = statement.split(relation + " AS (", 1)[1].split("\n),", 1)[0]
+    columns = (
+        "ctx_token",
+        "ctx_primary",
+        "ctx_end",
+        "ctx_start",
+        "ctx_anchor",
+        "ctx_band",
+        "ctx_band_key",
+        "ctx_band_raw",
+        "ctx_cadence",
+        "ctx_refill",
+        "ctx_resilience",
+        "ctx_all_books",
+        "ctx_all_flows",
+        "ctx_relative",
+        "lq_tiers",
+    )
+    if relation != "lq_flow_context":
+        columns += ("ctx_flows",)
+    carried = body.split("SELECT ", 1)[1].split("array", 1)[0]
+    assert tuple(item.strip() for item in carried.strip().rstrip(",").split(",")) == tuple(
+        f"{alias}.{column}" for column in columns
+    )
+    assert f" AS {result}\n    FROM {source} AS {alias}" in body
+    for stale in (
+        "lq_volume_flows",
+        "lq_buckets",
+        "lq_bucket_rows",
+        "lq_covered_buckets",
+        "lq_volumes",
+        "lq_volume_mean",
+    ):
+        assert stale not in body
+
+
 def test_liquidity_core_context_and_state_are_carried_columns():
     statement = ctes()
     prefix = statement.split("lq_input AS (", 1)[0]

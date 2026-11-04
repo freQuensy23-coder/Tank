@@ -97,7 +97,9 @@ lq_static_context AS (
 def _book_ctes():
     return r"""
 lq_flow_context AS (
-    SELECT s.*,
+    SELECT s.ctx_token, s.ctx_primary, s.ctx_end, s.ctx_start, s.ctx_anchor,
+        s.ctx_band, s.ctx_band_key, s.ctx_band_raw, s.ctx_cadence, s.ctx_refill,
+        s.ctx_resilience, s.ctx_all_books, s.ctx_all_flows, s.ctx_relative, s.lq_tiers,
         arrayConcat(arrayFilter(flow -> if(lq_is_spot(flow) AND has(s.ctx_eligible, lq_venue(flow)),
             lq_time(flow) >= s.ctx_start AND lq_time(flow) + INTERVAL 1 MINUTE <= s.ctx_end
                 AND JSONExtractRaw(flow, 'complete') = 'true', false), s.ctx_all_flows),
@@ -108,23 +110,34 @@ lq_flow_context AS (
     FROM lq_tier_values AS s
 ),
 lq_book_metadata AS (
-    SELECT c.*, arrayMap(book -> tuple(book, lq_venue(book), lq_is_spot(book),
+    SELECT c.ctx_token, c.ctx_primary, c.ctx_end, c.ctx_start, c.ctx_anchor,
+        c.ctx_band, c.ctx_band_key, c.ctx_band_raw, c.ctx_cadence, c.ctx_refill,
+        c.ctx_resilience, c.ctx_all_books, c.ctx_all_flows, c.ctx_relative, c.lq_tiers, c.ctx_flows,
+        arrayMap(book -> tuple(book, lq_venue(book), lq_is_spot(book),
         NOT JSONHas(book, 'token_id') OR JSONExtractString(book, 'token_id') = c.ctx_token,
         JSONExtractRaw(book, 'integrity_ok'), lq_time_raw(book)), c.ctx_all_books) AS book_metadata
     FROM lq_flow_context AS c
 ),
 lq_book_times AS (
-    SELECT m.*, arrayMap(book -> tuple(book.1, book.2,
+    SELECT m.ctx_token, m.ctx_primary, m.ctx_end, m.ctx_start, m.ctx_anchor,
+        m.ctx_band, m.ctx_band_key, m.ctx_band_raw, m.ctx_cadence, m.ctx_refill,
+        m.ctx_resilience, m.ctx_all_books, m.ctx_all_flows, m.ctx_relative, m.lq_tiers, m.ctx_flows,
+        arrayMap(book -> tuple(book.1, book.2,
         if(book.3 AND book.4, lq_required_time(book.6), CAST(NULL, 'Nullable(DateTime64(6, \'UTC\'))')),
         book.3 AND book.4, book.5), m.book_metadata) AS book_times
     FROM lq_book_metadata AS m
 ),
 lq_book_admitted AS (
-    SELECT t.*, arrayFilter(book -> book.4 AND book.3 <= t.ctx_end AND book.5 = 'true', t.book_times) AS admitted_books
+    SELECT t.ctx_token, t.ctx_primary, t.ctx_end, t.ctx_start, t.ctx_anchor,
+        t.ctx_band, t.ctx_band_key, t.ctx_band_raw, t.ctx_cadence, t.ctx_refill,
+        t.ctx_resilience, t.ctx_all_books, t.ctx_all_flows, t.ctx_relative, t.lq_tiers, t.ctx_flows,
+        arrayFilter(book -> book.4 AND book.3 <= t.ctx_end AND book.5 = 'true', t.book_times) AS admitted_books
     FROM lq_book_times AS t
 ),
 lq_book_ordinals AS (
-    SELECT a.*,
+    SELECT a.ctx_token, a.ctx_primary, a.ctx_end, a.ctx_start, a.ctx_anchor,
+        a.ctx_band, a.ctx_band_key, a.ctx_band_raw, a.ctx_cadence, a.ctx_refill,
+        a.ctx_resilience, a.ctx_all_books, a.ctx_all_flows, a.ctx_relative, a.lq_tiers, a.ctx_flows,
         arrayMap((book, ordinal) -> tuple(book.3, ordinal, book.1, book.2),
             a.admitted_books, arrayEnumerate(a.admitted_books)) AS ordered_books
     FROM lq_book_admitted AS a
