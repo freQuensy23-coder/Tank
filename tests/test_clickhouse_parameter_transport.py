@@ -1,6 +1,8 @@
+import asyncio
 import email.parser
 import email.policy
 import hashlib
+import itertools
 import json
 import os
 from pathlib import Path
@@ -369,6 +371,248 @@ def test_liquidity_phase_receipts_are_bounded_and_reject_unknown_labels(tmp_path
     assert all(
         b"private_payload" not in content and b"private_secret" not in content for content in before.values()
     )
+
+
+@pytest.fixture
+def native_observer_receipts(tmp_path, monkeypatch):
+    monkeypatch.setenv("GITHUB_ACTIONS", "true")
+    monkeypatch.setenv("CLICKHOUSE_TEST_URL", "http://localhost:8123")
+    retain = truth_sql_failure_evidence._retain_first_receipt
+    monkeypatch.setattr(
+        truth_sql_failure_evidence,
+        "_retain_first_receipt",
+        lambda directory, receipt, prefix: retain(tmp_path, receipt, prefix),
+    )
+    ticks = itertools.count(0, 10)
+    monkeypatch.setattr(truth_sql_failure_evidence.time, "monotonic_ns", lambda: next(ticks))
+    return tmp_path
+
+
+def synthetic_phase_request():
+    return (
+        "tests/test_truth_sql_liquidity.py::test_native_liquidity_absence_relational_phase_contracts::venue_stats",
+        "WITH \n{lq_snapshot:String} AS lq_snapshot, synthetic_fixture AS unused "
+        "SELECT arraySort(groupArray(tuple(venue, pre_spread))) AS value FROM lq_venue_stats",
+    )
+
+
+def native_receipts(directory):
+    return [json.loads(path.read_text()) for path in directory.glob("truth-sql-native-*.json")]
+
+
+async def test_ci_native_observer_preserves_wire_and_records_inclusive_boundaries(native_observer_receipts):
+    nodeid, query = synthetic_phase_request()
+    calls = []
+
+    def respond(request):
+        calls.append(request)
+        assert request.content == (query + " FORMAT JSONEachRow").encode()
+        assert dict(request.url.params) == SETTINGS | {"param_value": "wire\\n"}
+        assert len(request.headers["X-ClickHouse-Query-Id"]) == 64
+        return httpx.Response(
+            200,
+            content=b'{"value":1}\n',
+            headers={
+                "X-ClickHouse-Summary": json.dumps(
+                    {
+                        "elapsed_ns": "100",
+                        "read_rows": "0",
+                        "result_rows": "1",
+                        "privateHeaderKey": "credentialPrefix,credentialSuffix",
+                    }
+                ),
+                "Location": "https://private-host/private-path?password=credentialPrefix;credentialSuffix",
+                "X-Private": "privateHeaderValue",
+            },
+        )
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(respond)) as http:
+        client = EvidenceClickHouse("http://localhost:8123", nodeid, http=http)
+        for _ in range(2):
+            assert await client.rows(query, {"value": ("wire\\n", "String")}) == [{"value": 1}]
+        assert client.http.post == client._original_http_post
+    receipts = native_receipts(native_observer_receipts)
+    assert len(calls) == len(receipts) == 2
+    assert len({r["query_id"] for r in receipts}) == 2
+    for receipt in receipts:
+        assert receipt["outcome"] == "decoded"
+        assert receipt["own_query"] == {"status": "not_requested"}
+        assert receipt["clocks"] == {
+            "http_start_offset_ns": 10,
+            "headers_offset_ns": 20,
+            "http_end_offset_ns": 30,
+            "decode_start_offset_ns": 40,
+            "rows_end_offset_ns": 50,
+        }
+        assert receipt["summary"]["elapsed_ns"] == 100
+        assert type(receipt["summary"]["elapsed_ns"]) is int
+        assert receipt["summary"]["read_rows_present"] == 1
+        assert receipt["summary"]["read_rows"] == 0
+        assert receipt["summary"]["written_rows_present"] == 0
+        assert "written_rows" not in receipt["summary"]
+    persisted = "".join(path.read_text() for path in native_observer_receipts.iterdir())
+    for forbidden in (
+        "privateHeaderKey",
+        "privateHeaderValue",
+        "private-host",
+        "private-path",
+        "credentialPrefix",
+        "credentialSuffix",
+        query,
+        "wire\\n",
+        "Location",
+    ):
+        assert forbidden not in persisted
+
+
+@pytest.mark.parametrize("diagnostic", ["live", "absent", "schema", "timeout", "cancelled", "invalid"])
+async def test_ci_native_timeout_snapshot_is_single_bounded_and_preserves_original(
+    native_observer_receipts, diagnostic
+):
+    nodeid, query = synthetic_phase_request()
+    original = httpx.ReadTimeout("credentialPrefix;credentialSuffix https://private-host/private-path")
+    calls = []
+    query_ids = []
+
+    def respond(request):
+        calls.append(request)
+        if len(calls) == 1:
+            query_ids.append(request.headers["X-ClickHouse-Query-Id"])
+            raise original
+        assert len(calls) == 2
+        assert "X-ClickHouse-Query-Id" not in request.headers
+        assert request.url.params["param_observer_query_id"] == query_ids[0]
+        assert request.headers["X-ClickHouse-User"] == "default"
+        assert all(value <= 4 for value in request.extensions["timeout"].values())
+        text = request.content.decode()
+        assert "FROM system.processes WHERE query_id = {observer_query_id:String} LIMIT 1" in text
+        assert "mapContains(ProfileEvents, 'FunctionExecute')" in text
+        assert "SELECT *" not in text
+        assert "query," not in text and "user," not in text
+        if diagnostic == "schema":
+            return httpx.Response(400, text="private schema exception credentialPrefix,credentialSuffix")
+        if diagnostic == "timeout":
+            raise httpx.ReadTimeout("private diagnostic exception")
+        if diagnostic == "cancelled":
+            raise asyncio.CancelledError("private cancellation")
+        if diagnostic == "absent":
+            return httpx.Response(200, content=b"")
+        return httpx.Response(
+            200,
+            json={
+                "elapsed": 120.125,
+                "read_rows": 3,
+                "read_bytes": 30,
+                "memory_usage": 2048,
+                "peak_memory_usage": 4096,
+                "is_cancelled": 0,
+                "is_all_data_sent": 0,
+                "FunctionExecute_present": 1,
+                "FunctionExecute": True if diagnostic == "invalid" else 17,
+                "ScalarSubqueriesGlobalCacheHit_present": 0,
+                "ScalarSubqueriesGlobalCacheHit": 0,
+                "ScalarSubqueriesLocalCacheHit_present": 1,
+                "ScalarSubqueriesLocalCacheHit": 0,
+                "ScalarSubqueriesCacheMiss_present": 1,
+                "ScalarSubqueriesCacheMiss": 2,
+                "private_unknown_profile_key": "credentialPrefix;credentialSuffix",
+                "url": "https://private-host/private-path",
+            },
+        )
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(respond)) as http:
+        client = EvidenceClickHouse("http://localhost:8123", nodeid, http=http)
+        with pytest.raises(httpx.ReadTimeout) as raised:
+            await client.rows(query)
+        assert raised.value is original
+        assert client._observation is None and client._evidence_query is None
+        assert client.http.post == client._original_http_post
+    assert len(calls) == 2
+    (receipt,) = native_receipts(native_observer_receipts)
+    assert receipt["outcome"] == "read_timeout"
+    assert receipt["summary"] == {"status": "no_response"}
+    assert "decode_start_offset_ns" not in receipt["clocks"]
+    snapshot = receipt["own_query"]
+    if diagnostic == "live":
+        assert snapshot["status"] == "observed"
+        assert snapshot["elapsed"] == 120.125 and type(snapshot["elapsed"]) is float
+        assert snapshot["FunctionExecute"] == 17 and type(snapshot["FunctionExecute"]) is int
+        assert snapshot["ScalarSubqueriesGlobalCacheHit_present"] == 0
+        assert "ScalarSubqueriesGlobalCacheHit" not in snapshot
+        assert snapshot["ScalarSubqueriesLocalCacheHit_present"] == 1
+        assert snapshot["ScalarSubqueriesLocalCacheHit"] == 0
+    else:
+        assert snapshot["status"] == {
+            "absent": "absent",
+            "schema": "http_error",
+            "timeout": "error",
+            "cancelled": "error",
+            "invalid": "error",
+        }[diagnostic]
+    persisted = "".join(path.read_text() for path in native_observer_receipts.iterdir())
+    for forbidden in (
+        "credentialPrefix",
+        "credentialSuffix",
+        "private_unknown_profile_key",
+        "private-host",
+        "private-path",
+        "private diagnostic",
+        "private cancellation",
+        query,
+    ):
+        assert forbidden not in persisted
+
+
+@pytest.mark.parametrize(
+    "reason", ["not_ci", "unowned", "unrelated_node", "unknown_phase", "unrelated_sql", "baseline_sql"]
+)
+async def test_native_observer_disabled_outside_exact_owned_cases(
+    native_observer_receipts, monkeypatch, reason
+):
+    nodeid, query = synthetic_phase_request()
+    if reason == "not_ci":
+        monkeypatch.delenv("GITHUB_ACTIONS")
+    elif reason == "unowned":
+        monkeypatch.setenv("CLICKHOUSE_TEST_URL", "http://127.0.0.1:8123")
+    elif reason == "unrelated_node":
+        nodeid = "tests/test_clickhouse_parameter_transport.py::test_real_native_large_multipart_values"
+    elif reason == "unknown_phase":
+        nodeid += "private_suffix"
+    elif reason == "baseline_sql":
+        nodeid = truth_sql_failure_evidence._LIQUIDITY_BASELINE
+    else:
+        query = "SELECT 1"
+    calls = []
+
+    def respond(request):
+        calls.append(request)
+        assert "X-ClickHouse-Query-Id" not in request.headers
+        return httpx.Response(200, content=b"{}\n")
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(respond)) as http:
+        await EvidenceClickHouse("http://localhost:8123", nodeid, http=http).rows(query)
+    assert len(calls) == 1
+    assert not list(native_observer_receipts.iterdir())
+
+
+@pytest.mark.parametrize(
+    "value", [True, -1, 1.5, float("nan"), float("inf"), None, [], {}, "-1", "NaN", "1e3", 1 << 64]
+)
+def test_summary_rejects_invalid_typed_metrics(value):
+    response = httpx.Response(200, headers={"X-ClickHouse-Summary": json.dumps({"read_rows": value})})
+    assert truth_sql_failure_evidence._summary_metrics(response) == {"status": "invalid"}
+
+
+def test_summary_rejects_duplicate_keys_and_ignores_unknown_keys():
+    response = httpx.Response(200, headers={"X-ClickHouse-Summary": '{"read_rows":"1","read_rows":"2"}'})
+    assert truth_sql_failure_evidence._summary_metrics(response) == {"status": "invalid"}
+    response = httpx.Response(
+        200, headers={"X-ClickHouse-Summary": '{"unknownSecretName":"unknownSecretValue"}'}
+    )
+    metrics = truth_sql_failure_evidence._summary_metrics(response)
+    assert metrics["status"] == "observed"
+    assert all(metrics[name + "_present"] == 0 for name in truth_sql_failure_evidence._SUMMARY_FIELDS)
+    assert "unknownSecret" not in json.dumps(metrics)
 
 
 def test_parameter_string_preserves_native_escaped_spelling():
