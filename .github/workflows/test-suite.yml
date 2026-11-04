@@ -231,8 +231,15 @@ jobs:
           uv python install 3.13.13
           echo "TANK_FILE_IO_TEST_PYTHON=$(uv python find --managed-python 3.13.13)" >> "$GITHUB_ENV"
       - name: Managed context source prerequisites
-        run: npx --yes pnpm@11.0.8 --dir vendor/openma --filter @open-managed-agents/control-plane-node... install --frozen-lockfile --ignore-scripts
+        id: managed_context_prerequisites
+        run: npx --yes pnpm@11.0.8 --dir vendor/openma --filter @open-managed-agents/control-plane-node... --filter @open-managed-agents/main-node... install --frozen-lockfile --ignore-scripts
       - name: Local JavaScript units
         run: node scripts/test-node.mjs local-unit
       - name: Local JavaScript contracts
         run: node scripts/test-node.mjs local-contract
+      - name: Typecheck Managed production call chain
+        if: ${{ !cancelled() && steps.managed_context_prerequisites.outcome == 'success' }}
+        run: npx --yes pnpm@11.0.8 --dir vendor/openma --filter @open-managed-agents/control-plane-node run typecheck
+      - name: Typecheck Managed OpenAI test helper
+        if: ${{ !cancelled() && steps.managed_context_prerequisites.outcome == 'success' }}
+        run: npx --yes pnpm@11.0.8 --dir vendor/openma --filter @open-managed-agents/main-node exec tsc --project tsconfig.openai-e2e.json

@@ -22,7 +22,7 @@ const { SqlSessionStore } = await load('packages/session-store-sql/src/index.ts'
 const { SqlSessionEventStore } = await load('packages/session-event-store-sql/src/index.ts');
 const { SessionEventsApplicationService } = await load('packages/managed-agents-application/src/session-events/application.ts');
 const { SqlSessionRuntimeProjectionPersistence } = await load('packages/managed-agents-adapters-sql/src/session-runtime-projection-sql-persistence.ts');
-const { SqlSessionExecutionStore } = await load('packages/session-runtime-sql/src/coordination.ts');
+const { SqlSessionExecutionStore, ensureSessionExecutionClaimLockSchema } = await load('packages/session-runtime-sql/src/coordination.ts');
 const { loadSessionContinuationSnapshot } = await load('packages/session-runtime-sql/src/continuation.ts');
 const { planSessionContinuation } = await load('packages/session-runtime-contract/src/continuation.ts');
 const { ManagedNodeHarnessRuntime } = await load('packages/control-plane-node/src/lib/node-managed-harness-runtime.ts');
@@ -60,6 +60,7 @@ try {
   stage = 'migration';
   await migrateNodeDatabase({ dialect: 'postgres', sql,
     applyMigrations: async migrationsFolder => migrate(drizzle(connection), { migrationsFolder }) });
+  await ensureSessionExecutionClaimLockSchema(sql, 'postgres');
   await ensureRuntimeResourceFenceSchema(sql);
   stage = 'fixture';
   const sessions = new SqlSessionStore(sql, { seal: async () => assert.fail('no secrets') });
