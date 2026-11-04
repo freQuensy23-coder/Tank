@@ -290,9 +290,7 @@ async def test_wait_data_watch_refreshes_truth_before_decision_and_replays_lost_
                 await sessions.process_event("s", event, 7)
                 assert sent[0] == sent[1]
                 tool_requests = [
-                    row
-                    for row in native.requests
-                    if row[1]["events"][0]["type"] == "user.custom_tool_result"
+                    row for row in native.requests if row[1]["events"][0]["type"] == "user.custom_tool_result"
                 ]
                 assert len(tool_requests) == 2 and tool_requests[0] == tool_requests[1]
                 key, body = tool_requests[0]
