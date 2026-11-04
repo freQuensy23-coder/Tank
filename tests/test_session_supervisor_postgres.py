@@ -230,9 +230,7 @@ async def test_sent_at_identity_recovery_preserves_supervisor_ack_and_history_ba
                     "input-prior": {
                         "reason": "TURN_FAILED_AND_RETRIED",
                         "failure_event_id": "prior-failure",
-                        "replacement_input_id": (
-                            None if identity == "legacy-retry" else "input-root"
-                        ),
+                        "replacement_input_id": (None if identity == "legacy-retry" else "input-root"),
                     }
                 },
             )
@@ -285,9 +283,7 @@ async def test_sent_at_identity_recovery_preserves_supervisor_ack_and_history_ba
                 return await handler(request)
             except Exception as exc:
                 if not peer_failures:
-                    peer_failures.append(
-                        (request.method, request.path, type(exc).__name__, str(exc)[:500])
-                    )
+                    peer_failures.append((request.method, request.path, type(exc).__name__, str(exc)[:500]))
                 raise
 
         async def assert_recovered(request):
@@ -449,14 +445,10 @@ async def test_sent_at_identity_recovery_preserves_supervisor_ack_and_history_ba
             assert current["message_log"][0]["sent_at"] == original_intent["sent_at"]
             assert current["verified_native_completion"]["complete"] is True
             assert current["verified_native_completion"]["pending_action_ids"] == []
-            assert (
-                current["native_execution_receipts"]["current-end"]["stop_reason"]["type"]
-                == "end_turn"
-            )
+            assert current["native_execution_receipts"]["current-end"]["stop_reason"]["type"] == "end_turn"
             if attempt:
                 assert (
-                    current["superseded_native_inputs"]["input-prior"]["replacement_input_id"]
-                    == "input-root"
+                    current["superseded_native_inputs"]["input-prior"]["replacement_input_id"] == "input-root"
                 )
             assert returned["result"] == {"item_id": "i", "text": "Product announced"}
             await service.wake_waiting()
