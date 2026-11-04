@@ -367,22 +367,43 @@ lq_venue_base AS (
         arrayFilter(book -> book.1 >= v.ctx_anchor - INTERVAL 1 HOUR AND book.1 < v.ctx_anchor, v.series) AS previous
     FROM lq_venue_context AS v
 ),
-lq_venue_depth AS (
-    SELECT b.*, lq_depth_context(b.current.3, 'bid', 'usd', b.ctx_band, b.ctx_band_key) AS bid,
-        lq_depth_context(b.current.3, 'ask', 'usd', b.ctx_band, b.ctx_band_key) AS ask,
-        lq_depth_context(b.current.3, 'bid', 'native', b.ctx_band, b.ctx_band_key) AS bid_native,
-        lq_depth_context(b.current.3, 'ask', 'native', b.ctx_band, b.ctx_band_key) AS ask_native,
-        lq_mean(arrayFilter(x -> isNotNull(x), arrayMap(book -> lq_depth_context(book.3, 'bid', 'usd', b.ctx_band, b.ctx_band_key), b.previous))) AS pre_bid,
-        lq_mean(arrayFilter(x -> isNotNull(x), arrayMap(book -> lq_depth_context(book.3, 'ask', 'usd', b.ctx_band, b.ctx_band_key), b.previous))) AS pre_ask,
-        lq_mean(arrayMap(book -> lq_depth_context(book.3, 'bid', 'native', b.ctx_band, b.ctx_band_key), b.previous)) AS pre_bid_native,
-        lq_mean(arrayMap(book -> lq_depth_context(book.3, 'ask', 'native', b.ctx_band, b.ctx_band_key), b.previous)) AS pre_ask_native,
-        lq_mean(arrayFilter(x -> isNotNull(x), arrayMap(book -> lq_depth_context(book.3, 'bid', 'usd', b.ctx_band, b.ctx_band_key)
-            + lq_depth_context(book.3, 'ask', 'usd', b.ctx_band, b.ctx_band_key), b.previous))) AS pre_total,
-        lq_number(JSONExtractRaw(b.current.3, 'spread_bps')) AS spread,
-        lq_float_mean(arrayFilter(x -> isNotNull(x), arrayMap(book -> lq_number(JSONExtractRaw(book.3, 'spread_bps')), b.previous))) AS pre_spread,
-        lq_mean(arrayFilter(x -> isNotNull(x), arrayMap(book -> lq_depth_context(book.3, 'bid', 'usd', b.ctx_band, b.ctx_band_key), arrayFilter(book -> book.1 >= b.ctx_start, b.series)))) AS avg_bid,
-        lq_mean(arrayFilter(x -> isNotNull(x), arrayMap(book -> lq_depth_context(book.3, 'ask', 'usd', b.ctx_band, b.ctx_band_key), arrayFilter(book -> book.1 >= b.ctx_start, b.series)))) AS avg_ask
+lq_venue_metric_demand AS (
+    SELECT b.*, arrayMap(book -> tuple(book,
+        ifNull(book.2 = b.current.2 OR (book.1 >= b.ctx_anchor - INTERVAL 1 HOUR AND book.1 < b.ctx_anchor)
+            OR book.1 >= b.ctx_start, false),
+        ifNull(book.2 = b.current.2 OR (book.1 >= b.ctx_anchor - INTERVAL 1 HOUR AND book.1 < b.ctx_anchor), false),
+        ifNull(book.1 >= b.ctx_anchor - INTERVAL 1 HOUR AND book.1 < b.ctx_anchor, false),
+        ifNull(book.1 >= b.ctx_start, false)), b.series) AS metric_demand
     FROM lq_venue_base AS b
+),
+lq_venue_metrics AS (
+    SELECT d.*, arrayMap(demand -> tuple(demand.1.1, demand.1.2,
+        if(demand.2, lq_depth_context(demand.1.3, 'bid', 'usd', d.ctx_band, d.ctx_band_key), CAST(NULL, 'Nullable(Decimal256(24))')),
+        if(demand.2, lq_depth_context(demand.1.3, 'ask', 'usd', d.ctx_band, d.ctx_band_key), CAST(NULL, 'Nullable(Decimal256(24))')),
+        if(demand.3, lq_depth_context(demand.1.3, 'bid', 'native', d.ctx_band, d.ctx_band_key), CAST(NULL, 'Nullable(Decimal256(24))')),
+        if(demand.3, lq_depth_context(demand.1.3, 'ask', 'native', d.ctx_band, d.ctx_band_key), CAST(NULL, 'Nullable(Decimal256(24))')),
+        if(demand.3, lq_number(JSONExtractRaw(demand.1.3, 'spread_bps')), CAST(NULL, 'Nullable(Float64)')),
+        demand.4, demand.5), d.metric_demand) AS book_metrics
+    FROM lq_venue_metric_demand AS d
+),
+lq_venue_depth AS (
+    SELECT b.venue, b.first_ordinal, b.series, b.ctx_start, b.ctx_anchor,
+        b.ctx_band, b.ctx_band_key, b.ctx_primary, b.ctx_end, b.ctx_band_raw,
+        b.ctx_cadence, b.ctx_refill, b.ctx_resilience, b.ctx_relative, b.ctx_flows,
+        b.lq_tiers, b.ctx_token, b.ctx_all_books, b.ctx_all_flows, b.lq_books,
+        b.current, b.previous,
+        b.book_metrics[-1].3 AS bid, b.book_metrics[-1].4 AS ask,
+        b.book_metrics[-1].5 AS bid_native, b.book_metrics[-1].6 AS ask_native,
+        lq_mean(arrayFilter(x -> isNotNull(x), arrayMap(metric -> metric.3, arrayFilter(metric -> metric.8, b.book_metrics)))) AS pre_bid,
+        lq_mean(arrayFilter(x -> isNotNull(x), arrayMap(metric -> metric.4, arrayFilter(metric -> metric.8, b.book_metrics)))) AS pre_ask,
+        lq_mean(arrayMap(metric -> metric.5, arrayFilter(metric -> metric.8, b.book_metrics))) AS pre_bid_native,
+        lq_mean(arrayMap(metric -> metric.6, arrayFilter(metric -> metric.8, b.book_metrics))) AS pre_ask_native,
+        lq_mean(arrayFilter(x -> isNotNull(x), arrayMap(metric -> metric.3 + metric.4, arrayFilter(metric -> metric.8, b.book_metrics)))) AS pre_total,
+        b.book_metrics[-1].7 AS spread,
+        lq_float_mean(arrayFilter(x -> isNotNull(x), arrayMap(metric -> metric.7, arrayFilter(metric -> metric.8, b.book_metrics)))) AS pre_spread,
+        lq_mean(arrayFilter(x -> isNotNull(x), arrayMap(metric -> metric.3, arrayFilter(metric -> metric.9, b.book_metrics)))) AS avg_bid,
+        lq_mean(arrayFilter(x -> isNotNull(x), arrayMap(metric -> metric.4, arrayFilter(metric -> metric.9, b.book_metrics)))) AS avg_ask
+    FROM lq_venue_metrics AS b
 ),
 lq_venue_stats AS (
     SELECT d.*, d.bid + d.ask AS current_total FROM lq_venue_depth AS d

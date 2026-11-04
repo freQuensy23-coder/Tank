@@ -786,6 +786,138 @@ def test_liquidity_book_frontier_projects_only_consumed_columns(relation, source
         assert stale not in body
 
 
+def test_liquidity_venue_metric_demand_preserves_exact_cohorts():
+    statement = ctes()
+    body = statement.split("lq_venue_metric_demand AS (", 1)[1].split("\n),", 1)[0]
+    compact = " ".join(body.split())
+    previous = "book.1 >= b.ctx_anchor - INTERVAL 1 HOUR AND book.1 < b.ctx_anchor"
+    assert "arrayMap(book -> tuple(book," in compact
+    assert f"ifNull(book.2 = b.current.2 OR ({previous}) OR book.1 >= b.ctx_start, false)" in compact
+    assert f"ifNull(book.2 = b.current.2 OR ({previous}), false)" in compact
+    assert f"ifNull({previous}, false)" in compact
+    assert "ifNull(book.1 >= b.ctx_start, false)), b.series) AS metric_demand" in compact
+    assert "FROM lq_venue_base AS b" in compact
+    assert "lq_depth_context" not in body
+    assert "lq_number" not in body
+
+
+@pytest.mark.parametrize(
+    ("side", "unit", "guard"),
+    [("bid", "usd", 2), ("ask", "usd", 2), ("bid", "native", 3), ("ask", "native", 3)],
+)
+def test_liquidity_venue_metrics_parse_only_typed_demand(side, unit, guard):
+    statement = ctes()
+    body = statement.split("lq_venue_metrics AS (", 1)[1].split("\n),", 1)[0]
+    compact = " ".join(body.split())
+    assert "arrayMap(demand -> tuple(demand.1.1, demand.1.2," in compact
+    assert (
+        f"if(demand.{guard}, lq_depth_context(demand.1.3, '{side}', '{unit}', "
+        "d.ctx_band, d.ctx_band_key), CAST(NULL, 'Nullable(Decimal256(24))'))"
+    ) in compact
+    assert (
+        "if(demand.3, lq_number(JSONExtractRaw(demand.1.3, 'spread_bps')), "
+        "CAST(NULL, 'Nullable(Float64)'))"
+    ) in compact
+    assert "demand.4, demand.5), d.metric_demand) AS book_metrics" in compact
+    assert "FROM lq_venue_metric_demand AS d" in compact
+    assert "materialize(" not in body
+    assert body.count("lq_depth_context(") == 4
+
+
+def test_liquidity_venue_depth_reduces_metric_columns_without_reparsing():
+    statement = ctes()
+    body = statement.split("lq_venue_depth AS (", 1)[1].split("\n),", 1)[0]
+    compact = " ".join(body.split())
+    assert "FROM lq_venue_metrics AS b" in compact
+    columns = (
+        "venue",
+        "first_ordinal",
+        "series",
+        "ctx_start",
+        "ctx_anchor",
+        "ctx_band",
+        "ctx_band_key",
+        "ctx_primary",
+        "ctx_end",
+        "ctx_band_raw",
+        "ctx_cadence",
+        "ctx_refill",
+        "ctx_resilience",
+        "ctx_relative",
+        "ctx_flows",
+        "lq_tiers",
+        "ctx_token",
+        "ctx_all_books",
+        "ctx_all_flows",
+        "lq_books",
+        "current",
+        "previous",
+    )
+    carried = compact.split("SELECT ", 1)[1].split("b.book_metrics[-1]", 1)[0]
+    assert tuple(item.strip() for item in carried.rstrip(", ").split(",")) == tuple(
+        f"b.{column}" for column in columns
+    )
+    assert "b.*" not in body
+    assert "b.metric_demand" not in body
+    for field, name in ((3, "bid"), (4, "ask"), (5, "bid_native"), (6, "ask_native"), (7, "spread")):
+        assert f"b.book_metrics[-1].{field} AS {name}" in compact
+    for field, name in ((3, "pre_bid"), (4, "pre_ask")):
+        assert (
+            f"lq_mean(arrayFilter(x -> isNotNull(x), arrayMap(metric -> metric.{field}, "
+            f"arrayFilter(metric -> metric.8, b.book_metrics)))) AS {name}"
+        ) in compact
+    for field, name in ((5, "pre_bid_native"), (6, "pre_ask_native")):
+        assert (
+            f"lq_mean(arrayMap(metric -> metric.{field}, "
+            f"arrayFilter(metric -> metric.8, b.book_metrics))) AS {name}"
+        ) in compact
+    assert (
+        "lq_mean(arrayFilter(x -> isNotNull(x), arrayMap(metric -> metric.3 + metric.4, "
+        "arrayFilter(metric -> metric.8, b.book_metrics)))) AS pre_total"
+    ) in compact
+    assert (
+        "lq_float_mean(arrayFilter(x -> isNotNull(x), arrayMap(metric -> metric.7, "
+        "arrayFilter(metric -> metric.8, b.book_metrics)))) AS pre_spread"
+    ) in compact
+    for field, name in ((3, "avg_bid"), (4, "avg_ask")):
+        assert (
+            f"lq_mean(arrayFilter(x -> isNotNull(x), arrayMap(metric -> metric.{field}, "
+            f"arrayFilter(metric -> metric.9, b.book_metrics)))) AS {name}"
+        ) in compact
+    assert "lq_depth_context(" not in body
+    assert "JSONExtract" not in body
+
+
+@pytest.mark.parametrize(
+    "case", ["old_unused", "null_anchor", "average_only", "current_tie", "nullable_previous"]
+)
+async def test_native_venue_metrics_preserve_lazy_demand_and_populations(
+    native_client, original_truth, case
+):
+    snapshot, spot, relative = _packet()
+    start = parse_time(snapshot["_start"])
+    end = parse_time(snapshot["cutoff"])
+    if case == "nullable_previous":
+        snapshot["books"].append(_book("B", start - timedelta(minutes=20), native=False))
+    else:
+        stamp = start - timedelta(hours=2)
+        if case == "null_anchor":
+            snapshot["_event_anchor"] = None
+            stamp = start - timedelta(minutes=20)
+        elif case == "average_only":
+            stamp = start + timedelta(minutes=5)
+        elif case == "current_tie":
+            stamp = end
+        book = _book("B", stamp)
+        for side in ("bid", "ask"):
+            book["depth"][side]["p1"]["native"] = "1e100"
+            if case in {"old_unused", "null_anchor"}:
+                book["depth"][side]["p1"]["usd"] = "1e100"
+        book["exchange_ts_prec"] = "UNSUPPORTED_UNUSED"
+        snapshot["books"].insert(0, book)
+    await _compare(native_client, original_truth, snapshot, spot, relative)
+
+
 def test_liquidity_core_context_and_state_are_carried_columns():
     statement = ctes()
     prefix = statement.split("lq_input AS (", 1)[0]
