@@ -1369,3 +1369,51 @@ async def test_native_filtered_context_preserves_duplicates_and_boundary_append_
         parameters,
     )
     assert rows == [{"value": reference}]
+
+
+@pytest.mark.parametrize("case", ["duplicate_bursts", "no_bursts", "no_books"])
+async def test_native_canonical_root_keeps_one_venue_and_duplicate_burst_observations(
+    native_client, original_truth, case
+):
+    snapshot, spot, relative = _packet()
+    start = parse_time(snapshot["_start"])
+    snapshot["books"] = [
+        _book("B", start - timedelta(seconds=10), bid="100"),
+        _book("A", start - timedelta(seconds=10), bid="100"),
+        _book("B", start + timedelta(seconds=60), bid="100"),
+        _book("A", start + timedelta(seconds=60), bid="100"),
+    ]
+    for index, row in enumerate(snapshot["flow_bars"]):
+        row.update(
+            buy_notional="0",
+            sell_notional="100" if index in (0, 15) and case != "no_bursts" else "0",
+            buy_qty="0",
+            sell_qty="0",
+        )
+    snapshot["flow_bars"].extend(
+        [deepcopy(snapshot["flow_bars"][0]), deepcopy(snapshot["flow_bars"][15])]
+    )
+    if case == "no_books":
+        snapshot["books"] = []
+    actual = await _compare(native_client, original_truth, snapshot, spot, relative)
+    assert [venue["venue"] for venue in actual["per_venue"]] == (
+        [] if case == "no_books" else ["B", "A"]
+    )
+    assert actual["replenishment"]["available"] is (case != "no_books")
+    assert actual["replenishment"]["observations"] == (
+        [
+            {
+                "venue": venue,
+                "ts": iso(start),
+                "replenished": True,
+                "recovery_s": 60.0,
+                "resilient": True,
+            }
+            for venue in ("B", "B", "A", "A")
+        ]
+        if case == "duplicate_bursts"
+        else []
+    )
+    assert actual["replenishment"]["bursts"] == (
+        None if case == "no_books" else 4 if case == "duplicate_bursts" else 0
+    )

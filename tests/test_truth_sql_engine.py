@@ -223,16 +223,28 @@ async def test_actual_service_native_query_postgres_immutable_readback(
 
 @pytest.mark.integration
 @pytest.mark.parametrize("amount", ["1e25", "0.0000000000000000000000001"])
-async def test_native_admission_refuses_unrepresentable_amounts(engine_client, amount):
+async def test_native_admission_refuses_unrepresentable_amounts(engine_client, original_truth, monkeypatch, amount):
     packet = _supply_snapshot()
-    packet["supply"] = [
-        {
-            "kind": "FLOW",
-            "ts": iso(parse_time(packet["cutoff"]) - timedelta(seconds=1)),
-            "qty_native": amount,
-        }
-    ]
-    with pytest.raises(RuntimeError, match="native financial range"):
+    wallet = next(row for row in packet["supply"] if row["kind"] == "WALLET_FLOWS")
+    wallet["flows"][0]["qty_native"] = "1.25"
+    expected = original_truth.compute_market_truth(deepcopy(packet))
+    expected["measurement_context"]["numeric_policy"] = native.NUMERIC_POLICY
+    forbid_python_business(monkeypatch)
+    control = await native.evaluate(engine_client, deepcopy(packet))
+    assert_complete(control, expected)
+    for body in (expected, control):
+        quantities = [
+            flow["qty"] for flow in body["supply"]["flows"] if flow.get("wallet_list_commit") == "captured"
+        ]
+        assert quantities == [Decimal("1.25")]
+    wallet["flows"][0]["qty_native"] = amount
+    with pytest.raises(
+        RuntimeError,
+        match=(
+            r"\AClickHouse 500: Code: 395\. DB::Exception: "
+            r"Market Truth decimal input outside native financial range(?=[:.] )"
+        ),
+    ):
         await native.evaluate(engine_client, packet)
 
 

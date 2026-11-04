@@ -55,7 +55,7 @@ jobs:
       CLICKHOUSE_TEST_URL: http://tank_ci:tank-ci-disposable@127.0.0.1:8123
     services:
       clickhouse:
-        image: clickhouse/clickhouse-server:25.8
+        image: clickhouse/clickhouse-server:25.8.33.6@sha256:0152dd511befe6a2c2ef53e930726179669b08116da78500b37c51c96ff5ee77
         env:
           CLICKHOUSE_USER: tank_ci
           CLICKHOUSE_PASSWORD: tank-ci-disposable
@@ -82,6 +82,8 @@ jobs:
           python-version: "3.13.13"
           enable-cache: true
       - run: uv sync --python 3.13.13 --frozen --extra dev
+      - name: Stage and verify the pinned native ClickHouse executable
+        run: uv run --frozen --extra dev python scripts/ci/setup_native_clickhouse.py "${{ job.services.clickhouse.id }}"
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e
         with:
           go-version: "1.25.14"

@@ -622,10 +622,14 @@ class ReplayMarketReader:
             result["anchor"] = copy.deepcopy(anchor)
         return result
 
+    async def condition_snapshot(self, token_id, cutoff, *, anchor=None, requirements=None):
+        return await self.snapshot(token_id, cutoff, anchor=anchor)
+
 
 async def run_captured_tools(inputs, repo):
     """Execute captured analyst tool calls through production validation and rules."""
-    from contextlib import ExitStack
+    import sys
+    from contextlib import AsyncExitStack, ExitStack
     from unittest.mock import patch
 
     import httpx
@@ -633,6 +637,7 @@ async def run_captured_tools(inputs, repo):
     from tank import event_tools, storage, util
     from tank.analysis import cards, decisions, truth
     from tank.analysis.decisions import DecisionEngine
+    from tank.analysis.truth_native_binding import _finish_cleanup, bind_replay_native
     from tank.event_tools import EventToolService
     from tank.settings import Settings
 
@@ -730,116 +735,124 @@ async def run_captured_tools(inputs, repo):
             if hasattr(module, "iso"):
                 stack.enter_context(patch.object(module, "iso", replay_iso))
         async with httpx.AsyncClient(transport=httpx.MockTransport(captured_http)) as http:
-            service = EventToolService(
-                repo,
-                settings,
-                truth.MarketTruthService(repo, settings, ReplayMarketReader(inputs, evidence)),
-                DecisionEngine(settings),
-                http=http,
-            )
-            seeded = set()
-            for call in calls:
-                clock.advance(call["available_at"])
-                market_batches = {}
-                for index, row in enumerate(inputs._records):
-                    projected = row["record"]
-                    revision_identity = (index, digest(projected))
-                    if revision_identity in seeded or row["collection"] == "replay.market_snapshots":
-                        continue
-                    if inputs.record_visible(row, clock.now()):
-                        collection = row["collection"]
-                        if collection in MARKET_COLUMNS:
-                            batch = market_batches.setdefault(collection, [])
-                            batch.append((revision_identity, row))
-                            if len(batch) == 500:
-                                await repo.put_market_batch(
-                                    collection,
-                                    [copy.deepcopy(entry["record"]) for _, entry in batch],
-                                    keys=[entry["key"] for _, entry in batch],
-                                )
-                                seeded.update(identity for identity, _ in batch)
-                                batch.clear()
-                        else:
-                            record = copy.deepcopy(projected)
-                            await repo.put(collection, row["key"], record)
-                            seeded.add(revision_identity)
-                for collection, batch in market_batches.items():
-                    if batch:
-                        await repo.put_market_batch(
-                            collection,
-                            [copy.deepcopy(entry["record"]) for _, entry in batch],
-                            keys=[entry["key"] for _, entry in batch],
-                        )
-                        seeded.update(identity for identity, _ in batch)
-                call = remap(call)
-                context = copy.deepcopy(call.get("context", {}))
-                context["call_id"] = call["call_id"]
-                if call["tool"] in {"web_search", "fetch_page"}:
-                    captures = [
-                        row
-                        for row in inputs._tool_results
-                        if row.get("call_id") == call["call_id"]
-                        and parse_time(row["available_at"]) <= clock.now()
-                    ]
-                    if not captures or any(
-                        row.get("tool") != call["tool"] or remap(row.get("arguments")) != call["arguments"]
-                        for row in captures
-                    ):
-                        raise ReplayError(
-                            "insufficient_fixture: no exact captured pre-cutoff external tool arguments"
-                        )
-                    result = inputs.tool_result(call["call_id"], cutoff=util.iso(clock.now()))
-                elif call["tool"] in {"get_market_truth", "get_decision"}:
-                    import asyncio
-
-                    async def complete_market_jobs(call=call):
-                        while True:
-                            for job in await repo.list(
-                                "ops.jobs", filters={"status": "QUEUED"}, limit=100000
-                            ):
-                                if job["payload"].get("event_id") != call["arguments"]["event_id"]:
-                                    continue
-                                if job["type"] not in {"ESCALATE_TOKENS", "RUN_MARKET_TRUTH"}:
-                                    continue
-                                if job.get("run_after") and parse_time(job["run_after"]) > clock.now():
-                                    continue
-                                dependencies = [
-                                    await repo.get("ops.jobs", key)
-                                    for key in job["payload"].get("_depends_on", [])
-                                ]
-                                if any(row is None or row.get("status") != "DONE" for row in dependencies):
-                                    continue
-                                result = None
-                                if job["type"] == "RUN_MARKET_TRUTH":
-                                    payload = job["payload"]
-                                    result = await service.truth.assess(
-                                        payload["event_id"], payload["token_id"], payload["cutoff"]
-                                    )
-                                await repo.put(
-                                    "ops.jobs", job["job_id"], dict(job, result=result, status="DONE")
-                                )
-                            await asyncio.sleep(0.01)
-
-                    worker = asyncio.create_task(complete_market_jobs())
-                    try:
-                        result = await asyncio.wait_for(
-                            service.dispatch(call["tool"], copy.deepcopy(call["arguments"]), context), 5
-                        )
-                    finally:
-                        worker.cancel()
-                        completed = await asyncio.gather(worker, return_exceptions=True)
-                        if completed and isinstance(completed[0], Exception):
-                            raise completed[0]
-                else:
-                    result = await service.dispatch(call["tool"], copy.deepcopy(call["arguments"]), context)
-                captured = next(
-                    (r for r in inputs._tool_results if r.get("call_id") == call["call_id"]), None
+            async with AsyncExitStack() as native_stack:
+                truth_service = truth.MarketTruthService(repo, settings, ReplayMarketReader(inputs, evidence))
+                await native_stack.enter_async_context(bind_replay_native(truth_service))
+                service = EventToolService(
+                    repo,
+                    settings,
+                    truth_service,
+                    DecisionEngine(settings),
+                    http=http,
                 )
-                if captured:
-                    if parse_time(captured["available_at"]) > clock.now():
-                        raise ReplayError("captured tool result was unavailable at call time")
-                    remember_ids(captured["result"], result)
-                results.append({"call_id": call["call_id"], "tool": call["tool"], "result": result})
+                seeded = set()
+                for call in calls:
+                    clock.advance(call["available_at"])
+                    market_batches = {}
+                    for index, row in enumerate(inputs._records):
+                        projected = row["record"]
+                        revision_identity = (index, digest(projected))
+                        if revision_identity in seeded or row["collection"] == "replay.market_snapshots":
+                            continue
+                        if inputs.record_visible(row, clock.now()):
+                            collection = row["collection"]
+                            if collection in MARKET_COLUMNS:
+                                batch = market_batches.setdefault(collection, [])
+                                batch.append((revision_identity, row))
+                                if len(batch) == 500:
+                                    await repo.put_market_batch(
+                                        collection,
+                                        [copy.deepcopy(entry["record"]) for _, entry in batch],
+                                        keys=[entry["key"] for _, entry in batch],
+                                    )
+                                    seeded.update(identity for identity, _ in batch)
+                                    batch.clear()
+                            else:
+                                record = copy.deepcopy(projected)
+                                await repo.put(collection, row["key"], record)
+                                seeded.add(revision_identity)
+                    for collection, batch in market_batches.items():
+                        if batch:
+                            await repo.put_market_batch(
+                                collection,
+                                [copy.deepcopy(entry["record"]) for _, entry in batch],
+                                keys=[entry["key"] for _, entry in batch],
+                            )
+                            seeded.update(identity for identity, _ in batch)
+                    call = remap(call)
+                    context = copy.deepcopy(call.get("context", {}))
+                    context["call_id"] = call["call_id"]
+                    if call["tool"] in {"web_search", "fetch_page"}:
+                        captures = [
+                            row
+                            for row in inputs._tool_results
+                            if row.get("call_id") == call["call_id"]
+                            and parse_time(row["available_at"]) <= clock.now()
+                        ]
+                        if not captures or any(
+                            row.get("tool") != call["tool"] or remap(row.get("arguments")) != call["arguments"]
+                            for row in captures
+                        ):
+                            raise ReplayError(
+                                "insufficient_fixture: no exact captured pre-cutoff external tool arguments"
+                            )
+                        result = inputs.tool_result(call["call_id"], cutoff=util.iso(clock.now()))
+                    elif call["tool"] in {"get_market_truth", "get_decision"}:
+                        import asyncio
+
+                        async def complete_market_jobs(call=call):
+                            while True:
+                                for job in await repo.list(
+                                    "ops.jobs", filters={"status": "QUEUED"}, limit=100000
+                                ):
+                                    if job["payload"].get("event_id") != call["arguments"]["event_id"]:
+                                        continue
+                                    if job["type"] not in {"ESCALATE_TOKENS", "RUN_MARKET_TRUTH"}:
+                                        continue
+                                    if job.get("run_after") and parse_time(job["run_after"]) > clock.now():
+                                        continue
+                                    dependencies = [
+                                        await repo.get("ops.jobs", key)
+                                        for key in job["payload"].get("_depends_on", [])
+                                    ]
+                                    if any(row is None or row.get("status") != "DONE" for row in dependencies):
+                                        continue
+                                    result = None
+                                    if job["type"] == "RUN_MARKET_TRUTH":
+                                        payload = job["payload"]
+                                        result = await service.truth.assess(
+                                            payload["event_id"], payload["token_id"], payload["cutoff"]
+                                        )
+                                    await repo.put(
+                                        "ops.jobs", job["job_id"], dict(job, result=result, status="DONE")
+                                    )
+                                await asyncio.sleep(0.01)
+
+                        worker = asyncio.create_task(complete_market_jobs())
+                        try:
+                            result = await asyncio.wait_for(
+                                service.dispatch(call["tool"], copy.deepcopy(call["arguments"]), context), 5
+                            )
+                        finally:
+                            failure = sys.exception()
+                            worker.cancel()
+                            completed = await _finish_cleanup(
+                                asyncio.gather(worker, return_exceptions=True), failure=failure
+                            )
+                            if completed and isinstance(completed[0], Exception):
+                                if failure is not None:
+                                    raise failure from completed[0]
+                                raise completed[0]
+                    else:
+                        result = await service.dispatch(call["tool"], copy.deepcopy(call["arguments"]), context)
+                    captured = next(
+                        (r for r in inputs._tool_results if r.get("call_id") == call["call_id"]), None
+                    )
+                    if captured:
+                        if parse_time(captured["available_at"]) > clock.now():
+                            raise ReplayError("captured tool result was unavailable at call time")
+                        remember_ids(captured["result"], result)
+                    results.append({"call_id": call["call_id"], "tool": call["tool"], "result": result})
     return {"tool_calls": results}
 
 
@@ -1372,7 +1385,8 @@ async def replay_agent_session(
     silently replace that with a deterministic interpretation.
     """
     import asyncio
-    from contextlib import ExitStack
+    import sys
+    from contextlib import AsyncExitStack, ExitStack
     from unittest.mock import patch
 
     import httpx
@@ -1386,6 +1400,7 @@ async def replay_agent_session(
     from tank.analysis import cards, truth
     from tank.analysis.decisions import DecisionEngine
     from tank.analysis.truth import MarketTruthService
+    from tank.analysis.truth_native_binding import _finish_cleanup, bind_replay_native
     from tank.delivery import DeliveryError, DeliveryService
     from tank.event_tools import EventToolService
     from tank.models import TABLE_COLUMNS
@@ -1426,909 +1441,944 @@ async def replay_agent_session(
     for collection in TABLE_COLUMNS:
         if await repo.list(collection, limit=1):
             raise ReplayError(f"replay requires an empty isolated repository: {collection}")
-    timeline = [
-        replay_message_timestamp(inputs, message) for message in [initial_message, *subsequent_messages]
-    ]
-    if any(parse_time(right.value) < parse_time(left.value) for left, right in pairwise(timeline)):
-        raise ReplayError("Original replay messages are not chronological")
-    clock = ReplayClock(timeline[0], inputs.cutoff)
-    if inputs.fixture_reference and inputs.fixture_reference.get("phases"):
-        if (
-            output_path
-            and evidence_view
-            and Path(output_path).resolve().is_relative_to(evidence_view.destination.resolve())
-        ):
-            raise ReplayError("Reference phase checkpoints must remain outside guest evidence")
-        event_tools.truth.market.active_cutoff = clock.now
+    async with AsyncExitStack() as native_stack, AsyncExitStack() as construction_stack:
+        await native_stack.enter_async_context(bind_replay_native(event_tools.truth))
+        service = delivery_http = scheduler = None
 
-    async def advance_clock(timestamp):
-        clock.advance(timestamp)
-        if evidence_view:
-            current = evidence_view.advance(clock.timestamp())
-            if active_session_id:
-                await service.request(
-                    "POST",
-                    f"sessions/{active_session_id}",
-                    json={
-                        "metadata": {
-                            "tank_replay_run_id": run_id,
-                            "tank_replay_evidence_sha256": current["manifest_sha256"],
-                            "tank_replay_cutoff": current["manifest"]["cutoff"],
-                        }
-                    },
-                )
-                mapped = await repo.get("ops.agent_sessions", active_session_id)
-                mapped.update(
-                    replay_evidence_sha256=current["manifest_sha256"],
-                    replay_cutoff=current["manifest"]["cutoff"],
-                )
-                await repo.put("ops.agent_sessions", active_session_id, mapped)
+        async def cleanup_construction(exc_type, exc, traceback):
+            async def close_consumers():
+                try:
+                    if service is not None:
+                        try:
+                            await service.stop_followers()
+                        finally:
+                            await service.close()
+                finally:
+                    try:
+                        if delivery_http is not None:
+                            await delivery_http.aclose()
+                    finally:
+                        if scheduler is not None:
+                            await scheduler.close()
 
-    active_session_id = None
-    imported = set()
+            await _finish_cleanup(close_consumers(), failure=exc)
 
-    async def import_prefix(*, baseline=False):
-        market_batches = {}
-        for revision, row in sorted(
-            enumerate(inputs._records),
-            key=lambda entry: (parse_time(inputs.available_at(entry[1])), entry[0]),
-        ):
-            projected = row["record"]
-            identity = (revision, digest(projected))
-            if identity in imported or row["collection"] in {
-                "replay.market_snapshots",
-                "ops.tool_calls",
-            }:
-                continue
-
-            if not baseline and not (
-                row["collection"].startswith("ingest.")
-                or _market_record(row)
-                or _late_unlock(row, inputs.cutoff)
-            ):
-                continue
-            if inputs.record_visible(row, clock.now()):
-                collection = row["collection"]
-                if collection in MARKET_COLUMNS:
-                    batch = market_batches.setdefault(collection, [])
-                    batch.append((identity, row))
-                    if len(batch) == 500:
-                        await repo.put_market_batch(
-                            collection,
-                            [copy.deepcopy(entry["record"]) for _, entry in batch],
-                            keys=[entry["key"] for _, entry in batch],
-                        )
-                        imported.update(identity for identity, _ in batch)
-                        batch.clear()
-                else:
-                    record = copy.deepcopy(projected)
-                    if collection == "ingest.source_items":
-                        fresh = await repo.get(collection, row["key"])
-                        for field in (
-                            "event_id",
-                            "session_id",
-                            "extraction_status",
-                            "route_event_id",
-                            "route",
-                            "routing_message",
-                            "routing_scores",
-                            "status",
-                            "relevance",
-                            "relevance_decision",
-                            "relevance_p",
-                        ):
-                            record.pop(field, None)
-                            if fresh and field in fresh:
-                                record[field] = fresh[field]
-                        if not fresh or not (
-                            "relevance" in fresh or fresh.get("relevance_decision") is not None
-                        ):
-                            from tank.sources.policy import initial_relevance
-
-                            record["relevance"] = initial_relevance(
-                                record.get("source_id"), record.get("subtype"), record.get("author_role")
-                            )
-                        if fresh:
-                            for field in ("observed_at", "published_at", "public_at", "fetched_at"):
-                                if field in record and record[field] != fresh.get(field):
-                                    record.update(propagate_timestamp(record, field).fields(field))
-                            record = {**fresh, **record}
-                        if "extraction_status" not in record:
-                            record["extraction_status"] = "PENDING"
-                    await repo.put(collection, row["key"], record)
-                    imported.add(identity)
-        for collection, batch in market_batches.items():
-            if batch:
-                await repo.put_market_batch(
-                    collection,
-                    [copy.deepcopy(entry["record"]) for _, entry in batch],
-                    keys=[entry["key"] for _, entry in batch],
-                )
-                imported.update(identity for identity, _ in batch)
-
-    await import_prefix(baseline=True)
-    if not await repo.get("ingest.source_items", initial_message["item_id"]):
-        raise ReplayError("insufficient_fixture: initial source item is absent")
-    original_sessions = [
-        row["record"]
-        for row in inputs._records
-        if row["collection"] == "ops.agent_sessions"
-        and (
-            row["record"].get("event_id") == initial_message.get("event_id")
-            if initial_message.get("event_id")
-            else row["record"].get("opened_by_item", row["record"].get("item_id"))
-            == initial_message["item_id"]
-        )
-    ]
-    source_id = initial_message.get("replay_source_session_id") or inputs.config.get(
-        "replay_source_session_id"
-    )
-    if source_id is None and len(original_sessions) == 1:
-        source_id = original_sessions[0]["session_id"]
-    if source_id:
-        initial_message = dict(initial_message, replay_source_session_id=source_id)
-    run_id = replay_run_id or util.new_id("RPL")
-    capture_receipts = []
-    identity_substitutions = {}
-    causal_tool_receipts = []
-    consumed_source_calls = set()
-
-    def mapped_capture(value):
-        if isinstance(value, dict):
-            return {key: mapped_capture(entry) for key, entry in value.items()}
-        if isinstance(value, list):
-            return [mapped_capture(entry) for entry in value]
-        return identity_substitutions.get(value, value) if isinstance(value, str) else value
-
-    def corresponding_tool_call(session, tool, arguments):
-        candidates = [
-            row
-            for row in inputs._records
-            if row["collection"] == "ops.tool_calls"
-            and row["key"] not in consumed_source_calls
-            and row["record"].get("session_id") == session.get("replay_source_session_id")
-            and row["record"].get("tool") == tool
-            and row["record"].get("status") == "DONE"
-            and mapped_capture(row["record"].get("arguments", row["record"].get("input"))) == arguments
+        construction_stack.push_async_exit(cleanup_construction)
+        timeline = [
+            replay_message_timestamp(inputs, message) for message in [initial_message, *subsequent_messages]
         ]
+        if any(parse_time(right.value) < parse_time(left.value) for left, right in pairwise(timeline)):
+            raise ReplayError("Original replay messages are not chronological")
+        clock = ReplayClock(timeline[0], inputs.cutoff)
+        if inputs.fixture_reference and inputs.fixture_reference.get("phases"):
+            if (
+                output_path
+                and evidence_view
+                and Path(output_path).resolve().is_relative_to(evidence_view.destination.resolve())
+            ):
+                raise ReplayError("Reference phase checkpoints must remain outside guest evidence")
+            event_tools.truth.market.active_cutoff = clock.now
 
-        return (
-            min(
-                candidates,
-                key=lambda row: parse_time(row["record"].get("requested_at") or row["available_at"]),
+        async def advance_clock(timestamp):
+            clock.advance(timestamp)
+            if evidence_view:
+                current = evidence_view.advance(clock.timestamp())
+                if active_session_id:
+                    await service.request(
+                        "POST",
+                        f"sessions/{active_session_id}",
+                        json={
+                            "metadata": {
+                                "tank_replay_run_id": run_id,
+                                "tank_replay_evidence_sha256": current["manifest_sha256"],
+                                "tank_replay_cutoff": current["manifest"]["cutoff"],
+                            }
+                        },
+                    )
+                    mapped = await repo.get("ops.agent_sessions", active_session_id)
+                    mapped.update(
+                        replay_evidence_sha256=current["manifest_sha256"],
+                        replay_cutoff=current["manifest"]["cutoff"],
+                    )
+                    await repo.put("ops.agent_sessions", active_session_id, mapped)
+
+        active_session_id = None
+        imported = set()
+
+        async def import_prefix(*, baseline=False):
+            market_batches = {}
+            for revision, row in sorted(
+                enumerate(inputs._records),
+                key=lambda entry: (parse_time(inputs.available_at(entry[1])), entry[0]),
+            ):
+                projected = row["record"]
+                identity = (revision, digest(projected))
+                if identity in imported or row["collection"] in {
+                    "replay.market_snapshots",
+                    "ops.tool_calls",
+                }:
+                    continue
+
+                if not baseline and not (
+                    row["collection"].startswith("ingest.")
+                    or _market_record(row)
+                    or _late_unlock(row, inputs.cutoff)
+                ):
+                    continue
+                if inputs.record_visible(row, clock.now()):
+                    collection = row["collection"]
+                    if collection in MARKET_COLUMNS:
+                        batch = market_batches.setdefault(collection, [])
+                        batch.append((identity, row))
+                        if len(batch) == 500:
+                            await repo.put_market_batch(
+                                collection,
+                                [copy.deepcopy(entry["record"]) for _, entry in batch],
+                                keys=[entry["key"] for _, entry in batch],
+                            )
+                            imported.update(identity for identity, _ in batch)
+                            batch.clear()
+                    else:
+                        record = copy.deepcopy(projected)
+                        if collection == "ingest.source_items":
+                            fresh = await repo.get(collection, row["key"])
+                            for field in (
+                                "event_id",
+                                "session_id",
+                                "extraction_status",
+                                "route_event_id",
+                                "route",
+                                "routing_message",
+                                "routing_scores",
+                                "status",
+                                "relevance",
+                                "relevance_decision",
+                                "relevance_p",
+                            ):
+                                record.pop(field, None)
+                                if fresh and field in fresh:
+                                    record[field] = fresh[field]
+                            if not fresh or not (
+                                "relevance" in fresh or fresh.get("relevance_decision") is not None
+                            ):
+                                from tank.sources.policy import initial_relevance
+
+                                record["relevance"] = initial_relevance(
+                                    record.get("source_id"), record.get("subtype"), record.get("author_role")
+                                )
+                            if fresh:
+                                for field in ("observed_at", "published_at", "public_at", "fetched_at"):
+                                    if field in record and record[field] != fresh.get(field):
+                                        record.update(propagate_timestamp(record, field).fields(field))
+                                record = {**fresh, **record}
+                            if "extraction_status" not in record:
+                                record["extraction_status"] = "PENDING"
+                        await repo.put(collection, row["key"], record)
+                        imported.add(identity)
+            for collection, batch in market_batches.items():
+                if batch:
+                    await repo.put_market_batch(
+                        collection,
+                        [copy.deepcopy(entry["record"]) for _, entry in batch],
+                        keys=[entry["key"] for _, entry in batch],
+                    )
+                    imported.update(identity for identity, _ in batch)
+
+        await import_prefix(baseline=True)
+        if not await repo.get("ingest.source_items", initial_message["item_id"]):
+            raise ReplayError("insufficient_fixture: initial source item is absent")
+        original_sessions = [
+            row["record"]
+            for row in inputs._records
+            if row["collection"] == "ops.agent_sessions"
+            and (
+                row["record"].get("event_id") == initial_message.get("event_id")
+                if initial_message.get("event_id")
+                else row["record"].get("opened_by_item", row["record"].get("item_id"))
+                == initial_message["item_id"]
             )
-            if candidates
-            else None
+        ]
+        source_id = initial_message.get("replay_source_session_id") or inputs.config.get(
+            "replay_source_session_id"
         )
+        if source_id is None and len(original_sessions) == 1:
+            source_id = original_sessions[0]["session_id"]
+        if source_id:
+            initial_message = dict(initial_message, replay_source_session_id=source_id)
+        run_id = replay_run_id or util.new_id("RPL")
+        capture_receipts = []
+        identity_substitutions = {}
+        causal_tool_receipts = []
+        consumed_source_calls = set()
 
-    class CapturedExternalSessionService(SessionService):
-        def clock_timestamp(self):
-            return clock.timestamp()
+        def mapped_capture(value):
+            if isinstance(value, dict):
+                return {key: mapped_capture(entry) for key, entry in value.items()}
+            if isinstance(value, list):
+                return [mapped_capture(entry) for entry in value]
+            return identity_substitutions.get(value, value) if isinstance(value, str) else value
 
-        async def invoke_tool(self, session, tool, arguments, call_id, **internal):
-            if tool not in {"web_search", "fetch_page"}:
-                resolved = internal.setdefault("resolved_arguments", {})
-                actual = await super().invoke_tool(session, tool, arguments, call_id, **internal)
-                if internal.get("decision_market_refresh_only"):
+        def corresponding_tool_call(session, tool, arguments):
+            candidates = [
+                row
+                for row in inputs._records
+                if row["collection"] == "ops.tool_calls"
+                and row["key"] not in consumed_source_calls
+                and row["record"].get("session_id") == session.get("replay_source_session_id")
+                and row["record"].get("tool") == tool
+                and row["record"].get("status") == "DONE"
+                and mapped_capture(row["record"].get("arguments", row["record"].get("input"))) == arguments
+            ]
+
+            return (
+                min(
+                    candidates,
+                    key=lambda row: parse_time(row["record"].get("requested_at") or row["available_at"]),
+                )
+                if candidates
+                else None
+            )
+
+        class CapturedExternalSessionService(SessionService):
+            def clock_timestamp(self):
+                return clock.timestamp()
+
+            async def invoke_tool(self, session, tool, arguments, call_id, **internal):
+                if tool not in {"web_search", "fetch_page"}:
+                    resolved = internal.setdefault("resolved_arguments", {})
+                    actual = await super().invoke_tool(session, tool, arguments, call_id, **internal)
+                    if internal.get("decision_market_refresh_only"):
+                        return actual
+                    source = corresponding_tool_call(session, tool, resolved or arguments)
+                    if source is not None:
+                        consumed_source_calls.add(source["key"])
+                        before = dict(identity_substitutions)
+                        bind_replay_result_lineage(source["record"].get("result"), actual, identity_substitutions)
+                        causal_tool_receipts.append(
+                            {
+                                "tool": tool,
+                                "source_call_id": source["record"].get("call_id"),
+                                "fresh_tool_use_id": call_id,
+                                "policy": "Exact arguments and chronological occurrence",
+                                "identity_bindings": {
+                                    key: value
+                                    for key, value in identity_substitutions.items()
+                                    if before.get(key) != value
+                                },
+                            }
+                        )
                     return actual
-                source = corresponding_tool_call(session, tool, resolved or arguments)
-                if source is not None:
-                    consumed_source_calls.add(source["key"])
-                    before = dict(identity_substitutions)
-                    bind_replay_result_lineage(source["record"].get("result"), actual, identity_substitutions)
-                    causal_tool_receipts.append(
+                original = session.get("replay_source_session_id")
+                if inputs.fixture_reference:
+                    capture = inputs.reference_capture(tool, arguments, clock.now())
+                    selected_at = propagate_timestamp({"at": inputs.available_at(capture)}, "at")
+                    if parse_time(selected_at.value) > clock.now():
+                        await advance_clock(selected_at)
+                    await import_prefix()
+                    capture_receipts.append(
                         {
                             "tool": tool,
-                            "source_call_id": source["record"].get("call_id"),
-                            "fresh_tool_use_id": call_id,
-                            "policy": "Exact arguments and chronological occurrence",
-                            "identity_bindings": {
-                                key: value
-                                for key, value in identity_substitutions.items()
-                                if before.get(key) != value
-                            },
+                            "origin": capture["origin"],
+                            "source_item_id": capture.get("source_item_id"),
+                            "actual_available_at": capture["available_at"],
+                            "simulated_available_at": inputs.available_at(capture),
+                            "status": capture["status"],
+                            "is_error": CapturedToolResult.from_record(capture).is_error,
                         }
                     )
-                return actual
-            original = session.get("replay_source_session_id")
-            if inputs.fixture_reference:
-                capture = inputs.reference_capture(tool, arguments, clock.now())
-                selected_at = propagate_timestamp({"at": inputs.available_at(capture)}, "at")
-                if parse_time(selected_at.value) > clock.now():
-                    await advance_clock(selected_at)
+                    return CapturedToolResult.from_record(capture)
+                matches = [
+                    row
+                    for row in inputs._records
+                    if row["collection"] == "ops.tool_calls"
+                    and row["record"].get("session_id") == original
+                    and row["record"].get("tool") == tool
+                    and row["record"].get("status") in {"DONE", "ERROR", "REFUSED"}
+                    and row["record"].get("arguments", row["record"].get("input")) == arguments
+                ]
+                results = {CapturedToolResult.from_record(row["record"]).signature() for row in matches}
+                if not original or len(results) != 1:
+                    raise ReplayError(
+                        "insufficient_fixture: one unambiguous original external tool result required"
+                    )
+                capture = min(matches, key=lambda row: parse_time(row["available_at"]))
+
+                capture_timestamp = propagate_timestamp(capture, "available_at")
+                if parse_time(capture_timestamp.value) > clock.now():
+                    await advance_clock(capture_timestamp)
                 await import_prefix()
                 capture_receipts.append(
                     {
                         "tool": tool,
-                        "origin": capture["origin"],
-                        "source_item_id": capture.get("source_item_id"),
-                        "actual_available_at": capture["available_at"],
-                        "simulated_available_at": inputs.available_at(capture),
-                        "status": capture["status"],
-                        "is_error": CapturedToolResult.from_record(capture).is_error,
+                        "source_session_id": original,
+                        "source_call_id": capture["record"].get("call_id"),
+                        "available_at": capture["available_at"],
+                        "status": capture["record"]["status"],
+                        "is_error": CapturedToolResult.from_record(capture["record"]).is_error,
                     }
                 )
-                return CapturedToolResult.from_record(capture)
-            matches = [
-                row
-                for row in inputs._records
-                if row["collection"] == "ops.tool_calls"
-                and row["record"].get("session_id") == original
-                and row["record"].get("tool") == tool
-                and row["record"].get("status") in {"DONE", "ERROR", "REFUSED"}
-                and row["record"].get("arguments", row["record"].get("input")) == arguments
-            ]
-            results = {CapturedToolResult.from_record(row["record"]).signature() for row in matches}
-            if not original or len(results) != 1:
-                raise ReplayError(
-                    "insufficient_fixture: one unambiguous original external tool result required"
-                )
-            capture = min(matches, key=lambda row: parse_time(row["available_at"]))
+                return CapturedToolResult.from_record(capture["record"])
 
-            capture_timestamp = propagate_timestamp(capture, "available_at")
-            if parse_time(capture_timestamp.value) > clock.now():
-                await advance_clock(capture_timestamp)
-            await import_prefix()
-            capture_receipts.append(
-                {
-                    "tool": tool,
-                    "source_session_id": original,
-                    "source_call_id": capture["record"].get("call_id"),
-                    "available_at": capture["available_at"],
-                    "status": capture["record"]["status"],
-                    "is_error": CapturedToolResult.from_record(capture["record"]).is_error,
-                }
+        service = CapturedExternalSessionService(repo, settings, event_tools.dispatch, http=http)
+        delivery_receipts = []
+        active_delivery_receipt = None
+
+        async def captured_telegram(request):
+            if (
+                request.method != "POST"
+                or request.url.host != "api.telegram.org"
+                or active_delivery_receipt is None
+            ):
+                raise ReplayError("Uncaptured replay delivery transport request")
+            return httpx.Response(
+                200, json={"ok": True, "result": {"message_id": int(active_delivery_receipt["message_ref"])}}
             )
-            return CapturedToolResult.from_record(capture["record"])
 
-    service = CapturedExternalSessionService(repo, settings, event_tools.dispatch, http=http)
-    delivery_receipts = []
-    active_delivery_receipt = None
-
-    async def captured_telegram(request):
-        if (
-            request.method != "POST"
-            or request.url.host != "api.telegram.org"
-            or active_delivery_receipt is None
-        ):
-            raise ReplayError("Uncaptured replay delivery transport request")
-        return httpx.Response(
-            200, json={"ok": True, "result": {"message_id": int(active_delivery_receipt["message_ref"])}}
+        delivery_http = httpx.AsyncClient(transport=httpx.MockTransport(captured_telegram))
+        delivery_settings = settings.model_copy(
+            update={
+                "telegram_token": "REPLAY_CAPTURED_RECEIPT_ONLY",
+                "telegram_alerts_chat": "replay-captured-alerts",
+                "telegram_ops_chat": "replay-captured-ops",
+            }
         )
+        delivery = DeliveryService(repo, delivery_settings, http=delivery_http)
 
-    delivery_http = httpx.AsyncClient(transport=httpx.MockTransport(captured_telegram))
-    delivery_settings = settings.model_copy(
-        update={
-            "telegram_token": "REPLAY_CAPTURED_RECEIPT_ONLY",
-            "telegram_alerts_chat": "replay-captured-alerts",
-            "telegram_ops_chat": "replay-captured-ops",
-        }
-    )
-    delivery = DeliveryService(repo, delivery_settings, http=delivery_http)
-
-    async def replay_delivery(payload):
-        nonlocal active_delivery_receipt
-        if payload.get("notice_id"):
-            raise ReplayDivergence("Captured replay of ops notices is not an analyst card transition")
-        fresh = [
-            row
-            async for row in repo.iter_all(
-                "out.alerts", filters={"alert_id": payload["alert_id"], "version": payload["version"]}
+        async def replay_delivery(payload):
+            nonlocal active_delivery_receipt
+            if payload.get("notice_id"):
+                raise ReplayDivergence("Captured replay of ops notices is not an analyst card transition")
+            fresh = [
+                row
+                async for row in repo.iter_all(
+                    "out.alerts", filters={"alert_id": payload["alert_id"], "version": payload["version"]}
+                )
+            ]
+            if len(fresh) != 1:
+                raise ReplayDivergence("Replay delivery has no unique fresh alert")
+            fresh = fresh[0]
+            original_session = next(
+                (
+                    row["record"]
+                    for row in inputs._records
+                    if row["collection"] == "ops.agent_sessions" and row["record"].get("session_id") == source_id
+                ),
+                {},
             )
-        ]
-        if len(fresh) != 1:
-            raise ReplayDivergence("Replay delivery has no unique fresh alert")
-        fresh = fresh[0]
-        original_session = next(
-            (
+            old_event = original_session.get("event_id") or initial_message.get("event_id")
+            original_alerts = [
                 row["record"]
                 for row in inputs._records
-                if row["collection"] == "ops.agent_sessions" and row["record"].get("session_id") == source_id
-            ),
-            {},
-        )
-        old_event = original_session.get("event_id") or initial_message.get("event_id")
-        original_alerts = [
-            row["record"]
-            for row in inputs._records
-            if row["collection"] == "out.alerts"
-            and row["record"].get("event_id") == old_event
-            and row["record"].get("version") == fresh["version"]
-            and row["record"].get("kind") == fresh["kind"]
-        ]
-        if len(original_alerts) != 1:
-            raise ReplayDivergence("Replay delivery has no unique original publication lineage")
-        original_alert = original_alerts[0]
-        receipts = [
-            row["record"]
-            for row in inputs._records
-            if row["collection"] == "out.deliveries"
-            and row["record"].get("alert_id") == original_alert["alert_id"]
-            and row["record"].get("version") == original_alert["version"]
-            and row["record"].get("channel") == payload.get("channel", "telegram:alerts")
-            and row["record"].get("status") == "SENT"
-        ]
-        if len(receipts) != 1 or not receipts[0].get("message_ref"):
-            raise ReplayError("insufficient_fixture: one captured SENT delivery receipt required")
-        receipt = receipts[0]
-        sent = propagate_timestamp(receipt, "sent_at" if receipt.get("sent_at") else "at")
-        if sent.value is None:
-            raise ReplayError("insufficient_fixture: captured delivery timestamp required")
-        if parse_time(sent.value) > clock.now():
-            await advance_clock(sent)
-            await import_prefix()
-        active_delivery_receipt = receipt
-        try:
-            outcome = await delivery.deliver(payload)
-        finally:
-            active_delivery_receipt = None
-        if isinstance(outcome, DeliveryError):
-            raise ReplayDivergence("Fresh delivery code rejected or deferred the recorded SENT transition")
-        identity_substitutions[original_alert["alert_id"]] = fresh["alert_id"]
-        call_bindings = {}
-        async for call in repo.iter_all(
-            "ana.calls", filters={"opened_by_alert": fresh["alert_id"], "opened_by_version": fresh["version"]}
-        ):
-            originals = {
-                row["record"]["call_id"]
+                if row["collection"] == "out.alerts"
+                and row["record"].get("event_id") == old_event
+                and row["record"].get("version") == fresh["version"]
+                and row["record"].get("kind") == fresh["kind"]
+            ]
+            if len(original_alerts) != 1:
+                raise ReplayDivergence("Replay delivery has no unique original publication lineage")
+            original_alert = original_alerts[0]
+            receipts = [
+                row["record"]
                 for row in inputs._records
-                if row["collection"] == "ana.calls"
-                and row["record"].get("opened_by_alert") == original_alert["alert_id"]
-                and row["record"].get("opened_by_version") == original_alert["version"]
-                and row["record"].get("token_id") == call["token_id"]
-            }
-            if len(originals) == 1:
-                old = next(iter(originals))
-                identity_substitutions[old] = call["call_id"]
-                call_bindings[old] = call["call_id"]
-        delivery_receipts.append(
-            {
-                "original_alert_id": original_alert["alert_id"],
-                "fresh_alert_id": fresh["alert_id"],
-                "version": fresh["version"],
-                "message_ref": receipt["message_ref"],
-                **sent.fields("captured_sent_at"),
-                "call_bindings": call_bindings,
-                "transport": "CAPTURED_RECEIPT_NO_NETWORK",
-            }
-        )
-        return {"captured_delivery": True}
-
-    scheduler = Scheduler(repo, settings, event_tools.truth.market, event_tools.truth)
-    timer_receipts = []
-    selected_timer_timestamp = None
-
-    async def rerun_timer(message, original):
-        nonlocal selected_timer_timestamp
-        kind = message.get("kind")
-        if kind not in {"CONDITION", "CONDITION_FIRED", "CALL_EXPIRED", "MILESTONE"}:
-            return message, None
-        trigger = replay_message_timestamp(inputs, original)
-        before = {row["job_id"] async for row in repo.iter_all("ops.jobs", filters={"type": "AGENT_MESSAGE"})}
-        selected_timer_timestamp = trigger
-        try:
-            if kind == "CALL_EXPIRED":
-                await scheduler.expire_calls(parse_time(trigger.value))
-                identity = (message.get("call") or {}).get("call_id")
-                canonical_kind = kind
-            elif kind in {"CONDITION", "CONDITION_FIRED"}:
-                if parse_time(trigger.value) < clock.now():
-                    raise ReplayDivergence(
-                        "Original condition trigger predates the fresh available-state clock"
-                    )
-                await scheduler.eval_conditions(trigger.fields("cutoff"))
-                identity = (message.get("condition") or {}).get("cond_id")
-                canonical_kind = "CONDITION_FIRED"
-            else:
-                await scheduler.milestone_check(message)
-                identity, canonical_kind = message.get("milestone"), kind
-        finally:
-            selected_timer_timestamp = None
-        generated = [
-            row
-            async for row in repo.iter_all("ops.jobs", filters={"type": "AGENT_MESSAGE"})
-            if row["job_id"] not in before
-            and row["payload"].get("kind") == canonical_kind
-            and row["payload"].get("event_id") == message.get("event_id")
-            and (
-                (row["payload"].get("call") or {}).get("call_id") == identity
-                if canonical_kind == "CALL_EXPIRED"
-                else (row["payload"].get("condition") or {}).get("cond_id") == identity
-                if canonical_kind == "CONDITION_FIRED"
-                else row["payload"].get("milestone") == identity
-            )
-        ]
-        if len(generated) != 1:
-            raise ReplayDivergence(
-                "Recorded timer predicate does not fire for the actual fresh object at its original trigger"
-            )
-        job = generated[0]
-        actual = job["payload"]
-        if kind == "MILESTONE" and any(
-            message.get(field) != actual.get(field)
-            for field in ("outcome", "quotes", "evidence", "verification_required")
-        ):
-            raise ReplayDivergence("Fresh milestone evidence/outcome differs from the recorded trigger")
-        controls = {key: value for key, value in message.items() if key.startswith("replay_")}
-        timer_receipts.append(
-            {
-                "original_kind": kind,
-                "actual_kind": canonical_kind,
-                "job_id": job["job_id"],
-                **trigger.fields("original_trigger_at"),
-                "payload_sha256": digest(actual),
-                "predicate": "RERUN_PRODUCTION_SCHEDULER",
-            }
-        )
-        return dict(actual, **controls), job
-
-    pending_messages = iter(subsequent_messages)
-    divergence = None
-    accepted_messages = [copy.deepcopy(initial_message)]
-    phase_checkpoints = []
-
-    async def checkpoint_phase(execution, calls):
-        phases = (inputs.fixture_reference or {}).get("phases", [])
-        phase = next(
-            (phase for phase in phases if max(phase["message_indexes"]) == len(accepted_messages) - 1), None
-        )
-        if not phase or any(row["phase_id"] == phase["phase_id"] for row in phase_checkpoints):
-            return
-
-        follower = service.tasks.get(sid)
-        if follower is not None and not follower.done():
-            follower.cancel()
-            await asyncio.gather(follower, return_exceptions=True)
-        collections = (
-            "ingest.source_items",
-            "evt.events",
-            "evt.claims",
-            "evt.ems_assessments",
-            "evt.beneficiary_maps",
-            "evt.beneficiary_edges",
-            "ana.market_truth",
-            "ana.decisions",
-            "out.alerts",
-            "out.evidence_bundles",
-        )
-        state = {name: [row async for row in repo.iter_all(name)] for name in collections}
-        snapshot = {
-            "phase_id": phase["phase_id"],
-            "at": phase["at"],
-            "at_prec": phase["at_prec"],
-            "actual_checkpoint_at": datetime.now(UTC).isoformat(),
-            "actual_checkpoint_at_prec": "COLLECTION_ONLY",
-            "session_id": sid,
-            "execution_barrier": copy.deepcopy(execution),
-            "callbacks": [
-                {
-                    "call_id": call["call_id"],
-                    "ordinal": call.get("native_turn_call_index"),
-                    "returned_at": call.get("returned_at"),
-                    "sha256": digest(call),
+                if row["collection"] == "out.deliveries"
+                and row["record"].get("alert_id") == original_alert["alert_id"]
+                and row["record"].get("version") == original_alert["version"]
+                and row["record"].get("channel") == payload.get("channel", "telegram:alerts")
+                and row["record"].get("status") == "SENT"
+            ]
+            if len(receipts) != 1 or not receipts[0].get("message_ref"):
+                raise ReplayError("insufficient_fixture: one captured SENT delivery receipt required")
+            receipt = receipts[0]
+            sent = propagate_timestamp(receipt, "sent_at" if receipt.get("sent_at") else "at")
+            if sent.value is None:
+                raise ReplayError("insufficient_fixture: captured delivery timestamp required")
+            if parse_time(sent.value) > clock.now():
+                await advance_clock(sent)
+                await import_prefix()
+            active_delivery_receipt = receipt
+            try:
+                outcome = await delivery.deliver(payload)
+            finally:
+                active_delivery_receipt = None
+            if isinstance(outcome, DeliveryError):
+                raise ReplayDivergence("Fresh delivery code rejected or deferred the recorded SENT transition")
+            identity_substitutions[original_alert["alert_id"]] = fresh["alert_id"]
+            call_bindings = {}
+            async for call in repo.iter_all(
+                "ana.calls", filters={"opened_by_alert": fresh["alert_id"], "opened_by_version": fresh["version"]}
+            ):
+                originals = {
+                    row["record"]["call_id"]
+                    for row in inputs._records
+                    if row["collection"] == "ana.calls"
+                    and row["record"].get("opened_by_alert") == original_alert["alert_id"]
+                    and row["record"].get("opened_by_version") == original_alert["version"]
+                    and row["record"].get("token_id") == call["token_id"]
                 }
-                for call in calls
-            ],
-            "state": state,
-            "session_workflow": copy.deepcopy(
-                (await repo.get("ops.agent_sessions", sid)).get("verified_source_completion")
-            ),
-            "delivery_intents": [row async for row in repo.iter_all("ops.jobs", filters={"type": "DELIVER"})],
-            "external_capture_gaps": reference_evidence_gaps(calls),
-            "requested_external_captures_complete": not reference_evidence_gaps(calls),
-            "evidence_manifest_sha256": evidence_view.receipts[-1]["manifest_sha256"]
-            if evidence_view and evidence_view.receipts
-            else None,
-        }
-        snapshot["sha256"] = digest(snapshot)
-        if output_path:
-            freeze(Path(output_path).parent / (run_id + "-phase-" + phase["phase_id"] + ".json"), snapshot)
-        phase_checkpoints.append(snapshot)
-
-    worker = None
-    sid = None
-    session_ids = []
-    execution_barriers = {}
-    report = None
-    failure = None
-    initial_decisions = {r["dec_id"] async for r in repo.iter_all("ana.decisions")}
-    initial_alerts = {(r["alert_id"], r["version"]) async for r in repo.iter_all("out.alerts")}
-
-    async def market_jobs():
-        while True:
-            session = await repo.get("ops.agent_sessions", sid)
-            eid = (session or {}).get("event_id")
-            async for job in repo.iter_all("ops.jobs", filters={"status": "QUEUED"}):
-                if job["type"] == "DELIVER":
-                    if inputs.fixture_reference:
-                        continue
-
-                    outcome = await replay_delivery(job["payload"])
-                    await repo.put("ops.jobs", job["job_id"], dict(job, result=outcome, status="DONE"))
-                    continue
-                if (
-                    not eid
-                    or job["payload"].get("event_id") != eid
-                    or job["type"] not in {"ESCALATE_TOKENS", "RUN_MARKET_TRUTH"}
-                ):
-                    continue
-                if job.get("run_after") and parse_time(job["run_after"]) > clock.now():
-                    continue
-                dependencies = [
-                    await repo.get("ops.jobs", key) for key in job["payload"].get("_depends_on", [])
-                ]
-                if any(row is None or row.get("status") != "DONE" for row in dependencies):
-                    continue
-                result = None
-                if job["type"] == "RUN_MARKET_TRUTH":
-                    payload = job["payload"]
-                    if parse_time(payload["cutoff"]) > clock.now():
-                        raise ReplayError("market request exceeds replay clock")
-                    result = await event_tools.truth.assess(eid, payload["token_id"], payload["cutoff"])
-                await repo.put("ops.jobs", job["job_id"], dict(job, result=result, status="DONE"))
-            await asyncio.sleep(0.01)
-
-    original_iso = util.iso
-
-    def replay_iso(value=None):
-        return original_iso(clock.now() if value is None else value)
-
-    with ExitStack() as stack:
-        for module in (
-            util,
-            storage,
-            tool_module,
-            session_module,
-            cards,
-            truth,
-            delivery_module,
-            scheduler_module,
-        ):
-            if hasattr(module, "utcnow"):
-                stack.enter_context(patch.object(module, "utcnow", clock.now))
-            if hasattr(module, "iso"):
-                stack.enter_context(patch.object(module, "iso", replay_iso))
-        stack.enter_context(
-            patch.object(delivery_module, "collection_clock", lambda value=None, **kwargs: clock.timestamp())
-        )
-        stack.enter_context(
-            patch.object(
-                scheduler_module,
-                "collection_clock",
-                lambda value=None, **kwargs: selected_timer_timestamp or clock.timestamp(),
+                if len(originals) == 1:
+                    old = next(iter(originals))
+                    identity_substitutions[old] = call["call_id"]
+                    call_bindings[old] = call["call_id"]
+            delivery_receipts.append(
+                {
+                    "original_alert_id": original_alert["alert_id"],
+                    "fresh_alert_id": fresh["alert_id"],
+                    "version": fresh["version"],
+                    "message_ref": receipt["message_ref"],
+                    **sent.fields("captured_sent_at"),
+                    "call_bindings": call_bindings,
+                    "transport": "CAPTURED_RECEIPT_NO_NETWORK",
+                }
             )
-        )
-        stack.enter_context(
-            patch.object(
-                scheduler_module,
-                "utcnow",
-                lambda: (
-                    parse_time(selected_timer_timestamp.value) if selected_timer_timestamp else clock.now()
-                ),
+            return {"captured_delivery": True}
+
+        scheduler = Scheduler(repo, settings, event_tools.truth.market, event_tools.truth)
+        timer_receipts = []
+        selected_timer_timestamp = None
+
+        async def rerun_timer(message, original):
+            nonlocal selected_timer_timestamp
+            kind = message.get("kind")
+            if kind not in {"CONDITION", "CONDITION_FIRED", "CALL_EXPIRED", "MILESTONE"}:
+                return message, None
+            trigger = replay_message_timestamp(inputs, original)
+            before = {row["job_id"] async for row in repo.iter_all("ops.jobs", filters={"type": "AGENT_MESSAGE"})}
+            selected_timer_timestamp = trigger
+            try:
+                if kind == "CALL_EXPIRED":
+                    await scheduler.expire_calls(parse_time(trigger.value))
+                    identity = (message.get("call") or {}).get("call_id")
+                    canonical_kind = kind
+                elif kind in {"CONDITION", "CONDITION_FIRED"}:
+                    if parse_time(trigger.value) < clock.now():
+                        raise ReplayDivergence(
+                            "Original condition trigger predates the fresh available-state clock"
+                        )
+                    await scheduler.eval_conditions(trigger.fields("cutoff"))
+                    identity = (message.get("condition") or {}).get("cond_id")
+                    canonical_kind = "CONDITION_FIRED"
+                else:
+                    await scheduler.milestone_check(message)
+                    identity, canonical_kind = message.get("milestone"), kind
+            finally:
+                selected_timer_timestamp = None
+            generated = [
+                row
+                async for row in repo.iter_all("ops.jobs", filters={"type": "AGENT_MESSAGE"})
+                if row["job_id"] not in before
+                and row["payload"].get("kind") == canonical_kind
+                and row["payload"].get("event_id") == message.get("event_id")
+                and (
+                    (row["payload"].get("call") or {}).get("call_id") == identity
+                    if canonical_kind == "CALL_EXPIRED"
+                    else (row["payload"].get("condition") or {}).get("cond_id") == identity
+                    if canonical_kind == "CONDITION_FIRED"
+                    else row["payload"].get("milestone") == identity
+                )
+            ]
+            if len(generated) != 1:
+                raise ReplayDivergence(
+                    "Recorded timer predicate does not fire for the actual fresh object at its original trigger"
+                )
+            job = generated[0]
+            actual = job["payload"]
+            if kind == "MILESTONE" and any(
+                message.get(field) != actual.get(field)
+                for field in ("outcome", "quotes", "evidence", "verification_required")
+            ):
+                raise ReplayDivergence("Fresh milestone evidence/outcome differs from the recorded trigger")
+            controls = {key: value for key, value in message.items() if key.startswith("replay_")}
+            timer_receipts.append(
+                {
+                    "original_kind": kind,
+                    "actual_kind": canonical_kind,
+                    "job_id": job["job_id"],
+                    **trigger.fields("original_trigger_at"),
+                    "payload_sha256": digest(actual),
+                    "predicate": "RERUN_PRODUCTION_SCHEDULER",
+                }
             )
-        )
-        try:
-            deadline = asyncio.get_running_loop().time() + timeout
-            async with asyncio.timeout_at(deadline):
-                session = await service.send_message(
-                    dict(
-                        initial_message,
-                        replay_run_id=run_id,
-                        **(
-                            {
-                                "replay_evidence_sha256": evidence_capture["manifest_sha256"],
-                                "replay_cutoff": evidence_capture["manifest"]["cutoff"],
-                            }
-                            if evidence_capture
-                            else {}
-                        ),
-                    )
-                )
-            sid = session["session_id"]
-            session_ids.append(sid)
-            active_session_id = sid
-            worker = asyncio.create_task(market_jobs())
-            async with asyncio.timeout_at(deadline):
-                while True:
-                    if worker.done():
-                        try:
-                            await worker
-                        except ReplayDivergence as exc:
-                            divergence = {
-                                "reason": str(exc),
-                                "stage": "CAPTURED_DELIVERY",
-                                "policy": "No original future state imported",
-                            }
-                            break
-                    current = await repo.get("ops.agent_sessions", sid)
-                    if current.get("status") == "FAILED":
-                        raise ReplayError("replay agent turn failed before a settled completion")
-                    if current.get("status") == "ENDED" and any(
-                        message.get("turn_status") != "DONE" for message in current.get("message_log", [])
-                    ):
-                        raise ReplayError("replay agent session terminated before a settled completion")
-                    calls = [
-                        row async for row in repo.iter_all("ops.tool_calls", filters={"session_id": sid})
-                    ]
-                    if any(missing_capture_error(call) for call in calls):
-                        raise ReplayError("insufficient_fixture: required replay tool capture is absent")
+            return dict(actual, **controls), job
 
-                    queued_deliveries = [
-                        row
-                        async for row in repo.iter_all(
-                            "ops.jobs", filters={"status": "QUEUED", "type": "DELIVER"}
-                        )
-                    ]
-                    execution = await service.completed_turn(sid)
+        pending_messages = iter(subsequent_messages)
+        divergence = None
+        accepted_messages = [copy.deepcopy(initial_message)]
+        phase_checkpoints = []
 
-                    if (
-                        execution["complete"]
-                        and (inputs.fixture_reference or not queued_deliveries)
-                        and all(call.get("returned_at") for call in calls)
-                    ):
-                        execution_barriers[sid] = copy.deepcopy(execution)
-                        await checkpoint_phase(execution, calls)
-                        message = next(pending_messages, None)
-                        if message is None:
-                            incomplete = []
-                            for accepted_message in accepted_messages:
-                                if accepted_message.get("kind") in {"NEW_ITEM", "ITEM_ADDED"}:
-                                    source = await repo.get(
-                                        "ingest.source_items", accepted_message["item_id"]
-                                    )
-                                    if not source or source.get("extraction_status") not in {
-                                        "DONE",
-                                        "SKIPPED",
-                                    }:
-                                        incomplete.append(accepted_message["item_id"])
-                            if incomplete:
-                                raise ReplayError(
-                                    "incomplete_replay: source extraction did not finish: "
-                                    + ", ".join(sorted(set(incomplete)))
-                                )
-                            break
-                        if message.get("session_id") or message.get("kind") not in {
-                            "NEW_ITEM",
-                            "ITEM_ADDED",
-                            "CONDITION",
-                            "CONDITION_FIRED",
-                            "MILESTONE",
-                            "CALL_EXPIRED",
-                        }:
-                            raise ReplayError("Invalid subsequent replay message")
-                        scheduled_at = replay_message_timestamp(inputs, message)
-                        if parse_time(scheduled_at.value) >= clock.now():
-                            await advance_clock(scheduled_at)
-                        await import_prefix()
-                        original_session = next(
-                            (
-                                row["record"]
-                                for row in inputs._records
-                                if row["collection"] == "ops.agent_sessions"
-                                and row["record"].get("session_id") == source_id
-                            ),
-                            {},
-                        )
-                        if original_session.get("event_id") and current.get("event_id"):
-                            identity_substitutions[original_session["event_id"]] = current["event_id"]
-                        try:
-                            resolved_message = await resolve_replay_message_references(
-                                message,
-                                inputs,
-                                repo,
-                                identity_substitutions,
-                                event_scope=None
-                                if message["kind"] == "NEW_ITEM"
-                                else current.get("event_id"),
-                            )
-                            resolved_message, timer_job = await rerun_timer(resolved_message, message)
-                        except ReplayDivergence as exc:
-                            divergence = {
-                                "reason": str(exc),
-                                "original_message": copy.deepcopy(message),
-                                "policy": "No old snapshot imported; original trigger time retained; no clock movement to fresh expiry",
-                            }
-                            break
-                        next_payload = dict(resolved_message, replay_run_id=run_id)
-                        if message["kind"] == "NEW_ITEM":
-                            source_id = message.get("replay_source_session_id")
-                            current_evidence = (
-                                evidence_view.advance(clock.timestamp())
-                                if evidence_view
-                                else evidence_capture
-                            )
-                            if current_evidence:
-                                next_payload.update(
-                                    replay_evidence_sha256=current_evidence["manifest_sha256"],
-                                    replay_cutoff=current_evidence["manifest"]["cutoff"],
-                                )
-                        else:
-                            next_payload["session_id"] = sid
-                        if source_id:
-                            next_payload["replay_source_session_id"] = source_id
-                        next_session = await service.send_message(next_payload)
-                        sid = next_session["session_id"]
-                        active_session_id = sid
-                        if sid not in session_ids:
-                            session_ids.append(sid)
-                        accepted_messages.append(copy.deepcopy(message))
-                        if timer_job:
-                            await repo.put(
-                                "ops.jobs",
-                                timer_job["job_id"],
-                                dict(timer_job, status="DONE", result={"replay_session_id": sid}),
-                            )
-                    await asyncio.sleep(0.01)
-            calls = [
-                row async for row in repo.iter_all("ops.tool_calls") if row.get("session_id") in session_ids
-            ]
-            decisions = [
-                r async for r in repo.iter_all("ana.decisions") if r["dec_id"] not in initial_decisions
-            ]
-            alerts = [
-                r
-                async for r in repo.iter_all("out.alerts")
-                if (r["alert_id"], r["version"]) not in initial_alerts
-            ]
-            verdict_inputs = []
-            for decision in decisions:
-                provenance = decision.get("provenance", {})
-                verdict_inputs.append(
-                    {
-                        "dec_id": decision["dec_id"],
-                        "event": await repo.get("evt.events", decision["event_id"]),
-                        "assessment": await repo.get("evt.ems_assessments", provenance["ems_id"])
-                        if provenance.get("ems_id")
-                        else None,
-                        "market_truth": await repo.get("ana.market_truth", provenance["mta_id"])
-                        if provenance.get("mta_id")
-                        else None,
-                        "claims": [
-                            row
-                            async for row in repo.iter_all(
-                                "evt.claims", filters={"event_id": decision["event_id"]}
-                            )
-                        ],
-                    }
-                )
-            report = {
-                "replay_run_id": run_id,
-                "replay_evidence": evidence_capture,
-                "guest_prefix_receipts": evidence_view.receipts if evidence_view else [],
+        async def checkpoint_phase(execution, calls):
+            phases = (inputs.fixture_reference or {}).get("phases", [])
+            phase = next(
+                (phase for phase in phases if max(phase["message_indexes"]) == len(accepted_messages) - 1), None
+            )
+            if not phase or any(row["phase_id"] == phase["phase_id"] for row in phase_checkpoints):
+                return
+
+            follower = service.tasks.get(sid)
+            if follower is not None and not follower.done():
+                follower.cancel()
+                await asyncio.gather(follower, return_exceptions=True)
+            collections = (
+                "ingest.source_items",
+                "evt.events",
+                "evt.claims",
+                "evt.ems_assessments",
+                "evt.beneficiary_maps",
+                "evt.beneficiary_edges",
+                "ana.market_truth",
+                "ana.decisions",
+                "out.alerts",
+                "out.evidence_bundles",
+            )
+            state = {name: [row async for row in repo.iter_all(name)] for name in collections}
+            snapshot = {
+                "phase_id": phase["phase_id"],
+                "at": phase["at"],
+                "at_prec": phase["at_prec"],
+                "actual_checkpoint_at": datetime.now(UTC).isoformat(),
+                "actual_checkpoint_at_prec": "COLLECTION_ONLY",
                 "session_id": sid,
-                "session_ids": session_ids,
-                "mode": "FRESH_OPENMA_SESSION",
-                "evidence_mode": inputs.evidence_mode,
-                "fixture_reference": copy.deepcopy(inputs.fixture_reference),
-                "historical_live_performance_claim": False if inputs.fixture_reference else None,
-                "status": "DIVERGED" if divergence else "COMPLETED",
-                "divergence": divergence,
-                "messages": accepted_messages,
-                "phase_checkpoints": phase_checkpoints,
-                "external_capture_receipts": capture_receipts,
-                "identity_substitutions": identity_substitutions,
-                "causal_tool_receipts": causal_tool_receipts,
-                "delivery_receipts": delivery_receipts,
-                "timer_receipts": timer_receipts,
-                "execution_barrier": execution,
-                "execution_barriers": execution_barriers,
-                "tool_error_receipts": [
+                "execution_barrier": copy.deepcopy(execution),
+                "callbacks": [
                     {
                         "call_id": call["call_id"],
-                        "tool": call["tool"],
-                        "status": call["status"],
-                        "error": call.get("result", {}).get("error"),
+                        "ordinal": call.get("native_turn_call_index"),
+                        "returned_at": call.get("returned_at"),
+                        "sha256": digest(call),
                     }
                     for call in calls
-                    if call.get("is_error")
                 ],
-                "cutoff": inputs.cutoff,
-                "config_version": inputs.config_version,
-                "code_version": inputs.code_version,
-                "input_sha256": digest(json.loads(Path(bundle_path).read_text())),
-                "output": {
-                    "decisions": decisions,
-                    "alerts": alerts,
-                    "verdict_inputs": verdict_inputs,
-                    "events": [row async for row in repo.iter_all("evt.events")],
-                    "observations": [row async for row in repo.iter_all("evt.event_observations")],
-                    "claims": [row async for row in repo.iter_all("evt.claims")],
-                    "state_changes": [row async for row in repo.iter_all("evt.state_changes")],
-                    "assessments": [row async for row in repo.iter_all("evt.ems_assessments")],
-                    "beneficiary_maps": [row async for row in repo.iter_all("evt.beneficiary_maps")],
-                    "beneficiary_edges": [row async for row in repo.iter_all("evt.beneficiary_edges")],
-                    "market_truth": [row async for row in repo.iter_all("ana.market_truth")],
-                    "calls": [row async for row in repo.iter_all("ana.calls")],
-                    "conditions": [row async for row in repo.iter_all("ana.watch_conditions")],
-                },
-                "performance_evidence": False,
-                "assembled_at": inputs.assembled_at,
+                "state": state,
+                "session_workflow": copy.deepcopy(
+                    (await repo.get("ops.agent_sessions", sid)).get("verified_source_completion")
+                ),
+                "delivery_intents": [row async for row in repo.iter_all("ops.jobs", filters={"type": "DELIVER"})],
+                "external_capture_gaps": reference_evidence_gaps(calls),
+                "requested_external_captures_complete": not reference_evidence_gaps(calls),
+                "evidence_manifest_sha256": evidence_view.receipts[-1]["manifest_sha256"]
+                if evidence_view and evidence_view.receipts
+                else None,
             }
-            if inputs.fixture_reference:
-                report.update(
-                    delivery_status="NOT_RUN",
-                    delivery_reason="FIRST_REFERENCE_NO_CAPTURED_DELIVERY",
-                    delivery_intents=sorted(
-                        [
-                            copy.deepcopy(job)
-                            async for job in repo.iter_all("ops.jobs", filters={"type": "DELIVER"})
-                        ],
-                        key=lambda job: job["job_id"],
+            snapshot["sha256"] = digest(snapshot)
+            if output_path:
+                freeze(Path(output_path).parent / (run_id + "-phase-" + phase["phase_id"] + ".json"), snapshot)
+            phase_checkpoints.append(snapshot)
+
+        worker = None
+        sid = None
+        session_ids = []
+        execution_barriers = {}
+        report = None
+        failure = None
+        initial_decisions = {r["dec_id"] async for r in repo.iter_all("ana.decisions")}
+        initial_alerts = {(r["alert_id"], r["version"]) async for r in repo.iter_all("out.alerts")}
+
+        async def market_jobs():
+            while True:
+                session = await repo.get("ops.agent_sessions", sid)
+                eid = (session or {}).get("event_id")
+                async for job in repo.iter_all("ops.jobs", filters={"status": "QUEUED"}):
+                    if job["type"] == "DELIVER":
+                        if inputs.fixture_reference:
+                            continue
+
+                        outcome = await replay_delivery(job["payload"])
+                        await repo.put("ops.jobs", job["job_id"], dict(job, result=outcome, status="DONE"))
+                        continue
+                    if (
+                        not eid
+                        or job["payload"].get("event_id") != eid
+                        or job["type"] not in {"ESCALATE_TOKENS", "RUN_MARKET_TRUTH"}
+                    ):
+                        continue
+                    if job.get("run_after") and parse_time(job["run_after"]) > clock.now():
+                        continue
+                    dependencies = [
+                        await repo.get("ops.jobs", key) for key in job["payload"].get("_depends_on", [])
+                    ]
+                    if any(row is None or row.get("status") != "DONE" for row in dependencies):
+                        continue
+                    result = None
+                    if job["type"] == "RUN_MARKET_TRUTH":
+                        payload = job["payload"]
+                        if parse_time(payload["cutoff"]) > clock.now():
+                            raise ReplayError("market request exceeds replay clock")
+                        result = await event_tools.truth.assess(eid, payload["token_id"], payload["cutoff"])
+                    await repo.put("ops.jobs", job["job_id"], dict(job, result=result, status="DONE"))
+                await asyncio.sleep(0.01)
+
+        original_iso = util.iso
+
+        def replay_iso(value=None):
+            return original_iso(clock.now() if value is None else value)
+
+        with ExitStack() as stack:
+            for module in (
+                util,
+                storage,
+                tool_module,
+                session_module,
+                cards,
+                truth,
+                delivery_module,
+                scheduler_module,
+            ):
+                if hasattr(module, "utcnow"):
+                    stack.enter_context(patch.object(module, "utcnow", clock.now))
+                if hasattr(module, "iso"):
+                    stack.enter_context(patch.object(module, "iso", replay_iso))
+            stack.enter_context(
+                patch.object(delivery_module, "collection_clock", lambda value=None, **kwargs: clock.timestamp())
+            )
+            stack.enter_context(
+                patch.object(
+                    scheduler_module,
+                    "collection_clock",
+                    lambda value=None, **kwargs: selected_timer_timestamp or clock.timestamp(),
+                )
+            )
+            stack.enter_context(
+                patch.object(
+                    scheduler_module,
+                    "utcnow",
+                    lambda: (
+                        parse_time(selected_timer_timestamp.value) if selected_timer_timestamp else clock.now()
                     ),
                 )
-            report["output_sha256"] = digest(report["output"])
-            return report
-        except BaseException as exc:
-            failure = {
-                "error_type": type(exc).__name__,
-                "reason": str(exc)
-                if isinstance(exc, ReplayError)
-                else "Replay completion deadline expired"
-                if isinstance(exc, TimeoutError)
-                else "Replay caller cancelled execution"
-                if isinstance(exc, asyncio.CancelledError)
-                else "Execution failed; inspect the audited session/tool records",
-            }
-            raise
-        finally:
-            if worker:
-                worker.cancel()
-                await asyncio.gather(worker, return_exceptions=True)
-
-            await service.stop_followers()
-
-            owned = [
-                row async for row in repo.iter_all("ops.agent_sessions", filters={"replay_run_id": run_id})
-            ]
-            cleanup = []
-            for row in owned:
-                receipt = {"session_id": row["session_id"], "archived": False}
-                if failure is not None:
-                    try:
-                        receipt["local_finalization"] = await service.finalize_replay_abort(
-                            row["session_id"], run_id, failure
+            )
+            try:
+                construction_stack.pop_all()
+                deadline = asyncio.get_running_loop().time() + timeout
+                async with asyncio.timeout_at(deadline):
+                    session = await service.send_message(
+                        dict(
+                            initial_message,
+                            replay_run_id=run_id,
+                            **(
+                                {
+                                    "replay_evidence_sha256": evidence_capture["manifest_sha256"],
+                                    "replay_cutoff": evidence_capture["manifest"]["cutoff"],
+                                }
+                                if evidence_capture
+                                else {}
+                            ),
                         )
-                    except Exception as exc:
-                        receipt["local_finalization_error_type"] = type(exc).__name__
-                try:
-                    await service.request("POST", f"sessions/{row['session_id']}/archive")
-                    receipt["archived"] = True
-                except Exception as exc:
-                    receipt["error_type"] = type(exc).__name__
-                cleanup.append(receipt)
-            await service.close()
-            await delivery_http.aclose()
-            await scheduler.close()
-            if report is None and failure is not None:
+                    )
+                sid = session["session_id"]
+                session_ids.append(sid)
+                active_session_id = sid
+                worker = asyncio.create_task(market_jobs())
+                async with asyncio.timeout_at(deadline):
+                    while True:
+                        if worker.done():
+                            try:
+                                await worker
+                            except ReplayDivergence as exc:
+                                divergence = {
+                                    "reason": str(exc),
+                                    "stage": "CAPTURED_DELIVERY",
+                                    "policy": "No original future state imported",
+                                }
+                                break
+                        current = await repo.get("ops.agent_sessions", sid)
+                        if current.get("status") == "FAILED":
+                            raise ReplayError("replay agent turn failed before a settled completion")
+                        if current.get("status") == "ENDED" and any(
+                            message.get("turn_status") != "DONE" for message in current.get("message_log", [])
+                        ):
+                            raise ReplayError("replay agent session terminated before a settled completion")
+                        calls = [
+                            row async for row in repo.iter_all("ops.tool_calls", filters={"session_id": sid})
+                        ]
+                        if any(missing_capture_error(call) for call in calls):
+                            raise ReplayError("insufficient_fixture: required replay tool capture is absent")
+
+                        queued_deliveries = [
+                            row
+                            async for row in repo.iter_all(
+                                "ops.jobs", filters={"status": "QUEUED", "type": "DELIVER"}
+                            )
+                        ]
+                        execution = await service.completed_turn(sid)
+
+                        if (
+                            execution["complete"]
+                            and (inputs.fixture_reference or not queued_deliveries)
+                            and all(call.get("returned_at") for call in calls)
+                        ):
+                            execution_barriers[sid] = copy.deepcopy(execution)
+                            await checkpoint_phase(execution, calls)
+                            message = next(pending_messages, None)
+                            if message is None:
+                                incomplete = []
+                                for accepted_message in accepted_messages:
+                                    if accepted_message.get("kind") in {"NEW_ITEM", "ITEM_ADDED"}:
+                                        source = await repo.get(
+                                            "ingest.source_items", accepted_message["item_id"]
+                                        )
+                                        if not source or source.get("extraction_status") not in {
+                                            "DONE",
+                                            "SKIPPED",
+                                        }:
+                                            incomplete.append(accepted_message["item_id"])
+                                if incomplete:
+                                    raise ReplayError(
+                                        "incomplete_replay: source extraction did not finish: "
+                                        + ", ".join(sorted(set(incomplete)))
+                                    )
+                                break
+                            if message.get("session_id") or message.get("kind") not in {
+                                "NEW_ITEM",
+                                "ITEM_ADDED",
+                                "CONDITION",
+                                "CONDITION_FIRED",
+                                "MILESTONE",
+                                "CALL_EXPIRED",
+                            }:
+                                raise ReplayError("Invalid subsequent replay message")
+                            scheduled_at = replay_message_timestamp(inputs, message)
+                            if parse_time(scheduled_at.value) >= clock.now():
+                                await advance_clock(scheduled_at)
+                            await import_prefix()
+                            original_session = next(
+                                (
+                                    row["record"]
+                                    for row in inputs._records
+                                    if row["collection"] == "ops.agent_sessions"
+                                    and row["record"].get("session_id") == source_id
+                                ),
+                                {},
+                            )
+                            if original_session.get("event_id") and current.get("event_id"):
+                                identity_substitutions[original_session["event_id"]] = current["event_id"]
+                            try:
+                                resolved_message = await resolve_replay_message_references(
+                                    message,
+                                    inputs,
+                                    repo,
+                                    identity_substitutions,
+                                    event_scope=None
+                                    if message["kind"] == "NEW_ITEM"
+                                    else current.get("event_id"),
+                                )
+                                resolved_message, timer_job = await rerun_timer(resolved_message, message)
+                            except ReplayDivergence as exc:
+                                divergence = {
+                                    "reason": str(exc),
+                                    "original_message": copy.deepcopy(message),
+                                    "policy": "No old snapshot imported; original trigger time retained; no clock movement to fresh expiry",
+                                }
+                                break
+                            next_payload = dict(resolved_message, replay_run_id=run_id)
+                            if message["kind"] == "NEW_ITEM":
+                                source_id = message.get("replay_source_session_id")
+                                current_evidence = (
+                                    evidence_view.advance(clock.timestamp())
+                                    if evidence_view
+                                    else evidence_capture
+                                )
+                                if current_evidence:
+                                    next_payload.update(
+                                        replay_evidence_sha256=current_evidence["manifest_sha256"],
+                                        replay_cutoff=current_evidence["manifest"]["cutoff"],
+                                    )
+                            else:
+                                next_payload["session_id"] = sid
+                            if source_id:
+                                next_payload["replay_source_session_id"] = source_id
+                            next_session = await service.send_message(next_payload)
+                            sid = next_session["session_id"]
+                            active_session_id = sid
+                            if sid not in session_ids:
+                                session_ids.append(sid)
+                            accepted_messages.append(copy.deepcopy(message))
+                            if timer_job:
+                                await repo.put(
+                                    "ops.jobs",
+                                    timer_job["job_id"],
+                                    dict(timer_job, status="DONE", result={"replay_session_id": sid}),
+                                )
+                        await asyncio.sleep(0.01)
+                calls = [
+                    row async for row in repo.iter_all("ops.tool_calls") if row.get("session_id") in session_ids
+                ]
+                decisions = [
+                    r async for r in repo.iter_all("ana.decisions") if r["dec_id"] not in initial_decisions
+                ]
+                alerts = [
+                    r
+                    async for r in repo.iter_all("out.alerts")
+                    if (r["alert_id"], r["version"]) not in initial_alerts
+                ]
+                verdict_inputs = []
+                for decision in decisions:
+                    provenance = decision.get("provenance", {})
+                    verdict_inputs.append(
+                        {
+                            "dec_id": decision["dec_id"],
+                            "event": await repo.get("evt.events", decision["event_id"]),
+                            "assessment": await repo.get("evt.ems_assessments", provenance["ems_id"])
+                            if provenance.get("ems_id")
+                            else None,
+                            "market_truth": await repo.get("ana.market_truth", provenance["mta_id"])
+                            if provenance.get("mta_id")
+                            else None,
+                            "claims": [
+                                row
+                                async for row in repo.iter_all(
+                                    "evt.claims", filters={"event_id": decision["event_id"]}
+                                )
+                            ],
+                        }
+                    )
                 report = {
-                    "mode": "FRESH_OPENMA_SESSION",
-                    "status": "FAILED",
                     "replay_run_id": run_id,
+                    "replay_evidence": evidence_capture,
+                    "guest_prefix_receipts": evidence_view.receipts if evidence_view else [],
                     "session_id": sid,
-                    "failure": failure,
+                    "session_ids": session_ids,
+                    "mode": "FRESH_OPENMA_SESSION",
+                    "evidence_mode": inputs.evidence_mode,
+                    "fixture_reference": copy.deepcopy(inputs.fixture_reference),
+                    "historical_live_performance_claim": False if inputs.fixture_reference else None,
+                    "status": "DIVERGED" if divergence else "COMPLETED",
+                    "divergence": divergence,
                     "messages": accepted_messages,
-                    "input_sha256": digest(json.loads(Path(bundle_path).read_text())),
+                    "phase_checkpoints": phase_checkpoints,
+                    "external_capture_receipts": capture_receipts,
+                    "identity_substitutions": identity_substitutions,
+                    "causal_tool_receipts": causal_tool_receipts,
+                    "delivery_receipts": delivery_receipts,
+                    "timer_receipts": timer_receipts,
+                    "execution_barrier": execution,
+                    "execution_barriers": execution_barriers,
+                    "tool_error_receipts": [
+                        {
+                            "call_id": call["call_id"],
+                            "tool": call["tool"],
+                            "status": call["status"],
+                            "error": call.get("result", {}).get("error"),
+                        }
+                        for call in calls
+                        if call.get("is_error")
+                    ],
+                    "cutoff": inputs.cutoff,
                     "config_version": inputs.config_version,
                     "code_version": inputs.code_version,
-                    "cutoff": inputs.cutoff,
-                    "output": None,
-                    "output_sha256": digest(None),
-                    "phase_checkpoints": phase_checkpoints,
-                    "partial_output_not_collected": True,
+                    "input_sha256": digest(json.loads(Path(bundle_path).read_text())),
+                    "output": {
+                        "decisions": decisions,
+                        "alerts": alerts,
+                        "verdict_inputs": verdict_inputs,
+                        "events": [row async for row in repo.iter_all("evt.events")],
+                        "observations": [row async for row in repo.iter_all("evt.event_observations")],
+                        "claims": [row async for row in repo.iter_all("evt.claims")],
+                        "state_changes": [row async for row in repo.iter_all("evt.state_changes")],
+                        "assessments": [row async for row in repo.iter_all("evt.ems_assessments")],
+                        "beneficiary_maps": [row async for row in repo.iter_all("evt.beneficiary_maps")],
+                        "beneficiary_edges": [row async for row in repo.iter_all("evt.beneficiary_edges")],
+                        "market_truth": [row async for row in repo.iter_all("ana.market_truth")],
+                        "calls": [row async for row in repo.iter_all("ana.calls")],
+                        "conditions": [row async for row in repo.iter_all("ana.watch_conditions")],
+                    },
                     "performance_evidence": False,
+                    "assembled_at": inputs.assembled_at,
                 }
-            if report is not None:
-                report["cleanup_sessions"] = cleanup
                 if inputs.fixture_reference:
-                    recorded_calls = [
-                        row
-                        async for row in repo.iter_all("ops.tool_calls")
-                        if row.get("session_id") in session_ids
-                    ]
-                    gaps = reference_evidence_gaps(recorded_calls)
-                    report["external_capture_gaps"] = gaps
-                    report["requested_external_captures_complete"] = (
-                        not gaps and report["status"] == "COMPLETED"
+                    report.update(
+                        delivery_status="NOT_RUN",
+                        delivery_reason="FIRST_REFERENCE_NO_CAPTURED_DELIVERY",
+                        delivery_intents=sorted(
+                            [
+                                copy.deepcopy(job)
+                                async for job in repo.iter_all("ops.jobs", filters={"type": "DELIVER"})
+                            ],
+                            key=lambda job: job["job_id"],
+                        ),
                     )
-                if output_path:
-                    freeze(output_path, report)
+                report["output_sha256"] = digest(report["output"])
+                return report
+            except BaseException as exc:
+                failure = {
+                    "error_type": type(exc).__name__,
+                    "reason": str(exc)
+                    if isinstance(exc, ReplayError)
+                    else "Replay completion deadline expired"
+                    if isinstance(exc, TimeoutError)
+                    else "Replay caller cancelled execution"
+                    if isinstance(exc, asyncio.CancelledError)
+                    else "Execution failed; inspect the audited session/tool records",
+                }
+                raise
+            finally:
+                async def cleanup_consumers():
+                    nonlocal report
+                    try:
+                        try:
+                            if worker:
+                                worker.cancel()
+                                await asyncio.gather(worker, return_exceptions=True)
+
+                        finally:
+                            await service.stop_followers()
+                        owned = [
+                            row async for row in repo.iter_all("ops.agent_sessions", filters={"replay_run_id": run_id})
+                        ]
+                        cleanup = []
+                        for row in owned:
+                            receipt = {"session_id": row["session_id"], "archived": False}
+                            if failure is not None:
+                                try:
+                                    receipt["local_finalization"] = await service.finalize_replay_abort(
+                                        row["session_id"], run_id, failure
+                                    )
+                                except Exception as exc:
+                                    receipt["local_finalization_error_type"] = type(exc).__name__
+                            try:
+                                await service.request("POST", f"sessions/{row['session_id']}/archive")
+                                receipt["archived"] = True
+                            except Exception as exc:
+                                receipt["error_type"] = type(exc).__name__
+                            cleanup.append(receipt)
+                    finally:
+                        try:
+                            await service.close()
+                        finally:
+                            try:
+                                await delivery_http.aclose()
+                            finally:
+                                await scheduler.close()
+                    if report is None and failure is not None:
+                        report = {
+                            "mode": "FRESH_OPENMA_SESSION",
+                            "status": "FAILED",
+                            "replay_run_id": run_id,
+                            "session_id": sid,
+                            "failure": failure,
+                            "messages": accepted_messages,
+                            "input_sha256": digest(json.loads(Path(bundle_path).read_text())),
+                            "config_version": inputs.config_version,
+                            "code_version": inputs.code_version,
+                            "cutoff": inputs.cutoff,
+                            "output": None,
+                            "output_sha256": digest(None),
+                            "phase_checkpoints": phase_checkpoints,
+                            "partial_output_not_collected": True,
+                            "performance_evidence": False,
+                        }
+                    if report is not None:
+                        report["cleanup_sessions"] = cleanup
+                        if inputs.fixture_reference:
+                            recorded_calls = [
+                                row
+                                async for row in repo.iter_all("ops.tool_calls")
+                                if row.get("session_id") in session_ids
+                            ]
+                            gaps = reference_evidence_gaps(recorded_calls)
+                            report["external_capture_gaps"] = gaps
+                            report["requested_external_captures_complete"] = (
+                                not gaps and report["status"] == "COMPLETED"
+                            )
+                        if output_path:
+                            freeze(output_path, report)
+
+                await _finish_cleanup(cleanup_consumers(), failure=sys.exception())

@@ -167,6 +167,12 @@ def ctes():
             "<= ctx_end, arrayMin(future_lows) >= lq_dec(JSONExtractRaw(flow, 'low')), NULL)"
         ),
     )
+    root_observation = (
+        observation.replace("flow", "burst.1")
+        .replace("recovery)", "burst.3)")
+        .replace("recovery[", "burst.3[")
+        .replace("future_lows", "burst.4")
+    )
     return (
         r"""
 {lq_snapshot:String} AS lq_snapshot,
@@ -421,6 +427,67 @@ lq_observed AS (
     SELECT arrayMap(x -> x.3, arraySort(x -> tuple(x.1, x.2), groupArray(tuple(first_ordinal, flow_ordinal, observation)))) AS observations
     FROM lq_burst_results
 ),
+lq_root_inputs AS (
+    SELECT v.venue, v.first_ordinal, v.series, v.current, v.ctx_band_key,
+        v.bid, v.ask, v.bid_native, v.ask_native, v.pre_bid, v.pre_ask,
+        v.pre_bid_native, v.pre_ask_native, v.current_total, v.pre_total,
+        v.spread, v.pre_spread, v.avg_bid, v.avg_ask, t.lq_tiers,
+        c.ctx_primary, c.ctx_end, c.ctx_start, c.ctx_anchor, c.ctx_band, c.ctx_band_raw,
+        c.ctx_cadence, c.ctx_refill, c.ctx_resilience, c.ctx_relative, c.ctx_flows,
+        arrayFilter(flow -> lq_venue(flow) = v.venue, c.ctx_flows) AS venue_flows
+    FROM lq_flow_context AS c CROSS JOIN lq_tier_values AS t
+    LEFT ALL JOIN lq_venue_stats AS v ON true
+),
+lq_root_baselines AS (
+    SELECT r.*, arrayMap(flow -> tuple(flow, indexOf(r.venue_flows, flow),
+        arrayFilter(book -> book.1 < lq_time(flow)
+            AND dateDiff('microsecond', book.1, lq_time(flow)) <= r.ctx_cadence * 1000000,
+            r.series)), r.venue_flows) AS burst_baselines
+    FROM lq_root_inputs AS r
+),
+lq_root_selected AS (
+    SELECT r.*, arrayFilter(burst -> if(notEmpty(burst.3),
+        isNotNull(lq_dec(JSONExtractRaw(burst.1, 'sell_notional')))
+        AND isNotNull(lq_dec(JSONExtractRaw(burst.1, 'buy_notional')))
+        AND lq_dec(JSONExtractRaw(burst.1, 'sell_notional')) - lq_dec(JSONExtractRaw(burst.1, 'buy_notional'))
+            >= lq_depth_context(burst.3[-1].3, 'bid', 'usd', r.ctx_band, r.ctx_band_key), false),
+        r.burst_baselines) AS selected_bursts
+    FROM lq_root_baselines AS r
+),
+lq_root_recovery AS (
+    SELECT r.*, arrayMap(burst -> tuple(burst.1, burst.2,
+        arrayFilter(book -> book.1 > lq_time(burst.1)
+            AND book.1 <= least(lq_time(burst.1) + toIntervalMicrosecond(toInt64(r.ctx_refill * 1000000)), r.ctx_end)
+            AND lq_depth_context(book.3, 'bid', 'usd', r.ctx_band, r.ctx_band_key)
+                >= lq_depth_context(burst.3[-1].3, 'bid', 'usd', r.ctx_band, r.ctx_band_key), r.series),
+        arrayFilter(x -> isNotNull(x), arrayMap(row -> lq_dec(JSONExtractRaw(row, 'low')),
+            arrayFilter(row -> lq_time(row) > lq_time(burst.1)
+                AND lq_time(row) <= lq_time(burst.1) + toIntervalMicrosecond(toInt64(r.ctx_resilience * 1000000)),
+                r.venue_flows)))), r.selected_bursts) AS recovered_bursts
+    FROM lq_root_selected AS r
+),
+lq_root_results AS (
+    SELECT r.*, if(first_ordinal > 0, {per_venue}, '') AS venue_json,
+        arrayMap(burst -> tuple(first_ordinal, burst.2, {root_observation}), recovered_bursts) AS root_observations
+    FROM lq_root_recovery AS r
+),
+lq_root_publication AS (
+    SELECT arraySort(v -> v.17, groupArrayIf(tuple(venue, bid, ask, bid_native, ask_native,
+        pre_bid, pre_ask, pre_bid_native, pre_ask_native, current_total, pre_total, spread,
+        pre_spread, avg_bid, avg_ask, venue_json, first_ordinal, current.3), first_ordinal > 0)) AS venues,
+        arrayMap(x -> x.3, arraySort(x -> tuple(x.1, x.2), arrayFlatten(groupArray(root_observations)))) AS observations,
+        any(tuple(lq_tiers, ctx_anchor, ctx_band, ctx_band_raw, ctx_start, ctx_end, ctx_primary,
+            ctx_flows, ctx_relative)) AS root_context
+    FROM lq_root_results
+),
+lq_root_context AS (
+    SELECT p.venues, p.observations, p.root_context.1 AS lq_tiers,
+        p.root_context.2 AS ctx_anchor, p.root_context.3 AS ctx_band,
+        p.root_context.4 AS ctx_band_raw, p.root_context.5 AS ctx_start,
+        p.root_context.6 AS ctx_end, p.root_context.7 AS ctx_primary,
+        p.root_context.8 AS ctx_flows, p.root_context.9 AS ctx_relative
+    FROM lq_root_publication AS p
+),
 """
         + _state_ctes()
     )
@@ -456,7 +523,7 @@ lq_state_inputs AS (
             - lq_sum(arrayMap(flow -> lq_dec(JSONExtractRaw(flow, 'sell_qty')), c.ctx_flows)) AS lq_net_native,
         JSONExtractRaw(c.ctx_relative, 'windows', c.ctx_primary) AS lq_relative_window,
         notEmpty(venues) AND notEmpty(c.ctx_flows) AS lq_replenishment_available
-    FROM lq_collected CROSS JOIN lq_observed CROSS JOIN lq_tier_values CROSS JOIN lq_flow_context AS c
+    FROM lq_root_context AS c
 ),
 lq_state_flow AS (
     SELECT *, if(isNotNull(lq_net_native), lq_net_native, lq_net_usd) AS lq_net,

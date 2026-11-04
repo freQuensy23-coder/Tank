@@ -5766,10 +5766,11 @@ class MarketTruthService:
             config, config_version=self.settings.config_version, code_version=self.settings.code_version
         )
         from tank.analysis import truth_sql_engine
+        from tank.analysis.truth_native_binding import native_provider
 
         async with self._condition_lock:
             return await truth_sql_engine.evaluate_conditions(
-                getattr(self.repo, "clickhouse", None),
+                native_provider(self),
                 snapshot,
                 requirements,
                 config,
@@ -5809,8 +5810,9 @@ class MarketTruthService:
         lock = self._assessment_locks.setdefault(token_id, asyncio.Lock())
         async with lock:
             from tank.analysis import truth_sql_engine
+            from tank.analysis.truth_native_binding import native_provider
 
-            result = await truth_sql_engine.evaluate(getattr(self.repo, "clickhouse", None), snapshot, knobs)
+            result = await truth_sql_engine.evaluate(native_provider(self), snapshot, knobs)
         result["mta_id"] = new_id("MTA")
         await self.repo.put("ana.market_truth", result["mta_id"], result, immutable=True)
         return result

@@ -16,6 +16,7 @@ import asyncio
 import json
 import re
 import time
+from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from urllib.parse import urlsplit, urlunsplit
@@ -130,22 +131,8 @@ class ClickHouse:
         await self.http.aclose()
 
     async def _post(self, query, params):
-        request = {
-            "date_time_output_format": "iso",
-            "output_format_json_quote_64bit_integers": "0",
-            "output_format_json_quote_decimals": "0",
-            "do_not_merge_across_partitions_select_final": "1",
-            "use_skip_indexes_if_final": "0",
-            "max_query_size": str(256 << 20),
-        }
-        parameters = {
-            "param_" + name: ""
-            if value is None
-            else str(value).lower()
-            if isinstance(value, bool)
-            else str(value)
-            for name, (value, _) in (params or {}).items()
-        }
+        request = dict(_REQUEST_SETTINGS)
+        parameters = _wire_parameters(params)
         query = query if self.database == "mkt" else re.sub(r"\bmkt\b", self.database, query)
         headers = {"X-ClickHouse-User": self.user, "X-ClickHouse-Key": self.password}
         if sum(len(name) + len(value) + 2 for name, value in parameters.items()) > 4096:
@@ -181,38 +168,99 @@ class ClickHouse:
             await self._post(f"INSERT INTO {table} FORMAT JSONEachRow\n{body}", None)
 
 
-def _external_parameters(query, params, parameters):
+_REQUEST_SETTINGS = {
+    "date_time_output_format": "iso",
+    "output_format_json_quote_64bit_integers": "0",
+    "output_format_json_quote_decimals": "0",
+    "do_not_merge_across_partitions_select_final": "1",
+    "use_skip_indexes_if_final": "0",
+    "max_query_size": str(256 << 20),
+}
+_SQL_QUOTED = (
+    r"'(?:[^'\\]|\\.|'')*'|\"(?:[^\"\\]|\\.|\"\")*\"|`(?:[^`\\]|\\.|``)*`"
+    r"|--[^\n]*|\#[^\n]*|/\*.*?\*/|(?P<tag>\$\w*\$).*?(?P=tag)|"
+)
+
+
+@dataclass(frozen=True)
+class _ParameterPlan:
+    query: str
+    table: str
+    structure: str
+    data: bytes
+    fields: tuple
+
+
+def _wire_parameters(params):
+    return {
+        "param_" + name: ""
+        if value is None
+        else str(value).lower()
+        if isinstance(value, bool)
+        else str(value)
+        for name, (value, _) in (params or {}).items()
+    }
+
+
+def _parameter_plan(query, params, parameters=None, *, bind_all=False):
+    params = params or {}
+    if bind_all:
+        for name, (value, kind) in params.items():
+            if (
+                not isinstance(name, str)
+                or re.fullmatch(r"[A-Za-z_][A-Za-z_0-9]*", name) is None
+                or kind != "String"
+                or not isinstance(value, str)
+            ):
+                raise ValueError("native local parameter unsupported")
+    parameters = _wire_parameters(params) if parameters is None else parameters
     table = "_tank_http_parameters"
     while table in query:
         table += "_"
     substitutions = {}
     columns = []
     values = []
-    files = []
+    fields = []
     for name, (_, kind) in params.items():
         wire = parameters["param_" + name]
-        if len(wire.encode()) <= 4096 or kind == "Identifier":
-            files.append(("param_" + name, (None, wire.encode())))
+        if not bind_all and (len(wire.encode()) <= 4096 or kind == "Identifier"):
+            fields.append(("param_" + name, (None, wire.encode())))
             continue
         column = f"c{len(columns)}"
         columns.append(f"{column} {kind}")
         values.append(wire)
         substitutions["{" + name + ":" + kind + "}"] = f"(SELECT tuple({column}) FROM {table}).1"
-    if columns:
-        tokens = (
-            r"'(?:[^'\\]|\\.|'')*'|\"(?:[^\"\\]|\\.|\"\")*\"|`(?:[^`\\]|\\.|``)*`"
-            r"|--[^\n]*|\#[^\n]*|/\*.*?\*/|(?P<tag>\$\w*\$).*?(?P=tag)|"
-            + "|".join(re.escape(token) for token in substitutions)
+    if columns or bind_all:
+        tokens = _SQL_QUOTED + (
+            r"\{[A-Za-z_][A-Za-z_0-9]*:[^{}]+\}"
+            if bind_all
+            else "|".join(re.escape(token) for token in substitutions)
         )
-        query = re.sub(tokens, lambda match: substitutions.get(match[0], match[0]), query, flags=re.S)
+
+        def substitute(match):
+            token = match[0]
+            if bind_all and token.startswith("{") and token not in substitutions:
+                raise ValueError("native local parameter unbound")
+            return substitutions.get(token, token)
+
+        query = re.sub(tokens, substitute, query, flags=re.S)
+    return _ParameterPlan(
+        query, table, ", ".join(columns), ("\t".join(values) + "\n").encode() if columns else b"", tuple(fields)
+    )
+
+
+def _external_parameters(query, params, parameters):
+    plan = _parameter_plan(query, params, parameters)
+    files = list(plan.fields)
+    if plan.structure:
         files.extend(
             [
-                (table + "_structure", (None, ", ".join(columns).encode())),
-                (table + "_format", (None, b"TabSeparated")),
-                (table, ("parameters.tsv", ("\t".join(values) + "\n").encode())),
+                (plan.table + "_structure", (None, plan.structure.encode())),
+                (plan.table + "_format", (None, b"TabSeparated")),
+                (plan.table, ("parameters.tsv", plan.data)),
             ]
         )
-    return query, files
+    return plan.query, files
 
 
 def parameter_string(value):
