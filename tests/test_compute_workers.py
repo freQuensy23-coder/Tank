@@ -98,8 +98,9 @@ async def test_native_service_dependency_owns_inputs_and_per_token_locks_not_wor
 
     async def evaluate(client, snapshot, config=None):
         token = snapshot["token_id"]
-        assert_input(client, snapshot, config, provider,
-                     dict(deepcopy(packets[token]), event_id=None), ("cfg", "code"))
+        assert_input(
+            client, snapshot, config, provider, dict(deepcopy(packets[token]), event_id=None), ("cfg", "code")
+        )
         assert token not in active
         active.add(token)
         seen.append(token)
@@ -120,14 +121,16 @@ async def test_native_service_dependency_owns_inputs_and_per_token_locks_not_wor
     assert seen == ["T", "U"] and repo.rows == {}
     release.set()
     results.extend(await asyncio.gather(t1, t2, u))
-    results.append(await truth.MarketTruthService(repo, SETTINGS, Market(packets)).assess(
-        None, "T", "2026-10-16T12:00:00Z"))
+    results.append(
+        await truth.MarketTruthService(repo, SETTINGS, Market(packets)).assess(
+            None, "T", "2026-10-16T12:00:00Z"
+        )
+    )
     assert seen == ["T", "U", "T", "T"]
     assert len({result["mta_id"] for result in results}) == 4
     assert repo.rows == {("ana.market_truth", result["mta_id"]): result for result in results}
     assert active == set()
     assert compute_workers._executors == {} and compute_workers._baselines == {}
-
 
 
 @pytest.mark.asyncio
@@ -191,8 +194,10 @@ async def test_direct_compute_worker_process_is_independent_of_busy_reaction_lan
     ticker = asyncio.create_task(ticks())
     started = time.monotonic()
     result = await compute_workers.compute_market_truth(
-        compute_workers.ASSESSMENT, snapshot,
-        config={"config_version": "cfg", "code_version": "code"}, baseline_key="T",
+        compute_workers.ASSESSMENT,
+        snapshot,
+        config={"config_version": "cfg", "code_version": "code"},
+        baseline_key="T",
     )
     elapsed = time.monotonic() - started
     done.set()

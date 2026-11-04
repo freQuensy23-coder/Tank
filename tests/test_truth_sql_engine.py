@@ -223,7 +223,9 @@ async def test_actual_service_native_query_postgres_immutable_readback(
 
 @pytest.mark.integration
 @pytest.mark.parametrize("amount", ["1e25", "0.0000000000000000000000001"])
-async def test_native_admission_refuses_unrepresentable_amounts(engine_client, original_truth, monkeypatch, amount):
+async def test_native_admission_refuses_unrepresentable_amounts(
+    engine_client, original_truth, monkeypatch, amount
+):
     packet = _supply_snapshot()
     wallet = next(row for row in packet["supply"] if row["kind"] == "WALLET_FLOWS")
     wallet["flows"][0]["qty_native"] = "1.25"

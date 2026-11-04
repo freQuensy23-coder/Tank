@@ -20,19 +20,25 @@ from tank.clickhouse_market import _external_parameters, _parameter_plan, _wire_
 
 
 def _http_guard(error, message):
-    return re.match(
-        r"\AClickHouse 500: Code: 395\. DB::Exception: " + re.escape(message) + r"(?=[:.] )",
-        str(error),
-    ) is not None
+    return (
+        re.match(
+            r"\AClickHouse 500: Code: 395\. DB::Exception: " + re.escape(message) + r"(?=[:.] )",
+            str(error),
+        )
+        is not None
+    )
 
 
-@pytest.mark.parametrize("text", [
-    "native local execution failed",
-    "ClickHouse 500: Code: 62. DB::Exception: private-secret anchor must precede cutoff. ",
-    "ClickHouse 500: Code: 395. DB::Exception: private-secret anchor must precede cutoff. ",
-    "ClickHouse 500: Code: 395. DB::Exception: anchor must precede cutoff-extra. ",
-    "ClickHouse 500: private-secret Code: 395. DB::Exception: anchor must precede cutoff. ",
-])
+@pytest.mark.parametrize(
+    "text",
+    [
+        "native local execution failed",
+        "ClickHouse 500: Code: 62. DB::Exception: private-secret anchor must precede cutoff. ",
+        "ClickHouse 500: Code: 395. DB::Exception: private-secret anchor must precede cutoff. ",
+        "ClickHouse 500: Code: 395. DB::Exception: anchor must precede cutoff-extra. ",
+        "ClickHouse 500: private-secret Code: 395. DB::Exception: anchor must precede cutoff. ",
+    ],
+)
 def test_http_guard_rejects_generic_wrong_code_and_injected_message(text):
     assert not _http_guard(RuntimeError(text), "anchor must precede cutoff")
 
@@ -62,12 +68,15 @@ def test_local_plan_refuses_non_string_types(kind):
         _parameter_plan("SELECT {p:" + kind + "}", {"p": ("x", kind)}, bind_all=True)
 
 
-@pytest.mark.parametrize("query,params", [
-    ("SELECT {absent:String}", {}),
-    ("SELECT {p:Identifier}", {"p": ("x", "String")}),
-    ("SELECT {p:String}", {"p": (True, "String")}),
-    ("SELECT {p:String}", {"bad-name": ("x", "String")}),
-])
+@pytest.mark.parametrize(
+    "query,params",
+    [
+        ("SELECT {absent:String}", {}),
+        ("SELECT {p:Identifier}", {"p": ("x", "String")}),
+        ("SELECT {p:String}", {"p": (True, "String")}),
+        ("SELECT {p:String}", {"bad-name": ("x", "String")}),
+    ],
+)
 def test_local_plan_rejects_unbound_or_invalid_parameters(query, params):
     with pytest.raises(ValueError, match="native local parameter"):
         _parameter_plan(query, params, bind_all=True)
@@ -78,7 +87,10 @@ def test_shared_http_plan_preserves_multipart_projection_exactly():
     query = "SELECT {big:String}, {small:Bool} FROM {id:Identifier}"
     wire = _wire_parameters(params)
     actual_query, files = _external_parameters(query, params, wire)
-    assert actual_query == "SELECT (SELECT tuple(c0) FROM _tank_http_parameters).1, {small:Bool} FROM {id:Identifier}"
+    assert (
+        actual_query
+        == "SELECT (SELECT tuple(c0) FROM _tank_http_parameters).1, {small:Bool} FROM {id:Identifier}"
+    )
     assert files == [
         ("param_small", (None, b"true")),
         ("param_id", (None, b"mkt")),
@@ -118,7 +130,9 @@ def test_sealed_seekable_inputs_are_owned_and_readable(monkeypatch, missing_bind
         assert os.read(data_fd, 4096) == b"already\\n\n"
         for descriptor in descriptors:
             assert not os.get_inheritable(descriptor)
-            assert fcntl.fcntl(descriptor, getattr(fcntl, "F_GET_SEALS", 1034)) & getattr(fcntl, "F_SEAL_WRITE", 0x0008)
+            assert fcntl.fcntl(descriptor, getattr(fcntl, "F_GET_SEALS", 1034)) & getattr(
+                fcntl, "F_SEAL_WRITE", 0x0008
+            )
             assert fcntl.fcntl(descriptor, 1034) == 0x000F
             with pytest.raises(OSError):
                 os.write(descriptor, b"private")
@@ -162,10 +176,17 @@ def test_missing_native_capabilities_fail_closed_and_private(monkeypatch, primit
             raise OSError("private-loader-details")
         return SimpleNamespace(**({primitive: unsupported} if failure == "kernel" else {}))
 
-    monkeypatch.setattr(local, "ctypes", SimpleNamespace(
-        CDLL=library, c_int=local.ctypes.c_int, c_uint=local.ctypes.c_uint,
-        c_char_p=local.ctypes.c_char_p, get_errno=lambda: errno.ENOSYS,
-    ))
+    monkeypatch.setattr(
+        local,
+        "ctypes",
+        SimpleNamespace(
+            CDLL=library,
+            c_int=local.ctypes.c_int,
+            c_uint=local.ctypes.c_uint,
+            c_char_p=local.ctypes.c_char_p,
+            get_errno=lambda: errno.ENOSYS,
+        ),
+    )
     with pytest.raises((local._LocalFailure, OSError)) as caught:
         if primitive == "memfd_create":
             local._memfd_create()
@@ -280,11 +301,19 @@ def synthetic_spawn(monkeypatch):
 
 
 @pytest.mark.parametrize("failure", ["exit", "json", "shape", "stdout", "stderr"])
-async def test_synthetic_subprocess_faults_are_bounded_private_and_reaped(synthetic_spawn, monkeypatch, failure):
+async def test_synthetic_subprocess_faults_are_bounded_private_and_reaped(
+    synthetic_spawn, monkeypatch, failure
+):
     calls, processes = synthetic_spawn
     secret = b"private-token-secret"
     process = SyntheticSubprocessFaultTransport(
-        stdout=secret if failure == "json" else b"[]\n" if failure == "shape" else b"x" * 65 if failure == "stdout" else b"",
+        stdout=secret
+        if failure == "json"
+        else b"[]\n"
+        if failure == "shape"
+        else b"x" * 65
+        if failure == "stdout"
+        else b"",
         stderr=secret * 4 if failure == "stderr" else secret,
         code=43 if failure == "exit" else 0,
     )
@@ -300,7 +329,7 @@ async def test_synthetic_subprocess_faults_are_bounded_private_and_reaped(synthe
         assert "SELECT" not in str(raised.value)
         assert process.reaped
         assert not provider._requests
-        (args, kwargs), = calls
+        ((args, kwargs),) = calls
         assert args[0] == str(Path(sys.executable).absolute().with_name("clickhouse"))
         assert args[1] == "local"
         assert "--queries-file" in args and "--query-file" not in args
@@ -325,24 +354,75 @@ async def test_missing_binary_fails_without_spawn(monkeypatch):
         await provider.rows("SELECT 1")
 
 
-@pytest.mark.parametrize("stderr,code,expected", [
-    (b"Code: 395. DB::Exception: anchor must precede cutoff. (FUNCTION_THROW_IF_VALUE_IS_NON_ZERO)\n", 139, (395, "anchor_must_precede_cutoff")),
-    (b"Code: 395. DB::Exception: Market Truth decimal input outside native financial range: while executing private-secret. (FUNCTION_THROW_IF_VALUE_IS_NON_ZERO) (version 25.8.22.40 (official build))\n", 139, (395, "decimal_input_outside_financial_range")),
-    (b"Code: 62. DB::Exception: Syntax error private-secret\n", 62, (62, None)),
-    (b"Code: 651. DB::Exception: anchor must precede cutoff. (FUNCTION_THROW_IF_VALUE_IS_NON_ZERO)\n", 139, (651, None)),
-    (b"Code: 395. DB::Exception: private-secret anchor must precede cutoff. (FUNCTION_THROW_IF_VALUE_IS_NON_ZERO)\n", 139, (395, None)),
-    (b"Code: 395. DB::Exception: anchor must precede cutoff-extra. (FUNCTION_THROW_IF_VALUE_IS_NON_ZERO)\n", 139, (395, None)),
-    (b"Code: 395. DB::Exception: anchor must precede cutoff. private-secret\n", 139, (395, None)),
-    (b"Code: 395. DB::Exception: anchor must precede cutoff. (FUNCTION_THROW_IF_VALUE_IS_NON_ZERO)\n", -11, (None, None)),
-    (b"Code: 395. DB::Exception: anchor must precede cutoff. (FUNCTION_THROW_IF_VALUE_IS_NON_ZERO)\n", 62, (None, None)),
-    (b"private-secret log\nCode: 395. DB::Exception: anchor must precede cutoff. (FUNCTION_THROW_IF_VALUE_IS_NON_ZERO)\n", 139, (None, None)),
-    (b"Code: 62. DB::Exception: BadValueData private-secret\nCode: 395. DB::Exception: Market Truth decimal input outside native financial range. (FUNCTION_THROW_IF_VALUE_IS_NON_ZERO)\n", 62, (None, None)),
-    (b"Code: 395. DB::Exception: anchor must precede cutoff. (FUNCTION_THROW_IF_VALUE_IS_NON_ZERO)\nCode: 395. private-secret\n", 139, (None, None)),
-    (b"Code: 0395. DB::Exception: anchor must precede cutoff. (FUNCTION_THROW_IF_VALUE_IS_NON_ZERO)\n", 139, (None, None)),
-    (b"Code: 395. NotException: anchor must precede cutoff. (FUNCTION_THROW_IF_VALUE_IS_NON_ZERO)\n", 139, (None, None)),
-    (b"Bad arguments: private-secret Code: 395 anchor must precede cutoff\n", 139, (None, None)),
-    (b"private-secret", 139, (None, None)),
-])
+@pytest.mark.parametrize(
+    "stderr,code,expected",
+    [
+        (
+            b"Code: 395. DB::Exception: anchor must precede cutoff. (FUNCTION_THROW_IF_VALUE_IS_NON_ZERO)\n",
+            139,
+            (395, "anchor_must_precede_cutoff"),
+        ),
+        (
+            b"Code: 395. DB::Exception: Market Truth decimal input outside native financial range: while executing private-secret. (FUNCTION_THROW_IF_VALUE_IS_NON_ZERO) (version 25.8.22.40 (official build))\n",
+            139,
+            (395, "decimal_input_outside_financial_range"),
+        ),
+        (b"Code: 62. DB::Exception: Syntax error private-secret\n", 62, (62, None)),
+        (
+            b"Code: 651. DB::Exception: anchor must precede cutoff. (FUNCTION_THROW_IF_VALUE_IS_NON_ZERO)\n",
+            139,
+            (651, None),
+        ),
+        (
+            b"Code: 395. DB::Exception: private-secret anchor must precede cutoff. (FUNCTION_THROW_IF_VALUE_IS_NON_ZERO)\n",
+            139,
+            (395, None),
+        ),
+        (
+            b"Code: 395. DB::Exception: anchor must precede cutoff-extra. (FUNCTION_THROW_IF_VALUE_IS_NON_ZERO)\n",
+            139,
+            (395, None),
+        ),
+        (b"Code: 395. DB::Exception: anchor must precede cutoff. private-secret\n", 139, (395, None)),
+        (
+            b"Code: 395. DB::Exception: anchor must precede cutoff. (FUNCTION_THROW_IF_VALUE_IS_NON_ZERO)\n",
+            -11,
+            (None, None),
+        ),
+        (
+            b"Code: 395. DB::Exception: anchor must precede cutoff. (FUNCTION_THROW_IF_VALUE_IS_NON_ZERO)\n",
+            62,
+            (None, None),
+        ),
+        (
+            b"private-secret log\nCode: 395. DB::Exception: anchor must precede cutoff. (FUNCTION_THROW_IF_VALUE_IS_NON_ZERO)\n",
+            139,
+            (None, None),
+        ),
+        (
+            b"Code: 62. DB::Exception: BadValueData private-secret\nCode: 395. DB::Exception: Market Truth decimal input outside native financial range. (FUNCTION_THROW_IF_VALUE_IS_NON_ZERO)\n",
+            62,
+            (None, None),
+        ),
+        (
+            b"Code: 395. DB::Exception: anchor must precede cutoff. (FUNCTION_THROW_IF_VALUE_IS_NON_ZERO)\nCode: 395. private-secret\n",
+            139,
+            (None, None),
+        ),
+        (
+            b"Code: 0395. DB::Exception: anchor must precede cutoff. (FUNCTION_THROW_IF_VALUE_IS_NON_ZERO)\n",
+            139,
+            (None, None),
+        ),
+        (
+            b"Code: 395. NotException: anchor must precede cutoff. (FUNCTION_THROW_IF_VALUE_IS_NON_ZERO)\n",
+            139,
+            (None, None),
+        ),
+        (b"Bad arguments: private-secret Code: 395 anchor must precede cutoff\n", 139, (None, None)),
+        (b"private-secret", 139, (None, None)),
+    ],
+)
 def test_failure_identity_uses_only_unambiguous_native_header_and_static_guard(stderr, code, expected):
     assert local._failure_identity(stderr, code) == expected
 
@@ -374,9 +454,19 @@ async def test_synthetic_native_failure_publishes_only_validated_metadata(synthe
         await provider.close()
 
 
-@pytest.mark.parametrize("native_code,source_guard", [(True, "anchor_must_precede_cutoff"), (395, "private-secret"), (62, "anchor_must_precede_cutoff"), (395, [])])
+@pytest.mark.parametrize(
+    "native_code,source_guard",
+    [
+        (True, "anchor_must_precede_cutoff"),
+        (395, "private-secret"),
+        (62, "anchor_must_precede_cutoff"),
+        (395, []),
+    ],
+)
 def test_failure_metadata_rejects_unvalidated_categories(native_code, source_guard):
-    error = local._LocalFailure("native local execution failed", native_code=native_code, source_guard=source_guard)
+    error = local._LocalFailure(
+        "native local execution failed", native_code=native_code, source_guard=source_guard
+    )
     assert error.source_guard is None
     assert error.native_code == (native_code if type(native_code) is int else None)
 
@@ -516,8 +606,7 @@ async def test_close_cancels_two_owned_children_during_pipe_draining(monkeypatch
     monkeypatch.setattr(local.os, "killpg", terminate)
     provider = local.ReplayNativeRows()
     requests = [
-        asyncio.create_task(provider.rows("SELECT {p:String}", {"p": ("x", "String")}))
-        for _ in children
+        asyncio.create_task(provider.rows("SELECT {p:String}", {"p": ("x", "String")})) for _ in children
     ]
     await entered.wait()
     await provider.close()
@@ -578,9 +667,21 @@ async def test_cleanup_never_signals_recycled_group_after_reap(monkeypatch, synt
     await provider.close()
     assert process.reaped and not process.owns_group
     assert process.stdout.at_eof() and process.stderr.at_eof()
-    assert signals == ([] if phase == "already_reaped" else [signal.SIGTERM, signal.SIGKILL] if phase == "term_exit" else [signal.SIGTERM])
+    assert signals == (
+        []
+        if phase == "already_reaped"
+        else [signal.SIGTERM, signal.SIGKILL]
+        if phase == "term_exit"
+        else [signal.SIGTERM]
+    )
     local._signal_group(process, signal.SIGKILL)
-    assert signals == ([] if phase == "already_reaped" else [signal.SIGTERM, signal.SIGKILL] if phase == "term_exit" else [signal.SIGTERM])
+    assert signals == (
+        []
+        if phase == "already_reaped"
+        else [signal.SIGTERM, signal.SIGKILL]
+        if phase == "term_exit"
+        else [signal.SIGTERM]
+    )
 
 
 async def test_owned_exit_notification_does_not_reap_before_final_group_signal(monkeypatch):
@@ -695,7 +796,7 @@ async def test_real_local_scalar_controls_repeated_cte_reads_and_large_unicode(n
         + " /* {p:String} */ -- {p:String}\n# {p:String}\n"
     )
     rows = await native_local.rows(query, params)
-    row, = rows
+    (row,) = rows
     assert row["value"] == value
     assert row["second_value"] == value[::-1]
     assert not row["query_cache"]
@@ -713,7 +814,9 @@ async def test_real_local_scalar_controls_repeated_cte_reads_and_large_unicode(n
 @pytest.mark.integration
 @pytest.mark.process
 @pytest.mark.parametrize("case", ["supply", "fresh", "physical", "no_anchor", "future", "incomplete"])
-async def test_real_local_assessment_matches_http_and_independent_original(native_local, original_truth, monkeypatch, case):
+async def test_real_local_assessment_matches_http_and_independent_original(
+    native_local, original_truth, monkeypatch, case
+):
     from datetime import timedelta
 
     from test_truth_sql_conditions import _physical_snapshot
@@ -724,7 +827,13 @@ async def test_real_local_assessment_matches_http_and_independent_original(nativ
     from tank.clickhouse_market import ClickHouse
     from tank.util import iso, parse_time
 
-    packet = _supply_snapshot() if case == "supply" else _fresh_snapshot()[0] if case == "fresh" else _physical_snapshot()
+    packet = (
+        _supply_snapshot()
+        if case == "supply"
+        else _fresh_snapshot()[0]
+        if case == "fresh"
+        else _physical_snapshot()
+    )
     packet.pop("_primary", None)
     control_packet = deepcopy(packet)
     if case == "no_anchor":
@@ -783,8 +892,19 @@ async def test_real_local_conditions_full_fields_cache_preimages_and_reuse(nativ
     http = ClickHouse(url)
     try:
         for _ in range(2):
-            actual = await _cached_evaluate(native_local, original_truth, packet, requirements, local_cache, oracle_cache, baselines, config=config)
-            expected = await engine.evaluate_conditions(http, deepcopy(packet), requirements, config, cache=http_cache)
+            actual = await _cached_evaluate(
+                native_local,
+                original_truth,
+                packet,
+                requirements,
+                local_cache,
+                oracle_cache,
+                baselines,
+                config=config,
+            )
+            expected = await engine.evaluate_conditions(
+                http, deepcopy(packet), requirements, config, cache=http_cache
+            )
             assert_complete(actual, expected)
             assert local_cache == http_cache
     finally:
@@ -817,7 +937,8 @@ async def test_real_local_preserves_financial_range_refusal(native_local, origin
         assert_complete(control_local, expected)
         for body in (expected, control_http, control_local):
             quantities = [
-                flow["qty"] for flow in body["supply"]["flows"]
+                flow["qty"]
+                for flow in body["supply"]["flows"]
                 if flow.get("wallet_list_commit") == "captured"
             ]
             assert quantities == [Decimal("1.25")]
@@ -839,12 +960,16 @@ async def test_real_local_preserves_financial_range_refusal(native_local, origin
 async def test_real_local_preserves_whole_envelope_refusal_and_cache(native_local, original_truth, failure):
     from test_truth_sql_engine import test_real_native_whole_envelope_refusal_preserves_ordered_cache
 
-    await test_real_native_whole_envelope_refusal_preserves_ordered_cache(native_local, original_truth, "spot.classification", ("spot", "W1H"), failure)
+    await test_real_native_whole_envelope_refusal_preserves_ordered_cache(
+        native_local, original_truth, "spot.classification", ("spot", "W1H"), failure
+    )
 
 
 @pytest.mark.integration
 @pytest.mark.process
-async def test_real_local_late_spawn_cancellation_reaps_child_and_removes_owned_scratch(native_local, monkeypatch):
+async def test_real_local_late_spawn_cancellation_reaps_child_and_removes_owned_scratch(
+    native_local, monkeypatch
+):
     entered, release = asyncio.Event(), asyncio.Event()
     spawn = local._spawn
     children = []
@@ -894,7 +1019,7 @@ async def test_real_local_cancellation_terminates_acknowledged_active_workload(n
         async def read(self, size):
             chunk = await self.reader.read(size)
             if not acknowledged.is_set():
-                self.prefix.extend(chunk[:64 - len(self.prefix)])
+                self.prefix.extend(chunk[: 64 - len(self.prefix)])
                 if b"\n" in self.prefix:
                     assert self.prefix.split(b"\n", 1)[0] == b'{"started":0}'
                     acknowledged.set()
@@ -914,7 +1039,7 @@ async def test_real_local_cancellation_terminates_acknowledged_active_workload(n
         await asyncio.wait((request, started), return_when=asyncio.FIRST_COMPLETED)
         assert not request.done(), "native workload exited or failed before active acknowledgement"
         assert acknowledged.is_set()
-        child, = children
+        (child,) = children
         assert child.owns_group and child.returncode is None
         assert os.waitid(local._P_PIDFD, child._pidfd, os.WEXITED | os.WNOWAIT | os.WNOHANG) is None
         request.cancel()
@@ -943,7 +1068,9 @@ async def test_real_local_cancellation_terminates_acknowledged_active_workload(n
 
 @pytest.mark.integration
 @pytest.mark.process
-async def test_real_local_clean_config_and_environment_do_not_inherit_caller(native_local, monkeypatch, tmp_path):
+async def test_real_local_clean_config_and_environment_do_not_inherit_caller(
+    native_local, monkeypatch, tmp_path
+):
     (tmp_path / "config.xml").write_text("private-invalid-config")
     (tmp_path / ".clickhouse-local").mkdir()
     (tmp_path / ".clickhouse-local" / "config.xml").write_text("private-invalid-user-config")

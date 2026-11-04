@@ -22,13 +22,9 @@ async def native_memory_analytics(monkeypatch, request):
                 assert passed_client is None
                 return await original_evaluate(client, snapshot, config)
 
-            async def evaluate_conditions(
-                passed_client, snapshot, requirements, config=None, *, cache=None
-            ):
+            async def evaluate_conditions(passed_client, snapshot, requirements, config=None, *, cache=None):
                 assert passed_client is None
-                return await original_conditions(
-                    client, snapshot, requirements, config, cache=cache
-                )
+                return await original_conditions(client, snapshot, requirements, config, cache=cache)
 
             scoped.setattr(native, "evaluate", evaluate)
             scoped.setattr(native, "evaluate_conditions", evaluate_conditions)

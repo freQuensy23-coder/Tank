@@ -245,7 +245,11 @@ def _parameter_plan(query, params, parameters=None, *, bind_all=False):
 
         query = re.sub(tokens, substitute, query, flags=re.S)
     return _ParameterPlan(
-        query, table, ", ".join(columns), ("\t".join(values) + "\n").encode() if columns else b"", tuple(fields)
+        query,
+        table,
+        ", ".join(columns),
+        ("\t".join(values) + "\n").encode() if columns else b"",
+        tuple(fields),
     )
 
 

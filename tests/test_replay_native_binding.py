@@ -487,9 +487,7 @@ async def test_condition_reader_rejects_future_cutoff_before_record_access(
 
     reader, source = synthetic_condition_capture
     if boundary == "active-phase":
-        object.__setattr__(
-            reader.inputs, "fixture_reference", {"phases": [{"phase_id": "synthetic"}]}
-        )
+        object.__setattr__(reader.inputs, "fixture_reference", {"phases": [{"phase_id": "synthetic"}]})
         reader.active_cutoff = lambda: parse_time("2026-09-24T11:59:00Z")
         cutoff = source["cutoff"]
         reason = "active reference phase"

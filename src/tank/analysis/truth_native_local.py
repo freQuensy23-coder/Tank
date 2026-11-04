@@ -43,7 +43,7 @@ def _failure_identity(stderr, returncode):
         rb" \(FUNCTION_THROW_IF_VALUE_IS_NON_ZERO\)(?: \(version [0-9.]+ \(official build\)\))?\n?\Z",
         stderr,
     ):
-        message = stderr[header.end():]
+        message = stderr[header.end() :]
         for prefix, label in _SOURCE_GUARDS:
             if message.startswith((prefix + b": ", prefix + b". ")):
                 guard = label
@@ -54,10 +54,16 @@ def _failure_identity(stderr, returncode):
 class _LocalFailure(RuntimeError):
     def __init__(self, message, *, native_code=None, source_guard=None):
         super().__init__(message)
-        self.native_code = native_code if type(native_code) is int and 0 < native_code < 1_000_000_000 else None
-        self.source_guard = source_guard if self.native_code == 395 and type(source_guard) is str and source_guard in {
-            label for _, label in _SOURCE_GUARDS
-        } else None
+        self.native_code = (
+            native_code if type(native_code) is int and 0 < native_code < 1_000_000_000 else None
+        )
+        self.source_guard = (
+            source_guard
+            if self.native_code == 395
+            and type(source_guard) is str
+            and source_guard in {label for _, label in _SOURCE_GUARDS}
+            else None
+        )
 
 
 def _binary():
@@ -304,7 +310,9 @@ class ReplayNativeRows:
         for task in requests:
             task.cancel()
         if requests:
-            _, cancelled = await _settle(asyncio.ensure_future(asyncio.gather(*requests, return_exceptions=True)))
+            _, cancelled = await _settle(
+                asyncio.ensure_future(asyncio.gather(*requests, return_exceptions=True))
+            )
             self._requests.difference_update(requests)
             if cancelled:
                 raise asyncio.CancelledError
@@ -389,22 +397,30 @@ class ReplayNativeRows:
                 *(f"--{name}={value}" for name, value in _REQUEST_SETTINGS.items()),
             ]
             if inputs.structure:
-                arguments.extend([
-                    "--table", inputs.table,
-                    "--structure", inputs.structure,
-                    "--input-format", "TabSeparated",
-                    "--file", f"/proc/self/fd/{data_fd}",
-                ])
-            spawn = asyncio.create_task(_spawn(
-                *arguments,
-                stdin=asyncio.subprocess.DEVNULL,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-                pass_fds=inputs.fds,
-                cwd=root,
-                env={"HOME": root, "TMPDIR": root, "TZ": "UTC", "LANG": "C.UTF-8", "LC_ALL": "C.UTF-8"},
-                start_new_session=True,
-            ))
+                arguments.extend(
+                    [
+                        "--table",
+                        inputs.table,
+                        "--structure",
+                        inputs.structure,
+                        "--input-format",
+                        "TabSeparated",
+                        "--file",
+                        f"/proc/self/fd/{data_fd}",
+                    ]
+                )
+            spawn = asyncio.create_task(
+                _spawn(
+                    *arguments,
+                    stdin=asyncio.subprocess.DEVNULL,
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE,
+                    pass_fds=inputs.fds,
+                    cwd=root,
+                    env={"HOME": root, "TMPDIR": root, "TZ": "UTC", "LANG": "C.UTF-8", "LC_ALL": "C.UTF-8"},
+                    start_new_session=True,
+                )
+            )
             process = await asyncio.shield(spawn)
             drains = readers(process)
             waiter = asyncio.create_task(process.wait())

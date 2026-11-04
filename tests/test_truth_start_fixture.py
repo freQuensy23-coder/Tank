@@ -392,17 +392,23 @@ async def _assess_loser_snapshot(monkeypatch):
 
     async def evaluate(client, snapshot, config=None):
         expected = compact_start_snapshot()
-        expected.update(event_id="EVT", token_id="T", expected_direction="LOSER",
-                        event_public_at="2026-10-16T08:00:00Z", event_public_at_prec=None,
-                        event_public_at_prec_reason="INCOMPLETE")
+        expected.update(
+            event_id="EVT",
+            token_id="T",
+            expected_direction="LOSER",
+            event_public_at="2026-10-16T08:00:00Z",
+            event_public_at_prec=None,
+            event_public_at_prec_reason="INCOMPLETE",
+        )
         assert_input(client, snapshot, config, provider, expected, ("test", "test"))
-        return {"relative": {"expected_direction": "LOSER", "repricing_sign": -1, "repricing_band": "UNPRICED"}}
+        return {
+            "relative": {"expected_direction": "LOSER", "repricing_sign": -1, "repricing_band": "UNPRICED"}
+        }
 
     provider = bind_evaluator(monkeypatch, repo, evaluate)
     return await MarketTruthService(
         repo, SimpleNamespace(config_version="test", code_version="test"), Market()
     ).assess("EVT", "T", "2026-10-16T12:00:00Z")
-
 
 
 def test_latest_durable_beneficiary_role_sets_loser_repricing_direction(monkeypatch):
@@ -413,4 +419,3 @@ def test_latest_durable_beneficiary_role_sets_loser_repricing_direction(monkeypa
     assert result["relative"]["repricing_sign"] == -1
     assert result["relative"]["repricing_band"] == "UNPRICED"
     assert compute_market_truth(compact_start_snapshot())["relative"]["repricing_band"] == "EARLY"
-

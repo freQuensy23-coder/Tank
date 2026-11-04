@@ -104,9 +104,7 @@ def test_unqualified_binary_is_never_executed_and_service_is_untouched(staging):
     assert [call[1] for call in calls] == ["inspect", "cp"]
 
 
-@pytest.mark.parametrize(
-    "container", ["", "a" * 63, "A" * 64, "a" * 64 + "\n", "tcp://remote:2375", "--all"]
-)
+@pytest.mark.parametrize("container", ["", "a" * 63, "A" * 64, "a" * 64 + "\n", "tcp://remote:2375", "--all"])
 def test_invalid_service_descriptor_refuses_before_docker(staging, container):
     target, calls = staging
     with pytest.raises(RuntimeError, match="exact CI service container ID"):

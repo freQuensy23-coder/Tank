@@ -11,9 +11,7 @@ class InertProvider:
 def bind_evaluator(monkeypatch, repo, evaluator, *, conditions=False):
     provider = InertProvider()
     monkeypatch.setattr(repo, "clickhouse", provider, raising=False)
-    monkeypatch.setattr(
-        truth_sql_engine, "evaluate_conditions" if conditions else "evaluate", evaluator
-    )
+    monkeypatch.setattr(truth_sql_engine, "evaluate_conditions" if conditions else "evaluate", evaluator)
     return provider
 
 

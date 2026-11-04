@@ -21,7 +21,8 @@ def require_loopback_native_url() -> str:
             valid = (
                 parsed.scheme in {"http", "https"}
                 and parsed.hostname in {"localhost", "127.0.0.1", "::1"}
-                and re.fullmatch(r"(?:localhost|127\.0\.0\.1|\[::1\])(?::[0-9]+)?", host, re.IGNORECASE) is not None
+                and re.fullmatch(r"(?:localhost|127\.0\.0\.1|\[::1\])(?::[0-9]+)?", host, re.IGNORECASE)
+                is not None
                 and (parsed.port is None or 1 <= parsed.port <= 65535)
                 and not parsed.fragment
                 and "\\" not in url

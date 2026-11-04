@@ -425,12 +425,23 @@ async def test_assessment_persists_with_event_anchor(monkeypatch):
     evaluated = []
 
     async def evaluate(client, snapshot, config=None):
-        expected = {"token_id": "WLD", "cutoff": "2026-10-16T12:00:00Z",
-                    "anchor": {"type": "T0", "ts": "2026-10-16T08:00:00Z", "ts_prec": "EXACT", "ts_prec_reason": None},
-                    "event_id": "EVT-1"}
+        expected = {
+            "token_id": "WLD",
+            "cutoff": "2026-10-16T12:00:00Z",
+            "anchor": {
+                "type": "T0",
+                "ts": "2026-10-16T08:00:00Z",
+                "ts_prec": "EXACT",
+                "ts_prec_reason": None,
+            },
+            "event_id": "EVT-1",
+        }
         assert_input(client, snapshot, config, provider, expected, ("test", "test"))
         evaluated.append(deepcopy(snapshot))
-        return {"relative": {"anchor": deepcopy(snapshot["anchor"])}, "config_version": config["config_version"]}
+        return {
+            "relative": {"anchor": deepcopy(snapshot["anchor"])},
+            "config_version": config["config_version"],
+        }
 
     provider = bind_evaluator(monkeypatch, repo, evaluate)
     service = MarketTruthService(repo, SimpleNamespace(config_version="test", code_version="test"), Market())
@@ -442,8 +453,6 @@ async def test_assessment_persists_with_event_anchor(monkeypatch):
     assert len(evaluated) == 1
     assert repo.records == [("ana.market_truth", result["mta_id"], result)]
     assert result["mta_id"].startswith("MTA")
-
-
 
 
 @pytest.mark.asyncio
@@ -491,9 +500,15 @@ async def test_assessment_before_a_scheduled_t0_anchors_on_t1_instead_of_failing
             ("T1", "2026-10-27T13:00:00Z", "2026-10-27T13:35:00Z"),
             ("T0", "2026-10-30T06:00:00Z", "2026-10-30T07:00:00Z"),
         ][index]
-        expected = {"token_id": "bitcoin:BTC", "event_id": "EVT-1", "cutoff": end,
-                    "anchor": {"type": kind, "ts": stamp, "ts_prec": "EXACT", "ts_prec_reason": None},
-                    "event_public_at": "2026-10-27T13:00:00Z", "event_public_at_prec": "EXACT", "event_public_at_prec_reason": None}
+        expected = {
+            "token_id": "bitcoin:BTC",
+            "event_id": "EVT-1",
+            "cutoff": end,
+            "anchor": {"type": kind, "ts": stamp, "ts_prec": "EXACT", "ts_prec_reason": None},
+            "event_public_at": "2026-10-27T13:00:00Z",
+            "event_public_at_prec": "EXACT",
+            "event_public_at_prec_reason": None,
+        }
         assert_input(client, snapshot, config, provider, expected, ("t", "t"))
         evaluated.append(deepcopy(snapshot))
         return {"relative": {"anchor": deepcopy(snapshot["anchor"])}}
@@ -512,8 +527,6 @@ async def test_assessment_before_a_scheduled_t0_anchors_on_t1_instead_of_failing
     assert writes == [before, after]
     assert len(evaluated) == 2
     assert before["mta_id"] != after["mta_id"]
-
-
 
 
 @pytest.mark.parametrize("side", ["BUY", "SELL"])
@@ -1881,7 +1894,6 @@ async def test_direct_worker_cpu_runs_off_event_loop(monkeypatch):
     assert called[0] != main_thread
 
 
-
 def test_closed_bar_collection_latency_is_not_future_market_data():
     from runpy import run_path
 
@@ -2732,9 +2744,15 @@ async def test_assessment_calls_snapshot_with_shared_canonical_anchor(
             expected_anchor.update(ts_prec="EXACT", ts_prec_reason=None)
         else:
             expected_anchor.update(ts_prec=None, ts_prec_reason="INCOMPLETE")
-        expected = {"token_id": "T", "event_id": "EVT", "cutoff": "2026-10-16T12:00:00Z",
-                    "anchor": expected_anchor, "event_public_at": "2026-10-16T09:00:00Z",
-                    "event_public_at_prec": None, "event_public_at_prec_reason": "INCOMPLETE"}
+        expected = {
+            "token_id": "T",
+            "event_id": "EVT",
+            "cutoff": "2026-10-16T12:00:00Z",
+            "anchor": expected_anchor,
+            "event_public_at": "2026-10-16T09:00:00Z",
+            "event_public_at_prec": None,
+            "event_public_at_prec_reason": "INCOMPLETE",
+        }
         assert_input(client, snapshot, config, provider, expected, ("test", "test"))
         evaluated.append(deepcopy(snapshot))
         return {"relative": {"anchor": deepcopy(snapshot["anchor"])}}
@@ -2749,8 +2767,6 @@ async def test_assessment_calls_snapshot_with_shared_canonical_anchor(
 
     assert writes == [result]
     assert len(evaluated) == 1
-
-
 
 
 @pytest.mark.parametrize(
@@ -2942,6 +2958,7 @@ async def test_idle_token_assessment_baselines_are_released(monkeypatch):
     provider = bind_evaluator(monkeypatch, repo, evaluate)
     monkeypatch.setattr(module, "compute_condition_values", lambda *args, **kwargs: {})
     from tank.analysis import truth_sql_engine
+
     monkeypatch.setattr(truth_sql_engine, "evaluate_conditions", conditions)
     service = module.MarketTruthService(
         repo, SimpleNamespace(config_version="test", code_version="test"), Market()
@@ -2949,17 +2966,29 @@ async def test_idle_token_assessment_baselines_are_released(monkeypatch):
     current = [service]
     await service.assess(None, "A", "2026-10-16T12:00:00Z")
     assert compute_workers._executors == {} and compute_workers._baselines == {}
-    await compute_workers.compute_market_truth(compute_workers.ASSESSMENT,
-        {"token_id": "A", "cutoff": "2026-10-16T12:00:00Z"}, config={}, baseline_key="A")
+    await compute_workers.compute_market_truth(
+        compute_workers.ASSESSMENT,
+        {"token_id": "A", "cutoff": "2026-10-16T12:00:00Z"},
+        config={},
+        baseline_key="A",
+    )
     clock[0] += 60
     await service.assess(None, "B", "2026-10-16T12:01:00Z")
-    await compute_workers.compute_market_truth(compute_workers.ASSESSMENT,
-        {"token_id": "B", "cutoff": "2026-10-16T12:01:00Z"}, config={}, baseline_key="B")
+    await compute_workers.compute_market_truth(
+        compute_workers.ASSESSMENT,
+        {"token_id": "B", "cutoff": "2026-10-16T12:01:00Z"},
+        config={},
+        baseline_key="B",
+    )
     assert set(held()) == {"A", "B"}
     clock[0] += module.ASSESSMENT_BASELINE_IDLE_S
     await service.assess(None, "B", "2026-10-16T12:31:00Z")
-    await compute_workers.compute_market_truth(compute_workers.ASSESSMENT,
-        {"token_id": "B", "cutoff": "2026-10-16T12:31:00Z"}, config={}, baseline_key="B")
+    await compute_workers.compute_market_truth(
+        compute_workers.ASSESSMENT,
+        {"token_id": "B", "cutoff": "2026-10-16T12:31:00Z"},
+        config={},
+        baseline_key="B",
+    )
     assert set(held()) == {"B"}
     assert held()["B"] == {("native-volume-index", "B"): {"head": "2026-10-16T12:31:00Z"}}
     clock[0] += module.ASSESSMENT_BASELINE_IDLE_S + 1
@@ -2967,8 +2996,12 @@ async def test_idle_token_assessment_baselines_are_released(monkeypatch):
     await service.condition_values(None, "C", "2026-10-16T13:02:00Z", [])
     assert held() == {}
     await service.assess(None, "D", "2026-10-16T13:03:00Z")
-    await compute_workers.compute_market_truth(compute_workers.ASSESSMENT,
-        {"token_id": "D", "cutoff": "2026-10-16T13:03:00Z"}, config={}, baseline_key="D")
+    await compute_workers.compute_market_truth(
+        compute_workers.ASSESSMENT,
+        {"token_id": "D", "cutoff": "2026-10-16T13:03:00Z"},
+        config={},
+        baseline_key="D",
+    )
     clock[0] += module.ASSESSMENT_BASELINE_IDLE_S + 1
     replacement = module.MarketTruthService(
         repo, SimpleNamespace(config_version="next", code_version="test"), Market()
@@ -2976,7 +3009,6 @@ async def test_idle_token_assessment_baselines_are_released(monkeypatch):
     current[0] = replacement
     await replacement.condition_values(None, "C", "2026-10-16T13:34:00Z", [])
     assert held() == {}
-
 
 
 async def test_assessment_awaits_evaluator_and_preserves_default_and_explicit_cutoff(monkeypatch):
@@ -2988,7 +3020,9 @@ async def test_assessment_awaits_evaluator_and_preserves_default_and_explicit_cu
     entered, release, heartbeat = asyncio.Event(), asyncio.Event(), asyncio.Event()
     writes, loaded, evaluated = [], [], []
     real_iso = module.iso
-    monkeypatch.setattr(module, "iso", lambda value=None: real_iso(value) if value is not None else "2026-10-16T12:02:37Z")
+    monkeypatch.setattr(
+        module, "iso", lambda value=None: real_iso(value) if value is not None else "2026-10-16T12:02:37Z"
+    )
 
     class Repo:
         async def put(self, collection, key, record, **kwargs):
@@ -3004,16 +3038,23 @@ async def test_assessment_awaits_evaluator_and_preserves_default_and_explicit_cu
 
     async def evaluate(client, snapshot, config=None):
         cutoff = ["2026-10-16T12:02:00Z", "2026-10-16T12:02:17Z"][len(evaluated)]
-        assert_input(client, snapshot, config, provider,
-                     {"token_id": "T", "event_id": None, "anchor": None, "cutoff": cutoff},
-                     ("test", "test"))
+        assert_input(
+            client,
+            snapshot,
+            config,
+            provider,
+            {"token_id": "T", "event_id": None, "anchor": None, "cutoff": cutoff},
+            ("test", "test"),
+        )
         evaluated.append(deepcopy(snapshot))
         entered.set()
         await release.wait()
         return {"cutoff": snapshot["cutoff"]}
 
     provider = bind_evaluator(monkeypatch, repo, evaluate)
-    service = module.MarketTruthService(repo, SimpleNamespace(config_version="test", code_version="test"), Market())
+    service = module.MarketTruthService(
+        repo, SimpleNamespace(config_version="test", code_version="test"), Market()
+    )
     pending = asyncio.create_task(service.assess(None, "T"))
     await asyncio.wait_for(entered.wait(), 1)
     asyncio.get_running_loop().call_soon(heartbeat.set)

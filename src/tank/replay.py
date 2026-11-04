@@ -1655,7 +1655,9 @@ async def replay_agent_session(
                     if source is not None:
                         consumed_source_calls.add(source["key"])
                         before = dict(identity_substitutions)
-                        bind_replay_result_lineage(source["record"].get("result"), actual, identity_substitutions)
+                        bind_replay_result_lineage(
+                            source["record"].get("result"), actual, identity_substitutions
+                        )
                         causal_tool_receipts.append(
                             {
                                 "tool": tool,
@@ -1763,7 +1765,8 @@ async def replay_agent_session(
                 (
                     row["record"]
                     for row in inputs._records
-                    if row["collection"] == "ops.agent_sessions" and row["record"].get("session_id") == source_id
+                    if row["collection"] == "ops.agent_sessions"
+                    and row["record"].get("session_id") == source_id
                 ),
                 {},
             )
@@ -1803,11 +1806,14 @@ async def replay_agent_session(
             finally:
                 active_delivery_receipt = None
             if isinstance(outcome, DeliveryError):
-                raise ReplayDivergence("Fresh delivery code rejected or deferred the recorded SENT transition")
+                raise ReplayDivergence(
+                    "Fresh delivery code rejected or deferred the recorded SENT transition"
+                )
             identity_substitutions[original_alert["alert_id"]] = fresh["alert_id"]
             call_bindings = {}
             async for call in repo.iter_all(
-                "ana.calls", filters={"opened_by_alert": fresh["alert_id"], "opened_by_version": fresh["version"]}
+                "ana.calls",
+                filters={"opened_by_alert": fresh["alert_id"], "opened_by_version": fresh["version"]},
             ):
                 originals = {
                     row["record"]["call_id"]
@@ -1844,7 +1850,9 @@ async def replay_agent_session(
             if kind not in {"CONDITION", "CONDITION_FIRED", "CALL_EXPIRED", "MILESTONE"}:
                 return message, None
             trigger = replay_message_timestamp(inputs, original)
-            before = {row["job_id"] async for row in repo.iter_all("ops.jobs", filters={"type": "AGENT_MESSAGE"})}
+            before = {
+                row["job_id"] async for row in repo.iter_all("ops.jobs", filters={"type": "AGENT_MESSAGE"})
+            }
             selected_timer_timestamp = trigger
             try:
                 if kind == "CALL_EXPIRED":
@@ -1910,7 +1918,8 @@ async def replay_agent_session(
         async def checkpoint_phase(execution, calls):
             phases = (inputs.fixture_reference or {}).get("phases", [])
             phase = next(
-                (phase for phase in phases if max(phase["message_indexes"]) == len(accepted_messages) - 1), None
+                (phase for phase in phases if max(phase["message_indexes"]) == len(accepted_messages) - 1),
+                None,
             )
             if not phase or any(row["phase_id"] == phase["phase_id"] for row in phase_checkpoints):
                 return
@@ -1953,7 +1962,9 @@ async def replay_agent_session(
                 "session_workflow": copy.deepcopy(
                     (await repo.get("ops.agent_sessions", sid)).get("verified_source_completion")
                 ),
-                "delivery_intents": [row async for row in repo.iter_all("ops.jobs", filters={"type": "DELIVER"})],
+                "delivery_intents": [
+                    row async for row in repo.iter_all("ops.jobs", filters={"type": "DELIVER"})
+                ],
                 "external_capture_gaps": reference_evidence_gaps(calls),
                 "requested_external_captures_complete": not reference_evidence_gaps(calls),
                 "evidence_manifest_sha256": evidence_view.receipts[-1]["manifest_sha256"]
@@ -1962,7 +1973,9 @@ async def replay_agent_session(
             }
             snapshot["sha256"] = digest(snapshot)
             if output_path:
-                freeze(Path(output_path).parent / (run_id + "-phase-" + phase["phase_id"] + ".json"), snapshot)
+                freeze(
+                    Path(output_path).parent / (run_id + "-phase-" + phase["phase_id"] + ".json"), snapshot
+                )
             phase_checkpoints.append(snapshot)
 
         worker = None
@@ -2029,7 +2042,9 @@ async def replay_agent_session(
                 if hasattr(module, "iso"):
                     stack.enter_context(patch.object(module, "iso", replay_iso))
             stack.enter_context(
-                patch.object(delivery_module, "collection_clock", lambda value=None, **kwargs: clock.timestamp())
+                patch.object(
+                    delivery_module, "collection_clock", lambda value=None, **kwargs: clock.timestamp()
+                )
             )
             stack.enter_context(
                 patch.object(
@@ -2043,7 +2058,9 @@ async def replay_agent_session(
                     scheduler_module,
                     "utcnow",
                     lambda: (
-                        parse_time(selected_timer_timestamp.value) if selected_timer_timestamp else clock.now()
+                        parse_time(selected_timer_timestamp.value)
+                        if selected_timer_timestamp
+                        else clock.now()
                     ),
                 )
             )
@@ -2201,7 +2218,9 @@ async def replay_agent_session(
                                 )
                         await asyncio.sleep(0.01)
                 calls = [
-                    row async for row in repo.iter_all("ops.tool_calls") if row.get("session_id") in session_ids
+                    row
+                    async for row in repo.iter_all("ops.tool_calls")
+                    if row.get("session_id") in session_ids
                 ]
                 decisions = [
                     r async for r in repo.iter_all("ana.decisions") if r["dec_id"] not in initial_decisions
@@ -2312,6 +2331,7 @@ async def replay_agent_session(
                 }
                 raise
             finally:
+
                 async def cleanup_consumers():
                     nonlocal report
                     try:
@@ -2323,7 +2343,10 @@ async def replay_agent_session(
                         finally:
                             await service.stop_followers()
                         owned = [
-                            row async for row in repo.iter_all("ops.agent_sessions", filters={"replay_run_id": run_id})
+                            row
+                            async for row in repo.iter_all(
+                                "ops.agent_sessions", filters={"replay_run_id": run_id}
+                            )
                         ]
                         cleanup = []
                         for row in owned:

@@ -42,8 +42,8 @@ def _raw(expression):
 def _input_ctes():
     return r"""
 lq_input AS (
-    SELECT lq_snapshot AS input_snapshot, lq_config AS input_config,
-        lq_spot AS input_spot, lq_relative AS input_relative
+    SELECT materialize(lq_snapshot) AS input_snapshot, materialize(lq_config) AS input_config,
+        materialize(lq_spot) AS input_spot, materialize(lq_relative) AS input_relative
 ),
 lq_input_fields AS (
     SELECT JSONExtractString(i.input_snapshot, 'token_id') AS ctx_token,

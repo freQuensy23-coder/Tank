@@ -822,11 +822,14 @@ async def test_external_capture_consumer_uses_bounded_incomplete_then_terminal_h
         config_version="fixture",
         code_version="fixture",
     )
-    async with native_memory_analytics(monkeypatch, request), httpx.AsyncClient(
-        transport=httpx.MockTransport(
-            lambda req: (_ for _ in ()).throw(AssertionError("No external requests"))
-        )
-    ) as http:
+    async with (
+        native_memory_analytics(monkeypatch, request),
+        httpx.AsyncClient(
+            transport=httpx.MockTransport(
+                lambda req: (_ for _ in ()).throw(AssertionError("No external requests"))
+            )
+        ) as http,
+    ):
         market = MarketService(repo, settings, http=http)
         truth = MarketTruthService(repo, settings, market)
         original = truth.assess

@@ -971,9 +971,7 @@ async def test_native_relational_root_demanded_refusals(native_client, original_
 
 
 @pytest.mark.parametrize("case", ["complete", "no_books", "all_filtered"])
-async def test_native_root_spine_forwards_flow_tiers_and_empty_context(
-    native_client, original_truth, case
-):
+async def test_native_root_spine_forwards_flow_tiers_and_empty_context(native_client, original_truth, case):
     snapshot, spot, relative = _packet()
     snapshot["_event_anchor"] = None
     if case == "no_books":
@@ -1429,15 +1427,11 @@ async def test_native_canonical_root_keeps_one_venue_and_duplicate_burst_observa
             buy_qty="0",
             sell_qty="0",
         )
-    snapshot["flow_bars"].extend(
-        [deepcopy(snapshot["flow_bars"][0]), deepcopy(snapshot["flow_bars"][15])]
-    )
+    snapshot["flow_bars"].extend([deepcopy(snapshot["flow_bars"][0]), deepcopy(snapshot["flow_bars"][15])])
     if case == "no_books":
         snapshot["books"] = []
     actual = await _compare(native_client, original_truth, snapshot, spot, relative)
-    assert [venue["venue"] for venue in actual["per_venue"]] == (
-        [] if case == "no_books" else ["B", "A"]
-    )
+    assert [venue["venue"] for venue in actual["per_venue"]] == ([] if case == "no_books" else ["B", "A"])
     assert actual["replenishment"]["available"] is (case != "no_books")
     assert actual["replenishment"]["observations"] == (
         [

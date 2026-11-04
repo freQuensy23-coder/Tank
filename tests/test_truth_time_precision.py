@@ -101,8 +101,10 @@ async def test_actual_service_preserves_event_public_and_anchor_precision_withou
         expected["anchor"] = anchor
         assert_input(client, snapshot, config, provider, expected, ("t", "t"))
         inputs.append(deepcopy(snapshot))
-        return {"event_public_at_prec": snapshot["event_public_at_prec"],
-                "relative": {"anchor": deepcopy(snapshot["anchor"])}}
+        return {
+            "event_public_at_prec": snapshot["event_public_at_prec"],
+            "relative": {"anchor": deepcopy(snapshot["anchor"])},
+        }
 
     provider = bind_evaluator(monkeypatch, repo, evaluate)
     result = await MarketTruthService(
@@ -120,7 +122,6 @@ async def test_actual_service_preserves_event_public_and_anchor_precision_withou
     assert writes == [result, legacy]
     assert result["mta_id"] != legacy["mta_id"]
     assert len(inputs) == 2
-
 
 
 @pytest.mark.parametrize("precision", ["BUCKET(1h)", None])

@@ -530,7 +530,9 @@ async def test_event_only_risk_watch_never_waits_for_market_refresh(
         truth = MarketTruthService(repo, settings, market)
         tools = EventToolService(repo, settings, truth, DecisionEngine())
         await seed_domain(repo, settings, end)
-        first = await truth.assess("e", "T", chosen_boundary(end - timedelta(minutes=1), precision="BUCKET(1m)"))
+        first = await truth.assess(
+            "e", "T", chosen_boundary(end - timedelta(minutes=1), precision="BUCKET(1m)")
+        )
         await repo.put(
             "ana.calls",
             "open",
