@@ -882,6 +882,7 @@ async def test_ci_native_deep_summary_preserves_original_response(
             "elapsed_ns_present": 0,
         }
     if decoder_failure:
+
         def decode(value, *args, **kwargs):
             if value == summary:
                 raise RecursionError("privateRecursionPrefix;privateRecursionSuffix")

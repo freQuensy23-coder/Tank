@@ -1191,9 +1191,7 @@ async def test_native_private_book_branch_isolates_filtered_flow_timestamp(
 
 
 @pytest.mark.parametrize("selection", ["full", "state", "burst", "full_no_books", "state_no_books"])
-async def test_native_filtered_flow_timestamp_remains_demanded(
-    native_client, original_truth, selection
-):
+async def test_native_filtered_flow_timestamp_remains_demanded(native_client, original_truth, selection):
     snapshot, spot, relative = _packet()
     snapshot["_event_anchor"] = None
     snapshot["flow_bars"][0]["minute_start"] = "not-a-time"
@@ -1221,9 +1219,7 @@ async def test_native_filtered_flow_timestamp_remains_demanded(
 
 
 @pytest.mark.parametrize("selection", ["population", "tiers"])
-async def test_native_volume_demands_ineligible_spot_timestamp(
-    native_client, original_truth, selection
-):
+async def test_native_volume_demands_ineligible_spot_timestamp(native_client, original_truth, selection):
     snapshot, spot, relative = _packet()
     snapshot["_event_anchor"] = None
     snapshot["flow_bars"].append(

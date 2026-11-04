@@ -8,9 +8,7 @@ from tank.util import jsonable
 SPOT_METRICS = frozenset(
     {"spot.cohort.direction", "spot.cohort.cwb_buy", "spot.cohort.cwb_sell", "spot.classification"}
 )
-OI_METRICS = frozenset(
-    {"deriv.native_oi_chg_pct", "deriv.native_oi_vs_normal", "deriv.oi_class"}
-)
+OI_METRICS = frozenset({"deriv.native_oi_chg_pct", "deriv.native_oi_vs_normal", "deriv.oi_class"})
 STATE_METRICS = frozenset({"mt.move_class", "mt.divergence_state"})
 RELATIVE_METRICS = frozenset({"price.repricing_band", "price.vs_anchor_pct"})
 DOMAIN_FIELDS = {
@@ -19,29 +17,74 @@ DOMAIN_FIELDS = {
     "funding": ("funding", "instruments", "semantics", "capture_metadata"),
     "close": ("flow_bars", "flow_segments", "klines", "instruments"),
     "dc": (
-        "flow_bars", "flow_segments", "tickers", "instruments", "semantics", "capture_metadata",
-        "oi", "funding", "klines", "books", "liquidations", "supply", "anchor",
+        "flow_bars",
+        "flow_segments",
+        "tickers",
+        "instruments",
+        "semantics",
+        "capture_metadata",
+        "oi",
+        "funding",
+        "klines",
+        "books",
+        "liquidations",
+        "supply",
+        "anchor",
     ),
     "depth": ("books", "instruments", "anchor", "capture_metadata"),
     "state": (
-        "flow_bars", "flow_segments", "reference_points", "tickers", "instruments", "tokens",
-        "sector_baskets", "semantics", "capture_metadata", "oi", "funding", "klines", "books",
-        "liquidations", "supply", "anchor", "expected_direction", "funding_confirmations",
-        "stat_price_series", "stat_volume_series", "series_coverage_counts",
+        "flow_bars",
+        "flow_segments",
+        "reference_points",
+        "tickers",
+        "instruments",
+        "tokens",
+        "sector_baskets",
+        "semantics",
+        "capture_metadata",
+        "oi",
+        "funding",
+        "klines",
+        "books",
+        "liquidations",
+        "supply",
+        "anchor",
+        "expected_direction",
+        "funding_confirmations",
+        "stat_price_series",
+        "stat_volume_series",
+        "series_coverage_counts",
         "relative_history_dependency_fingerprint",
     ),
     "relative": (
-        "flow_bars", "flow_segments", "reference_points", "instruments", "tokens", "sector_baskets",
-        "klines", "anchor", "expected_direction", "funding_confirmations", "stat_price_series",
-        "series_coverage_counts", "relative_history_dependency_fingerprint",
+        "flow_bars",
+        "flow_segments",
+        "reference_points",
+        "instruments",
+        "tokens",
+        "sector_baskets",
+        "klines",
+        "anchor",
+        "expected_direction",
+        "funding_confirmations",
+        "stat_price_series",
+        "series_coverage_counts",
+        "relative_history_dependency_fingerprint",
     ),
 }
 
 STATE_NODE_FIELDS = {
     "spot": ("flow_bars", "flow_segments", "tickers", "instruments", "anchor"),
     "relative": (
-        "klines", "stat_price_series", "flow_bars", "flow_segments", "reference_points", "tokens",
-        "sector_baskets", "instruments", "expected_direction",
+        "klines",
+        "stat_price_series",
+        "flow_bars",
+        "flow_segments",
+        "reference_points",
+        "tokens",
+        "sector_baskets",
+        "instruments",
+        "expected_direction",
     ),
     "derivatives": ("oi", "funding", "liquidations", "semantics", "instruments", "klines"),
     "supply": ("supply", "anchor"),
@@ -59,20 +102,30 @@ def _transport(value):
 def _encode(value, *, canonical=False):
     if canonical:
         return json.dumps(
-            jsonable(value), separators=(",", ":"), sort_keys=True, allow_nan=False,
+            jsonable(value),
+            separators=(",", ":"),
+            sort_keys=True,
+            allow_nan=False,
             default=lambda item: item.tolist() if isinstance(item, array) else str(item),
         )
     return json.dumps(
-        _transport(value), separators=(",", ":"), ensure_ascii=False, allow_nan=False,
+        _transport(value),
+        separators=(",", ":"),
+        ensure_ascii=False,
+        allow_nan=False,
     )
 
 
 def _object(**fields):
-    return "concat('{', " + ", ".join(
-        part
-        for index, (key, value) in enumerate(fields.items())
-        for part in (("','",) if index else ()) + (repr('"' + key + '":'), value)
-    ) + ", '}')"
+    return (
+        "concat('{', "
+        + ", ".join(
+            part
+            for index, (key, value) in enumerate(fields.items())
+            for part in (("','",) if index else ()) + (repr('"' + key + '":'), value)
+        )
+        + ", '}')"
+    )
 
 
 def _core():
@@ -95,7 +148,9 @@ def _core():
         "con_parse(JSONExtractRaw(con_input_snapshot, 'assembled_at')) AS con_assembled",
     )
     core = core.replace("AS con_parse,", "AS con_unchecked_parse,")
-    return core + r""",
+    return (
+        core
+        + r""",
 (x -> if(con_text(con_time_unwrap(x)) IN ('', 'null'), CAST(NULL, 'Nullable(DateTime64(6, \'UTC\'))'),
     if(throwIf(isNull(con_unchecked_parse(x)) OR match(con_text(con_time_unwrap(x)), '^[0-9]{4}-')
         AND toInt32OrZero(substring(con_text(con_time_unwrap(x)), 1, 4)) NOT BETWEEN 1900 AND 2299,
@@ -154,11 +209,14 @@ arrayDistinct(arrayMap(r -> tuple(con_domain(r.1), r.2), con_supported_requests)
 con_parse(JSONExtractRaw(con_input_snapshot, 'cutoff')) AS con_input_end,
 con_parse(JSONExtractRaw(con_input_snapshot, 'assembled_at')) AS con_input_assembled
 """
+    )
 
 
 def _timestamp_ctes():
     freshness = truth_sql_support._freshness().replace("sup_", "con_")
-    return freshness + r""",
+    return (
+        freshness
+        + r""",
 ((r, field, aliases) -> con_patch(r, ['ts', 'ts_prec', 'ts_precision', 'ts_prec_reason', 'ts_bucket_size_s', 'ts_bucket_anchor', 'timestamp_precision', 'precision', 'timestamp_precision_reason', 'precision_reason'],
     [con_raw(JSONExtractRaw(r, field)), con_raw(JSONExtractRaw(r, concat(field, '_prec'))), con_raw(JSONExtractRaw(r, concat(field, '_precision'))),
     coalesce(nullIf(JSONExtractRaw(r, concat(field, '_prec_reason')), ''), nullIf(JSONExtractRaw(r, concat(field, '_precision_reason')), ''), 'null'), con_raw(JSONExtractRaw(r, concat(field, '_bucket_size_s'))),
@@ -174,6 +232,7 @@ def _timestamp_ctes():
 ((r, output, offset) -> if(isNotNull(con_time(r)) AND isNotNull(con_precision_anchor(r)), con_patch(con_timestamp_base(r, output, offset),
     [concat(output, '_bucket_anchor')], [toJSONString(con_precision_anchor(r))]), con_timestamp_base(r, output, offset))) AS con_timestamp_fields
 """
+    )
 
 
 def _dependency_ctes():
@@ -212,39 +271,59 @@ def _spot_ctes(*, close=False):
     sql = truth_sql_spot.ctes().replace("spot_", "con_flow_")
     sql = sql.replace("{con_flow_snapshot:String}", "con_snapshot")
     sql = sql.replace("{con_flow_sigma:String}", "con_text(con_parameter('significant_flow_sigma', '2'))")
-    sql = sql.replace("{con_flow_min_venues:UInt64}", "toUInt64(con_number(con_parameter('min_spot_venues', '2')))")
+    sql = sql.replace(
+        "{con_flow_min_venues:UInt64}", "toUInt64(con_number(con_parameter('min_spot_venues', '2')))"
+    )
     sql = sql.replace(
         "('EVENT', assumeNotNull(con_flow_cutoff - con_flow_start))] AS con_flow_window_defs",
         "('EVENT', assumeNotNull(con_flow_cutoff - con_flow_start))]) AS con_flow_window_defs",
     )
-    sql = sql.replace("[('W15M', toInt64(900000000))", "arrayFilter(w -> has(con_spot_windows, w.1), [('W15M', toInt64(900000000))")
+    sql = sql.replace(
+        "[('W15M', toInt64(900000000))",
+        "arrayFilter(w -> has(con_spot_windows, w.1), [('W15M', toInt64(900000000))",
+    )
 
     sql = sql.replace("con_flow_start >= con_flow_cutoff OR ", "")
     selected = truth_sql_spot.select_sql().replace("spot_", "con_flow_")
-    selected = selected.replace("{con_flow_sigma:String}", "con_text(con_parameter('significant_flow_sigma', '2'))")
-    selected = selected.replace("{con_flow_min_venues:UInt64}", "toUInt64(con_number(con_parameter('min_spot_venues', '2')))")
-    result = r"""
+    selected = selected.replace(
+        "{con_flow_sigma:String}", "con_text(con_parameter('significant_flow_sigma', '2'))"
+    )
+    selected = selected.replace(
+        "{con_flow_min_venues:UInt64}", "toUInt64(con_number(con_parameter('min_spot_venues', '2')))"
+    )
+    result = (
+        r"""
 arrayDistinct(arrayConcat(arrayMap(r -> r.2, arrayFilter(r -> con_domain(r.1) = 'spot', con_supported_requests)),
     if(arrayExists(r -> con_domain(r.1) = 'dc', con_supported_requests), [con_primary], []),
     if(arrayExists(r -> con_domain(r.1) = 'state', con_supported_requests), ['EVENT'], []))) AS con_spot_windows,
-""" + sql + ",\ncon_spot_graph AS (" + selected + r"""),
+"""
+        + sql
+        + ",\ncon_spot_graph AS ("
+        + selected
+        + r"""),
 (SELECT result FROM con_spot_graph) AS con_spot_graph_json,
 (w -> con_patch(con_strip(JSONExtractRaw(con_spot_graph_json, 'spots', w), ['window', 'start', 'cutoff', 'observed_at', 'precision']),
     ['composite_cohort', 'cohort_consistent'], ['null', '{}'])) AS con_spot_value
 """
+    )
     if close:
         beginning = result.index("arrayDistinct(arrayConcat(")
         ending = result.index(" AS con_spot_windows,") + len(" AS con_spot_windows,")
         result = result[:beginning] + "['W24H'] AS con_spot_windows," + result[ending:]
         result = result.replace("con_flow_", "con_close_flow_").replace("con_spot_", "con_close_spot_")
-        result = result.replace("SELECT con_snapshot AS con_close_flow_document", "SELECT con_close_snapshot AS con_close_flow_document")
+        result = result.replace(
+            "SELECT con_snapshot AS con_close_flow_document",
+            "SELECT con_close_snapshot AS con_close_flow_document",
+        )
     return result
 
 
 def _derivative_ctes():
     sql = _derivative_helpers("con_oi_", "con_selected_snapshot('oi')")
     sql += ",\n" + _derivative_helpers("con_funding_", "con_selected_snapshot('funding')")
-    return sql + r""",
+    return (
+        sql
+        + r""",
 ((d, w) -> if(d = 'oi', con_oi_window(toUnixTimestamp64Micro(con_offset(con_end, -con_duration(w))), toUnixTimestamp64Micro(con_end)),
     con_funding_window(toUnixTimestamp64Micro(con_offset(con_end, -con_duration(w))), toUnixTimestamp64Micro(con_end)))) AS con_derivative_value,
 ((d, v) -> arrayFilter(p -> d = 'funding' OR has(arrayMap(con_text, JSONExtractArrayRaw(v, 'synchronized', 'venues')), JSONExtractString(p, 'venue')), JSONExtractArrayRaw(v, 'per_venue'))) AS con_derivative_observed_venues,
@@ -258,6 +337,7 @@ def _derivative_ctes():
 ((d, v) -> if(d = 'oi', con_patch(v, ['synchronized'], [if(con_derivatives_fresh(d, v), con_raw(JSONExtractRaw(v, 'synchronized')), 'null')]),
     con_patch(v, ['per_venue'], [con_array(arrayMap(p -> if(con_derivative_fresh(d, p), p, con_patch(p, ['funding_vs_normal'], ['null'])), JSONExtractArrayRaw(v, 'per_venue')))]))) AS con_fresh_derivatives
 """
+    )
 
 
 def _physical_spot_ctes():
@@ -271,7 +351,10 @@ con_patch(con_selected_snapshot('spot'), ['anchor', 'instruments'], [con_raw(JSO
     windows = "arrayDistinct(arrayMap(r -> r.2, arrayFilter(r -> con_domain(r.1) = 'spot', con_supported_requests))) AS con_spot_windows,"
     sql = sql[:beginning] + windows + sql[ending:]
     sql = sql.replace("con_flow_", "con_physical_flow_").replace("con_spot_", "con_physical_spot_")
-    sql = sql.replace("SELECT con_snapshot AS con_physical_flow_document", "SELECT con_physical_spot_snapshot AS con_physical_flow_document")
+    sql = sql.replace(
+        "SELECT con_snapshot AS con_physical_flow_document",
+        "SELECT con_physical_spot_snapshot AS con_physical_flow_document",
+    )
     return inputs + ",\n" + sql
 
 
@@ -279,12 +362,13 @@ def _derivative_helpers(prefix, snapshot):
     sql = truth_sql_derivatives.ctes().replace("deriv_", prefix)
     sql = sql.replace("{" + prefix + "snapshot:String}", snapshot)
     sql = sql.replace("{" + prefix + "config:String}", "con_config")
-    return sql[:sql.index("    " + prefix + "output AS (")].rstrip().removesuffix(",")
+    return sql[: sql.index("    " + prefix + "output AS (")].rstrip().removesuffix(",")
 
 
 def _depth_ctes():
     observation = _object(
-        venue="toJSONString(con_venue(r))", observed_at="toJSONString(con_iso(con_time(r)))",
+        venue="toJSONString(con_venue(r))",
+        observed_at="toJSONString(con_iso(con_time(r)))",
         cadence_s="toJSONString(con_book_cadence(r).1)",
         cadence_source="toJSONString(con_book_cadence(r).2)",
         fresh="toJSONString(CAST(con_book_fresh(r), 'Bool'))",
@@ -333,7 +417,11 @@ con_patch(con_snapshot, ['instruments', 'flow_bars', 'flow_segments'],
     con_array(arrayMap(con_close_identity, JSONExtractArrayRaw(con_snapshot, 'flow_bars'))),
     con_array(arrayMap(con_close_identity, JSONExtractArrayRaw(con_snapshot, 'flow_segments')))]) AS con_close_snapshot
 """
-    return inputs + ",\n" + _spot_ctes(close=True) + r""",
+    return (
+        inputs
+        + ",\n"
+        + _spot_ctes(close=True)
+        + r""",
 arrayFilter(r -> JSONExtractRaw(r, 'complete') = 'true' AND con_is_spot(r)
     AND isNotNull(con_dec(if(JSONHas(r, 'c'), JSONExtractRaw(r, 'c'), JSONExtractRaw(r, 'close'))))
     AND con_dec(if(JSONHas(r, 'c'), JSONExtractRaw(r, 'c'), JSONExtractRaw(r, 'close'))) != con_zero, JSONExtractArrayRaw(con_snapshot, 'klines')) AS con_price_rows,
@@ -353,6 +441,7 @@ con_merge(con_patch('{}', ['ref_venue', 'close_1h_price'], [if(con_close_ref = '
             con_timestamp(con_hourly_source, 'close_time', 'close_1h_observed_at', 0., []),
             con_timestamp(con_hourly_source, 'open_time', 'close_1h_observed_at', ifNull(con_number(JSONExtractRaw(con_hourly_source, 'interval_s')), 60.), ['timestamp_precision'])))) AS con_close_value
 """
+    )
 
 
 def _confidence_ctes():
@@ -378,25 +467,29 @@ con_pairs([(con_primary, con_confidence_raw_derivatives)]) AS con_confidence_der
     }
     for old, new in replacements.items():
         core = core.replace(old, new)
-    return ",\n".join((
-        inputs,
-        _derivative_helpers("con_dc_deriv_", "con_confidence_endpoints"),
-        core,
-        truth_sql_support._freshness().replace("sup_", "con_conf_"),
-        truth_sql_support._confidence().replace("sup_", "con_conf_"),
-        r"""
+    return ",\n".join(
+        (
+            inputs,
+            _derivative_helpers("con_dc_deriv_", "con_confidence_endpoints"),
+            core,
+            truth_sql_support._freshness().replace("sup_", "con_conf_"),
+            truth_sql_support._confidence().replace("sup_", "con_conf_"),
+            r"""
 (SELECT con_patch(con_strip(con_conf_confidence, ['class_']), ['class', 'derivatives_classification_ready', 'derivatives_classification_ready_reason', 'analysis_window'],
     [con_raw(JSONExtractRaw(con_conf_confidence, 'class_')), 'null', '"NOT_ESTIMABLE"',
     con_patch('{}', ['window', 'start', 'cutoff'], [toJSONString(con_primary), toJSONString(con_iso(con_start(con_primary))), toJSONString(con_iso(con_end))])]) FROM con_conf_conf_output) AS con_confidence_value
 """,
-    ))
+        )
+    )
 
 
 def _relative_ctes():
     sql = truth_sql_relative.ctes().replace("rel_", "con_rel_")
     inputs = {
-        "snapshot:String": "con_selected_snapshot('relative')", "start:String": "con_iso(coalesce(con_anchor, con_offset(con_end, -14400.)))",
-        "end:String": "con_iso(con_end)", "lookback:Float64": "con_number(con_parameter('historical_lookback_days', con_parameter('base_retention_days', '90')))",
+        "snapshot:String": "con_selected_snapshot('relative')",
+        "start:String": "con_iso(coalesce(con_anchor, con_offset(con_end, -14400.)))",
+        "end:String": "con_iso(con_end)",
+        "lookback:Float64": "con_number(con_parameter('historical_lookback_days', con_parameter('base_retention_days', '90')))",
         "min_days:Float64": "con_number(con_parameter('history_min_days', '7'))",
         "beta_weight:Float64": "con_number(con_parameter('beta_blume_weight', '0.6666666666666666'))",
         "quantile_lo:Float64": "con_number(JSONExtractRaw(con_parameter('normal_range_quantiles', '[0.025,0.975]'), 1))",
@@ -405,10 +498,13 @@ def _relative_ctes():
     }
     for name, expression in inputs.items():
         sql = sql.replace("{con_rel_" + name + "}", expression)
-    return sql + r""",
+    return (
+        sql
+        + r""",
 if(con_has_anchor, con_rel_result, con_patch(con_rel_result, ['repricing_band', 'windows'], ['null',
     con_patch(JSONExtractRaw(con_rel_result, 'windows'), ['EVENT'], [con_patch(JSONExtractRaw(con_rel_result, 'windows', 'EVENT'), ['r_raw'], ['null'])])])) AS con_relative_value
 """
+    )
 
 
 def _state_ctes():
@@ -434,7 +530,8 @@ def _ordered_requirements(requirements):
 
 
 def _cache_steps(requirements):
-    chunks = [r"""
+    chunks = [
+        r"""
 ((d, w) -> multiIf(d = 'spot', con_physical_spot_value(w), d IN ('oi', 'funding'), con_derivative_value(d, w),
     d = 'depth', con_depth_value, d = 'close', con_close_value, d = 'dc', con_confidence_value,
     d = 'relative', con_relative_value, '{}')) AS con_calculate,
@@ -443,7 +540,8 @@ def _cache_steps(requirements):
 ((c, r) -> con_prepare_key(c, r, con_cache_key(con_domain(r.1), r.2))) AS con_prepare,
 ((acc, r) -> tuple(con_cache_store(acc.1, r.5, r.7), arrayPushBack(acc.2, tuple(r.1, r.2, r.3, r.4, r.7, r.6)))) AS con_accumulate,
 con_step_0 AS (SELECT tuple(con_initial_cache, CAST([], 'Array(Tuple(UInt64, String, String, String, String, Bool))')) AS con_packet)
-"""]
+"""
+    ]
     ordered = _ordered_requirements(requirements)
     previous = 0
     while previous < len(ordered):
@@ -466,7 +564,12 @@ con_step_0 AS (SELECT tuple(con_initial_cache, CAST([], 'Array(Tuple(UInt64, Str
             continue
         bundle = f"con_state_bundle_{index}"
         chunks.append(f"{{con_state_result_{index}:String}} AS {bundle}")
-        chunks.append(_state_ctes().replace("con_state_", f"con_state_{index}_").replace("con_selected_state", f"con_selected_state_{index}").replace("con_full_result", bundle))
+        chunks.append(
+            _state_ctes()
+            .replace("con_state_", f"con_state_{index}_")
+            .replace("con_selected_state", f"con_selected_state_{index}")
+            .replace("con_full_result", bundle)
+        )
         node_cache = (
             f"if(con_has_anchor AND con_anchor >= con_end, con_cache, if(JSONHas({bundle}, '_native_condition_cache'), "
             f"arrayMap(r -> tuple(JSONExtractString(r, 'key'), JSONExtractRaw(r, 'value')), "
@@ -481,7 +584,9 @@ con_step_0 AS (SELECT tuple(con_initial_cache, CAST([], 'Array(Tuple(UInt64, Str
         )
         chunks.append(
             f"con_step_{index}_raw AS (SELECT *, assumeNotNull(if(con_reused, con_cache_get(con_cache, con_key), "
-            f"con_state_{index}_value)) AS con_raw_value FROM con_step_{index}_key WHERE " + _state_guard(bundle) + ")"
+            f"con_state_{index}_value)) AS con_raw_value FROM con_step_{index}_key WHERE "
+            + _state_guard(bundle)
+            + ")"
         )
         chunks.append(
             f"con_step_{index} AS (SELECT if(con_admitted, tuple(if(con_reused, con_cache, "
@@ -501,16 +606,22 @@ con_step_0 AS (SELECT tuple(con_initial_cache, CAST([], 'Array(Tuple(UInt64, Str
 
 def _evaluation_ctes(requirements):
     proof = _object(
-        metric="toJSONString(con_metric)", window="toJSONString(con_window)",
+        metric="toJSONString(con_metric)",
+        window="toJSONString(con_window)",
         dependency_fingerprint="toJSONString(con_dependency(con_domain_name))",
         reused="toJSONString(CAST(con_reused, 'Bool'))",
         reason="if(con_available AND con_fresh, 'null', '\"INCOMPLETE\"')",
-        observations="con_array(con_observations)", available="toJSONString(CAST(con_available, 'Bool'))",
+        observations="con_array(con_observations)",
+        available="toJSONString(CAST(con_available, 'Bool'))",
         coverage="multiIf(con_domain_name = 'spot', con_raw(JSONExtractRaw(con_value, 'coverage')), con_domain_name = 'oi', concat('{\"venues\":', con_raw(coalesce(nullIf(JSONExtractRaw(con_value, 'synchronized', 'venues'), ''), '[]')), '}'), 'null')",
     )
     pending = _object(metric="toJSONString(r.1)", window="toJSONString(r.2)", reason="'\"NOT_SUPPORTED\"'")
-    incomplete = _object(metric="toJSONString(con_metric)", window="toJSONString(con_window)", reason="'\"INCOMPLETE\"'")
-    return _cache_steps(requirements) + r""",
+    incomplete = _object(
+        metric="toJSONString(con_metric)", window="toJSONString(con_window)", reason="'\"INCOMPLETE\"'"
+    )
+    return (
+        _cache_steps(requirements)
+        + r""",
 con_evaluation_values AS (
     SELECT *, multiIf(con_domain_name IN ('oi', 'funding'), con_fresh_derivatives(con_domain_name, con_raw_value),
         con_domain_name = 'depth', con_patch(con_strip(con_raw_value, ['observations']), ['aggregate_depth_p1_usd', 'spread_ratio'],
@@ -546,7 +657,10 @@ con_evaluation_output AS (
         arrayFold((acc, r) -> con_apply(acc, r.2, r.3, r.4, r.5), con_rows, '{"spot":{},"derivatives":{"windows":{}},"relative":{}}') AS con_body
     FROM con_evaluation_collected
 )
-""".replace("__PROOF__", proof).replace("__INCOMPLETE__", incomplete).replace("__UNSUPPORTED__", pending)
+""".replace("__PROOF__", proof)
+        .replace("__INCOMPLETE__", incomplete)
+        .replace("__UNSUPPORTED__", pending)
+    )
 
 
 def _merge_ctes():
@@ -586,8 +700,14 @@ def ctes(requirements=None):
     if needs(OI_METRICS | {"deriv.funding_vs_normal"}):
         chunks.append(_derivative_ctes())
     else:
-        chunks.append("((d, w) -> '{}') AS con_derivative_value, ((d, v) -> v) AS con_fresh_derivatives, ((d, v) -> true) AS con_derivatives_fresh, ((d, v) -> CAST([], 'Array(String)')) AS con_derivative_observed_venues, ((d, p) -> '{}') AS con_derivative_observation")
-    chunks.append(_depth_ctes() if needs({"liq.depth_p1_vs_pre", "liq.spread_ratio"}) else "'{}' AS con_depth_value, true AS con_depth_fresh, CAST([], 'Array(String)') AS con_depth_observations")
+        chunks.append(
+            "((d, w) -> '{}') AS con_derivative_value, ((d, v) -> v) AS con_fresh_derivatives, ((d, v) -> true) AS con_derivatives_fresh, ((d, v) -> CAST([], 'Array(String)')) AS con_derivative_observed_venues, ((d, p) -> '{}') AS con_derivative_observation"
+        )
+    chunks.append(
+        _depth_ctes()
+        if needs({"liq.depth_p1_vs_pre", "liq.spread_ratio"})
+        else "'{}' AS con_depth_value, true AS con_depth_fresh, CAST([], 'Array(String)') AS con_depth_observations"
+    )
     chunks.append(_close_ctes() if needs({"price.close_vs_level"}) else "'{}' AS con_close_value")
     chunks.append(_confidence_ctes() if needs({"dc.class"}) else "'{}' AS con_confidence_value")
     chunks.append(_relative_ctes() if needs(RELATIVE_METRICS) else "'{}' AS con_relative_value")
@@ -613,13 +733,20 @@ def _state_guard(body):
 def select_sql(*, cache_transport=False):
     request_key = "con_hash(con_sorted_object([('token_id', con_raw(JSONExtractRaw(con_canonical_snapshot, 'token_id'))), ('requirements', toJSONString(con_requested)), ('dependencies', if(JSONHas(con_canonical_snapshot, 'dependency_fingerprint'), con_raw(JSONExtractRaw(con_canonical_snapshot, 'dependency_fingerprint')), toJSONString(arrayMap(p -> JSONExtractString(p, 'dependency_fingerprint'), con_proofs)))), ('anchor', con_raw(JSONExtractRaw(con_canonical_snapshot, 'anchor'))), ('config', con_canonical_config)]))"
     evaluation = _object(
-        requires_market_truth="'[]'", unavailable_metrics="con_array(con_pending_metrics)",
-        request_key=request_key, proofs="con_array(con_proofs)", transient="'true'",
+        requires_market_truth="'[]'",
+        unavailable_metrics="con_array(con_pending_metrics)",
+        request_key=request_key,
+        proofs="con_array(con_proofs)",
+        transient="'true'",
     )
     return (
         "SELECT con_merge(con_patch(con_body, ['_condition_evaluation'], [" + evaluation + "]), "
         "con_timestamp(con_input_snapshot, 'cutoff', 'cutoff', 0., [])) AS result"
-        + (", (SELECT con_cache_json(con_cache) FROM con_final_cache) AS condition_cache" if cache_transport else "")
+        + (
+            ", (SELECT con_cache_json(con_cache) FROM con_final_cache) AS condition_cache"
+            if cache_transport
+            else ""
+        )
         + " FROM con_evaluation_output "
         "WHERE throwIf(isNull(con_end), 'Market Truth condition cutoff is invalid') = 0 "
         "AND throwIf(con_depth_key_guard, 'Unsupported depth band') = 0"

@@ -5769,7 +5769,11 @@ class MarketTruthService:
 
         async with self._condition_lock:
             return await truth_sql_engine.evaluate_conditions(
-                getattr(self.repo, "clickhouse", None), snapshot, requirements, config, cache=self._condition_cache
+                getattr(self.repo, "clickhouse", None),
+                snapshot,
+                requirements,
+                config,
+                cache=self._condition_cache,
             )
 
     async def assess(self, event_id, token_id, cutoff=None):
