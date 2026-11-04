@@ -27,16 +27,19 @@ async def test_saved_identity_restores_without_post_and_releases_completed_slot(
         item["extraction_status"] = "DONE"
         await repo.put("ingest.source_items", "i", item)
         pending = {
-            "session_id": "s",
+            "session_id": session["session_id"],
             "call_id": "pending",
             "tool": "get_item",
-            "arguments": {},
-            "input": {},
+            "arguments": {"item_id": session["opened_by_item"]},
+            "input": {"item_id": session["opened_by_item"]},
             "status": "PENDING",
-            "native_turn_message_id": "root",
-            "native_turn_retry_count": attempt,
+            "requested_at": intent["requested_at"],
+            "requested_at_prec": session["opened_at_prec"],
+            "native_turn_message_id": intent["message_id"],
+            "native_turn_retry_count": intent["retry_count"],
         }
         await repo.put("ops.tool_calls", "s:pending", pending)
+        assert await repo.get("ops.tool_calls", "s:pending") == pending
         async with native_peer() as (url, requests, effects):
             opts = settings()
             opts.openma_url = url

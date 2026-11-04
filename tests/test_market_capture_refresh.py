@@ -143,6 +143,26 @@ async def seed_bound_session(repo):
     await repo.put("ops.agent_sessions", "s", session)
 
 
+class RefreshNativeInputs:
+    def __init__(self):
+        self.accepted = {}
+        self.requests = []
+
+    def __call__(self, request):
+        assert request.method == "POST"
+        assert request.url.path.endswith("/sessions/s/events")
+        key = request.headers["idempotency-key"]
+        body = json.loads(request.content)
+        assert len(body["events"]) == 1
+        assert body["events"][0]["type"] in {"user.message", "user.custom_tool_result"}
+        self.requests.append((key, body))
+        if key in self.accepted:
+            assert self.accepted[key][0] == body
+        else:
+            self.accepted[key] = (body, f"accepted-refresh-{len(self.accepted)}")
+        return httpx.Response(200, json={"data": [{"id": self.accepted[key][1]}]})
+
+
 async def seed_domain(repo, settings, end):
     anchor = iso(end - timedelta(hours=4))
     event = complete_event_fixture(
@@ -217,16 +237,18 @@ async def test_wait_data_watch_refreshes_truth_before_decision_and_replays_lost_
         await seed_bound_session(repo)
         sent = []
         native_messages = []
+        native = RefreshNativeInputs()
 
         def transport(request):
+            response = native(request)
             body = json.loads(request.content)
             if body["events"][0]["type"] == "user.message":
                 native_messages.append(json.loads(body["events"][0]["content"][0]["text"]))
-                return httpx.Response(200, json={"data": [{"id": "accepted-condition"}]})
+                return response
             sent.append(body)
             if len(sent) == 1:
                 raise httpx.ReadError("Synthetic lost ACK", request=request)
-            return httpx.Response(200, json={})
+            return response
 
         runtime = object.__new__(Runtime)
         runtime.repo, runtime.market, runtime.truth = repo, market, truth
@@ -267,6 +289,18 @@ async def test_wait_data_watch_refreshes_truth_before_decision_and_replays_lost_
                 logical_now[0] += timedelta(minutes=1)
                 await sessions.process_event("s", event, 7)
                 assert sent[0] == sent[1]
+                tool_requests = [
+                    row
+                    for row in native.requests
+                    if row[1]["events"][0]["type"] == "user.custom_tool_result"
+                ]
+                assert len(tool_requests) == 2 and tool_requests[0] == tool_requests[1]
+                key, body = tool_requests[0]
+                returned = await repo.get("ops.tool_calls", "s:decision")
+                assert returned is not None
+                assert body == {"events": [returned["native_result_body"]]}
+                assert returned["remote_event_id"] == native.accepted[key][1]
+                assert len(native.accepted) == len(native.requests) - 1
                 assert (await repo.get("ops.tool_calls", "s:decision"))["returned_at"]
                 assert (await repo.get("ops.agent_sessions", "s"))["next_tool_call_ordinal"] == 1
                 assert before == await persisted_ids(repo)
@@ -367,10 +401,11 @@ async def test_cancelled_preflight_reuses_job_before_any_decision_ledger(
             "input": {"token_id": "T"},
         }
         acks = []
+        native = RefreshNativeInputs()
 
         def accepted(request):
             acks.append(json.loads(request.content))
-            return httpx.Response(200, json={})
+            return native(request)
 
         async with httpx.AsyncClient(transport=httpx.MockTransport(accepted)) as http:
             sessions = SessionService(repo, session_settings(), tools.dispatch, http=http)
@@ -388,6 +423,7 @@ async def test_cancelled_preflight_reuses_job_before_any_decision_ledger(
             with pytest.raises(asyncio.CancelledError):
                 await pending
             assert await repo.get("ops.tool_calls", "s:cancelled") is None
+            assert not native.requests
             assert not (await repo.get("ana.watch_conditions", condition["cond_id"])).get("consumed_by")
             assert len(await repo.list("ana.decisions")) == 1
             market.released = True
@@ -403,10 +439,15 @@ async def test_cancelled_preflight_reuses_job_before_any_decision_ledger(
                 jobs = [row async for row in repo.iter_all("ops.jobs", filters={"type": "RUN_MARKET_TRUTH"})]
                 assert len(jobs) == 1 and jobs[0]["job_id"] == original_jobs[0]["job_id"]
                 ledger = await repo.get("ops.tool_calls", "s:cancelled")
+                assert ledger is not None
                 assert ledger["status"] == "DONE" and ledger["result"]["mta_id"] != first["mta_id"]
                 assert len(await repo.list("ana.decisions")) == 2
                 assert (await repo.get("ops.agent_sessions", "s"))["next_tool_call_ordinal"] == 1
                 assert len(acks) == 1
+                key, body = native.requests[0]
+                assert body == {"events": [ledger["native_result_body"]]}
+                assert ledger["remote_event_id"] == native.accepted[key][1]
+                assert ledger["returned_at"]
             finally:
                 stop.set()
                 await worker
@@ -473,9 +514,8 @@ async def test_condition_firing_during_refresh_wait_is_deferred_until_its_own_re
         runtime.handlers = {"ESCALATE_TOKENS": runtime.escalate, "RUN_MARKET_TRUTH": runtime.assess}
         stop = asyncio.Event()
         worker = asyncio.create_task(runtime.worker(stop))
-        async with httpx.AsyncClient(
-            transport=httpx.MockTransport(lambda request: httpx.Response(200, json={}))
-        ) as http:
+        native = RefreshNativeInputs()
+        async with httpx.AsyncClient(transport=httpx.MockTransport(native)) as http:
             sessions = SessionService(repo, session_settings(), tools.dispatch, http=http)
             event = {
                 "id": "first-condition",
@@ -501,6 +541,15 @@ async def test_condition_firing_during_refresh_wait_is_deferred_until_its_own_re
                 assert evaluated[-1] == [second["cond_id"]]
                 assert (await repo.get("ana.watch_conditions", second["cond_id"])).get("consumed_by")
                 assert len(await repo.list("ana.market_truth")) == before + 1
+                assert len(native.requests) == len(native.accepted) == 2
+                for key, body in native.requests:
+                    call_id = body["events"][0]["custom_tool_use_id"]
+                    ledger = await repo.get("ops.tool_calls", "s:" + call_id)
+                    assert ledger is not None
+                    assert body == {"events": [ledger["native_result_body"]]}
+                    assert ledger["remote_event_id"] == native.accepted[key][1]
+                    assert ledger["returned_at"]
+                assert len({row[1] for row in native.accepted.values()}) == 2
             finally:
                 release.set()
                 stop.set()
