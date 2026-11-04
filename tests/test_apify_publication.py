@@ -55,9 +55,13 @@ def worker_journal(committed=False):
         "settlement_marker_mismatch",
         "settlement_ownership_mismatch",
         "post_finish_main_term",
+        "post_finish_term_observed",
     ],
 )
-def test_worker_publication_transaction(tmp_path, mode):
+def test_worker_publication_transaction(tmp_path, mode, request):
+    observed = mode == "post_finish_term_observed"
+    if observed:
+        mode = "post_finish_term"
     source = tmp_path / "worker"
     source.mkdir()
     (source / "main.py").write_text("print('selected revision')\n")
@@ -216,6 +220,36 @@ docker() {
 """
         marker = "previous=$(cat deployed 2>/dev/null || true)"
         script = script.replace(marker, hook + marker)
+        if observed:
+            replacements = {
+                "  local status=$1 worker_restored=yes\n": """  local status=$1 worker_restored=yes
+  case "$2" in
+    term) printf '%s\\n' term_entered >> term-observation ;;
+    exit) printf '%s\\n' exit_entered >> term-observation ;;
+  esac
+  if [ "$BASHPID" = "$$" ]; then
+    printf '%s\\n' primary_shell >> term-observation
+  fi
+  if [ "$status" -eq 143 ]; then
+    printf '%s\\n' input_143 >> term-observation
+  fi
+  if [ "$worker_started" = no ] && [ "$tank_started" = no ]; then
+    printf '%s\\n' flags_cleared >> term-observation
+  fi
+""",
+                "trap 'recover 143' TERM": "trap 'recover 143 term' TERM",
+                "trap 'recover \"$?\"' EXIT": "trap 'recover \"$?\" exit' EXIT",
+                '  exit "$status"\n': """  case "$status" in
+    143) printf '%s\\n' exit_143_requested >> term-observation ;;
+    1) printf '%s\\n' exit_one_requested >> term-observation ;;
+    *) printf '%s\\n' exit_other_requested >> term-observation ;;
+  esac
+  exit "$status"
+""",
+            }
+            for original, replacement in replacements.items():
+                assert script.count(original) == (2 if original == "trap 'recover 143' TERM" else 1)
+                script = script.replace(original, replacement)
         if mode == "post_finish_main_term":
             cleanup = "      docker image ls --format"
             assert script.count(cleanup) == 1
@@ -244,6 +278,30 @@ docker() {
             text=True,
             timeout=8,
         )
+        if mode == "post_finish_term":
+            request.node.user_properties.extend(
+                [
+                    (
+                        "term_observation_context",
+                        "instrumented_sibling" if observed else "original",
+                    ),
+                    ("term_primary_exit", {143: "143", 1: "one"}.get(result.returncode, "other")),
+                ]
+            )
+            if observed:
+                observation = tmp_path / "term-observation"
+                events = observation.read_text().splitlines() if observation.exists() else []
+                for event in (
+                    "term_entered",
+                    "exit_entered",
+                    "primary_shell",
+                    "input_143",
+                    "flags_cleared",
+                    "exit_143_requested",
+                    "exit_one_requested",
+                    "exit_other_requested",
+                ):
+                    request.node.user_properties.append(("term_" + event, int(event in events)))
         success = mode in {"success", "unchanged", "ack_lost", "second"} or mode.startswith("settlement_")
         assert (result.returncode == 0) == success, result.stdout + result.stderr
         remains_new = success and mode != "unchanged"
