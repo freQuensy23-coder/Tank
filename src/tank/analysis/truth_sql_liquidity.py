@@ -428,12 +428,18 @@ lq_observed AS (
     FROM lq_burst_results
 ),
 lq_root_inputs AS (
-    SELECT v.venue, v.first_ordinal, v.series, v.current, v.ctx_band_key,
-        v.bid, v.ask, v.bid_native, v.ask_native, v.pre_bid, v.pre_ask,
-        v.pre_bid_native, v.pre_ask_native, v.current_total, v.pre_total,
-        v.spread, v.pre_spread, v.avg_bid, v.avg_ask, t.lq_tiers,
-        c.ctx_primary, c.ctx_end, c.ctx_start, c.ctx_anchor, c.ctx_band, c.ctx_band_raw,
-        c.ctx_cadence, c.ctx_refill, c.ctx_resilience, c.ctx_relative, c.ctx_flows,
+    SELECT v.venue AS venue, v.first_ordinal AS first_ordinal, v.series AS series,
+        v.current AS current, v.ctx_band_key AS ctx_band_key,
+        v.bid AS bid, v.ask AS ask, v.bid_native AS bid_native, v.ask_native AS ask_native,
+        v.pre_bid AS pre_bid, v.pre_ask AS pre_ask,
+        v.pre_bid_native AS pre_bid_native, v.pre_ask_native AS pre_ask_native,
+        v.current_total AS current_total, v.pre_total AS pre_total,
+        v.spread AS spread, v.pre_spread AS pre_spread, v.avg_bid AS avg_bid, v.avg_ask AS avg_ask,
+        t.lq_tiers AS lq_tiers,
+        c.ctx_primary AS ctx_primary, c.ctx_end AS ctx_end, c.ctx_start AS ctx_start,
+        c.ctx_anchor AS ctx_anchor, c.ctx_band AS ctx_band, c.ctx_band_raw AS ctx_band_raw,
+        c.ctx_cadence AS ctx_cadence, c.ctx_refill AS ctx_refill,
+        c.ctx_resilience AS ctx_resilience, c.ctx_relative AS ctx_relative, c.ctx_flows AS ctx_flows,
         arrayFilter(flow -> lq_venue(flow) = v.venue, c.ctx_flows) AS venue_flows
     FROM lq_flow_context AS c CROSS JOIN lq_tier_values AS t
     LEFT ALL JOIN lq_venue_stats AS v ON true

@@ -1,4 +1,5 @@
 import asyncio
+import ctypes
 import fcntl
 import os
 import re
@@ -17,6 +18,11 @@ _MAX_PARAMETERS = 4096
 _MAX_STDOUT_BYTES = 256 << 20
 _MAX_STDERR_BYTES = 1 << 20
 _TERMINATE_GRACE_SECONDS = 0.25
+_MFD_CLOEXEC = 0x0001
+_MFD_ALLOW_SEALING = 0x0002
+_F_ADD_SEALS = 1033
+_INPUT_SEALS = 0x0008 | 0x0004 | 0x0002 | 0x0001
+_P_PIDFD = getattr(os, "P_PIDFD", 3) if sys.platform == "linux" else None
 _SOURCE_GUARDS = (
     (b"anchor must precede cutoff", "anchor_must_precede_cutoff"),
     (b"Market Truth decimal input outside native financial range", "decimal_input_outside_financial_range"),
@@ -61,8 +67,46 @@ def _binary():
     return binary
 
 
+def _libc_function(name, argtypes):
+    if sys.platform != "linux":
+        raise _LocalFailure("native local primitives unavailable")
+    try:
+        function = getattr(ctypes.CDLL(None, use_errno=True), name)
+    except (AttributeError, OSError):
+        raise _LocalFailure("native local primitives unavailable") from None
+    function.argtypes = argtypes
+    function.restype = ctypes.c_int
+    return function
+
+
+def _memfd_create():
+    if sys.platform != "linux":
+        raise _LocalFailure("native local primitives unavailable")
+    create = getattr(os, "memfd_create", None)
+    if create is not None:
+        return create("tank-native-input", _MFD_CLOEXEC | _MFD_ALLOW_SEALING)
+    create = _libc_function("memfd_create", (ctypes.c_char_p, ctypes.c_uint))
+    descriptor = create(b"tank-native-input", _MFD_CLOEXEC | _MFD_ALLOW_SEALING)
+    if descriptor < 0:
+        raise OSError(ctypes.get_errno(), "native local primitives unavailable")
+    return descriptor
+
+
+def _pidfd_open(pid):
+    if sys.platform != "linux":
+        raise _LocalFailure("native local process ownership unavailable")
+    create = getattr(os, "pidfd_open", None)
+    if create is not None:
+        return create(pid)
+    create = _libc_function("pidfd_open", (ctypes.c_int, ctypes.c_uint))
+    descriptor = create(pid, 0)
+    if descriptor < 0:
+        raise OSError(ctypes.get_errno(), "native local process ownership unavailable")
+    return descriptor
+
+
 def _memfd(data):
-    descriptor = os.memfd_create("tank-native-input", os.MFD_CLOEXEC | os.MFD_ALLOW_SEALING)
+    descriptor = _memfd_create()
     try:
         view = memoryview(data)
         while view:
@@ -71,11 +115,7 @@ def _memfd(data):
                 raise OSError("native local input write failed")
             view = view[written:]
         os.lseek(descriptor, 0, os.SEEK_SET)
-        fcntl.fcntl(
-            descriptor,
-            fcntl.F_ADD_SEALS,
-            fcntl.F_SEAL_WRITE | fcntl.F_SEAL_GROW | fcntl.F_SEAL_SHRINK | fcntl.F_SEAL_SEAL,
-        )
+        fcntl.fcntl(descriptor, _F_ADD_SEALS, _INPUT_SEALS)
         return descriptor
     except BaseException:
         os.close(descriptor)
@@ -163,7 +203,7 @@ class _OwnedProcess:
             return
         self._loop.remove_reader(self._pidfd)
         try:
-            status = os.waitid(os.P_PIDFD, self._pidfd, os.WEXITED | os.WNOWAIT)
+            status = os.waitid(_P_PIDFD, self._pidfd, os.WEXITED | os.WNOWAIT)
             if status is None:
                 raise _LocalFailure("native local process ownership unavailable")
             self.returncode = status.si_status if status.si_code == os.CLD_EXITED else -status.si_status
@@ -194,13 +234,13 @@ class _OwnedProcess:
 
 
 def _start_process(arguments, kwargs):
-    if signal.getsignal(signal.SIGCHLD) != signal.SIG_DFL or not hasattr(os, "P_PIDFD"):
+    if signal.getsignal(signal.SIGCHLD) != signal.SIG_DFL or _P_PIDFD is None:
         raise _LocalFailure("native local process ownership unavailable")
     process = subprocess.Popen(arguments, **kwargs, bufsize=0)
     pidfd = None
     try:
-        pidfd = os.pidfd_open(process.pid)
-        os.waitid(os.P_PIDFD, pidfd, os.WEXITED | os.WNOWAIT | os.WNOHANG)
+        pidfd = _pidfd_open(process.pid)
+        os.waitid(_P_PIDFD, pidfd, os.WEXITED | os.WNOWAIT | os.WNOHANG)
     except BaseException as error:
         if not isinstance(error, (ChildProcessError, ProcessLookupError)):
             with suppress(ProcessLookupError):
@@ -230,7 +270,7 @@ async def _spawn(*arguments, **kwargs):
     except BaseException:
         _signal_group(child, signal.SIGKILL)
         try:
-            await asyncio.to_thread(os.waitid, os.P_PIDFD, pidfd, os.WEXITED | os.WNOWAIT)
+            await asyncio.to_thread(os.waitid, _P_PIDFD, pidfd, os.WEXITED | os.WNOWAIT)
         finally:
             child.reap()
             child.close_readers()

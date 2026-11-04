@@ -5,8 +5,8 @@ from decimal import Decimal
 from types import SimpleNamespace
 
 import pytest
-from truth_service_unit_seam import assert_input, bind_evaluator
 from test_truth_start_fixture import compact_start_snapshot
+from truth_service_unit_seam import assert_input, bind_evaluator
 
 import tank.analysis.truth as module
 from tank.scheduler import metric_value

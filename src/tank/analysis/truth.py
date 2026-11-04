@@ -22,11 +22,15 @@ from decimal import Decimal, getcontext, localcontext
 from functools import wraps
 from math import log
 from statistics import mean, median, stdev
+from typing import TYPE_CHECKING
 
 from tank.analysis import compute_workers
 from tank.market.capture import event_anchor
 from tank.time_precision import Timestamp, chosen_boundary, offset_schedule, propagate_timestamp
 from tank.util import iso, jsonable, new_id, parse_time
+
+if TYPE_CHECKING:
+    from tank.analysis.truth_native_binding import _ReplayNativeState
 
 WINDOWS = {"W15M": 900, "W1H": 3600, "W4H": 14400, "W24H": 86400}
 RISK_ORDER = [
@@ -5719,6 +5723,8 @@ ASSESSMENT_BASELINE_IDLE_S = 1800
 
 
 class MarketTruthService:
+    _replay_native_state: "_ReplayNativeState | None"
+
     def __init__(self, repo, settings, market):
         self.repo, self.settings, self.market = repo, settings, market
         self._condition_cache = {}

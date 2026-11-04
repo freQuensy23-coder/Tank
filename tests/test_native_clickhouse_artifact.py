@@ -1,4 +1,5 @@
 import hashlib
+import re
 import runpy
 import subprocess
 import sys
@@ -290,7 +291,7 @@ async def test_artifact_qualification_refuses_remote_before_any_probe(monkeypatc
     monkeypatch.setitem(HELPER, "verify_binary", forbidden)
     monkeypatch.setattr(subprocess, "check_output", forbidden)
     monkeypatch.setattr(subprocess, "run", forbidden)
-    with pytest.raises(ValueError, match=NATIVE_URL_REFUSAL):
+    with pytest.raises(ValueError, match=r"\A" + re.escape(NATIVE_URL_REFUSAL) + r"\Z"):
         await test_installed_native_binary_and_service_match_the_pinned_release_and_source()
     assert calls == []
 

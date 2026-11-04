@@ -576,7 +576,7 @@ async def test_condition_reader_preserves_missing_reference_admission_and_proven
 def replay_condition_original_truth():
     from test_truth_sql_conditions import original_truth
 
-    yield from getattr(original_truth, "__wrapped__")()
+    yield from original_truth.__wrapped__()
 
 
 @pytest.mark.integration

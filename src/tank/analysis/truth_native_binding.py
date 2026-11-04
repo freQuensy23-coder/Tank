@@ -1,20 +1,15 @@
-from __future__ import annotations
-
 import asyncio
 from collections.abc import AsyncIterator, Awaitable
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, TypeVar
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from tank.analysis.truth import MarketTruthService
     from tank.analysis.truth_native_local import ReplayNativeRows
 
 
-_Result = TypeVar("_Result")
-
-
-async def _finish_cleanup(
+async def _finish_cleanup[_Result](
     operation: Awaitable[_Result], *, failure: BaseException | None = None
 ) -> _Result:
     task = asyncio.ensure_future(operation)
@@ -40,15 +35,15 @@ async def _finish_cleanup(
 
 @dataclass(slots=True, repr=False)
 class _ReplayNativeState:
-    service: MarketTruthService
+    service: "MarketTruthService"
     repo: Any
     settings: Any
-    provider: ReplayNativeRows
+    provider: "ReplayNativeRows"
     token: object
     lifecycle: str = "active"
 
 
-def native_provider(service: MarketTruthService) -> Any:
+def native_provider(service: "MarketTruthService") -> Any:
     state = getattr(service, "_replay_native_state", None)
     if state is None:
         return getattr(service.repo, "clickhouse", None)
@@ -66,7 +61,7 @@ def native_provider(service: MarketTruthService) -> Any:
 
 
 @asynccontextmanager
-async def bind_replay_native(service: MarketTruthService) -> AsyncIterator[None]:
+async def bind_replay_native(service: "MarketTruthService") -> AsyncIterator[None]:
     from tank.analysis.truth import MarketTruthService
 
     if not isinstance(service, MarketTruthService) or not service.settings.replay:
@@ -79,7 +74,7 @@ async def bind_replay_native(service: MarketTruthService) -> AsyncIterator[None]
     from tank.analysis.truth_native_local import ReplayNativeRows
 
     state = _ReplayNativeState(service, service.repo, service.settings, ReplayNativeRows(), object())
-    setattr(service, "_replay_native_state", state)
+    service._replay_native_state = state
     failure = None
     try:
         yield
@@ -99,6 +94,6 @@ async def bind_replay_native(service: MarketTruthService) -> AsyncIterator[None]
             state.token = None
             if getattr(service, "_replay_native_state", None) is state:
                 if previous_present:
-                    setattr(service, "_replay_native_state", previous)
+                    service._replay_native_state = previous
                 else:
                     delattr(service, "_replay_native_state")

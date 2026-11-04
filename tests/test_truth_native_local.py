@@ -1,4 +1,5 @@
 import asyncio
+import errno
 import fcntl
 import hashlib
 import os
@@ -8,6 +9,7 @@ import sys
 from copy import deepcopy
 from pathlib import Path
 from threading import Event
+from types import SimpleNamespace
 
 import pytest
 from test_truth_sql_conditions import original_truth as original_truth
@@ -98,17 +100,26 @@ def test_local_plan_avoids_existing_table_name_and_preserves_order():
     assert "SELECT tuple(c0) FROM _tank_http_parameters_" in plan.query
 
 
-def test_sealed_seekable_inputs_are_owned_and_readable():
+@pytest.mark.parametrize("missing_bindings", [False, True])
+def test_sealed_seekable_inputs_are_owned_and_readable(monkeypatch, missing_bindings):
+    if missing_bindings:
+        bindings = SimpleNamespace(**vars(os))
+        for name in ("memfd_create", "MFD_CLOEXEC", "MFD_ALLOW_SEALING"):
+            vars(bindings).pop(name, None)
+        monkeypatch.setattr(local, "os", bindings)
     prepared = local._prepare("SELECT {p:String}", {"p": ("already\\n", "String")})
     descriptors = prepared.fds
     try:
         query_fd, data_fd = descriptors
+        assert query_fd != data_fd
         assert os.read(query_fd, 4096).endswith(b" FORMAT JSONEachRow")
         assert os.read(data_fd, 4096) == b"already\\n\n"
         os.lseek(data_fd, 0, os.SEEK_SET)
         assert os.read(data_fd, 4096) == b"already\\n\n"
         for descriptor in descriptors:
-            assert fcntl.fcntl(descriptor, fcntl.F_GET_SEALS) & fcntl.F_SEAL_WRITE
+            assert not os.get_inheritable(descriptor)
+            assert fcntl.fcntl(descriptor, getattr(fcntl, "F_GET_SEALS", 1034)) & getattr(fcntl, "F_SEAL_WRITE", 0x0008)
+            assert fcntl.fcntl(descriptor, 1034) == 0x000F
             with pytest.raises(OSError):
                 os.write(descriptor, b"private")
     finally:
@@ -116,6 +127,94 @@ def test_sealed_seekable_inputs_are_owned_and_readable():
     for descriptor in descriptors:
         with pytest.raises(OSError):
             os.fstat(descriptor)
+
+
+def test_pidfd_allocation_without_python_binding_is_owned_and_cloexec(monkeypatch):
+    bindings = SimpleNamespace(**vars(os))
+    vars(bindings).pop("pidfd_open", None)
+    monkeypatch.setattr(local, "os", bindings)
+    descriptor = local._pidfd_open(os.getpid())
+    try:
+        assert not os.get_inheritable(descriptor)
+        os.fstat(descriptor)
+        assert local._P_PIDFD == 3
+    finally:
+        os.close(descriptor)
+    with pytest.raises(OSError):
+        os.fstat(descriptor)
+
+
+@pytest.mark.parametrize("primitive", ["memfd_create", "pidfd_open"])
+@pytest.mark.parametrize("failure", ["loader", "symbol", "kernel"])
+def test_missing_native_capabilities_fail_closed_and_private(monkeypatch, primitive, failure):
+    bindings = SimpleNamespace(**vars(os))
+    vars(bindings).pop(primitive, None)
+    monkeypatch.setattr(local, "os", bindings)
+    calls = []
+
+    def unsupported(*args):
+        calls.append(args)
+        return -1
+
+    def library(name, *, use_errno):
+        assert name is None and use_errno is True
+        if failure == "loader":
+            raise OSError("private-loader-details")
+        return SimpleNamespace(**({primitive: unsupported} if failure == "kernel" else {}))
+
+    monkeypatch.setattr(local, "ctypes", SimpleNamespace(
+        CDLL=library, c_int=local.ctypes.c_int, c_uint=local.ctypes.c_uint,
+        c_char_p=local.ctypes.c_char_p, get_errno=lambda: errno.ENOSYS,
+    ))
+    with pytest.raises((local._LocalFailure, OSError)) as caught:
+        if primitive == "memfd_create":
+            local._memfd_create()
+        else:
+            local._pidfd_open(os.getpid())
+    assert "unavailable" in str(caught.value)
+    assert "private" not in str(caught.value)
+    if failure == "kernel":
+        assert isinstance(caught.value, OSError)
+        assert caught.value.errno == errno.ENOSYS
+        assert vars(unsupported)["restype"] is local.ctypes.c_int
+        assert vars(unsupported)["argtypes"] == (
+            local.ctypes.c_char_p if primitive == "memfd_create" else local.ctypes.c_int,
+            local.ctypes.c_uint,
+        )
+        assert calls == ([(b"tank-native-input", 3)] if primitive == "memfd_create" else [(os.getpid(), 0)])
+    else:
+        assert not calls
+
+
+@pytest.mark.parametrize("primitive", ["memfd", "pidfd"])
+def test_non_linux_native_primitives_are_refused(monkeypatch, primitive):
+    monkeypatch.setattr(local, "sys", SimpleNamespace(platform="darwin"))
+    with pytest.raises(local._LocalFailure, match="unavailable"):
+        if primitive == "memfd":
+            local._memfd_create()
+        else:
+            local._pidfd_open(os.getpid())
+
+
+def test_sealing_failure_closes_real_owned_descriptor(monkeypatch):
+    descriptors = []
+    allocate = local._memfd_create
+
+    def observed():
+        descriptor = allocate()
+        descriptors.append(descriptor)
+        return descriptor
+
+    def refuse(*args):
+        raise OSError("private-sealing-error")
+
+    monkeypatch.setattr(local, "_memfd_create", observed)
+    monkeypatch.setattr(local, "fcntl", SimpleNamespace(fcntl=refuse))
+    with pytest.raises(OSError):
+        local._memfd(b"private-input")
+    assert len(descriptors) == 1
+    with pytest.raises(OSError):
+        os.fstat(descriptors[0])
 
 
 def test_fd_preparation_failure_closes_prior_descriptor(monkeypatch):
@@ -485,8 +584,6 @@ async def test_cleanup_never_signals_recycled_group_after_reap(monkeypatch, synt
 
 
 async def test_owned_exit_notification_does_not_reap_before_final_group_signal(monkeypatch):
-    from types import SimpleNamespace
-
     events = []
     popen = SimpleNamespace(pid=987654321, returncode=None)
 
@@ -527,8 +624,6 @@ async def test_owned_exit_notification_does_not_reap_before_final_group_signal(m
 
 @pytest.mark.parametrize("failure", ["pidfd_unsupported", "waitid_unsupported", "already_reaped"])
 def test_process_handle_setup_fails_closed_before_reap(monkeypatch, failure):
-    from types import SimpleNamespace
-
     events = []
     pipes = [SimpleNamespace(close=lambda: events.append("pipe_close")) for _ in range(2)]
     process = SimpleNamespace(pid=987654321, stdout=pipes[0], stderr=pipes[1])
@@ -551,7 +646,7 @@ def test_process_handle_setup_fails_closed_before_reap(monkeypatch, failure):
         assert failure != "already_reaped", "recycled unrelated group was targeted"
         events.append("kill")
 
-    monkeypatch.setattr(local.os, "pidfd_open", pidfd_open)
+    monkeypatch.setattr(local, "_pidfd_open", pidfd_open)
     monkeypatch.setattr(local.os, "waitid", waitid)
     monkeypatch.setattr(local.os, "killpg", killpg)
     monkeypatch.setattr(local.os, "close", lambda fd: events.append("pidfd_close"))
@@ -671,7 +766,7 @@ async def test_real_local_assessment_matches_http_and_independent_original(nativ
 @pytest.mark.integration
 @pytest.mark.process
 async def test_real_local_conditions_full_fields_cache_preimages_and_reuse(native_local, original_truth):
-    from test_truth_sql_conditions import _cache_snapshot, _cached_evaluate, _requirements, METRICS
+    from test_truth_sql_conditions import METRICS, _cache_snapshot, _cached_evaluate, _requirements
     from test_truth_sql_engine import assert_complete
 
     from tank.analysis import truth_sql_engine as engine
@@ -821,7 +916,7 @@ async def test_real_local_cancellation_terminates_acknowledged_active_workload(n
         assert acknowledged.is_set()
         child, = children
         assert child.owns_group and child.returncode is None
-        assert os.waitid(os.P_PIDFD, child._pidfd, os.WEXITED | os.WNOWAIT | os.WNOHANG) is None
+        assert os.waitid(local._P_PIDFD, child._pidfd, os.WEXITED | os.WNOWAIT | os.WNOHANG) is None
         request.cancel()
         closing = asyncio.create_task(native_local.close())
         await asyncio.sleep(0)

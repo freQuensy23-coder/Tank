@@ -734,125 +734,127 @@ async def run_captured_tools(inputs, repo):
                 stack.enter_context(patch.object(module, "utcnow", clock.now))
             if hasattr(module, "iso"):
                 stack.enter_context(patch.object(module, "iso", replay_iso))
-        async with httpx.AsyncClient(transport=httpx.MockTransport(captured_http)) as http:
-            async with AsyncExitStack() as native_stack:
-                truth_service = truth.MarketTruthService(repo, settings, ReplayMarketReader(inputs, evidence))
-                await native_stack.enter_async_context(bind_replay_native(truth_service))
-                service = EventToolService(
-                    repo,
-                    settings,
-                    truth_service,
-                    DecisionEngine(settings),
-                    http=http,
+        async with (
+            httpx.AsyncClient(transport=httpx.MockTransport(captured_http)) as http,
+            AsyncExitStack() as native_stack,
+        ):
+            truth_service = truth.MarketTruthService(repo, settings, ReplayMarketReader(inputs, evidence))
+            await native_stack.enter_async_context(bind_replay_native(truth_service))
+            service = EventToolService(
+                repo,
+                settings,
+                truth_service,
+                DecisionEngine(settings),
+                http=http,
+            )
+            seeded = set()
+            for call in calls:
+                clock.advance(call["available_at"])
+                market_batches = {}
+                for index, row in enumerate(inputs._records):
+                    projected = row["record"]
+                    revision_identity = (index, digest(projected))
+                    if revision_identity in seeded or row["collection"] == "replay.market_snapshots":
+                        continue
+                    if inputs.record_visible(row, clock.now()):
+                        collection = row["collection"]
+                        if collection in MARKET_COLUMNS:
+                            batch = market_batches.setdefault(collection, [])
+                            batch.append((revision_identity, row))
+                            if len(batch) == 500:
+                                await repo.put_market_batch(
+                                    collection,
+                                    [copy.deepcopy(entry["record"]) for _, entry in batch],
+                                    keys=[entry["key"] for _, entry in batch],
+                                )
+                                seeded.update(identity for identity, _ in batch)
+                                batch.clear()
+                        else:
+                            record = copy.deepcopy(projected)
+                            await repo.put(collection, row["key"], record)
+                            seeded.add(revision_identity)
+                for collection, batch in market_batches.items():
+                    if batch:
+                        await repo.put_market_batch(
+                            collection,
+                            [copy.deepcopy(entry["record"]) for _, entry in batch],
+                            keys=[entry["key"] for _, entry in batch],
+                        )
+                        seeded.update(identity for identity, _ in batch)
+                call = remap(call)
+                context = copy.deepcopy(call.get("context", {}))
+                context["call_id"] = call["call_id"]
+                if call["tool"] in {"web_search", "fetch_page"}:
+                    captures = [
+                        row
+                        for row in inputs._tool_results
+                        if row.get("call_id") == call["call_id"]
+                        and parse_time(row["available_at"]) <= clock.now()
+                    ]
+                    if not captures or any(
+                        row.get("tool") != call["tool"] or remap(row.get("arguments")) != call["arguments"]
+                        for row in captures
+                    ):
+                        raise ReplayError(
+                            "insufficient_fixture: no exact captured pre-cutoff external tool arguments"
+                        )
+                    result = inputs.tool_result(call["call_id"], cutoff=util.iso(clock.now()))
+                elif call["tool"] in {"get_market_truth", "get_decision"}:
+                    import asyncio
+
+                    async def complete_market_jobs(call=call):
+                        while True:
+                            for job in await repo.list(
+                                "ops.jobs", filters={"status": "QUEUED"}, limit=100000
+                            ):
+                                if job["payload"].get("event_id") != call["arguments"]["event_id"]:
+                                    continue
+                                if job["type"] not in {"ESCALATE_TOKENS", "RUN_MARKET_TRUTH"}:
+                                    continue
+                                if job.get("run_after") and parse_time(job["run_after"]) > clock.now():
+                                    continue
+                                dependencies = [
+                                    await repo.get("ops.jobs", key)
+                                    for key in job["payload"].get("_depends_on", [])
+                                ]
+                                if any(row is None or row.get("status") != "DONE" for row in dependencies):
+                                    continue
+                                result = None
+                                if job["type"] == "RUN_MARKET_TRUTH":
+                                    payload = job["payload"]
+                                    result = await service.truth.assess(
+                                        payload["event_id"], payload["token_id"], payload["cutoff"]
+                                    )
+                                await repo.put(
+                                    "ops.jobs", job["job_id"], dict(job, result=result, status="DONE")
+                                )
+                            await asyncio.sleep(0.01)
+
+                    worker = asyncio.create_task(complete_market_jobs())
+                    try:
+                        result = await asyncio.wait_for(
+                            service.dispatch(call["tool"], copy.deepcopy(call["arguments"]), context), 5
+                        )
+                    finally:
+                        failure = sys.exception()
+                        worker.cancel()
+                        completed = await _finish_cleanup(
+                            asyncio.gather(worker, return_exceptions=True), failure=failure
+                        )
+                        if completed and isinstance(completed[0], Exception):
+                            if failure is not None:
+                                raise failure from completed[0]
+                            raise completed[0]
+                else:
+                    result = await service.dispatch(call["tool"], copy.deepcopy(call["arguments"]), context)
+                captured = next(
+                    (r for r in inputs._tool_results if r.get("call_id") == call["call_id"]), None
                 )
-                seeded = set()
-                for call in calls:
-                    clock.advance(call["available_at"])
-                    market_batches = {}
-                    for index, row in enumerate(inputs._records):
-                        projected = row["record"]
-                        revision_identity = (index, digest(projected))
-                        if revision_identity in seeded or row["collection"] == "replay.market_snapshots":
-                            continue
-                        if inputs.record_visible(row, clock.now()):
-                            collection = row["collection"]
-                            if collection in MARKET_COLUMNS:
-                                batch = market_batches.setdefault(collection, [])
-                                batch.append((revision_identity, row))
-                                if len(batch) == 500:
-                                    await repo.put_market_batch(
-                                        collection,
-                                        [copy.deepcopy(entry["record"]) for _, entry in batch],
-                                        keys=[entry["key"] for _, entry in batch],
-                                    )
-                                    seeded.update(identity for identity, _ in batch)
-                                    batch.clear()
-                            else:
-                                record = copy.deepcopy(projected)
-                                await repo.put(collection, row["key"], record)
-                                seeded.add(revision_identity)
-                    for collection, batch in market_batches.items():
-                        if batch:
-                            await repo.put_market_batch(
-                                collection,
-                                [copy.deepcopy(entry["record"]) for _, entry in batch],
-                                keys=[entry["key"] for _, entry in batch],
-                            )
-                            seeded.update(identity for identity, _ in batch)
-                    call = remap(call)
-                    context = copy.deepcopy(call.get("context", {}))
-                    context["call_id"] = call["call_id"]
-                    if call["tool"] in {"web_search", "fetch_page"}:
-                        captures = [
-                            row
-                            for row in inputs._tool_results
-                            if row.get("call_id") == call["call_id"]
-                            and parse_time(row["available_at"]) <= clock.now()
-                        ]
-                        if not captures or any(
-                            row.get("tool") != call["tool"] or remap(row.get("arguments")) != call["arguments"]
-                            for row in captures
-                        ):
-                            raise ReplayError(
-                                "insufficient_fixture: no exact captured pre-cutoff external tool arguments"
-                            )
-                        result = inputs.tool_result(call["call_id"], cutoff=util.iso(clock.now()))
-                    elif call["tool"] in {"get_market_truth", "get_decision"}:
-                        import asyncio
-
-                        async def complete_market_jobs(call=call):
-                            while True:
-                                for job in await repo.list(
-                                    "ops.jobs", filters={"status": "QUEUED"}, limit=100000
-                                ):
-                                    if job["payload"].get("event_id") != call["arguments"]["event_id"]:
-                                        continue
-                                    if job["type"] not in {"ESCALATE_TOKENS", "RUN_MARKET_TRUTH"}:
-                                        continue
-                                    if job.get("run_after") and parse_time(job["run_after"]) > clock.now():
-                                        continue
-                                    dependencies = [
-                                        await repo.get("ops.jobs", key)
-                                        for key in job["payload"].get("_depends_on", [])
-                                    ]
-                                    if any(row is None or row.get("status") != "DONE" for row in dependencies):
-                                        continue
-                                    result = None
-                                    if job["type"] == "RUN_MARKET_TRUTH":
-                                        payload = job["payload"]
-                                        result = await service.truth.assess(
-                                            payload["event_id"], payload["token_id"], payload["cutoff"]
-                                        )
-                                    await repo.put(
-                                        "ops.jobs", job["job_id"], dict(job, result=result, status="DONE")
-                                    )
-                                await asyncio.sleep(0.01)
-
-                        worker = asyncio.create_task(complete_market_jobs())
-                        try:
-                            result = await asyncio.wait_for(
-                                service.dispatch(call["tool"], copy.deepcopy(call["arguments"]), context), 5
-                            )
-                        finally:
-                            failure = sys.exception()
-                            worker.cancel()
-                            completed = await _finish_cleanup(
-                                asyncio.gather(worker, return_exceptions=True), failure=failure
-                            )
-                            if completed and isinstance(completed[0], Exception):
-                                if failure is not None:
-                                    raise failure from completed[0]
-                                raise completed[0]
-                    else:
-                        result = await service.dispatch(call["tool"], copy.deepcopy(call["arguments"]), context)
-                    captured = next(
-                        (r for r in inputs._tool_results if r.get("call_id") == call["call_id"]), None
-                    )
-                    if captured:
-                        if parse_time(captured["available_at"]) > clock.now():
-                            raise ReplayError("captured tool result was unavailable at call time")
-                        remember_ids(captured["result"], result)
-                    results.append({"call_id": call["call_id"], "tool": call["tool"], "result": result})
+                if captured:
+                    if parse_time(captured["available_at"]) > clock.now():
+                        raise ReplayError("captured tool result was unavailable at call time")
+                    remember_ids(captured["result"], result)
+                results.append({"call_id": call["call_id"], "tool": call["tool"], "result": result})
     return {"tool_calls": results}
 
 

@@ -4,8 +4,8 @@ from copy import deepcopy
 from types import SimpleNamespace
 
 import pytest
-from truth_service_unit_seam import assert_input, bind_evaluator
 from test_truth_start_fixture import synthetic_start_snapshot
+from truth_service_unit_seam import assert_input, bind_evaluator
 
 from tank.analysis.truth import MarketTruthService, compute_market_truth
 from tank.util import parse_time
