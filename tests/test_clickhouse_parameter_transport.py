@@ -627,7 +627,9 @@ async def test_native_observer_disabled_outside_exact_owned_cases(
 @pytest.mark.parametrize(
     ("digest", "admitted"),
     [
-        ("70dc6c3374e1fb8dac7c00d478d7bef5afe187bb35229bc5f8df4fdc08221bb5", True),
+        ("df5b18d0b5110c3e1a3009b53f1d5319de95212e50b4e171d371f3b1195ce35a", True),
+        ("70dc6c3374e1fb8dac7c00d478d7bef5afe187bb35229bc5f8df4fdc08221bb5", False),
+        ("dfe0cbea3b2e3dc1bfd3001912cbe31120b47628d427a89e1eb44766959c8a4d", False),
         ("d04c31b10582cede47e47414f4fb93866ed7a541087ba872a552e11891d1eb1e", False),
         ("23fea68086a60d64f3e9e051af50f13046e4fd0eb005f71e317a1d0461ff32a7", False),
     ],
@@ -739,6 +741,7 @@ def test_summary_rejects_duplicate_keys_and_ignores_unknown_keys():
         "boolean",
         "unknown_category",
         "too_many_samples",
+        "too_many_per_type",
         "too_many_frames",
         "unknown_type",
         "duplicate",
@@ -794,7 +797,10 @@ async def test_owned_trace_log_protocol_privacy_and_refusal(native_observer_rece
         assert "X-ClickHouse-Query-Id" not in request.headers
         assert request.headers["X-ClickHouse-User"] == "default"
         sql = request.content.decode()
-        assert "WHERE query_id = {observer_query_id:String} AND trace_type IN ('CPU', 'Real') LIMIT 16" in sql
+        assert (
+            "WHERE query_id = {observer_query_id:String} AND trace_type IN ('CPU', 'Real') "
+            "ORDER BY event_time_microseconds DESC LIMIT 8 BY trace_type LIMIT 16 FORMAT JSONEachRow"
+        ) in sql
         assert "arraySlice(symbols, 1, 32)" in sql
         for forbidden in ("system.stack_trace", "addressTo", "SYSTEM", "SETTINGS", "SELECT *", "lines"):
             assert forbidden not in sql
@@ -850,7 +856,7 @@ async def test_owned_trace_log_protocol_privacy_and_refusal(native_observer_rece
                 categories=["Other"] * 32,
                 class_counts=[0] * 14 + [255],
             )
-            samples = [sample] * 16
+            samples = [sample] * 8 + [sample | {"trace_type": "Real"}] * 8
         elif scenario == "vector_short":
             sample["class_counts"].pop()
         elif scenario == "vector_long":
@@ -880,6 +886,8 @@ async def test_owned_trace_log_protocol_privacy_and_refusal(native_observer_rece
             sample["categories"] = ["privateNativeSymbol credential"]
         elif scenario == "too_many_samples":
             samples = [sample] * 17
+        elif scenario == "too_many_per_type":
+            samples = [sample] * 9 + [sample | {"trace_type": "Real"}] * 7
         elif scenario == "too_many_frames":
             sample.update(
                 frame_count=33,
@@ -908,7 +916,10 @@ async def test_owned_trace_log_protocol_privacy_and_refusal(native_observer_rece
     assert diagnostic.extensions["timeout"] == {"connect": 1, "read": 4, "write": 4, "pool": 4}
     assert "X-ClickHouse-Query-Id" not in diagnostic.headers
     sql = diagnostic.content.decode()
-    assert "WHERE query_id = {observer_query_id:String} AND trace_type IN ('CPU', 'Real') LIMIT 16" in sql
+    assert (
+        "WHERE query_id = {observer_query_id:String} AND trace_type IN ('CPU', 'Real') "
+        "ORDER BY event_time_microseconds DESC LIMIT 8 BY trace_type LIMIT 16 FORMAT JSONEachRow"
+    ) in sql
     assert "arraySlice(symbols, 1, 32)" in sql and "arraySlice(symbols, 1, 255)" in sql
     for forbidden in ("system.stack_trace", "addressTo", "SYSTEM", "SETTINGS", "SELECT *", "lines"):
         assert forbidden not in sql
@@ -938,16 +949,19 @@ async def test_owned_trace_log_protocol_privacy_and_refusal(native_observer_rece
             assert trace["samples"][0] == sample | {"symbol_status": "Unavailable"}
         if scenario == "maximum_stack":
             assert len(trace["samples"]) == 16
-            assert all(row == sample | {"symbol_status": "Unavailable"} for row in trace["samples"])
+            assert trace["samples"] == (
+                [sample | {"symbol_status": "Unavailable"}] * 8
+                + [sample | {"trace_type": "Real", "symbol_status": "Unavailable"}] * 8
+            )
         assert trace["CPU"] == (
             {"status": "NoCounter"}
             if scenario == "real_only"
-            else {"status": "observed", "sample_count": 16 if scenario == "maximum_stack" else 1}
+            else {"status": "observed", "sample_count": 8 if scenario == "maximum_stack" else 1}
         )
         assert trace["Real"] == (
             {"status": "NoCounter"}
-            if scenario in {"unsymbolized", "maximum_stack"}
-            else {"status": "observed", "sample_count": 1}
+            if scenario == "unsymbolized"
+            else {"status": "observed", "sample_count": 8 if scenario == "maximum_stack" else 1}
         )
         if scenario == "samples":
             assert trace["samples"][0] == sample | {"symbol_status": "observed"}

@@ -437,7 +437,7 @@ _OBSERVER_INSTANCES = itertools.count()
 def _liquidity_observation(nodeid, query):
     if nodeid == _LIQUIDITY_BASELINE:
         if hashlib.sha256(query.encode()).hexdigest() == (
-            "70dc6c3374e1fb8dac7c00d478d7bef5afe187bb35229bc5f8df4fdc08221bb5"
+            "df5b18d0b5110c3e1a3009b53f1d5319de95212e50b4e171d371f3b1195ce35a"
         ):
             return "baseline"
         return None
@@ -579,7 +579,8 @@ def _own_trace_sql():
         + vocabulary
         + ") AS class_counts "
         "FROM system.trace_log WHERE query_id = {observer_query_id:String} "
-        "AND trace_type IN ('CPU', 'Real') LIMIT 16 FORMAT JSONEachRow"
+        "AND trace_type IN ('CPU', 'Real') ORDER BY event_time_microseconds DESC "
+        "LIMIT 8 BY trace_type LIMIT 16 FORMAT JSONEachRow"
     )
 
 
@@ -709,6 +710,8 @@ class EvidenceClickHouse(ClickHouse):
                         }
                     )
                     counts[trace_type] = counts.get(trace_type, 0) + 1
+                    if counts[trace_type] > 8:
+                        raise ValueError("oversized per-type sample population")
                 return {
                     "status": "observed",
                     "unit": "retained_samples_not_cpu_seconds",

@@ -626,14 +626,10 @@ def _base_fields():
         depth_unit=_json("lq_unit"),
         net_flow=_money("lq_net"),
         hit_side_depth_lower_bound=_money("lq_bound"),
-        hit_side_covered_venues=_json(
-            "if(isNull(lq_hit), [], covered[coverage_index].1)"
-        ),
+        hit_side_covered_venues=_json("if(isNull(lq_hit), [], covered[coverage_index].1)"),
         hit_side_coverage_complete=_bool("lq_bound_complete"),
         pre_event_hit_side_depth_lower_bound=_money("lq_pre_bound"),
-        pre_event_hit_side_covered_venues=_json(
-            "if(isNull(lq_hit), [], covered[coverage_index + 4].1)"
-        ),
+        pre_event_hit_side_covered_venues=_json("if(isNull(lq_hit), [], covered[coverage_index + 4].1)"),
         hit_side_depth_p1_usd=_money("if(isNull(lq_hit), NULL, side_totals[hit_index])"),
         pre_event_hit_side_depth_p1_usd=_money("if(isNull(lq_hit), NULL, side_totals[hit_index + 2])"),
         avg_hit_side_depth_p1_usd=_money("lq_average_hit"),
@@ -652,9 +648,7 @@ def _base_fields():
         aggregate_ask_depth_p1_usd=_money("side_totals[2]"),
         pre_event_depth_p1_usd=_money("lq_sum(arrayMap(v -> v.11, lq_venues_array))"),
         pre_event_depth_window=f"if(isNotNull(ctx_anchor), {pre_window}, {absent_window})",
-        pre_event_side_depth_p1_usd=_object(
-            bid=_money("side_totals[3]"), ask=_money("side_totals[4]")
-        ),
+        pre_event_side_depth_p1_usd=_object(bid=_money("side_totals[3]"), ask=_money("side_totals[4]")),
         depth_drop_by_side=_object(bid=_json("depth_drops[1]"), ask=_json("depth_drops[2]")),
         depth_drop=_json("if(isNull(lq_hit), NULL, depth_drops[hit_index])"),
         depth_majority_lost=_bool("lq_majority_lost"),
