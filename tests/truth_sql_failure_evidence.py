@@ -522,7 +522,48 @@ _TRACE_CATEGORIES = frozenset(
 )
 
 
+_TRACE_CLASSES = (
+    (
+        "AnalyzerResolve",
+        "startsWith(symbol, 'DB::QueryAnalyzer::resolveFunction(') OR "
+        "startsWith(symbol, 'DB::QueryAnalyzer::resolveExpressionNode(')",
+    ),
+    ("ScalarEvaluation", "startsWith(symbol, 'DB::QueryAnalyzer::evaluateScalarSubqueryIfNeeded(')"),
+    (
+        "ConstantArguments",
+        "startsWith(symbol, 'DB::IExecutableFunction::defaultImplementationForConstantArguments(')",
+    ),
+    (
+        "TreeClone",
+        "startsWith(symbol, 'DB::IQueryTreeNode::clone(') OR "
+        "startsWith(symbol, 'DB::IQueryTreeNode::cloneAndReplace(')",
+    ),
+    ("TreeHash", "startsWith(symbol, 'DB::IQueryTreeNode::getTreeHash(')"),
+    ("ExpressionActions", "startsWith(symbol, 'DB::ExpressionActions::')"),
+    ("ActionsDAG", "startsWith(symbol, 'DB::ActionsDAG::')"),
+    ("ArrayFunction", "startsWith(symbol, 'DB::FunctionArray')"),
+    (
+        "Function",
+        "startsWith(symbol, 'DB::Function') OR "
+        "startsWith(symbol, 'DB::IExecutableFunction::') OR "
+        "startsWith(symbol, 'DB::IFunctionBase::')",
+    ),
+    ("WideInteger", "startsWith(symbol, 'wide::integer<')"),
+    ("PipelineExecutor", "startsWith(symbol, 'DB::PipelineExecutor::')"),
+    ("ReadFromMergeTree", "startsWith(symbol, 'DB::ReadFromMergeTree::')"),
+    ("ParserExpression", "startsWith(symbol, 'DB::ParserExpression::')"),
+    ("Unresolved", "empty(symbol)"),
+    ("Other", "1"),
+)
+
+
 def _own_trace_sql():
+    classification = (
+        "multiIf("
+        + ", ".join(predicate + ", '" + name + "'" for name, predicate in _TRACE_CLASSES[:-1])
+        + ", 'Other')"
+    )
+    vocabulary = "[" + ", ".join("'" + name + "'" for name, _ in _TRACE_CLASSES) + "]"
     return (
         "SELECT toString(trace_type) AS trace_type, length(trace) AS frame_count, "
         "arrayMap(symbol -> multiIf("
@@ -531,7 +572,12 @@ def _own_trace_sql():
         "startsWith(symbol, 'DB::ActionsDAG::'), 'ActionsDAG', "
         "startsWith(symbol, 'DB::Function'), 'Function', "
         "startsWith(symbol, 'DB::PipelineExecutor::'), 'PipelineExecutor', 'Other'), "
-        "arraySlice(symbols, 1, 32)) AS categories "
+        "arraySlice(symbols, 1, 32)) AS categories, length(symbols) AS symbol_count, "
+        "arrayMap(class -> countEqual(arrayMap(symbol -> "
+        + classification
+        + ", arraySlice(symbols, 1, 255)), class), "
+        + vocabulary
+        + ") AS class_counts "
         "FROM system.trace_log WHERE query_id = {observer_query_id:String} "
         "AND trace_type IN ('CPU', 'Real') LIMIT 16 FORMAT JSONEachRow"
     )
@@ -621,14 +667,30 @@ class EvidenceClickHouse(ClickHouse):
                 samples = []
                 counts = {}
                 for row in rows:
-                    if type(row) is not dict or set(row) != {"trace_type", "frame_count", "categories"}:
+                    if type(row) is not dict or set(row) != {
+                        "trace_type",
+                        "frame_count",
+                        "categories",
+                        "symbol_count",
+                        "class_counts",
+                    }:
                         raise ValueError("invalid sample fields")
                     trace_type = row["trace_type"]
                     if type(trace_type) is not str or trace_type not in {"CPU", "Real"}:
                         raise ValueError("invalid sample type")
                     frame_count = int(_bounded_number(row["frame_count"], maximum=255))
+                    symbol_count = _bounded_number(row["symbol_count"], maximum=255)
+                    if symbol_count not in {0, frame_count}:
+                        raise ValueError("invalid stored symbol population")
+                    class_counts = row["class_counts"]
+                    if type(class_counts) is not list or len(class_counts) != len(_TRACE_CLASSES):
+                        raise ValueError("invalid class count vector")
+                    for value in class_counts:
+                        _bounded_number(value, maximum=symbol_count)
+                    if sum(class_counts) != symbol_count:
+                        raise ValueError("inconsistent class counts")
                     categories = row["categories"]
-                    if type(categories) is not list or len(categories) > min(32, frame_count):
+                    if type(categories) is not list or len(categories) > min(32, symbol_count):
                         raise ValueError("invalid sample frames")
                     if any(type(value) is not str or value not in _TRACE_CATEGORIES for value in categories):
                         raise ValueError("invalid symbol category")
@@ -637,6 +699,8 @@ class EvidenceClickHouse(ClickHouse):
                             "trace_type": trace_type,
                             "frame_count": frame_count,
                             "categories": categories,
+                            "symbol_count": symbol_count,
+                            "class_counts": class_counts,
                             "symbol_status": (
                                 "observed"
                                 if any(value not in {"Other", "Unresolved"} for value in categories)
@@ -648,6 +712,7 @@ class EvidenceClickHouse(ClickHouse):
                 return {
                     "status": "observed",
                     "unit": "retained_samples_not_cpu_seconds",
+                    "class_order": [name for name, _ in _TRACE_CLASSES],
                     "samples": samples,
                     **{
                         kind: (
