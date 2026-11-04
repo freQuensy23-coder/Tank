@@ -795,7 +795,7 @@ async def test_native_liquidity_absence_relational_phase_contracts(native_client
             (
                 phase,
                 f"SELECT arraySort(groupArray(tuple(venue, lq_walk_book(current.3, lq_tiers[{index}], 'ask')))) "
-                "AS value FROM lq_venue_stats CROSS JOIN lq_tier_values",
+                "AS value FROM lq_venue_stats",
                 [
                     [v["venue"], v["slippage_bps"][tier]]
                     for v in sorted(expected["per_venue"], key=lambda v: v["venue"])
@@ -968,6 +968,45 @@ async def test_native_relational_root_demanded_refusals(native_client, original_
     )
     with pytest.raises(RuntimeError, match=refusal):
         await native_client.rows(statement, parameters)
+
+
+@pytest.mark.parametrize("case", ["complete", "no_books", "all_filtered"])
+async def test_native_root_spine_forwards_flow_tiers_and_empty_context(
+    native_client, original_truth, case
+):
+    snapshot, spot, relative = _packet()
+    snapshot["_event_anchor"] = None
+    if case == "no_books":
+        snapshot["books"] = []
+    elif case == "all_filtered":
+        for book in snapshot["books"]:
+            book["integrity_ok"] = False
+    await _compare(native_client, original_truth, snapshot, spot, relative)
+    _, parameters = query(snapshot, spot=spot, relative=relative)
+    rows = await native_client.rows(
+        "WITH " + ctes() + " SELECT first_ordinal, length(series) AS books, "
+        "length(ctx_flows) AS flows, length(venue_flows) AS venue_flows, "
+        "arrayMap(x -> toString(x), lq_tiers) AS tiers, lq_iso(ctx_anchor) AS anchor, "
+        "lq_iso(ctx_start) AS start, lq_iso(ctx_end) AS cutoff "
+        "FROM lq_root_inputs ORDER BY first_ordinal",
+        parameters,
+    )
+    _assert_complete(
+        rows,
+        [
+            {
+                "first_ordinal": ordinal,
+                "books": 2 if case == "complete" else 0,
+                "flows": 30,
+                "venue_flows": 15 if case == "complete" else 0,
+                "tiers": [Decimal("72"), Decimal("720"), Decimal("3600")],
+                "anchor": None,
+                "start": snapshot["_start"],
+                "cutoff": snapshot["cutoff"],
+            }
+            for ordinal in ([1, 3] if case == "complete" else [0])
+        ],
+    )
 
 
 async def test_native_relational_root_filtered_ordinals_and_duplicate_series(native_client, original_truth):

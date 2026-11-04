@@ -9,9 +9,9 @@ if TYPE_CHECKING:
     from tank.analysis.truth_native_local import ReplayNativeRows
 
 
-async def _finish_cleanup[_Result](
-    operation: Awaitable[_Result], *, failure: BaseException | None = None
-) -> _Result:
+async def _finish_cleanup[Result](
+    operation: Awaitable[Result], *, failure: BaseException | None = None
+) -> Result:
     task = asyncio.ensure_future(operation)
     cancellation = None
     try:
