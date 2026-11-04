@@ -56,6 +56,13 @@ def worker_journal(committed=False):
         "settlement_ownership_mismatch",
         "post_finish_main_term",
         "post_finish_term_observed",
+        "cleanup_selection",
+        "cleanup_previous_empty",
+        "cleanup_empty",
+        "cleanup_listing_failed",
+        "cleanup_listing_partial",
+        "cleanup_rmi_failed",
+        "cleanup_batched",
     ],
 )
 def test_worker_publication_transaction(tmp_path, mode, request):
@@ -220,6 +227,61 @@ docker() {
 """
         marker = "previous=$(cat deployed 2>/dev/null || true)"
         script = script.replace(marker, hook + marker)
+        cleanup_mode = mode.startswith("cleanup_")
+        selected = []
+        if cleanup_mode:
+            repository = "ghcr.io/frequensy23-coder/tank/"
+            selected = [
+                repository + "tank:old",
+                repository + "tank-capture:latest",
+                repository + "tank:none",
+                repository + "tank:<none>",
+                repository + "tank:" + "a" * 40 + "0",
+                repository + "tank:old",
+                "ghcrXio/frequensy23-coder/tank/tank:old",
+            ]
+            listing = [
+                repository + "tank:" + "a" * 40,
+                repository + "tank-capture:" + "b" * 40,
+                "other.example/tank/tank:old",
+                "prefix-" + repository + "tank:old",
+                "ghcr.io/frequensy23-coder/tank-other/tank:old",
+                *selected,
+            ]
+            if mode == "cleanup_previous_empty":
+                selected.remove(repository + "tank:none")
+                selected.insert(0, repository + "tank-capture:" + "b" * 40)
+                cleanup = "      docker image ls --format"
+                assert script.count(cleanup) == 1
+                script = script.replace(cleanup, "      previous=\n" + cleanup)
+            elif mode == "cleanup_empty":
+                listing = listing[:5]
+                selected = []
+            elif mode == "cleanup_listing_failed":
+                listing = []
+                selected = []
+            elif mode == "cleanup_batched":
+                selected = [repository + f"tank:{index:080d}" for index in range(3000)]
+                listing = selected
+            (tmp_path / "image-listing").write_text("".join(image + "\n" for image in listing))
+            executable = tmp_path / "bin"
+            executable.mkdir()
+            docker = executable / "docker"
+            docker.write_text(
+                "#!/usr/bin/env python3\n"
+                "import json, os, sys\n"
+                "from pathlib import Path\n"
+                "args = sys.argv[1:]\n"
+                "with Path('image-commands').open('a') as output:\n"
+                "    output.write(json.dumps(args) + '\\n')\n"
+                "if args == ['image', 'ls', '--format', '{{.Repository}}:{{.Tag}}']:\n"
+                "    sys.stdout.write(Path('image-listing').read_text())\n"
+                "    sys.exit(17 if os.environ['MODE'] in "
+                "{'cleanup_listing_failed', 'cleanup_listing_partial'} else 0)\n"
+                "sys.exit(19 if os.environ['MODE'] == 'cleanup_rmi_failed' else 0)\n"
+            )
+            docker.chmod(0o755)
+            script = script.replace(marker, 'docker() { command docker "$@"; }\n' + marker)
         if observed:
             replacements = {
                 "  local status=$1 worker_restored=yes\n": """  local status=$1 worker_restored=yes
@@ -271,13 +333,36 @@ docker() {
             (stage / "compose.yaml").write_text("first candidate compose\n")
             entry = stage / "deploy.sh"
         (tmp_path / "deployed").write_text("b" * 40 + "\n")
+        environment = {**os.environ, "MODE": mode}
+        if cleanup_mode:
+            environment["PATH"] = str(tmp_path / "bin") + os.pathsep + os.environ["PATH"]
         result = subprocess.run(
             ["bash", str(entry), "a" * 40],
-            env={**os.environ, "MODE": mode},
+            env=environment,
             capture_output=True,
             text=True,
             timeout=8,
         )
+        if mode != "post_finish_crash":
+            assert list(tmp_path.glob(".deploy-images.*")) == []
+        if cleanup_mode:
+            commands = [
+                json.loads(line) for line in (tmp_path / "image-commands").read_text().splitlines()
+            ]
+            assert commands[0] == ["image", "ls", "--format", "{{.Repository}}:{{.Tag}}"]
+            assert all(command[0] == "rmi" and len(command) > 1 for command in commands[1:])
+            assert [image for command in commands[1:] for image in command[1:]] == selected
+            if mode == "cleanup_batched":
+                assert len(commands) > 2
+            elif selected:
+                assert len(commands) == 2
+            else:
+                assert len(commands) == 1
+            assert json.loads((tmp_path / "worker.pending").read_text()) == worker_journal(True)
+            assert (tmp_path / "running-release").read_text() == "a" * 40 + "\n"
+            assert (tmp_path / "rolls").read_text().splitlines() == ["a" * 40]
+            tag_writes = [body for path, body in state["writes"] if path == f"/v2/acts/{ACTOR}"]
+            assert tag_writes == [{"taggedBuilds": {"direct": {"buildId": "new"}}}]
         if mode == "post_finish_term":
             request.node.user_properties.extend(
                 [
@@ -302,7 +387,11 @@ docker() {
                     "exit_other_requested",
                 ):
                     request.node.user_properties.append(("term_" + event, int(event in events)))
-        success = mode in {"success", "unchanged", "ack_lost", "second"} or mode.startswith("settlement_")
+        success = (
+            mode in {"success", "unchanged", "ack_lost", "second"}
+            or mode.startswith("settlement_")
+            or cleanup_mode
+        )
         assert (result.returncode == 0) == success, result.stdout + result.stderr
         remains_new = success and mode != "unchanged"
         remains_new = remains_new or mode in {

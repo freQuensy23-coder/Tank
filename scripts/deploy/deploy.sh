@@ -99,6 +99,7 @@ previous=$(cat deployed 2>/dev/null || true)
 [[ -z "$previous" || "$previous" =~ ^[0-9a-f]{40}$ ]] || { echo "invalid previous release SHA"; exit 1; }
 tank_started=no
 worker_started=no
+image_cleanup=""
 recover() {
   local status=$1 worker_restored=yes
   trap - EXIT INT TERM
@@ -124,6 +125,7 @@ recover() {
   if [ "$status" -ne 0 ] && [ "$tank_started" = no ] && [ "$worker_started" = yes ] && [ "$worker_restored" = yes ]; then
     if restore_compose; then apify clear || status=1; else status=1; fi
   fi
+  [ -z "$image_cleanup" ] || rm -rf -- "$image_cleanup" || true
   exit "$status"
 }
 trap 'recover "$?"' EXIT
@@ -177,8 +179,11 @@ if roll "$SHA"; then
       trap 'recover 130' INT
       trap 'recover 143' TERM
       echo "VERIFIED $SHA after $(( $(date +%s) - start ))s"
-      docker image ls --format '{{.Repository}}:{{.Tag}}' | grep '^ghcr.io/frequensy23-coder/tank/' \
-        | grep -v -E ":(${SHA}|${previous:-none})\$" | xargs -r docker rmi >/dev/null 2>&1 || true
+      image_cleanup=$(mktemp -d "$PWD/.deploy-images.XXXXXXXXXX") || exit 0
+      docker image ls --format '{{.Repository}}:{{.Tag}}' > "$image_cleanup/listed" || true
+      grep '^ghcr.io/frequensy23-coder/tank/' < "$image_cleanup/listed" > "$image_cleanup/repository" || true
+      grep -v -E ":(${SHA}|${previous:-none})\$" < "$image_cleanup/repository" > "$image_cleanup/selected" || true
+      xargs -r docker rmi < "$image_cleanup/selected" >/dev/null 2>&1 || true
       exit 0
     fi
     sleep 15
