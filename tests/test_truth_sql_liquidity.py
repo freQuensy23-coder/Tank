@@ -738,6 +738,66 @@ async def test_native_all_liquidity_windows_are_one_select(native_client, origin
     _assert_complete(actual, expected)
 
 
+def test_liquidity_core_context_and_state_are_carried_columns():
+    statement = ctes()
+    prefix = statement.split("lq_input AS (", 1)[0]
+    for name in (
+        "lq_token",
+        "lq_primary",
+        "lq_end",
+        "lq_start",
+        "lq_anchor",
+        "lq_band",
+        "lq_band_key",
+        "lq_cadence",
+        "lq_refill",
+        "lq_resilience",
+        "lq_all_books",
+        "lq_books",
+        "lq_all_flows",
+        "lq_eligible",
+        "lq_flows",
+        "lq_base_tiers",
+    ):
+        assert f" AS {name}," not in prefix
+    for relation, source in (
+        ("lq_state_coverage_rows", "lq_state_direction"),
+        ("lq_state_coverage", "lq_state_coverage_rows"),
+        ("lq_state_cohort_totals", "lq_state_coverage"),
+        ("lq_state_cohort", "lq_state_cohort_totals"),
+        ("lq_state_depth", "lq_state_cohort"),
+    ):
+        body = statement.split(relation + " AS (", 1)[1].split("\n),", 1)[0]
+        assert f"FROM {source}" in body
+    assert "AS lq_covered_rows," not in statement
+    assert "AS lq_cohort," not in statement
+    assert "AS lq_drop," not in statement
+
+
+async def test_native_carried_context_matches_raw_population(native_client):
+    snapshot, spot, relative = _packet()
+    _, parameters = query(snapshot, spot=spot, relative=relative)
+    rows = await native_client.rows(
+        "WITH " + ctes() + " SELECT ctx_token AS token, ctx_primary AS window, "
+        "length(ctx_all_books) AS books, length(ctx_all_flows) AS flows, "
+        "length(lq_books) AS admitted, ctx_cadence AS cadence, "
+        "lq_iso(ctx_start) AS start, lq_iso(ctx_end) AS cutoff FROM lq_state",
+        parameters,
+    )
+    assert rows == [
+        {
+            "token": "T",
+            "window": "W15M",
+            "books": 4,
+            "flows": 30,
+            "admitted": 4,
+            "cadence": 10,
+            "start": snapshot["_start"],
+            "cutoff": snapshot["cutoff"],
+        }
+    ]
+
+
 def test_liquidity_reducers_bind_consumed_array_graph_once():
     statement = ctes()
     for name in ("lq_sum", "lq_mean", "lq_float_mean"):
