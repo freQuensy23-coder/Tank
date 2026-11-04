@@ -102,7 +102,7 @@ def _packet():
         "cutoff": iso(end),
         "_start": iso(start),
         "_primary": "W15M",
-        "_event_anchor": iso(start),
+        "_event_anchor": start,
         "books": [],
         "flow_bars": [],
     }
@@ -1123,3 +1123,253 @@ async def test_native_relational_root_strict_numeric_time_thresholds(native_clie
         parameters,
     )
     assert rows == [{"value": micros}]
+
+
+@pytest.mark.parametrize("anchor", ["absent", "null"])
+@pytest.mark.parametrize("selection", ["books", "spread", "depth"])
+async def test_native_private_book_branch_isolates_filtered_flow_timestamp(
+    native_client, original_truth, anchor, selection
+):
+    snapshot, spot, relative = _packet()
+    if anchor == "absent":
+        del snapshot["_event_anchor"]
+    else:
+        snapshot["_event_anchor"] = None
+    token = original_truth._PARAMETERS.set({})
+    try:
+        expected = original_truth.liquidity_truth(
+            deepcopy(snapshot),
+            parse_time(snapshot["_start"]),
+            parse_time(snapshot["cutoff"]),
+            deepcopy(spot),
+            deepcopy(relative),
+        )
+        snapshot["flow_bars"][0]["minute_start"] = "not-a-time"
+        with pytest.raises(ValueError, match="Invalid isoformat string"):
+            original_truth.liquidity_truth(
+                deepcopy(snapshot),
+                parse_time(snapshot["_start"]),
+                parse_time(snapshot["cutoff"]),
+                deepcopy(spot),
+                deepcopy(relative),
+            )
+    finally:
+        original_truth._PARAMETERS.reset(token)
+    if selection == "books":
+        selected = (
+            "SELECT venue, first_ordinal, length(series) AS samples "
+            "FROM lq_venue_books ORDER BY first_ordinal"
+        )
+        reference = [
+            {"venue": "B", "first_ordinal": 1, "samples": 2},
+            {"venue": "A", "first_ordinal": 3, "samples": 2},
+        ]
+    elif selection == "spread":
+        selected = "SELECT venue, pre_spread FROM lq_venue_stats ORDER BY first_ordinal"
+        reference = [
+            {"venue": venue["venue"], "pre_spread": None if anchor == "null" else 2.0}
+            for venue in expected["per_venue"]
+        ]
+    else:
+        selected = (
+            "SELECT venue, toString(bid) AS bid, toString(ask) AS ask, "
+            "toString(current_total) AS total FROM lq_venue_stats ORDER BY first_ordinal"
+        )
+        reference = [
+            {
+                "venue": venue["venue"],
+                "bid": venue["bid_depth_p1_usd"],
+                "ask": venue["ask_depth_p1_usd"],
+                "total": venue["depth_p1_usd"],
+            }
+            for venue in expected["per_venue"]
+        ]
+    _, parameters = query(snapshot, spot=spot, relative=relative)
+    rows = await native_client.rows("WITH " + ctes() + " " + selected, parameters)
+    assert len(rows) == 2
+    _assert_complete(rows, reference)
+
+
+@pytest.mark.parametrize("selection", ["full", "state", "burst", "full_no_books", "state_no_books"])
+async def test_native_filtered_flow_timestamp_remains_demanded(
+    native_client, original_truth, selection
+):
+    snapshot, spot, relative = _packet()
+    snapshot["_event_anchor"] = None
+    snapshot["flow_bars"][0]["minute_start"] = "not-a-time"
+    if selection.endswith("_no_books"):
+        snapshot["books"] = []
+    token = original_truth._PARAMETERS.set({})
+    try:
+        with pytest.raises(ValueError, match="Invalid isoformat string"):
+            original_truth.liquidity_truth(
+                deepcopy(snapshot),
+                parse_time(snapshot["_start"]),
+                parse_time(snapshot["cutoff"]),
+                deepcopy(spot),
+                deepcopy(relative),
+            )
+    finally:
+        original_truth._PARAMETERS.reset(token)
+    statement, parameters = query(snapshot, spot=spot, relative=relative)
+    if selection in {"state", "state_no_books"}:
+        statement = "WITH " + ctes() + " SELECT toString(lq_net) AS value FROM lq_state"
+    elif selection == "burst":
+        statement = "WITH " + ctes() + " SELECT observations AS value FROM lq_observed"
+    with pytest.raises(RuntimeError, match="Invalid demanded observation timestamp"):
+        await native_client.rows(statement, parameters)
+
+
+@pytest.mark.parametrize("selection", ["population", "tiers"])
+async def test_native_volume_demands_ineligible_spot_timestamp(
+    native_client, original_truth, selection
+):
+    snapshot, spot, relative = _packet()
+    snapshot["_event_anchor"] = None
+    snapshot["flow_bars"].append(
+        dict(snapshot["flow_bars"][0], instrument_id="X:spot:T", minute_start="not-a-time")
+    )
+    token = original_truth._PARAMETERS.set({})
+    try:
+        with pytest.raises(ValueError, match="Invalid isoformat string"):
+            original_truth.liquidity_truth(
+                deepcopy(snapshot),
+                parse_time(snapshot["_start"]),
+                parse_time(snapshot["cutoff"]),
+                deepcopy(spot),
+                deepcopy(relative),
+            )
+    finally:
+        original_truth._PARAMETERS.reset(token)
+    _, parameters = query(snapshot, spot=spot, relative=relative)
+    rows = await native_client.rows(
+        "WITH " + ctes() + " SELECT length(ctx_flows) AS value FROM lq_flow_context",
+        parameters,
+    )
+    assert rows == [{"value": 30}]
+    selected = (
+        "SELECT length(lq_volume_flows) AS value FROM lq_volume_population"
+        if selection == "population"
+        else "SELECT arrayMap(x -> toString(x), lq_tiers) AS value FROM lq_tier_values"
+    )
+    with pytest.raises(RuntimeError, match="Invalid demanded observation timestamp"):
+        await native_client.rows("WITH " + ctes() + " " + selected, parameters)
+
+
+@pytest.mark.parametrize("anchor", ["absent", "null"])
+@pytest.mark.parametrize(
+    "case", ["no_books", "all_filtered", "empty_eligible", "empty_flows", "boundary_only", "empty_all"]
+)
+async def test_native_separated_context_preserves_singleton_state(
+    native_client, original_truth, anchor, case
+):
+    snapshot, spot, relative = _packet()
+    if anchor == "absent":
+        del snapshot["_event_anchor"]
+    else:
+        snapshot["_event_anchor"] = None
+    if case in {"no_books", "boundary_only", "empty_all"}:
+        snapshot["books"] = []
+    elif case == "all_filtered":
+        for book in snapshot["books"]:
+            book["integrity_ok"] = False
+    if case == "empty_eligible":
+        spot["venues"] = []
+    if case in {"empty_flows", "boundary_only", "empty_all"}:
+        snapshot["flow_bars"] = []
+    if case == "boundary_only":
+        spot["venues"] = [
+            {
+                "venue": "B",
+                "boundary_segments": [
+                    {
+                        "aggregates": [
+                            {
+                                "start": snapshot["_start"],
+                                "end": snapshot["cutoff"],
+                                "buy_qty": "2",
+                                "sell_qty": "0",
+                                "buy_notional": "200",
+                                "sell_notional": "0",
+                            }
+                        ]
+                    }
+                ],
+            }
+        ]
+    actual = await _compare(native_client, original_truth, snapshot, spot, relative)
+    no_venues = case in {"no_books", "all_filtered", "boundary_only", "empty_all"}
+    no_flow = case in {"empty_eligible", "empty_flows", "empty_all"}
+    net = None if no_flow else Decimal("2") if case == "boundary_only" else Decimal("24")
+    _assert_complete(actual["elasticity"]["net_flow"], net)
+    assert actual["replenishment"]["available"] is False
+    assert actual["replenishment"]["observations"] == []
+    if no_venues:
+        assert actual["per_venue"] == []
+        assert actual["aggregate_depth_p1_usd"] is None
+        assert actual["elasticity"]["hit_side_coverage_complete"] is False
+        assert actual["elasticity"]["hit_side_depth_lower_bound"] is None
+    else:
+        assert [venue["venue"] for venue in actual["per_venue"]] == ["B", "A"]
+    _, parameters = query(snapshot, spot=spot, relative=relative)
+    rows = await native_client.rows(
+        "WITH " + ctes() + " SELECT length(lq_venues_array) AS venues, "
+        "length(lq_observations) AS observations, toString(lq_net) AS net, "
+        "CAST(lq_replenishment_available, 'Bool') AS available, "
+        "lq_iso(ctx_anchor) AS anchor FROM lq_state",
+        parameters,
+    )
+    _assert_complete(
+        rows,
+        [
+            {
+                "venues": 0 if no_venues else 2,
+                "observations": 0,
+                "net": net,
+                "available": False,
+                "anchor": None if anchor == "null" else snapshot["_start"],
+            }
+        ],
+    )
+
+
+async def test_native_filtered_context_preserves_duplicates_and_boundary_append_order(
+    native_client, original_truth
+):
+    snapshot, spot, relative = _packet()
+    snapshot["_event_anchor"] = None
+    snapshot["flow_bars"].append(deepcopy(snapshot["flow_bars"][0]))
+    for venue, quantity in (("B", "2"), ("A", "3")):
+        spot["venues"] = [v for v in spot["venues"] if v["venue"] != venue]
+        spot["venues"].append(
+            {
+                "venue": venue,
+                "boundary_segments": [
+                    {
+                        "aggregates": [
+                            {
+                                "start": snapshot["_start"],
+                                "end": snapshot["cutoff"],
+                                "buy_qty": quantity,
+                                "sell_qty": "0",
+                                "buy_notional": "200",
+                                "sell_notional": "0",
+                            }
+                        ]
+                    }
+                ],
+            }
+        )
+    await _compare(native_client, original_truth, snapshot, spot, relative)
+    reference = [
+        [original_truth._venue(row), iso(original_truth._observation_time(row)), row["buy_qty"]]
+        for row in snapshot["flow_bars"]
+    ] + [["B", snapshot["_start"], "2"], ["A", snapshot["_start"], "3"]]
+    _, parameters = query(snapshot, spot=spot, relative=relative)
+    rows = await native_client.rows(
+        "WITH " + ctes() + " SELECT arrayMap(flow -> tuple(lq_venue(flow), "
+        "lq_iso(lq_time(flow)), JSONExtractString(flow, 'buy_qty')), ctx_flows) "
+        "AS value FROM lq_flow_context",
+        parameters,
+    )
+    assert rows == [{"value": reference}]

@@ -651,7 +651,7 @@ async def test_physical_condition_never_invokes_full_engine(clickhouse, original
     def forbidden(*args, **kwargs):
         pytest.fail("a selective physical condition invoked full native MarketTruth orchestration")
 
-    setattr(engine, "query", forbidden)
+    engine.query = forbidden
     monkeypatch.setitem(sys.modules, "tank.analysis.truth_sql_engine", engine)
     monkeypatch.setattr(analysis_package, "truth_sql_engine", engine, raising=False)
     data = _physical_snapshot(minutes=60)

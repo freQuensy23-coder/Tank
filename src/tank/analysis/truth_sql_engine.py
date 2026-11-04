@@ -24,21 +24,85 @@ NUMERIC_POLICY = (
 )
 
 _DECIMAL_FIELDS = frozenset(
-    "cvd volume volume_native sum_sq_qty buy_qty sell_qty buy_notional sell_notional "
-    "oi_native oi_native_start oi_native_end oi_usd oi_usd_start oi_usd_end "
-    "position markup interaction basis_bps funding_8h_eq funding_dispersion_8h "
-    "funding_estimate funding_estimate_8h_eq funding_estimate_interval_h funding_settled_8h_eq "
-    "funding_settled_interval_h funding_settled_last funding_start funding_start_interval_h "
-    "interval_h liq_long_native liq_long_usd liq_short_native liq_short_usd long short "
-    "spot perp aggregate_ask_depth_p1_usd aggregate_bid_depth_p1_usd aggregate_depth_p1_usd "
-    "ask_depth_p1_usd bid_depth_p1_usd avg_hit_side_depth_p1_usd depth_p1_usd "
-    "hit_side_depth_lower_bound hit_side_depth_p1_usd net_flow pre_event_depth_p1_usd "
-    "pre_event_hit_side_depth_lower_bound pre_event_hit_side_depth_p1_usd "
-    "quote_conversion_uncertainty_bps close_1h_price covered_volume_native entry_ref_price "
-    "price_end price_start ref_price large_ticket_buy_notional large_ticket_sell_notional "
-    "chg_native_24h perp_volume_usd previous qty_native supply_chg_24h supply_chg_7d "
-    "supply_usd value bid ask usd native tier_notional tier_notional_usd "
-    "normal_range basis_normal_range funding_dispersion_normal_range_8h funding_normal_range_8h".split()
+    [
+        "cvd",
+        "volume",
+        "volume_native",
+        "sum_sq_qty",
+        "buy_qty",
+        "sell_qty",
+        "buy_notional",
+        "sell_notional",
+        "oi_native",
+        "oi_native_start",
+        "oi_native_end",
+        "oi_usd",
+        "oi_usd_start",
+        "oi_usd_end",
+        "position",
+        "markup",
+        "interaction",
+        "basis_bps",
+        "funding_8h_eq",
+        "funding_dispersion_8h",
+        "funding_estimate",
+        "funding_estimate_8h_eq",
+        "funding_estimate_interval_h",
+        "funding_settled_8h_eq",
+        "funding_settled_interval_h",
+        "funding_settled_last",
+        "funding_start",
+        "funding_start_interval_h",
+        "interval_h",
+        "liq_long_native",
+        "liq_long_usd",
+        "liq_short_native",
+        "liq_short_usd",
+        "long",
+        "short",
+        "spot",
+        "perp",
+        "aggregate_ask_depth_p1_usd",
+        "aggregate_bid_depth_p1_usd",
+        "aggregate_depth_p1_usd",
+        "ask_depth_p1_usd",
+        "bid_depth_p1_usd",
+        "avg_hit_side_depth_p1_usd",
+        "depth_p1_usd",
+        "hit_side_depth_lower_bound",
+        "hit_side_depth_p1_usd",
+        "net_flow",
+        "pre_event_depth_p1_usd",
+        "pre_event_hit_side_depth_lower_bound",
+        "pre_event_hit_side_depth_p1_usd",
+        "quote_conversion_uncertainty_bps",
+        "close_1h_price",
+        "covered_volume_native",
+        "entry_ref_price",
+        "price_end",
+        "price_start",
+        "ref_price",
+        "large_ticket_buy_notional",
+        "large_ticket_sell_notional",
+        "chg_native_24h",
+        "perp_volume_usd",
+        "previous",
+        "qty_native",
+        "supply_chg_24h",
+        "supply_chg_7d",
+        "supply_usd",
+        "value",
+        "bid",
+        "ask",
+        "usd",
+        "native",
+        "tier_notional",
+        "tier_notional_usd",
+        "normal_range",
+        "basis_normal_range",
+        "funding_dispersion_normal_range_8h",
+        "funding_normal_range_8h",
+    ]
 )
 _DECIMAL_TEXT = re.compile(r"-?[0-9]+[.][0-9]{24}\Z")
 _PARAMETER = re.compile(r"\{([A-Za-z_][A-Za-z_0-9]*):([^{}]+)\}")
@@ -1095,9 +1159,11 @@ def _validate_conditions(result, snapshot, requirements):
             _condition_fields(proof["coverage"], {"venues": _CONDITION_STRINGS}, exact=True)
         elif proof["coverage"] is not None:
             raise ValueError("native Market Truth conditions returned unexpected coverage")
-        if metric in truth_sql_conditions.OI_METRICS or metric == "deriv.funding_vs_normal":
-            if window not in result["derivatives"]["windows"]:
-                raise ValueError("native Market Truth conditions omitted a requested derivative window")
+        if (
+            (metric in truth_sql_conditions.OI_METRICS or metric == "deriv.funding_vs_normal")
+            and window not in result["derivatives"]["windows"]
+        ):
+            raise ValueError("native Market Truth conditions omitted a requested derivative window")
         if not proof["available"] and proof["reason"] != "INCOMPLETE":
             raise ValueError("native Market Truth conditions omitted an unavailable proof reason")
         if minimal_state and metric in truth_sql_conditions.STATE_METRICS and (not proof["available"] or proof["reason"] is not None):

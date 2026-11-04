@@ -11,7 +11,8 @@ from test_truth_sql_conditions import original_truth as original_truth
 from test_truth_sql_support import _fresh_snapshot, _snapshot, _supply_snapshot
 from truth_sql_failure_evidence import EvidenceClickHouse
 
-from tank.analysis import truth, truth_sql_engine as native
+from tank.analysis import truth
+from tank.analysis import truth_sql_engine as native
 from tank.util import iso, parse_time
 
 
@@ -844,7 +845,14 @@ async def test_minimal_anchor_real_native_whole_envelope_refusal_and_reuse(engin
 @pytest.mark.integration
 @pytest.mark.parametrize("seconds", [0, 60])
 async def test_nonpast_anchor_retained_raw_state_hit_is_not_recomputed_minimal_state(engine_client, original_truth, seconds):
-    from test_truth_sql_conditions import CUTOFF, _cached_evaluate, _compare_caches, _condition_contract_oracle, _requirements, _snapshot
+    from test_truth_sql_conditions import (
+        CUTOFF,
+        _cached_evaluate,
+        _compare_caches,
+        _condition_contract_oracle,
+        _requirements,
+        _snapshot,
+    )
 
     packet = _snapshot()
     packet.pop("anchor")
@@ -944,7 +952,7 @@ async def _native_shape_refusal_matrix(client, original, packet, requirements, p
         record = next(record for record in reversed(records) if json.loads(record["key"])[0] in {"state", "dc"})
         target = public if location == "public" else record["value"]
         if confidence:
-            target = target["data_confidence"] if "data_confidence" in target else target
+            target = target.get("data_confidence", target)
             if path[0] == "limiting":
                 assert target["limiting"]["collection"] == "liquidations"
         else:
@@ -1159,7 +1167,7 @@ async def test_native_freshness_complete_inventory_refusal_and_recovery(
             public = json.loads(rows[0]["result"])
             record = next(record for record in reversed(records) if json.loads(record["key"])[0] == ("dc" if metric == "dc.class" else "state"))
             target = public if location == "public" else record["value"]
-            confidence = target["data_confidence"] if "data_confidence" in target else target
+            confidence = target.get("data_confidence", target)
             row = confidence[group] if group == "limiting" else next(row for row in confidence[group] if row.get("collection") == collection and "metric_family" not in row)
             if failure == "missing":
                 del row[field]
@@ -1184,7 +1192,7 @@ async def test_native_freshness_complete_inventory_refusal_and_recovery(
                 admitted_cache = deepcopy(cache)
                 admitted = await native.evaluate_conditions(CorruptNative(), candidate, requirements, cache=admitted_cache)
                 admitted_record = next(value for key, value in reversed(list(admitted_cache.items())) if json.loads(key)[0] == ("dc" if metric == "dc.class" else "state"))
-                admitted_confidence = admitted["data_confidence"] if location == "public" else (admitted_record["data_confidence"] if "data_confidence" in admitted_record else admitted_record)
+                admitted_confidence = admitted["data_confidence"] if location == "public" else admitted_record.get("data_confidence", admitted_record)
                 admitted_row = admitted_confidence[group] if group == "limiting" else next(row for row in admitted_confidence[group] if row.get("collection") == collection and "metric_family" not in row)
                 assert "observed_at" in admitted_row and admitted_row["observed_at"] is None
             else:

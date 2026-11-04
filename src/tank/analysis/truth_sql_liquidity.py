@@ -83,11 +83,17 @@ lq_context_start AS (
         multiIf(v.ctx_band = 0.5, 'p0_5', v.ctx_band = 1, 'p1', v.ctx_band = 2, 'p2', '') AS ctx_band_key
     FROM lq_context_values AS v
 ),
-lq_context AS (
+lq_static_context AS (
     SELECT s.ctx_token, s.ctx_primary, s.ctx_end, s.ctx_start,
         if(s.ctx_has_anchor, lq_parse(s.ctx_anchor_raw), s.ctx_start) AS ctx_anchor,
         s.ctx_band, s.ctx_band_key, s.ctx_band_raw, s.ctx_cadence, s.ctx_refill, s.ctx_resilience,
         s.ctx_all_books, s.ctx_all_flows, s.ctx_eligible, s.ctx_base_tiers, s.ctx_relative,
+        s.ctx_spot_venues
+    FROM lq_context_start AS s
+),
+lq_flow_context AS (
+    SELECT s.ctx_primary, s.ctx_end, s.ctx_start, s.ctx_anchor,
+        s.ctx_band, s.ctx_band_raw, s.ctx_cadence, s.ctx_refill, s.ctx_resilience, s.ctx_relative,
         arrayConcat(arrayFilter(flow -> if(lq_is_spot(flow) AND has(s.ctx_eligible, lq_venue(flow)),
             lq_time(flow) >= s.ctx_start AND lq_time(flow) + INTERVAL 1 MINUTE <= s.ctx_end
                 AND JSONExtractRaw(flow, 'complete') = 'true', false), s.ctx_all_flows),
@@ -95,13 +101,13 @@ lq_context AS (
                 JSONMergePatch(row, concat('{"minute_start":', JSONExtractRaw(row, 'start'),
                     ',"segment_end":', JSONExtractRaw(row, 'end'), ',"venue":', toJSONString(JSONExtractString(v, 'venue')), '}')),
                 JSONExtractArrayRaw(segment, 'aggregates')), JSONExtractArrayRaw(v, 'boundary_segments'))), s.ctx_spot_venues))) AS ctx_flows
-    FROM lq_context_start AS s
+    FROM lq_static_context AS s
 ),
 lq_book_metadata AS (
     SELECT c.*, arrayMap(book -> tuple(book, lq_venue(book), lq_is_spot(book),
         NOT JSONHas(book, 'token_id') OR JSONExtractString(book, 'token_id') = c.ctx_token,
         JSONExtractRaw(book, 'integrity_ok'), lq_time_raw(book)), c.ctx_all_books) AS book_metadata
-    FROM lq_context AS c
+    FROM lq_static_context AS c
 ),
 lq_book_times AS (
     SELECT m.*, arrayMap(book -> tuple(book.1, book.2,
@@ -114,8 +120,7 @@ lq_book_admitted AS (
     FROM lq_book_times AS t
 ),
 lq_book_ordinals AS (
-    SELECT a.ctx_start, a.ctx_end, a.ctx_anchor, a.ctx_band, a.ctx_band_key,
-        a.ctx_cadence, a.ctx_refill, a.ctx_resilience, a.ctx_flows,
+    SELECT a.ctx_start, a.ctx_anchor, a.ctx_band, a.ctx_band_key,
         arrayMap((book, ordinal) -> tuple(book.3, ordinal, book.1, book.2),
             a.admitted_books, arrayEnumerate(a.admitted_books)) AS ordered_books
     FROM lq_book_admitted AS a
@@ -280,7 +285,7 @@ lq_volume_population AS (
     SELECT c.ctx_eligible, c.ctx_base_tiers,
         arrayFilter(flow -> if(lq_is_spot(flow), lq_time(flow) >= c.ctx_end - INTERVAL 1 DAY
             AND lq_time(flow) < c.ctx_end, false), c.ctx_all_flows) AS lq_volume_flows
-    FROM lq_context AS c
+    FROM lq_static_context AS c
 ),
 lq_volume_bucket_keys AS (
     SELECT p.*, arrayDistinct(arrayMap(flow -> intDiv(toUnixTimestamp(lq_time(flow)), 900), p.lq_volume_flows)) AS lq_buckets
@@ -336,23 +341,19 @@ lq_tier_values AS (
 lq_venue_books AS (
     SELECT item.4 AS venue, min(item.2) AS first_ordinal,
         arraySort(x -> tuple(x.1, x.2), groupArray(tuple(item.1, item.2, item.3))) AS series,
-        any(tuple(o.ctx_start, o.ctx_end, o.ctx_anchor, o.ctx_band, o.ctx_band_key,
-            o.ctx_cadence, o.ctx_refill, o.ctx_resilience, o.ctx_flows)) AS venue_context
+        any(tuple(o.ctx_start, o.ctx_anchor, o.ctx_band, o.ctx_band_key)) AS venue_context
     FROM lq_book_ordinals AS o ARRAY JOIN o.ordered_books AS item
     GROUP BY venue
 ),
 lq_venue_context AS (
     SELECT b.venue, b.first_ordinal, b.series,
-        b.venue_context.1 AS ctx_start, b.venue_context.2 AS ctx_end, b.venue_context.3 AS ctx_anchor,
-        b.venue_context.4 AS ctx_band, b.venue_context.5 AS ctx_band_key,
-        b.venue_context.6 AS ctx_cadence, b.venue_context.7 AS ctx_refill,
-        b.venue_context.8 AS ctx_resilience, b.venue_context.9 AS ctx_flows
+        b.venue_context.1 AS ctx_start, b.venue_context.2 AS ctx_anchor,
+        b.venue_context.3 AS ctx_band, b.venue_context.4 AS ctx_band_key
     FROM lq_venue_books AS b
 ),
 lq_venue_base AS (
     SELECT v.*, v.series[-1] AS current,
-        arrayFilter(book -> book.1 >= v.ctx_anchor - INTERVAL 1 HOUR AND book.1 < v.ctx_anchor, v.series) AS previous,
-        arrayFilter(flow -> lq_venue(flow) = v.venue, v.ctx_flows) AS venue_flows
+        arrayFilter(book -> book.1 >= v.ctx_anchor - INTERVAL 1 HOUR AND book.1 < v.ctx_anchor, v.series) AS previous
     FROM lq_venue_context AS v
 ),
 lq_venue_depth AS (
@@ -380,9 +381,15 @@ lq_venue_stats AS (
 lq_venues AS (
     SELECT *, {per_venue} AS venue_json FROM lq_venue_stats CROSS JOIN lq_tier_values
 ),
+lq_burst_inputs AS (
+    SELECT v.venue, v.first_ordinal, v.series, v.ctx_band, v.ctx_band_key,
+        c.ctx_end, c.ctx_cadence, c.ctx_refill, c.ctx_resilience,
+        arrayFilter(flow -> lq_venue(flow) = v.venue, c.ctx_flows) AS venue_flows
+    FROM lq_venue_base AS v CROSS JOIN lq_flow_context AS c
+),
 lq_burst_base AS (
     SELECT b.*, flow, arrayFilter(book -> book.1 < lq_time(flow) AND dateDiff('microsecond', book.1, lq_time(flow)) <= b.ctx_cadence * 1000000, b.series) AS baselines
-    FROM lq_venue_base AS b ARRAY JOIN b.venue_flows AS flow
+    FROM lq_burst_inputs AS b ARRAY JOIN b.venue_flows AS flow
 ),
 lq_burst_selected AS (
     SELECT b.*, b.baselines[-1] AS baseline
@@ -449,7 +456,7 @@ lq_state_inputs AS (
             - lq_sum(arrayMap(flow -> lq_dec(JSONExtractRaw(flow, 'sell_qty')), c.ctx_flows)) AS lq_net_native,
         JSONExtractRaw(c.ctx_relative, 'windows', c.ctx_primary) AS lq_relative_window,
         notEmpty(venues) AND notEmpty(c.ctx_flows) AS lq_replenishment_available
-    FROM lq_collected CROSS JOIN lq_observed CROSS JOIN lq_tier_values CROSS JOIN lq_context AS c
+    FROM lq_collected CROSS JOIN lq_observed CROSS JOIN lq_tier_values CROSS JOIN lq_flow_context AS c
 ),
 lq_state_flow AS (
     SELECT *, if(isNotNull(lq_net_native), lq_net_native, lq_net_usd) AS lq_net,
