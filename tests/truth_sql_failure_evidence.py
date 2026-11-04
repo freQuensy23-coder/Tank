@@ -510,8 +510,7 @@ def _own_query_sql():
         + ", ".join(_PROCESS_FIELDS)
         + ", "
         + ", ".join(
-            f"mapContains(ProfileEvents, '{name}') AS {name}_present, "
-            f"ProfileEvents['{name}'] AS {name}"
+            f"mapContains(ProfileEvents, '{name}') AS {name}_present, ProfileEvents['{name}'] AS {name}"
             for name in _PROFILE_EVENTS
         )
         + " FROM system.processes WHERE query_id = {observer_query_id:String} LIMIT 1 FORMAT JSONEachRow"

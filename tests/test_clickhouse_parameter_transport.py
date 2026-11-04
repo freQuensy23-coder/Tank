@@ -377,15 +377,17 @@ def test_liquidity_phase_receipts_are_bounded_and_reject_unknown_labels(tmp_path
 def native_observer_receipts(tmp_path, monkeypatch):
     monkeypatch.setenv("GITHUB_ACTIONS", "true")
     monkeypatch.setenv("CLICKHOUSE_TEST_URL", "http://localhost:8123")
+    directory = tmp_path / "native-evidence"
+    directory.mkdir()
     retain = truth_sql_failure_evidence._retain_first_receipt
     monkeypatch.setattr(
         truth_sql_failure_evidence,
         "_retain_first_receipt",
-        lambda directory, receipt, prefix: retain(tmp_path, receipt, prefix),
+        lambda original_directory, receipt, prefix: retain(directory, receipt, prefix),
     )
     ticks = itertools.count(0, 10)
     monkeypatch.setattr(truth_sql_failure_evidence.time, "monotonic_ns", lambda: next(ticks))
-    return tmp_path
+    return directory
 
 
 def synthetic_phase_request():
@@ -542,13 +544,16 @@ async def test_ci_native_timeout_snapshot_is_single_bounded_and_preserves_origin
         assert snapshot["ScalarSubqueriesLocalCacheHit_present"] == 1
         assert snapshot["ScalarSubqueriesLocalCacheHit"] == 0
     else:
-        assert snapshot["status"] == {
-            "absent": "absent",
-            "schema": "http_error",
-            "timeout": "error",
-            "cancelled": "error",
-            "invalid": "error",
-        }[diagnostic]
+        assert (
+            snapshot["status"]
+            == {
+                "absent": "absent",
+                "schema": "http_error",
+                "timeout": "error",
+                "cancelled": "error",
+                "invalid": "error",
+            }[diagnostic]
+        )
     persisted = "".join(path.read_text() for path in native_observer_receipts.iterdir())
     for forbidden in (
         "credentialPrefix",
