@@ -1,5 +1,6 @@
 import asyncio
 import gzip
+import hashlib
 import importlib
 import json
 import threading
@@ -107,6 +108,8 @@ class LoopbackTelegramTransport(httpx.AsyncBaseTransport):
 
 async def test_real_worker_http_errors_keep_cursors_and_send_response_documents(tmp_path, wire_server):
     origin, state = wire_server
+    expected = state["body"] + b"\r\nCookie: [REDACTED]\r\nbody"
+    state["body"] += b"\r\nCookie: sid=cookie-primary; refresh=cookie-secondary, tail=cookie-tail\r\nbody"
     source = {"source_id": "S29", "name": "X", "feeds": [{"kind": "x", "url": origin + "/actor"}]}
     config = source_settings(tmp_path, [source])
     config.apify_api_token = "isolated-apify-token"
@@ -123,6 +126,10 @@ async def test_real_worker_http_errors_keep_cursors_and_send_response_documents(
     assert result["status"] == "DEGRADED" and result["items"] == 0
     assert checkpoint["account_cursors"] == {"alice": "90"}
     assert state["outputs"][0]["accounts"][0]["diagnostics"]["attemptCount"] == 3
+    assert [
+        attempt["response"]["body"].encode()
+        for attempt in state["outputs"][0]["accounts"][0]["diagnostics"]["attempts"]
+    ] == [expected] * 3
     assert len(state["profile"]) == 3
     starts = [attempt[0] for attempt in state["profile"]]
     assert 0.9 <= starts[1] - starts[0] < 3
@@ -139,8 +146,18 @@ async def test_real_worker_http_errors_keep_cursors_and_send_response_documents(
     for path, headers, body in state["telegram"][1:4]:
         assert path.endswith("sendDocument")
         request = httpx.Request("POST", origin, headers=headers, content=body)
-        assert multipart(request)["document"][1] == state["body"]
+        assert multipart(request)["document"][1] == expected
         assert b"forbidden-cookie" not in body
+    path, headers, body = state["telegram"][4]
+    metadata_request = httpx.Request("POST", origin, headers=headers, content=body)
+    metadata = json.loads(multipart(metadata_request)["document"][1])
+    digest = hashlib.sha256(expected).hexdigest()
+    assert [attempt["response"]["bodySha256"] for attempt in metadata["attempts"]] == [digest] * 3
+    assert all(
+        secret not in body
+        for path, headers, body in state["telegram"]
+        for secret in (b"cookie-primary", b"cookie-secondary", b"cookie-tail")
+    )
     assert checkpoint["entry_errors"][0]["diagnostics"]["attemptCount"] == 3
     receipts = await repo.list("out.deliveries", filters={"status": "SENT"})
     assert len(receipts) == 5

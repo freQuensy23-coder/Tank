@@ -126,6 +126,51 @@ def test_sanitization_removes_echoed_token_cookies_and_auth_headers(encoding):
     }
 
 
+@pytest.mark.parametrize("encoding", ["utf-8", "base64"])
+async def test_multipart_cookie_headers_redact_every_pair_and_preserve_body(encoding):
+    raw = (
+        b"Cookie: sid=cookie-primary; refresh=cookie-secondary, tail=cookie-tail\r\n"
+        b"Set-Cookie: session=set-primary; SameSite=Strict; refresh=set-secondary\r\n"
+        b"body"
+    )
+    expected = b"Cookie: [REDACTED]\r\nSet-Cookie: [REDACTED]\r\nbody"
+    evidence = diagnostics(
+        base64.b64encode(raw).decode() if encoding == "base64" else raw.decode(), encoding=encoding
+    )
+    repo = MemoryRepository()
+    notice = await notice_for(repo, evidence)
+    captured = []
+
+    def send(request):
+        captured.append(request)
+        return httpx.Response(200, json={"ok": True, "result": {"message_id": len(captured)}})
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(send)) as http:
+        await DeliveryService(repo, telegram_settings(), http=http).deliver(
+            {"notice_id": notice["notice_id"]}
+        )
+    assert len(captured) == 5
+    uploads = [multipart(request)["document"][1] for request in captured[1:]]
+    assert uploads[:3] == [expected] * 3
+    metadata = json.loads(uploads[3])
+    digest = sha256(expected)
+    assert [attempt["response"]["bodySha256"] for attempt in metadata["attempts"]] == [digest] * 3
+    assert all(
+        secret not in content
+        for content in [json.dumps(notice).encode(), *uploads]
+        for secret in (
+            b"cookie-primary",
+            b"cookie-secondary",
+            b"cookie-tail",
+            b"set-primary",
+            b"set-secondary",
+        )
+    )
+    receipts = await repo.list("out.deliveries", filters={"status": "SENT", "method": "sendDocument"})
+    assert len(receipts) == 4
+    assert [row["document_bytes"] for row in receipts[:3]] == [len(expected)] * 3
+
+
 async def test_all_failed_accounts_reach_checkpoint_ops_and_preserve_cursor(tmp_path, monkeypatch):
     repo = MemoryRepository()
     config = source_settings(

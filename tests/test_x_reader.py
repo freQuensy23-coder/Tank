@@ -254,6 +254,30 @@ async def test_recovered_actor_has_no_terminal_failure(reader, monkeypatch, cloc
         (b'{"cookie":"session","detail":"upstream A"}', b'{"cookie":"[REDACTED]","detail":"upstream A"}'),
         (b'{"ct0":"escaped\\"secret","detail":1}', b'{"ct0":"[REDACTED]","detail":1}'),
         (b"cookie=session; detail=upstream A", b"cookie=[REDACTED]; detail=upstream A"),
+        (
+            b"Cookie: sid=primary; refresh=secondary, tail=last\r\nbody",
+            b"Cookie: [REDACTED]\r\nbody",
+        ),
+        (
+            b'Set-Cookie: sid="primary"; refresh=secondary\nbody',
+            b"Set-Cookie: [REDACTED]\nbody",
+        ),
+        (
+            b'Cookie: "sid=primary"; refresh=secondary\r\nbody',
+            b"Cookie: [REDACTED]\r\nbody",
+        ),
+        (
+            b"Cookie: [REDACTED]; refresh=secondary\r\nbody",
+            b"Cookie: [REDACTED]\r\nbody",
+        ),
+        (
+            b"Cookie: sid=primary<tail>{suffix}; refresh=secondary\r\nbody",
+            b"Cookie: [REDACTED]\r\nbody",
+        ),
+        (
+            b"\x00\xffCookie: sid=primary; refresh=secondary\nbody",
+            b"\x00\xffCookie: [REDACTED]\nbody",
+        ),
         (b"?auth_token=session&detail=upstream+A", b"?auth_token=[REDACTED]&detail=upstream+A"),
         (b"authorization: Basic abc123, detail=upstream A", b"authorization: [REDACTED], detail=upstream A"),
         (

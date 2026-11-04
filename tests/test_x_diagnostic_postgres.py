@@ -1,3 +1,6 @@
+import base64
+import hashlib
+import json
 import os
 
 import httpx
@@ -34,6 +37,70 @@ async def test_jsonb_readback_preserves_manifest_multipart_bytes_and_durable_rec
         receipts = await repo.list("out.deliveries", filters={"status": "SENT", "method": "sendDocument"})
         assert {row["document_sha256"] for row in receipts} == {row["sha256"] for row in expected}
         assert all(row["message_ref"] and row["chat_id"] == "ops" for row in receipts)
+
+
+@pytest.mark.parametrize("encoding", ["utf-8", "base64"])
+async def test_jsonb_cookie_header_privacy_survives_wire_delivery_and_pool_reopen(
+    postgres_template, wire_server, encoding
+):
+    raw = (
+        b"Cookie: sid=cookie-primary; refresh=cookie-secondary, tail=cookie-tail\r\n"
+        b"Set-Cookie: session=set-primary; refresh=set-secondary\r\nbody"
+    )
+    expected = b"Cookie: [REDACTED]\r\nSet-Cookie: [REDACTED]\r\nbody"
+    if encoding == "base64":
+        raw += b"\x00\xff"
+        expected += b"\x00\xff"
+    evidence = diagnostics(
+        base64.b64encode(raw).decode() if encoding == "base64" else raw.decode(), encoding=encoding
+    )
+    origin, state = wire_server
+    async with postgres_template.repository(os.environ["TANK_TEST_DATABASE_URL"]) as repo:
+        notice = await notice_for(repo, evidence)
+        saved = await repo.get("out.ops_notices", notice["notice_id"])
+        payload = {"notice_id": notice["notice_id"], "channel": "telegram:ops"}
+        async with httpx.AsyncClient(transport=LoopbackTelegramTransport(origin)) as http:
+            await DeliveryService(repo, telegram_settings(), http=http).deliver(payload)
+            await repo.close()
+            await repo.open()
+            committed = await repo.list("out.deliveries", filters={"notice_id": notice["notice_id"]})
+            await DeliveryService(repo, telegram_settings(), http=http).deliver(payload)
+        assert len(state["telegram"]) == 5
+        uploads = [
+            multipart(httpx.Request("POST", origin, headers=headers, content=body))
+            for path, headers, body in state["telegram"][1:]
+        ]
+        assert [upload["document"][1] for upload in uploads[:3]] == [expected] * 3
+        metadata = json.loads(uploads[3]["document"][1])
+        digest = hashlib.sha256(expected).hexdigest()
+        assert [attempt["response"]["bodySha256"] for attempt in metadata["attempts"]] == [digest] * 3
+        parents = [
+            row for row in committed if row["status"] == "SENT" and row.get("method") != "sendDocument"
+        ]
+        receipts = [
+            row for row in committed if row["status"] == "SENT" and row.get("method") == "sendDocument"
+        ]
+        assert len(parents) == 1 and len(receipts) == 4
+        bodies = [row for row in receipts if row["document_sha256"] == digest]
+        assert len(bodies) == 3 and all(row["document_bytes"] == len(expected) for row in bodies)
+        assert all(
+            json.loads(upload["reply_parameters"][1]) == {"message_id": int(parents[0]["message_ref"])}
+            for upload in uploads
+        )
+        assert all(row["request_reply_to_message_ref"] == parents[0]["message_ref"] for row in receipts)
+        assert all(
+            secret not in content
+            for content in [json.dumps(saved).encode(), *(upload["document"][1] for upload in uploads)]
+            for secret in (
+                b"cookie-primary",
+                b"cookie-secondary",
+                b"cookie-tail",
+                b"set-primary",
+                b"set-secondary",
+            )
+        )
+        assert await repo.get("out.ops_notices", notice["notice_id"]) == saved
+        assert await repo.list("out.deliveries", filters={"notice_id": notice["notice_id"]}) == committed
 
 
 async def test_jsonb_partial_retry_skips_durable_successful_documents(postgres_template):
