@@ -475,9 +475,7 @@ def condition_query(snapshot, requirements, config=None, *, cache_records=None, 
 
 def _prepare_conditions(snapshot, requirements, config, cache_items):
     records = [{"key": key, "value": deepcopy(value)} for key, value in cache_items]
-    return condition_query(
-        snapshot, requirements, config, cache_records=records, cache_transport=True
-    )
+    return condition_query(snapshot, requirements, config, cache_records=records, cache_transport=True)
 
 
 def _decode_conditions(rows, snapshot, requirements):

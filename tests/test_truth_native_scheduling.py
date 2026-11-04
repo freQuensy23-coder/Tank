@@ -101,7 +101,9 @@ def pipeline(monkeypatch, kind, stage, barrier, *, prepare_success=False):
 
     monkeypatch.setattr(truth_sql_engine.json, "loads", decode)
     if kind == "conditions":
-        coroutine = truth_sql_engine.evaluate_conditions(provider, snapshot, requirements, config, cache=cache)
+        coroutine = truth_sql_engine.evaluate_conditions(
+            provider, snapshot, requirements, config, cache=cache
+        )
     else:
         coroutine = truth_sql_engine.evaluate(provider, snapshot, config)
     return coroutine, provider, cache
@@ -132,7 +134,9 @@ async def test_actual_native_pipeline_marshalling_yields_and_propagates_failure(
 
 @pytest.mark.parametrize("kind", ["assessment", "conditions"])
 @pytest.mark.parametrize("stage", ["prepare", "decode"])
-async def test_actual_native_pipeline_cancellation_discards_worker_without_io_or_publication(monkeypatch, kind, stage):
+async def test_actual_native_pipeline_cancellation_discards_worker_without_io_or_publication(
+    monkeypatch, kind, stage
+):
     barrier = WorkerBarrier()
     coroutine, provider, cache = pipeline(monkeypatch, kind, stage, barrier, prepare_success=True)
     task = asyncio.create_task(coroutine)
