@@ -396,7 +396,7 @@ _LIQUIDITY_SELECTIONS = {
     **{
         "venue_walk_t" + str(index): (
             f"SELECT arraySort(groupArray(tuple(venue, lq_walk_book(current.3, lq_tiers[{index}], 'ask')))) "
-            "AS value FROM lq_venue_stats CROSS JOIN lq_tier_values"
+            "AS value FROM lq_venue_stats"
         )
         for index in (1, 2, 3)
     },

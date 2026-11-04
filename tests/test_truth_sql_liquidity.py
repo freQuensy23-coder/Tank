@@ -738,6 +738,53 @@ async def test_native_all_liquidity_windows_are_one_select(native_client, origin
     _assert_complete(actual, expected)
 
 
+def test_liquidity_reducers_bind_consumed_array_graph_once():
+    statement = ctes()
+    for name in ("lq_sum", "lq_mean", "lq_float_mean"):
+        declaration = statement.split(f" AS {name},", 1)[0].rsplit("\n(values ->", 1)[1]
+        assert declaration.startswith(" arrayMap(items ->")
+        assert declaration.endswith(", [values])[1])")
+        assert declaration.count("values") == 1
+
+
+@pytest.mark.parametrize("reducer", ["lq_sum", "lq_mean", "lq_float_mean"])
+@pytest.mark.parametrize("case", ["empty", "complete", "missing", "zero", "duplicates"])
+async def test_native_typed_liquidity_reducer_preserves_population(native_client, reducer, case):
+    populations = {
+        "empty": [],
+        "complete": ["1", "2", "6"],
+        "missing": ["1", None, "6"],
+        "zero": ["0"],
+        "duplicates": ["1", "1", "6"],
+    }
+    values = populations[case]
+    _, parameters = query({})
+    parameters["reducer_values"] = (canonical_json(values), "String")
+    if reducer == "lq_float_mean":
+        expression = "arrayMap(x -> lq_number(x), JSONExtractArrayRaw({reducer_values:String}))"
+        expected = (
+            sum(float(value) if value is not None else 0.0 for value in values) / len(values)
+            if values
+            else None
+        )
+        selection = f"{reducer}({expression})"
+    else:
+        expression = "arrayMap(x -> lq_dec(x), JSONExtractArrayRaw({reducer_values:String}))"
+        with localcontext() as context:
+            context.prec = 100
+            expected = (
+                sum((Decimal(value) for value in values), Decimal(0))
+                if values and None not in values
+                else None
+            )
+            if expected is not None and reducer == "lq_mean":
+                expected /= len(values)
+        selection = f"toString({reducer}({expression}))"
+    rows = await native_client.rows("WITH " + ctes() + f" SELECT {selection} AS value", parameters)
+    assert len(rows) == 1
+    _assert_complete(rows[0]["value"], expected)
+
+
 async def test_native_liquidity_absence_relational_phase_contracts(native_client, original_truth, request):
     snapshot, spot, relative = _packet()
     snapshot["_event_anchor"] = None

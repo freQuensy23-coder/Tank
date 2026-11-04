@@ -402,6 +402,23 @@ def native_receipts(directory):
     return [json.loads(path.read_text()) for path in directory.glob("truth-sql-native-*.json")]
 
 
+@pytest.mark.parametrize("index", [1, 2, 3])
+def test_ci_native_observer_walk_phase_selection_scope(index):
+    phase = f"venue_walk_t{index}"
+    nodeid, _ = synthetic_phase_request()
+    nodeid = nodeid.rsplit("::", 1)[0] + "::" + phase
+    selection = (
+        f"SELECT arraySort(groupArray(tuple(venue, lq_walk_book(current.3, lq_tiers[{index}], 'ask')))) "
+        "AS value FROM lq_venue_stats"
+    )
+    query = "WITH \n{lq_snapshot:String} AS lq_snapshot, synthetic_fixture AS unused " + selection
+    observe = truth_sql_failure_evidence._liquidity_observation
+    assert observe(nodeid, query) == phase
+    assert observe(nodeid, query + " CROSS JOIN lq_tier_values") is None
+    assert observe(nodeid.rsplit("::", 1)[0] + "::venue_stats", query) is None
+    assert observe(nodeid, query + " trailing") is None
+
+
 async def test_ci_native_observer_preserves_wire_and_records_inclusive_boundaries(native_observer_receipts):
     nodeid, query = synthetic_phase_request()
     calls = []
@@ -891,10 +908,7 @@ async def test_owned_trace_log_protocol_privacy_and_refusal(native_observer_rece
     assert diagnostic.extensions["timeout"] == {"connect": 1, "read": 4, "write": 4, "pool": 4}
     assert "X-ClickHouse-Query-Id" not in diagnostic.headers
     sql = diagnostic.content.decode()
-    assert (
-        "WHERE query_id = {observer_query_id:String} AND trace_type IN ('CPU', 'Real') LIMIT 16"
-        in sql
-    )
+    assert "WHERE query_id = {observer_query_id:String} AND trace_type IN ('CPU', 'Real') LIMIT 16" in sql
     assert "arraySlice(symbols, 1, 32)" in sql and "arraySlice(symbols, 1, 255)" in sql
     for forbidden in ("system.stack_trace", "addressTo", "SYSTEM", "SETTINGS", "SELECT *", "lines"):
         assert forbidden not in sql
