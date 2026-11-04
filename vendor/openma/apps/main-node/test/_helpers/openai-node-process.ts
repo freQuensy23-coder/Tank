@@ -203,5 +203,5 @@ export async function bootOpenAINode(reply: OpenAINodeModel = defaultReply, opti
       },
       dispose,
     };
-  } catch (error) { await dispose(); throw error; }
+  } catch (error) { await dispose().catch(() => undefined); throw error; }
 }

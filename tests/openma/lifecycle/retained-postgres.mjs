@@ -1,6 +1,14 @@
 import assert from 'node:assert/strict';
 import { createRequire } from 'node:module';
 
+let stage = 'imports';
+let failure;
+let failureReported = false;
+const reason = error => [
+  'ERR_MODULE_NOT_FOUND', 'MODULE_NOT_FOUND', 'ERR_PACKAGE_PATH_NOT_EXPORTED',
+  'ERR_UNKNOWN_FILE_EXTENSION', 'ERR_UNSUPPORTED_TYPESCRIPT_SYNTAX',
+].includes(error?.code) ? error.code : error?.code === 'ERR_ASSERTION' ? 'assertion' : 'UNKNOWN';
+try {
 const root = new URL('../../..', import.meta.url);
 const source = new URL('vendor/openma/', root);
 const load = path => import(new URL(path, source));
@@ -20,12 +28,14 @@ const { planSessionContinuation } = await load('packages/session-runtime-contrac
 const { ManagedNodeHarnessRuntime } = await load('packages/control-plane-node/src/lib/node-managed-harness-runtime.ts');
 const { SqlRuntimeResourceFencePort, ensureRuntimeResourceFenceSchema } = await load('packages/runtime-resource-fence-sql/src/index.ts');
 const { RetainedSessionLifecycle } = await load('packages/control-plane-node/src/lib/tank-retained/retained-session.ts');
+stage = 'input';
 let input = '';
 for await (const chunk of process.stdin) input += chunk;
 const { url } = JSON.parse(input);
 const target = new URL(url);
 assert.ok(['127.0.0.1', 'localhost', '[::1]'].includes(target.hostname));
 assert.match(target.pathname, /^\/tank_test_[A-Za-z0-9_]+$/);
+stage = 'connection';
 const connection = postgres(url, { onnotice: () => {}, types: {
   bigint: { to: 20, from: [20], serialize: value => String(value), parse: Number },
 } });
@@ -47,9 +57,11 @@ let scenarioFailed = false;
 try {
   const version = await sql.prepare('SHOW server_version_num').first();
   assert.equal(Math.floor(Number(version.server_version_num) / 10000), 16);
+  stage = 'migration';
   await migrateNodeDatabase({ dialect: 'postgres', sql,
     applyMigrations: async migrationsFolder => migrate(drizzle(connection), { migrationsFolder }) });
   await ensureRuntimeResourceFenceSchema(sql);
+  stage = 'fixture';
   const sessions = new SqlSessionStore(sql, { seal: async () => assert.fail('no secrets') });
   await sessions.insert({ workspaceId: scope.workspaceId, session, initialEvents: [], resourceSecrets: [] });
   const events = new SqlSessionEventStore(sql, { executionOutbox: true });
@@ -93,6 +105,7 @@ try {
   assert.deepEqual(original.execution.events, [promptEvent]);
   assert.deepEqual(original.fence, { ...scope, executionId: promptId, attemptId: 'before-attempt',
     ownerId: 'before', generation: 1, expiresAt: '2026-11-03T00:00:30.000Z' });
+  stage = 'original-history';
   const output = [
     event({ id: 'running', type: 'session.status_running' }),
     event({ id: 'model', type: 'span.model_request_start' }),
@@ -116,6 +129,7 @@ try {
     processed_at: Date.parse('2026-11-03T00:00:00.000Z') }));
   assert.deepEqual(before.map(row => ({ ...row, document: JSON.parse(row.document) })),
     [...expectedRows].sort((left, right) => left.id < right.id ? -1 : left.id > right.id ? 1 : 0));
+  stage = 'replacement';
   const fences = new SqlRuntimeResourceFencePort(sql, clock);
   const disks = new Map();
   let allocation = 0;
@@ -167,6 +181,7 @@ try {
     attemptCount: 1, maxAttempts: 10, deadlineAt: '2026-11-03T01:00:00.000Z', interruptRequestedAt: null,
     settledAt: '2026-11-03T00:00:00.000Z', failure: null, revision: 3 + renewals };
   assert.deepEqual(originalSettlement, { type: 'settled', execution: expectedOriginalExecution });
+  stage = 'callback';
   const callbackBody = [{ type: 'user.custom_tool_result', customToolUseId: 'corrected', content: text('Recorded'), isError: false }];
   const callback = await send('callback', callbackBody);
   assert.equal(callback.type, 'accepted');
@@ -189,6 +204,7 @@ try {
   assert.equal((await send('callback', [{ ...callbackBody[0], customToolUseId: 'rejected' }])).type, 'idempotency_conflict');
   assert.deepEqual(await persisted(), afterCallback);
   store = new SqlSessionExecutionStore(sql, { callbackContinuations: true });
+  stage = 'continuation';
   const reply = await claim('after');
   assert.equal(reply.execution.id, callbackId);
   assert.deepEqual(reply.execution.events, [callbackEvent]);
@@ -203,6 +219,7 @@ try {
     sandbox: {}, output: async () => assert.fail('projection must not execute'), clock,
     ids: { nextEventId: () => assert.fail('projection must retain original IDs') } });
   const messages = runtime.history.getMessages();
+  stage = 'execution-fences';
   assert.equal((await project(original.fence, [event({ id: 'stale', type: 'agent.message', content: text('forbidden') })])).type, 'execution_fence_lost');
   assert.deepEqual(await persisted(), afterCallback);
   assert.deepEqual(await store.settle({ fence: original.fence, settledAt: now.toISOString(), outcome: 'completed' }), originalSettlement);
@@ -218,6 +235,7 @@ try {
     thread_id: null, id: value.id, type: value.type, document: { ...value, source_position: { revision: 5,
       index, execution_id: callbackId, execution_metadata: { attemptId: 'after-attempt', generation: 1 } } },
     processed_at: Date.parse('2026-11-03T00:00:00.000Z') })));
+  stage = 'settlement';
   assert.equal((await store.settle({ fence: reply.fence, settledAt: now.toISOString(), outcome: 'completed' })).type, 'settled');
   const reopened = new SqlSessionExecutionStore(sql, { callbackContinuations: true });
   const expectedReplyExecution = { ...scope, id: callbackId, laneId: 'sthr_primary',
@@ -228,6 +246,7 @@ try {
     settledAt: '2026-11-03T00:00:00.000Z', failure: null, revision: 3 };
   assert.deepEqual(await reopened.find({ workspaceId: 'workspace', executionId: callbackId }), expectedReplyExecution);
   assert.deepEqual((await persisted()).filter(row => before.some(originalRow => originalRow.id === row.id)), before);
+  stage = 'callback-refusal';
   const foreign = await send('foreign-callback', [{ ...callbackBody[0], customToolUseId: 'not-declared' }]);
   assert.equal(foreign.type, 'accepted');
   assert.equal(foreign.events.length, 1);
@@ -265,6 +284,7 @@ try {
   assert.deepEqual((await persisted()).map(row => ({ ...row, document: JSON.parse(row.document) })),
     [...expectedRows].sort((left, right) => left.id < right.id ? -1 : left.id > right.id ? 1 : 0));
   assert.deepEqual((await persisted()).filter(row => afterCallback.some(originalRow => originalRow.id === row.id)), afterCallback);
+  stage = 'resource-fences';
   const resourceScope = { ...scope, environmentId: 'environment', workId: 'refusal' };
   const first = await fences.acquire({ scope: resourceScope, ownerId: 'first', ttlMs: 1000 });
   assert.equal(first.type, 'acquired');
@@ -278,6 +298,19 @@ try {
   await fences.release({ fence: first.fence, reason: 'lease_lost' });
   assert.equal(await fences.isCurrent(next.fence), true);
   await fences.release({ fence: next.fence, reason: 'completed' });
+  stage = 'model-history';
+  assert.equal(messages[2]?.role, 'tool');
+  assert.equal(messages[2]?.content?.[0]?.type, 'tool-result');
+  assert.equal(messages[2]?.content?.[0]?.toolCallId, 'rejected');
+  assert.equal(messages[2]?.content?.[0]?.toolName, 'record_event');
+  stage = 'model-error-state';
+  try {
+    assert.equal(messages[2]?.content?.[0]?.output?.type, 'error-text');
+  } catch (error) {
+    if (error?.code === 'ERR_ASSERTION') failure = { stage, reason: 'rejected-error-state' };
+    throw error;
+  }
+  stage = 'model-history';
   assert.deepEqual(messages, [
     { role: 'user', content: text('Remember every rejected and corrected call') },
     { role: 'assistant', content: [{ type: 'tool-call', toolCallId: 'rejected', toolName: 'record_event', input: { precision: 'MINUTE' } }] },
@@ -287,8 +320,12 @@ try {
   ]);
 } catch (error) {
   scenarioFailed = true;
+  failure ??= { stage, reason: reason(error) };
+  console.log(JSON.stringify({ qualification: 'postgres-source-only', status: 'FAIL', ...failure }));
+  failureReported = true;
   throw error;
 } finally {
+  stage = 'cleanup';
   let cleanupError;
   let cleanupTimer;
   try {
@@ -311,3 +348,8 @@ try {
 console.log(JSON.stringify({ qualification: 'postgres-source-only', shippingEntrypointExercised: false,
   nativeVmExercised: false, retainedHistory: true, callbackIdempotence: true,
   executionAndResourceFences: true, settlementAndReopen: true }));
+} catch (error) {
+  if (!failureReported) console.log(JSON.stringify({ qualification: 'postgres-source-only', status: 'FAIL',
+    ...(failure ?? { stage, reason: reason(error) }) }));
+  throw error;
+}

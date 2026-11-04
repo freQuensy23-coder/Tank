@@ -8,9 +8,8 @@ from urllib.parse import quote, urlencode
 from uuid import uuid4
 
 import pytest
-from psycopg.conninfo import conninfo_to_dict, make_conninfo
-
 from postgres_helpers import _create_database, _drop_database, _finish, _template_name
+from psycopg.conninfo import conninfo_to_dict, make_conninfo
 
 pytestmark = [pytest.mark.integration, pytest.mark.postgres, pytest.mark.node, pytest.mark.process]
 
@@ -95,9 +94,46 @@ async def test_openma_retained_history_and_ownership_on_postgres(record_property
         )
         process = await asyncio.shield(spawning)
         communication = asyncio.create_task(process.communicate(json.dumps({"url": url}).encode()))
-        stdout, _ = await asyncio.wait_for(asyncio.shield(communication), 60)
+        stdout, stderr = await asyncio.wait_for(asyncio.shield(communication), 60)
         if process.returncode != 0:
-            raise AssertionError("PostgreSQL source qualification child failed")
+            diagnostic = {"stage": "UNKNOWN", "reason": "UNKNOWN"}
+            stages = {
+                "imports", "input", "connection", "migration", "fixture", "original-history",
+                "replacement", "callback", "continuation", "execution-fences", "settlement",
+                "callback-refusal", "resource-fences", "model-history", "model-error-state", "cleanup",
+            }
+            reasons = {
+                "UNKNOWN", "assertion", "rejected-error-state", "ERR_MODULE_NOT_FOUND", "MODULE_NOT_FOUND",
+                "ERR_PACKAGE_PATH_NOT_EXPORTED", "ERR_UNKNOWN_FILE_EXTENSION", "ERR_UNSUPPORTED_TYPESCRIPT_SYNTAX",
+            }
+            try:
+                evidence = json.loads(stdout) if len(stdout) <= 4096 else None
+            except (ValueError, UnicodeError):
+                evidence = None
+            if (
+                isinstance(evidence, dict)
+                and set(evidence) == {"qualification", "status", "stage", "reason"}
+                and evidence["qualification"] == "postgres-source-only"
+                and evidence["status"] == "FAIL"
+                and isinstance(evidence["stage"], str)
+                and evidence["stage"] in stages
+                and isinstance(evidence["reason"], str)
+                and evidence["reason"] in reasons
+                and (evidence["reason"] != "rejected-error-state" or evidence["stage"] == "model-error-state")
+            ):
+                diagnostic = {"stage": evidence["stage"], "reason": evidence["reason"]}
+            else:
+                for code in (
+                    "ERR_MODULE_NOT_FOUND", "MODULE_NOT_FOUND", "ERR_PACKAGE_PATH_NOT_EXPORTED",
+                    "ERR_UNKNOWN_FILE_EXTENSION", "ERR_UNSUPPORTED_TYPESCRIPT_SYNTAX",
+                ):
+                    if f"code: '{code}'".encode() in stderr or f"Error [{code}]".encode() in stderr:
+                        diagnostic = {"stage": "node-startup", "reason": code}
+                        break
+            record_property("openma_postgres_failure", json.dumps(diagnostic, sort_keys=True))
+            raise AssertionError(
+                f"PostgreSQL source qualification child failed: STAGE={diagnostic['stage']} REASON={diagnostic['reason']}"
+            )
         try:
             receipt = json.loads(stdout)
         except (ValueError, UnicodeError):
@@ -131,10 +167,7 @@ async def test_openma_retained_history_and_ownership_on_postgres(record_property
                     failures.append(error)
             joined = process is None
             if process is not None:
-                if communication is None:
-                    drain = asyncio.create_task(process.communicate())
-                else:
-                    drain = communication
+                drain = asyncio.create_task(process.communicate()) if communication is None else communication
                 if process.returncode is None:
                     try:
                         process.terminate()

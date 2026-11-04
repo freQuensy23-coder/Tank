@@ -50,8 +50,8 @@ test('runner bind is lazy, preserves per-exec hooks and same disk across two tur
 });
 
 for(const legacy of [false,true])test(`Managed driver reopens persisted context through Pi streamSimple after clean replacement (legacy=${legacy})`,async()=>{
-  const {planSessionContinuation}=await import('../../../vendor/openma/packages/session-runtime-contract/src/continuation.ts');
-  const {encodeSessionEventDocument,decodeSessionEventDocument}=await import('../../../vendor/openma/packages/session-runtime-contract/src/history.ts');
+  const {planSessionContinuation}=await import(new URL('packages/session-runtime-contract/src/continuation.ts',openmaSource));
+  const {encodeSessionEventDocument,decodeSessionEventDocument}=await import(new URL('packages/session-runtime-contract/src/history.ts',openmaSource));
   const s=fixture();let fingerprint=s.options.fingerprint;
   let identity=legacy?undefined:{version:2,image:'sha256:'+'c'.repeat(64),compatibility:{scope:'sha256:'+'d'.repeat(64)}};
   const manager=s.lifecycle({fingerprint:async()=>fingerprint,identity:async()=>identity}),sb=s.sandbox(),ctx=s.context(sb);
@@ -79,12 +79,10 @@ for(const legacy of [false,true])test(`Managed driver reopens persisted context 
   fingerprint='sha256:'+'b'.repeat(64);identity={version:2,image:'sha256:'+'e'.repeat(64),compatibility:{scope:'sha256:'+'d'.repeat(64)}};
   const {mkdtemp,writeFile,readFile,rm}=await import('node:fs/promises');
   const {tmpdir}=await import('node:os');const {join}=await import('node:path');
-  const {createRequire}=await import('node:module');
-  const require=createRequire(new URL('../../../vendor/openma/apps/agent/package.json',import.meta.url));
-  const {createModels,fauxProvider,fauxAssistantMessage}=await import(require.resolve('@earendil-works/pi-ai'));
-  const {PiHarness}=await import('../../../vendor/openma/apps/agent/src/harness/pi-loop.ts');
-  const {DefaultNodeManagedSessionRunner}=await import('../../../vendor/openma/packages/control-plane-node/src/lib/node-managed-session-runner.ts');
-  const {DefaultNodeManagedSessionRuntimeDriver,ApplicationBackedNodeManagedSessionRuntimeEngine}=await import('../../../vendor/openma/packages/control-plane-node/src/lib/node-managed-session-runtime.ts');
+  const {createModels,fauxProvider,fauxAssistantMessage}=await import(new URL('apps/agent/tests/helpers/pi-ai.mjs',openmaSource));
+  const {PiHarness}=await import(new URL('apps/agent/src/harness/pi-loop.ts',openmaSource));
+  const {DefaultNodeManagedSessionRunner}=await import(new URL('packages/control-plane-node/src/lib/node-managed-session-runner.ts',openmaSource));
+  const {DefaultNodeManagedSessionRuntimeDriver,ApplicationBackedNodeManagedSessionRuntimeEngine}=await import(new URL('packages/control-plane-node/src/lib/node-managed-session-runtime.ts',openmaSource));
   const root=await mkdtemp(join(tmpdir(),'tank-model-context-')),journal=join(root,'history.json');
   try{
     await writeFile(journal,JSON.stringify({documents,executions:snapshot.executions}));
