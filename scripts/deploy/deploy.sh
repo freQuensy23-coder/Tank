@@ -100,7 +100,7 @@ previous=$(cat deployed 2>/dev/null || true)
 tank_started=no
 worker_started=no
 recover() {
-  local status=$? worker_restored=yes
+  local status=$1 worker_restored=yes
   trap - EXIT INT TERM
   if [ "$status" -ne 0 ] && [ "$worker_started" = yes ]; then
     apify rollback-intent || exit 1
@@ -126,9 +126,9 @@ recover() {
   fi
   exit "$status"
 }
-trap recover EXIT
-trap 'exit 130' INT
-trap 'exit 143' TERM
+trap 'recover "$?"' EXIT
+trap 'recover 130' INT
+trap 'recover 143' TERM
 if [ -f worker.pending ]; then
   if apify settled; then
     :
@@ -174,8 +174,8 @@ if roll "$SHA"; then
       apify finish
       worker_started=no
       tank_started=no
-      trap 'exit 130' INT
-      trap 'exit 143' TERM
+      trap 'recover 130' INT
+      trap 'recover 143' TERM
       echo "VERIFIED $SHA after $(( $(date +%s) - start ))s"
       docker image ls --format '{{.Repository}}:{{.Tag}}' | grep '^ghcr.io/frequensy23-coder/tank/' \
         | grep -v -E ":(${SHA}|${previous:-none})\$" | xargs -r docker rmi >/dev/null 2>&1 || true

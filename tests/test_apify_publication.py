@@ -54,6 +54,7 @@ def worker_journal(committed=False):
         "settlement_disconnected",
         "settlement_marker_mismatch",
         "settlement_ownership_mismatch",
+        "post_finish_main_term",
     ],
 )
 def test_worker_publication_transaction(tmp_path, mode):
@@ -140,6 +141,7 @@ def test_worker_publication_transaction(tmp_path, mode):
                 if target == "old" and mode in {
                     "rollback_refused",
                     "post_finish_term",
+                    "post_finish_main_term",
                     "post_finish_crash",
                     "finish_child_failed",
                     "finish_child_killed",
@@ -214,6 +216,10 @@ docker() {
 """
         marker = "previous=$(cat deployed 2>/dev/null || true)"
         script = script.replace(marker, hook + marker)
+        if mode == "post_finish_main_term":
+            cleanup = "      docker image ls --format"
+            assert script.count(cleanup) == 1
+            script = script.replace(cleanup, "      kill -TERM $$\n" + cleanup)
         if mode in {"crash_marker", "changed_actor", "changed_compose"}:
             script = script.replace(
                 "      apify finish",
@@ -248,6 +254,7 @@ docker() {
             "ownership_unreadable",
             "changed_compose",
             "post_finish_term",
+            "post_finish_main_term",
             "post_finish_crash",
             "finish_child_failed",
             "finish_child_killed",
@@ -259,6 +266,7 @@ docker() {
             "changed_actor",
             "changed_compose",
             "post_finish_term",
+            "post_finish_main_term",
             "post_finish_crash",
             "finish_child_failed",
             "finish_child_killed",
@@ -319,6 +327,14 @@ docker() {
             assert pending["committed"] is True
             assert (tmp_path / "rolls").read_text().splitlines() == ["a" * 40]
             assert result.returncode == (143 if mode == "post_finish_term" else -9)
+            tag_writes = [body for path, body in state["writes"] if path == f"/v2/acts/{ACTOR}"]
+            assert tag_writes == [{"taggedBuilds": {"direct": {"buildId": "new"}}}]
+        if mode == "post_finish_main_term":
+            assert json.loads((tmp_path / "worker.pending").read_text()) == worker_journal(True)
+            assert (tmp_path / "deployed").read_text() == "a" * 40 + "\n"
+            assert (tmp_path / "running-release").read_text() == "a" * 40 + "\n"
+            assert (tmp_path / "rolls").read_text().splitlines() == ["a" * 40]
+            assert result.returncode == 143
             tag_writes = [body for path, body in state["writes"] if path == f"/v2/acts/{ACTOR}"]
             assert tag_writes == [{"taggedBuilds": {"direct": {"buildId": "new"}}}]
         if mode.startswith("settlement_"):
