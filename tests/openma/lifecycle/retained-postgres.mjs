@@ -118,8 +118,8 @@ try {
     event({ id: 'waiting', type: 'session.status_idle', stopReason: { type: 'requires_action', eventIds: ['corrected'] } }),
   ];
   assert.equal((await project(original.fence, output)).type, 'projected');
-  const persisted = async () => (await sql.prepare('SELECT * FROM managed_session_events WHERE workspace_id = ? AND session_id = ? ORDER BY id')
-    .bind(scope.workspaceId, scope.sessionId).all()).results;
+  const persisted = async () => [...(await sql.prepare('SELECT * FROM managed_session_events WHERE workspace_id = ? AND session_id = ? ORDER BY id')
+    .bind(scope.workspaceId, scope.sessionId).all()).results];
   const before = await persisted();
   const expectedRows = [
     { value: promptEvent, position: { revision: 2, index: 0 } },
