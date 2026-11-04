@@ -32,7 +32,7 @@ def _decode_postgres_frame(stdout, marker):
     frames = [line for line in stdout.split(b"\n") if line.startswith(marker)]
     if len(frames) != 1 or not stdout.endswith(b"\n"):
         return None
-    payload = frames[0][len(marker):]
+    payload = frames[0][len(marker) :]
     if len(payload) > 4096:
         return None
     try:
@@ -156,7 +156,9 @@ def test_openma_postgres_failure_frame_projection(stage, reason):
     envelope = json.dumps(
         {"qualification": "postgres-source-only", "status": "FAIL", "stage": stage, "reason": reason}
     )
-    stdout = b'{"msg":"db.boundary"}\n' * 200 + b"TANK_OPENMA_POSTGRES_FAILURE_V1 " + envelope.encode() + b"\n"
+    stdout = (
+        b'{"msg":"db.boundary"}\n' * 200 + b"TANK_OPENMA_POSTGRES_FAILURE_V1 " + envelope.encode() + b"\n"
+    )
     diagnostic = _decode_postgres_failure(stdout)
     assert diagnostic == {"stage": stage, "reason": reason}
     assert diagnostic is not None
@@ -165,7 +167,9 @@ def test_openma_postgres_failure_frame_projection(stage, reason):
 
 
 def test_openma_postgres_failure_frame_exact_limits():
-    payload = b'{"qualification":"postgres-source-only","status":"FAIL","stage":"migration","reason":"UNKNOWN"}'
+    payload = (
+        b'{"qualification":"postgres-source-only","status":"FAIL","stage":"migration","reason":"UNKNOWN"}'
+    )
     frame = b"TANK_OPENMA_POSTGRES_FAILURE_V1 " + payload.ljust(4096) + b"\n"
     stdout = b"x" * (65536 - len(frame) - 1) + b"\n" + frame
     assert _decode_postgres_failure(stdout) == {"stage": "migration", "reason": "UNKNOWN"}
@@ -197,9 +201,13 @@ def test_openma_postgres_failure_frame_payload_refusal(payload):
     assert _decode_postgres_failure(b"TANK_OPENMA_POSTGRES_FAILURE_V1 " + payload + b"\n") is None
 
 
-@pytest.mark.parametrize("shape", ["absent", "embedded", "duplicate", "malformed-duplicate", "unterminated", "oversized"])
+@pytest.mark.parametrize(
+    "shape", ["absent", "embedded", "duplicate", "malformed-duplicate", "unterminated", "oversized"]
+)
 def test_openma_postgres_failure_frame_boundary_refusal(shape):
-    payload = b'{"qualification":"postgres-source-only","status":"FAIL","stage":"migration","reason":"UNKNOWN"}'
+    payload = (
+        b'{"qualification":"postgres-source-only","status":"FAIL","stage":"migration","reason":"UNKNOWN"}'
+    )
     frame = b"TANK_OPENMA_POSTGRES_FAILURE_V1 " + payload + b"\n"
     stdout = {
         "absent": payload,
