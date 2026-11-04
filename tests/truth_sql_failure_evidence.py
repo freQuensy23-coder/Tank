@@ -437,7 +437,7 @@ _OBSERVER_INSTANCES = itertools.count()
 def _liquidity_observation(nodeid, query):
     if nodeid == _LIQUIDITY_BASELINE:
         if hashlib.sha256(query.encode()).hexdigest() == (
-            "d04c31b10582cede47e47414f4fb93866ed7a541087ba872a552e11891d1eb1e"
+            "70dc6c3374e1fb8dac7c00d478d7bef5afe187bb35229bc5f8df4fdc08221bb5"
         ):
             return "baseline"
         return None
@@ -517,6 +517,26 @@ def _own_query_sql():
     )
 
 
+_TRACE_CATEGORIES = frozenset(
+    {"ExpressionActions", "ActionsDAG", "Function", "PipelineExecutor", "Other", "Unresolved"}
+)
+
+
+def _own_trace_sql():
+    return (
+        "SELECT toString(trace_type) AS trace_type, length(trace) AS frame_count, "
+        "arrayMap(symbol -> multiIf("
+        "empty(symbol), 'Unresolved', "
+        "startsWith(symbol, 'DB::ExpressionActions::'), 'ExpressionActions', "
+        "startsWith(symbol, 'DB::ActionsDAG::'), 'ActionsDAG', "
+        "startsWith(symbol, 'DB::Function'), 'Function', "
+        "startsWith(symbol, 'DB::PipelineExecutor::'), 'PipelineExecutor', 'Other'), "
+        "arraySlice(symbols, 1, 32)) AS categories "
+        "FROM system.trace_log WHERE query_id = {observer_query_id:String} "
+        "AND trace_type IN ('CPU', 'Real') LIMIT 16 FORMAT JSONEachRow"
+    )
+
+
 class EvidenceClickHouse(ClickHouse):
     def __init__(self, url, nodeid, *, http=None):
         if urlparse(url).hostname not in {"localhost", "127.0.0.1", "::1"}:
@@ -571,9 +591,79 @@ class EvidenceClickHouse(ClickHouse):
             self._observation["decode_start_offset_ns"] = time.monotonic_ns() - self._observation["start"]
         return body
 
-    async def _own_query_snapshot(self, query_id):
+    async def _own_trace_snapshot(self, query_id, deadline):
+        if asyncio.get_running_loop().time() >= deadline:
+            return {"status": "Unavailable", "reason": "diagnostic_budget"}
         try:
-            async with asyncio.timeout(5):
+            async with asyncio.timeout_at(deadline):
+                response = await self._original_http_post(
+                    self.base,
+                    params={
+                        "param_observer_query_id": query_id,
+                        "output_format_json_quote_64bit_integers": "0",
+                    },
+                    content=_own_trace_sql().encode(),
+                    headers={"X-ClickHouse-User": self.user, "X-ClickHouse-Key": self.password},
+                    timeout=httpx.Timeout(4, connect=1),
+                    follow_redirects=False,
+                )
+                if response.status_code != 200:
+                    return {"status": "Unavailable", "reason": "http_error"}
+                if len(response.content) > 16384:
+                    raise ValueError("oversized trace evidence")
+                rows = [
+                    json.loads(line, object_pairs_hook=_unique_json) for line in response.content.splitlines()
+                ]
+                if not rows:
+                    return {"status": "NoCounter"}
+                if len(rows) > 16:
+                    raise ValueError("oversized sample population")
+                samples = []
+                counts = {}
+                for row in rows:
+                    if type(row) is not dict or set(row) != {"trace_type", "frame_count", "categories"}:
+                        raise ValueError("invalid sample fields")
+                    trace_type = row["trace_type"]
+                    if type(trace_type) is not str or trace_type not in {"CPU", "Real"}:
+                        raise ValueError("invalid sample type")
+                    frame_count = int(_bounded_number(row["frame_count"], maximum=255))
+                    categories = row["categories"]
+                    if type(categories) is not list or len(categories) > min(32, frame_count):
+                        raise ValueError("invalid sample frames")
+                    if any(type(value) is not str or value not in _TRACE_CATEGORIES for value in categories):
+                        raise ValueError("invalid symbol category")
+                    samples.append(
+                        {
+                            "trace_type": trace_type,
+                            "frame_count": frame_count,
+                            "categories": categories,
+                            "symbol_status": (
+                                "observed"
+                                if any(value not in {"Other", "Unresolved"} for value in categories)
+                                else "Unavailable"
+                            ),
+                        }
+                    )
+                    counts[trace_type] = counts.get(trace_type, 0) + 1
+                return {
+                    "status": "observed",
+                    "unit": "retained_samples_not_cpu_seconds",
+                    "samples": samples,
+                    **{
+                        kind: (
+                            {"status": "observed", "sample_count": counts[kind]}
+                            if kind in counts
+                            else {"status": "NoCounter"}
+                        )
+                        for kind in ("CPU", "Real")
+                    },
+                }
+        except (Exception, asyncio.CancelledError):
+            return {"status": "Unavailable", "reason": "read_or_validation_error"}
+
+    async def _own_query_snapshot(self, query_id, deadline):
+        try:
+            async with asyncio.timeout_at(deadline):
                 response = await self._original_http_post(
                     self.base,
                     params={
@@ -668,9 +758,12 @@ class EvidenceClickHouse(ClickHouse):
                     if name in observation:
                         clocks[name] = observation[name]
                 snapshot = {"status": "not_requested"}
+                trace_snapshot = {"status": "not_requested"}
                 diagnostic_start = time.monotonic_ns()
                 if timeout:
-                    snapshot = await self._own_query_snapshot(observation["query_id"])
+                    deadline = asyncio.get_running_loop().time() + 5
+                    snapshot = await self._own_query_snapshot(observation["query_id"], deadline)
+                    trace_snapshot = await self._own_trace_snapshot(observation["query_id"], deadline)
                 with contextlib.suppress(Exception):
                     clocks = {
                         name: _bounded_number(value, maximum=86400 * 1_000_000_000)
@@ -688,6 +781,7 @@ class EvidenceClickHouse(ClickHouse):
                             "clocks": clocks,
                             "summary": observation["summary"],
                             "own_query": snapshot,
+                            "own_trace_log": trace_snapshot,
                             "diagnostic_wall_ns": _bounded_number(time.monotonic_ns() - diagnostic_start),
                         },
                         "truth-sql-native-" + observation["query_id"] + "-",

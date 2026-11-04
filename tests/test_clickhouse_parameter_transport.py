@@ -481,6 +481,12 @@ async def test_ci_native_timeout_snapshot_is_single_bounded_and_preserves_origin
         if len(calls) == 1:
             query_ids.append(request.headers["X-ClickHouse-Query-Id"])
             raise original
+        if len(calls) == 3:
+            assert request.url.params["param_observer_query_id"] == query_ids[0]
+            assert "FROM system.trace_log WHERE query_id = {observer_query_id:String}" in (
+                request.content.decode()
+            )
+            return httpx.Response(200, content=b"")
         assert len(calls) == 2
         assert "X-ClickHouse-Query-Id" not in request.headers
         assert request.url.params["param_observer_query_id"] == query_ids[0]
@@ -529,8 +535,9 @@ async def test_ci_native_timeout_snapshot_is_single_bounded_and_preserves_origin
         assert raised.value is original
         assert client._observation is None and client._evidence_query is None
         assert client.http.post == client._original_http_post
-    assert len(calls) == 2
+    assert len(calls) == 3
     (receipt,) = native_receipts(native_observer_receipts)
+    assert receipt["own_trace_log"] == {"status": "NoCounter"}
     assert receipt["outcome"] == "read_timeout"
     assert receipt["summary"] == {"status": "no_response"}
     assert "decode_start_offset_ns" not in receipt["clocks"]
@@ -601,6 +608,87 @@ async def test_native_observer_disabled_outside_exact_owned_cases(
 
 
 @pytest.mark.parametrize(
+    ("digest", "admitted"),
+    [
+        ("70dc6c3374e1fb8dac7c00d478d7bef5afe187bb35229bc5f8df4fdc08221bb5", True),
+        ("d04c31b10582cede47e47414f4fb93866ed7a541087ba872a552e11891d1eb1e", False),
+        ("23fea68086a60d64f3e9e051af50f13046e4fd0eb005f71e317a1d0461ff32a7", False),
+    ],
+)
+async def test_ci_native_baseline_digest_seam_preserves_timeout_and_private_invalid_metrics(
+    native_observer_receipts, monkeypatch, digest, admitted
+):
+    query = "SELECT 'synthetic-baseline-digest-seam'"
+    original_hash = hashlib.sha256
+
+    class QueryDigest:
+        def hexdigest(self):
+            return digest
+
+    monkeypatch.setattr(
+        truth_sql_failure_evidence.hashlib,
+        "sha256",
+        lambda value: QueryDigest() if value == query.encode() else original_hash(value),
+    )
+    original = httpx.ReadTimeout("privateBaselineCredential;privateBaselineBody")
+    calls = []
+    query_ids = []
+
+    def respond(request):
+        calls.append(request)
+        if len(calls) == 1:
+            assert ("X-ClickHouse-Query-Id" in request.headers) is admitted
+            if admitted:
+                query_ids.append(request.headers["X-ClickHouse-Query-Id"])
+            raise original
+        if len(calls) == 3:
+            assert admitted
+            assert request.url.params["param_observer_query_id"] == query_ids[0]
+            assert "FROM system.trace_log WHERE query_id = {observer_query_id:String}" in (
+                request.content.decode()
+            )
+            return httpx.Response(200, content=b"")
+        assert admitted and len(calls) == 2
+        assert request.url.params["param_observer_query_id"] == query_ids[0]
+        assert "X-ClickHouse-Query-Id" not in request.headers
+        assert "FROM system.processes WHERE query_id = {observer_query_id:String} LIMIT 1" in (
+            request.content.decode()
+        )
+        assert "system.stack_trace" not in request.content.decode()
+        return httpx.Response(
+            200,
+            json={"read_rows": True, "unknownPrivateField": "privateBaselineCredential"},
+        )
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(respond)) as http:
+        client = EvidenceClickHouse(
+            "http://localhost:8123", truth_sql_failure_evidence._LIQUIDITY_BASELINE, http=http
+        )
+        with pytest.raises(httpx.ReadTimeout) as raised:
+            await client.rows(query)
+        assert raised.value is original
+        assert client._observation is None and client._evidence_query is None
+        assert client.http.post == client._original_http_post
+    receipts = native_receipts(native_observer_receipts)
+    if admitted:
+        assert len(calls) == 3
+        (receipt,) = receipts
+        assert receipt["own_trace_log"] == {"status": "NoCounter"}
+        assert receipt["phase"] == "baseline"
+        assert receipt["query_digest"] == digest
+        assert receipt["query_id"] == query_ids[0]
+        assert receipt["outcome"] == "read_timeout"
+        assert receipt["own_query"] == {"status": "error", "exception_class": "ValueError"}
+        assert receipt["summary"] == {"status": "no_response"}
+    else:
+        assert len(calls) == 1
+        assert receipts == []
+    persisted = "".join(path.read_text() for path in native_observer_receipts.iterdir())
+    for forbidden in (query, "privateBaselineCredential", "privateBaselineBody", "unknownPrivateField"):
+        assert forbidden not in persisted
+
+
+@pytest.mark.parametrize(
     "value", [True, -1, 1.5, float("nan"), float("inf"), None, [], {}, "-1", "NaN", "1e3", 1 << 64]
 )
 def test_summary_rejects_invalid_typed_metrics(value):
@@ -618,6 +706,133 @@ def test_summary_rejects_duplicate_keys_and_ignores_unknown_keys():
     assert metrics["status"] == "observed"
     assert all(metrics[name + "_present"] == 0 for name in truth_sql_failure_evidence._SUMMARY_FIELDS)
     assert "unknownSecret" not in json.dumps(metrics)
+
+
+@pytest.mark.parametrize(
+    "scenario",
+    [
+        "samples",
+        "real_only",
+        "unsymbolized",
+        "empty",
+        "denied",
+        "missing",
+        "timeout",
+        "cancelled",
+        "boolean",
+        "unknown_category",
+        "too_many_samples",
+        "too_many_frames",
+        "unknown_type",
+        "duplicate",
+        "oversized",
+    ],
+)
+async def test_owned_trace_log_protocol_privacy_and_refusal(
+    native_observer_receipts, monkeypatch, scenario
+):
+    nodeid, query = synthetic_phase_request()
+    original = httpx.ReadTimeout("privateOriginalCredential")
+    calls = []
+    deadlines = []
+    timeout_at = asyncio.timeout_at
+
+    def bounded_timeout(deadline):
+        deadlines.append(deadline)
+        return timeout_at(deadline)
+
+    monkeypatch.setattr(truth_sql_failure_evidence.asyncio, "timeout_at", bounded_timeout)
+    sample = {"trace_type": "CPU", "frame_count": 2, "categories": ["ExpressionActions", "Other"]}
+
+    def respond(request):
+        calls.append(request)
+        if len(calls) == 1:
+            raise original
+        if len(calls) == 2:
+            assert "FROM system.processes" in request.content.decode()
+            return httpx.Response(200, content=b"")
+        assert len(calls) == 3
+        assert dict(request.url.params) == {
+            "param_observer_query_id": calls[0].headers["X-ClickHouse-Query-Id"],
+            "output_format_json_quote_64bit_integers": "0",
+        }
+        assert request.extensions["timeout"] == {"connect": 1, "read": 4, "write": 4, "pool": 4}
+        assert "X-ClickHouse-Query-Id" not in request.headers
+        assert request.headers["X-ClickHouse-User"] == "default"
+        sql = request.content.decode()
+        assert (
+            "WHERE query_id = {observer_query_id:String} AND trace_type IN ('CPU', 'Real') LIMIT 16"
+            in sql
+        )
+        assert "arraySlice(symbols, 1, 32)" in sql
+        for forbidden in ("system.stack_trace", "addressTo", "SYSTEM", "SETTINGS", "SELECT *", "lines"):
+            assert forbidden not in sql
+        if scenario in {"denied", "missing"}:
+            return httpx.Response(403 if scenario == "denied" else 404, text="privateNativeSymbol credential")
+        if scenario == "timeout":
+            raise httpx.ReadTimeout("privateTraceCredential")
+        if scenario == "cancelled":
+            raise asyncio.CancelledError("privateTraceCredential")
+        if scenario == "empty":
+            return httpx.Response(200, content=b"")
+        if scenario == "duplicate":
+            return httpx.Response(200, content=b'{"trace_type":"CPU","trace_type":"Real"}')
+        if scenario == "oversized":
+            return httpx.Response(200, content=b"privateTraceCredential" * 1000)
+        samples = [sample, {"trace_type": "Real", "frame_count": 1, "categories": ["Unresolved"]}]
+        if scenario == "real_only":
+            samples = samples[1:]
+        elif scenario == "unsymbolized":
+            samples = [{"trace_type": "CPU", "frame_count": 2, "categories": []}]
+        elif scenario == "boolean":
+            sample["frame_count"] = True
+        elif scenario == "unknown_category":
+            sample["categories"] = ["privateNativeSymbol credential"]
+        elif scenario == "too_many_samples":
+            samples = [sample] * 17
+        elif scenario == "too_many_frames":
+            sample.update(frame_count=33, categories=["Other"] * 33)
+        elif scenario == "unknown_type":
+            sample["trace_type"] = "Memory"
+        return httpx.Response(200, content="\n".join(json.dumps(row) for row in samples).encode())
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(respond)) as http:
+        client = EvidenceClickHouse("http://localhost:8123", nodeid, http=http)
+        with pytest.raises(httpx.ReadTimeout) as raised:
+            await client.rows(query)
+        assert raised.value is original
+        assert client.http.post == client._original_http_post
+        assert client._observation is None and client._evidence_query is None
+    assert len(calls) == 3
+    assert len(deadlines) == 2 and deadlines[0] == deadlines[1]
+    (receipt,) = native_receipts(native_observer_receipts)
+    trace = receipt["own_trace_log"]
+    if scenario in {"samples", "real_only", "unsymbolized"}:
+        assert trace["status"] == "observed"
+        assert trace["unit"] == "retained_samples_not_cpu_seconds"
+        assert trace["CPU"] == (
+            {"status": "NoCounter"}
+            if scenario == "real_only"
+            else {"status": "observed", "sample_count": 1}
+        )
+        assert trace["Real"] == (
+            {"status": "NoCounter"}
+            if scenario == "unsymbolized"
+            else {"status": "observed", "sample_count": 1}
+        )
+        if scenario == "samples":
+            assert trace["samples"][0] == sample | {"symbol_status": "observed"}
+        if scenario == "unsymbolized":
+            assert trace["samples"][0]["categories"] == []
+            assert trace["samples"][0]["symbol_status"] == "Unavailable"
+    elif scenario == "empty":
+        assert trace == {"status": "NoCounter"}
+    else:
+        assert trace["status"] == "Unavailable"
+        assert "samples" not in trace and "CPU" not in trace and "Real" not in trace
+    persisted = "".join(path.read_text() for path in native_observer_receipts.iterdir())
+    for forbidden in (query, "privateOriginalCredential", "privateTraceCredential", "privateNativeSymbol"):
+        assert forbidden not in persisted
 
 
 def test_parameter_string_preserves_native_escaped_spelling():
