@@ -321,7 +321,7 @@ try {
 } catch (error) {
   scenarioFailed = true;
   failure ??= { stage, reason: reason(error) };
-  console.log(JSON.stringify({ qualification: 'postgres-source-only', status: 'FAIL', ...failure }));
+  console.log('TANK_OPENMA_POSTGRES_FAILURE_V1 ' + JSON.stringify({ qualification: 'postgres-source-only', status: 'FAIL', ...failure }));
   failureReported = true;
   throw error;
 } finally {
@@ -345,11 +345,11 @@ try {
   }
   if (!scenarioFailed && cleanupError) throw cleanupError;
 }
-console.log(JSON.stringify({ qualification: 'postgres-source-only', shippingEntrypointExercised: false,
+console.log('TANK_OPENMA_POSTGRES_SUCCESS_V1 ' + JSON.stringify({ qualification: 'postgres-source-only', shippingEntrypointExercised: false,
   nativeVmExercised: false, retainedHistory: true, callbackIdempotence: true,
   executionAndResourceFences: true, settlementAndReopen: true }));
 } catch (error) {
-  if (!failureReported) console.log(JSON.stringify({ qualification: 'postgres-source-only', status: 'FAIL',
+  if (!failureReported) console.log('TANK_OPENMA_POSTGRES_FAILURE_V1 ' + JSON.stringify({ qualification: 'postgres-source-only', status: 'FAIL',
     ...(failure ?? { stage, reason: reason(error) }) }));
   throw error;
 }

@@ -126,6 +126,63 @@ for(const legacy of [false,true])test(`Managed driver reopens persisted context 
   }finally{await manager.shutdown();await rm(root,{recursive:true,force:true});}
 });
 
+for(const withResolver of [false,true])test(`Pi history preserves complete error content and legacy success (resolver=${withResolver})`,async()=>{
+  const {createModels,fauxProvider,fauxAssistantMessage}=await import(new URL('apps/agent/tests/helpers/pi-ai.mjs',openmaSource));
+  const {PiHarness}=await import(new URL('apps/agent/src/harness/pi-loop.ts',openmaSource));
+  const events=[
+    {type:'user.message',content:[{type:'text',text:'Remember these tool results'}]},
+    {type:'agent.tool_use',id:'ordinary',name:'echo',input:{value:'ok'}},
+    {type:'agent.custom_tool_use',id:'rejected-string',name:'record_event',input:{precision:'MINUTE'}},
+    {type:'agent.custom_tool_use',id:'rejected-multiline',name:'record_event',input:{precision:'SECOND'}},
+    {type:'agent.custom_tool_use',id:'rejected-single-block',name:'record_event',input:{precision:'DAY'}},
+    {type:'agent.custom_tool_use',id:'rejected-blocks',name:'record_event',input:{precision:'WEEK'}},
+    {type:'agent.tool_use',id:'legacy',name:'echo',input:{value:'legacy'}},
+    {type:'agent.tool_result',tool_use_id:'ordinary',content:'ordinary result',is_error:false},
+    {type:'agent.tool_result',tool_use_id:'rejected-string',content:'String rejection',is_error:true},
+    {type:'agent.tool_result',tool_use_id:'rejected-multiline',content:'Use HOUR\nOriginal rejection',is_error:true},
+    {type:'agent.tool_result',tool_use_id:'rejected-single-block',content:[{type:'text',text:'Single block rejection'}],is_error:true},
+    {type:'agent.tool_result',tool_use_id:'rejected-blocks',content:[
+      {type:'text',text:'Use HOUR'},
+      {type:'image',source:{type:'base64',data:'aW1hZ2U=',media_type:'image/png'}},
+      {type:'text',text:'Original details'},
+    ],is_error:true},
+    {type:'agent.tool_result',tool_use_id:'legacy',content:[{type:'text',text:'legacy result'}]},
+    {type:'user.message',content:[{type:'text',text:'continue'}]},
+  ];
+  const faux=fauxProvider({tokensPerSecond:100000}),models=createModels();models.setProvider(faux.provider);
+  let results;
+  faux.setResponses([context=>{
+    results=structuredClone(context.messages.filter(message=>message.role==='toolResult'));
+    return fauxAssistantMessage('continued');
+  }]);
+  const noop=async()=>{};
+  const ctx={
+    agent:{id:'agent-test',model:faux.getModel().id},userMessage:events.at(-1),session_id:'session-test',tools:{},model:{},
+    pi:{models,model:faux.getModel(),thinkingLevel:'off',speed:'standard'},systemPrompt:'You are concise.',env:{},
+    runtime:{
+      history:{getEvents:()=>events,getMessages:()=>[],append:event=>events.push(event)},sandbox:{},broadcast:event=>events.push(event),
+      broadcastStreamStart:noop,broadcastChunk:noop,broadcastStreamEnd:noop,
+      broadcastThinkingStart:noop,broadcastThinkingChunk:noop,broadcastThinkingEnd:noop,
+      broadcastToolInputStart:noop,broadcastToolInputChunk:noop,broadcastToolInputEnd:noop,
+      reportUsage:noop,pendingConfirmations:[],
+    },
+  };
+  if(withResolver)ctx.fileFetcher=async()=>null;
+  await new PiHarness().run(ctx);
+  assert.deepEqual(results.map(({timestamp,...result})=>{assert.equal(typeof timestamp,'number');return result;}),[
+    {role:'toolResult',toolCallId:'ordinary',toolName:'echo',content:[{type:'text',text:'ordinary result'}],isError:false},
+    {role:'toolResult',toolCallId:'rejected-string',toolName:'record_event',content:[{type:'text',text:'String rejection'}],isError:true},
+    {role:'toolResult',toolCallId:'rejected-multiline',toolName:'record_event',content:[{type:'text',text:'Use HOUR\nOriginal rejection'}],isError:true},
+    {role:'toolResult',toolCallId:'rejected-single-block',toolName:'record_event',content:[{type:'text',text:'Single block rejection'}],isError:true},
+    {role:'toolResult',toolCallId:'rejected-blocks',toolName:'record_event',content:[
+      {type:'text',text:'Use HOUR'},
+      {type:'image',data:'aW1hZ2U=',mimeType:'image/png'},
+      {type:'text',text:'Original details'},
+    ],isError:true},
+    {role:'toolResult',toolCallId:'legacy',toolName:'echo',content:[{type:'text',text:'legacy result'}],isError:false},
+  ]);
+});
+
 test('no-guest-I/O turn does not allocate a VM and cold archive does not restore one',async()=>{
   const s=fixture(),manager=s.lifecycle(),sandbox=s.sandbox(),ctx=s.context(sandbox);
   await manager.bind(ctx);await manager.idle(ctx);assert.equal(s.disks.size,0);

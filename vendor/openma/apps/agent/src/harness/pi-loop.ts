@@ -644,7 +644,7 @@ function modelMessagesToPi(
               toolCallId: part.toolCallId,
               toolName: part.toolName,
               content: toolOutputToPi(part.output),
-              isError: false,
+              isError: part.output.type === "error-text" || part.output.type === "error-json",
               timestamp,
             }]
           : [],
@@ -657,9 +657,9 @@ function modelMessagesToPi(
 function toolOutputToPi(output: unknown): Array<TextContent | ImageContent> {
   if (!output || typeof output !== "object") return valueToPiContent(output);
   const value = output as { type?: string; value?: unknown };
-  if (value.type === "text") return [{ type: "text", text: String(value.value ?? "") }];
-  if (value.type === "json") return valueToPiContent(value.value);
-  if (value.type === "content" && Array.isArray(value.value)) {
+  if (value.type === "text" || value.type === "error-text") return [{ type: "text", text: String(value.value ?? "") }];
+  if (value.type === "json" || (value.type === "error-json" && !Array.isArray(value.value))) return valueToPiContent(value.value);
+  if ((value.type === "content" || value.type === "error-json") && Array.isArray(value.value)) {
     return value.value.flatMap((part): Array<TextContent | ImageContent> => {
       if (!part || typeof part !== "object") return valueToPiContent(part);
       const item = part as Record<string, unknown>;

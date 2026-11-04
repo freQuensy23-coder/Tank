@@ -337,12 +337,12 @@ function buildMessages(
           ? (e as AgentToolResultEvent).tool_use_id
           : (e as AgentMcpToolResultEvent).mcp_tool_use_id;
         const toolName = toolNameById.get(toolCallId) ?? "unknown";
-        const output = wireContentToToolOutput((e as AgentToolResultEvent).content);
+        const output = wireContentToToolOutput(e.content, "is_error" in e && e.is_error === true);
         pendingToolContent.push({
           type: "tool-result",
           toolCallId,
           toolName,
-          output: output as any,
+          output,
         });
         break;
       }
@@ -445,12 +445,12 @@ async function buildMessagesAsync(
           ? (e as AgentToolResultEvent).tool_use_id
           : (e as AgentMcpToolResultEvent).mcp_tool_use_id;
         const toolName = toolNameById.get(toolCallId) ?? "unknown";
-        const output = wireContentToToolOutput((e as AgentToolResultEvent).content);
+        const output = wireContentToToolOutput(e.content, "is_error" in e && e.is_error === true);
         pendingToolContent.push({
           type: "tool-result",
           toolCallId,
           toolName,
-          output: output as any,
+          output,
         });
         break;
       }
@@ -575,13 +575,17 @@ function pickPreservedTail(
  */
 function wireContentToToolOutput(
   content: string | ContentBlock[],
-): { type: "text"; value: string } | { type: "content"; value: any[] } {
+  isError = false,
+): Extract<ToolModelMessage["content"][number], { type: "tool-result" }>["output"] {
   if (typeof content === "string") {
-    return { type: "text", value: content };
+    return { type: isError ? "error-text" : "text", value: content };
+  }
+  if (isError && content.length === 1 && content[0].type === "text") {
+    return { type: "error-text", value: content[0].text };
   }
   return {
-    type: "content",
-    value: content.map((b) => {
+    type: isError ? "error-json" : "content",
+    value: content.map((b): any => {
       if (b.type === "text") return { type: "text", text: b.text };
       if (b.type === "image" && b.source.type === "base64") {
         return { type: "image-data", data: b.source.data ?? "", mediaType: b.source.media_type ?? "image/png" };
