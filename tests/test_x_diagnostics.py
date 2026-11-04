@@ -1,4 +1,5 @@
 import base64
+import hashlib
 import json
 from datetime import UTC, datetime, timedelta
 from email import policy
@@ -486,6 +487,225 @@ def test_sanitization_preserves_adjacent_nonsecret_bytes(encoding, raw, expected
     assert content == prefix + expected
     assert response["bodySha256"] == sha256(prefix + expected)
     assert response["redacted"]
+
+
+@pytest.mark.parametrize("encoding", ["utf-8", "base64"])
+@pytest.mark.parametrize("scheme", ["", "Basic ", "Bearer\t", "Bearer\n"])
+@pytest.mark.parametrize("leading", ["?", "?detail=before&"])
+@pytest.mark.parametrize(
+    "key",
+    [
+        "apikey",
+        "api_key",
+        "api-key",
+        "access_token",
+        "token",
+        "password",
+        "secret",
+        "authorization",
+        "set-cookie",
+        "cookie",
+        "auth_token",
+        "ct0",
+        "AUTH_TOKEN",
+    ],
+)
+def test_unredacted_query_suffixes_are_removed_at_consumer_boundary(encoding, scheme, leading, key):
+    prefix = b"\x00\xff" if encoding == "base64" else b""
+    pieces = [f"consumer-{key}-{part}".encode() for part in ("prefix", "suffix", "tail")]
+    raw = (
+        prefix
+        + f'<a href="https://x.com/error{leading}{key}={scheme}'.encode()
+        + pieces[0]
+        + b","
+        + pieces[1]
+        + b";"
+        + pieces[2]
+        + b'&detail=after+%2C%3B">safe</a>\r\nbody'
+    )
+    expected = (
+        prefix
+        + f'<a href="https://x.com/error{leading}{key}=[REDACTED]'.encode()
+        + b'&detail=after+%2C%3B">safe</a>\r\nbody'
+    )
+    evidence = diagnostics(
+        base64.b64encode(raw).decode() if encoding == "base64" else raw.decode(), encoding=encoding
+    )
+    clean = sanitize(evidence, "unrelated-configured-token")
+    attachments = documents([{"account": "alice", "diagnostics": clean}])
+    assert [attachment["content"] for attachment in attachments[:3]] == [expected] * 3
+    assert len(attachments) == 4
+    for response in (attempt["response"] for attempt in clean["attempts"]):
+        content = (
+            base64.b64decode(response["body"]) if encoding == "base64" else response["body"].encode()
+        )
+        assert content == expected
+        assert response["bodyEncoding"] == encoding
+        assert response["bodyBytes"] == len(expected)
+        assert response["bodySha256"] == hashlib.sha256(expected).hexdigest()
+        assert response["redacted"] and not response["bodyTruncated"]
+    assert all(
+        piece not in content
+        for content in [json.dumps(clean).encode(), *(attachment["content"] for attachment in attachments)]
+        for piece in pieces
+    )
+
+
+@pytest.mark.parametrize("encoding", ["utf-8", "base64"])
+def test_query_consumer_preserves_legacy_header_delimiters(encoding):
+    prefix = b"\x00\xff" if encoding == "base64" else b""
+    raw = prefix + (
+        b"Authorization: Basic header-primary, detail=safe\n"
+        b"authorization: Basic\theader-basic; detail=safe\n"
+        b"auth_token=header-token; detail=safe\n"
+        b"ct0=header-ct0, detail=safe\nBearer standalone-bearer\nbody"
+    )
+    expected = prefix + (
+        b"Authorization: [REDACTED], detail=safe\n"
+        b"authorization: [REDACTED]; detail=safe\n"
+        b"auth_token=[REDACTED]; detail=safe\n"
+        b"ct0=[REDACTED], detail=safe\nBearer [REDACTED]\nbody"
+    )
+    clean = sanitize(
+        diagnostics(
+            base64.b64encode(raw).decode() if encoding == "base64" else raw.decode(), encoding=encoding
+        )
+    )
+    assert [row["content"] for row in documents([{"account": "alice", "diagnostics": clean}])[:3]] == [
+        expected
+    ] * 3
+
+
+@pytest.mark.parametrize("encoding", ["utf-8", "base64"])
+@pytest.mark.parametrize("leading", ["?", "?detail=before&"])
+@pytest.mark.parametrize("key", ["auth_token", "ct0", "authorization", "api_key"])
+@pytest.mark.parametrize(
+    "value,replacement,boundary",
+    [
+        (
+            "\"query-prefix,query-suffix;query-tail\"",
+            "\"[REDACTED]\"",
+            "&detail=after+%2C%3B\r\nsafe body",
+        ),
+        (
+            "'query-prefix,query-suffix;query-tail'",
+            "'[REDACTED]'",
+            "&detail=after+%2C%3B\r\nsafe body",
+        ),
+        (
+            "\"query-prefix\\\",query-suffix;query-tail\"",
+            "\"[REDACTED]\"",
+            "&detail=after+%2C%3B\r\nsafe body",
+        ),
+        (
+            "'query-prefix\\',query-suffix;query-tail'",
+            "'[REDACTED]'",
+            "&detail=after+%2C%3B\r\nsafe body",
+        ),
+        (
+            "\"query-prefix&inner=query-suffix;query-tail\"",
+            "\"[REDACTED]\"",
+            "&detail=after+%2C%3B\r\nsafe body",
+        ),
+        (
+            "Basic \"query-prefix,query-suffix;query-tail\"",
+            "\"[REDACTED]\"",
+            "&detail=after+%2C%3B\r\nsafe body",
+        ),
+        (
+            "Bearer\t'query-prefix,query-suffix;query-tail'",
+            "'[REDACTED]'",
+            "&detail=after+%2C%3B\r\nsafe body",
+        ),
+        (
+            "Bearer\n\"query-prefix,query-suffix;query-tail\"",
+            "\"[REDACTED]\"",
+            "&detail=after+%2C%3B\r\nsafe body",
+        ),
+        (
+            " \t\"query-prefix,query-suffix;query-tail\"",
+            "\"[REDACTED]\"",
+            "&detail=after+%2C%3B\r\nsafe body",
+        ),
+        (
+            "\"query-prefix,query-suffix;query-tail",
+            "\"[REDACTED]",
+            "\r\nsafe body",
+        ),
+        (
+            "\"\"",
+            "\"[REDACTED]\"",
+            "&detail=after+%2C%3B\r\nsafe body",
+        ),
+        (
+            "''",
+            "'[REDACTED]'",
+            "&detail=after+%2C%3B\r\nsafe body",
+        ),
+        (
+            "Basic \"\"",
+            "\"[REDACTED]\"",
+            "&detail=after+%2C%3B\r\nsafe body",
+        ),
+        (
+            "",
+            "[REDACTED]",
+            "&detail=after+%2C%3B\r\nsafe body",
+        ),
+        (
+            "",
+            "[REDACTED]",
+            "",
+        ),
+        (
+            "",
+            "[REDACTED]",
+            "\r\nsafe body",
+        ),
+        (
+            " \t",
+            "[REDACTED]",
+            "\r\nsafe body",
+        ),
+        (
+            "query-prefix,query-suffix;query-tail",
+            "[REDACTED]",
+            " safe body",
+        ),
+        (
+            "query-prefix,query-suffix;query-tail",
+            "[REDACTED]",
+            "<safe>\r\nsafe body",
+        ),
+    ],
+)
+def test_unredacted_query_value_grammar_is_safe_at_consumer_boundary(
+    encoding, key, leading, value, replacement, boundary
+):
+    prefix = b"\x00\xff" if encoding == "base64" else b""
+    raw = prefix + f"safe π https://x.com/error{leading}{key}={value}{boundary}".encode()
+    expected = prefix + f"safe π https://x.com/error{leading}{key}={replacement}{boundary}".encode()
+    evidence = diagnostics(
+        base64.b64encode(raw).decode() if encoding == "base64" else raw.decode(), encoding=encoding
+    )
+    clean = sanitize(evidence, "unrelated-configured-token")
+    attachments = documents([{"account": "alice", "diagnostics": clean}])
+    assert [attachment["content"] for attachment in attachments[:3]] == [expected] * 3
+    assert len(attachments) == 4
+    for response in (attempt["response"] for attempt in clean["attempts"]):
+        content = (
+            base64.b64decode(response["body"]) if encoding == "base64" else response["body"].encode()
+        )
+        assert content == expected
+        assert response["bodyEncoding"] == encoding
+        assert response["bodyBytes"] == len(expected)
+        assert response["bodySha256"] == hashlib.sha256(expected).hexdigest()
+        assert response["redacted"] and not response["bodyTruncated"]
+    assert all(
+        piece not in content
+        for content in [json.dumps(clean).encode(), *(attachment["content"] for attachment in attachments)]
+        for piece in (b"query-prefix", b"query-suffix", b"query-tail")
+    )
 
 
 @pytest.mark.parametrize("encoding", ["utf-8", "base64"])

@@ -1,4 +1,5 @@
 import asyncio
+import base64
 import gzip
 import hashlib
 import importlib
@@ -161,6 +162,79 @@ async def test_real_worker_http_errors_keep_cursors_and_send_response_documents(
     assert checkpoint["entry_errors"][0]["diagnostics"]["attemptCount"] == 3
     receipts = await repo.list("out.deliveries", filters={"status": "SENT"})
     assert len(receipts) == 5
+
+
+@pytest.mark.parametrize("credential", ["auth_token", "ct0"])
+@pytest.mark.parametrize("encoding", ["utf-8", "base64"])
+async def test_real_actor_http_redacts_query_credential_suffixes_before_consumer(
+    wire_server, credential, encoding
+):
+    origin, state = wire_server
+    raw = (
+        f"safe body prefix https://x.com/alice?{credential}="
+        "query-distinctprefix,query-distinctsuffix;query-distincttail&detail=safe\r\n"
+        f'https://x.com/alice?{credential}="'
+        'query-doubleprefix,query-doublesuffix;query-doubletail"&detail=double-safe\r\n'
+        f"https://x.com/alice?before=single-safe&{credential}='"
+        "query-singleprefix,query-singlesuffix;query-singletail'&detail=single-safe\r\n"
+        f"https://x.com/alice?{credential}=&detail=empty-safe\r\n"
+        f'https://x.com/alice?{credential}=""&detail=double-empty-safe\r\n'
+        f"https://x.com/alice?{credential}=''&detail=single-empty-safe\r\n"
+        "safe body suffix"
+    ).encode()
+    expected = (
+        f"safe body prefix https://x.com/alice?{credential}=[REDACTED]&detail=safe\r\n"
+        f'https://x.com/alice?{credential}="[REDACTED]"&detail=double-safe\r\n'
+        f"https://x.com/alice?before=single-safe&{credential}='[REDACTED]'&detail=single-safe\r\n"
+        f"https://x.com/alice?{credential}=[REDACTED]&detail=empty-safe\r\n"
+        f'https://x.com/alice?{credential}="[REDACTED]"&detail=double-empty-safe\r\n'
+        f"https://x.com/alice?{credential}='[REDACTED]'&detail=single-empty-safe\r\n"
+        "safe body suffix"
+    ).encode()
+    secret_pieces = (
+        b"query-distinctprefix",
+        b"query-distinctsuffix",
+        b"query-distincttail",
+        b"query-doubleprefix",
+        b"query-doublesuffix",
+        b"query-doubletail",
+        b"query-singleprefix",
+        b"query-singlesuffix",
+        b"query-singletail",
+    )
+    if encoding == "base64":
+        raw += b"\x00\xff"
+        expected += b"\x00\xff"
+    state["body"] = raw
+    async with httpx.AsyncClient(timeout=20) as http:
+        response = await http.post(
+            origin + "/actor", json={"handles": ["alice"], "cursors": {"alice": "90"}}
+        )
+    assert response.status_code == 201
+    output = response.json()
+    assert output["health"] == "failed" and output["posts"] == []
+    assert output["nextCursors"] == {"alice": "90"}
+    evidence = output["accounts"][0]["diagnostics"]
+    assert evidence["outcome"] == "exhausted" and evidence["attemptCount"] == 3
+    assert len(state["profile"]) == 3
+    for attempt in evidence["attempts"]:
+        captured = attempt["response"]
+        body = (
+            base64.b64decode(captured["body"], validate=True)
+            if encoding == "base64"
+            else captured["body"].encode()
+        )
+        assert body == expected
+        assert captured["bodyEncoding"] == encoding
+        assert captured["bodyBytes"] == len(expected)
+        assert captured["bodySha256"] == hashlib.sha256(expected).hexdigest()
+        assert captured["redacted"] and not captured["bodyTruncated"]
+        assert captured["status"] == 503
+        assert all(
+            piece not in body and piece not in response.content
+            for piece in secret_pieces
+        )
+    assert state["telegram"] == []
 
 
 @pytest.mark.timeout(10)

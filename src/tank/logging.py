@@ -15,8 +15,21 @@ def redact_text(value: str, secrets: tuple[str, ...] = ()) -> str:
         text = text.replace(secret, "[REDACTED]")
     text = re.sub(r"(https?://api\.telegram\.org/bot)[^/\s]+", r"\1[REDACTED]", text)
     text = re.sub(
-        r"(?i)([?&](?:api[-_]?key|access_token|token|password|secret)=)[^&\s'\"<>]*",
-        r"\1[REDACTED]",
+        r"(?i)([?&](?:api[-_]?key|access_token|token|password|secret|"
+        r"authorization|set-cookie|cookie|auth_token|ct0)=)"
+        r"[ \t]*(?:(?:Basic|Bearer)\s+)?"
+        r"(\"(?:\\[^\r\n]|[^\"\\\r\n])*\"?|'(?:\\[^\r\n]|[^'\\\r\n])*'?|"
+        r"[^&\s'\"<>]+|(?=[&\s<>]|$))",
+        lambda match: (
+            match[1]
+            + (match[2][:1] if match[2][:1] in ("\"", "'") else "")
+            + "[REDACTED]"
+            + (
+                match[2][:1]
+                if match[2][:1] in ("\"", "'") and match[2][-1:] == match[2][:1]
+                else ""
+            )
+        ),
         text,
     )
     text = re.sub(r"(?i)(Bearer\s+)[A-Za-z0-9._~+/-]+", r"\1[REDACTED]", text)

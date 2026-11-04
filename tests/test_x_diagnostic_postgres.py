@@ -103,6 +103,137 @@ async def test_jsonb_cookie_header_privacy_survives_wire_delivery_and_pool_reope
         assert await repo.list("out.deliveries", filters={"notice_id": notice["notice_id"]}) == committed
 
 
+@pytest.mark.parametrize("credential", ["auth_token", "ct0"])
+@pytest.mark.parametrize("encoding", ["utf-8", "base64"])
+async def test_jsonb_query_credentials_redact_suffixes_before_manifest_and_wire_delivery(
+    postgres_template, wire_server, credential, encoding
+):
+    raw = (
+        f"safe body prefix https://x.com/alice?{credential}="
+        "query-distinctprefix,query-distinctsuffix;query-distincttail&detail=safe\r\n"
+        f'https://x.com/alice?{credential}="'
+        'query-doubleprefix,query-doublesuffix;query-doubletail"&detail=double-safe\r\n'
+        f"https://x.com/alice?before=single-safe&{credential}='"
+        "query-singleprefix,query-singlesuffix;query-singletail'&detail=single-safe\r\n"
+        f"https://x.com/alice?{credential}=&detail=empty-safe\r\n"
+        f'https://x.com/alice?{credential}=""&detail=double-empty-safe\r\n'
+        f"https://x.com/alice?{credential}=''&detail=single-empty-safe\r\n"
+        "safe body suffix"
+    ).encode()
+    expected = (
+        f"safe body prefix https://x.com/alice?{credential}=[REDACTED]&detail=safe\r\n"
+        f'https://x.com/alice?{credential}="[REDACTED]"&detail=double-safe\r\n'
+        f"https://x.com/alice?before=single-safe&{credential}='[REDACTED]'&detail=single-safe\r\n"
+        f"https://x.com/alice?{credential}=[REDACTED]&detail=empty-safe\r\n"
+        f'https://x.com/alice?{credential}="[REDACTED]"&detail=double-empty-safe\r\n'
+        f"https://x.com/alice?{credential}='[REDACTED]'&detail=single-empty-safe\r\n"
+        "safe body suffix"
+    ).encode()
+    secret_pieces = (
+        b"query-distinctprefix",
+        b"query-distinctsuffix",
+        b"query-distincttail",
+        b"query-doubleprefix",
+        b"query-doublesuffix",
+        b"query-doubletail",
+        b"query-singleprefix",
+        b"query-singlesuffix",
+        b"query-singletail",
+    )
+    if encoding == "base64":
+        raw += b"\x00\xff"
+        expected += b"\x00\xff"
+    evidence = diagnostics(
+        base64.b64encode(raw).decode() if encoding == "base64" else raw.decode(), encoding=encoding
+    )
+    digest = hashlib.sha256(expected).hexdigest()
+    extension = "bin" if encoding == "base64" else "txt"
+    filenames = [f"x-alice-1-attempt-{index}-{digest[:12]}.{extension}" for index in range(1, 4)]
+    origin, state = wire_server
+    async with postgres_template.repository(os.environ["TANK_TEST_DATABASE_URL"]) as repo:
+        notice = await notice_for(repo, evidence)
+        saved = await repo.get("out.ops_notices", notice["notice_id"])
+        assert saved["document_manifest"][:3] == [
+            {"filename": filename, "sha256": digest, "bytes": len(expected)} for filename in filenames
+        ]
+        responses = [
+            attempt["response"] for attempt in saved["entry_errors"][0]["diagnostics"]["attempts"]
+        ]
+        for response in responses:
+            persisted_body = (
+                base64.b64decode(response["body"], validate=True)
+                if encoding == "base64"
+                else response["body"].encode()
+            )
+            assert persisted_body == expected
+            assert all(piece not in persisted_body for piece in secret_pieces)
+            assert response["bodyEncoding"] == encoding
+            assert response["bodyBytes"] == len(expected) and response["bodySha256"] == digest
+            assert response["redacted"] and not response["bodyTruncated"]
+            assert response["consumerCapturedBytes"] == len(raw)
+        payload = {"notice_id": notice["notice_id"], "channel": "telegram:ops"}
+        async with httpx.AsyncClient(transport=LoopbackTelegramTransport(origin)) as http:
+            await DeliveryService(repo, telegram_settings(), http=http).deliver(payload)
+            await repo.close()
+            await repo.open()
+            committed = await repo.list("out.deliveries", filters={"notice_id": notice["notice_id"]})
+            await DeliveryService(repo, telegram_settings(), http=http).deliver(payload)
+        assert len(state["telegram"]) == 5
+        assert state["telegram"][0][0].endswith("sendMessage")
+        assert all(path.endswith("sendDocument") for path, _, _ in state["telegram"][1:])
+        uploads = [
+            multipart(httpx.Request("POST", origin, headers=headers, content=body))
+            for _, headers, body in state["telegram"][1:]
+        ]
+        assert [upload["document"] for upload in uploads[:3]] == [
+            (filename, expected) for filename in filenames
+        ]
+        metadata = json.loads(uploads[3]["document"][1])
+        for index, attempt in enumerate(metadata["attempts"]):
+            assert attempt["response"] == {
+                **{key: value for key, value in responses[index].items() if key != "body"},
+                "bodyDocument": filenames[index],
+            }
+        assert saved["document_manifest"] == [
+            {
+                "filename": upload["document"][0],
+                "sha256": hashlib.sha256(upload["document"][1]).hexdigest(),
+                "bytes": len(upload["document"][1]),
+            }
+            for upload in uploads
+        ]
+        parents = [
+            row for row in committed if row["status"] == "SENT" and row.get("method") != "sendDocument"
+        ]
+        receipts = [
+            row for row in committed if row["status"] == "SENT" and row.get("method") == "sendDocument"
+        ]
+        assert len(parents) == 1 and len(receipts) == 4
+        assert all(row["message_ref"] and row["chat_id"] == "ops" and row["attempt"] == 1 for row in receipts)
+        assert {
+            row["filename"]: (row["document_sha256"], row["document_bytes"]) for row in receipts
+        } == {
+            item["filename"]: (item["sha256"], item["bytes"]) for item in saved["document_manifest"]
+        }
+        assert all(row["request_reply_to_message_ref"] == parents[0]["message_ref"] for row in receipts)
+        assert all(
+            json.loads(upload["reply_parameters"][1]) == {"message_id": int(parents[0]["message_ref"])}
+            for upload in uploads
+        )
+        assert all(
+            piece not in content
+            for content in [
+                json.dumps(saved).encode(),
+                json.dumps(committed).encode(),
+                *(body for _, _, body in state["telegram"]),
+                *(upload["document"][1] for upload in uploads),
+            ]
+            for piece in secret_pieces
+        )
+        assert await repo.get("out.ops_notices", notice["notice_id"]) == saved
+        assert await repo.list("out.deliveries", filters={"notice_id": notice["notice_id"]}) == committed
+
+
 async def test_jsonb_partial_retry_skips_durable_successful_documents(postgres_template):
     async with postgres_template.repository(os.environ["TANK_TEST_DATABASE_URL"]) as repo:
         notice = await notice_for(repo, diagnostics("retry body"))

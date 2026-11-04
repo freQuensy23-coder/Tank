@@ -71,6 +71,154 @@ def test_reload_preserves_old_and_new_credential_redaction():
         logger.removeHandler(handler)
 
 
+@pytest.mark.parametrize("scheme", ["", "Basic ", "Bearer\t", "Bearer\n"])
+@pytest.mark.parametrize("leading", ["?", "?detail=before&"])
+@pytest.mark.parametrize(
+    "key",
+    [
+        "apikey",
+        "api_key",
+        "api-key",
+        "access_token",
+        "token",
+        "password",
+        "secret",
+        "authorization",
+        "set-cookie",
+        "cookie",
+        "auth_token",
+        "ct0",
+        "AUTH_TOKEN",
+    ],
+)
+def test_query_redaction_removes_each_credential_piece_and_preserves_safe_neighbors(key, scheme, leading):
+    pieces = [f"logging-{key}-{part}" for part in ("prefix", "suffix", "tail")]
+    value = (
+        f'url="https://x.com/error{leading}{key}={scheme}'
+        + pieces[0]
+        + ","
+        + pieces[1]
+        + ";"
+        + pieces[2]
+        + '&detail=after+%2C%3B"\nbody'
+    )
+    safe = redact_text(value)
+    assert safe == f'url="https://x.com/error{leading}{key}=[REDACTED]&detail=after+%2C%3B"\nbody'
+    assert all(piece not in safe for piece in pieces)
+
+
+@pytest.mark.parametrize("leading", ["?", "?detail=before&"])
+@pytest.mark.parametrize("key", ["auth_token", "ct0", "authorization", "api_key"])
+@pytest.mark.parametrize(
+    "value,replacement,boundary",
+    [
+        (
+            "\"query-prefix,query-suffix;query-tail\"",
+            "\"[REDACTED]\"",
+            "&detail=after+%2C%3B\r\nsafe body",
+        ),
+        (
+            "'query-prefix,query-suffix;query-tail'",
+            "'[REDACTED]'",
+            "&detail=after+%2C%3B\r\nsafe body",
+        ),
+        (
+            "\"query-prefix\\\",query-suffix;query-tail\"",
+            "\"[REDACTED]\"",
+            "&detail=after+%2C%3B\r\nsafe body",
+        ),
+        (
+            "'query-prefix\\',query-suffix;query-tail'",
+            "'[REDACTED]'",
+            "&detail=after+%2C%3B\r\nsafe body",
+        ),
+        (
+            "\"query-prefix&inner=query-suffix;query-tail\"",
+            "\"[REDACTED]\"",
+            "&detail=after+%2C%3B\r\nsafe body",
+        ),
+        (
+            "Basic \"query-prefix,query-suffix;query-tail\"",
+            "\"[REDACTED]\"",
+            "&detail=after+%2C%3B\r\nsafe body",
+        ),
+        (
+            "Bearer\t'query-prefix,query-suffix;query-tail'",
+            "'[REDACTED]'",
+            "&detail=after+%2C%3B\r\nsafe body",
+        ),
+        (
+            "Bearer\n\"query-prefix,query-suffix;query-tail\"",
+            "\"[REDACTED]\"",
+            "&detail=after+%2C%3B\r\nsafe body",
+        ),
+        (
+            " \t\"query-prefix,query-suffix;query-tail\"",
+            "\"[REDACTED]\"",
+            "&detail=after+%2C%3B\r\nsafe body",
+        ),
+        (
+            "\"query-prefix,query-suffix;query-tail",
+            "\"[REDACTED]",
+            "\r\nsafe body",
+        ),
+        (
+            "\"\"",
+            "\"[REDACTED]\"",
+            "&detail=after+%2C%3B\r\nsafe body",
+        ),
+        (
+            "''",
+            "'[REDACTED]'",
+            "&detail=after+%2C%3B\r\nsafe body",
+        ),
+        (
+            "Basic \"\"",
+            "\"[REDACTED]\"",
+            "&detail=after+%2C%3B\r\nsafe body",
+        ),
+        (
+            "",
+            "[REDACTED]",
+            "&detail=after+%2C%3B\r\nsafe body",
+        ),
+        (
+            "",
+            "[REDACTED]",
+            "",
+        ),
+        (
+            "",
+            "[REDACTED]",
+            "\r\nsafe body",
+        ),
+        (
+            " \t",
+            "[REDACTED]",
+            "\r\nsafe body",
+        ),
+        (
+            "query-prefix,query-suffix;query-tail",
+            "[REDACTED]",
+            " safe body",
+        ),
+        (
+            "query-prefix,query-suffix;query-tail",
+            "[REDACTED]",
+            "<safe>\r\nsafe body",
+        ),
+    ],
+)
+def test_query_value_grammar_consumes_quoted_and_empty_credentials(
+    key, leading, value, replacement, boundary
+):
+    raw = f"safe π https://x.com/error{leading}{key}={value}{boundary}"
+    expected = f"safe π https://x.com/error{leading}{key}={replacement}{boundary}"
+    safe = redact_text(raw)
+    assert safe == expected
+    assert all(piece not in safe for piece in ("query-prefix", "query-suffix", "query-tail"))
+
+
 def test_foundry_and_gateway_keys_redacted_from_logs():
     configure_logging(
         Settings(foundry_api_key="fake-router-log-key", codex_gateway_key="fake-gateway-log-key")

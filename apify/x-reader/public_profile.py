@@ -61,6 +61,24 @@ def redact(value):
     for name in ("APIFY_TOKEN", "APIFY_API_TOKEN", "ACTOR_TOKEN"):
         if secret := os.environ.get(name):
             value = value.replace(secret, "[REDACTED]")
+    value = re.sub(
+        r"(?i)([?&](?:api[-_]?key|access_token|token|password|secret|"
+        r"authorization|set-cookie|cookie|auth_token|ct0)=)"
+        r"[ \t]*(?:(?:Basic|Bearer)\s+)?"
+        r"(\"(?:\\[^\r\n]|[^\"\\\r\n])*\"?|'(?:\\[^\r\n]|[^'\\\r\n])*'?|"
+        r"[^&\s'\"<>]+|(?=[&\s<>]|$))",
+        lambda match: (
+            match[1]
+            + (match[2][:1] if match[2][:1] in ("\"", "'") else "")
+            + "[REDACTED]"
+            + (
+                match[2][:1]
+                if match[2][:1] in ("\"", "'") and match[2][-1:] == match[2][:1]
+                else ""
+            )
+        ),
+        value,
+    )
     value = re.sub(r"(?i)(Bearer\s+)[A-Za-z0-9._~+/-]+", r"\1[REDACTED]", value)
     value = re.sub(
         r"(?i)((?<![A-Za-z0-9_])(?:set-cookie|cookie)[ \t]*:[ \t]*)[^\r\n]*",
