@@ -836,3 +836,290 @@ async def test_native_liquidity_absence_relational_phase_contracts(native_client
         retain_liquidity_phase(
             Path(__file__).resolve().parents[1] / ".test-results", request.node.nodeid, phase
         )
+
+
+@pytest.mark.parametrize(
+    "case",
+    [
+        "empty",
+        "all_filtered",
+        "other_token_malformed",
+        "nonspot_malformed",
+        "unused_timestamp_alternates",
+        "null_timestamp_alternates",
+        "interleaved_equal_time_duplicates",
+        "uncovered_bad_money",
+        "old_bad_precision",
+        "late_base_receipt",
+        "null_anchor",
+        "previous_half_open",
+        "unused_malformed_walk_tail",
+    ],
+)
+async def test_native_relational_root_complete_frozen_controls(native_client, original_truth, case):
+    snapshot, spot, relative = _packet()
+    end = parse_time(snapshot["cutoff"])
+    start = parse_time(snapshot["_start"])
+    if case == "empty":
+        snapshot["books"] = []
+    elif case == "all_filtered":
+        for book in snapshot["books"]:
+            book["integrity_ok"] = False
+    elif case in {"other_token_malformed", "nonspot_malformed"}:
+        book = _book("X", end)
+        book.update(exchange_ts="not-a-time", mid="NaN", exchange_ts_prec="INVALID")
+        if case == "other_token_malformed":
+            book["token_id"] = "OTHER"
+        else:
+            book["market_type"] = "PERP_LINEAR"
+        snapshot["books"].insert(0, book)
+    elif case == "unused_timestamp_alternates":
+        for book in snapshot["books"]:
+            book.update(ts="not-a-time", as_of="1e999", observed_at="invalid")
+    elif case == "null_timestamp_alternates":
+        for book in snapshot["books"]:
+            book.update(minute_start=None, open_time=None)
+    elif case == "interleaved_equal_time_duplicates":
+        b0, b1, a0, a1 = snapshot["books"]
+        last = deepcopy(b1)
+        last["depth"]["bid"]["p1"]["usd"] = "777"
+        snapshot["books"] = [b0, a0, b1, a1, deepcopy(b1), last]
+    elif case == "uncovered_bad_money":
+        snapshot["books"][1]["range_covered_pct"]["ask"] = 0
+        snapshot["books"][1]["depth"]["ask"]["p1"] = {"usd": "NaN", "native": "NaN"}
+    elif case == "old_bad_precision":
+        snapshot["books"][0]["exchange_ts_prec"] = "INVALID"
+    elif case == "late_base_receipt":
+        snapshot["assembled_at"] = snapshot["cutoff"]
+        for book in snapshot["books"]:
+            book["received_ts"] = iso(end + timedelta(days=1))
+    elif case == "null_anchor":
+        snapshot["_event_anchor"] = None
+    elif case == "previous_half_open":
+        snapshot["books"] = [
+            _book("B", start - timedelta(hours=1), bid="100", ask="200"),
+            _book("B", start - timedelta(hours=1, microseconds=1), bid="900", ask="900"),
+            _book("B", start, bid="800", ask="800"),
+            _book("B", end),
+        ]
+    elif case == "unused_malformed_walk_tail":
+        for book in snapshot["books"]:
+            book["asks"] = [["101", "1000000"], ["NaN", "invalid"]]
+    actual = await _compare(native_client, original_truth, snapshot, spot, relative)
+    if case in {"empty", "all_filtered"}:
+        assert actual["per_venue"] == []
+        assert actual["aggregate_depth_p1_usd"] is None
+        assert actual["replenishment"]["available"] is False
+    elif case == "interleaved_equal_time_duplicates":
+        assert [row["venue"] for row in actual["per_venue"]] == ["B", "A"]
+        assert Decimal(actual["per_venue"][0]["bid_depth_p1_usd"]) == Decimal("777")
+    elif case == "null_anchor":
+        assert actual["pre_event_depth_window"] == {
+            "start": None,
+            "cutoff": None,
+            "reason": "INCOMPLETE",
+        }
+    elif case == "previous_half_open":
+        assert Decimal(actual["pre_event_depth_p1_usd"]) == Decimal("300")
+    elif case == "late_base_receipt":
+        assert [row["venue"] for row in actual["per_venue"]] == ["B", "A"]
+
+
+@pytest.mark.parametrize(
+    "case", ["first_malformed", "before_integrity", "missing_time", "consumed_walk", "current_precision"]
+)
+async def test_native_relational_root_demanded_refusals(native_client, original_truth, case):
+    from decimal import InvalidOperation
+
+    snapshot, spot, relative = _packet()
+    book = snapshot["books"][1]
+    if case == "consumed_walk":
+        book["asks"] = [["invalid", "5"], ["101", "1000000"]]
+    elif case == "current_precision":
+        book["exchange_ts_prec"] = "INVALID"
+    elif case == "missing_time":
+        del book["exchange_ts"]
+    else:
+        book["minute_start"] = "not-a-time"
+        if case == "before_integrity":
+            book["integrity_ok"] = False
+    token = original_truth._PARAMETERS.set({})
+    expected_error = (
+        InvalidOperation if case == "consumed_walk" else TypeError if case == "missing_time" else ValueError
+    )
+    try:
+        with pytest.raises(expected_error):
+            original_truth.liquidity_truth(
+                deepcopy(snapshot),
+                parse_time(snapshot["_start"]),
+                parse_time(snapshot["cutoff"]),
+                deepcopy(spot),
+                deepcopy(relative),
+            )
+    finally:
+        original_truth._PARAMETERS.reset(token)
+    statement, parameters = query(snapshot, spot=spot, relative=relative)
+    refusal = (
+        "Market Truth decimal input outside native financial range"
+        if case == "consumed_walk"
+        else "Unsupported timestamp precision"
+        if case == "current_precision"
+        else "Invalid demanded observation timestamp"
+    )
+    with pytest.raises(RuntimeError, match=refusal):
+        await native_client.rows(statement, parameters)
+
+
+async def test_native_relational_root_filtered_ordinals_and_duplicate_series(
+    native_client, original_truth
+):
+    snapshot, spot, relative = _packet()
+    b0, b1, a0, a1 = snapshot["books"]
+    foreign = dict(b0, token_id="OTHER", exchange_ts="invalid")
+    snapshot["books"] = [foreign, b0, a0, b1, deepcopy(b1), a1]
+    assert original_truth._observation_time(b0) == parse_time("2026-10-16T11:15:00Z")
+    _, parameters = query(snapshot, spot=spot, relative=relative)
+    rows = await native_client.rows(
+        "WITH " + ctes() + " SELECT arraySort(x -> x.2, groupArray(tuple(venue, first_ordinal, "
+        "arrayMap(book -> tuple(lq_iso(book.1), book.2), series)))) AS value FROM lq_venue_books",
+        parameters,
+    )
+    assert rows == [
+        {
+            "value": [
+                [
+                    "B",
+                    1,
+                    [
+                        ["2026-10-16T11:15:00Z", 1],
+                        ["2026-10-16T12:00:00Z", 3],
+                        ["2026-10-16T12:00:00Z", 4],
+                    ],
+                ],
+                ["A", 2, [["2026-10-16T11:15:00Z", 2], ["2026-10-16T12:00:00Z", 5]]],
+            ]
+        }
+    ]
+
+
+@pytest.mark.parametrize(
+    ("raw", "expected"),
+    [
+        ("1792152000", "2026-10-16T12:00:00Z"),
+        ("1792152000000", "2026-10-16T12:00:00Z"),
+        ("1792152000000000", "2026-10-16T12:00:00Z"),
+        ("1.792152e9", "2026-10-16T12:00:00Z"),
+        ("1792152000.0000025", "2026-10-16T12:00:00.000002Z"),
+        ("1792152000.0000035", "2026-10-16T12:00:00.000004Z"),
+        ('"2026-10-16T14:00:00.123456+02:00"', "2026-10-16T12:00:00.123456Z"),
+        ("100000000001", "1973-03-03T09:46:40.001000Z"),
+        ("100000000000001", "1973-03-03T09:46:40.000001Z"),
+    ],
+)
+async def test_native_relational_root_exact_timestamp_primitives(native_client, raw, expected):
+    snapshot, spot, relative = _packet()
+    snapshot["books"] = []
+    _, parameters = query(snapshot, spot=spot, relative=relative)
+    parameters["root_timestamp"] = (raw, "String")
+    rows = await native_client.rows(
+        "WITH " + ctes() + " SELECT lq_iso(lq_parse({root_timestamp:String})) AS value",
+        parameters,
+    )
+    assert rows == [{"value": expected}]
+
+
+@pytest.mark.parametrize(
+    "field",
+    [
+        "minute_start",
+        "open_time",
+        "exchange_ts",
+        "ts",
+        "as_of",
+        "settlement_time",
+        "funding_time",
+        "observed_at",
+    ],
+)
+async def test_native_relational_root_first_present_timestamp(native_client, original_truth, field):
+    snapshot, spot, relative = _packet()
+    book = _book("B", parse_time(snapshot["cutoff"]))
+    fields = [
+        "minute_start",
+        "open_time",
+        "exchange_ts",
+        "ts",
+        "as_of",
+        "settlement_time",
+        "funding_time",
+        "observed_at",
+    ]
+    for name in fields:
+        book[name] = None if fields.index(name) < fields.index(field) else "not-a-time"
+    book[field] = snapshot["cutoff"]
+    snapshot["books"] = [book]
+    assert original_truth._observation_time(book) == parse_time("2026-10-16T12:00:00Z")
+    _, parameters = query(snapshot, spot=spot, relative=relative)
+    rows = await native_client.rows(
+        "WITH " + ctes() + " SELECT arrayMap(book -> tuple(lq_iso(book.1), book.2, book.4), ordered_books) AS value FROM lq_book_ordinals",
+        parameters,
+    )
+    assert rows == [{"value": [["2026-10-16T12:00:00Z", 1, "B"]]}]
+
+
+@pytest.mark.parametrize("offset_us", [-1, 0, 1])
+async def test_native_relational_root_rest_receipt_boundary(native_client, original_truth, offset_us):
+    snapshot, _, _ = _packet()
+    snapshot["assembled_at"] = snapshot["cutoff"]
+    start = parse_time(snapshot["_start"])
+    end = parse_time(snapshot["cutoff"])
+    snapshot["books"] = []
+    for seconds in (0, 450, 900):
+        stamp = start + timedelta(seconds=seconds)
+        for venue in ("A", "B"):
+            book = _book(venue, stamp)
+            book["mid"] = "100" if venue == "A" else "101"
+            book["received_ts"] = iso(end + timedelta(days=1))
+            book["second_path_confirmed"] = True
+            book["independent_rest"] = {
+                "source": "PUBLIC_REST",
+                "ts": iso(stamp),
+                "received_ts": iso(end + timedelta(microseconds=offset_us)),
+                "mid": book["mid"],
+                "spread_bps": "2",
+            }
+            snapshot["books"].append(book)
+    spot, relative, deriv = _enrichment_inputs(original_truth, snapshot)
+    config = {"book_interval_s": 450}
+    token = original_truth._PARAMETERS.set(config)
+    try:
+        expected = _original_enriched(original_truth, snapshot, spot, relative, deriv)
+    finally:
+        original_truth._PARAMETERS.reset(token)
+    statement, parameters = window_query(snapshot, config, spot=spot, relative=relative, deriv=deriv)
+    rows = await native_client.rows(statement, parameters)
+    assert len(rows) == 1
+    actual = json.loads(rows[0]["result"])
+    _assert_complete(actual, expected)
+    assert actual["fragmentation"]["price_path_validated"] is (offset_us <= 0)
+
+
+@pytest.mark.parametrize(
+    ("raw", "micros"),
+    [
+        ("100000000000", 100000000000000000),
+        ("100000000001", 100000000001000),
+        ("100000000000000", 100000000000000000),
+        ("100000000000001", 100000000000001),
+        ("-100000000001", -100000000001000),
+    ],
+)
+async def test_native_relational_root_strict_numeric_time_thresholds(native_client, raw, micros):
+    snapshot, spot, relative = _packet()
+    _, parameters = query(snapshot, spot=spot, relative=relative)
+    parameters["root_timestamp"] = (raw, "String")
+    rows = await native_client.rows(
+        "WITH " + ctes() + " SELECT toUnixTimestamp64Micro(lq_parse({root_timestamp:String})) AS value",
+        parameters,
+    )
+    assert rows == [{"value": micros}]

@@ -500,7 +500,7 @@ def _summary_metrics(response):
             "status": "observed",
             **_metric_projection(json.loads(raw, object_pairs_hook=_unique_json), _SUMMARY_FIELDS, text=True),
         }
-    except (ValueError, TypeError, OverflowError):
+    except (ValueError, TypeError, OverflowError, RecursionError):
         return {"status": "invalid"}
 
 

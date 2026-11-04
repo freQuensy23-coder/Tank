@@ -39,6 +39,90 @@ def _raw(expression):
     return f"if({expression} IN ('', 'null'), 'null', {expression})"
 
 
+def _input_ctes():
+    return r"""
+lq_input AS (
+    SELECT lq_snapshot AS input_snapshot, lq_config AS input_config,
+        lq_spot AS input_spot, lq_relative AS input_relative
+),
+lq_input_fields AS (
+    SELECT JSONExtractString(i.input_snapshot, 'token_id') AS ctx_token,
+        if(JSONExtractString(i.input_snapshot, '_primary') = '', 'W4H', JSONExtractString(i.input_snapshot, '_primary')) AS ctx_primary,
+        JSONExtractRaw(i.input_snapshot, 'cutoff') AS ctx_end_raw,
+        JSONExtractRaw(i.input_snapshot, '_start') AS ctx_private_start_raw,
+        JSONExtractRaw(i.input_snapshot, 'start') AS ctx_start_raw,
+        JSONExtractRaw(i.input_snapshot, '_event_anchor') AS ctx_anchor_raw,
+        JSONHas(i.input_snapshot, '_event_anchor') AS ctx_has_anchor,
+        JSONExtractRaw(i.input_snapshot, 'anchor', 'ts') AS ctx_event_raw,
+        JSONExtractArrayRaw(i.input_snapshot, 'books') AS ctx_all_books,
+        JSONExtractArrayRaw(i.input_snapshot, 'flow_bars') AS ctx_all_flows,
+        JSONExtractArrayRaw(i.input_spot, 'venues') AS ctx_spot_venues,
+        i.input_relative AS ctx_relative,
+        if(JSONHas(i.input_config, 'depth_band_pct'), JSONExtractRaw(i.input_config, 'depth_band_pct'), '1') AS ctx_band_raw,
+        if(JSONHas(i.input_config, 'book_interval_s'), JSONExtractRaw(i.input_config, 'book_interval_s'), '10') AS ctx_cadence_raw,
+        if(JSONHas(i.input_config, 'refill_window_s'), JSONExtractRaw(i.input_config, 'refill_window_s'), '60') AS ctx_refill_raw,
+        if(JSONHas(i.input_config, 'resilience_window_min'), JSONExtractRaw(i.input_config, 'resilience_window_min'), '15') AS ctx_resilience_raw,
+        if(JSONHas(i.input_config, 'impact_tiers_usd'), JSONExtractRaw(i.input_config, 'impact_tiers_usd'), '[100000,1000000,5000000]') AS ctx_tiers_raw
+    FROM lq_input AS i
+),
+lq_context_values AS (
+    SELECT f.*, lq_parse(f.ctx_end_raw) AS ctx_end,
+        lq_number(f.ctx_band_raw) AS ctx_band,
+        lq_number(f.ctx_cadence_raw) AS ctx_cadence,
+        lq_number(f.ctx_refill_raw) AS ctx_refill,
+        lq_number(f.ctx_resilience_raw) * 60 AS ctx_resilience,
+        arrayDistinct(arrayMap(v -> JSONExtractString(v, 'venue'), f.ctx_spot_venues)) AS ctx_eligible,
+        arrayMap(x -> lq_dec(x), JSONExtractArrayRaw(f.ctx_tiers_raw)) AS ctx_base_tiers
+    FROM lq_input_fields AS f
+),
+lq_context_start AS (
+    SELECT v.*, coalesce(lq_parse(v.ctx_private_start_raw), lq_parse(v.ctx_start_raw),
+        if(v.ctx_primary = 'EVENT', coalesce(lq_parse(v.ctx_anchor_raw), lq_parse(v.ctx_event_raw)),
+            v.ctx_end - toIntervalSecond(multiIf(v.ctx_primary = 'W15M', 900, v.ctx_primary = 'W1H', 3600,
+                v.ctx_primary = 'W24H', 86400, 14400)))) AS ctx_start,
+        multiIf(v.ctx_band = 0.5, 'p0_5', v.ctx_band = 1, 'p1', v.ctx_band = 2, 'p2', '') AS ctx_band_key
+    FROM lq_context_values AS v
+),
+lq_context AS (
+    SELECT s.ctx_token, s.ctx_primary, s.ctx_end, s.ctx_start,
+        if(s.ctx_has_anchor, lq_parse(s.ctx_anchor_raw), s.ctx_start) AS ctx_anchor,
+        s.ctx_band, s.ctx_band_key, s.ctx_band_raw, s.ctx_cadence, s.ctx_refill, s.ctx_resilience,
+        s.ctx_all_books, s.ctx_all_flows, s.ctx_eligible, s.ctx_base_tiers, s.ctx_relative,
+        arrayConcat(arrayFilter(flow -> if(lq_is_spot(flow) AND has(s.ctx_eligible, lq_venue(flow)),
+            lq_time(flow) >= s.ctx_start AND lq_time(flow) + INTERVAL 1 MINUTE <= s.ctx_end
+                AND JSONExtractRaw(flow, 'complete') = 'true', false), s.ctx_all_flows),
+            arrayFlatten(arrayMap(v -> arrayFlatten(arrayMap(segment -> arrayMap(row ->
+                JSONMergePatch(row, concat('{"minute_start":', JSONExtractRaw(row, 'start'),
+                    ',"segment_end":', JSONExtractRaw(row, 'end'), ',"venue":', toJSONString(JSONExtractString(v, 'venue')), '}')),
+                JSONExtractArrayRaw(segment, 'aggregates')), JSONExtractArrayRaw(v, 'boundary_segments'))), s.ctx_spot_venues))) AS ctx_flows
+    FROM lq_context_start AS s
+),
+lq_book_metadata AS (
+    SELECT c.*, arrayMap(book -> tuple(book, lq_venue(book), lq_is_spot(book),
+        NOT JSONHas(book, 'token_id') OR JSONExtractString(book, 'token_id') = c.ctx_token,
+        JSONExtractRaw(book, 'integrity_ok'), lq_time_raw(book)), c.ctx_all_books) AS book_metadata
+    FROM lq_context AS c
+),
+lq_book_times AS (
+    SELECT m.*, arrayMap(book -> tuple(book.1, book.2,
+        if(book.3 AND book.4, lq_required_time(book.6), CAST(NULL, 'Nullable(DateTime64(6, \'UTC\'))')),
+        book.3 AND book.4, book.5), m.book_metadata) AS book_times
+    FROM lq_book_metadata AS m
+),
+lq_book_admitted AS (
+    SELECT t.*, arrayFilter(book -> book.4 AND book.3 <= t.ctx_end AND book.5 = 'true', t.book_times) AS admitted_books
+    FROM lq_book_times AS t
+),
+lq_book_ordinals AS (
+    SELECT a.ctx_start, a.ctx_end, a.ctx_anchor, a.ctx_band, a.ctx_band_key,
+        a.ctx_cadence, a.ctx_refill, a.ctx_resilience, a.ctx_flows,
+        arrayMap((book, ordinal) -> tuple(book.3, ordinal, book.1, book.2),
+            a.admitted_books, arrayEnumerate(a.admitted_books)) AS ordered_books
+    FROM lq_book_admitted AS a
+),
+"""
+
+
 def ctes():
     per_venue = _object(
         venue=_json("venue"),
@@ -66,16 +150,16 @@ def ctes():
         venue=_json("venue"),
         ts=_json("lq_iso(lq_time(flow))"),
         replenished=_bool(
-            "if(lq_time(flow) + toIntervalMicrosecond(toInt64(lq_refill * 1000000)) "
-            "<= lq_end, notEmpty(recovery), NULL)"
+            "if(lq_time(flow) + toIntervalMicrosecond(toInt64(ctx_refill * 1000000)) "
+            "<= ctx_end, notEmpty(recovery), NULL)"
         ),
         recovery_s=_json(
             "if(notEmpty(recovery), dateDiff('microsecond', lq_time(flow), recovery[1].1) / 1000000., NULL)"
         ),
         resilient=_bool(
             "if(notEmpty(future_lows) AND isNotNull(lq_dec(JSONExtractRaw(flow, 'low'))) "
-            "AND lq_time(flow) + toIntervalMicrosecond(toInt64(lq_resilience * 1000000)) "
-            "<= lq_end, arrayMin(future_lows) >= lq_dec(JSONExtractRaw(flow, 'low')), NULL)"
+            "AND lq_time(flow) + toIntervalMicrosecond(toInt64(ctx_resilience * 1000000)) "
+            "<= ctx_end, arrayMin(future_lows) >= lq_dec(JSONExtractRaw(flow, 'low')), NULL)"
         ),
     )
     return (
@@ -112,10 +196,13 @@ toDecimal256(1, 24) AS lq_one,
         abs(number) > toDecimal256('100000000000', 24), number * 1000,
         number * 1000000), 0)), 'UTC'), [lq_timestamp_number(x)])[1],
     parseDateTime64BestEffortOrNull(lq_text(x), 6, 'UTC'))) AS lq_parse,
-(x -> coalesce(lq_parse(JSONExtractRaw(x, 'minute_start')), lq_parse(JSONExtractRaw(x, 'open_time')),
-    lq_parse(JSONExtractRaw(x, 'exchange_ts')), lq_parse(JSONExtractRaw(x, 'ts')),
-    lq_parse(JSONExtractRaw(x, 'as_of')), lq_parse(JSONExtractRaw(x, 'settlement_time')),
-    lq_parse(JSONExtractRaw(x, 'funding_time')), lq_parse(JSONExtractRaw(x, 'observed_at')))) AS lq_time,
+(x -> arrayFirst(raw -> raw NOT IN ('', 'null'), [
+    JSONExtractRaw(x, 'minute_start'), JSONExtractRaw(x, 'open_time'),
+    JSONExtractRaw(x, 'exchange_ts'), JSONExtractRaw(x, 'ts'), JSONExtractRaw(x, 'as_of'),
+    JSONExtractRaw(x, 'settlement_time'), JSONExtractRaw(x, 'funding_time'), JSONExtractRaw(x, 'observed_at')])) AS lq_time_raw,
+(raw -> arrayMap(parsed -> if(throwIf(isNull(parsed), 'Invalid demanded observation timestamp') = 0,
+    parsed, CAST(NULL, 'Nullable(DateTime64(6, \'UTC\'))')), [lq_parse(raw)])[1]) AS lq_required_time,
+(x -> if(lq_time_raw(x) = '', CAST(NULL, 'Nullable(DateTime64(6, \'UTC\'))'), lq_required_time(lq_time_raw(x)))) AS lq_time,
 (x -> if(isNull(x), CAST(NULL, 'Nullable(String)'),
     concat(formatDateTime(x, '%Y-%m-%dT%H:%i:%S', 'UTC'),
         if(positiveModulo(toUnixTimestamp64Micro(x), 1000000) = 0, '', concat('.', leftPad(toString(positiveModulo(toUnixTimestamp64Micro(x), 1000000)), 6, '0'))), 'Z'))) AS lq_iso,
@@ -133,10 +220,11 @@ multiIf(lq_band = 0.5, 'p0_5', lq_band = 1, 'p1', lq_band = 2, 'p2', '') AS lq_b
 lq_number(lq_parameter('book_interval_s', '10')) AS lq_cadence,
 lq_number(lq_parameter('refill_window_s', '60')) AS lq_refill,
 lq_number(lq_parameter('resilience_window_min', '15')) * 60 AS lq_resilience,
-((book, side, unit) -> if(
+((book, side, unit, band, band_key) -> if(
     if(JSONType(JSONExtractRaw(book, 'range_covered_pct')) = 'Object',
-        lq_number(JSONExtractRaw(book, 'range_covered_pct', side)), lq_number(JSONExtractRaw(book, 'range_covered_pct'))) >= lq_band,
-    lq_dec(JSONExtractRaw(book, 'depth', side, lq_band_key, unit)), NULL)) AS lq_depth,
+        lq_number(JSONExtractRaw(book, 'range_covered_pct', side)), lq_number(JSONExtractRaw(book, 'range_covered_pct'))) >= band,
+    lq_dec(JSONExtractRaw(book, 'depth', side, band_key, unit)), NULL)) AS lq_depth_context,
+((book, side, unit) -> lq_depth_context(book, side, unit, lq_band, lq_band_key)) AS lq_depth,
 (values -> if(notEmpty(values) AND arrayAll(x -> isNotNull(x), values),
     arraySum(arrayMap(x -> ifNull(x, lq_zero), values)), CAST(NULL, 'Nullable(Decimal256(24))'))) AS lq_sum,
 (values -> divideDecimal(lq_sum(values), toDecimal256(greatest(length(values), 1), 24), 24)) AS lq_mean,
@@ -185,36 +273,43 @@ arrayConcat(arrayFilter(flow -> lq_is_spot(flow) AND has(lq_eligible, lq_venue(f
             ',"segment_end":', JSONExtractRaw(row, 'end'), ',"venue":', toJSONString(JSONExtractString(v, 'venue')), '}')),
         JSONExtractArrayRaw(segment, 'aggregates')), JSONExtractArrayRaw(v, 'boundary_segments'))), JSONExtractArrayRaw(lq_spot, 'venues')))) AS lq_flows,
 arrayMap(x -> lq_dec(x), JSONExtractArrayRaw(lq_parameter('impact_tiers_usd', '[100000,1000000,5000000]'))) AS lq_base_tiers,
+"""
+        + _input_ctes()
+        + r"""
 lq_volume_population AS (
-    SELECT arrayFilter(flow -> lq_is_spot(flow) AND lq_time(flow) >= lq_end - INTERVAL 1 DAY AND lq_time(flow) < lq_end, lq_all_flows) AS lq_volume_flows
+    SELECT c.ctx_eligible, c.ctx_base_tiers,
+        arrayFilter(flow -> if(lq_is_spot(flow), lq_time(flow) >= c.ctx_end - INTERVAL 1 DAY
+            AND lq_time(flow) < c.ctx_end, false), c.ctx_all_flows) AS lq_volume_flows
+    FROM lq_context AS c
 ),
 lq_volume_bucket_keys AS (
-    SELECT *, arrayDistinct(arrayMap(flow -> intDiv(toUnixTimestamp(lq_time(flow)), 900), lq_volume_flows)) AS lq_buckets
-    FROM lq_volume_population
+    SELECT p.*, arrayDistinct(arrayMap(flow -> intDiv(toUnixTimestamp(lq_time(flow)), 900), p.lq_volume_flows)) AS lq_buckets
+    FROM lq_volume_population AS p
 ),
 lq_volume_bucket_groups AS (
-    SELECT arrayMap(bucket -> arrayFilter(flow -> has(lq_eligible, lq_venue(flow)) AND intDiv(toUnixTimestamp(lq_time(flow)), 900) = bucket, lq_volume_flows), lq_buckets) AS lq_bucket_rows
-    FROM lq_volume_bucket_keys
+    SELECT k.ctx_eligible, k.ctx_base_tiers,
+        arrayMap(bucket -> arrayFilter(flow -> has(k.ctx_eligible, lq_venue(flow)) AND intDiv(toUnixTimestamp(lq_time(flow)), 900) = bucket, k.lq_volume_flows), k.lq_buckets) AS lq_bucket_rows
+    FROM lq_volume_bucket_keys AS k
 ),
 lq_volume_coverage AS (
-    SELECT arrayFilter(rows -> notEmpty(lq_eligible) AND arrayAll(row -> JSONExtractRaw(row, 'complete') = 'true', rows)
-        AND arrayAll(venue -> length(arrayDistinct(arrayMap(row -> lq_time(row), arrayFilter(row -> lq_venue(row) = venue, rows)))) = 15, lq_eligible)
+    SELECT g.ctx_base_tiers, arrayFilter(rows -> notEmpty(g.ctx_eligible) AND arrayAll(row -> JSONExtractRaw(row, 'complete') = 'true', rows)
+        AND arrayAll(venue -> length(arrayDistinct(arrayMap(row -> lq_time(row), arrayFilter(row -> lq_venue(row) = venue, rows)))) = 15, g.ctx_eligible)
         AND isNotNull(lq_sum(arrayMap(row -> lq_dec(JSONExtractRaw(row, 'buy_notional')), rows)))
-        AND isNotNull(lq_sum(arrayMap(row -> lq_dec(JSONExtractRaw(row, 'sell_notional')), rows))), lq_bucket_rows) AS lq_covered_buckets
-    FROM lq_volume_bucket_groups
+        AND isNotNull(lq_sum(arrayMap(row -> lq_dec(JSONExtractRaw(row, 'sell_notional')), rows))), g.lq_bucket_rows) AS lq_covered_buckets
+    FROM lq_volume_bucket_groups AS g
 ),
 lq_volume_totals AS (
-    SELECT arrayMap(rows -> lq_sum(arrayMap(row -> lq_dec(JSONExtractRaw(row, 'buy_notional')), rows))
-        + lq_sum(arrayMap(row -> lq_dec(JSONExtractRaw(row, 'sell_notional')), rows)), lq_covered_buckets) AS lq_volumes
-    FROM lq_volume_coverage
+    SELECT c.ctx_base_tiers, arrayMap(rows -> lq_sum(arrayMap(row -> lq_dec(JSONExtractRaw(row, 'buy_notional')), rows))
+        + lq_sum(arrayMap(row -> lq_dec(JSONExtractRaw(row, 'sell_notional')), rows)), c.lq_covered_buckets) AS lq_volumes
+    FROM lq_volume_coverage AS c
 ),
 lq_volume_average AS (
-    SELECT lq_mean(lq_volumes) AS lq_volume_mean FROM lq_volume_totals
+    SELECT t.ctx_base_tiers, lq_mean(t.lq_volumes) AS lq_volume_mean FROM lq_volume_totals AS t
 ),
 lq_tier_values AS (
-    SELECT arrayMap(n -> if(lq_volume_mean >= lq_base_tiers[3], n,
-        divideDecimal(multiplyDecimal(n, lq_volume_mean, 24), nullIf(lq_base_tiers[3], lq_zero), 24)), lq_base_tiers) AS lq_tiers
-    FROM lq_volume_average
+    SELECT arrayMap(n -> if(a.lq_volume_mean >= a.ctx_base_tiers[3], n,
+        divideDecimal(multiplyDecimal(n, a.lq_volume_mean, 24), nullIf(a.ctx_base_tiers[3], lq_zero), 24)), a.ctx_base_tiers) AS lq_tiers
+    FROM lq_volume_average AS a
 ),
 (level -> if(JSONType(level) = 'Object', lq_dec(JSONExtractRaw(level, 'price')), lq_dec(JSONExtractRaw(level, 1)))) AS lq_level_price,
 (level -> if(JSONType(level) = 'Object', lq_dec(JSONExtractRaw(level, 'qty')), lq_dec(JSONExtractRaw(level, 2)))) AS lq_level_qty,
@@ -239,31 +334,46 @@ lq_tier_values AS (
             nullIf(lq_dec(JSONExtractRaw(book, 'mid')), lq_zero), 24) - lq_one) * 10000), CAST(NULL, 'Nullable(Float64)')),
         [lq_fill(book, n, side)])[1], CAST(NULL, 'Nullable(Float64)'))) AS lq_walk_book,
 lq_venue_books AS (
-    SELECT lq_venue(book) AS venue, min(ordinal) AS first_ordinal,
-        arraySort(x -> tuple(x.1, x.2), groupArray(tuple(lq_time(book), ordinal, book))) AS series
-    FROM (SELECT arrayJoin(arrayZip(lq_books, arrayEnumerate(lq_books))) AS item, item.1 AS book, item.2 AS ordinal)
+    SELECT item.4 AS venue, min(item.2) AS first_ordinal,
+        arraySort(x -> tuple(x.1, x.2), groupArray(tuple(item.1, item.2, item.3))) AS series,
+        any(tuple(o.ctx_start, o.ctx_end, o.ctx_anchor, o.ctx_band, o.ctx_band_key,
+            o.ctx_cadence, o.ctx_refill, o.ctx_resilience, o.ctx_flows)) AS venue_context
+    FROM lq_book_ordinals AS o ARRAY JOIN o.ordered_books AS item
     GROUP BY venue
 ),
+lq_venue_context AS (
+    SELECT b.venue, b.first_ordinal, b.series,
+        b.venue_context.1 AS ctx_start, b.venue_context.2 AS ctx_end, b.venue_context.3 AS ctx_anchor,
+        b.venue_context.4 AS ctx_band, b.venue_context.5 AS ctx_band_key,
+        b.venue_context.6 AS ctx_cadence, b.venue_context.7 AS ctx_refill,
+        b.venue_context.8 AS ctx_resilience, b.venue_context.9 AS ctx_flows
+    FROM lq_venue_books AS b
+),
 lq_venue_base AS (
-    SELECT *, series[-1] AS current,
-        arrayFilter(book -> book.1 >= lq_anchor - INTERVAL 1 HOUR AND book.1 < lq_anchor, series) AS previous,
-        arrayFilter(flow -> lq_venue(flow) = venue, lq_flows) AS venue_flows
-    FROM lq_venue_books
+    SELECT v.*, v.series[-1] AS current,
+        arrayFilter(book -> book.1 >= v.ctx_anchor - INTERVAL 1 HOUR AND book.1 < v.ctx_anchor, v.series) AS previous,
+        arrayFilter(flow -> lq_venue(flow) = v.venue, v.ctx_flows) AS venue_flows
+    FROM lq_venue_context AS v
+),
+lq_venue_depth AS (
+    SELECT b.*, lq_depth_context(b.current.3, 'bid', 'usd', b.ctx_band, b.ctx_band_key) AS bid,
+        lq_depth_context(b.current.3, 'ask', 'usd', b.ctx_band, b.ctx_band_key) AS ask,
+        lq_depth_context(b.current.3, 'bid', 'native', b.ctx_band, b.ctx_band_key) AS bid_native,
+        lq_depth_context(b.current.3, 'ask', 'native', b.ctx_band, b.ctx_band_key) AS ask_native,
+        lq_mean(arrayFilter(x -> isNotNull(x), arrayMap(book -> lq_depth_context(book.3, 'bid', 'usd', b.ctx_band, b.ctx_band_key), b.previous))) AS pre_bid,
+        lq_mean(arrayFilter(x -> isNotNull(x), arrayMap(book -> lq_depth_context(book.3, 'ask', 'usd', b.ctx_band, b.ctx_band_key), b.previous))) AS pre_ask,
+        lq_mean(arrayMap(book -> lq_depth_context(book.3, 'bid', 'native', b.ctx_band, b.ctx_band_key), b.previous)) AS pre_bid_native,
+        lq_mean(arrayMap(book -> lq_depth_context(book.3, 'ask', 'native', b.ctx_band, b.ctx_band_key), b.previous)) AS pre_ask_native,
+        lq_mean(arrayFilter(x -> isNotNull(x), arrayMap(book -> lq_depth_context(book.3, 'bid', 'usd', b.ctx_band, b.ctx_band_key)
+            + lq_depth_context(book.3, 'ask', 'usd', b.ctx_band, b.ctx_band_key), b.previous))) AS pre_total,
+        lq_number(JSONExtractRaw(b.current.3, 'spread_bps')) AS spread,
+        lq_float_mean(arrayFilter(x -> isNotNull(x), arrayMap(book -> lq_number(JSONExtractRaw(book.3, 'spread_bps')), b.previous))) AS pre_spread,
+        lq_mean(arrayFilter(x -> isNotNull(x), arrayMap(book -> lq_depth_context(book.3, 'bid', 'usd', b.ctx_band, b.ctx_band_key), arrayFilter(book -> book.1 >= b.ctx_start, b.series)))) AS avg_bid,
+        lq_mean(arrayFilter(x -> isNotNull(x), arrayMap(book -> lq_depth_context(book.3, 'ask', 'usd', b.ctx_band, b.ctx_band_key), arrayFilter(book -> book.1 >= b.ctx_start, b.series)))) AS avg_ask
+    FROM lq_venue_base AS b
 ),
 lq_venue_stats AS (
-    SELECT *, lq_depth(current.3, 'bid', 'usd') AS bid, lq_depth(current.3, 'ask', 'usd') AS ask,
-        lq_depth(current.3, 'bid', 'native') AS bid_native, lq_depth(current.3, 'ask', 'native') AS ask_native,
-        lq_mean(arrayFilter(x -> isNotNull(x), arrayMap(book -> lq_depth(book.3, 'bid', 'usd'), previous))) AS pre_bid,
-        lq_mean(arrayFilter(x -> isNotNull(x), arrayMap(book -> lq_depth(book.3, 'ask', 'usd'), previous))) AS pre_ask,
-        lq_mean(arrayMap(book -> lq_depth(book.3, 'bid', 'native'), previous)) AS pre_bid_native,
-        lq_mean(arrayMap(book -> lq_depth(book.3, 'ask', 'native'), previous)) AS pre_ask_native,
-        bid + ask AS current_total,
-        lq_mean(arrayFilter(x -> isNotNull(x), arrayMap(book -> lq_depth(book.3, 'bid', 'usd') + lq_depth(book.3, 'ask', 'usd'), previous))) AS pre_total,
-        lq_number(JSONExtractRaw(current.3, 'spread_bps')) AS spread,
-        lq_float_mean(arrayFilter(x -> isNotNull(x), arrayMap(book -> lq_number(JSONExtractRaw(book.3, 'spread_bps')), previous))) AS pre_spread,
-        lq_mean(arrayFilter(x -> isNotNull(x), arrayMap(book -> lq_depth(book.3, 'bid', 'usd'), arrayFilter(book -> book.1 >= lq_start, series)))) AS avg_bid,
-        lq_mean(arrayFilter(x -> isNotNull(x), arrayMap(book -> lq_depth(book.3, 'ask', 'usd'), arrayFilter(book -> book.1 >= lq_start, series)))) AS avg_ask
-    FROM lq_venue_base
+    SELECT d.*, d.bid + d.ask AS current_total FROM lq_venue_depth AS d
 ),
 """
         + f"""
@@ -271,24 +381,25 @@ lq_venues AS (
     SELECT *, {per_venue} AS venue_json FROM lq_venue_stats CROSS JOIN lq_tier_values
 ),
 lq_burst_base AS (
-    SELECT *, arrayFilter(book -> book.1 < lq_time(flow) AND dateDiff('microsecond', book.1, lq_time(flow)) <= lq_cadence * 1000000, series) AS baselines
-    FROM lq_venue_base ARRAY JOIN venue_flows AS flow
+    SELECT b.*, flow, arrayFilter(book -> book.1 < lq_time(flow) AND dateDiff('microsecond', book.1, lq_time(flow)) <= b.ctx_cadence * 1000000, b.series) AS baselines
+    FROM lq_venue_base AS b ARRAY JOIN b.venue_flows AS flow
 ),
 lq_burst_selected AS (
-    SELECT *, baselines[-1] AS baseline
-    FROM lq_burst_base WHERE notEmpty(baselines)
+    SELECT b.*, b.baselines[-1] AS baseline
+    FROM lq_burst_base AS b WHERE notEmpty(b.baselines)
         AND isNotNull(lq_dec(JSONExtractRaw(flow, 'sell_notional')))
         AND isNotNull(lq_dec(JSONExtractRaw(flow, 'buy_notional')))
-        AND lq_dec(JSONExtractRaw(flow, 'sell_notional')) - lq_dec(JSONExtractRaw(flow, 'buy_notional')) >= lq_depth(baseline.3, 'bid', 'usd')
+        AND lq_dec(JSONExtractRaw(flow, 'sell_notional')) - lq_dec(JSONExtractRaw(flow, 'buy_notional')) >= lq_depth_context(b.baselines[-1].3, 'bid', 'usd', b.ctx_band, b.ctx_band_key)
 ),
 lq_burst_recovery AS (
-    SELECT *, arrayFilter(book -> book.1 > lq_time(flow)
-        AND book.1 <= least(lq_time(flow) + toIntervalMicrosecond(toInt64(lq_refill * 1000000)), lq_end)
-        AND lq_depth(book.3, 'bid', 'usd') >= lq_depth(baseline.3, 'bid', 'usd'), series) AS recovery,
+    SELECT b.*, arrayFilter(book -> book.1 > lq_time(b.flow)
+        AND book.1 <= least(lq_time(b.flow) + toIntervalMicrosecond(toInt64(b.ctx_refill * 1000000)), b.ctx_end)
+        AND lq_depth_context(book.3, 'bid', 'usd', b.ctx_band, b.ctx_band_key)
+            >= lq_depth_context(b.baseline.3, 'bid', 'usd', b.ctx_band, b.ctx_band_key), b.series) AS recovery,
         arrayFilter(x -> isNotNull(x), arrayMap(row -> lq_dec(JSONExtractRaw(row, 'low')),
-            arrayFilter(row -> lq_time(row) > lq_time(flow)
-                AND lq_time(row) <= lq_time(flow) + toIntervalMicrosecond(toInt64(lq_resilience * 1000000)), venue_flows))) AS future_lows
-    FROM lq_burst_selected
+            arrayFilter(row -> lq_time(row) > lq_time(b.flow)
+                AND lq_time(row) <= lq_time(b.flow) + toIntervalMicrosecond(toInt64(b.ctx_resilience * 1000000)), b.venue_flows))) AS future_lows
+    FROM lq_burst_selected AS b
 ),
 lq_burst_results AS (
     SELECT first_ordinal, indexOf(venue_flows, flow) AS flow_ordinal, {observation} AS observation
@@ -331,13 +442,14 @@ def _state_ctes():
     lq_lower_bound(side, 0, 0) >= lq_tiers[2], false, CAST(NULL, 'Nullable(Bool)'))) AS lq_thin_side,
 lq_state_inputs AS (
     SELECT venues AS lq_venues_array, observations AS lq_observations, lq_tiers,
-        lq_sum(arrayMap(flow -> lq_dec(JSONExtractRaw(flow, 'buy_notional')), lq_flows))
-            - lq_sum(arrayMap(flow -> lq_dec(JSONExtractRaw(flow, 'sell_notional')), lq_flows)) AS lq_net_usd,
-        lq_sum(arrayMap(flow -> lq_dec(JSONExtractRaw(flow, 'buy_qty')), lq_flows))
-            - lq_sum(arrayMap(flow -> lq_dec(JSONExtractRaw(flow, 'sell_qty')), lq_flows)) AS lq_net_native,
-        JSONExtractRaw(lq_relative, 'windows', lq_primary) AS lq_relative_window,
-        notEmpty(lq_books) AND notEmpty(lq_flows) AS lq_replenishment_available
-    FROM lq_collected CROSS JOIN lq_observed CROSS JOIN lq_tier_values
+        c.ctx_anchor, c.ctx_band, c.ctx_band_raw, c.ctx_start, c.ctx_end, c.ctx_primary,
+        lq_sum(arrayMap(flow -> lq_dec(JSONExtractRaw(flow, 'buy_notional')), c.ctx_flows))
+            - lq_sum(arrayMap(flow -> lq_dec(JSONExtractRaw(flow, 'sell_notional')), c.ctx_flows)) AS lq_net_usd,
+        lq_sum(arrayMap(flow -> lq_dec(JSONExtractRaw(flow, 'buy_qty')), c.ctx_flows))
+            - lq_sum(arrayMap(flow -> lq_dec(JSONExtractRaw(flow, 'sell_qty')), c.ctx_flows)) AS lq_net_native,
+        JSONExtractRaw(c.ctx_relative, 'windows', c.ctx_primary) AS lq_relative_window,
+        notEmpty(venues) AND notEmpty(c.ctx_flows) AS lq_replenishment_available
+    FROM lq_collected CROSS JOIN lq_observed CROSS JOIN lq_tier_values CROSS JOIN lq_context AS c
 ),
 lq_state_flow AS (
     SELECT *, if(isNotNull(lq_net_native), lq_net_native, lq_net_usd) AS lq_net,
@@ -350,7 +462,7 @@ lq_state_flow AS (
 lq_state_direction AS (
     SELECT *, multiIf(lq_net > 0, 'ask', lq_net < 0, 'bid', CAST(NULL, 'Nullable(String)')) AS lq_hit,
         if(lq_net != 0 AND isNotNull(lq_raw_return),
-            if(lq_net > 0, lq_raw_return, -lq_raw_return) < lq_band / 100, CAST(NULL, 'Nullable(Bool)')) AS lq_small_price
+            if(lq_net > 0, lq_raw_return, -lq_raw_return) < ctx_band / 100, CAST(NULL, 'Nullable(Bool)')) AS lq_small_price
     FROM lq_state_flow
 ),
 lq_state_depth AS (
@@ -429,19 +541,19 @@ def _base_fields():
         avg_hit_side_depth_p1_usd=_money("lq_average_hit"),
     )
     pre_window = _object(
-        start=_json("lq_iso(lq_anchor - INTERVAL 1 HOUR)"),
-        cutoff=_json("lq_iso(lq_anchor)"),
+        start=_json("lq_iso(ctx_anchor - INTERVAL 1 HOUR)"),
+        cutoff=_json("lq_iso(ctx_anchor)"),
         anchor_type="'\"EVENT\"'",
     )
     absent_window = _object(start="'null'", cutoff="'null'", reason="'\"INCOMPLETE\"'")
     return dict(
-        depth_measurement_band_pct="lq_parameter('depth_band_pct', '1')",
+        depth_measurement_band_pct="ctx_band_raw",
         per_venue=("concat('[', arrayStringConcat(arrayMap(v -> v.16, lq_venues_array), ','), ']')"),
         aggregate_depth_p1_usd=_money("lq_sum(arrayMap(v -> v.10, lq_venues_array))"),
         aggregate_bid_depth_p1_usd=_money("lq_total('bid', 0)"),
         aggregate_ask_depth_p1_usd=_money("lq_total('ask', 0)"),
         pre_event_depth_p1_usd=_money("lq_sum(arrayMap(v -> v.11, lq_venues_array))"),
-        pre_event_depth_window=f"if(isNotNull(lq_anchor), {pre_window}, {absent_window})",
+        pre_event_depth_window=f"if(isNotNull(ctx_anchor), {pre_window}, {absent_window})",
         pre_event_side_depth_p1_usd=_object(
             bid=_money("lq_total('bid', 1)"), ask=_money("lq_total('ask', 1)")
         ),

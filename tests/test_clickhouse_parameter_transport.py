@@ -854,3 +854,40 @@ async def test_real_native_large_multipart_values(request):
             for key in ("ascii", "unicode", "empty")
         },
     )
+
+
+@pytest.mark.parametrize("status", [200, 500])
+async def test_ci_native_deep_summary_preserves_original_response(native_observer_receipts, status):
+    nodeid, query = synthetic_phase_request()
+    summary = '{"unknownSecretName":' + "[" * 2000 + '"credentialPrefix;credentialSuffix"' + "]" * 2000 + "}"
+    assert len(summary) < 16384
+    calls = []
+
+    def respond(request):
+        calls.append(request)
+        return httpx.Response(
+            status,
+            content=b'{"value":7}\n' if status == 200 else b"owned failure body",
+            headers={"X-ClickHouse-Summary": summary},
+        )
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(respond)) as http:
+        client = EvidenceClickHouse("http://localhost:8123", nodeid, http=http)
+        if status == 200:
+            assert await client.rows(query) == [{"value": 7}]
+        else:
+            with pytest.raises(RuntimeError) as caught:
+                await client.rows(query)
+            assert type(caught.value) is RuntimeError
+            assert str(caught.value) == "ClickHouse 500: owned failure body"
+        assert client.http.post == client._original_http_post
+        assert client._observation is None
+        assert client._evidence_query is None
+    receipts = native_receipts(native_observer_receipts)
+    assert len(calls) == len(receipts) == 1
+    assert receipts[0]["summary"] == {"status": "invalid"}
+    assert receipts[0]["outcome"] == ("decoded" if status == 200 else "exception")
+    assert receipts[0]["own_query"] == {"status": "not_requested"}
+    persisted = "".join(path.read_text() for path in native_observer_receipts.iterdir())
+    for forbidden in ("unknownSecretName", "credentialPrefix", "credentialSuffix", summary, query):
+        assert forbidden not in persisted
