@@ -5723,6 +5723,7 @@ class MarketTruthService:
         self.repo, self.settings, self.market = repo, settings, market
         self._condition_cache = {}
         self._condition_baselines = {}
+        self._condition_lock = asyncio.Lock()
 
         self._assessment_locks = {}
 
@@ -5764,14 +5765,12 @@ class MarketTruthService:
         config = dict(
             config, config_version=self.settings.config_version, code_version=self.settings.code_version
         )
-        return await asyncio.to_thread(
-            compute_condition_values,
-            snapshot,
-            requirements,
-            config=config,
-            cache=self._condition_cache,
-            baseline_cache=self._condition_baselines,
-        )
+        from tank.analysis import truth_sql_engine
+
+        async with self._condition_lock:
+            return await truth_sql_engine.evaluate_conditions(
+                getattr(self.repo, "clickhouse", None), snapshot, requirements, config, cache=self._condition_cache
+            )
 
     async def assess(self, event_id, token_id, cutoff=None):
         event = await self.repo.get("evt.events", event_id) if event_id else None
@@ -5805,9 +5804,9 @@ class MarketTruthService:
         self._release_idle_assessment_baselines()
         lock = self._assessment_locks.setdefault(token_id, asyncio.Lock())
         async with lock:
-            result = await compute_workers.compute_market_truth(
-                compute_workers.ASSESSMENT, snapshot, config=knobs, baseline_key=token_id
-            )
+            from tank.analysis import truth_sql_engine
+
+            result = await truth_sql_engine.evaluate(getattr(self.repo, "clickhouse", None), snapshot, knobs)
         result["mta_id"] = new_id("MTA")
         await self.repo.put("ana.market_truth", result["mta_id"], result, immutable=True)
         return result
