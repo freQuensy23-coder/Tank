@@ -347,7 +347,16 @@ def test_array_aggregation_diagnostic_keeps_only_static_native_scope_functions(t
 
 @pytest.mark.parametrize(
     "phase",
-    ["tier_values", "venue_depth", "venue_precision", "venue_walk_t1", "venue_walk_t2", "venue_walk_t3"],
+    [
+        "tier_values",
+        "book_ordinals",
+        "venue_books",
+        "venue_depth",
+        "venue_precision",
+        "venue_walk_t1",
+        "venue_walk_t2",
+        "venue_walk_t3",
+    ],
 )
 def test_liquidity_phase_receipts_are_bounded_and_reject_unknown_labels(tmp_path, phase):
     directory = tmp_path / "evidence"
@@ -402,15 +411,22 @@ def native_receipts(directory):
     return [json.loads(path.read_text()) for path in directory.glob("truth-sql-native-*.json")]
 
 
-@pytest.mark.parametrize("index", [1, 2, 3])
+@pytest.mark.parametrize("index", [1, 2, 3, "book_ordinals", "venue_books"])
 def test_ci_native_observer_walk_phase_selection_scope(index):
     phase = f"venue_walk_t{index}"
     nodeid, _ = synthetic_phase_request()
+    if index == "book_ordinals":
+        phase = "book_ordinals"
+        selection = "SELECT length(ordered_books) AS value FROM lq_book_ordinals"
+    elif index == "venue_books":
+        phase = "venue_books"
+        selection = "SELECT arraySort(groupArray(tuple(venue, length(series)))) AS value FROM lq_venue_books"
+    else:
+        selection = (
+            f"SELECT arraySort(groupArray(tuple(venue, lq_walk_book(current.3, lq_tiers[{index}], 'ask')))) "
+            "AS value FROM lq_venue_stats"
+        )
     nodeid = nodeid.rsplit("::", 1)[0] + "::" + phase
-    selection = (
-        f"SELECT arraySort(groupArray(tuple(venue, lq_walk_book(current.3, lq_tiers[{index}], 'ask')))) "
-        "AS value FROM lq_venue_stats"
-    )
     query = "WITH \n{lq_snapshot:String} AS lq_snapshot, synthetic_fixture AS unused " + selection
     observe = truth_sql_failure_evidence._liquidity_observation
     assert observe(nodeid, query) == phase
@@ -627,7 +643,8 @@ async def test_native_observer_disabled_outside_exact_owned_cases(
 @pytest.mark.parametrize(
     ("digest", "admitted"),
     [
-        ("df5b18d0b5110c3e1a3009b53f1d5319de95212e50b4e171d371f3b1195ce35a", True),
+        ("00c6fb8895af64256de6ed5c0a8f41344503096029c9cb5517f7cbff56bdf485", True),
+        ("df5b18d0b5110c3e1a3009b53f1d5319de95212e50b4e171d371f3b1195ce35a", False),
         ("70dc6c3374e1fb8dac7c00d478d7bef5afe187bb35229bc5f8df4fdc08221bb5", False),
         ("dfe0cbea3b2e3dc1bfd3001912cbe31120b47628d427a89e1eb44766959c8a4d", False),
         ("d04c31b10582cede47e47414f4fb93866ed7a541087ba872a552e11891d1eb1e", False),

@@ -921,6 +921,12 @@ async def test_native_liquidity_absence_relational_phase_contracts(native_client
             "SELECT arrayMap(x -> toString(x), lq_tiers) AS value FROM lq_tier_values",
             [Decimal("72"), Decimal("720"), Decimal("3600")],
         ),
+        ("book_ordinals", "SELECT length(ordered_books) AS value FROM lq_book_ordinals", 4),
+        (
+            "venue_books",
+            "SELECT arraySort(groupArray(tuple(venue, length(series)))) AS value FROM lq_venue_books",
+            [["A", 2], ["B", 2]],
+        ),
         (
             "venue_stats",
             "SELECT arraySort(groupArray(tuple(venue, pre_spread))) AS value FROM lq_venue_stats",

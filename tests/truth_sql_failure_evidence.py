@@ -292,6 +292,8 @@ def retain_liquidity_phase(directory, nodeid, phase, *, status="PASS"):
         "volume_coverage",
         "volume_totals",
         "tier_values",
+        "book_ordinals",
+        "venue_books",
         "venue_stats",
         "venue_depth",
         "venue_precision",
@@ -385,6 +387,8 @@ _LIQUIDITY_SELECTIONS = {
     "volume_coverage": "SELECT length(lq_covered_buckets) AS value FROM lq_volume_coverage",
     "volume_totals": "SELECT arrayMap(x -> toString(x), lq_volumes) AS value FROM lq_volume_totals",
     "tier_values": "SELECT arrayMap(x -> toString(x), lq_tiers) AS value FROM lq_tier_values",
+    "book_ordinals": "SELECT length(ordered_books) AS value FROM lq_book_ordinals",
+    "venue_books": "SELECT arraySort(groupArray(tuple(venue, length(series)))) AS value FROM lq_venue_books",
     "venue_stats": "SELECT arraySort(groupArray(tuple(venue, pre_spread))) AS value FROM lq_venue_stats",
     "venue_depth": (
         "SELECT arraySort(groupArray(tuple(venue, toString(bid), toString(ask), "
@@ -437,7 +441,7 @@ _OBSERVER_INSTANCES = itertools.count()
 def _liquidity_observation(nodeid, query):
     if nodeid == _LIQUIDITY_BASELINE:
         if hashlib.sha256(query.encode()).hexdigest() == (
-            "df5b18d0b5110c3e1a3009b53f1d5319de95212e50b4e171d371f3b1195ce35a"
+            "00c6fb8895af64256de6ed5c0a8f41344503096029c9cb5517f7cbff56bdf485"
         ):
             return "baseline"
         return None
