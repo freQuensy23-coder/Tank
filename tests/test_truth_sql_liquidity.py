@@ -815,8 +815,7 @@ def test_liquidity_venue_metrics_parse_only_typed_demand(side, unit, guard):
         "d.ctx_band, d.ctx_band_key), CAST(NULL, 'Nullable(Decimal256(24))'))"
     ) in compact
     assert (
-        "if(demand.3, lq_number(JSONExtractRaw(demand.1.3, 'spread_bps')), "
-        "CAST(NULL, 'Nullable(Float64)'))"
+        "if(demand.3, lq_number(JSONExtractRaw(demand.1.3, 'spread_bps')), CAST(NULL, 'Nullable(Float64)'))"
     ) in compact
     assert "demand.4, demand.5), d.metric_demand) AS book_metrics" in compact
     assert "FROM lq_venue_metric_demand AS d" in compact
@@ -891,9 +890,7 @@ def test_liquidity_venue_depth_reduces_metric_columns_without_reparsing():
 @pytest.mark.parametrize(
     "case", ["old_unused", "null_anchor", "average_only", "current_tie", "nullable_previous"]
 )
-async def test_native_venue_metrics_preserve_lazy_demand_and_populations(
-    native_client, original_truth, case
-):
+async def test_native_venue_metrics_preserve_lazy_demand_and_populations(native_client, original_truth, case):
     snapshot, spot, relative = _packet()
     start = parse_time(snapshot["_start"])
     end = parse_time(snapshot["cutoff"])

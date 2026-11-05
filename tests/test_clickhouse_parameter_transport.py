@@ -643,7 +643,8 @@ async def test_native_observer_disabled_outside_exact_owned_cases(
 @pytest.mark.parametrize(
     ("digest", "admitted"),
     [
-        ("00c6fb8895af64256de6ed5c0a8f41344503096029c9cb5517f7cbff56bdf485", True),
+        ("9759dc8ae3dc941c4dae074b86124194de1b46f685aae172506e8edaff144e7c", True),
+        ("00c6fb8895af64256de6ed5c0a8f41344503096029c9cb5517f7cbff56bdf485", False),
         ("df5b18d0b5110c3e1a3009b53f1d5319de95212e50b4e171d371f3b1195ce35a", False),
         ("70dc6c3374e1fb8dac7c00d478d7bef5afe187bb35229bc5f8df4fdc08221bb5", False),
         ("dfe0cbea3b2e3dc1bfd3001912cbe31120b47628d427a89e1eb44766959c8a4d", False),
