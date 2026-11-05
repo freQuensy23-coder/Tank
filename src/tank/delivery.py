@@ -122,10 +122,11 @@ class DeliveryService:
                 expires_at=offset_schedule(collection_clock(utcnow()), timedelta(days=1)),
             )
 
-    async def _enter_delivery_lock(self, stack, key):
+    async def _enter_delivery_lock(self, stack, key, *, session=False):
         try:
             async with asyncio.timeout(DELIVERY_LOCK_WAIT_S):
-                await stack.enter_async_context(self.repo.lock(key))
+                lock = self.repo.session_lock(key) if session else self.repo.lock(key)
+                await stack.enter_async_context(lock)
         except TimeoutError:
             raise DeliveryDeferred(
                 offset_schedule(collection_clock(utcnow()), timedelta(seconds=1))
@@ -141,7 +142,7 @@ class DeliveryService:
                 error = await self._deliver(job)
                 if error is None and notice and notice.get("document_manifest"):
                     async with AsyncExitStack() as locks:
-                        await self._enter_delivery_lock(locks, "documents:" + job.subject)
+                        await self._enter_delivery_lock(locks, "documents:" + job.subject, session=True)
                         error = await self._deliver_documents(notice)
         else:
             rows = await self._all("out.alerts", filters=job.subject_filters)

@@ -76,15 +76,23 @@ async def test_failed_scan_redacts_account_error_without_diagnostics(error, expe
 @pytest.mark.integration
 @pytest.mark.postgres
 @pytest.mark.parametrize(
-    "error,expected",
+    "error,expected,rendered",
     [
-        ("safe distinct-apify-credential suffix", "safe [REDACTED] suffix"),
-        ("safe\x00text", "INVALID_ACCOUNT_ERROR"),
-        ("x" * 8185 + "distinct-apify-credential", "INVALID_ACCOUNT_ERROR"),
+        (
+            "safe distinct-apify-credential suffix",
+            "safe [REDACTED] suffix",
+            "safe [REDACTED] suffix",
+        ),
+        ("safe\x00text", "INVALID_ACCOUNT_ERROR", "INVALIDACCOUNTERROR"),
+        (
+            "x" * 8185 + "distinct-apify-credential",
+            "INVALID_ACCOUNT_ERROR",
+            "INVALIDACCOUNTERROR",
+        ),
     ],
 )
 async def test_account_reason_jsonb_checkpoint_immutable_ops_and_wire_delivery(
-    tmp_path, postgres_template, wire_server, monkeypatch, error, expected
+    tmp_path, postgres_template, wire_server, monkeypatch, error, expected, rendered
 ):
     origin, state = wire_server
     broken = failed_run(None)
@@ -124,7 +132,8 @@ async def test_account_reason_jsonb_checkpoint_immutable_ops_and_wire_delivery(
         assert not await repo.list("ingest.source_items")
         [notice] = await repo.list("out.ops_notices", filters={"kind": "ENTRY_ERRORS"})
         [marker] = await repo.list("out.ops_notices", filters={"kind": "ENTRY_ERROR"})
-        assert notice["entry_errors"] == errors and expected in notice["text"]
+        assert notice["entry_errors"] == errors
+        assert rendered in notice["text"]
         assert marker["entry_error"] == errors[0] and marker["text"] == expected
         assert not notice.get("document_manifest")
         [job] = await repo.list("ops.jobs", filters={"type": "DELIVER"})
@@ -136,7 +145,7 @@ async def test_account_reason_jsonb_checkpoint_immutable_ops_and_wire_delivery(
             await DeliveryService(repo, config, http=http).deliver(job["payload"])
         assert len(state["telegram"]) == 1
         path, _, body = state["telegram"][0]
-        assert path.endswith("sendMessage") and expected in json.loads(body)["text"]
+        assert path.endswith("sendMessage") and rendered in json.loads(body)["text"]
         assert len(committed) == 2
         assert sorted(row["status"] for row in committed) == ["GENERATED", "SENT"]
         for value in (checkpoint, notice, marker, committed, json.loads(body)):

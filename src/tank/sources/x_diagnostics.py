@@ -74,13 +74,22 @@ def sanitize(value, token=None, budget=None):
         return candidate
 
     def text(candidate, path):
-        if not isinstance(candidate, str):
+        refused = "INVALID_DIAGNOSTIC_TEXT"
+        if token and token in refused:
+            refused = ""
+        if (
+            not isinstance(candidate, str)
+            or len(candidate) > 8192
+            or "\x00" in candidate
+            or any(0xD800 <= ord(c) <= 0xDFFF for c in candidate)
+        ):
             invalid.append(path)
-            return "INVALID_DIAGNOSTIC_TEXT"
-        if "\x00" in candidate[:8192] or any(0xD800 <= ord(c) <= 0xDFFF for c in candidate[:8192]):
+            return refused
+        safe = redact(candidate, token)
+        if len(safe) > 8192 or (token and token in safe):
             invalid.append(path)
-        safe = redact(candidate, token).replace("\x00", "[NUL]")
-        return safe.encode("utf-8", "replace").decode()[:8192]
+            return refused
+        return safe
 
     def scalar(parent, key, kind, path, minimum=0, maximum=2**63 - 1):
         candidate = parent.get(key)
@@ -157,8 +166,40 @@ def sanitize(value, token=None, budget=None):
                     original_raw, clipped = b"", bool(body)
             else:
                 original_raw, clipped = text_prefix(body, limit)
-            byte_token = token.encode("utf-8").decode("latin-1") if token else None
-            transformed = redact(original_raw.decode("latin-1"), byte_token, BODY_LIMIT).encode("latin-1")
+            token_raw = token.encode("utf-8") if token else b""
+            redaction_raw = original_raw
+            if clipped and original_raw and token_raw:
+                inspection_limit = limit + len(token_raw) - 1
+                if encoding == "base64":
+                    inspection_encoded_limit = ((inspection_limit + 2) // 3) * 4
+                    try:
+                        inspection = base64.b64decode(
+                            body[:inspection_encoded_limit], validate=True
+                        )
+                    except (ValueError, binascii.Error):
+                        invalid.append(f"bodyEncoding[{index}]")
+                        inspection = b""
+                        redaction_raw = b""
+                else:
+                    inspection, _ = text_prefix(body, inspection_limit)
+                crossing = inspection.find(
+                    token_raw, max(0, len(original_raw) - len(token_raw) + 1)
+                )
+                if 0 <= crossing < len(original_raw):
+                    while crossing:
+                        overlap = inspection.rfind(
+                            token_raw,
+                            max(0, crossing - len(token_raw) + 1),
+                            crossing + len(token_raw) - 1,
+                        )
+                        if overlap < 0:
+                            break
+                        crossing = overlap
+                    redaction_raw = original_raw[:crossing] + b"[REDACTED]"
+            byte_token = token_raw.decode("latin-1") if token_raw else None
+            transformed = redact(
+                redaction_raw.decode("latin-1"), byte_token, max(BODY_LIMIT, len(redaction_raw))
+            ).encode("latin-1")
             raw = transformed[:limit]
             transformed_clipped = len(transformed) > limit
             budget[0] -= max(len(original_raw), len(raw))
