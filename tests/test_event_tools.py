@@ -7,7 +7,7 @@ from tank.event_tools import EventToolService, freshness, validate_schema
 from tank.settings import Settings
 from tank.storage import MemoryRepository
 from tank.telegram_rich import score_summary
-from tank.util import iso, parse_time, utcnow
+from tank.util import iso, parse_time, sha256, utcnow
 
 
 @pytest.fixture
@@ -770,7 +770,7 @@ async def test_real_session_tool_refuses_cross_event_mutation(service):
         replies.append(kwargs)
         if args and args[0] == "GET":
             return resolved_native_domain_fixture(session["session_id"])
-        return {}
+        return {"data": [{"id": kwargs["idem"]}]}
 
     sessions.request = request
     await sessions.tool(
@@ -786,6 +786,7 @@ async def test_real_session_tool_refuses_cross_event_mutation(service):
     assert stored["status"] == "REFUSED"
     assert stored["result"]["error"]["category"] == "VALIDATION"
     assert stored["returned_at"]
+    assert stored["remote_event_id"] == "tool:" + sha256("scope-session:scope-call")
     assert replies
     assert not await service.repo.list("ops.source_escalations")
 
@@ -824,7 +825,7 @@ async def test_novel_layer_proposal_survives_real_session_transaction(service):
     async def request(*args, **kwargs):
         if args and args[0] == "GET":
             return resolved_native_domain_fixture(session["session_id"])
-        return {}
+        return {"data": [{"id": kwargs["idem"]}]}
 
     sessions.request = request
     edge = {
@@ -844,6 +845,7 @@ async def test_novel_layer_proposal_survives_real_session_transaction(service):
     )
     ledger = await service.repo.get("ops.tool_calls", "novel-session:novel-call")
     assert ledger["returned_at"]
+    assert ledger["remote_event_id"] == "tool:" + sha256("novel-session:novel-call")
     assert ledger["result"]["accepted"] is False
     proposals = await service.repo.list("scout.expansion_proposals")
     assert len(proposals) == 1
@@ -2050,7 +2052,7 @@ async def test_other_tank_item_quote_read_through_real_session_is_admissible(ser
     async def request(*a, **kw):
         if a and a[0] == "GET":
             return resolved_native_domain_fixture(session["session_id"])
-        return {}
+        return {"data": [{"id": kw["idem"]}]}
 
     sessions.request = request
     await sessions.tool(
@@ -2060,6 +2062,9 @@ async def test_other_tank_item_quote_read_through_real_session_is_admissible(ser
         session, {"id": "read-other", "name": "get_item", "input": {"item_id": "other-primary"}}
     )
     assert (await service.repo.get("ops.tool_calls", "item-proof-session:read-other"))["status"] == "DONE"
+    assert (await service.repo.get("ops.tool_calls", "item-proof-session:read-other"))[
+        "remote_event_id"
+    ] == "tool:" + sha256("item-proof-session:read-other")
     x["claims"][0].update(quote="Fee switch approved.", state_claim="APPROVED")
     x.pop("item_id")
     x["token_ids"] = ["world:WLD"]
@@ -3749,7 +3754,7 @@ async def test_native_prompt_snapshot_producer_reaches_versioned_event_tools(
                     }
                 },
             )
-        return httpx.Response(200, json={})
+        return httpx.Response(200, json={"data": [{"id": request.headers["idempotency-key"]}]})
 
     async def dispatch(name, args, context):
         dispatched.append(name)
@@ -3795,6 +3800,8 @@ async def test_native_prompt_snapshot_producer_reaches_versioned_event_tools(
             args.pop("item_id")
             await native.tool(session, {"id": "native-record", "name": "record_event", "input": args})
             ledger = await repo.get("ops.tool_calls", sid + ":native-record")
+            assert ledger["remote_event_id"] == "tool:" + sha256(sid + ":native-record")
+            assert ledger["returned_at"]
             if not resolved_snapshot:
                 assert ledger["status"] == "REFUSED" and ledger["result"]["error"]["category"] == "PROVENANCE"
                 assert not dispatched
@@ -3901,6 +3908,7 @@ async def test_actual_fetch_http_error_returns_durably_then_card_or_native_faile
             ):
                 lose_reply = False
                 raise httpx.ConnectError("Synthetic lost acknowledgement", request=request)
+            return httpx.Response(200, json={"data": [{"id": request.headers["idempotency-key"]}]})
         return httpx.Response(200, json={})
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(control)) as http:

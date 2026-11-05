@@ -174,7 +174,7 @@ async def test_tool_result_lost_reply_restart_reuses_completed_result():
 
     def works(req):
         posts.append(req)
-        return httpx.Response(200, json={"data": []})
+        return httpx.Response(200, json={"data": [{"id": req.headers["idempotency-key"]}]})
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(works)) as http:
         restarted = SessionService(repo, opts, dispatch, http=http)
@@ -182,6 +182,10 @@ async def test_tool_result_lost_reply_restart_reuses_completed_result():
         await restarted.process_event("ses_1", event, 7)
     assert count == 1 and len(posts) == 2
     assert posts[0].headers["Idempotency-Key"] == posts[1].headers["Idempotency-Key"]
+    assert posts[0].content == posts[1].content
+    stored = await repo.get("ops.tool_calls", "ses_1:call_1")
+    assert stored["remote_event_id"] == posts[1].headers["Idempotency-Key"]
+    assert stored["returned_at"]
     body = json.loads(posts[1].content)["events"][0]
     assert body["custom_tool_use_id"] == "call_1" and body["content"][0]["text"] == '{"ok":true}'
     assert (await repo.get("ops.agent_sessions", "ses_1"))["last_event_seq"] == 7
@@ -198,7 +202,9 @@ async def test_failed_dispatch_rolls_back_and_replays():
         raise ValueError("bad data")
 
     async with httpx.AsyncClient(
-        transport=httpx.MockTransport(lambda r: httpx.Response(200, json={}))
+        transport=httpx.MockTransport(
+            lambda r: httpx.Response(200, json={"data": [{"id": r.headers["idempotency-key"]}]})
+        )
     ) as http:
         service = SessionService(repo, opts, bad, http=http)
         await service.process_event(
@@ -260,7 +266,7 @@ async def test_message_running_session_posted_and_retry_failure():
 
     def handler(req):
         posts.append(json.loads(req.content))
-        return httpx.Response(200, json={})
+        return httpx.Response(200, json={"data": [{"id": req.headers["idempotency-key"]}]})
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http:
         service = SessionService(repo, opts, None, http=http)
@@ -315,7 +321,7 @@ async def test_canonical_event_routing_and_added_message():
                     "usage": {"input_tokens": 100},
                 },
             )
-        return httpx.Response(200, json={})
+        return httpx.Response(200, json={"data": [{"id": req.headers["idempotency-key"]}]})
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http:
         routed = await Pipeline(repo, opts, http=http).route_item({"item_id": "i"})
@@ -338,7 +344,9 @@ async def test_new_scout_session_wire_protocol_and_isolation():
             return httpx.Response(200, json={"data": [], "next_page": None})
         body = json.loads(req.content)
         posted.append(body)
-        return httpx.Response(200, json={"id": "ses_scout"} if req.url.path == "/v1/sessions" else {})
+        if req.url.path == "/v1/sessions":
+            return httpx.Response(200, json={"id": "ses_scout"})
+        return httpx.Response(200, json={"data": [{"id": req.headers["idempotency-key"]}]})
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http:
         service = SessionService(repo, opts, None, http=http)
@@ -372,7 +380,9 @@ async def test_stream_processing_preserves_concurrent_added_message():
     await seed_session(repo)
     await repo.put("ingest.source_items", "itm_2", {"item_id": "itm_2", "text": "fresh"})
     async with httpx.AsyncClient(
-        transport=httpx.MockTransport(lambda r: httpx.Response(200, json={}))
+        transport=httpx.MockTransport(
+            lambda r: httpx.Response(200, json={"data": [{"id": r.headers["idempotency-key"]}]})
+        )
     ) as http:
         service = SessionService(repo, opts, None, http=http)
         service.start_stream = lambda sid: None
@@ -477,7 +487,9 @@ async def test_slow_denial_turn_remains_until_exit_update_delivered(monkeypatch,
         "quote": "Official cancellation",
     }
     async with httpx.AsyncClient(
-        transport=httpx.MockTransport(lambda r: httpx.Response(200, json={}))
+        transport=httpx.MockTransport(
+            lambda r: httpx.Response(200, json={"data": [{"id": r.headers["idempotency-key"]}]})
+        )
     ) as http:
         service = SessionService(repo, opts, tools.dispatch, http=http)
 
@@ -648,7 +660,7 @@ async def test_concurrent_items_without_event_candidates_open_distinct_idempoten
             creates.append(body)
             return httpx.Response(200, json={"id": f"pending_session_{len(creates)}"})
         messages.append(body)
-        return httpx.Response(200, json={"data": []})
+        return httpx.Response(200, json={"data": [{"id": request.headers["idempotency-key"]}]})
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http:
         pipe = Pipeline(repo, opts, http=http)
@@ -691,7 +703,7 @@ async def test_live_slow_and_recovered_tool_context_keep_session_provenance():
         return {"ok": True}
 
     def transport(req):
-        return httpx.Response(200, json={"data": []})
+        return httpx.Response(200, json={"data": [{"id": req.headers["idempotency-key"]}]})
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(transport)) as http:
         live = SessionService(repo, opts, dispatch, http=http)
@@ -768,7 +780,7 @@ async def test_market_truth_wire_omits_internal_metadata_full_result_survives_re
 
     def accepted(request):
         requests.append(json.loads(request.content))
-        return httpx.Response(200, json={})
+        return httpx.Response(200, json={"data": [{"id": request.headers["idempotency-key"]}]})
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(accepted)) as http:
         recovered = SessionService(repo, opts, dispatch, http=http)
@@ -902,7 +914,7 @@ async def test_session_acceptance_and_tools_keep_clock_and_source_precision_sepa
                 if request.method == "GET"
                 else httpx.Response(201, json={"id": "fresh"})
             )
-        return httpx.Response(200, json={})
+        return httpx.Response(200, json={"data": [{"id": request.headers["idempotency-key"]}]})
 
     async def dispatch(*args):
         return {"ok": True}
@@ -989,7 +1001,7 @@ async def test_tool_execution_error_is_durable_returned_and_never_redispatched_a
         responses.append(json.loads(request.content)["events"][0])
         if len(responses) == 1:
             raise httpx.ConnectError("Lost tool response acknowledgement", request=request)
-        return httpx.Response(200, json={})
+        return httpx.Response(200, json={"data": [{"id": request.headers["idempotency-key"]}]})
 
     event = {"id": "failure", "type": "agent.custom_tool_use", "name": tool_name, "input": {}}
     async with httpx.AsyncClient(transport=httpx.MockTransport(control)) as http:
@@ -1031,7 +1043,7 @@ async def test_new_session_prompt_version_binds_actual_resolved_agent_not_static
                 return httpx.Response(200, json={"data": []})
             created += 1
             return httpx.Response(201, json={"id": "fresh-" + str(created), "agent": copy.deepcopy(snapshot)})
-        return httpx.Response(200, json={})
+        return httpx.Response(200, json={"data": [{"id": request.headers["idempotency-key"]}]})
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(control)) as http:
         service = SessionService(repo, opts, None, http=http)
