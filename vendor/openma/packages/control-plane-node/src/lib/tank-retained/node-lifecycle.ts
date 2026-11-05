@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import type { RuntimeIdentity } from './runtime-identity.js';
-import { RetainedSessionLifecycle, type Fences, type Options, type Scope } from './retained-session.js';
+import { RetainedSessionLifecycle, decodeSchema2Publication, type Fences, type Options, type Scope } from './retained-session.js';
 import { RetainedBoxOperations, pinnedBoxLiteProvider, type Allocation, type BoxLiteRuntime, type PinnedBoxLiteModule } from './boxlite-provider.js';
 
 type Box = RetainedBoxOperations & { stop(): Promise<void> };
@@ -57,15 +57,33 @@ export class NodeRetainedLifecycle {
       if (acquired.type !== 'acquired') continue;
       try {
         const published = acquired.publication?.workspaceCandidate.metadata;
-        if (published?.schema === 2) throw Error('retained_schema2_orphan_cleanup_requires_archive');
         if (!await this.options.fences.isCurrent(acquired.fence)) throw Error('retained_fence_lost');
         const provider = pinnedBoxLiteProvider({ module: this.options.providerModule, client: this.options.client,
           allocation: { image: 'cleanup-only-no-allocation' }, leaseTtlMs: this.options.leaseTtlMs,
           isCurrent: fence => this.options.fences.isCurrent(fence) });
-        const intent = published?.state === 'allocating' && typeof published.runtimeId === 'string'
-          ? await provider.resolveIntent({ provider: 'litebox', runtimeId: published.runtimeId }, orphan.scope, acquired.fence, new AbortController().signal) : null;
-        if (published?.runtimeId !== orphan.sandbox.runtimeId && intent?.runtimeId !== orphan.sandbox.runtimeId) {
-          await provider.reap(orphan.sandbox, orphan.scope, acquired.fence, new AbortController().signal);
+        if (published?.schema === 2) {
+          const scope = { workspaceId: orphan.scope.workspaceId, environmentId: orphan.scope.environmentId,
+            sessionId: orphan.scope.sessionId, workId: orphan.scope.workId };
+          const manifest = decodeSchema2Publication(acquired.publication!.workspaceCandidate, scope, 'litebox');
+          const protectedHandles = [manifest.handle, ...manifest.retired ?? [],
+            ...(manifest.upgrade ? [manifest.upgrade.source, manifest.upgrade.target] : [])];
+          if (manifest.state === 'allocating') {
+            const intent = await provider.resolveIntent(manifest.handle, scope, acquired.fence, new AbortController().signal);
+            if (!intent) throw Error('retained_incomplete_allocation_missing');
+            protectedHandles.push(intent);
+          }
+          if (!await this.options.fences.isCurrent(acquired.fence)) throw Error('retained_fence_lost');
+          if (!protectedHandles.some(handle => handle.provider === orphan.sandbox.provider && handle.runtimeId === orphan.sandbox.runtimeId)) {
+            await provider.reap(orphan.sandbox, scope, acquired.fence, new AbortController().signal);
+          }
+          if (!await this.options.fences.isCurrent(acquired.fence)) throw Error('retained_fence_lost');
+        } else {
+          if (published && published.schema !== 1) throw Error('retained_manifest_invalid');
+          const intent = published?.state === 'allocating' && typeof published.runtimeId === 'string'
+            ? await provider.resolveIntent({ provider: 'litebox', runtimeId: published.runtimeId }, orphan.scope, acquired.fence, new AbortController().signal) : null;
+          if (published?.runtimeId !== orphan.sandbox.runtimeId && intent?.runtimeId !== orphan.sandbox.runtimeId) {
+            await provider.reap(orphan.sandbox, orphan.scope, acquired.fence, new AbortController().signal);
+          }
         }
         await queue.resolve({ id: orphan.id });
       } catch {

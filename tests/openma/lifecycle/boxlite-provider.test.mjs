@@ -18,19 +18,26 @@ test('public provider bridge resumes a fresh handle and reaps without resume or 
       async create(...args){calls.push(['create',...args]);return {runtimeHandle:()=>({provider:'litebox',runtimeId:'box'})};},
       async resume(...args){calls.push(['resume',...args]);return {runtimeHandle:()=>({provider:'litebox',runtimeId:'box'})};},
     };},
-    createBoxLiteManagedRuntime(){return {sandbox:{async reap(input){calls.push(['reap',input]);}}};},
+    createBoxLiteManagedRuntime(){return {sandbox:{async reap(){assert.fail('ordinary cleanup must use the guarded native path');}}};},
   };
   const allocation={image:'pinned:sha256',rootfsPath:'/readonly-oci',cpus:1,memoryMib:512,
     security:{jailerEnabled:false,seccompEnabled:false},
     network:{mode:'enabled',allowNet:['postgres','172.16.0.5']},volumes:[{hostPath:'/owned/session',guestPath:'/mnt/session/outputs'}]};
-  const p=pinnedBoxLiteProvider({module,client:{async getInfo(id){return id==='box'?{state:{running:false}}:null;}},allocation,leaseTtlMs:30000});
+  const name='oma-e3126361fce11865804283c33f002683';
+  const client={
+    async getInfo(id){return id==='box'?{id,name,state:{running:false}}:null;},
+    async get(id){calls.push(['get',id]);return {id,name,async info(){return {id,name,state:{running:false}};}};},
+    async remove(id,force){calls.push(['remove',id,force]);},
+  };
+  const p=pinnedBoxLiteProvider({module,client,allocation,leaseTtlMs:30000});
   const first=await p.create(scope,fence,signal());await p.resume(first.runtimeHandle(),scope,fence,signal());
   await p.reap(first.runtimeHandle(),scope,fence,signal());
-  assert.deepEqual(calls.map(x=>x[0]),['options','create','resume','reap']);
+  assert.deepEqual(calls.map(x=>x[0]),['options','create','resume','get','remove']);
   assert.deepEqual(calls[0][1].allocationOptions(),allocation);
   assert.deepEqual(calls[1][2],{});
   assert.equal('env' in calls[0][1].allocationOptions(),false);
-  assert.equal(calls[3][1].lease.runtimeId,'box');
+  assert.deepEqual(calls[3],['get','box']);
+  assert.deepEqual(calls[4],['remove','box',true]);
 });
 test('SimpleBox-compatible command/file bridge preserves current per-exec env and binary files',async()=>{
   const directory=await mkdtemp(join(tmpdir(),'tank-retained-offline-'));

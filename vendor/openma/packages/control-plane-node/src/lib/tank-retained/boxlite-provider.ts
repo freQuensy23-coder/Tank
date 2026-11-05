@@ -186,7 +186,16 @@ export function pinnedBoxLiteProvider(input: {
         if (info.name !== name || (handle.runtimeId !== name && info.id !== handle.runtimeId)) throw Error('retained_cleanup_ownership_mismatch');
         await current(fence);
         await client.remove(info.id, true);
-      } else await resource.sandbox.reap({ scope, lease: handle, reason: 'completed' });
+      } else {
+        if (handle.provider !== 'litebox') throw Error('retained_cleanup_ownership_mismatch');
+        const box = await client.get(handle.runtimeId);
+        if (!box) return;
+        const info = box.info();
+        const name = ownershipName(handle, scope);
+        if (box.id !== handle.runtimeId || box.name !== name || info.id !== handle.runtimeId || info.name !== name) throw Error('retained_cleanup_ownership_mismatch');
+        await current(fence);
+        await client.remove(handle.runtimeId, true);
+      }
     },
   };
 }

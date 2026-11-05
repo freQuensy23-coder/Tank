@@ -44,6 +44,32 @@ export class RetainedLifecycleError extends Error {
 function fail(code: string): never { throw new RetainedLifecycleError(code); }
 const digest = (value: unknown) => 'sha256:' + createHash('sha256').update(JSON.stringify(value)).digest('hex');
 
+export function decodeSchema2Publication(candidate: Candidate, canonicalScope: Scope, providerId: string): Manifest {
+  const metadata = candidate.metadata;
+  if (metadata?.schema !== 2) fail('retained_manifest_invalid');
+  if (metadata.scope !== JSON.stringify(canonicalScope) || typeof metadata.manifest !== 'string'
+      || candidate.contentHash !== stableDigest({ scope: canonicalScope, manifest: metadata.manifest })) fail('retained_manifest_invalid');
+  let manifest: Manifest;
+  try { manifest = JSON.parse(metadata.manifest); } catch { fail('retained_manifest_invalid'); }
+  if (!manifest || typeof manifest !== 'object') fail('retained_manifest_invalid');
+  const validHandle = (handle: Handle) => handle && handle.provider === providerId
+    && typeof handle.runtimeId === 'string' && handle.runtimeId.length > 0
+    && (handle.ownershipName === undefined || (typeof handle.ownershipName === 'string' && handle.ownershipName.length > 0));
+  if (!validHandle(manifest.handle) || !['allocating', 'aborted', 'retained', 'upgrading', 'archived'].includes(manifest.state)
+      || manifest.archived !== (manifest.state === 'archived') || !Array.isArray(manifest.retired)
+      || manifest.retired!.some(handle => !validHandle(handle))) fail('retained_manifest_invalid');
+  validateRuntimeIdentity(manifest.identity);
+  if (manifest.state === 'upgrading') {
+    const upgrade = manifest.upgrade;
+    if (!upgrade || !validHandle(upgrade.source) || !validHandle(upgrade.target) || typeof upgrade.owner !== 'string'
+        || !upgrade.owner || JSON.stringify(upgrade.source) !== JSON.stringify(manifest.handle)
+        || upgrade.target.runtimeId === upgrade.source.runtimeId) fail('retained_manifest_invalid');
+    validateRuntimeIdentity(upgrade.identity);
+    assertCompatible(manifest.identity!, upgrade.identity);
+  } else if (manifest.upgrade) fail('retained_manifest_invalid');
+  return manifest;
+}
+
 export class RetainedSessionLifecycle<R extends RetainedRuntime> {
   readonly scope: Scope;
   readonly options: Options<R>;
@@ -103,26 +129,7 @@ export class RetainedSessionLifecycle<R extends RetainedRuntime> {
   private decode(candidate: Candidate, archiveOnly = false): Manifest {
     const metadata = candidate.metadata;
     if (metadata?.schema === 2) {
-      if (metadata.scope !== JSON.stringify(this.scope) || typeof metadata.manifest !== 'string'
-          || candidate.contentHash !== stableDigest({ scope: this.scope, manifest: metadata.manifest })) fail('retained_manifest_invalid');
-      let manifest: Manifest;
-      try { manifest = JSON.parse(metadata.manifest); } catch { fail('retained_manifest_invalid'); }
-      if (!manifest || typeof manifest !== 'object') fail('retained_manifest_invalid');
-      const validHandle = (handle: Handle) => handle && handle.provider === this.options.providerId
-        && typeof handle.runtimeId === 'string' && handle.runtimeId.length > 0
-        && (handle.ownershipName === undefined || (typeof handle.ownershipName === 'string' && handle.ownershipName.length > 0));
-      if (!validHandle(manifest.handle) || !['allocating', 'aborted', 'retained', 'upgrading', 'archived'].includes(manifest.state)
-          || manifest.archived !== (manifest.state === 'archived') || !Array.isArray(manifest.retired)
-          || manifest.retired!.some(handle => !validHandle(handle))) fail('retained_manifest_invalid');
-      validateRuntimeIdentity(manifest.identity);
-      if (manifest.state === 'upgrading') {
-        const upgrade = manifest.upgrade;
-        if (!upgrade || !validHandle(upgrade.source) || !validHandle(upgrade.target) || typeof upgrade.owner !== 'string'
-            || !upgrade.owner || JSON.stringify(upgrade.source) !== JSON.stringify(manifest.handle)
-            || upgrade.target.runtimeId === upgrade.source.runtimeId) fail('retained_manifest_invalid');
-        validateRuntimeIdentity(upgrade.identity);
-        assertCompatible(manifest.identity!, upgrade.identity);
-      } else if (manifest.upgrade) fail('retained_manifest_invalid');
+      const manifest = decodeSchema2Publication(candidate, this.scope, this.options.providerId);
       if (!archiveOnly && manifest.state !== 'archived') {
         if (!this.options.identity) fail('retained_identity_required');
         if (stableDigest(manifest.identity) !== stableDigest(this.options.identity)

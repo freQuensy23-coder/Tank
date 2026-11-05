@@ -299,6 +299,164 @@ try {
   await fences.release({ fence: first.fence, reason: 'lease_lost' });
   assert.equal(await fences.isCurrent(next.fence), true);
   await fences.release({ fence: next.fence, reason: 'completed' });
+  const beforeOrphanHistory = await persisted();
+  const { SqlRuntimeOrphanPort } = await load('packages/runtime-resource-fence-sql/src/index.ts');
+  const { NodeRetainedLifecycle } = await load('packages/control-plane-node/src/lib/tank-retained/node-lifecycle.ts');
+  const { pinnedBoxLiteProvider } = await load('packages/control-plane-node/src/lib/tank-retained/boxlite-provider.ts');
+  const providerModule = await load('packages/managed-runtime-boxlite/src/index.ts');
+  for (const schema of [1, 2]) for (const mode of ['publication', 'fence-loss', 'post-allocation']) {
+    const orphanScope = { workspaceId: 'orphan-workspace', environmentId: 'environment',
+      sessionId: `orphan-${schema}-${mode}`, workId: 'tank-retained-session-v1' };
+    const orphanFences = new SqlRuntimeResourceFencePort(sql, clock);
+    const orphanQueue = new SqlRuntimeOrphanPort(sql);
+    const nativeDisks = new Map(), effects = [];
+    let lost = false, failedRemove = 0, failedPublication = 0;
+    const inspect = id => nativeDisks.get(id) ?? [...nativeDisks.values()].find(disk => disk.name === id);
+    const native = disk => ({
+      id: disk.id, name: disk.name,
+      async info() { return { id: disk.id, name: disk.name,
+        state: { running: disk.running, status: disk.running ? 'Running' : 'Stopped' } }; },
+      async start() { disk.running = true; effects.push(['start', disk.id]); },
+      async stop() { disk.running = false; effects.push(['stop', disk.id]); },
+      async exec(command, args) {
+        effects.push(['exec', disk.id, command, args]);
+        return { async stdin() { return { async write() {}, async close() {} }; },
+          async stdout() { return { async next() { return null; } }; },
+          async stderr() { return { async next() { return null; } }; },
+          async wait() { return { exitCode: 0 }; }, async kill() {}, async id() { return 'controlled-exec'; } };
+      },
+      async copyIn() { assert.fail('no guest copy'); }, async copyOut() { assert.fail('no guest copy'); },
+    });
+    const client = {
+      async getInfo(id) { const disk = inspect(id); return disk ? native(disk).info() : null; },
+      async get(id) { const disk = inspect(id); return disk ? native(disk) : null; },
+      async getOrCreate(allocation, name) {
+        assert.equal(allocation.autoRemove, false); assert.equal(allocation.detach, true);
+        const disk = { id: `controlled-native-${schema}-${mode}`, name, running: false,
+          files: { '/workspace/marker': 'preserved' } };
+        assert.equal(inspect(name), undefined); nativeDisks.set(disk.id, disk);
+        effects.push(['allocate', disk.id]);
+        if (mode !== 'publication') lost = true;
+        if (mode === 'post-allocation') throw Error('injected post-allocation failure');
+        return { created: true, box: native(disk) };
+      },
+      async remove(id) {
+        effects.push(['remove', id]);
+        if (failedRemove > 0) { failedRemove--; throw Error('injected cleanup failure'); }
+        nativeDisks.delete(id);
+      },
+    };
+    const isCurrent = orphanFences.isCurrent.bind(orphanFences);
+    orphanFences.isCurrent = async fence => !lost && await isCurrent(fence);
+    const publish = orphanFences.publish.bind(orphanFences);
+    orphanFences.publish = async input => {
+      if (mode === 'publication' && input.workspaceCandidate.metadata.state === 'retained') {
+        failedPublication++;
+        throw Error('injected retained publication failure');
+      }
+      return publish(input);
+    };
+    const orphanProvider = pinnedBoxLiteProvider({ module: providerModule, client,
+      allocation: { image: 'controlled-no-vm' }, leaseTtlMs: 30000,
+      isCurrent: fence => orphanFences.isCurrent(fence),
+      unpublishedCleanupFailed: async (sandbox, scope, fence) => orphanQueue.enqueue({ scope,
+        generation: fence.generation, ownerId: fence.ownerId, sandbox, reason: 'failed',
+        error: Error('retained_initial_cleanup_failed') }) });
+    const orphanOptions = { scope: orphanScope, fences: orphanFences, orphans: orphanQueue,
+      provider: orphanProvider, providerId: 'litebox', ownerId: 'orphan-controller', leaseTtlMs: 30000,
+      fingerprint: `sha256:${'c'.repeat(64)}`, identity: schema === 2 ? identity('c') : undefined };
+    if (mode === 'publication') failedRemove = 1;
+    await assert.rejects(new RetainedSessionLifecycle(orphanOptions).begin(async () => {},
+      new AbortController().signal), /retained_initial_cleanup_failed/);
+    assert.equal(failedPublication, mode === 'publication' ? 1 : 0);
+    assert.equal(failedRemove, 0);
+    assert.equal(effects.filter(effect => effect[0] === 'remove').length, mode === 'publication' ? 1 : 0);
+    lost = false; orphanFences.publish = publish;
+    const queued = await new SqlRuntimeOrphanPort(sql).list({ limit: 128 });
+    assert.equal(queued.length, 1); assert.equal(queued[0].attempts, 0);
+    assert.deepEqual(queued[0].scope, orphanScope);
+    const diskId = queued[0].sandbox.runtimeId;
+    assert.equal(queued[0].sandbox.provider, 'litebox'); assert.equal(nativeDisks.has(diskId), true);
+    const readPublication = () => sql.prepare('SELECT publication_json, publication_generation, revision FROM runtime_resource_fences WHERE workspace_id = ? AND environment_id = ? AND session_id = ? AND work_id = ?')
+      .bind(orphanScope.workspaceId, orphanScope.environmentId, orphanScope.sessionId, orphanScope.workId).first();
+    const beforePublication = await readPublication();
+    const metadata = JSON.parse(beforePublication.publication_json).workspaceCandidate.metadata;
+    assert.equal(metadata.schema, schema); assert.equal(metadata.state, 'allocating');
+    assert.equal(metadata.runtimeId, nativeDisks.get(diskId).name);
+    assert.notEqual(metadata.runtimeId, diskId);
+    const beforeDisk = structuredClone(nativeDisks.get(diskId)), beforeEffects = effects.length;
+    const reconciler = new NodeRetainedLifecycle({ fences: new SqlRuntimeResourceFencePort(sql, clock),
+      orphans: new SqlRuntimeOrphanPort(sql), providerModule, client, ownerId: 'orphan-reconciler',
+      leaseTtlMs: 30000, fingerprint: async () => orphanOptions.fingerprint,
+      assertExecutionCurrent: async () => assert.fail('cleanup must not execute a session') });
+    await reconciler.reconcileOrphans();
+    assert.deepEqual(await new SqlRuntimeOrphanPort(sql).list({ limit: 128 }), []);
+    assert.equal(await sql.prepare('SELECT id FROM runtime_resource_orphans WHERE id = ?').bind(queued[0].id).first(), null);
+    assert.deepEqual(await readPublication(), beforePublication);
+    assert.deepEqual(nativeDisks.get(diskId), beforeDisk); assert.equal(nativeDisks.size, 1);
+    assert.deepEqual(effects.slice(beforeEffects), []);
+    await new RetainedSessionLifecycle(orphanOptions).archive(async () => {}, new AbortController().signal);
+    assert.equal(nativeDisks.size, 0);
+  }
+  {
+    const { createHash } = await import('node:crypto');
+    const { stableDigest } = await load('packages/control-plane-node/src/lib/tank-retained/runtime-identity.ts');
+    const ownedScope = { workspaceId: 'orphan-workspace', environmentId: 'environment',
+      sessionId: 'ordinary-lookup-loss', workId: 'tank-retained-session-v1' };
+    const ownedFences = new SqlRuntimeResourceFencePort(sql, clock), queue = new SqlRuntimeOrphanPort(sql);
+    const seed = await ownedFences.acquire({ scope: ownedScope, ownerId: 'seed', ttlMs: 30000 });
+    assert.equal(seed.type, 'acquired');
+    const handle = { provider: 'litebox', runtimeId: 'ordinary-orphan' };
+    const manifest = JSON.stringify({ handle: { provider: 'litebox', runtimeId: 'published-sibling' },
+      state: 'retained', archived: false, identity: identity('c'), retired: [] });
+    assert.equal((await ownedFences.publish({ fence: seed.fence, workspaceCandidate: {
+      id: 'ordinary-publication', contentHash: stableDigest({ scope: ownedScope, manifest }),
+      metadata: { schema: 2, scope: JSON.stringify(ownedScope), manifest } }, outputCandidate: null })).type, 'published');
+    await ownedFences.release({ fence: seed.fence, reason: 'completed' });
+    await queue.enqueue({ scope: ownedScope, generation: seed.fence.generation, ownerId: 'seed',
+      sandbox: handle, reason: 'failed', error: Error('retained_initial_cleanup_failed') });
+    const queued = await queue.list({ limit: 128 });assert.equal(queued.length, 1);assert.equal(queued[0].attempts, 0);
+    const disk = { id: handle.runtimeId,
+      name: 'oma-' + createHash('sha256').update(`litebox:${ownedScope.sessionId}`).digest('hex').slice(0, 32),
+      state: { running: false, status: 'Stopped' }, files: { marker: 'preserved' } };
+    const nativeDisks = new Map([[disk.id, disk]]), effects = [], beforeDisk = structuredClone([...nativeDisks]);
+    const readPublication = () => sql.prepare('SELECT publication_json, publication_generation, revision FROM runtime_resource_fences WHERE workspace_id = ? AND environment_id = ? AND session_id = ? AND work_id = ?')
+      .bind(ownedScope.workspaceId, ownedScope.environmentId, ownedScope.sessionId, ownedScope.workId).first();
+    const beforePublication = await readPublication();
+    let lookups = 0, successor;
+    const lookup = async id => {
+      assert.equal(id, disk.id);lookups++;
+      const previous = await sql.prepare('SELECT generation, owner_id, expires_at_ms FROM runtime_resource_fences WHERE workspace_id = ? AND environment_id = ? AND session_id = ? AND work_id = ?')
+        .bind(ownedScope.workspaceId, ownedScope.environmentId, ownedScope.sessionId, ownedScope.workId).first();
+      assert.equal(previous.owner_id, `ordinary-reconciler:orphan:${queued[0].id}`);
+      assert.ok(Number(previous.expires_at_ms) > now.getTime());
+      now = new Date(now.getTime() + 30001);
+      successor = await new SqlRuntimeResourceFencePort(sql, clock).acquire({ scope: ownedScope, ownerId: 'lookup-successor', ttlMs: 30000 });
+      assert.equal(successor.type, 'acquired');
+      assert.equal(successor.fence.generation, Number(previous.generation) + 1);
+      return nativeDisks.get(id);
+    };
+    const client = {
+      async getInfo(id) { return await lookup(id) ?? null; },
+      async get(id) { const value = await lookup(id);return value ? { id: value.id, name: value.name, info: async () => value } : null; },
+      async remove(id) { effects.push(['remove', id]);nativeDisks.delete(id); },
+      async getOrCreate() { assert.fail('cleanup must not allocate'); },
+    };
+    const reconciler = new NodeRetainedLifecycle({ fences: ownedFences, orphans: queue, providerModule, client,
+      ownerId: 'ordinary-reconciler', leaseTtlMs: 30000, fingerprint: async () => assert.fail('no session fingerprint'),
+      assertExecutionCurrent: async () => assert.fail('cleanup must not execute a session') });
+    await reconciler.reconcileOrphans();
+    assert.equal(lookups, 1);assert.deepEqual(effects, []);assert.deepEqual([...nativeDisks], beforeDisk);
+    const remaining = await new SqlRuntimeOrphanPort(sql).list({ limit: 128 });
+    assert.equal(remaining.length, 1);assert.deepEqual(remaining[0], { ...queued[0], attempts: 1, lastError: 'retained_orphan_cleanup_failed' });
+    assert.equal(Number((await sql.prepare('SELECT attempts FROM runtime_resource_orphans WHERE id = ?').bind(queued[0].id).first()).attempts), 1);
+    assert.deepEqual(await readPublication(), beforePublication);
+    assert.equal(await new SqlRuntimeResourceFencePort(sql, clock).isCurrent(successor.fence), true);
+    await ownedFences.release({ fence: successor.fence, reason: 'completed' });
+    await queue.resolve({ id: queued[0].id });
+    assert.deepEqual(await new SqlRuntimeOrphanPort(sql).list({ limit: 128 }), []);
+  }
+  assert.deepEqual(await persisted(), beforeOrphanHistory);
   stage = 'model-history';
   assert.equal(messages[2]?.role, 'tool');
   assert.equal(messages[2]?.content?.[0]?.type, 'tool-result');

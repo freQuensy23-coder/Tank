@@ -1,6 +1,7 @@
 const openmaSource = process.env.TANK_AUDIT_OPENMA_ROOT ? pathToFileURL(process.env.TANK_AUDIT_OPENMA_ROOT.replace(/\/?$/, '/')) : new URL('../../../vendor/openma/', import.meta.url);
 import { pathToFileURL } from 'node:url';
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
 const { RetainedSessionLifecycle } = await import(new URL('packages/control-plane-node/src/lib/tank-retained/retained-session.ts', openmaSource));
 const fingerprint = 'sha256:' + 'a'.repeat(64);
 export function setup() {
@@ -37,9 +38,10 @@ export function setup() {
     nativeHandles.push(value);return value;
   }
   const provider={
+    async beforeNativeLookup(){},
     async allocationIntent(scope){if([...disks.values()].some(d=>d.scope===JSON.stringify(scope)))throw Error('retained_unpublished_runtime_exists');return {provider:'litebox',runtimeId:'intent:'+scope.sessionId};},
     async resolveIntent(handle,scope){assert.equal(handle.runtimeId,'intent:'+scope.sessionId);const disk=[...disks.values()].find(d=>d.scope===JSON.stringify(scope));return disk?{provider:'litebox',runtimeId:disk.id}:null;},
-    async create(scope){creates++;const disk={id:'box_'+(++next),scope:JSON.stringify(scope),files:{},profile:{},running:true};disks.set(disk.id,disk);calls.push(['create',disk.id]);return native(disk);},
+    async create(scope){creates++;const disk={id:'box_'+(++next),name:'oma-'+createHash('sha256').update(`litebox:${scope.sessionId}`).digest('hex').slice(0,32),scope:JSON.stringify(scope),files:{},profile:{},running:true};disks.set(disk.id,disk);calls.push(['create',disk.id]);return native(disk);},
     async resume(handle,scope){calls.push(['fresh-get',handle.runtimeId]);const disk=disks.get(handle.runtimeId);if(!disk)throw Error('owned retained disk missing');assert.equal(disk.scope,JSON.stringify(scope));disk.running=true;return native(disk);},
     async reap(handle,scope){const disk=disks.get(handle.runtimeId);if(disk)assert.equal(disk.scope,JSON.stringify(scope));calls.push(['remove-owned',handle.runtimeId]);disks.delete(handle.runtimeId);},
   };

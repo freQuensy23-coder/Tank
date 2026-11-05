@@ -2,6 +2,8 @@ const openmaSource = process.env.TANK_AUDIT_OPENMA_ROOT ? pathToFileURL(process.
 import { pathToFileURL } from 'node:url';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
+const { stableDigest } = await import(new URL('packages/control-plane-node/src/lib/tank-retained/runtime-identity.ts', openmaSource));
 const { NodeRetainedLifecycle } = await import(new URL('packages/control-plane-node/src/lib/tank-retained/node-lifecycle.ts', openmaSource));
 import { setup } from './fakes.mjs';
 function fixture() {
@@ -18,9 +20,15 @@ function fixture() {
       async create(_ctx,_env,acq){return decorate(await s.provider.create(acq.scope));},
       async resume(handle,_ctx,_env,acq){return decorate(await s.provider.resume(handle,acq.scope));},
     };},
-    createBoxLiteManagedRuntime(){return {sandbox:{async reap({lease,scope}){await s.provider.reap(lease,scope);}}};},
+    createBoxLiteManagedRuntime(options){return {sandbox:{async reap({lease,scope}){const disk=await options.client.get(lease.runtimeId);if(!disk)return;assert.equal(disk.name,'oma-'+createHash('sha256').update(`litebox:${scope.sessionId}`).digest('hex').slice(0,32));await options.client.remove(lease.runtimeId,true);}}};},
   };
-  const lifecycle=(changes={})=>new NodeRetainedLifecycle({fences:s.fences,providerModule:module,client:{async getInfo(id){const disk=s.disks.get(id);return disk?{state:{running:disk.running}}:null;}},ownerId:'controller',leaseTtlMs:30000,
+  const client={
+    async lookup(id){await s.provider.beforeNativeLookup(id);return s.disks.get(id)??[...s.disks.values()].find(disk=>disk.name===id);},
+    async getInfo(id){const disk=await client.lookup(id);return disk?{id:disk.id,name:disk.name,state:{status:disk.running?'Running':'Stopped',running:disk.running}}:null;},
+    async get(id){const disk=await client.lookup(id);return disk?{id:disk.id,name:disk.name,info:()=>({id:disk.id,name:disk.name,state:{status:disk.running?'Running':'Stopped',running:disk.running}})}:null;},
+    async remove(id){const disk=s.disks.get(id);await s.provider.reap({provider:'litebox',runtimeId:id},disk?JSON.parse(disk.scope):s.options.scope);},
+  };
+  const lifecycle=(changes={})=>new NodeRetainedLifecycle({fences:s.fences,providerModule:module,client,ownerId:'controller',leaseTtlMs:30000,
     fingerprint:async()=>s.options.fingerprint,assertExecutionCurrent:async fence=>{assert.equal(fence.current,true);},...changes});
   const allocation={image:'image-pinned',cpus:1,memoryMib:512,network:{mode:'enabled'},volumes:[]};
   const sandbox=()=>new class {
@@ -289,4 +297,107 @@ test('warm current-prefix metadata advances preserve allocation/workspace and st
   await replacement.bind(fresh);assert.equal(JSON.parse((await newSb.exec('read','FAKE_AFTER_RESTART')).stdout).workspace,'persisted');await replacement.idle(fresh);
   assert.equal(s.allocations.filter(options=>options.providerId==='litebox').length,2);
   assert.equal([...s.disks.keys()][0],id);
+});
+
+
+const orphanIdentity={version:2,image:'sha256:'+'c'.repeat(64),compatibility:{scope:'sha256:'+'d'.repeat(64)}};
+function orphanQueue(rows=[]) {
+  const resolved=[],failures=[];
+  return {rows,resolved,failures,async enqueue(input){rows.push({id:`orphan_${rows.length}`,scope:input.scope,sandbox:input.sandbox});},
+    async list(){return rows.filter(row=>!resolved.includes(row.id));},async resolve({id}){resolved.push(id);},async failed({id}){failures.push(id);}};
+}
+function schema2Candidate(scope,manifest) {
+  const encoded=JSON.stringify(manifest);
+  return {id:'publication',contentHash:stableDigest({scope,manifest:encoded}),metadata:{schema:2,scope:JSON.stringify(scope),manifest:encoded,runtimeId:'untrusted-outer-id',state:'allocating'}};
+}
+async function seedPublication(s,scope,candidate) {
+  const acquired=await s.fences.acquire({scope,ownerId:'seed'});
+  await s.fences.publish({fence:acquired.fence,workspaceCandidate:candidate});
+  await s.fences.release({fence:acquired.fence,reason:'completed'});
+}
+for(const schema of [1,2])test(`failed retained publication and cleanup hand off to protected intent reconciliation (schema=${schema})`,async()=>{
+  const s=fixture(),queue=orphanQueue(),manager=s.lifecycle({orphans:queue,...(schema===2?{identity:async()=>orphanIdentity}:{})});
+  const sb=s.sandbox(),ctx=s.context(sb),publish=s.fences.publish.bind(s.fences),reap=s.provider.reap.bind(s.provider);
+  s.fences.publish=async input=>{if(input.workspaceCandidate.metadata.state==='retained')throw Error('publication unavailable');return publish(input);};
+  s.provider.reap=async()=>{throw Error('cleanup unavailable');};
+  await manager.bind(ctx);await assert.rejects(sb.exec('write','FAKE_KEY'),/retained_initial_cleanup_failed/);
+  assert.equal(queue.rows.length,1);assert.equal(s.disks.has(queue.rows[0].sandbox.runtimeId),true);
+  const publication=structuredClone([...s.rows.values()][0].publication),before=s.calls.length;
+  s.provider.reap=reap;await s.lifecycle({orphans:queue}).reconcileOrphans();
+  assert.deepEqual(queue.resolved,['orphan_0']);assert.deepEqual(queue.failures,[]);
+  assert.equal(s.disks.size,1);assert.deepEqual([...s.rows.values()][0].publication,publication);
+  assert.deepEqual(s.calls.slice(before),[]);assert.equal([...s.rows.values()][0].active,false);
+});
+for(const protectedRole of ['current','retired','upgrade-source','upgrade-target'])test(`schema2 protects authoritative ${protectedRole} and reaps unrelated exact-owned queued disk`,async()=>{
+  const s=fixture(),scope={...s.options.scope,workId:'tank-retained-session-v1'};
+  const handles=[];for(let i=0;i<4;i++)handles.push((await s.provider.create(scope)).runtimeHandle());
+  const [current,retired,target,stale]=handles;
+  const upgrading=protectedRole.startsWith('upgrade');
+  const manifest={handle:current,state:upgrading?'upgrading':'retained',archived:false,identity:orphanIdentity,retired:[retired],
+    ...(upgrading?{upgrade:{source:current,target,owner:'upgrade-owner',identity:orphanIdentity}}:{})};
+  const protectedHandle=protectedRole==='retired'?retired:protectedRole==='upgrade-target'?target:current;
+  await seedPublication(s,scope,schema2Candidate(scope,manifest));
+  const publication=structuredClone([...s.rows.values()][0].publication),before=s.calls.length;
+  const queue=orphanQueue([{id:'protected',scope,sandbox:protectedHandle},{id:'stale',scope,sandbox:stale}]);
+  await s.lifecycle({orphans:queue}).reconcileOrphans();
+  assert.deepEqual(queue.resolved,['protected','stale']);assert.deepEqual(queue.failures,[]);
+  assert.equal(s.disks.has(protectedHandle.runtimeId),true);assert.equal(s.disks.has(stale.runtimeId),false);
+  assert.deepEqual(s.calls.slice(before),[['remove-owned',stale.runtimeId]]);
+  assert.deepEqual([...s.rows.values()][0].publication,publication);assert.equal([...s.rows.values()][0].active,false);
+});
+test('schema2 ordinary queued disk survives fence replacement inside awaited native lookup',async()=>{
+  const s=fixture(),scope={...s.options.scope,workId:'tank-retained-session-v1'};
+  const published=(await s.provider.create(scope)).runtimeHandle(),orphan=(await s.provider.create(scope)).runtimeHandle();
+  await seedPublication(s,scope,schema2Candidate(scope,{handle:published,state:'retained',archived:false,identity:orphanIdentity,retired:[]}));
+  const publication=structuredClone([...s.rows.values()][0].publication),disks=structuredClone([...s.disks]),before=s.calls.length;
+  const queue=orphanQueue([{id:'lookup-loss',scope,sandbox:orphan,attempts:0}]);
+  queue.failed=async({id})=>{queue.failures.push(id);queue.rows[0].attempts++;};
+  let lookups=0,successor;
+  s.provider.beforeNativeLookup=async id=>{
+    assert.equal(id,orphan.runtimeId);lookups++;
+    const row=[...s.rows.values()][0];assert.equal(await s.fences.isCurrent(row.fence),true);
+    row.active=false;
+    successor=await s.fences.acquire({scope,ownerId:'successor'});assert.equal(successor.type,'acquired');
+  };
+  await s.lifecycle({orphans:queue}).reconcileOrphans();
+  assert.equal(lookups,1);assert.deepEqual(queue.resolved,[]);assert.deepEqual(queue.failures,['lookup-loss']);
+  assert.equal(queue.rows[0].attempts,1);assert.equal((await queue.list()).length,1);
+  assert.deepEqual([...s.disks],disks);assert.deepEqual(s.calls.slice(before),[]);
+  assert.deepEqual([...s.rows.values()][0].publication,publication);assert.equal(await s.fences.isCurrent(successor.fence),true);
+});
+for(const refusal of ['hash','json','scope','provider','identity','retired','upgrade-owner','upgrade-source','upgrade-target','upgrade-compatibility','unknown-schema','foreign-native','lost-fence','lost-after-intent','missing-intent','foreign-intent'])test(`schema2 orphan reconciliation fails closed for ${refusal}`,async()=>{
+  const s=fixture(),scope={...s.options.scope,workId:'tank-retained-session-v1'};
+  const handle=(await s.provider.create(scope)).runtimeHandle();
+  const manifest={handle:{...handle,runtimeId:'published'},state:'retained',archived:false,identity:structuredClone(orphanIdentity),retired:[]};
+  if(refusal.startsWith('upgrade-')){
+    manifest.state='upgrading';manifest.upgrade={source:manifest.handle,target:{provider:'litebox',runtimeId:'target'},owner:'owner',identity:structuredClone(orphanIdentity)};
+    if(refusal==='upgrade-owner')manifest.upgrade.owner='';
+    if(refusal==='upgrade-source')manifest.upgrade.source=handle;
+    if(refusal==='upgrade-target')manifest.upgrade.target=manifest.handle;
+    if(refusal==='upgrade-compatibility')manifest.upgrade.identity.compatibility.scope='sha256:'+'e'.repeat(64);
+  }
+  if(refusal==='provider')manifest.handle.provider='foreign';
+  if(refusal==='identity')manifest.identity.version=3;
+  if(refusal==='retired')manifest.retired=[{provider:'foreign',runtimeId:'retired'}];
+  if(['lost-after-intent','missing-intent','foreign-intent'].includes(refusal)){
+    manifest.state='allocating';manifest.handle={provider:'litebox',runtimeId:[...s.disks.values()][0].name};
+    if(refusal==='missing-intent')[...s.disks.values()][0].name='unrelated';
+    if(refusal==='foreign-intent')manifest.handle.runtimeId='foreign-intent';
+  }
+  const candidate=schema2Candidate(scope,manifest);
+  if(refusal==='hash')candidate.contentHash='sha256:'+'0'.repeat(64);
+  if(refusal==='json'){candidate.metadata.manifest='{';candidate.contentHash=stableDigest({scope,manifest:'{'});}
+  if(refusal==='scope')candidate.metadata.scope=JSON.stringify({...scope,sessionId:'foreign'});
+  if(refusal==='unknown-schema')candidate.metadata.schema=3;
+  await seedPublication(s,scope,candidate);
+  if(refusal==='foreign-native')[...s.disks.values()][0].name='foreign-owner';
+  const publication=structuredClone([...s.rows.values()][0].publication),before=s.calls.length;
+  const current=s.fences.isCurrent.bind(s.fences);let checks=0;
+  if(refusal==='lost-fence')s.fences.isCurrent=async()=>false;
+  if(refusal==='lost-after-intent')s.fences.isCurrent=async fence=>++checks<3&&await current(fence);
+  const queue=orphanQueue([{id:'refused',scope,sandbox:handle}]);
+  await s.lifecycle({orphans:queue}).reconcileOrphans();s.fences.isCurrent=current;
+  assert.deepEqual(queue.resolved,[]);assert.deepEqual(queue.failures,['refused']);
+  assert.equal(s.disks.has(handle.runtimeId),true);assert.deepEqual(s.calls.slice(before),[]);
+  assert.deepEqual([...s.rows.values()][0].publication,publication);
 });
