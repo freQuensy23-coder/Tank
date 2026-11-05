@@ -22,11 +22,15 @@ from decimal import Decimal, getcontext, localcontext
 from functools import wraps
 from math import log
 from statistics import mean, median, stdev
+from typing import TYPE_CHECKING
 
 from tank.analysis import compute_workers
 from tank.market.capture import event_anchor
 from tank.time_precision import Timestamp, chosen_boundary, offset_schedule, propagate_timestamp
 from tank.util import iso, jsonable, new_id, parse_time
+
+if TYPE_CHECKING:
+    from tank.analysis.truth_native_binding import _ReplayNativeState
 
 WINDOWS = {"W15M": 900, "W1H": 3600, "W4H": 14400, "W24H": 86400}
 RISK_ORDER = [
@@ -5719,10 +5723,13 @@ ASSESSMENT_BASELINE_IDLE_S = 1800
 
 
 class MarketTruthService:
+    _replay_native_state: "_ReplayNativeState | None"
+
     def __init__(self, repo, settings, market):
         self.repo, self.settings, self.market = repo, settings, market
         self._condition_cache = {}
         self._condition_baselines = {}
+        self._condition_lock = asyncio.Lock()
 
         self._assessment_locks = {}
 
@@ -5764,14 +5771,17 @@ class MarketTruthService:
         config = dict(
             config, config_version=self.settings.config_version, code_version=self.settings.code_version
         )
-        return await asyncio.to_thread(
-            compute_condition_values,
-            snapshot,
-            requirements,
-            config=config,
-            cache=self._condition_cache,
-            baseline_cache=self._condition_baselines,
-        )
+        from tank.analysis import truth_sql_engine
+        from tank.analysis.truth_native_binding import native_provider
+
+        async with self._condition_lock:
+            return await truth_sql_engine.evaluate_conditions(
+                native_provider(self),
+                snapshot,
+                requirements,
+                config,
+                cache=self._condition_cache,
+            )
 
     async def assess(self, event_id, token_id, cutoff=None):
         event = await self.repo.get("evt.events", event_id) if event_id else None
@@ -5805,9 +5815,10 @@ class MarketTruthService:
         self._release_idle_assessment_baselines()
         lock = self._assessment_locks.setdefault(token_id, asyncio.Lock())
         async with lock:
-            result = await compute_workers.compute_market_truth(
-                compute_workers.ASSESSMENT, snapshot, config=knobs, baseline_key=token_id
-            )
+            from tank.analysis import truth_sql_engine
+            from tank.analysis.truth_native_binding import native_provider
+
+            result = await truth_sql_engine.evaluate(native_provider(self), snapshot, knobs)
         result["mta_id"] = new_id("MTA")
         await self.repo.put("ana.market_truth", result["mta_id"], result, immutable=True)
         return result

@@ -3,6 +3,7 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 import pytest
+from truth_native_memory_dependencies import native_memory_analytics
 
 from tank.runtime import Runtime
 from tank.scheduler import Scheduler
@@ -742,7 +743,7 @@ async def test_terminal_delivery_reconciliation_covers_expiry_restart_and_valida
 @pytest.mark.asyncio
 @pytest.mark.parametrize("terminal_status", ["PARTIAL", "FAILED"])
 async def test_external_capture_consumer_uses_bounded_incomplete_then_terminal_history(
-    tmp_path, terminal_status, monkeypatch
+    tmp_path, terminal_status, monkeypatch, request
 ):
     from datetime import timedelta
 
@@ -821,11 +822,14 @@ async def test_external_capture_consumer_uses_bounded_incomplete_then_terminal_h
         config_version="fixture",
         code_version="fixture",
     )
-    async with httpx.AsyncClient(
-        transport=httpx.MockTransport(
-            lambda req: (_ for _ in ()).throw(AssertionError("No external requests"))
-        )
-    ) as http:
+    async with (
+        native_memory_analytics(monkeypatch, request),
+        httpx.AsyncClient(
+            transport=httpx.MockTransport(
+                lambda req: (_ for _ in ()).throw(AssertionError("No external requests"))
+            )
+        ) as http,
+    ):
         market = MarketService(repo, settings, http=http)
         truth = MarketTruthService(repo, settings, market)
         original = truth.assess

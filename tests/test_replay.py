@@ -2917,10 +2917,13 @@ async def test_actual_reference_publication_retains_unsent_intent_and_ordinary_r
 
 
 @pytest.mark.integration
-async def test_captured_tools_decision_refreshes_fired_market_watch_offline(packet, tmp_path, monkeypatch):
+async def test_captured_tools_decision_refreshes_fired_market_watch_offline(
+    packet, tmp_path, monkeypatch, request
+):
     from datetime import timedelta
 
     from test_market_capture_refresh import ReleasedMarket, seed_domain, shifted_snapshot
+    from truth_native_memory_dependencies import native_memory_analytics
 
     from tank.analysis.decisions import DecisionEngine
     from tank.analysis.truth import MarketTruthService
@@ -2938,9 +2941,10 @@ async def test_captured_tools_decision_refreshes_fired_market_watch_offline(pack
     await seed_domain(source, cfg, end)
     market = ReleasedMarket(shifted_snapshot(end))
     truth = MarketTruthService(source, cfg, market)
-    first = await truth.assess("e", "T", chosen_boundary(earlier, precision="BUCKET(1m)"))
-    tools = EventToolService(source, cfg, truth, DecisionEngine())
-    initial = await tools.dispatch("get_decision", {"event_id": "e", "token_id": "T"}, {})
+    async with native_memory_analytics(monkeypatch, request):
+        first = await truth.assess("e", "T", chosen_boundary(earlier, precision="BUCKET(1m)"))
+        tools = EventToolService(source, cfg, truth, DecisionEngine())
+        initial = await tools.dispatch("get_decision", {"event_id": "e", "token_id": "T"}, {})
     watch = next(row for row in initial["conditions"] if row["role"] == "UPGRADE")
     watch.update(status="FIRED", fired_at=data["cutoff"])
     snapshot = shifted_snapshot(end)

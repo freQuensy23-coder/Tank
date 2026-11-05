@@ -182,6 +182,7 @@ jobs:
           context: ${{ matrix.context }}
           file: ${{ matrix.file }}
           push: ${{ github.event_name == 'push' }}
+          load: ${{ matrix.image == 'tank' }}
           build-contexts: ${{ matrix.image == 'tank-openma' && format('sandbox={0}/sandbox-oci', runner.temp) || '' }}
           build-args: |
             GIT_SHA=${{ github.sha }}
@@ -193,6 +194,51 @@ jobs:
           tags: ${{ steps.name.outputs.image }}:${{ github.sha }}
           cache-from: type=gha,scope=${{ matrix.image }}
           cache-to: ${{ github.event_name == 'push' && format('type=gha,mode=max,scope={0}', matrix.image) || '' }}
+      - name: Qualify the shipping Tank native executable as its runtime user
+        if: matrix.image == 'tank'
+        env:
+          TANK_IMAGE: ${{ steps.name.outputs.image }}:${{ github.sha }}
+        run: |
+          docker run --rm --network none -i "$TANK_IMAGE" python - <<'PY'
+          import asyncio
+          import hashlib
+          import os
+          import platform
+          import re
+          import subprocess
+          import sys
+          from pathlib import Path
+
+          from tank.analysis.truth_native_local import ReplayNativeRows
+
+          assert os.getuid() == 1000
+          assert Path(sys.executable).parent == Path('/opt/tank/venv/bin')
+          binary = Path(sys.executable).with_name('clickhouse')
+          expected = {
+              'x86_64': '6a96266c0f00897225f9bb2ab0f965111298da75d7ec1b67465c6c9d5cf5ae81',
+              'aarch64': '6a23992b3035628dd1fc0fc981453db82b2f35fcf0f5c588293ce7c4918841fd',
+          }[platform.machine()]
+          with binary.open('rb') as executable:
+              actual = hashlib.file_digest(executable, 'sha256').hexdigest()
+          assert actual == expected
+          version = subprocess.check_output([str(binary), '--version'], text=True).strip()
+          assert re.search(r'\bversion 25\.8\.33\.6(?:\s|$)', version)
+          query = "SELECT version() AS version, toUInt32(1) AS scalar, (SELECT value FROM system.build_options WHERE name = 'VERSION_GITHASH') AS source"
+
+          async def qualify():
+              provider = ReplayNativeRows()
+              try:
+                  return await provider.rows(query)
+              finally:
+                  await provider.close()
+
+          assert asyncio.run(qualify()) == [{
+              'version': '25.8.33.6',
+              'scalar': 1,
+              'source': '65eaf18b4a939f3e02aad50b7fbb2711b09495a0',
+          }]
+          print(f'{version} uid={os.getuid()} arch={platform.machine()} sha256={actual} scalar=1 source=matched')
+          PY
 
   publish:
     if: github.event_name == 'push'

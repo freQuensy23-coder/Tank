@@ -26,6 +26,8 @@ class Repo:
         return self.rows.get((table, key))
 
     async def put(self, table, key, value, **kwargs):
+        assert kwargs == {"immutable": True}
+        assert table == "ana.market_truth" and key == value["mta_id"]
         self.rows[(table, key)] = value
         return value
 
@@ -60,7 +62,7 @@ def test_snapshot_parts_restore_every_row_and_value(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_assessment_keeps_each_tokens_baseline_cache_in_its_worker(monkeypatch):
+async def test_direct_worker_keeps_each_tokens_baseline_cache_in_its_worker(monkeypatch):
     seen = []
 
     def compute(snapshot, *, config):
@@ -71,12 +73,64 @@ async def test_assessment_keeps_each_tokens_baseline_cache_in_its_worker(monkeyp
 
     monkeypatch.setattr(truth, "_compute_market_truth", compute)
     packets = {token: {"token_id": token, "cutoff": "2026-10-16T12:00:00Z"} for token in ("T", "U")}
-    first = truth.MarketTruthService(Repo(), SETTINGS, Market(packets))
-    await first.assess(None, "T")
-    await first.assess(None, "T")
-    await first.assess(None, "U")
-    await truth.MarketTruthService(Repo(), SETTINGS, Market(packets)).assess(None, "T")
+    for token in ("T", "T", "U", "T"):
+        await compute_workers.compute_market_truth(
+            compute_workers.ASSESSMENT, packets[token], config={}, baseline_key=token
+        )
     assert seen == [("T", []), ("T", [0]), ("U", []), ("T", [0, 1])]
+
+
+async def test_native_service_dependency_owns_inputs_and_per_token_locks_not_worker_caches(monkeypatch):
+    from copy import deepcopy
+
+    from truth_service_unit_seam import assert_input, bind_evaluator
+
+    repo = Repo()
+    packets = {token: {"token_id": token, "cutoff": "2026-10-16T12:00:00Z"} for token in ("T", "U")}
+    seen, active, results = [], set(), []
+    entered_t, entered_u, release = asyncio.Event(), asyncio.Event(), asyncio.Event()
+
+    def forbidden(*args, **kwargs):
+        raise AssertionError("native service must not allocate a Python financial worker")
+
+    monkeypatch.setattr(compute_workers, "compute_market_truth", forbidden)
+    monkeypatch.setattr(truth, "compute_market_truth", forbidden)
+
+    async def evaluate(client, snapshot, config=None):
+        token = snapshot["token_id"]
+        assert_input(
+            client, snapshot, config, provider, dict(deepcopy(packets[token]), event_id=None), ("cfg", "code")
+        )
+        assert token not in active
+        active.add(token)
+        seen.append(token)
+        (entered_t if token == "T" else entered_u).set()
+        try:
+            await release.wait()
+            return {"token_id": token, "cutoff": snapshot["cutoff"]}
+        finally:
+            active.remove(token)
+
+    provider = bind_evaluator(monkeypatch, repo, evaluate)
+    first = truth.MarketTruthService(repo, SETTINGS, Market(packets))
+    t1 = asyncio.create_task(first.assess(None, "T", "2026-10-16T12:00:00Z"))
+    await asyncio.wait_for(entered_t.wait(), 1)
+    t2 = asyncio.create_task(first.assess(None, "T", "2026-10-16T12:00:00Z"))
+    u = asyncio.create_task(first.assess(None, "U", "2026-10-16T12:00:00Z"))
+    await asyncio.wait_for(entered_u.wait(), 1)
+    assert seen == ["T", "U"] and repo.rows == {}
+    release.set()
+    results.extend(await asyncio.gather(t1, t2, u))
+    results.append(
+        await truth.MarketTruthService(repo, SETTINGS, Market(packets)).assess(
+            None, "T", "2026-10-16T12:00:00Z"
+        )
+    )
+    assert seen == ["T", "U", "T", "T"]
+    assert len({result["mta_id"] for result in results}) == 4
+    assert repo.rows == {("ana.market_truth", result["mta_id"]): result for result in results}
+    assert active == set()
+    assert compute_workers._executors == {} and compute_workers._baselines == {}
 
 
 @pytest.mark.asyncio
@@ -124,11 +178,10 @@ def worker_processes(monkeypatch):
 @pytest.mark.integration
 @pytest.mark.process
 @pytest.mark.asyncio
-async def test_assessment_computes_in_a_worker_process_while_the_reaction_lane_is_busy(worker_processes):
+async def test_direct_compute_worker_process_is_independent_of_busy_reaction_lane(worker_processes):
     reaction = compute_workers.executor(compute_workers.REACTION)
     busy = reaction.submit(time.sleep, 30)
-    repo = Repo()
-    service = truth.MarketTruthService(repo, SETTINGS, Market({"T": _spot_packet()}))
+    snapshot = dict(_spot_packet(), event_id=None)
     gaps, done = [], asyncio.Event()
 
     async def ticks():
@@ -140,7 +193,12 @@ async def test_assessment_computes_in_a_worker_process_while_the_reaction_lane_i
 
     ticker = asyncio.create_task(ticks())
     started = time.monotonic()
-    result = await service.assess(None, "T", "2026-10-16T12:00:00Z")
+    result = await compute_workers.compute_market_truth(
+        compute_workers.ASSESSMENT,
+        snapshot,
+        config={"config_version": "cfg", "code_version": "code"},
+        baseline_key="T",
+    )
     elapsed = time.monotonic() - started
     done.set()
     await ticker
@@ -149,7 +207,6 @@ async def test_assessment_computes_in_a_worker_process_while_the_reaction_lane_i
     assert workers and os.getpid() not in workers
     assert not busy.done() and elapsed < 25
     assert max(gaps) < 1
-    assert repo.rows[("ana.market_truth", result["mta_id"])] is result
     assert _comparable(result) == _comparable(
         truth.compute_market_truth(_spot_packet(), config={"config_version": "cfg", "code_version": "code"})
     )

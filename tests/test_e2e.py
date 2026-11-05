@@ -5,6 +5,7 @@ from datetime import UTC
 
 import httpx
 import pytest
+from truth_native_test_safety import require_loopback_native_url
 
 from tank.agents.pipeline import Pipeline
 from tank.agents.sessions import SessionService
@@ -260,6 +261,7 @@ async def isolated_e2e_database(postgres_template):
     source = os.environ.get("TANK_E2E_DATABASE_URL")
     if not source:
         pytest.skip("requires disposable PostgreSQL16 admin test connection")
+    require_loopback_native_url()
     async with postgres_template.repository(source) as repo:
         yield repo
 
@@ -702,6 +704,9 @@ async def test_full_sse_pipeline_postgres(tmp_path, complete_market, monkeypatch
 
             repo = PostgresRepository(settings.database_url)
             await repo.open()
+            assert isolated_e2e_database.clickhouse is not None
+            repo.clickhouse = isolated_e2e_database.clickhouse
+            assert repo.clickhouse is isolated_e2e_database.clickhouse
             delivery = DeliveryService(repo, settings, http=http)
             payload = {"alert_id": published["alert_id"], "version": published["version"]}
             await delivery.deliver(payload)

@@ -55,7 +55,7 @@ jobs:
       CLICKHOUSE_TEST_URL: http://tank_ci:tank-ci-disposable@127.0.0.1:8123
     services:
       clickhouse:
-        image: clickhouse/clickhouse-server:25.8
+        image: clickhouse/clickhouse-server:25.8.33.6@sha256:0152dd511befe6a2c2ef53e930726179669b08116da78500b37c51c96ff5ee77
         env:
           CLICKHOUSE_USER: tank_ci
           CLICKHOUSE_PASSWORD: tank-ci-disposable
@@ -82,12 +82,49 @@ jobs:
           python-version: "3.13.13"
           enable-cache: true
       - run: uv sync --python 3.13.13 --frozen --extra dev
+      - name: Stage and verify the pinned native ClickHouse executable
+        run: uv run --frozen --extra dev python scripts/ci/setup_native_clickhouse.py "${{ job.services.clickhouse.id }}"
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e
         with:
           go-version: "1.25.14"
           cache-dependency-path: capture/go.sum
       - name: Prepare the isolated ClickHouse schema
         run: uv run --frozen --extra dev python scripts/ci/prepare_clickhouse.py
+      - name: Qualify native ClickHouse parameter body transport
+        run: uv run --frozen --extra dev pytest tests/test_clickhouse_parameter_transport.py -q -n auto --dist loadfile -m integration --timeout=300 --junitxml=.test-results/parameter-transport.xml
+      - name: Require both native parameter transport cases with zero skips
+        run: |
+          uv run --frozen --extra dev python - <<'PY'
+          import xml.etree.ElementTree as ET
+          from collections import Counter
+
+          cases = ET.parse('.test-results/parameter-transport.xml').getroot().findall('.//testcase')
+          expected = Counter(("tests.test_clickhouse_parameter_transport", name) for name in (
+              "test_real_native_domain_parameter_serializers_preserve_complete_json",
+              "test_real_native_large_multipart_values",
+          ))
+          assert Counter((case.get('classname'), case.get('name')) for case in cases) == expected
+          assert not any(case.find(tag) is not None for case in cases for tag in ('failure', 'error', 'skipped'))
+          print('Native parameter transport: 2 passed, 0 failures, 0 errors, 0 skips')
+          PY
+      - name: Qualify native liquidity without an event anchor
+        id: liquidity-absence
+        run: uv run --frozen --extra dev pytest 'tests/test_truth_sql_liquidity.py::test_native_liquidity_complete_original_output[no_event_anchor]' -q -n auto --dist loadfile -m integration --timeout=300 --junitxml=.test-results/liquidity-absence.xml
+      - name: Require the native liquidity absence case with zero skips
+        run: |
+          uv run --frozen --extra dev python - <<'PY'
+          import xml.etree.ElementTree as ET
+          from collections import Counter
+
+          cases = ET.parse('.test-results/liquidity-absence.xml').getroot().findall('.//testcase')
+          expected = Counter({("tests.test_truth_sql_liquidity", "test_native_liquidity_complete_original_output[no_event_anchor]"): 1})
+          assert Counter((case.get('classname'), case.get('name')) for case in cases) == expected
+          assert not any(case.find(tag) is not None for case in cases for tag in ('failure', 'error', 'skipped'))
+          print('Native liquidity absence: 1 passed, 0 failures, 0 errors, 0 skips')
+          PY
+      - name: Localize failed native liquidity through retained relational contracts
+        if: ${{ failure() && steps.liquidity-absence.outcome == 'failure' }}
+        run: uv run --frozen --extra dev pytest tests/test_truth_sql_liquidity.py::test_native_liquidity_absence_relational_phase_contracts -q -n auto --dist loadfile -m integration --timeout=300 --junitxml=.test-results/liquidity-phases.xml
       - name: Install versioned X worker dependencies
         run: uv pip install --python .venv/bin/python -r apify/x-reader/requirements.txt
       - name: Prepare the pinned Go modules and offline build cache
