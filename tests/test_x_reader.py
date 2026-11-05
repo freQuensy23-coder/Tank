@@ -1,5 +1,6 @@
 import base64
 import gzip
+import hashlib
 import importlib
 import json
 import time
@@ -254,6 +255,30 @@ async def test_recovered_actor_has_no_terminal_failure(reader, monkeypatch, cloc
         (b'{"cookie":"session","detail":"upstream A"}', b'{"cookie":"[REDACTED]","detail":"upstream A"}'),
         (b'{"ct0":"escaped\\"secret","detail":1}', b'{"ct0":"[REDACTED]","detail":1}'),
         (b"cookie=session; detail=upstream A", b"cookie=[REDACTED]; detail=upstream A"),
+        (
+            b"Cookie: sid=primary; refresh=secondary, tail=last\r\nbody",
+            b"Cookie: [REDACTED]\r\nbody",
+        ),
+        (
+            b'Set-Cookie: sid="primary"; refresh=secondary\nbody',
+            b"Set-Cookie: [REDACTED]\nbody",
+        ),
+        (
+            b'Cookie: "sid=primary"; refresh=secondary\r\nbody',
+            b"Cookie: [REDACTED]\r\nbody",
+        ),
+        (
+            b"Cookie: [REDACTED]; refresh=secondary\r\nbody",
+            b"Cookie: [REDACTED]\r\nbody",
+        ),
+        (
+            b"Cookie: sid=primary<tail>{suffix}; refresh=secondary\r\nbody",
+            b"Cookie: [REDACTED]\r\nbody",
+        ),
+        (
+            b"\x00\xffCookie: sid=primary; refresh=secondary\nbody",
+            b"\x00\xffCookie: [REDACTED]\nbody",
+        ),
         (b"?auth_token=session&detail=upstream+A", b"?auth_token=[REDACTED]&detail=upstream+A"),
         (b"authorization: Basic abc123, detail=upstream A", b"authorization: [REDACTED], detail=upstream A"),
         (
@@ -272,6 +297,195 @@ def test_credential_value_redaction_preserves_adjacent_response_evidence(reader,
     assert safe == expected
     assert evidence["bodySha256"] == reader.hashlib.sha256(expected).hexdigest()
     assert evidence["redacted"]
+
+
+@pytest.mark.parametrize("encoding", ["utf-8", "base64"])
+@pytest.mark.parametrize("scheme", ["", "Basic ", "Bearer\t", "Bearer\n"])
+@pytest.mark.parametrize("leading", ["?", "?detail=before&"])
+@pytest.mark.parametrize(
+    "key",
+    [
+        "apikey",
+        "api_key",
+        "api-key",
+        "access_token",
+        "token",
+        "password",
+        "secret",
+        "authorization",
+        "set-cookie",
+        "cookie",
+        "auth_token",
+        "ct0",
+        "AUTH_TOKEN",
+    ],
+)
+def test_query_credential_suffixes_are_removed_before_response_capture(
+    reader, encoding, scheme, leading, key
+):
+    prefix = b"\x00\xff" if encoding == "base64" else b""
+    pieces = [f"producer-{key}-{part}".encode() for part in ("prefix", "suffix", "tail")]
+    raw = (
+        prefix
+        + f'<a href="https://x.com/error{leading}{key}={scheme}'.encode()
+        + pieces[0]
+        + b","
+        + pieces[1]
+        + b";"
+        + pieces[2]
+        + b'&detail=after+%2C%3B">safe</a>\r\nbody'
+    )
+    expected = (
+        prefix
+        + f'<a href="https://x.com/error{leading}{key}=[REDACTED]'.encode()
+        + b'&detail=after+%2C%3B">safe</a>\r\nbody'
+    )
+    evidence = reader.response_evidence(http_error(), raw)
+    safe = base64.b64decode(evidence["body"]) if encoding == "base64" else evidence["body"].encode()
+    assert safe == expected
+    assert all(piece not in safe for piece in pieces)
+    assert evidence["bodyEncoding"] == encoding
+    assert evidence["bodyBytes"] == len(expected)
+    assert evidence["bodySha256"] == reader.hashlib.sha256(expected).hexdigest()
+    assert evidence["redacted"] and not evidence["bodyTruncated"]
+
+
+@pytest.mark.parametrize("prefix", [b"", b"\x00\xff"])
+def test_query_redaction_preserves_legacy_header_delimiters(reader, prefix):
+    raw = prefix + (
+        b"Authorization: Basic header-primary, detail=safe\n"
+        b"authorization: Basic\theader-basic; detail=safe\n"
+        b"auth_token=header-token; detail=safe\n"
+        b"ct0=header-ct0, detail=safe\nBearer standalone-bearer\nbody"
+    )
+    expected = prefix + (
+        b"Authorization: [REDACTED], detail=safe\n"
+        b"authorization: [REDACTED]; detail=safe\n"
+        b"auth_token=[REDACTED]; detail=safe\n"
+        b"ct0=[REDACTED], detail=safe\nBearer [REDACTED]\nbody"
+    )
+    evidence = reader.response_evidence(http_error(), raw)
+    safe = base64.b64decode(evidence["body"]) if prefix else evidence["body"].encode()
+    assert safe == expected
+
+
+@pytest.mark.parametrize("encoding", ["utf-8", "base64"])
+@pytest.mark.parametrize("leading", ["?", "?detail=before&"])
+@pytest.mark.parametrize("key", ["auth_token", "ct0", "authorization", "api_key"])
+@pytest.mark.parametrize(
+    "value,replacement,boundary",
+    [
+        (
+            '"query-prefix,query-suffix;query-tail"',
+            '"[REDACTED]"',
+            "&detail=after+%2C%3B\r\nsafe body",
+        ),
+        (
+            "'query-prefix,query-suffix;query-tail'",
+            "'[REDACTED]'",
+            "&detail=after+%2C%3B\r\nsafe body",
+        ),
+        (
+            '"query-prefix\\",query-suffix;query-tail"',
+            '"[REDACTED]"',
+            "&detail=after+%2C%3B\r\nsafe body",
+        ),
+        (
+            "'query-prefix\\',query-suffix;query-tail'",
+            "'[REDACTED]'",
+            "&detail=after+%2C%3B\r\nsafe body",
+        ),
+        (
+            '"query-prefix&inner=query-suffix;query-tail"',
+            '"[REDACTED]"',
+            "&detail=after+%2C%3B\r\nsafe body",
+        ),
+        (
+            'Basic "query-prefix,query-suffix;query-tail"',
+            '"[REDACTED]"',
+            "&detail=after+%2C%3B\r\nsafe body",
+        ),
+        (
+            "Bearer\t'query-prefix,query-suffix;query-tail'",
+            "'[REDACTED]'",
+            "&detail=after+%2C%3B\r\nsafe body",
+        ),
+        (
+            'Bearer\n"query-prefix,query-suffix;query-tail"',
+            '"[REDACTED]"',
+            "&detail=after+%2C%3B\r\nsafe body",
+        ),
+        (
+            ' \t"query-prefix,query-suffix;query-tail"',
+            '"[REDACTED]"',
+            "&detail=after+%2C%3B\r\nsafe body",
+        ),
+        (
+            '"query-prefix,query-suffix;query-tail',
+            '"[REDACTED]',
+            "\r\nsafe body",
+        ),
+        (
+            '""',
+            '"[REDACTED]"',
+            "&detail=after+%2C%3B\r\nsafe body",
+        ),
+        (
+            "''",
+            "'[REDACTED]'",
+            "&detail=after+%2C%3B\r\nsafe body",
+        ),
+        (
+            'Basic ""',
+            '"[REDACTED]"',
+            "&detail=after+%2C%3B\r\nsafe body",
+        ),
+        (
+            "",
+            "[REDACTED]",
+            "&detail=after+%2C%3B\r\nsafe body",
+        ),
+        (
+            "",
+            "[REDACTED]",
+            "",
+        ),
+        (
+            "",
+            "[REDACTED]",
+            "\r\nsafe body",
+        ),
+        (
+            " \t",
+            "[REDACTED]",
+            "\r\nsafe body",
+        ),
+        (
+            "query-prefix,query-suffix;query-tail",
+            "[REDACTED]",
+            " safe body",
+        ),
+        (
+            "query-prefix,query-suffix;query-tail",
+            "[REDACTED]",
+            "<safe>\r\nsafe body",
+        ),
+    ],
+)
+def test_query_value_grammar_is_safe_before_response_capture(
+    reader, encoding, key, leading, value, replacement, boundary
+):
+    prefix = b"\x00\xff" if encoding == "base64" else b""
+    raw = prefix + f"safe π https://x.com/error{leading}{key}={value}{boundary}".encode()
+    expected = prefix + f"safe π https://x.com/error{leading}{key}={replacement}{boundary}".encode()
+    evidence = reader.response_evidence(http_error(), raw)
+    safe = base64.b64decode(evidence["body"]) if encoding == "base64" else evidence["body"].encode()
+    assert safe == expected
+    assert all(piece not in safe for piece in (b"query-prefix", b"query-suffix", b"query-tail"))
+    assert evidence["bodyEncoding"] == encoding
+    assert evidence["bodyBytes"] == len(expected)
+    assert evidence["bodySha256"] == hashlib.sha256(expected).hexdigest()
+    assert evidence["redacted"] and not evidence["bodyTruncated"]
 
 
 def relay_script(data):

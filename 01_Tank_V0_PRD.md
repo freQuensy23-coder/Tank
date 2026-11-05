@@ -405,12 +405,14 @@ WHAT TO DO: DON'T CHASE
 
 ### 7.2 "Tank Ops" notices
 
+X HTTP failures include the retained response bodies as actual attached documents, with separate metadata for status, safe response headers, retries, empty bodies, redaction and capture truncation. Successful attachments have durable delivery receipts and are not resent on retry.
+
 "Tank Ops" receives exactly these five notices:
 
 | Notice | When | What it contains |
 |---|---|---|
 | ITEM PROGRESS | Every new unique material, whatever happens to it | One card per material, sent once and then edited in place as the material moves on: the material and its source link, the filter result, what the agent decided (no event, the event and its grade), whether a card went to "Tank Alerts" and, if not, why. A rejection by the filter or the agent, an error and an expired step are shown on the same card. It changes regardless of whether anything is published in "Tank Alerts". |
-| ENTRY ERRORS | A source poll returned entries Tank could not turn into a material: no identifier or link, an entry that does not match the source's format, a damaged feed document, a tracked Snapshot proposal missing from the answer, an X profile that could not be read | One message per poll with all its new broken entries; each broken entry is reported only once, however often the source repeats it. For an X profile that failed every attempt, the message names the failed account and the failure reason; upstream HTTP responses are not attached as documents. |
+| ENTRY ERRORS | A source poll returned entries Tank could not turn into a material: no identifier or link, an entry that does not match the source's format, a damaged feed document, a tracked Snapshot proposal missing from the answer, an X profile that could not be read | One message per poll with all its new broken entries; each broken entry is reported only once, however often the source repeats it. For an X profile that failed every attempt, the message names the failed account and the failure reason; bounded sanitized HTTP response documents are attached with durable delivery receipts. |
 | DELIVERY FAILED | A card or update for "Tank Alerts" was not delivered after 5 attempts | The card and its version; the material's processing card shows the same failure. A notice that itself fails to reach "Tank Ops" creates no further notice. |
 | HEARTBEAT | Daily at 08:00 UTC | The figures of FR-P-02. |
 | AGENT STALL | The analyst stopped working while work waits for it (FR-P-05) | How many messages wait for the agent and since when, how many sessions are at work, how many agent model calls were made in the window, and which condition fired. Sent once per stall. |
