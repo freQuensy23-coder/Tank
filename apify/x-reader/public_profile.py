@@ -123,7 +123,6 @@ def response_evidence(response, raw, read_error=None, limit=BODY_LIMIT, serializ
             truncated = truncated or len(inspection) > limit
         except (OSError, EOFError, zlib.error):
             encoding_error = "GZIP_DECODE_FAILED_WIRE_PREFIX"
-            truncated = True
     original = inspection[:limit]
     secrets = [
         secret.encode("utf-8")

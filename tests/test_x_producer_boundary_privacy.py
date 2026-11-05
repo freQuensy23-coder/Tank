@@ -179,5 +179,9 @@ async def test_producer_returned_prefix_jsonb_checkpoint_immutable_ops_and_multi
             hashlib.sha256(content).hexdigest() for _, content in uploads
         }
         assert await repo.get("out.ops_notices", notice["notice_id"]) == notice
-        for payload in [json.dumps(checkpoint).encode(), json.dumps(notice).encode(), *(v for _, v in uploads)]:
+        for payload in [
+            json.dumps(checkpoint).encode(),
+            json.dumps(notice).encode(),
+            *(v for _, v in uploads),
+        ]:
             assert b"uniq" not in payload and b"secret-tail" not in payload
