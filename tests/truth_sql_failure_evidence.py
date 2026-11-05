@@ -642,7 +642,7 @@ def _own_trace_sql(*, ordered=False):
 
 
 def _ordered_prefix_fits(categories, ordered_classes, class_counts):
-    prefix = [category for category, code in zip(categories, ordered_classes) if code == 0]
+    prefix = [category for category, code in zip(categories, ordered_classes, strict=False) if code == 0]
     other = prefix.count("Other")
     function = prefix.count("Function")
     other_capacity = sum(class_counts[index] for index in (1, 2, 9, 11, 12, 14)) - ordered_classes.count(6)
@@ -802,7 +802,7 @@ class EvidenceClickHouse(ClickHouse):
                             or any(
                                 (code == 5) != (category == "Unresolved")
                                 or (code in {1, 2, 3, 4, 6} and category != "Other")
-                                for code, category in zip(ordered_classes, categories)
+                                for code, category in zip(ordered_classes, categories, strict=False)
                             )
                             or not _ordered_prefix_fits(categories, ordered_classes, class_counts)
                             or any(
@@ -815,7 +815,7 @@ class EvidenceClickHouse(ClickHouse):
                             or categories.count("Function") > class_counts[7] + class_counts[8]
                             or class_counts[7] > categories.count("Function") + symbol_count - len(categories)
                             or sum(hash_class_counts[:4]) > (
-                                sum(code == 0 and category == "Other" for code, category in zip(ordered_classes, categories))
+                                sum(code == 0 and category == "Other" for code, category in zip(ordered_classes, categories, strict=False))
                                 + ordered_classes[len(categories):].count(0)
                             )
                         ):
