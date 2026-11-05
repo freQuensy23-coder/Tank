@@ -577,7 +577,22 @@ _TRACE_HASH_CLASSES = (
 )
 
 
-def _own_trace_sql():
+_TRACE_ORDERED_CLASSES = (
+    ("Other", "1"),
+    ("ResolveFunction", "startsWith(symbol, 'DB::QueryAnalyzer::resolveFunction(')"),
+    ("ResolveExpression", "startsWith(symbol, 'DB::QueryAnalyzer::resolveExpressionNode(')"),
+    ("TreeHash", "startsWith(symbol, 'DB::IQueryTreeNode::getTreeHash(')"),
+    (
+        "TreeClone",
+        "startsWith(symbol, 'DB::IQueryTreeNode::clone(') OR "
+        "startsWith(symbol, 'DB::IQueryTreeNode::cloneAndReplace(')",
+    ),
+    ("Unresolved", "empty(symbol)"),
+    ("ResolveLambda", "startsWith(symbol, 'DB::QueryAnalyzer::resolveLambda(')"),
+)
+
+
+def _own_trace_sql(*, ordered=False):
     classification = (
         "multiIf("
         + ", ".join(predicate + ", '" + name + "'" for name, predicate in _TRACE_CLASSES[:-1])
@@ -590,6 +605,17 @@ def _own_trace_sql():
         + ", 'Other')"
     )
     hash_vocabulary = "[" + ", ".join("'" + name + "'" for name, _ in _TRACE_HASH_CLASSES) + "]"
+    ordered_projection = ""
+    if ordered:
+        ordered_projection = (
+            ", arrayMap(symbol -> multiIf("
+            + ", ".join(
+                predicate + ", " + str(index)
+                for index, (_, predicate) in enumerate(_TRACE_ORDERED_CLASSES)
+                if index
+            )
+            + ", 0), arraySlice(symbols, 1, 255)) AS ordered_classes"
+        )
     return (
         "SELECT toString(trace_type) AS trace_type, length(trace) AS frame_count, "
         "arrayMap(symbol -> multiIf("
@@ -607,10 +633,29 @@ def _own_trace_sql():
         + hash_classification
         + ", arraySlice(symbols, 1, 255)), class), "
         + hash_vocabulary
-        + ") AS hash_class_counts "
-        "FROM system.trace_log WHERE query_id = {observer_query_id:String} "
+        + ") AS hash_class_counts"
+        + ordered_projection
+        + " FROM system.trace_log WHERE query_id = {observer_query_id:String} "
         "AND trace_type IN ('CPU', 'Real') ORDER BY event_time_microseconds DESC "
         "LIMIT 8 BY trace_type LIMIT 16 FORMAT JSONEachRow"
+    )
+
+
+def _ordered_prefix_fits(categories, ordered_classes, class_counts):
+    prefix = [category for category, code in zip(categories, ordered_classes) if code == 0]
+    other = prefix.count("Other")
+    function = prefix.count("Function")
+    other_capacity = sum(class_counts[index] for index in (1, 2, 9, 11, 12, 14)) - ordered_classes.count(6)
+    function_capacity = class_counts[7]
+    flexible = class_counts[8]
+    return (
+        all(
+            prefix.count(category) <= class_counts[index]
+            for category, index in (("ExpressionActions", 5), ("ActionsDAG", 6), ("PipelineExecutor", 10))
+        )
+        and other <= other_capacity + flexible
+        and function <= function_capacity + flexible
+        and other + function <= other_capacity + function_capacity + flexible
     )
 
 
@@ -669,7 +714,7 @@ class EvidenceClickHouse(ClickHouse):
             self._observation["decode_start_offset_ns"] = time.monotonic_ns() - self._observation["start"]
         return body
 
-    async def _own_trace_snapshot(self, query_id, deadline):
+    async def _own_trace_snapshot(self, query_id, deadline, *, ordered=False):
         if asyncio.get_running_loop().time() >= deadline:
             return {"status": "Unavailable", "reason": "diagnostic_budget"}
         try:
@@ -680,7 +725,7 @@ class EvidenceClickHouse(ClickHouse):
                         "param_observer_query_id": query_id,
                         "output_format_json_quote_64bit_integers": "0",
                     },
-                    content=_own_trace_sql().encode(),
+                    content=_own_trace_sql(ordered=ordered).encode(),
                     headers={"X-ClickHouse-User": self.user, "X-ClickHouse-Key": self.password},
                     timeout=httpx.Timeout(4, connect=1),
                     follow_redirects=False,
@@ -699,14 +744,17 @@ class EvidenceClickHouse(ClickHouse):
                 samples = []
                 counts = {}
                 for row in rows:
-                    if type(row) is not dict or set(row) != {
+                    expected_fields = {
                         "trace_type",
                         "frame_count",
                         "categories",
                         "symbol_count",
                         "class_counts",
                         "hash_class_counts",
-                    }:
+                    }
+                    if ordered:
+                        expected_fields.add("ordered_classes")
+                    if type(row) is not dict or set(row) != expected_fields:
                         raise ValueError("invalid sample fields")
                     trace_type = row["trace_type"]
                     if type(trace_type) is not str or trace_type not in {"CPU", "Real"}:
@@ -736,8 +784,45 @@ class EvidenceClickHouse(ClickHouse):
                         raise ValueError("invalid sample frames")
                     if any(type(value) is not str or value not in _TRACE_CATEGORIES for value in categories):
                         raise ValueError("invalid symbol category")
+                    ordered_classes = row.get("ordered_classes")
+                    if ordered:
+                        if type(ordered_classes) is not list or len(ordered_classes) != symbol_count:
+                            raise ValueError("invalid ordered stack length")
+                        for value in ordered_classes:
+                            _bounded_number(value, maximum=len(_TRACE_ORDERED_CLASSES) - 1)
+                        if (
+                            ordered_classes.count(1) + ordered_classes.count(2) != class_counts[0]
+                            or ordered_classes.count(3) != class_counts[4]
+                            or ordered_classes.count(4) != class_counts[3]
+                            or ordered_classes.count(5) != class_counts[13]
+                            or ordered_classes.count(5) != hash_class_counts[4]
+                            or ordered_classes.count(6) + sum(hash_class_counts[:4]) > class_counts[14]
+                            or sum(hash_class_counts[:4]) > ordered_classes.count(0)
+                            or len(categories) != min(32, symbol_count)
+                            or any(
+                                (code == 5) != (category == "Unresolved")
+                                or (code in {1, 2, 3, 4, 6} and category != "Other")
+                                for code, category in zip(ordered_classes, categories)
+                            )
+                            or not _ordered_prefix_fits(categories, ordered_classes, class_counts)
+                            or any(
+                                not categories.count(category) <= class_counts[index]
+                                <= categories.count(category) + symbol_count - len(categories)
+                                for category, index in (
+                                    ("ExpressionActions", 5), ("ActionsDAG", 6), ("PipelineExecutor", 10)
+                                )
+                            )
+                            or categories.count("Function") > class_counts[7] + class_counts[8]
+                            or class_counts[7] > categories.count("Function") + symbol_count - len(categories)
+                            or sum(hash_class_counts[:4]) > (
+                                sum(code == 0 and category == "Other" for code, category in zip(ordered_classes, categories))
+                                + ordered_classes[len(categories):].count(0)
+                            )
+                        ):
+                            raise ValueError("inconsistent ordered classes")
                     samples.append(
                         {
+                            **({"ordered_classes": ordered_classes} if ordered else {}),
                             "trace_type": trace_type,
                             "frame_count": frame_count,
                             "categories": categories,
@@ -748,6 +833,7 @@ class EvidenceClickHouse(ClickHouse):
                                 "observed"
                                 if any(value not in {"Other", "Unresolved"} for value in categories)
                                 or any(hash_class_counts[:4])
+                                or (ordered and any(value in {1, 2, 3, 4, 6} for value in ordered_classes))
                                 else "Unavailable"
                             ),
                         }
@@ -761,6 +847,15 @@ class EvidenceClickHouse(ClickHouse):
                     "class_order": [name for name, _ in _TRACE_CLASSES],
                     "hash_classification_version": 1,
                     "hash_class_order": [name for name, _ in _TRACE_HASH_CLASSES],
+                    **(
+                        {
+                            "ordered_classification_version": 1,
+                            "ordered_class_order": [name for name, _ in _TRACE_ORDERED_CLASSES],
+                            "ordered_stack_direction": "as_stored_in_trace_log",
+                        }
+                        if ordered
+                        else {}
+                    ),
                     "samples": samples,
                     **{
                         kind: (
@@ -880,7 +975,9 @@ class EvidenceClickHouse(ClickHouse):
                 if timeout:
                     deadline = asyncio.get_running_loop().time() + 5
                     snapshot = await self._own_query_snapshot(observation["query_id"], deadline)
-                    trace_snapshot = await self._own_trace_snapshot(observation["query_id"], deadline)
+                    trace_snapshot = await self._own_trace_snapshot(
+                        observation["query_id"], deadline, ordered=phase == "baseline"
+                    )
                 with contextlib.suppress(Exception):
                     clocks = {
                         name: _bounded_number(value, maximum=86400 * 1_000_000_000)

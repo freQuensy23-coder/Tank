@@ -520,6 +520,7 @@ async def test_ci_native_timeout_snapshot_is_single_bounded_and_preserves_origin
             assert "FROM system.trace_log WHERE query_id = {observer_query_id:String}" in (
                 request.content.decode()
             )
+            assert "ordered_classes" not in request.content.decode()
             return httpx.Response(200, content=b"")
         assert len(calls) == 2
         assert "X-ClickHouse-Query-Id" not in request.headers
@@ -1430,3 +1431,220 @@ async def test_ci_native_deep_summary_preserves_original_response(
         query,
     ):
         assert forbidden not in persisted
+
+
+@pytest.mark.parametrize(
+    "scenario",
+    [
+        "ordered", "unsymbolized", "maximum", "missing", "short", "long", "private", "boolean", "float",
+        "negative", "unknown", "object", "inconsistent", "extra", "hash_unresolved", "category_unresolved",
+        "category_recognized", "category_short", "category_counts", "hash_overlap", "legitimate_overlap",
+        "boundary", "oversize", "duplicate", "lambda_only", "large_categories", "shared_suffix",
+        "flexible_collision", "flexible_valid", "shared_suffix_valid",
+    ],
+)
+async def test_owned_baseline_ordered_stack_privacy_and_validation(native_observer_receipts, scenario):
+    nodeid = truth_sql_failure_evidence._LIQUIDITY_BASELINE
+    query = "private SQL payload"
+    original = httpx.ReadTimeout("privateOriginalCredential")
+    calls = []
+    sample = {
+        "trace_type": "CPU",
+        "frame_count": 4,
+        "symbol_count": 4,
+        "categories": ["Other", "Other", "Other", "Unresolved"],
+        "class_counts": [1, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1],
+        "hash_class_counts": [0, 0, 0, 0, 1, 3],
+        "ordered_classes": [3, 0, 1, 5],
+    }
+
+    def respond(request):
+        calls.append(request)
+        if len(calls) == 1:
+            raise original
+        if len(calls) == 2:
+            return httpx.Response(200, content=b"")
+        assert len(calls) == 3
+        assert dict(request.url.params)["param_observer_query_id"] == calls[0].headers["X-ClickHouse-Query-Id"]
+        sql = request.content.decode()
+        assert "AS ordered_classes" in sql
+        assert "DB::QueryAnalyzer::resolveFunction(" in sql
+        assert "DB::IQueryTreeNode::getTreeHash(" in sql
+        assert "arraySlice(symbols, 1, 255)" in sql
+        assert query not in sql and "privateNativeSymbol" not in sql
+        if scenario == "unsymbolized":
+            sample.update(
+                frame_count=4, symbol_count=0, categories=[], class_counts=[0] * 15,
+                hash_class_counts=[0] * 6, ordered_classes=[],
+            )
+        elif scenario == "maximum":
+            sample.update(
+                frame_count=255, symbol_count=255, categories=["Other"] * 32,
+                class_counts=[0] * 14 + [255], hash_class_counts=[0] * 5 + [255],
+                ordered_classes=[0] * 255,
+            )
+        elif scenario == "missing":
+            del sample["ordered_classes"]
+        elif scenario == "short":
+            sample["ordered_classes"].pop()
+        elif scenario == "long":
+            sample["ordered_classes"].append(0)
+        elif scenario == "object":
+            sample["ordered_classes"] = {"privateNativeSymbol": "privateTraceCredential"}
+        elif scenario == "extra":
+            sample["privateNativeSymbol"] = "privateTraceCredential"
+        elif scenario == "inconsistent":
+            sample["ordered_classes"][0] = 0
+        elif scenario == "hash_unresolved":
+            sample["hash_class_counts"] = [0, 0, 0, 0, 0, 4]
+        elif scenario == "category_unresolved":
+            sample["categories"][3] = "Other"
+        elif scenario == "category_recognized":
+            sample["categories"][0] = "Function"
+        elif scenario == "category_short":
+            sample["categories"].pop()
+        elif scenario == "category_counts":
+            sample["categories"][1] = "ExpressionActions"
+        elif scenario == "hash_overlap":
+            sample["hash_class_counts"] = [2, 0, 0, 0, 1, 1]
+        elif scenario == "shared_suffix":
+            sample.update(
+                frame_count=33, symbol_count=33, categories=["Other"] * 32,
+                class_counts=[0, 0, 0, 0, 0, 1, 0, 1, 0, 0, 0, 0, 0, 0, 31],
+                hash_class_counts=[0, 0, 0, 0, 0, 33], ordered_classes=[0] * 33,
+            )
+        elif scenario == "flexible_collision":
+            sample.update(
+                frame_count=33, symbol_count=33, categories=["Other"] * 31 + ["Function"],
+                class_counts=[0, 0, 0, 0, 0, 1, 1, 0, 1, 0, 0, 0, 0, 0, 30],
+                hash_class_counts=[0, 0, 0, 0, 0, 33], ordered_classes=[0] * 33,
+            )
+        elif scenario == "flexible_valid":
+            sample.update(
+                frame_count=3, symbol_count=3, categories=["Other", "Function", "Other"],
+                class_counts=[0] * 8 + [2] + [0] * 5 + [1],
+                hash_class_counts=[1, 0, 0, 0, 0, 2], ordered_classes=[0] * 3,
+            )
+        elif scenario == "shared_suffix_valid":
+            sample.update(
+                frame_count=34, symbol_count=34, categories=["Other"] * 32,
+                class_counts=[0, 0, 0, 0, 0, 1, 0, 1, 0, 0, 0, 0, 0, 0, 32],
+                hash_class_counts=[1, 0, 0, 0, 0, 33], ordered_classes=[0] * 34,
+            )
+        elif scenario == "lambda_only":
+            sample.update(
+                frame_count=1, symbol_count=1, categories=["Other"],
+                class_counts=[0] * 14 + [1], hash_class_counts=[0] * 5 + [1], ordered_classes=[6],
+            )
+        elif scenario == "large_categories":
+            sample.update(
+                frame_count=255, symbol_count=255, categories=["ExpressionActions"] * 32,
+                class_counts=[0] * 5 + [255] + [0] * 9, hash_class_counts=[0] * 5 + [255],
+                ordered_classes=[0] * 255,
+            )
+        elif scenario == "legitimate_overlap":
+            sample.update(
+                frame_count=3, symbol_count=3, categories=["Other"] * 3,
+                class_counts=[0] * 14 + [3], hash_class_counts=[1, 0, 0, 0, 0, 2],
+                ordered_classes=[0, 6, 0],
+            )
+        elif scenario in {"private", "boolean", "float", "negative", "unknown"}:
+            sample["ordered_classes"][0] = {
+                "private": "privateNativeSymbol 0x1234 privateTraceCredential",
+                "boolean": True, "float": 3.0, "negative": -1, "unknown": 7,
+            }[scenario]
+        samples = [sample]
+        if scenario in {"maximum", "large_categories"}:
+            samples = [sample] * 8 + [sample | {"trace_type": "Real"}] * 8
+        content = "\n".join(json.dumps(row, separators=(",", ":")) for row in samples).encode()
+        if scenario == "large_categories":
+            assert len(content) > 16384
+        if scenario == "duplicate":
+            content = content.replace(b'{"trace_type":', b'{"trace_type":"CPU","trace_type":', 1)
+        if scenario in {"boundary", "oversize"}:
+            size = 16384 if scenario == "boundary" else 16385
+            assert len(content) < size
+            content += b" " * (size - len(content))
+            assert len(content) == size
+        return httpx.Response(200, content=content)
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(respond)) as http:
+        client = EvidenceClickHouse("http://localhost:8123", nodeid, http=http, baseline_query=query)
+        with pytest.raises(httpx.ReadTimeout) as raised:
+            await client.rows(query)
+        assert raised.value is original
+        assert client.http.post == client._original_http_post
+        assert client._observation is None and client._evidence_query is None
+    assert len(calls) == 3
+    (receipt,) = native_receipts(native_observer_receipts)
+    assert receipt["phase"] == "baseline"
+    assert receipt["query_digest"] == hashlib.sha256(query.encode()).hexdigest()
+    assert receipt["query_id"] == calls[0].headers["X-ClickHouse-Query-Id"]
+    trace = receipt["own_trace_log"]
+    if scenario in {
+        "ordered", "unsymbolized", "maximum", "legitimate_overlap", "boundary", "lambda_only",
+        "flexible_valid", "shared_suffix_valid",
+    }:
+        assert trace["status"] == "observed"
+        assert trace["ordered_classification_version"] == 1
+        assert trace["ordered_class_order"] == [
+            "Other", "ResolveFunction", "ResolveExpression", "TreeHash", "TreeClone", "Unresolved", "ResolveLambda"
+        ]
+        assert trace["ordered_stack_direction"] == "as_stored_in_trace_log"
+        assert trace["samples"][0]["ordered_classes"] == sample["ordered_classes"]
+        if scenario == "maximum":
+            assert len(trace["samples"]) == 16
+        if scenario == "unsymbolized":
+            assert trace["samples"][0]["symbol_status"] == "Unavailable"
+        if scenario in {"ordered", "legitimate_overlap", "boundary", "lambda_only"}:
+            assert trace["samples"][0]["symbol_status"] == "observed"
+    else:
+        assert trace == {"status": "Unavailable", "reason": "read_or_validation_error"}
+    persisted = "".join(path.read_text() for path in native_observer_receipts.iterdir())
+    for forbidden in (query, "privateOriginalCredential", "privateNativeSymbol", "privateTraceCredential", "0x1234"):
+        assert forbidden not in persisted
+
+
+def test_ordered_classifier_is_fixed_and_preserves_stack_order():
+    classes = truth_sql_failure_evidence._TRACE_ORDERED_CLASSES
+    assert [name for name, _ in classes] == [
+        "Other", "ResolveFunction", "ResolveExpression", "TreeHash", "TreeClone", "Unresolved", "ResolveLambda"
+    ]
+    symbols = [
+        "DB::IQueryTreeNode::getTreeHash()",
+        "privateNativeSymbol 0x1234 payload",
+        "DB::QueryAnalyzer::resolveFunction()",
+        "DB::QueryAnalyzer::resolveExpressionNode()",
+        "DB::IQueryTreeNode::clone()",
+        "",
+        "DB::QueryAnalyzer::resolveLambda()",
+    ]
+    observed = []
+    for symbol in symbols:
+        code = 0
+        for index, (_, predicate) in enumerate(classes[1:], 1):
+            prefixes = re.findall(r"startsWith\(symbol, '([^']+)'\)", predicate)
+            if any(symbol.startswith(prefix) for prefix in prefixes) or (predicate == "empty(symbol)" and not symbol):
+                code = index
+                break
+        observed.append(code)
+    assert observed == [3, 0, 1, 2, 4, 5, 6]
+    assert list(reversed(observed)) != observed
+    sql = truth_sql_failure_evidence._own_trace_sql(ordered=True)
+    expected = (
+        ", arrayMap(symbol -> multiIf("
+        "startsWith(symbol, 'DB::QueryAnalyzer::resolveFunction('), 1, "
+        "startsWith(symbol, 'DB::QueryAnalyzer::resolveExpressionNode('), 2, "
+        "startsWith(symbol, 'DB::IQueryTreeNode::getTreeHash('), 3, "
+        "startsWith(symbol, 'DB::IQueryTreeNode::clone(') OR "
+        "startsWith(symbol, 'DB::IQueryTreeNode::cloneAndReplace('), 4, "
+        "empty(symbol), 5, "
+        "startsWith(symbol, 'DB::QueryAnalyzer::resolveLambda('), 6, 0), "
+        "arraySlice(symbols, 1, 255)) AS ordered_classes"
+    )
+    phase_sql = truth_sql_failure_evidence._own_trace_sql()
+    suffix = " FROM system.trace_log WHERE query_id = {observer_query_id:String} "
+    assert phase_sql.count(suffix) == 1
+    assert sql == phase_sql.replace(suffix, expected + suffix, 1)
+    assert "ordered_classes" not in phase_sql
+    assert "privateNativeSymbol" not in sql and "0x1234" not in sql and "payload" not in sql
