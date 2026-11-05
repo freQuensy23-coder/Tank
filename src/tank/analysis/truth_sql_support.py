@@ -759,8 +759,9 @@ sup_ratio(sup_inventory_change, sup_balance_total(sup_inventory_previous, sup_in
 sup_latest_kind(['WALLET_FLOWS']) AS sup_wallet,
 ((f) -> __FLOW_WRAPPER__) AS sup_wrapped_flow,
 ((r) -> __DIRECT_FLOW__) AS sup_direct_flow,
-((a) -> arrayConcat(if(sup_wallet != '' AND sup_available(sup_wallet), arrayMap(sup_wrapped_flow,
-    arrayFilter(f -> sup_parse(JSONExtractRaw(f, 'ts')) >= a AND sup_parse(JSONExtractRaw(f, 'ts')) < sup_end, JSONExtractArrayRaw(sup_wallet, 'flows'))), []),
+((a) -> if(sup_wallet != '' AND sup_available(sup_wallet), arrayMap(sup_wrapped_flow,
+    arrayFilter(f -> sup_parse(JSONExtractRaw(f, 'ts')) >= a AND sup_parse(JSONExtractRaw(f, 'ts')) < sup_end, JSONExtractArrayRaw(sup_wallet, 'flows'))), [])) AS sup_wrapped_flows,
+((a) -> arrayConcat(sup_wrapped_flows(a),
     arrayMap(sup_direct_flow, arrayFilter(r -> sup_kind(r) IN ('FLOW', 'WALLET_FLOW') AND sup_available(r) AND sup_time(r) >= a AND sup_time(r) < sup_end, sup_supply_rows)))) AS sup_flows,
 ((a) -> sup_wallet != '' AND sup_available(sup_wallet) AND arrayExists(f -> sup_parse(JSONExtractRaw(f, 'ts')) >= a AND sup_parse(JSONExtractRaw(f, 'ts')) < sup_end
     AND JSONExtractString(f, 'classification') IN ('UNLOCK_DISTRIBUTION', 'TREASURY_INTERNAL', 'MM_INVENTORY') AND JSONExtractRaw(f, 'reaches_exchange') = 'true', JSONExtractArrayRaw(sup_wallet, 'flows'))
@@ -812,7 +813,9 @@ concat('{', arrayStringConcat(arrayFilter(x -> x != '', [
     OR sup_unlock_wrapper != '' AND sup_available(sup_unlock_wrapper) OR notEmpty(sup_unlocks) OR sup_lend != '' AND sup_available(sup_lend)
     OR notEmpty(sup_chains) OR arrayExists(r -> sup_kind(r) IN ('FLOW', 'WALLET_FLOW') AND sup_available(r) AND sup_time(r) >= a AND sup_time(r) < sup_end, sup_supply_rows)) AS sup_supply_available,
 sup_supply_stage AS (
-    SELECT sup_window, sup_window_start, sup_inventory_history_at(sup_window_start) AS sup_inventory_history,
+    SELECT sup_window, sup_window_start,
+        if(sup_window = 'EVENT' AND NOT sup_has_anchor, 0, length(sup_wrapped_flows(sup_window_start))) AS sup_wrapped_flow_count,
+        sup_inventory_history_at(sup_window_start) AS sup_inventory_history,
         if(sup_inventory_current != '' AND sup_available(sup_inventory_current),
             if(JSONHas(sup_inventory_current, 'balances'), __INVENTORY__, sup_inventory_current), sup_missing) AS sup_inventory,
         if(sup_inventory_current != '' AND sup_available(sup_inventory_current),

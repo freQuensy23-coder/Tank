@@ -168,7 +168,9 @@ def test_current_liquidity_root_observer_requires_complete_owned_statement(
                 nullIf(ifNull(parsed.1, lq_zero), lq_zero), 24), toUInt8(1)),
 """
     start = statement.index("        arrayMap(parsed -> if(throwIf(")
-    end = statement.index("            [tuple(lq_level_price(level), lq_level_qty(level))])[1]), levels,", start)
+    end = statement.index(
+        "            [tuple(lq_level_price(level), lq_level_qty(level))])[1]), levels,", start
+    )
     historical = statement[:start] + old_body + statement[end:]
     assert hashlib.sha256(historical.encode()).hexdigest() == (
         "9759dc8ae3dc941c4dae074b86124194de1b46f685aae172506e8edaff144e7c"
@@ -426,9 +428,7 @@ async def test_native_book_operand_controls_preserve_complete_frozen_result(
         level["qty"] = "-1"
     encoded = level if shape == "object" else [level["price"], level["qty"]]
     valid = ["101", "1000000"]
-    snapshot["books"][1]["asks"] = (
-        [valid, encoded] if case.startswith("unused_null") else [encoded, valid]
-    )
+    snapshot["books"][1]["asks"] = [valid, encoded] if case.startswith("unused_null") else [encoded, valid]
     actual = await _compare(native_client, original_truth, snapshot, spot, relative)
     assert [venue["venue"] for venue in actual["per_venue"]] == ["B", "A"]
     assert all(value is not None for value in actual["per_venue"][0]["slippage_bps"].values())

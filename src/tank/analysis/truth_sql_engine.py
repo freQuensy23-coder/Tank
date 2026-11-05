@@ -19,9 +19,11 @@ from tank.clickhouse_market import parameter_string
 from tank.util import jsonable
 
 NUMERIC_POLICY = (
-    "Native Decimal256(24) quantities, USD amounts and funding rates with explicit range admission; "
-    "dimensionless returns, beta, percentiles and ratios use FLOAT64 statistics; significance compares "
-    "native Decimal products at scale 24 with explicit per-product truncation"
+    "Native Decimal256(24) financial inputs admit magnitude below 1e24 and at most 24 fractional "
+    "digits; each multiplication and division truncates toward zero at scale 24 with local error "
+    "below 1e-24; significance and sell-share comparisons use these native rounded products; "
+    "overflow and outside-range inputs are refused; dimensionless returns, beta, percentiles "
+    "and display ratios use Float64 statistics"
 )
 
 _DECIMAL_FIELDS = frozenset(
@@ -186,10 +188,7 @@ eng_input AS (
 
 
 def _assessment_select():
-    return truth_sql_result.select_sql().replace(
-        "significance uses exact squared comparisons within admitted native ranges",
-        "significance compares native Decimal products at scale 24 with explicit per-product truncation",
-    )
+    return truth_sql_result.select_sql()
 
 
 def _provenance_select():
@@ -198,7 +197,9 @@ def _provenance_select():
     if not statement.endswith(suffix):
         raise ValueError("native Market Truth assembly phase contract changed")
     return statement.removesuffix(suffix) + (
-        ", (SELECT eng_snapshot FROM eng_input) AS provenance_snapshot FROM res_assembly"
+        ", (SELECT eng_snapshot FROM eng_input) AS provenance_snapshot, "
+        "(SELECT groupArray(tuple(pre_window, accurateCast(pre_wrapped_flow_count, 'UInt32'))) "
+        "FROM pre_supply_stage) AS wrapped_flow_counts FROM res_assembly"
     )
 
 
@@ -2096,8 +2097,73 @@ def decode_decimals(value, field=None):
     return value
 
 
+def _restore_wrapped_quantities(result, records):
+    windows = {"W15M", "W1H", "W4H", "W24H", "EVENT"}
+    supply = result["supply"]
+    packs = supply.get("windows")
+    primary = result["primary_window"]
+    if (
+        not isinstance(records, list)
+        or len(records) != len(windows)
+        or not isinstance(packs, dict)
+        or set(packs) != windows
+        or not isinstance(primary, str)
+        or primary not in windows
+    ):
+        raise ValueError("native Market Truth returned invalid quantity provenance")
+    counts = {}
+    replacements = []
+    for record in records:
+        if (
+            not isinstance(record, (list, tuple))
+            or len(record) != 2
+            or not isinstance(record[0], str)
+            or record[0] not in windows
+            or record[0] in counts
+            or type(record[1]) is not int
+            or record[1] < 0
+        ):
+            raise ValueError("native Market Truth returned invalid quantity provenance")
+        window, count = record
+        counts[window] = count
+        pack = packs[window]
+        if isinstance(pack, dict) and "flows" not in pack:
+            if (
+                window != "EVENT"
+                or count != 0
+                or primary != "W4H"
+                or not isinstance(result.get("cutoff"), str)
+                or not result["cutoff"]
+                or pack != {"window": "EVENT", "start": None, "cutoff": result["cutoff"], "reason": "INCOMPLETE"}
+                or not isinstance(result.get("relative"), dict)
+                or result["relative"].get("anchor")
+                != {"type": None, "ts": None, "ref_price": None, "reason": "INCOMPLETE"}
+            ):
+                raise ValueError("native Market Truth returned invalid unavailable quantity provenance")
+            continue
+        flows = pack.get("flows") if isinstance(pack, dict) else None
+        if not isinstance(flows, list) or count > len(flows):
+            raise ValueError("native Market Truth returned invalid quantity provenance")
+        for flow in flows[:count]:
+            if not isinstance(flow, dict) or "qty" not in flow:
+                raise ValueError("native Market Truth returned invalid wrapped quantity")
+            quantity = flow["qty"]
+            if quantity is not None:
+                if not isinstance(quantity, str) or not _DECIMAL_TEXT.fullmatch(quantity):
+                    raise ValueError("native Market Truth returned invalid wrapped quantity")
+                replacements.append((flow, Decimal(quantity)))
+    primary_flows = supply.get("flows")
+    if not isinstance(primary_flows, list) or primary_flows != packs[primary]["flows"]:
+        raise ValueError("native Market Truth returned invalid primary quantity provenance")
+    for flow in primary_flows[: counts[primary]]:
+        if flow["qty"] is not None:
+            replacements.append((flow, Decimal(flow["qty"])))
+    for flow, quantity in replacements:
+        flow["qty"] = quantity
+
+
 def _decode_result(rows):
-    if len(rows) != 1 or set(rows[0]) != {"result", "provenance_snapshot"}:
+    if len(rows) != 1 or set(rows[0]) != {"result", "provenance_snapshot", "wrapped_flow_counts"}:
         raise ValueError("native Market Truth requires one complete result row")
     result = json.loads(rows[0]["result"])
     provenance = json.loads(rows[0]["provenance_snapshot"])
@@ -2133,6 +2199,7 @@ def _decode_result(rows):
         raise ValueError("native Market Truth returned incomplete domain shapes")
     from tank.analysis.truth import measurement_metadata, timestamp_companions
 
+    _restore_wrapped_quantities(result, rows[0]["wrapped_flow_counts"])
     result = timestamp_companions(decode_decimals(result), provenance)
     result["measurement_metadata"] = measurement_metadata(result)
     return jsonable(result)

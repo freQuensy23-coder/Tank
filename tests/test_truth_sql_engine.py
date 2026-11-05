@@ -131,6 +131,119 @@ async def test_one_native_select_complete_frozen_original(engine_client, origina
 
 
 @pytest.mark.integration
+@pytest.mark.parametrize("has_flows", [False, True])
+async def test_absent_anchor_native_quantity_provenance_matches_final_windows(
+    engine_client, original_truth, monkeypatch, has_flows
+):
+    packet = _snapshot()
+    packet.pop("_primary", None)
+    packet["anchor"] = None
+    packet["supply"] = []
+    if has_flows:
+        packet["supply"] = [{
+            "kind": "WALLET_FLOWS",
+            "ts": packet["cutoff"],
+            "wrapped_flow_counts": [["EVENT", 99]],
+            "flows": [{
+                "ts": iso(parse_time(packet["cutoff"]) - timedelta(minutes=10)),
+                "classification": "TREASURY_INTERNAL",
+                "qty_native": "12.25",
+                "wrapped_flow_counts": [["W4H", 99]],
+            }],
+        }]
+    expected = original_truth.compute_market_truth(deepcopy(packet))
+    expected["measurement_context"]["numeric_policy"] = native.NUMERIC_POLICY
+    forbid_python_business(monkeypatch)
+
+    class RecordingNative(CountingNative):
+        async def rows(self, statement, params=None):
+            self.result_rows = await super().rows(statement, params)
+            return self.result_rows
+
+    counted = RecordingNative(engine_client)
+    actual = await native.evaluate(counted, packet)
+    assert len(counted.requests) == 1
+    assert_complete(actual, expected)
+    assert actual["primary_window"] == "W4H"
+    unavailable = {"window": "EVENT", "start": None, "cutoff": packet["cutoff"], "reason": "INCOMPLETE"}
+    wire = json.loads(counted.result_rows[0]["result"])
+    assert wire["supply"]["windows"]["EVENT"] == unavailable
+    assert actual["supply"]["windows"]["EVENT"] == unavailable
+    assert dict(counted.result_rows[0]["wrapped_flow_counts"]) == {
+        "W15M": int(has_flows),
+        "W1H": int(has_flows),
+        "W4H": int(has_flows),
+        "W24H": int(has_flows),
+        "EVENT": 0,
+    }
+    assert actual["supply"]["flows"] == actual["supply"]["windows"]["W4H"]["flows"]
+    if has_flows:
+        assert actual["supply"]["flows"][0]["qty"] == "12.250000000000000000000000"
+        assert "supply.flows[0].qty" in actual["measurement_metadata"]
+
+
+def test_native_selected_numeric_policy_matches_admitted_arithmetic():
+    policy = (
+        "Native Decimal256(24) financial inputs admit magnitude below 1e24 and at most 24 fractional "
+        "digits; each multiplication and division truncates toward zero at scale 24 with local error "
+        "below 1e-24; significance and sell-share comparisons use these native rounded products; "
+        "overflow and outside-range inputs are refused; dimensionless returns, beta, percentiles "
+        "and display ratios use Float64 statistics"
+    )
+    assert native.NUMERIC_POLICY == policy
+    assert "'\"" + policy + "\"'" in native._assessment_select()
+
+
+@pytest.mark.integration
+@pytest.mark.parametrize("quantity", ["12.25", "0", None])
+async def test_native_wallet_flow_quantity_metadata_matches_frozen_original(
+    engine_client, original_truth, monkeypatch, quantity
+):
+    packet = _snapshot()
+    packet.pop("_primary", None)
+    stamp = iso(parse_time(packet["cutoff"]) - timedelta(minutes=10))
+    raw = "7.000000000000000000000000"
+    packet["supply"] = [
+        {
+            "kind": "WALLET_FLOWS",
+            "ts": packet["cutoff"],
+            "flows": [
+                {
+                    "ts": stamp,
+                    "classification": "TREASURY_INTERNAL",
+                    "qty_native": quantity,
+                    "identity_evidence": {"qty": raw, "value": raw},
+                    "aggregates": [{"qty": raw, "buy_qty": raw}],
+                }
+            ],
+        },
+        {"kind": "FLOW", "ts": stamp, "class": "TREASURY_INTERNAL", "qty": raw},
+        {"kind": "WALLET_FLOW", "ts": stamp, "class": "MM_INVENTORY", "qty": 7.0},
+    ]
+    expected = original_truth.compute_market_truth(deepcopy(packet))
+    expected["measurement_context"]["numeric_policy"] = native.NUMERIC_POLICY
+    forbid_python_business(monkeypatch)
+    actual = await native.evaluate(engine_client, packet)
+    assert_complete(actual, expected)
+    assert actual["measurement_metadata"].keys() == expected["measurement_metadata"].keys()
+    for window in (None, "W15M", "W1H", "W4H", "W24H", "EVENT"):
+        prefix = "supply" if window is None else f"supply.windows.{window}"
+        domain = actual["supply"] if window is None else actual["supply"]["windows"][window]
+        expected_domain = expected["supply"] if window is None else expected["supply"]["windows"][window]
+        assert len(domain["flows"]) == len(expected_domain["flows"])
+        if not expected_domain["flows"]:
+            continue
+        assert len(expected_domain["flows"]) == 3
+        assert f"{prefix}.flows[0].qty" in actual["measurement_metadata"]
+        assert f"{prefix}.flows[1].qty" not in actual["measurement_metadata"]
+        assert f"{prefix}.flows[2].qty" in actual["measurement_metadata"]
+        assert domain["flows"][1]["qty"] == raw
+        assert type(domain["flows"][2]["qty"]) is float
+        assert domain["flows"][0]["identity_evidence"] == {"qty": raw, "value": raw}
+        assert domain["flows"][0]["aggregates"] == [{"qty": raw, "buy_qty": raw}]
+
+
+@pytest.mark.integration
 async def test_native_support_consumes_post_residual_fields(engine_client, original_truth, monkeypatch):
     from test_truth_sql_conditions import _physical_snapshot
 
@@ -415,6 +528,177 @@ def test_query_values_remain_typed_parameters_and_arrays_keep_order():
     assert all(isinstance(value, tuple) and len(value) == 2 for value in parameters.values())
     assert statement.index("eng_enriched AS (") < statement.index("sup_support_stage AS (")
     assert statement.index("sup_support_stage AS (") < statement.index("res_gate_inputs AS (")
+
+
+def test_result_decoder_preserves_raw_quantity_metadata_refusals():
+    amount = "7.000000000000000000000000"
+    payload = {
+        "spot": {window: {} for window in ("W15M", "W1H", "W4H", "W24H", "EVENT")},
+        "relative": {},
+        "derivatives": {},
+        "liquidity": {},
+        "supply": {
+            "flows": [
+                {
+                    "kind": "FLOW",
+                    "qty": amount,
+                    "identity_evidence": {"qty": amount, "value": amount},
+                    "aggregates": [{"qty": amount, "buy_qty": amount}],
+                }
+            ],
+            "exchange_inventory": {"kind": "INVENTORY", "qty_native": amount},
+        },
+        "data_confidence": {},
+        "move_class": "UNKNOWN",
+        "cutoff": "2026-01-01T00:00:00Z",
+        "primary_window": "W4H",
+        "measurement_context": {},
+    }
+    payload["supply"]["windows"] = {
+        window: deepcopy(payload["supply"]) for window in ("W15M", "W1H", "W4H", "W24H", "EVENT")
+    }
+    result = native._decode_result(
+        [{
+            "result": json.dumps(payload),
+            "provenance_snapshot": "{}",
+            "wrapped_flow_counts": [[window, 0] for window in payload["supply"]["windows"]],
+        }]
+    )
+    assert result["supply"] == payload["supply"]
+    assert "supply.flows[0].qty" not in result["measurement_metadata"]
+    assert "supply.flows[0].identity_evidence.value" not in result["measurement_metadata"]
+    assert "supply.flows[0].aggregates[0].buy_qty" not in result["measurement_metadata"]
+    assert "supply.exchange_inventory.qty_native" not in result["measurement_metadata"]
+
+
+@pytest.mark.parametrize("quantity", ["12.250000000000000000000000", "0.000000000000000000000000", None])
+def test_quantity_transport_restores_only_native_prefix(quantity):
+    raw = "7.000000000000000000000000"
+    direct = {
+        "class": "TREASURY_INTERNAL",
+        "classification": "TREASURY_INTERNAL",
+        "qty_native": raw,
+        "wrapped_flow_counts": [["W4H", 99]],
+        "qty": raw,
+        "identity_evidence": {"qty": raw, "value": raw},
+        "aggregates": [{"qty": raw, "buy_qty": raw}],
+    }
+    flows = [{"qty": quantity}, direct, {"qty": 7.0}, {"qty": {"raw": raw}}]
+    windows = ("W15M", "W1H", "W4H", "W24H", "EVENT")
+    payload = {
+        "spot": {window: {} for window in windows},
+        "relative": {},
+        "derivatives": {},
+        "liquidity": {},
+        "supply": {"flows": deepcopy(flows), "windows": {window: {"flows": deepcopy(flows)} for window in windows}},
+        "data_confidence": {},
+        "move_class": "UNKNOWN",
+        "cutoff": "2026-01-01T00:00:00Z",
+        "primary_window": "W4H",
+        "measurement_context": {},
+    }
+    result = native._decode_result(
+        [{
+            "result": json.dumps(payload),
+            "provenance_snapshot": "{}",
+            "wrapped_flow_counts": [[window, 1] for window in windows],
+        }]
+    )
+    for prefix, pack in [("supply", result["supply"])] + [
+        (f"supply.windows.{window}", result["supply"]["windows"][window]) for window in windows
+    ]:
+        assert pack["flows"][1:] == flows[1:]
+        assert type(pack["flows"][2]["qty"]) is float
+        assert f"{prefix}.flows[0].qty" in result["measurement_metadata"]
+        assert f"{prefix}.flows[1].qty" not in result["measurement_metadata"]
+        assert pack["flows"][0]["qty"] == quantity
+
+
+@pytest.mark.parametrize("failure", ["missing", "duplicate", "bool", "negative", "large", "unknown", "primary", "qty"])
+def test_quantity_transport_refuses_before_mutation(failure):
+    windows = ("W15M", "W1H", "W4H", "W24H", "EVENT")
+    flows = [{"qty": "1.000000000000000000000000"}]
+    result = {
+        "supply": {"flows": deepcopy(flows), "windows": {window: {"flows": deepcopy(flows)} for window in windows}},
+        "primary_window": "W4H",
+    }
+    counts = [[window, 1] for window in windows]
+    if failure == "missing":
+        counts.pop()
+    elif failure == "duplicate":
+        counts[-1][0] = "W4H"
+    elif failure == "bool":
+        counts[-1][1] = True
+    elif failure == "negative":
+        counts[-1][1] = -1
+    elif failure == "large":
+        counts[-1][1] = 2
+    elif failure == "unknown":
+        counts[-1][0] = "W7D"
+    elif failure == "primary":
+        result["primary_window"] = "W7D"
+    else:
+        result["supply"]["windows"]["EVENT"]["flows"][0]["qty"] = "not-decimal"
+    before = deepcopy(result)
+    with pytest.raises(ValueError, match="native Market Truth"):
+        native._restore_wrapped_quantities(result, counts)
+    assert result == before
+
+
+@pytest.mark.parametrize(
+    "failure",
+    [None, "count", "window", "start", "reason", "cutoff", "missing_cutoff", "primary", "association", "anchor", "extra", "other_window"],
+)
+def test_unavailable_event_quantity_transport_is_strict_and_atomic(failure):
+    windows = ("W15M", "W1H", "W4H", "W24H", "EVENT")
+    quantity = "1.000000000000000000000000"
+    flows = [{"qty": quantity}]
+    cutoff = "2026-01-01T00:00:00Z"
+    unavailable = {"window": "EVENT", "start": None, "cutoff": cutoff, "reason": "INCOMPLETE"}
+    result = {
+        "supply": {"flows": deepcopy(flows), "windows": {window: {"flows": deepcopy(flows)} for window in windows}},
+        "primary_window": "W4H",
+        "cutoff": cutoff,
+        "relative": {"anchor": {"type": None, "ts": None, "ref_price": None, "reason": "INCOMPLETE"}},
+    }
+    result["supply"]["windows"]["EVENT"] = deepcopy(unavailable)
+    counts = [[window, 0 if window == "EVENT" else 1] for window in windows]
+    event = result["supply"]["windows"]["EVENT"]
+    if failure == "count":
+        counts[-1][1] = 1
+    elif failure == "window":
+        event["window"] = "W4H"
+    elif failure == "start":
+        event["start"] = cutoff
+    elif failure == "reason":
+        event["reason"] = "STALE"
+    elif failure == "cutoff":
+        event["cutoff"] = "2025-12-31T23:59:59Z"
+    elif failure == "missing_cutoff":
+        result.pop("cutoff")
+        event.pop("cutoff")
+    elif failure == "primary":
+        result["primary_window"] = "EVENT"
+    elif failure == "association":
+        result["supply"]["flows"] = []
+    elif failure == "anchor":
+        result["relative"]["anchor"]["ts"] = cutoff
+    elif failure == "extra":
+        event["extra"] = None
+    elif failure == "other_window":
+        result["supply"]["windows"]["W24H"] = deepcopy(unavailable)
+        counts[-2][1] = 0
+    before = deepcopy(result)
+    if failure is not None:
+        with pytest.raises(ValueError, match="native Market Truth"):
+            native._restore_wrapped_quantities(result, counts)
+        assert result == before
+    else:
+        native._restore_wrapped_quantities(result, counts)
+        assert result["supply"]["windows"]["EVENT"] == unavailable
+        for window in windows[:-1]:
+            assert result["supply"]["windows"][window]["flows"][0]["qty"] == Decimal(quantity)
+        assert result["supply"]["flows"][0]["qty"] == Decimal(quantity)
 
 
 def test_decimal_wire_restoration_is_not_identifier_coercion():
