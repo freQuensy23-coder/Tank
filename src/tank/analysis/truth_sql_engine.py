@@ -2134,7 +2134,8 @@ def _restore_wrapped_quantities(result, records):
                 or primary != "W4H"
                 or not isinstance(result.get("cutoff"), str)
                 or not result["cutoff"]
-                or pack != {"window": "EVENT", "start": None, "cutoff": result["cutoff"], "reason": "INCOMPLETE"}
+                or pack
+                != {"window": "EVENT", "start": None, "cutoff": result["cutoff"], "reason": "INCOMPLETE"}
                 or not isinstance(result.get("relative"), dict)
                 or result["relative"].get("anchor")
                 != {"type": None, "ts": None, "ref_price": None, "reason": "INCOMPLETE"}

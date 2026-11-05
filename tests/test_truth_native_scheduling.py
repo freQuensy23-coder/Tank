@@ -71,11 +71,13 @@ def pipeline(monkeypatch, kind, stage, barrier, *, prepare_success=False):
         rows = [{"result": PAYLOAD, "condition_cache": "[]"}]
         constructor_name = "condition_query"
     else:
-        rows = [{
-            "result": PAYLOAD,
-            "provenance_snapshot": "{}",
-            "wrapped_flow_counts": [[window, 0] for window in ("W15M", "W1H", "W4H", "W24H", "EVENT")],
-        }]
+        rows = [
+            {
+                "result": PAYLOAD,
+                "provenance_snapshot": "{}",
+                "wrapped_flow_counts": [[window, 0] for window in ("W15M", "W1H", "W4H", "W24H", "EVENT")],
+            }
+        ]
         constructor_name = "_query"
     provider = SentinelProvider(rows)
 

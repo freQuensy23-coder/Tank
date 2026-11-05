@@ -140,17 +140,21 @@ async def test_absent_anchor_native_quantity_provenance_matches_final_windows(
     packet["anchor"] = None
     packet["supply"] = []
     if has_flows:
-        packet["supply"] = [{
-            "kind": "WALLET_FLOWS",
-            "ts": packet["cutoff"],
-            "wrapped_flow_counts": [["EVENT", 99]],
-            "flows": [{
-                "ts": iso(parse_time(packet["cutoff"]) - timedelta(minutes=10)),
-                "classification": "TREASURY_INTERNAL",
-                "qty_native": "12.25",
-                "wrapped_flow_counts": [["W4H", 99]],
-            }],
-        }]
+        packet["supply"] = [
+            {
+                "kind": "WALLET_FLOWS",
+                "ts": packet["cutoff"],
+                "wrapped_flow_counts": [["EVENT", 99]],
+                "flows": [
+                    {
+                        "ts": iso(parse_time(packet["cutoff"]) - timedelta(minutes=10)),
+                        "classification": "TREASURY_INTERNAL",
+                        "qty_native": "12.25",
+                        "wrapped_flow_counts": [["W4H", 99]],
+                    }
+                ],
+            }
+        ]
     expected = original_truth.compute_market_truth(deepcopy(packet))
     expected["measurement_context"]["numeric_policy"] = native.NUMERIC_POLICY
     forbid_python_business(monkeypatch)
@@ -558,11 +562,13 @@ def test_result_decoder_preserves_raw_quantity_metadata_refusals():
         window: deepcopy(payload["supply"]) for window in ("W15M", "W1H", "W4H", "W24H", "EVENT")
     }
     result = native._decode_result(
-        [{
-            "result": json.dumps(payload),
-            "provenance_snapshot": json.dumps({"cutoff": payload["cutoff"]}),
-            "wrapped_flow_counts": [[window, 0] for window in payload["supply"]["windows"]],
-        }]
+        [
+            {
+                "result": json.dumps(payload),
+                "provenance_snapshot": json.dumps({"cutoff": payload["cutoff"]}),
+                "wrapped_flow_counts": [[window, 0] for window in payload["supply"]["windows"]],
+            }
+        ]
     )
     assert result["supply"] == payload["supply"]
     assert "supply.flows[0].qty" not in result["measurement_metadata"]
@@ -571,26 +577,37 @@ def test_result_decoder_preserves_raw_quantity_metadata_refusals():
     assert "supply.exchange_inventory.qty_native" not in result["measurement_metadata"]
 
 
-@pytest.mark.parametrize("quantity", ["12.250000000000000000000000", "0.000000000000000000000000", None])
-def test_quantity_transport_restores_only_native_prefix(quantity):
+@pytest.mark.parametrize(
+    ("transport_quantity", "expected_quantity"),
+    [
+        ("12.250000000000000000000000", "12.250000000000000000000000"),
+        ("0.000000000000000000000000", "0E-24"),
+        (None, None),
+    ],
+)
+def test_quantity_transport_restores_only_native_prefix(transport_quantity, expected_quantity):
     raw = "7.000000000000000000000000"
+    raw_zero = "0.000000000000000000000000"
     direct = {
         "class": "TREASURY_INTERNAL",
         "classification": "TREASURY_INTERNAL",
         "qty_native": raw,
         "wrapped_flow_counts": [["W4H", 99]],
         "qty": raw,
-        "identity_evidence": {"qty": raw, "value": raw},
-        "aggregates": [{"qty": raw, "buy_qty": raw}],
+        "identity_evidence": {"qty": raw, "value": raw_zero},
+        "aggregates": [{"qty": raw, "buy_qty": raw_zero}],
     }
-    flows = [{"qty": quantity}, direct, {"qty": 7.0}, {"qty": {"raw": raw}}]
+    flows = [{"qty": transport_quantity}, direct, {"qty": 7.0}, {"qty": {"raw": raw}}, {"qty": raw_zero}]
     windows = ("W15M", "W1H", "W4H", "W24H", "EVENT")
     payload = {
         "spot": {window: {} for window in windows},
         "relative": {},
         "derivatives": {},
         "liquidity": {},
-        "supply": {"flows": deepcopy(flows), "windows": {window: {"flows": deepcopy(flows)} for window in windows}},
+        "supply": {
+            "flows": deepcopy(flows),
+            "windows": {window: {"flows": deepcopy(flows)} for window in windows},
+        },
         "data_confidence": {},
         "move_class": "UNKNOWN",
         "cutoff": "2026-01-01T00:00:00Z",
@@ -598,11 +615,13 @@ def test_quantity_transport_restores_only_native_prefix(quantity):
         "measurement_context": {},
     }
     result = native._decode_result(
-        [{
-            "result": json.dumps(payload),
-            "provenance_snapshot": json.dumps({"cutoff": payload["cutoff"]}),
-            "wrapped_flow_counts": [[window, 1] for window in windows],
-        }]
+        [
+            {
+                "result": json.dumps(payload),
+                "provenance_snapshot": json.dumps({"cutoff": payload["cutoff"]}),
+                "wrapped_flow_counts": [[window, 1] for window in windows],
+            }
+        ]
     )
     for prefix, pack in [("supply", result["supply"])] + [
         (f"supply.windows.{window}", result["supply"]["windows"][window]) for window in windows
@@ -611,15 +630,23 @@ def test_quantity_transport_restores_only_native_prefix(quantity):
         assert type(pack["flows"][2]["qty"]) is float
         assert f"{prefix}.flows[0].qty" in result["measurement_metadata"]
         assert f"{prefix}.flows[1].qty" not in result["measurement_metadata"]
-        assert pack["flows"][0]["qty"] == quantity
+        assert pack["flows"][0]["qty"] == expected_quantity
+        metadata = result["measurement_metadata"][f"{prefix}.flows[0].qty"]
+        assert metadata["value"] == expected_quantity
+        assert metadata["representation"] == ("DECIMAL_STRING" if expected_quantity is not None else None)
 
 
-@pytest.mark.parametrize("failure", ["missing", "duplicate", "bool", "negative", "large", "unknown", "primary", "qty"])
+@pytest.mark.parametrize(
+    "failure", ["missing", "duplicate", "bool", "negative", "large", "unknown", "primary", "qty"]
+)
 def test_quantity_transport_refuses_before_mutation(failure):
     windows = ("W15M", "W1H", "W4H", "W24H", "EVENT")
     flows = [{"qty": "1.000000000000000000000000"}]
     result = {
-        "supply": {"flows": deepcopy(flows), "windows": {window: {"flows": deepcopy(flows)} for window in windows}},
+        "supply": {
+            "flows": deepcopy(flows),
+            "windows": {window: {"flows": deepcopy(flows)} for window in windows},
+        },
         "primary_window": "W4H",
     }
     counts = [[window, 1] for window in windows]
@@ -647,7 +674,20 @@ def test_quantity_transport_refuses_before_mutation(failure):
 
 @pytest.mark.parametrize(
     "failure",
-    [None, "count", "window", "start", "reason", "cutoff", "missing_cutoff", "primary", "association", "anchor", "extra", "other_window"],
+    [
+        None,
+        "count",
+        "window",
+        "start",
+        "reason",
+        "cutoff",
+        "missing_cutoff",
+        "primary",
+        "association",
+        "anchor",
+        "extra",
+        "other_window",
+    ],
 )
 def test_unavailable_event_quantity_transport_is_strict_and_atomic(failure):
     windows = ("W15M", "W1H", "W4H", "W24H", "EVENT")
@@ -656,7 +696,10 @@ def test_unavailable_event_quantity_transport_is_strict_and_atomic(failure):
     cutoff = "2026-01-01T00:00:00Z"
     unavailable = {"window": "EVENT", "start": None, "cutoff": cutoff, "reason": "INCOMPLETE"}
     result = {
-        "supply": {"flows": deepcopy(flows), "windows": {window: {"flows": deepcopy(flows)} for window in windows}},
+        "supply": {
+            "flows": deepcopy(flows),
+            "windows": {window: {"flows": deepcopy(flows)} for window in windows},
+        },
         "primary_window": "W4H",
         "cutoff": cutoff,
         "relative": {"anchor": {"type": None, "ts": None, "ref_price": None, "reason": "INCOMPLETE"}},
