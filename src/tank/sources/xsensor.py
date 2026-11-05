@@ -182,6 +182,20 @@ def scan(run: ApifyRun, accounts: list[str], cursors: Mapping[str, str], raw: by
     )
 
 
+def account_error(value: str | None, token: str | None) -> str | None:
+    if not value:
+        return value
+    invalid = "INVALID_ACCOUNT_ERROR"
+    if token and token in invalid:
+        invalid = "?"
+    if len(value) > 8192 or "\x00" in value or any(0xD800 <= ord(c) <= 0xDFFF for c in value):
+        return invalid
+    safe = redact(value, token)
+    if len(safe) > 8192 or (token and token in safe):
+        return invalid
+    return safe
+
+
 class XSensor:
     def __init__(self, http: httpx.AsyncClient, token: str | None) -> None:
         self.http = http
@@ -218,7 +232,10 @@ class XSensor:
                 else run.error,
                 "accounts": [
                     account.model_copy(
-                        update={"diagnostics": sanitize(account.diagnostics, self.token, budget)}
+                        update={
+                            "error": account_error(account.error, self.token),
+                            "diagnostics": sanitize(account.diagnostics, self.token, budget),
+                        }
                     )
                     for account in run.accounts
                 ],
