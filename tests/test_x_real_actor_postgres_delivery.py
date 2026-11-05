@@ -24,7 +24,9 @@ async def test_real_actor_postgres_documents_survive_interrupted_delivery_and_re
     tmp_path, postgres_template, wire_server
 ):
     origin, state = wire_server
-    state["body"] = b"independent wire prefix\r\nCookie: sid=private-wire-one; refresh=private-wire-two\r\nend"
+    state["body"] = (
+        b"independent wire prefix\r\nCookie: sid=private-wire-one; refresh=private-wire-two\r\nend"
+    )
     expected = b"independent wire prefix\r\nCookie: [REDACTED]\r\nend"
     digest = hashlib.sha256(expected).hexdigest()
     names = [f"x-alice-1-attempt-{index}-{digest[:12]}.txt" for index in range(1, 4)]
@@ -85,40 +87,42 @@ async def test_real_actor_postgres_documents_survive_interrupted_delivery_and_re
             assert parsed_date.utcoffset() is not None
             assert poll_started - timedelta(seconds=1) <= parsed_date <= poll_finished
             assert abs((parsed_timestamp - parsed_date).total_seconds()) < 15
-            expected_attempts.append({
-                "attempt": index,
-                "at": timestamp,
-                "status": 503,
-                "error": "PUBLIC_PROFILE_HTTP_503",
-                "retryable": True,
-                "response": {
+            expected_attempts.append(
+                {
+                    "attempt": index,
+                    "at": timestamp,
                     "status": 503,
-                    "headers": {
-                        "server": f"{BaseHTTPRequestHandler.server_version} {BaseHTTPRequestHandler.sys_version}",
-                        "date": date,
-                        "content-type": "text/plain",
-                        "content-encoding": "gzip",
-                        "x-request-id": "safe-wire-id",
-                        "content-length": str(wire_bytes),
+                    "error": "PUBLIC_PROFILE_HTTP_503",
+                    "retryable": True,
+                    "response": {
+                        "status": 503,
+                        "headers": {
+                            "server": f"{BaseHTTPRequestHandler.server_version} {BaseHTTPRequestHandler.sys_version}",
+                            "date": date,
+                            "content-type": "text/plain",
+                            "content-encoding": "gzip",
+                            "x-request-id": "safe-wire-id",
+                            "content-length": str(wire_bytes),
+                        },
+                        "body": expected.decode(),
+                        "bodyEncoding": "utf-8",
+                        "bodyBytes": len(expected),
+                        "bodySha256": digest,
+                        "bodyTruncated": False,
+                        "consumerCapturedBytes": len(expected),
+                        "consumerCaptureTruncated": False,
+                        "consumerTransformTruncated": False,
+                        "consumerBodyLimitBytes": 2_000_000,
+                        "redacted": True,
+                        "omittedWireBytes": 0,
+                        "wireBytes": wire_bytes,
+                        "captureLimitBytes": 2_000_000,
+                        "serializedBodyLimitBytes": 4_000_000,
+                        "readError": None,
+                        "decodeError": None,
                     },
-                    "body": expected.decode(),
-                    "bodyEncoding": "utf-8",
-                    "bodyBytes": len(expected),
-                    "bodySha256": digest,
-                    "bodyTruncated": False,
-                    "consumerCapturedBytes": len(expected),
-                    "consumerCaptureTruncated": False,
-                    "consumerTransformTruncated": False,
-                    "consumerBodyLimitBytes": 2_000_000,
-                    "redacted": True,
-                    "omittedWireBytes": 0,
-                    "wireBytes": wire_bytes,
-                    "captureLimitBytes": 2_000_000,
-                    "serializedBodyLimitBytes": 4_000_000,
-                    "readError": None,
-                    "decodeError": None,
-                },
-            })
+                }
+            )
         expected_diagnostics = {
             "request": {"method": "GET", "url": origin + "/alice", "body": None},
             "outcome": "exhausted",
@@ -164,11 +168,17 @@ async def test_real_actor_postgres_documents_survive_interrupted_delivery_and_re
         before = await repo.list("out.deliveries", filters={"notice_id": notice["notice_id"]})
         assert len([row for row in before if row["status"] == "SENT"]) == 2
         assert len(state["telegram"]) == 2
-        [before_parent] = [row for row in before if row["status"] == "SENT" and row.get("method") != "sendDocument"]
-        [before_document] = [row for row in before if row["status"] == "SENT" and row.get("method") == "sendDocument"]
+        [before_parent] = [
+            row for row in before if row["status"] == "SENT" and row.get("method") != "sendDocument"
+        ]
+        [before_document] = [
+            row for row in before if row["status"] == "SENT" and row.get("method") == "sendDocument"
+        ]
         assert (before_parent["chat_id"], before_parent["message_ref"]) == ("isolated-ops", "1")
         assert (before_document["chat_id"], before_document["message_ref"], before_document["filename"]) == (
-            "isolated-ops", "2", names[0]
+            "isolated-ops",
+            "2",
+            names[0],
         )
         assert before_document["request_reply_to_message_ref"] == "1"
         assert state["telegram"][0][0].endswith("sendMessage")
