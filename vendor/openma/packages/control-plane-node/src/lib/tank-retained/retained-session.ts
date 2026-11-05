@@ -24,7 +24,7 @@ export interface Provider<R extends RetainedRuntime> {
   resolveIntent(intent: Handle, scope: Scope, fence: Fence, signal: AbortSignal): Promise<Handle | null>;
   create(scope: Scope, fence: Fence, signal: AbortSignal): Promise<R>;
   resume(handle: Handle, scope: Scope, fence: Fence, signal: AbortSignal): Promise<R>;
-  reap(handle: Handle, scope: Scope, fence: Fence, signal: AbortSignal): Promise<void>;
+  reap(handle: Handle, scope: Scope, fence: Fence, signal: AbortSignal, assertAuthorized?: () => Promise<void>): Promise<void>;
 }
 export interface Options<R extends RetainedRuntime> {
   scope: Omit<Scope, 'workId'>;
@@ -192,7 +192,7 @@ export class RetainedSessionLifecycle<R extends RetainedRuntime> {
         this.handle = manifest.handle;
         for (const handle of [...manifest.retired ?? [], manifest.handle]) {
           signal.throwIfAborted(); await assertExecutionCurrent();
-          await this.options.provider.reap(handle, this.scope, await this.current(), signal);
+          await this.options.provider.reap(handle, this.scope, await this.current(), signal, assertExecutionCurrent);
         }
         signal.throwIfAborted(); await assertExecutionCurrent();
         await this.publish('aborted');
@@ -331,9 +331,10 @@ export class RetainedSessionLifecycle<R extends RetainedRuntime> {
             ...(this.handle && manifest.state !== 'aborted' ? [this.handle] : [])];
           for (const handle of handles) {
             await assertArchiveAuthorized();
-            await this.options.provider.reap(handle, this.scope, await this.current(), signal);
+            await this.options.provider.reap(handle, this.scope, await this.current(), signal, assertArchiveAuthorized);
           }
           this.handle ??= manifest.handle;
+          signal.throwIfAborted(); await assertArchiveAuthorized();
           await this.publish('archived');
         }
       }

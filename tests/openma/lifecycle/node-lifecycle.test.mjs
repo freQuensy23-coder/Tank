@@ -25,7 +25,7 @@ function fixture() {
   const client={
     async lookup(id){await s.provider.beforeNativeLookup(id);return s.disks.get(id)??[...s.disks.values()].find(disk=>disk.name===id);},
     async getInfo(id){const disk=await client.lookup(id);return disk?{id:disk.id,name:disk.name,state:{status:disk.running?'Running':'Stopped',running:disk.running}}:null;},
-    async get(id){const disk=await client.lookup(id);return disk?{id:disk.id,name:disk.name,info:()=>({id:disk.id,name:disk.name,state:{status:disk.running?'Running':'Stopped',running:disk.running}})}:null;},
+    async get(id){const disk=await client.lookup(id);return disk?{id:disk.id,name:disk.name,info:async()=>{await s.provider.beforeNativeInfo?.(id);return {id:disk.id,name:disk.name,state:{status:disk.running?'Running':'Stopped',running:disk.running}};}}:null;},
     async remove(id){const disk=s.disks.get(id);await s.provider.reap({provider:'litebox',runtimeId:id},disk?JSON.parse(disk.scope):s.options.scope);},
   };
   const lifecycle=(changes={})=>new NodeRetainedLifecycle({fences:s.fences,providerModule:module,client,ownerId:'controller',leaseTtlMs:30000,
@@ -299,6 +299,36 @@ test('warm current-prefix metadata advances preserve allocation/workspace and st
   assert.equal([...s.disks.keys()][0],id);
 });
 
+
+for(const boundary of ['get','info'])for(const refusal of ['execution','cancel'])test(`replacement preserves publication after ${refusal} during native ${boundary}`,async()=>{
+  const s=fixture();let fingerprint=s.options.fingerprint;
+  const manager=s.lifecycle({fingerprint:async()=>fingerprint,assertExecutionCurrent:async fence=>{if(!fence.current)throw Error('execution_authority_lost');}});
+  const sb=s.sandbox(),ctx=s.context(sb);
+  await manager.bind(ctx);await sb.exec('write','FAKE_FIRST');await manager.idle(ctx);
+  fingerprint='sha256:'+'b'.repeat(64);
+  const cancellation=new AbortController(),next={...ctx,signal:cancellation.signal,executionFence:{...ctx.executionFence,current:true}};
+  ctx.executionFence.current=false;
+  await manager.bind(next);
+  const publication=structuredClone([...s.rows.values()][0].publication),disks=structuredClone([...s.disks]),before=s.calls.length;
+  let lookups=0;
+  const hook=boundary==='get'?'beforeNativeLookup':'beforeNativeInfo';
+  s.provider[hook]=async id=>{
+    assert.equal(id,disks[0][0]);lookups++;
+    await Promise.resolve();
+    const row=[...s.rows.values()][0];assert.equal(await s.fences.isCurrent(row.fence),true);
+    if(refusal==='execution')next.executionFence.current=false;else cancellation.abort(Error('retirement_cancelled'));
+    assert.equal(await s.fences.isCurrent(row.fence),true);
+  };
+  await assert.rejects(sb.exec('read','FAKE_REJECTED'),refusal==='execution'?/execution_authority_lost/:/retirement_cancelled/);
+  assert.equal(lookups,1);assert.deepEqual([...s.disks],disks);assert.deepEqual(s.calls.slice(before),[]);
+  assert.deepEqual([...s.rows.values()][0].publication,publication);assert.equal([...s.rows.values()][0].active,false);
+  s.provider[hook]=async()=>{};
+  fingerprint=s.options.fingerprint;
+  const successor={...ctx,executionFence:{...ctx.executionFence,current:true}};
+  await manager.bind(successor);
+  assert.equal(JSON.parse((await sb.exec('read','FAKE_SUCCESSOR')).stdout).workspace,'persisted');
+  await manager.idle(successor);assert.equal(s.disks.size,1);assert.equal(s.disks.has(disks[0][0]),true);
+});
 
 const orphanIdentity={version:2,image:'sha256:'+'c'.repeat(64),compatibility:{scope:'sha256:'+'d'.repeat(64)}};
 function orphanQueue(rows=[]) {

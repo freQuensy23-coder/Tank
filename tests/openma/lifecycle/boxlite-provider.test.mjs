@@ -159,6 +159,24 @@ test('one original deadline bounds deferred stdin close and refuses new I/O whil
   await assert.rejects(box.exec('still-poisoned-after-ack',[]),/retained_runtime_requires_stop/);
 });
 
+for(const owned of [false,true])for(const refusal of ['execution','cancel','resource'])test(`native retirement rechecks per-operation authority after lookup (owned=${owned}, refusal=${refusal})`,async()=>{
+  const {createHash}=await import('node:crypto');
+  const name=owned?'oma-'+createHash('sha256').update(JSON.stringify(scope)).digest('hex').slice(0,32)+'-upgrade-'+'a'.repeat(32):'oma-e3126361fce11865804283c33f002683';
+  const handle={provider:'litebox',runtimeId:'native',...(owned?{ownershipName:name}:{})};
+  const effects=[],disk={id:'native',name,state:{running:false}},cancellation=new AbortController();
+  let authorized=true,resourceCurrent=true,lookups=0;
+  const interrupt=async()=>{await Promise.resolve();lookups++;if(refusal==='execution')authorized=false;else if(refusal==='cancel')cancellation.abort(Error('retirement_cancelled'));};
+  const module={createBoxLiteProvider(){return {};},createBoxLiteManagedRuntime(){return {sandbox:{async reap(){assert.fail('must use native guard');}}};}};
+  const client={async getInfo(){await interrupt();return disk;},async get(){return {id:disk.id,name,async info(){await interrupt();return disk;}};},async remove(id){effects.push(id);}};
+  const provider=pinnedBoxLiteProvider({module,client,allocation:{image:'pinned'},leaseTtlMs:30000,isCurrent:async()=>resourceCurrent});
+  const authorize=async()=>{if(refusal==='resource')resourceCurrent=false;if(!authorized)throw Error('execution_authority_lost');};
+  await assert.rejects(provider.reap(handle,scope,fence,cancellation.signal,authorize),refusal==='execution'?/execution_authority_lost/:refusal==='cancel'?/retirement_cancelled/:/retained_fence_lost/);
+  assert.equal(lookups,1);assert.deepEqual(effects,[]);
+  resourceCurrent=true;client.getInfo=async()=>disk;client.get=async()=>({id:disk.id,name,info:async()=>disk});
+  await provider.reap(handle,scope,fence,signal());
+  assert.deepEqual(effects,['native']);
+});
+
 test('schema2 owner metadata permits only exact scope-owned archive and rejects foreign owner',async()=>{
   const { createHash }=await import('node:crypto');
   const name='oma-'+createHash('sha256').update(JSON.stringify(scope)).digest('hex').slice(0,32)+'-upgrade-'+'a'.repeat(32);

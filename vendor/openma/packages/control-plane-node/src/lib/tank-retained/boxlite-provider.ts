@@ -177,14 +177,14 @@ export function pinnedBoxLiteProvider(input: {
         throw error;
       }
     },
-    async reap(handle, scope, fence, signal) {
+    async reap(handle, scope, fence, signal, assertAuthorized) {
       signal.throwIfAborted(); await current(fence);
       if (handle.ownershipName) {
         const name = ownershipName(handle, scope);
         const info = await inspect(handle.runtimeId);
         if (!info) return;
         if (info.name !== name || (handle.runtimeId !== name && info.id !== handle.runtimeId)) throw Error('retained_cleanup_ownership_mismatch');
-        await current(fence);
+        await assertAuthorized?.(); await current(fence); signal.throwIfAborted();
         await client.remove(info.id, true);
       } else {
         if (handle.provider !== 'litebox') throw Error('retained_cleanup_ownership_mismatch');
@@ -193,7 +193,7 @@ export function pinnedBoxLiteProvider(input: {
         const info = box.info();
         const name = ownershipName(handle, scope);
         if (box.id !== handle.runtimeId || box.name !== name || info.id !== handle.runtimeId || info.name !== name) throw Error('retained_cleanup_ownership_mismatch');
-        await current(fence);
+        await assertAuthorized?.(); await current(fence); signal.throwIfAborted();
         await client.remove(handle.runtimeId, true);
       }
     },

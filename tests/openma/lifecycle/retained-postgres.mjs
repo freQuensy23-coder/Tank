@@ -456,6 +456,69 @@ try {
     await queue.resolve({ id: queued[0].id });
     assert.deepEqual(await new SqlRuntimeOrphanPort(sql).list({ limit: 128 }), []);
   }
+  for (const nativePath of ['get', 'info', 'owner-info']) for (const operation of ['begin', 'archive']) {
+    const { createHash } = await import('node:crypto');
+    const { stableDigest } = await load('packages/control-plane-node/src/lib/tank-retained/runtime-identity.ts');
+    const retirementScope = { workspaceId: 'retirement-workspace', environmentId: 'environment',
+      sessionId: `retirement-${nativePath}-${operation}`, workId: 'tank-retained-session-v1' };
+    const retirementFences = new SqlRuntimeResourceFencePort(sql, clock);
+    const ordinaryName = 'oma-' + createHash('sha256').update(`litebox:${retirementScope.sessionId}`).digest('hex').slice(0, 32);
+    const ownerName = 'oma-' + createHash('sha256').update(JSON.stringify(retirementScope)).digest('hex').slice(0, 32) + '-upgrade-' + 'a'.repeat(32);
+    const handle = { provider: 'litebox', runtimeId: 'retirement-native',
+      ...(nativePath === 'owner-info' ? { ownershipName: ownerName } : {}) };
+    const disk = { id: handle.runtimeId, name: handle.ownershipName ?? ordinaryName,
+      state: { running: false, status: 'Stopped' }, files: { marker: 'preserved' } };
+    const nativeDisks = new Map([[disk.id, disk]]), effects = [];
+    const seed = await retirementFences.acquire({ scope: retirementScope, ownerId: 'seed', ttlMs: 30000 });
+    assert.equal(seed.type, 'acquired');
+    const manifest = JSON.stringify({ handle, state: 'retained', archived: false, identity: identity('c'), retired: [] });
+    assert.equal((await retirementFences.publish({ fence: seed.fence, workspaceCandidate: {
+      id: 'retirement-publication', contentHash: stableDigest({ scope: retirementScope, manifest }),
+      metadata: { schema: 2, scope: JSON.stringify(retirementScope), manifest } }, outputCandidate: null })).type, 'published');
+    await retirementFences.release({ fence: seed.fence, reason: 'completed' });
+    const readPublication = () => sql.prepare('SELECT publication_json, publication_generation, revision FROM runtime_resource_fences WHERE workspace_id = ? AND environment_id = ? AND session_id = ? AND work_id = ?')
+      .bind(retirementScope.workspaceId, retirementScope.environmentId, retirementScope.sessionId, retirementScope.workId).first();
+    const beforePublication = await readPublication(), beforeDisks = structuredClone([...nativeDisks]);
+    let resourceFence, interruptions = 0;
+    const execution = { current: true };
+    const authorize = async () => { if (!execution.current) throw Error('execution_authority_lost'); };
+    const interrupt = async boundary => {
+      if (boundary !== nativePath) return;
+      await Promise.resolve();
+      assert.equal(await retirementFences.isCurrent(resourceFence), true);
+      execution.current = false; interruptions++;
+      assert.equal(await retirementFences.isCurrent(resourceFence), true);
+    };
+    const client = {
+      async getInfo(id) { assert.equal(id, disk.id);await interrupt('owner-info');return nativeDisks.get(id) ?? null; },
+      async get(id) {
+        assert.equal(id, disk.id);await interrupt('get');
+        return nativeDisks.has(id) ? { id, name: disk.name, async info() { await interrupt('info');return disk; } } : null;
+      },
+      async remove(id) { effects.push(['remove', id]);nativeDisks.delete(id); },
+      async getOrCreate() { effects.push(['allocate']);assert.fail('rejected retirement must not allocate'); },
+    };
+    const retirementProvider = pinnedBoxLiteProvider({ module: providerModule, client,
+      allocation: { image: 'controlled-no-vm' }, leaseTtlMs: 30000,
+      isCurrent: async fence => { resourceFence = fence;return retirementFences.isCurrent(fence); } });
+    const controller = new RetainedSessionLifecycle({ scope: retirementScope, fences: retirementFences,
+      provider: retirementProvider, providerId: 'litebox', ownerId: 'retirement-controller', leaseTtlMs: 30000,
+      fingerprint: `sha256:${'e'.repeat(64)}`, identity: identity('e') });
+    const signal = new AbortController().signal;
+    await assert.rejects(operation === 'begin' ? controller.begin(authorize, signal) : controller.archive(authorize, signal), /execution_authority_lost/);
+    assert.equal(interruptions, 1);assert.deepEqual(effects, []);
+    assert.deepEqual([...nativeDisks], beforeDisks);assert.deepEqual(await readPublication(), beforePublication);
+    assert.equal(await retirementFences.isCurrent(resourceFence), false);
+    const successor = await retirementFences.acquire({ scope: retirementScope, ownerId: 'successor', ttlMs: 30000 });
+    assert.equal(successor.type, 'acquired');
+    assert.equal(await retirementFences.isCurrent(successor.fence), true);
+    await retirementFences.release({ fence: successor.fence, reason: 'completed' });
+    execution.current = true;
+    client.getInfo = async id => nativeDisks.get(id) ?? null;
+    client.get = async id => nativeDisks.has(id) ? { id, name: disk.name, info: async () => disk } : null;
+    await controller.archive(authorize, new AbortController().signal);
+    assert.equal(nativeDisks.size, 0);assert.deepEqual(effects, [['remove', disk.id]]);
+  }
   assert.deepEqual(await persisted(), beforeOrphanHistory);
   stage = 'model-history';
   assert.equal(messages[2]?.role, 'tool');
