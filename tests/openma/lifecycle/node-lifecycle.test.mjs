@@ -302,7 +302,8 @@ test('warm current-prefix metadata advances preserve allocation/workspace and st
 
 for(const boundary of ['get','info'])for(const refusal of ['execution','cancel'])test(`replacement preserves publication after ${refusal} during native ${boundary}`,async()=>{
   const s=fixture();let fingerprint=s.options.fingerprint;
-  const manager=s.lifecycle({fingerprint:async()=>fingerprint,assertExecutionCurrent:async fence=>{if(!fence.current)throw Error('execution_authority_lost');}});
+  const identity=async()=>({version:2,image:fingerprint,compatibility:{configuration:stableDigest({scope:s.options.scope,allocation:s.allocation})}});
+  const manager=s.lifecycle({fingerprint:async()=>fingerprint,identity,assertExecutionCurrent:async fence=>{if(!fence.current)throw Error('execution_authority_lost');}});
   const sb=s.sandbox(),ctx=s.context(sb);
   await manager.bind(ctx);await sb.exec('write','FAKE_FIRST');await manager.idle(ctx);
   fingerprint='sha256:'+'b'.repeat(64);

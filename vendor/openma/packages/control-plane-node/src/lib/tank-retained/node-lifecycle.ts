@@ -6,6 +6,15 @@ import { RetainedBoxOperations, pinnedBoxLiteProvider, type Allocation, type Box
 type Box = RetainedBoxOperations & { stop(): Promise<void> };
 export interface AttachableSandbox {
   setRetainedBoxFactory(factory: (allocation: Allocation) => Promise<Box>): void;
+  prepareRetainedRuntime?(): Promise<void>;
+}
+export interface RetainedWorkspaceOwnership {
+  runtimeKey: string;
+  allowLegacyCheckpoint: boolean;
+  assertCurrent(): Promise<void>;
+}
+export interface RetainedBinding {
+  prepareWorkspace(): Promise<RetainedWorkspaceOwnership>;
 }
 export interface Context {
   workspaceId: string; sessionId: string;
@@ -111,12 +120,32 @@ export class NodeRetainedLifecycle {
     if (!lifetime.binds && !this.entries.has(scopeKey) && !this.archives.has(scopeKey)
       && this.lifetimes.get(scopeKey) === lifetime) this.lifetimes.delete(scopeKey);
   }
-  async bind(context: Context): Promise<void> {
+  async bind(context: Context): Promise<RetainedBinding> {
     const scope = scopeOf(context), scopeKey = key(scope);
     const lifetime = this.lifetimes.get(scopeKey) ?? { final: false, binds: 0 };
     this.lifetimes.set(scopeKey, lifetime);
     lifetime.binds++;
-    try { await this.bindOpen(context, scope, lifetime); }
+    try {
+      await this.bindOpen(context, scope, lifetime);
+      return { prepareWorkspace: async () => {
+        const entry = this.sandboxes.get(context.sandbox)!;
+        this.assertOpen(entry.lifetime);
+        if (!context.sandbox.prepareRetainedRuntime) throw Error('retained_workspace_preparation_required');
+        await context.sandbox.prepareRetainedRuntime();
+        await this.ensureActive(entry);
+        const ownership = await entry.controller!.workspaceOwnership(
+          () => this.options.assertExecutionCurrent(entry.context.executionFence),
+          entry.context.signal ?? new AbortController().signal);
+        const assertCurrent = async () => {
+          this.assertOpen(entry.lifetime);
+          const current = await entry.controller!.workspaceOwnership(
+            () => this.options.assertExecutionCurrent(entry.context.executionFence),
+            entry.context.signal ?? new AbortController().signal);
+          if (current.runtimeKey !== ownership.runtimeKey) throw Error('retained_workspace_owner_changed');
+        };
+        return { ...ownership, assertCurrent };
+      } };
+    }
     finally { lifetime.binds--; this.releaseLifetime(scopeKey, lifetime); }
   }
   private async bindOpen(context: Context, scope: Omit<Scope, 'workId'>, lifetime: Lifetime): Promise<void> {
@@ -162,7 +191,15 @@ export class NodeRetainedLifecycle {
       owned.controller = this.controller(scope, fingerprint, allocation, await this.options.identity?.(owned.context, allocation));
       const use = async <T>(operation: (runtime: BoxLiteRuntime) => Promise<T>): Promise<T> => {
         await this.ensureActive(owned);
-        return owned.controller!.use(operation);
+        return owned.controller!.use(async runtime => {
+          this.assertOpen(owned.lifetime);
+          await this.options.assertExecutionCurrent(owned.context.executionFence);
+          const signal = owned.context.signal ?? new AbortController().signal;
+          await owned.controller!.workspaceOwnership(
+            () => this.options.assertExecutionCurrent(owned.context.executionFence), signal);
+          signal.throwIfAborted();
+          return operation(runtime);
+        });
       };
       await this.ensureActive(owned);
       const operations = new RetainedBoxOperations(use);
