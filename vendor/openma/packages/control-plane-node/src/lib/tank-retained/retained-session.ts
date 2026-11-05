@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { assertCompatible, stableDigest, validateRuntimeIdentity, type RuntimeIdentity } from './runtime-identity.js';
-type Manifest = { handle: Handle; state: string; archived: boolean; identity?: RuntimeIdentity; retired?: Handle[]; upgrade?: { source: Handle; target: Handle; owner: string; identity: RuntimeIdentity } };
+type Manifest = { handle: Handle; state: string; archived: boolean; checkpointBoundary?: boolean; legacyFingerprint?: string; identity?: RuntimeIdentity; retired?: Handle[]; upgrade?: { source: Handle; target: Handle; owner: string; identity: RuntimeIdentity } };
 
 export type Scope = { workspaceId: string; environmentId: string; sessionId: string; workId: string };
 export type Handle = { provider: string; runtimeId: string; ownershipName?: string };
@@ -24,7 +24,7 @@ export interface Provider<R extends RetainedRuntime> {
   resolveIntent(intent: Handle, scope: Scope, fence: Fence, signal: AbortSignal): Promise<Handle | null>;
   create(scope: Scope, fence: Fence, signal: AbortSignal): Promise<R>;
   resume(handle: Handle, scope: Scope, fence: Fence, signal: AbortSignal): Promise<R>;
-  reap(handle: Handle, scope: Scope, fence: Fence, signal: AbortSignal): Promise<void>;
+  reap(handle: Handle, scope: Scope, fence: Fence, signal: AbortSignal, assertAuthorized?: () => Promise<void>): Promise<void>;
 }
 export interface Options<R extends RetainedRuntime> {
   scope: Omit<Scope, 'workId'>;
@@ -44,6 +44,33 @@ export class RetainedLifecycleError extends Error {
 function fail(code: string): never { throw new RetainedLifecycleError(code); }
 const digest = (value: unknown) => 'sha256:' + createHash('sha256').update(JSON.stringify(value)).digest('hex');
 
+export function decodeSchema2Publication(candidate: Candidate, canonicalScope: Scope, providerId: string): Manifest {
+  const metadata = candidate.metadata;
+  if (metadata?.schema !== 2) fail('retained_manifest_invalid');
+  if (metadata.scope !== JSON.stringify(canonicalScope) || typeof metadata.manifest !== 'string'
+      || candidate.contentHash !== stableDigest({ scope: canonicalScope, manifest: metadata.manifest })) fail('retained_manifest_invalid');
+  let manifest: Manifest;
+  try { manifest = JSON.parse(metadata.manifest); } catch { fail('retained_manifest_invalid'); }
+  if (!manifest || typeof manifest !== 'object') fail('retained_manifest_invalid');
+  if ('checkpointBoundary' in manifest && typeof manifest.checkpointBoundary !== 'boolean') fail('retained_manifest_invalid');
+  const validHandle = (handle: Handle) => handle && handle.provider === providerId
+    && typeof handle.runtimeId === 'string' && handle.runtimeId.length > 0
+    && (handle.ownershipName === undefined || (typeof handle.ownershipName === 'string' && handle.ownershipName.length > 0));
+  if (!validHandle(manifest.handle) || !['allocating', 'aborted', 'retained', 'upgrading', 'archived'].includes(manifest.state)
+      || manifest.archived !== (manifest.state === 'archived') || !Array.isArray(manifest.retired)
+      || manifest.retired!.some(handle => !validHandle(handle))) fail('retained_manifest_invalid');
+  validateRuntimeIdentity(manifest.identity);
+  if (manifest.state === 'upgrading') {
+    const upgrade = manifest.upgrade;
+    if (!upgrade || !validHandle(upgrade.source) || !validHandle(upgrade.target) || typeof upgrade.owner !== 'string'
+        || !upgrade.owner || JSON.stringify(upgrade.source) !== JSON.stringify(manifest.handle)
+        || upgrade.target.runtimeId === upgrade.source.runtimeId) fail('retained_manifest_invalid');
+    validateRuntimeIdentity(upgrade.identity);
+    assertCompatible(manifest.identity!, upgrade.identity);
+  } else if (manifest.upgrade) fail('retained_manifest_invalid');
+  return manifest;
+}
+
 export class RetainedSessionLifecycle<R extends RetainedRuntime> {
   readonly scope: Scope;
   readonly options: Options<R>;
@@ -57,6 +84,7 @@ export class RetainedSessionLifecycle<R extends RetainedRuntime> {
   private phase: 'idle' | 'starting' | 'active' | 'quiescing' | 'stopped' | 'archived' = 'idle';
   private manifest: Manifest | null = null;
   private operations = new Set<Promise<unknown>>();
+  private allowLegacyCheckpoint = false;
 
   constructor(options: Options<R>) {
     if (!/^sha256:[a-f0-9]{64}$/.test(options.fingerprint)) fail('retained_fingerprint_invalid');
@@ -103,30 +131,11 @@ export class RetainedSessionLifecycle<R extends RetainedRuntime> {
   private decode(candidate: Candidate, archiveOnly = false): Manifest {
     const metadata = candidate.metadata;
     if (metadata?.schema === 2) {
-      if (metadata.scope !== JSON.stringify(this.scope) || typeof metadata.manifest !== 'string'
-          || candidate.contentHash !== stableDigest({ scope: this.scope, manifest: metadata.manifest })) fail('retained_manifest_invalid');
-      let manifest: Manifest;
-      try { manifest = JSON.parse(metadata.manifest); } catch { fail('retained_manifest_invalid'); }
-      if (!manifest || typeof manifest !== 'object') fail('retained_manifest_invalid');
-      const validHandle = (handle: Handle) => handle && handle.provider === this.options.providerId
-        && typeof handle.runtimeId === 'string' && handle.runtimeId.length > 0
-        && (handle.ownershipName === undefined || (typeof handle.ownershipName === 'string' && handle.ownershipName.length > 0));
-      if (!validHandle(manifest.handle) || !['allocating', 'aborted', 'retained', 'upgrading', 'archived'].includes(manifest.state)
-          || manifest.archived !== (manifest.state === 'archived') || !Array.isArray(manifest.retired)
-          || manifest.retired!.some(handle => !validHandle(handle))) fail('retained_manifest_invalid');
-      validateRuntimeIdentity(manifest.identity);
-      if (manifest.state === 'upgrading') {
-        const upgrade = manifest.upgrade;
-        if (!upgrade || !validHandle(upgrade.source) || !validHandle(upgrade.target) || typeof upgrade.owner !== 'string'
-            || !upgrade.owner || JSON.stringify(upgrade.source) !== JSON.stringify(manifest.handle)
-            || upgrade.target.runtimeId === upgrade.source.runtimeId) fail('retained_manifest_invalid');
-        validateRuntimeIdentity(upgrade.identity);
-        assertCompatible(manifest.identity!, upgrade.identity);
-      } else if (manifest.upgrade) fail('retained_manifest_invalid');
+      const manifest = decodeSchema2Publication(candidate, this.scope, this.options.providerId);
       if (!archiveOnly && manifest.state !== 'archived') {
         if (!this.options.identity) fail('retained_identity_required');
-        assertCompatible(manifest.identity!, this.options.identity);
-        if (manifest.identity!.image !== this.options.identity.image) fail('retained_configuration_changed:image');
+        if (stableDigest(manifest.identity) !== stableDigest(this.options.identity)
+            && !['retained', 'aborted'].includes(manifest.state)) fail('retained_configuration_changed');
         if (manifest.state === 'upgrading') fail('retained_upgrade_incomplete');
       }
       return manifest;
@@ -134,11 +143,15 @@ export class RetainedSessionLifecycle<R extends RetainedRuntime> {
     if (!metadata || metadata.schema !== 1 || metadata.scope !== JSON.stringify(this.scope)
         || metadata.provider !== this.options.providerId || typeof metadata.runtimeId !== 'string'
         || !metadata.runtimeId || !['allocating', 'aborted', 'retained', 'archived'].includes(String(metadata.state))) fail('retained_manifest_invalid');
+    if ('checkpointBoundary' in metadata && typeof metadata.checkpointBoundary !== 'boolean') fail('retained_manifest_invalid');
     const identity = { scope: this.scope, provider: metadata.provider, runtimeId: metadata.runtimeId,
-      fingerprint: metadata.fingerprint, state: metadata.state };
+      fingerprint: metadata.fingerprint, state: metadata.state,
+      ...(metadata.checkpointBoundary === true ? { checkpointBoundary: true } : {}) };
     if (candidate.contentHash !== digest(identity)) fail('retained_manifest_invalid');
-    if (!archiveOnly && metadata.state !== 'archived' && metadata.fingerprint !== this.options.fingerprint) fail('retained_configuration_changed');
-    return { handle: { provider: String(metadata.provider), runtimeId: metadata.runtimeId as string }, state: String(metadata.state), archived: metadata.state === 'archived' };
+    if (typeof metadata.fingerprint !== 'string' || !/^sha256:[a-f0-9]{64}$/.test(metadata.fingerprint)) fail('retained_manifest_invalid');
+    if (!archiveOnly && metadata.state !== 'archived' && metadata.fingerprint !== this.options.fingerprint
+        && (!this.options.identity || !['retained', 'aborted'].includes(String(metadata.state)))) fail('retained_configuration_changed');
+    return { handle: { provider: String(metadata.provider), runtimeId: metadata.runtimeId as string }, state: String(metadata.state), archived: metadata.state === 'archived', legacyFingerprint: metadata.fingerprint, checkpointBoundary: metadata.checkpointBoundary === true };
   }
   private async publish(state: 'allocating' | 'aborted' | 'retained' | 'archived'): Promise<void> {
     if (this.manifest?.identity) {
@@ -157,12 +170,15 @@ export class RetainedSessionLifecycle<R extends RetainedRuntime> {
     const fence = await this.current();
     const handle = this.handle!;
     const identity = { scope: this.scope, provider: handle.provider, runtimeId: handle.runtimeId,
-      fingerprint: this.options.fingerprint, state };
+      fingerprint: this.options.fingerprint, state,
+      ...(this.manifest?.checkpointBoundary ? { checkpointBoundary: true } : {}) };
     const result = await this.options.fences.publish({ fence,
       workspaceCandidate: { id: `retained-${handle.runtimeId}`, contentHash: digest(identity),
         metadata: { schema: 1, scope: JSON.stringify(this.scope), provider: handle.provider,
-          runtimeId: handle.runtimeId, fingerprint: this.options.fingerprint, state } }, outputCandidate: null });
+          runtimeId: handle.runtimeId, fingerprint: this.options.fingerprint, state,
+          ...(this.manifest?.checkpointBoundary ? { checkpointBoundary: true } : {}) } }, outputCandidate: null });
     if (result.type === 'lost') { this.lost = true; fail('retained_fence_lost'); }
+    this.manifest = { handle, state, archived: state === 'archived', legacyFingerprint: this.options.fingerprint, checkpointBoundary: this.manifest?.checkpointBoundary };
   }
   async begin(assertExecutionCurrent: () => Promise<void>, signal: AbortSignal): Promise<void> {
     if (this.phase !== 'idle') fail('retained_already_active');
@@ -174,9 +190,22 @@ export class RetainedSessionLifecycle<R extends RetainedRuntime> {
       const acquired = await this.options.fences.acquire({ scope: this.scope, ownerId: this.ownerId, ttlMs: this.options.leaseTtlMs });
       if (acquired.type !== 'acquired') fail('retained_resource_busy');
       this.fence = acquired.fence; this.lost = false; this.startHeartbeat();
-      const manifest = acquired.publication ? this.decode(acquired.publication.workspaceCandidate) : null;
+      let manifest = acquired.publication ? this.decode(acquired.publication.workspaceCandidate) : null;
       this.manifest = manifest;
+      this.allowLegacyCheckpoint = manifest?.state === 'retained' && !manifest.checkpointBoundary;
       if (manifest?.archived) fail('retained_session_archived');
+      if (manifest?.state === 'retained' && ((manifest.identity && stableDigest(manifest.identity) !== stableDigest(this.options.identity))
+          || (manifest.legacyFingerprint && manifest.legacyFingerprint !== this.options.fingerprint))) {
+        this.allowLegacyCheckpoint = false;
+        this.handle = manifest.handle;
+        for (const handle of [...manifest.retired ?? [], manifest.handle]) {
+          signal.throwIfAborted(); await assertExecutionCurrent();
+          await this.options.provider.reap(handle, this.scope, await this.current(), signal, assertExecutionCurrent);
+        }
+        signal.throwIfAborted(); await assertExecutionCurrent();
+        await this.publish('aborted');
+        manifest = this.manifest;
+      }
       if (manifest && manifest.state !== 'aborted') {
         this.handle = manifest.handle;
         if (manifest.state === 'allocating') {
@@ -189,7 +218,11 @@ export class RetainedSessionLifecycle<R extends RetainedRuntime> {
         if (manifest.state === 'allocating') await this.publish('retained');
       } else {
         this.manifest = null;
+        signal.throwIfAborted(); await assertExecutionCurrent();
         this.handle = await this.options.provider.allocationIntent(this.scope, await this.current(), signal);
+        this.allowLegacyCheckpoint = false;
+        this.manifest = { handle: this.handle, state: 'allocating', archived: false, checkpointBoundary: true,
+          ...(this.options.identity ? { identity: this.options.identity, retired: [] } : {}) };
         await this.publish('allocating'); newIntent = true;
         this.runtime = await this.options.provider.create(this.scope, await this.current(), signal);
         this.handle = this.runtime.runtimeHandle(); created = true;
@@ -246,6 +279,15 @@ export class RetainedSessionLifecycle<R extends RetainedRuntime> {
     }
   }
   isStopped(): boolean { return this.phase === 'stopped'; }
+  async workspaceOwnership(assertExecutionCurrent: () => Promise<void>, signal: AbortSignal) {
+    signal.throwIfAborted();
+    await assertExecutionCurrent();
+    await this.current();
+    signal.throwIfAborted();
+    if (this.phase !== 'active' || !this.handle) fail('retained_not_active');
+    return { runtimeKey: JSON.stringify({ provider: this.handle.provider, runtimeId: this.handle.runtimeId }),
+      allowLegacyCheckpoint: this.allowLegacyCheckpoint };
+  }
   async use<T>(operation: (runtime: R) => Promise<T>): Promise<T> {
     if (this.phase !== 'active' || !this.runtime) fail('retained_not_active');
     const runtime = this.runtime;
@@ -308,9 +350,10 @@ export class RetainedSessionLifecycle<R extends RetainedRuntime> {
             ...(this.handle && manifest.state !== 'aborted' ? [this.handle] : [])];
           for (const handle of handles) {
             await assertArchiveAuthorized();
-            await this.options.provider.reap(handle, this.scope, await this.current(), signal);
+            await this.options.provider.reap(handle, this.scope, await this.current(), signal, assertArchiveAuthorized);
           }
           this.handle ??= manifest.handle;
+          signal.throwIfAborted(); await assertArchiveAuthorized();
           await this.publish('archived');
         }
       }

@@ -244,6 +244,10 @@ export class LiteBoxSandbox implements SandboxExecutor {
     this.volumes.push({ hostPath, guestPath: "/mnt/session/outputs", readOnly: false });
   }
 
+  async prepareRetainedRuntime(): Promise<void> {
+    await this.ensureBox();
+  }
+
   async readFile(path: string): Promise<string> {
     const box = await this.ensureBox();
     const tmp = join(this.tmpRoot, `read-${Buffer.from(randomBytes(6)).toString("hex")}`);
