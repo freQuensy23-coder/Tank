@@ -28,9 +28,7 @@ def evidence_for(raw, encoding):
     return evidence
 
 
-def assert_response(
-    clean, expected, captured, limit, capture_clipped, transform_clipped, redacted, encoding
-):
+def assert_response(clean, expected, captured, limit, capture_clipped, transform_clipped, redacted, encoding):
     response = clean["attempts"][0]["response"]
     actual = (
         base64.b64decode(response["body"], validate=True)
@@ -68,9 +66,7 @@ def test_known_token_crossing_owned_capture_boundary(encoding, limit, prefix_kin
     budget = [limit]
     clean = sanitize(evidence_for(raw, encoding), TOKEN, budget)
     output_encoding = "base64" if encoding == "base64" or prefix_kind == "controls" else "utf-8"
-    attachments = assert_response(
-        clean, prefix + b"[RED", limit, limit, True, True, True, output_encoding
-    )
+    attachments = assert_response(clean, prefix + b"[RED", limit, limit, True, True, True, output_encoding)
     assert budget == [0]
     for payload in [json.dumps(clean).encode(), *(item["content"] for item in attachments)]:
         assert b"uniq" not in payload
@@ -86,9 +82,7 @@ def test_earlier_redaction_does_not_backfill_boundary_lookahead(encoding):
     raw = prefix + token + b"UNRETAINED"
     budget = [limit + 3]
     first = sanitize(evidence_for(raw, encoding), TOKEN, [limit])
-    assert_response(
-        first, b"safe [REDACTED] companion [REDACTED]", limit, limit, True, False, True, encoding
-    )
+    assert_response(first, b"safe [REDACTED] companion [REDACTED]", limit, limit, True, False, True, encoding)
     shared = sanitize(evidence_for(raw, encoding), TOKEN, budget)
     expected = b"safe [REDACTED] companion [REDACTED]"
     assert_response(shared, expected, limit + 3, limit + 3, True, False, True, encoding)
@@ -201,9 +195,7 @@ async def test_full_capture_boundary_jsonb_ops_and_multipart(
         redacted=True,
         bodyDocument=f"x-alice-1-attempt-1-{digest[:12]}.{suffix}",
     )
-    expected_metadata_bytes = json.dumps(
-        expected, ensure_ascii=False, indent=2, sort_keys=True
-    ).encode()
+    expected_metadata_bytes = json.dumps(expected, ensure_ascii=False, indent=2, sort_keys=True).encode()
     async with postgres_template.repository(os.environ["TANK_TEST_DATABASE_URL"]) as repo:
         await repo.put("ops.source_checkpoints", "S29:0", {"account_cursors": {"alice": "90"}})
         async with httpx.AsyncClient() as http:
@@ -239,9 +231,7 @@ async def test_full_capture_boundary_jsonb_ops_and_multipart(
         for payload in [json.dumps(checkpoint).encode(), json.dumps(notice).encode(), *uploads]:
             assert b"uniq" not in payload and b"secret-tail" not in payload
             assert b"UNCAPTURED-SAFE-TAIL" not in payload
-        receipts = await repo.list(
-            "out.deliveries", filters={"status": "SENT", "method": "sendDocument"}
-        )
+        receipts = await repo.list("out.deliveries", filters={"status": "SENT", "method": "sendDocument"})
         assert {row["document_sha256"] for row in receipts} == {
             hashlib.sha256(content).hexdigest() for content in uploads
         }

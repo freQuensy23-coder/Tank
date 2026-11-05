@@ -43,9 +43,7 @@ async def test_reopened_document_retry_uses_original_parent_route(
         producer = None
         try:
             async with httpx.AsyncClient(transport=InterruptedTransport(origin)) as http:
-                producer = asyncio.create_task(
-                    DeliveryService(repo, settings, http=http).deliver(payload)
-                )
+                producer = asyncio.create_task(DeliveryService(repo, settings, http=http).deliver(payload))
                 await asyncio.wait_for(blocked.wait(), 3)
                 producer.cancel()
                 with pytest.raises(asyncio.CancelledError):
@@ -71,15 +69,11 @@ async def test_reopened_document_retry_uses_original_parent_route(
             retained = [row for row in after if row in before]
             assert json.dumps(retained, sort_keys=True).encode() == frozen
             assert (
-                json.dumps(
-                    await repo.get("out.ops_notices", notice["notice_id"]), sort_keys=True
-                ).encode()
+                json.dumps(await repo.get("out.ops_notices", notice["notice_id"]), sort_keys=True).encode()
                 == saved_notice
             )
             receipts = [
-                row
-                for row in after
-                if row["status"] == "SENT" and row.get("method") == "sendDocument"
+                row for row in after if row["status"] == "SENT" and row.get("method") == "sendDocument"
             ]
             assert len(receipts) == len(notice["document_manifest"])
             assert all(row["chat_id"] == "-1001111111111" for row in receipts)
@@ -94,9 +88,7 @@ async def test_reopened_document_retry_uses_original_parent_route(
             ]
             assert len(uploads) == len(notice["document_manifest"])
             assert all(upload["chat_id"][1] == b"-1001111111111" for upload in uploads)
-            assert all(
-                json.loads(upload["reply_parameters"][1]) == {"message_id": 1} for upload in uploads
-            )
+            assert all(json.loads(upload["reply_parameters"][1]) == {"message_id": 1} for upload in uploads)
             assert [upload["document"][0] for upload in uploads] == [
                 item["filename"] for item in notice["document_manifest"]
             ]
@@ -125,14 +117,10 @@ async def test_memory_documents_use_durable_parent_not_reloaded_settings(reloade
         reloaded = telegram_settings()
         reloaded.telegram_ops_chat = reloaded_chat
         await DeliveryService(repo, reloaded, http=http).deliver(payload)
-    uploads = [
-        multipart(request) for request in captured if request.url.path.endswith("sendDocument")
-    ]
+    uploads = [multipart(request) for request in captured if request.url.path.endswith("sendDocument")]
     assert len(uploads) == len(notice["document_manifest"])
     assert all(upload["chat_id"][1] == b"ops" for upload in uploads)
-    assert all(
-        json.loads(upload["reply_parameters"][1]) == {"message_id": 41} for upload in uploads
-    )
+    assert all(json.loads(upload["reply_parameters"][1]) == {"message_id": 41} for upload in uploads)
 
 
 @pytest.mark.parametrize(

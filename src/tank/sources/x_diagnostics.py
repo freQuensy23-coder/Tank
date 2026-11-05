@@ -168,23 +168,29 @@ def sanitize(value, token=None, budget=None):
                 original_raw, clipped = text_prefix(body, limit)
             token_raw = token.encode("utf-8") if token else b""
             redaction_raw = original_raw
-            if clipped and original_raw and token_raw:
+            source_truncated = scalar(response, "bodyTruncated", bool, f"bodyTruncated[{index}]")
+            if (clipped or source_truncated) and original_raw and token_raw:
                 inspection_limit = limit + len(token_raw) - 1
                 if encoding == "base64":
                     inspection_encoded_limit = ((inspection_limit + 2) // 3) * 4
                     try:
-                        inspection = base64.b64decode(
-                            body[:inspection_encoded_limit], validate=True
-                        )
+                        inspection = base64.b64decode(body[:inspection_encoded_limit], validate=True)
                     except (ValueError, binascii.Error):
                         invalid.append(f"bodyEncoding[{index}]")
                         inspection = b""
                         redaction_raw = b""
                 else:
                     inspection, _ = text_prefix(body, inspection_limit)
-                crossing = inspection.find(
-                    token_raw, max(0, len(original_raw) - len(token_raw) + 1)
-                )
+                crossing = inspection.find(token_raw, max(0, len(original_raw) - len(token_raw) + 1))
+                boundary_marker = b"[REDACTED]"
+                if source_truncated:
+                    for size in range(min(len(token_raw) - 1, len(inspection)), 0, -1):
+                        start = len(inspection) - size
+                        if start < len(original_raw) and inspection.endswith(token_raw[:size]):
+                            if crossing < 0 or start <= crossing:
+                                crossing = start
+                                boundary_marker = b""
+                            break
                 if 0 <= crossing < len(original_raw):
                     while crossing:
                         overlap = inspection.rfind(
@@ -195,7 +201,7 @@ def sanitize(value, token=None, budget=None):
                         if overlap < 0:
                             break
                         crossing = overlap
-                    redaction_raw = original_raw[:crossing] + b"[REDACTED]"
+                    redaction_raw = original_raw[:crossing] + boundary_marker
             byte_token = token_raw.decode("latin-1") if token_raw else None
             transformed = redact(
                 redaction_raw.decode("latin-1"), byte_token, max(BODY_LIMIT, len(redaction_raw))
@@ -225,9 +231,7 @@ def sanitize(value, token=None, budget=None):
                 "bodyEncoding": encoding,
                 "bodyBytes": len(raw),
                 "bodySha256": sha256(raw),
-                "bodyTruncated": bool(scalar(response, "bodyTruncated", bool, f"bodyTruncated[{index}]"))
-                or clipped
-                or transformed_clipped,
+                "bodyTruncated": bool(source_truncated) or clipped or transformed_clipped,
                 "consumerCapturedBytes": len(original_raw),
                 "consumerCaptureTruncated": clipped,
                 "consumerTransformTruncated": transformed_clipped,

@@ -111,41 +111,72 @@ def response_evidence(response, raw, read_error=None, limit=BODY_LIMIT, serializ
         for name, value in response.headers.items()
         if name.lower() in DIAGNOSTIC_HEADERS
     }
-    truncated = len(raw) > limit
-    captured = raw[:limit]
+    length = headers.get("content-length", "")
+    total = int(length) if length.isdecimal() and len(length) <= 20 else None
+    truncated = len(raw) > limit or read_error is not None or (total is not None and total > len(raw))
+    inspection = raw[: limit + 1]
     encoding_error = None
     if headers.get("content-encoding", "").lower() == "gzip":
         try:
-            with gzip.GzipFile(fileobj=io.BytesIO(captured)) as decoded:
-                captured = decoded.read(limit + 1)
-            truncated = truncated or len(captured) > limit
-            captured = captured[:limit]
+            with gzip.GzipFile(fileobj=io.BytesIO(raw[:limit])) as decoded:
+                inspection = decoded.read(limit + 1)
+            truncated = truncated or len(inspection) > limit
         except (OSError, EOFError, zlib.error):
             encoding_error = "GZIP_DECODE_FAILED_WIRE_PREFIX"
-    original = captured
+            truncated = True
+    original = inspection[:limit]
+    secrets = [
+        secret.encode("utf-8")
+        for name in ("APIFY_TOKEN", "APIFY_API_TOKEN", "ACTOR_TOKEN")
+        if (secret := os.environ.get(name))
+    ]
+    end = len(original)
+    if truncated:
+        for secret in secrets:
+            for size in range(min(len(secret) - 1, len(inspection)), 0, -1):
+                start = len(inspection) - size
+                if start < end and inspection.endswith(secret[:size]):
+                    end = start
+                    break
+            start = inspection.find(secret, max(0, end - len(secret) + 1))
+            if 0 <= start < end:
+                end = start
+        previous = None
+        while previous != end:
+            previous = end
+            for secret in secrets:
+                start = inspection.find(secret, max(0, end - len(secret) + 1))
+                if 0 <= start < end:
+                    end = start
+    captured = original[:end]
     try:
-        text = captured.decode("utf-8")
+        text = original.decode("utf-8")
         textual = not any(ord(c) < 32 and c not in "\r\n\t" for c in text)
     except UnicodeError:
         textual = False
+    for secret in sorted(secrets, key=len, reverse=True):
+        captured = captured.replace(secret, b"[REDACTED]")
     safe = redact(captured.decode("latin-1")).encode("latin-1")
     if textual:
-        body = redact(original.decode("utf-8"))
+        body = redact(captured.decode("utf-8", errors="ignore"))
         safe = body.encode("utf-8")
     else:
         body = base64.b64encode(safe).decode("ascii")
     redacted = original != safe
     if serialized_limit is not None and len(json.dumps(body, ensure_ascii=True)) > serialized_limit:
-        safe = safe[: serialized_limit // 6]
+        retained = min(len(safe), serialized_limit // 6)
+        for secret in secrets:
+            start = safe.find(secret, max(0, retained - len(secret) + 1))
+            if 0 <= start < retained:
+                retained = start
+                redacted = True
+        safe = safe[:retained]
         if textual:
             body = safe.decode("utf-8", errors="ignore")
             safe = body.encode("utf-8")
         else:
             body = base64.b64encode(safe).decode("ascii")
         truncated = True
-    length = headers.get("content-length", "")
-    total = int(length) if length.isdecimal() and len(length) <= 20 else None
-    truncated = truncated or (total is not None and total > len(raw))
     return {
         "status": response.status_code,
         "headers": headers,
