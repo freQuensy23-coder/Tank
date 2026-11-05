@@ -1436,11 +1436,36 @@ async def test_ci_native_deep_summary_preserves_original_response(
 @pytest.mark.parametrize(
     "scenario",
     [
-        "ordered", "unsymbolized", "maximum", "missing", "short", "long", "private", "boolean", "float",
-        "negative", "unknown", "object", "inconsistent", "extra", "hash_unresolved", "category_unresolved",
-        "category_recognized", "category_short", "category_counts", "hash_overlap", "legitimate_overlap",
-        "boundary", "oversize", "duplicate", "lambda_only", "large_categories", "shared_suffix",
-        "flexible_collision", "flexible_valid", "shared_suffix_valid",
+        "ordered",
+        "unsymbolized",
+        "maximum",
+        "missing",
+        "short",
+        "long",
+        "private",
+        "boolean",
+        "float",
+        "negative",
+        "unknown",
+        "object",
+        "inconsistent",
+        "extra",
+        "hash_unresolved",
+        "category_unresolved",
+        "category_recognized",
+        "category_short",
+        "category_counts",
+        "hash_overlap",
+        "legitimate_overlap",
+        "boundary",
+        "oversize",
+        "duplicate",
+        "lambda_only",
+        "large_categories",
+        "shared_suffix",
+        "flexible_collision",
+        "flexible_valid",
+        "shared_suffix_valid",
     ],
 )
 async def test_owned_baseline_ordered_stack_privacy_and_validation(native_observer_receipts, scenario):
@@ -1465,7 +1490,9 @@ async def test_owned_baseline_ordered_stack_privacy_and_validation(native_observ
         if len(calls) == 2:
             return httpx.Response(200, content=b"")
         assert len(calls) == 3
-        assert dict(request.url.params)["param_observer_query_id"] == calls[0].headers["X-ClickHouse-Query-Id"]
+        assert (
+            dict(request.url.params)["param_observer_query_id"] == calls[0].headers["X-ClickHouse-Query-Id"]
+        )
         sql = request.content.decode()
         assert "AS ordered_classes" in sql
         assert "DB::QueryAnalyzer::resolveFunction(" in sql
@@ -1474,13 +1501,20 @@ async def test_owned_baseline_ordered_stack_privacy_and_validation(native_observ
         assert query not in sql and "privateNativeSymbol" not in sql
         if scenario == "unsymbolized":
             sample.update(
-                frame_count=4, symbol_count=0, categories=[], class_counts=[0] * 15,
-                hash_class_counts=[0] * 6, ordered_classes=[],
+                frame_count=4,
+                symbol_count=0,
+                categories=[],
+                class_counts=[0] * 15,
+                hash_class_counts=[0] * 6,
+                ordered_classes=[],
             )
         elif scenario == "maximum":
             sample.update(
-                frame_count=255, symbol_count=255, categories=["Other"] * 32,
-                class_counts=[0] * 14 + [255], hash_class_counts=[0] * 5 + [255],
+                frame_count=255,
+                symbol_count=255,
+                categories=["Other"] * 32,
+                class_counts=[0] * 14 + [255],
+                hash_class_counts=[0] * 5 + [255],
                 ordered_classes=[0] * 255,
             )
         elif scenario == "missing":
@@ -1509,49 +1543,74 @@ async def test_owned_baseline_ordered_stack_privacy_and_validation(native_observ
             sample["hash_class_counts"] = [2, 0, 0, 0, 1, 1]
         elif scenario == "shared_suffix":
             sample.update(
-                frame_count=33, symbol_count=33, categories=["Other"] * 32,
+                frame_count=33,
+                symbol_count=33,
+                categories=["Other"] * 32,
                 class_counts=[0, 0, 0, 0, 0, 1, 0, 1, 0, 0, 0, 0, 0, 0, 31],
-                hash_class_counts=[0, 0, 0, 0, 0, 33], ordered_classes=[0] * 33,
+                hash_class_counts=[0, 0, 0, 0, 0, 33],
+                ordered_classes=[0] * 33,
             )
         elif scenario == "flexible_collision":
             sample.update(
-                frame_count=33, symbol_count=33, categories=["Other"] * 31 + ["Function"],
+                frame_count=33,
+                symbol_count=33,
+                categories=["Other"] * 31 + ["Function"],
                 class_counts=[0, 0, 0, 0, 0, 1, 1, 0, 1, 0, 0, 0, 0, 0, 30],
-                hash_class_counts=[0, 0, 0, 0, 0, 33], ordered_classes=[0] * 33,
+                hash_class_counts=[0, 0, 0, 0, 0, 33],
+                ordered_classes=[0] * 33,
             )
         elif scenario == "flexible_valid":
             sample.update(
-                frame_count=3, symbol_count=3, categories=["Other", "Function", "Other"],
+                frame_count=3,
+                symbol_count=3,
+                categories=["Other", "Function", "Other"],
                 class_counts=[0] * 8 + [2] + [0] * 5 + [1],
-                hash_class_counts=[1, 0, 0, 0, 0, 2], ordered_classes=[0] * 3,
+                hash_class_counts=[1, 0, 0, 0, 0, 2],
+                ordered_classes=[0] * 3,
             )
         elif scenario == "shared_suffix_valid":
             sample.update(
-                frame_count=34, symbol_count=34, categories=["Other"] * 32,
+                frame_count=34,
+                symbol_count=34,
+                categories=["Other"] * 32,
                 class_counts=[0, 0, 0, 0, 0, 1, 0, 1, 0, 0, 0, 0, 0, 0, 32],
-                hash_class_counts=[1, 0, 0, 0, 0, 33], ordered_classes=[0] * 34,
+                hash_class_counts=[1, 0, 0, 0, 0, 33],
+                ordered_classes=[0] * 34,
             )
         elif scenario == "lambda_only":
             sample.update(
-                frame_count=1, symbol_count=1, categories=["Other"],
-                class_counts=[0] * 14 + [1], hash_class_counts=[0] * 5 + [1], ordered_classes=[6],
+                frame_count=1,
+                symbol_count=1,
+                categories=["Other"],
+                class_counts=[0] * 14 + [1],
+                hash_class_counts=[0] * 5 + [1],
+                ordered_classes=[6],
             )
         elif scenario == "large_categories":
             sample.update(
-                frame_count=255, symbol_count=255, categories=["ExpressionActions"] * 32,
-                class_counts=[0] * 5 + [255] + [0] * 9, hash_class_counts=[0] * 5 + [255],
+                frame_count=255,
+                symbol_count=255,
+                categories=["ExpressionActions"] * 32,
+                class_counts=[0] * 5 + [255] + [0] * 9,
+                hash_class_counts=[0] * 5 + [255],
                 ordered_classes=[0] * 255,
             )
         elif scenario == "legitimate_overlap":
             sample.update(
-                frame_count=3, symbol_count=3, categories=["Other"] * 3,
-                class_counts=[0] * 14 + [3], hash_class_counts=[1, 0, 0, 0, 0, 2],
+                frame_count=3,
+                symbol_count=3,
+                categories=["Other"] * 3,
+                class_counts=[0] * 14 + [3],
+                hash_class_counts=[1, 0, 0, 0, 0, 2],
                 ordered_classes=[0, 6, 0],
             )
         elif scenario in {"private", "boolean", "float", "negative", "unknown"}:
             sample["ordered_classes"][0] = {
                 "private": "privateNativeSymbol 0x1234 privateTraceCredential",
-                "boolean": True, "float": 3.0, "negative": -1, "unknown": 7,
+                "boolean": True,
+                "float": 3.0,
+                "negative": -1,
+                "unknown": 7,
             }[scenario]
         samples = [sample]
         if scenario in {"maximum", "large_categories"}:
@@ -1582,13 +1641,25 @@ async def test_owned_baseline_ordered_stack_privacy_and_validation(native_observ
     assert receipt["query_id"] == calls[0].headers["X-ClickHouse-Query-Id"]
     trace = receipt["own_trace_log"]
     if scenario in {
-        "ordered", "unsymbolized", "maximum", "legitimate_overlap", "boundary", "lambda_only",
-        "flexible_valid", "shared_suffix_valid",
+        "ordered",
+        "unsymbolized",
+        "maximum",
+        "legitimate_overlap",
+        "boundary",
+        "lambda_only",
+        "flexible_valid",
+        "shared_suffix_valid",
     }:
         assert trace["status"] == "observed"
         assert trace["ordered_classification_version"] == 1
         assert trace["ordered_class_order"] == [
-            "Other", "ResolveFunction", "ResolveExpression", "TreeHash", "TreeClone", "Unresolved", "ResolveLambda"
+            "Other",
+            "ResolveFunction",
+            "ResolveExpression",
+            "TreeHash",
+            "TreeClone",
+            "Unresolved",
+            "ResolveLambda",
         ]
         assert trace["ordered_stack_direction"] == "as_stored_in_trace_log"
         assert trace["samples"][0]["ordered_classes"] == sample["ordered_classes"]
@@ -1601,14 +1672,26 @@ async def test_owned_baseline_ordered_stack_privacy_and_validation(native_observ
     else:
         assert trace == {"status": "Unavailable", "reason": "read_or_validation_error"}
     persisted = "".join(path.read_text() for path in native_observer_receipts.iterdir())
-    for forbidden in (query, "privateOriginalCredential", "privateNativeSymbol", "privateTraceCredential", "0x1234"):
+    for forbidden in (
+        query,
+        "privateOriginalCredential",
+        "privateNativeSymbol",
+        "privateTraceCredential",
+        "0x1234",
+    ):
         assert forbidden not in persisted
 
 
 def test_ordered_classifier_is_fixed_and_preserves_stack_order():
     classes = truth_sql_failure_evidence._TRACE_ORDERED_CLASSES
     assert [name for name, _ in classes] == [
-        "Other", "ResolveFunction", "ResolveExpression", "TreeHash", "TreeClone", "Unresolved", "ResolveLambda"
+        "Other",
+        "ResolveFunction",
+        "ResolveExpression",
+        "TreeHash",
+        "TreeClone",
+        "Unresolved",
+        "ResolveLambda",
     ]
     symbols = [
         "DB::IQueryTreeNode::getTreeHash()",
@@ -1624,7 +1707,9 @@ def test_ordered_classifier_is_fixed_and_preserves_stack_order():
         code = 0
         for index, (_, predicate) in enumerate(classes[1:], 1):
             prefixes = re.findall(r"startsWith\(symbol, '([^']+)'\)", predicate)
-            if any(symbol.startswith(prefix) for prefix in prefixes) or (predicate == "empty(symbol)" and not symbol):
+            if any(symbol.startswith(prefix) for prefix in prefixes) or (
+                predicate == "empty(symbol)" and not symbol
+            ):
                 code = index
                 break
         observed.append(code)

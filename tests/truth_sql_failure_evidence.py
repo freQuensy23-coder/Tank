@@ -806,17 +806,24 @@ class EvidenceClickHouse(ClickHouse):
                             )
                             or not _ordered_prefix_fits(categories, ordered_classes, class_counts)
                             or any(
-                                not categories.count(category) <= class_counts[index]
+                                not categories.count(category)
+                                <= class_counts[index]
                                 <= categories.count(category) + symbol_count - len(categories)
                                 for category, index in (
-                                    ("ExpressionActions", 5), ("ActionsDAG", 6), ("PipelineExecutor", 10)
+                                    ("ExpressionActions", 5),
+                                    ("ActionsDAG", 6),
+                                    ("PipelineExecutor", 10),
                                 )
                             )
                             or categories.count("Function") > class_counts[7] + class_counts[8]
                             or class_counts[7] > categories.count("Function") + symbol_count - len(categories)
-                            or sum(hash_class_counts[:4]) > (
-                                sum(code == 0 and category == "Other" for code, category in zip(ordered_classes, categories, strict=False))
-                                + ordered_classes[len(categories):].count(0)
+                            or sum(hash_class_counts[:4])
+                            > (
+                                sum(
+                                    code == 0 and category == "Other"
+                                    for code, category in zip(ordered_classes, categories, strict=False)
+                                )
+                                + ordered_classes[len(categories) :].count(0)
                             )
                         ):
                             raise ValueError("inconsistent ordered classes")
