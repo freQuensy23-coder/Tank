@@ -438,11 +438,9 @@ _PROFILE_EVENTS = (
 _OBSERVER_INSTANCES = itertools.count()
 
 
-def _liquidity_observation(nodeid, query):
+def _liquidity_observation(nodeid, query, *, baseline_query=None):
     if nodeid == _LIQUIDITY_BASELINE:
-        if hashlib.sha256(query.encode()).hexdigest() == (
-            "9759dc8ae3dc941c4dae074b86124194de1b46f685aae172506e8edaff144e7c"
-        ):
+        if type(baseline_query) is str and baseline_query and query == baseline_query:
             return "baseline"
         return None
     for phase, selection in _LIQUIDITY_SELECTIONS.items():
@@ -561,6 +559,24 @@ _TRACE_CLASSES = (
 )
 
 
+_TRACE_HASH_CLASSES = (
+    ("ConstantHash", "startsWith(symbol, 'DB::ConstantNode::updateTreeHashImpl(')"),
+    (
+        "StringHash",
+        "startsWith(symbol, 'DB::ColumnString::updateHashWithValue(') OR "
+        "startsWith(symbol, 'DB::ColumnString::updateHashFast(')",
+    ),
+    ("TableHash", "startsWith(symbol, 'DB::TableNode::updateTreeHashImpl(')"),
+    (
+        "GetScalar",
+        "startsWith(symbol, 'DB::(anonymous namespace)::FunctionGetScalar::getReturnTypeImpl(') OR "
+        "startsWith(symbol, 'DB::(anonymous namespace)::FunctionGetScalar::executeImpl(')",
+    ),
+    ("Unresolved", "empty(symbol)"),
+    ("Other", "1"),
+)
+
+
 def _own_trace_sql():
     classification = (
         "multiIf("
@@ -568,6 +584,12 @@ def _own_trace_sql():
         + ", 'Other')"
     )
     vocabulary = "[" + ", ".join("'" + name + "'" for name, _ in _TRACE_CLASSES) + "]"
+    hash_classification = (
+        "multiIf("
+        + ", ".join(predicate + ", '" + name + "'" for name, predicate in _TRACE_HASH_CLASSES[:-1])
+        + ", 'Other')"
+    )
+    hash_vocabulary = "[" + ", ".join("'" + name + "'" for name, _ in _TRACE_HASH_CLASSES) + "]"
     return (
         "SELECT toString(trace_type) AS trace_type, length(trace) AS frame_count, "
         "arrayMap(symbol -> multiIf("
@@ -581,7 +603,11 @@ def _own_trace_sql():
         + classification
         + ", arraySlice(symbols, 1, 255)), class), "
         + vocabulary
-        + ") AS class_counts "
+        + ") AS class_counts, arrayMap(class -> countEqual(arrayMap(symbol -> "
+        + hash_classification
+        + ", arraySlice(symbols, 1, 255)), class), "
+        + hash_vocabulary
+        + ") AS hash_class_counts "
         "FROM system.trace_log WHERE query_id = {observer_query_id:String} "
         "AND trace_type IN ('CPU', 'Real') ORDER BY event_time_microseconds DESC "
         "LIMIT 8 BY trace_type LIMIT 16 FORMAT JSONEachRow"
@@ -589,11 +615,12 @@ def _own_trace_sql():
 
 
 class EvidenceClickHouse(ClickHouse):
-    def __init__(self, url, nodeid, *, http=None):
+    def __init__(self, url, nodeid, *, http=None, baseline_query=None):
         if urlparse(url).hostname not in {"localhost", "127.0.0.1", "::1"}:
             raise ValueError("native SQL qualification requires a loopback service")
         super().__init__(url, http=http)
         self.nodeid = nodeid
+        self._baseline_query = baseline_query
         self._evidence_query = None
         self._observation = None
         self._original_http_post = self.http.post
@@ -678,6 +705,7 @@ class EvidenceClickHouse(ClickHouse):
                         "categories",
                         "symbol_count",
                         "class_counts",
+                        "hash_class_counts",
                     }:
                         raise ValueError("invalid sample fields")
                     trace_type = row["trace_type"]
@@ -694,6 +722,15 @@ class EvidenceClickHouse(ClickHouse):
                         _bounded_number(value, maximum=symbol_count)
                     if sum(class_counts) != symbol_count:
                         raise ValueError("inconsistent class counts")
+                    hash_class_counts = row["hash_class_counts"]
+                    if type(hash_class_counts) is not list or len(hash_class_counts) != len(
+                        _TRACE_HASH_CLASSES
+                    ):
+                        raise ValueError("invalid hash class count vector")
+                    for value in hash_class_counts:
+                        _bounded_number(value, maximum=symbol_count)
+                    if sum(hash_class_counts) != symbol_count:
+                        raise ValueError("inconsistent hash class counts")
                     categories = row["categories"]
                     if type(categories) is not list or len(categories) > min(32, symbol_count):
                         raise ValueError("invalid sample frames")
@@ -706,9 +743,11 @@ class EvidenceClickHouse(ClickHouse):
                             "categories": categories,
                             "symbol_count": symbol_count,
                             "class_counts": class_counts,
+                            "hash_class_counts": hash_class_counts,
                             "symbol_status": (
                                 "observed"
                                 if any(value not in {"Other", "Unresolved"} for value in categories)
+                                or any(hash_class_counts[:4])
                                 else "Unavailable"
                             ),
                         }
@@ -720,6 +759,8 @@ class EvidenceClickHouse(ClickHouse):
                     "status": "observed",
                     "unit": "retained_samples_not_cpu_seconds",
                     "class_order": [name for name, _ in _TRACE_CLASSES],
+                    "hash_classification_version": 1,
+                    "hash_class_order": [name for name, _ in _TRACE_HASH_CLASSES],
                     "samples": samples,
                     **{
                         kind: (
@@ -782,7 +823,11 @@ class EvidenceClickHouse(ClickHouse):
             }
 
     async def rows(self, query, params=None):
-        phase = _liquidity_observation(self.nodeid, query) if self._observe_ci else None
+        phase = (
+            _liquidity_observation(self.nodeid, query, baseline_query=self._baseline_query)
+            if self._observe_ci
+            else None
+        )
         observation = None
         if phase is not None:
             self._request_count += 1

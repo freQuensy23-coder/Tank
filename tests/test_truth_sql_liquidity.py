@@ -1,4 +1,5 @@
 import builtins
+import hashlib
 import json
 import os
 import subprocess
@@ -10,6 +11,7 @@ from pathlib import Path
 from types import ModuleType
 
 import pytest
+import truth_sql_failure_evidence
 from truth_sql_failure_evidence import EvidenceClickHouse, retain_liquidity_phase
 
 from tank.analysis.truth_sql_liquidity import ctes, query, window_query, windows_query
@@ -67,7 +69,12 @@ def original_truth():
 async def native_client(request):
     url = os.environ.get("CLICKHOUSE_TEST_URL")
     assert url, "CLICKHOUSE_TEST_URL must identify the owned native CI service"
-    client = EvidenceClickHouse(url, request.node.nodeid)
+    baseline_query = (
+        request.getfixturevalue("current_liquidity_baseline_statement")
+        if request.node.nodeid == truth_sql_failure_evidence._LIQUIDITY_BASELINE
+        else None
+    )
+    client = EvidenceClickHouse(url, request.node.nodeid, baseline_query=baseline_query)
     try:
         yield client
     finally:
@@ -129,6 +136,44 @@ def _packet():
     spot: dict = {"venues": [{"venue": "A"}, {"venue": "B"}]}
     relative = {"windows": {"W15M": {"r_raw": 0.005, "beyond_normal": False}}}
     return snapshot, spot, relative
+
+
+@pytest.fixture(scope="module")
+def current_liquidity_baseline_statement():
+    snapshot, spot, relative = _packet()
+    snapshot["_event_anchor"] = None
+    statement, _ = query(snapshot, {}, spot=spot, relative=relative)
+    return statement
+
+
+def test_current_liquidity_root_observer_requires_complete_owned_statement(
+    current_liquidity_baseline_statement,
+):
+    statement = current_liquidity_baseline_statement
+    observe = truth_sql_failure_evidence._liquidity_observation
+    nodeid = truth_sql_failure_evidence._LIQUIDITY_BASELINE
+    binding = {"baseline_query": statement}
+    assert observe(nodeid, statement, **binding) == "baseline"
+    assert observe(nodeid, statement) is None
+    assert observe(nodeid, "SELECT 1", **binding) is None
+    assert observe(nodeid, statement + " ", **binding) is None
+    assert observe(nodeid, statement[:-1], **binding) is None
+    assert observe(nodeid + "foreign", statement, **binding) is None
+    phase = "tests/test_truth_sql_liquidity.py::test_native_liquidity_absence_relational_phase_contracts"
+    assert observe(phase + "::venue_stats", statement, **binding) is None
+    old_body = """        arrayMap(parsed -> tuple(
+            state.1 - least(state.1, multiplyDecimal(ifNull(parsed.1, lq_zero), ifNull(parsed.2, lq_zero), 24)),
+            state.2 + least(state.1, multiplyDecimal(ifNull(parsed.1, lq_zero), ifNull(parsed.2, lq_zero), 24)),
+            state.3 + divideDecimal(least(state.1, multiplyDecimal(ifNull(parsed.1, lq_zero), ifNull(parsed.2, lq_zero), 24)),
+                nullIf(ifNull(parsed.1, lq_zero), lq_zero), 24), toUInt8(1)),
+"""
+    start = statement.index("        arrayMap(parsed -> if(throwIf(")
+    end = statement.index("            [tuple(lq_level_price(level), lq_level_qty(level))])[1]), levels,", start)
+    historical = statement[:start] + old_body + statement[end:]
+    assert hashlib.sha256(historical.encode()).hexdigest() == (
+        "9759dc8ae3dc941c4dae074b86124194de1b46f685aae172506e8edaff144e7c"
+    )
+    assert observe(nodeid, historical, **binding) is None
 
 
 def _assert_complete(actual, expected, path="result"):
@@ -320,6 +365,73 @@ async def test_native_walk_consumes_actual_levels_on_both_sides(
         assert rows[0]["value"] is None
     else:
         assert rows[0]["value"] == pytest.approx(expected, rel=1e-10, abs=1e-12)
+
+
+def test_liquidity_walk_refuses_missing_operands_inside_consumed_branch():
+    statement = ctes()
+    body = statement.split("((levels, notional) ->", 1)[1].split(" AS lq_walk_state,", 1)[0]
+    compact = " ".join(body.split())
+    assert "if(state.1 <= toDecimal256('0.00000001', 24) AND state.4, state," in compact
+    assert (
+        "arrayMap(parsed -> if(throwIf(isNull(parsed.1) OR isNull(parsed.2), "
+        "'Missing demanded book level operand') = 0, tuple("
+    ) in compact
+    assert "toUInt8(1)), state), [tuple(lq_level_price(level), lq_level_qty(level))])[1]" in compact
+    assert "ifNull(parsed." not in body
+    assert "multiplyDecimal(assumeNotNull(parsed.1), assumeNotNull(parsed.2), 24)" in body
+    assert "arrayFilter" not in body
+
+
+@pytest.mark.parametrize("shape", ["array", "object"])
+@pytest.mark.parametrize("operand", ["price", "qty"])
+@pytest.mark.parametrize("position", ["first", "later"])
+async def test_native_consumed_null_book_operand_refuses_complete_result(
+    native_client, original_truth, shape, operand, position
+):
+    snapshot, spot, relative = _packet()
+    missing: dict[str, str | None] = {"price": "101", "qty": "1"}
+    missing[operand] = None
+    level = missing if shape == "object" else [missing["price"], missing["qty"]]
+    levels = [level, ["102", "1000000"]]
+    if position == "later":
+        levels.insert(0, ["101", "0.01"])
+    snapshot["books"][1]["asks"] = levels
+    token = original_truth._PARAMETERS.set({})
+    try:
+        with pytest.raises(TypeError):
+            original_truth.liquidity_truth(
+                deepcopy(snapshot),
+                parse_time(snapshot["_start"]),
+                parse_time(snapshot["cutoff"]),
+                deepcopy(spot),
+                deepcopy(relative),
+            )
+    finally:
+        original_truth._PARAMETERS.reset(token)
+    statement, parameters = query(snapshot, spot=spot, relative=relative)
+    with pytest.raises(RuntimeError, match="Missing demanded book level operand"):
+        await native_client.rows(statement, parameters)
+
+
+@pytest.mark.parametrize("shape", ["array", "object"])
+@pytest.mark.parametrize("case", ["unused_null_price", "unused_null_qty", "zero_qty", "negative_qty"])
+async def test_native_book_operand_controls_preserve_complete_frozen_result(
+    native_client, original_truth, shape, case
+):
+    snapshot, spot, relative = _packet()
+    level: dict[str, str | None] = {"price": "101", "qty": "0"}
+    if case.startswith("unused_null"):
+        level["price" if case == "unused_null_price" else "qty"] = None
+    elif case == "negative_qty":
+        level["qty"] = "-1"
+    encoded = level if shape == "object" else [level["price"], level["qty"]]
+    valid = ["101", "1000000"]
+    snapshot["books"][1]["asks"] = (
+        [valid, encoded] if case.startswith("unused_null") else [encoded, valid]
+    )
+    actual = await _compare(native_client, original_truth, snapshot, spot, relative)
+    assert [venue["venue"] for venue in actual["per_venue"]] == ["B", "A"]
+    assert all(value is not None for value in actual["per_venue"][0]["slippage_bps"].values())
 
 
 @pytest.mark.parametrize("net_sign", [-1, 1])

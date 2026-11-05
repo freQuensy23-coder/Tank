@@ -5,6 +5,7 @@ import hashlib
 import itertools
 import json
 import os
+import re
 from pathlib import Path
 
 import httpx
@@ -643,7 +644,8 @@ async def test_native_observer_disabled_outside_exact_owned_cases(
 @pytest.mark.parametrize(
     ("digest", "admitted"),
     [
-        ("9759dc8ae3dc941c4dae074b86124194de1b46f685aae172506e8edaff144e7c", True),
+        ("1111111111111111111111111111111111111111111111111111111111111111", True),
+        ("9759dc8ae3dc941c4dae074b86124194de1b46f685aae172506e8edaff144e7c", False),
         ("00c6fb8895af64256de6ed5c0a8f41344503096029c9cb5517f7cbff56bdf485", False),
         ("df5b18d0b5110c3e1a3009b53f1d5319de95212e50b4e171d371f3b1195ce35a", False),
         ("70dc6c3374e1fb8dac7c00d478d7bef5afe187bb35229bc5f8df4fdc08221bb5", False),
@@ -699,7 +701,10 @@ async def test_ci_native_baseline_digest_seam_preserves_timeout_and_private_inva
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(respond)) as http:
         client = EvidenceClickHouse(
-            "http://localhost:8123", truth_sql_failure_evidence._LIQUIDITY_BASELINE, http=http
+            "http://localhost:8123",
+            truth_sql_failure_evidence._LIQUIDITY_BASELINE,
+            http=http,
+            baseline_query=query if admitted else query + " current-root",
         )
         with pytest.raises(httpx.ReadTimeout) as raised:
             await client.rows(query)
@@ -777,6 +782,17 @@ def test_summary_rejects_duplicate_keys_and_ignores_unknown_keys():
         "vector_object",
         "vector_duplicate",
         "maximum_stack",
+        "hash_full_stack",
+        "hash_vector_short",
+        "hash_vector_long",
+        "hash_vector_boolean",
+        "hash_vector_negative",
+        "hash_vector_float",
+        "hash_vector_overflow",
+        "hash_vector_sum",
+        "hash_vector_object",
+        "hash_vector_missing",
+        "hash_vector_private",
     ],
 )
 async def test_owned_trace_log_protocol_privacy_and_refusal(native_observer_receipts, monkeypatch, scenario):
@@ -797,6 +813,7 @@ async def test_owned_trace_log_protocol_privacy_and_refusal(native_observer_rece
         "categories": ["ExpressionActions", "Other"],
         "symbol_count": 2,
         "class_counts": [0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 1],
+        "hash_class_counts": [0, 0, 0, 0, 0, 2],
     }
 
     def respond(request):
@@ -846,6 +863,7 @@ async def test_owned_trace_log_protocol_privacy_and_refusal(native_observer_rece
                 "categories": ["Unresolved"],
                 "symbol_count": 1,
                 "class_counts": [0] * 13 + [1, 0],
+                "hash_class_counts": [0, 0, 0, 0, 1, 0],
             },
         ]
         if scenario == "real_only":
@@ -858,6 +876,7 @@ async def test_owned_trace_log_protocol_privacy_and_refusal(native_observer_rece
                     "categories": [],
                     "symbol_count": 0,
                     "class_counts": [0] * 15,
+                    "hash_class_counts": [0] * 6,
                 }
             ]
         elif scenario == "full_stack":
@@ -866,6 +885,7 @@ async def test_owned_trace_log_protocol_privacy_and_refusal(native_observer_rece
                 symbol_count=43,
                 categories=["Other"] * 32,
                 class_counts=[1, 1, 1, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 38],
+                hash_class_counts=[0, 0, 0, 0, 0, 43],
             )
         elif scenario == "maximum_stack":
             sample.update(
@@ -873,6 +893,7 @@ async def test_owned_trace_log_protocol_privacy_and_refusal(native_observer_rece
                 symbol_count=255,
                 categories=["Other"] * 32,
                 class_counts=[0] * 14 + [255],
+                hash_class_counts=[0, 0, 0, 0, 0, 255],
             )
             samples = [sample] * 8 + [sample | {"trace_type": "Real"}] * 8
         elif scenario == "vector_short":
@@ -912,9 +933,36 @@ async def test_owned_trace_log_protocol_privacy_and_refusal(native_observer_rece
                 symbol_count=33,
                 categories=["Other"] * 33,
                 class_counts=[0] * 14 + [33],
+                hash_class_counts=[0, 0, 0, 0, 0, 33],
             )
         elif scenario == "unknown_type":
             sample["trace_type"] = "Memory"
+        elif scenario == "hash_full_stack":
+            sample.update(
+                frame_count=45,
+                symbol_count=45,
+                categories=["Other"] * 32,
+                class_counts=[0] * 14 + [45],
+                hash_class_counts=[1, 2, 1, 2, 1, 38],
+            )
+        elif scenario == "hash_vector_short":
+            sample["hash_class_counts"].pop()
+        elif scenario == "hash_vector_long":
+            sample["hash_class_counts"].append(0)
+        elif scenario == "hash_vector_missing":
+            del sample["hash_class_counts"]
+        elif scenario == "hash_vector_sum":
+            sample["hash_class_counts"] = [0] * 6
+        elif scenario == "hash_vector_object":
+            sample["hash_class_counts"] = {"privateNativeSymbol": 2}
+        elif scenario.startswith("hash_vector_"):
+            sample["hash_class_counts"][0] = {
+                "hash_vector_boolean": False,
+                "hash_vector_negative": -1,
+                "hash_vector_float": 0.0,
+                "hash_vector_overflow": 3,
+                "hash_vector_private": "privateNativeSymbol credential",
+            }[scenario]
         return httpx.Response(200, content="\n".join(json.dumps(row) for row in samples).encode())
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(respond)) as http:
@@ -943,9 +991,27 @@ async def test_owned_trace_log_protocol_privacy_and_refusal(native_observer_rece
         assert forbidden not in sql
     (receipt,) = native_receipts(native_observer_receipts)
     trace = receipt["own_trace_log"]
-    if scenario in {"samples", "real_only", "unsymbolized", "full_stack", "maximum_stack"}:
+    if scenario in {
+        "samples",
+        "real_only",
+        "unsymbolized",
+        "full_stack",
+        "maximum_stack",
+        "hash_full_stack",
+    }:
         assert trace["status"] == "observed"
         assert trace["unit"] == "retained_samples_not_cpu_seconds"
+        assert trace["hash_classification_version"] == 1
+        assert trace["hash_class_order"] == [
+            "ConstantHash",
+            "StringHash",
+            "TableHash",
+            "GetScalar",
+            "Unresolved",
+            "Other",
+        ]
+        if scenario == "hash_full_stack":
+            assert trace["samples"][0] == sample | {"symbol_status": "observed"}
         assert trace["class_order"] == [
             "AnalyzerResolve",
             "ScalarEvaluation",
@@ -994,6 +1060,66 @@ async def test_owned_trace_log_protocol_privacy_and_refusal(native_observer_rece
     persisted = "".join(path.read_text() for path in native_observer_receipts.iterdir())
     for forbidden in (query, "privateOriginalCredential", "privateTraceCredential", "privateNativeSymbol"):
         assert forbidden not in persisted
+
+
+def test_owned_trace_hash_classifier_uses_only_pinned_public_methods():
+    expected = (
+        ("ConstantHash", ("DB::ConstantNode::updateTreeHashImpl(",)),
+        (
+            "StringHash",
+            ("DB::ColumnString::updateHashWithValue(", "DB::ColumnString::updateHashFast("),
+        ),
+        ("TableHash", ("DB::TableNode::updateTreeHashImpl(",)),
+        (
+            "GetScalar",
+            (
+                "DB::(anonymous namespace)::FunctionGetScalar::getReturnTypeImpl(",
+                "DB::(anonymous namespace)::FunctionGetScalar::executeImpl(",
+            ),
+        ),
+        ("Unresolved", ()),
+        ("Other", ()),
+    )
+    classes = truth_sql_failure_evidence._TRACE_HASH_CLASSES
+    assert [name for name, _ in classes] == [name for name, _ in expected]
+    for (_, predicate), (_, prefixes) in zip(classes[:-2], expected[:-2], strict=True):
+        assert predicate == " OR ".join(f"startsWith(symbol, '{prefix}')" for prefix in prefixes)
+    assert classes[-2:] == (("Unresolved", "empty(symbol)"), ("Other", "1"))
+    synthetic_public_pinned_symbols = (
+        ["DB::ColumnString::filter() const"] * 32
+        + [prefix + ") const" for _, prefixes in expected for prefix in prefixes]
+        + [
+            "DB::ColumnString::updateHashFastPrivate()",
+            "DB::ConstantNode::updateTreeHashImplPrivate()",
+            "DB::TableNode::updateTreeHashImplPrivate()",
+            "DB::(anonymous namespace)::FunctionGetScalar::privateMethod()",
+            "private::DB::ColumnString::updateHashFast()",
+            "privateSymbol 0x1234 payload",
+            "",
+        ]
+    )
+    counts = [0] * len(classes)
+    for symbol in synthetic_public_pinned_symbols:
+        for index, (_, predicate) in enumerate(classes):
+            prefixes = re.findall(r"startsWith\(symbol, '([^']+)'\)", predicate)
+            if (
+                any(symbol.startswith(prefix) for prefix in prefixes)
+                or (predicate == "empty(symbol)" and not symbol)
+                or predicate == "1"
+            ):
+                counts[index] += 1
+                break
+    assert counts == [1, 2, 1, 2, 1, 38]
+    sql = truth_sql_failure_evidence._own_trace_sql()
+    projection = (
+        "multiIf("
+        + ", ".join(predicate + ", '" + name + "'" for name, predicate in classes[:-1])
+        + ", 'Other')"
+    )
+    assert "arrayMap(symbol -> " + projection + ", arraySlice(symbols, 1, 255))" in sql
+    assert "AS hash_class_counts" in sql
+    assert "['ConstantHash', 'StringHash', 'TableHash', 'GetScalar', 'Unresolved', 'Other']" in sql
+    assert "privateSymbol" not in sql and "payload" not in sql and "0x1234" not in sql
 
 
 def test_parameter_string_preserves_native_escaped_spelling():
