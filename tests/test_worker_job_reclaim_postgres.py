@@ -7,6 +7,7 @@ import httpx
 import pytest
 from test_session_binding_concurrency import fixture_repo
 from test_session_supervisor_recovery import settings
+from test_storage import complete_fixture_record
 from test_telegram_followups import FakeTelegram, ask, inbox_settings
 
 from tank.agents.sessions import SessionService
@@ -94,6 +95,16 @@ async def test_controlled_job_reclaim_runs_worker_and_delivers_closed_question(p
                     return None
 
                 async with asyncio.timeout(5):
+                    await repo.put(
+                        "ingest.source_items",
+                        "itm_1",
+                        complete_fixture_record(
+                            "ingest.source_items", {"item_id": "itm_1", "text": "AAVE exploit"}
+                        ),
+                    )
+                    await repo.put(
+                        "evt.events", "evt_1", complete_fixture_record("evt.events", {"event_id": "evt_1"})
+                    )
                     question_id = await ask(repo, session_status="ENDED")
                     session = await repo.get("ops.agent_sessions", "ses_1")
                     assert closed_reason(session) == ("ARCHIVED", EARLY_ARCHIVED_TEXT)
@@ -134,7 +145,9 @@ async def test_controlled_job_reclaim_runs_worker_and_delivers_closed_question(p
                 async def send_message(body):
                     try:
                         current = await repo.get("ops.jobs", job["job_id"])
-                        claims.append((current["type"], current["job_id"], current["status"], current["attempts"]))
+                        claims.append(
+                            (current["type"], current["job_id"], current["status"], current["attempts"])
+                        )
                         assert current["payload"] == body == payload
                         assert current["recovery_reclaim"] is False and current["recovery_count"] == 1
                         return await service.send_message(body)
@@ -148,7 +161,9 @@ async def test_controlled_job_reclaim_runs_worker_and_delivers_closed_question(p
                         rows = await repo.list("ops.jobs", filters={"type": "TELEGRAM_ANSWER"})
                         assert len(rows) == 1
                         current = rows[0]
-                        claims.append((current["type"], current["job_id"], current["status"], current["attempts"]))
+                        claims.append(
+                            (current["type"], current["job_id"], current["status"], current["attempts"])
+                        )
                         assert body == current["payload"] == {"question_id": question_id}
                         assert (await repo.get("ops.jobs", job["job_id"]))["status"] == "DONE"
                         return await inbox.answer(body)
@@ -179,7 +194,9 @@ async def test_controlled_job_reclaim_runs_worker_and_delivers_closed_question(p
                 assert agent_job["attempts"] == 1 and agent_job["recovery_count"] == 1
                 assert agent_job["recovery_reclaim"] is False and agent_job["expires_at"] == job["expires_at"]
                 assert agent_job["last_error"] is None
-                assert answer_job["status"] == "DONE" and answer_job["payload"] == {"question_id": question_id}
+                assert answer_job["status"] == "DONE" and answer_job["payload"] == {
+                    "question_id": question_id
+                }
                 assert answer_job["attempts"] == 1 and answer_job["last_error"] is None
                 question = await repo.get("out.user_questions", question_id)
                 assert question["status"] == "DELIVERED" and question["answer_status"] == "ARCHIVED"
@@ -254,7 +271,11 @@ async def test_preserve_repository_error(body_error, exit_error, expected):
     assert events == ["enter", "body", "exit"]
     assert caught is (errors[expected] if expected else None)
     if body_error and exit_error:
-        note = "Repository cleanup failure" if expected == body_error else "Failure before repository cancellation"
+        note = (
+            "Repository cleanup failure"
+            if expected == body_error
+            else "Failure before repository cancellation"
+        )
         assert caught.__notes__ == [note]
 
 
@@ -282,7 +303,9 @@ async def test_repository_notes_do_not_expose_exception_values(cancel_exit):
     correct_identity = caught is (exit_error if cancel_exit else primary)
     notes = getattr(caught, "__notes__", [])
     notes_are_safe = all(secret not in note for note in notes)
-    notes_match = notes == ["Failure before repository cancellation" if cancel_exit else "Repository cleanup failure"]
+    notes_match = notes == [
+        "Failure before repository cancellation" if cancel_exit else "Repository cleanup failure"
+    ]
     assert correct_identity
     assert notes_are_safe
     assert notes_match
@@ -303,7 +326,9 @@ def test_cleanup_notes_do_not_expose_exception_values(has_primary):
     correct_identity = caught is (None if has_primary else target)
     notes = getattr(target, "__notes__", [])
     notes_are_safe = all(secret not in note for note in notes)
-    notes_match = notes == (["Cleanup failure", "Cleanup failure"] if has_primary else ["Additional cleanup failure"])
+    notes_match = notes == (
+        ["Cleanup failure", "Cleanup failure"] if has_primary else ["Additional cleanup failure"]
+    )
     assert correct_identity
     assert notes_are_safe
     assert notes_match
