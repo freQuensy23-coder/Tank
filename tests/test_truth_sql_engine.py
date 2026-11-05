@@ -190,7 +190,7 @@ def test_native_selected_numeric_policy_matches_admitted_arithmetic():
         "overflow and outside-range inputs are refused; dimensionless returns, beta, percentiles "
         "and display ratios use Float64 statistics"
     )
-    assert native.NUMERIC_POLICY == policy
+    assert policy == native.NUMERIC_POLICY
     assert "'\"" + policy + "\"'" in native._assessment_select()
 
 
@@ -560,7 +560,7 @@ def test_result_decoder_preserves_raw_quantity_metadata_refusals():
     result = native._decode_result(
         [{
             "result": json.dumps(payload),
-            "provenance_snapshot": "{}",
+            "provenance_snapshot": json.dumps({"cutoff": payload["cutoff"]}),
             "wrapped_flow_counts": [[window, 0] for window in payload["supply"]["windows"]],
         }]
     )
@@ -600,7 +600,7 @@ def test_quantity_transport_restores_only_native_prefix(quantity):
     result = native._decode_result(
         [{
             "result": json.dumps(payload),
-            "provenance_snapshot": "{}",
+            "provenance_snapshot": json.dumps({"cutoff": payload["cutoff"]}),
             "wrapped_flow_counts": [[window, 1] for window in windows],
         }]
     )
