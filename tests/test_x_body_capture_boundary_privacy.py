@@ -17,7 +17,6 @@ from tank.delivery import DeliveryService
 from tank.sources import SourceService
 from tank.sources.x_diagnostics import documents, sanitize
 
-
 TOKEN = "unique-boundary-credential-π-secret-tail"
 
 

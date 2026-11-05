@@ -15,7 +15,6 @@ from tank.delivery import DeliveryService
 from tank.sources import SourceService
 from tank.sources.x_diagnostics import documents, sanitize
 
-
 METADATA_FIELDS = [
     (("request", "url"), "request.url"),
     (("attempts", 0, "error"), "error[1]"),

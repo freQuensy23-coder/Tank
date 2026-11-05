@@ -116,9 +116,8 @@ async def test_memory_session_lock_is_reentrant_and_commits_outside_batch():
         async with repo.session_lock("documents:notice:one"):
             await repo.put("ops.scheduler_checkpoints", "one", {"state": {"committed": True}})
         with pytest.raises(RuntimeError):
-            async with repo.transaction():
-                async with repo.session_lock("documents:notice:two"):
-                    pass
+            async with repo.transaction(), repo.session_lock("documents:notice:two"):
+                pass
     assert await repo.get("ops.scheduler_checkpoints", "one") == {"state": {"committed": True}}
     assert not repo._locks
 
@@ -169,11 +168,10 @@ async def test_session_lock_reentrancy_transaction_refusal_and_legacy_exclusion(
                 with pytest.raises(RuntimeError, match="outside an application transaction"):
                     async with repo.session_lock("documents:legacy"):
                         pass
-            async with repo.session_lock("documents:legacy"):
-                async with repo.session_lock("documents:legacy"):
-                    with pytest.raises(TimeoutError):
-                        async with asyncio.timeout(0.05), other.lock("documents:legacy"):
-                            pytest.fail("legacy transaction lock overlapped session owner")
+            async with repo.session_lock("documents:legacy"), repo.session_lock("documents:legacy"):
+                with pytest.raises(TimeoutError):
+                    async with asyncio.timeout(0.05), other.lock("documents:legacy"):
+                        pytest.fail("legacy transaction lock overlapped session owner")
             async with other.lock("documents:legacy"):
                 with pytest.raises(TimeoutError):
                     async with asyncio.timeout(0.05), repo.session_lock("documents:legacy"):

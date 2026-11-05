@@ -159,14 +159,23 @@ class DeliveryService:
 
     async def _deliver_documents(self, notice):
         deadline = time.monotonic() + 30
-        chat = str(self.settings.telegram_ops_chat or "")
         ledger = await self._all(
             "out.deliveries", filters={"notice_id": notice["notice_id"], "channel": "telegram:ops"}
         )
         messages = [row for row in ledger if row["status"] == "SENT" and row.get("method") != "sendDocument"]
         if not messages:
             raise DeliveryError("Ops diagnostic parent message was not delivered")
-        parent = messages[0]["message_ref"]
+        chat = messages[0].get("chat_id")
+        parent = messages[0].get("message_ref")
+        if (
+            not isinstance(chat, str)
+            or not chat.strip()
+            or not isinstance(parent, str)
+            or not parent.isascii()
+            or not parent.isdecimal()
+            or int(parent) <= 0
+        ):
+            raise DeliveryError("Ops diagnostic parent receipt has no admissible route")
         attachments = documents(notice["entry_errors"])
         manifest = [
             {"filename": row["filename"], "sha256": row["sha256"], "bytes": len(row["content"])}
