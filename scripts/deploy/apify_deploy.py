@@ -149,15 +149,23 @@ def prepare():
         version = {
             "versionNumber": version_number,
             "sourceType": "SOURCE_FILES",
-            "buildTag": None,
-            "envVars": [],
-            "applyEnvVarsToBuild": False,
             "sourceFiles": [
                 {"name": name, "format": "BASE64", "content": base64.b64encode(body).decode()}
                 for name, body in files.items()
             ],
         }
         exists = any(item["versionNumber"] == version_number for item in actor["versions"])
+        if exists:
+            existing = request("GET", ACTOR + "/versions/" + version_number)
+            require(
+                existing.get("versionNumber") == version_number
+                and existing.get("sourceType") == "SOURCE_FILES"
+                and existing.get("actorPath") is None,
+                "existing worker version uses an unsupported source configuration",
+            )
+            version["actorPath"] = None
+        else:
+            version.update({"buildTag": None, "envVars": [], "applyEnvVarsToBuild": False})
         request(
             "PUT" if exists else "POST",
             ACTOR + ("/versions/" + version_number if exists else "/versions"),
