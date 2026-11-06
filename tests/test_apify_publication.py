@@ -299,7 +299,7 @@ docker() {
     printf '%s\\n' flags_cleared >> term-observation
   fi
 """,
-                "trap 'recover 143' TERM": "trap 'recover 143 term' TERM",
+                '  recover "$status"\n': '  recover "$status" term\n',
                 "trap 'recover \"$?\"' EXIT": "trap 'recover \"$?\" exit' EXIT",
                 '  exit "$status"\n': """  case "$status" in
     143) printf '%s\\n' exit_143_requested >> term-observation ;;
@@ -310,7 +310,7 @@ docker() {
 """,
             }
             for original, replacement in replacements.items():
-                assert script.count(original) == (2 if original == "trap 'recover 143' TERM" else 1)
+                assert script.count(original) == 1
                 script = script.replace(original, replacement)
         if mode == "post_finish_main_term":
             cleanup = "      docker image ls --format"

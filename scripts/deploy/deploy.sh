@@ -39,11 +39,11 @@ roll() {
     fi
     healthy "tank-$svc-1" || { echo "$svc not healthy"; return 1; }
   done
-  old_cap=$(docker ps -q --filter label=com.docker.compose.project=tank --filter label=com.docker.compose.service=tank-capture)
+  old_cap=$(docker ps -q --filter label=com.docker.compose.project=tank --filter label=com.docker.compose.service=tank-capture) || return 1
   echo "tank-capture standby next to ${old_cap:-none} $(date -u +%T)"
   compose "$v" up -d --no-deps --no-recreate --scale tank-capture=$(( $(echo "$old_cap" | grep -c .) + 1 )) tank-capture || return 1
-  new_cap=$(docker ps -q --filter label=com.docker.compose.project=tank --filter label=com.docker.compose.service=tank-capture | grep -v -x -F "${old_cap:-none}" | head -1)
-  pid=$(docker inspect -f '{{.State.Pid}}' "$new_cap")
+  new_cap=$(docker ps -q --filter label=com.docker.compose.project=tank --filter label=com.docker.compose.service=tank-capture | grep -v -x -F "${old_cap:-none}" | head -1) || return 1
+  pid=$(docker inspect -f '{{.State.Pid}}' "$new_cap") || return 1
   ready=no
   for _ in $(seq 1 24); do
     nsenter -t "$pid" -n curl -sf -m 3 http://127.0.0.1:8791/readyz >/dev/null 2>&1 && { ready=yes; break; }
@@ -70,22 +70,22 @@ verify() {
   bad() { echo "FAIL $*"; fail=1; }
   chq() { docker exec -i tank-clickhouse-1 sh -c 'clickhouse-client --user tank --password "$TANK_DB_PASSWORD"'; }
   psqlq() { docker exec -i -u postgres tank-postgres-1 psql -d tank -Atq; }
-  cap=$(docker ps -q --filter label=com.docker.compose.project=tank --filter label=com.docker.compose.service=tank-capture)
+  cap=$(docker ps -q --filter label=com.docker.compose.project=tank --filter label=com.docker.compose.service=tank-capture) || return 1
   [ "$(echo "$cap" | grep -c .)" = 1 ] || bad "expected one tank-capture container, found: $(echo $cap)"
-  cap=$(echo "$cap" | head -1)
+  cap=$(echo "$cap" | head -1) || return 1
   [ "$(docker inspect -f '{{.State.Status}}' tank-tank-1 2>/dev/null)" = running ] || bad "tank not running"
   [ "$(docker inspect -f '{{.State.Health.Status}}' "$cap" 2>/dev/null)" = healthy ] || bad "tank-capture not healthy"
-  lag=$(echo "SELECT ifNull(toInt64(dateDiff('second', max(recorded_at), now64(6))), 9999) FROM mkt.flow_bars_1m FINAL WHERE minute_start > now() - INTERVAL 5 MINUTE" | chq)
+  lag=$(echo "SELECT ifNull(toInt64(dateDiff('second', max(recorded_at), now64(6))), 9999) FROM mkt.flow_bars_1m FINAL WHERE minute_start > now() - INTERVAL 5 MINUTE" | chq) || return 1
   [ "${lag:-9999}" -le 90 ] || bad "no bar recorded for ${lag}s"
   n=$(docker logs --since "$since" "$cap" 2>&1 | grep -c "market flush failed" || true)
   [ "$n" = 0 ] || bad "$n market flush failures"
-  stale=$(echo "select string_agg(s, ' ') from unnest(array['S09','S10','S11','S14']) s where not exists (select 1 from ops.source_checkpoints c where c.source_id=s and c.updated_at > timestamptz '$(docker inspect -f '{{.State.StartedAt}}' tank-tank-1)');" | psqlq)
+  stale=$(echo "select string_agg(s, ' ') from unnest(array['S09','S10','S11','S14']) s where not exists (select 1 from ops.source_checkpoints c where c.source_id=s and c.updated_at > timestamptz '$(docker inspect -f '{{.State.StartedAt}}' tank-tank-1)');" | psqlq) || return 1
   [ -z "$stale" ] || bad "exchange sources not polled since core start: $stale"
-  age=$(echo "SELECT dateDiff('second', max(ts), now64(6)) FROM mkt.trades WHERE instrument_id = 'binance:perp_linear:BTCUSDT' AND ts > now() - INTERVAL 1 HOUR" | chq 2>/dev/null)
+  age=$(echo "SELECT dateDiff('second', max(ts), now64(6)) FROM mkt.trades WHERE instrument_id = 'binance:perp_linear:BTCUSDT' AND ts > now() - INTERVAL 1 HOUR" | chq 2>/dev/null) || return 1
   [ "${age:-9999}" -le 60 ] 2>/dev/null || bad "newest BTC print in mkt.trades ${age:-none}s old"
-  holes=$(echo "SELECT arrayStringConcat(groupArray(concat(i, ' ', formatDateTime(m, '%H:%i'))), ', ') FROM (SELECT arrayJoin(['binance:spot:BTCUSDT','coinbase:spot:BTC-USD','kraken:spot:XBT/USD','okx:spot:BTC-USDT','bybit:spot:BTCUSDT','binance:perp_linear:BTCUSDT','okx:perp_linear:BTC-USDT-SWAP','bybit:perp_linear:BTCUSDT','hyperliquid:perp_linear:BTC']) AS i, arrayJoin(arrayMap(x -> toStartOfMinute(parseDateTime64BestEffort('$since', 6, 'UTC')) - INTERVAL 5 MINUTE + toIntervalMinute(x), range(toUInt32(dateDiff('minute', toStartOfMinute(parseDateTime64BestEffort('$since', 6, 'UTC')) - INTERVAL 5 MINUTE, toStartOfMinute(now()) - INTERVAL 2 MINUTE)) + 1))) AS m) w LEFT ANTI JOIN (SELECT instrument_id AS i, minute_start AS m FROM mkt.flow_bars_1m FINAL WHERE complete AND minute_start >= parseDateTime64BestEffort('$since', 6, 'UTC') - INTERVAL 6 MINUTE) b USING (i, m)" | chq)
+  holes=$(echo "SELECT arrayStringConcat(groupArray(concat(i, ' ', formatDateTime(m, '%H:%i'))), ', ') FROM (SELECT arrayJoin(['binance:spot:BTCUSDT','coinbase:spot:BTC-USD','kraken:spot:XBT/USD','okx:spot:BTC-USDT','bybit:spot:BTCUSDT','binance:perp_linear:BTCUSDT','okx:perp_linear:BTC-USDT-SWAP','bybit:perp_linear:BTCUSDT','hyperliquid:perp_linear:BTC']) AS i, arrayJoin(arrayMap(x -> toStartOfMinute(parseDateTime64BestEffort('$since', 6, 'UTC')) - INTERVAL 5 MINUTE + toIntervalMinute(x), range(toUInt32(dateDiff('minute', toStartOfMinute(parseDateTime64BestEffort('$since', 6, 'UTC')) - INTERVAL 5 MINUTE, toStartOfMinute(now()) - INTERVAL 2 MINUTE)) + 1))) AS m) w LEFT ANTI JOIN (SELECT instrument_id AS i, minute_start AS m FROM mkt.flow_bars_1m FINAL WHERE complete AND minute_start >= parseDateTime64BestEffort('$since', 6, 'UTC') - INTERVAL 6 MINUTE) b USING (i, m)" | chq) || return 1
   [ -z "$holes" ] || bad "incomplete BTC minutes: $holes"
-  stale=$(echo "SELECT arrayStringConcat(arrayFilter(i -> NOT has((SELECT groupArray(instrument_id) FROM mkt.oi_obs FINAL WHERE ts > now() - INTERVAL 10 MINUTE), i) OR NOT has((SELECT groupArray(instrument_id) FROM mkt.funding_obs FINAL WHERE as_of > now() - INTERVAL 10 MINUTE), i), ['binance:perp_linear:BTCUSDT','okx:perp_linear:BTC-USDT-SWAP','bybit:perp_linear:BTCUSDT','hyperliquid:perp_linear:BTC']), ' ')" | chq)
+  stale=$(echo "SELECT arrayStringConcat(arrayFilter(i -> NOT has((SELECT groupArray(instrument_id) FROM mkt.oi_obs FINAL WHERE ts > now() - INTERVAL 10 MINUTE), i) OR NOT has((SELECT groupArray(instrument_id) FROM mkt.funding_obs FINAL WHERE as_of > now() - INTERVAL 10 MINUTE), i), ['binance:perp_linear:BTCUSDT','okx:perp_linear:BTC-USDT-SWAP','bybit:perp_linear:BTCUSDT','hyperliquid:perp_linear:BTC']), ' ')" | chq) || return 1
   [ -z "$stale" ] || bad "OI or funding older than 10 min: $stale"
   return $fail
 }
@@ -93,18 +93,24 @@ verify() {
 apify() { (set +x; python3 "$bundle/apify_deploy.py" "$@" "$SHA"); }
 restore_compose() {
   apify previous-compose || return 1
-  cp worker.previous-compose.yaml compose.next && mv compose.next compose.yaml
+  cp worker.previous-compose.yaml compose.next || return 1
+  mv compose.next compose.yaml || return 1
 }
 previous=$(cat deployed 2>/dev/null || true)
 [[ -z "$previous" || "$previous" =~ ^[0-9a-f]{40}$ ]] || { echo "invalid previous release SHA"; exit 1; }
 tank_started=no
 worker_started=no
 image_cleanup=""
+finishing=no
 recover() {
   local status=$1 worker_restored=yes
-  trap - EXIT INT TERM
+  trap - EXIT
+  trap '' INT TERM
+  if [ "$status" -ne 0 ] && [ "$worker_started" = yes ] && [ ! -e worker.pending ] && [ ! -L worker.pending ]; then
+    worker_started=no
+  fi
   if [ "$status" -ne 0 ] && [ "$worker_started" = yes ]; then
-    apify rollback-intent || exit 1
+    apify rollback-intent || { echo "Worker rollback intent failed; transaction retained"; exit 1; }
     if ! apify rollback; then
       echo "Worker rollback failed; transaction retained"
       worker_restored=no
@@ -114,9 +120,17 @@ recover() {
   if [ "$status" -ne 0 ] && [ "$tank_started" = yes ] && [ -n "$previous" ]; then
     echo "rollback to $previous $(date -u +%T)"
     if restore_compose && roll "$previous" && [ "$worker_restored" = yes ]; then
-      printf '%s\n' "$previous" > deployed.next && mv deployed.next deployed
-      [ "$worker_started" = no ] || apify clear || status=1
-      echo "rolled back to $previous"
+      if printf '%s\n' "$previous" > deployed.next && mv deployed.next deployed; then
+        if [ "$worker_started" = no ] || apify clear; then
+          echo "rolled back to $previous"
+        else
+          echo "Worker journal clear failed; transaction retained"
+          status=1
+        fi
+      else
+        echo "Rollback release marker failed; transaction retained"
+        status=1
+      fi
     else
       echo "Tank rollback failed"
       status=1
@@ -128,9 +142,26 @@ recover() {
   [ -z "$image_cleanup" ] || rm -rf -- "$image_cleanup" || true
   exit "$status"
 }
+interrupt() {
+  local status=$1 settlement_status
+  trap '' INT TERM
+  if [ "$finishing" = yes ]; then
+    if apify settled; then
+      worker_started=no
+      tank_started=no
+    else
+      settlement_status=$?
+      if [ "$settlement_status" -ne 2 ]; then
+        trap - EXIT INT TERM
+        exit "$settlement_status"
+      fi
+    fi
+  fi
+  recover "$status"
+}
 trap 'recover "$?"' EXIT
-trap 'recover 130' INT
-trap 'recover 143' TERM
+trap 'interrupt 130' INT
+trap 'interrupt 143' TERM
 if [ -f worker.pending ]; then
   if apify settled; then
     :
@@ -138,15 +169,21 @@ if [ -f worker.pending ]; then
     settlement_status=$?
     [ "$settlement_status" -eq 2 ] || exit "$settlement_status"
     previous=$(apify previous-release)
-    worker_started=yes
-    tank_started=yes
+    worker_started=yes tank_started=yes
+    signal_status=0
+    trap 'signal_status=130' INT
+    trap 'signal_status=143' TERM
     apify rollback
     restore_compose
     roll "$previous"
-    printf '%s\n' "$previous" > deployed.next && mv deployed.next deployed
+    printf '%s\n' "$previous" > deployed.next
+    mv deployed.next deployed
     apify clear
     worker_started=no
     tank_started=no
+    trap 'interrupt 130' INT
+    trap 'interrupt 143' TERM
+    [ "$signal_status" -eq 0 ] || recover "$signal_status"
   fi
 fi
 if [ "$bundle" != "$PWD" ]; then
@@ -159,25 +196,27 @@ since=$(date -u +%FT%TZ)
 echo "deploy $SHA at $since; previous ${previous:-none}"
 out=""
 [ -n "$previous" ] || { echo "worker deployment requires a previous verified Tank release"; exit 1; }
-cp compose.yaml worker.previous-compose.next && mv worker.previous-compose.next worker.previous-compose.yaml
+cp compose.yaml worker.previous-compose.next
+mv worker.previous-compose.next worker.previous-compose.yaml
 export APIFY_PUBLICATION_DEADLINE=$(python3 -c 'import time; print(time.monotonic() + 300)')
-apify prepare
 worker_started=yes
+apify prepare
 if [ "$bundle" != "$PWD" ]; then
-  cp "$bundle/compose.yaml" compose.next && mv compose.next compose.yaml
+  cp "$bundle/compose.yaml" compose.next
+  mv compose.next compose.yaml
 fi
 apify activate
 tank_started=yes
 if roll "$SHA"; then
   while [ $(( $(date +%s) - start )) -lt "$LIMIT" ]; do
     if out=$(verify "$since" 2>&1); then
-      printf '%s\n' "$SHA" > deployed.next && mv deployed.next deployed
-      trap '' INT TERM
+      printf '%s\n' "$SHA" > deployed.next
+      mv deployed.next deployed
+      finishing=yes
       apify finish
       worker_started=no
       tank_started=no
-      trap 'recover 130' INT
-      trap 'recover 143' TERM
+      finishing=no
       echo "VERIFIED $SHA after $(( $(date +%s) - start ))s"
       image_cleanup=$(mktemp -d "$PWD/.deploy-images.XXXXXXXXXX") || exit 0
       docker image ls --format '{{.Repository}}:{{.Tag}}' > "$image_cleanup/listed" || true
