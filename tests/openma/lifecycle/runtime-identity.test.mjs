@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createHash } from 'node:crypto';
 import { gzipSync } from 'node:zlib';
-import { executableImageIdentity, assertCompatible, stableDigest } from '../../../vendor/openma/packages/control-plane-node/src/lib/tank-retained/runtime-identity.ts';
+import { executableImageIdentity, assertCompatible, retainedSessionResources, stableDigest } from '../../../vendor/openma/packages/control-plane-node/src/lib/tank-retained/runtime-identity.ts';
 
 async function layout(fn) {
   const root = await mkdtemp(join(tmpdir(), 'tank-image-identity-'));
@@ -93,4 +93,28 @@ test('compatibility comparison reports every changed or missing component withou
 test('missing optional identity components retain the original serialization digest', () => {
   assert.equal(stableDigest(undefined), 'sha256:' + createHash('sha256').update('undefined').digest('hex'));
   assert.equal(stableDigest({ b: 2, a: 1 }), stableDigest({ a: 1, b: 2 }));
+});
+
+test('reader file resources leave retained resource digests at their recorded values', () => {
+  const repository = { type: 'github_repository', id: 'sesrsc_repo', url: 'https://github.com/acme/repo', mountPath: '/workspace/repo', checkout: { type: 'branch', name: 'main' } };
+  const memory = { type: 'memory_store', id: 'sesrsc_memory', memoryStoreId: 'memstore_1', access: 'read_only', name: 'notes' };
+  const file = { type: 'file', id: 'sesrsc_file', fileId: 'file_1', mountPath: '/workspace/uploads/20261108T000000Z/attachment-0/report.pdf' };
+  const recorded = [
+    { resources: [], component: 'sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945',
+      fingerprint: 'sha256:07cb3c9cdec39790f579be3e9caa9572f8bc5e5f34625188ff97477ea52872ab' },
+    { resources: [repository, memory], component: 'sha256:28b50270c9d75778440e4a85bb43fcbadefe15bbc921367c81001c661b11488b',
+      fingerprint: 'sha256:94bd62cfee7aab92e9fef51f7ffd07221f5c59a2c2ac1aaa170618d56c948bfd' },
+  ];
+  for (const { resources, component, fingerprint } of recorded) {
+    assert.equal(stableDigest(resources), component);
+    assert.equal(stableDigest({ resources, skills: [] }), fingerprint);
+    assert.equal(JSON.stringify(retainedSessionResources(resources)), JSON.stringify(resources));
+    assert.equal(stableDigest(retainedSessionResources(resources)), component);
+    assert.equal(stableDigest({ resources: retainedSessionResources(resources), skills: [] }), fingerprint);
+    const withFiles = [file, ...resources, { ...file, id: 'sesrsc_file_2', fileId: 'file_2' }];
+    assert.notEqual(stableDigest(withFiles), component);
+    assert.equal(stableDigest(retainedSessionResources(withFiles)), component);
+    assert.equal(stableDigest({ resources: retainedSessionResources(withFiles), skills: [] }), fingerprint);
+  }
+  assert.equal(retainedSessionResources(undefined), undefined);
 });

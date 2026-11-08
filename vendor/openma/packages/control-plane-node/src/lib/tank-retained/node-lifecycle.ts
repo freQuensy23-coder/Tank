@@ -96,15 +96,16 @@ export class NodeRetainedLifecycle {
     if (!lifetime.binds && !this.entries.has(scopeKey) && !this.archives.has(scopeKey)
       && this.lifetimes.get(scopeKey) === lifetime) this.lifetimes.delete(scopeKey);
   }
-  async bind(context: Context): Promise<void> {
+  /** Resolves false when a warm sandbox's retained configuration changed: the caller must destroy it and prepare a new one. */
+  async bind(context: Context): Promise<boolean> {
     const scope = scopeOf(context), scopeKey = key(scope);
     const lifetime = this.lifetimes.get(scopeKey) ?? { final: false, binds: 0 };
     this.lifetimes.set(scopeKey, lifetime);
     lifetime.binds++;
-    try { await this.bindOpen(context, scope, lifetime); }
+    try { return await this.bindOpen(context, scope, lifetime); }
     finally { lifetime.binds--; this.releaseLifetime(scopeKey, lifetime); }
   }
-  private async bindOpen(context: Context, scope: Omit<Scope, 'workId'>, lifetime: Lifetime): Promise<void> {
+  private async bindOpen(context: Context, scope: Omit<Scope, 'workId'>, lifetime: Lifetime): Promise<boolean> {
     this.assertOpen(lifetime);
     if (!context.executionFence) throw Error('retained_execution_fence_required');
     await this.options.assertExecutionCurrent(context.executionFence);
@@ -122,14 +123,10 @@ export class NodeRetainedLifecycle {
       if (entry.allocation) {
         const fingerprint = await this.options.fingerprint(context, entry.allocation);
         this.assertOpen(lifetime);
-        if (entry.controller && fingerprint !== entry.controller.options.fingerprint) {
-          const identity = await this.options.identity?.(context, entry.allocation);
-          this.assertOpen(lifetime);
-          entry.controller = this.controller(scope, fingerprint, entry.allocation, identity);
-        }
+        if (entry.controller && fingerprint !== entry.controller.options.fingerprint) return false;
       }
       entry.context = context;
-      return;
+      return true;
     }
     entry = { lifetime, context, started: false };
     this.entries.set(key(scope), entry);
@@ -149,6 +146,7 @@ export class NodeRetainedLifecycle {
       const operations = new RetainedBoxOperations(use);
       return Object.assign(operations, { stop: () => this.idleEntry(owned) });
     });
+    return true;
   }
   private async ensureActive(entry: Entry): Promise<void> {
     this.assertOpen(entry.lifetime);

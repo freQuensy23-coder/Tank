@@ -61,6 +61,12 @@ interface RunnerConstructor {
       environment: Environment;
       signal?: AbortSignal;
     }): Promise<SandboxExecutor>;
+    retainedLifecycle?: {
+      bind(input: { session: Session; sandbox: SandboxExecutor }): Promise<boolean | void>;
+      idle(input: unknown): Promise<void>;
+      abandon(input: unknown): Promise<void>;
+      archive(input: unknown): Promise<void>;
+    };
     prepareSandbox?(input: {
       workspaceId: string;
       session: Session;
@@ -300,6 +306,58 @@ describe("DefaultNodeManagedSessionRunner", () => {
 
     expect(preparedResourceCounts).toEqual([0, 1]);
     expect(destroyed).toEqual([1]);
+  });
+
+  it("destroys and prepares a new sandbox when the retained lifecycle refuses the warm one", async () => {
+    const modulePath = new URL("../../../packages/control-plane-node/src/lib/node-managed-session-runner.ts", import.meta.url).href;
+    const runnerModule = await import(/* @vite-ignore */ modulePath) as {
+      DefaultNodeManagedSessionRunner: RunnerConstructor;
+    };
+    const order: string[] = [];
+    const sandboxes: SandboxExecutor[] = [];
+    const reusable = [true, false];
+    const runner = new runnerModule.DefaultNodeManagedSessionRunner({
+      outcomes: { evaluate: async () => { throw new Error("unexpected outcome evaluation"); } },
+      confirmedTools: { execute: async () => { throw new Error("unexpected confirmed tool execution"); } },
+      buildSandbox: async () => {
+        const index = sandboxes.length + 1;
+        const sandbox = { destroy: async () => { order.push(`destroy ${index}`); } } as unknown as SandboxExecutor;
+        sandboxes.push(sandbox);
+        order.push(`build ${index}`);
+        return sandbox;
+      },
+      retainedLifecycle: {
+        bind: async ({ sandbox }) => {
+          const index = sandboxes.indexOf(sandbox) + 1;
+          order.push(`bind ${index}`);
+          return index === 1 ? reusable.shift() : true;
+        },
+        idle: async () => undefined,
+        abandon: async () => undefined,
+        archive: async () => undefined,
+      },
+      prepareSandbox: async ({ sandbox }) => { order.push(`prepare ${sandboxes.indexOf(sandbox) + 1}`); },
+      buildModel: async () => ({}),
+      buildTools: async () => ({}),
+      buildHarness: () => ({ run: async () => undefined }),
+      buildHarnessContext: async (input) => input,
+      clock: { now: () => new Date("2026-08-26T02:00:00.000Z") },
+      ids: { nextEventId: () => "event_retained_refresh" },
+    });
+    const start = () => runner.start({
+      workspaceId: "workspace_01",
+      sessionId: session.id,
+      session,
+      environment,
+      initialEvents: [],
+    });
+
+    await start();
+    await start();
+    await start();
+
+    expect(order).toEqual(["build 1", "bind 1", "prepare 1", "bind 1", "destroy 1", "build 2", "bind 2", "prepare 2", "bind 2"]);
+    expect(runner.connectedSandbox({ workspaceId: "workspace_01", sessionId: session.id })).toBe(sandboxes[1]);
   });
 
   it("runs a user message between official lifecycle events", async () => {
