@@ -5,8 +5,10 @@ before in one ``ENTRY_ERRORS`` notice for that source poll. Each reported error 
 remembered by an ``ENTRY_ERROR`` marker whose id is derived from the source, the
 feed URL, the reason and the entry identity (the digest of the wire entry when the
 parser had one), never from the poll time. Feeds that keep returning the same broken
-entry therefore produce no further messages. Markers, the notice and its ``DELIVER``
-job are written in one transaction.
+entry therefore produce no further messages. A failed S29 run-sync call is keyed by its
+HTTP status and the feed's count of successful reads before it, so it is reported once
+per failure episode and status. Markers, the notice and its ``DELIVER`` job are written
+in one transaction.
 """
 
 import html
@@ -36,6 +38,8 @@ def identity(error):
         return {"entry_sha256": error["entry_sha256"]}
     if error.get("proposal_id"):
         return {"proposal_id": error["proposal_id"]}
+    if error.get("reason") == "APIFY_RUN_HTTP_ERROR":
+        return {"status": error["response"]["status"], "reads_ok_before": error.get("reads_ok_before")}
     if "account" in error:
         return {"account": str(error.get("account") or "").lower()}
     return {"error": re.sub(r"\d+", "#", str(error.get("error") or ""))}

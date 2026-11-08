@@ -663,9 +663,11 @@ class SourcePoller:
                         last_failure_at=self.stamp(),
                     )
                     await self.save(key, current)
+                    reads_ok = current["reads"]["ok"]
                 log.warning("Source feed %s read failed: %s", key, exc)
                 if isinstance(exc, ApifyRunFailed):
-                    await self.report_entry_errors(key, source, feed, [exc.failure], attempted)
+                    failure = {**exc.failure, "reads_ok_before": reads_ok}
+                    await self.report_entry_errors(key, source, feed, [failure], attempted)
                 return {"items": 0, "errors": [str(exc)]}
             await self.report_entry_errors(
                 key, source, feed, acquired.get("entry_errors") or [], acquired.get("fetched_at") or attempted

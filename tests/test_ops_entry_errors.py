@@ -8,7 +8,7 @@ import pytest
 from test_session_binding_concurrency import fixture_repo
 from test_sources import RSS
 from test_sources import settings as source_settings
-from test_xsensor import URL, failed, run
+from test_xsensor import URL, account, failed, run
 
 from tank import ops_entry_errors
 from tank.delivery import DeliveryService
@@ -245,6 +245,33 @@ async def test_failed_x_run_request_is_reported_once_with_its_response(tmp_path)
     [account_notice] = [row for row in await entry_notices(repo) if row["notice_id"] != notice["notice_id"]]
     assert account_notice["entry_errors"] == [{"account": "gone", "reason": "PUBLIC_PROFILE_HTTP_404"}]
     assert "аккаунт @gone" in account_notice["text"] and "Ответ:" not in account_notice["text"]
+
+
+@pytest.mark.parametrize(
+    ("statuses", "reported"),
+    [([400, 400], [400]), ([400, 201, 400], [400, 400]), ([400, 401], [400, 401])],
+)
+async def test_failed_x_run_is_reported_once_per_failure_episode_and_status(tmp_path, statuses, reported):
+    repo = MemoryRepository()
+    source = {"source_id": "S29", "name": "X", "feeds": [{"kind": "x", "url": URL}]}
+    settings = source_settings(tmp_path, [source])
+    settings.ops_progress_enabled = True
+    settings.apify_api_token = "FAKE-token"
+    answers = list(statuses)
+
+    def respond(request):
+        status = answers.pop(0)
+        body = run([], [account("ethereum")], {"ethereum": "1"}) if status == 201 else {"error": "failed"}
+        return httpx.Response(status, content=json.dumps(body).encode())
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(respond)) as http:
+        service = SourceService(repo, settings, http=http)
+        service.accounts = {"ethereum": {"handle": "ethereum", "role": "OTHER", "entity_id": "ethereum"}}
+        for _ in statuses:
+            await service.poll_once("S29")
+    errors = [error for row in await entry_notices(repo) for error in row["entry_errors"]]
+    assert sorted(error["response"]["status"] for error in errors) == reported
+    assert len(await entry_jobs(repo)) == len(reported)
 
 
 def test_long_x_run_response_body_is_clipped_inside_the_telegram_limit():
