@@ -5221,6 +5221,242 @@ async def test_market_truth_before_a_scheduled_t0_escalates_at_t1_then_again_at_
     assert after["idem_key"] == "A:" + eid and "anchor" not in after["payload"]
 
 
+@pytest.mark.parametrize(
+    "backend", ["memory", pytest.param("postgres", marks=[pytest.mark.integration, pytest.mark.postgres])]
+)
+async def test_replayed_market_truth_call_awaits_the_job_of_its_call_minute(
+    service, backend, monkeypatch, postgres_template, repository_lifetime
+):
+    """A restart replays an unanswered get_market_truth call. Without its own cutoff the call asks
+    for the minute it was made, not the minute it runs, so the replay awaits the job of its first
+    attempt, a second call made in the same minute shares that job, and the call is answered once
+    the job is done or terminal."""
+    import asyncio
+    import os
+    from contextlib import asynccontextmanager
+
+    import tank.event_tools as event_tools
+    from tank.util import new_id
+
+    if backend == "postgres":
+        url = os.getenv("TANK_TEST_DATABASE_URL")
+        if not url:
+            pytest.skip("Requires isolated TANK_TEST_DATABASE_URL")
+        service.repo = await repository_lifetime.enter_async_context(postgres_template.repository(url))
+    repo = service.repo
+    eid = new_id("event")
+    ems = eid + "-ems"
+    await repo.put("evt.events", eid, complete_event_fixture(eid, current_ems_id=ems))
+    await repo.put("evt.ems_assessments", ems, complete_assessment_fixture(ems, eid, **{"class": "MAJOR"}))
+    await repo.put(
+        "evt.beneficiary_maps", f"{eid}:1", {"event_id": eid, "map_version": 1, "analysis_set": ["A"]}
+    )
+    first_minute = utcnow().replace(second=0, microsecond=0) - timedelta(minutes=30)
+    committed = asyncio.Event()
+    transaction = repo.transaction
+    enqueue = repo.enqueue
+    depth = {}
+    pending = set()
+
+    @asynccontextmanager
+    async def observed_transaction():
+        task = asyncio.current_task()
+        depth[task] = depth.get(task, 0) + 1
+        try:
+            async with transaction() as repository:
+                yield repository
+        finally:
+            depth[task] -= 1
+            if not depth[task]:
+                del depth[task]
+                if task in pending:
+                    pending.remove(task)
+                    committed.set()
+
+    async def observed_enqueue(kind, *args, **kwargs):
+        job = await enqueue(kind, *args, **kwargs)
+        if kind == "RUN_MARKET_TRUTH":
+            task = asyncio.current_task()
+            if depth.get(task):
+                pending.add(task)
+            else:
+                committed.set()
+        return job
+
+    monkeypatch.setattr(repo, "transaction", observed_transaction)
+    monkeypatch.setattr(repo, "enqueue", observed_enqueue)
+
+    async def attempt(call_id, called_at, now):
+        monkeypatch.setattr(event_tools, "utcnow", lambda: now)
+        committed.clear()
+        task = asyncio.create_task(
+            service.dispatch(
+                "get_market_truth",
+                {"event_id": eid, "token_ids": ["A"]},
+                {"call_id": call_id, "call_processed_at": iso(called_at)},
+            )
+        )
+        async with asyncio.timeout(5):
+            await committed.wait()
+        return task
+
+    async def truth_jobs():
+        return await repo.list("ops.jobs", filters={"type": "RUN_MARKET_TRUTH"})
+
+    async def stop(task):
+        task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
+
+    tasks = []
+    try:
+        called = first_minute + timedelta(seconds=30)
+        tasks.append(await attempt("call-done", called, called))
+        await stop(tasks[-1])
+        [first] = await truth_jobs()
+        assert first["payload"]["cutoff"] == iso(first_minute)
+
+        tasks.append(await attempt("call-done", called, called + timedelta(minutes=7)))
+        assert [job["job_id"] for job in await truth_jobs()] == [first["job_id"]]
+        tasks.append(await attempt("call-same-minute", called + timedelta(seconds=20), called))
+        assert [job["job_id"] for job in await truth_jobs()] == [first["job_id"]]
+        assert first["idem_key"] == f"{eid}:A:{iso(first_minute)}"
+        result = {"mta_id": "mta-" + eid, "event_id": eid, "token_id": "A"}
+        stored = await repo.get("ops.jobs", first["job_id"])
+        stored.update(status="RUNNING", attempts=stored["attempts"] + 1, result=result)
+        await repo.put("ops.jobs", first["job_id"], stored)
+        await repo.finish_job(first["job_id"])
+        async with asyncio.timeout(5):
+            answers = await asyncio.gather(tasks[-2], tasks[-1])
+        for answered in answers:
+            assert answered["market_truth"] == [result]
+            assert answered["requested_cutoff"] == iso(first_minute)
+            assert answered["requested_cutoff_prec"] == "BUCKET(1m)"
+            assert answered["cutoff_minute"] == iso(first_minute)
+
+        later = first_minute + timedelta(minutes=20)
+        tasks.append(await attempt("call-expired", later, later))
+        await stop(tasks[-1])
+        expired = next(job for job in await truth_jobs() if job["payload"]["cutoff"] == iso(later))
+        stored = await repo.get("ops.jobs", expired["job_id"])
+        stored["status"] = "EXPIRED"
+        await repo.put("ops.jobs", expired["job_id"], stored)
+        tasks.append(await attempt("call-expired", later, later + timedelta(minutes=12)))
+        assert len(await truth_jobs()) == 2
+        with pytest.raises(ValueError, match="terminally failed or expired"):
+            async with asyncio.timeout(5):
+                await tasks[-1]
+    finally:
+        for task in tasks:
+            task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
+        if backend == "postgres":
+            await repo.close()
+
+
+async def test_late_replay_ranks_beneficiaries_on_the_newest_stored_truth(service, truth_job_enqueued):
+    """A call replayed long after it was made is answered from its own older job; the beneficiary
+    ranking still uses each token's newest stored truth, here a re-run stored for the same cutoff,
+    never the older answer."""
+    import asyncio
+
+    eid = "late-replay-event"
+    await service.repo.put("evt.events", eid, {"event_id": eid, "current_ems_id": "late-ems"})
+    await service.repo.put(
+        "evt.ems_assessments", "late-ems", {"ems_id": "late-ems", "event_id": eid, "class": "MAJOR"}
+    )
+    await service.repo.put(
+        "evt.beneficiary_maps", f"{eid}:1", {"event_id": eid, "map_version": 1, "analysis_set": ["A", "B"]}
+    )
+    for token in ["A", "B"]:
+        await service.repo.put(
+            "evt.beneficiary_edges",
+            "late-edge-" + token,
+            {
+                "edge_id": "late-edge-" + token,
+                "event_id": eid,
+                "map_version": 1,
+                "token_id": token,
+                "role": "SECONDARY",
+                "credible": True,
+                "exposure_score": 6,
+            },
+        )
+
+    def truth(token, band, cutoff):
+        return {
+            "mta_id": "late-mta-" + token + cutoff,
+            "event_id": eid,
+            "token_id": token,
+            "cutoff": cutoff,
+            "liquidity": {"liquidity_state": "NORMAL"},
+            "relative": {"repricing_band": band, "windows": {"EVENT": {"pctile": 0.5}}},
+        }
+
+    called = utcnow().replace(second=0, microsecond=0) - timedelta(minutes=30)
+    rerun = dict(truth("B", "HEAVY", iso(called)), mta_id="late-mta-B-rerun")
+    for row in (truth("A", "UNPRICED", iso(called + timedelta(minutes=10))), rerun):
+        await service.repo.put("ana.market_truth", row["mta_id"], row)
+    task = asyncio.create_task(
+        service.dispatch(
+            "get_market_truth",
+            {"event_id": eid, "token_ids": ["B"]},
+            {"call_id": "late-call", "call_processed_at": iso(called + timedelta(seconds=5))},
+        )
+    )
+    try:
+        async with asyncio.timeout(2):
+            await truth_job_enqueued.wait()
+            for kind in ("ESCALATE_TOKENS", "RUN_MARKET_TRUTH"):
+                job = await service.repo.claim_job()
+                assert job is not None and job["type"] == kind
+                if kind == "RUN_MARKET_TRUTH":
+                    assert job["payload"]["cutoff"] == iso(called)
+                    stored = await service.repo.get("ops.jobs", job["job_id"])
+                    stored["result"] = truth("B", "NEGATIVE", iso(called))
+                    await service.repo.put("ops.jobs", job["job_id"], stored)
+                await service.repo.finish_job(job["job_id"])
+            answered = await task
+    finally:
+        if not task.done():
+            task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
+    assert answered["market_truth"][0]["relative"]["repricing_band"] == "NEGATIVE"
+    mapping = await service.repo.get("evt.beneficiary_maps", f"{eid}:1")
+    assert mapping["least_repriced_edge"] == "late-edge-A"
+
+
+async def test_condition_refresh_keeps_the_current_minute(service, truth_job_enqueued):
+    """A get_decision condition refresh reflects the conditions that fired up to now, so its
+    snapshot keeps the current minute even when the decision call was made earlier."""
+    import asyncio
+
+    eid = "refresh-minute-event"
+    await service.repo.put("evt.events", eid, {"event_id": eid, "current_ems_id": "refresh-ems"})
+    await service.repo.put(
+        "evt.ems_assessments", "refresh-ems", {"ems_id": "refresh-ems", "event_id": eid, "class": "MAJOR"}
+    )
+    await service.repo.put(
+        "evt.beneficiary_maps", f"{eid}:1", {"event_id": eid, "map_version": 1, "analysis_set": ["A"]}
+    )
+    called = utcnow() - timedelta(minutes=20)
+    task = asyncio.create_task(
+        service.get_market_truth(
+            {"event_id": eid, "token_ids": ["A"]},
+            {"call_id": "decision-call", "call_processed_at": iso(called)},
+            refresh_key="condition:fired",
+        )
+    )
+    try:
+        async with asyncio.timeout(2):
+            await truth_job_enqueued.wait()
+        [job] = await service.repo.list("ops.jobs", filters={"type": "RUN_MARKET_TRUTH"})
+        assert job["idem_key"] == f"{eid}:A:condition:fired"
+        assert parse_time(job["payload"]["cutoff"]) > called
+    finally:
+        task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
+
+
 async def test_list_open_events_skips_events_whose_session_failed(service):
     """03 §3.2 Failures: a failed session ends the event's analysis, so the agent
     never sees it as open and never merges later news into it."""
