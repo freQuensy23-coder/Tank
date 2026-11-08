@@ -10,12 +10,13 @@ Signed-out profiles show no reposts and no replies to other accounts.
 
 from collections.abc import Mapping
 from dataclasses import dataclass
-from typing import Literal
+from typing import Any, Literal
 
 import httpx
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from tank.logging import redact_text
+from tank.sources.x_diagnostics import redact, sanitize
 from tank.util import iso
 
 RUN_TIMEOUT_S = 130
@@ -93,7 +94,7 @@ class ApifyAccount(ApifyModel):
     posts: int = 0
     history_gap: bool = Field(default=False, alias="historyGap")
     error: str | None = None
-    diagnostics: dict | None = None
+    diagnostics: Any = None
 
 
 class ApifyRun(ApifyModel):
@@ -110,6 +111,7 @@ class AccountFailure:
 
     account: str | None
     reason: str
+    diagnostics: dict | None = None
 
 
 @dataclass(frozen=True)
@@ -124,6 +126,7 @@ class Scan:
     failures: list[AccountFailure]
     gaps: list[str]
     failed: bool = False
+    error: str | None = None
 
 
 def scan(run: ApifyRun, accounts: list[str], cursors: Mapping[str, str], raw: bytes) -> Scan:
@@ -131,19 +134,21 @@ def scan(run: ApifyRun, accounts: list[str], cursors: Mapping[str, str], raw: by
 
     The actor returns every visible post each time. An account without a cursor is a
     baseline: its posts are not ingested, so there is no backfill. After that a post
-    is new when its ID is above the account's cursor. A failed run raises, so the
+    is new when its ID is above the account's cursor. A failed run retains errors and the
     cursors stay where they were. Every requested account must come back: one
     missing from the run, or read with posts but without a next cursor, is a failure.
     A degraded run that names no failure or gap is recorded as a run-level failure.
     """
-    if run.health == "failed" and not any(a.status == "failed" and a.diagnostics for a in run.accounts):
-        raise RuntimeError(f"Apify X run failed: {run.error}")
     rows = [
         post.row(raw)
         for post in run.posts
         if post.author.lower() in cursors and int(post.id) > int(cursors[post.author.lower()])
     ]
-    failures = [AccountFailure(a.handle, a.error or "FAILED") for a in run.accounts if a.status == "failed"]
+    failures = [
+        AccountFailure(a.handle, a.error or "FAILED", a.diagnostics)
+        for a in run.accounts
+        if a.status == "failed"
+    ]
     reported = {account.handle.lower(): account for account in run.accounts}
     for handle in accounts:
         account = reported.get(handle.lower())
@@ -152,7 +157,7 @@ def scan(run: ApifyRun, accounts: list[str], cursors: Mapping[str, str], raw: by
         elif account.status == "ok" and account.posts and handle.lower() not in run.next_cursors:
             failures.append(AccountFailure(handle, "NO_CURSOR"))
     gaps = [account.handle for account in run.accounts if account.history_gap]
-    if run.health == "degraded" and not failures and not gaps:
+    if run.health in {"degraded", "failed"} and not failures and not gaps:
         failures.append(AccountFailure(None, run.error or "RUN_DEGRADED"))
     failed_handles = {failure.account.lower() for failure in failures if failure.account}
     next_cursors = dict(cursors)
@@ -167,7 +172,28 @@ def scan(run: ApifyRun, accounts: list[str], cursors: Mapping[str, str], raw: by
         rows = []
     else:
         rows = [row for row in rows if str(row["author"]).lower() not in failed_handles]
-    return Scan(rows=rows, cursors=next_cursors, failures=failures, gaps=gaps, failed=run.health == "failed")
+    return Scan(
+        rows=rows,
+        cursors=next_cursors,
+        failures=failures,
+        gaps=gaps,
+        failed=run.health == "failed",
+        error=run.error if run.health == "failed" else None,
+    )
+
+
+def account_error(value: str | None, token: str | None) -> str | None:
+    if not value:
+        return value
+    invalid = "INVALID_ACCOUNT_ERROR"
+    if token and token in invalid:
+        invalid = "?"
+    if len(value) > 8192 or "\x00" in value or any(0xD800 <= ord(c) <= 0xDFFF for c in value):
+        return invalid
+    safe = redact(value, token)
+    if len(safe) > 8192 or (token and token in safe):
+        return invalid
+    return safe
 
 
 class XSensor:
@@ -194,4 +220,25 @@ class XSensor:
             message = redact_text(str(exc), (self.token, repr(self.token)[1:-1]))
             raise RuntimeError(f"Apify X run request failed: {message}") from None
         run = ApifyRun.model_validate_json(response.content)
+        budget = [12_000_000]
+        run = run.model_copy(
+            update={
+                "error": (
+                    "PUBLIC_SOURCE_UNAVAILABLE"
+                    if redact(run.error, self.token) == "PUBLIC_SOURCE_UNAVAILABLE"
+                    else "RUN_FAILED"
+                )
+                if run.health == "failed"
+                else run.error,
+                "accounts": [
+                    account.model_copy(
+                        update={
+                            "error": account_error(account.error, self.token),
+                            "diagnostics": sanitize(account.diagnostics, self.token, budget),
+                        }
+                    )
+                    for account in run.accounts
+                ],
+            }
+        )
         return scan(run, accounts, cursors, response.content)

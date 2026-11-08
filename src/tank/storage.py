@@ -124,6 +124,7 @@ class Repository(Protocol):
     async def delete(self, collection: str, key: str) -> None: ...
     def transaction(self) -> AbstractAsyncContextManager[Self]: ...
     def lock(self, key: str) -> AbstractAsyncContextManager[Self]: ...
+    def session_lock(self, key: str) -> AbstractAsyncContextManager[Self]: ...
     async def enqueue(
         self,
         kind: str,
@@ -717,6 +718,13 @@ class MemoryRepository(QueueMixin):
         pass
 
     @asynccontextmanager
+    async def session_lock(self, key):
+        if self._owner is asyncio.current_task():
+            raise RuntimeError("Session locks require ownership outside an application transaction")
+        async with self.lock(key):
+            yield self
+
+    @asynccontextmanager
     async def transaction(self):
         outer = self._owner is not asyncio.current_task()
         if outer:
@@ -1094,6 +1102,7 @@ class PostgresRepository(QueueMixin):
         self.database_url = database_url
         self._pool = None
         self._connection = ContextVar(f"pg_connection_{id(self)}", default=None)
+        self._session_locks = ContextVar(f"pg_session_locks_{id(self)}", default=())
 
     async def open(self):
         from psycopg import AsyncConnection
@@ -1144,16 +1153,18 @@ class PostgresRepository(QueueMixin):
         pool = self._pool
         if pool is None:
             raise RuntimeError("Repository.open() must be called first")
-        conn = await pool.getconn()
+        session = next((conn() for _, owner, conn in self._session_locks.get() if owner() is task), None)
+        conn = session if session is not None else await pool.getconn()
         token = self._connection.set((weakref.ref(conn), weakref.ref(task)))
         try:
             async with _stable_transaction(conn):
                 yield self
         finally:
             self._connection.reset(token)
-            _, cancelled = await _finish_critical(pool.putconn(conn))
-            if cancelled:
-                raise cancelled
+            if session is None:
+                _, cancelled = await _finish_critical(pool.putconn(conn))
+                if cancelled:
+                    raise cancelled
 
     def _conn(self):
         existing = self._connection.get()
@@ -1179,6 +1190,60 @@ class PostgresRepository(QueueMixin):
         async with self.transaction():
             await self._conn().execute("SELECT pg_advisory_xact_lock(%s)", (digest,))
             yield self
+
+    @asynccontextmanager
+    async def session_lock(self, key):
+        task = asyncio.current_task()
+        existing = self._connection.get()
+        if existing is not None and existing[1]() is task:
+            raise RuntimeError("Session locks require ownership outside an application transaction")
+        key = str(key)
+        held = self._session_locks.get()
+        if any(name == key and owner() is task for name, owner, _ in held):
+            yield self
+            return
+        pool = self._pool
+        if pool is None:
+            raise RuntimeError("Repository.open() must be called first")
+        session = next((conn() for _, owner, conn in held if owner() is task), None)
+        conn = session if session is not None else await pool.getconn()
+        digest = int.from_bytes(hashlib.sha256(key.encode()).digest()[:8], "big", signed=True)
+        token = None
+        failed = False
+        try:
+            while True:
+                async with _stable_transaction(conn):
+                    row = await (
+                        await conn.execute("SELECT pg_try_advisory_lock(%s) AS ok", (digest,))
+                    ).fetchone()
+                if row["ok"]:
+                    break
+                await asyncio.sleep(random.uniform(0.05, 0.2))
+            token = self._session_locks.set((*held, (key, weakref.ref(task), weakref.ref(conn))))
+            yield self
+        except BaseException:
+            failed = True
+            raise
+        finally:
+            if token is not None:
+                self._session_locks.reset(token)
+
+            async def release():
+                try:
+                    async with _stable_transaction(conn):
+                        await conn.execute("SELECT pg_advisory_unlock(%s)", (digest,))
+                except BaseException:
+                    await conn.close()
+                if session is None:
+                    await pool.putconn(conn)
+
+            if failed:
+                with suppress(BaseException):
+                    await _finish_critical(release())
+            else:
+                _, cancelled = await _finish_critical(release())
+                if cancelled:
+                    raise cancelled
 
     @asynccontextmanager
     async def _migration_connection(self):
