@@ -8,10 +8,11 @@ import pytest
 from test_session_binding_concurrency import fixture_repo
 from test_sources import RSS
 from test_sources import settings as source_settings
+from test_xsensor import URL, failed, run
 
 from tank import ops_entry_errors
 from tank.delivery import DeliveryService
-from tank.ops_entry_errors import MESSAGE_LIMIT, report_entry_errors, units
+from tank.ops_entry_errors import MESSAGE_LIMIT, render, report_entry_errors, units
 from tank.sources import SourceService
 from tank.storage import MemoryRepository
 
@@ -198,6 +199,76 @@ async def test_x_account_failures_are_keyed_by_account():
     await report_entry_errors(repo, settings, source, feed, again, "2026-10-24T12:05:00Z")
     latest = [row for row in await entry_notices(repo) if row["notice_id"] != notice["notice_id"]]
     assert [row["entry_errors"] for row in latest] == [[{"account": "carol", "reason": "MISSING_FROM_RUN"}]]
+
+
+async def test_failed_x_run_request_is_reported_once_with_its_response(tmp_path):
+    repo = MemoryRepository()
+    source = {"source_id": "S29", "name": "X", "feeds": [{"kind": "x", "url": URL}]}
+    settings = source_settings(tmp_path, [source])
+    settings.ops_progress_enabled = True
+    settings.apify_api_token = "FAKE-token"
+    apify_error = {"error": {"type": "run-failed", "message": "Actor run timed out (token=FAKE-token)"}}
+    answers = [
+        (400, apify_error),
+        (400, apify_error),
+        (201, run([], [failed("gone")], {}, health="degraded")),
+    ]
+
+    def respond(request):
+        status, body = answers.pop(0)
+        return httpx.Response(
+            status, content=json.dumps(body).encode(), headers={"content-type": "application/json"}
+        )
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(respond)) as http:
+        service = SourceService(repo, settings, http=http)
+        service.accounts = {"gone": {"handle": "gone", "role": "OTHER", "entity_id": "gone"}}
+        await service.poll_once("S29")
+        await service.poll_once("S29")
+        checkpoint = await repo.get("ops.source_checkpoints", "S29:0")
+        assert checkpoint["status"] == "DEGRADED" and checkpoint["reads"] == {"ok": 0, "failed": 2}
+        [notice] = await entry_notices(repo)
+        assert len(await entry_jobs(repo)) == 1
+        [error] = notice["entry_errors"]
+        assert error["account"] is None and error["reason"] == "APIFY_RUN_HTTP_ERROR"
+        assert error["response"]["status"] == 400
+        assert json.loads(error["response"]["body"]) == {
+            "error": {"type": "run-failed", "message": "Actor run timed out (token=[REDACTED])"}
+        }
+        text = notice["text"]
+        assert "Запуск сбора X в Apify завершился HTTP-ошибкой (APIFY_RUN_HTTP_ERROR)" in text
+        assert "весь запуск сбора X" in text and "Ответ: HTTP 400 Bad Request" in text
+        assert "Заголовки: content-type: application/json; content-length: " in text
+        assert '"type": "run-failed"' in text and "token=[REDACTED]" in text
+        assert "FAKE-token" not in json.dumps(notice, default=str)
+        await service.poll_once("S29")
+    [account_notice] = [row for row in await entry_notices(repo) if row["notice_id"] != notice["notice_id"]]
+    assert account_notice["entry_errors"] == [{"account": "gone", "reason": "PUBLIC_PROFILE_HTTP_404"}]
+    assert "аккаунт @gone" in account_notice["text"] and "Ответ:" not in account_notice["text"]
+
+
+def test_long_x_run_response_body_is_clipped_inside_the_telegram_limit():
+    body = json.dumps({"error": {"message": '"&<>' * 2048}})[:8192]
+    response = {
+        "status": 400,
+        "reason_phrase": "Bad Request",
+        "headers": {},
+        "body": body,
+        "body_bytes": 9000,
+        "body_truncated": True,
+    }
+    error = {"account": None, "reason": "APIFY_RUN_HTTP_ERROR", "error": "Client error", "response": response}
+    notice = {
+        "notice_id": "entry_errors_x",
+        "source_id": "S29",
+        "feed_url": URL,
+        "seen_at": "2026-11-08T17:40:00Z",
+        "entry_errors": [error],
+    }
+    text = render(notice)
+    assert units(html.escape(text)) <= MESSAGE_LIMIT and "… и ещё" not in text
+    assert 'Тело ответа (9000 байт, сохранены первые 8 КБ): {"error": {"message": "\\"&<>' in text
+    assert text.endswith("…")
 
 
 @pytest.mark.parametrize("second", ["broken", "recovered"])
