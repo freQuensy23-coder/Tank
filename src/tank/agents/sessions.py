@@ -141,6 +141,7 @@ class SessionService:
         self.owns_stream_http = stream_http is None and http is None
         self.tasks = {}
         self.event_locks = {}
+        self.reconciliation_locks = {}
         self.send_locks = {}
         self.execution_polls = {}
         self.history_polls = {}
@@ -697,6 +698,78 @@ class SessionService:
         return session
 
     async def post_message_intent(self, sid, key):
+        async with self.repo.lock("session:" + sid):
+            session = await self.repo.get("ops.agent_sessions", sid)
+            intent = next(row for row in session["message_log"] if row["message_id"] == key)
+            remote = session.get("remote_state") or {}
+            if (
+                not intent.get("remote_event_id")
+                and intent.get("turn_status") not in {"DONE", "FAILED"}
+                and key not in session.get("retired_message_ids", [])
+                and session.get("status") == "OPEN"
+                and not session.get("archived_at")
+                and remote.get("status") != "terminated"
+                and not remote.get("archived_at")
+            ):
+                attempt = intent.get("retry_count", 0)
+                lineage = intent.get("native_input_attempts", {})
+                candidates = (
+                    [
+                        identity
+                        for identity, value in lineage.items()
+                        if type(value) is int and value == attempt
+                    ]
+                    if isinstance(lineage, dict) and type(attempt) is int and attempt >= 0
+                    else []
+                )
+                if len(candidates) == 1:
+                    identity = candidates[0]
+                    if (
+                        isinstance(identity, str)
+                        and identity
+                        and identity not in session.get("superseded_native_inputs", {})
+                        and identity not in intent.get("superseded_native_input_ids", [])
+                        and await self.native_input_owner(session, identity) == (key, attempt)
+                    ):
+                        intent["remote_event_id"] = identity
+                        await self.repo.put("ops.agent_sessions", sid, session)
+                elif not candidates and type(attempt) is int and attempt == 1:
+                    prior = intent.get("superseded_native_input_ids", [])
+                    record = (
+                        session.get("superseded_native_inputs", {}).get(prior[0], {})
+                        if len(prior) == 1
+                        else {}
+                    )
+                    if (
+                        len(prior) == 1
+                        and lineage == {prior[0]: 0}
+                        and type(lineage.get(prior[0])) is int
+                        and record.get("reason") == "TURN_FAILED_AND_RETRIED"
+                        and record.get("failure_event_id") in session.get("processed_events", [])
+                        and record.get("replacement_input_id") is None
+                        and "0" in intent.get("retry_call_ordinal_cutoffs", {})
+                        and not session.get("pending_retry_event")
+                        and intent.get("body")
+                        and await self.native_input_owner(session, prior[0]) == (key, 0)
+                    ):
+                        accepted = await self.request(
+                            "POST",
+                            f"sessions/{sid}/events",
+                            json={"events": [copy.deepcopy(intent["body"])]},
+                            idem="turn-retry:" + sid + ":" + key,
+                        )
+                        identity = self.accepted_input_id(accepted)
+                        if (
+                            identity in session.get("superseded_native_inputs", {})
+                            or await self.native_input_owner(session, identity) is not None
+                        ):
+                            raise ValueError("Conflicting legacy retry acceptance identity")
+                        intent["native_input_attempts"][identity] = attempt
+                        if await self.native_input_owner(session, identity) != (key, attempt):
+                            raise ValueError("Conflicting legacy retry acceptance lineage")
+                        intent["remote_event_id"] = identity
+                        record["replacement_input_id"] = identity
+                        await self.repo.put("ops.agent_sessions", sid, session)
         session = await self.repo.get("ops.agent_sessions", sid)
         intent = next(row for row in session["message_log"] if row["message_id"] == key)
         initial_status = session.get("status")
@@ -708,7 +781,7 @@ class SessionService:
             or intent.get("native_input_attempts", {}) != {}
             or type(intent.get("retry_count", 0)) is not int
             or intent.get("retry_count", 0) != 0
-            or initial_status not in {"OPEN", "FAILED"}
+            or initial_status != "OPEN"
             or session.get("archived_at")
             or remote.get("status") == "terminated"
             or remote.get("archived_at")
@@ -805,7 +878,7 @@ class SessionService:
         async with self.send_locks.setdefault(sid, asyncio.Lock()):
             session = await self.repo.get("ops.agent_sessions", sid)
             for message in session.get("message_log", []):
-                if message.get("turn_status") == "ACCEPTING" and not message.get("sent_at"):
+                if not message.get("remote_event_id"):
                     await self.post_message_intent(sid, message["message_id"])
         session = await self.repo.get("ops.agent_sessions", sid)
         await session_progress(self.repo, self.settings, session)
@@ -824,28 +897,38 @@ class SessionService:
             and events[0]["id"]
         ):
             return events[0]["id"]
-        return None
+        raise ValueError("Missing native executable input acceptance identity")
 
     async def native_input_owner(self, session, execution_id):
         """Resolve exact accepted-input lineage, including tool-result continuations."""
         if not execution_id:
             return None
-        messages = {row["message_id"]: row for row in session.get("message_log", [])}
-        for message in messages.values():
-            if execution_id == message.get("remote_event_id") or execution_id in message.get(
-                "superseded_native_input_ids", []
+        messages = session.get("message_log", [])
+        owners = []
+        for message in messages:
+            lineage = message.get("native_input_attempts", {})
+            if (
+                execution_id == message.get("remote_event_id")
+                or execution_id in message.get("superseded_native_input_ids", [])
+                or execution_id in lineage
             ):
-                attempt = message.get("native_input_attempts", {}).get(execution_id)
-                if attempt is None:
+                attempt = lineage.get(execution_id)
+                if execution_id not in lineage:
                     attempt = (
                         message.get("retry_count", 0)
                         if execution_id == message.get("remote_event_id")
                         else message.get("superseded_native_input_ids", []).index(execution_id)
                     )
-                return message["message_id"], attempt
+                if type(attempt) is not int or attempt < 0:
+                    return None
+                owners.append((message["message_id"], attempt))
         async for call in self.repo.iter_all("ops.tool_calls", filters={"session_id": session["session_id"]}):
-            if call.get("remote_event_id") == execution_id and call.get("native_turn_message_id") in messages:
-                return call["native_turn_message_id"], call.get("native_turn_retry_count", 0)
+            if call.get("remote_event_id") == execution_id:
+                owners.append((call.get("native_turn_message_id"), call.get("native_turn_retry_count", 0)))
+        if len(owners) == 1:
+            owner, attempt = owners[0]
+            if type(attempt) is int and attempt >= 0 and any(row["message_id"] == owner for row in messages):
+                return owner, attempt
         return None
 
     async def execution_barrier(self, session, calls=None, *, verify_remote=False):
@@ -2494,6 +2577,10 @@ class SessionService:
         return False
 
     async def follow(self, sid):
+        async with self.reconciliation_locks.setdefault(sid, asyncio.Lock()):
+            await self.follow_owned(sid)
+
+    async def follow_owned(self, sid):
         delay = 1
         failures = 0
         logged_at = None
@@ -2507,6 +2594,7 @@ class SessionService:
         while not self.closed:
             stream_task = None
             try:
+                await self.recover_outbound_inputs(sid)
                 stream_task = asyncio.create_task(self.stream(sid))
                 await self.catch_up(sid)
                 session = await self.repo.get("ops.agent_sessions", sid)
@@ -2690,32 +2778,60 @@ class SessionService:
                 continue
             await self.finish_failed(session["session_id"])
 
+    async def reconcile_idle_sessions(self, sessions, tick):
+        for session in sessions:
+            sid = session["session_id"]
+            following = sid in self.tasks and not self.tasks[sid].done()
+            kept = bool(session.get("archive_after")) and parse_time(session["archive_after"]) > utcnow()
+            if following or session.get("followups_only") or kept or tick % IDLE_RECHECK_TICKS:
+                continue
+            try:
+                async with self.reconciliation_locks.setdefault(sid, asyncio.Lock()):
+                    if sid in self.tasks and not self.tasks[sid].done():
+                        continue
+                    current = await self.repo.get("ops.agent_sessions", sid)
+                    if not current or current.get("status") != "OPEN":
+                        continue
+                    if self.running(current) or not await self.finish_if_idle(sid):
+                        self.start_stream(sid)
+            except (httpx.HTTPError, ValueError, KeyError, RuntimeError) as exc:
+                log.warning("Agent session %s idle reconciliation failed: %s", sid, type(exc).__name__)
+        if tick % IDLE_RECHECK_TICKS == 0:
+            for operation in (self.sweep_failed, self.reconcile_answers):
+                try:
+                    await operation()
+                except (httpx.HTTPError, ValueError, KeyError, RuntimeError) as exc:
+                    log.warning("Agent maintenance %s failed: %s", operation.__name__, type(exc).__name__)
+
     async def run(self, stop):
         tick = 0
-        while not stop.is_set() and not self.closed:
-            async for session in self.repo.iter_metadata(
-                "ops.agent_sessions", SESSION_ADMISSION_FIELDS, filters={"status": "OPEN"}
-            ):
-                sid = session["session_id"]
-                settled = session.get("runtime_status") == "IDLE" and not session.get("active_message_id")
-                following = sid in self.tasks and not self.tasks[sid].done()
-                kept = bool(session.get("archive_after")) and parse_time(session["archive_after"]) > utcnow()
-                if (
-                    settled
-                    and not following
-                    and (session.get("followups_only") or kept or tick % IDLE_RECHECK_TICKS)
+        maintenance = None
+        try:
+            while not stop.is_set() and not self.closed:
+                idle = []
+                async for session in self.repo.iter_metadata(
+                    "ops.agent_sessions", SESSION_ADMISSION_FIELDS, filters={"status": "OPEN"}
                 ):
-                    continue
-                if await self.finish_if_idle(sid):
-                    continue
-                self.start_stream(sid)
-            if tick % IDLE_RECHECK_TICKS == 0:
-                await self.sweep_failed()
-                await self.reconcile_answers()
-            tick += 1
-            await self.wake_waiting()
-            with suppress(TimeoutError):
-                await asyncio.wait_for(stop.wait(), timeout=5)
+                    sid = session["session_id"]
+                    settled = session.get("runtime_status") == "IDLE" and not session.get("active_message_id")
+                    if not settled:
+                        self.start_stream(sid)
+                    else:
+                        idle.append(session)
+                if maintenance is None or maintenance.done():
+                    if maintenance is not None:
+                        await maintenance
+                    maintenance = asyncio.create_task(
+                        self.reconcile_idle_sessions(idle, tick), name="openma-idle-maintenance"
+                    )
+                tick += 1
+                await self.wake_waiting()
+                with suppress(TimeoutError):
+                    await asyncio.wait_for(stop.wait(), timeout=5)
+        finally:
+            if maintenance is not None:
+                maintenance.cancel()
+                await asyncio.gather(maintenance, return_exceptions=True)
 
     async def close(self):
         self.closed = True

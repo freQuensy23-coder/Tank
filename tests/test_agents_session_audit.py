@@ -83,7 +83,7 @@ async def test_refused_tool_reason_survives_lost_reply_and_does_not_stall():
 
     def accepted(request):
         posts.append(json.loads(request.content))
-        return httpx.Response(200, json={})
+        return httpx.Response(200, json={"data": [{"id": request.headers["idempotency-key"]}]})
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(accepted)) as http:
         await SessionService(repo, settings(), dispatch, http=http).process_event("s", event, 3)
@@ -105,7 +105,7 @@ async def test_failed_turn_retries_original_message_and_new_message_cannot_reset
 
     def handler(request):
         posts.append(json.loads(request.content))
-        return httpx.Response(200, json={})
+        return httpx.Response(200, json={"data": [{"id": request.headers["idempotency-key"]}]})
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http:
         service = SessionService(repo, settings(), None, http=http)
@@ -156,7 +156,7 @@ async def test_replay_runs_verdict_code_and_uses_fresh_remote_session():
         if request.url.path == "/v1/sessions":
             creates.append(body)
             return httpx.Response(200, json={"id": "fresh"})
-        return httpx.Response(200, json={})
+        return httpx.Response(200, json={"data": [{"id": request.headers["idempotency-key"]}]})
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http:
         service = SessionService(repo, settings(replay=True), dispatch, http=http)
@@ -289,7 +289,7 @@ async def test_credential_url_never_reaches_tool_ledger_or_callback():
 
     def handler(request):
         posted.append(json.loads(request.content))
-        return httpx.Response(200, json={})
+        return httpx.Response(200, json={"data": [{"id": request.headers["idempotency-key"]}]})
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http:
         service = SessionService(repo, settings(), dispatch, http=http)
@@ -333,7 +333,7 @@ async def test_configured_tokens_and_dsn_userinfo_never_enter_session_ledger(cas
 
     def handler(request):
         posted.append(json.loads(request.content))
-        return httpx.Response(200, json={})
+        return httpx.Response(200, json={"data": [{"id": request.headers["idempotency-key"]}]})
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http:
         await SessionService(repo, opts, dispatch, http=http).process_event(
@@ -390,6 +390,7 @@ async def test_native_queued_tool_result_executions_continue_after_transient_idl
     first_idle = asyncio.Event()
     all_results = asyncio.Event()
     calls, responses, history = [], [], []
+    accepted_inputs, execution_reads = {}, []
     names = [
         "get_item",
         "get_registry",
@@ -416,11 +417,32 @@ async def test_native_queued_tool_result_executions_continue_after_transient_idl
                 yield await queue.get()
 
     async def transport(request):
+        if request.url.path.endswith("/executions"):
+            identities = request.url.params.get_list("ids[]")
+            execution_reads.append(identities)
+            return httpx.Response(
+                200,
+                json={
+                    "data": [
+                        {
+                            "execution_id": identity,
+                            "state": "RUNNING" if identity in accepted_inputs else "UNKNOWN",
+                            "settled_outcome": None,
+                        }
+                        for identity in identities
+                    ]
+                },
+            )
         if request.url.path.endswith("/events/stream"):
             return httpx.Response(200, stream=Stream(), headers={"content-type": "text/event-stream"})
         if request.url.path.endswith("/events") and request.method == "GET":
             return httpx.Response(200, json={"data": list(history)})
         if request.url.path.endswith("/events"):
+            identity = request.headers["idempotency-key"]
+            if identity in accepted_inputs:
+                assert accepted_inputs[identity] == request.content
+            else:
+                accepted_inputs[identity] = request.content
             result = json.loads(request.content)["events"][0]
             responses.append(result["custom_tool_use_id"])
             if len(responses) == 3:
@@ -429,7 +451,7 @@ async def test_native_queued_tool_result_executions_continue_after_transient_idl
                 )
             if len(responses) == 7:
                 all_results.set()
-            return httpx.Response(200, json={})
+            return httpx.Response(200, json={"data": [{"id": request.headers["idempotency-key"]}]})
         raise AssertionError("Unexpected native request")
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(transport)) as http:
@@ -460,6 +482,13 @@ async def test_native_queued_tool_result_executions_continue_after_transient_idl
             assert len(set(responses)) == 7
             rows = await repo.list("ops.tool_calls")
             assert len(rows) == 7 and all(row["status"] == "DONE" and row.get("returned_at") for row in rows)
+            assert {row["remote_event_id"] for row in rows} == set(accepted_inputs)
+            assert execution_reads and all(
+                set(identities) <= accepted_inputs.keys() for identities in execution_reads
+            )
+            barrier = await service.execution_barrier(await repo.get("ops.agent_sessions", "s"))
+            assert not barrier["complete"]
+            assert barrier["pending_input_ids"] == sorted(accepted_inputs)
             assert (await repo.get("ops.agent_sessions", "s"))["last_event_id"] == "idle-6"
             assert not service.tasks["s"].done()
         finally:
@@ -563,7 +592,7 @@ async def test_unbound_terminal_turn_failure_retries_once_then_marks_source_fail
 
     def transport(request):
         posts.append(json.loads(request.content))
-        return httpx.Response(200, json={})
+        return httpx.Response(200, json={"data": [{"id": request.headers["idempotency-key"]}]})
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(transport)) as http:
         first = SessionService(repo, settings(), None, http=http)
@@ -622,7 +651,7 @@ async def test_new_replay_session_restores_captured_external_error_and_acknowled
         posts.append(json.loads(request.content)["events"][0])
         if len(posts) == 1:
             raise httpx.ConnectError("Synthetic lost native acknowledgement", request=request)
-        return httpx.Response(200, json={})
+        return httpx.Response(200, json={"data": [{"id": request.headers["idempotency-key"]}]})
 
     event = {"id": "fresh-error", "type": "agent.custom_tool_use", "name": "fetch_page", "input": args}
     async with httpx.AsyncClient(transport=httpx.MockTransport(control)) as http:
