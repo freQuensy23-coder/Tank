@@ -1507,6 +1507,7 @@ class SessionService:
         decision_market_refresh_completed=False,
         decision_prepared_condition_ids=None,
         resolved_arguments=None,
+        called_at=None,
     ):
         if tool in {
             "record_event",
@@ -1548,6 +1549,8 @@ class SessionService:
                 raise ValueError("Replay requires one unambiguous stored external tool result")
             return captures[0]
         context = self.tool_context(session, call_id)
+        if called_at:
+            context["call_processed_at"] = called_at
         if decision_market_refresh_only:
             context["_decision_market_refresh_only"] = True
         if decision_market_refresh_completed:
@@ -1640,12 +1643,18 @@ class SessionService:
                         call_id,
                         decision_market_refresh_only=True,
                         resolved_arguments=resolved_arguments,
+                        called_at=event.get("processed_at"),
                     )
                     decision_prepared_condition_ids = prepared.get("prepared_condition_ids")
                     decision_market_refresh_completed = True
                 else:
                     slow_result = await self.invoke_tool(
-                        session, event["name"], event["input"], call_id, resolved_arguments=resolved_arguments
+                        session,
+                        event["name"],
+                        event["input"],
+                        call_id,
+                        resolved_arguments=resolved_arguments,
+                        called_at=event.get("processed_at"),
                     )
             except Exception as error:
                 slow_error, slow_error_status = self.tool_failure(error)
@@ -1736,6 +1745,7 @@ class SessionService:
                                 stored.get("model_arguments", stored["input"]),
                                 call_id,
                                 resolved_arguments=resolved_arguments,
+                                called_at=event.get("processed_at"),
                                 **(
                                     {
                                         "decision_market_refresh_completed": True,

@@ -7,6 +7,7 @@ from model_fixture import audited_result, model_arguments
 from tank.replay import ReplayClock, ReplayError, evaluate_frozen, load_inputs, replay_bundle
 from tank.settings import Settings
 from tank.storage import MemoryRepository
+from tank.util import iso, utcnow
 
 
 @pytest.fixture
@@ -597,6 +598,7 @@ async def test_fresh_replay_session_reruns_market_and_decision_code(
                                 "type": "agent.custom_tool_use",
                                 "name": "get_market_truth",
                                 "input": {"token_ids": ["T"]},
+                                "processed_at": iso(utcnow()),
                             },
                         )
                     )

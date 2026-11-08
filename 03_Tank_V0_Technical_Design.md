@@ -1037,7 +1037,7 @@ PRELIMINARY delivery leaves a MATERIAL event TRACKED and does not set ordinary f
 | ROUTE_ITEM | New item of another source, or FILTER_ITEM found it relevant | 1 (deferrable: 2) | `item_id` | 20 s | 30 | 6 h |
 | AGENT_MESSAGE | ROUTE_ITEM, EVAL_CONDITIONS, MILESTONE_CHECK, call expiry | 1 (deferrable: 2) | `session_or_item:message` | 10 s | 3 | 24 h |
 | ESCALATE_TOKENS | `get_market_truth` | 0 | `token:event_id`; `token:event_id:PRE_T0` while a verified T0 is not before the cutoff (§5.7) | 10 s | 3 | — |
-| RUN_MARKET_TRUTH | `get_market_truth` | 1 | `event:token:cutoff_minute` | 90 s | 2 | 30 min |
+| RUN_MARKET_TRUTH | `get_market_truth` | 1 | `event:token:cutoff_minute`; a call without its own cutoff uses the minute it was made (its native `processed_at`), so a call replayed after a restart awaits the same job; a `get_decision` refresh uses `event:token:condition:<fired conditions hash>` | 90 s | 2 | 30 min |
 | DELIVER | `publish_card` or ops notice | 0 | `alert:version:channel` or `notice:notice_id` | 10 s | 5 | 24 h |
 | EVAL_CONDITIONS | Scheduler, every minute | 2 | `batch:minute` | 20 s | 2 | 5 min |
 | MILESTONE_CHECK | Scheduler, at the milestone's time (`schedule_milestone`) | 1 | `event:milestone` | — | — | Milestone window |
