@@ -200,13 +200,22 @@ async def test_sweep_skips_retained_sessions_until_their_retention_passes():
             checked.append(sid)
             return True
 
+        maintained = asyncio.Event()
+        reconcile = service.reconcile_idle_sessions
+
+        async def maintenance(sessions, tick):
+            await reconcile(sessions, tick)
+            maintained.set()
+
         async def tick():
+            await maintained.wait()
             stop.set()
 
         async def nothing():
             return None
 
         service.finish_if_idle = record
+        service.reconcile_idle_sessions = maintenance
         service.wake_waiting = tick
         service.reconcile_answers = nothing
         await service.run(stop)
@@ -214,6 +223,7 @@ async def test_sweep_skips_retained_sessions_until_their_retention_passes():
         session["archive_after"] = iso(utcnow() - timedelta(seconds=1))
         await repo.put("ops.agent_sessions", "ses_1", session)
         stop.clear()
+        maintained.clear()
         await service.run(stop)
     assert checked == ["ses_1"]
 
