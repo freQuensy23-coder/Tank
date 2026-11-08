@@ -245,7 +245,7 @@ async function phase(name, config) {
   await manager.shutdown();
   await json(join(config.directory, `phase-${name}.json`), { status: 'PASS', id: info.id, expectedName, controllerPid: process.pid,
     fingerprint: config.identity, workerSha256: hash(worker), nativePreparationMs, browserProof, rootfsWorkspaceAndOutputRetained: true, actualChromiumCookieAndLocalStorageRetained: true,
-    nativeInfo: info, stop, fingerprintMismatchRejected: name === 'resume', foreignScopeRejected: name === 'resume', competingOwnerRejected: name === 'first',
+    nativeInfo: info, stop, foreignScopeRejected: name === 'resume', competingOwnerRejected: name === 'first',
     noIdleArchiveOrRecreate: true, perExecFakeKeyRotation: true, openmaApiHistoryCertified: false });
 }
 export async function main() {

@@ -36,7 +36,8 @@ export interface NodeRetainedOptions {
   assertExecutionCurrent(fence: unknown): Promise<void>;
 }
 export const runtimeReplacedReminder = 'The sandbox of this session was replaced with a fresh one after a sandbox environment update. '
-  + 'Files, installed packages, running processes and the browser profile from earlier turns are gone; '
+  + 'Files under /workspace and elsewhere in the sandbox, installed packages, running processes and the browser profile '
+  + 'from earlier turns are gone; files in /mnt/session/outputs and memory stores under /mnt/memory are kept, and '
   + 'this conversation and its history are intact. Recreate anything from the old sandbox that you still need.';
 const key = (scope: Omit<Scope, 'workId'>) => JSON.stringify([scope.workspaceId, scope.environmentId, scope.sessionId]);
 const scopeOf = (context: Pick<Context, 'workspaceId' | 'sessionId' | 'session' | 'environment'>) => {

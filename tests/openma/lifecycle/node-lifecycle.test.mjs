@@ -174,7 +174,7 @@ test('warm sandbox with a changed fingerprint is refused for reuse and the cold 
   assert.deepEqual(JSON.parse((await fresh.exec('read','FAKE_SECOND')).stdout),{key:'FAKE_SECOND'});
   assert.equal(s.disks.has(old),false);assert.equal(s.disks.size,1);
   assert.equal(s.calls.some(call=>call[0]==='fresh-get'),false);
-  assert.match(manager.takeRuntimeReplacedReminder(cold),/sandbox of this session was replaced.*Files, installed packages.*browser profile.*conversation and its history are intact/);
+  assert.match(manager.takeRuntimeReplacedReminder(cold),/sandbox of this session was replaced.*Files under \/workspace.*installed packages.*browser profile.*\/mnt\/session\/outputs.*\/mnt\/memory are kept.*conversation and its history are intact/);
   assert.equal(manager.takeRuntimeReplacedReminder(cold),null);
   await manager.idle(cold);
   const later={...cold,executionFence:{current:true}};
