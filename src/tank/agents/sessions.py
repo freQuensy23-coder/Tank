@@ -2728,8 +2728,8 @@ class SessionService:
     async def run(self, stop):
         """Follow every busy session at once; idle maintenance runs in its own task.
 
-        A busy session's follower reconciles it, so one slow or failing session never delays
-        another's recovery, the idle rechecks or the slot wakeups that run on every tick."""
+        A busy session's follower reconciles it, so a busy session's slow replay never delays
+        another busy session's recovery or the slot wakeups that run on every tick."""
         tick = 0
         maintenance = None
         try:
