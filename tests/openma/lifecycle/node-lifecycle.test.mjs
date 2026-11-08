@@ -149,3 +149,36 @@ test('warm current-prefix metadata advances preserve allocation/workspace and st
   assert.equal(s.allocations.filter(options=>options.providerId==='litebox').length,2);
   assert.equal([...s.disks.keys()][0],id);
 });
+
+test('warm binding with a changed fingerprint rebuilds onto a fresh runtime in the same session and reminds once',async()=>{
+  const s=fixture();let current=s.options.fingerprint;
+  const manager=s.lifecycle({fingerprint:async()=>current}),sandbox=s.sandbox(),ctx=s.context(sandbox);
+  await manager.bind(ctx);await sandbox.exec('write','FAKE_FIRST');await manager.idle(ctx);
+  const old=[...s.disks.keys()][0];
+  assert.equal(manager.takeRuntimeReplacedReminder(ctx),null);
+  current='sha256:'+'b'.repeat(64);
+  const next={...ctx,executionFence:{current:true}};
+  await manager.bind(next);
+  assert.deepEqual(JSON.parse((await sandbox.exec('read','FAKE_SECOND')).stdout),{key:'FAKE_SECOND'});
+  assert.equal(s.disks.has(old),false);assert.equal(s.disks.size,1);
+  assert.equal(s.calls.some(call=>call[0]==='fresh-get'),false);
+  assert.match(manager.takeRuntimeReplacedReminder(next),/sandbox of this session was replaced.*Files, installed packages.*browser profile.*conversation and its history are intact/);
+  assert.equal(manager.takeRuntimeReplacedReminder(next),null);
+  await manager.idle(next);
+  const later={...next,executionFence:{current:true}};
+  await manager.bind(later);await sandbox.exec('read','FAKE_THIRD');
+  assert.equal(manager.takeRuntimeReplacedReminder(later),null);await manager.idle(later);
+});
+
+test('cold controller after a configuration change starts a fresh runtime and reminds once',async()=>{
+  const s=fixture(),first=s.lifecycle(),sandbox=s.sandbox(),ctx=s.context(sandbox);
+  await first.bind(ctx);await sandbox.exec('write','FAKE_FIRST');await first.idle(ctx);
+  const replacement=s.lifecycle({fingerprint:async()=>'sha256:'+'c'.repeat(64)}),newSandbox=s.sandbox(),newContext=s.context(newSandbox);
+  await replacement.bind(newContext);
+  assert.equal(replacement.takeRuntimeReplacedReminder(newContext),null);
+  assert.deepEqual(JSON.parse((await newSandbox.exec('read','FAKE_ROTATED')).stdout),{key:'FAKE_ROTATED'});
+  assert.equal(s.disks.size,1);assert.equal(s.calls.some(call=>call[0]==='fresh-get'),false);
+  assert.match(replacement.takeRuntimeReplacedReminder(newContext),/sandbox of this session was replaced/);
+  assert.equal(replacement.takeRuntimeReplacedReminder(newContext),null);
+  await replacement.idle(newContext);
+});

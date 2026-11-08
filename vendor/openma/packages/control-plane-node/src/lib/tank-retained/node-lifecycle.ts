@@ -35,6 +35,9 @@ export interface NodeRetainedOptions {
   fingerprint(context: Context, allocation: Allocation): Promise<string>;
   assertExecutionCurrent(fence: unknown): Promise<void>;
 }
+export const runtimeReplacedReminder = 'The sandbox of this session was replaced with a fresh one after a sandbox environment update. '
+  + 'Files, installed packages, running processes and the browser profile from earlier turns are gone; '
+  + 'this conversation and its history are intact. Recreate anything from the old sandbox that you still need.';
 const key = (scope: Omit<Scope, 'workId'>) => JSON.stringify([scope.workspaceId, scope.environmentId, scope.sessionId]);
 const scopeOf = (context: Pick<Context, 'workspaceId' | 'sessionId' | 'session' | 'environment'>) => {
   if (context.session.id !== context.sessionId || context.session.environmentId !== context.environment.id) throw Error('retained_scope_mismatch');
@@ -119,7 +122,11 @@ export class NodeRetainedLifecycle {
       if (entry.allocation) {
         const fingerprint = await this.options.fingerprint(context, entry.allocation);
         this.assertOpen(lifetime);
-        if (entry.controller && fingerprint !== entry.controller.options.fingerprint) throw Error('retained_configuration_changed');
+        if (entry.controller && fingerprint !== entry.controller.options.fingerprint) {
+          const identity = await this.options.identity?.(context, entry.allocation);
+          this.assertOpen(lifetime);
+          entry.controller = this.controller(scope, fingerprint, entry.allocation, identity);
+        }
       }
       entry.context = context;
       return;
@@ -161,6 +168,10 @@ export class NodeRetainedLifecycle {
       .finally(() => { if (entry.finalizing === finalizing) entry.finalizing = undefined; });
     entry.finalizing = finalizing;
     await finalizing;
+  }
+  takeRuntimeReplacedReminder(context: Pick<Context, 'workspaceId' | 'sessionId' | 'environment'>): string | null {
+    const entry = this.entries.get(key({ workspaceId: context.workspaceId, environmentId: context.environment.id, sessionId: context.sessionId }));
+    return entry?.controller?.takeRuntimeReplaced() ? runtimeReplacedReminder : null;
   }
   async idle(context: Pick<Context, 'workspaceId' | 'sessionId' | 'session' | 'environment'>): Promise<void> {
     const entry = this.entries.get(key(scopeOf(context)));

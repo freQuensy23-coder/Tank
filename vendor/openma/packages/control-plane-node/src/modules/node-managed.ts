@@ -537,6 +537,8 @@ export async function createManagedNodeRuntime(foundation: NodeFoundation, compo
         sandbox,
         runtimeGeneration,
       });
+      if ("prepareRetainedRuntime" in sandbox)
+        await (sandbox as typeof sandbox & { prepareRetainedRuntime(): Promise<void> }).prepareRetainedRuntime();
     },
     synchronizeSandbox: async ({ workspaceId, session, sandbox, runtimeGeneration, executionFence, }) => {
       await sandbox.synchronizeMemoryStores?.();
@@ -657,7 +659,9 @@ export async function createManagedNodeRuntime(foundation: NodeFoundation, compo
           .app({ workspaceId: input.workspaceId })
           .port(managedAgentsPortTokens.skillVersions))
         : undefined;
+      const runtimeReplaced = retainedLifecycle.takeRuntimeReplacedReminder({ ...input, sessionId: input.session.id });
       const platformReminders = [
+        ...(runtimeReplaced ? [{ source: "sandbox-runtime-replaced", text: runtimeReplaced }] : []),
         ...(assemblySkills ? [] : buildNodeManagedSkillReminders(input.session)),
         ...buildNodeManagedAppendablePromptReminders(input.session),
       ];

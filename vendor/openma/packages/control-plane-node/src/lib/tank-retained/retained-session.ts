@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { assertCompatible, stableDigest, validateRuntimeIdentity, type RuntimeIdentity } from './runtime-identity.js';
-type Manifest = { handle: Handle; state: string; archived: boolean; identity?: RuntimeIdentity; retired?: Handle[]; upgrade?: { source: Handle; target: Handle; owner: string; identity: RuntimeIdentity } };
+type Manifest = { handle: Handle; state: string; archived: boolean; fingerprint?: string; identity?: RuntimeIdentity; retired?: Handle[]; upgrade?: { source: Handle; target: Handle; owner: string; identity: RuntimeIdentity } };
 
 export type Scope = { workspaceId: string; environmentId: string; sessionId: string; workId: string };
 export type Handle = { provider: string; runtimeId: string; ownershipName?: string };
@@ -57,6 +57,7 @@ export class RetainedSessionLifecycle<R extends RetainedRuntime> {
   private phase: 'idle' | 'starting' | 'active' | 'quiescing' | 'stopped' | 'archived' = 'idle';
   private manifest: Manifest | null = null;
   private operations = new Set<Promise<unknown>>();
+  private runtimeReplaced = false;
 
   constructor(options: Options<R>) {
     if (!/^sha256:[a-f0-9]{64}$/.test(options.fingerprint)) fail('retained_fingerprint_invalid');
@@ -125,9 +126,11 @@ export class RetainedSessionLifecycle<R extends RetainedRuntime> {
       } else if (manifest.upgrade) fail('retained_manifest_invalid');
       if (!archiveOnly && manifest.state !== 'archived') {
         if (!this.options.identity) fail('retained_identity_required');
-        assertCompatible(manifest.identity!, this.options.identity);
-        if (manifest.identity!.image !== this.options.identity.image) fail('retained_configuration_changed:image');
-        if (manifest.state === 'upgrading') fail('retained_upgrade_incomplete');
+        if (manifest.state !== 'retained' && manifest.state !== 'aborted') {
+          assertCompatible(manifest.identity!, this.options.identity);
+          if (manifest.identity!.image !== this.options.identity.image) fail('retained_configuration_changed:image');
+          if (manifest.state === 'upgrading') fail('retained_upgrade_incomplete');
+        }
       }
       return manifest;
     }
@@ -137,8 +140,16 @@ export class RetainedSessionLifecycle<R extends RetainedRuntime> {
     const identity = { scope: this.scope, provider: metadata.provider, runtimeId: metadata.runtimeId,
       fingerprint: metadata.fingerprint, state: metadata.state };
     if (candidate.contentHash !== digest(identity)) fail('retained_manifest_invalid');
-    if (!archiveOnly && metadata.state !== 'archived' && metadata.fingerprint !== this.options.fingerprint) fail('retained_configuration_changed');
-    return { handle: { provider: String(metadata.provider), runtimeId: metadata.runtimeId as string }, state: String(metadata.state), archived: metadata.state === 'archived' };
+    if (!archiveOnly && metadata.state !== 'archived' && metadata.fingerprint !== this.options.fingerprint) {
+      if (metadata.state !== 'retained' && metadata.state !== 'aborted') fail('retained_configuration_changed');
+      if (typeof metadata.fingerprint !== 'string' || !/^sha256:[a-f0-9]{64}$/.test(metadata.fingerprint)) fail('retained_manifest_invalid');
+    }
+    return { handle: { provider: String(metadata.provider), runtimeId: metadata.runtimeId as string }, state: String(metadata.state),
+      archived: metadata.state === 'archived', ...(typeof metadata.fingerprint === 'string' ? { fingerprint: metadata.fingerprint } : {}) };
+  }
+  private configurationChanged(manifest: Manifest): boolean {
+    return manifest.identity ? stableDigest(manifest.identity) !== stableDigest(this.options.identity)
+      : manifest.fingerprint !== this.options.fingerprint;
   }
   private async publish(state: 'allocating' | 'aborted' | 'retained' | 'archived'): Promise<void> {
     if (this.manifest?.identity) {
@@ -167,16 +178,30 @@ export class RetainedSessionLifecycle<R extends RetainedRuntime> {
   async begin(assertExecutionCurrent: () => Promise<void>, signal: AbortSignal): Promise<void> {
     if (this.phase !== 'idle') fail('retained_already_active');
     this.phase = 'starting';
-    let created = false, newIntent = false;
+    let created = false, newIntent = false, replaced = false;
     try {
       signal.throwIfAborted();
       await assertExecutionCurrent();
       const acquired = await this.options.fences.acquire({ scope: this.scope, ownerId: this.ownerId, ttlMs: this.options.leaseTtlMs });
       if (acquired.type !== 'acquired') fail('retained_resource_busy');
       this.fence = acquired.fence; this.lost = false; this.startHeartbeat();
-      const manifest = acquired.publication ? this.decode(acquired.publication.workspaceCandidate) : null;
+      let manifest = acquired.publication ? this.decode(acquired.publication.workspaceCandidate) : null;
       this.manifest = manifest;
       if (manifest?.archived) fail('retained_session_archived');
+      if (manifest && this.configurationChanged(manifest)) {
+        const stale = [...manifest.retired ?? [], ...(manifest.state === 'retained' ? [manifest.handle] : [])];
+        for (const handle of stale) {
+          signal.throwIfAborted(); await assertExecutionCurrent();
+          await this.options.provider.reap(handle, this.scope, await this.current(), signal);
+        }
+        if (stale.length) {
+          signal.throwIfAborted(); await assertExecutionCurrent();
+          this.handle = manifest.handle;
+          this.manifest = { ...manifest, retired: [] };
+          await this.publish('aborted');
+        }
+        manifest = null; replaced = true;
+      }
       if (manifest && manifest.state !== 'aborted') {
         this.handle = manifest.handle;
         if (manifest.state === 'allocating') {
@@ -190,6 +215,9 @@ export class RetainedSessionLifecycle<R extends RetainedRuntime> {
       } else {
         this.manifest = null;
         this.handle = await this.options.provider.allocationIntent(this.scope, await this.current(), signal);
+        if (this.options.identity) {
+          this.manifest = { handle: this.handle, state: 'allocating', archived: false, identity: this.options.identity, retired: [] };
+        }
         await this.publish('allocating'); newIntent = true;
         this.runtime = await this.options.provider.create(this.scope, await this.current(), signal);
         this.handle = this.runtime.runtimeHandle(); created = true;
@@ -200,6 +228,7 @@ export class RetainedSessionLifecycle<R extends RetainedRuntime> {
       signal.throwIfAborted();
       await assertExecutionCurrent(); await this.current();
       this.phase = 'active';
+      if (replaced) this.runtimeReplaced = true;
     } catch (error) {
       let cleanupFailed = false;
       if (newIntent && !this.runtime && this.handle && this.fence && !this.lost) {
@@ -246,6 +275,11 @@ export class RetainedSessionLifecycle<R extends RetainedRuntime> {
     }
   }
   isStopped(): boolean { return this.phase === 'stopped'; }
+  takeRuntimeReplaced(): boolean {
+    const replaced = this.runtimeReplaced;
+    this.runtimeReplaced = false;
+    return replaced;
+  }
   async use<T>(operation: (runtime: R) => Promise<T>): Promise<T> {
     if (this.phase !== 'active' || !this.runtime) fail('retained_not_active');
     const runtime = this.runtime;

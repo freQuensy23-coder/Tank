@@ -29,8 +29,9 @@ actual Chromium persistent cookie plus localStorage on a VM-local loopback HTTP
 site. The browser context closes before idle to flush its real profile. It records
 the active VM's owned PID/start-time/RSS and asserts that original process exited
 (or is reaped/zombie with released memory), retained info is stopped, and native
-runtime metrics report no running VM. It refuses fingerprint mismatch and a
-foreign scoped owner without booting/mutating the retained resource. A competing
+runtime metrics report no running VM. It refuses a foreign scoped owner without
+booting/mutating the retained resource; a changed fingerprint is not probed here
+because it now replaces the runtime by design (docs/OPERATIONS.md). A competing
 controller cannot acquire its active resource. Final cleanup is idempotent and
 uses the public exact ownership check; idle does not archive/recreate anything.
 
