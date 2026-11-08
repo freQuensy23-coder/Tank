@@ -20,5 +20,5 @@ export function skillArchiveManifest(files: Record<string, Uint8Array>): {
   const manifest = manifests[0]!;
   const directory = posix.dirname(manifest.path);
   return {path: manifest.path, directory: directory === '.' ? '' : `${directory}/`,
-    body: new TextDecoder('utf-8', {fatal: true}).decode(manifest.bytes)};
+    body: new TextDecoder('utf-8', {fatal: true, ignoreBOM: false}).decode(manifest.bytes)};
 }

@@ -1,6 +1,8 @@
+import { Buffer } from 'node:buffer';
 import { createHash, randomBytes } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import { posix } from 'node:path';
+import { URL } from 'node:url';
 import { unzipSync, zipSync } from 'fflate';
 import type { SandboxExecutor } from '@open-managed-agents/sandbox';
 import { skillArchiveManifest } from './node-managed-skill-manifest.js';
@@ -89,7 +91,7 @@ export async function materializeStableSkills(sandbox: SandboxExecutor, plans: S
     entries['__tank_skill_batch__.json'] = manifest;
     const archive = zipSync(entries, { level: 0, mtime: new Date(1980, 0, 1) });
     const digest = createHash('sha256').update(archive).digest('hex');
-    const target = `/tmp/.openma-skills-${randomBytes(16).toString('hex')}/${digest}.zip`;
+    const target = `/tmp/.openma-skills-${Buffer.from(randomBytes(16)).toString('hex')}/${digest}.zip`;
     const command = (operation: string) => `python3 -c ${quote(worker)} ${operation} ${quote(target)} ${quote(digest)}`;
     let staged = false;
     try {

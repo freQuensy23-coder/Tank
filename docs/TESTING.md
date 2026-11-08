@@ -64,7 +64,7 @@ The standalone local lanes require Node 24 or later:
     node scripts/test-node.mjs local-unit
     node scripts/test-node.mjs local-contract
 
-The runner stages generated fixtures in an owned temporary directory. The contract lane is separate from the local unit lane. On Node 24.22.0, the local unit lane passed all 43 cases in 1.134s (p90 0.012735s, maximum 0.131806s); the local contract lane passed all 21 cases in 0.566s. Historical frozen test assets are evidence, not duplicate current unit runs.
+The local unit lane also requires the frozen Managed source dependency graph: `npx --yes pnpm@11.0.8 --dir vendor/openma --filter @open-managed-agents/control-plane-node... install --frozen-lockfile --ignore-scripts`. Its persisted-history continuation cases drive the actual Managed runtime driver, runner, harness runtime and Pi projection into an injected `models.streamSimple` boundary. The provider response and guest I/O are controlled fixtures, not paid-model or native-VM qualification. The runner stages generated fixtures in an owned temporary directory. The contract lane is separate from the local unit lane. On Node 24.22.0, the local unit lane passed all 43 cases in 1.134s (p90 0.012735s, maximum 0.131806s); the local contract lane passed all 21 cases in 0.566s. Historical frozen test assets are evidence, not duplicate current unit runs.
 
 Prepared upstream TypeScript suites use Vitest 4.1.4 and Node 24.22.0. All eight prepared suites passed 71 cases with zero skips: serial wall time 22.459s, case p90 0.567288s, maximum 2.064464s. The run preserved all 75 original source hashes and used 1 CPU, 1.5 GiB, no swap, and an isolated network namespace. These package contracts do not qualify a VM.
 

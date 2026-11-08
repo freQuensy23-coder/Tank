@@ -132,7 +132,7 @@ async function phase(name, config) {
     fingerprint: async (_context, allocation) => mismatch ? 'sha256:' + 'f'.repeat(64) : digest(allocation),
     assertExecutionCurrent: async fence => assert.equal(fence.current, true) });
   const context = sandbox => ({ ...scope, session: { id: scope.sessionId, environmentId: scope.environmentId },
-    environment: { id: scope.environmentId }, sandbox, executionFence: { current: true } });
+    environment: { id: scope.environmentId }, sandbox, executionFence: { workspaceId: scope.workspaceId, sessionId: scope.sessionId, current: true } });
   const sandbox = async () => {
     const sb = new LiteBoxSandbox({ image: 'native-qualification-no-registry-pull', rootfsPath: config.rootfs, cpus: 1, memoryMib: config.memoryMib,
       tankNetwork: { mode: 'disabled' }, outputsRoot: join(config.directory, 'outputs'), scratchRoot: join(config.directory, 'scratch') });

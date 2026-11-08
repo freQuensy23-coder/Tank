@@ -13,7 +13,7 @@ export type FileRunner = <T>(args:string[], exchange:(process:FileProcess)=>Prom
 const failure = () => new Error('guest_file_protocol_invalid');
 function pathArgument(path:string) { if(!path || path.includes('\0') || Buffer.byteLength(path)>16384)throw Error('guest_file_path_invalid'); }
 async function lines(stream:ReadableStream<Uint8Array>, consume:(line:string)=>Promise<void>) {
-  const reader=stream.getReader(), decoder=new TextDecoder('utf-8',{fatal:true}); let pending='';
+  const reader=stream.getReader(), decoder=new TextDecoder('utf-8',{fatal:true,ignoreBOM:false}); let pending='';
   try { for(;;) {
     const row=await reader.read(); if(row.done)break;
     const decoded=decoder.decode(row.value,{stream:true});let offset=0;

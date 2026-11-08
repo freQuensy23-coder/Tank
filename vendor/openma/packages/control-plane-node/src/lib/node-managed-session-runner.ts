@@ -31,6 +31,7 @@ import type { SessionExecutionFence } from "@open-managed-agents/session-runtime
 import { ManagedNodeHarnessRuntime } from "./node-managed-harness-runtime.js";
 import type { WorkspaceBinding, WorkspacePersistencePort, RuntimeResourceScope } from "@open-managed-agents/runtime-resource-contract";
 import type { NodeManagedWorkspaceCheckpoints } from "./node-managed-workspace-checkpoints.js";
+import type { RetainedBinding, RetainedWorkspaceOwnership } from './tank-retained/node-lifecycle.js';
 import { ScopedSessionMap } from "./scoped-session-map.js";
 import {
   ManagedNodeSubagents,
@@ -58,6 +59,7 @@ interface ManagedRunnerContext {
 }
 
 interface ManagedWorkspaceState {
+  ownership?: RetainedWorkspaceOwnership;
   port: WorkspacePersistencePort;
   binding: WorkspaceBinding;
   scope: RuntimeResourceScope;
@@ -141,7 +143,7 @@ export interface DefaultNodeManagedSessionRunnerDependencies {
   sandboxMode?(input: ManagedRunnerContext): SessionSandboxMode | Promise<SessionSandboxMode>;
   buildSandbox(input: ManagedRunnerContext & { signal?: AbortSignal }): Promise<SandboxExecutor>;
   retainedLifecycle?: {
-    bind(input: ManagedRunnerContext & { sandbox: SandboxExecutor; executionFence?: SessionExecutionFence; signal?: AbortSignal }): Promise<void>;
+    bind(input: ManagedRunnerContext & { sandbox: SandboxExecutor; executionFence?: SessionExecutionFence; signal?: AbortSignal }): Promise<RetainedBinding | void>;
     idle(input: ManagedRunnerContext): Promise<void>;
     abandon(input: ManagedRunnerContext): Promise<void>;
     archive(input: StopNodeManagedSessionRuntime): Promise<void>;
@@ -253,8 +255,12 @@ export class DefaultNodeManagedSessionRunner
         }), signal);
       }
       if (reusable) {
-        await this.dependencies.retainedLifecycle?.bind({ ...contextForRetention(input), sandbox: existing!, executionFence: input.executionFence, signal });
-        return;
+        const retained = await this.dependencies.retainedLifecycle?.bind({ ...contextForRetention(input), sandbox: existing!, executionFence: input.executionFence, signal });
+        if (this.dependencies.workspaceCheckpoints !== undefined && retained) {
+          const ownership = await retained.prepareWorkspace();
+          reusable = ownership.runtimeKey === this.workspaces.get(input)?.ownership?.runtimeKey;
+        }
+        if (reusable) return;
       }
       if (existing !== undefined) {
         const previousWorkspace = this.workspaces.get(input);
@@ -296,9 +302,11 @@ export class DefaultNodeManagedSessionRunner
       });
       let workspace: ManagedWorkspaceState | undefined;
       try {
-        await this.dependencies.retainedLifecycle?.bind({ ...context, sandbox, executionFence: input.executionFence, signal });
+        const retained = await this.dependencies.retainedLifecycle?.bind({ ...context, sandbox, executionFence: input.executionFence, signal });
         const checkpoints = this.dependencies.workspaceCheckpoints;
         if (checkpoints !== undefined) {
+          const ownership = retained ? await retained.prepareWorkspace() : undefined;
+          signal.throwIfAborted();
           const fence = input.executionFence!;
           const scope = {
             workspaceId: input.workspaceId,
@@ -307,7 +315,7 @@ export class DefaultNodeManagedSessionRunner
             workId: fence.executionId,
           };
           const active = await untilAborted(checkpoints.active(scope), signal);
-          const port = checkpoints.port(sandbox);
+          const port = checkpoints.port(sandbox, ownership);
           const runtimeFence = checkpoints.runtimeFence(fence, scope.environmentId);
           const binding = await untilAborted(port.materialize({
             scope, fence: runtimeFence, strategy: "checkpoint_restore",
@@ -315,7 +323,7 @@ export class DefaultNodeManagedSessionRunner
             idempotencyKey: runtimeGeneration,
             signal,
           }), signal);
-          workspace = { port, binding, scope, fence, activeId: active?.candidate.id ?? null, trusted: true };
+          workspace = { port, binding, scope, fence, ownership, activeId: active?.candidate.id ?? null, trusted: true };
           // A missing/corrupt published archive is a hard failure. Session
           // inputs and the harness must never observe an empty replacement.
           await untilAborted(port.attach({

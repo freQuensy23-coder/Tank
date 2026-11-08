@@ -5,6 +5,7 @@ import type { BlobStore } from "@open-managed-agents/blob-store";
 import type { SandboxExecutor } from "@open-managed-agents/sandbox";
 import type { SessionExecutionFence } from "@open-managed-agents/session-runtime-contract/coordination";
 import type { SqlClient } from "@open-managed-agents/sql-client";
+import type { RetainedWorkspaceOwnership } from './tank-retained/node-lifecycle.js';
 import type {
   RuntimeResourceFence,
   RuntimeResourceScope,
@@ -14,6 +15,7 @@ import type {
 } from "@open-managed-agents/runtime-resource-contract";
 
 const KEY = "openma.workspace.blob-key.v1";
+const RUNTIME_KEY = "openma.workspace.retained-runtime.v1";
 const PREFIX = "managed-session-workspace-checkpoints";
 const MAX_ARCHIVE_BYTES = 256 * 1024 * 1024;
 const SIZE_BEGIN = "__OPENMA_WS_SIZE_BEGIN__";
@@ -134,7 +136,23 @@ function failed(command: string): boolean {
 class NodeBlobWorkspacePort implements WorkspacePersistencePort {
   private readonly active = new Map<string, { id: string; contentHash: string; metadata?: Readonly<Record<string, string | number | boolean | null>> }>();
 
-  constructor(private readonly sandbox: SandboxExecutor, private readonly blobs: BlobStore) {}
+  constructor(private readonly sandbox: SandboxExecutor, private readonly blobs: BlobStore,
+    private readonly ownership?: RetainedWorkspaceOwnership) {}
+
+  private async assertCurrent(signal: AbortSignal): Promise<void> {
+    signal.throwIfAborted();
+    await this.ownership?.assertCurrent();
+    signal.throwIfAborted();
+  }
+
+  private async cleanup(temp: string, signal: AbortSignal): Promise<void> {
+    try {
+      if (this.ownership !== undefined) signal.throwIfAborted();
+      await this.ownership?.assertCurrent();
+      if (this.ownership !== undefined) signal.throwIfAborted();
+      await this.sandbox.exec(`rm -f '${temp}'`, 5_000);
+    } catch {}
+  }
 
   async capabilities() {
     return { strategies: ["checkpoint_restore" as const] };
@@ -156,6 +174,11 @@ class NodeBlobWorkspacePort implements WorkspacePersistencePort {
     if (input.strategy !== "checkpoint_restore") throw new Error(`Node workspace does not support ${input.strategy}`);
     const candidate = this.active.get(input.binding.bindingId);
     if (candidate === undefined) return;
+    await this.assertCurrent(input.signal);
+    if (this.ownership !== undefined) {
+      const source = candidate.metadata?.[RUNTIME_KEY];
+      if (source === undefined ? !this.ownership.allowLegacyCheckpoint : source !== this.ownership.runtimeKey) return;
+    }
     const key = archiveKey(candidate, input.scope);
     // S3BlobStore.get may begin draining its body immediately. HEAD first so
     // an obviously oversized object is rejected before allocating its bytes.
@@ -173,13 +196,14 @@ class NodeBlobWorkspacePort implements WorkspacePersistencePort {
     if (!this.sandbox.writeFileBytes) throw new Error("Workspace restore requires binary sandbox writes");
     const temp = `/var/tmp/openma-workspace-restore-${randomUUID()}.tar`;
     try {
-      input.signal.throwIfAborted();
+      await this.assertCurrent(input.signal);
       await this.sandbox.writeFileBytes(temp, bytes);
+      await this.assertCurrent(input.signal);
       const result = await this.sandbox.exec(`mkdir -p /workspace && tar -xf '${temp}' -C /workspace`, 120_000);
       if (failed(result)) throw new Error(`Workspace checkpoint restore failed: ${result.slice(0, 200)}`);
       input.signal.throwIfAborted();
     } finally {
-      await this.sandbox.exec(`rm -f '${temp}'`, 5_000).catch(() => undefined);
+      await this.cleanup(temp, input.signal);
     }
   }
 
@@ -190,8 +214,10 @@ class NodeBlobWorkspacePort implements WorkspacePersistencePort {
     const temp = `/var/tmp/openma-workspace-${randomUUID()}.tar`;
     let bytes: Uint8Array;
     try {
+      await this.assertCurrent(input.signal);
       const result = await this.sandbox.exec(`tar -C /workspace -cf '${temp}' .`, 120_000);
       if (failed(result)) throw new Error(`Workspace checkpoint archive failed: ${result.slice(0, 200)}`);
+      await this.assertCurrent(input.signal);
       const sizeOutput = await this.sandbox.exec(
         `printf '${SIZE_BEGIN}'; wc -c < '${temp}'; printf '${SIZE_END}'`, 5_000,
       );
@@ -205,12 +231,13 @@ class NodeBlobWorkspacePort implements WorkspacePersistencePort {
         throw new Error("Workspace checkpoint archive size could not be verified");
       }
       if (size > MAX_ARCHIVE_BYTES) throw new Error("Workspace checkpoint archive exceeds maximum size");
+      await this.assertCurrent(input.signal);
       bytes = await this.sandbox.readFileBytes(temp);
       if (bytes.byteLength > MAX_ARCHIVE_BYTES || bytes.byteLength !== size) {
         throw new Error("Workspace checkpoint archive exceeds maximum size or changed during read");
       }
     } finally {
-      await this.sandbox.exec(`rm -f '${temp}'`, 5_000).catch(() => undefined);
+      await this.cleanup(temp, input.signal);
     }
     input.signal.throwIfAborted();
     await validateWorkspaceArchive(bytes);
@@ -222,7 +249,9 @@ class NodeBlobWorkspacePort implements WorkspacePersistencePort {
     });
     if (stored === null) throw new Error("Workspace checkpoint archive key already exists");
     input.signal.throwIfAborted();
-    return { id, contentHash: digest(bytes), revision: input.fence.generation, metadata: { [KEY]: key } };
+    await this.assertCurrent(input.signal);
+    return { id, contentHash: digest(bytes), revision: input.fence.generation,
+      metadata: { [KEY]: key, ...(this.ownership ? { [RUNTIME_KEY]: this.ownership.runtimeKey } : {}) } };
   }
 
   async release(input: Parameters<WorkspacePersistencePort["release"]>[0]): Promise<void> {
@@ -259,8 +288,8 @@ export class NodeManagedWorkspaceCheckpoints {
     )`);
   }
 
-  port(sandbox: SandboxExecutor): WorkspacePersistencePort {
-    return new NodeBlobWorkspacePort(sandbox, this.deps.blobs);
+  port(sandbox: SandboxExecutor, ownership?: RetainedWorkspaceOwnership): WorkspacePersistencePort {
+    return new NodeBlobWorkspacePort(sandbox, this.deps.blobs, ownership);
   }
 
   runtimeFence(fence: SessionExecutionFence, environmentId: string): RuntimeResourceFence {
