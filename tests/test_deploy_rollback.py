@@ -110,3 +110,39 @@ def test_historical_target_uses_current_main_deployment_helper(tmp_path):
     assert "apify_deploy.py" in helper.read_text()
     assert (runner / "tank-orchestrator/deploy.sh").read_text() == current_helper
     assert output.read_text() == f"sha={historical}\n"
+
+
+@pytest.mark.parametrize("kline_lag,failure", [("2", None), ("9999", "no kline recorded for 9999s")])
+def test_verify_holds_in_every_capture_tier(tmp_path, kline_lag, failure):
+    """Prints and flow bars exist only for hot tokens (02 §4.9); the post-deploy check needs only
+    data every capture tier writes, so it passes with no hot token and fails on stale klines."""
+    source = (Path(__file__).parents[1] / "scripts/deploy/deploy.sh").read_text()
+    hook = """docker() {
+  case "$1" in
+    ps) echo capture-1 ;;
+    inspect) case "$*" in *Health*) echo healthy ;; *StartedAt*) echo 2026-11-08T09:00:00Z ;; *) echo running ;; esac ;;
+    exec)
+      sql=$(cat)
+      printf '%s\\n' "$sql" >> queries
+      case "$sql" in *klines_1m*) echo "$KLINE_LAG" ;; esac ;;
+  esac
+}
+if verify 2026-11-08T09:38:15Z; then exit 0; else exit 1; fi
+"""
+    marker = "previous=$(cat deployed 2>/dev/null || true)"
+    assert source.count(marker) == 1
+    script = tmp_path / "deploy.sh"
+    script.write_text(source.replace(marker, hook + marker))
+    result = subprocess.run(
+        ["bash", str(script), CANDIDATE],
+        cwd=tmp_path,
+        capture_output=True,
+        text=True,
+        timeout=4,
+        env={**os.environ, "KLINE_LAG": kline_lag},
+    )
+    failures = [line for line in result.stdout.splitlines() if line.startswith("FAIL ")]
+    assert failures == ([f"FAIL {failure}"] if failure else []), result.stdout + result.stderr
+    assert result.returncode == (1 if failure else 0)
+    queries = (tmp_path / "queries").read_text()
+    assert "mkt.trades" not in queries and "flow_bars_1m" not in queries
