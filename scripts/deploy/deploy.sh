@@ -87,9 +87,14 @@ verify() {
 previous=$(cat deployed 2>/dev/null || true)
 [[ -z "$previous" || "$previous" =~ ^[0-9a-f]{40}$ ]] || { echo "invalid previous release SHA"; exit 1; }
 tank_started=no
+worker_previous=""
+worker_current=""
 recover() {
   local status=$?
   trap - EXIT INT TERM
+  if [ "$status" -ne 0 ] && [ -n "$worker_previous" ] && [ "$worker_previous" != "$worker_current" ]; then
+    python3 apify_worker.py restore "$worker_previous" || { echo "X worker restore failed"; status=1; }
+  fi
   if [ "$status" -ne 0 ] && [ "$tank_started" = yes ] && [ -n "$previous" ]; then
     echo "rollback to $previous $(date -u +%T)"
     if roll "$previous"; then
@@ -105,6 +110,10 @@ recover() {
 trap recover EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM
+if [ -d "releases/$SHA/x-reader" ]; then
+  worker=$(python3 apify_worker.py publish "releases/$SHA/x-reader" "$SHA") || { echo "X worker publication failed; Tank unchanged"; exit 1; }
+  read -r worker_previous worker_current <<< "$worker"
+fi
 start=$(date +%s)
 since=$(date -u +%FT%TZ)
 echo "deploy $SHA at $since; previous ${previous:-none}"
