@@ -9,7 +9,8 @@
 documentation and is ignored). Unchanged source does nothing. Changed source replaces the files of
 actor version 0.3, builds it under the tag `tank-<sha12>` and, only after the build succeeded, moves
 `direct` to the new build. It prints the build `direct` pointed at before the deploy and the one it
-points at now, so a Tank rollback can restore the former. The API token is read from the host `.env` and never printed.
+points at now, so a Tank rollback can restore the former. If retagging fails, it points `direct` back
+at the previous build before failing. The API token is read from the host `.env` and never printed.
 """
 
 import base64
@@ -54,10 +55,16 @@ def host_token(env_file):
     return values[0]
 
 
+class NoRedirect(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        return None
+
+
 class Api:
     def __init__(self, token, base=API):
         self.token = token
         self.base = base
+        self.opener = urllib.request.build_opener(NoRedirect, urllib.request.ProxyHandler({}))
 
     def request(self, method, path, body=None):
         request = urllib.request.Request(
@@ -67,7 +74,7 @@ class Api:
             headers={"Authorization": "Bearer " + self.token, "Content-Type": "application/json"},
         )
         try:
-            with urllib.request.urlopen(request, timeout=75) as response:
+            with self.opener.open(request, timeout=75) as response:
                 value = json.load(response)
         except urllib.error.HTTPError as error:
             raise PublishError(f"Apify {method} {path.split('?')[0]} failed with HTTP {error.code}") from None
@@ -105,10 +112,9 @@ def worker_source(files):
 
 
 class Worker:
-    def __init__(self, api, clock=time.monotonic, sleep=time.sleep):
+    def __init__(self, api, clock=time.monotonic):
         self.api = api
         self.clock = clock
-        self.sleep = sleep
         self.actor = "/actors/" + ACTOR_ID
 
     def current(self):
@@ -155,7 +161,15 @@ class Worker:
         built = worker_source(build_files(build))
         require(built == worker_source(files), "built source differs from the release")
         require(self.current() == previous, f"{TAG} tag changed while building")
-        self.tag(build_id)
+        try:
+            self.tag(build_id)
+        except PublishError:
+            try:
+                self.tag(previous)
+            except PublishError as error:
+                message = f"{TAG} may point at {build_id}; restoring {previous} failed: {error}"
+                raise PublishError(message) from None
+            raise
         return previous, build_id
 
 

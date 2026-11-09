@@ -3,8 +3,7 @@
 # in the host directory holding compose.yaml, .env and this script. It starts the CI-built images
 # of that commit, proves within 8 minutes that they work, and otherwise returns to the previous
 # commit. PostgreSQL, ClickHouse and OpenMA restart only when their image content changed;
-# tank-capture is replaced make-before-break so no minute of prints is lost. A changed X worker
-# (releases/<sha>/x-reader) is built and activated on Apify first and restored on rollback.
+# tank-capture is replaced make-before-break so no minute of prints is lost.
 set -euo pipefail
 cd "$(dirname "$(readlink -f "$0")")"
 SHA=${1:?usage: deploy.sh <git sha>}

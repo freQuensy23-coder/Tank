@@ -37,7 +37,14 @@ def source(files):
 class FakeApi:
     """Apify actor, version and build endpoints as the worker publisher uses them."""
 
-    def __init__(self, active_files, build_status="SUCCEEDED", built_files=None, retag_during_build=False):
+    def __init__(
+        self,
+        active_files,
+        build_status="SUCCEEDED",
+        built_files=None,
+        retag_during_build=False,
+        lost_tag_response=False,
+    ):
         self.tagged = OLD
         self.builds = {
             OLD: {"id": OLD, "status": "SUCCEEDED", "actVersion": {"sourceFiles": source(active_files)}}
@@ -46,6 +53,7 @@ class FakeApi:
         self.build_status = build_status
         self.built_files = built_files
         self.retag_during_build = retag_during_build
+        self.lost_tag_response = lost_tag_response
         self.calls = []
 
     def request(self, method, path, body=None):
@@ -54,6 +62,9 @@ class FakeApi:
             return {"taggedBuilds": {"direct": {"buildId": self.tagged}}}
         if method == "PUT" and path == "/actors/" + apify_worker.ACTOR_ID:
             self.tagged = body["taggedBuilds"]["direct"]["buildId"]
+            if self.lost_tag_response:
+                self.lost_tag_response = False
+                raise apify_worker.PublishError("Apify PUT /actors failed with HTTP 504")
             return {}
         if method == "PUT" and path.endswith("/versions/" + apify_worker.VERSION):
             self.version = body
@@ -108,6 +119,16 @@ def test_failed_or_foreign_build_never_moves_the_direct_tag(tmp_path, api_option
     with pytest.raises(apify_worker.PublishError, match=message):
         apify_worker.Worker(api).publish(root, SHA)
     assert ("PUT", "/actors/" + apify_worker.ACTOR_ID) not in api.calls
+
+
+def test_a_failed_retag_points_direct_back_before_failing(tmp_path):
+    root = worker_dir(tmp_path)
+    api = FakeApi({"main.py": b"print('v1')\n"}, lost_tag_response=True)
+    with pytest.raises(apify_worker.PublishError, match="HTTP 504"):
+        apify_worker.Worker(api).publish(root, SHA)
+    assert api.tagged == OLD
+    tag_writes = [call for call in api.calls if call == ("PUT", "/actors/" + apify_worker.ACTOR_ID)]
+    assert len(tag_writes) == 2
 
 
 def test_build_deadline_stops_waiting(tmp_path):

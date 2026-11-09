@@ -168,11 +168,12 @@ def test_deploy_publishes_a_changed_x_worker_first_and_restores_it_on_rollback(
     """A changed X worker is built and activated before Tank rolls; a failed build leaves Tank and
     the worker untouched, and a Tank rollback points the worker's direct tag back first."""
     source = (Path(__file__).parents[1] / "scripts/deploy/deploy.sh").read_text()
-    hook = """roll() { printf '%s\\n' "$1" >> roll-calls; return 0; }
+    hook = """roll() { printf '%s\\n' "$1" >> roll-calls; printf 'roll %s\\n' "$1" >> order; return 0; }
 verify() { [[ "$MODE" != *not_verified ]]; }
 docker() { return 0; }
 python3() {
   printf '%s\\n' "$*" >> worker-calls
+  printf '%s %s\\n' "$2" "$3" >> order
   case "$2" in
     publish)
       case "$MODE" in
@@ -211,3 +212,8 @@ python3() {
     assert restores == ([f"apify_worker.py restore {expected_restore}"] if expected_restore else [])
     expected_marker = CANDIDATE if expected_status == 0 else PREVIOUS
     assert (tmp_path / "deployed").read_text() == expected_marker + "\n"
+    order = (tmp_path / "order").read_text().splitlines() if (tmp_path / "order").exists() else []
+    if expected_restore:
+        assert order.index(f"restore {expected_restore}") < order.index(f"roll {PREVIOUS}")
+    if mode != "no_worker" and expected_rolls:
+        assert order.index(f"publish releases/{CANDIDATE}/x-reader") < order.index(f"roll {CANDIDATE}")
