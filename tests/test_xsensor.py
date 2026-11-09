@@ -11,7 +11,7 @@ from test_sources import Repo, settings
 
 from tank.agents.pipeline import Pipeline
 from tank.sources import SourceService
-from tank.sources.xsensor import AccountFailure, ApifyPost, XSensor
+from tank.sources.xsensor import ERROR_BODY_BYTES, AccountFailure, ApifyPost, ApifyRunFailed, XSensor
 
 URL = "https://api.apify.com/v2/actors/actor/run-sync?build=direct&memory=256&timeout=110"
 
@@ -153,6 +153,45 @@ async def test_a_failed_or_unreadable_run_raises():
     assert leaked.value.__cause__ is None
     with pytest.raises(ValueError, match="APIFY_API_TOKEN"):
         await XSensor(httpx.AsyncClient(), None).posts(URL, ["ethereum"], {})
+
+
+@pytest.mark.asyncio
+async def test_run_sync_http_error_keeps_status_safe_headers_and_redacted_body():
+    token = "FAKE-token"
+    error = {"error": {"type": "run-timeout", "message": f"Actor run timed out; token={token}"}}
+    answers = [json.dumps(error).encode(), ("Bearer " + token + " " + "x" * 3 * ERROR_BODY_BYTES).encode()]
+
+    def respond(request):
+        return httpx.Response(
+            400,
+            content=answers.pop(0),
+            headers={"content-type": "application/json", "set-cookie": "session=s", "x-auth": token},
+        )
+
+    sensor = XSensor(httpx.AsyncClient(transport=httpx.MockTransport(respond)), token)
+    request_failed = "Apify X run request failed: Client error '400 Bad Request'"
+    with pytest.raises(ApifyRunFailed, match=request_failed) as small:
+        await sensor.posts(URL, ["ethereum"], {"ethereum": "1"})
+    failure = small.value.failure
+    assert failure["account"] is None and failure["reason"] == "APIFY_RUN_HTTP_ERROR"
+    assert failure["error"] == f"Client error '400 Bad Request' for url '{URL}'"
+    response = failure["response"]
+    assert response["status"] == 400 and response["reason_phrase"] == "Bad Request"
+    assert response["headers"] == {
+        "content-type": "application/json",
+        "content-length": str(response["body_bytes"]),
+    }
+    assert json.loads(response["body"])["error"] == {
+        "type": "run-timeout",
+        "message": "Actor run timed out; token=[REDACTED]",
+    }
+    assert not response["body_truncated"] and token not in json.dumps(failure)
+    with pytest.raises(ApifyRunFailed) as large:
+        await sensor.posts(URL, ["ethereum"], {"ethereum": "1"})
+    response = large.value.failure["response"]
+    assert response["body"].startswith("Bearer [REDACTED] xxx") and len(response["body"]) == ERROR_BODY_BYTES
+    assert response["body_truncated"] and response["body_bytes"] > 3 * ERROR_BODY_BYTES
+    assert small.value.__cause__ is None and large.value.__cause__ is None
 
 
 @pytest.mark.asyncio

@@ -5,8 +5,10 @@ before in one ``ENTRY_ERRORS`` notice for that source poll. Each reported error 
 remembered by an ``ENTRY_ERROR`` marker whose id is derived from the source, the
 feed URL, the reason and the entry identity (the digest of the wire entry when the
 parser had one), never from the poll time. Feeds that keep returning the same broken
-entry therefore produce no further messages. Markers, the notice and its ``DELIVER``
-job are written in one transaction.
+entry therefore produce no further messages. A failed S29 run-sync call is keyed by its
+HTTP status and the feed's count of successful reads before it, so it is reported once
+per failure episode and status. Markers, the notice and its ``DELIVER`` job are written
+in one transaction.
 """
 
 import html
@@ -25,8 +27,10 @@ REASONS = {
     "PENDING_PROPOSAL_UNAVAILABLE": "Отслеживаемое предложение не вернулось в ответе источника",
     "MISSING_FROM_RUN": "Аккаунт X отсутствует в результате сбора",
     "NO_CURSOR": "Для аккаунта X не получен курсор",
+    "APIFY_RUN_HTTP_ERROR": "Запуск сбора X в Apify завершился HTTP-ошибкой",
 }
 MESSAGE_LIMIT = 3900
+RESPONSE_BODY_UNITS = 2000
 
 
 def identity(error):
@@ -34,6 +38,8 @@ def identity(error):
         return {"entry_sha256": error["entry_sha256"]}
     if error.get("proposal_id"):
         return {"proposal_id": error["proposal_id"]}
+    if error.get("reason") == "APIFY_RUN_HTTP_ERROR":
+        return {"status": error["response"]["status"], "reads_ok_before": error.get("reads_ok_before")}
     if "account" in error:
         return {"account": str(error.get("account") or "").lower()}
     return {"error": re.sub(r"\d+", "#", str(error.get("error") or ""))}
@@ -52,6 +58,31 @@ def error_key(source_id, feed_url, error):
 
 def units(text):
     return len(text.encode("utf-16-le")) // 2
+
+
+def escaped_clip(value, limit):
+    """The text with whitespace collapsed, cut so that its HTML-escaped form fits in limit units."""
+    text = " ".join(str(value or "").split())
+    if units(html.escape(text)) <= limit:
+        return text
+    used = 0
+    for index, char in enumerate(text):
+        used += units(html.escape(char))
+        if used > limit - 1:
+            return text[:index] + "…"
+    return text
+
+
+def response_lines(response):
+    lines = [f"Ответ: HTTP {response.get('status')} {response.get('reason_phrase') or ''}".rstrip()]
+    headers = response.get("headers") or {}
+    if headers:
+        lines.append("Заголовки: " + escaped_clip("; ".join(f"{k}: {v}" for k, v in headers.items()), 300))
+    size = f"{response.get('body_bytes')} байт"
+    if response.get("body_truncated"):
+        size += ", сохранены первые 8 КБ"
+    lines.append(f"Тело ответа ({size}): " + escaped_clip(response.get("body"), RESPONSE_BODY_UNITS))
+    return lines
 
 
 def seen_label(value):
@@ -83,6 +114,8 @@ def entry_block(number, error, payload_shown):
         lines.append("Фрагмент: " + plain(entry["excerpt"], 200))
     if error.get("error"):
         lines.append("Ошибка: " + plain(error["error"], 300))
+    if error.get("response"):
+        lines.extend(response_lines(error["response"]))
     if error.get("entry_sha256"):
         lines.append("sha256 записи: " + error["entry_sha256"])
     if error.get("payload_sha256") and not payload_shown:
