@@ -12,4 +12,4 @@ Failed accounts include `diagnostics`: the GET method/URL and empty request body
 
 The existing permanent CI runs `tests/test_x_reader.py` and `tests/test_x_reader_integration.py`, installing this directory's pinned requirements separately from the shipping Tank environment. The integration suite uses isolated real HTTP listeners for profile failures, actor snapshots and plain Telegram notices; it does not call paid Apify runs or production Telegram.
 
-Tank's deploy workflow does not publish or activate Apify builds. The source and pinned worker requirements remain in this repository to preserve the full-text and referenced-post behavior of PR45 and its CI coverage. Existing actor builds are unchanged by this rollback; changing a build requires a separately authorized release.
+Tank's Deploy workflow publishes this directory: when its files differ from the actor build tagged `direct`, `scripts/deploy/apify_worker.py` builds them as version 0.3 and moves `direct` to the new build before Tank is rolled, and restores the previous build if Tank rolls back (docs/OPERATIONS.md). Keep the output compatible with the previous Tank release.
