@@ -1,7 +1,16 @@
 const openmaSource = process.env.TANK_AUDIT_OPENMA_ROOT ? pathToFileURL(process.env.TANK_AUDIT_OPENMA_ROOT.replace(/\/?$/, '/')) : new URL('../../../vendor/openma/', import.meta.url);
 import { pathToFileURL } from 'node:url';
+import { registerHooks } from 'node:module';
+import { mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+registerHooks({resolve(specifier,context,nextResolve){
+  if(specifier==='@open-managed-agents/observability')return {url:new URL('packages/observability/src/index.ts',openmaSource).href,shortCircuit:true};
+  if(specifier==='@boxlite-ai/boxlite')return {url:'data:text/javascript,'+encodeURIComponent('export class SimpleBox {}'),shortCircuit:true};
+  return nextResolve(specifier,context);
+}});
 const { NodeRetainedLifecycle } = await import(new URL('packages/control-plane-node/src/lib/tank-retained/node-lifecycle.ts', openmaSource));
 import { setup } from './fakes.mjs';
 function fixture() {
@@ -148,4 +157,65 @@ test('warm current-prefix metadata advances preserve allocation/workspace and st
   await replacement.bind(fresh);assert.equal(JSON.parse((await newSb.exec('read','FAKE_AFTER_RESTART')).stdout).workspace,'persisted');await replacement.idle(fresh);
   assert.equal(s.allocations.filter(options=>options.providerId==='litebox').length,2);
   assert.equal([...s.disks.keys()][0],id);
+});
+
+test('warm sandbox with a changed fingerprint is refused for reuse and the cold path replaces its runtime once',async()=>{
+  const s=fixture();let current=s.options.fingerprint;
+  const manager=s.lifecycle({fingerprint:async()=>current}),sandbox=s.sandbox(),ctx=s.context(sandbox);
+  assert.equal(await manager.bind(ctx),true);await sandbox.exec('write','FAKE_FIRST');await manager.idle(ctx);
+  const old=[...s.disks.keys()][0],calls=s.calls.length;
+  current='sha256:'+'b'.repeat(64);
+  const next={...ctx,executionFence:{current:true}};
+  assert.equal(await manager.bind(next),false);
+  assert.deepEqual(s.calls.slice(calls),[]);assert.equal(s.disks.get(old).running,false);
+  assert.equal(manager.takeRuntimeReplacedReminder(next),null);
+  const fresh=s.sandbox(),cold={...next,sandbox:fresh};
+  assert.equal(await manager.bind(cold),true);
+  assert.deepEqual(JSON.parse((await fresh.exec('read','FAKE_SECOND')).stdout),{key:'FAKE_SECOND'});
+  assert.equal(s.disks.has(old),false);assert.equal(s.disks.size,1);
+  assert.equal(s.calls.some(call=>call[0]==='fresh-get'),false);
+  assert.match(manager.takeRuntimeReplacedReminder(cold),/sandbox of this session was replaced.*Files under \/workspace.*installed packages.*browser profile.*\/mnt\/session\/outputs.*\/mnt\/memory are kept.*conversation and its history are intact/);
+  assert.equal(manager.takeRuntimeReplacedReminder(cold),null);
+  await manager.idle(cold);
+  const later={...cold,executionFence:{current:true}};
+  assert.equal(await manager.bind(later),true);await fresh.exec('read','FAKE_THIRD');
+  assert.equal(manager.takeRuntimeReplacedReminder(later),null);await manager.idle(later);
+});
+
+test('cold controller after a configuration change starts a fresh runtime and reminds once',async()=>{
+  const s=fixture(),first=s.lifecycle(),sandbox=s.sandbox(),ctx=s.context(sandbox);
+  await first.bind(ctx);await sandbox.exec('write','FAKE_FIRST');await first.idle(ctx);
+  const replacement=s.lifecycle({fingerprint:async()=>'sha256:'+'c'.repeat(64)}),newSandbox=s.sandbox(),newContext=s.context(newSandbox);
+  await replacement.bind(newContext);
+  assert.equal(replacement.takeRuntimeReplacedReminder(newContext),null);
+  assert.deepEqual(JSON.parse((await newSandbox.exec('read','FAKE_ROTATED')).stdout),{key:'FAKE_ROTATED'});
+  assert.equal(s.disks.size,1);assert.equal(s.calls.some(call=>call[0]==='fresh-get'),false);
+  assert.match(replacement.takeRuntimeReplacedReminder(newContext),/sandbox of this session was replaced/);
+  assert.equal(replacement.takeRuntimeReplacedReminder(newContext),null);
+  await replacement.idle(newContext);
+});
+
+test('cold LiteBox sandbox starts its replaced runtime while it is prepared and only the first prompt carries the reminder',async()=>{
+  const {LiteBoxSandbox}=await import(new URL('packages/sandbox-adapter-litebox/src/litebox.ts',openmaSource));
+  const s=fixture(),scratch=await mkdtemp(join(tmpdir(),'tank-litebox-reminder-'));
+  try{
+    const litebox=()=>new LiteBoxSandbox({scratchRoot:scratch,logger:{warn(){},log(){}}});
+    const first=s.lifecycle(),before=litebox(),ctx=s.context(before);
+    await first.bind(ctx);await before.prepareRetainedRuntime();
+    const old=[...s.disks.keys()][0];assert.equal(s.disks.get(old).running,true);
+    assert.equal(first.takeRuntimeReplacedReminder(ctx),null);await first.idle(ctx);await before.destroy();
+    const manager=s.lifecycle({fingerprint:async()=>'sha256:'+'c'.repeat(64)}),sandbox=litebox(),cold=s.context(sandbox);
+    await manager.bind(cold);
+    assert.equal(manager.takeRuntimeReplacedReminder(cold),null);assert.equal(s.disks.has(old),true);
+    await sandbox.prepareRetainedRuntime();
+    assert.equal(s.disks.has(old),false);assert.deepEqual([...s.disks.values()].map(disk=>disk.running),[true]);
+    assert.match(manager.takeRuntimeReplacedReminder(cold),/sandbox of this session was replaced/);
+    assert.equal(await sandbox.exec('true'),'');
+    assert.equal(manager.takeRuntimeReplacedReminder(cold),null);await manager.idle(cold);
+    const warm={...cold,executionFence:{current:true}};
+    assert.equal(await manager.bind(warm),true);assert.equal(await sandbox.exec('true'),'');
+    assert.equal(manager.takeRuntimeReplacedReminder(warm),null);
+    assert.equal(s.calls.filter(call=>call[0]==='create').length,2);
+    await manager.idle(warm);await sandbox.destroy();
+  }finally{await rm(scratch,{recursive:true,force:true});}
 });

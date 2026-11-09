@@ -128,8 +128,8 @@ async function phase(name, config) {
   const scope = { workspaceId: 'native_qualification', environmentId: 'native_qualification', sessionId: meta.sessionId };
   const fullScope = { ...scope, workId: 'tank-retained-session-v1' };
   const digest = allocation => 'sha256:' + hash(JSON.stringify({ identity: config.identity, scope, allocation, rootfsIndex: meta.rootfsIndex }));
-  const controller = mismatch => new NodeRetainedLifecycle({ fences, providerModule, client, ownerId: `proof-${name}-${process.pid}`, leaseTtlMs: 30000,
-    fingerprint: async (_context, allocation) => mismatch ? 'sha256:' + 'f'.repeat(64) : digest(allocation),
+  const controller = () => new NodeRetainedLifecycle({ fences, providerModule, client, ownerId: `proof-${name}-${process.pid}`, leaseTtlMs: 30000,
+    fingerprint: async (_context, allocation) => digest(allocation),
     assertExecutionCurrent: async fence => assert.equal(fence.current, true) });
   const context = sandbox => ({ ...scope, session: { id: scope.sessionId, environmentId: scope.environmentId },
     environment: { id: scope.environmentId }, sandbox, executionFence: { current: true } });
@@ -165,9 +165,6 @@ async function phase(name, config) {
   }
   const first = name === 'first' ? null : JSON.parse(await readFile(join(config.directory, 'phase-first.json'), 'utf8'));
   if (name === 'resume') {
-    const bad = await sandbox(), badContext = context(bad), badController = controller(true);
-    await badController.bind(badContext);
-    await assert.rejects(bad.exec('true'), /retained_configuration_changed/);
     assert.equal((await client.getInfo(first.id)).state.running, false);
     // A different scoped owner cannot start/remove the retained native identity.
     const foreign = { ...fullScope, sessionId: meta.sessionId + '_foreign' };
@@ -248,7 +245,7 @@ async function phase(name, config) {
   await manager.shutdown();
   await json(join(config.directory, `phase-${name}.json`), { status: 'PASS', id: info.id, expectedName, controllerPid: process.pid,
     fingerprint: config.identity, workerSha256: hash(worker), nativePreparationMs, browserProof, rootfsWorkspaceAndOutputRetained: true, actualChromiumCookieAndLocalStorageRetained: true,
-    nativeInfo: info, stop, fingerprintMismatchRejected: name === 'resume', foreignScopeRejected: name === 'resume', competingOwnerRejected: name === 'first',
+    nativeInfo: info, stop, foreignScopeRejected: name === 'resume', competingOwnerRejected: name === 'first',
     noIdleArchiveOrRecreate: true, perExecFakeKeyRotation: true, openmaApiHistoryCertified: false });
 }
 export async function main() {

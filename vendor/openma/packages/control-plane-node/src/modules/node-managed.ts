@@ -1,4 +1,4 @@
-import { executableImageIdentity, stableDigest as runtimeComponentDigest } from '../lib/tank-retained/runtime-identity.js';
+import { executableImageIdentity, retainedSessionResources, stableDigest as runtimeComponentDigest } from '../lib/tank-retained/runtime-identity.js';
 import { loadSessionContinuationSnapshot } from '@open-managed-agents/session-runtime-sql/continuation';
 
 /**
@@ -381,7 +381,7 @@ export async function createManagedNodeRuntime(foundation: NodeFoundation, compo
       const database = databaseUrl ? new URL(databaseUrl) : null;
       return stableDigest({
         runtimeIdentity: "c4afefbdddba3e6f05634a3bb5a46db20d5636413f4f24909b2abcdfa8fa8654", scope: [context.workspaceId, context.environment.id, context.sessionId],
-        resources: domain.session.resources, skills: domain.session.agent.skills, environmentName: domain.environment.name, environment: domain.environment.config, allocation, rootfsIndex,
+        resources: retainedSessionResources(domain.session.resources), skills: domain.session.agent.skills, environmentName: domain.environment.name, environment: domain.environment.config, allocation, rootfsIndex,
         databasePolicy: database ? { host: database.hostname, port: database.port, database: database.pathname, role: database.username } : null
       });
     },
@@ -413,7 +413,7 @@ export async function createManagedNodeRuntime(foundation: NodeFoundation, compo
       const components = {
         runtimeAbi: "c4afefbdddba3e6f05634a3bb5a46db20d5636413f4f24909b2abcdfa8fa8654",
         scope: [context.workspaceId, context.environment.id, context.sessionId],
-        resources: domain.session.resources, skills: domain.session.agent.skills,
+        resources: retainedSessionResources(domain.session.resources), skills: domain.session.agent.skills,
         environmentName: domain.environment.name, environment: domain.environment.config,
         runtimeResources, mounts: volumes, network, security,
         databasePolicy: database ? { host: database.hostname, port: database.port, database: database.pathname, role: database.username } : null
@@ -537,6 +537,8 @@ export async function createManagedNodeRuntime(foundation: NodeFoundation, compo
         sandbox,
         runtimeGeneration,
       });
+      if ("prepareRetainedRuntime" in sandbox)
+        await (sandbox as typeof sandbox & { prepareRetainedRuntime(): Promise<void> }).prepareRetainedRuntime();
     },
     synchronizeSandbox: async ({ workspaceId, session, sandbox, runtimeGeneration, executionFence, }) => {
       await sandbox.synchronizeMemoryStores?.();
@@ -657,7 +659,9 @@ export async function createManagedNodeRuntime(foundation: NodeFoundation, compo
           .app({ workspaceId: input.workspaceId })
           .port(managedAgentsPortTokens.skillVersions))
         : undefined;
+      const runtimeReplaced = retainedLifecycle.takeRuntimeReplacedReminder({ ...input, sessionId: input.session.id });
       const platformReminders = [
+        ...(runtimeReplaced ? [{ source: "sandbox-runtime-replaced", text: runtimeReplaced }] : []),
         ...(assemblySkills ? [] : buildNodeManagedSkillReminders(input.session)),
         ...buildNodeManagedAppendablePromptReminders(input.session),
       ];

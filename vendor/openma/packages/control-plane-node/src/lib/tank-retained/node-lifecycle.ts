@@ -35,6 +35,10 @@ export interface NodeRetainedOptions {
   fingerprint(context: Context, allocation: Allocation): Promise<string>;
   assertExecutionCurrent(fence: unknown): Promise<void>;
 }
+export const runtimeReplacedReminder = 'The sandbox of this session was replaced with a fresh one after a sandbox environment update. '
+  + 'Files under /workspace and elsewhere in the sandbox, installed packages, running processes and the browser profile '
+  + 'from earlier turns are gone; files in /mnt/session/outputs and memory stores under /mnt/memory are kept, and '
+  + 'this conversation and its history are intact. Recreate anything from the old sandbox that you still need.';
 const key = (scope: Omit<Scope, 'workId'>) => JSON.stringify([scope.workspaceId, scope.environmentId, scope.sessionId]);
 const scopeOf = (context: Pick<Context, 'workspaceId' | 'sessionId' | 'session' | 'environment'>) => {
   if (context.session.id !== context.sessionId || context.session.environmentId !== context.environment.id) throw Error('retained_scope_mismatch');
@@ -93,15 +97,16 @@ export class NodeRetainedLifecycle {
     if (!lifetime.binds && !this.entries.has(scopeKey) && !this.archives.has(scopeKey)
       && this.lifetimes.get(scopeKey) === lifetime) this.lifetimes.delete(scopeKey);
   }
-  async bind(context: Context): Promise<void> {
+  /** Resolves false when a warm sandbox's retained configuration changed: the caller must destroy it and prepare a new one. */
+  async bind(context: Context): Promise<boolean> {
     const scope = scopeOf(context), scopeKey = key(scope);
     const lifetime = this.lifetimes.get(scopeKey) ?? { final: false, binds: 0 };
     this.lifetimes.set(scopeKey, lifetime);
     lifetime.binds++;
-    try { await this.bindOpen(context, scope, lifetime); }
+    try { return await this.bindOpen(context, scope, lifetime); }
     finally { lifetime.binds--; this.releaseLifetime(scopeKey, lifetime); }
   }
-  private async bindOpen(context: Context, scope: Omit<Scope, 'workId'>, lifetime: Lifetime): Promise<void> {
+  private async bindOpen(context: Context, scope: Omit<Scope, 'workId'>, lifetime: Lifetime): Promise<boolean> {
     this.assertOpen(lifetime);
     if (!context.executionFence) throw Error('retained_execution_fence_required');
     await this.options.assertExecutionCurrent(context.executionFence);
@@ -119,10 +124,10 @@ export class NodeRetainedLifecycle {
       if (entry.allocation) {
         const fingerprint = await this.options.fingerprint(context, entry.allocation);
         this.assertOpen(lifetime);
-        if (entry.controller && fingerprint !== entry.controller.options.fingerprint) throw Error('retained_configuration_changed');
+        if (entry.controller && fingerprint !== entry.controller.options.fingerprint) return false;
       }
       entry.context = context;
-      return;
+      return true;
     }
     entry = { lifetime, context, started: false };
     this.entries.set(key(scope), entry);
@@ -142,6 +147,7 @@ export class NodeRetainedLifecycle {
       const operations = new RetainedBoxOperations(use);
       return Object.assign(operations, { stop: () => this.idleEntry(owned) });
     });
+    return true;
   }
   private async ensureActive(entry: Entry): Promise<void> {
     this.assertOpen(entry.lifetime);
@@ -161,6 +167,10 @@ export class NodeRetainedLifecycle {
       .finally(() => { if (entry.finalizing === finalizing) entry.finalizing = undefined; });
     entry.finalizing = finalizing;
     await finalizing;
+  }
+  takeRuntimeReplacedReminder(context: Pick<Context, 'workspaceId' | 'sessionId' | 'environment'>): string | null {
+    const entry = this.entries.get(key({ workspaceId: context.workspaceId, environmentId: context.environment.id, sessionId: context.sessionId }));
+    return entry?.controller?.takeRuntimeReplaced() ? runtimeReplacedReminder : null;
   }
   async idle(context: Pick<Context, 'workspaceId' | 'sessionId' | 'session' | 'environment'>): Promise<void> {
     const entry = this.entries.get(key(scopeOf(context)));
