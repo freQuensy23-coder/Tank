@@ -1,4 +1,5 @@
 import base64
+import http.client
 import importlib.util
 import re
 from pathlib import Path
@@ -44,6 +45,7 @@ class FakeApi:
         built_files=None,
         retag_during_build=False,
         lost_tag_response=False,
+        tag_writes_fail=False,
     ):
         self.tagged = OLD
         self.builds = {
@@ -54,6 +56,7 @@ class FakeApi:
         self.built_files = built_files
         self.retag_during_build = retag_during_build
         self.lost_tag_response = lost_tag_response
+        self.tag_writes_fail = tag_writes_fail
         self.calls = []
 
     def request(self, method, path, body=None):
@@ -65,6 +68,8 @@ class FakeApi:
             if self.lost_tag_response:
                 self.lost_tag_response = False
                 raise apify_worker.PublishError("Apify PUT /actors failed with HTTP 504")
+            if self.tag_writes_fail:
+                raise apify_worker.PublishError("Apify PUT /actors failed with HTTP 503")
             return {}
         if method == "PUT" and path.endswith("/versions/" + apify_worker.VERSION):
             self.version = body
@@ -129,6 +134,27 @@ def test_a_failed_retag_points_direct_back_before_failing(tmp_path):
     assert api.tagged == OLD
     tag_writes = [call for call in api.calls if call == ("PUT", "/actors/" + apify_worker.ACTOR_ID)]
     assert len(tag_writes) == 2
+
+
+def test_a_failed_restore_after_a_failed_retag_names_both_builds(tmp_path):
+    root = worker_dir(tmp_path)
+    api = FakeApi({"main.py": b"print('v1')\n"}, tag_writes_fail=True)
+    with pytest.raises(apify_worker.PublishError, match=f"may point at {NEW}; restoring {OLD} failed"):
+        apify_worker.Worker(api).publish(root, SHA)
+
+
+def test_a_truncated_response_is_a_publish_error(monkeypatch):
+    class Truncated:
+        def __enter__(self):
+            raise http.client.IncompleteRead(b"{")
+
+        def __exit__(self, *exc):
+            return False
+
+    api = apify_worker.Api("token")
+    monkeypatch.setattr(api.opener, "open", lambda *args, **kwargs: Truncated())
+    with pytest.raises(apify_worker.PublishError, match="transport or JSON failure"):
+        api.request("PUT", "/actors/" + apify_worker.ACTOR_ID, {})
 
 
 def test_build_deadline_stops_waiting(tmp_path):

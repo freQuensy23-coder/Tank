@@ -14,6 +14,7 @@ at the previous build before failing. The API token is read from the host `.env`
 """
 
 import base64
+import http.client
 import json
 import re
 import sys
@@ -78,7 +79,7 @@ class Api:
                 value = json.load(response)
         except urllib.error.HTTPError as error:
             raise PublishError(f"Apify {method} {path.split('?')[0]} failed with HTTP {error.code}") from None
-        except (OSError, ValueError):
+        except (OSError, ValueError, http.client.HTTPException):
             raise PublishError(f"Apify {method} {path.split('?')[0]} transport or JSON failure") from None
         require(isinstance(value, dict) and isinstance(value.get("data"), dict), "invalid Apify response")
         return value["data"]
