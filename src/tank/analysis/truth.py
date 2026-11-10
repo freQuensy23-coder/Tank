@@ -17,13 +17,14 @@ from bisect import bisect_left, bisect_right
 from collections import defaultdict
 from contextvars import ContextVar
 from copy import deepcopy
-from datetime import timedelta
+from dataclasses import replace
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal, getcontext, localcontext
 from functools import wraps
-from math import log
-from statistics import mean, median, stdev
+from statistics import mean, median
+from types import SimpleNamespace
 
-from tank.analysis import compute_workers
+from tank.analysis import compute_workers, truth_sql
 from tank.market.capture import event_anchor
 from tank.time_precision import Timestamp, chosen_boundary, offset_schedule, propagate_timestamp
 from tank.util import iso, jsonable, new_id, parse_time
@@ -129,33 +130,6 @@ def missing(reason="INCOMPLETE", unit=None):
     }
 
 
-class StatisticalPopulation:
-    """Compact immutable float statistics with one exact ordering, never monetary storage."""
-
-    def __init__(self, values, ordered=None):
-        self.values = array("d", values)
-        self.ordered = array("d", sorted(self.values) if ordered is None else ordered)
-        self._negative = None
-
-    def __len__(self):
-        return len(self.values)
-
-    def __iter__(self):
-        return iter(self.values)
-
-    def __getitem__(self, index):
-        return self.values[index]
-
-    def scaled(self, sign):
-        if sign == 1:
-            return self
-        if self._negative is None:
-            self._negative = StatisticalPopulation(
-                (-v for v in self.values), (-v for v in reversed(self.ordered))
-            )
-        return self._negative
-
-
 def remember(cache, key, build):
     if cache is None:
         return build()
@@ -181,11 +155,7 @@ def remember_latest(cache, key, head, build):
 
 
 def percentile(values, p):
-    s = (
-        values.ordered
-        if isinstance(values, StatisticalPopulation)
-        else sorted(v for v in values if v is not None)
-    )
+    s = sorted(v for v in values if v is not None)
     if not s:
         return None
     k = (len(s) - 1) * p
@@ -198,25 +168,6 @@ def percentile(values, p):
 def normal(values):
     qs = parameter("normal_range_quantiles", [0.025, 0.975])
     return [percentile(values, float(qs[0])), percentile(values, float(qs[1]))] if values else None
-
-
-def float_normal(values):
-    """normal() for measures built with float arithmetic (beta-adjusted returns): a zero-width
-    range there ([x, x] up to 1e-12) comes from identical history and float noise alone could
-    exceed it (BTC-adjusted returns of BTC are ~1e-16 around 0), so it is unavailable
-    (DEGENERATE_HISTORY). Exact Decimal measures (OI, funding, volume) keep normal()."""
-    r = normal(values)
-    if r is None or None in r:
-        return r
-    lo, hi = float(r[0]), float(r[1])
-    return None if abs(hi - lo) <= 1e-12 * max(1.0, abs(lo), abs(hi)) else r
-
-
-def range_reason(values):
-    """Why float_normal(values) is unavailable: INCOMPLETE (no history) or DEGENERATE_HISTORY."""
-    if not values:
-        return "INCOMPLETE"
-    return "DEGENERATE_HISTORY" if float_normal(values) is None else None
 
 
 def beyond(v, r):
@@ -253,43 +204,6 @@ def oi_class(dn, du, dec, nrange, urange):
     if ub is None:
         return None
     return "PRICE_MARKUP" if ub else "MIXED"
-
-
-def beta(token, benchmark):
-    pairs = [(benchmark[t], token[t]) for t in token.keys() & benchmark.keys()]
-    if len(pairs) < int(parameter("history_min_days", 7)) * 24:
-        return 1.0, "INSUFFICIENT_HISTORY"
-    x, y = zip(*pairs, strict=False)
-    xm, ym = mean(x), mean(y)
-    den = sum((v - xm) ** 2 for v in x)
-    weight = float(parameter("beta_blume_weight", 2 / 3))
-    return (
-        (weight * sum((a - xm) * (b - ym) for a, b in pairs) / den + (1 - weight), None)
-        if den
-        else (1.0, "NOT_ESTIMABLE")
-    )
-
-
-def market_context(r, rv, returns, vols):
-    rr, vr = normal(returns), normal(vols)
-    if not rr or not vr or r is None or rv is None:
-        return None
-    return "STRESS" if r < rr[0] or rv > vr[1] else "HEADWIND" if r < percentile(returns, 0.25) else "NEUTRAL"
-
-
-def repricing(value, event_history, day_history):
-    er, dr = float_normal(event_history), float_normal(day_history)
-    if value is None:
-        return None
-    if dr and value > dr[1]:
-        return "HEAVY"
-    if not er:
-        return None
-    if value < er[0]:
-        return "NEGATIVE"
-    if value > er[1]:
-        return "SUBSTANTIAL"
-    return "EARLY" if value > percentile(event_history, 0.75) else "UNPRICED"
 
 
 def _time(row):
@@ -492,46 +406,6 @@ def flow_window(snapshot, iid, start, end):
             return None
         bars.extend(dict(piece, minute_start=piece["start"], segment_end=piece["end"]) for piece in pieces)
     return bars
-
-
-def flow_reference(snapshot, iid, boundary):
-    points = list(snapshot.get("reference_points", []))
-    for bar in snapshot.get("flow_bars", []):
-        if bar.get("instrument_id") != iid:
-            continue
-        points.extend(dict(point, instrument_id=iid) for point in (bar.get("reference_points") or []))
-        if bar.get("complete") is True and _time(bar) + timedelta(minutes=1) == boundary:
-            points.append(
-                dict(
-                    instrument_id=iid, boundary=iso(boundary), complete=True, last_trade=bar.get("last_trade")
-                )
-            )
-    eligible = [
-        p
-        for p in points
-        if p.get("instrument_id") == iid
-        and p.get("boundary")
-        and parse_time(p["boundary"]) == boundary
-        and p.get("complete") is True
-        and _available(p, snapshot)
-        and (
-            snapshot.get("assembled_at") is None
-            or p.get("observed_at") is None
-            or parse_time(p["observed_at"]) <= parse_time(snapshot["assembled_at"])
-        )
-    ]
-    if not eligible:
-        return None
-    trades = [
-        p["last_trade"]
-        for p in eligible
-        if p.get("last_trade")
-        and _time(p["last_trade"]) is not None
-        and _time(p["last_trade"]) < boundary
-        and _available(p["last_trade"], snapshot)
-        and decimal(p["last_trade"].get("price")) is not None
-    ]
-    return dict(max(trades, key=_time), instrument_id=iid) if trades else None
 
 
 @precise
@@ -1398,93 +1272,40 @@ def derivatives_truth(snapshot, start, end):
     )
 
 
-def _prices(snapshot, token=None, *, exact=False, reference_only=False):
-    inputs = _ASSESSMENT_INPUTS.get()
-    if exact or inputs is None:
-        return _price_groups(snapshot, token, exact=exact, reference_only=reference_only)
-    candles = snapshot.get("klines")
-    projected = snapshot.get("stat_price_series")
-    key = (id(candles), id(projected), snapshot["cutoff"], token)
-    prices = inputs.setdefault("prices", {})
-    if key not in prices:
-        prices[key] = (candles, projected, _price_groups(snapshot, token))
-    return prices[key][2]
+AS_OF_ALL = datetime(2299, 12, 31, tzinfo=UTC)
+DEFI_SECTORS = (
+    "DEX_EXECUTION",
+    "LENDING_CREDIT",
+    "PERP_DEX",
+    "RWA",
+    "INTEROPERABILITY",
+    "SYNTHETIC_DOLLAR",
+)
 
 
-def _price_groups(snapshot, token=None, *, exact=False, reference_only=False):
-    groups = defaultdict(dict)
-    references = {}
-    cutoff = parse_time(snapshot["cutoff"])
-    for r in snapshot.get("klines", []):
-        if r.get("complete") is not True or _market(r) != "SPOT":
-            continue
-        if token and r.get("token_id") != token and token not in r.get("instrument_id", "").upper():
-            continue
-        t = kline_close_time(r) or _time(r) + timedelta(seconds=int(r.get("interval_s", 60)))
-        raw = r.get("c", r.get("close"))
-        if exact and reference_only:
-            raw = raw.get("value") if isinstance(raw, dict) else raw
-            price = None if raw is None else raw if isinstance(raw, Decimal) else Decimal(str(raw))
-        else:
-            price = (decimal if exact else number)(raw)
-        if price and t <= cutoff:
-            if exact and reference_only:
-                latest, hourly = references.setdefault(r["instrument_id"], [None, None])
-                if latest is None or t >= latest[0]:
-                    references[r["instrument_id"]][0] = (t, price)
-                if t.minute == 0 and t.second == 0 and (hourly is None or t >= hourly[0]):
-                    references[r["instrument_id"]][1] = (t, price)
-            else:
-                groups[r["instrument_id"]][t] = price
-    if exact and reference_only:
-        return {
-            iid: {point[0]: decimal(point[1]) for point in points if point is not None}
-            for iid, points in references.items()
-        }
-    if not exact:
-        epoch = parse_time("1970-01-01T00:00:00Z")
-        for iid, projected in (snapshot.get("stat_price_series") or {}).items():
-            if projected.get("time_basis") != "CLOSE_TIME":
-                continue
-            if token and projected.get("token_id") != token:
-                continue
-            for micros, value in zip(
-                projected.get("times_us", ()), projected.get("values", ()), strict=False
-            ):
-                t = epoch + timedelta(microseconds=int(micros))
-                price = number(value)
-                if price and price > 0 and t <= cutoff:
-                    groups[iid][t] = price
-    return groups
+def _knob(config, name, default):
+    return (config or {}).get(name, default)
 
 
-def relative_truth(snapshot, start, end, *, include_outcome=True):
-    groups = _prices(snapshot)
-    exact_groups = _prices(snapshot, exact=True, reference_only=True)
+def relative_registry(snapshot):
+    """The registry facts the price-relative rules need, from the snapshot's instruments, klines,
+    tokens and sector baskets: which token an instrument belongs to, each token's symbol and sector,
+    and the instrument chosen for a token (the spot instrument with the most one-minute closes in
+    the look-back, `series_coverage_counts`)."""
     token_id = snapshot.get("token_id", "")
     token_symbols = {
         r["token_id"]: r["symbol"].upper()
         for r in snapshot.get("tokens", [])
         if r.get("token_id") and r.get("symbol")
     }
-    identities = {
-        r["instrument_id"]: r.get("token_id")
-        for r in snapshot.get("instruments", [])
-        if r.get("instrument_id")
-    }
-    identities.update(
-        {
-            r["instrument_id"]: r["token_id"]
-            for r in snapshot.get("klines", [])
-            if r.get("instrument_id") and r.get("token_id")
-        }
-    )
-    identities.update(
-        {iid: row.get("token_id") for iid, row in (snapshot.get("stat_price_series") or {}).items()}
-    )
-    coverage_counts = dict(snapshot.get("series_coverage_counts") or {})
-    for iid, projected in (snapshot.get("stat_price_series") or {}).items():
-        coverage_counts.setdefault(iid, projected.get("coverage_count", len(groups.get(iid, {}))))
+    identities = {}
+    spot = set()
+    for r in [*snapshot.get("instruments", []), *snapshot.get("klines", [])]:
+        iid = r.get("instrument_id")
+        if iid and r.get("token_id"):
+            identities[iid] = r["token_id"]
+            if _market(r) == "SPOT":
+                spot.add(iid)
     for r in snapshot.get("instruments", []):
         if r.get("token_id") and (r.get("base_asset") or r.get("base_symbol")):
             token_symbols.setdefault(r["token_id"], str(r.get("base_asset", r.get("base_symbol"))).upper())
@@ -1492,244 +1313,21 @@ def relative_truth(snapshot, start, end, *, include_outcome=True):
     for identity in identities.values():
         if identity:
             token_symbols.setdefault(identity, str(identity).split(":")[-1].upper())
-    candidates = {iid: p for iid, p in groups.items() if identities.get(iid) == token_id}
-    ref_coverage = {}
-    volumes = {}
-    for iid in candidates:
-        instrument = next(
-            (i for i in snapshot.get("instruments", []) if i.get("instrument_id") == iid),
-            dict(instrument_id=iid, market_type="SPOT"),
-        )
-        bars = [r for r in snapshot.get("flow_bars", []) if r.get("instrument_id") == iid]
-        coverage = spot_truth(
-            bars,
-            [],
-            [instrument],
-            end - timedelta(days=1),
-            end,
-            flow_segments=flow_segments(snapshot),
-            assembled_at=snapshot.get("assembled_at"),
-        )
-        observed = coverage["venues"][0] if coverage["venues"] else None
-        ref_coverage[iid] = dict(
-            complete=observed is not None,
-            expected_duration_s=86400,
-            boundary_segments=observed.get("boundary_segments", []) if observed else [],
-            excluded=coverage["coverage"]["excluded"],
-            volume_unit="NATIVE_TOKEN",
-            covered_volume_native=observed["volume_native"] if observed else None,
-        )
-        if observed is not None:
-            volumes[iid] = observed["volume_native"]
-    ref = max(volumes, key=volumes.get) if volumes else None
-    prices = candidates.get(ref, {})
+    counts = snapshot.get("series_coverage_counts")
+    counts = counts if isinstance(counts, dict) else None
 
-    def series(symbol):
-        matches = {iid: p for iid, p in groups.items() if token_symbols.get(identities.get(iid)) == symbol}
-        return (
-            matches[max(matches, key=lambda iid: coverage_counts.get(iid, len(matches[iid])))]
-            if matches
-            else {}
-        )
-
-    cutoff_row = flow_reference(snapshot, ref, end)
-    anchor_row = flow_reference(snapshot, ref, start)
-    anchor_price = decimal(anchor_row.get("price")) if anchor_row else None
-    btc = series("BTC")
-    eth = series("ETH")
-    history_end = start
-    cache = _BASELINE_CACHE.get()
-    history_head = snapshot.get("relative_history_dependency_fingerprint")
-    if history_head is None and cache is not None:
-        history_head = history_fingerprint(
-            [(iid, [(t, v) for t, v in rows.items() if t < start]) for iid, rows in groups.items()]
-        )
-    elif history_head is not None and not isinstance(history_head, str):
-        history_head = fingerprint(history_head)
-    scope = (
-        history_head,
-        iso(start),
-        lookback_days(),
-        parameter("history_min_days", 7),
-        parameter("beta_blume_weight", 2 / 3),
-    )
-
-    def series_id(p):
-        return tuple(iid for iid, rows in groups.items() if rows is p)
-
-    def hourly_values(p):
-        return {
-            t: log(p[t] / p[t - timedelta(hours=1)])
-            for t in p
-            if t.minute == 0
-            and t.second == 0
-            and t < history_end
-            and t - timedelta(hours=1) in p
-            and t >= history_end - timedelta(days=lookback_days())
-        }
-
-    def hourly(p):
-        return remember(cache, ("relative_hourly", scope, series_id(p)), lambda: hourly_values(p))
-
-    bb, bflag = remember(
-        cache,
-        ("relative_beta", scope, series_id(prices), series_id(btc)),
-        lambda: beta(hourly(prices), hourly(btc)),
-    )
-    be, eflag = remember(
-        cache,
-        ("relative_beta", scope, series_id(prices), series_id(eth)),
-        lambda: beta(hourly(prices), hourly(eth)),
-    )
-    price_times = {}
-
-    def price(p, t):
-        times = price_times.setdefault(id(p), sorted(p)) if id(p) not in price_times else price_times[id(p)]
-        index = bisect_right(times, t) - 1
-        return p[times[index]] if index >= 0 else None
-
-    def ret(p, a, z):
-        pa, pz = price(p, a), price(p, z)
-        return pz / pa - 1 if pa and pz else None
-
-    def fresh_price(p, t):
-        """A benchmark/peer price at t only if its last point is within that series' own bar
-        spacing: a base-tier outage must not turn two copies of one old close into a 0 return."""
-        times = price_times.setdefault(id(p), sorted(p)) if id(p) not in price_times else price_times[id(p)]
-        index = bisect_right(times, t) - 1
-        if index < 0:
+    def chosen(ids):
+        ids = sorted(ids)
+        if not ids:
             return None
-        step = (times[index] - times[index - 1]).total_seconds() if index > 0 else 60
-        return p[times[index]] if (t - times[index]).total_seconds() <= max(step, 60) else None
+        best = max(ids, key=lambda iid: counts.get(iid, 0) if counts is not None else 1)
+        return best if counts is None or counts.get(best, 0) > 0 else None
 
-    def bench_ret(p, a, z):
-        pa, pz = fresh_price(p, a), fresh_price(p, z)
-        return pz / pa - 1 if pa and pz else None
+    def of_token(identity):
+        return [iid for iid in spot if identities.get(iid) == identity]
 
-    benchmark = token_symbols.get(token_id) == "BTC"
-    historical_times = sorted(t for t in prices if t < start)
-    deltas = [
-        (b - a).total_seconds() for a, b in zip(historical_times, historical_times[1:], strict=False) if b > a
-    ]
-    history_resolution_s = int(median(deltas)) if deltas else None
-    history_diagnostics = {}
-
-    def hist_values(length):
-        if (
-            not historical_times
-            or (historical_times[-1] - historical_times[0]).total_seconds()
-            < float(parameter("history_min_days", 7)) * 86400
-        ):
-            return []
-        out = []
-        durations = []
-        stalenesses = []
-        ends = []
-
-        for t in historical_times:
-            target = t - timedelta(seconds=length)
-            i = bisect_left(historical_times, target)
-            if i == len(historical_times) or historical_times[i] != target:
-                i -= 1
-            if i < 0:
-                continue
-            a = historical_times[i]
-            lag = (target - a).total_seconds()
-            if (
-                a < start - timedelta(days=lookback_days())
-                or lag >= history_resolution_s
-                or not benchmark
-                and (t not in btc or a not in btc)
-            ):
-                continue
-            out.append(
-                prices[t] / prices[a] - 1
-                if benchmark
-                else prices[t] / prices[a] - 1 - bb * (btc[t] / btc[a] - 1)
-            )
-            durations.append((t - a).total_seconds())
-            stalenesses.append(lag)
-            ends.append(t)
-        history_diagnostics[length] = dict(
-            target_window_duration_s=length,
-            observed_duration_bounds_s=[min(durations), max(durations)] if durations else None,
-            endpoint_staleness_bounds_s=[min(stalenesses), max(stalenesses)] if stalenesses else None,
-            exact=bool(stalenesses) and max(stalenesses) == 0,
-            resolution_s=history_resolution_s,
-            alignment="AS_OF_AT_EXACT_TARGET_BOUNDS",
-            sample_count=len(out),
-            latest_observed_at=iso(max(ends)) if ends else None,
-        )
-        return out
-
-    def hist(length):
-        key = ("relative_hist", scope, ref, series_id(btc), bb, benchmark, length)
-
-        def build():
-            values = hist_values(length)
-            return StatisticalPopulation(values) if cache is not None else values, deepcopy(
-                history_diagnostics.get(length, {})
-            )
-
-        values, diagnostic = remember(cache, key, build)
-        if diagnostic:
-            history_diagnostics[length] = diagnostic
-        return values
-
-    windows = {}
-    for name, length in dict(WINDOWS, EVENT=(end - start).total_seconds()).items():
-        a = end - timedelta(seconds=length)
-        r = (
-            (
-                float(
-                    (
-                        decimal(cutoff_row.get("price", cutoff_row.get("p")))
-                        if cutoff_row
-                        else price(exact_groups.get(ref, {}), end)
-                    )
-                    / anchor_price
-                    - 1
-                )
-                if anchor_price and (cutoff_row or price(prices, end))
-                else None
-            )
-            if name == "EVENT"
-            else ret(prices, a, end)
-        )
-        rb = bench_ret(btc, a, end)
-        re = bench_ret(eth, a, end)
-        adj = r - bb * rb if r is not None and rb is not None and not benchmark else None
-        measure = r if benchmark else adj
-        h = hist(length)
-        windows[name] = dict(
-            window=name,
-            start=iso(a),
-            cutoff=iso(end),
-            observed_at=iso(max(prices)) if prices else None,
-            precision=f"BUCKET({int(next((r.get('interval_s', 60) for r in reversed(snapshot.get('klines', [])) if r.get('instrument_id') == ref), 60))}s)"
-            if prices
-            else None,
-            coverage={"reference_venue": ref, "complete_24h": bool(ref)},
-            r_raw=r,
-            r_btc_adj=adj,
-            r_btc_adj_reason="NOT_APPLICABLE_BENCHMARK" if benchmark else None,
-            relative_measure="R_RAW" if benchmark else "R_BTC_ADJ",
-            relative_return=measure,
-            r_eth_adj=r - be * re if r is not None and re is not None else None,
-            r_sector_adj=None,
-            sector_reason="NOT_ESTIMABLE",
-            pctile=ratio(sum(x <= measure for x in h), len(h)) if measure is not None and h else None,
-            normal_range=float_normal(h),
-            normal_range_reason=range_reason(h),
-            beyond_normal=beyond(measure, float_normal(h)),
-            historical_window_resolution_s=history_resolution_s,
-            historical_window_duration_s=length,
-            requested_window_duration_s=length,
-            historical_alignment="AS_OF_AT_EXACT_TARGET_BOUNDS",
-            historical_measurement=history_diagnostics.get(
-                length, {"exact": False, "reason": "INCOMPLETE", "target_window_duration_s": length}
-            ),
-        )
+    def of_symbol(symbol):
+        return [iid for iid in spot if token_symbols.get(identities.get(iid)) == symbol]
 
     sector_members = defaultdict(list)
     token_sectors = {}
@@ -1744,39 +1342,325 @@ def relative_truth(snapshot, start, end, *, include_outcome=True):
             for identity in sector_members[basket["sector"]]:
                 token_sectors[identity] = basket["sector"]
     sector = token_sectors.get(token_id)
-
-    defi_sectors = (
-        "DEX_EXECUTION",
-        "LENDING_CREDIT",
-        "PERP_DEX",
-        "RWA",
-        "INTEROPERABILITY",
-        "SYNTHETIC_DOLLAR",
+    peers = [identity for identity in sector_members.get(sector, []) if identity != token_id]
+    defi = [
+        identity for name in DEFI_SECTORS for identity in sector_members.get(name, []) if identity != token_id
+    ]
+    return SimpleNamespace(
+        token_id=token_id,
+        token_symbols=token_symbols,
+        candidates=sorted(of_token(token_id)),
+        btc=chosen(of_symbol("BTC")),
+        eth=chosen(of_symbol("ETH")),
+        sector=sector,
+        peers={identity: chosen(of_token(identity)) for identity in dict.fromkeys(peers + defi)},
+        sector_peers=peers,
+        defi_peers=defi,
+        benchmark=token_symbols.get(token_id) == "BTC",
     )
 
-    def peer_series(identity):
-        matches = {iid: p for iid, p in groups.items() if identities.get(iid) == identity}
-        return (
-            matches[max(matches, key=lambda iid: coverage_counts.get(iid, len(matches[iid])))]
-            if matches
-            else {}
+
+def reference_choice(references, candidates):
+    """The reference venue: the candidate instrument of the token with a price and the largest native
+    volume over a complete 24 hours of flow (the first by instrument id on equal volume)."""
+    volumes = {
+        r.instrument_id: r.flow_volume_native
+        for r in references
+        if r.instrument_id in candidates and r.last_close is not None and r.flow_volume_native is not None
+    }
+    return max(volumes, key=volumes.get) if volumes else None
+
+
+def _trade(raw, iid):
+    return dict(json.loads(raw), instrument_id=iid) if raw else None
+
+
+def event_raw_return(reference):
+    """The EVENT raw return from the trade prices at the anchor and at the cutoff (the last close
+    stands in for a missing cutoff trade); None without an anchor price."""
+    if reference is None:
+        return None
+    anchor, entry = (
+        _trade(reference.anchor_trade, reference.instrument_id),
+        _trade(reference.entry_trade, reference.instrument_id),
+    )
+    anchor_price = Decimal(str(anchor["price"])) if anchor else None
+    entry_price = Decimal(str(entry["price"])) if entry else reference.last_close
+    if not anchor_price or not entry_price:
+        return None
+    return float(entry_price / anchor_price - 1)
+
+
+OUTCOME_HORIZONS = (("W12H", 43200), ("W3D", 259200), ("W7D", 604800))
+
+
+def _horizon_plan(start, end, include_outcome):
+    plan = [(name, seconds, end) for name, seconds in WINDOWS.items()]
+    plan.append(("EVENT", (end - start).total_seconds(), end))
+    plan.append(("PRE24H", 86400, start))
+    if include_outcome:
+        plan.extend((name, seconds, end) for name, seconds in OUTCOME_HORIZONS)
+    return plan
+
+
+def _time_param(value):
+    return value.astimezone(UTC).strftime("%Y-%m-%d %H:%M:%S.%f")
+
+
+async def relative_evidence(ch, snapshot, start, end, config, *, include_outcome=True, baselines=True):
+    """Run the price-relative statements of a snapshot (03 section 5.7) and return their records.
+
+    `baselines=False` reads only the reference prices (the hourly close of the reference venue)."""
+    registry = relative_registry(snapshot)
+    assembled = parse_time(snapshot["assembled_at"]) if snapshot.get("assembled_at") else AS_OF_ALL
+    lookback_s = (
+        int(_knob(config, "historical_lookback_days", _knob(config, "base_retention_days", 90))) * 86400
+    )
+    ids = list(dict.fromkeys([*registry.candidates, *([registry.btc] if registry.btc else [])]))
+    common = dict(cutoff=end, assembled=assembled, lookback_s=lookback_s)
+    jobs = [truth_sql.fetch(ch, truth_sql.ReferencePrice, instrument_ids=ids, start=start, **common)]
+    if baselines:
+        peer_ids = {
+            registry.peers[identity] for identity in registry.sector_peers if registry.peers[identity]
+        }
+        if len(peer_ids) < 2:
+            peer_ids |= {
+                registry.peers[identity] for identity in registry.defi_peers if registry.peers[identity]
+            }
+        names = [name for name, _ in sorted(WINDOWS.items(), key=lambda item: item[1])] + ["EVENT"]
+        lengths = dict(WINDOWS, EVENT=(end - start).total_seconds())
+        if peer_ids:
+            jobs.append(
+                truth_sql.fetch(
+                    ch,
+                    truth_sql.SectorReturn,
+                    peer_ids=sorted(peer_ids),
+                    names=names,
+                    starts=[_time_param(end - timedelta(seconds=lengths[name])) for name in names],
+                    ends=[_time_param(end)] * len(names),
+                    **common,
+                )
+            )
+    references, *rest = await asyncio.gather(*jobs)
+    peers = rest[0] if rest else []
+    ref = reference_choice(references, registry.candidates)
+    evidence = truth_sql.RelativeEvidence(
+        ref=ref, btc=registry.btc, eth=registry.eth, references=tuple(references), peers=tuple(peers)
+    )
+    if not baselines:
+        return evidence
+    by_instrument = {r.instrument_id: r for r in references}
+    plan = _horizon_plan(start, end, include_outcome)
+    raw = event_raw_return(by_instrument.get(ref))
+    horizons = await truth_sql.fetch(
+        ch,
+        truth_sql.RelativeHorizon,
+        ref=ref or "",
+        btc=registry.btc or "",
+        eth=registry.eth or "",
+        is_btc=int(registry.benchmark),
+        start=start,
+        blume=float(_knob(config, "beta_blume_weight", 2 / 3)),
+        min_pairs=int(_knob(config, "history_min_days", 7)) * 24,
+        event_raw=float("nan") if raw is None else raw,
+        names=[name for name, _, _ in plan],
+        lens_us=[str(round(seconds * 1_000_000)) for _, seconds, _ in plan],
+        ends=[_time_param(at) for _, _, at in plan],
+        **common,
+    )
+    return replace(evidence, horizons=tuple(horizons))
+
+
+def float_range(low, high):
+    """The 90-day normal range of a measure built with float arithmetic: None when the history is
+    missing or when a zero-width range (identical history, float noise alone could exceed it) makes
+    it unavailable (DEGENERATE_HISTORY)."""
+    if low is None or high is None:
+        return None
+    return None if abs(high - low) <= 1e-12 * max(1.0, abs(low), abs(high)) else [low, high]
+
+
+def history_usable(first, last):
+    """The history needs at least history_min_days between its first and last close."""
+    return bool(
+        first and last and (last - first).total_seconds() >= float(parameter("history_min_days", 7)) * 86400
+    )
+
+
+def beta_flag(pairs, ols):
+    if pairs < int(parameter("history_min_days", 7)) * 24:
+        return "INSUFFICIENT_HISTORY"
+    return "NOT_ESTIMABLE" if ols is None else None
+
+
+def repricing(value, event, day, sign):
+    """The repricing band of a signed EVENT measure against the 90-day history of the EVENT window and of
+    the 24 h window: each history is (q025, q25, q75, q975), None where it is unavailable; with
+    sign -1 (a loser) the histories are mirrored."""
+
+    def mirrored(history):
+        low, lower, upper, high = history[:4]
+        if sign == 1:
+            return float_range(low, high), upper
+        return float_range(None if high is None else -high, None if low is None else -low), (
+            None if lower is None else -lower
         )
 
-    peers = [identity for identity in sector_members.get(sector, []) if identity != token_id]
-    tradable = [identity for identity in peers if peer_series(identity)]
+    er, upper = mirrored(event)
+    dr, _ = mirrored(day)
+    if value is None:
+        return None
+    if dr and value > dr[1]:
+        return "HEAVY"
+    if not er:
+        return None
+    if value < er[0]:
+        return "NEGATIVE"
+    if value > er[1]:
+        return "SUBSTANTIAL"
+    return "EARLY" if value > upper else "UNPRICED"
+
+
+def market_context(r, rv, returns, vols):
+    """The BTC context: returns = (q025, q25) of the 24 h return and vols = (q025, q975) of the 24 h
+    realised volatility over the 90-day history."""
+    if None in returns or None in vols or r is None or rv is None:
+        return None
+    return "STRESS" if r < returns[0] or rv > vols[1] else "HEADWIND" if r < returns[1] else "NEUTRAL"
+
+
+def relative_truth(snapshot, start, end, *, include_outcome=True):
+    evidence = snapshot.get("relative_sql") or truth_sql.NO_RELATIVE
+    registry = relative_registry(snapshot)
+    ref, benchmark = evidence.ref, registry.benchmark
+    rows = {h.name: h for h in evidence.horizons}
+    by_instrument = {r.instrument_id: r for r in evidence.references}
+    reference = by_instrument.get(ref)
+    ref_coverage = {}
+    for r in evidence.references:
+        if r.instrument_id not in registry.candidates or r.last_close is None:
+            continue
+        complete = r.flow_volume_native is not None
+        ref_coverage[r.instrument_id] = dict(
+            complete=complete,
+            expected_duration_s=86400,
+            boundary_segments=[],
+            excluded=[]
+            if complete
+            else [
+                dict(
+                    venue=r.instrument_id.split(":")[0],
+                    reason="INCOMPLETE",
+                    detail=r.flow_detail,
+                )
+            ],
+            volume_unit="NATIVE_TOKEN",
+            covered_volume_native=r.flow_volume_native,
+        )
+    cutoff_row = _trade(reference.entry_trade, ref) if reference else None
+    anchor_row = _trade(reference.anchor_trade, ref) if reference else None
+    anchor_price = decimal(anchor_row.get("price")) if anchor_row else None
+    entry_price = (
+        decimal(cutoff_row.get("price")) if cutoff_row else reference.last_close if reference else None
+    )
+    last_close_at = reference.last_close_time if reference else None
+    any_horizon = next(iter(rows.values()), None)
+    bb = any_horizon.beta_btc if any_horizon else 1.0
+    be = any_horizon.beta_eth if any_horizon else 1.0
+    bflag = (
+        beta_flag(any_horizon.beta_btc_pairs, any_horizon.beta_btc_ols)
+        if any_horizon
+        else "INSUFFICIENT_HISTORY"
+    )
+    eflag = (
+        beta_flag(any_horizon.beta_eth_pairs, any_horizon.beta_eth_ols)
+        if any_horizon
+        else "INSUFFICIENT_HISTORY"
+    )
+    sample = any_horizon
+    resolution = (
+        int(sample.history_resolution_s) if sample and sample.history_resolution_s is not None else None
+    )
+    usable = bool(sample) and history_usable(sample.price_first_close, sample.price_last_close)
+    interval = next(
+        (
+            r.get("interval_s", 60)
+            for r in reversed(snapshot.get("klines", []))
+            if r.get("instrument_id") == ref
+        ),
+        60,
+    )
+
+    def history(h, length):
+        """The usable part of one horizon's history: its range, its sample count and diagnostics."""
+        n = h.sample_count if h is not None and usable else 0
+        diagnostic = None
+        if h is not None and usable:
+            k = -(-int(round(length * 1_000_000)) // 60_000_000)
+            duration, lag = float(k * 60), float(k * 60 - length)
+            diagnostic = dict(
+                target_window_duration_s=float(length),
+                observed_duration_bounds_s=[duration, duration] if n else None,
+                endpoint_staleness_bounds_s=[lag, lag] if n else None,
+                exact=bool(n) and lag == 0,
+                resolution_s=resolution,
+                alignment="AS_OF_AT_EXACT_TARGET_BOUNDS",
+                sample_count=n,
+                latest_observed_at=iso(h.history_last_end) if n else None,
+            )
+        return n, diagnostic
+
+    windows = {}
+    diagnostics = {}
+    lengths = dict(WINDOWS, EVENT=(end - start).total_seconds())
+    for name, length in lengths.items():
+        h = rows.get(name)
+        n, diagnostic = history(h, length)
+        diagnostics[name] = diagnostic
+        r = h.raw_return if h else None
+        adj = None if benchmark else h.btc_adjusted_return if h else None
+        measure = r if benchmark else adj
+        rng = float_range(h.history_q025, h.history_q975) if n else None
+        windows[name] = dict(
+            window=name,
+            start=iso(end - timedelta(seconds=length)),
+            cutoff=iso(end),
+            observed_at=iso(last_close_at) if last_close_at else None,
+            precision=f"BUCKET({int(interval)}s)" if last_close_at else None,
+            coverage={"reference_venue": ref, "complete_24h": bool(ref)},
+            r_raw=r,
+            r_btc_adj=adj,
+            r_btc_adj_reason="NOT_APPLICABLE_BENCHMARK" if benchmark else None,
+            relative_measure="R_RAW" if benchmark else "R_BTC_ADJ",
+            relative_return=measure,
+            r_eth_adj=h.eth_adjusted_return if h else None,
+            r_sector_adj=None,
+            sector_reason="NOT_ESTIMABLE",
+            pctile=h.percentile if n and measure is not None else None,
+            normal_range=rng,
+            normal_range_reason="INCOMPLETE" if not n else "DEGENERATE_HISTORY" if rng is None else None,
+            beyond_normal=beyond(measure, rng),
+            historical_window_resolution_s=resolution,
+            historical_window_duration_s=length,
+            requested_window_duration_s=length,
+            historical_alignment="AS_OF_AT_EXACT_TARGET_BOUNDS",
+            historical_measurement=diagnostic
+            or {"exact": False, "reason": "INCOMPLETE", "target_window_duration_s": length},
+        )
+
+    sector = registry.sector
+    returns = {(r.instrument_id, r.name): r.peer_return for r in evidence.peers}
+    with_series = {r.instrument_id for r in evidence.peers}
+    tradable = [identity for identity in registry.sector_peers if registry.peers[identity] in with_series]
     if len(tradable) < 2:
-        tradable = [
-            identity
-            for name in defi_sectors
-            for identity in sector_members.get(name, [])
-            if identity != token_id and peer_series(identity)
-        ]
+        tradable = [identity for identity in registry.defi_peers if registry.peers[identity] in with_series]
     not_applicable = sector == "IDENTITY_PAYMENTS"
-    for name, length in dict(WINDOWS, EVENT=(end - start).total_seconds()).items():
+    for name in lengths:
         peer_returns = [
-            bench_ret(peer_series(identity), end - timedelta(seconds=length), end) for identity in tradable
+            returns.get((registry.peers[identity], name))
+            for identity in tradable
+            if returns.get((registry.peers[identity], name)) is not None
         ]
-        peer_returns = [v for v in peer_returns if v is not None]
         raw = windows[name]["r_raw"]
         windows[name]["r_sector_adj"] = (
             raw - mean(peer_returns)
@@ -1790,110 +1674,85 @@ def relative_truth(snapshot, start, end, *, include_outcome=True):
             if windows[name]["r_sector_adj"] is not None
             else "NOT_ESTIMABLE"
         )
-    eh = hist((end - start).total_seconds())
-    dh = hist(86400)
     sign = -1 if snapshot.get("expected_direction") in ("BEARISH", "LOSER", -1) else 1
     eventr = windows["EVENT"]["relative_return"]
-    br = bench_ret(btc, end - timedelta(days=1), end)
-    bh = []
-    rvhist = []
-    rv = None
-    btc_hourly = {t: p for t, p in btc.items() if t.minute == 0 and t.second == 0 and t.microsecond == 0}
+    pre = rows.get("PRE24H")
+    pre_n = pre.sample_count if pre is not None and usable else 0
+    n_event = diagnostics["EVENT"]["sample_count"] if diagnostics.get("EVENT") else 0
 
-    def btc_baseline():
-        bh = []
-        rvhist = []
-        for t in sorted(btc_hourly):
-            if t >= start or t < start - timedelta(days=lookback_days()):
-                continue
-            a = t - timedelta(days=1)
-            if a in btc:
-                bh.append(btc[t] / btc[a] - 1)
-            lr = [
-                log(btc_hourly[x] / btc_hourly[x - timedelta(hours=1)])
-                for x in btc_hourly
-                if a < x <= t and x - timedelta(hours=1) in btc_hourly
-            ]
-            if len(lr) == 24:
-                rvhist.append(stdev(lr))
-        return StatisticalPopulation(bh) if cache is not None else bh, StatisticalPopulation(
-            rvhist
-        ) if cache is not None else rvhist
+    def quantiles(h, n):
+        return (
+            (h.history_q025, h.history_q25, h.history_q75, h.history_q975)
+            if h is not None and n
+            else (None,) * 4
+        )
 
-    bh, rvhist = remember(cache, ("btc_context_history", scope, series_id(btc)), btc_baseline)
-    lr = [
-        log(btc_hourly[t] / btc_hourly[t - timedelta(hours=1)])
-        for t in btc_hourly
-        if end.replace(minute=0, second=0, microsecond=0) - timedelta(days=1)
-        < t
-        <= end.replace(minute=0, second=0, microsecond=0)
-        and t - timedelta(hours=1) in btc_hourly
-    ]
-    if len(lr) == 24:
-        rv = stdev(lr)
-    if not btc or (max(btc) - min(btc)).total_seconds() < float(parameter("history_min_days", 7)) * 86400:
-        bh = []
-        rvhist = []
-    context = market_context(br, rv, bh, rvhist)
-    pre = ret(prices, start - timedelta(days=1), start)
-    preb = bench_ret(btc, start - timedelta(days=1), start)
-    ar = pre if benchmark else pre - bb * preb if pre is not None and preb is not None else None
+    ar = pre.measure if pre is not None else None
+    event_row = rows.get("EVENT")
+    ctx_usable = bool(sample) and history_usable(sample.btc_first_close, sample.btc_last_close)
+    ctx = rows.get("W24H") or sample
+    br = ctx.btc_return if ctx else None
+    rv = ctx.btc_realized_vol_24h if ctx else None
+    return_q = (
+        (ctx.btc_return_24h_q025, ctx.btc_return_24h_q25, ctx.btc_return_24h_q975)
+        if ctx and ctx_usable and ctx.btc_return_24h_samples
+        else (None,) * 3
+    )
+    vol_q = (
+        (ctx.btc_realized_vol_24h_q025, ctx.btc_realized_vol_24h_q975)
+        if ctx and ctx_usable and ctx.btc_realized_vol_24h_samples
+        else (None,) * 2
+    )
+    context = market_context(br, rv, (return_q[0], return_q[1]), vol_q)
     horizon_ranges = {}
     for name, length in (
-        [
-            ("W1H", 3600),
-            ("W4H", 14400),
-            ("W12H", 43200),
-            ("W24H", 86400),
-            ("W3D", 259200),
-            ("W7D", 604800),
-        ]
+        [("W1H", 3600), ("W4H", 14400), ("W12H", 43200), ("W24H", 86400), ("W3D", 259200), ("W7D", 604800)]
         if include_outcome
         else []
     ):
-        history = hist(length)
-        diagnostic = history_diagnostics.get(length, {})
+        h = rows.get(name)
+        n, diagnostic = history(h, length)
         horizon_ranges[name] = dict(
-            value=float_normal(history),
+            value=float_range(h.history_q025, h.history_q975) if n else None,
             unit="DECIMAL_RETURN",
             window=name,
             start=iso(start - timedelta(days=lookback_days())),
             cutoff=iso(start),
-            observed_at=diagnostic.get("latest_observed_at"),
-            precision=f"BUCKET({history_resolution_s}s)" if history_resolution_s else None,
-            coverage={"sample_count": len(history)},
-            reason=None if history else "NOT_ESTIMABLE",
-            historical_measurement=diagnostic,
+            observed_at=diagnostic["latest_observed_at"] if diagnostic else None,
+            precision=f"BUCKET({resolution}s)" if resolution else None,
+            coverage={"sample_count": n},
+            reason=None if n else "NOT_ESTIMABLE",
+            historical_measurement=diagnostic or {},
         )
-    btc_ids = {iid: p for iid, p in groups.items() if token_symbols.get(identities.get(iid)) == "BTC"}
-    btc_iid = max(btc_ids, key=lambda iid: coverage_counts.get(iid, len(btc_ids[iid]))) if btc_ids else None
-    btc_last = flow_reference(snapshot, btc_iid, end)
-    btc_entry = decimal(btc_last.get("price")) if btc_last else price(exact_groups.get(btc_iid, {}), end)
+    btc_reference = by_instrument.get(registry.btc) if registry.btc else None
+    btc_last = _trade(btc_reference.entry_trade, registry.btc) if btc_reference else None
+    btc_entry = (
+        decimal(btc_last.get("price")) if btc_last else btc_reference.last_close if btc_reference else None
+    )
     outcome_btc = dict(
-        instrument_id=btc_iid,
+        instrument_id=registry.btc,
         entry_ref_price=btc_entry,
-        observed_at=iso(_time(btc_last)) if btc_last else iso(max(btc)) if btc else None,
-        price_source="LAST_TRADE" if btc_last else "KLINE_CLOSE" if btc else None,
+        observed_at=iso(parse_time(btc_last["ts"]))
+        if btc_last
+        else iso(btc_reference.last_close_time)
+        if btc_reference and btc_reference.last_close_time
+        else None,
+        price_source="LAST_TRADE" if btc_last else "KLINE_CLOSE" if btc_entry is not None else None,
         reason=None if btc_entry is not None else "INCOMPLETE",
     )
-    hourly_closes = [
-        (t, p) for t, p in exact_groups.get(ref, {}).items() if t <= end and t.minute == 0 and t.second == 0
-    ]
     return dict(
         expected_direction=snapshot.get("expected_direction"),
         repricing_sign=sign,
         outcome_btc_reference=outcome_btc,
         normal_ranges=horizon_ranges,
-        entry_ref_price=decimal(cutoff_row.get("price", cutoff_row.get("p")))
-        if cutoff_row
-        else price(exact_groups.get(ref, {}), end),
+        entry_ref_price=entry_price,
         entry_price_source="LAST_TRADE" if cutoff_row else "KLINE_CLOSE",
-        entry_price_observed_at=iso(_time(cutoff_row))
+        entry_price_observed_at=iso(parse_time(cutoff_row["ts"]))
         if cutoff_row
-        else iso(max(prices))
-        if prices
+        else iso(last_close_at)
+        if last_close_at
         else None,
-        close_1h_price=max(hourly_closes, key=lambda x: x[0])[1] if hourly_closes else None,
+        close_1h_price=reference.hourly_close if reference else None,
         ref_venue=ref,
         reference_coverage=ref_coverage,
         reference_reason=None if ref else "INCOMPLETE",
@@ -1903,7 +1762,7 @@ def relative_truth(snapshot, start, end, *, include_outcome=True):
             else "KNOWN_TO_US_AT",
             ts=iso(start),
             ref_price=anchor_price,
-            price_observed_at=iso(_time(anchor_row)) if anchor_row else None,
+            price_observed_at=iso(parse_time(anchor_row["ts"])) if anchor_row else None,
             evidence=anchor_row,
             price_reason=None if anchor_row else "INCOMPLETE",
             price_source="LAST_TRADE" if anchor_row else None,
@@ -1917,13 +1776,14 @@ def relative_truth(snapshot, start, end, *, include_outcome=True):
             start=iso(start - timedelta(days=1)),
             cutoff=iso(start),
             ar=ar,
-            pctile=ratio(sum(x <= ar for x in dh), len(dh)) if ar is not None else None,
-            flag=beyond(ar, float_normal(dh)),
+            pctile=pre.percentile if pre_n and ar is not None else None,
+            flag=beyond(ar, float_range(pre.history_q025, pre.history_q975) if pre_n else None),
         ),
         repricing_band=repricing(
             eventr * sign if eventr is not None else None,
-            eh.scaled(sign) if isinstance(eh, StatisticalPopulation) else [x * sign for x in eh],
-            dh.scaled(sign) if isinstance(dh, StatisticalPopulation) else [x * sign for x in dh],
+            quantiles(event_row, n_event),
+            quantiles(pre, pre_n),
+            sign,
         ),
         market_context=context,
         context_inputs=dict(
@@ -1931,9 +1791,9 @@ def relative_truth(snapshot, start, end, *, include_outcome=True):
             rv24=rv,
             rv24_observed_cutoff=iso(end.replace(minute=0, second=0, microsecond=0)),
             rv24_resolution_s=3600,
-            return_normal_range=normal(bh),
-            return_lower_quartile=percentile(bh, 0.25),
-            rv_normal_range=normal(rvhist),
+            return_normal_range=[return_q[0], return_q[2]] if None not in return_q else None,
+            return_lower_quartile=return_q[1],
+            rv_normal_range=list(vol_q) if None not in vol_q else None,
             rule="normal_range",
         ),
     )
@@ -2752,32 +2612,16 @@ def enrich_evidence(snapshot, start, end, spots, primary, deriv, relative, liqui
         reason=None if books or dispersion is not None else "INCOMPLETE",
     )
 
-    token = relative["ref_venue"]
-    prices = _prices(snapshot).get(token, {})
-    hourly = {t: p for t, p in prices.items() if t.minute == 0 and t.second == 0}
-    hourly_returns = {
-        t: log(p / hourly[t - timedelta(hours=1)])
-        for t, p in hourly.items()
-        if t - timedelta(hours=1) in hourly
-    }
-    return_times = sorted(hourly_returns)
-    rvs = []
-    current = None
-    for t in sorted(hourly):
-        left = bisect_right(return_times, t - timedelta(hours=24))
-        right = bisect_right(return_times, t)
-        lr = [hourly_returns[x] for x in return_times[left:right]]
-        if len(lr) == 24:
-            if start - timedelta(days=lookback_days()) <= t < start:
-                rvs.append(stdev(lr))
-            if t <= end:
-                current = stdev(lr)
-    if (
-        hourly
-        and (max(hourly) - min(hourly)).total_seconds() < float(parameter("history_min_days", 7)) * 86400
-    ):
-        rvs = []
-    rr = normal(rvs)
+    horizons = {h.name: h for h in (snapshot.get("relative_sql") or truth_sql.NO_RELATIVE).horizons}
+    sample = horizons.get(primary)
+    current = sample.ref_realized_vol_24h if sample else None
+    rr = (
+        [sample.ref_realized_vol_24h_q025, sample.ref_realized_vol_24h_q975]
+        if sample
+        and sample.ref_realized_vol_24h_samples
+        and history_usable(sample.ref_hourly_first, sample.ref_hourly_last)
+        else None
+    )
     liquidity["vol_compression"] = dict(
         window="W24H",
         cutoff=iso(end),
@@ -5064,54 +4908,30 @@ DERIVATIVE_CONDITION_METRICS = {
 
 
 def condition_reference_close(snapshot, end):
-    price_groups = _prices(snapshot, exact=True)
-    candidates = {}
-    for instrument in snapshot.get("instruments", []):
-        iid = instrument.get("instrument_id")
-        if _market(instrument) != "SPOT" or instrument.get("token_id") != snapshot.get("token_id"):
-            continue
-        spot = spot_truth(
-            [r for r in snapshot.get("flow_bars", []) if r.get("instrument_id") == iid],
-            [],
-            [instrument],
-            end - timedelta(days=1),
-            end,
-            flow_segments=flow_segments(snapshot),
-            assembled_at=snapshot.get("assembled_at"),
-        )
-        if spot["venues"]:
-            candidates[iid] = spot["venues"][0]["volume_native"]
-    ref = max((iid for iid in price_groups if iid in candidates), key=candidates.get, default=None)
-    values = price_groups.get(ref, {})
-    closed = [(t, v) for t, v in values.items() if t <= end and t.minute == t.second == t.microsecond == 0]
-    selected = max(closed, key=lambda row: row[0]) if closed else None
-    expected = end.replace(minute=0, second=0, microsecond=0)
-    if selected and selected[0] != expected:
-        selected = None
-    source = next(
-        (
-            row
-            for row in reversed(snapshot.get("klines", []))
-            if row.get("instrument_id") == ref
-            and row.get("complete") is True
-            and selected
-            and (kline_close_time(row) or _time(row) + timedelta(seconds=int(row.get("interval_s", 60))))
-            == selected[0]
-        ),
-        None,
+    evidence = snapshot.get("relative_sql") or truth_sql.NO_RELATIVE
+    reference = next((r for r in evidence.references if r.instrument_id == evidence.ref), None)
+    selected = (
+        reference
+        if reference is not None
+        and reference.hourly_close_time == end.replace(minute=0, second=0, microsecond=0)
+        else None
     )
     observed = propagate_timestamp({}, "observed_at")
-    if source:
-        if source.get("close_time") and source.get("open_time") is None:
-            observed = propagate_timestamp(source, "close_time")
-        else:
-            observed = offset_schedule(
-                propagate_timestamp(source, "open_time", precision_aliases=("timestamp_precision",)),
-                timedelta(seconds=int(source.get("interval_s", 60))),
-            )
+    if selected is not None:
+        observed = offset_schedule(
+            propagate_timestamp(
+                {
+                    "open_time": selected.hourly_close_time - timedelta(seconds=60),
+                    "open_time_prec": selected.hourly_close_prec,
+                    "open_time_prec_reason": selected.hourly_close_prec_reason,
+                },
+                "open_time",
+            ),
+            timedelta(seconds=60),
+        )
     return dict(
-        ref_venue=ref,
-        close_1h_price=selected[1] if selected else None,
+        ref_venue=evidence.ref,
+        close_1h_price=selected.hourly_close if selected is not None else None,
         **observed.fields("close_1h_observed_at"),
     )
 
@@ -5280,6 +5100,8 @@ def condition_market_state(snapshot, end, cache):
             head = fingerprint({field: snapshot.get(field) for field in fields})
         elif not isinstance(head, str):
             head = fingerprint(head)
+        if "relative_sql" in fields:
+            head = fingerprint([head, snapshot.get("relative_sql")])
         key = (
             "condition-state-node",
             name,
@@ -5308,7 +5130,7 @@ def condition_market_state(snapshot, end, cache):
         "relative",
         (
             "klines",
-            "stat_price_series",
+            "relative_sql",
             "flow_bars",
             "flow_segments",
             "reference_points",
@@ -5379,7 +5201,7 @@ def compute_condition_values(snapshot, requirements, *, config=None, cache=None,
                 fields = (domain, "instruments", "semantics", "capture_metadata")
             elif metric == "price.close_vs_level":
                 domain = "close"
-                fields = ("flow_bars", "flow_segments", "klines", "instruments")
+                fields = ("relative_sql", "instruments")
             elif metric == "dc.class":
                 domain = "dc"
                 fields = (
@@ -5422,10 +5244,9 @@ def compute_condition_values(snapshot, requirements, *, config=None, cache=None,
                     "anchor",
                     "expected_direction",
                     "funding_confirmations",
-                    "stat_price_series",
+                    "relative_sql",
                     "stat_volume_series",
                     "series_coverage_counts",
-                    "relative_history_dependency_fingerprint",
                 )
                 seconds = (end - condition_primary_bounds(snapshot, end)[0]).total_seconds()
             elif metric in RELATIVE_CONDITION_METRICS:
@@ -5441,9 +5262,8 @@ def compute_condition_values(snapshot, requirements, *, config=None, cache=None,
                     "anchor",
                     "expected_direction",
                     "funding_confirmations",
-                    "stat_price_series",
+                    "relative_sql",
                     "series_coverage_counts",
-                    "relative_history_dependency_fingerprint",
                 )
             else:
                 pending.append(dict(metric=metric, window=window, reason="NOT_SUPPORTED"))
@@ -5453,6 +5273,8 @@ def compute_condition_values(snapshot, requirements, *, config=None, cache=None,
                 dependency = fingerprint({field: snapshot.get(field) for field in fields})
             elif not isinstance(dependency, str):
                 dependency = fingerprint(dependency)
+            if "relative_sql" in fields:
+                dependency = fingerprint([dependency, snapshot.get("relative_sql")])
             key = (
                 domain,
                 window,
@@ -5684,6 +5506,28 @@ def _cutoff_value(cutoff):
     return cutoff.value if isinstance(cutoff, Timestamp) else cutoff
 
 
+async def with_relative(repo, snapshot, config, *, include_outcome=True, baselines=True):
+    """The snapshot with the records of the price-relative statements (03 §5.7) as `relative_sql`.
+
+    `baselines=False` reads only the reference prices; a snapshot whose anchor does not precede its
+    cutoff is returned as it is."""
+    from tank import clickhouse_market
+
+    ch = clickhouse_market.client(repo, "mkt.klines_1m")
+    if ch is None:
+        raise RuntimeError("mkt.klines_1m is stored in ClickHouse only; TANK_CLICKHOUSE_URL is not set")
+    end = parse_time(snapshot["cutoff"])
+    anchor = snapshot.get("anchor")
+    anchor_at = anchor.get("ts") if isinstance(anchor, dict) else anchor
+    start = parse_time(anchor_at) if anchor_at else end - timedelta(hours=4)
+    if start >= end:
+        return snapshot
+    evidence = await relative_evidence(
+        ch, snapshot, start, end, config, include_outcome=include_outcome, baselines=baselines
+    )
+    return dict(snapshot, relative_sql=evidence)
+
+
 ASSESSMENT_BASELINE_IDLE_S = 1800
 
 
@@ -5733,6 +5577,15 @@ class MarketTruthService:
         config = dict(
             config, config_version=self.settings.config_version, code_version=self.settings.code_version
         )
+        wanted = {r["metric"] for r in requirements}
+        if wanted & ({"price.close_vs_level"} | COMPOSITE_CONDITION_METRICS | RELATIVE_CONDITION_METRICS):
+            snapshot = await with_relative(
+                self.repo,
+                snapshot,
+                config,
+                include_outcome=False,
+                baselines=bool(wanted & (COMPOSITE_CONDITION_METRICS | RELATIVE_CONDITION_METRICS)),
+            )
         return await asyncio.to_thread(
             compute_condition_values,
             snapshot,
@@ -5774,6 +5627,7 @@ class MarketTruthService:
         self._release_idle_assessment_baselines()
         lock = self._assessment_locks.setdefault(token_id, asyncio.Lock())
         async with lock:
+            snapshot = await with_relative(self.repo, snapshot, knobs)
             result = await compute_workers.compute_market_truth(
                 compute_workers.ASSESSMENT, snapshot, config=knobs, baseline_key=token_id
             )

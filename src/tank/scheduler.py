@@ -1280,14 +1280,15 @@ class Scheduler:
         }
         knobs = self.settings.load_config("thresholds") if hasattr(self.settings, "load_config") else {}
         await self._yield_to_market_truth(payload, end)
+        config = {
+            **knobs,
+            "config_version": self.settings.config_version,
+            "code_version": self.settings.code_version,
+        }
+        from tank.analysis.truth import with_relative
+
         truth = await compute_workers.compute_market_truth(
-            compute_workers.REACTION,
-            snapshot,
-            config={
-                **knobs,
-                "config_version": self.settings.config_version,
-                "code_version": self.settings.code_version,
-            },
+            compute_workers.REACTION, await with_relative(self.repo, snapshot, config), config=config
         )
         relative = truth.get("relative", {})
         event_window = relative.get("windows", {}).get("EVENT", {})

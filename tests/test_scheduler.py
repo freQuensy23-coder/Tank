@@ -9,6 +9,11 @@ from tank.storage import MemoryRepository
 from tank.util import iso, utcnow
 
 
+@pytest.fixture(autouse=True)
+def _relative_statements(relative_statements):
+    return relative_statements
+
+
 @pytest.mark.asyncio
 async def test_recursive_hourly_persistence_does_not_count_same_window_twice():
     repo = MemoryRepository()

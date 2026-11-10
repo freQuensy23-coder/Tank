@@ -60,6 +60,7 @@ def test_snapshot_parts_restore_every_row_and_value(monkeypatch):
 
 
 @pytest.mark.asyncio
+@pytest.mark.usefixtures("relative_statements")
 async def test_assessment_keeps_each_tokens_baseline_cache_in_its_worker(monkeypatch):
     seen = []
 

@@ -6,6 +6,7 @@ from functools import lru_cache
 from math import sin
 
 import pytest
+from relative_helpers import start_evidence
 
 from tank.analysis.truth import compute_market_truth
 from tank.util import iso, parse_time
@@ -205,6 +206,7 @@ def synthetic_start_snapshot():
             "complete": True,
         }
     )
+    snap["relative_sql"] = start_evidence(end, anchor)
     anchors = snap.pop("anchor_trades")
     for row in anchors:
         parent = next(
@@ -388,6 +390,7 @@ async def _assess_loser_snapshot():
     ).assess("EVT", "T", "2026-10-16T12:00:00Z")
 
 
+@pytest.mark.usefixtures("relative_statements")
 def test_latest_durable_beneficiary_role_sets_loser_repricing_direction():
     import asyncio
 

@@ -1,10 +1,12 @@
 """Selective condition inputs agree with full truth without unrelated work or MTA writes."""
 
+import dataclasses
 from copy import deepcopy
 from decimal import Decimal
 from types import SimpleNamespace
 
 import pytest
+from relative_helpers import with_references
 from test_truth_start_fixture import compact_start_snapshot
 
 import tank.analysis.truth as module
@@ -166,14 +168,18 @@ def test_unchanged_cached_funding_never_overrides_its_actual_capture_cadence():
         assert proof["observations"][0]["cadence_s"] == 60
 
 
-def test_completed_close_uses_actual_largest_complete_reference_venue():
+def test_completed_close_uses_the_reference_venue_the_statement_chose():
     packet = snapshot()
-    for row in packet["flow_bars"]:
-        if row["instrument_id"] == "B:spot:T":
-            row["buy_qty"] = "200"
-    for row in packet["klines"]:
-        if row["instrument_id"] == "B:spot:T":
-            row["c"] = "202.2"
+    packet["relative_sql"] = dataclasses.replace(
+        with_references(
+            packet["relative_sql"],
+            ("B:spot:T",),
+            last_close=Decimal("202.2"),
+            hourly_close=Decimal("202.2"),
+            flow_volume_native=432000.0,
+        ),
+        ref="B:spot:T",
+    )
     full = module.compute_market_truth(packet)
     selected = module.compute_condition_values(packet, [dict(metric="price.close_vs_level", window="W1H")])
     assert full["relative"]["ref_venue"] == selected["relative"]["ref_venue"] == "B:spot:T"
@@ -216,11 +222,9 @@ def test_missing_completed_hour_close_is_not_replaced_by_an_older_hour():
 
     packet = snapshot()
     end = parse_time(packet["cutoff"])
-    packet["klines"] = [
-        row
-        for row in packet["klines"]
-        if module._time(row) + timedelta(seconds=row.get("interval_s", 60)) != end
-    ]
+    packet["relative_sql"] = with_references(
+        packet["relative_sql"], hourly_close_time=end - timedelta(hours=1)
+    )
     result = module.compute_condition_values(packet, [dict(metric="price.close_vs_level", window="W1H")])
     assert result["relative"]["close_1h_price"] is None
     assert result["_condition_evaluation"]["unavailable_metrics"][0]["reason"] == "INCOMPLETE"
@@ -245,7 +249,9 @@ def test_proven_source_heads_avoid_serializing_full_history_for_cache_identity(m
 
 
 @pytest.mark.asyncio
-async def test_actual_market_loader_selective_sql_footprint_and_no_assessment_writes(tmp_path, monkeypatch):
+async def test_actual_market_loader_selective_sql_footprint_and_no_assessment_writes(
+    tmp_path, monkeypatch, relative_statements
+):
     import httpx
 
     from tank.market.service import MarketService
@@ -294,6 +300,7 @@ async def test_actual_market_loader_selective_sql_footprint_and_no_assessment_wr
             else {}
         ),
     )
+    relative_statements.evidence = packet["relative_sql"]
     async with httpx.AsyncClient() as http:
         market = MarketService(repo, settings, http=http)
         monkeypatch.setattr(market, "snapshot", forbidden)
@@ -539,6 +546,7 @@ def test_composite_conditions_change_from_unknown_when_actual_evidence_arrives()
 
 
 @pytest.mark.asyncio
+@pytest.mark.usefixtures("relative_statements")
 async def test_selective_relative_uses_canonical_latest_beneficiary_direction():
     packet = snapshot()
 

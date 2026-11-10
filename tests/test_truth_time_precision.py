@@ -64,6 +64,7 @@ def test_pure_truth_selected_bounds_exact_and_source_precision_propagated():
 
 
 @pytest.mark.asyncio
+@pytest.mark.usefixtures("relative_statements")
 async def test_actual_service_preserves_event_public_and_anchor_precision_without_iso_inference():
     event = {"public_at": "2026-10-16T08:00:00Z", "public_at_prec": "BUCKET(1h)"}
 

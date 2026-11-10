@@ -48,7 +48,8 @@ async def test_full_registry_baskets_and_optional_sector_peer_prices_reach_norma
             "world:WLD", cutoff, requirements=[{"metric": "mt.move_class", "window": "W4H"}]
         )
         assert conditional["sector_baskets"] == registry["sector_baskets"]
-        assert peer["instrument_id"] in conditional["stat_price_series"]
+        assert peer["instrument_id"] in {i["instrument_id"] for i in conditional["instruments"]}
+        assert "stat_price_series" not in conditional
 
         relative_head = conditional["domain_dependency_fingerprints"]["relative"]
         service.sector_baskets = copy.deepcopy(service.sector_baskets)

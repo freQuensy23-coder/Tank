@@ -201,8 +201,31 @@ def test_missing_is_not_zero_and_no_leakage():
 
 
 def test_repricing_and_baseline_context():
-    assert repricing(0.23, [-0.03, 0, 0.02, 0.05], [-0.04, 0, 0.02, 0.046]) == "HEAVY"
-    assert market_context(-0.0325, 0.0045, [-0.0301, -0.0085, 0, 0.02], [0.003, 0.005, 0.01]) == "STRESS"
+    event, day = (-0.03, 0, 0.02, 0.04), (-0.04, 0, 0.02, 0.046)
+    assert repricing(0.23, event, day, 1) == "HEAVY"
+    assert repricing(0.01, event, day, 1) == "UNPRICED"
+    assert repricing(0.03, event, day, 1) == "EARLY"
+    assert repricing(0.045, event, day, 1) == "SUBSTANTIAL"
+    assert repricing(-0.04, event, day, 1) == "NEGATIVE"
+    assert repricing(-0.01, event, day, -1) == "UNPRICED"
+    assert repricing(0.03, event, day, -1) == "EARLY"
+    assert repricing(0.035, (-0.03, -0.02, 0, 0.03), day, -1) == "SUBSTANTIAL"
+    assert repricing(None, event, day, 1) is None
+    assert repricing(0.01, (None,) * 4, day, 1) is None
+    assert market_context(-0.0325, 0.0045, (-0.0301, -0.0085), (0.003, 0.005)) == "STRESS"
+    assert market_context(-0.01, 0.004, (-0.0301, -0.0085), (0.003, 0.005)) == "HEADWIND"
+    assert market_context(0.01, 0.004, (-0.0301, -0.0085), (0.003, 0.005)) == "NEUTRAL"
+    assert market_context(0.01, 0.004, (None, None), (0.003, 0.005)) is None
+
+
+def test_degenerate_float_history_range_is_unavailable():
+    from tank.analysis.truth import float_range
+
+    assert float_range(-1.4e-16, 1.4e-16) is None
+    assert float_range(None, 0.02) is None
+    assert float_range(-0.01, 0.02) == [-0.01, 0.02]
+    noise = (-2.2e-17, 0.0, 0.0, 1.4e-16)
+    assert repricing(0.000272, noise, noise, 1) is None
 
 
 def test_walk_book_requires_actual_fill():
@@ -395,6 +418,7 @@ def test_t5_pairwise_constant_cohort():
 
 
 @pytest.mark.asyncio
+@pytest.mark.usefixtures("relative_statements")
 async def test_assessment_persists_with_event_anchor():
     from types import SimpleNamespace
 
@@ -427,6 +451,7 @@ async def test_assessment_persists_with_event_anchor():
 
 
 @pytest.mark.asyncio
+@pytest.mark.usefixtures("relative_statements")
 async def test_assessment_before_a_scheduled_t0_anchors_on_t1_instead_of_failing():
     """Binance's 10-30 06:00 delisting was analysed on 10-27: anchoring on the future T0
     raised "anchor must precede cutoff" and the MAJOR event got no market truth."""
@@ -578,28 +603,6 @@ def test_confidence_requires_present_fresh_reference_and_books():
     )
 
 
-def test_nonminute_event_anchor_uses_true_asof_bounds_and_reports_precision():
-    from runpy import run_path
-
-    from tank.analysis.truth import relative_truth
-
-    snapshot = run_path(str(Path(__file__).with_name("test_truth_start_fixture.py")))[
-        "synthetic_start_snapshot"
-    ]()
-    end = parse_time(snapshot["cutoff"])
-    start = end - timedelta(hours=4) + timedelta(seconds=17)
-    result = relative_truth(snapshot, start, end)
-    event = result["windows"]["EVENT"]
-    assert event["normal_range"] is not None
-    assert event["historical_window_duration_s"] == event["requested_window_duration_s"] == 14383
-    measurement = event["historical_measurement"]
-    assert measurement["exact"] is False
-    assert measurement["target_window_duration_s"] == 14383
-    assert measurement["observed_duration_bounds_s"] == [14400, 14400]
-    assert measurement["endpoint_staleness_bounds_s"] == [17, 17]
-    assert result["anchor"]["ts"] == iso(start)
-
-
 def test_btc_benchmark_is_judged_by_its_raw_return_against_its_own_raw_history():
     """P0 (MTA-01M5E69YTSW72QGR0HAVWZNS9J): for BTC itself beta = 1 makes r_btc_adj identically 0,
     so its history range was [0, 0] and 1e-16 noise read as beyond normal and HEAVY."""
@@ -645,18 +648,6 @@ def test_btc_benchmark_is_judged_by_its_raw_return_against_its_own_raw_history()
     )
     fact = next(f for f in facts if f["metric"] == "relative.r_raw")
     assert fact["text"].startswith("W15M price move (benchmark, raw)")
-
-
-def test_degenerate_float_history_range_is_unavailable():
-    from tank.analysis.truth import float_normal, range_reason, repricing
-
-    noise = [1.4e-16, -2.2e-17, 0.0, 0.0, 3.1e-17] * 40
-    assert float_normal(noise) is None
-    assert range_reason(noise) == "DEGENERATE_HISTORY"
-    assert range_reason([]) == "INCOMPLETE"
-    assert range_reason([-0.01, 0.0, 0.02]) is None
-
-    assert repricing(0.000272, noise, noise) is None
 
 
 @pytest.mark.parametrize("confirmation", ["VALID", "FLAG_ONLY", "FUTURE", "NO_REST_GAP"])
@@ -1573,41 +1564,6 @@ def test_derivative_windows_keep_one_hour_watch_separate_from_four_hour_crowding
     )
 
 
-def test_reference_requires_complete_24h_flow_and_last_actual_trade():
-    from runpy import run_path
-
-    from tank.analysis.truth import relative_truth
-
-    snapshot = run_path(str(Path(__file__).with_name("test_truth_start_fixture.py")))[
-        "synthetic_start_snapshot"
-    ]()
-    end = parse_time(snapshot["cutoff"])
-    start = parse_time(snapshot["anchor"]["ts"])
-    next(
-        bar
-        for bar in snapshot["flow_bars"]
-        if bar.get("reference_points") and bar["reference_points"][0]["boundary"] == iso(start)
-    )["reference_points"][0]["last_trade"]["price"] = 99
-    result = relative_truth(snapshot, start, end)
-    assert result["ref_venue"] == "A:spot:T"
-    assert result["anchor"]["ref_price"] == 99
-    assert result["anchor"]["price_source"] == "LAST_TRADE"
-    assert result["windows"]["EVENT"]["r_raw"] == pytest.approx(101.1 / 99 - 1)
-
-    snapshot["flow_bars"][0]["complete"] = False
-    result = relative_truth(snapshot, start, end)
-    assert result["ref_venue"] == "B:spot:T"
-    assert result["anchor"]["ref_price"] == 100
-    for bar in snapshot["flow_bars"]:
-        if any(point["boundary"] == iso(start) for point in bar.get("reference_points", [])):
-            bar["reference_points"] = []
-            bar.pop("last_trade", None)
-    result = relative_truth(snapshot, start, end)
-    assert result["anchor"]["ref_price"] is None
-    assert result["windows"]["EVENT"]["r_raw"] is None
-    assert result["repricing_band"] is None
-
-
 def test_slug_identity_wld_sector_is_not_applicable_and_self_is_excluded():
     from runpy import run_path
 
@@ -1806,6 +1762,7 @@ def test_fractional_window_boundary_trades_need_continuity_proof_and_are_exact()
 
 
 @pytest.mark.asyncio
+@pytest.mark.usefixtures("relative_statements")
 async def test_assessment_cpu_runs_off_event_loop_and_default_cutoff_is_closed_minute(monkeypatch):
     import threading
     from types import SimpleNamespace
@@ -2111,69 +2068,6 @@ def test_oi_fact_reports_venue_decomposition_when_synchronized_class_unavailable
     )
 
 
-def test_hourly_archive_bars_with_binance_close_time_join_minute_bars_on_the_hour():
-    """F-16: Binance closeTime is hh:59:59.999; prices are keyed by the bar boundary (open + interval)."""
-    from tank.analysis.truth import _price_groups
-
-    def bar(open_time, interval, close, close_time=None):
-        row = {
-            "instrument_id": "binance:spot:BTCUSDT",
-            "token_id": "bitcoin:BTC",
-            "market_type": "SPOT",
-            "open_time": open_time,
-            "interval_s": interval,
-            "complete": True,
-            "c": close,
-        }
-        if close_time:
-            row["close_time"] = close_time
-        return row
-
-    snapshot = {
-        "cutoff": "2026-09-01T00:02:00Z",
-        "klines": [
-            bar("2026-08-31T22:00:00Z", 3600, "100", "2026-08-31T22:59:59.999Z"),
-            bar("2026-08-31T23:00:00Z", 3600, "101", "2026-08-31T23:59:59.999Z"),
-            bar("2026-09-01T00:00:00Z", 60, "102"),
-            bar("2026-09-01T00:01:00Z", 60, "103"),
-        ],
-    }
-    prices = _price_groups(snapshot)["binance:spot:BTCUSDT"]
-    assert sorted(iso(t) for t in prices) == [
-        "2026-08-31T23:00:00Z",
-        "2026-09-01T00:00:00Z",
-        "2026-09-01T00:01:00Z",
-        "2026-09-01T00:02:00Z",
-    ]
-    hourly = [t for t in prices if t.minute == 0 and t.second == 0]
-    assert len(hourly) == 2
-
-
-def test_benchmark_gap_leaves_btc_adjusted_return_na_not_raw():
-    """Prod 20 Oct (WLD): BTC base klines missing 10:00-15:28 made r_btc_adj equal r_raw (BTC return 0)."""
-    from runpy import run_path
-
-    from tank.analysis.truth import relative_truth
-
-    snapshot = run_path(str(Path(__file__).with_name("test_truth_start_fixture.py")))[
-        "synthetic_start_snapshot"
-    ]()
-    end = parse_time(snapshot["cutoff"])
-    start = parse_time(snapshot["anchor"]["ts"])
-    whole = relative_truth(snapshot, start, end)["windows"]["W1H"]
-    assert whole["r_btc_adj"] is not None and whole["r_raw"] is not None
-    btc = [r for r in snapshot["klines"] if "BTC" in r["instrument_id"]]
-    assert btc
-    snapshot["klines"] = [
-        r
-        for r in snapshot["klines"]
-        if not ("BTC" in r["instrument_id"] and parse_time(r["open_time"]) >= end - timedelta(hours=2))
-    ]
-    gap = relative_truth(snapshot, start, end)["windows"]["W1H"]
-    assert gap["r_raw"] == whole["r_raw"]
-    assert gap["r_btc_adj"] is None
-
-
 def test_null_measurements_have_companion_context_without_wrapping_literal_fields():
     from runpy import run_path
 
@@ -2275,20 +2169,6 @@ def test_outcome_btc_reference_and_horizon_ranges_are_frozen_from_entry_history(
         assert measured["coverage"]["sample_count"] > 0
         assert measured["value"] is not None and measured["reason"] is None
         assert parse_time(measured["cutoff"]) == parse_time(snapshot["anchor"]["ts"])
-
-    snapshot["klines"].append(
-        {
-            "instrument_id": "A:spot:T",
-            "token_id": "T",
-            "open_time": "2026-10-17T12:00:00Z",
-            "interval_s": 60,
-            "c": 999999,
-            "complete": True,
-        }
-    )
-    again = relative_truth(snapshot, start, end)
-    assert again["normal_ranges"] == relative["normal_ranges"]
-    assert again["beta_btc"] == relative["beta_btc"]
 
 
 def test_complete_liquidation_total_requires_whole_window_capture_not_recent_connection():
@@ -2609,6 +2489,7 @@ def test_distribution_cohort_buy_to_sell_does_not_require_current_selling_majori
         ({"value": "2026-10-16T08:00:00Z", "precision": "BUCKET(1d)"}, None, True, "T1"),
     ],
 )
+@pytest.mark.usefixtures("relative_statements")
 async def test_assessment_calls_snapshot_with_shared_canonical_anchor(
     event_time, precision, state_verified, kind
 ):
@@ -2784,6 +2665,7 @@ def test_full_assessments_run_one_at_a_time_per_process(monkeypatch):
 
 
 @pytest.mark.asyncio
+@pytest.mark.usefixtures("relative_statements")
 async def test_idle_token_assessment_baselines_are_released(monkeypatch):
     """Per-token assessment baselines were kept for the process lifetime, so every token
     ever assessed kept its 90-day indexes in the assessment worker."""

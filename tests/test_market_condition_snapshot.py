@@ -664,6 +664,6 @@ async def test_composite_dependency_heads_read_each_scope_once(setup, monkeypatc
         ]
         packet = await service.condition_snapshot(inst["token_id"], end, requirements=req)
     orders = ("availability", "semantic_latest", "semantic_earliest")
-    assert packet["dependency_fingerprint"] and packet["relative_history_dependency_fingerprint"]
+    assert packet["dependency_fingerprint"] and "relative_history_dependency_fingerprint" not in packet
     assert calls and all(c[1] == orders and c[2] is None for c in calls)
-    assert sum(c[0] == "mkt.klines_1m" for c in calls) >= 2
+    assert sum(c[0] == "mkt.klines_1m" for c in calls) >= 1

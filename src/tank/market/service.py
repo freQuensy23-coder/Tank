@@ -1712,11 +1712,8 @@ class MarketService:
 
     async def _condition_composite_inputs(self, result, *, full_state):
         """Exact compact source graph for transient catalog conditions; never an MTA."""
-        from array import array
-        from bisect import bisect_right
-        from datetime import UTC, datetime
 
-        from tank.analysis.truth import condition_primary_bounds, condition_reference_close
+        from tank.analysis.truth import condition_primary_bounds
         from tank.market_schema import MARKET_COLUMNS
 
         token_id = result["token_id"]
@@ -1814,7 +1811,6 @@ class MarketService:
                 )
                 for row in rows
             )
-        reference = condition_reference_close(result, end).get("ref_venue")
         all_spot = [i for i in self.instruments.values() if i["market_type"] == "SPOT"]
         counts = await self.repo.market_series_counts(
             [i["instrument_id"] for i in all_spot], end - timedelta(days=90), end, assembled
@@ -1826,83 +1822,11 @@ class MarketService:
             current = chosen.get(symbol)
             if current is None or counts[instrument["instrument_id"]] > counts[current["instrument_id"]]:
                 chosen[symbol] = instrument
-        selected = []
-        if reference:
-            selected.append(self.instruments[reference])
-        selected.extend(i for i in chosen.values() if i["token_id"] != token_id)
-        result["stat_price_series"] = {}
-        epoch = datetime(1970, 1, 1, tzinfo=UTC)
-
-        def micros(value):
-            delta = value - epoch
-            return (delta.days * 86400 + delta.seconds) * 1000000 + delta.microseconds
-
-        boundaries = [end - timedelta(seconds=n) for n in (0, 900, 3600, 14400, 86400)] + [start, anchor]
-        price_heads = []
-        preanchor_heads = []
-        for instrument in selected:
-            iid = instrument["instrument_id"]
-            symbol = self.tokens[instrument["token_id"]].get("symbol")
-            dense = iid == reference or symbol == "BTC"
-            series_start = (
-                history_start
-                if dense or symbol == "ETH"
-                else min(anchor, start, end - timedelta(hours=25)) - timedelta(minutes=1)
-            )
-            series = await self._condition_kline_series(
-                instrument, series_start, end, assembled, kind="price", coverage_count=counts[iid]
-            )
-            if not dense:
-                wanted = set()
-                if symbol == "ETH":
-                    wanted.update(
-                        index for index, stamp in enumerate(series["times_us"]) if stamp % 3600000000 == 0
-                    )
-                for boundary in boundaries:
-                    index = bisect_right(series["times_us"], micros(boundary)) - 1
-                    if index >= 0:
-                        wanted.add(index)
-                order = sorted(wanted)
-                series = dict(
-                    series,
-                    times_us=array("q", (series["times_us"][j] for j in order)),
-                    values=array("d", (series["values"][j] for j in order)),
-                )
-            result["stat_price_series"][iid] = series
-            price_heads.append(series["dependency_fingerprint"])
-            if dense or symbol == "ETH":
-                found = await market_dependency_head(
-                    self.repo,
-                    "mkt.klines_1m",
-                    "open_time",
-                    anchor - timedelta(minutes=1, microseconds=1),
-                    start=history_start,
-                    instrument_ids=[iid],
-                    assembled_at=assembled,
-                    orders=HEAD_ORDERS,
-                )
-                preanchor_heads.extend(found[o] for o in HEAD_ORDERS)
-        result["relative_history_dependency_fingerprint"] = sha256(
-            [
-                preanchor_heads,
-                reference,
-                [i["instrument_id"] for i in selected],
-                self.settings.config_version,
-                self.settings.code_version,
-            ]
-        )
+        selected = [i for i in chosen.values() if i["token_id"] != token_id]
 
         result["instruments"] = target + [i for i in selected if i not in target]
         heads["relative"] = sha256(
-            [
-                price_heads,
-                flow_heads,
-                reference,
-                result["reference_points"],
-                counts,
-                self.tokens,
-                self.sector_baskets,
-            ]
+            [flow_heads, result["reference_points"], counts, self.tokens, self.sector_baskets]
         )
         heads["spot"] = sha256([flow_heads, result["tickers"], target])
         if full_state:
@@ -2060,7 +1984,7 @@ class MarketService:
             heads["depth"] = sha256(
                 [book_heads, result["books"], anchor.isoformat(), result["capture_metadata"]]
             )
-            heads["close"] = sha256([price_heads, flow_heads])
+            heads["close"] = sha256([flow_heads])
             heads["derivatives"] = sha256(
                 [derivative_heads, result["funding"], result["semantics"], result["capture_metadata"]]
             )
@@ -2982,7 +2906,6 @@ class MarketService:
             ),
         )
         result["series_coverage_counts"] = counts
-        result["stat_price_series"] = {}
         result["stat_volume_series"] = {}
         latest_closes = (
             {
@@ -3015,44 +2938,9 @@ class MarketService:
                     present_closes.add(identity)
                     result["klines"].append(row)
 
-        async def dense_prices(inst):
-            iid = inst["instrument_id"]
-            series = await self._condition_kline_series(
-                inst,
-                history_start,
-                cutoff_dt,
-                assembled,
-                kind="price",
-                coverage_count=counts.get(iid, 0),
-                fixed_window=True,
-                captured_rows=captured_klines.get(iid) if captured_klines is not None else None,
-                rolling=rolling,
-            )
-            result["stat_price_series"][iid] = series
-
-            wanted = set(series["times_us"][-1:])
-            hourly = next((v for v in reversed(series["times_us"]) if v % 3600000000 == 0), None)
-            if hourly is not None:
-                wanted.add(hourly)
-            epoch = parse_time("1970-01-01T00:00:00Z")
-            for stamp in wanted:
-                opened = epoch + timedelta(microseconds=int(stamp)) - timedelta(minutes=1)
-                if (iid, opened) not in present_closes:
-                    for row in await self.repo.latest_market_records(
-                        "mkt.klines_1m",
-                        time_field="open_time",
-                        start=opened,
-                        cutoff=opened,
-                        assembled_at=assembled,
-                        instrument_ids=[iid],
-                    ):
-                        await retain_close(row)
-
         for inst in instruments:
             iid = inst["instrument_id"]
             await retain_close(latest_closes.get(iid))
-            if norm.venue_key(inst).endswith(".spot"):
-                await dense_prices(inst)
             volume = await self._condition_kline_series(
                 inst,
                 history_start,
@@ -3066,91 +2954,10 @@ class MarketService:
             )
             if volume["times_us"]:
                 result["stat_volume_series"][iid] = volume
-        chosen = {}
-        for inst in all_spot:
-            if inst["token_id"] not in peers:
-                continue
-            current = chosen.get(inst["token_id"])
-            if current is None or counts[inst["instrument_id"]] > counts[current["instrument_id"]]:
-                chosen[inst["token_id"]] = inst
-
-        from math import isfinite
-
-        boundaries = [cutoff_dt - timedelta(seconds=n) for n in (0, 900, 3600, 14400, 86400)]
-        if result["anchor"] and result["anchor"].get("ts"):
-            boundaries.append(parse_time(result["anchor"]["ts"]))
-        epoch = parse_time("1970-01-01T00:00:00Z")
-        sector_ids = [
-            inst["instrument_id"]
-            for inst in chosen.values()
-            if self.tokens[inst["token_id"]].get("symbol") not in {"BTC", "ETH"}
-        ]
-        sector_points = {iid: {} for iid in sector_ids}
-        for boundary in sorted(set(boundaries)):
-            upper_open = boundary - timedelta(minutes=1)
-            if upper_open < history_start or not sector_ids:
-                continue
-
-            pending = await self.repo.latest_market_records(
-                "mkt.klines_1m",
-                time_field="open_time",
-                instrument_ids=sector_ids,
-                filters={"complete": True, "interval_s": 60},
-                start=history_start,
-                cutoff=upper_open,
-                assembled_at=assembled,
-            )
-            for row in pending:
-                iid = row["instrument_id"]
-                while True:
-                    value = float(row["c"]) if row.get("c") is not None else float("nan")
-                    opened = parse_time(row["open_time"])
-                    if isfinite(value) and value > 0:
-                        delta = opened + timedelta(minutes=1) - epoch
-                        stamp = (delta.days * 86400 + delta.seconds) * 1000000 + delta.microseconds
-                        sector_points[iid][stamp] = value
-                        break
-                    before = opened - timedelta(microseconds=1)
-                    if before < history_start:
-                        break
-                    earlier = await self.repo.latest_market_records(
-                        "mkt.klines_1m",
-                        time_field="open_time",
-                        instrument_ids=[iid],
-                        filters={"complete": True, "interval_s": 60},
-                        start=history_start,
-                        cutoff=before,
-                        assembled_at=assembled,
-                    )
-                    if not earlier:
-                        break
-                    row = earlier[0]
         for inst in self.instruments.values():
-            if inst["token_id"] not in peers or not norm.venue_key(inst).endswith(".spot"):
-                continue
-            instruments.append(inst)
-            if self.tokens[inst["token_id"]].get("symbol") not in {"BTC", "ETH"}:
-                if inst["instrument_id"] in latest_closes:
-                    await retain_close(latest_closes[inst["instrument_id"]])
-                if chosen[inst["token_id"]]["instrument_id"] != inst["instrument_id"]:
-                    continue
-                points = sector_points[inst["instrument_id"]]
-                times = sorted(points)
-                result["stat_price_series"][inst["instrument_id"]] = {
-                    "instrument_id": inst["instrument_id"],
-                    "token_id": inst["token_id"],
-                    "venue": inst["venue"],
-                    "market_type": inst["market_type"],
-                    "time_basis": "CLOSE_TIME",
-                    "coverage_count": counts[inst["instrument_id"]],
-                    "times_us": times,
-                    "values": [points[stamp] for stamp in times],
-                    "complete": [1] * len(times),
-                }
-                continue
-            await retain_close(latest_closes.get(inst["instrument_id"]))
-            if chosen[inst["token_id"]]["instrument_id"] == inst["instrument_id"]:
-                await dense_prices(inst)
+            if inst["token_id"] in peers and norm.venue_key(inst).endswith(".spot"):
+                instruments.append(inst)
+                await retain_close(latest_closes.get(inst["instrument_id"]))
         result["semantics"] = self._instrument_semantics(instruments)
         result["instruments"] = instruments
         result["tokens"] = list(self.tokens.values())
@@ -3200,48 +3007,7 @@ class MarketService:
     @staticmethod
     def _snapshot_heads(result, cutoff_dt):
         """Dependency heads for Market Truth's cross-assessment caches, from the returned data
-        (no DB calls). The relative head covers exactly what can enter truth's pre-start price
-        history (every price series point and spot kline before the analysis start: the
-        anchor, else cutoff - 4 h), so it stays constant minute to minute for a fixed anchor."""
-        from array import array
-        from bisect import bisect_left
-
-        anchor = result.get("anchor") or {}
-        start = parse_time(anchor["ts"]) if anchor.get("ts") else cutoff_dt - timedelta(hours=4)
-        epoch = parse_time("1970-01-01T00:00:00Z")
-        delta = start - epoch
-        start_us = (delta.days * 86400 + delta.seconds) * 1000000 + delta.microseconds
-        digest = hashlib.sha256()
-        for iid in sorted(result.get("stat_price_series") or {}):
-            series = result["stat_price_series"][iid]
-            times = series.get("times_us") or []
-            k = bisect_left(times, start_us)
-            values = series.get("values") or []
-            digest.update(repr((iid, series.get("token_id"), series.get("time_basis"))).encode())
-            digest.update(array("q", times[:k]).tobytes())
-            digest.update(
-                array("d", values[:k]).tobytes()
-                if isinstance(values, array)
-                else repr(list(values[:k])).encode()
-            )
-            digest.update(bytes(series.get("complete", b"")[:k]))
-        rows = sorted(
-            (
-                (
-                    r["instrument_id"],
-                    r["open_time"],
-                    r.get("c"),
-                    r.get("complete"),
-                    r.get("interval_s"),
-                    r.get("token_id"),
-                )
-                for r in result.get("klines", [])
-                if r.get("open_time") and parse_time(r["open_time"]) < start
-            ),
-            key=repr,
-        )
-        digest.update(repr(rows).encode())
-        result["relative_history_dependency_fingerprint"] = digest.hexdigest()
+        (no DB calls)."""
         result["domain_dependency_fingerprints"] = {
             name: sha256(sorted(r.get("semantic_fingerprint") or sha256(r) for r in result.get(name, [])))
             for name in ("oi", "funding")

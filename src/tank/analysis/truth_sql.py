@@ -92,3 +92,109 @@ async def benchmark_reaction(ch, instrument_ids, window_start, window_end):
         window_end=window_end,
     )
     return record
+
+
+@dataclass(frozen=True)
+class ReferencePrice(Record):
+    """What the reference venue, the anchor price and the entry price of a token are chosen from, one
+    row per spot instrument (reference_prices.sql).
+
+    The close columns are the last complete one-minute bar closed at or before the cutoff and the last
+    one that closed on a whole hour; `flow_volume_native` is the native volume of the 24 hours before the
+    cutoff when their flow coverage is complete, otherwise None with `flow_detail`; the trades are the
+    stored JSON of the last trade before the anchor and before the cutoff."""
+
+    statement = "reference_prices"
+    instrument_id: str
+    last_close: Decimal | None
+    last_close_time: datetime | None
+    last_close_prec: str | None
+    last_close_prec_reason: str | None
+    hourly_close: Decimal | None
+    hourly_close_time: datetime | None
+    hourly_close_prec: str | None
+    hourly_close_prec_reason: str | None
+    flow_volume_native: float | None
+    flow_detail: str | None
+    anchor_trade: str | None
+    entry_trade: str | None
+
+
+@dataclass(frozen=True)
+class SectorReturn(Record):
+    """The return of one peer instrument over one horizon, None when a bound has no fresh price
+    (sector_returns.sql)."""
+
+    statement = "sector_returns"
+    instrument_id: str
+    name: str
+    peer_return: float | None
+
+
+@dataclass(frozen=True)
+class RelativeHorizon(Record):
+    """The price-relative numbers of one horizon (relative_baselines.sql).
+
+    Returns are of the token, BTC and ETH and the BTC- and ETH-adjusted ones; `measure` is what the
+    history is compared with and `percentile` the share of the history not above it; the history is
+    described by its sample count, its quantiles and the first and last end it reaches. The BTC context
+    and the realised volatility of the reference are the same on every row."""
+
+    statement = "relative_baselines"
+    name: str
+    length_s: float
+    beta_btc_pairs: int
+    beta_btc_ols: float | None
+    beta_btc: float
+    beta_eth_pairs: int
+    beta_eth_ols: float | None
+    beta_eth: float
+    raw_return: float | None
+    btc_return: float | None
+    eth_return: float | None
+    btc_adjusted_return: float | None
+    eth_adjusted_return: float | None
+    measure: float | None
+    sample_count: int
+    history_q025: float | None
+    history_q25: float | None
+    history_q75: float | None
+    history_q975: float | None
+    percentile: float | None
+    history_first_end: datetime | None
+    history_last_end: datetime | None
+    price_first_close: datetime | None
+    price_last_close: datetime | None
+    history_resolution_s: float | None
+    btc_first_close: datetime | None
+    btc_last_close: datetime | None
+    btc_realized_vol_24h: float | None
+    btc_return_24h_q025: float | None
+    btc_return_24h_q25: float | None
+    btc_return_24h_q975: float | None
+    btc_realized_vol_24h_q025: float | None
+    btc_realized_vol_24h_q975: float | None
+    btc_return_24h_samples: int
+    btc_realized_vol_24h_samples: int
+    ref_realized_vol_24h: float | None
+    ref_realized_vol_24h_q025: float | None
+    ref_realized_vol_24h_q975: float | None
+    ref_realized_vol_24h_samples: int
+    ref_hourly_first: datetime | None
+    ref_hourly_last: datetime | None
+
+
+@dataclass(frozen=True)
+class RelativeEvidence:
+    """Everything the price-relative rules of a snapshot read from ClickHouse: the instruments chosen
+    from the registry (reference venue, BTC, ETH), the statement rows by instrument and horizon."""
+
+    ref: str | None = None
+    btc: str | None = None
+    eth: str | None = None
+    references: tuple[ReferencePrice, ...] = ()
+    horizons: tuple[RelativeHorizon, ...] = ()
+    peers: tuple[SectorReturn, ...] = ()
+
+
+NO_RELATIVE = RelativeEvidence()
