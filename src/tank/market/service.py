@@ -23,7 +23,6 @@ from tank.market_storage import (
     market_range_by_instrument,
     market_rows_recorded_since,
     market_series_day_counts,
-    sampled_market_history,
 )
 from tank.sources.capture_fetch import is_exchange_url
 from tank.time_precision import Timestamp, chosen_boundary, collection_clock, propagate_timestamp
@@ -1519,15 +1518,15 @@ class MarketService:
             oi_heads, funding_heads = [], []
             for instrument in perp:
                 iid = instrument["instrument_id"]
-                for name, field, filters in (
-                    ("oi", "ts", {"instrument_id": iid}),
-                    ("funding", "funding_time", {"instrument_id": iid, "kind": "SETTLED"}),
+                for name, field, filters, since in (
+                    ("oi", "ts", {"instrument_id": iid}, end - timedelta(hours=48)),
+                    ("funding", "funding_time", {"instrument_id": iid, "kind": "SETTLED"}, history_start),
                 ):
                     collection = COLLECTIONS[name][0]
                     rows, head = await self._condition_projected_history(
                         collection,
                         field,
-                        history_start,
+                        since,
                         end,
                         assembled,
                         fields=list(MARKET_COLUMNS[collection]),
@@ -1774,7 +1773,20 @@ class MarketService:
         if domains & {"oi", "funding", "dc", "depth"}:
             result["capture_metadata"] = await self._capture_metadata(token_id, end)
             result["semantics"] = self._instrument_semantics(instruments if "dc" in domains else perp)
-            for domain in domains & {"oi", "funding"}:
+            if "oi" in domains:
+                result["oi"] = []
+                for instrument in perp:
+                    result["oi"].extend(
+                        await self.repo.latest_market_records(
+                            "mkt.oi_obs",
+                            group_by=("instrument_id", "metric_key"),
+                            time_field="ts",
+                            filters={"instrument_id": instrument["instrument_id"]},
+                            cutoff=end,
+                            assembled_at=result["assembled_at"],
+                        )
+                    )
+            for domain in domains & {"funding"}:
                 collection, field = COLLECTIONS[domain]
                 result[domain] = []
                 for instrument in perp:
@@ -1826,25 +1838,10 @@ class MarketService:
         if "dc" in domains:
             result["tokens"] = list(self.tokens.values())
             result["sector_baskets"] = deepcopy(self.sector_baskets)
-            primary_seconds = 14400
-            if anchor and anchor.get("ts"):
-                age = (end - parse_time(anchor["ts"])).total_seconds()
-                if 900 <= age <= 86400:
-                    primary_seconds = age
-            primary_start = end - timedelta(seconds=primary_seconds)
             if "oi" not in domains:
                 result["oi"] = []
                 for instrument in perp:
                     iid = instrument["instrument_id"]
-                    result["oi"].extend(
-                        await self._range(
-                            "mkt.oi_obs",
-                            "ts",
-                            start=primary_start - timedelta(seconds=60),
-                            end=upper,
-                            filters={"instrument_id": iid},
-                        )
-                    )
                     result["oi"].extend(
                         await self.repo.latest_market_records(
                             "mkt.oi_obs",
@@ -1919,7 +1916,9 @@ class MarketService:
                 )
         result["domain_dependency_fingerprints"] = {}
         for domain in domains - {"composite"}:
-            if domain in {"oi", "funding"}:
+            if domain == "oi":
+                dependency = [result["oi"], result["semantics"], result["capture_metadata"]]
+            elif domain == "funding":
                 collection, field = COLLECTIONS[domain]
                 heads = [
                     self._condition_histories[(collection, field, i["instrument_id"])]["fingerprint"]
@@ -2445,22 +2444,6 @@ class MarketService:
                 window_rows = await self._window_rows(
                     token_id, collection, field, ids, recent_start, snapshot_end, books=name == "books"
                 )
-            if name == "oi" and recent_start > history_start:
-                sampled = {iid: [] for iid in ids}
-                for row in await self._shared_call(
-                    ("sampled", collection, field, tuple(sorted(ids)), history_start, recent_start),
-                    lambda collection=collection, field=field: sampled_market_history(
-                        self.repo,
-                        collection,
-                        field,
-                        ("metric_key",),
-                        sorted(ids),
-                        history_start,
-                        recent_start,
-                        300,
-                    ),
-                ):
-                    sampled[row["instrument_id"]].append(row)
             if name == "funding":
                 settled_history = (
                     await self._ranged(
@@ -2483,8 +2466,6 @@ class MarketService:
                     )
                 else:
                     rows = list(window_rows[iid])
-                if name == "oi" and recent_start > history_start:
-                    rows = sampled[iid] + rows
                 if name == "funding":
                     if recent_start > history_start:
                         rows = settled_history[iid] + rows

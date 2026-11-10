@@ -10,7 +10,6 @@ import asyncio
 import contextlib
 import hashlib
 import json
-import pickle
 import threading
 from array import array
 from bisect import bisect_left, bisect_right
@@ -612,16 +611,6 @@ def spot_truth(
     )
 
 
-def history_fingerprint(items):
-    """Exact in-process cache key for history rows (datetime/Decimal tuples).
-
-    fingerprint() serializes through iso()/jsonable/json and cost ~3 s per assessment on
-    90 days of prod history; pickling the same values is equality-preserving and C-fast.
-    Keys never leave the process.
-    """
-    return hashlib.blake2b(pickle.dumps(items, protocol=5), digest_size=32).hexdigest()
-
-
 def fingerprint(value):
     return hashlib.sha256(
         json.dumps(
@@ -633,126 +622,82 @@ def fingerprint(value):
     ).hexdigest()
 
 
-def oi_temporally_admissible(row):
-    """An explicitly unresolved provider bucket edge proves no endpoint window.
+def oi_candidates(instruments, semantics):
+    """1 for each perp instrument that may join the synchronised composite, else 0 (03 §5.4): a Binance, OKX
+    or Bybit instrument whose open-interest definitions in the registry are all SINGLE_SIDED, the candidates
+    sharing one aggregation class. The statements decide per window which of them are members."""
+    definitions = [s for s in semantics if s.get("metric_family") == "oi"]
+    flags, classes = [], set()
+    for instrument in instruments:
+        venue = _venue(instrument)
+        own = [
+            s
+            for s in definitions
+            if s.get("instrument_id") == instrument["instrument_id"]
+            or s.get("instrument_id") is None
+            and s.get("venue") == venue
+        ]
+        eligible = (
+            venue in ("binance", "okx", "bybit")
+            and bool(own)
+            and all(s.get("sidedness") == "SINGLE_SIDED" for s in own)
+        )
+        flags.append(eligible)
+        if eligible:
+            classes.add(own[0].get("aggregation_class"))
+    shared = len(classes) == 1 and None not in classes
+    return [int(shared and eligible) for eligible in flags]
 
-    Missing legacy edge fields retain their existing contract. Canonical nullable
-    bucket edges are resolved by the shared timestamp helper, never guessed here.
-    Unit/sidedness synchronization flags do not govern supplemental venue math.
-    """
-    raw = row.get("ts")
-    if "ts_bucket_anchor" not in row and not (isinstance(raw, dict) and "bucket_anchor" in raw):
-        return True
 
-    inputs = _ASSESSMENT_INPUTS.get()
-    memo = inputs.setdefault("oi_admissible", {}) if inputs is not None else None
-    identity = id(row)
-    if memo is not None and identity in memo:
-        return memo[identity][1]
-    value = (
-        propagate_timestamp(row, "ts", precision_aliases=("timestamp_precision", "precision")).bucket_anchor
-        != "UNSPECIFIED"
+def oi_records(snapshot, window):
+    """The endpoint and the history records of one window by instrument; the composite is 'composite'."""
+    evidence = snapshot.get("oi_sql") or truth_sql.NO_OI
+    return (
+        {r.instrument_id: r for r in evidence.endpoints if r.window == window},
+        {r.instrument_id: r for r in evidence.history if r.window == window},
     )
-    if memo is not None:
-        memo[identity] = (row, value)
-    return value
+
+
+def oi_normal_ranges(history, length):
+    """The native and the USD normal range of the change of open interest over `length` (03 §0): a history
+    that reaches back less than the minimum days, or a range whose window ends span less than the minimum
+    with the window, is None."""
+    minimum = float(parameter("history_min_days", 7)) * 86400
+    if (
+        history is None
+        or history.first_observation is None
+        or (history.last_observation - history.first_observation).total_seconds() < minimum
+    ):
+        return None, None
+
+    def spanning(low, high, first, last):
+        if low is None or (last - first + length).total_seconds() < minimum:
+            return None
+        return [low, high]
+
+    return (
+        spanning(history.native_low, history.native_high, history.native_first_end, history.native_last_end),
+        spanning(history.usd_low, history.usd_high, history.usd_first_end, history.usd_last_end),
+    )
 
 
 @precise
-def _oi_rows(snapshot, instrument_id):
-    """The instrument's OI rows; a row without oi_usd gets oi_native x mark (03 §5.4 table:
-    Binance oi_native x mark, Bybit singleOpenInterest x markPrice) from its own mark or the
-    nearest ticker mark of the instrument within the sync tolerance, marked with
-    oi_usd_source. A derived USD value serves only the window endpoints a decomposition uses;
-    normal-range history uses stored oi_usd only (_stored_usd). Input rows are not modified;
-    the derived list is built once per assessment and shared by all windows."""
-    rows = _instrument_rows(snapshot, "oi", instrument_id)
-    inputs = _ASSESSMENT_INPUTS.get()
-    memo = inputs.setdefault("oi_rows", {}) if inputs is not None else None
-    if memo is not None and memo.get(id(rows), (None,))[0] is rows:
-        return memo[id(rows)][1]
-    tolerance = float(parameter("oi_sync_tolerance_s", 60))
-    marks = sorted(
-        (_time(t), decimal(t["mark_price"]))
-        for t in _instrument_rows(snapshot, "tickers", instrument_id)
-        if t.get("mark_price") is not None and _time(t) is not None and decimal(t["mark_price"])
-    )
-    mark_times = [t for t, _ in marks]
-    out = []
-    for row in rows:
-        native = decimal(row.get("oi_native"))
-        if row.get("oi_usd") is not None or native is None:
-            out.append(row)
-            continue
-        mark, source = decimal(row.get("mark_price")), "OI_NATIVE_X_ROW_MARK"
-        if not mark:
-            t = _time(row)
-            i = bisect_left(mark_times, t)
-            near = [
-                (abs((mark_times[j] - t).total_seconds()), j)
-                for j in (i - 1, i)
-                if 0 <= j < len(marks) and abs((mark_times[j] - t).total_seconds()) <= tolerance
-            ]
-            mark, source = (marks[min(near)[1]][1], "OI_NATIVE_X_TICKER_MARK") if near else (None, None)
-        if not mark:
-            out.append(row)
-            continue
-        exact_context(native, mark)
-        out.append(dict(row, oi_usd=native * mark, oi_usd_reason=None, oi_usd_source=source))
-    if memo is not None:
-        memo[id(rows)] = (rows, out)
-    return out
-
-
-def _stored_usd(row):
-    """oi_usd as stored by capture; None for a value derived from a mark at assessment time."""
-    return None if row.get("oi_usd_source") else decimal(row.get("oi_usd"))
-
-
-def _oi_split(rows):
-    """(admissible rows, inadmissible rows, admissible (time, index) order) of one row list,
-    built once per assessment for a list shared across windows."""
-    inputs = _ASSESSMENT_INPUTS.get()
-    memo = inputs.setdefault("oi_split", {}) if inputs is not None else None
-    hit = memo.get(id(rows)) if memo is not None else None
-    if hit is None or hit[0] is not rows:
-        admissible = [row for row in rows if oi_temporally_admissible(row)]
-        excluded = [row for row in rows if not oi_temporally_admissible(row)]
-        ordered = sorted((_time(r), i) for i, r in enumerate(admissible))
-        hit = (rows, admissible, excluded, ordered, [t for t, _ in ordered])
-        if memo is not None:
-            memo[id(rows)] = hit
-    return hit[1:]
-
-
-def _oi_stats(rows, start, end, *, history_identity=None, venue_history=None):
-    rows, _, ordered, ordered_times = _oi_split(rows)
-    tolerance = float(parameter("oi_sync_tolerance_s", 60))
-
-    def nearest(t):
-
-        lo = bisect_left(ordered_times, t - timedelta(seconds=tolerance))
-        hi = bisect_right(ordered_times, min(t + timedelta(seconds=tolerance), end))
-        best = None
-        for when, index in ordered[lo:hi]:
-            if abs((when - t).total_seconds()) > tolerance:
-                continue
-            rank = (abs((when - t).total_seconds()), index)
-            if best is None or rank < best:
-                best = rank
-        return rows[best[1]] if best else None
-
-    a, z = nearest(start), nearest(end)
-    if not a or not z:
+def oi_stats(endpoint, history, length):
+    """The change of open interest of one venue, or of the composite, between the bounds of a window, its
+    decomposition, its normal ranges and its class; None where a bound has no observation or the start has no
+    positive native value."""
+    if endpoint is None or endpoint.start_observed_at is None or endpoint.end_observed_at is None:
         return None
     n0, n1, u0, u1 = (
-        decimal(r.get(k)) for r, k in [(a, "oi_native"), (z, "oi_native"), (a, "oi_usd"), (z, "oi_usd")]
+        endpoint.oi_native_start,
+        endpoint.oi_native_end,
+        endpoint.oi_usd_start,
+        endpoint.oi_usd_end,
     )
     if n0 is None or n1 is None or n0 <= 0 or n1 < 0:
         return None
-    exact_context(n0, n1, u0, u1)
     p0 = u0 / n0 if u0 is not None else None
-    p1 = u1 / n1 if u1 is not None and n1 else decimal(z.get("mark_price", z.get("mark")))
+    p1 = u1 / n1 if u1 is not None and n1 else endpoint.end_mark
     usd_ready = u0 is not None and u1 is not None and u0 > 0
     dec = (
         decomposition(n0, n1, p0, p1)
@@ -766,89 +711,21 @@ def _oi_stats(rows, start, end, *, history_identity=None, venue_history=None):
             detail="SYNCHRONIZED_MARK_OR_QUOTE_RATE_UNAVAILABLE",
         )
     )
-    length = _time(z) - _time(a)
-
-    window = end - start
-    bytime = {_time(r): r for r in rows if start - timedelta(days=lookback_days()) <= _time(r) < start}
-    if venue_history is not None:
-        venue_history = [_history_slice(times, venue_rows, start) for times, venue_rows in venue_history]
-    history_times = sorted(bytime)
-    gaps = sorted(
-        (b - a).total_seconds() for a, b in zip(history_times, history_times[1:], strict=False) if b > a
-    )
-    pair_tolerance = max(float(parameter("oi_sync_tolerance_s", 60)), gaps[len(gaps) // 2] / 2 if gaps else 0)
-    cache = _BASELINE_CACHE.get()
-    dependency = _BASELINE_DEPENDENCY.get()
-    history_key = (
-        (
-            "oi" if venue_history is None else "oi_composite",
-            window.total_seconds(),
-            pair_tolerance,
-            parameter("history_min_days", 7),
-            tuple(parameter("normal_range_quantiles", [0.025, 0.975])),
-            (dependency, history_identity or tuple(sorted({r.get("instrument_id", "") for r in rows})))
-            if dependency is not None
-            else history_fingerprint(
-                [(t, r.get("oi_native"), _stored_usd(r)) for t, r in sorted(bytime.items())]
-                if venue_history is None
-                else [
-                    [(t, r.get("oi_native"), _stored_usd(r)) for t, r in zip(*v, strict=False)]
-                    for v in venue_history
-                ]
-            ),
-        )
-        if cache is not None
-        else None
-    )
-    ranges = cache.get(history_key) if cache is not None else None
-    if ranges is None:
-        hn = []
-        hu = []
-        if venue_history is not None:
-            hn, hu = _composite_history(venue_history, window)
-        elif (
-            bytime
-            and (max(bytime) - min(bytime)).total_seconds() >= float(parameter("history_min_days", 7)) * 86400
-        ):
-            native_ends, usd_ends = [], []
-            for t, r in bytime.items():
-                target = t - window
-                i = bisect_left(history_times, target)
-                near = [
-                    (abs((history_times[j] - target).total_seconds()), j)
-                    for j in (i - 1, i)
-                    if 0 <= j < len(history_times)
-                    and abs((history_times[j] - target).total_seconds()) <= pair_tolerance
-                ]
-                old = bytime[history_times[min(near)[1]]] if near else None
-                if old:
-                    nn, oo = decimal(r.get("oi_native")), decimal(old.get("oi_native"))
-                    uu, ou = _stored_usd(r), _stored_usd(old)
-                    if nn is not None and oo:
-                        hn.append(float(nn / oo - 1))
-                        native_ends.append(t)
-                    if uu is not None and ou:
-                        hu.append(float(uu / ou - 1))
-                        usd_ends.append(t)
-
-            minimum = float(parameter("history_min_days", 7)) * 86400
-            if not usd_ends or (max(usd_ends) - min(usd_ends) + window).total_seconds() < minimum:
-                hu = []
-            if not native_ends or (max(native_ends) - min(native_ends) + window).total_seconds() < minimum:
-                hn = []
-        ranges = (normal(hn), normal(hu))
-        if cache is not None:
-            cache[history_key] = ranges
-            if len(cache) > 128:
-                cache.pop(next(iter(cache)))
-    dn, du = float(n1 / n0 - 1), float(u1 / u0 - 1) if usd_ready else None
-    nr, ur = ranges
+    nr, ur = oi_normal_ranges(history, length)
+    dn, du = n1 / n0 - 1, u1 / u0 - 1 if usd_ready else None
+    klass = oi_class(dn, du, dec, nr, ur)
+    stamp = {
+        "ts": endpoint.end_observed_at,
+        "ts_prec": endpoint.end_ts_prec,
+        "timestamp_precision": endpoint.end_timestamp_precision,
+        "ts_bucket_size_s": endpoint.end_ts_bucket_size_s,
+    }
     return dict(
-        requested_window_duration_s=(end - start).total_seconds(),
-        observed_window_duration_s=length.total_seconds(),
+        requested_window_duration_s=length.total_seconds(),
+        observed_window_duration_s=(endpoint.end_observed_at - endpoint.start_observed_at).total_seconds(),
         native_oi_vs_normal=("ABOVE" if dn > nr[1] else "BELOW" if dn < nr[0] else "WITHIN") if nr else None,
         precision=propagate_timestamp(
-            z, "ts", precision_aliases=("timestamp_precision", "precision")
+            stamp, "ts", precision_aliases=("timestamp_precision", "precision")
         ).precision,
         oi_native_start=n0,
         oi_native_end=n1,
@@ -859,15 +736,27 @@ def _oi_stats(rows, start, end, *, history_identity=None, venue_history=None):
         oi_usd_reason=None if usd_ready else "INCOMPLETE",
         oi_usd_detail=None if usd_ready else "SYNCHRONIZED_MARK_OR_QUOTE_RATE_UNAVAILABLE",
         decomposition=dec,
-        oi_class=oi_class(dn, du, dec, nr, ur),
-        classification_ready=oi_class(dn, du, dec, nr, ur) is not None,
+        oi_class=klass,
+        classification_ready=klass is not None,
         native_normal_range=nr,
         usd_normal_range=ur,
         native_beyond=beyond(dn, nr),
         usd_beyond=beyond(du, ur),
-        start_observed_at=iso(_time(a)),
-        end_observed_at=iso(_time(z)),
+        start_observed_at=iso(endpoint.start_observed_at),
+        end_observed_at=iso(endpoint.end_observed_at),
     )
+
+
+def oi_synchronized(snapshot, window, length, venues):
+    """The composite of the venues that observed both bounds of the window, with `venues` as the (instrument,
+    venue) pairs of the token in their order; None when there is none."""
+    endpoints, history = oi_records(snapshot, window)
+    composite = endpoints.get("composite")
+    stats = oi_stats(composite, history.get("composite"), length) if composite else None
+    if stats is not None:
+        members = composite.cohort.split(",")
+        stats["venues"] = [venue for iid, venue in venues if iid in members]
+    return stats
 
 
 def liquidation_side_evidence(rows, window_complete, coverage):
@@ -887,125 +776,6 @@ def liquidation_side_evidence(rows, window_complete, coverage):
     return result
 
 
-def _history_slice(times, rows, start):
-    lo = bisect_left(times, start - timedelta(days=lookback_days()))
-    hi = bisect_left(times, start)
-    return times[lo:hi], rows[lo:hi]
-
-
-def _composite_history(venue_history, window):
-    """Past same-length changes of a synchronized composite (03 §0, §5.4).
-
-    venue_history holds each cohort venue's (times, rows) before the window. Each past window
-    sums, per measure, the venues observed at both of its bounds, the rule the event window
-    follows: native OI where the native value was observed, USD OI where the USD value was
-    (Bybit base-tier rows carry no mark before ticker capture). Demanding every current venue
-    at every past point cut the history to the youngest venue's: OKX OI capture began on
-    18 Oct 2026 against Binance and Bybit base tiers from July-August, so the three-venue BTC
-    composite stayed under the 7 days §0 needs. A venue joining or leaving the cohort is never
-    counted as an OI change.
-    """
-    series = []
-    for times, rows in venue_history:
-        gaps = sorted((b - a).total_seconds() for a, b in zip(times, times[1:], strict=False) if b > a)
-
-        tolerance = max(float(parameter("oi_sync_tolerance_s", 60)), gaps[len(gaps) // 2] / 2 if gaps else 0)
-        values = [(decimal(r.get("oi_native")), _stored_usd(r)) for r in rows]
-        series.append((times, values, tolerance))
-    history = sorted({t for times, _, _ in series for t in times})
-
-    minimum = float(parameter("history_min_days", 7)) * 86400
-    if not history or (history[-1] - history[0]).total_seconds() < minimum:
-        return [], []
-
-    def nearest(times, values, tolerance, t):
-        i = bisect_left(times, t)
-        near = [
-            (abs((times[j] - t).total_seconds()), j)
-            for j in (i - 1, i)
-            if 0 <= j < len(times) and abs((times[j] - t).total_seconds()) <= tolerance
-        ]
-        return values[min(near)[1]] if near else None
-
-    hn, hu, native_ends, usd_ends = [], [], [], []
-    for t in history:
-        n0 = n1 = u0 = u1 = Decimal(0)
-        native = usd = 0
-        for times, values, tolerance in series:
-            old, new = nearest(times, values, tolerance, t - window), nearest(times, values, tolerance, t)
-            if old is None or new is None or old is new:
-                continue
-            if new[0] is not None and old[0]:
-                native += 1
-                n0, n1 = n0 + old[0], n1 + new[0]
-            if new[1] is not None and old[1]:
-                usd += 1
-                u0, u1 = u0 + old[1], u1 + new[1]
-        if native:
-            native_ends.append(t)
-            hn.append(float(n1 / n0 - 1))
-        if usd:
-            usd_ends.append(t)
-            hu.append(float(u1 / u0 - 1))
-
-    def stored(ends):
-
-        return bool(ends) and (ends[-1] - ends[0] + window).total_seconds() >= minimum
-
-    return (hn if stored(native_ends) else []), (hu if stored(usd_ends) else [])
-
-
-def synchronized_oi(sync, start, end):
-    admissible = []
-    tolerance = float(parameter("oi_sync_tolerance_s", 60))
-    for p, rows, category in sync:
-        if _venue(p) == "hyperliquid":
-            continue
-        eligible = [r for r in rows if oi_temporally_admissible(r) and _time(r) <= end]
-        if all(
-            any(abs((_time(row) - endpoint).total_seconds()) <= tolerance for row in eligible)
-            for endpoint in (start, end)
-        ):
-            admissible.append((p, eligible, category))
-    sync = admissible
-    synchronized = None
-    if sync and len({s[2] for s in sync}) == 1 and sync[0][2] is not None:
-        timestamps = sorted({_time(r) for _, rs, _ in sync for r in rs})
-        combined = []
-        indexed = []
-        for _, rs, _ in sync:
-            ordered = sorted(rs, key=_time)
-            indexed.append(([_time(r) for r in ordered], ordered))
-        for t in timestamps:
-            selected = []
-            for times, rs in indexed:
-                idx = bisect_left(times, t)
-                candidates = [
-                    rs[i]
-                    for i in (idx - 1, idx)
-                    if 0 <= i < len(rs)
-                    and abs((times[i] - t).total_seconds()) <= float(parameter("oi_sync_tolerance_s", 60))
-                    and times[i] <= end
-                ]
-                if not candidates:
-                    break
-                selected.append(min(candidates, key=lambda r: abs((_time(r) - t).total_seconds())))
-            if len(selected) == len(sync) and all(decimal(r.get("oi_native")) is not None for r in selected):
-                combined.append(
-                    dict(ts=iso(t), oi_native=_sum(selected, "oi_native"), oi_usd=_sum(selected, "oi_usd"))
-                )
-        synchronized = _oi_stats(
-            combined,
-            start,
-            end,
-            history_identity=tuple(sorted(p[0]["instrument_id"] for p in sync)),
-            venue_history=indexed,
-        )
-        if synchronized:
-            synchronized["venues"] = [p["venue"] for p, _, _ in sync]
-    return synchronized
-
-
 @precise
 def derivatives_truth(snapshot, start, end):
     groups = defaultdict(list)
@@ -1018,13 +788,13 @@ def derivatives_truth(snapshot, start, end):
                 instruments.setdefault(iid, row)
                 groups.setdefault(iid, [])
     for iid in groups:
-        groups[iid] = _oi_rows(snapshot, iid)
-    sem = {(s.get("instrument_id"), s["metric_key"]): s for s in snapshot.get("semantics", [])}
+        groups[iid] = _instrument_rows(snapshot, "oi", iid)
+    endpoints, history = oi_records(snapshot, snapshot.get("_primary"))
     per = []
-    sync = []
     for instrument, rs in groups.items():
-        stats = _oi_stats(rs, start, end)
-        unresolved = [r for r in _oi_split(rs)[1] if _time(r) <= end]
+        endpoint = endpoints.get(instrument)
+        stats = oi_stats(endpoint, history.get(instrument), end - start)
+        unresolved = endpoint.excluded if endpoint else 0
         venue = _venue(instruments[instrument])
         if stats is None:
             stats = {
@@ -1144,38 +914,31 @@ def derivatives_truth(snapshot, start, end):
             },
         )
         if unresolved:
-            latest_unresolved = max(unresolved, key=_time)
+            stamp = {
+                "ts": endpoint.excluded_at,
+                "ts_prec": endpoint.excluded_ts_prec,
+                "timestamp_precision": endpoint.excluded_timestamp_precision,
+                "ts_bucket_size_s": endpoint.excluded_ts_bucket_size_s,
+                "ts_bucket_anchor": endpoint.excluded_ts_bucket_anchor,
+            }
             p["oi_temporal_exclusions"] = {
-                "count": len(unresolved),
+                "count": unresolved,
                 "reason": "INCOMPLETE",
                 "detail": "OI_BUCKET_EDGE_UNSPECIFIED",
                 "latest_observation": {
                     **propagate_timestamp(
-                        latest_unresolved, "ts", precision_aliases=("timestamp_precision", "precision")
+                        stamp, "ts", precision_aliases=("timestamp_precision", "precision")
                     ).fields("ts"),
-                    "oi_native": decimal(latest_unresolved.get("oi_native")),
-                    "oi_usd": decimal(latest_unresolved.get("oi_usd")),
+                    "oi_native": endpoint.excluded_oi_native,
+                    "oi_usd": endpoint.excluded_oi_usd,
                     "scope": "SUPPLEMENTAL_PROVIDER_OBSERVATION_NOT_WINDOW_ENDPOINT",
                 },
             }
-        lastoi = max(rs, key=_time) if rs else {}
-        mark = decimal(lastoi.get("mark_price", lastoi.get("mark")))
-        index = decimal(lastoi.get("index_price", lastoi.get("index")))
-        p["basis_bps"] = (mark / index - 1) * 10000 if mark is not None and index else None
+        p["basis_bps"] = endpoint.basis_bps if endpoint else None
         per.append(p)
-        semantics = [
-            sem.get((instrument, r.get("metric_key")), sem.get((None, r.get("metric_key")), {}))
-            for r in rs
-            if start <= _time(r) <= end
-        ]
-        if (
-            venue in ("binance", "okx", "bybit")
-            and semantics
-            and all(s.get("sidedness") == "SINGLE_SIDED" for s in semantics)
-            and stats.get("oi_native_start") is not None
-        ):
-            sync.append((p, rs, semantics[0].get("aggregation_class")))
-    synchronized = synchronized_oi(sync, start, end)
+    synchronized = oi_synchronized(
+        snapshot, snapshot.get("_primary"), end - start, [(p["instrument_id"], p["venue"]) for p in per]
+    )
     eqs = [p["funding_8h_eq"] for p in per if p["funding_8h_eq"] is not None]
     totals = {}
     for key, cov in [("complete_venues_total", "COMPLETE"), ("sampled_venues_min", "SAMPLED")]:
@@ -1463,6 +1226,47 @@ async def volume_evidence(ch, snapshot, end, config, windows):
     )
     return truth_sql.VolumeEvidence(
         instruments=tuple(instruments), windows=tuple(rows), normals=tuple(normals), buckets=tuple(buckets)
+    )
+
+
+async def oi_evidence(ch, snapshot, end, config, windows, recent_start, *, history=True):
+    """Run the open-interest statements of a snapshot (03 section 5.4 and 5.7) for these windows, a mapping of
+    window name to length in seconds, and return their records; `history=False` reads only the endpoints.
+    `recent_start` is where the history stops being sampled."""
+    target = snapshot.get("token_id")
+    instruments = sorted(
+        (
+            i
+            for i in snapshot.get("instruments", [])
+            if i.get("token_id", target) == target and _market(i) != "SPOT"
+        ),
+        key=lambda i: i["instrument_id"],
+    )
+    if not instruments:
+        return truth_sql.NO_OI
+    ids = [i["instrument_id"] for i in instruments]
+    common = dict(
+        iids=ids,
+        cand=[str(flag) for flag in oi_candidates(instruments, snapshot.get("semantics", []))],
+        cutoff=end,
+        assembled=parse_time(snapshot["assembled_at"]) if snapshot.get("assembled_at") else AS_OF_ALL,
+        names=list(windows),
+        lens_us=[str(round(seconds * 1_000_000)) for seconds in windows.values()],
+        sync_tol_s=int(_knob(config, "oi_sync_tolerance_s", 60)),
+    )
+    jobs = [truth_sql.fetch(ch, truth_sql.OiEndpoint, **common)]
+    if history:
+        lookback_s = (
+            int(_knob(config, "historical_lookback_days", _knob(config, "base_retention_days", 90))) * 86400
+        )
+        jobs.append(
+            truth_sql.fetch(
+                ch, truth_sql.OiHistory, recent_start=recent_start, lookback_s=lookback_s, **common
+            )
+        )
+    endpoints, *rest = await asyncio.gather(*jobs)
+    return truth_sql.OiEvidence(
+        instruments=tuple(ids), history=tuple(rest[0]) if rest else (), endpoints=tuple(endpoints)
     )
 
 
@@ -3380,6 +3184,7 @@ def support_features(snapshot, start, end, spot, deriv, liquidity, supply):
     window = snapshot.get("_primary")
     volume = {(n.market, n.window): n for n in evidence.normals}
     usd = {(r.window, r.instrument_id): r for r in evidence.windows}
+    oi_endpoints, oi_history = oi_records(snapshot, window)
     features = {}
     for market in ("SPOT", "PERP"):
         row = volume.get((market, window))
@@ -3425,23 +3230,12 @@ def support_features(snapshot, start, end, spot, deriv, liquidity, supply):
         perp_flags.append(complete)
         p["perp_volume_usd"] = usd[(window, iid)].current_usd if (window, iid) in usd else None
         p["perp_volume_reason"] = None if p["perp_volume_usd"] is not None else "INCOMPLETE"
-        oi = [r for r in _instrument_rows(snapshot, "oi", iid) if _time(r) <= end]
-        historical = []
-        initial = []
-        tolerance = float(parameter("oi_sync_tolerance_s", 60))
-        for row in oi:
-            mark, index = decimal(row.get("mark_price")), decimal(row.get("index_price"))
-            if mark is None or not index:
-                continue
-            basis = (mark / index - 1) * 10000
-            if _time(row) < start:
-                historical.append((_time(row), basis))
-            if abs((_time(row) - start).total_seconds()) <= tolerance:
-                initial.append((_time(row), basis))
+        endpoint, record = oi_endpoints.get(iid), oi_history.get(iid)
         br = (
-            normal([v for _, v in historical])
-            if historical
-            and (max(t for t, _ in historical) - min(t for t, _ in historical)).total_seconds()
+            [record.basis_low, record.basis_high]
+            if record is not None
+            and record.basis_low is not None
+            and (record.basis_last - record.basis_first).total_seconds()
             >= float(parameter("history_min_days", 7)) * 86400
             else None
         )
@@ -3455,9 +3249,7 @@ def support_features(snapshot, start, end, spot, deriv, liquidity, supply):
             if br and p.get("basis_bps") is not None
             else None
         )
-        initial_value = (
-            min(initial, key=lambda x: abs((x[0] - start).total_seconds()))[1] if initial else None
-        )
+        initial_value = endpoint.basis_start_bps if endpoint else None
         p["basis_widening"] = (
             p["basis_bps"] > initial_value
             if p.get("basis_bps") is not None and initial_value is not None
@@ -4623,7 +4415,11 @@ def _compute_market_truth(snapshot, *, config=None):
         enrich_evidence(scoped, wstart, end, spots, name, d, relative, window_liquidity)
         d["support_features"] = support_features(scoped, wstart, end, spots[name], d, window_liquidity, su)
         if name == "EVENT" and not av:
-            d = derivatives_truth(dict(scoped, oi=[], funding=[], liquidations=[], klines=[]), wstart, end)
+            d = derivatives_truth(
+                dict(scoped, oi=[], oi_sql=truth_sql.NO_OI, funding=[], liquidations=[], klines=[]),
+                wstart,
+                end,
+            )
             d.update(window=name, start=None, cutoff=iso(end), reason="INCOMPLETE")
             window_liquidity = {"window": name, "start": None, "cutoff": iso(end), "reason": "INCOMPLETE"}
             su = {"window": name, "start": None, "cutoff": iso(end), "reason": "INCOMPLETE"}
@@ -4825,38 +4621,14 @@ def condition_confidence(snapshot, end):
         flow_segments=flow_segments(snapshot),
         assembled_at=snapshot.get("assembled_at"),
     )
-    tolerance = timedelta(seconds=float(parameter("oi_sync_tolerance_s", 60)))
-    endpoints = dict(
-        snapshot,
-        oi=[
-            r
-            for r in snapshot.get("oi", [])
-            if abs((_time(r) - start).total_seconds()) <= tolerance.total_seconds()
-            or end - tolerance <= _time(r) <= end
-        ],
-    )
-    groups = defaultdict(list)
-    for row in endpoints["oi"]:
-        groups[row["instrument_id"]].append(row)
-    semantics = {(row.get("instrument_id"), row["metric_key"]): row for row in snapshot.get("semantics", [])}
-    sync = []
-    for iid, rows in groups.items():
-        stats = _oi_stats(rows, start, end)
-        definitions = [
-            semantics.get((iid, row.get("metric_key")), semantics.get((None, row.get("metric_key")), {}))
-            for row in rows
-            if start <= _time(row) <= end
-        ]
-        venue = _venue(rows[0])
-        if (
-            venue in ("binance", "okx", "bybit")
-            and definitions
-            and all(row.get("sidedness") == "SINGLE_SIDED" for row in definitions)
-            and stats
-            and stats.get("oi_native_start") is not None
-        ):
-            sync.append((dict(venue=venue, instrument_id=iid), rows, definitions[0].get("aggregation_class")))
-    derivatives = {"synchronized": synchronized_oi(sync, start, end)}
+    derivatives = {
+        "synchronized": oi_synchronized(
+            snapshot,
+            window,
+            end - start,
+            [(i["instrument_id"], _venue(i)) for i in instruments if _market(i) != "SPOT"],
+        )
+    }
     value = data_confidence(snapshot, spot, derivatives, end)
     value["class"] = value.pop("class_")
     value["derivatives_classification_ready"] = None
@@ -4946,6 +4718,31 @@ def condition_depth(snapshot, end):
 
 COMPOSITE_CONDITION_METRICS = {"mt.move_class", "mt.divergence_state"}
 RELATIVE_CONDITION_METRICS = {"price.repricing_band", "price.vs_anchor_pct"}
+OI_CONDITION_METRICS = DERIVATIVE_CONDITION_METRICS - {"deriv.funding_vs_normal"}
+
+
+def condition_oi_windows(snapshot, requirements):
+    """The windows (name to seconds) whose open-interest records a condition evaluation reads, and whether
+    their history is needed: the requested window of an open-interest metric, the primary window of a state
+    or of a data confidence (whose endpoints alone are enough)."""
+    end = parse_time(snapshot["cutoff"])
+    lengths = dict(WINDOWS)
+    anchor = (snapshot.get("anchor") or {}).get("ts")
+    if anchor:
+        lengths["EVENT"] = (end - parse_time(anchor)).total_seconds()
+    start, primary = condition_primary_bounds(snapshot, end)
+    windows, history = {}, False
+    for requirement in requirements:
+        metric = requirement["metric"]
+        if metric in OI_CONDITION_METRICS:
+            name = requirement.get("window", "W1H")
+            if lengths.get(name, 0) > 0:
+                windows[name] = lengths[name]
+                history = True
+        elif metric in COMPOSITE_CONDITION_METRICS or metric == "dc.class":
+            windows[primary] = (end - start).total_seconds()
+            history = history or metric in COMPOSITE_CONDITION_METRICS
+    return windows, history
 
 
 def condition_market_state(snapshot, end, cache):
@@ -4965,7 +4762,7 @@ def condition_market_state(snapshot, end, cache):
             head = fingerprint({field: snapshot.get(field) for field in fields})
         elif not isinstance(head, str):
             head = fingerprint(head)
-        for evidence in ("relative_sql", "volume_sql"):
+        for evidence in ("relative_sql", "volume_sql", "oi_sql"):
             if evidence in fields:
                 head = fingerprint([head, snapshot.get(evidence)])
         key = (
@@ -5010,7 +4807,7 @@ def condition_market_state(snapshot, end, cache):
     wstart = end - timedelta(seconds=windows[primary])
     derivatives = node(
         "derivatives",
-        ("oi", "funding", "liquidations", "semantics", "instruments", "klines", "volume_sql"),
+        ("oi", "oi_sql", "funding", "liquidations", "semantics", "instruments", "klines", "volume_sql"),
         lambda: derivatives_truth(scoped, wstart, end),
     )
     liquidity = liquidity_truth(scoped, wstart, end, spots[primary], relative)
@@ -5064,7 +4861,7 @@ def compute_condition_values(snapshot, requirements, *, config=None, cache=None,
                 fields = ("flow_bars", "flow_segments", "tickers", "instruments")
             elif metric in DERIVATIVE_CONDITION_METRICS:
                 domain = "funding" if metric == "deriv.funding_vs_normal" else "oi"
-                fields = (domain, "instruments", "semantics", "capture_metadata")
+                fields = (domain, "instruments", "semantics", "capture_metadata", "oi_sql")
             elif metric == "price.close_vs_level":
                 domain = "close"
                 fields = ("relative_sql", "instruments")
@@ -5078,6 +4875,7 @@ def compute_condition_values(snapshot, requirements, *, config=None, cache=None,
                     "semantics",
                     "capture_metadata",
                     "oi",
+                    "oi_sql",
                     "funding",
                     "klines",
                     "books",
@@ -5102,6 +4900,7 @@ def compute_condition_values(snapshot, requirements, *, config=None, cache=None,
                     "semantics",
                     "capture_metadata",
                     "oi",
+                    "oi_sql",
                     "funding",
                     "klines",
                     "books",
@@ -5139,7 +4938,7 @@ def compute_condition_values(snapshot, requirements, *, config=None, cache=None,
                 dependency = fingerprint({field: snapshot.get(field) for field in fields})
             elif not isinstance(dependency, str):
                 dependency = fingerprint(dependency)
-            for evidence in ("relative_sql", "volume_sql"):
+            for evidence in ("relative_sql", "volume_sql", "oi_sql"):
                 if evidence in fields:
                     dependency = fingerprint([dependency, snapshot.get(evidence)])
             key = (
@@ -5191,6 +4990,7 @@ def compute_condition_values(snapshot, requirements, *, config=None, cache=None,
                         value["repricing_band"] = None
                         value["windows"]["EVENT"]["r_raw"] = None
                 else:
+                    selected["_primary"] = window
                     history_head = (snapshot.get("history_dependency_fingerprints") or {}).get(domain, {})
                     history_head = history_head.get(window) if isinstance(history_head, dict) else None
                     if history_head is not None and not isinstance(history_head, str):
@@ -5411,6 +5211,33 @@ async def with_volumes(repo, snapshot, config, *, primary_only=False):
     return dict(snapshot, volume_sql=await volume_evidence(ch, snapshot, end, config, windows))
 
 
+async def with_oi(repo, snapshot, config, *, windows=None, history=True):
+    """The snapshot with the records of the open-interest statements (03 §5.4, §5.7) as `oi_sql`.
+
+    The windows are those of the assessment (W15M, W1H, W4H, W24H and EVENT) unless given; the history is
+    sampled before `recent_start`, twice the longer of a day and the event window (and a minute) before the
+    cutoff, the same for every path. A snapshot whose anchor does not precede its cutoff is returned as it
+    is."""
+    ch = _market_client(repo)
+    end = parse_time(snapshot["cutoff"])
+    anchor = snapshot.get("anchor")
+    anchor_at = anchor.get("ts") if isinstance(anchor, dict) else anchor
+    start = parse_time(anchor_at) if anchor_at else end - timedelta(hours=4)
+    if start >= end:
+        return snapshot
+    if windows is None:
+        windows = dict(WINDOWS, EVENT=(end - start).total_seconds())
+    lookback = timedelta(
+        days=int(_knob(config, "historical_lookback_days", _knob(config, "base_retention_days", 90)))
+    )
+    duration = max(timedelta(days=1), end - start) if anchor_at else timedelta(days=1)
+    recent_start = max(end - lookback, end - 2 * duration - timedelta(minutes=1))
+    return dict(
+        snapshot,
+        oi_sql=await oi_evidence(ch, snapshot, end, config, windows, recent_start, history=history),
+    )
+
+
 def _market_client(repo):
     from tank import clickhouse_market
 
@@ -5480,6 +5307,9 @@ class MarketTruthService:
             )
         if wanted & COMPOSITE_CONDITION_METRICS:
             snapshot = await with_volumes(self.repo, snapshot, config, primary_only=True)
+        windows, history = condition_oi_windows(snapshot, requirements)
+        if windows:
+            snapshot = await with_oi(self.repo, snapshot, config, windows=windows, history=history)
         return await asyncio.to_thread(
             compute_condition_values,
             snapshot,
@@ -5521,7 +5351,11 @@ class MarketTruthService:
         self._release_idle_assessment_baselines()
         lock = self._assessment_locks.setdefault(token_id, asyncio.Lock())
         async with lock:
-            snapshot = await with_volumes(self.repo, await with_relative(self.repo, snapshot, knobs), knobs)
+            snapshot = await with_oi(
+                self.repo,
+                await with_volumes(self.repo, await with_relative(self.repo, snapshot, knobs), knobs),
+                knobs,
+            )
             result = await compute_workers.compute_market_truth(
                 compute_workers.ASSESSMENT, snapshot, config=knobs, baseline_key=token_id
             )

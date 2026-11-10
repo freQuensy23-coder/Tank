@@ -253,3 +253,91 @@ class VolumeEvidence:
 
 
 NO_VOLUME = VolumeEvidence()
+
+
+@dataclass(frozen=True)
+class OiHistory(Record):
+    """The 90-day history behind the normal ranges of the open-interest change and of the basis of one window
+    (oi_history.sql): one row per perp venue (`series` its 1-based position among the instruments) and one for
+    the synchronised composite (series 0, `cohort` the instruments it sums).
+
+    `observations` is the number of observations before the window start with the first and the last of them;
+    a change range is its sample count, its 0.025 and 0.975 quantiles and the first and the last window end it
+    reaches, the basis range the same over the basis of the observations; None where there is none. The pairing
+    tolerance is the venue's, 0 for the composite."""
+
+    statement = "oi_history"
+    window: str
+    series: int
+    instrument_id: str
+    cohort: str
+    observations: int
+    first_observation: datetime | None
+    last_observation: datetime | None
+    native_samples: int
+    native_low: float | None
+    native_high: float | None
+    native_first_end: datetime | None
+    native_last_end: datetime | None
+    usd_samples: int
+    usd_low: float | None
+    usd_high: float | None
+    usd_first_end: datetime | None
+    usd_last_end: datetime | None
+    pair_tolerance_s: float
+    basis_samples: int
+    basis_low: float | None
+    basis_high: float | None
+    basis_first: datetime | None
+    basis_last: datetime | None
+
+
+@dataclass(frozen=True)
+class OiEndpoint(Record):
+    """The open-interest endpoints of one window (oi_endpoints.sql): per perp venue (`series` its 1-based
+    position among the instruments) the observations nearest to the window start and to the cutoff, and for the
+    synchronised composite (series 0, `cohort` the instruments it sums) the composite at the times nearest to
+    them; None where there is none or the cohort has no composite.
+
+    A venue row also carries the own mark of its end observation and the declared precision of its timestamp,
+    the basis of its latest observation and of the one at the window start, and `excluded` observations near the
+    bounds whose bucket edge is unresolved with the latest of them."""
+
+    statement = "oi_endpoints"
+    window: str
+    series: int
+    instrument_id: str
+    cohort: str
+    start_observed_at: datetime | None
+    oi_native_start: float | None
+    oi_usd_start: float | None
+    end_observed_at: datetime | None
+    oi_native_end: float | None
+    oi_usd_end: float | None
+    end_mark: float | None
+    end_ts_prec: str | None
+    end_timestamp_precision: str | None
+    end_ts_bucket_size_s: float | None
+    basis_bps: float | None
+    basis_start_bps: float | None
+    excluded: int
+    excluded_at: datetime | None
+    excluded_oi_native: float | None
+    excluded_oi_usd: float | None
+    excluded_ts_prec: str | None
+    excluded_timestamp_precision: str | None
+    excluded_ts_bucket_size_s: float | None
+    excluded_ts_bucket_anchor: str | None
+
+
+@dataclass(frozen=True)
+class OiEvidence:
+    """Everything the open-interest rules of a snapshot read from ClickHouse: the perp instruments of the token
+    and the statement rows. `history` is empty where only the endpoints were read."""
+
+    instruments: tuple[str, ...] = ()
+    history: tuple[OiHistory, ...] = ()
+    endpoints: tuple[OiEndpoint, ...] = ()
+
+
+NO_OI = OiEvidence()

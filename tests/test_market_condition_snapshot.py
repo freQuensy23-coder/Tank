@@ -37,23 +37,28 @@ async def test_close_loader_reads_only_hour_ending_candle_and_reference_flow(set
 
 
 @pytest.mark.asyncio
-async def test_native_history_cache_refreshes_late_correction_without_rereading_history(setup):
+async def test_oi_condition_reads_the_latest_observation_and_not_the_history(setup):
     repo, settings, spot = setup
     end = utcnow() - timedelta(hours=1)
     perp = dict(spot, instrument_id="binance:perp:ABCUSD", market_type="PERP_LINEAR")
-    await repo.put(
-        "mkt.oi_obs",
-        "oi",
-        {
-            "instrument_id": perp["instrument_id"],
-            "token_id": spot["token_id"],
-            "metric_key": "binance.usdm.openInterest",
-            "ts": iso(end - timedelta(days=2)),
-            "oi_native": "100",
-            "recorded_at": iso(),
-            "ts_prec": "EXACT",
-        },
-    )
+
+    async def observe(key, at, value):
+        await repo.put(
+            "mkt.oi_obs",
+            key,
+            {
+                "instrument_id": perp["instrument_id"],
+                "token_id": spot["token_id"],
+                "metric_key": "binance.usdm.openInterest",
+                "ts": iso(at),
+                "oi_native": value,
+                "recorded_at": iso(),
+                "ts_prec": "EXACT",
+            },
+        )
+
+    await observe("old", end - timedelta(days=2), "100")
+    await observe("latest", end - timedelta(minutes=2), "150")
     calls = []
     original = repo.iter_range
 
@@ -70,23 +75,11 @@ async def test_native_history_cache_refreshes_late_correction_without_rereading_
         first = await service.condition_snapshot(spot["token_id"], end, requirements=requirements)
         second = await service.condition_snapshot(spot["token_id"], end, requirements=requirements)
         assert first["domain_dependency_fingerprints"] == second["domain_dependency_fingerprints"]
-        assert len(calls) == 1
-        await repo.put(
-            "mkt.oi_obs",
-            "oi",
-            {
-                "instrument_id": perp["instrument_id"],
-                "token_id": spot["token_id"],
-                "metric_key": "binance.usdm.openInterest",
-                "ts": iso(end - timedelta(days=2)),
-                "oi_native": "200",
-                "recorded_at": iso(),
-                "ts_prec": "EXACT",
-            },
-        )
+        await observe("corrected", end - timedelta(minutes=2), "200")
         third = await service.condition_snapshot(spot["token_id"], end, requirements=requirements)
-    assert len(calls) == 1
-    assert third["oi"][0]["oi_native"] == "200"
+    assert not [c for c in calls if c[0] == "mkt.oi_obs"]
+    assert [r["oi_native"] for r in first["oi"]] == ["150"]
+    assert [r["oi_native"] for r in third["oi"]] == ["200"]
     assert third["domain_dependency_fingerprints"] != first["domain_dependency_fingerprints"]
     assert "funding" not in third and "flow_bars" not in third
 
@@ -230,7 +223,7 @@ async def test_dc_and_depth_loader_use_bounded_inputs_and_cutoff_safe_latest(set
 
 
 @pytest.mark.asyncio
-async def test_native_cache_cutoff_movement_never_leaks_future_or_loses_precollected_points(setup):
+async def test_the_latest_oi_observation_never_leaks_the_future_and_follows_the_cutoff(setup):
     repo, settings, spot = setup
     end = utcnow() - timedelta(days=1)
     perp = dict(spot, instrument_id="binance:perp:ABCUSD", market_type="PERP_LINEAR")
@@ -261,7 +254,7 @@ async def test_native_cache_cutoff_movement_never_leaks_future_or_loses_precolle
         )
         historical = await service.condition_snapshot(spot["token_id"], end, requirements=req)
     assert [r["oi_native"] for r in first["oi"]] == ["100"]
-    assert {r["oi_native"] for r in advanced["oi"]} == {"100", "200"}
+    assert [r["oi_native"] for r in advanced["oi"]] == ["200"]
     assert [r["oi_native"] for r in historical["oi"]] == ["100"]
 
 
@@ -326,55 +319,6 @@ async def test_projected_flow_restores_declared_aliases_without_inventing_missin
         )
     assert rows[0]["buy_notional"] == rows[0]["buy_usd"] == "123.4567890123456789"
     assert rows[0]["sell_notional"] is None and rows[0]["high"] == "12"
-
-
-@pytest.mark.asyncio
-async def test_warm_native_history_is_not_rehashed_on_every_condition_read(setup, monkeypatch):
-    """Audit finding 4: a warm OI condition read hashed every cached 90-day row again to
-    deduplicate rows the history already holds once (UNI: 208k rows, ~33 us each, a
-    ~7 s event-loop stall per read). Hashing now scales with new rows only."""
-    import tank.market.service as service_module
-
-    repo, settings, spot = setup
-    end = utcnow().replace(second=0, microsecond=0) - timedelta(hours=1)
-    perps = [
-        dict(spot, instrument_id=f"venue{n}:perp:ABCUSD", venue=f"venue{n}", market_type="PERP_LINEAR")
-        for n in range(4)
-    ]
-    rows = [
-        {
-            "instrument_id": perp["instrument_id"],
-            "token_id": spot["token_id"],
-            "metric_key": "binance.usdm.openInterest",
-            "ts": iso(end - timedelta(minutes=minute)),
-            "oi_native": str(1000 + minute),
-            "recorded_at": iso(end - timedelta(minutes=minute)),
-            "ts_prec": "EXACT",
-        }
-        for perp in perps
-        for minute in range(0, 90 * 1440, 520)
-    ]
-    await repo.put_market_batch("mkt.oi_obs", rows, keys=[r["instrument_id"] + r["ts"] for r in rows])
-    hashed = []
-    original = service_module.sha256
-
-    def counting(value):
-        hashed.append(1)
-        return original(value)
-
-    monkeypatch.setattr(service_module, "sha256", counting)
-    requirements = [{"metric": "deriv.native_oi_vs_normal", "window": "W1H"}]
-    async with httpx.AsyncClient() as http:
-        service = MarketService(repo, settings, http=http)
-        for perp in perps:
-            service.instruments[perp["instrument_id"]] = perp
-        first = await service.condition_snapshot(spot["token_id"], end, requirements=requirements)
-        hashed.clear()
-        second = await service.condition_snapshot(
-            spot["token_id"], end + timedelta(minutes=1), requirements=requirements
-        )
-    assert len(first["oi"]) == len(second["oi"]) == 1000
-    assert len(hashed) < 20
 
 
 @pytest.mark.asyncio

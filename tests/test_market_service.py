@@ -625,7 +625,7 @@ async def test_capture_changes_are_durable_bounded_and_stable(setup):
 
 @pytest.mark.asyncio
 async def test_cold_bybit_oi_uses_registry_without_runtime_probe(setup):
-    from tank.analysis.truth import derivatives_truth
+    from tank.analysis.truth import oi_candidates
     from tank.market import normalize as norm
 
     repo, settings, inst = setup
@@ -654,13 +654,7 @@ async def test_cold_bybit_oi_uses_registry_without_runtime_probe(setup):
         for t in (start, end)
     ]
     definitions = service._instrument_semantics([inst])
-    actual = derivatives_truth(
-        {"token_id": inst["token_id"], "instruments": [inst], "oi": endpoints, "semantics": definitions},
-        start,
-        end,
-    )
-    assert actual["synchronized"] is not None
-    assert actual["per_venue"][0]["oi_native_chg_pct"] == 0
+    assert oi_candidates([inst], definitions) == [1]
     assert all(row["ts_prec"] == "EXACT" and row["synchronized_eligible"] for row in endpoints)
     assert not hasattr(service, "self_test")
     assert not await repo.list("qa.reviews", filters={"subject": "METRIC_SEMANTICS"})

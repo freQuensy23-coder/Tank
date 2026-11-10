@@ -86,26 +86,6 @@ def test_identical_closed_window_inputs_reused_but_corrected_row_invalidates(mon
     assert third["_condition_evaluation"]["request_key"] != first["_condition_evaluation"]["request_key"]
 
 
-def test_native_baseline_reused_when_only_current_observation_changes(monkeypatch):
-    packet = snapshot()
-    baseline = {}
-    original = module.normal
-    calls = []
-
-    def counted(values):
-        calls.append(1)
-        return original(values)
-
-    monkeypatch.setattr(module, "normal", counted)
-    req = [dict(metric="deriv.native_oi_vs_normal", window="W1H")]
-    module.compute_condition_values(packet, req, baseline_cache=baseline)
-    count = len(calls)
-    packet["oi"][-1]["oi_native"] = "1001"
-    value = module.compute_condition_values(packet, req, baseline_cache=baseline)
-    assert len(calls) == count
-    assert Decimal(value["derivatives"]["windows"]["W1H"]["synchronized"]["oi_native_end"]) == 1001
-
-
 @pytest.mark.asyncio
 async def test_service_uses_only_light_loader_and_never_writes_assessments():
     packet = snapshot()

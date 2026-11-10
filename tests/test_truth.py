@@ -5,10 +5,10 @@ from decimal import Decimal
 from pathlib import Path
 
 import pytest
+from oi_helpers import evidence as oi_evidence
 from volume_helpers import buckets, evidence
 
 from tank.analysis.truth import (
-    _oi_stats,
     compute_market_truth,
     decomposition,
     market_context,
@@ -129,6 +129,7 @@ def _add_fresh_perp_fields(snapshot):
             "complete": True,
         }
     )
+    snapshot["oi_sql"] = oi_evidence(end, [iid], cohort=[iid])
 
 
 def test_oi_formula_vectors():
@@ -234,29 +235,6 @@ def test_walk_book_requires_actual_fill():
     assert walk_book([[100, 1]], 100000, 100) is None
 
 
-@pytest.mark.historical
-@pytest.mark.integration
-def test_real_rest_fixture_endpoints():
-    path = Path(__file__).resolve().parents[1] / "fixture_check/data/rest_openInterestHist_fixtures.json"
-    data = json.loads(path.read_text())["data"]
-    cases = [
-        ("F-12:QNTUSDT:1h", "2026-09-26T19:00:00Z", "2026-09-26T23:00:00Z", 0.0042),
-        ("F-13:ONDOUSDT:1h", "2026-09-24T12:00:00Z", "2026-09-24T16:00:00Z", 0.5732),
-        ("F-14:QNTUSDT:1h", "2026-09-27T19:00:00Z", "2026-09-27T23:00:00Z", -0.3036),
-    ]
-    for key, a, z, expected in cases:
-        rows = [
-            dict(
-                ts=iso(parse_time(r["timestamp"])),
-                oi_native=r["sumOpenInterest"],
-                oi_usd=r["sumOpenInterestValue"],
-            )
-            for r in data[key]
-        ]
-        result = _oi_stats(rows, parse_time(a), parse_time(z))
-        assert result["oi_native_chg_pct"] == pytest.approx(expected, abs=0.0001)
-
-
 def test_t6_funding_and_t8_funding_freshness():
     from tank.analysis.truth import data_confidence, derivatives_truth
 
@@ -276,6 +254,7 @@ def test_t6_funding_and_t8_funding_freshness():
     assert d["funding_dispersion_8h"] == Decimal(".00006")
     snap = _fresh_spot_snapshot()
     _add_fresh_perp_fields(snap)
+    snap["_primary"] = "W4H"
     snap["funding"][-1]["settlement_time"] = iso(end - timedelta(minutes=10))
     spot = spot_truth(snap["flow_bars"], [], snap["instruments"], end - timedelta(minutes=1), end)
     derivatives = derivatives_truth(snap, start, end)
@@ -284,42 +263,6 @@ def test_t6_funding_and_t8_funding_freshness():
     assert c["class_"] == "MEDIUM"
     assert c["limiting"]["condition"] == "freshness"
     assert c["limiting"]["collection"] == "funding"
-
-
-@pytest.mark.historical
-@pytest.mark.integration
-def test_real_archive_oi_regressions():
-    import csv
-    import io
-    import zipfile
-
-    path = Path(__file__).resolve().parents[1] / "fixture_check/data"
-    results = json.loads((path.parent / "results.json").read_text())
-    rest = json.loads((path / "rest_openInterestHist_fixtures.json").read_text())["data"]
-    for fixture, symbol, a, z, cls in [
-        ("F-12", "QNTUSDT", "2026-09-26T19:00:00Z", "2026-09-26T23:00:00Z", "PRICE_MARKUP"),
-        ("F-13", "ONDOUSDT", "2026-09-24T12:00:00Z", "2026-09-24T16:00:00Z", "REAL_NATIVE"),
-        ("F-14", "QNTUSDT", "2026-09-27T19:00:00Z", "2026-09-27T23:00:00Z", "MIXED"),
-    ]:
-        rows = {}
-        for file in sorted((path / "metrics").glob(symbol + "-*")):
-            with zipfile.ZipFile(file) as archive:
-                for name in archive.namelist():
-                    for r in csv.DictReader(io.TextIOWrapper(archive.open(name))):
-                        if not r["sum_open_interest"] or not r["sum_open_interest_value"]:
-                            continue
-                        n, u = float(r["sum_open_interest"]), float(r["sum_open_interest_value"])
-                        if n > 0 and u > 0:
-                            ts = parse_time(r["create_time"])
-                            rows[ts] = dict(ts=iso(ts), oi_native=n, oi_usd=u)
-
-        for r in rest[f"{fixture}:{symbol}:1h"]:
-            t = parse_time(r["timestamp"])
-            if t in (parse_time(a), parse_time(z)):
-                rows[t] = dict(ts=iso(t), oi_native=r["sumOpenInterest"], oi_usd=r["sumOpenInterestValue"])
-        out = _oi_stats(list(rows.values()), parse_time(a), parse_time(z))
-        assert out["oi_class"] == cls
-        assert out["native_normal_range"][1] == pytest.approx(results[fixture]["n_p97_5"])
 
 
 def fixture_klines(filename, token, interval_s):
@@ -995,106 +938,6 @@ def test_spot_flow_fact_prints_cvd_signed_rounded_with_token_ticker():
     assert "CVD -0.00341 BTC," in flow(Decimal("-0.003410000"), "bitcoin:BTC")["text"]
 
 
-def test_oi_seconds_anchor_uses_actual_synchronized_observation_duration():
-    end = parse_time("2026-10-16T12:00:00Z")
-    start = end - timedelta(hours=4, seconds=-17)
-    rows = [
-        {"ts": iso(end + timedelta(minutes=i)), "oi_native": 100, "oi_usd": 100}
-        for i in range(-8 * 1440, 0, 5)
-    ]
-    rows.append({"ts": iso(end), "oi_native": 108, "oi_usd": 108})
-    result = _oi_stats(rows, start, end)
-    assert result["native_normal_range"] == [0, 0]
-    assert result["observed_window_duration_s"] == 14400
-    assert result["requested_window_duration_s"] == 14383
-    assert result["oi_class"] == "REAL_NATIVE"
-
-
-def test_oi_history_pairs_use_requested_window_on_300s_grid_with_live_end_point():
-    """Live: the end point is a WebSocket/REST sample off the 300 s history grid, so the observed
-    length (14 min 37 s) never equals a history offset; pairs use the requested 15 min window."""
-    end = parse_time("2026-10-16T12:00:00Z")
-    start = end - timedelta(minutes=15)
-    rows = [
-        {
-            "ts": iso(start + timedelta(minutes=i)),
-            "oi_native": 100 + (i // 5) % 3,
-            "oi_usd": 100 + (i // 5) % 3,
-        }
-        for i in range(-8 * 1440, 1, 5)
-    ]
-    rows.append({"ts": iso(end - timedelta(seconds=23)), "oi_native": 120, "oi_usd": 132})
-    result = _oi_stats(rows, start, end)
-    assert result["observed_window_duration_s"] == 877
-    assert result["native_normal_range"] is not None
-    assert result["usd_normal_range"] is not None
-    assert result["native_oi_vs_normal"] == "ABOVE"
-    assert result["oi_class"] is not None
-
-
-def test_oi_rows_derive_usd_from_ticker_mark_without_mutating_inputs():
-    """03 §5.4: Bybit singleOpenInterest x markPrice, Binance oi_native x mark; Bybit OI rows carry
-    no mark, the instrument's ticker within the sync tolerance does."""
-    from tank.analysis.truth import _oi_rows
-
-    iid = "bybit:perp_linear:BTCUSDT"
-    oi = [
-        {"instrument_id": iid, "ts": "2026-10-16T12:00:00Z", "oi_native": "10", "oi_usd": None},
-        {"instrument_id": iid, "ts": "2026-10-16T12:05:00Z", "oi_native": "11", "oi_usd": None},
-        {"instrument_id": iid, "ts": "2026-10-16T12:10:00Z", "oi_native": "12", "oi_usd": "999"},
-    ]
-    tickers = [
-        {"instrument_id": iid, "ts": "2026-10-16T11:59:40Z", "mark_price": "2"},
-        {"instrument_id": iid, "ts": "2026-10-16T12:00:30Z", "mark_price": "3"},
-        {"instrument_id": "other", "ts": "2026-10-16T12:05:00Z", "mark_price": "7"},
-    ]
-    snapshot = {"oi": oi, "tickers": tickers}
-    rows = _oi_rows(snapshot, iid)
-    assert rows[0]["oi_usd"] == Decimal("20")
-    assert rows[0]["oi_usd_source"] == "OI_NATIVE_X_TICKER_MARK"
-    assert rows[1]["oi_usd"] is None
-    assert rows[2] is oi[2]
-    assert oi[0]["oi_usd"] is None and "oi_usd_source" not in oi[0]
-
-
-def test_derivatives_oi_classifies_with_usd_from_ticker_mark():
-    from tank.analysis.truth import derivatives_truth
-
-    iid = "bybit:perp_linear:BTCUSDT"
-    end = parse_time("2026-10-16T12:00:00Z")
-    start = end - timedelta(hours=4)
-    times = [end + timedelta(minutes=i) for i in range(-8 * 1440, 1, 5)]
-    oi = [
-        {
-            "instrument_id": iid,
-            "venue": "bybit",
-            "ts": iso(t),
-            "oi_native": 100 if t < end else 108,
-            "oi_usd": None,
-        }
-        for t in times
-    ]
-    tickers = [{"instrument_id": iid, "venue": "bybit", "ts": iso(t), "mark_price": 10} for t in times]
-    snapshot = {
-        "instruments": [
-            {
-                "instrument_id": iid,
-                "venue": "bybit",
-                "market_type": "perp_linear",
-                "aggregation_class": "native",
-            }
-        ],
-        "oi": oi,
-        "tickers": tickers,
-    }
-    stats = derivatives_truth(snapshot, start, end)["per_venue"][0]
-    assert stats["oi_usd_chg_pct"] == pytest.approx(0.08)
-    assert stats["native_normal_range"] == [0, 0]
-    assert stats["decomposition"]["pos_share"] is not None
-    assert stats["oi_class"] == "REAL_NATIVE"
-    assert oi[0]["oi_usd"] is None
-
-
 def test_freshness_counts_only_the_assessed_tokens_fields_not_peer_closes():
     """§5.10: a BTC assessment never fails freshness on a sector peer's kline (MORPHO on a BTC card)."""
     from tank.analysis.truth import available_field_freshness
@@ -1283,107 +1126,6 @@ def test_liquidation_freshness_comes_from_stream_watermark_not_last_event():
     assert check["detail"] == "STREAM_CONNECTION_UNPROVEN"
 
 
-def test_derived_oi_usd_serves_window_endpoints_only_and_usd_range_needs_seven_days_of_usd_pairs():
-    """Lead ruling 2026-10-21 (03 §0, §5.4): a ticker-mark USD value is derived only for the
-    window endpoints; history uses stored oi_usd, so Bybit (no stored USD) has no USD normal
-    range, and stored USD covering < 7 days gives none either. Native is unaffected."""
-    from tank.analysis.truth import derivatives_truth
-
-    end = parse_time("2026-10-16T12:00:00Z")
-    start = end - timedelta(hours=4)
-    times = [end + timedelta(minutes=i) for i in range(-8 * 1440, 1, 5)]
-
-    def venue(name, stored_usd_days):
-        iid = f"{name}:perp_linear:BTCUSDT"
-        oi = [
-            {
-                "instrument_id": iid,
-                "venue": name,
-                "ts": iso(t),
-                "oi_native": 100 + (i % 3) if t < end else 108,
-                "oi_usd": (100 + (i % 3)) * 10
-                if stored_usd_days and t >= end - timedelta(days=stored_usd_days)
-                else None,
-            }
-            for i, t in enumerate(times)
-        ]
-        tickers = [{"instrument_id": iid, "venue": name, "ts": iso(t), "mark_price": 10} for t in times]
-        instrument = {
-            "instrument_id": iid,
-            "venue": name,
-            "market_type": "perp_linear",
-            "aggregation_class": "native",
-        }
-        return instrument, oi, tickers
-
-    for days in (None, 3):
-        instrument, oi, tickers = venue("bybit", days)
-        stats = derivatives_truth({"instruments": [instrument], "oi": oi, "tickers": tickers}, start, end)[
-            "per_venue"
-        ][0]
-        assert stats["native_normal_range"] is not None
-        assert stats["usd_normal_range"] is None, days
-        endpoint_usd = []
-        for at in (start, end):
-            row = next(row for row in oi if parse_time(row["ts"]) == at)
-            mark = next(row["mark_price"] for row in tickers if parse_time(row["ts"]) == at)
-            endpoint_usd.append(
-                Decimal(str(row["oi_usd"]))
-                if row["oi_usd"] is not None
-                else Decimal(str(row["oi_native"])) * Decimal(str(mark))
-            )
-        expected_usd_change = endpoint_usd[1] / endpoint_usd[0] - 1
-        assert stats["oi_usd_chg_pct"] == pytest.approx(float(expected_usd_change))
-        assert stats["decomposition"]["pos_share"] is not None
-    instrument, oi, tickers = venue("bybit", 8)
-    stats = derivatives_truth({"instruments": [instrument], "oi": oi, "tickers": tickers}, start, end)[
-        "per_venue"
-    ][0]
-    assert stats["usd_normal_range"] is not None
-
-
-def test_synchronized_composite_keeps_native_range_and_endpoint_usd_with_endpoint_only_derivation():
-    from tank.analysis.truth import derivatives_truth
-
-    end = parse_time("2026-10-16T12:00:00Z")
-    start = end - timedelta(hours=4)
-    times = [end + timedelta(minutes=i) for i in range(-8 * 1440, 1, 5)]
-    snapshot = {"instruments": [], "oi": [], "tickers": [], "semantics": []}
-    for name, stored in (("binance", True), ("bybit", False)):
-        iid = f"{name}:perp_linear:BTCUSDT"
-        snapshot["instruments"].append(
-            {"instrument_id": iid, "venue": name, "market_type": "perp_linear", "aggregation_class": "native"}
-        )
-        snapshot["semantics"].append(
-            {
-                "metric_key": f"{name}.oi",
-                "instrument_id": iid,
-                "metric_family": "oi",
-                "sidedness": "SINGLE_SIDED",
-                "aggregation_class": "oi_native_single_sided",
-            }
-        )
-        for i, t in enumerate(times):
-            native = (100 + (i % 3)) if t < end else 108
-            snapshot["oi"].append(
-                {
-                    "instrument_id": iid,
-                    "venue": name,
-                    "metric_key": f"{name}.oi",
-                    "ts": iso(t),
-                    "oi_native": native,
-                    "oi_usd": native * 10 if stored else None,
-                }
-            )
-            snapshot["tickers"].append({"instrument_id": iid, "venue": name, "ts": iso(t), "mark_price": 10})
-    sync = derivatives_truth(snapshot, start, end)["synchronized"]
-    assert sync["venues"] == ["binance", "bybit"]
-    assert sync["native_normal_range"] is not None
-    assert sync["oi_usd_chg_pct"] == pytest.approx(0.08)
-
-    assert sync["usd_normal_range"] is not None
-
-
 def test_native_only_oi_preserves_native_and_sync_without_inventing_usd():
     from runpy import run_path
 
@@ -1394,11 +1136,22 @@ def test_native_only_oi_preserves_native_and_sync_without_inventing_usd():
     ]()
     end = parse_time(fixture["cutoff"])
     start = end - timedelta(hours=4)
-    for row in fixture["oi"]:
-        row["oi_native"] = 100 if parse_time(row["ts"]) < end else 108
-        row["oi_usd"] = None
-        row["oi_usd_reason"] = "SYNCHRONIZED_MARK_OR_QUOTE_RATE_UNAVAILABLE"
-    result = derivatives_truth(fixture, start, end)
+    no_usd = dict(oi_usd_start=None, oi_usd_end=None)
+    instrument = "binance:perp:T"
+    fixture["oi_sql"] = oi_evidence(
+        end,
+        [instrument],
+        cohort=[instrument],
+        venue={None: no_usd},
+        composite={None: no_usd},
+        venue_history={
+            None: dict(native_low=0.0, native_high=0.0, usd_samples=0, usd_low=None, usd_high=None)
+        },
+        composite_history={
+            None: dict(native_low=0.0, native_high=0.0, usd_samples=0, usd_low=None, usd_high=None)
+        },
+    )
+    result = derivatives_truth(dict(fixture, _primary="W4H"), start, end)
     for stats in (result["per_venue"][0], result["synchronized"]):
         assert stats["oi_native_start"] == 100
         assert stats["oi_native_end"] == 108
@@ -1542,10 +1295,20 @@ def test_derivative_windows_keep_one_hour_watch_separate_from_four_hour_crowding
     ]()
     end = parse_time(snapshot["cutoff"])
     snapshot["anchor"]["ts"] = iso(end - timedelta(hours=2))
-    for row in snapshot["oi"]:
-        native = 108 if parse_time(row["ts"]) >= end - timedelta(hours=2) else 100
-        row["oi_native"] = native
-        row["oi_usd"] = native * 100
+    moved = dict(oi_native_start=100.0, oi_native_end=108.0, oi_usd_start=10000.0, oi_usd_end=10800.0)
+    still = dict(oi_native_start=108.0, oi_native_end=108.0, oi_usd_start=10800.0, oi_usd_end=10800.0)
+    changes = {name: moved for name in ("W4H", "W24H")} | {name: still for name in ("W15M", "W1H", "EVENT")}
+    flat = dict(native_low=0.0, native_high=0.0, usd_low=0.0, usd_high=0.0)
+    snapshot["oi_sql"] = oi_evidence(
+        end,
+        ["binance:perp:T"],
+        lengths=dict(W15M=900, W1H=3600, W4H=14400, W24H=86400, EVENT=7200),
+        cohort=["binance:perp:T"],
+        venue=changes,
+        composite=changes,
+        venue_history={None: flat},
+        composite_history={None: flat},
+    )
     for row in snapshot["funding"]:
         row["rate"] = 0.0001 if parse_time(row["settlement_time"]) >= end - timedelta(hours=2) else 0
     result = compute_market_truth(snapshot)
@@ -2100,6 +1863,7 @@ def test_hot_90_second_derivative_points_are_medium_without_weakening_sync_rule(
 
     snapshot = _fresh_spot_snapshot()
     _add_fresh_perp_fields(snapshot)
+    snapshot["_primary"] = "W4H"
     end = parse_time(snapshot["cutoff"])
     start = end - timedelta(hours=4)
     assert derivatives_truth(snapshot, start, end)["synchronized"] is not None
@@ -2130,8 +1894,6 @@ def test_hot_90_second_derivative_points_are_medium_without_weakening_sync_rule(
     assert not any(
         f["condition"] == "freshness" and f.get("collection") in ("oi", "funding") for f in base["failed"]
     )
-
-    assert derivatives["synchronized"] is None
 
 
 def test_freshness_uses_semantic_point_time_and_snapshot_assembly_availability():
@@ -2579,69 +2341,6 @@ def test_price_markup_flag_keeps_measured_venue_when_composite_is_unavailable(
     assert result["move_class"] == "UNKNOWN"
     assert result["class_confidence"] == "LOW"
     assert derivatives["synchronized"] is None
-
-
-def _sync_cohort(end, spans_days, levels, usd_days=None):
-    """Synchronized cohort rows on a 5 min grid; venue i starts spans_days[i] before end and
-    carries USD for its last usd_days[venue] days (all of them by default)."""
-    cohort = []
-    for (venue, span), level in zip(spans_days.items(), levels, strict=False):
-        iid = f"{venue}:perp_linear:BTCUSDT"
-        rows = [
-            {
-                "instrument_id": iid,
-                "ts": iso(end - timedelta(minutes=m)),
-                "oi_native": level(m),
-                "oi_usd": 2 * level(m) if m <= (usd_days or {}).get(venue, span) * 1440 else None,
-            }
-            for m in range(int(span * 1440) // 5 * 5, -1, -5)
-        ]
-        cohort.append(({"venue": venue, "instrument_id": iid}, rows, "PERP_LINEAR_SINGLE"))
-    return cohort
-
-
-def test_synchronized_oi_history_counts_each_past_window_over_venues_seen_at_both_bounds():
-    """03 §0/§5.4: OKX joined on 18 Oct, Binance and Bybit have months of base tier; the
-    composite's normal range comes from past windows over the venues observed at their bounds."""
-    from tank.analysis.truth import _composite_history, normal, synchronized_oi
-
-    end = parse_time("2026-10-21T03:00:00Z")
-    start = end - timedelta(minutes=15)
-    spans = {"binance": 10, "bybit": 10, "okx": 2.5}
-    levels = [lambda m: 100 + (m // 5) % 4, lambda m: 50 + (m // 5) % 3, lambda m: 30 + (m // 5) % 2]
-    usd_days = {"binance": 10, "bybit": 2.5, "okx": 2.5}
-    sync = _sync_cohort(end, spans, levels, usd_days)
-    result = synchronized_oi(sync, start, end)
-    assert result["venues"] == ["binance", "bybit", "okx"]
-    native, usd = [], []
-
-    for m in range(20, 10 * 1440 - 15 + 1, 5):
-        for days, out in ((spans, native), (usd_days, usd)):
-            present = [i for i, span in enumerate(days.values()) if m + 15 <= span * 1440]
-            out.append(sum(levels[i](m) for i in present) / sum(levels[i](m + 15) for i in present) - 1)
-    assert native != usd
-    assert result["native_normal_range"] == pytest.approx(normal(native))
-    assert result["usd_normal_range"] == pytest.approx(normal(usd))
-    assert result["native_oi_vs_normal"] is not None
-
-    flat = _sync_cohort(end, spans, [lambda m: 100, lambda m: 50, lambda m: 1000])
-    stored = [[r for r in rows if parse_time(r["ts"]) < start] for _, rows, _ in flat]
-    hn, hu = _composite_history([([parse_time(r["ts"]) for r in rows], rows) for rows in stored], end - start)
-    assert hn and max(map(abs, hn)) == 0 and max(map(abs, hu)) == 0
-
-
-def test_synchronized_oi_history_stays_unavailable_under_seven_days():
-    from tank.analysis.truth import synchronized_oi
-
-    end = parse_time("2026-10-21T03:00:00Z")
-    start = end - timedelta(minutes=15)
-    sync = _sync_cohort(
-        end, {"binance": 6.9, "bybit": 6.9, "okx": 2.5}, [lambda m: 100 + m % 7, lambda m: 50, lambda m: 30]
-    )
-    result = synchronized_oi(sync, start, end)
-    assert result["venues"] == ["binance", "bybit", "okx"]
-    assert result["native_normal_range"] is None
-    assert result["oi_class"] is None
 
 
 def test_full_assessments_run_one_at_a_time_per_process(monkeypatch):

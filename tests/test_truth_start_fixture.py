@@ -6,6 +6,7 @@ from functools import lru_cache
 from math import sin
 
 import pytest
+from oi_helpers import steady
 from relative_helpers import start_evidence
 from volume_helpers import buckets, evidence
 
@@ -208,6 +209,7 @@ def synthetic_start_snapshot():
         }
     )
     snap["relative_sql"] = start_evidence(end, anchor)
+    snap["oi_sql"] = steady(end, [iid])
     snap["volume_sql"] = evidence(
         [row["instrument_id"] for row in snap["instruments"]],
         native={"PERP": None},
@@ -272,8 +274,7 @@ def test_confidence_diagnostics_do_not_add_unlisted_grade_conditions():
     snapshot = compact_start_snapshot()
     snapshot["capture_status"] = {"status": "RUNNING", "reason": "BACKFILL_PENDING"}
 
-    for row in snapshot["oi"]:
-        row["oi_usd"] = None
+    snapshot["oi_sql"] = steady(parse_time(snapshot["cutoff"]), ["binance:perp:T"], usd=False)
     result = compute_market_truth(snapshot)
     assert result["data_confidence"]["class"] == "HIGH", result["data_confidence"]
     assert result["data_confidence"]["derivatives_classification_ready"] is False

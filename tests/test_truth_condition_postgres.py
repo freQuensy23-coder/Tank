@@ -12,7 +12,7 @@ from types import SimpleNamespace
 import httpx
 import pytest
 
-from tank.analysis.truth import MarketTruthService, compute_market_truth
+from tank.analysis.truth import MarketTruthService, compute_market_truth, with_oi
 from tank.market.service import MarketService
 from tank.util import iso, parse_time
 
@@ -266,7 +266,7 @@ async def test_disposable_postgres_selective_condition_inputs_and_sql_footprint(
                 anchor={"type": "T1", "ts": packet["anchor"]["ts"], "ts_prec": "EXACT"},
                 requirements=requirements,
             )
-            full = compute_market_truth(deepcopy(loaded))
+            full = compute_market_truth(deepcopy(await with_oi(repo, loaded, {})))
             assert selective["data_confidence"]["class"] == full["data_confidence"]["class"] == "HIGH"
             assert Decimal(selective["liquidity"]["aggregate_depth_p1_usd"]) == Decimal(
                 full["liquidity"]["aggregate_depth_p1_usd"]

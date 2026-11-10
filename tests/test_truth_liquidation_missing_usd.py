@@ -70,6 +70,7 @@ def test_actual_truth_keeps_liquidation_sides_independent_when_fx_missing(missin
 def test_missing_oi_does_not_drop_independent_funding_and_liquidation_observations(registry_present):
     snapshot = fixture["synthetic_start_snapshot"]()
     snapshot["oi"] = []
+    snapshot.pop("oi_sql")
     iid = "binance:perp:T"
     if not registry_present:
         snapshot["instruments"] = [r for r in snapshot["instruments"] if r["instrument_id"] != iid]

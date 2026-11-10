@@ -10,6 +10,7 @@ from datetime import timedelta
 from decimal import Decimal
 
 import pytest
+from oi_helpers import evidence as oi_evidence
 from volume_helpers import buckets, evidence
 
 from tank.analysis.truth import (
@@ -201,8 +202,47 @@ def attach_volumes(packet):
     return packet
 
 
+def attach_oi(packet):
+    """The open-interest records the statements return for the raw packet: each perp's open interest went
+    from 110 to 111 (or `end_native` and `end_usd` of `packet["oi_state"]`) against a 90-day range of
+    -9.09% .. +20%, its basis is 10 bps (or `basis`) against a range of exactly 10 bps and 10 bps at the
+    window start."""
+    state = dict(basis=10.0, end_native=111.0, end_usd=11111.1) | packet.get("oi_state", {})
+    perps = [i["instrument_id"] for i in packet["instruments"] if ":perp:" in i["instrument_id"]]
+    packet["oi_sql"] = oi_evidence(
+        END,
+        perps,
+        lengths={"EVENT": 900},
+        venue={
+            None: dict(
+                oi_native_start=110.0,
+                oi_native_end=state["end_native"],
+                oi_usd_start=11011.0,
+                oi_usd_end=state["end_usd"],
+                basis_bps=state["basis"],
+                basis_start_bps=10.0,
+            )
+        },
+        venue_history={
+            None: dict(
+                native_low=-0.0909,
+                native_high=0.2,
+                usd_low=-0.0909,
+                usd_high=0.2,
+                basis_samples=864,
+                basis_low=10.0,
+                basis_high=10.0,
+                basis_first=START - timedelta(days=9),
+                basis_last=START - timedelta(minutes=15),
+            )
+        },
+    )
+    return packet
+
+
 def derive(packet, start=START, end=END):
     attach_volumes(packet)
+    attach_oi(packet)
     spot = spot_truth(packet["flow_bars"], [], packet["instruments"], start, end)
 
     spot["composite_cohort"] = deepcopy(spot["composite_max"])
@@ -243,9 +283,7 @@ def test_raw_native_volume_and_basis_support_require_complete_own_history():
 
 def test_raw_perp_taker_significance_and_basis_widening_have_negative_controls():
     packet = raw_packet()
-    for row in packet["oi"]:
-        if parse_time(row["ts"]) == END:
-            row["mark_price"] = "100.2"
+    packet["oi_state"] = dict(basis=20.0)
     f = derive(packet)[1]["support_features"]
     assert f["basis_widening"] is True and f["basis_within_normal"] is False
     for row in packet["flow_bars"]:
@@ -464,9 +502,7 @@ def positive_packet(cls):
         for row in packet["funding"]:
             if parse_time(row["settlement_time"]) == END:
                 row["rate"] = ".01"
-        for row in packet["oi"]:
-            if parse_time(row["ts"]) == END:
-                row["mark_price"] = "100.2"
+        packet["oi_state"] = dict(basis=20.0)
     if cls == "SHORT_SQUEEZE":
         for row in packet["funding"]:
             row["rate"] = "-.0001"
@@ -614,13 +650,9 @@ def test_each_support_term_loses_exactly_one_point_when_raw_evidence_is_removed(
             if parse_time(row["ts"]) > START:
                 row["depth"]["ask"]["p1"]["usd"] = "900000000" if term == "depth_not_down" else "1000000000"
     elif term == "basis_within":
-        for row in packet["oi"]:
-            if parse_time(row["ts"]) == END:
-                row["mark_price"] = "100.2"
+        packet["oi_state"] = dict(basis=20.0)
     elif term == "basis_widening":
-        for row in packet["oi"]:
-            if parse_time(row["ts"]) == END:
-                row["mark_price"] = "100.1"
+        packet["oi_state"] = dict(basis=10.0)
     elif term == "funding_above":
         for row in packet["funding"]:
             if parse_time(row["settlement_time"]) == END:
@@ -648,9 +680,7 @@ def test_each_support_term_loses_exactly_one_point_when_raw_evidence_is_removed(
     elif term in ("supply_evidence", "exchange_inflows"):
         packet["supply"] = []
     elif term == "native_not_up":
-        for row in packet["oi"]:
-            if parse_time(row["ts"]) == END:
-                row.update(oi_native="1000", oi_usd="100100")
+        packet["oi_state"] = dict(end_native=1000.0, end_usd=100100.0)
     elif term == "venue_signs_disagree":
         for row in packet["flow_bars"]:
             if ":spot:" in row["instrument_id"]:

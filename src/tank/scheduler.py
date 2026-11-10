@@ -1285,11 +1285,15 @@ class Scheduler:
             "config_version": self.settings.config_version,
             "code_version": self.settings.code_version,
         }
-        from tank.analysis.truth import with_relative, with_volumes
+        from tank.analysis.truth import with_oi, with_relative, with_volumes
 
         truth = await compute_workers.compute_market_truth(
             compute_workers.REACTION,
-            await with_volumes(self.repo, await with_relative(self.repo, snapshot, config), config),
+            await with_oi(
+                self.repo,
+                await with_volumes(self.repo, await with_relative(self.repo, snapshot, config), config),
+                config,
+            ),
             config=config,
         )
         relative = truth.get("relative", {})
