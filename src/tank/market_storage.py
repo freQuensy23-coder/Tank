@@ -567,13 +567,13 @@ async def market_dependency_head(
     The `contents` head is computed by the database over every row of the scope readable at
     `assembled_at` (recorded by then, or with unknown availability): {rows, unknown, digest},
     the row count, the count with unknown availability and the XOR of the rows' marks
-    (`fingerprint_mark`: the stored fingerprint and recorded_at of each row). A stored row is
-    rewritten only when its semantic fingerprint differs, the fingerprint binds the row's
-    instrument and market time, and a version written twice differs in recorded_at, so any
-    new, late, corrected, replaced or removed row of the scope moves this head without the
-    caller reading a single row, and a caller that holds the rows can compare its own count
-    and XOR of marks with the head. A row stored without a fingerprint enters the digest
-    through its storage key, which no caller can reproduce.
+    (`fingerprint_mark`: the stored fingerprint and recorded_at of each row). Every writer
+    rewrites a stored row only when its semantic fingerprint differs, and the fingerprint
+    covers the row's identity and every value outside the stamps, so a replaced row has a
+    different mark and any new, late, corrected, replaced or removed row of the scope moves
+    this head without the caller reading a single row. A caller that holds the rows can compare
+    its own count and XOR of marks with the head. A row stored without a fingerprint enters
+    the digest through its storage key, which no caller can reproduce.
     """
     from psycopg import sql
 
