@@ -508,6 +508,29 @@ async def test_a_long_lived_service_answers_as_one_that_never_saw_the_data(stand
         assert key(again) == key(after) and comparable(again) == comparable(after)
 
 
+@pytest.mark.parametrize("change", ["late", "correction", "ancient"])
+async def test_open_interest_written_by_another_process_is_seen_at_the_same_cutoff(
+    stand, change, monkeypatch
+):
+    """Rows stored by the capture process leave no write note in this one, so the history of
+    an instrument asked again for a cutoff already evaluated must still come from the
+    database."""
+    repo, settings, rows, cutoff = stand
+    monkeypatch.setitem(GROUPS, "oi", ("T", ["deriv.native_oi_chg_pct"]))
+    await seed(repo, rows, cutoff, held_back=GAPS if change == "late" else ())
+    async with httpx.AsyncClient() as http:
+        warm = services(repo, settings, http, rows)
+        before = await evaluate(warm, cutoff, "oi")
+        assert key(await evaluate(warm, cutoff, "oi")) == key(before)
+        batches, then = arrivals(rows, cutoff, change, 2)
+        for batch in batches:
+            await write(repo, batch)
+        repo._market_write_clock.clear()
+        after = await evaluate(warm, then, "oi")
+        cold = await evaluate(services(repo, settings, http, rows), then, "oi")
+        assert comparable(after) == comparable(cold)
+
+
 async def spent(settings, rows, cutoff, hashed, group, **size):
     """Bytes hashed by a service that already holds the history: by the evaluation of the
     next minute with its new rows, and by one more evaluation with nothing new."""

@@ -1319,7 +1319,9 @@ class MarketService:
     ):
         """The 90-day history of one instrument, read once and then kept equal to the store.
 
-        The database heads of the range say whether anything changed; equal heads return the
+        The database heads of the range say whether anything changed; they are asked of the
+        database at every call, never taken from the memo of boundary heads, which learns of
+        a write only when this process made it. Equal heads return the
         held rows. Moved heads are followed by reading only the new and the late rows, and the
         contents head confirms the lane then holds exactly the stored versions. The
         fingerprint is the heads, never the rows. `proof` receives the lane's history proof
@@ -1330,9 +1332,17 @@ class MarketService:
         start = cutoff - timedelta(days=90)
         filters = {"instrument_id": instrument_id}
         async with locks.setdefault(key, asyncio.Lock()):
-            heads = await self._condition_heads(
-                collection, field, start, cutoff, assembled_at, filters, CHANGE_ORDERS
+            found = await market_dependency_head(
+                self.repo,
+                collection,
+                field,
+                cutoff,
+                start=start,
+                filters=filters,
+                assembled_at=assembled_at,
+                orders=CHANGE_ORDERS,
             )
+            heads = [found[o] for o in CHANGE_ORDERS]
             contents = heads[-1]
             unknown = contents is not None and contents["unknown"] > 0
             previous = cache.pop(key, None)
