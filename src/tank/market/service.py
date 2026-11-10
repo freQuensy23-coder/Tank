@@ -385,10 +385,11 @@ class MarketService:
 
         beat = [time.monotonic()]
         loop_thread = threading.get_ident()
+        ended = threading.Event()
 
         def watch():
             reported = 0.0
-            while not self._stop.is_set():
+            while not ended.is_set() and not self._stop.is_set():
                 time.sleep(1)
                 stale = time.monotonic() - beat[0]
                 if stale < LOOP_STALL_S or time.monotonic() - reported < 30:
@@ -408,10 +409,13 @@ class MarketService:
                 )
 
         threading.Thread(target=watch, name="loop-watchdog", daemon=True).start()
-        while not self._stop.is_set():
-            beat[0] = time.monotonic()
-            with suppress(asyncio.TimeoutError):
-                await asyncio.wait_for(self._stop.wait(), 1)
+        try:
+            while not self._stop.is_set():
+                beat[0] = time.monotonic()
+                with suppress(asyncio.TimeoutError):
+                    await asyncio.wait_for(self._stop.wait(), 1)
+        finally:
+            ended.set()
 
     async def close(self):
         try:
@@ -643,6 +647,19 @@ class MarketService:
                     self._capture_waits[latest["backfill_id"]] = result
                 return result
             await asyncio.sleep(min(0.25, max(0, timeout_s - elapsed)))
+
+    async def recorded_capture_waits(self, token_id):
+        """The bounded waits wait_capture recorded for the token's capture runs: what a
+        snapshot read in a worker process needs to report them as this process would."""
+        runs = await self.repo.list("mkt.backfill_runs", filters={"token_id": token_id}, limit=10000)
+        return {
+            run["backfill_id"]: self._capture_waits[run["backfill_id"]]
+            for run in runs
+            if run["backfill_id"] in self._capture_waits
+        }
+
+    def record_capture_waits(self, waits):
+        self._capture_waits.update(waits)
 
     async def _schedule_event_backfill(self, event_id, token_id, anchor):
         marker = (token_id, event_id, iso(anchor))
@@ -3371,12 +3388,29 @@ class MarketService:
                 task.cancel()
             await asyncio.gather(*workers, return_exceptions=True)
 
-    async def _evict_recorded_days(self, since):
+    async def _evict_recorded_days(self, since, *, save=True):
         """Past-day kline counts of days tank-capture wrote into since `since`; the counts
         are saved after."""
         now = utcnow()
         today = now.replace(hour=0, minute=0, second=0, microsecond=0)
         for key in await market_kline_days_recorded_since(self.repo, since - DAY_COUNTS_MARGIN, today):
             self._kline_day_counts.pop(key, None)
-        await self._save_day_counts()
+        if save:
+            await self._save_day_counts()
         return now
+
+    async def follow_day_counts(self):
+        """The past-day kline counts of a process that only reads (a market worker, which
+        never runs run()): restored from what the service process saved, then kept true as
+        tank-capture records late klines. The service process alone saves them."""
+        checked = utcnow()
+        try:
+            log.info("series counts restored: %d past days", await self._load_day_counts())
+        except Exception as exc:
+            log.warning("series count restore failed: %s", type(exc).__name__)
+        while True:
+            await asyncio.sleep(DAY_COUNTS_SAVE_S)
+            try:
+                checked = await self._evict_recorded_days(checked, save=False)
+            except Exception as exc:
+                log.warning("series count upkeep failed: %s", type(exc).__name__)

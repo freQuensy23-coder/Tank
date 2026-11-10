@@ -441,7 +441,7 @@ Sizing estimate (ClickHouse): prints ≈ 0.5 GB/day compressed at 15 hot tokens;
 | Time | The host's NTP client (e.g. `chrony`); containers use the host clock |
 | Backups | Nightly `pg_dump` + `bundles/` copy to the volume `backup` (an external disk on the host) |
 
-Concurrency: one asyncio event loop with 8 job workers; CPU-heavy steps run in a thread pool, except full Market Truth computations, which run in two worker processes of the `tank` service (one for RUN_MARKET_TRUTH, one for reaction checkpoints; 03 §3.8) so they neither share the event loop's GIL nor wait behind each other; sessions run in parallel inside OpenMA, one per event; `publish_card` takes one lock per event.
+Concurrency: one asyncio event loop with 8 job workers; CPU-heavy steps run in a thread pool, except market reads and the Market Truth computed from them, which run in seven worker processes of the `tank` service (four for watch-condition reads, two for RUN_MARKET_TRUTH, one for reaction checkpoints; 03 §3.8) so they neither share the event loop's GIL nor wait behind each other, and the service uses as many cores as it has such work; sessions run in parallel inside OpenMA, one per event; `publish_card` takes one lock per event.
 
 ---
 

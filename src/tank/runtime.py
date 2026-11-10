@@ -58,11 +58,13 @@ class Runtime:
         scheduler=None,
         gateway=None,
         inbox=None,
+        market_workers=None,
     ):
         from tank.logging import configure_logging
 
         configure_logging(settings)
         self.repo, self.settings = repo, settings
+        self.market_workers = market_workers
         self.active_jobs = set()
         if gateway is None:
             from tank.codex_gateway import CodexGateway
@@ -80,7 +82,7 @@ class Runtime:
         if truth is None:
             from tank.analysis.truth import MarketTruthService
 
-            truth = MarketTruthService(repo, settings, market)
+            truth = MarketTruthService(repo, settings, market, market_workers)
         if pipeline is None:
             from tank.agents.pipeline import Pipeline
 
@@ -105,6 +107,8 @@ class Runtime:
         if hasattr(self.sessions, "telegram"):
             self.sessions.telegram = inbox
         self.scheduler = scheduler or Scheduler(repo, settings, market, truth)
+        if market_workers is not None:
+            self.scheduler.market_workers = market_workers
         if hasattr(self.event_tools, "scheduler"):
             self.event_tools.scheduler = self.scheduler
         self.handlers = {
@@ -512,9 +516,19 @@ class Runtime:
                     await service.close()
                 except Exception:
                     log.exception("Resource close failed")
+        if getattr(self, "market_workers", None) is not None:
+            self.market_workers.close()
         from tank.sources.rate_limits import shared_request_budgets
 
         await shared_request_budgets.release(getattr(self, "request_ledger", None))
+
+
+def service_generation(repo, settings):
+    """A generation of the live service: its market reads and their Market Truth
+    computations run in its own worker processes (02 §8)."""
+    from tank.analysis.market_workers import MarketWorkers
+
+    return Runtime(repo, settings, market_workers=MarketWorkers(settings))
 
 
 class RuntimeSupervisor:
