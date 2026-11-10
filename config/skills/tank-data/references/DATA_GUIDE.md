@@ -702,7 +702,7 @@ HTML page sources: Tank collects every link on the page that matches the source'
 | S19 | `POST https://www.franklintempleton.com/api/articleApi` (form: `articleType=press-release`, filter `pressReleaseCategory.exact=news-room`, `en-US`, newest 24) — the JSON search the press-releases page uses; each hit carries title, URL, reference date and full text (`contentString`) | press release URL | 600 s |
 | S20 | `https://www.circle.com/pressroom` | `^/pressroom/[a-z0-9-]+$` (`/pressroom/circle-to-announce-q3-2026-financial-results-on-november-4-2026`) | 600 s |
 | S21 | `https://tether.io/feed/` — RSS, item key `guid` | — | 300 s |
-| S22 | `https://www.paxos.com/newsroom` | `^/newsroom/[a-z0-9-]+$` (`/newsroom/paxos-joins-solana-developer-platform`) | 600 s |
+| S22 | `https://www.paxos.com/newsroom` (article links moved from `/newsroom/…` to `/blog/…`; checked 10 Nov 2026) | `^/blog/[a-z0-9-]+$` (`/blog/paxos-joins-solana-developer-platform`) | 600 s |
 
 ### 3.4 Governance (CORE)
 

@@ -1,0 +1,37 @@
+{
+  "newsroom": {
+    "url": "https://www.paxos.com/newsroom",
+    "response_url": "https://www.paxos.com/newsroom",
+    "status": 200,
+    "captured_at": "2026-11-10T14:18:46.607665Z",
+    "sha256": "b295327dde9dff4202068e5e2d6ceebdd24abb1e1116a85fdb593365bf0aa40b"
+  },
+  "sec-clearing-agency-registration": {
+    "url": "https://www.paxos.com/blog/sec-registers-paxos-securities-settlement-company-as-a-clearing-agency",
+    "response_url": "https://www.paxos.com/blog/sec-registers-paxos-securities-settlement-company-as-a-clearing-agency",
+    "status": 200,
+    "captured_at": "2026-11-10T14:18:46.725433Z",
+    "sha256": "32fc9bb17565af62022f4777b1aa06338ae93c8a09041b13be4dbec36a446d38"
+  },
+  "schwab-spot-crypto-trading": {
+    "url": "https://www.paxos.com/blog/charles-schwab-announces-details-of-spot-crypto-trading-launch",
+    "response_url": "https://www.paxos.com/blog/charles-schwab-announces-details-of-spot-crypto-trading-launch",
+    "status": 200,
+    "captured_at": "2026-11-10T14:18:46.839403Z",
+    "sha256": "67c0a7b0aa8b5b83576839c74063a05d2a776728751f1eef80584d8b98c43110"
+  },
+  "solana-developer-platform": {
+    "url": "https://www.paxos.com/blog/paxos-joins-solana-developer-platform",
+    "response_url": "https://www.paxos.com/blog/paxos-joins-solana-developer-platform",
+    "status": 200,
+    "captured_at": "2026-11-10T14:18:46.945325Z",
+    "sha256": "93afa78618e1f8bba380b8b5ebb89f536cdc8e3d0f4006ad64a27b35ec5d3f79"
+  },
+  "occ-trust-conversion": {
+    "url": "https://www.paxos.com/blog/occ-approves-paxos-application-to-convert-to-occ-trust-paxos-to-complete-conversion-imminently-to-become-a-federally-regulated-blockchain-infrastructure-provider",
+    "response_url": "https://www.paxos.com/blog/occ-approves-paxos-application-to-convert-to-occ-trust-paxos-to-complete-conversion-imminently-to-become-a-federally-regulated-blockchain-infrastructure-provider",
+    "status": 200,
+    "captured_at": "2026-11-10T14:18:47.053691Z",
+    "sha256": "d3d4f23358e97b6866b98153c15910344ca12ee4480e6a5b2cb11db0652a7a8a"
+  }
+}

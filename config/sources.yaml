@@ -635,7 +635,7 @@ sources:
   - url: https://www.paxos.com/newsroom
     kind: html
     interval_s: 600
-    article_pattern: ^/newsroom/[a-z0-9-]+$
+    article_pattern: ^/blog/[a-z0-9-]+$
   priority: CORE
   terms_notes: Read-only public content; honor publisher terms and Retry-After.
   limits:
