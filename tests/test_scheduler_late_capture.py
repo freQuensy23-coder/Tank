@@ -17,7 +17,6 @@ from tank.time_precision import collection_clock
 from tank.util import iso, parse_time, utcnow
 
 
-@pytest.mark.usefixtures("relative_statements")
 @pytest.mark.integration
 @pytest.mark.process
 @pytest.mark.asyncio
@@ -26,8 +25,13 @@ async def test_backfill_changes_append_reaction_revision_once_and_preserve_origi
     monkeypatch,
     parity_binary,
     request,
+    market_clickhouse,
 ):
+    import tank.analysis.truth as truth_module
     import tank.scheduler as scheduler_module
+    from tank import clickhouse_market as chm
+    from tank.analysis.truth_sql import NO_SUPPLY
+    from tank.market.service import COLLECTIONS
 
     monkeypatch.setattr(scheduler_module, "LATE_REVISION_DEFER_S", 0)
     anchor = utcnow().replace(second=0, microsecond=0) - timedelta(hours=2)
@@ -95,7 +99,23 @@ async def test_backfill_changes_append_reaction_revision_once_and_preserve_origi
                 keys=[bar["instrument_id"] + ":" + bar["minute_start"] for bar in bars],
             )
 
+    async def memory_supply(repo, snapshot, config, **kwargs):
+        return dict(snapshot, supply_sql=NO_SUPPLY)
+
+    monkeypatch.setattr(truth_module, "with_supply", memory_supply)
     repo = MemoryRepository()
+    repo.clickhouse = market_clickhouse
+    names = {collection: name for name, (collection, _) in COLLECTIONS.items()}
+    stored = repo.put_market_batch
+
+    async def put_market_batch(collection, records, *, keys=None):
+        records = list(records)
+        result = await stored(collection, records, keys=keys)
+        if collection in names:
+            await chm.load_snapshot(market_clickhouse, {names[collection]: records})
+        return result
+
+    repo.put_market_batch = put_market_batch
     await repo.put(
         "evt.events",
         "e",

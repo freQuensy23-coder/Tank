@@ -88,9 +88,9 @@ def flow(iid, since, until=END, skip=(), **common):
     return rows
 
 
-def segment(start, finish, buy="4", sell="1", **changes):
+def segment(begin, finish, buy="4", sell="1", **changes):
     return {
-        "start": iso(start),
+        "start": iso(begin),
         "end": iso(finish),
         "complete": True,
         "observed_at": iso(finish),
@@ -129,7 +129,7 @@ async def test_window_volumes_sum_the_klines_of_the_current_and_the_previous_win
     result = await volumes(market_clickhouse, {"W15M": 900, "W1H": 3600})
     assert usd(result, SPOT) == {"W15M": (150, 150), "W1H": (600, 600)}
     assert usd(result, PERP) == {"W15M": (1500, 1500), "W1H": (6000, 6000)}
-    assert result.instruments == (PERP, SPOT)
+    assert result.instruments == (SPOT, PERP)
 
 
 @pytest.mark.integration

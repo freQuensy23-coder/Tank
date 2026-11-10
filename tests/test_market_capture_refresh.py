@@ -2,18 +2,18 @@
 
 import asyncio
 import copy
-import dataclasses
 import json
 import os
 import re
 from contextlib import asynccontextmanager
-from datetime import datetime, timedelta
+from datetime import timedelta
 from functools import lru_cache
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 import httpx
 import pytest
+from evidence_shift import shifted_evidence
 from test_agents_session_audit import settings as session_settings
 from test_event_tools import complete_assessment_fixture, complete_event_fixture
 from test_session_binding_concurrency import fixture_repo
@@ -30,27 +30,6 @@ from tank.settings import Settings
 from tank.storage import MemoryRepository
 from tank.time_precision import chosen_boundary
 from tank.util import iso, parse_time, utcnow
-
-
-def _shifted_evidence(value, delta):
-    if dataclasses.is_dataclass(value):
-        return dataclasses.replace(
-            value,
-            **{f.name: _shifted_evidence(getattr(value, f.name), delta) for f in dataclasses.fields(value)},
-        )
-    if isinstance(value, tuple):
-        return tuple(_shifted_evidence(item, delta) for item in value)
-    if isinstance(value, dict):
-        return {key: _shifted_evidence(item, delta) for key, item in value.items()}
-    if isinstance(value, datetime):
-        return value + delta
-    if isinstance(value, str) and re.match(r"^\d{4}-\d{2}-\d{2}T", value):
-        return iso(parse_time(value) + delta)
-    if isinstance(value, str) and value[:1] == "{":
-        return json.dumps(_shifted_evidence(json.loads(value), delta))
-    if isinstance(value, list):
-        return [_shifted_evidence(item, delta) for item in value]
-    return value
 
 
 @pytest.fixture(autouse=True)
@@ -106,7 +85,7 @@ def shifted_snapshot(end, *, full_flow_history=True):
         return value
 
     shifted = shift(source)
-    shifted.update({key: _shifted_evidence(value, delta) for key, value in evidence.items()})
+    shifted.update({key: shifted_evidence(value, delta) for key, value in evidence.items()})
     return shifted
 
 

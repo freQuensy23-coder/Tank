@@ -324,6 +324,20 @@ async def dispersion(ch, instruments, windows=W1H, since=SINCE):
     return {r.window: r for r in evidence.dispersion}
 
 
+async def dispersion_of(ch, instruments, windows=W1H):
+    rows = await truth_sql.fetch(
+        ch,
+        truth_sql.FundingDispersion,
+        iids=sorted(instruments),
+        lookback_s=12 * 86400,
+        names=list(windows),
+        lens_us=[str(seconds * 1_000_000) for seconds in windows.values()],
+        cutoff=END,
+        assembled=END + HOUR,
+    )
+    return {r.window: r for r in rows}
+
+
 @pytest.mark.integration
 async def test_settlements_of_one_instant_are_taken_in_descending_instrument_id_order(market_clickhouse):
     first = END - 10 * DAY
@@ -357,10 +371,7 @@ async def test_a_dispersion_sample_needs_every_venue_to_have_a_state(market_clic
     assert two["W1H"].samples == 2
     assert two["W1H"].history_first == first + 2 * SETTLEMENT
     assert (two["W1H"].normal_low, two["W1H"].normal_high) == same(inclusive([0.0002, 0.0001]))
-    three = await dispersion(market_clickhouse, [BINANCE, BYBIT, OKX])
-    assert (
-        three["W1H"].samples == 0 and three["W1H"].normal_low is None and three["W1H"].history_first is None
-    )
+    assert await dispersion_of(market_clickhouse, [BINANCE, BYBIT, OKX]) == {}
 
 
 @pytest.mark.integration
@@ -436,9 +447,15 @@ def socket(iid, at, rate, path="binance.usdm:ws:funding", **changes):
 
 
 async def confirmations(ch, *instruments, since=SINCE):
-    shown = snapshot(*instruments)
-    evidence = await funding_evidence(ch, shown, END, CONFIG, W1H, since, state=True)
-    return {r.instrument_id: r for r in evidence.confirmations}
+    rows = await truth_sql.fetch(
+        ch,
+        truth_sql.FundingConfirmation,
+        iids=sorted(instruments),
+        since=since,
+        cutoff=END,
+        assembled=END + HOUR,
+    )
+    return {r.instrument_id: r for r in rows}
 
 
 @pytest.mark.integration
