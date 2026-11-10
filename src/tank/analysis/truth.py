@@ -43,6 +43,7 @@ RISK_ORDER = [
 
 _BASELINE_CACHE = ContextVar("truth_baseline_cache", default=None)
 _BASELINE_DEPENDENCY = ContextVar("truth_baseline_dependency", default=None)
+_HISTORY_PROOFS = ContextVar("truth_history_proofs", default=None)
 
 _TIMES = ContextVar("truth_observation_times", default=None)
 _PARAMETERS = ContextVar("tank_truth_parameters", default=None)
@@ -322,17 +323,20 @@ def _instrument_rows(snapshot, collection, instrument_id):
     return hit[1].get(instrument_id, [])
 
 
+OBSERVATION_FIELDS = (
+    "minute_start",
+    "open_time",
+    "exchange_ts",
+    "ts",
+    "as_of",
+    "settlement_time",
+    "funding_time",
+    "observed_at",
+)
+
+
 def _observation_time(row):
-    for k in (
-        "minute_start",
-        "open_time",
-        "exchange_ts",
-        "ts",
-        "as_of",
-        "settlement_time",
-        "funding_time",
-        "observed_at",
-    ):
+    for k in OBSERVATION_FIELDS:
         if row.get(k) is not None:
             return parse_time(row[k])
     return None
@@ -748,6 +752,30 @@ def history_fingerprint(items):
     return hashlib.blake2b(pickle.dumps(items, protocol=5), digest_size=32).hexdigest()
 
 
+def proven_history(collection, instruments, start, *, lookback=True):
+    """What the loader proves about the stored rows of these instruments observed before
+    `start` (and, with `lookback`, inside the lookback before it): per lane of rows their
+    count and the XOR of the marks of their stored fingerprints, read by bisection off the
+    running XOR the loader keeps, so a history baseline is keyed without reading a row. None
+    when the loader proved nothing; the caller then keys the baseline by the rows."""
+    proofs = (_HISTORY_PROOFS.get() or {}).get(collection)
+    if not proofs:
+        return None
+    floor = start - timedelta(days=lookback_days()) if lookback else None
+    proven = []
+    for instrument in instruments:
+        proof = proofs.get(instrument)
+        if proof is None:
+            return None
+        lanes = []
+        for times, running in proof["lanes"]:
+            low = bisect_left(times, floor) if floor is not None else 0
+            high = bisect_left(times, start)
+            lanes.append((high - low, running[high] ^ running[low]))
+        proven.append((instrument, tuple(lanes), proof.get("latest")))
+    return floor, start, tuple(proven)
+
+
 def fingerprint(value):
     return hashlib.sha256(
         json.dumps(
@@ -905,6 +933,13 @@ def _oi_stats(rows, start, end, *, history_identity=None, venue_history=None):
     pair_tolerance = max(float(parameter("oi_sync_tolerance_s", 60)), gaps[len(gaps) // 2] / 2 if gaps else 0)
     cache = _BASELINE_CACHE.get()
     dependency = _BASELINE_DEPENDENCY.get()
+    proven = (
+        proven_history(
+            "oi", history_identity or tuple(sorted({r.get("instrument_id", "") for r in rows})), start
+        )
+        if cache is not None and dependency is None
+        else None
+    )
     history_key = (
         (
             "oi" if venue_history is None else "oi_composite",
@@ -914,6 +949,8 @@ def _oi_stats(rows, start, end, *, history_identity=None, venue_history=None):
             tuple(parameter("normal_range_quantiles", [0.025, 0.975])),
             (dependency, history_identity or tuple(sorted({r.get("instrument_id", "") for r in rows})))
             if dependency is not None
+            else ("proven", proven, len(bytime))
+            if proven is not None
             else history_fingerprint(
                 [(t, r.get("oi_native"), _stored_usd(r)) for t, r in sorted(bytime.items())]
                 if venue_history is None
@@ -1235,6 +1272,11 @@ def derivatives_truth(snapshot, start, end):
             >= float(parameter("history_min_days", 7)) * 86400
         )
         baseline_cache = _BASELINE_CACHE.get()
+        proven = (
+            proven_history("funding", (instrument,), start, lookback=False)
+            if baseline_cache is not None and _BASELINE_DEPENDENCY.get() is None
+            else None
+        )
         funding_key = (
             (
                 "funding",
@@ -1242,6 +1284,8 @@ def derivatives_truth(snapshot, start, end):
                 tuple(parameter("normal_range_quantiles", [0.025, 0.975])),
                 (_BASELINE_DEPENDENCY.get(), instrument)
                 if _BASELINE_DEPENDENCY.get() is not None
+                else ("proven", proven, len(fh))
+                if proven is not None
                 else fingerprint(fh),
             )
             if baseline_cache is not None
@@ -5186,23 +5230,29 @@ def condition_confidence(snapshot, end):
         groups[row["instrument_id"]].append(row)
     semantics = {(row.get("instrument_id"), row["metric_key"]): row for row in snapshot.get("semantics", [])}
     sync = []
-    for iid, rows in groups.items():
-        stats = _oi_stats(rows, start, end)
-        definitions = [
-            semantics.get((iid, row.get("metric_key")), semantics.get((None, row.get("metric_key")), {}))
-            for row in rows
-            if start <= _time(row) <= end
-        ]
-        venue = _venue(rows[0])
-        if (
-            venue in ("binance", "okx", "bybit")
-            and definitions
-            and all(row.get("sidedness") == "SINGLE_SIDED" for row in definitions)
-            and stats
-            and stats.get("oi_native_start") is not None
-        ):
-            sync.append((dict(venue=venue, instrument_id=iid), rows, definitions[0].get("aggregation_class")))
-    derivatives = {"synchronized": synchronized_oi(sync, start, end)}
+    histories = _HISTORY_PROOFS.set(None)
+    try:
+        for iid, rows in groups.items():
+            stats = _oi_stats(rows, start, end)
+            definitions = [
+                semantics.get((iid, row.get("metric_key")), semantics.get((None, row.get("metric_key")), {}))
+                for row in rows
+                if start <= _time(row) <= end
+            ]
+            venue = _venue(rows[0])
+            if (
+                venue in ("binance", "okx", "bybit")
+                and definitions
+                and all(row.get("sidedness") == "SINGLE_SIDED" for row in definitions)
+                and stats
+                and stats.get("oi_native_start") is not None
+            ):
+                sync.append(
+                    (dict(venue=venue, instrument_id=iid), rows, definitions[0].get("aggregation_class"))
+                )
+        derivatives = {"synchronized": synchronized_oi(sync, start, end)}
+    finally:
+        _HISTORY_PROOFS.reset(histories)
     value = data_confidence(snapshot, spot, derivatives, end)
     value["class"] = value.pop("class_")
     value["derivatives_classification_ready"] = None
@@ -5248,28 +5298,7 @@ def condition_depth(snapshot, end):
             if depth_at_band(row, "bid") is not None and depth_at_band(row, "ask") is not None
         ]
         if depths:
-            baseline = _BASELINE_CACHE.get()
-            key = (
-                "depth_pre",
-                venue,
-                iso(start),
-                parameter("depth_band_pct", 1),
-                fingerprint(
-                    [
-                        (iso(_time(row)), depth_at_band(row, "bid"), depth_at_band(row, "ask"))
-                        for row in before
-                    ]
-                ),
-            )
-            if baseline is not None and key in baseline:
-                previous.append(baseline[key])
-            else:
-                value = mean(depths)
-                previous.append(value)
-                if baseline is not None:
-                    baseline[key] = value
-                    if len(baseline) > 128:
-                        baseline.pop(next(iter(baseline)))
+            previous.append(mean(depths))
         cadence, source = capture_cadence(snapshot, "books", latest)
         observations.append(
             dict(
@@ -5294,8 +5323,10 @@ COMPOSITE_CONDITION_METRICS = {"mt.move_class", "mt.divergence_state"}
 RELATIVE_CONDITION_METRICS = {"price.repricing_band", "price.vs_anchor_pct"}
 
 
-def condition_market_state(snapshot, end, cache):
-    """The required primary-window state graph, without MTA/outcome/card persistence work."""
+def condition_market_state(snapshot, end, cache, parameters=None):
+    """The required primary-window state graph, without MTA/outcome/card persistence work.
+
+    A node whose inputs carry a dependency head from the loader is keyed by that head alone."""
     av = (snapshot.get("anchor") or {}).get("ts")
     start = parse_time(av) if av else end - timedelta(hours=4)
     if start >= end:
@@ -5305,8 +5336,11 @@ def condition_market_state(snapshot, end, cache):
             "data_confidence": {"class": "LOW"},
         }
 
+    parameters = parameters or fingerprint(_PARAMETERS.get())
+    proven = snapshot.get("domain_dependency_fingerprints") or {}
+
     def node(name, fields, build):
-        head = (snapshot.get("domain_dependency_fingerprints") or {}).get(name)
+        head = proven.get(name)
         if head is None:
             head = fingerprint({field: snapshot.get(field) for field in fields})
         elif not isinstance(head, str):
@@ -5317,7 +5351,7 @@ def condition_market_state(snapshot, end, cache):
             iso(start),
             iso(end),
             head,
-            fingerprint(_PARAMETERS.get()),
+            parameters,
             fingerprint(snapshot.get("expected_direction")),
         )
 
@@ -5388,9 +5422,18 @@ def compute_condition_values(snapshot, requirements, *, config=None, cache=None,
     baseline_cache = baseline_cache if baseline_cache is not None else {}
     parameters = _PARAMETERS.set(config)
     baselines = _BASELINE_CACHE.set(baseline_cache)
+    histories = _HISTORY_PROOFS.set(snapshot.get("history_proofs"))
     try:
         end = parse_time(snapshot["cutoff"])
-        snapshot = bounded_market_snapshot(snapshot, end)
+        bounded = []
+
+        def bound():
+            if not bounded:
+                bounded.append(bounded_market_snapshot(snapshot, end))
+            return bounded[0]
+
+        proven = snapshot.get("domain_dependency_fingerprints") or {}
+        knobs = fingerprint(config)
         result = {"cutoff": iso(end), "spot": {}, "derivatives": {"windows": {}}, "relative": {}}
         requested = sorted({(r["metric"], r.get("window", "W1H")) for r in requirements})
         pending = []
@@ -5479,9 +5522,9 @@ def compute_condition_values(snapshot, requirements, *, config=None, cache=None,
             else:
                 pending.append(dict(metric=metric, window=window, reason="NOT_SUPPORTED"))
                 continue
-            dependency = (snapshot.get("domain_dependency_fingerprints") or {}).get(domain)
+            dependency = proven.get(domain)
             if dependency is None:
-                dependency = fingerprint({field: snapshot.get(field) for field in fields})
+                dependency = fingerprint({field: bound().get(field) for field in fields})
             elif not isinstance(dependency, str):
                 dependency = fingerprint(dependency)
             key = (
@@ -5490,12 +5533,12 @@ def compute_condition_values(snapshot, requirements, *, config=None, cache=None,
                 seconds,
                 iso(end),
                 dependency,
-                fingerprint(config),
+                knobs,
                 fingerprint(snapshot.get("expected_direction")),
             )
             hit = key in cache
             if not hit:
-                selected = {field: snapshot.get(field, []) for field in fields}
+                selected = {field: bound().get(field, []) for field in fields}
                 selected.update(
                     token_id=snapshot.get("token_id"),
                     cutoff=iso(end),
@@ -5520,7 +5563,7 @@ def compute_condition_values(snapshot, requirements, *, config=None, cache=None,
                 elif domain == "depth":
                     value = condition_depth(selected, end)
                 elif domain == "state":
-                    value = condition_market_state(selected, end, cache)
+                    value = condition_market_state(selected, end, cache, knobs)
                 elif domain == "relative":
                     anchor = (selected.get("anchor") or {}).get("ts")
                     value = relative_truth(
@@ -5556,7 +5599,7 @@ def compute_condition_values(snapshot, requirements, *, config=None, cache=None,
                         continue
                     rows = [
                         r
-                        for r in snapshot.get(domain, [])
+                        for r in bound().get(domain, [])
                         if r.get("instrument_id") == instrument["instrument_id"]
                     ]
                     latest = max(rows, key=_time) if rows else None
@@ -5697,7 +5740,7 @@ def compute_condition_values(snapshot, requirements, *, config=None, cache=None,
                         "dependency_fingerprint", [p["dependency_fingerprint"] for p in proofs]
                     ),
                     anchor=snapshot.get("anchor"),
-                    config=config,
+                    config=knobs,
                 )
             ),
             "proofs": proofs,
@@ -5706,6 +5749,7 @@ def compute_condition_values(snapshot, requirements, *, config=None, cache=None,
         result.update(propagate_timestamp(snapshot, "cutoff").fields("cutoff"))
         return jsonable(result)
     finally:
+        _HISTORY_PROOFS.reset(histories)
         _BASELINE_CACHE.reset(baselines)
         _PARAMETERS.reset(parameters)
 

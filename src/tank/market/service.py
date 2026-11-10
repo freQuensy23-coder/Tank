@@ -3,6 +3,7 @@ import hashlib
 import json
 import logging
 import time
+from array import array
 from bisect import bisect_left, bisect_right
 from collections import defaultdict
 from contextlib import suppress
@@ -18,6 +19,7 @@ from tank.market import normalize as norm
 from tank.market.capture import event_anchor
 from tank.market.rate_gate import PriorityGate
 from tank.market_storage import (
+    fingerprint_mark,
     market_dependency_head,
     market_kline_days_recorded_since,
     market_range_by_instrument,
@@ -160,6 +162,9 @@ LOOP_STALL_S = 10
 
 HEAD_REUSE_S = 300
 HEAD_ORDERS = ("availability", "semantic_latest", "semantic_earliest")
+CHANGE_ORDERS = (*HEAD_ORDERS, "contents")
+RANGE_LANES = 8
+RANGE_TAIL = timedelta(minutes=5)
 
 
 DAY_COUNTS_SAVE_S = 60
@@ -195,6 +200,73 @@ COLLECTIONS = {
     "tickers": ("mkt.tickers_24h", "ts"),
     "supply": ("mkt.supply_obs", "ts"),
 }
+
+
+def stored_version(row):
+    """The stored version of a row without reading its content: the fingerprint written at
+    insert time and its availability stamps. A row stored without a fingerprint stands for
+    itself."""
+    fingerprint = row.get("semantic_fingerprint")
+    if fingerprint is None:
+        return row
+    return [fingerprint, row.get("recorded_at"), row.get("received_ts")]
+
+
+def distinct_rows(rows):
+    """Rows without repeats of equal content, each at its first position holding its last
+    copy, exactly as a mapping keyed by content keeps them. A repeat is one stored version
+    read twice, so candidates meet through the stored fingerprint and availability stamps and
+    are confirmed by equality; only a row stored without a fingerprint is keyed by its
+    content."""
+    kept, places = [], {}
+    for row in rows:
+        fingerprint = row.get("semantic_fingerprint")
+        held = places.setdefault(
+            (fingerprint, row.get("recorded_at"), row.get("received_ts"))
+            if isinstance(fingerprint, str)
+            else sha256(row),
+            [],
+        )
+        for place in held:
+            if kept[place] == row:
+                kept[place] = row
+                break
+        else:
+            held.append(len(kept))
+            kept.append(row)
+    return kept
+
+
+def reconciled(contents, count, digest):
+    """Whether rows known by their count and the XOR of their marks are exactly the stored
+    row versions a `contents` dependency head stands for."""
+    if contents is None:
+        return count == 0
+    return contents["rows"] == count and int(contents["digest"], 16) == digest
+
+
+def history_proof(state, assembled_at, kind=None):
+    """The observation times of a lane's rows (of one `kind`, when given) in order and the
+    running XOR of their marks: the count and XOR of any time slice then cost two
+    bisections, which is how a history baseline is keyed without reading a row. None when the
+    lane cannot stand for what the computation reads: it is not comparable with the stored
+    rows, or it holds a row received after the assembly clock, which the computation drops."""
+    if not state["plain"] or (state["received"] is not None and state["received"] > assembled_at):
+        return None
+    proofs = state.setdefault("proofs", {})
+    if kind not in proofs:
+        seen, stamps, marks = state["seen"], state["stamps"], state["marks"]
+        pairs = sorted(
+            (seen.get(identity) or stamps[identity], marks[identity])
+            for identity, row in state["points"].items()
+            if kind is None or row.get("kind") == kind
+        )
+        running, total = array("Q", [0]), 0
+        for _, mark in pairs:
+            total ^= mark
+            running.append(total)
+        proofs[kind] = ([at for at, _ in pairs], running)
+    return proofs[kind]
 
 
 def funding_confirmations(observations, *, distinct_paths=False):
@@ -338,20 +410,6 @@ class MarketService:
             key = str(key) + ":" + new_id("REV")
             row = dict(row, review_id=key)
         return await self.repo.put(collection, str(key), self.provenance(jsonable(row)), immutable=immutable)
-
-    @classmethod
-    def _semantic_content(cls, value):
-        if isinstance(value, dict):
-            ignored = ("received_ts", "recorded_at", "observed_at", "updated_at")
-            return {
-                key: cls._semantic_content(item)
-                for key, item in value.items()
-                if key not in ("config_version", "code_version", "semantic_fingerprint")
-                and not any(key == field or key.startswith(field + "_prec") for field in ignored)
-            }
-        if isinstance(value, list):
-            return [cls._semantic_content(item) for item in value]
-        return value
 
     async def flush_market(self):
         """One multi-row write per typed collection this process queued (supply, tiers)."""
@@ -1141,99 +1199,237 @@ class MarketService:
                 state.polls[iid] = list(row["recent_polls"])
         return state
 
-    async def _condition_history(self, collection, field, instrument_id, cutoff, assembled_at):
-        """Reuse immutable history, incorporating newly eligible and late corrected points."""
+    async def _condition_lane(
+        self,
+        previous,
+        contents,
+        start,
+        cutoff,
+        *,
+        point,
+        window,
+        late=None,
+        tail=None,
+        prove=None,
+        every=False,
+    ):
+        """Bring a lane of stored rows to the range [start, cutoff] and return its state.
+
+        A lane holds every stored row of its range once (`points`), with the mark of its
+        stored version (fingerprint and recorded_at), its parsed time and the XOR of all
+        marks. The `contents` head the database computed for the range gives the same two
+        numbers for what is stored, so the lane proves it holds exactly the stored versions by
+        comparing them and reads only what is missing: nothing when the rows that left the
+        range explain the head, else the rows after its last cutoff (with `tail`, from that
+        far before it, replacing what it held there), else the rows recorded since its last
+        read (`late`). A lane that still disagrees, or cannot be compared (a row without a
+        fingerprint, two stored rows under one identity), reads its range once. `point` admits
+        a row and names it; `prove` is the lane's time field when its rows feed a history
+        proof; with `every` a range read keeps each stored row, also the ones that share an
+        identity."""
+        from tank.analysis.truth import OBSERVATION_FIELDS, _observation_time
+
+        state = previous
+
+        def hold(row, loading=False):
+            made = point(row)
+            if made is None:
+                return
+            identity, at, held = made
+            mark = fingerprint_mark(row.get("semantic_fingerprint"), row.get("recorded_at"))
+            known = identity in state["points"]
+            if mark is None or (known and loading):
+                state["plain"] = False
+            if known and loading and every:
+                identity, known = (identity, len(state["points"])), False
+            if known:
+                state["digest"] ^= state["marks"][identity] or 0
+            if not known or mark is None or state["marks"][identity] != mark:
+                state["changed"] = True
+            state["digest"] ^= mark or 0
+            state["points"][identity], state["marks"][identity], state["stamps"][identity] = held, mark, at
+            if prove is None:
+                return
+            if next((name for name in OBSERVATION_FIELDS if held.get(name) is not None), None) == prove:
+                state["seen"].pop(identity, None)
+            else:
+                state["seen"][identity] = _observation_time(held)
+            received, recorded = held.get("received_ts"), held.get("recorded_at")
+            if received is None or (
+                isinstance(received, str)
+                and isinstance(recorded, str)
+                and len(received) == len(recorded)
+                and received[-1] == recorded[-1] == "Z"
+                and received <= recorded
+            ):
+                return
+            received = parse_time(received)
+            if state["received"] is None or received > state["received"]:
+                state["received"] = received
+
+        def drop(identity):
+            state["points"].pop(identity)
+            state["stamps"].pop(identity)
+            state["seen"].pop(identity, None)
+            state["digest"] ^= state["marks"].pop(identity) or 0
+            state["changed"] = True
+
+        def agreed():
+            return state["plain"] and reconciled(contents, len(state["points"]), state["digest"])
+
+        if state is not None and state["plain"] and start >= state["start"] and cutoff >= state["cutoff"]:
+            state["changed"] = False
+            begin = state["cutoff"] + timedelta(microseconds=1)
+            for identity in [i for i, at in state["stamps"].items() if at < start]:
+                drop(identity)
+            if not agreed():
+                if tail is not None:
+                    begin = max(start, begin - tail)
+                    for identity in [i for i, at in state["stamps"].items() if at >= begin]:
+                        drop(identity)
+                if begin <= cutoff:
+                    async for row in window(begin, cutoff + timedelta(microseconds=1)):
+                        hold(row)
+            if not agreed() and late is not None:
+                async for row in late():
+                    hold(row)
+            if agreed():
+                state.update(start=start, cutoff=cutoff)
+                if state["changed"]:
+                    state.pop("proofs", None)
+                return state
+        state = {
+            "points": {},
+            "marks": {},
+            "stamps": {},
+            "seen": {},
+            "digest": 0,
+            "plain": True,
+            "received": None,
+            "changed": True,
+            "start": start,
+            "cutoff": cutoff,
+        }
+        async for row in window(start, cutoff + timedelta(microseconds=1)):
+            hold(row, loading=True)
+        return state
+
+    async def _condition_history(
+        self, collection, field, instrument_id, cutoff, assembled_at, *, proof=None, kind=None
+    ):
+        """The 90-day history of one instrument, read once and then kept equal to the store.
+
+        The database heads of the range say whether anything changed; equal heads return the
+        held rows. Moved heads are followed by reading only the new and the late rows, and the
+        contents head confirms the lane then holds exactly the stored versions. The
+        fingerprint is the heads, never the rows. `proof` receives the lane's history proof
+        for its rows of `kind`."""
         cache = self.__dict__.setdefault("_condition_histories", {})
         locks = self.__dict__.setdefault("_condition_history_locks", {})
         key = (collection, field, instrument_id)
+        start = cutoff - timedelta(days=90)
+        filters = {"instrument_id": instrument_id}
         async with locks.setdefault(key, asyncio.Lock()):
-            previous = cache.get(key)
-            start = cutoff - timedelta(days=90)
-            filters = {"instrument_id": instrument_id}
-            reload = previous is None or cutoff < previous["cutoff"] or previous.get("unknown_availability")
-            if reload:
-                rows = await self._range(
-                    collection, field, start=start, end=cutoff + timedelta(microseconds=1), filters=filters
-                )
-                points = {}
-            else:
-                points = dict(previous["points"])
-                rows = (
-                    await self._range(
-                        collection,
-                        field,
-                        start=previous["cutoff"] + timedelta(microseconds=1),
-                        end=cutoff + timedelta(microseconds=1),
-                        filters=filters,
-                    )
-                    if cutoff > previous["cutoff"]
-                    else []
-                )
-                rows.extend(
-                    [
-                        r
-                        async for r in self.repo.iter_late_arrivals(
-                            collection,
-                            "recorded_at",
-                            field,
-                            since=previous["assembled_at"],
-                            end=assembled_at,
-                            market_end=cutoff,
-                            filters=filters,
-                        )
-                    ]
-                )
-            changes = []
-            for row in rows:
+            heads = await self._condition_heads(
+                collection, field, start, cutoff, assembled_at, filters, CHANGE_ORDERS
+            )
+            contents = heads[-1]
+            unknown = contents is not None and contents["unknown"] > 0
+            previous = cache.pop(key, None)
+            if previous is not None and not unknown and heads == previous["heads"]:
+                previous.update(start=start, cutoff=cutoff, assembled_at=assembled_at)
+                cache[key] = previous
+                if proof is not None:
+                    proof.append(history_proof(previous, assembled_at, kind))
+                return previous["rows"]
+
+            def point(row):
                 stamp = row.get(field)
                 if stamp is None:
-                    continue
+                    return None
                 availability = row.get("recorded_at") or row.get("received_ts")
                 if availability and parse_time(availability) > assembled_at:
-                    continue
-                identity = (row.get("instrument_id"), row.get("metric_key"), row.get("kind"), stamp)
-                fingerprint = sha256(self._semantic_content(row))
-                if identity not in points or sha256(self._semantic_content(points[identity])) != fingerprint:
-                    changes.append((identity, fingerprint))
-                points[identity] = row
-            removed = [
-                identity for identity, row in points.items() if not start <= parse_time(row[field]) <= cutoff
-            ]
-            for identity in removed:
-                points.pop(identity)
-            initial = reload
-            cache[key] = {
-                "points": points,
-                "cutoff": cutoff,
-                "assembled_at": assembled_at,
-                "unknown_availability": any(row.get("recorded_at") is None for row in points.values()),
-                "fingerprint": sha256([None if initial else previous["fingerprint"], changes, removed])
-                if initial or changes or removed
-                else previous["fingerprint"],
-            }
+                    return None
+                at = parse_time(stamp)
+                if not start <= at <= cutoff:
+                    return None
+                return (row.get("instrument_id"), row.get("metric_key"), row.get("kind"), stamp), at, row
+
+            def window(begin, finish):
+                return self.repo.iter_range(
+                    collection, field, start=begin, end=finish, filters=filters, batch_size=100000
+                )
+
+            def late():
+                return self.repo.iter_late_arrivals(
+                    collection,
+                    "recorded_at",
+                    field,
+                    since=previous["assembled_at"] - WINDOW_MARGIN,
+                    end=assembled_at + timedelta(microseconds=1),
+                    market_end=cutoff,
+                    filters=filters,
+                )
+
+            state = await self._condition_lane(
+                None if unknown else previous,
+                contents,
+                start,
+                cutoff,
+                point=point,
+                window=window,
+                late=late,
+                prove=field,
+            )
+            if unknown:
+                state["plain"] = False
+            if state["changed"] or "rows" not in state:
+                state["rows"] = list(state["points"].values())
+            state.update(
+                heads=heads,
+                assembled_at=assembled_at,
+                fingerprint=sha256(
+                    [
+                        list(key),
+                        heads,
+                        [
+                            [identity, stored_version(row)]
+                            for identity, row in state["points"].items()
+                            if row.get("recorded_at") is None
+                        ]
+                        if unknown
+                        else [],
+                    ]
+                ),
+            )
+            cache[key] = state
+            if proof is not None:
+                proof.append(history_proof(state, assembled_at, kind))
             while len(cache) > 128:
                 oldest = next(iter(cache))
                 if oldest == key:
                     break
                 cache.pop(oldest)
                 locks.pop(oldest, None)
-            return list(points.values())
+            return state["rows"]
 
     async def _condition_book_baseline(self, instrument_id, origin, assembled_at):
         end = origin - timedelta(microseconds=1)
         start = origin - timedelta(hours=1)
-        head = await self.repo.market_dependency_head(
+        found = await self.repo.market_dependency_head(
             "mkt.book_summaries",
             "exchange_ts",
             end,
             start=start,
             instrument_ids=[instrument_id],
             assembled_at=assembled_at,
+            orders=("availability", "contents"),
         )
+        head = [found["availability"], found["contents"]]
         cache = self.__dict__.setdefault("_condition_book_baselines", {})
         key = (instrument_id, iso(origin))
         cached = cache.get(key)
-        if cached is None or head is None or cached["head"] != head:
+        if cached is None or not any(head) or cached["head"] != head:
             from tank.market_schema import MARKET_COLUMNS
 
             fields = [f for f in MARKET_COLUMNS["mkt.book_summaries"] if f not in ("bids", "asks")]
@@ -1253,6 +1449,113 @@ class MarketService:
             while len(cache) > 128:
                 cache.pop(next(iter(cache)))
         return cache[key]["rows"]
+
+    async def _condition_range(self, collection, field, start, upper, instrument_id):
+        """Rows of [start, upper) of one instrument and the database head that stands for them.
+
+        The head (row count, unknown-availability count and XOR of the stored rows' marks)
+        is computed by the database. A window asked again with an equal head returns
+        the held rows; a window that moved keeps the rows it shares with the one before it and
+        reads only the minutes at its end, which the head then confirms. A correction or a
+        late row further back makes the head disagree, and the window is read once."""
+        from tank.market_schema import MARKET_IDENTITIES
+
+        cutoff = upper - timedelta(microseconds=1)
+        filters = {"instrument_id": instrument_id}
+        scope = (collection, field, instrument_id)
+        names = MARKET_IDENTITIES[collection]
+        locks = self.__dict__.setdefault("_condition_range_locks", {})
+        async with locks.setdefault(scope, asyncio.Lock()):
+            found = await market_dependency_head(
+                self.repo, collection, field, cutoff, start=start, filters=filters, orders=("contents",)
+            )
+            head = [iso(start), iso(cutoff), found["contents"]]
+            lanes = self.__dict__.setdefault("_condition_ranges", {}).setdefault(scope, [])
+            lane = next((held for held in lanes if held["head"] == head), None)
+            if lane is not None:
+                lanes.remove(lane)
+            else:
+                lane = min(
+                    (
+                        held
+                        for held in lanes
+                        if timedelta(0)
+                        <= start - held["start"]
+                        <= cutoff - held["cutoff"] + timedelta(minutes=1)
+                    ),
+                    key=lambda held: (cutoff - held["cutoff"], start - held["start"]),
+                    default=None,
+                )
+                if lane is not None:
+                    lanes.remove(lane)
+
+                def point(row):
+                    stamp = row.get(field)
+                    if stamp is None:
+                        return None
+                    at = parse_time(stamp)
+                    if not start <= at <= cutoff:
+                        return None
+                    return (*(row.get(name) for name in names), stamp), at, row
+
+                def window(begin, finish):
+                    return self.repo.iter_range(
+                        collection, field, start=begin, end=finish, filters=filters, batch_size=100000
+                    )
+
+                lane = await self._condition_lane(
+                    lane,
+                    found["contents"],
+                    start,
+                    cutoff,
+                    point=point,
+                    window=window,
+                    tail=RANGE_TAIL,
+                    every=True,
+                )
+                lane.update(head=head, rows=list(lane["points"].values()))
+            lanes.append(lane)
+            del lanes[:-RANGE_LANES]
+            return list(lane["rows"]), head
+
+    def _registry_dependency(self, instruments):
+        """One digest of the static registries a condition depends on: these instruments and
+        their semantics, the tokens, the sector baskets and the versions. It is computed again
+        only when a registry entry is replaced, never per evaluation."""
+        key = (
+            tuple(map(id, instruments)),
+            id(self.semantics),
+            len(self.semantics),
+            tuple(map(id, self.tokens.values())),
+            tuple(map(id, self.sector_baskets)),
+            self.settings.config_version,
+            self.settings.code_version,
+        )
+        cache = self.__dict__.setdefault("_registry_dependencies", {})
+        held = cache.get(key)
+        if held is None:
+            pinned = (
+                list(instruments),
+                self.semantics,
+                list(self.tokens.values()),
+                list(self.sector_baskets),
+            )
+            held = cache[key] = (
+                pinned,
+                sha256(
+                    [
+                        instruments,
+                        self.semantics,
+                        self.tokens,
+                        self.sector_baskets,
+                        self.settings.config_version,
+                        self.settings.code_version,
+                    ]
+                ),
+            )
+            while len(cache) > 256:
+                cache.pop(next(iter(cache)))
+        return held[1]
 
     async def _condition_kline_series(
         self,
@@ -1566,13 +1869,14 @@ class MarketService:
             found.add(row["open_time"])
         return found
 
-    async def _condition_heads(self, collection, field, start, cutoff, assembled_at, filters):
-        """The three dependency heads of a window in one round trip. A head counts only rows
+    async def _condition_heads(
+        self, collection, field, start, cutoff, assembled_at, filters, orders=HEAD_ORDERS
+    ):
+        """The dependency heads of a window in one round trip. A head counts only rows
         recorded by its assembly clock, so for a later clock of the same window it is reused
         while nothing was written to its scope since (one condition evaluation asks for the
         same heads once per condition; prod r106 ran ~60-80 sequential heads per BTC pass)."""
-        orders = HEAD_ORDERS
-        key = (collection, field, tuple(sorted(filters.items())), iso(start), iso(cutoff))
+        key = (collection, field, tuple(sorted(filters.items())), iso(start), iso(cutoff), orders)
         scope = next(
             ((name, filters[name]) for name in ("instrument_id", "token_id") if name in filters), (None, None)
         )
@@ -1607,33 +1911,44 @@ class MarketService:
         return heads
 
     async def _condition_projected_history(
-        self, collection, field, start, cutoff, assembled_at, *, fields, filters
+        self, collection, field, start, cutoff, assembled_at, *, fields, filters, proof=None
     ):
-        """Cache selected typed fields and apply only newly eligible/changed source points."""
+        """Selected typed fields of a window, read once and then kept equal to the store.
+
+        The database heads alone say whether the window changed: the three boundary heads and
+        the contents head (count and XOR of the marks of every readable stored
+        row version, unknown availability included). Equal heads return the held rows. Moved
+        heads are followed by reading only the new and the late rows, and the contents head
+        confirms the lane then holds exactly the stored versions. The fingerprint is the heads
+        and never the rows. `proof` receives the lane's history proof."""
         from tank.market_schema import MARKET_ALIASES
 
         fields = tuple(dict.fromkeys([*fields, field, "recorded_at"]))
+        stored = tuple(dict.fromkeys([*fields, "semantic_fingerprint"]))
         key = (collection, field, tuple(sorted(filters.items())), fields)
         cache = self.__dict__.setdefault("_condition_projections", {})
-        heads = await self._condition_heads(collection, field, start, cutoff, assembled_at, filters)
         locks = self.__dict__.setdefault("_condition_projection_locks", {})
+        clock = parse_time(assembled_at)
         async with locks.setdefault(key, asyncio.Lock()):
-            previous = cache.get(key)
-            reset = (
-                previous is None
-                or start < previous["start"]
-                or cutoff < previous["cutoff"]
-                or previous.get("unknown_availability")
+            heads = await self._condition_heads(
+                collection, field, start, cutoff, assembled_at, filters, CHANGE_ORDERS
             )
-            reset = reset or not any(heads)
-            if not reset and heads == previous["heads"]:
+            previous = cache.pop(key, None)
+            if previous is not None and heads == previous["heads"]:
+                previous.update(start=start, cutoff=cutoff, clock=clock)
+                cache[key] = previous
+                if proof is not None:
+                    proof.append(history_proof(previous, clock))
                 return previous["rows"], previous["fingerprint"]
-            points = {} if reset else dict(previous["points"])
+            aliases = MARKET_ALIASES.get(collection, {})
 
-            def apply(row):
+            def point(row):
                 stamp = row.get(field)
-                if stamp is None or not start <= parse_time(stamp) <= cutoff:
-                    return
+                if stamp is None:
+                    return None
+                at = parse_time(stamp)
+                if not start <= at <= cutoff:
+                    return None
                 identity = (
                     row.get("instrument_id"),
                     row.get("token_id"),
@@ -1649,66 +1964,52 @@ class MarketService:
                 )
                 projected = {f: row.get(f) for f in fields}
                 projected.update(
-                    {
-                        alias: projected[target]
-                        for alias, target in MARKET_ALIASES.get(collection, {}).items()
-                        if target in projected
-                    }
+                    {alias: projected[target] for alias, target in aliases.items() if target in projected}
                 )
-                points[identity] = projected
+                return identity, at, projected
 
-            if reset:
-                async for row in self.repo.iter_market_projection(
+            def window(begin, finish):
+                return self.repo.iter_market_projection(
                     collection,
-                    fields,
+                    stored,
                     field,
-                    start=start,
-                    end=cutoff + timedelta(microseconds=1),
+                    start=begin,
+                    end=finish,
                     filters=filters,
                     assembled_at=assembled_at,
                     batch_size=10000,
-                ):
-                    apply(row)
-            else:
-                if cutoff > previous["cutoff"]:
-                    async for row in self.repo.iter_market_projection(
-                        collection,
-                        fields,
-                        field,
-                        start=previous["cutoff"] + timedelta(microseconds=1),
-                        end=cutoff + timedelta(microseconds=1),
-                        filters=filters,
-                        assembled_at=assembled_at,
-                        batch_size=10000,
-                    ):
-                        apply(row)
-                async for row in self.repo.iter_late_arrivals(
+                )
+
+            def late():
+                return self.repo.iter_late_arrivals(
                     collection,
                     "recorded_at",
                     field,
-                    since=previous["assembled_at"],
-                    end=assembled_at,
+                    since=previous["clock"] - WINDOW_MARGIN,
+                    end=clock + timedelta(microseconds=1),
                     market_end=cutoff,
                     filters=filters,
-                ):
-                    apply(row)
-            points = {k: r for k, r in points.items() if start <= parse_time(r[field]) <= cutoff}
-            rows = sorted(points.values(), key=lambda row: row[field])
-            unknown = any(row.get("recorded_at") is None for row in rows)
-            fingerprint = sha256([heads, rows if unknown else None])
-            cache[key] = {
-                "points": points,
-                "rows": rows,
-                "heads": heads,
-                "start": start,
-                "cutoff": cutoff,
-                "assembled_at": assembled_at,
-                "unknown_availability": unknown,
-                "fingerprint": fingerprint,
-            }
+                )
+
+            state = await self._condition_lane(
+                previous if any(heads[:3]) else None,
+                heads[-1],
+                start,
+                cutoff,
+                point=point,
+                window=window,
+                late=late,
+                prove=field,
+            )
+            if state["changed"] or "rows" not in state:
+                state["rows"] = sorted(state["points"].values(), key=lambda row: row[field])
+            state.update(heads=heads, clock=clock, fingerprint=sha256([heads, None]))
+            cache[key] = state
+            if proof is not None:
+                proof.append(history_proof(state, clock))
             while len(cache) > 256:
                 cache.pop(next(iter(cache)))
-            return rows, fingerprint
+            return state["rows"], state["fingerprint"]
 
     async def _condition_composite_inputs(self, result, *, full_state):
         """Exact compact source graph for transient catalog conditions; never an MTA."""
@@ -1731,6 +2032,7 @@ class MarketService:
         result["sector_baskets"] = deepcopy(self.sector_baskets)
         result["capture_metadata"] = await self._capture_metadata(token_id, end)
         result["flow_bars"], result["flow_segments"], result["reference_points"] = [], [], []
+        registry = self._registry_dependency(target)
         heads = {}
         flow_heads = []
         for instrument in target if full_state else spot:
@@ -1745,16 +2047,12 @@ class MarketService:
                 filters={"instrument_id": iid},
             )
             if anchor < end - timedelta(hours=48):
-                bars = list(bars)
-                bars.extend(
-                    await self._range(
-                        "mkt.flow_bars_1m",
-                        "minute_start",
-                        start=anchor.replace(second=0, microsecond=0),
-                        end=anchor.replace(second=0, microsecond=0) + timedelta(minutes=1),
-                        filters={"instrument_id": iid},
-                    )
+                minute = anchor.replace(second=0, microsecond=0)
+                anchored, anchored_head = await self._condition_range(
+                    "mkt.flow_bars_1m", "minute_start", minute, minute + timedelta(minutes=1), iid
                 )
+                bars = [*bars, *anchored]
+                head = [head, anchored_head]
             flow_heads.append(head)
             for bar in bars:
                 result["flow_segments"].extend(
@@ -1893,18 +2191,8 @@ class MarketService:
         )
 
         result["instruments"] = target + [i for i in selected if i not in target]
-        heads["relative"] = sha256(
-            [
-                price_heads,
-                flow_heads,
-                reference,
-                result["reference_points"],
-                counts,
-                self.tokens,
-                self.sector_baskets,
-            ]
-        )
-        heads["spot"] = sha256([flow_heads, result["tickers"], target])
+        heads["relative"] = sha256([price_heads, flow_heads, reference, counts, registry])
+        heads["spot"] = sha256([flow_heads, [stored_version(r) for r in result["tickers"]], registry])
         if full_state:
             result["stat_volume_series"] = {}
             volume_heads = []
@@ -1922,8 +2210,11 @@ class MarketService:
                     result["stat_volume_series"][iid] = series
                 volume_heads.append(series["dependency_fingerprint"])
             result["oi"], result["funding"], result["books"], result["liquidations"] = [], [], [], []
+            histories = {"oi": {}, "funding": {}}
             derivative_heads, book_heads = [], []
             oi_heads, funding_heads = [], []
+            latest = {"funding": [], "liquidations": [], "books": [], "supply": []}
+            baseline_heads = []
             for instrument in perp:
                 iid = instrument["instrument_id"]
                 for name, field, filters in (
@@ -1939,20 +2230,21 @@ class MarketService:
                         assembled,
                         fields=list(MARKET_COLUMNS[collection]),
                         filters=filters,
+                        proof=histories[name].setdefault(iid, {"lanes": [], "latest": None})["lanes"],
                     )
                     result[name].extend(rows)
                     derivative_heads.append(head)
                     (oi_heads if name == "oi" else funding_heads).append(head)
-                result["funding"].extend(
-                    await self.repo.latest_market_records(
-                        "mkt.funding_obs",
-                        group_by=("instrument_id", "metric_key", "kind"),
-                        time_field="as_of",
-                        filters={"instrument_id": iid},
-                        cutoff=end,
-                        assembled_at=assembled,
-                    )
+                rows = await self.repo.latest_market_records(
+                    "mkt.funding_obs",
+                    group_by=("instrument_id", "metric_key", "kind"),
+                    time_field="as_of",
+                    filters={"instrument_id": iid},
+                    cutoff=end,
+                    assembled_at=assembled,
                 )
+                latest["funding"].extend(rows)
+                histories["funding"][iid]["latest"] = sha256([stored_version(row) for row in rows])
                 rows, head = await self._condition_projected_history(
                     "mkt.liq_obs",
                     "ts",
@@ -1964,7 +2256,7 @@ class MarketService:
                 )
                 result["liquidations"].extend(rows)
                 derivative_heads.append(head)
-                result["liquidations"].extend(
+                latest["liquidations"].extend(
                     await self.repo.latest_market_records(
                         "mkt.liq_obs",
                         group_by=("instrument_id", "metric_key"),
@@ -1975,6 +2267,9 @@ class MarketService:
                         assembled_at=assembled,
                     )
                 )
+            result["funding"].extend(latest["funding"])
+            result["liquidations"].extend(latest["liquidations"])
+            funding_latest = [r.get("kind") == "CURRENT_ESTIMATE" for r in latest["funding"]]
             book_fields = [f for f in MARKET_COLUMNS["mkt.book_summaries"] if f not in ("bids", "asks")]
             for instrument in target:
                 iid = instrument["instrument_id"]
@@ -1989,15 +2284,16 @@ class MarketService:
                 )
                 result["books"].extend(rows)
                 result["books"].extend(await self._condition_book_baseline(iid, anchor, assembled))
-                result["books"].extend(
-                    await self.repo.latest_market_records(
-                        "mkt.book_summaries",
-                        time_field="exchange_ts",
-                        filters={"instrument_id": iid, "integrity_ok": True},
-                        cutoff=end,
-                        assembled_at=assembled,
-                    )
+                baseline_heads.append(self._condition_book_baselines[(iid, iso(anchor))]["head"])
+                rows = await self.repo.latest_market_records(
+                    "mkt.book_summaries",
+                    time_field="exchange_ts",
+                    filters={"instrument_id": iid, "integrity_ok": True},
+                    cutoff=end,
+                    assembled_at=assembled,
                 )
+                result["books"].extend(rows)
+                latest["books"].extend(rows)
                 book_heads.append(head)
             result["supply"] = await self.repo.latest_market_records(
                 "mkt.supply_obs",
@@ -2017,6 +2313,7 @@ class MarketService:
                     assembled_at=assembled,
                 )
             )
+            latest["supply"].extend(result["supply"])
             supply_heads = []
             for kind in ("EXCHANGE_INVENTORY", "INVENTORY", "LENDING"):
                 rows, head = await self._condition_projected_history(
@@ -2046,26 +2343,36 @@ class MarketService:
                 for rest, ws in funding_confirmations(observations, distinct_paths=True)
             ]
             for name in ("funding", "books", "supply", "liquidations"):
-                result[name] = list({sha256(row): row for row in result[name]}.values())
-            heads["oi"] = sha256([oi_heads, result["semantics"], result["capture_metadata"]])
+                result[name] = distinct_rows(result[name])
+            result["history_proofs"] = {
+                name: {iid: proof for iid, proof in proofs.items() if None not in proof["lanes"]}
+                for name, proofs in histories.items()
+            }
+            latest = {name: [stored_version(r) for r in rows] for name, rows in latest.items()}
+            books = [book_heads, baseline_heads, latest["books"], anchor.isoformat()]
+            heads["oi"] = sha256([oi_heads, registry, result["capture_metadata"]])
             heads["funding"] = sha256(
                 [
                     funding_heads,
-                    [r for r in result["funding"] if r.get("kind") == "CURRENT_ESTIMATE"],
-                    result["semantics"],
+                    [v for v, r in zip(latest["funding"], funding_latest, strict=True) if r],
+                    registry,
                     result["capture_metadata"],
                 ]
             )
             heads["dc"] = result["dependency_fingerprint"]
-            heads["depth"] = sha256(
-                [book_heads, result["books"], anchor.isoformat(), result["capture_metadata"]]
-            )
+            heads["depth"] = sha256([books, result["capture_metadata"]])
             heads["close"] = sha256([price_heads, flow_heads])
             heads["derivatives"] = sha256(
-                [derivative_heads, result["funding"], result["semantics"], result["capture_metadata"]]
+                [
+                    derivative_heads,
+                    latest["funding"],
+                    latest["liquidations"],
+                    registry,
+                    result["capture_metadata"],
+                ]
             )
-            heads["books"] = sha256([book_heads, result["books"], anchor.isoformat()])
-            heads["supply"] = sha256([supply_heads, result["supply"]])
+            heads["books"] = sha256(books)
+            heads["supply"] = sha256([supply_heads, latest["supply"]])
             heads["support"] = sha256([volume_heads, flow_heads, heads["relative"], heads["books"]])
         result.setdefault("domain_dependency_fingerprints", {}).update(heads)
         result["domain_dependency_fingerprints"]["state"] = result["dependency_fingerprint"]
@@ -2126,6 +2433,7 @@ class MarketService:
         result.update(requested.fields("cutoff"))
         result.update(requested.fields("requested_cutoff"))
         result.update(collection_clock(iso()).fields("assembled_at"))
+        proven = defaultdict(list)
         if domains & {"spot", "close", "dc"}:
             duration = max(durations or [3600])
             if domains & {"close", "dc"}:
@@ -2133,15 +2441,11 @@ class MarketService:
             start = (end - timedelta(seconds=duration)).replace(second=0, microsecond=0)
             bars = []
             for instrument in spot:
-                bars.extend(
-                    await self._range(
-                        "mkt.flow_bars_1m",
-                        "minute_start",
-                        start=start,
-                        end=upper,
-                        filters={"instrument_id": instrument["instrument_id"]},
-                    )
+                rows, head = await self._condition_range(
+                    "mkt.flow_bars_1m", "minute_start", start, upper, instrument["instrument_id"]
                 )
+                bars.extend(rows)
+                proven["flow"].append(head)
             result["flow_segments"] = [
                 dict(s, instrument_id=b["instrument_id"])
                 for b in bars
@@ -2165,26 +2469,30 @@ class MarketService:
                 )
                 if point:
                     result["tickers"].append(point)
+            proven["tickers"] = [stored_version(row) for row in result["tickers"]]
         if "close" in domains:
             close = end.replace(minute=0, second=0, microsecond=0)
             result["klines"] = []
             for instrument in spot:
-                result["klines"].extend(
-                    await self._range(
-                        "mkt.klines_1m",
-                        "open_time",
-                        start=close - timedelta(minutes=1),
-                        end=close,
-                        filters={"instrument_id": instrument["instrument_id"]},
-                    )
+                rows, head = await self._condition_range(
+                    "mkt.klines_1m",
+                    "open_time",
+                    close - timedelta(minutes=1),
+                    close,
+                    instrument["instrument_id"],
                 )
+                result["klines"].extend(rows)
+                proven["klines"].append(head)
         if domains & {"oi", "funding", "dc", "depth"}:
             result["capture_metadata"] = await self._capture_metadata(token_id, end)
             result["semantics"] = self._instrument_semantics(instruments if "dc" in domains else perp)
+            histories = result["history_proofs"] = {}
             for domain in domains & {"oi", "funding"}:
                 collection, field = COLLECTIONS[domain]
                 result[domain] = []
+                kind = "SETTLED" if domain == "funding" else None
                 for instrument in perp:
+                    lanes = []
                     result[domain].extend(
                         await self._condition_history(
                             collection,
@@ -2192,6 +2500,8 @@ class MarketService:
                             instrument["instrument_id"],
                             end,
                             parse_time(result["assembled_at"]),
+                            proof=lanes,
+                            kind=kind,
                         )
                     )
                     if domain == "funding":
@@ -2203,9 +2513,16 @@ class MarketService:
                                 instrument["instrument_id"],
                                 end,
                                 parse_time(result["assembled_at"]),
+                                proof=lanes,
+                                kind=kind,
                             )
                             if r.get("as_of") is None
                         )
+                    if None not in lanes:
+                        histories.setdefault(domain, {})[instrument["instrument_id"]] = {
+                            "lanes": lanes,
+                            "latest": None,
+                        }
         if domains & {"depth", "dc"}:
             result["books"] = []
             for instrument in spot:
@@ -2213,9 +2530,8 @@ class MarketService:
                 point = await self.repo.latest_before(
                     "mkt.book_summaries", "exchange_ts", upper, filters={"instrument_id": iid}
                 )
-                if point:
-                    result["books"].append(point)
-                result["books"].extend(
+                rows = [point] if point else []
+                rows.extend(
                     await self.repo.latest_market_records(
                         "mkt.book_summaries",
                         time_field="exchange_ts",
@@ -2224,11 +2540,16 @@ class MarketService:
                         assembled_at=result["assembled_at"],
                     )
                 )
+                result["books"].extend(rows)
+                proven["books"].extend(stored_version(row) for row in rows)
                 if "depth" in domains and anchor and anchor.get("ts"):
                     origin = parse_time(anchor["ts"])
                     if origin <= end:
                         result["books"].extend(
                             await self._condition_book_baseline(iid, origin, result["assembled_at"])
+                        )
+                        proven["books"].append(
+                            [iso(origin), self._condition_book_baselines[(iid, iso(origin))]["head"]]
                         )
         if "dc" in domains:
             result["tokens"] = list(self.tokens.values())
@@ -2243,47 +2564,39 @@ class MarketService:
                 result["oi"] = []
                 for instrument in perp:
                     iid = instrument["instrument_id"]
-                    result["oi"].extend(
-                        await self._range(
-                            "mkt.oi_obs",
-                            "ts",
-                            start=primary_start - timedelta(seconds=60),
-                            end=upper,
-                            filters={"instrument_id": iid},
-                        )
+                    rows, head = await self._condition_range(
+                        "mkt.oi_obs", "ts", primary_start - timedelta(seconds=60), upper, iid
                     )
-                    result["oi"].extend(
-                        await self.repo.latest_market_records(
-                            "mkt.oi_obs",
-                            group_by=("instrument_id", "metric_key"),
-                            time_field="ts",
-                            filters={"instrument_id": iid},
-                            cutoff=end,
-                            assembled_at=result["assembled_at"],
-                        )
+                    result["oi"].extend(rows)
+                    proven["oi"].append(head)
+                    rows = await self.repo.latest_market_records(
+                        "mkt.oi_obs",
+                        group_by=("instrument_id", "metric_key"),
+                        time_field="ts",
+                        filters={"instrument_id": iid},
+                        cutoff=end,
+                        assembled_at=result["assembled_at"],
                     )
+                    result["oi"].extend(rows)
+                    proven["oi"].extend(stored_version(row) for row in rows)
             if "close" not in domains:
                 result["klines"] = []
             for instrument in spot:
-                result["klines"].extend(
-                    await self.repo.latest_market_records(
-                        "mkt.klines_1m",
-                        time_field="open_time",
-                        filters={"instrument_id": instrument["instrument_id"], "complete": True},
-                        cutoff=end - timedelta(minutes=1),
-                        assembled_at=result["assembled_at"],
-                    )
+                rows = await self.repo.latest_market_records(
+                    "mkt.klines_1m",
+                    time_field="open_time",
+                    filters={"instrument_id": instrument["instrument_id"], "complete": True},
+                    cutoff=end - timedelta(minutes=1),
+                    assembled_at=result["assembled_at"],
                 )
+                result["klines"].extend(rows)
+                proven["klines"].extend(stored_version(row) for row in rows)
             for instrument in perp:
-                result["klines"].extend(
-                    await self._range(
-                        "mkt.klines_1m",
-                        "open_time",
-                        start=end - timedelta(days=1),
-                        end=upper,
-                        filters={"instrument_id": instrument["instrument_id"]},
-                    )
+                rows, head = await self._condition_range(
+                    "mkt.klines_1m", "open_time", end - timedelta(days=1), upper, instrument["instrument_id"]
                 )
+                result["klines"].extend(rows)
+                proven["klines"].append(head)
             for name in ("funding", "liquidations", "supply"):
                 if name == "funding" and "funding" in domains:
                     continue
@@ -2313,66 +2626,42 @@ class MarketService:
                     assembled_at=result["assembled_at"],
                 )
             )
+            for name in ("funding", "liquidations", "supply"):
+                if name not in domains:
+                    proven[name] = [stored_version(row) for row in result[name]]
         for name in ("books", "oi", "funding", "supply", "klines", "liquidations", "tickers"):
             if name in result and name not in domains:
                 field = COLLECTIONS[name][1]
-                result[name] = list(
-                    {
-                        sha256(row): row
-                        for row in result[name]
-                        if (stamp := row.get(field) or row.get("funding_time")) is not None
-                        and end - timedelta(days=90) <= parse_time(stamp) <= end
-                    }.values()
+                result[name] = distinct_rows(
+                    row
+                    for row in result[name]
+                    if (stamp := row.get(field) or row.get("funding_time")) is not None
+                    and end - timedelta(days=90) <= parse_time(stamp) <= end
                 )
+        for domain in domains & {"oi", "funding"}:
+            collection, field = COLLECTIONS[domain]
+            proven[domain] = [
+                self._condition_histories[(collection, name, i["instrument_id"])]["fingerprint"]
+                for name in ((field, "funding_time") if domain == "funding" else (field,))
+                for i in perp
+            ]
+        registry = self._registry_dependency(instruments)
+        scope = [iso(end), anchor, registry]
         result["domain_dependency_fingerprints"] = {}
         for domain in domains - {"composite"}:
             if domain in {"oi", "funding"}:
-                collection, field = COLLECTIONS[domain]
-                heads = [
-                    self._condition_histories[(collection, field, i["instrument_id"])]["fingerprint"]
-                    for i in perp
-                ]
-                if domain == "funding":
-                    heads.extend(
-                        self._condition_histories[(collection, "funding_time", i["instrument_id"])][
-                            "fingerprint"
-                        ]
-                        for i in perp
-                    )
-                dependency = [heads, result["semantics"], result["capture_metadata"]]
-            elif domain in {"dc", "depth"}:
-                fields = (
-                    ["books", "anchor", "capture_metadata"]
-                    if domain == "depth"
-                    else [
-                        "flow_bars",
-                        "flow_segments",
-                        "books",
-                        "oi",
-                        "funding",
-                        "klines",
-                        "tickers",
-                        "supply",
-                        "liquidations",
-                        "capture_metadata",
-                        "semantics",
-                    ]
-                )
-                dependency = [result.get(field) for field in fields]
+                names = [domain]
+            elif domain == "depth":
+                names = ["books"]
+            elif domain == "dc":
+                names = ["flow", "books", "oi", "funding", "klines", "tickers", "supply", "liquidations"]
             else:
-                fields = [
-                    "flow_bars",
-                    "flow_segments",
-                    "reference_points",
-                    "tickers" if domain == "spot" else "klines",
-                ]
-                dependency = [result.get(field) for field in fields]
+                names = ["flow", "tickers" if domain == "spot" else "klines"]
             result["domain_dependency_fingerprints"][domain] = sha256(
                 [
-                    dependency,
-                    instruments,
-                    self.settings.config_version,
-                    self.settings.code_version,
+                    [proven.get(name) for name in names],
+                    result.get("capture_metadata") if domain in {"oi", "funding", "dc", "depth"} else None,
+                    scope,
                 ]
             )
         if "composite" in domains:
@@ -2413,16 +2702,7 @@ class MarketService:
             )
             heads.extend(found[o] for o in HEAD_ORDERS)
             result["dependency_fingerprint"] = sha256(
-                [
-                    heads,
-                    self.semantics,
-                    instruments,
-                    self.tokens,
-                    self.sector_baskets,
-                    await self._capture_metadata(token_id, end),
-                    self.settings.config_version,
-                    self.settings.code_version,
-                ]
+                [heads, registry, await self._capture_metadata(token_id, end)]
             )
         if any(
             r["metric"]
