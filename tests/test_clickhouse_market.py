@@ -5,14 +5,24 @@ The same typed rows go into the memory repository (put_market_batch) and into Cl
 (as tank-capture writes them); every routed read must give the same answer on both.
 """
 
+import asyncio
 import json
 import os
+import pickle
+import socket
+import struct
+from contextlib import suppress
+from copy import deepcopy
 from datetime import UTC, datetime, timedelta
+from types import SimpleNamespace
 
+import httpx
 import pytest
 
 from tank import clickhouse_market as chm
 from tank import market_storage as ms
+from tank.market import service as service_module
+from tank.market.service import MarketService
 from tank.market_schema import MARKET_COLUMNS
 from tank.storage import MemoryRepository, PostgresRepository
 from tank.util import iso
@@ -246,3 +256,185 @@ async def test_latest_per_instrument_reaches_past_the_recent_day(both):
     got = await routed.latest_market_records("mkt.klines_1m", **options)
     assert got == expected
     assert [(r["instrument_id"], r["c"]) for r in got] == [(IIDS[0], "2"), (IIDS[1], "4")]
+
+
+@pytest.fixture
+async def interrupted_clickhouse(both):
+    upstream = both[1].clickhouse
+    state = SimpleNamespace(
+        phase=None,
+        failure=None,
+        selected=0,
+        armed_hydration=False,
+        reached=asyncio.Event(),
+        release=asyncio.Event(),
+        peer_closed=asyncio.Event(),
+        queries=[],
+        errors=[],
+    )
+    handlers = set()
+
+    async def serve(reader, writer):
+        task = asyncio.current_task()
+        handlers.add(task)
+        try:
+            head = await reader.readuntil(b"\r\n\r\n")
+            first, *lines = head.decode().split("\r\n")
+            headers = dict(line.split(": ", 1) for line in lines if ": " in line)
+            body = await reader.readexactly(int(headers.get("Content-Length", "0")))
+            query = body.decode()
+            state.queries.append(query)
+            key_selection = query.startswith("SELECT storage_key,")
+            late_selection = key_selection and "recorded_at >=" in query
+            selected = (
+                key_selection
+                if state.phase == "cold"
+                else late_selection
+                if state.phase == "late"
+                else key_selection and not late_selection
+            )
+            if selected:
+                state.selected += 1
+            if state.phase == "hydration" and selected:
+                state.armed_hydration = True
+            interrupt = state.phase is not None and (
+                query.startswith("SELECT *") and state.armed_hydration
+                if state.phase == "hydration"
+                else selected and state.selected == (2 if state.phase == "cold" else 1)
+            )
+            response = await upstream.http.post(
+                upstream.base.rstrip("/") + first.split(" ")[1],
+                content=body,
+                headers={
+                    name: value for name, value in headers.items() if name.lower().startswith("x-clickhouse-")
+                },
+            )
+            assert response.status_code == 200, response.text
+            payload = response.content
+            assert not interrupt or len(payload) > 1
+            writer.write(
+                f"HTTP/1.1 200 OK\r\nContent-Length: {len(payload)}\r\nConnection: close\r\n\r\n".encode()
+                + (payload[:1] if interrupt else payload)
+            )
+            await writer.drain()
+            if interrupt:
+                state.reached.set()
+                await state.release.wait()
+                if state.failure == "cancel":
+                    assert await asyncio.wait_for(reader.read(1), 1) == b""
+                    state.peer_closed.set()
+                else:
+                    writer.get_extra_info("socket").setsockopt(
+                        socket.SOL_SOCKET, socket.SO_LINGER, struct.pack("ii", 1, 0)
+                    )
+                    writer.transport.abort()
+        except Exception as exc:
+            state.errors.append(exc)
+            state.reached.set()
+        finally:
+            writer.close()
+            with suppress(ConnectionError):
+                await writer.wait_closed()
+            handlers.discard(task)
+
+    server = await asyncio.start_server(serve, "127.0.0.1", 0)
+    port = server.sockets[0].getsockname()[1]
+    ch = chm.ClickHouse(f"http://127.0.0.1:{port}", password=upstream.password)
+    ch.user = upstream.user
+    try:
+        yield state, ch
+    finally:
+        state.release.set()
+        server.close()
+        await ch.close()
+        for task in list(handlers):
+            task.cancel()
+        await asyncio.gather(*list(handlers), return_exceptions=True)
+        await server.wait_closed()
+    assert state.errors == []
+
+
+@pytest.mark.parametrize("phase", ["cold", "late", "forward", "hydration"])
+@pytest.mark.parametrize("failure", ["error", "cancel"])
+async def test_interrupted_window_read_keeps_committed_lanes(
+    both, interrupted_clickhouse, monkeypatch, phase, failure, record_property
+):
+    memory, routed, put = both
+    state, ch = interrupted_clickhouse
+    original_ch = routed.clickhouse
+    clock = T0 + timedelta(days=4)
+    monkeypatch.setattr(service_module, "utcnow", lambda: clock)
+    collection, field = "mkt.flow_bars_1m", "minute_start"
+    await put(collection, [bar(IIDS[0], minute) for minute in [*range(1010), *range(1200, 1204)]])
+    routed.clickhouse = ch
+    service = object.__new__(MarketService)
+    service.repo = routed
+
+    async def read(low, high):
+        return await service._ranged(
+            collection,
+            field,
+            [IIDS[0]],
+            T0 + timedelta(minutes=low),
+            T0 + timedelta(minutes=high),
+        )
+
+    await read(0, 1001)
+    await read(1200, 1204)
+    assert len(next(iter(service._windows.values()))) == 2
+    committed = deepcopy(service._windows)
+    before = pickle.dumps(service._windows)
+    corrected = bar(IIDS[0], 10, last="corrected")
+    corrected["recorded_at"] = iso(clock + timedelta(seconds=1))
+    late = bar(IIDS[0], 10.5, last="late")
+    late["recorded_at"] = iso(clock + timedelta(seconds=1))
+    await put(collection, [corrected, late])
+    clock += timedelta(seconds=2)
+    state.phase, state.failure = phase, failure
+    state.selected = 0
+    low, high = (-1, 1010) if phase == "cold" else (5, 1001 if phase == "late" else 1010)
+    task = asyncio.create_task(read(low, high))
+    expiry = asyncio.get_running_loop().time() + 10
+    try:
+        async with asyncio.timeout_at(expiry):
+            await asyncio.wait_for(state.reached.wait(), 2)
+            assert state.errors == []
+            if failure == "cancel":
+                task.cancel()
+                with pytest.raises(asyncio.CancelledError):
+                    await task
+                state.release.set()
+                await asyncio.wait_for(state.peer_closed.wait(), 1)
+            else:
+                state.release.set()
+                with pytest.raises(httpx.ReadError) as caught:
+                    await task
+                chain = []
+                error = caught.value
+                while error is not None:
+                    chain.append(type(error).__name__)
+                    error = error.__cause__
+                record_property("transport_exception_chain", ",".join(chain))
+            assert service._windows == committed
+            assert pickle.dumps(service._windows) == before
+            assert all(not lock.locked() for lock in service._window_locks.values())
+            state.phase = None
+            actual = await read(low, high)
+            expected = await ms.market_range_by_instrument(
+                memory,
+                collection,
+                field,
+                [IIDS[0]],
+                T0 + timedelta(minutes=low),
+                T0 + timedelta(minutes=high),
+            )
+            assert actual == expected
+            rows = actual[IIDS[0]]
+            assert len(rows) == high - max(low, 0) + 1
+            assert {row["last_trade"]["trade_id"] for row in rows} >= {"corrected", "late"}
+            assert asyncio.get_running_loop().time() < expiry
+    finally:
+        state.release.set()
+        task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
+        routed.clickhouse = original_ch
