@@ -3038,3 +3038,44 @@ async def test_market_reader_writes_each_packet_snapshot_into_the_replay_clickho
     ]
     await ReplayMarketReader(inputs).snapshot("bitcoin:BTC", cutoff)
     assert len(client.inserted) == 1
+
+
+async def test_market_reader_writes_the_supply_rows_of_a_packet_snapshot_into_the_replay_repository():
+    from types import SimpleNamespace
+
+    from tank.replay import ReplayMarketReader
+
+    cutoff = "2026-10-16T12:00:00Z"
+    supply = [
+        {
+            "token_id": "T",
+            "kind": "LENDING",
+            "chain": None,
+            "ts": "2026-10-16T11:30:00Z",
+            "available": True,
+            "pools": [{"pool_id": "P", "utilization": "0.5"}],
+        },
+        {
+            "token_id": "T",
+            "kind": "CHAIN_LIQUIDITY",
+            "chain": "Base",
+            "ts": "2026-10-16T11:00:00Z",
+            "available": True,
+            "series": [{"ts": "2026-10-16T00:00:00Z", "supply_usd": "7"}],
+        },
+    ]
+    snapshot = {"token_id": "T", "cutoff": cutoff, "supply": supply}
+    inputs = SimpleNamespace(
+        fixture_reference=None, cutoff=cutoff, records=lambda collection, cutoff=None: [snapshot]
+    )
+    repo = MemoryRepository()
+    await repo.open()
+    reader = ReplayMarketReader(inputs, None, None, repo)
+    assert (await reader.snapshot("T", cutoff))["supply"] == supply
+    await reader.snapshot("T", cutoff)
+    stored = await repo.list("mkt.supply_obs", filters={"token_id": "T"})
+    assert sorted((row["kind"], row.get("chain")) for row in stored) == [
+        ("CHAIN_LIQUIDITY", "Base"),
+        ("LENDING", None),
+    ]
+    await repo.close()

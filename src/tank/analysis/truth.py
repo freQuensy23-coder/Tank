@@ -1346,6 +1346,28 @@ async def liquidity_evidence(ch, snapshot, end, config, windows, anchor_at, *, s
     )
 
 
+async def supply_evidence(repo, snapshot, end, config, windows):
+    """Run the supply statements of a snapshot (03 section 5.6) for these windows, a mapping of window name to
+    length in seconds, and return their records."""
+    token = snapshot.get("token_id")
+    lookback_s = (
+        int(_knob(config, "historical_lookback_days", _knob(config, "base_retention_days", 90))) * 86400
+    )
+    common = dict(
+        token_id=token,
+        cutoff=end,
+        assembled=parse_time(snapshot["assembled_at"]) if snapshot.get("assembled_at") else AS_OF_ALL,
+    )
+    names = list(windows)
+    starts = [end - timedelta(seconds=windows[name]) for name in names]
+    inventory = await truth_sql.fetch_postgres(
+        repo, truth_sql.SupplyInventory, lookback_s=lookback_s, names=names, starts=starts, **common
+    )
+    pools = await truth_sql.fetch_postgres(repo, truth_sql.SupplyPool, **common)
+    chains = await truth_sql.fetch_postgres(repo, truth_sql.SupplyChain, **common)
+    return truth_sql.SupplyEvidence(inventory=tuple(inventory), pools=tuple(pools), chains=tuple(chains))
+
+
 def large_buckets(get):
     """The size buckets whose notional counts as large tickets: those whose upper edge reaches the large-ticket
     threshold, none when the threshold is not an edge."""
@@ -2275,7 +2297,12 @@ def enrich_evidence(snapshot, start, end, spots, primary, deriv, relative, liqui
 
 @precise
 def supply_truth(snapshot, start, end):
-    """Interpret captured supply wrappers; unknown wallets and APY never become inferred sales/APR."""
+    """Interpret captured supply wrappers; unknown wallets and APY never become inferred sales/APR.
+
+    The inventory change and its normal range, the utilization change of the lending pools and the stablecoin supply
+    of the chains are the records of the supply statements (`supply_sql`, 03 section 5.6)."""
+    records = snapshot.get("supply_sql") or truth_sql.NO_SUPPLY
+    window = snapshot.get("_primary")
     rows = sorted(
         [r for r in snapshot.get("supply", []) if _time(r) is not None and _time(r) <= end], key=_time
     )
@@ -2285,10 +2312,6 @@ def supply_truth(snapshot, start, end):
 
     def latest(k):
         return next((r for r in reversed(rows) if kind(r) in k), None)
-
-    def asof(rs, target, maxage=21600):
-        candidates = [r for r in rs if _time(r) <= target and (target - _time(r)).total_seconds() <= maxage]
-        return max(candidates, key=_time) if candidates else None
 
     unavailable = {}
     flows = []
@@ -2302,83 +2325,57 @@ def supply_truth(snapshot, start, end):
     current = inventories[-1] if inventories else None
     if current and current.get("available") is not False:
         available = True
-        if "balances" not in current:
-            inventory = dict(current)
-            if (
-                beyond(number(current.get("chg_pct")), current.get("normal_range")) is True
-                and number(current.get("chg_pct")) > 0
-            ):
-                evidence = True
-        else:
-
-            def balances(r):
-                return {
-                    (b.get("venue"), b.get("chainid"), b.get("contract"), b.get("wallet_list_commit")): b
-                    for b in r.get("balances", [])
-                    if b.get("complete") is True and decimal(b.get("qty_native")) is not None
-                }
-
-            now = balances(current)
-            previous = asof(inventories, end - timedelta(days=1))
-            old = balances(previous) if previous and previous.get("available") is not False else {}
-            cohort = set(now) & set(old)
-            per = []
-            history = []
-
-            def total(r, keys):
-                bs = balances(r)
-                return (
-                    sum((decimal(bs[k]["qty_native"]) for k in keys), Decimal(0))
-                    if keys and all(k in bs for k in keys)
-                    else None
+        record = next((r for r in records.inventory if r.window == window), None)
+        change, pct, nr = None, None, None
+        per, coverage = [], {}
+        if record is not None:
+            change, pct = record.change, record.pct
+            per = [
+                dict(
+                    venue=venue,
+                    chainid=chainid,
+                    contract=contract,
+                    qty_native=qty,
+                    chg_native_24h=chg,
+                    chg_pct=p,
                 )
-
-            for key in sorted(cohort, key=str):
-                n, o = decimal(now[key]["qty_native"]), decimal(old[key]["qty_native"])
-                per.append(
-                    dict(
-                        venue=key[0],
-                        chainid=key[1],
-                        contract=key[2],
-                        qty_native=n,
-                        chg_native_24h=n - o,
-                        chg_pct=ratio(n - o, o),
-                    )
+                for venue, chainid, contract, qty, chg, p in zip(
+                    record.venues,
+                    record.chainids,
+                    record.contracts,
+                    record.qty_native,
+                    record.chg_native,
+                    record.chg_pct,
+                    strict=True,
                 )
-            n0, n1 = total(previous, cohort) if previous else None, total(current, cohort)
-            if (
-                inventories
-                and (_time(current) - _time(inventories[0])).total_seconds()
+            ]
+            spans = (
+                record.current_at is not None
+                and record.first_at is not None
+                and (record.current_at - record.first_at).total_seconds()
                 >= float(parameter("history_min_days", 7)) * 86400
-            ):
-                for r in inventories:
-                    if not end - timedelta(days=lookback_days()) <= _time(r) < start:
-                        continue
-                    past = asof(inventories, _time(r) - timedelta(days=1))
-                    n = total(r, cohort)
-                    o = total(past, cohort) if past else None
-                    if n is not None and o:
-                        history.append(float(n / o - 1))
-            change = n1 - n0 if n1 is not None and n0 is not None else None
-            pct = ratio(change, n0)
-            nr = normal(history)
-            inventory = dict(
-                chg_native_24h=change,
-                chg_pct=pct,
-                normal_range=nr,
-                per_venue=per,
-                coverage=dict(
-                    complete_balances=len(now),
-                    observed_balances=len(current.get("balances", [])),
-                    comparable_balances=len(cohort),
-                    coverage_errors=current.get("coverage_errors", []),
-                    unsupported_venues=current.get("unsupported_venues", []),
-                ),
-                reason=None if change is not None else "INCOMPLETE",
-                observed_at=iso(_time(current)),
             )
-            if pct is not None and nr and pct > nr[1]:
-                evidence = True
+            nr = [record.normal_low, record.normal_high] if spans and record.samples else None
+            coverage = dict(
+                complete_balances=record.complete_balances,
+                observed_balances=record.observed_balances,
+                comparable_balances=record.comparable_balances,
+            )
+        inventory = dict(
+            chg_native_24h=change,
+            chg_pct=pct,
+            normal_range=nr,
+            per_venue=per,
+            coverage=dict(
+                coverage,
+                coverage_errors=current.get("coverage_errors", []),
+                unsupported_venues=current.get("unsupported_venues", []),
+            ),
+            reason=None if change is not None else "INCOMPLETE",
+            observed_at=iso(_time(current)),
+        )
+        if pct is not None and nr and pct > nr[1]:
+            evidence = True
     else:
         unavailable["exchange_inventory"] = current.get("reason", "INCOMPLETE") if current else "INCOMPLETE"
     wallet = latest(("WALLET_FLOWS",))
@@ -2440,24 +2437,16 @@ def supply_truth(snapshot, start, end):
         available = True
         lending = dict(lend)
         if "pools" in lend:
-            prior = asof(
-                [r for r in rows if kind(r) == "LENDING" and r.get("available") is not False],
-                end - timedelta(days=1),
-                1800,
-            )
-            oldp = {p["pool_id"]: p for p in prior.get("pools", [])} if prior else {}
-            pools = []
-            for p in lend["pools"]:
-                old = oldp.get(p["pool_id"], {})
-                u, ou = number(p.get("utilization")), number(old.get("utilization"))
-                pools.append(
-                    dict(
-                        p,
-                        borrow_apr=None,
-                        borrow_apr_reason="NOT_ESTIMABLE",
-                        chg_24h=u - ou if u is not None and ou is not None else None,
-                    )
+            changes = {r.pool_id: r.chg_24h for r in records.pools}
+            pools = [
+                dict(
+                    p,
+                    borrow_apr=None,
+                    borrow_apr_reason="NOT_ESTIMABLE",
+                    chg_24h=changes.get(p["pool_id"]),
                 )
+                for p in lend["pools"]
+            ]
             lending["pools"] = pools
             lending["borrow_apr"] = None
             lending["reason"] = "APY_IS_NOT_APR"
@@ -2465,42 +2454,20 @@ def supply_truth(snapshot, start, end):
         unavailable["lending"] = lend.get("reason", "INCOMPLETE")
     else:
         unavailable["lending"] = "INCOMPLETE"
-    chain_latest = {}
-    for r in rows:
-        if kind(r) in ("CHAIN_LIQUIDITY", "STABLECOIN_CHAIN"):
-            chain_latest[r.get("chain")] = r
-    if not chain_latest:
+    if not records.chains:
         unavailable["stablecoin_chain"] = "INCOMPLETE"
-    for chain, r in chain_latest.items():
-        if r.get("available") is False:
-            unavailable["stablecoin_chain"] = r.get("reason", "INCOMPLETE")
+    for r in records.chains:
+        if r.available is False:
+            unavailable["stablecoin_chain"] = r.reason
             continue
         available = True
-        if "series" not in r:
-            chains.append(r)
-            continue
-        series = sorted(
-            [p for p in r["series"] if parse_time(p["ts"]) <= end], key=lambda p: parse_time(p["ts"])
-        )
-
-        def point(target):
-            ps = [
-                p
-                for p in series
-                if parse_time(p["ts"]) <= target and (target - parse_time(p["ts"])).total_seconds() <= 86400
-            ]
-            return decimal(ps[-1].get("supply_usd")) if ps else None
-
-        n = point(end)
-        p1 = point(end - timedelta(days=1))
-        p7 = point(end - timedelta(days=7))
         chains.append(
             dict(
-                chain=chain,
-                supply_usd=n,
-                supply_chg_24h=n - p1 if n is not None and p1 is not None else None,
-                supply_chg_7d=n - p7 if n is not None and p7 is not None else None,
-                reason=None if n is not None else "INCOMPLETE",
+                chain=r.chain,
+                supply_usd=r.supply_usd,
+                supply_chg_24h=r.supply_chg_24h,
+                supply_chg_7d=r.supply_chg_7d,
+                reason=None if r.supply_usd is not None else "INCOMPLETE",
             )
         )
 
@@ -4554,6 +4521,15 @@ def condition_liquidity_windows(snapshot, requirements):
     return windows, state
 
 
+def condition_supply_windows(snapshot, requirements):
+    """The windows (name to seconds) whose supply a condition evaluation reads: the primary window of a state."""
+    end = parse_time(snapshot["cutoff"])
+    start, primary = condition_primary_bounds(snapshot, end)
+    if any(requirement["metric"] in COMPOSITE_CONDITION_METRICS for requirement in requirements):
+        return {primary: (end - start).total_seconds()}
+    return {}
+
+
 def condition_market_state(snapshot, end, cache):
     """The required primary-window state graph, without MTA/outcome/card persistence work."""
     av = (snapshot.get("anchor") or {}).get("ts")
@@ -4571,7 +4547,15 @@ def condition_market_state(snapshot, end, cache):
             head = fingerprint({field: snapshot.get(field) for field in fields})
         elif not isinstance(head, str):
             head = fingerprint(head)
-        for evidence in ("relative_sql", "volume_sql", "oi_sql", "funding_sql", "flow_sql", "liquidity_sql"):
+        for evidence in (
+            "relative_sql",
+            "volume_sql",
+            "oi_sql",
+            "funding_sql",
+            "flow_sql",
+            "liquidity_sql",
+            "supply_sql",
+        ):
             if evidence in fields:
                 head = fingerprint([head, snapshot.get(evidence)])
         key = (
@@ -4629,7 +4613,7 @@ def condition_market_state(snapshot, end, cache):
         lambda: derivatives_truth(scoped, wstart, end),
     )
     liquidity = liquidity_truth(scoped, wstart, end, spots[primary], relative)
-    supply = node("supply", ("supply", "anchor"), lambda: supply_truth(scoped, wstart, end))
+    supply = node("supply", ("supply", "supply_sql", "anchor"), lambda: supply_truth(scoped, wstart, end))
     enrich_evidence(scoped, wstart, end, spots, primary, derivatives, relative, liquidity)
     derivatives["support_features"] = support_features(
         scoped, wstart, end, spots[primary], derivatives, liquidity, supply
@@ -4732,6 +4716,7 @@ def compute_condition_values(snapshot, requirements, *, config=None, cache=None,
                     "relative_sql",
                     "volume_sql",
                     "liquidity_sql",
+                    "supply_sql",
                     "series_coverage_counts",
                 )
                 seconds = (end - condition_primary_bounds(snapshot, end)[0]).total_seconds()
@@ -5133,6 +5118,22 @@ async def with_liquidity(repo, snapshot, config, *, windows=None, state=True):
     )
 
 
+async def with_supply(repo, snapshot, config, *, windows=None):
+    """The snapshot with the records of the supply statements (03 section 5.6) as `supply_sql`.
+
+    The windows are those of the assessment (W15M, W1H, W4H, W24H and EVENT) unless given; a snapshot whose anchor
+    does not precede its cutoff is returned as it is."""
+    end = parse_time(snapshot["cutoff"])
+    anchor = snapshot.get("anchor")
+    anchor_at = anchor.get("ts") if isinstance(anchor, dict) else anchor
+    start = parse_time(anchor_at) if anchor_at else end - timedelta(hours=4)
+    if start >= end:
+        return snapshot
+    if windows is None:
+        windows = dict(WINDOWS, EVENT=(end - start).total_seconds())
+    return dict(snapshot, supply_sql=await supply_evidence(repo, snapshot, end, config, windows))
+
+
 def _market_client(repo):
     from tank import clickhouse_market
 
@@ -5214,6 +5215,9 @@ class MarketTruthService:
         windows, state = condition_liquidity_windows(snapshot, requirements)
         if windows:
             snapshot = await with_liquidity(self.repo, snapshot, config, windows=windows, state=state)
+        windows = condition_supply_windows(snapshot, requirements)
+        if windows:
+            snapshot = await with_supply(self.repo, snapshot, config, windows=windows)
         return await asyncio.to_thread(
             compute_condition_values,
             snapshot,
@@ -5255,16 +5259,20 @@ class MarketTruthService:
         self._release_idle_assessment_baselines()
         lock = self._assessment_locks.setdefault(token_id, asyncio.Lock())
         async with lock:
-            snapshot = await with_liquidity(
+            snapshot = await with_supply(
                 self.repo,
-                await with_flow(
+                await with_liquidity(
                     self.repo,
-                    await with_funding(
+                    await with_flow(
                         self.repo,
-                        await with_oi(
+                        await with_funding(
                             self.repo,
-                            await with_volumes(
-                                self.repo, await with_relative(self.repo, snapshot, knobs), knobs
+                            await with_oi(
+                                self.repo,
+                                await with_volumes(
+                                    self.repo, await with_relative(self.repo, snapshot, knobs), knobs
+                                ),
+                                knobs,
                             ),
                             knobs,
                         ),

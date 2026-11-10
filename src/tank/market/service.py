@@ -1234,7 +1234,6 @@ class MarketService:
         end, assembled = parse_time(result["cutoff"]), result["assembled_at"]
         start, _ = condition_primary_bounds(result, end)
         anchor = parse_time(result["anchor"]["ts"]) if result.get("anchor") else start
-        history_start = min(start, anchor, end - timedelta(days=1)) - timedelta(days=90)
         target = [i for i in self.instruments.values() if i["token_id"] == token_id]
         spot = [i for i in target if i["market_type"] == "SPOT"]
         perp = [i for i in target if i["market_type"] != "SPOT"]
@@ -1417,37 +1416,7 @@ class MarketService:
                         assembled_at=assembled,
                     )
                 )
-            result["supply"] = await self.repo.latest_market_records(
-                "mkt.supply_obs",
-                group_by=("token_id", "kind", "chain"),
-                time_field="ts",
-                filters={"token_id": token_id},
-                cutoff=end,
-                assembled_at=assembled,
-            )
-            result["supply"].extend(
-                await self.repo.latest_market_records(
-                    "mkt.supply_obs",
-                    group_by=("token_id", "kind", "chain"),
-                    time_field="ts",
-                    filters={"token_id": token_id, "available": True},
-                    cutoff=end,
-                    assembled_at=assembled,
-                )
-            )
-            supply_heads = []
-            for kind in ("EXCHANGE_INVENTORY", "INVENTORY", "LENDING"):
-                rows, head = await self._condition_projected_history(
-                    "mkt.supply_obs",
-                    "ts",
-                    history_start if kind != "LENDING" else end - timedelta(hours=48),
-                    end,
-                    assembled,
-                    fields=list(MARKET_COLUMNS["mkt.supply_obs"]),
-                    filters={"token_id": token_id, "kind": kind},
-                )
-                result["supply"].extend(rows)
-                supply_heads.append(head)
+            result["supply"] = await self._latest_supply(token_id, end, assembled)
             result["semantics"] = self._instrument_semantics(target)
             for name in ("funding", "books", "supply", "liquidations"):
                 result[name] = list({sha256(row): row for row in result[name]}.values())
@@ -1467,7 +1436,7 @@ class MarketService:
                 [derivative_heads, result["funding"], result["semantics"], result["capture_metadata"]]
             )
             heads["books"] = sha256([result["books"], anchor.isoformat()])
-            heads["supply"] = sha256([supply_heads, result["supply"]])
+            heads["supply"] = sha256(result["supply"])
             heads["support"] = sha256([flow_heads, heads["relative"], heads["books"]])
         result.setdefault("domain_dependency_fingerprints", {}).update(heads)
         result["domain_dependency_fingerprints"]["state"] = result["dependency_fingerprint"]
@@ -2129,6 +2098,30 @@ class MarketService:
         of the union range inside snapshot_anchors()."""
         return await self._ranged(collection, field, ids, start, end, books=books)
 
+    async def _latest_supply(self, token_id, cutoff, assembled=None):
+        """The latest observation of each supply kind and chain of a token at or before `cutoff`, and the latest
+        available one: what the supply rules read of the rows themselves. The numbers derived from the series are
+        the supply statements' (03 section 5.6)."""
+        rows = await self.repo.latest_market_records(
+            "mkt.supply_obs",
+            group_by=("token_id", "kind", "chain"),
+            time_field="ts",
+            filters={"token_id": token_id},
+            cutoff=cutoff,
+            assembled_at=assembled,
+        )
+        rows.extend(
+            await self.repo.latest_market_records(
+                "mkt.supply_obs",
+                group_by=("token_id", "kind", "chain"),
+                time_field="ts",
+                filters={"token_id": token_id, "available": True},
+                cutoff=cutoff,
+                assembled_at=assembled,
+            )
+        )
+        return list({sha256(row): row for row in rows}.values())
+
     async def snapshot(self, token_id, cutoff, anchor=None, *, scope=None):
         """scope="REACTION": a reaction checkpoint (03 §8, 01 FR-R-01) measures its EVENT
         window, anchor to cutoff. Flow bars, klines, OI, funding and liquidations are read
@@ -2227,13 +2220,7 @@ class MarketService:
                 )
             for iid in ids if name != "supply" else [None]:
                 if iid is None:
-                    rows = await self._range(
-                        collection,
-                        field,
-                        start=history_start,
-                        end=snapshot_end,
-                        filters={"token_id": token_id},
-                    )
+                    rows = await self._latest_supply(token_id, cutoff_dt)
                 else:
                     rows = list(window_rows[iid])
                 if name == "funding":

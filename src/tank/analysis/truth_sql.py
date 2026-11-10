@@ -1,11 +1,12 @@
-"""Market Truth statements (03 §11.1): hand-written ClickHouse statements and their typed results.
+"""Market Truth statements (03 §11.1): hand-written statements and their typed results.
 
 Every number derived from the stored market series is produced by one `.sql` file of
 `analysis/sql/`: it reads `mkt.*` itself and returns aggregates whose size does not depend on the
 window length. `fetch` sends the statement with its server-side parameters and decodes each result
 row into the frozen record class of that statement; the rules over those scalars stay in
-`analysis.truth`. A record field is a result column of the same name, `None` where the column is
-NULL; a statement and its record must agree on the column names exactly.
+`analysis.truth`. The statements are ClickHouse statements except the supply ones, which read PostgreSQL
+(`fetch_postgres`). A record field is a result column of the same name, `None` where the column is NULL; a
+statement and its record must agree on the column names exactly.
 """
 
 import re
@@ -22,7 +23,8 @@ from tank.util import parse_time
 
 STATEMENTS = Path(__file__).with_name("sql")
 PARAMETER = re.compile(r"\{(\w+):((?:[^{}()]|\([^()]*\))+)\}")
-DECODERS = {str: str, int: int, float: float, Decimal: Decimal, datetime: parse_time}
+POSTGRES_PARAMETER = re.compile(r"%\((\w+)\)s")
+DECODERS = {str: str, int: int, float: float, bool: bool, Decimal: Decimal, datetime: parse_time}
 
 
 @dataclass(frozen=True)
@@ -71,6 +73,26 @@ async def fetch(ch, record, **values):
         raise TypeError(f"{record.statement} takes {sorted(kinds)}, not {sorted(values)}")
     params = {name: (_literal(values[name]), kind) for name, kind in kinds.items()}
     return [record.decode(row) for row in await ch.rows(query, params)]
+
+
+@cache
+def load_postgres_statement(name):
+    """The text of the PostgreSQL statement `sql/<name>.sql` and the names of its `%(name)s` parameters."""
+    text = (STATEMENTS / f"{name}.sql").read_text()
+    return text.strip() + "\n", frozenset(POSTGRES_PARAMETER.findall(text))
+
+
+async def fetch_postgres(repo, record, **values):
+    """Run the PostgreSQL statement of `record` on the repository's database with these parameter values; one
+    decoded record per row. Only a PostgreSQL repository answers: the supply observations are not in ClickHouse."""
+    query, names = load_postgres_statement(record.statement)
+    if values.keys() != names:
+        raise TypeError(f"{record.statement} takes {sorted(names)}, not {sorted(values)}")
+    if not hasattr(repo, "_conn"):
+        raise RuntimeError("mkt.supply_obs is read by statements that run on PostgreSQL only")
+    async with repo.transaction():
+        rows = await (await repo._conn().execute(query, values)).fetchall()
+    return [record.decode(row) for row in rows]
 
 
 @dataclass(frozen=True)
@@ -665,3 +687,76 @@ class LiquidityEvidence:
 
 
 NO_LIQUIDITY = LiquidityEvidence()
+
+
+@dataclass(frozen=True)
+class SupplyInventory(Record):
+    """The 24-hour change of the exchange inventory of a token in one window (supply_inventory.sql).
+
+    `current_at`, `previous_at` and `first_at` are the instants of the current observation, of the one a day before
+    it and of the earliest one read; the balances are counted as observed, complete and in the cohort (the keys of
+    both observations). `base`, `total` and `change` are the sums of the cohort at the previous and the current
+    observation and their difference, `pct` the change over the base; the cohort by key is the parallel lists from
+    `venues` to `chg_pct`. The history is the day-over-day changes of the cohort before the window start: its sample
+    count and the 0.025 and 0.975 quantiles; None where there is none."""
+
+    statement = "supply_inventory"
+    window: str
+    current_at: datetime | None
+    previous_at: datetime | None
+    first_at: datetime | None
+    observed_balances: int | None
+    complete_balances: int
+    comparable_balances: int
+    base: Decimal | None
+    total: Decimal | None
+    change: Decimal | None
+    pct: float | None
+    samples: int
+    normal_low: float | None
+    normal_high: float | None
+    venues: tuple[str | None, ...]
+    chainids: tuple[int | None, ...]
+    contracts: tuple[str | None, ...]
+    qty_native: tuple[Decimal, ...]
+    chg_native: tuple[Decimal, ...]
+    chg_pct: tuple[float | None, ...]
+
+
+@dataclass(frozen=True)
+class SupplyPool(Record):
+    """The 24-hour change of the utilization of one lending pool of the latest lending observation, None where
+    either utilization is missing (supply_lending.sql)."""
+
+    statement = "supply_lending"
+    pool_id: str
+    chg_24h: float | None
+
+
+@dataclass(frozen=True)
+class SupplyChain(Record):
+    """The stablecoin supply of one chain at the cutoff and its change over 24 hours and 7 days, None where the
+    series has no point that fresh; `available` and `reason` are those of the chain's latest observation
+    (supply_chains.sql)."""
+
+    statement = "supply_chains"
+    chain: str | None
+    observed_at: datetime
+    available: bool | None
+    reason: str | None
+    supply_usd: Decimal | None
+    supply_chg_24h: Decimal | None
+    supply_chg_7d: Decimal | None
+
+
+@dataclass(frozen=True)
+class SupplyEvidence:
+    """Everything the supply rules of a snapshot read from PostgreSQL: the inventory rows by window, the pools and
+    the chains."""
+
+    inventory: tuple[SupplyInventory, ...] = ()
+    pools: tuple[SupplyPool, ...] = ()
+    chains: tuple[SupplyChain, ...] = ()
+
+
+NO_SUPPLY = SupplyEvidence()

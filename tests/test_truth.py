@@ -11,6 +11,7 @@ from funding_helpers import rate, start
 from funding_helpers import steady as funding_steady
 from liquidity_helpers import window_liquidity, with_liquidity
 from oi_helpers import evidence as oi_evidence
+from supply_helpers import window_supply
 from volume_helpers import buckets, evidence
 
 from tank.analysis.truth import (
@@ -1190,14 +1191,17 @@ def test_supply_wrappers_preserve_unavailable_and_do_not_treat_unlock_as_sale():
         {"kind": kind, "observed_at": iso(end), "available": False, "reason": "SOURCE_FAILED"}
         for kind in ("EXCHANGE_INVENTORY", "WALLET_FLOWS", "UNLOCKS", "LENDING", "CHAIN_LIQUIDITY")
     ]
-    assert supply_truth({"supply": unavailable}, start, end)["supply_in_evidence"] == "UNKNOWN"
+    assert (
+        supply_truth(window_supply({"supply": unavailable}, start, end), start, end)["supply_in_evidence"]
+        == "UNKNOWN"
+    )
     unlock = {
         "kind": "UNLOCKS",
         "observed_at": iso(end),
         "available": True,
         "unlocks": [{"date": iso(end + timedelta(days=2)), "qty": 100, "kind": "POTENTIAL_SUPPLY"}],
     }
-    result = supply_truth({"supply": [unlock]}, start, end)
+    result = supply_truth(window_supply({"supply": [unlock]}, start, end), start, end)
     assert result["supply_in_evidence"] == "FALSE"
     assert len(result["unlocks_next_14d"]) == 1
     assert result["unlocks_next_14d"][0]["inference"] == "POTENTIAL_SUPPLY_IS_NOT_A_SALE"
@@ -1209,7 +1213,7 @@ def test_supply_without_observations_is_na_with_reason_not_empty():
 
     end = parse_time("2026-10-16T12:00:00Z")
     start = end - timedelta(hours=4)
-    empty = supply_truth({"supply": []}, start, end)
+    empty = supply_truth(window_supply({"supply": []}, start, end), start, end)
     assert empty["unlocks_next_14d"] == []
     assert empty["unavailable"] == {
         "exchange_inventory": "INCOMPLETE",
@@ -1220,7 +1224,7 @@ def test_supply_without_observations_is_na_with_reason_not_empty():
     }
     assert empty["supply_in_evidence"] == "UNKNOWN"
     read = {"kind": "UNLOCKS", "observed_at": iso(end), "available": True, "unlocks": []}
-    result = supply_truth({"supply": [read]}, start, end)
+    result = supply_truth(window_supply({"supply": [read]}, start, end), start, end)
     assert result["unlocks_next_14d"] == [] and "unlocks" not in result["unavailable"]
 
 
@@ -1283,7 +1287,7 @@ def test_supply_inventory_own_history_wrapped_flows_chain_and_lending():
             },
         ]
     )
-    result = supply_truth({"supply": rows}, start, end)
+    result = supply_truth(window_supply({"supply": rows}, start, end), start, end)
     assert result["exchange_inventory"]["chg_native_24h"] == 20
     assert result["exchange_inventory"]["chg_pct"] == pytest.approx(0.2)
     assert result["exchange_inventory"]["normal_range"] == [0, 0]
@@ -1686,7 +1690,9 @@ def test_stale_available_noncritical_supply_prevents_high_but_missing_is_na():
     snapshot["supply"][0]["reason"] = "NOT_SUPPORTED"
     missing = data_confidence(snapshot, spot, {"per_venue": []}, end)
     assert missing["class_"] == "HIGH"
-    supply = supply_truth(snapshot, end - timedelta(hours=4), end)
+    supply = supply_truth(
+        window_supply(snapshot, end - timedelta(hours=4), end), end - timedelta(hours=4), end
+    )
     assert supply["lending"]["value"] is None
     assert supply["supply_in_evidence"] == "UNKNOWN"
 

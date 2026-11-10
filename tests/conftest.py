@@ -349,10 +349,12 @@ async def market_clickhouse():
 def flow_evidence_from_bars():
     """A Market Truth calculation of a snapshot that has bars (`flow_bars`) and no `flow_sql` gets the records the
     trade-flow statements would return for those bars (tests/flow_helpers.py), and one that has no `liquidity_sql`
-    those of the order-book statements for its books and bars (tests/liquidity_helpers.py), so that a test can
+    those of the order-book statements for its books and bars (tests/liquidity_helpers.py) and one that has no
+    `supply_sql` those of the supply statements for its supply rows (tests/supply_helpers.py), so that a test can
     describe the market minute by minute. Session scoped: module-scoped baselines calculate too."""
     from flow_helpers import with_flow
     from liquidity_helpers import with_liquidity
+    from supply_helpers import with_supply
 
     from tank.analysis import truth
 
@@ -362,6 +364,8 @@ def flow_evidence_from_bars():
         snapshot = snapshot if "flow_sql" in snapshot else with_flow(snapshot)
         if "liquidity_sql" not in snapshot:
             snapshot = with_liquidity(snapshot, config=kwargs.get("config"))
+        if "supply_sql" not in snapshot:
+            snapshot = with_supply(snapshot, config=kwargs.get("config"))
         return compute(snapshot, **kwargs)
 
     def evaluated(snapshot, requirements, **kwargs):
@@ -369,6 +373,9 @@ def flow_evidence_from_bars():
         windows, state = truth.condition_liquidity_windows(snapshot, requirements)
         if windows and "liquidity_sql" not in snapshot:
             snapshot = with_liquidity(snapshot, windows=windows, state=state, config=kwargs.get("config"))
+        windows = truth.condition_supply_windows(snapshot, requirements)
+        if windows and "supply_sql" not in snapshot:
+            snapshot = with_supply(snapshot, windows=windows, config=kwargs.get("config"))
         return condition(snapshot, requirements, **kwargs)
 
     with pytest.MonkeyPatch.context() as patch:
@@ -380,21 +387,33 @@ def flow_evidence_from_bars():
 @pytest.fixture
 def relative_statements(monkeypatch):
     """Stand-in for the ClickHouse statements of the price-relative, volume, open-interest, funding, trade-flow and
-    order-book rules in tests that run a Market Truth service without a ClickHouse server: the snapshot keeps the
-    `relative_sql`, the `volume_sql`, the `oi_sql`, the `funding_sql`, the `flow_sql` and the `liquidity_sql` it carries, `evidence`,
-    `volumes`, `oi`, `funding`, `flow` and `liquidity` replace them when set, and a snapshot without one has no such evidence
-    (the flow and liquidity evidence of its bars and books, when it has any). The statements themselves are tested
-    against a real server in tests/test_truth_relative_sql.py, tests/test_truth_volume_sql.py,
-    tests/test_truth_oi_sql.py, tests/test_truth_funding_sql.py, tests/test_truth_flow_sql.py and
-    tests/test_truth_liquidity_sql.py."""
+    order-book and supply rules in tests that run a Market Truth service without a ClickHouse or PostgreSQL server: the
+    snapshot keeps the `relative_sql`, the `volume_sql`, the `oi_sql`, the `funding_sql`, the `flow_sql`, the
+    `liquidity_sql` and the `supply_sql` it carries, `evidence`, `volumes`, `oi`, `funding`, `flow`, `liquidity` and
+    `supply` replace them when set, and a snapshot without one has no such evidence (the flow, liquidity and supply
+    evidence of its bars, books and supply rows, when it has any). The statements themselves are tested against a real
+    server in tests/test_truth_relative_sql.py, tests/test_truth_volume_sql.py, tests/test_truth_oi_sql.py,
+    tests/test_truth_funding_sql.py, tests/test_truth_flow_sql.py, tests/test_truth_liquidity_sql.py and
+    tests/test_truth_supply_sql.py."""
     from types import SimpleNamespace
 
     from flow_helpers import flow_evidence
     from liquidity_helpers import liquidity_evidence
+    from supply_helpers import supply_evidence
 
     from tank.analysis import truth, truth_sql
 
-    stand_in = SimpleNamespace(evidence=None, volumes=None, oi=None, funding=None, flow=None, liquidity=None)
+    stand_in = SimpleNamespace(
+        evidence=None, volumes=None, oi=None, funding=None, flow=None, liquidity=None, supply=None
+    )
+
+    async def attach_supply(repo, snapshot, config, *, windows=None, **kwargs):
+        evidence = stand_in.supply or snapshot.get("supply_sql")
+        if evidence is None:
+            evidence = supply_evidence(snapshot, windows=windows, config=config)
+        return dict(snapshot, supply_sql=evidence)
+
+    monkeypatch.setattr(truth, "with_supply", attach_supply)
 
     async def attach_liquidity(repo, snapshot, config, *, windows=None, state=True, **kwargs):
         evidence = stand_in.liquidity or snapshot.get("liquidity_sql")
