@@ -8,6 +8,8 @@ serialised to find that out.
 """
 
 import hashlib
+import sys
+from contextvars import ContextVar
 from datetime import timedelta
 from math import sin
 from pathlib import Path
@@ -15,6 +17,7 @@ from pathlib import Path
 import httpx
 import pytest
 
+import tank.util
 from tank.analysis.truth import MarketTruthService
 from tank.market.service import RANGE_TAIL, MarketService, distinct_rows
 from tank.market_schema import MARKET_COLUMNS
@@ -615,3 +618,92 @@ async def test_a_window_reads_only_what_its_head_says_moved(stand):
         stamped, done = await window(start, upper)
         assert done == [(upper - RANGE_TAIL, upper), (start, upper)]
         assert stamped[2]["rows"] == 120 and stamped[2]["digest"] != corrected[2]["digest"]
+
+
+class Counting(MemoryRepository):
+    """A memory repository that counts the rows its range, projection and late-arrival
+    readers yield. Rows a repository method reads for itself, as `latest_market_records` and
+    `market_series_counts` do for their own answers, are not counted: a database answers those
+    without sending them."""
+
+    inside = ContextVar("counting_repository_inside", default=False)
+
+    def __init__(self):
+        super().__init__()
+        self.read = 0
+
+    def counted(self, rows):
+        async def stream():
+            async for row in rows:
+                if not self.inside.get():
+                    self.read += 1
+                yield row
+
+        return stream()
+
+    def iter_range(self, *args, **options):
+        return self.counted(super().iter_range(*args, **options))
+
+    def iter_market_projection(self, *args, **options):
+        return self.counted(super().iter_market_projection(*args, **options))
+
+    def iter_late_arrivals(self, *args, **options):
+        return self.counted(super().iter_late_arrivals(*args, **options))
+
+    async def latest_market_records(self, *args, **options):
+        token = self.inside.set(True)
+        try:
+            return await super().latest_market_records(*args, **options)
+        finally:
+            self.inside.reset(token)
+
+    async def market_series_counts(self, *args, **options):
+        token = self.inside.set(True)
+        try:
+            return await super().market_series_counts(*args, **options)
+        finally:
+            self.inside.reset(token)
+
+
+@pytest.fixture
+def clock(monkeypatch):
+    """The process clock, stepped by the test: rows are recorded and inputs assembled at
+    instants it chooses, as a live capture writes a minute just after it ends."""
+    now = [utcnow()]
+    real = tank.util.utcnow
+    for module in list(sys.modules.values()):
+        if getattr(module, "utcnow", None) is real:
+            monkeypatch.setattr(module, "utcnow", lambda: now[0])
+    return now
+
+
+async def rows_read(settings, rows, cutoff, clock, group, **size):
+    """Rows read from the repository by the evaluation of the third minute after the
+    first, each minute a live write: new rows recorded seconds after their minute."""
+    repo = Counting()
+    await seed(repo, rows, cutoff, anchor_hours=1, **size)
+    async with httpx.AsyncClient() as http:
+        truth = services(repo, settings, http, rows)
+        clock[0] = cutoff + timedelta(seconds=5)
+        await evaluate(truth, cutoff, group)
+        for minute in range(1, 4):
+            moved = cutoff + timedelta(minutes=minute - 1)
+            await write(repo, rows.minute(moved, iso(moved + timedelta(seconds=3)), books=size["books"]))
+            clock[0] = cutoff + timedelta(minutes=minute, seconds=5)
+            repo.read = 0
+            await evaluate(truth, cutoff + timedelta(minutes=minute), group)
+        return repo.read
+
+
+@pytest.mark.parametrize("group", GROUPS)
+async def test_a_minute_reads_the_new_rows_and_not_the_window(stand, clock, group):
+    _, settings, rows, cutoff = stand
+    flow = SIZES.get(group, {}).get("flow_hours", 4)
+    few = await rows_read(
+        settings, rows, cutoff, clock, group, books=2, hours=2, flow_hours=flow // 2, book_hours=1
+    )
+    many = await rows_read(
+        settings, rows, cutoff, clock, group, books=2, hours=4, flow_hours=flow, book_hours=3
+    )
+    assert many <= few + 8
+    assert many < 64
