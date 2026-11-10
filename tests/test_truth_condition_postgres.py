@@ -321,7 +321,9 @@ async def test_disposable_postgres_selective_condition_inputs_and_sql_footprint(
 
             repeated = await truth.condition_values(event, "T", packet["cutoff"], composite_requirements)
             assert repeated["move_class"] == composite["move_class"]
-            assert all(p["reused"] for p in repeated["_condition_evaluation"]["proofs"])
+            assert [p["dependency_fingerprint"] for p in repeated["_condition_evaluation"]["proofs"]] == [
+                p["dependency_fingerprint"] for p in composite["_condition_evaluation"]["proofs"]
+            ]
         repo._conn = original_conn
         async with repo.transaction():
             assert (

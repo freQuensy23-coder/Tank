@@ -549,9 +549,9 @@ async def test_confirmations_read_only_what_was_visible_at_the_assembly_and_sinc
         market_clickhouse,
         funding=[
             rest(BINANCE, at, "0.0001"),
-            socket(BINANCE, at, "0.0002"),
+            socket(BINANCE, at + timedelta(seconds=1), "0.0002"),
             rest(BYBIT, at, "0.0001", "bybit:rest", recorded_at=late),
-            socket(BYBIT, at, "0.0002", "bybit:ws"),
+            socket(BYBIT, at + timedelta(seconds=1), "0.0002", "bybit:ws"),
             estimate(
                 OKX,
                 at,
@@ -562,7 +562,7 @@ async def test_confirmations_read_only_what_was_visible_at_the_assembly_and_sinc
                     "PUBLIC_REST": observation("PUBLIC_REST", "okx:rest", at, "0.0001", received_ts=late)
                 },
             ),
-            socket(OKX, at, "0.0002", "okx:ws"),
+            socket(OKX, at + timedelta(seconds=1), "0.0002", "okx:ws"),
         ],
     )
     assert set(await confirmations(market_clickhouse, BINANCE, BYBIT, OKX)) == {BINANCE}
