@@ -216,6 +216,7 @@ async def test_s29_poll_stores_new_posts_and_moves_cursors_only_after_them(tmp_p
                     post("105", "Official_Org", "Upgrade vote"),
                     post("100", "Official_Org"),
                     post("102", "other_account", "Market view"),
+                    post("99", "other_account"),
                 ],
                 accounts,
                 {"official_org": "105", "other_account": "102"},

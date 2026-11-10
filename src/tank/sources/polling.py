@@ -913,7 +913,14 @@ class SourcePoller:
 
                 while current.get("pending_batches") and not current["pending_batches"][0]["rows"]:
                     batch = current["pending_batches"].pop(0)
-                    current.update(batch["coverage"])
+                    coverage = dict(batch["coverage"])
+                    if sid == "S29" and "account_cursors" in coverage:
+                        cursors = dict(current.get("account_cursors", {}))
+                        for handle, cursor in coverage.pop("account_cursors").items():
+                            if handle not in cursors or int(cursor) > int(cursors[handle]):
+                                cursors[handle] = cursor
+                        current["account_cursors"] = cursors
+                    current.update(coverage)
                     current.pop("instruments", None)
                 current["article_errors"] = article_errors
                 if duplicates:
