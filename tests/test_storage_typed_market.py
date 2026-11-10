@@ -364,6 +364,328 @@ async def test_market_dependency_head_memory():
     await exercise_dependency_head(MemoryRepository())
 
 
+async def store_legacy(repo, collection, key, record):
+    """Store a row as it was written before fingerprints and availability stamps existed."""
+    import time
+
+    from tank import clickhouse_market as chm
+    from tank.market_storage import decode, encode
+
+    row = encode(collection, record)
+    if (ch := getattr(repo, "clickhouse", None)) is not None:
+        await ch.insert(collection, [chm._row(collection, row, key, time.time_ns())])
+    else:
+        repo._data.setdefault(collection, {})[key] = decode(collection, row)
+
+
+async def exercise_contents_head(repo):
+    """The contents head is the count and the XOR of the marks of exactly the stored rows a
+    reader of the scope gets, so it moves with every new, late, corrected or replaced row."""
+    from datetime import timedelta
+
+    from tank.market_storage import fingerprint_mark, market_dependency_head
+    from tank.util import parse_time
+
+    await repo.migrate()
+    collection, field, cutoff = "mkt.flow_bars_1m", "minute_start", "2026-10-18T02:00:00Z"
+    scope = {"start": "2026-10-18T00:00:00Z", "filters": {"instrument_id": "test:BTC"}}
+
+    async def head(**changes):
+        found = await market_dependency_head(
+            repo, collection, field, cutoff, **(scope | changes), orders=("contents",)
+        )
+        return found["contents"]
+
+    async def held(assembled_at=None):
+        rows = [
+            row
+            async for row in repo.iter_range(
+                collection,
+                field,
+                start=scope["start"],
+                end=parse_time(cutoff) + timedelta(microseconds=1),
+                filters=scope["filters"],
+            )
+        ]
+        rows = [
+            row
+            for row in rows
+            if assembled_at is None
+            or row.get("recorded_at") is None
+            or parse_time(row["recorded_at"]) <= parse_time(assembled_at)
+        ]
+        digest = 0
+        for row in rows:
+            digest ^= fingerprint_mark(row["semantic_fingerprint"], row.get("recorded_at"))
+        return {
+            "rows": len(rows),
+            "unknown": sum(row.get("recorded_at") is None for row in rows),
+            "digest": f"{digest:016x}",
+        }
+
+    assert await head() is None
+    await repo.put_market_batch(
+        collection,
+        [
+            flow("2026-10-18T00:00:00Z"),
+            dict(flow("2026-10-18T00:30:00Z"), recorded_at="2026-10-18T00:31:00.123457Z"),
+            dict(flow(cutoff), recorded_at="2026-10-18T02:01:00Z"),
+            dict(flow("2026-10-18T02:00:00.000001Z"), recorded_at="2026-10-18T02:01:00Z"),
+            dict(flow("2026-10-17T23:59:00Z"), recorded_at="2026-10-18T00:00:30Z"),
+            dict(flow("2026-10-18T00:30:00Z"), instrument_id="other:BTC"),
+        ],
+    )
+    seen = [await head()]
+    assert seen[-1] == await held() and seen[-1]["rows"] == 3 and seen[-1]["unknown"] == 0
+
+    await repo.put_market_batch(
+        collection, [dict(flow("2026-10-18T01:00:00Z"), recorded_at="2026-10-18T01:01:00Z")]
+    )
+    seen.append(await head())
+    assert seen[-1] == await held() and seen[-1]["rows"] == 4
+
+    await repo.put_market_batch(
+        collection, [dict(flow("2026-10-18T00:10:00Z"), recorded_at="2026-10-18T05:00:00Z")]
+    )
+    seen.append(await head())
+    assert seen[-1] == await held() and seen[-1]["rows"] == 5
+
+    correction = dict(flow("2026-10-18T00:00:00Z"), buy_qty="2", recorded_at="2026-10-18T05:30:00Z")
+    await repo.put_market_batch(collection, [correction])
+    seen.append(await head())
+    assert seen[-1] == await held() and seen[-1]["rows"] == 5
+
+    await repo.put_market_batch(collection, [dict(correction, recorded_at="2026-10-18T05:45:00Z")])
+    assert await head() == seen[-1]
+
+    frozen = await head(assembled_at="2026-10-18T04:00:00Z")
+    assert frozen == await held("2026-10-18T04:00:00Z") and frozen["rows"] == 3
+
+    unknown = flow("2026-10-18T01:15:00Z")
+    del unknown["recorded_at"], unknown["recorded_at_prec"]
+    await repo.put_market_batch(collection, [unknown])
+    seen.append(await head())
+    assert seen[-1] == await held() and (seen[-1]["rows"], seen[-1]["unknown"]) == (6, 1)
+    frozen = await head(assembled_at="2026-10-18T04:00:00Z")
+    assert frozen == await held("2026-10-18T04:00:00Z") and (frozen["rows"], frozen["unknown"]) == (4, 1)
+
+    await store_legacy(repo, collection, "legacy", dict(unknown, minute_start="2026-10-18T01:45:00Z"))
+    seen.append(await head())
+    assert (seen[-1]["rows"], seen[-1]["unknown"]) == (7, 2)
+    assert len({found["digest"] for found in seen}) == len(seen)
+
+    orders = ("availability", "semantic_latest", "semantic_earliest", "contents")
+    for assembled_at in (None, "2026-10-18T04:00:00Z", "2026-10-17T00:00:00Z"):
+        options = scope | {"assembled_at": assembled_at}
+        together = await market_dependency_head(repo, collection, field, cutoff, **options, orders=orders)
+        assert together["contents"] == await head(assembled_at=assembled_at)
+        for order in orders[:3]:
+            assert together[order] == await market_dependency_head(
+                repo, collection, field, cutoff, **options, order=order
+            )
+    assert not any(together[order] for order in orders[:3])
+    assert together["contents"]["rows"] == together["contents"]["unknown"] == 2
+
+
+async def test_contents_head_clickhouse(typed_repo):
+    await exercise_contents_head(typed_repo)
+
+
+async def test_contents_head_memory():
+    from tank.storage import MemoryRepository
+
+    await exercise_contents_head(MemoryRepository())
+
+
+async def exercise_supply_contents_head(repo):
+    """The same head from the store that holds supply observations."""
+    from datetime import timedelta
+
+    from tank.market_storage import fingerprint_mark, market_dependency_head
+    from tank.util import parse_time
+
+    await repo.migrate()
+    collection, cutoff = "mkt.supply_obs", "2026-10-18T02:00:00Z"
+    scope = {"start": "2026-10-18T00:00:00Z", "filters": {"token_id": "BTC", "kind": "INVENTORY"}}
+
+    def supply(at, **changes):
+        return {
+            "token_id": "BTC",
+            "kind": "INVENTORY",
+            "chain": "eth",
+            "available": True,
+            "ts": at,
+            "ts_prec": "EXACT",
+            "recorded_at": "2026-10-18T00:01:00.000007Z",
+            "recorded_at_prec": "COLLECTION_ONLY",
+        } | changes
+
+    async def head(**changes):
+        found = await market_dependency_head(
+            repo, collection, "ts", cutoff, **(scope | changes), orders=("contents",)
+        )
+        return found["contents"]
+
+    async def held(assembled_at=None):
+        digest, rows = 0, []
+        async for row in repo.iter_range(
+            collection,
+            "ts",
+            start=scope["start"],
+            end=parse_time(cutoff) + timedelta(microseconds=1),
+            filters=scope["filters"],
+        ):
+            if (
+                assembled_at is None
+                or row.get("recorded_at") is None
+                or parse_time(row["recorded_at"]) <= parse_time(assembled_at)
+            ):
+                rows.append(row)
+                digest ^= fingerprint_mark(row["semantic_fingerprint"], row.get("recorded_at"))
+        return {
+            "rows": len(rows),
+            "unknown": sum(row.get("recorded_at") is None for row in rows),
+            "digest": f"{digest:016x}",
+        }
+
+    assert await head() is None
+    await repo.put_market_batch(
+        collection,
+        [
+            supply("2026-10-18T00:00:00Z"),
+            supply(cutoff, recorded_at="2026-10-18T02:01:00Z"),
+            supply("2026-10-18T02:00:00.000001Z"),
+            supply("2026-10-18T01:00:00Z", kind="LENDING"),
+            supply("2026-10-18T01:00:00Z", token_id="ETH"),
+        ],
+        keys=["first", "last", "after", "lending", "other"],
+    )
+    seen = [await head()]
+    assert seen[-1] == await held() and seen[-1]["rows"] == 2
+
+    await repo.put_market_batch(
+        collection, [supply("2026-10-18T00:20:00Z", recorded_at="2026-10-18T05:00:00Z")], keys=["late"]
+    )
+    seen.append(await head())
+    assert seen[-1] == await held() and seen[-1]["rows"] == 3
+
+    await repo.put_market_batch(
+        collection,
+        [supply("2026-10-18T00:00:00Z", available=False, recorded_at="2026-10-18T05:30:00Z")],
+        keys=["first"],
+    )
+    seen.append(await head())
+    assert seen[-1] == await held() and seen[-1]["rows"] == 3
+    frozen = await head(assembled_at="2026-10-18T04:00:00Z")
+    assert frozen == await held("2026-10-18T04:00:00Z") and frozen["rows"] == 1
+
+    unknown = supply("2026-10-18T01:30:00Z")
+    del unknown["recorded_at"], unknown["recorded_at_prec"]
+    await repo.put_market_batch(collection, [unknown], keys=["unknown"])
+    seen.append(await head())
+    assert seen[-1] == await held() and (seen[-1]["rows"], seen[-1]["unknown"]) == (4, 1)
+
+    if hasattr(repo, "_conn"):
+        async with repo.transaction():
+            await repo._conn().execute(
+                "UPDATE mkt.supply_obs SET semantic_fingerprint = NULL WHERE storage_key = %s", ["late"]
+            )
+    else:
+        repo._data[collection]["late"]["semantic_fingerprint"] = None
+    seen.append(await head())
+    assert (seen[-1]["rows"], seen[-1]["unknown"]) == (4, 1)
+    assert len({found["digest"] for found in seen}) == len(seen)
+
+
+async def test_supply_contents_head_postgres(typed_repo):
+    await exercise_supply_contents_head(typed_repo)
+
+
+async def test_supply_contents_head_memory():
+    from tank.storage import MemoryRepository
+
+    await exercise_supply_contents_head(MemoryRepository())
+
+
+async def exercise_condition_range(repo, tmp_path, monkeypatch):
+    """A condition window is read where its contents head says the stored rows moved: not at
+    all while the head stands, its last minutes when the window advances, and once in full
+    after a late arrival or a correction further back."""
+    from datetime import timedelta
+    from pathlib import Path
+
+    import httpx
+
+    from tank.market.service import RANGE_TAIL, MarketService
+    from tank.settings import Settings
+    from tank.util import iso, parse_time
+
+    await repo.migrate()
+    settings = Settings(
+        _env_file=None,
+        config_dir=Path(__file__).resolve().parents[1] / "config",
+        data_dir=tmp_path / "data",
+        replay=True,
+    )
+    collection, field, iid = "mkt.flow_bars_1m", "minute_start", "test:BTC"
+    base = parse_time("2026-10-18T00:00:00Z")
+
+    def bar(minute, **changes):
+        at = base + timedelta(minutes=minute)
+        return {**flow(iso(at)), "recorded_at": iso(at + timedelta(seconds=63)), **changes}
+
+    await repo.put_market_batch(collection, [bar(minute) for minute in range(120) if minute != 30])
+    reads, read = [], repo.iter_range
+
+    def recorded(name, time_field, *, start=None, end=None, **options):
+        reads.append((parse_time(start), parse_time(end)))
+        return read(name, time_field, start=start, end=end, **options)
+
+    monkeypatch.setattr(repo, "iter_range", recorded)
+    async with httpx.AsyncClient() as http:
+        market = MarketService(repo, settings, http=http)
+
+        async def window(start, upper):
+            del reads[:]
+            rows, head = await market._condition_range(collection, field, start, upper, iid)
+            stored = read(collection, field, start=start, end=upper, filters={"instrument_id": iid})
+            assert rows == [row async for row in stored]
+            return head, list(reads)
+
+        upper = base + timedelta(hours=2)
+        first, done = await window(base, upper)
+        assert done == [(base, upper)] and first[2]["rows"] == 119
+        assert await window(base, upper) == (first, [])
+
+        await repo.put_market_batch(collection, [bar(120)])
+        start, upper = base + timedelta(minutes=1), upper + timedelta(minutes=1)
+        moved, done = await window(start, upper)
+        assert done == [(upper - timedelta(minutes=1) - RANGE_TAIL, upper)] and moved[2]["rows"] == 119
+
+        await repo.put_market_batch(collection, [bar(30, recorded_at="2026-10-18T05:00:00Z")])
+        late, done = await window(start, upper)
+        assert done == [(upper - RANGE_TAIL, upper), (start, upper)] and late[2]["rows"] == 120
+
+        correction = bar(45, buy_qty="2", recorded_at="2026-10-18T05:30:00Z")
+        await repo.put_market_batch(collection, [correction])
+        corrected, done = await window(start, upper)
+        assert done == [(upper - RANGE_TAIL, upper), (start, upper)]
+        assert corrected[2]["rows"] == 120 and corrected[2]["digest"] != late[2]["digest"]
+
+        await repo.put_market_batch(collection, [dict(correction, recorded_at="2026-10-18T05:45:00Z")])
+        assert await window(start, upper) == (corrected, [])
+
+
+async def test_condition_range_reads_what_its_head_moved_clickhouse(typed_repo, tmp_path, monkeypatch):
+    await exercise_condition_range(typed_repo, tmp_path, monkeypatch)
+
+
+async def test_condition_range_reads_what_its_head_moved_memory(tmp_path, monkeypatch):
+    from tank.storage import MemoryRepository
+
+    await exercise_condition_range(MemoryRepository(), tmp_path, monkeypatch)
+
+
 async def exercise_bounded_latest_market_records(repo):
     await repo.migrate()
     rows = [

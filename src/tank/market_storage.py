@@ -3,7 +3,8 @@
 import asyncio
 import hashlib
 import json
-from datetime import timedelta
+import re
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 
 from tank.market_schema import MARKET_ALIASES, MARKET_COLUMNS, MARKET_IDENTITIES
@@ -84,6 +85,26 @@ def decode(collection, row):
 
 
 FINGERPRINT_EXCLUDED = {"mkt.book_summaries": frozenset({"bids", "asks"})}
+DEPENDENCY_HEAD_ORDERS = ("availability", "semantic_latest", "semantic_earliest", "contents")
+FINGERPRINT_MARK = re.compile(r"[0-9a-f]{16}")
+EPOCH = datetime(1970, 1, 1, tzinfo=UTC)
+MICROSECOND = timedelta(microseconds=1)
+MARK_BITS = 0xFFFFFFFFFFFFFFFF
+
+
+def fingerprint_mark(fingerprint, recorded_at=None):
+    """The 64-bit mark of one stored row version, or None when the row carries no semantic
+    fingerprint: the first 64 bits of the fingerprint as an integer, XORed with `recorded_at`
+    in microseconds since the epoch when the row has one. The `contents` dependency head is
+    the XOR of these marks, so whoever holds the rows of a scope proves it holds exactly the
+    stored versions by comparing its own count and XOR with the head, without hashing a
+    row."""
+    if not isinstance(fingerprint, str) or not FINGERPRINT_MARK.match(fingerprint):
+        return None
+    mark = int(fingerprint[:16], 16)
+    if recorded_at is None:
+        return mark
+    return mark ^ ((parse_time(recorded_at) - EPOCH) // MICROSECOND & MARK_BITS)
 
 
 def semantic_fingerprint(record, collection=None):
@@ -542,29 +563,25 @@ async def market_dependency_head(
     A correction to an old point participates by its actual recorded_at, not by its
     position in semantic history. Unknown legacy availability is explicitly excluded.
     Bounds are inclusive; an empty instrument scope never broadens into all instruments.
+
+    The `contents` head is computed by the database over every row of the scope readable at
+    `assembled_at` (recorded by then, or with unknown availability): {rows, unknown, digest},
+    the row count, the count with unknown availability and the XOR of the rows' marks
+    (`fingerprint_mark`: the stored fingerprint and recorded_at of each row). Every writer
+    rewrites a stored row only when its semantic fingerprint differs, and the fingerprint
+    covers the row's identity and every value outside the stamps, so a replaced row has a
+    different mark and any new, late, corrected, replaced or removed row of the scope moves
+    this head without the caller reading a single row. A caller that holds the rows can compare
+    its own count and XOR of marks with the head. A row stored without a fingerprint enters
+    the digest through its storage key, which no caller can reproduce.
     """
     from psycopg import sql
 
     from tank.storage import _exact_predicate
 
-    if any(o not in ("availability", "semantic_latest", "semantic_earliest") for o in orders or (order,)):
+    if any(o not in DEPENDENCY_HEAD_ORDERS for o in orders or (order,)):
         raise ValueError("Unsupported market dependency head order")
-    if orders is not None and not hasattr(self, "_conn"):
-        return {
-            o: await market_dependency_head(
-                self,
-                collection,
-                semantic_field,
-                cutoff,
-                start=start,
-                filters=filters,
-                instrument_ids=instrument_ids,
-                assembled_at=assembled_at,
-                order=o,
-            )
-            for o in orders
-        }
-    ascending = order == "semantic_earliest"
+    wanted = [order] if orders is None else list(orders)
     columns = MARKET_COLUMNS.get(collection)
     semantic_field = MARKET_ALIASES.get(collection, {}).get(semantic_field, semantic_field)
     if (
@@ -598,20 +615,18 @@ async def market_dependency_head(
 
     if not hasattr(self, "_conn"):
         _exact_predicate(collection, filters)
-        selected = None
+        picked = dict.fromkeys(o for o in wanted if o != "contents")
+        count = unknown = digest = 0
         async with self.transaction():
             for key, row in self._data.get(collection, {}).items():
                 arrival, semantic = row.get("recorded_at"), row.get(semantic_field)
-                if arrival is None or semantic is None:
+                if semantic is None:
                     continue
-                arrival, semantic = parse_time(arrival), parse_time(semantic)
-                if (
-                    semantic > cutoff
-                    or start is not None
-                    and semantic < start
-                    or assembled_at is not None
-                    and arrival > assembled_at
-                ):
+                semantic = parse_time(semantic)
+                if semantic > cutoff or start is not None and semantic < start:
+                    continue
+                arrival = parse_time(arrival) if arrival is not None else None
+                if arrival is not None and assembled_at is not None and arrival > assembled_at:
                     continue
                 if instrument_ids is not None and row.get("instrument_id") not in instrument_ids:
                     continue
@@ -620,14 +635,35 @@ async def market_dependency_head(
                     for k, v in (filters or {}).items()
                 ):
                     continue
-                candidate = (arrival if order == "availability" else semantic, key)
-                if selected is None or (candidate < selected[0] if ascending else candidate > selected[0]):
-                    selected = (candidate, metadata(dict(row, storage_key=key)))
-        return selected[1] if selected else None
+                if "contents" in wanted:
+                    mark = fingerprint_mark(row.get("semantic_fingerprint"), arrival)
+                    digest ^= (
+                        int.from_bytes(hashlib.blake2b(str(key).encode(), digest_size=8).digest(), "big")
+                        if mark is None
+                        else mark
+                    )
+                    count += 1
+                    unknown += arrival is None
+                if arrival is None:
+                    continue
+                for o in picked:
+                    candidate = (arrival if o == "availability" else semantic, key)
+                    held = picked[o]
+                    if held is None or (
+                        candidate < held[0] if o == "semantic_earliest" else candidate > held[0]
+                    ):
+                        picked[o] = (candidate, row)
+        found = {
+            o: metadata(dict(held[1], storage_key=held[0][1])) if held else None for o, held in picked.items()
+        }
+        if "contents" in wanted:
+            found["contents"] = (
+                {"rows": count, "unknown": unknown, "digest": f"{digest:016x}"} if count else None
+            )
+        return found.get(order) if orders is None else {o: found[o] for o in wanted}
     from tank import clickhouse_market as chm
 
     if (ch := chm.client(self, collection)) is not None:
-        wanted = [order] if orders is None else list(orders)
         found = await chm.market_dependency_head(
             ch,
             collection,
@@ -640,25 +676,24 @@ async def market_dependency_head(
             wanted=wanted,
         )
         return found.get(order) if orders is None else {o: found.get(o) for o in wanted}
-    clauses, args = _exact_predicate(collection, filters)
-    clauses.extend(
-        [sql.SQL("recorded_at IS NOT NULL"), sql.SQL("{} <= %s").format(sql.Identifier(semantic_field))]
-    )
-    args.append(cutoff)
+    scope, scope_args = _exact_predicate(collection, filters)
+    scope.append(sql.SQL("{} <= %s").format(sql.Identifier(semantic_field)))
+    scope_args.append(cutoff)
     if start is not None:
-        clauses.append(sql.SQL("{} >= %s").format(sql.Identifier(semantic_field)))
-        args.append(start)
+        scope.append(sql.SQL("{} >= %s").format(sql.Identifier(semantic_field)))
+        scope_args.append(start)
+    if instrument_ids is not None:
+        if len(instrument_ids) == 1:
+            scope.append(sql.SQL("instrument_id = %s"))
+            scope_args.append(instrument_ids[0])
+        else:
+            scope.append(sql.SQL("instrument_id = ANY(%s::text[])"))
+            scope_args.append(instrument_ids)
+    clauses, args = [*scope, sql.SQL("recorded_at IS NOT NULL")], list(scope_args)
     if assembled_at is not None:
         clauses.append(sql.SQL("recorded_at <= %s"))
         args.append(assembled_at)
-    if instrument_ids is not None:
-        if len(instrument_ids) == 1:
-            clauses.append(sql.SQL("instrument_id = %s"))
-            args.append(instrument_ids[0])
-        else:
-            clauses.append(sql.SQL("instrument_id = ANY(%s::text[])"))
-            args.append(instrument_ids)
-    wanted = [order] if orders is None else list(orders)
+    table = sql.Identifier(*collection.split("."))
 
     def head(o):
         direction = sql.SQL("ASC" if o == "semantic_earliest" else "DESC")
@@ -668,17 +703,39 @@ async def market_dependency_head(
         ).format(
             sql.Literal(o),
             sql.Identifier(semantic_field),
-            sql.Identifier(*collection.split(".")),
+            table,
             sql.SQL(" AND ").join(clauses),
             sql.Identifier("recorded_at" if o == "availability" else semantic_field),
             direction,
             direction,
         )
 
-    query = sql.SQL(" UNION ALL ").join(head(o) for o in wanted)
+    found = {}
+    boundary = [o for o in wanted if o != "contents"]
     async with self.transaction():
-        rows = await (await self._conn().execute(query, args * len(wanted))).fetchall()
-    found = {row["head"]: metadata(row) for row in rows}
+        if boundary:
+            query = sql.SQL(" UNION ALL ").join(head(o) for o in boundary)
+            rows = await (await self._conn().execute(query, args * len(boundary))).fetchall()
+            found.update({row["head"]: metadata(row) for row in rows})
+        if "contents" in wanted:
+            readable, readable_args = list(scope), list(scope_args)
+            if assembled_at is not None:
+                readable.append(sql.SQL("(recorded_at IS NULL OR recorded_at <= %s)"))
+                readable_args.append(assembled_at)
+            query = sql.SQL(
+                "SELECT count(*) AS rows,count(*) FILTER (WHERE recorded_at IS NULL) AS unknown,"
+                "bit_xor(CASE WHEN semantic_fingerprint ~ '^[0-9a-f]{{16}}'"
+                " THEN ('x' || substr(semantic_fingerprint,1,16))::bit(64)::bigint"
+                " # coalesce((extract(epoch FROM recorded_at) * 1000000)::bigint,0)"
+                " ELSE hashtextextended(storage_key,0) END) AS digest FROM {} WHERE {}"
+            ).format(table, sql.SQL(" AND ").join(readable))
+            row = await (await self._conn().execute(query, readable_args)).fetchone()
+            if row["rows"]:
+                found["contents"] = {
+                    "rows": int(row["rows"]),
+                    "unknown": int(row["unknown"]),
+                    "digest": f"{int(row['digest']) & 0xFFFFFFFFFFFFFFFF:016x}",
+                }
     return found.get(order) if orders is None else {o: found.get(o) for o in wanted}
 
 

@@ -460,13 +460,24 @@ async def latest_market_records(
 async def market_dependency_head(
     ch, collection, semantic_field, cutoff, *, start, filters, instrument_ids, assembled_at, wanted
 ):
+    """Boundary heads and the `contents` head of one scope from a single scan. The contents
+    head counts every row readable at `assembled_at`, including rows with unknown availability,
+    and XORs their marks: the first 64 bits of the stored fingerprint as a big-endian integer,
+    XORed with recorded_at in microseconds (`market_storage.fingerprint_mark`). The boundary
+    heads select through -If combinators only when it is asked."""
     q = Query()
     _filters(q, collection, filters)
-    q.where("recorded_at IS NOT NULL")
+    contents = "contents" in wanted
+    boundary = [order for order in wanted if order != "contents"]
+    if contents:
+        if assembled_at is not None:
+            q.where(f"(recorded_at IS NULL OR recorded_at <= {q.param(assembled_at, DT)})")
+    else:
+        q.where("recorded_at IS NOT NULL")
     q.where(f"`{semantic_field}` <= {q.param(cutoff, DT)}")
     if start is not None:
         q.where(f"`{semantic_field}` >= {q.param(start, DT)}")
-    if assembled_at is not None:
+    if assembled_at is not None and not contents:
         q.where(f"recorded_at <= {q.param(assembled_at, DT)}")
     if instrument_ids is not None:
         _ids(q, instrument_ids)
@@ -476,18 +487,36 @@ async def market_dependency_head(
         "semantic_earliest": "argMin",
     }
     row = f"tuple(storage_key, recorded_at, semantic_fingerprint, `{semantic_field}`)"
-    heads = ", ".join(
-        f"{picks[order]}({row}, tuple({'recorded_at' if order == 'availability' else f'`{semantic_field}`'}, "
-        f"storage_key)) AS `{order}`"
-        for order in wanted
+    known = ", recorded_at IS NOT NULL" if contents else ""
+    selected = [f"count{'If(recorded_at IS NOT NULL)' if contents else '()'} AS n"]
+    selected.extend(
+        f"{picks[order]}{'If' if contents else ''}({row}, "
+        f"tuple({'recorded_at' if order == 'availability' else f'`{semantic_field}`'}, storage_key){known})"
+        f" AS `{order}`"
+        for order in boundary
     )
-    rows = await ch.rows(
-        f"SELECT count() AS n, {heads} FROM {_table(collection)} WHERE {q.predicate()}", q.params
-    )
-    if not wanted or not rows or not int(rows[0]["n"]):
+    if contents:
+        selected.append(
+            "count() AS readable, countIf(recorded_at IS NULL) AS unknown, "
+            "groupBitXor(if(match(ifNull(semantic_fingerprint, ''), '^[0-9a-f]{16}'), "
+            "bitXor(reinterpretAsUInt64(reverse(unhex(substring(ifNull(semantic_fingerprint, ''), 1, 16)))), "
+            "toUInt64(ifNull(toUnixTimestamp64Micro(recorded_at), 0))), "
+            "sipHash64(storage_key))) AS digest"
+        )
+    heads = ", ".join(selected)
+    rows = await ch.rows(f"SELECT {heads} FROM {_table(collection)} WHERE {q.predicate()}", q.params)
+    if not wanted or not rows:
         return {}
     found = {}
-    for order in wanted:
+    if contents and int(rows[0]["readable"]):
+        found["contents"] = {
+            "rows": int(rows[0]["readable"]),
+            "unknown": int(rows[0]["unknown"]),
+            "digest": f"{int(rows[0]['digest']):016x}",
+        }
+    if not int(rows[0]["n"]):
+        return found
+    for order in boundary:
         key, recorded, fingerprint, semantic = rows[0][order]
         found[order] = {
             "storage_key": key,
