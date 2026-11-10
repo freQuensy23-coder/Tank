@@ -40,7 +40,7 @@ class KlineMarket:
         self.changes = []
         self.snapshots = 0
 
-    async def snapshot(self, token_id, cutoff, *, anchor=None, scope=None):
+    async def snapshot(self, token_id, cutoff, *, anchor=None):
         self.snapshots += 1
         return {"token_id": token_id, "klines": klines(token_id, "binance:spot:BTCUSDT", self.end)}
 

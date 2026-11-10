@@ -236,7 +236,9 @@ def test_degenerate_float_history_range_is_unavailable():
 
 
 def test_t6_funding_and_t8_funding_freshness():
-    from tank.analysis.truth import data_confidence, derivatives_truth
+    from series_helpers import data_confidence
+
+    from tank.analysis.truth import derivatives_truth
 
     end = parse_time("2026-10-16T12:00:00Z")
     start = end - timedelta(hours=4)
@@ -482,7 +484,7 @@ def test_asymmetric_depth_uses_actual_hit_side_and_excludes_perps(side):
 
 
 def test_descriptive_semantics_cannot_replace_actual_spot_coverage():
-    from tank.analysis.truth import data_confidence
+    from series_helpers import data_confidence
 
     end = parse_time("2026-10-16T12:00:00Z")
     result = data_confidence(
@@ -501,7 +503,7 @@ def test_descriptive_semantics_cannot_replace_actual_spot_coverage():
 
 
 def test_confidence_requires_present_fresh_reference_and_books():
-    from tank.analysis.truth import data_confidence
+    from series_helpers import data_confidence
 
     end = parse_time("2026-10-16T12:00:00Z")
     snapshot = {
@@ -949,7 +951,7 @@ def test_spot_flow_fact_prints_cvd_signed_rounded_with_token_ticker():
 
 def test_freshness_counts_only_the_assessed_tokens_fields_not_peer_closes():
     """§5.10: a BTC assessment never fails freshness on a sector peer's kline (MORPHO on a BTC card)."""
-    from tank.analysis.truth import available_field_freshness
+    from series_helpers import available_field_freshness
 
     end = parse_time("2026-10-20T22:51:00Z")
     snapshot = {
@@ -992,7 +994,7 @@ def test_freshness_counts_only_the_assessed_tokens_fields_not_peer_closes():
 def test_once_per_interval_oi_is_fresh_within_two_intervals_plus_publish_lag():
     """03 §5.10 'within its own cadence': Bybit publishes 5-min singleOpenInterest ~60-80 s after
     the sample time, so a HOT 60 s cadence can never be met; it is judged by 2 x 300 s + lag."""
-    from tank.analysis.truth import available_field_freshness
+    from series_helpers import available_field_freshness
 
     end = parse_time("2026-10-21T00:31:00Z")
     iid = "bybit:perp_linear:BTCUSDT"
@@ -1058,7 +1060,7 @@ def test_capture_cadence_prefers_the_per_metric_cadence():
 
 
 def test_data_confidence_required_oi_uses_the_interval_rule_for_bybit_5min():
-    from tank.analysis.truth import data_confidence
+    from series_helpers import data_confidence
 
     end = parse_time("2026-10-21T00:31:00Z")
     iid = "bybit:perp_linear:BTCUSDT"
@@ -1106,7 +1108,7 @@ def test_data_confidence_required_oi_uses_the_interval_rule_for_bybit_5min():
 def test_liquidation_freshness_comes_from_stream_watermark_not_last_event():
     """A quiet market has no liquidations; the proven socket watermark keeps the stream fresh.
     Without a watermark the failure says the connection is unproven, not that events are stale."""
-    from tank.analysis.truth import available_field_freshness
+    from series_helpers import available_field_freshness
 
     end = parse_time("2026-10-20T22:51:00Z")
     iid = "bybit:perp_linear:BTCUSDT"
@@ -1138,7 +1140,9 @@ def test_liquidation_freshness_comes_from_stream_watermark_not_last_event():
 def test_native_only_oi_preserves_native_and_sync_without_inventing_usd():
     from runpy import run_path
 
-    from tank.analysis.truth import data_confidence, derivatives_truth
+    from series_helpers import data_confidence
+
+    from tank.analysis.truth import derivatives_truth
 
     fixture = run_path(str(Path(__file__).with_name("test_truth_start_fixture.py")))[
         "synthetic_start_snapshot"
@@ -1642,7 +1646,7 @@ def test_canonical_text_facts_print_units_windows_and_preserve_audit_companion()
 
 
 def test_hot_derivative_cadence_is_60s_and_base_is_300s():
-    from tank.analysis.truth import available_field_freshness
+    from series_helpers import available_field_freshness
 
     end = parse_time("2026-10-16T12:00:00Z")
     point = iso(end - timedelta(seconds=90))
@@ -1671,7 +1675,9 @@ def test_hot_derivative_cadence_is_60s_and_base_is_300s():
 
 
 def test_stale_available_noncritical_supply_prevents_high_but_missing_is_na():
-    from tank.analysis.truth import data_confidence, supply_truth
+    from series_helpers import data_confidence
+
+    from tank.analysis.truth import supply_truth
 
     snapshot = _fresh_spot_snapshot()
     end = parse_time(snapshot["cutoff"])
@@ -1711,7 +1717,7 @@ def test_klines_poll_watermark_keeps_quiet_spot_venue_fresh_without_inventing_ca
     quiet, watermark_offset_s, missing, expected_class
 ):
     """A poll can prove availability; it cannot manufacture a price observation."""
-    from tank.analysis.truth import data_confidence
+    from series_helpers import data_confidence
 
     snapshot = _fresh_spot_snapshot()
     end = parse_time(snapshot["cutoff"])
@@ -1878,7 +1884,9 @@ def test_null_measurements_have_companion_context_without_wrapping_literal_field
 
 
 def test_hot_90_second_derivative_points_are_medium_without_weakening_sync_rule():
-    from tank.analysis.truth import data_confidence, derivatives_truth
+    from series_helpers import data_confidence
+
+    from tank.analysis.truth import derivatives_truth
 
     snapshot = _fresh_spot_snapshot()
     _add_fresh_perp_fields(snapshot)
@@ -1916,7 +1924,7 @@ def test_hot_90_second_derivative_points_are_medium_without_weakening_sync_rule(
 
 
 def test_freshness_uses_semantic_point_time_and_snapshot_assembly_availability():
-    from tank.analysis.truth import available_field_freshness
+    from series_helpers import available_field_freshness
 
     end = parse_time("2026-10-16T12:00:00Z")
     point = {
@@ -1975,10 +1983,7 @@ def test_complete_liquidation_total_requires_whole_window_capture_not_recent_con
 
     snapshot = {
         "_primary": "EVENT",
-        "oi": [
-            {"instrument_id": iid, "ts": iso(start), "oi_native": 100, "oi_usd": 100},
-            {"instrument_id": iid, "ts": iso(end), "oi_native": 100, "oi_usd": 100},
-        ],
+        "instruments": [{"instrument_id": iid, "venue": "bybit", "market_type": "PERP_LINEAR"}],
         "funding_sql": liquidations(**short),
         "capture_metadata": {
             "collections": {
@@ -2338,94 +2343,3 @@ def test_price_markup_flag_keeps_measured_venue_when_composite_is_unavailable(
     assert result["move_class"] == "UNKNOWN"
     assert result["class_confidence"] == "LOW"
     assert derivatives["synchronized"] is None
-
-
-def test_full_assessments_run_one_at_a_time_per_process(monkeypatch):
-    """Concurrent compute_market_truth calls in worker threads never overlap (GIL share of the
-    event loop thread); a waiting call simply runs after the current one."""
-    import threading
-    import time
-
-    import tank.analysis.truth as truth
-
-    active, peak, lock = [0], [0], threading.Lock()
-
-    def fake(snapshot, config=None):
-        with lock:
-            active[0] += 1
-            peak[0] = max(peak[0], active[0])
-        time.sleep(0.05)
-        with lock:
-            active[0] -= 1
-        return {"token_id": snapshot["token_id"]}
-
-    monkeypatch.setattr(truth, "_compute_market_truth", fake)
-    threads = [
-        threading.Thread(target=truth.compute_market_truth, args=({"token_id": str(i)},)) for i in range(4)
-    ]
-    for t in threads:
-        t.start()
-    for t in threads:
-        t.join()
-    assert peak[0] == 1
-
-
-@pytest.mark.asyncio
-@pytest.mark.usefixtures("relative_statements")
-async def test_idle_token_assessment_baselines_are_released(monkeypatch):
-    """Per-token assessment baselines were kept for the process lifetime, so every token
-    ever assessed kept its 90-day indexes in the assessment worker."""
-    from types import SimpleNamespace
-
-    import tank.analysis.truth as module
-    from tank.analysis import compute_workers
-
-    def held():
-        compute_workers.executor(compute_workers.ASSESSMENT).submit(lambda: None).result(timeout=5)
-        return compute_workers._baselines
-
-    clock = [1000.0]
-    monkeypatch.setattr(compute_workers.time, "monotonic", lambda: clock[0])
-
-    def fill(snapshot, *, config=None, baseline_cache=None):
-        baseline_cache[("native-volume-index", snapshot["token_id"])] = {"head": snapshot["cutoff"]}
-        return {"token_id": snapshot["token_id"]}
-
-    monkeypatch.setattr(module, "compute_market_truth", fill)
-
-    class Repo:
-        async def get(self, *args):
-            return {}
-
-        async def put(self, *args, **kwargs):
-            return args[2]
-
-    class Market:
-        async def snapshot(self, token, cutoff, anchor=None):
-            return {"token_id": token, "cutoff": cutoff, "anchor": anchor}
-
-        async def condition_snapshot(self, token, cutoff, anchor=None, requirements=None):
-            return {"token_id": token, "cutoff": cutoff}
-
-    service = module.MarketTruthService(
-        Repo(), SimpleNamespace(config_version="test", code_version="test"), Market()
-    )
-    await service.assess(None, "A", "2026-10-16T12:00:00Z")
-    clock[0] += 60
-    await service.assess(None, "B", "2026-10-16T12:01:00Z")
-    assert set(held()) == {"A", "B"}
-    clock[0] += module.ASSESSMENT_BASELINE_IDLE_S
-    await service.assess(None, "B", "2026-10-16T12:31:00Z")
-    assert set(held()) == {"B"}
-    assert held()["B"] == {("native-volume-index", "B"): {"head": "2026-10-16T12:31:00Z"}}
-    clock[0] += module.ASSESSMENT_BASELINE_IDLE_S + 1
-    monkeypatch.setattr(module, "compute_condition_values", lambda *args, **kwargs: {})
-    await service.condition_values(None, "C", "2026-10-16T13:02:00Z", [])
-    assert held() == {}
-    await service.assess(None, "D", "2026-10-16T13:03:00Z")
-    clock[0] += module.ASSESSMENT_BASELINE_IDLE_S + 1
-    replacement = module.MarketTruthService(
-        Repo(), SimpleNamespace(config_version="next", code_version="test"), Market()
-    )
-    await replacement.condition_values(None, "C", "2026-10-16T13:34:00Z", [])
-    assert held() == {}

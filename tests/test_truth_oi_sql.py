@@ -371,8 +371,13 @@ async def test_the_end_observation_carries_its_declared_precision(market_clickho
         endpoint(result, BYBIT).end_ts_prec == "EXACT"
         and endpoint(result, BYBIT).end_ts_bucket_size_s is None
     )
+    assert endpoint(result, BINANCE).start_ts_prec == "EXACT"
+    assert endpoint(result, BINANCE).start_timestamp_precision == "EXACT"
+    assert endpoint(result, BINANCE).start_ts_bucket_size_s is None
+    assert endpoint(result, BYBIT).start_ts_prec == "EXACT"
     stats = truth.oi_stats(endpoint(result, BINANCE), None, timedelta(hours=1))
     assert stats["precision"] == "BUCKET(300s)"
+    assert stats["start_observed_at_prec"] == "EXACT" and stats["end_observed_at_prec"] == "BUCKET(300s)"
     assert stats["oi_native_chg_pct"] == pytest.approx(0.1)
 
 
@@ -820,7 +825,8 @@ async def test_a_condition_evaluation_reads_the_oi_windows_its_metrics_need(monk
         return shown
 
     monkeypatch.setattr(truth, "with_oi", attach)
-    monkeypatch.setattr(truth, "with_flow", passthrough)
+    for name in ("with_flow", "with_series", "with_supply"):
+        monkeypatch.setattr(truth, name, passthrough)
     monkeypatch.setattr(truth, "compute_condition_values", lambda *args, **kwargs: {})
 
     class Repo:

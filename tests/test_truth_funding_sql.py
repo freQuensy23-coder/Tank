@@ -105,9 +105,9 @@ async def test_a_venue_carries_its_latest_settled_rate_and_estimate_as_stored(ma
         market_clickhouse,
         funding=[
             settled(BINANCE, END - 5 * HOUR, "0.0001", "8.0"),
-            settled(BINANCE, END - HOUR, "0.0002", "8.0"),
+            settled(BINANCE, END - HOUR, "0.0002", "8.0", as_of_prec="EXACT"),
             estimate(BINANCE, END - 20 * timedelta(minutes=1), "0.0003"),
-            estimate(BINANCE, END - 10 * timedelta(minutes=1), "0.0005", "4"),
+            estimate(BINANCE, END - 10 * timedelta(minutes=1), "0.0005", "4", as_of_prec="COLLECTION_ONLY"),
             settled(BYBIT, END - HOUR, "-0.00004"),
         ],
     )
@@ -119,6 +119,11 @@ async def test_a_venue_carries_its_latest_settled_rate_and_estimate_as_stored(ma
     assert binance.estimate_rate == Decimal("0.0005") and binance.estimate_interval_h == Decimal("4")
     assert binance.estimate_at == END - 10 * timedelta(minutes=1)
     assert binance.estimate_eq == same(0.001)
+    assert (binance.settled_at_prec, binance.estimate_at_prec, binance.start_at_prec) == (
+        "EXACT",
+        "COLLECTION_ONLY",
+        "EXACT",
+    )
     bybit = venue(result, BYBIT)
     assert bybit.settled_rate == Decimal("-0.00004")
     assert bybit.estimate_rate is None and bybit.estimate_at is None and bybit.estimate_eq is None
@@ -802,7 +807,15 @@ async def test_a_condition_evaluation_reads_the_funding_windows_its_metrics_need
         return shown
 
     monkeypatch.setattr(truth, "with_funding", attach)
-    for name in ("with_oi", "with_volumes", "with_relative", "with_flow", "with_liquidity"):
+    for name in (
+        "with_oi",
+        "with_volumes",
+        "with_relative",
+        "with_flow",
+        "with_liquidity",
+        "with_series",
+        "with_supply",
+    ):
         monkeypatch.setattr(truth, name, passthrough)
     monkeypatch.setattr(truth, "compute_condition_values", lambda *args, **kwargs: {})
 

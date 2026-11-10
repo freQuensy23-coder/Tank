@@ -279,31 +279,6 @@ def _fresh_quote_usd_history(monkeypatch):
     monkeypatch.setattr(normalize, "QUOTE_USD_HISTORY", {})
 
 
-@pytest.fixture(autouse=True)
-def compute_lanes_in_threads(monkeypatch):
-    """Market Truth compute lanes run in one thread each, so a test's substitutes of
-    compute_market_truth apply; tests/test_compute_workers.py uses the real worker
-    processes. Every test starts with fresh lanes and worker baseline caches."""
-    from concurrent.futures import ThreadPoolExecutor
-
-    from tank.analysis import compute_workers
-
-    started = []
-
-    def start_executor(lane):
-        started.append(ThreadPoolExecutor(max_workers=1, thread_name_prefix=f"compute-{lane}"))
-        return started[-1]
-
-    monkeypatch.setattr(compute_workers, "start_executor", start_executor)
-    monkeypatch.setattr(compute_workers, "_executors", {})
-    monkeypatch.setattr(compute_workers, "_baselines", {})
-    monkeypatch.setattr(compute_workers, "_used", {})
-    monkeypatch.setattr(compute_workers, "_active", {})
-    yield
-    for pool in started:
-        pool.shutdown(wait=False, cancel_futures=True)
-
-
 def pytest_addoption(parser):
     parser.addoption(
         "--postgres-schema-template",
@@ -350,10 +325,12 @@ def flow_evidence_from_bars():
     """A Market Truth calculation of a snapshot that has bars (`flow_bars`) and no `flow_sql` gets the records the
     trade-flow statements would return for those bars (tests/flow_helpers.py), and one that has no `liquidity_sql`
     those of the order-book statements for its books and bars (tests/liquidity_helpers.py) and one that has no
-    `supply_sql` those of the supply statements for its supply rows (tests/supply_helpers.py), so that a test can
-    describe the market minute by minute. Session scoped: module-scoped baselines calculate too."""
+    `supply_sql` those of the supply statements for its supply rows (tests/supply_helpers.py), and one that has no
+    `series_sql` those of the series statements for its rows (tests/series_helpers.py), so that a test can describe
+    the market minute by minute. Session scoped: module-scoped baselines calculate too."""
     from flow_helpers import with_flow
     from liquidity_helpers import with_liquidity
+    from series_helpers import with_series
     from supply_helpers import with_supply
 
     from tank.analysis import truth
@@ -366,6 +343,8 @@ def flow_evidence_from_bars():
             snapshot = with_liquidity(snapshot, config=kwargs.get("config"))
         if "supply_sql" not in snapshot:
             snapshot = with_supply(snapshot, config=kwargs.get("config"))
+        if "series_sql" not in snapshot:
+            snapshot = with_series(snapshot, config=kwargs.get("config"))
         return compute(snapshot, **kwargs)
 
     def evaluated(snapshot, requirements, **kwargs):
@@ -376,6 +355,9 @@ def flow_evidence_from_bars():
         windows = truth.condition_supply_windows(snapshot, requirements)
         if windows and "supply_sql" not in snapshot:
             snapshot = with_supply(snapshot, windows=windows, config=kwargs.get("config"))
+        needs = truth.condition_series_needs(snapshot, requirements)
+        if any(needs.values()) and "series_sql" not in snapshot:
+            snapshot = with_series(snapshot, config=kwargs.get("config"), **needs)
         return condition(snapshot, requirements, **kwargs)
 
     with pytest.MonkeyPatch.context() as patch:
@@ -387,25 +369,43 @@ def flow_evidence_from_bars():
 @pytest.fixture
 def relative_statements(monkeypatch):
     """Stand-in for the ClickHouse statements of the price-relative, volume, open-interest, funding, trade-flow and
-    order-book and supply rules in tests that run a Market Truth service without a ClickHouse or PostgreSQL server: the
-    snapshot keeps the `relative_sql`, the `volume_sql`, the `oi_sql`, the `funding_sql`, the `flow_sql`, the
-    `liquidity_sql` and the `supply_sql` it carries, `evidence`, `volumes`, `oi`, `funding`, `flow`, `liquidity` and
-    `supply` replace them when set, and a snapshot without one has no such evidence (the flow, liquidity and supply
-    evidence of its bars, books and supply rows, when it has any). The statements themselves are tested against a real
-    server in tests/test_truth_relative_sql.py, tests/test_truth_volume_sql.py, tests/test_truth_oi_sql.py,
-    tests/test_truth_funding_sql.py, tests/test_truth_flow_sql.py, tests/test_truth_liquidity_sql.py and
-    tests/test_truth_supply_sql.py."""
+    order-book, supply and series rules in tests that run a Market Truth service without a ClickHouse or PostgreSQL
+    server: the snapshot keeps the `relative_sql`, the `volume_sql`, the `oi_sql`, the `funding_sql`, the `flow_sql`,
+    the `liquidity_sql`, the `supply_sql` and the `series_sql` it carries, `evidence`, `volumes`, `oi`, `funding`,
+    `flow`, `liquidity`, `supply` and `series` replace them when set, and a snapshot without one has no such evidence
+    (the flow, liquidity, supply and series evidence of its rows, when it has any). The statements themselves are
+    tested against a real server in tests/test_truth_relative_sql.py, tests/test_truth_volume_sql.py,
+    tests/test_truth_oi_sql.py, tests/test_truth_funding_sql.py, tests/test_truth_flow_sql.py,
+    tests/test_truth_liquidity_sql.py, tests/test_truth_supply_sql.py and tests/test_truth_series_sql.py."""
     from types import SimpleNamespace
 
     from flow_helpers import flow_evidence
     from liquidity_helpers import liquidity_evidence
+    from series_helpers import series_evidence
     from supply_helpers import supply_evidence
 
     from tank.analysis import truth, truth_sql
 
     stand_in = SimpleNamespace(
-        evidence=None, volumes=None, oi=None, funding=None, flow=None, liquidity=None, supply=None
+        evidence=None,
+        volumes=None,
+        oi=None,
+        funding=None,
+        flow=None,
+        liquidity=None,
+        supply=None,
+        series=None,
     )
+
+    async def attach_series(repo, snapshot, config, *, tickers=True, health=True, lead_lag=True, **kwargs):
+        evidence = stand_in.series or snapshot.get("series_sql")
+        if evidence is None:
+            evidence = series_evidence(
+                snapshot, tickers=tickers, health=health, lead_lag=lead_lag, config=config
+            )
+        return dict(snapshot, series_sql=evidence)
+
+    monkeypatch.setattr(truth, "with_series", attach_series)
 
     async def attach_supply(repo, snapshot, config, *, windows=None, **kwargs):
         evidence = stand_in.supply or snapshot.get("supply_sql")

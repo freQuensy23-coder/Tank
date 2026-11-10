@@ -26,8 +26,9 @@ def test_actual_truth_keeps_liquidation_sides_independent_when_fx_missing(missin
         }
     }
 
-    for row in snapshot["oi"]:
-        row["liq_coverage"] = "COMPLETE"
+    for row in snapshot["instruments"]:
+        if row["instrument_id"] == iid:
+            row["liq_coverage"] = "COMPLETE"
     missing = "long" if missing_side == "LONG_LIQ" else "short"
     other = "short" if missing == "long" else "long"
     snapshot["funding_sql"] = steady(
@@ -64,15 +65,11 @@ def test_actual_truth_keeps_liquidation_sides_independent_when_fx_missing(missin
     assert Decimal(totals["complete_venues_total"][other]) == 700
 
 
-@pytest.mark.parametrize("registry_present", [True, False])
-def test_missing_oi_does_not_drop_independent_funding_and_liquidation_observations(registry_present):
+def test_missing_oi_does_not_drop_independent_funding_and_liquidation_observations():
     snapshot = fixture["synthetic_start_snapshot"]()
     snapshot["oi"] = []
     snapshot.pop("oi_sql")
     iid = "binance:perp:T"
-    if not registry_present:
-        snapshot["instruments"] = [r for r in snapshot["instruments"] if r["instrument_id"] != iid]
-    snapshot["liquidations"] = [dict(instrument_id=iid, ts="2026-10-16T09:00:00Z", side="SHORT_LIQ")]
     snapshot["funding_sql"] = steady(
         parse_time(snapshot["cutoff"]),
         [iid],

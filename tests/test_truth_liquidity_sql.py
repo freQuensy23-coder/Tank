@@ -939,7 +939,15 @@ async def test_a_condition_evaluation_reads_the_order_book_windows_its_metrics_n
         return shown
 
     monkeypatch.setattr(truth, "with_liquidity", attach)
-    for name in ("with_oi", "with_volumes", "with_relative", "with_flow", "with_funding"):
+    for name in (
+        "with_oi",
+        "with_volumes",
+        "with_relative",
+        "with_flow",
+        "with_funding",
+        "with_series",
+        "with_supply",
+    ):
         monkeypatch.setattr(truth, name, passthrough)
     monkeypatch.setattr(truth, "compute_condition_values", lambda *args, **kwargs: {})
 

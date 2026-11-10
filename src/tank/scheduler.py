@@ -1253,7 +1253,6 @@ class Scheduler:
     async def _measure_reaction(self, payload):
         payload = dict(payload)
         captured_stamp = collection_clock()
-        from tank.analysis import compute_workers
 
         window = self._reaction_window(payload)
         anchor_stamp = window["anchor_stamp"]
@@ -1270,7 +1269,6 @@ class Scheduler:
             payload["token_id"],
             end_stamp,
             anchor={**start_stamp.fields("ts"), "type": payload["anchor"]["type"]},
-            scope="REACTION",
         )
         snapshot = {
             **snapshot,
@@ -1285,42 +1283,10 @@ class Scheduler:
             "config_version": self.settings.config_version,
             "code_version": self.settings.code_version,
         }
-        from tank.analysis.truth import (
-            with_flow,
-            with_funding,
-            with_liquidity,
-            with_oi,
-            with_relative,
-            with_supply,
-            with_volumes,
-        )
+        from tank.analysis.truth import compute_market_truth, with_statements
 
-        truth = await compute_workers.compute_market_truth(
-            compute_workers.REACTION,
-            await with_supply(
-                self.repo,
-                await with_liquidity(
-                    self.repo,
-                    await with_flow(
-                        self.repo,
-                        await with_funding(
-                            self.repo,
-                            await with_oi(
-                                self.repo,
-                                await with_volumes(
-                                    self.repo, await with_relative(self.repo, snapshot, config), config
-                                ),
-                                config,
-                            ),
-                            config,
-                        ),
-                        config,
-                    ),
-                    config,
-                ),
-                config,
-            ),
-            config=config,
+        truth = await asyncio.to_thread(
+            compute_market_truth, await with_statements(self.repo, snapshot, config), config=config
         )
         relative = truth.get("relative", {})
         event_window = relative.get("windows", {}).get("EVENT", {})

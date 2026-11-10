@@ -44,6 +44,14 @@ def packet_for(token):
             packet["klines"].append(
                 dict(original, token_id=peer["token_id"], instrument_id="peer:spot:" + peer["symbol"])
             )
+            packet["instruments"].append(
+                dict(
+                    instrument_id="peer:spot:" + peer["symbol"],
+                    token_id=peer["token_id"],
+                    venue="peer",
+                    market_type="SPOT",
+                )
+            )
     return packet
 
 

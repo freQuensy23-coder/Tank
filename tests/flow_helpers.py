@@ -11,6 +11,8 @@ import json
 from datetime import timedelta
 from decimal import Decimal
 
+from series_helpers import volumes
+
 from tank.analysis import truth, truth_sql
 from tank.util import parse_time
 
@@ -246,7 +248,7 @@ def spot_truth(rows, tickers, instruments, start, end, *, flow_segments=None, as
     snapshot = dict(
         flow_bars=rows, flow_segments=flow_segments or [], instruments=instruments, assembled_at=assembled_at
     )
-    return truth.spot_truth(window_records(snapshot, start, end), tickers, start, end)
+    return truth.spot_truth(window_records(snapshot, start, end), volumes(tickers, end), start, end)
 
 
 def with_flow(snapshot, **kwargs):

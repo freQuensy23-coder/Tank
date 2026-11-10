@@ -1,7 +1,8 @@
 -- oi_endpoints: the open-interest endpoints of the current window of every window length, per perp venue and for the
 -- synchronised composite, with the basis at the window start and at the cutoff (03 section 5.4 open interest and
 -- basis, 2.5 temporal admissibility).
--- One result row per window and venue (series = the 1-based position in {iids}), plus one row per window for the
+-- One result row per window and venue (series = the 1-based position in {iids}; `start_*` precision columns are those of
+-- the start observation as stored), plus one row per window for the
 -- composite (series 0, the cohort in `cohort`). A window is [cutoff - length, cutoff].
 -- Rules:
 -- * an observation is a row of mkt.oi_obs recorded and received at or before {assembled} (a missing time counts)
@@ -72,7 +73,10 @@ SELECT
     r.20 AS excluded_ts_prec,
     r.21 AS excluded_timestamp_precision,
     r.22 AS excluded_ts_bucket_size_s,
-    r.23 AS excluded_ts_bucket_anchor
+    r.23 AS excluded_ts_bucket_anchor,
+    r.24 AS start_ts_prec,
+    r.25 AS start_timestamp_precision,
+    r.26 AS start_ts_bucket_size_s
 FROM
 (
     SELECT
@@ -83,7 +87,8 @@ FROM
                 if(ends[1].5, toInt64(ends[1].2), toInt64(0)), if(ends[1].5, ends[1].3, nil), if(ends[1].5, ends[1].4, nil),
                 if(ends[2].5, toInt64(ends[2].2), toInt64(0)), if(ends[2].5, ends[2].3, nil), if(ends[2].5, ends[2].4, nil),
                 nil, nils, nils, nil, nil, nil,
-                toUInt64(0), toInt64(0), nil, nil, nils, nils, nil, nils
+                toUInt64(0), toInt64(0), nil, nil, nils, nils, nil, nils,
+                nils, nils, nil
             )],
             arrayMap(v -> (
                 toUInt8(v), iids[v], '',
@@ -91,7 +96,8 @@ FROM
                 ve[v].2, ve[v].3, ve[v].4,
                 ve[v].5, ve[v].7, ve[v].8, ve[v].9,
                 latest[v].6, startb[v],
-                toUInt64(length(excl[v])), excl[v][1].2, excl[v][1].3, excl[v][1].4, excl[v][1].7, excl[v][1].8, excl[v][1].9, excl[v][1].10
+                toUInt64(length(excl[v])), excl[v][1].2, excl[v][1].3, excl[v][1].4, excl[v][1].7, excl[v][1].8, excl[v][1].9, excl[v][1].10,
+                vs[v].7, vs[v].8, vs[v].9
             ), range(1, nv + 1))
         ) AS out_rows
     FROM

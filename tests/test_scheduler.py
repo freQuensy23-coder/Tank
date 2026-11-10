@@ -1790,8 +1790,7 @@ async def test_eval_conditions_per_condition_budget_and_explicit_outcomes(monkey
 
 @pytest.mark.asyncio
 async def test_pre_windows_each_read_only_their_checkpoint_window(monkeypatch):
-    """r110: reaction captures read days of 10 s books; each PRE window now reads its own
-    checkpoint window (snapshot scope REACTION), anchored at its own start."""
+    """r110: each PRE window is measured from a snapshot anchored at its own start."""
     import tank.analysis.truth as truth_module
 
     repo = MemoryRepository()
@@ -1800,8 +1799,8 @@ async def test_pre_windows_each_read_only_their_checkpoint_window(monkeypatch):
     calls = []
 
     class Market:
-        async def snapshot(self, token_id, cutoff, *, anchor=None, scope=None):
-            calls.append((anchor["ts"], scope))
+        async def snapshot(self, token_id, cutoff, *, anchor=None):
+            calls.append(anchor["ts"])
             return {"token_id": token_id, "anchor": anchor}
 
     def fake_truth(snapshot, config=None):
@@ -1818,9 +1817,7 @@ async def test_pre_windows_each_read_only_their_checkpoint_window(monkeypatch):
             "retro": True,
         }
         await scheduler.reaction_capture(payload, wait_for_slot=True)
-    assert sorted(calls) == sorted(
-        (iso(now - timedelta(seconds=s)), "REACTION") for s in (86400, 14400, 3600)
-    )
+    assert sorted(calls) == sorted(iso(now - timedelta(seconds=s)) for s in (86400, 14400, 3600))
     rows = await repo.list("out.reaction_checkpoints")
     assert sorted(row["checkpoint"] for row in rows) == ["PRE_1H", "PRE_24H", "PRE_4H"]
 

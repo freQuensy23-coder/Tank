@@ -3,9 +3,7 @@ import hashlib
 import json
 import logging
 import time
-from bisect import bisect_left, bisect_right
 from contextlib import suppress
-from contextvars import ContextVar
 from copy import deepcopy
 from datetime import timedelta
 from decimal import Decimal
@@ -17,110 +15,12 @@ from tank.market import normalize as norm
 from tank.market.capture import event_anchor
 from tank.market.rate_gate import PriorityGate
 from tank.market_storage import (
-    market_dependency_head,
     market_kline_days_recorded_since,
-    market_range_by_instrument,
-    market_rows_recorded_since,
     market_series_day_counts,
 )
 from tank.sources.capture_fetch import is_exchange_url
 from tank.time_precision import Timestamp, chosen_boundary, collection_clock, propagate_timestamp
 from tank.util import iso, jsonable, new_id, parse_time, sha256, utcnow
-
-REACTION_BOUND_MARGIN = timedelta(minutes=5)
-REACTION_NEWEST_MARGIN = timedelta(minutes=15)
-
-
-TICKER_ASOF_MARGIN = timedelta(minutes=15)
-TICKER_MARK_MARGIN = timedelta(minutes=2)
-
-
-def _merge_ranges(ranges):
-    """Sorted, non-overlapping [start, end) ranges covering the given ones."""
-    out = []
-    for low, high in sorted(r for r in ranges if r[0] < r[1]):
-        if out and low <= out[-1][1]:
-            out[-1] = (out[-1][0], max(out[-1][1], high))
-        else:
-            out.append((low, high))
-    return out
-
-
-def _cut(rows_by_instrument, field, start, end):
-    """[start, end) of each instrument's rows, which are ordered by `field`."""
-    out = {}
-    for iid in sorted(rows_by_instrument):
-        rows = rows_by_instrument[iid]
-        times = [parse_time(row[field]) for row in rows]
-        out[iid] = rows[bisect_left(times, start) : bisect_left(times, end)]
-    return out
-
-
-def _bound_windows(windows):
-    """Drop cached windows unused for WINDOW_TTL_S, then the least recently used ones until
-    at most WINDOW_ROWS rows and WINDOW_ENTRIES keys remain."""
-    now = time.monotonic()
-    for key in list(windows):
-        windows[key] = [lane for lane in windows[key] if now - lane.get("used", now) < WINDOW_TTL_S]
-        if not windows[key]:
-            windows.pop(key)
-    lanes = sorted(
-        ((lane.get("used", now), key, lane) for key, held in windows.items() for lane in held),
-        key=lambda item: item[0],
-    )
-    total = sum(lane.get("size", 0) for _, _, lane in lanes)
-    keys = len(windows)
-    for _, key, lane in lanes:
-        if total <= WINDOW_ROWS and keys <= WINDOW_ENTRIES:
-            break
-        windows[key].remove(lane)
-        total -= lane.get("size", 0)
-        if not windows[key]:
-            windows.pop(key)
-            keys -= 1
-
-
-def _place_levels(points):
-    """Book levels on the newest BOOK_LEVEL_ROWS rows and the newest integrity-checked row
-    only, as a fresh read places them; other rows are replaced by copies without them."""
-    newest_ok = next(
-        (n for n in range(len(points) - 1, -1, -1) if points[n][2].get("integrity_ok") is True), None
-    )
-    for n in range(len(points) - BOOK_LEVEL_ROWS):
-        when, key, row = points[n]
-        if n != newest_ok and ("bids" in row or "asks" in row):
-            points[n] = (when, key, {k: v for k, v in row.items() if k not in ("bids", "asks")})
-
-
-def book_level_keeper():
-    """Order-book levels only where Market Truth walks them, applied while rows stream.
-
-    Slippage walks the levels of the newest integrity-checked book per venue (03 §5.5);
-    older rows are read for depth, spread and mid. Two days of BTC levels held ~3.5 GB
-    per snapshot, so rows outside each instrument's newest BOOK_LEVEL_ROWS drop their
-    levels as soon as they fall out (the slack covers availability-bounded snapshots).
-    """
-    newest_ok = {}
-
-    def keep(instrument_id, rows):
-        index = len(rows) - 1
-
-        def strip(i):
-            if "bids" in rows[i] or "asks" in rows[i]:
-                rows[i] = {k: v for k, v in rows[i].items() if k not in ("bids", "asks")}
-
-        if rows[index].get("integrity_ok") is True:
-            previous = newest_ok.get(instrument_id)
-            if previous is not None and previous < index - BOOK_LEVEL_ROWS:
-                strip(previous)
-            newest_ok[instrument_id] = index
-        if index >= BOOK_LEVEL_ROWS and index - BOOK_LEVEL_ROWS != newest_ok.get(instrument_id):
-            strip(index - BOOK_LEVEL_ROWS)
-
-    return keep
-
-
-_SHARED_READS = ContextVar("market_shared_snapshot_reads", default=None)
 
 log = logging.getLogger(__name__)
 
@@ -156,28 +56,8 @@ CAPTURE_REQUEST_TERMINAL = ("COMPLETE", "PARTIAL", "FAILED", "EXPIRED")
 LOOP_STALL_S = 10
 
 
-HEAD_REUSE_S = 300
-HEAD_ORDERS = ("availability", "semantic_latest", "semantic_earliest")
-
-
 DAY_COUNTS_SAVE_S = 60
 DAY_COUNTS_MARGIN = timedelta(minutes=30)
-
-WIDE_PAGE_ROWS = 500
-BOOK_LEVEL_ROWS = 30
-
-
-WINDOW_CACHED = frozenset(
-    {"mkt.flow_bars_1m", "mkt.klines_1m", "mkt.oi_obs", "mkt.funding_obs", "mkt.book_summaries"}
-)
-WINDOW_MARGIN = timedelta(seconds=5)
-WINDOW_ENTRIES = 32
-WINDOW_LANES = 4
-WINDOW_KEEP_S = 600
-
-
-WINDOW_TTL_S = 300
-WINDOW_ROWS = 300_000
 
 COLLECTIONS = {
     "flow_bars": ("mkt.flow_bars_1m", "minute_start"),
@@ -217,7 +97,6 @@ class MarketService:
         self._kline_day_counts_saved = ({}, 0.0)
         self._pending_market = {}
         self._market_flush_lock = asyncio.Lock()
-        self._condition_heads_memo = {}
         self._stop = None
         self._last_request = {}
         self._request_locks = {}
@@ -929,14 +808,6 @@ class MarketService:
             else key + (".ctx" if key.startswith("hyperliquid") else ".open-interest")
         )
 
-    async def _range(self, collection, field, *, start=None, end=None, filters=None):
-        return [
-            row
-            async for row in self.repo.iter_range(
-                collection, field, start=start, end=end, filters=filters, batch_size=100000
-            )
-        ]
-
     async def _capture_metadata(self, token_id, cutoff):
         from tank.market.supply import supply_cadences
 
@@ -1080,377 +951,81 @@ class MarketService:
                 state.polls[iid] = list(row["recent_polls"])
         return state
 
-    async def _condition_heads(self, collection, field, start, cutoff, assembled_at, filters):
-        """The three dependency heads of a window in one round trip. A head counts only rows
-        recorded by its assembly clock, so for a later clock of the same window it is reused
-        while nothing was written to its scope since (one condition evaluation asks for the
-        same heads once per condition; prod r106 ran ~60-80 sequential heads per BTC pass)."""
-        orders = HEAD_ORDERS
-        key = (collection, field, tuple(sorted(filters.items())), iso(start), iso(cutoff))
-        scope = next(
-            ((name, filters[name]) for name in ("instrument_id", "token_id") if name in filters), (None, None)
+    def _peer_instruments(self, token_id):
+        """The spot instruments of the benchmarks (BTC and ETH) and of the tokens of the same sector (the DeFi
+        sectors when it has fewer than two) that the price-relative rules choose their reference prices from."""
+        members = {}
+        for t in self.tokens.values():
+            if t.get("sector"):
+                members.setdefault(t["sector"], set()).add(t["token_id"])
+        for basket in self.sector_baskets:
+            if basket.get("sector"):
+                members.setdefault(basket["sector"], set()).update(basket.get("constituents", []))
+        sector = next(
+            (name for name, ids_ in members.items() if token_id in ids_ and name != "BENCHMARK"),
+            self.tokens.get(token_id, {}).get("sector"),
         )
-        written = getattr(self.repo, "_market_write_clock", {}).get((collection, *scope))
-        at = parse_time(assembled_at) if assembled_at is not None else None
-        memo = self._condition_heads_memo
-        hit = memo.get(key)
-        if (
-            hit is not None
-            and at is not None
-            and hit["at"] <= at
-            and (written is None or written <= hit["at"])
-            and time.monotonic() - hit["computed"] < HEAD_REUSE_S
-        ):
-            return hit["heads"]
-        found = await market_dependency_head(
-            self.repo,
-            collection,
-            field,
-            cutoff,
-            start=start,
-            filters=filters,
-            assembled_at=assembled_at,
-            orders=orders,
-        )
-        heads = [found[o] for o in orders]
-        if at is not None:
-            memo.pop(key, None)
-            memo[key] = {"at": at, "heads": heads, "computed": time.monotonic()}
-            if len(memo) > 4096:
-                memo.pop(next(iter(memo)))
-        return heads
+        same_sector = members.get(sector, set()) - {token_id} if sector != "BENCHMARK" else set()
 
-    async def _condition_projected_history(
-        self, collection, field, start, cutoff, assembled_at, *, fields, filters
-    ):
-        """Cache selected typed fields and apply only newly eligible/changed source points."""
-        from tank.market_schema import MARKET_ALIASES
-
-        fields = tuple(dict.fromkeys([*fields, field, "recorded_at"]))
-        key = (collection, field, tuple(sorted(filters.items())), fields)
-        cache = self.__dict__.setdefault("_condition_projections", {})
-        heads = await self._condition_heads(collection, field, start, cutoff, assembled_at, filters)
-        locks = self.__dict__.setdefault("_condition_projection_locks", {})
-        async with locks.setdefault(key, asyncio.Lock()):
-            previous = cache.get(key)
-            reset = (
-                previous is None
-                or start < previous["start"]
-                or cutoff < previous["cutoff"]
-                or previous.get("unknown_availability")
-            )
-            reset = reset or not any(heads)
-            if not reset and heads == previous["heads"]:
-                return previous["rows"], previous["fingerprint"]
-            points = {} if reset else dict(previous["points"])
-
-            def apply(row):
-                stamp = row.get(field)
-                if stamp is None or not start <= parse_time(stamp) <= cutoff:
-                    return
-                identity = (
-                    row.get("instrument_id"),
-                    row.get("token_id"),
-                    row.get("kind"),
-                    row.get("metric_key"),
-                    row.get("chain"),
-                    stamp,
-                    row.get("id")
-                    if row.get("id") is not None
-                    else (row.get("side"), row.get("qty_native"), row.get("price"))
-                    if collection == "mkt.liq_obs"
-                    else None,
+        if len(same_sector) < 2 and sector != "IDENTITY_PAYMENTS":
+            same_sector |= {
+                identity
+                for name in (
+                    "DEX_EXECUTION",
+                    "LENDING_CREDIT",
+                    "PERP_DEX",
+                    "RWA",
+                    "INTEROPERABILITY",
+                    "SYNTHETIC_DOLLAR",
                 )
-                projected = {f: row.get(f) for f in fields}
-                projected.update(
-                    {
-                        alias: projected[target]
-                        for alias, target in MARKET_ALIASES.get(collection, {}).items()
-                        if target in projected
-                    }
-                )
-                points[identity] = projected
-
-            if reset:
-                async for row in self.repo.iter_market_projection(
-                    collection,
-                    fields,
-                    field,
-                    start=start,
-                    end=cutoff + timedelta(microseconds=1),
-                    filters=filters,
-                    assembled_at=assembled_at,
-                    batch_size=10000,
-                ):
-                    apply(row)
-            else:
-                if cutoff > previous["cutoff"]:
-                    async for row in self.repo.iter_market_projection(
-                        collection,
-                        fields,
-                        field,
-                        start=previous["cutoff"] + timedelta(microseconds=1),
-                        end=cutoff + timedelta(microseconds=1),
-                        filters=filters,
-                        assembled_at=assembled_at,
-                        batch_size=10000,
-                    ):
-                        apply(row)
-                async for row in self.repo.iter_late_arrivals(
-                    collection,
-                    "recorded_at",
-                    field,
-                    since=previous["assembled_at"],
-                    end=assembled_at,
-                    market_end=cutoff,
-                    filters=filters,
-                ):
-                    apply(row)
-            points = {k: r for k, r in points.items() if start <= parse_time(r[field]) <= cutoff}
-            rows = sorted(points.values(), key=lambda row: row[field])
-            unknown = any(row.get("recorded_at") is None for row in rows)
-            fingerprint = sha256([heads, rows if unknown else None])
-            cache[key] = {
-                "points": points,
-                "rows": rows,
-                "heads": heads,
-                "start": start,
-                "cutoff": cutoff,
-                "assembled_at": assembled_at,
-                "unknown_availability": unknown,
-                "fingerprint": fingerprint,
+                for identity in members.get(name, ())
             }
-            while len(cache) > 256:
-                cache.pop(next(iter(cache)))
-            return rows, fingerprint
-
-    async def _condition_composite_inputs(self, result, *, full_state):
-        """Exact compact source graph for transient catalog conditions; never an MTA."""
-
-        from tank.analysis.truth import condition_primary_bounds
-        from tank.market_schema import MARKET_COLUMNS
-
-        token_id = result["token_id"]
-        end, assembled = parse_time(result["cutoff"]), result["assembled_at"]
-        start, _ = condition_primary_bounds(result, end)
-        anchor = parse_time(result["anchor"]["ts"]) if result.get("anchor") else start
-        target = [i for i in self.instruments.values() if i["token_id"] == token_id]
-        spot = [i for i in target if i["market_type"] == "SPOT"]
-        perp = [i for i in target if i["market_type"] != "SPOT"]
-        result["tokens"] = list(self.tokens.values())
-        result["sector_baskets"] = deepcopy(self.sector_baskets)
-        result["capture_metadata"] = await self._capture_metadata(token_id, end)
-        result["flow_bars"], result["flow_segments"], result["reference_points"] = [], [], []
-        heads = {}
-        flow_heads = []
-        for instrument in target if full_state else spot:
-            iid = instrument["instrument_id"]
-            bars, head = await self._condition_projected_history(
-                "mkt.flow_bars_1m",
-                "minute_start",
-                end - timedelta(hours=48),
-                end,
-                assembled,
-                fields=list(MARKET_COLUMNS["mkt.flow_bars_1m"]),
-                filters={"instrument_id": iid},
-            )
-            if anchor < end - timedelta(hours=48):
-                bars = list(bars)
-                bars.extend(
-                    await self._range(
-                        "mkt.flow_bars_1m",
-                        "minute_start",
-                        start=anchor.replace(second=0, microsecond=0),
-                        end=anchor.replace(second=0, microsecond=0) + timedelta(minutes=1),
-                        filters={"instrument_id": iid},
-                    )
-                )
-            flow_heads.append(head)
-            for bar in bars:
-                result["flow_segments"].extend(
-                    dict(s, instrument_id=iid)
-                    for s in (bar.get("boundary_segments") or [])
-                    if parse_time(s["end"]) <= end
-                )
-                result["reference_points"].extend(
-                    dict(p, instrument_id=iid)
-                    for p in (bar.get("reference_points") or [])
-                    if parse_time(p["boundary"]) <= end
-                )
-                if parse_time(bar["minute_start"]) + timedelta(minutes=1) <= end:
-                    result["flow_bars"].append(bar)
-        result["tickers"] = await self.repo.latest_market_records(
-            "mkt.tickers_24h", cutoff=end, assembled_at=assembled, filters={"token_id": token_id}
-        )
-
-        result["klines"] = []
-        recent_fields = [
-            "instrument_id",
-            "token_id",
-            "venue",
-            "market_type",
-            "open_time",
-            "open_time_prec",
-            "open_time_prec_reason",
-            "interval_s",
-            "complete",
-            "o",
-            "h",
-            "l",
-            "c",
-            "volume_native",
-            "quote_volume",
-            "quote_volume_usd",
-            "quote_volume_usd_reason",
-            "received_ts",
-            "received_ts_prec",
-            "recorded_at",
+        peers = {
+            t["token_id"]
+            for t in self.tokens.values()
+            if t.get("symbol") in ("BTC", "ETH") or t["token_id"] in same_sector
+        } - {token_id}
+        return [
+            inst
+            for inst in self.instruments.values()
+            if norm.venue_key(inst).endswith(".spot") and inst["token_id"] in peers
         ]
-        for instrument in target if full_state else spot:
-            rows, _ = await self._condition_projected_history(
-                "mkt.klines_1m",
-                "open_time",
-                end - timedelta(hours=48),
-                end - timedelta(minutes=1),
-                assembled,
-                fields=recent_fields,
-                filters={"instrument_id": instrument["instrument_id"]},
-            )
-            result["klines"].extend(
-                dict(
-                    row,
-                    venue=row.get("venue") or instrument["venue"],
-                    market_type=row.get("market_type") or instrument["market_type"],
-                )
-                for row in rows
-            )
-        all_spot = [i for i in self.instruments.values() if i["market_type"] == "SPOT"]
-        counts = await self.repo.market_series_counts(
-            [i["instrument_id"] for i in all_spot], end - timedelta(days=90), end, assembled
-        )
-        result["series_coverage_counts"] = counts
-        chosen = {}
-        for instrument in all_spot:
-            symbol = self.tokens[instrument["token_id"]].get("symbol")
-            current = chosen.get(symbol)
-            if current is None or counts[instrument["instrument_id"]] > counts[current["instrument_id"]]:
-                chosen[symbol] = instrument
-        selected = [i for i in chosen.values() if i["token_id"] != token_id]
 
-        result["instruments"] = target + [i for i in selected if i not in target]
-        heads["relative"] = sha256(
-            [flow_heads, result["reference_points"], counts, self.tokens, self.sector_baskets]
+    async def _registry_inputs(self, token_id, cutoff_dt, assembled):
+        """What every Market Truth path reads of the registry and of the capture state: the instruments of the
+        token and of its reference peers, their metric semantics, the tokens and sector baskets, the complete
+        one-minute closes per spot instrument in the 90 days (the reference instrument of a token is the one with
+        the most), and the capture metadata. No series is read."""
+        instruments = [r for r in self.instruments.values() if r["token_id"] == token_id]
+        spot = [
+            inst
+            for inst in self.instruments.values()
+            if norm.venue_key(inst).endswith(".spot") and inst["token_id"] == token_id
+        ]
+        peers = self._peer_instruments(token_id)
+        ids = [inst["instrument_id"] for inst in [*spot, *peers]]
+        counts = (
+            await self._series_counts(ids, cutoff_dt - timedelta(days=90), cutoff_dt, assembled)
+            if ids
+            else {}
         )
-        heads["spot"] = sha256([flow_heads, result["tickers"], target])
-        if full_state:
-            result["oi"], result["funding"], result["books"], result["liquidations"] = [], [], [], []
-            derivative_heads = []
-            oi_heads, funding_heads = [], []
-            for instrument in perp:
-                iid = instrument["instrument_id"]
-                for name, field, filters in (
-                    ("oi", "ts", {"instrument_id": iid}),
-                    ("funding", "funding_time", {"instrument_id": iid, "kind": "SETTLED"}),
-                ):
-                    collection = COLLECTIONS[name][0]
-                    rows, head = await self._condition_projected_history(
-                        collection,
-                        field,
-                        end - timedelta(hours=48),
-                        end,
-                        assembled,
-                        fields=list(MARKET_COLUMNS[collection]),
-                        filters=filters,
-                    )
-                    result[name].extend(rows)
-                    derivative_heads.append(head)
-                    (oi_heads if name == "oi" else funding_heads).append(head)
-                result["funding"].extend(
-                    await self.repo.latest_market_records(
-                        "mkt.funding_obs",
-                        group_by=("instrument_id", "metric_key", "kind"),
-                        time_field="as_of",
-                        filters={"instrument_id": iid},
-                        cutoff=end,
-                        assembled_at=assembled,
-                    )
-                )
-                rows, head = await self._condition_projected_history(
-                    "mkt.liq_obs",
-                    "ts",
-                    end - timedelta(hours=48),
-                    end,
-                    assembled,
-                    fields=list(MARKET_COLUMNS["mkt.liq_obs"]),
-                    filters={"instrument_id": iid},
-                )
-                result["liquidations"].extend(rows)
-                derivative_heads.append(head)
-                result["liquidations"].extend(
-                    await self.repo.latest_market_records(
-                        "mkt.liq_obs",
-                        group_by=("instrument_id", "metric_key"),
-                        time_field="ts",
-                        filters={"instrument_id": iid},
-                        start=end - timedelta(days=90),
-                        cutoff=end,
-                        assembled_at=assembled,
-                    )
-                )
-            for instrument in target:
-                iid = instrument["instrument_id"]
-                point = await self.repo.latest_before(
-                    "mkt.book_summaries",
-                    "exchange_ts",
-                    end + timedelta(microseconds=1),
-                    filters={"instrument_id": iid},
-                )
-                if point:
-                    result["books"].append(point)
-                result["books"].extend(
-                    await self.repo.latest_market_records(
-                        "mkt.book_summaries",
-                        time_field="exchange_ts",
-                        filters={"instrument_id": iid, "integrity_ok": True},
-                        cutoff=end,
-                        assembled_at=assembled,
-                    )
-                )
-            result["supply"] = await self._latest_supply(token_id, end, assembled)
-            result["semantics"] = self._instrument_semantics(target)
-            for name in ("funding", "books", "supply", "liquidations"):
-                result[name] = list({sha256(row): row for row in result[name]}.values())
-            heads["oi"] = sha256([oi_heads, result["semantics"], result["capture_metadata"]])
-            heads["funding"] = sha256(
-                [
-                    funding_heads,
-                    [r for r in result["funding"] if r.get("kind") == "CURRENT_ESTIMATE"],
-                    result["semantics"],
-                    result["capture_metadata"],
-                ]
-            )
-            heads["dc"] = result["dependency_fingerprint"]
-            heads["depth"] = sha256([result["books"], anchor.isoformat(), result["capture_metadata"]])
-            heads["close"] = sha256([flow_heads])
-            heads["derivatives"] = sha256(
-                [derivative_heads, result["funding"], result["semantics"], result["capture_metadata"]]
-            )
-            heads["books"] = sha256([result["books"], anchor.isoformat()])
-            heads["supply"] = sha256(result["supply"])
-            heads["support"] = sha256([flow_heads, heads["relative"], heads["books"]])
-        result.setdefault("domain_dependency_fingerprints", {}).update(heads)
-        result["domain_dependency_fingerprints"]["state"] = result["dependency_fingerprint"]
-        return result
+        instruments = [*instruments, *peers]
+        return dict(
+            instruments=instruments,
+            semantics=self._instrument_semantics(instruments),
+            tokens=list(self.tokens.values()),
+            sector_baskets=deepcopy(self.sector_baskets),
+            series_coverage_counts=counts,
+            capture_metadata=await self._capture_metadata(token_id, cutoff_dt),
+        )
 
     async def condition_snapshot(self, token_id, cutoff, *, anchor=None, requirements):
-        """Load persisted condition inputs without flushing capture or reading raw files."""
-        from tank.analysis.truth import DERIVATIVE_CONDITION_METRICS, SPOT_CONDITION_METRICS, WINDOWS
-
+        """The registry and capture inputs of a condition evaluation at `cutoff`. The series themselves are read by
+        the statements of Market Truth (03 section 5.9), not here."""
         requested = cutoff if isinstance(cutoff, Timestamp) else chosen_boundary(cutoff, precision="EXACT")
         if requested.value is None:
             raise ValueError("Condition snapshot requires a cutoff value")
         end = parse_time(requested.value)
-        upper = end + timedelta(microseconds=1)
         if isinstance(anchor, dict):
             anchor = {
                 **anchor,
@@ -1458,322 +1033,19 @@ class MarketService:
             }
         elif anchor is not None:
             anchor = {"type": "T0", **norm.timestamp_fields("ts", anchor, None)}
-        domains, durations = set(), []
-        for requirement in requirements:
-            metric, window = requirement["metric"], requirement.get("window", "W1H")
-            domain = (
-                "spot"
-                if metric in SPOT_CONDITION_METRICS
-                else "funding"
-                if metric == "deriv.funding_vs_normal"
-                else "oi"
-                if metric in DERIVATIVE_CONDITION_METRICS
-                else "close"
-                if metric == "price.close_vs_level"
-                else "dc"
-                if metric == "dc.class"
-                else "depth"
-                if metric in ("liq.depth_p1_vs_pre", "liq.spread_ratio")
-                else "composite"
-            )
-            domains.add(domain)
-            duration = WINDOWS.get(window)
-            if window == "EVENT" and anchor and anchor.get("ts"):
-                duration = (end - parse_time(anchor["ts"])).total_seconds()
-            if duration and duration > 0:
-                durations.append(duration)
-        if any(r["metric"] in ("mt.move_class", "mt.divergence_state") for r in requirements):
-            domains = {"composite"}
-        instruments = [i for i in self.instruments.values() if i["token_id"] == token_id]
-        spot = [i for i in instruments if i["market_type"] == "SPOT"]
-        perp = [i for i in instruments if i["market_type"] != "SPOT"]
         result = {
             "token_id": token_id,
             "anchor": anchor,
-            "instruments": instruments,
             "config_version": self.settings.config_version,
             "code_version": self.settings.code_version,
         }
         result.update(requested.fields("cutoff"))
         result.update(requested.fields("requested_cutoff"))
         result.update(collection_clock(iso()).fields("assembled_at"))
-        if domains & {"spot", "close", "dc"}:
-            duration = max(durations or [3600])
-            if domains & {"close", "dc"}:
-                duration = max(duration, 86400)
-            start = (end - timedelta(seconds=duration)).replace(second=0, microsecond=0)
-            bars = []
-            for instrument in spot:
-                bars.extend(
-                    await self._range(
-                        "mkt.flow_bars_1m",
-                        "minute_start",
-                        start=start,
-                        end=upper,
-                        filters={"instrument_id": instrument["instrument_id"]},
-                    )
-                )
-            result["flow_segments"] = [
-                dict(s, instrument_id=b["instrument_id"])
-                for b in bars
-                for s in (b.get("boundary_segments") or [])
-                if parse_time(s["end"]) <= end
-            ]
-            result["reference_points"] = [
-                dict(p, instrument_id=b["instrument_id"])
-                for b in bars
-                for p in (b.get("reference_points") or [])
-                if parse_time(p["boundary"]) <= end
-            ]
-            result["flow_bars"] = [
-                b for b in bars if parse_time(b["minute_start"]) + timedelta(minutes=1) <= end
-            ]
-        if domains & {"spot", "dc"}:
-            result["tickers"] = []
-            for instrument in spot:
-                point = await self.repo.latest_before(
-                    "mkt.tickers_24h", "ts", upper, filters={"instrument_id": instrument["instrument_id"]}
-                )
-                if point:
-                    result["tickers"].append(point)
-        if "close" in domains:
-            close = end.replace(minute=0, second=0, microsecond=0)
-            result["klines"] = []
-            for instrument in spot:
-                result["klines"].extend(
-                    await self._range(
-                        "mkt.klines_1m",
-                        "open_time",
-                        start=close - timedelta(minutes=1),
-                        end=close,
-                        filters={"instrument_id": instrument["instrument_id"]},
-                    )
-                )
-        if domains & {"oi", "funding", "dc", "depth"}:
-            result["capture_metadata"] = await self._capture_metadata(token_id, end)
-            result["semantics"] = self._instrument_semantics(instruments if "dc" in domains else perp)
-            if "oi" in domains:
-                result["oi"] = []
-                for instrument in perp:
-                    result["oi"].extend(
-                        await self.repo.latest_market_records(
-                            "mkt.oi_obs",
-                            group_by=("instrument_id", "metric_key"),
-                            time_field="ts",
-                            filters={"instrument_id": instrument["instrument_id"]},
-                            cutoff=end,
-                            assembled_at=result["assembled_at"],
-                        )
-                    )
-            if "funding" in domains:
-                result["funding"] = []
-                for instrument in perp:
-                    result["funding"].extend(
-                        await self.repo.latest_market_records(
-                            "mkt.funding_obs",
-                            group_by=("instrument_id", "metric_key", "kind"),
-                            time_field="as_of",
-                            filters={"instrument_id": instrument["instrument_id"]},
-                            cutoff=end,
-                            assembled_at=result["assembled_at"],
-                        )
-                    )
-        if domains & {"depth", "dc"}:
-            result["books"] = []
-            for instrument in spot:
-                iid = instrument["instrument_id"]
-                point = await self.repo.latest_before(
-                    "mkt.book_summaries", "exchange_ts", upper, filters={"instrument_id": iid}
-                )
-                if point:
-                    result["books"].append(point)
-                result["books"].extend(
-                    await self.repo.latest_market_records(
-                        "mkt.book_summaries",
-                        time_field="exchange_ts",
-                        filters={"instrument_id": iid, "integrity_ok": True},
-                        cutoff=end,
-                        assembled_at=result["assembled_at"],
-                    )
-                )
-        if "dc" in domains:
-            result["tokens"] = list(self.tokens.values())
-            result["sector_baskets"] = deepcopy(self.sector_baskets)
-            if "oi" not in domains:
-                result["oi"] = []
-                for instrument in perp:
-                    iid = instrument["instrument_id"]
-                    result["oi"].extend(
-                        await self.repo.latest_market_records(
-                            "mkt.oi_obs",
-                            group_by=("instrument_id", "metric_key"),
-                            time_field="ts",
-                            filters={"instrument_id": iid},
-                            cutoff=end,
-                            assembled_at=result["assembled_at"],
-                        )
-                    )
-            if "close" not in domains:
-                result["klines"] = []
-            for instrument in spot:
-                result["klines"].extend(
-                    await self.repo.latest_market_records(
-                        "mkt.klines_1m",
-                        time_field="open_time",
-                        filters={"instrument_id": instrument["instrument_id"], "complete": True},
-                        cutoff=end - timedelta(minutes=1),
-                        assembled_at=result["assembled_at"],
-                    )
-                )
-            for instrument in perp:
-                result["klines"].extend(
-                    await self._range(
-                        "mkt.klines_1m",
-                        "open_time",
-                        start=end - timedelta(days=1),
-                        end=upper,
-                        filters={"instrument_id": instrument["instrument_id"]},
-                    )
-                )
-            for name in ("funding", "liquidations", "supply"):
-                if name == "funding" and "funding" in domains:
-                    continue
-                collection, field = COLLECTIONS[name]
-                groups = (
-                    ("token_id", "kind", "chain")
-                    if name == "supply"
-                    else ("instrument_id", "metric_key", "kind")
-                    if name == "funding"
-                    else ("instrument_id", "metric_key")
-                )
-                result[name] = await self.repo.latest_market_records(
-                    collection,
-                    group_by=groups,
-                    time_field=field,
-                    filters={"token_id": token_id},
-                    cutoff=end,
-                    assembled_at=result["assembled_at"],
-                )
-            result["supply"].extend(
-                await self.repo.latest_market_records(
-                    "mkt.supply_obs",
-                    group_by=("token_id", "kind", "chain"),
-                    time_field="ts",
-                    filters={"token_id": token_id, "available": True},
-                    cutoff=end,
-                    assembled_at=result["assembled_at"],
-                )
-            )
-        for name in ("books", "oi", "funding", "supply", "klines", "liquidations", "tickers"):
-            if name in result and name not in domains:
-                field = COLLECTIONS[name][1]
-                result[name] = list(
-                    {
-                        sha256(row): row
-                        for row in result[name]
-                        if (stamp := row.get(field) or row.get("funding_time")) is not None
-                        and end - timedelta(days=90) <= parse_time(stamp) <= end
-                    }.values()
-                )
-        result["domain_dependency_fingerprints"] = {}
-        for domain in domains - {"composite"}:
-            if domain == "oi":
-                dependency = [result["oi"], result["semantics"], result["capture_metadata"]]
-            elif domain == "funding":
-                dependency = [result["funding"], result["semantics"], result["capture_metadata"]]
-            elif domain in {"dc", "depth"}:
-                fields = (
-                    ["books", "anchor", "capture_metadata"]
-                    if domain == "depth"
-                    else [
-                        "flow_bars",
-                        "flow_segments",
-                        "books",
-                        "oi",
-                        "funding",
-                        "klines",
-                        "tickers",
-                        "supply",
-                        "liquidations",
-                        "capture_metadata",
-                        "semantics",
-                    ]
-                )
-                dependency = [result.get(field) for field in fields]
-            else:
-                fields = [
-                    "flow_bars",
-                    "flow_segments",
-                    "reference_points",
-                    "tickers" if domain == "spot" else "klines",
-                ]
-                dependency = [result.get(field) for field in fields]
-            result["domain_dependency_fingerprints"][domain] = sha256(
-                [
-                    dependency,
-                    instruments,
-                    self.settings.config_version,
-                    self.settings.code_version,
-                ]
-            )
-        if "composite" in domains:
-            heads = []
-            for name, (collection, field) in COLLECTIONS.items():
-                found = await market_dependency_head(
-                    self.repo,
-                    collection,
-                    field,
-                    end,
-                    start=end - timedelta(days=90),
-                    filters={"token_id": token_id} if name == "supply" else None,
-                    instrument_ids=None if name == "supply" else [i["instrument_id"] for i in instruments],
-                    assembled_at=result["assembled_at"],
-                    orders=HEAD_ORDERS,
-                )
-                heads.extend(found[o] for o in HEAD_ORDERS)
-
-            peers = [
-                i["instrument_id"]
-                for i in self.instruments.values()
-                if i["market_type"] == "SPOT"
-                and (
-                    self.tokens[i["token_id"]].get("symbol") in ("BTC", "ETH")
-                    or self.tokens[i["token_id"]].get("sector") not in (None, "BENCHMARK")
-                    or i["token_id"] in self._sector_tokens
-                )
-            ]
-            found = await market_dependency_head(
-                self.repo,
-                "mkt.klines_1m",
-                "open_time",
-                end,
-                start=end - timedelta(days=90),
-                instrument_ids=peers,
-                assembled_at=result["assembled_at"],
-                orders=HEAD_ORDERS,
-            )
-            heads.extend(found[o] for o in HEAD_ORDERS)
-            result["dependency_fingerprint"] = sha256(
-                [
-                    heads,
-                    self.semantics,
-                    instruments,
-                    self.tokens,
-                    self.sector_baskets,
-                    await self._capture_metadata(token_id, end),
-                    self.settings.config_version,
-                    self.settings.code_version,
-                ]
-            )
-        if any(
-            r["metric"]
-            in ("mt.move_class", "mt.divergence_state", "price.repricing_band", "price.vs_anchor_pct")
-            for r in requirements
-        ):
-            result = await self._condition_composite_inputs(
-                result,
-                full_state=any(r["metric"] in ("mt.move_class", "mt.divergence_state") for r in requirements),
-            )
+        result.update(await self._registry_inputs(token_id, end, result["assembled_at"]))
+        metrics = {r["metric"] for r in requirements}
+        if metrics & {"dc.class", "mt.move_class", "mt.divergence_state"}:
+            result["supply"] = await self._latest_supply(token_id, end, result["assembled_at"])
         return result
 
     async def _series_counts(self, instrument_ids, start, cutoff, assembled):
@@ -1880,224 +1152,6 @@ class MarketService:
                 return
             await asyncio.sleep(1)
 
-    async def _shared_call(self, key, factory):
-        """Inside snapshot_anchors(): one call per identical request, shared read-only."""
-        shared = _SHARED_READS.get()
-        if shared is None:
-            return await factory()
-        calls = shared.setdefault("calls", {})
-        if key not in calls:
-            calls[key] = await factory()
-        return calls[key]
-
-    def _shared_slice(self, collection, field, filters, ids, start, end):
-        """Rows of [start, end) cut from the union range read once for all anchors (the
-        row objects themselves, not copies; snapshots treat rows as read-only)."""
-        shared = _SHARED_READS.get()
-        if shared is None:
-            return None
-        hit = shared.get("ranges", {}).get((collection, field, repr(sorted((filters or {}).items()))))
-        if hit is None or hit["start"] > start or hit["end"] < end or set(ids) - set(hit["rows"]):
-            return None
-        return _cut({iid: hit["rows"][iid] for iid in set(ids)}, field, start, end)
-
-    async def _ranged(self, collection, field, ids, start, end, filters=None, *, books=False):
-        sliced = self._shared_slice(collection, field, filters, ids, start, end)
-        if sliced is not None:
-            return sliced
-        if collection not in WINDOW_CACHED:
-            return await self._ranged_read(collection, field, ids, start, end, filters, books=books)
-        return await self._ranged_cached(collection, field, ids, start, end, filters, books=books)
-
-    async def _ranged_read(
-        self, collection, field, ids, start, end, filters=None, *, books=False, keys_out=None
-    ):
-        if books:
-            return await market_range_by_instrument(
-                self.repo,
-                collection,
-                field,
-                ids,
-                start,
-                end,
-                filters,
-                batch_size=WIDE_PAGE_ROWS,
-                keep=None if hasattr(self.repo, "_conn") else book_level_keeper(),
-                level_rows=BOOK_LEVEL_ROWS if hasattr(self.repo, "_conn") else None,
-                keys_out=keys_out,
-            )
-
-        page = WIDE_PAGE_ROWS if collection == "mkt.tickers_24h" else 1000
-        return await market_range_by_instrument(
-            self.repo, collection, field, ids, start, end, filters, batch_size=page, keys_out=keys_out
-        )
-
-    async def _ranged_cached(self, collection, field, ids, start, end, filters, *, books):
-        """A window read that equals a fresh `_ranged_read` but, once the window was read,
-        fetches only rows past its end and rows recorded since that read: a warm BTC
-        snapshot re-read two days of five collections (~100k rows, ~10 s) every minute."""
-        start, end = parse_time(start), parse_time(end)
-        key = (collection, field, tuple(sorted(set(ids))), tuple(sorted((filters or {}).items())), books)
-        windows = self.__dict__.setdefault("_windows", {})
-        locks = self.__dict__.setdefault("_window_locks", {})
-        async with locks.setdefault(key, asyncio.Lock()):
-            lanes = windows.pop(key, [])
-            entry = next(
-                (
-                    lane
-                    for lane in lanes
-                    if lane["start"] <= start <= lane["end"] and not (books and end < lane["end"])
-                ),
-                None,
-            )
-            if entry is not None:
-                lanes.remove(entry)
-            clock = utcnow()
-            if entry is None:
-                keys = {}
-                out = await self._ranged_read(
-                    collection, field, ids, start, end, filters, books=books, keys_out=keys
-                )
-                rows = {
-                    iid: [
-                        (parse_time(row[field]), k, row)
-                        for k, row in zip(keys.get(iid, []), out[iid], strict=True)
-                    ]
-                    for iid in out
-                }
-                entry = {"start": start, "end": end, "clock": clock, "rows": rows, "starts": []}
-            else:
-                late = await market_rows_recorded_since(
-                    self.repo,
-                    collection,
-                    field,
-                    ids,
-                    entry["clock"] - WINDOW_MARGIN,
-                    start,
-                    entry["end"],
-                    filters,
-                )
-                fresh = {}
-                if end > entry["end"]:
-                    fresh = await self._ranged_read(
-                        collection, field, ids, entry["end"], end, filters, books=books, keys_out=(keys := {})
-                    )
-                rows = entry["rows"]
-
-                now = time.monotonic()
-                entry["starts"] = [(at, s) for at, s in entry["starts"] if now - at < WINDOW_KEEP_S]
-                entry["starts"].append((now, start))
-                floor = min(s for _, s in entry["starts"])
-                for iid in rows:
-                    held = rows[iid]
-                    first = bisect_left(held, floor, key=lambda point: point[0])
-                    held = rows[iid] = held[first:]
-                    changed = [(k, row) for i, row, k in late if i == iid]
-                    if changed:
-                        index = {point[1]: n for n, point in enumerate(held)}
-                        for k, row in changed:
-                            point = (parse_time(row[field]), k, row)
-                            if k in index:
-                                old = held[index[k]][2]
-                                if books and "bids" not in row and "bids" in old:
-                                    row = dict(row, bids=old["bids"], asks=old.get("asks"))
-                                    point = (point[0], k, row)
-                                held[index[k]] = point
-                            else:
-                                held.insert(
-                                    bisect_right(held, (point[0], k), key=lambda p: (p[0], p[1])), point
-                                )
-                    if fresh.get(iid):
-                        held.extend(
-                            (parse_time(row[field]), k, row)
-                            for k, row in zip(keys[iid], fresh[iid], strict=True)
-                        )
-                entry.update(start=floor, end=max(end, entry["end"]), clock=clock)
-                if books:
-                    for held in rows.values():
-                        _place_levels(held)
-            entry["used"] = time.monotonic()
-            entry["size"] = sum(len(held) for held in entry["rows"].values())
-            windows[key] = [entry, *lanes][:WINDOW_LANES]
-            _bound_windows(windows)
-            return {
-                iid: [
-                    point[2]
-                    for point in held[bisect_left(held, start, key=lambda point: point[0]) :]
-                    if point[0] < end
-                ]
-                for iid, held in entry["rows"].items()
-            }
-
-    async def snapshot_anchors(self, token_id, cutoff, anchors):
-        """Snapshots of one token and cutoff for several anchors (e.g. PRE_24H/4H/1H) with
-        shared reads, yielded one at a time as (anchor, snapshot) from the widest window to
-        the narrowest. Each window collection is read once over the widest anchor's range;
-        every snapshot is cut from it, and rows older than the next anchor's range are
-        released before it is built, so memory stays near one snapshot of the widest
-        window. Identical calls are made once. Each snapshot equals
-        snapshot(token_id, cutoff, anchor) for its anchor; rows are shared between the
-        snapshots, so callers must not modify them."""
-        requested = cutoff if isinstance(cutoff, Timestamp) else chosen_boundary(cutoff, precision="EXACT")
-        cutoff_dt = parse_time(requested.value)
-        history_start = cutoff_dt - timedelta(days=90)
-        snapshot_end = cutoff_dt + timedelta(microseconds=1)
-
-        def recent_start(anchor):
-            value = anchor.get("ts") if isinstance(anchor, dict) else anchor
-            duration = max(timedelta(days=1), cutoff_dt - parse_time(value)) if value else timedelta(days=1)
-            return max(history_start, cutoff_dt - 2 * duration - timedelta(minutes=1))
-
-        ordered = sorted(anchors, key=recent_start)
-        ids = sorted(r["instrument_id"] for r in self.instruments.values() if r["token_id"] == token_id)
-        shared = {"ranges": {}}
-        token = _SHARED_READS.set(shared)
-        try:
-            widest = recent_start(ordered[0])
-            for name, (collection, field) in COLLECTIONS.items():
-                if name == "supply":
-                    continue
-                rows = await self._ranged(collection, field, ids, widest, snapshot_end, books=name == "books")
-                shared["ranges"][(collection, field, repr([]))] = {
-                    "field": field,
-                    "start": widest,
-                    "end": snapshot_end,
-                    "rows": rows,
-                }
-            funding = COLLECTIONS["funding"]
-            narrowest = recent_start(ordered[-1])
-            if narrowest > history_start:
-                filters = {"kind": "SETTLED"}
-                rows = await self._ranged(funding[0], funding[1], ids, history_start, narrowest, filters)
-                shared["ranges"][(funding[0], funding[1], repr(sorted(filters.items())))] = {
-                    "start": history_start,
-                    "end": narrowest,
-                    "rows": rows,
-                }
-            rows = await self._ranged(funding[0], "funding_time", ids, history_start, snapshot_end)
-            shared["ranges"][(funding[0], "funding_time", repr([]))] = {
-                "start": history_start,
-                "end": snapshot_end,
-                "rows": rows,
-            }
-            windows = [hit for hit in shared["ranges"].values() if "field" in hit]
-            for anchor in ordered:
-                start = recent_start(anchor)
-                for hit in windows:
-                    if hit["start"] < start:
-                        hit["rows"], hit["start"] = (
-                            _cut(hit["rows"], hit["field"], start, snapshot_end),
-                            start,
-                        )
-                yield anchor, await self.snapshot(token_id, cutoff, anchor=anchor)
-        finally:
-            _SHARED_READS.reset(token)
-
-    async def _window_rows(self, token_id, collection, field, ids, start, end, *, books=False):
-        """The window rows of all of a token's instruments: one query per collection, or a cut
-        of the union range inside snapshot_anchors()."""
-        return await self._ranged(collection, field, ids, start, end, books=books)
-
     async def _latest_supply(self, token_id, cutoff, assembled=None):
         """The latest observation of each supply kind and chain of a token at or before `cutoff`, and the latest
         available one: what the supply rules read of the rows themselves. The numbers derived from the series are
@@ -2122,64 +1176,16 @@ class MarketService:
         )
         return list({sha256(row): row for row in rows}.values())
 
-    async def snapshot(self, token_id, cutoff, anchor=None, *, scope=None):
-        """scope="REACTION": a reaction checkpoint (03 §8, 01 FR-R-01) measures its EVENT
-        window, anchor to cutoff. Flow bars, klines, OI, funding and liquidations are read
-        from the earlier of the anchor and cutoff - 24 h (the reference venue's trailing-24 h
-        coverage, 03 §5.7); books and tickers only around the window bounds (the newest
-        books for the freshness rules, the marks next to the OI bounds). The default reads flow
-        bars, klines, OI, funding and liquidations from 2 x the event window before the cutoff
-        (previous-window comparisons), books only the newest ones (the depth, spread, bursts and
-        slippage are ClickHouse statements, 03 §5.5), and tickers only around the window bounds
-        (see the scope branches below)."""
+    async def snapshot(self, token_id, cutoff, anchor=None):
+        """The registry and capture inputs of one Market Truth assessment at `cutoff` (03 section 5): the
+        instruments, the registry facts, the capture state of the token, the backfill runs and the latest supply
+        observations. The series are not read here; the statements of Market Truth read them (03 section 11.1)."""
 
         requested = cutoff if isinstance(cutoff, Timestamp) else chosen_boundary(cutoff, precision="EXACT")
         if requested.value is None:
             raise ValueError("Snapshot requires a cutoff value")
         cutoff = requested.value
         cutoff_dt = parse_time(cutoff)
-        history_start = cutoff_dt - timedelta(days=90)
-        anchor_value = anchor.get("ts") if isinstance(anchor, dict) else anchor
-        duration = (
-            max(timedelta(days=1), cutoff_dt - parse_time(anchor_value))
-            if anchor_value
-            else timedelta(days=1)
-        )
-        recent_start = max(history_start, cutoff_dt - 2 * duration - timedelta(minutes=1))
-        snapshot_end = cutoff_dt + timedelta(microseconds=1)
-        bounded = {}
-        if scope == "REACTION":
-            anchor_dt = min(parse_time(anchor_value), cutoff_dt) if anchor_value else cutoff_dt
-            recent_start = max(
-                history_start, min(anchor_dt, cutoff_dt - timedelta(days=1)) - timedelta(minutes=1)
-            )
-            bounds = _merge_ranges(
-                [
-                    (anchor_dt - REACTION_BOUND_MARGIN, min(anchor_dt + REACTION_BOUND_MARGIN, snapshot_end)),
-                    (cutoff_dt - REACTION_NEWEST_MARGIN, snapshot_end),
-                ]
-            )
-            bounded = {"books": [(cutoff_dt - REACTION_NEWEST_MARGIN, snapshot_end)], "tickers": bounds}
-        elif scope is None:
-            from tank.analysis.truth import WINDOWS
-
-            edges = {cutoff_dt, *(cutoff_dt - timedelta(seconds=s) for s in WINDOWS.values())}
-            if anchor_value:
-                edges.add(parse_time(anchor_value))
-            bounded = {
-                "books": [(max(recent_start, cutoff_dt - REACTION_NEWEST_MARGIN), snapshot_end)],
-                "tickers": _merge_ranges(
-                    [
-                        (
-                            max(recent_start, edge - TICKER_ASOF_MARGIN),
-                            min(edge + TICKER_MARK_MARGIN, snapshot_end),
-                        )
-                        for edge in edges
-                    ]
-                ),
-            }
-        else:
-            raise ValueError(f"Unknown snapshot scope: {scope}")
         result = {
             "token_id": token_id,
             **requested.fields("cutoff"),
@@ -2195,162 +1201,10 @@ class MarketService:
             "config_version": self.settings.config_version,
             "code_version": self.settings.code_version,
         }
-        instruments = [r for r in self.instruments.values() if r["token_id"] == token_id]
-        ids = {r["instrument_id"] for r in instruments}
-        result["flow_segments"] = []
-        result["reference_points"] = []
-        for name, (collection, field) in COLLECTIONS.items():
-            values = []
-
-            if name in bounded:
-                window_rows = {iid: [] for iid in ids}
-                for low, high in bounded[name]:
-                    part = await self._window_rows(
-                        token_id, collection, field, ids, low, high, books=name == "books"
-                    )
-                    for iid in ids:
-                        window_rows[iid].extend(part[iid])
-            elif name != "supply":
-                window_rows = await self._window_rows(
-                    token_id, collection, field, ids, recent_start, snapshot_end, books=name == "books"
-                )
-            if name == "funding":
-                settled_by_time = await self._ranged(
-                    collection, "funding_time", ids, history_start, snapshot_end
-                )
-            for iid in ids if name != "supply" else [None]:
-                if iid is None:
-                    rows = await self._latest_supply(token_id, cutoff_dt)
-                else:
-                    rows = list(window_rows[iid])
-                if name == "funding":
-                    rows.extend(row for row in settled_by_time[iid] if row.get("as_of") is None)
-                for row in rows:
-                    if name == "flow_bars":
-                        result["flow_segments"].extend(
-                            dict(segment, instrument_id=iid)
-                            for segment in (row.get("boundary_segments") or [])
-                            if parse_time(segment["end"]) <= cutoff_dt
-                        )
-                        result["reference_points"].extend(
-                            dict(point, instrument_id=iid)
-                            for point in (row.get("reference_points") or [])
-                            if parse_time(point["boundary"]) <= cutoff_dt
-                        )
-                    stamp = row.get(field) or row.get("funding_time") or row.get("settlement_time")
-                    if stamp is None or parse_time(stamp) > cutoff_dt:
-                        continue
-                    if (
-                        name in ("flow_bars", "klines")
-                        and parse_time(stamp) + timedelta(minutes=1) > cutoff_dt
-                    ):
-                        continue
-                    if name == "books" and row.get("independent_rest"):
-                        independent = row["independent_rest"]
-                        if any(parse_time(independent[f]) > cutoff_dt for f in ("ts",) if independent.get(f)):
-                            row = dict(
-                                row,
-                                second_path_confirmed=False,
-                                independent_rest=None,
-                                second_path_reason="CONFIRMATION_AFTER_CUTOFF",
-                            )
-                    values.append(row)
-            result[name] = sorted(
-                values, key=lambda r: r.get(field) or r.get("funding_time") or r.get("settlement_time")
-            )
-
-        members = {}
-        for t in self.tokens.values():
-            if t.get("sector"):
-                members.setdefault(t["sector"], set()).add(t["token_id"])
-        for basket in self.sector_baskets:
-            if basket.get("sector"):
-                members.setdefault(basket["sector"], set()).update(basket.get("constituents", []))
-        sector = next(
-            (name for name, ids_ in members.items() if token_id in ids_ and name != "BENCHMARK"),
-            self.tokens.get(token_id, {}).get("sector"),
-        )
-        same_sector = members.get(sector, set()) - {token_id} if sector != "BENCHMARK" else set()
-
-        if len(same_sector) < 2 and sector != "IDENTITY_PAYMENTS":
-            same_sector |= {
-                identity
-                for name in (
-                    "DEX_EXECUTION",
-                    "LENDING_CREDIT",
-                    "PERP_DEX",
-                    "RWA",
-                    "INTEROPERABILITY",
-                    "SYNTHETIC_DOLLAR",
-                )
-                for identity in members.get(name, ())
-            }
-        peers = {
-            t["token_id"]
-            for t in self.tokens.values()
-            if t.get("symbol") in ("BTC", "ETH") or t["token_id"] in same_sector
-        } - {token_id}
-        shared = _SHARED_READS.get()
-        assembled = shared.setdefault("assembled", iso()) if shared is not None else iso()
-
-        all_spot = [
-            inst
-            for inst in self.instruments.values()
-            if norm.venue_key(inst).endswith(".spot") and inst["token_id"] in peers | {token_id}
-        ]
-        counts = await self._shared_call(
-            ("counts", tuple(inst["instrument_id"] for inst in all_spot), history_start, cutoff_dt),
-            lambda: self._series_counts(
-                [inst["instrument_id"] for inst in all_spot], history_start, cutoff_dt, assembled
-            ),
-        )
-        result["series_coverage_counts"] = counts
-        latest_closes = (
-            {
-                row["instrument_id"]: row
-                for row in await self._shared_call(
-                    (
-                        "latest_closes",
-                        tuple(sorted(ids | {inst["instrument_id"] for inst in all_spot})),
-                        cutoff_dt,
-                    ),
-                    lambda: self.repo.latest_market_records(
-                        "mkt.klines_1m",
-                        time_field="open_time",
-                        instrument_ids=sorted(ids | {inst["instrument_id"] for inst in all_spot}),
-                        start=cutoff_dt - timedelta(days=90),
-                        cutoff=cutoff_dt - timedelta(minutes=1),
-                        assembled_at=assembled,
-                    ),
-                )
-            }
-            if all_spot
-            else {}
-        )
-        present_closes = {(row["instrument_id"], parse_time(row["open_time"])) for row in result["klines"]}
-
-        async def retain_close(row):
-            if row is not None:
-                identity = (row["instrument_id"], parse_time(row["open_time"]))
-                if identity not in present_closes:
-                    present_closes.add(identity)
-                    result["klines"].append(row)
-
-        for inst in instruments:
-            iid = inst["instrument_id"]
-            await retain_close(latest_closes.get(iid))
-        for inst in self.instruments.values():
-            if inst["token_id"] in peers and norm.venue_key(inst).endswith(".spot"):
-                instruments.append(inst)
-                await retain_close(latest_closes.get(inst["instrument_id"]))
-        result["semantics"] = self._instrument_semantics(instruments)
-        result["instruments"] = instruments
-        result["tokens"] = list(self.tokens.values())
-        result["sector_baskets"] = deepcopy(self.sector_baskets)
-        runs = await self._shared_call(
-            ("runs", token_id),
-            lambda: self.repo.list("mkt.backfill_runs", filters={"token_id": token_id}, limit=10000),
-        )
+        assembled = iso()
+        result.update(await self._registry_inputs(token_id, cutoff_dt, assembled))
+        result["supply"] = await self._latest_supply(token_id, cutoff_dt)
+        runs = await self.repo.list("mkt.backfill_runs", filters={"token_id": token_id}, limit=10000)
         anchor_ts = (
             anchor.get("ts") if isinstance(anchor, dict) else iso(anchor) if anchor is not None else None
         )
@@ -2370,22 +1224,9 @@ class MarketService:
             result["capture_status"]["bounded_wait_s"] = waited["bounded_wait_s"]
             if latest["status"] in ("PENDING", "RUNNING"):
                 result["capture_status"].update(waited)
-        result["capture_metadata"] = await self._shared_call(
-            ("capture_metadata", token_id, cutoff), lambda: self._capture_metadata(token_id, cutoff)
-        )
         result["capture_tier"] = result["capture_metadata"]["tier"]
-        self._snapshot_heads(result, cutoff_dt)
         result.update(collection_clock(iso()).fields("assembled_at"))
         return result
-
-    @staticmethod
-    def _snapshot_heads(result, cutoff_dt):
-        """Dependency heads for Market Truth's cross-assessment caches, from the returned data
-        (no DB calls)."""
-        result["domain_dependency_fingerprints"] = {
-            name: sha256(sorted(r.get("semantic_fingerprint") or sha256(r) for r in result.get(name, [])))
-            for name in ("oi", "funding")
-        }
 
     async def coverage(self):
         hot = {r["token_id"] for r in await self.repo.list("mkt.hot_tokens", limit=10000)}

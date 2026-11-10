@@ -358,6 +358,9 @@ class OiEndpoint(Record):
     excluded_timestamp_precision: str | None
     excluded_ts_bucket_size_s: float | None
     excluded_ts_bucket_anchor: str | None
+    start_ts_prec: str | None = None
+    start_timestamp_precision: str | None = None
+    start_ts_bucket_size_s: float | None = None
 
 
 @dataclass(frozen=True)
@@ -381,7 +384,8 @@ class FundingVenue(Record):
     None where the rate is missing or the interval is missing or 0. The settled and the estimate columns are of
     the latest SETTLED and CURRENT_ESTIMATE row, the `start_*` columns of the latest SETTLED row at or before the
     window start. The history is the settled 8-hour-equivalent rates before the window start: its sample count,
-    the first and the last time and the 0.025 and 0.975 quantiles; None where there is none."""
+    the first and the last time and the 0.025 and 0.975 quantiles; None where there is none. `*_at_prec` and
+    `*_at_prec_reason` are the precision of the time `*_at` as stored."""
 
     statement = "funding"
     window: str
@@ -402,6 +406,12 @@ class FundingVenue(Record):
     history_last: datetime | None
     normal_low: float | None
     normal_high: float | None
+    settled_at_prec: str | None = None
+    settled_at_prec_reason: str | None = None
+    estimate_at_prec: str | None = None
+    estimate_at_prec_reason: str | None = None
+    start_at_prec: str | None = None
+    start_at_prec_reason: str | None = None
 
 
 NO_FUNDING_VENUE = FundingVenue(
@@ -760,3 +770,64 @@ class SupplyEvidence:
 
 
 NO_SUPPLY = SupplyEvidence()
+
+
+@dataclass(frozen=True)
+class TickerVolume(Record):
+    """The native 24-hour volume of the latest ticker of one instrument at the cutoff, as the stored decimal text;
+    None when that ticker has none (ticker_volumes.sql)."""
+
+    statement = "ticker_volumes"
+    instrument_id: str
+    observed_at: datetime
+    volume_native: Decimal | None
+
+
+@dataclass(frozen=True)
+class LeadLagBars(Record):
+    """The one-minute klines of one instrument over the lead-lag window (lead_lag.sql): how many there are,
+    whether they are all complete and contiguous (`usable`) and the open time of the first bar that left the
+    normal range, None when none did."""
+
+    statement = "lead_lag"
+    instrument_id: str
+    bars: int
+    usable: int
+    first_exit_at: datetime | None
+
+
+@dataclass(frozen=True)
+class SeriesHealth(Record):
+    """What the data-quality rules read of one market series of one instrument and key (series_health.sql): the
+    number of rows that count, the latest one with the precision of its time as stored, the close or time of the
+    latest row that is fit to be freshness evidence, and for klines the USD volume of the last 24 hours."""
+
+    statement = "series_health"
+    series: str
+    instrument_id: str
+    metric_key: str | None
+    kind: str | None
+    rows: int
+    last_at: datetime | None
+    last_interval_s: int
+    last_prec: str | None
+    last_prec_reason: str | None
+    last_timestamp_precision: str | None
+    last_bucket_size_s: float | None
+    last_bucket_anchor: str | None
+    last_interval_h: float | None
+    valid_at: datetime | None
+    usd_volume: float | None
+
+
+@dataclass(frozen=True)
+class SeriesEvidence:
+    """Everything the lead-lag, ticker-volume and data-quality rules of a snapshot read from ClickHouse: the latest
+    tickers, the lead-lag bars of each instrument and the series health."""
+
+    tickers: tuple[TickerVolume, ...] = ()
+    lead_lag: tuple[LeadLagBars, ...] = ()
+    health: tuple[SeriesHealth, ...] = ()
+
+
+NO_SERIES = SeriesEvidence()

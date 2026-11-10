@@ -26,7 +26,7 @@ def _number(value):
 
 
 def _when(row):
-    return truth._observation_time(row)
+    return truth._time(row)
 
 
 def _venue(row):

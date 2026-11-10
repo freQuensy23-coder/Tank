@@ -467,6 +467,8 @@ def test_reference_anchor_entry_and_btc_reference_come_from_the_reference_rows()
         instrument_id="A:spot:BTC",
         entry_ref_price=Decimal("75000.5"),
         observed_at=iso(END - timedelta(minutes=1)),
+        observed_at_prec="BUCKET(60s)",
+        observed_at_prec_reason=None,
         price_source="KLINE_CLOSE",
         reason=None,
     )
@@ -504,27 +506,27 @@ def test_the_condition_close_is_the_hourly_close_of_the_cutoff_hour_only():
     assert nothing["ref_venue"] is None and nothing["close_1h_price"] is None
 
 
-def test_condition_results_are_keyed_by_the_statement_records():
+def test_condition_dependency_is_keyed_by_the_statement_records():
     first = start_evidence(END, START)
-    second = with_references(first, last_close=Decimal("1"))
     requirements = [dict(metric="price.close_vs_level", window="W1H")]
-    cache = {}
-    one = truth.compute_condition_values(
-        dict(token_id="T", cutoff=iso(END), relative_sql=first), requirements, cache=cache
-    )
-    again = truth.compute_condition_values(
-        dict(token_id="T", cutoff=iso(END), relative_sql=first), requirements, cache=cache
-    )
-    other = truth.compute_condition_values(
-        dict(token_id="T", cutoff=iso(END), relative_sql=with_references(first, hourly_close=Decimal("7"))),
-        requirements,
-        cache=cache,
-    )
-    assert one["_condition_evaluation"]["proofs"][0]["reused"] is False
-    assert again["_condition_evaluation"]["proofs"][0]["reused"] is True
-    assert other["_condition_evaluation"]["proofs"][0]["reused"] is False
+
+    def evaluate(evidence):
+        return truth.compute_condition_values(
+            dict(token_id="T", cutoff=iso(END), relative_sql=evidence), requirements
+        )
+
+    one, again = evaluate(first), evaluate(first)
+    other = evaluate(with_references(first, hourly_close=Decimal("7")))
+
+    def proof(value):
+        return value["_condition_evaluation"]["proofs"][0]
+
+    assert proof(one)["dependency_fingerprint"] == proof(again)["dependency_fingerprint"]
+    assert proof(other)["dependency_fingerprint"] != proof(one)["dependency_fingerprint"]
+    assert one["_condition_evaluation"]["request_key"] == again["_condition_evaluation"]["request_key"]
+    assert other["_condition_evaluation"]["request_key"] != one["_condition_evaluation"]["request_key"]
+    assert [proof(value)["reused"] for value in (one, again, other)] == [False, False, False]
     assert other["relative"]["close_1h_price"] == "7"
-    assert second is not first
     assert horizon("W1H").length_s == 3600
 
 

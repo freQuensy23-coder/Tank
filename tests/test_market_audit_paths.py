@@ -15,6 +15,7 @@ from funding_helpers import confirmation, rate, start
 from funding_helpers import evidence as funding_evidence
 from liquidity_helpers import liquidity_evidence
 from oi_helpers import evidence as oi_evidence
+from series_helpers import series_evidence
 from volume_helpers import buckets, evidence
 
 from tank.analysis.truth import (
@@ -275,6 +276,7 @@ def derive(packet, start=START, end=END):
     seconds = (end - start).total_seconds()
     packet["flow_sql"] = flow_evidence(packet, windows={"EVENT": seconds, "W15M": 900})
     spot = spot_truth(packet["flow_bars"], [], packet["instruments"], start, end)
+    packet["series_sql"] = series_evidence(packet, end=end, start=start, normal=[-0.01, 0.01])
 
     packet["liquidity_sql"] = liquidity_evidence(
         packet,

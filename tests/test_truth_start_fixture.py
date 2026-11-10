@@ -126,6 +126,7 @@ def synthetic_start_snapshot():
                 }
             )
     btc = "A:spot:BTC"
+    snap["instruments"].append({"instrument_id": btc, "token_id": "BTC", "venue": "A", "market_type": "SPOT"})
     for h in range(-192, 0):
         snap["klines"].append(
             {
@@ -351,13 +352,12 @@ def test_legacy_semantic_status_cannot_reduce_confidence_or_mask_real_freshness(
         assert missing["data_confidence"]["limiting"]["condition"] == "freshness"
 
 
-def test_missing_instrument_registry_and_selftest_records_do_not_cap_observed_confidence():
+def test_selftest_records_do_not_cap_observed_confidence():
     snapshot = compact_start_snapshot()
     end = parse_time(snapshot["cutoff"])
     baseline = compute_market_truth(snapshot)
     assert baseline["data_confidence"]["class"] == "HIGH"
 
-    snapshot["instruments"] = []
     for row in snapshot["semantics"]:
         row["semantic_confidence"] = "DOCUMENTED_UNTESTED"
     observed = compute_market_truth(snapshot)

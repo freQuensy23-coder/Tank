@@ -114,7 +114,7 @@ def test_t6_funding_normalization_no_market_average():
     from tank.analysis.truth import derivatives_truth
 
     ids = [f"{v}:perp:T" for v in ("X", "Y", "Z")]
-    oi = [dict(instrument_id=iid, ts=iso(END), oi_native=100, oi_usd=100) for iid in ids]
+    instruments = [dict(instrument_id=iid) for iid in ids]
     funding = evidence(
         END,
         ids,
@@ -123,7 +123,9 @@ def test_t6_funding_normalization_no_market_average():
             None: {"X:perp:T": rate(0.0001, 8), "Y:perp:T": rate(0.00005, 4), "Z:perp:T": rate(0.00002, 1)}
         },
     )
-    d = derivatives_truth(dict(oi=oi, funding_sql=funding, _primary="EVENT"), END - timedelta(hours=4), END)
+    d = derivatives_truth(
+        dict(instruments=instruments, funding_sql=funding, _primary="EVENT"), END - timedelta(hours=4), END
+    )
     assert [v["funding_8h_eq"] for v in d["per_venue"]] == [
         Decimal(".0001"),
         Decimal(".0001"),

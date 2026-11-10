@@ -6,6 +6,7 @@ from decimal import Decimal
 from types import SimpleNamespace
 
 import pytest
+from flow_helpers import flow_evidence
 from funding_helpers import estimate, rate
 from funding_helpers import evidence as funding_evidence
 from relative_helpers import with_references
@@ -65,9 +66,8 @@ def test_selective_same_input_parity_and_no_unrequested_domains(monkeypatch, bas
     assert "_condition_evaluation" in selected and "mta_id" not in selected
 
 
-def test_identical_closed_window_inputs_reused_but_corrected_row_invalidates(monkeypatch):
+def test_request_key_follows_the_statement_records_and_each_request_computes_its_domain_once(monkeypatch):
     packet = snapshot()
-    cache = {}
     calls = []
     original = module.spot_truth
 
@@ -77,14 +77,14 @@ def test_identical_closed_window_inputs_reused_but_corrected_row_invalidates(mon
 
     monkeypatch.setattr(module, "spot_truth", counted)
     requirements = REQUIREMENTS[:2]
-    first = module.compute_condition_values(packet, requirements, cache=cache)
-    second = module.compute_condition_values(packet, requirements, cache=cache)
-    assert len(calls) == 1
-    assert all(p["reused"] for p in second["_condition_evaluation"]["proofs"])
+    first = module.compute_condition_values(packet, requirements)
+    second = module.compute_condition_values(packet, requirements)
+    assert len(calls) == 2
+    assert [p["reused"] for p in second["_condition_evaluation"]["proofs"]] == [False, True]
+    assert second["_condition_evaluation"]["request_key"] == first["_condition_evaluation"]["request_key"]
     changed = deepcopy(packet)
     changed["flow_bars"][-1]["buy_qty"] = "101"
-    third = module.compute_condition_values(changed, requirements, cache=cache)
-    assert len(calls) == 2
+    third = module.compute_condition_values(changed, requirements)
     assert third["_condition_evaluation"]["request_key"] != first["_condition_evaluation"]["request_key"]
 
 
@@ -132,7 +132,7 @@ def test_composite_requests_do_not_execute_full_assessment(monkeypatch):
     assert evaluation["request_key"]
 
 
-def test_unchanged_cached_funding_never_overrides_its_actual_capture_cadence():
+def test_stale_funding_is_judged_by_its_actual_capture_cadence():
     from datetime import timedelta
 
     from tank.util import parse_time
@@ -142,13 +142,11 @@ def test_unchanged_cached_funding_never_overrides_its_actual_capture_cadence():
     packet["capture_metadata"] = {"tier": "HOT", "collections": {"funding": {"cadence_s": 60}}}
     packet["funding"] = [row for row in packet["funding"] if module._time(row) <= end - timedelta(seconds=90)]
     req = [dict(metric="deriv.funding_vs_normal", window="W1H")]
-    cache = {}
-    for _ in range(2):
-        result = module.compute_condition_values(packet, req, cache=cache)
-        assert metric_value(result, {}, "deriv.funding_vs_normal", "W1H") is None
-        proof = result["_condition_evaluation"]["proofs"][0]
-        assert proof["reason"] == "INCOMPLETE"
-        assert proof["observations"][0]["cadence_s"] == 60
+    result = module.compute_condition_values(packet, req)
+    assert metric_value(result, {}, "deriv.funding_vs_normal", "W1H") is None
+    proof = result["_condition_evaluation"]["proofs"][0]
+    assert proof["reason"] == "INCOMPLETE"
+    assert proof["observations"][0]["cadence_s"] == 60
 
 
 def test_completed_close_uses_the_reference_venue_the_statement_chose():
@@ -202,26 +200,8 @@ def test_missing_completed_hour_close_is_not_replaced_by_an_older_hour():
     assert result["_condition_evaluation"]["unavailable_metrics"][0]["reason"] == "INCOMPLETE"
 
 
-def test_proven_source_heads_avoid_serializing_full_history_for_cache_identity(monkeypatch):
-    packet = snapshot()
-    packet["domain_dependency_fingerprints"] = {"oi": "ACTUAL-SOURCE-HEAD"}
-    packet["history_dependency_fingerprints"] = {"oi": {"W1H": "ACTUAL-ELIGIBLE-HISTORY-HEAD"}}
-    original = module.fingerprint
-
-    def no_full_history(value):
-        if isinstance(value, list) and value and isinstance(value[0], tuple) and len(value[0]) == 3:
-            pytest.fail("Full historical native/USD arrays rehashed despite proven head")
-        if isinstance(value, dict) and "oi" in value:
-            pytest.fail("Whole OI domain rehashed despite proven head")
-        return original(value)
-
-    monkeypatch.setattr(module, "fingerprint", no_full_history)
-    result = module.compute_condition_values(packet, [dict(metric="deriv.native_oi_vs_normal", window="W1H")])
-    assert metric_value(result, {}, "deriv.native_oi_vs_normal", "W1H") == "WITHIN"
-
-
 @pytest.mark.asyncio
-async def test_actual_market_loader_selective_sql_footprint_and_no_assessment_writes(
+async def test_actual_market_loader_reads_no_series_and_writes_no_assessments(
     tmp_path, monkeypatch, relative_statements
 ):
     import httpx
@@ -273,6 +253,7 @@ async def test_actual_market_loader_selective_sql_footprint_and_no_assessment_wr
         ),
     )
     relative_statements.evidence = packet["relative_sql"]
+    relative_statements.flow = flow_evidence(packet)
     async with httpx.AsyncClient() as http:
         market = MarketService(repo, settings, http=http)
         monkeypatch.setattr(market, "snapshot", forbidden)
@@ -286,7 +267,7 @@ async def test_actual_market_loader_selective_sql_footprint_and_no_assessment_wr
         result = await truth.condition_values("E", "T", packet["cutoff"], req)
     assert result["spot"]["W1H"]["direction"] == "BUY"
     assert Decimal(result["relative"]["close_1h_price"]) == Decimal("101.1")
-    assert set(reads) == {"mkt.flow_bars_1m", "mkt.klines_1m"}
+    assert reads == []
     assert "mta_id" not in result
 
 
@@ -412,7 +393,7 @@ def test_compact_statistical_projections_preserve_full_catalog_and_exact_prices(
     assert actual["_condition_evaluation"]["requires_market_truth"] == []
 
 
-def test_composite_primary_graph_reused_across_requested_windows(monkeypatch, baseline_truth):
+def test_composite_primary_graph_is_computed_once_for_the_requested_windows(monkeypatch, baseline_truth):
     packet = snapshot()
     full = baseline_truth()
     calls = []
@@ -423,21 +404,19 @@ def test_composite_primary_graph_reused_across_requested_windows(monkeypatch, ba
         return original(*args, **kwargs)
 
     monkeypatch.setattr(module, "derivatives_truth", counted)
-    cache = {}
-    baselines = {}
-    for window in ("W1H", "W4H"):
-        result = module.compute_condition_values(
-            packet,
-            [
-                dict(metric="mt.move_class", window=window),
-                dict(metric="mt.divergence_state", window=window),
-            ],
-            cache=cache,
-            baseline_cache=baselines,
-        )
+    windows = ("W1H", "W4H")
+    result = module.compute_condition_values(
+        packet,
+        [
+            dict(metric=metric, window=window)
+            for window in windows
+            for metric in ("mt.move_class", "mt.divergence_state")
+        ],
+    )
+    for window in windows:
         for metric in ("mt.move_class", "mt.divergence_state"):
             assert metric_value(result, {}, metric, window) == metric_value(full, {}, metric, window)
-        assert result["_condition_evaluation"]["requires_market_truth"] == []
+    assert result["_condition_evaluation"]["requires_market_truth"] == []
     assert len(calls) == 1
 
 
@@ -447,9 +426,8 @@ def test_composite_conditions_change_from_unknown_when_actual_evidence_arrives()
     missing["flow_bars"] = []
     missing["flow_segments"] = []
     requirements = [dict(metric="mt.move_class", window="W1H")]
-    cache = {}
-    before = module.compute_condition_values(missing, requirements, cache=cache)
-    after = module.compute_condition_values(complete, requirements, cache=cache)
+    before = module.compute_condition_values(missing, requirements)
+    after = module.compute_condition_values(complete, requirements)
     assert metric_value(before, {}, "mt.move_class", "W1H") == "UNKNOWN"
     assert metric_value(after, {}, "mt.move_class", "W1H") == "SPOT_LED_ACCUMULATION"
     assert after["_condition_evaluation"]["requires_market_truth"] == []
@@ -492,20 +470,16 @@ async def test_selective_relative_uses_canonical_latest_beneficiary_direction():
     assert actual["relative"]["repricing_band"] == expected["relative"]["repricing_band"]
 
 
-def test_beneficiary_direction_invalidates_market_head_cache():
+def test_beneficiary_direction_is_part_of_the_condition_key():
     packet = snapshot()
-    packet["domain_dependency_fingerprints"] = {"relative": "unchanged-price-source-head"}
-    cache = {}
     requirements = [dict(metric="price.repricing_band", window="EVENT")]
-    first = module.compute_condition_values(
-        dict(packet, expected_direction="BULLISH"), requirements, cache=cache
-    )
-    second = module.compute_condition_values(
-        dict(packet, expected_direction="LOSER"), requirements, cache=cache
-    )
+    first = module.compute_condition_values(dict(packet, expected_direction="BULLISH"), requirements)
+    second = module.compute_condition_values(dict(packet, expected_direction="LOSER"), requirements)
     assert first["relative"]["expected_direction"] == "BULLISH"
     assert second["relative"]["expected_direction"] == "LOSER"
-    assert second["_condition_evaluation"]["proofs"][0]["reused"] is False
+    keys = [value["_condition_evaluation"] for value in (first, second)]
+    assert keys[0]["request_key"] != keys[1]["request_key"]
+    assert keys[0]["proofs"][0]["dependency_fingerprint"] != keys[1]["proofs"][0]["dependency_fingerprint"]
 
 
 def test_complete_market_condition_catalog_matches_same_input_full_truth(baseline_truth):
