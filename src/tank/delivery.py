@@ -408,10 +408,13 @@ class DeliveryService:
             if not self.settings.telegram_token or not chat:
                 raise ValueError("Telegram token and destination must be configured")
             rich_message = record.get("rich_message") if not notice else None
-            method = "sendRichMessage" if rich_message else "sendMessage"
+            document = record.get("document") if notice else None
+            method = "sendRichMessage" if rich_message else "sendDocument" if document else "sendMessage"
             body = {"chat_id": chat}
             if rich_message:
                 body["rich_message"] = rich_message
+            elif document:
+                body.update(caption=html.escape(record["text"]), parse_mode="HTML")
             else:
                 body.update(
                     text=html.escape(record["text"]) if notice else telegram_card_html(record["card_text"]),
@@ -443,9 +446,12 @@ class DeliveryService:
             await self.repo.put("out.deliveries", new_id("delivery"), transition, immutable=True)
             response_status = None
             try:
-                response = await self.http.post(
-                    f"https://api.telegram.org/bot{self.settings.telegram_token}/{method}", json=body
-                )
+                url = f"https://api.telegram.org/bot{self.settings.telegram_token}/{method}"
+                if document:
+                    attached = (document["filename"], document["text"].encode(), "text/plain")
+                    response = await self.http.post(url, data=body, files={"document": attached})
+                else:
+                    response = await self.http.post(url, json=body)
                 response_status = response.status_code
                 data = response.json()
                 if response.status_code != 200 or not data.get("ok"):

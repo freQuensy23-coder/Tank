@@ -31,24 +31,8 @@ TEXT = '.whitespace-pre-wrap, [data-testid="tweetText"]'
 SNOWFLAKE_EPOCH_MS = 1288834974657
 FIRST_DATED_ID = 10**11
 BODY_LIMIT = 2_000_000
-RUN_EVIDENCE_LIMIT = 12_000_000
 REFERENCE_FETCH_LIMIT = 24
-REFERENCE_EVIDENCE_LIMIT = 4096
 PROFILE_ORIGIN = "https://x.com/"
-DIAGNOSTIC_HEADERS = {
-    "content-type",
-    "content-encoding",
-    "content-length",
-    "retry-after",
-    "server",
-    "date",
-    "x-request-id",
-    "x-transaction-id",
-    "cf-ray",
-    "x-rate-limit-limit",
-    "x-rate-limit-remaining",
-    "x-rate-limit-reset",
-}
 
 
 class ProfileFailure(RuntimeError):
@@ -76,31 +60,30 @@ def redact(value):
     )
 
 
-async def read_body(response, parts, limit=BODY_LIMIT):
+async def read_body(response, parts, limit=None):
+    """Read the body into parts: all of it, or with a limit one byte past it, which marks a page as too large."""
     size = 0
     async for part in response.aiter_raw():
-        captured = part[: limit + 1 - size]
+        captured = part if limit is None else part[: limit + 1 - size]
         parts.append(captured)
         size += len(captured)
-        if size > limit:
+        if limit is not None and size > limit:
             break
 
 
-def response_evidence(response, raw, read_error=None, limit=BODY_LIMIT, serialized_limit=None):
-    headers = {
-        name.lower(): redact(value)
-        for name, value in response.headers.items()
-        if name.lower() in DIAGNOSTIC_HEADERS
-    }
-    truncated = len(raw) > limit
-    captured = raw[:limit]
+def response_evidence(response, raw, read_error=None):
+    """An error response as X sent it: the status, every header and the whole body that was read.
+
+    Credential values are redacted in the header values and in the body; nothing else is left out."""
+    headers = [
+        [name, redact(f"{name}: {value}")[len(name) + 2 :]] for name, value in response.headers.multi_items()
+    ]
+    captured = raw
     encoding_error = None
-    if headers.get("content-encoding", "").lower() == "gzip":
+    if response.headers.get("content-encoding", "").lower() == "gzip":
         try:
-            with gzip.GzipFile(fileobj=io.BytesIO(captured)) as decoded:
-                captured = decoded.read(limit + 1)
-            truncated = truncated or len(captured) > limit
-            captured = captured[:limit]
+            with gzip.GzipFile(fileobj=io.BytesIO(raw)) as decoded:
+                captured = decoded.read()
         except (OSError, EOFError, zlib.error):
             encoding_error = "GZIP_DECODE_FAILED_WIRE_PREFIX"
     original = captured
@@ -116,17 +99,8 @@ def response_evidence(response, raw, read_error=None, limit=BODY_LIMIT, serializ
     else:
         body = base64.b64encode(safe).decode("ascii")
     redacted = original != safe
-    if serialized_limit is not None and len(json.dumps(body, ensure_ascii=True)) > serialized_limit:
-        safe = safe[: serialized_limit // 6]
-        if textual:
-            body = safe.decode("utf-8", errors="ignore")
-            safe = body.encode("utf-8")
-        else:
-            body = base64.b64encode(safe).decode("ascii")
-        truncated = True
-    length = headers.get("content-length", "")
+    length = response.headers.get("content-length", "")
     total = int(length) if length.isdecimal() and len(length) <= 20 else None
-    truncated = truncated or (total is not None and total > len(raw))
     return {
         "status": response.status_code,
         "headers": headers,
@@ -134,11 +108,9 @@ def response_evidence(response, raw, read_error=None, limit=BODY_LIMIT, serializ
         "bodyEncoding": "utf-8" if textual else "base64",
         "bodyBytes": len(safe),
         "bodySha256": hashlib.sha256(safe).hexdigest(),
-        "wireBytes": min(len(raw), limit),
-        "captureLimitBytes": limit,
-        "serializedBodyLimitBytes": serialized_limit,
-        "bodyTruncated": truncated or read_error is not None,
-        "omittedWireBytes": max(0, total - min(len(raw), limit)) if total is not None else None,
+        "wireBytes": len(raw),
+        "bodyTruncated": read_error is not None or (total is not None and total > len(raw)),
+        "omittedWireBytes": max(0, total - len(raw)) if total is not None else None,
         "readError": read_error,
         "decodeError": encoding_error,
         "redacted": redacted,
@@ -397,26 +369,26 @@ def parse_post(raw, post_id):
     raise RuntimeError("PUBLIC_POST_NOT_READABLE")
 
 
-async def fetch_profile(handle, deadline=None, evidence_limit=BODY_LIMIT):
+async def fetch_profile(handle, deadline=None):
     return await fetch_public(
         PROFILE_ORIGIN + urllib.parse.quote(handle),
         lambda raw: parse_profile(raw, handle),
         "PROFILE",
         deadline,
-        evidence_limit,
     )
 
 
 async def fetch_post(author, post_id, deadline):
     url = PROFILE_ORIGIN + urllib.parse.quote(author or "i") + "/status/" + post_id
-    found, _ = await fetch_public(
-        url, lambda raw: parse_post(raw, post_id), "POST", deadline, REFERENCE_EVIDENCE_LIMIT
-    )
+    found, _ = await fetch_public(url, lambda raw: parse_post(raw, post_id), "POST", deadline)
     return found
 
 
-async def fetch_public(url, parse, subject, deadline=None, evidence_limit=BODY_LIMIT):
-    """GET one signed-out x.com page with bounded retries and parse it; failures carry diagnostics."""
+async def fetch_public(url, parse, subject, deadline=None):
+    """GET one signed-out x.com page and parse it; failures carry diagnostics.
+
+    A request that X answers with an HTTP error status, or that fails in transport, is made
+    three times: at once, 1 s later and 5 s after that, within the run deadline."""
     deadline = run_deadline() if deadline is None else deadline
     diagnostics = {
         "request": {"method": "GET", "url": url, "body": None},
@@ -425,7 +397,6 @@ async def fetch_public(url, parse, subject, deadline=None, evidence_limit=BODY_L
         "outcome": "exhausted",
     }
     reason = f"PUBLIC_{subject}_DEADLINE_EXHAUSTED"
-    capture_limit = min(BODY_LIMIT, evidence_limit)
 
     async def trace(name, info):
         if name == "connection.connect_tcp.complete":
@@ -471,9 +442,7 @@ async def fetch_public(url, parse, subject, deadline=None, evidence_limit=BODY_L
                             "www.twitter.com",
                         ):
                             raise RuntimeError(f"UNEXPECTED_PUBLIC_{subject}_REDIRECT")
-                        await read_body(
-                            response, parts, capture_limit if response.status_code >= 400 else BODY_LIMIT
-                        )
+                        await read_body(response, parts, None if response.status_code >= 400 else BODY_LIMIT)
                 if response.status_code < 400:
                     compressed = b"".join(parts)
                     if len(compressed) > BODY_LIMIT:
@@ -502,11 +471,9 @@ async def fetch_public(url, parse, subject, deadline=None, evidence_limit=BODY_L
                 reason = f"PUBLIC_{subject}_NOT_READABLE"
             if response is not None and response.status_code >= 400:
                 reason = f"PUBLIC_{subject}_HTTP_{response.status_code}"
-                retryable = response.status_code in (408, 429) or 500 <= response.status_code <= 599
+                retryable = True
             if response is not None and (response.status_code >= 400 or read_error):
-                attempt["response"] = response_evidence(
-                    response, b"".join(parts), read_error, capture_limit, evidence_limit
-                )
+                attempt["response"] = response_evidence(response, b"".join(parts), read_error)
                 attempt["status"] = response.status_code
             attempt.update(error=reason, retryable=retryable)
             diagnostics["attempts"].append(attempt)
@@ -524,7 +491,8 @@ async def resolve_references(pairs, account_state, semaphore, deadline):
     """Read the text of posts that new posts reply to or link but whose page did not carry it.
 
     Only posts above an account's cursor are new to Tank, so baseline reads fetch nothing.
-    A post that cannot be read keeps its reference with the reason in "error".
+    A post that cannot be read keeps its reference with the reason in "error" and the
+    requests made for it in "diagnostics".
     """
     pending = {}
     for records, report in pairs:
@@ -544,7 +512,7 @@ async def resolve_references(pairs, account_state, semaphore, deadline):
                 found = await fetch_post(refs[0]["author"], post_id, deadline)
             except RuntimeError as exc:
                 for ref in refs:
-                    ref["error"] = str(exc)
+                    ref.update(error=str(exc), diagnostics=getattr(exc, "diagnostics", None))
                 return
         for ref in refs:
             ref.update({key: value for key, value in found.items() if value is not None})
@@ -565,13 +533,12 @@ async def collect(config, known_ids, cutoff):
         raise RuntimeError("INVALID_MONITORED_HANDLE")
     semaphore = asyncio.Semaphore(max(1, min(8, int(config.get("concurrency", 6)))))
     account_state = config.get("_accountState") or {}
-    evidence_limit = RUN_EVIDENCE_LIMIT // (3 * len(names))
 
     async def one(handle):
         async with semaphore:
             stamp = time.time()
             try:
-                rows, size = await fetch_profile(handle, deadline, evidence_limit)
+                rows, size = await fetch_profile(handle, deadline)
                 previous = account_state.get(handle) or {}
                 previous_max = previous.get("lastMaxId")
                 current_max = max(int(r["id"]) for r in rows)

@@ -11,7 +11,7 @@ from test_sources import Repo, settings
 
 from tank.agents.pipeline import Pipeline
 from tank.sources import SourceService
-from tank.sources.xsensor import ERROR_BODY_BYTES, AccountFailure, ApifyPost, ApifyRunFailed, XSensor
+from tank.sources.xsensor import AccountFailure, ApifyPost, ApifyRun, ApifyRunFailed, XSensor, scan
 
 URL = "https://api.apify.com/v2/actors/actor/run-sync?build=direct&memory=256&timeout=110"
 
@@ -156,10 +156,11 @@ async def test_a_failed_or_unreadable_run_raises():
 
 
 @pytest.mark.asyncio
-async def test_run_sync_http_error_keeps_status_safe_headers_and_redacted_body():
+async def test_run_sync_http_error_keeps_status_every_header_and_the_whole_redacted_body():
     token = "FAKE-token"
     error = {"error": {"type": "run-timeout", "message": f"Actor run timed out; token={token}"}}
-    answers = [json.dumps(error).encode(), ("Bearer " + token + " " + "x" * 3 * ERROR_BODY_BYTES).encode()]
+    long_body = "Bearer " + token + " " + "x" * 30_000 + " END"
+    answers = [json.dumps(error).encode(), long_body.encode()]
 
     def respond(request):
         return httpx.Response(
@@ -179,19 +180,108 @@ async def test_run_sync_http_error_keeps_status_safe_headers_and_redacted_body()
     assert response["status"] == 400 and response["reason_phrase"] == "Bad Request"
     assert response["headers"] == {
         "content-type": "application/json",
+        "set-cookie": "session=s",
+        "x-auth": "[REDACTED]",
         "content-length": str(response["body_bytes"]),
     }
     assert json.loads(response["body"])["error"] == {
         "type": "run-timeout",
         "message": "Actor run timed out; token=[REDACTED]",
     }
-    assert not response["body_truncated"] and token not in json.dumps(failure)
+    assert token not in json.dumps(failure)
     with pytest.raises(ApifyRunFailed) as large:
         await sensor.posts(URL, ["ethereum"], {"ethereum": "1"})
     response = large.value.failure["response"]
-    assert response["body"].startswith("Bearer [REDACTED] xxx") and len(response["body"]) == ERROR_BODY_BYTES
-    assert response["body_truncated"] and response["body_bytes"] > 3 * ERROR_BODY_BYTES
+    assert response["body"] == "Bearer [REDACTED] " + "x" * 30_000 + " END"
+    assert response["body_bytes"] == len(long_body) and set(response) == {
+        "status",
+        "reason_phrase",
+        "headers",
+        "body",
+        "body_bytes",
+    }
     assert small.value.__cause__ is None and large.value.__cause__ is None
+
+
+def test_scan_reports_failures_with_the_requests_the_worker_made_to_x():
+    def evidence(url, status):
+        attempt = {"error": f"HTTP_{status}", "status": status, "response": {"status": status, "body": "b"}}
+        return {
+            "request": {"method": "GET", "url": url, "body": None},
+            "attempts": [{**attempt, "attempt": number} for number in (1, 2, 3)],
+            "outcome": "exhausted",
+        }
+
+    blocked = evidence("https://x.com/blocked", 403)
+    missing = evidence("https://x.com/i/status/40", 404)
+    unread = {
+        "request": {"method": "GET", "url": "https://x.com/aave/status/30", "body": None},
+        "attempts": [{"attempt": 1, "error": "PUBLIC_POST_NOT_READABLE"}],
+        "outcome": "permanent_failure",
+    }
+    reference = {"author": None, "publishedAt": None, "text": None}
+    references = [
+        {
+            **reference,
+            "relation": "replied_to",
+            "id": "40",
+            "url": "https://x.com/i/status/40",
+            "error": "PUBLIC_POST_HTTP_404",
+            "diagnostics": missing,
+        },
+        {
+            **reference,
+            "relation": "linked",
+            "id": "30",
+            "url": "https://x.com/aave/status/30",
+            "error": "PUBLIC_POST_NOT_READABLE",
+            "diagnostics": unread,
+        },
+        {
+            **reference,
+            "relation": "quoted",
+            "id": "20",
+            "url": "https://x.com/i/status/20",
+            "error": "QUOTED_POST_UNAVAILABLE",
+        },
+    ]
+    accounts = [
+        account("ethereum"),
+        {**failed("blocked"), "error": "PUBLIC_PROFILE_HTTP_403", "diagnostics": blocked},
+    ]
+    body = run(
+        [{**post("105"), "referencedPosts": references}, {**post("90"), "referencedPosts": references}],
+        accounts,
+        {"ethereum": "105"},
+        health="degraded",
+    )
+    found = scan(
+        ApifyRun.model_validate(body),
+        ["ethereum", "blocked", "absent"],
+        {"ethereum": "100", "blocked": "7"},
+        b"{}",
+    )
+    assert found.failures == [
+        AccountFailure("blocked", "PUBLIC_PROFILE_HTTP_403"),
+        AccountFailure("absent", "MISSING_FROM_RUN"),
+    ]
+    assert found.reports == [
+        {"account": "blocked", "reason": "PUBLIC_PROFILE_HTTP_403", "diagnostics": blocked},
+        {"account": "absent", "reason": "MISSING_FROM_RUN"},
+        {
+            "account": "ethereum",
+            "reason": "PUBLIC_POST_HTTP_404",
+            "referenced_post": {
+                "relation": "replied_to",
+                "id": "40",
+                "url": "https://x.com/i/status/40",
+                "in": "https://x.com/ethereum/status/105",
+            },
+            "diagnostics": missing,
+        },
+    ]
+    assert [row["external_id"] for row in found.rows] == ["105"]
+    assert "diagnostics" not in json.dumps([{**row, "_payload": None} for row in found.rows])
 
 
 @pytest.mark.asyncio
