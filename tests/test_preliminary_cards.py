@@ -38,7 +38,7 @@ async def lead(service):
     await service.repo.put(
         "evt.ems_assessments",
         "ems",
-        {"ems_id": "ems", "event_id": eid, "class": "MATERIAL", "certainty": "LOW", "criterion": "MATERIAL"},
+        {"ems_id": "ems", "event_id": eid, "class": "MATERIAL", "certainty": "LOW"},
     )
     return {
         "event_id": eid,
@@ -153,7 +153,7 @@ async def test_preliminary_then_full_uses_ordinary_requirements_and_same_thread(
         event.update(certainty="MEDIUM")
         await service.repo.put("evt.events", eid, event)
         assessment = await service.repo.get("evt.ems_assessments", "ems")
-        assessment.update({"class": "MAJOR", "certainty": "MEDIUM", "criterion": "M2"})
+        assessment.update({"class": "MAJOR", "certainty": "MEDIUM"})
         await service.repo.put("evt.ems_assessments", "ems", assessment)
         with pytest.raises(ValueError, match="UPDATE requires"):
             await service.dispatch("publish_card", {**args, "kind": "UPDATE"}, {})
@@ -595,7 +595,7 @@ async def test_postgres_preliminary_and_timed_review_roundtrip(tmp_path, postgre
             "set_assessment",
             {
                 "event_id": eid,
-                "assessment": unknown_assessment(claim=proof),
+                "assessment": unknown_assessment(klass="MATERIAL"),
             },
             context,
         )
@@ -628,7 +628,7 @@ async def test_postgres_preliminary_and_timed_review_roundtrip(tmp_path, postgre
                 "set_assessment",
                 {
                     "event_id": eid,
-                    "assessment": unknown_assessment(claim=proof),
+                    "assessment": unknown_assessment(),
                 },
                 context,
             )

@@ -423,7 +423,7 @@ def compose_card(
         event.get("event_state", event.get("state"))
     )
     lines = [
-        f"{_na(assessment.get('class', assessment.get('ems_class')), 'class unavailable').replace('STRUCTURAL_SHOCK', 'STRUCTURAL SHOCK')} ({_na(assessment.get('criterion', assessment.get('matched_criterion')), 'criterion unavailable')}) — {_na(verdict or event.get('statement'), 'neutral event statement unavailable')}",
+        f"{_na(assessment.get('class', assessment.get('ems_class')), 'class unavailable').replace('STRUCTURAL_SHOCK', 'STRUCTURAL SHOCK')} — {_na(verdict or event.get('statement'), 'neutral event statement unavailable')}",
         *([f"WHAT: {what}"] if what else []),
         scores,
         f"Stage: {stage} · Certainty: {_na(assessment.get('certainty', event.get('certainty')))} · Data {header_data}",

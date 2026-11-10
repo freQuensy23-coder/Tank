@@ -583,8 +583,6 @@ async def test_numeric_ems_requires_accepted_evidence(service):
     }
     assessment = {
         "class": "MAJOR",
-        "criterion": "M2",
-        "criterion_claim_id": result["accepted_claims"][0]["claim_id"],
         "dims": dims,
         "impact_horizon": {"impact_start": "WEEKS"},
     }
@@ -638,8 +636,6 @@ async def test_assessment_escalates_all_official_sources_in_consumer_table(servi
     }
     assessment = {
         "class": "MAJOR",
-        "criterion": "M2",
-        "criterion_claim_id": result["accepted_claims"][0]["claim_id"],
         "dims": dims,
         "impact_horizon": {
             "impact_start": "WEEKS",
@@ -692,8 +688,6 @@ async def test_structural_assessment_requires_agent_partial_without_parallel_pub
     }
     assessment = {
         "class": "STRUCTURAL_SHOCK",
-        "criterion": "G5",
-        "criterion_claim_id": extraction["accepted_claims"][0]["claim_id"],
         "dims": dims,
         "impact_horizon": {
             "impact_start": "WEEKS",
@@ -1067,7 +1061,6 @@ async def test_real_expiry_to_update_delivery_never_reopens_call(service, monkey
         "ems_id": "expiry-ems",
         "event_id": eid,
         "class": "MAJOR",
-        "criterion": "M2",
         "certainty": "HIGH",
         "impact_horizon": {"impact_start": "WEEKS"},
     }
@@ -1221,7 +1214,6 @@ async def test_structural_shock_completion_is_sent_at_once_and_later_updates_wai
         "ems_id": "shock-ems",
         "event_id": eid,
         "class": "STRUCTURAL_SHOCK",
-        "criterion": "G5",
         "certainty": "HIGH",
         "impact_horizon": {"impact_start": "WEEKS"},
     }
@@ -1342,7 +1334,6 @@ async def test_material_update_is_queued_once_and_delivered_after_window(service
                 "ems_id": "material-ems",
                 "event_id": eid,
                 "class": "MAJOR",
-                "criterion": "M2",
                 "certainty": "HIGH",
                 "impact_horizon": {"impact_start": "WEEKS"},
             },
@@ -1511,8 +1502,6 @@ async def test_bundle_keeps_producing_model_and_separate_session_config(service)
     }
     assessment = {
         "class": "STRUCTURAL_SHOCK",
-        "criterion": "G5",
-        "criterion_claim_id": result["accepted_claims"][0]["claim_id"],
         "dims": dims,
         "impact_horizon": {
             "impact_start": "WEEKS",
@@ -1577,7 +1566,7 @@ async def test_market_truth_domain_result_and_evidence_bundle_keep_full_metadata
     await service.repo.put(
         "evt.ems_assessments",
         "metadata-ems",
-        {"ems_id": "metadata-ems", "event_id": eid, "class": "STRUCTURAL_SHOCK", "criterion": "G5"},
+        {"ems_id": "metadata-ems", "event_id": eid, "class": "STRUCTURAL_SHOCK"},
     )
     await service.repo.put(
         "evt.beneficiary_maps", "metadata-map", {"event_id": eid, "map_version": 1, "analysis_set": ["T"]}
@@ -1895,7 +1884,7 @@ async def test_search_failure_does_not_mutate_medium_event_certainty(service):
     assert len(await service.repo.list("evt.event_observations")) == 1
 
 
-def unknown_assessment(criterion="M2", klass="MAJOR", claim=None):
+def unknown_assessment(klass="MAJOR"):
     dims = {
         name: {
             "value": None,
@@ -1917,8 +1906,6 @@ def unknown_assessment(criterion="M2", klass="MAJOR", claim=None):
     }
     return {
         "class": klass,
-        "criterion": criterion,
-        "criterion_claim_id": claim,
         "dims": dims,
         "impact_horizon": {
             "impact_start": "WEEKS",
@@ -1980,15 +1967,10 @@ async def test_primary_approved_edge_is_credible_and_exposure_layer_reasons_chec
         await service.dispatch("set_beneficiaries", args, {})
 
 
-async def test_material_criterion_cannot_pass_major_and_measured_headline_only_caps(service):
+async def test_measured_headline_only_capture_is_capped(service):
     x = await seed(service)
     x["token_ids"] = ["world:WLD"]
     created = await service.dispatch("record_event", x, {})
-    assessment = unknown_assessment("MATERIAL")
-    scored = await service.dispatch(
-        "set_assessment", {"event_id": created["event_id"], "assessment": assessment}, {}
-    )
-    assert scored["class"] == "MATERIAL"
     measured = {
         "value": None,
         "unit": "USD",
@@ -2243,7 +2225,6 @@ def complete_assessment_fixture(ems_id, event_id, **changes):
         event_id=event_id,
         version=1,
         cutoff=iso(),
-        structural_gates=[],
         class_reasons=["Synthetic fixture primary fact"],
         config_version="fixture",
         code_version="fixture",
@@ -2352,7 +2333,7 @@ async def test_real_event_tool_producers_satisfy_postgres_typed_contract(
             "set_assessment",
             {
                 "event_id": eid,
-                "assessment": unknown_assessment(claim=created["accepted_claims"][0]["claim_id"]),
+                "assessment": unknown_assessment(),
             },
             context,
         )
@@ -2954,7 +2935,7 @@ async def seed_economic_event(service, *, capture_score=8, negative_relation=Tru
             "evidence": [created["accepted_claims"][1]["claim_id"]],
         },
     )
-    assessment = unknown_assessment(claim=created["accepted_claims"][0]["claim_id"])
+    assessment = unknown_assessment()
     assessment["capture_chains"] = [chain]
     await service.dispatch("set_assessment", {"event_id": created["event_id"], "assessment": assessment}, {})
     return created, relation_quote, {layer: "No further adopted link is established" for layer in LAYERS}
@@ -3213,7 +3194,7 @@ async def test_magnitude_agent_judgment_is_preserved_with_or_without_ratio_metad
     created, _, _ = await seed_economic_event(service, negative_relation=False)
     eid = created["event_id"]
     proof = created["accepted_claims"][0]["claim_id"]
-    assessment = unknown_assessment(claim=created["accepted_claims"][0]["claim_id"])
+    assessment = unknown_assessment()
     assessment["dims"]["magnitude"].update(value=10, rationale="V4 is significant", evidence=[proof])
     out = await service.dispatch("set_assessment", {"event_id": eid, "assessment": assessment}, {})
     stored = await service.repo.get("evt.ems_assessments", out["ems_id"])
@@ -3280,7 +3261,7 @@ async def test_proposed_timing_requires_primary_dated_decision(service):
     eid = created["event_id"]
     event = await service.repo.get("evt.events", eid)
     await service.repo.put("evt.events", eid, {**event, "event_state": "PROPOSED"})
-    assessment = unknown_assessment(claim=created["accepted_claims"][0]["claim_id"])
+    assessment = unknown_assessment()
     assessment["impact_horizon"].update(impact_start="DAYS", timing_confidence="HIGH")
     out = await service.dispatch("set_assessment", {"event_id": eid, "assessment": assessment}, {})
     stored = await service.repo.get("evt.ems_assessments", out["ems_id"])
@@ -3368,7 +3349,7 @@ async def test_immediate_market_access_allows_effective_primary_change_without_p
         "world-access",
         {"instrument_id": "world-access", "token_id": "world:WLD", "active": True},
     )
-    assessment = unknown_assessment(claim=proof)
+    assessment = unknown_assessment()
     assessment["impact_horizon"].update(
         impact_start="NOW",
         immediate_market_access={
@@ -3430,7 +3411,7 @@ async def test_primary_natural_calendar_and_usd_ratio_dispatch(service):
                 "evidence": [{"item_id": "primary-quote", "quote": quote}],
             },
         )
-    assessment = unknown_assessment(claim=created["accepted_claims"][0]["claim_id"])
+    assessment = unknown_assessment()
     assessment["dims"]["magnitude"].update(value=10, evidence=["fees", "revenue"])
     assessment["magnitude_basis"] = {
         "kind": "USAGE_REVENUE",
@@ -3808,11 +3789,7 @@ async def test_native_prompt_snapshot_producer_reaches_versioned_event_tools(
                     {
                         "id": "native-assessment",
                         "name": "set_assessment",
-                        "input": {
-                            "assessment": unknown_assessment(
-                                claim=ledger["result"]["accepted_claims"][0]["claim_id"]
-                            )
-                        },
+                        "input": {"assessment": unknown_assessment()},
                     },
                 )
                 assessed = await repo.get("ops.tool_calls", sid + ":native-assessment")
@@ -3884,6 +3861,8 @@ async def test_actual_fetch_http_error_returns_durably_then_card_or_native_faile
         if request.url.host == "evidence.invalid":
             fetched.append(str(request.url))
             return httpx.Response(http_status, text="Synthetic unavailable source")
+        if request.url.path.endswith("/v1/files"):
+            return httpx.Response(200, json={"id": "file_mt"})
         if request.url.path.endswith("/sessions"):
             if request.method == "GET":
                 return httpx.Response(200, json={"data": []})
@@ -4051,7 +4030,7 @@ async def test_actual_fetch_http_error_returns_durably_then_card_or_native_faile
                     "evidence": [created["accepted_claims"][1]["claim_id"]],
                 },
             )
-            assessment = unknown_assessment(claim=created["accepted_claims"][0]["claim_id"])
+            assessment = unknown_assessment()
             assessment["capture_chains"] = [chain]
             await tool("assessment", "set_assessment", {"event_id": eid, "assessment": assessment})
             await tool(
@@ -4629,7 +4608,7 @@ async def test_immediate_access_uses_agent_structured_fact_and_effective_time(se
             active=case != "inactive_instrument",
         ),
     )
-    assessment = unknown_assessment(claim=proof)
+    assessment = unknown_assessment()
     assessment["impact_horizon"].update(
         impact_start="NOW",
         immediate_market_access={
@@ -5150,13 +5129,15 @@ async def test_least_repriced_ranks_all_credible_tokens_on_partial_refresh(servi
                     stored["result"] = fresh
                     await service.repo.put("ops.jobs", job["job_id"], stored)
                 await service.repo.finish_job(job["job_id"])
-            await task
+            result = await task
     finally:
         if not task.done():
             task.cancel()
         await asyncio.gather(task, return_exceptions=True)
     mapping = await service.repo.get("evt.beneficiary_maps", f"{eid}:1")
     assert mapping["least_repriced_edge"] == "edge-B"
+    assert result["least_repriced_edge"]["edge_id"] == "edge-B"
+    assert result["least_repriced_edge"]["token_id"] == "B"
 
 
 async def test_market_truth_before_a_scheduled_t0_escalates_at_t1_then_again_at_t0(

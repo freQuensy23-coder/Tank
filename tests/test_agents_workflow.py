@@ -134,15 +134,13 @@ async def test_actual_producer_consumer_workflow(tmp_path, backend, case, postgr
                     {
                         "event_id": eid,
                         "assessment": unknown_assessment(
-                            claim=origin["result"]["accepted_claims"][0]["claim_id"],
-                            criterion="G4" if case == "SHOCK_RESUME" else "M2",
                             klass="STRUCTURAL_SHOCK"
                             if case == "SHOCK_RESUME"
                             else "LOW"
                             if case == "HYDRATE"
                             else case
                             if case in {"LOW", "MATERIAL"}
-                            else "MAJOR",
+                            else "MAJOR"
                         ),
                     },
                 )

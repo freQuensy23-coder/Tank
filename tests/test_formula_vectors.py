@@ -196,11 +196,9 @@ async def recorded(service, state):
     return result["event_id"], proof, quote
 
 
-def assessment(proof, klass, criterion, gate=None):
-    a = {
+def assessment(proof, klass):
+    return {
         "class": klass,
-        "criterion": criterion,
-        "criterion_claim_id": proof,
         "dims": {
             n: {"value": 8, "rationale": "vector", "evidence": [proof]}
             for n in [
@@ -221,31 +219,15 @@ def assessment(proof, klass, criterion, gate=None):
             "time_to_materiality": "Weeks",
         },
     }
-    if gate:
-        a["structural_gates"] = [{"gate": gate, "satisfied": True, "evidence": [proof]}]
-    return a
 
 
-@pytest.mark.parametrize(
-    "klass,criterion,gate",
-    [("STRUCTURAL_SHOCK", "M4", None), ("MAJOR", "M4", None), ("STRUCTURAL_SHOCK", "G4", "G4")],
-)
-async def test_t7_fee_burn_put_to_binding_vote_is_major_never_structural(service, klass, criterion, gate):
-    eid, proof, _ = await recorded(service, "PROPOSED")
-    out = await service.set_assessment(
-        {"event_id": eid, "assessment": assessment(proof, klass, criterion, gate)}, {}
-    )
-    assert out["class"] != "STRUCTURAL_SHOCK"
-    if criterion == "M4":
-        assert out["class"] == "MAJOR"
-
-
-async def test_t7_verified_required_infrastructure_selection_is_structural_g4(service):
-    eid, proof, _ = await recorded(service, "LIVE")
-    out = await service.set_assessment(
-        {"event_id": eid, "assessment": assessment(proof, "STRUCTURAL_SHOCK", "G4", "G4")}, {}
-    )
-    assert out["class"] == "STRUCTURAL_SHOCK" and out["criterion"] == "G4"
+@pytest.mark.parametrize("state", ["PROPOSED", "LIVE"])
+@pytest.mark.parametrize("klass", ["LOW", "MATERIAL", "MAJOR", "STRUCTURAL_SHOCK"])
+async def test_t7_class_is_the_one_the_agent_set(service, state, klass):
+    eid, proof, _ = await recorded(service, state)
+    out = await service.set_assessment({"event_id": eid, "assessment": assessment(proof, klass)}, {})
+    assert out["class"] == klass
+    assert (await service.repo.get("evt.ems_assessments", out["ems_id"]))["class"] == klass
 
 
 def _three_venue_snapshot_with_stale_funding():

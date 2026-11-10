@@ -312,7 +312,6 @@ def ordinary_full_card_inputs():
     }
     assessment = {
         "class": "MAJOR",
-        "criterion": "M2",
         "certainty": "HIGH",
         "dims": {
             key: {"value": value}
