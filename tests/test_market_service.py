@@ -929,7 +929,11 @@ async def test_snapshot_anchors_yield_widest_first_and_equal_single_snapshots(se
         single = stable(await service.snapshot(inst["token_id"], iso(cutoff), anchor=anchor))
         assert snapshot == single
         assert sum("asks" in b for b in snapshot["books"]) <= BOOK_LEVEL_ROWS + 1
-    assert len(shared[0][1]["books"]) > len(shared[-1][1]["books"])
+    assert all(
+        cutoff - timedelta(minutes=15) <= parse_time(b["exchange_ts"])
+        for _, snapshot in shared
+        for b in snapshot["books"]
+    )
     await http.aclose()
 
 
@@ -984,8 +988,9 @@ async def test_loop_watchdog_logs_the_stack_that_holds_the_loop(setup, monkeypat
 @pytest.mark.asyncio
 async def test_reaction_snapshot_reads_books_and_tickers_only_at_the_window_bounds(setup, monkeypatch):
     """r110: one BTC reaction capture read ~1M rows (days of 10 s books and tickers). A REACTION
-    snapshot reads books/tickers only around its window bounds and the rest of the window
-    collections from the earlier of the anchor and cutoff - 24 h, never 2 x the window."""
+    snapshot reads tickers only around its window bounds, books only the newest ones (the depth is a
+    ClickHouse statement) and the rest of the window collections from the earlier of the anchor and
+    cutoff - 24 h, never 2 x the window."""
     import tank.market.service as service_module
     from tank.util import iso, parse_time
 
@@ -1033,25 +1038,31 @@ async def test_reaction_snapshot_reads_books_and_tickers_only_at_the_window_boun
         (cutoff - timedelta(minutes=15), cutoff + timedelta(seconds=1)),
     ]
 
-    def inside(t):
-        return any(low <= t <= high for low, high in near)
+    def inside(t, ranges=near):
+        return any(low <= t <= high for low, high in ranges)
 
     for collection, start, end in reads:
-        if collection in ("mkt.book_summaries", "mkt.tickers_24h"):
+        if collection == "mkt.book_summaries":
+            assert inside(start, near[1:]) and inside(end, near[1:]), (collection, start, end)
+        elif collection == "mkt.tickers_24h":
             assert inside(start) and inside(end), (collection, start, end)
         elif collection != "mkt.funding_obs":
             assert start >= anchor - timedelta(minutes=1), (collection, start)
-    assert snapshot["books"] and all(inside(parse_time(b["exchange_ts"])) for b in snapshot["books"])
+    assert snapshot["books"] and all(
+        inside(parse_time(b["exchange_ts"]), near[1:]) for b in snapshot["books"]
+    )
     assert snapshot["tickers"] and all(inside(parse_time(t["ts"])) for t in snapshot["tickers"])
     full = await service.snapshot(inst["token_id"], iso(cutoff), anchor={"type": "T1", "ts": iso(anchor)})
-    assert len(full["books"]) > 10 * len(snapshot["books"])
+    assert full["books"] and all(
+        cutoff - timedelta(minutes=15) <= parse_time(b["exchange_ts"]) for b in full["books"]
+    )
     await http.aclose()
 
 
-async def test_market_truth_snapshot_reads_one_day_of_books_and_tickers_at_window_bounds(setup, monkeypatch):
-    """E2E #5: the default snapshot read two days of books and tickers. Market Truth needs books
-    over the last 24 h and the hour before the anchor, and tickers only around the window
-    bounds (latest at or before each bound, marks next to the OI points)."""
+async def test_market_truth_snapshot_reads_the_newest_books_and_tickers_at_window_bounds(setup, monkeypatch):
+    """E2E #5: the default snapshot read two days of books and tickers. Market Truth needs the newest
+    books (freshness; the depth is read by the order-book statements, 03 §5.5) and tickers only around
+    the window bounds (latest at or before each bound, marks next to the OI points)."""
     import tank.market.service as service_module
     from tank.util import iso, parse_time
 
@@ -1093,7 +1104,7 @@ async def test_market_truth_snapshot_reads_one_day_of_books_and_tickers_at_windo
     snapshot = await service.snapshot(inst["token_id"], iso(cutoff), anchor={"type": "T1", "ts": iso(anchor)})
     edges = [cutoff - timedelta(seconds=s) for s in (0, 900, 3600, 14400, 86400)] + [anchor]
     book_reads = [(a, z) for c, a, z in reads if c == "mkt.book_summaries"]
-    assert book_reads and min(a for a, _ in book_reads) >= cutoff - timedelta(days=1, seconds=11)
+    assert book_reads and min(a for a, _ in book_reads) >= cutoff - timedelta(minutes=15)
 
     def near_edge(t):
         return any(
@@ -1103,8 +1114,8 @@ async def test_market_truth_snapshot_reads_one_day_of_books_and_tickers_at_windo
     ticker_reads = [(a, z) for c, a, z in reads if c == "mkt.tickers_24h"]
     assert ticker_reads and all(near_edge(a) and near_edge(z) for a, z in ticker_reads)
     assert sum((z - a).total_seconds() for a, z in ticker_reads) < 6 * 17 * 60
-    assert all(
-        cutoff - timedelta(days=1, seconds=11) <= parse_time(b["exchange_ts"]) for b in snapshot["books"]
+    assert snapshot["books"] and all(
+        cutoff - timedelta(minutes=15) <= parse_time(b["exchange_ts"]) for b in snapshot["books"]
     )
     assert all(
         any(

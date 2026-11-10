@@ -13,6 +13,7 @@ import pytest
 from flow_helpers import flow_evidence, spot_truth
 from funding_helpers import confirmation, rate, start
 from funding_helpers import evidence as funding_evidence
+from liquidity_helpers import liquidity_evidence
 from oi_helpers import evidence as oi_evidence
 from volume_helpers import buckets, evidence
 
@@ -275,6 +276,13 @@ def derive(packet, start=START, end=END):
     packet["flow_sql"] = flow_evidence(packet, windows={"EVENT": seconds, "W15M": 900})
     spot = spot_truth(packet["flow_bars"], [], packet["instruments"], start, end)
 
+    packet["liquidity_sql"] = liquidity_evidence(
+        packet,
+        windows={"EVENT": seconds, "W15M": 900},
+        end=end,
+        anchor=packet.get("_event_anchor", start),
+        venues={v["venue"] for v in spot["venues"]},
+    )
     spot["composite_cohort"] = deepcopy(spot["composite_max"])
     relative = dict(
         ref_venue="A:spot:T",

@@ -229,3 +229,48 @@ async def test_benchmark_statement_skips_incomplete_and_zero_close_bars(market_c
     assert result.price_start == 158 and result.price_start_observed_at == START - timedelta(minutes=1)
     assert result.price_end == 218 and result.price_end_observed_at == END - timedelta(minutes=1)
     assert result.r_raw == pytest.approx(218 / 158 - 1, abs=1e-12)
+
+
+def test_a_list_column_decodes_to_a_tuple_that_keeps_the_nulls_of_its_items():
+    row = dict(
+        window="W1H",
+        venue="A",
+        books=1,
+        latest_at=None,
+        latest_prec=None,
+        latest_prec_reason=None,
+        latest_spread=None,
+        latest_bid=None,
+        latest_ask=None,
+        latest_bid_native=None,
+        latest_ask_native=None,
+        latest_covered=None,
+        pre_books=0,
+        pre_bid=None,
+        pre_ask=None,
+        pre_bid_native=None,
+        pre_ask_native=None,
+        pre_native_missing=0,
+        pre_depth=None,
+        pre_spread=None,
+        window_bid=None,
+        window_ask=None,
+        bars=2,
+        bursts=2,
+        replenished=1,
+        resilient_bursts=0,
+        burst_at=["2026-10-16T11:30:00Z", "2026-10-16T11:40:00Z"],
+        burst_replenished=[1, None],
+        burst_recovery_s=[12.5, None],
+        burst_resilient=[None, 0],
+        ask_building=None,
+        ask_testable_bars=0,
+        ask_recovered_bars=0,
+    )
+    found = truth_sql.BookLiquidity.decode(row)
+    assert found.burst_at == (END - timedelta(minutes=30), END - timedelta(minutes=20))
+    assert (found.burst_replenished, found.burst_recovery_s, found.burst_resilient) == (
+        (1, None),
+        (12.5, None),
+        (None, 0),
+    )

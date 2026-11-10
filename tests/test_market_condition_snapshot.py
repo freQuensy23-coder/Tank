@@ -173,42 +173,6 @@ async def test_composite_reads_only_dependency_metadata_and_invalidates_old_poin
 
 
 @pytest.mark.asyncio
-async def test_depth_baseline_cache_uses_source_head_and_refreshes_real_change(setup):
-    repo, settings, inst = setup
-    origin = utcnow() - timedelta(hours=2)
-    point = {
-        "instrument_id": inst["instrument_id"],
-        "token_id": inst["token_id"],
-        "exchange_ts": iso(origin - timedelta(minutes=30)),
-        "exchange_ts_prec": "EXACT",
-        "recorded_at": iso(),
-        "integrity_ok": True,
-        "mid": "12",
-    }
-    await repo.put("mkt.book_summaries", "pre-book", point)
-    async with httpx.AsyncClient() as http:
-        service = MarketService(repo, settings, http=http)
-        original = repo.iter_market_projection
-        reads = []
-
-        async def projection(collection, fields, field, **kwargs):
-            reads.append((collection, fields))
-            async for row in original(collection, fields, field, **kwargs):
-                yield row
-
-        repo.iter_market_projection = projection
-        service._range = AsyncMock(side_effect=AssertionError("Do not load old book levels"))
-        first = await service._condition_book_baseline(inst["instrument_id"], origin, iso())
-        second = await service._condition_book_baseline(inst["instrument_id"], origin, iso())
-        assert first == second and len(reads) == 1
-        await repo.put("mkt.book_summaries", "pre-book", dict(point, mid="13", recorded_at=iso()))
-        third = await service._condition_book_baseline(inst["instrument_id"], origin, iso())
-        assert len(reads) == 2 and third[0]["mid"] == "13"
-
-        assert all("bids" not in fields and "asks" not in fields for _, fields in reads)
-
-
-@pytest.mark.asyncio
 async def test_dc_and_depth_loader_use_bounded_inputs_and_cutoff_safe_latest(setup):
     repo, settings, inst = setup
     end = utcnow() - timedelta(hours=2)

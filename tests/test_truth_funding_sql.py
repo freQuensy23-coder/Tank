@@ -802,7 +802,7 @@ async def test_a_condition_evaluation_reads_the_funding_windows_its_metrics_need
         return shown
 
     monkeypatch.setattr(truth, "with_funding", attach)
-    for name in ("with_oi", "with_volumes", "with_relative", "with_flow"):
+    for name in ("with_oi", "with_volumes", "with_relative", "with_flow", "with_liquidity"):
         monkeypatch.setattr(truth, name, passthrough)
     monkeypatch.setattr(truth, "compute_condition_values", lambda *args, **kwargs: {})
 

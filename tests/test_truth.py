@@ -9,6 +9,7 @@ from flow_helpers import spot_truth
 from funding_helpers import evidence as funding_evidence
 from funding_helpers import rate, start
 from funding_helpers import steady as funding_steady
+from liquidity_helpers import window_liquidity, with_liquidity
 from oi_helpers import evidence as oi_evidence
 from volume_helpers import buckets, evidence
 
@@ -18,7 +19,6 @@ from tank.analysis.truth import (
     market_context,
     oi_class,
     repricing,
-    walk_book,
 )
 from tank.util import iso, parse_time
 
@@ -232,11 +232,6 @@ def test_degenerate_float_history_range_is_unavailable():
     assert float_range(-0.01, 0.02) == [-0.01, 0.02]
     noise = (-2.2e-17, 0.0, 0.0, 1.4e-16)
     assert repricing(0.000272, noise, noise, 1) is None
-
-
-def test_walk_book_requires_actual_fill():
-    assert walk_book([[100, 1000], [101, 1000]], 100000, 100) == 0
-    assert walk_book([[100, 1]], 100000, 100) is None
 
 
 def test_t6_funding_and_t8_funding_freshness():
@@ -462,11 +457,16 @@ def test_asymmetric_depth_uses_actual_hit_side_and_excludes_perps(side):
         for i in range(15)
     ]
     r = liquidity_truth(
-        {
-            "books": books,
-            "flow_bars": rows,
-            "volume_sql": evidence([], buckets=buckets(end, ["A"], volume=30300.0, count=1)),
-        },
+        window_liquidity(
+            {
+                "books": books,
+                "flow_bars": rows,
+                "volume_sql": evidence([], buckets=buckets(end, ["A"], volume=30300.0, count=1)),
+            },
+            start,
+            end,
+            venues={"A"},
+        ),
         start,
         end,
         {"venues": [{"venue": "A"}]},
@@ -648,7 +648,9 @@ def test_fragmentation_needs_actual_cutoff_safe_independent_rest_gap(confirmatio
         for i in range(15)
     ]
     enrich_evidence(
-        {"books": books, "flow_bars": flow, "cutoff": iso(end)},
+        with_liquidity(
+            {"books": books, "flow_bars": flow, "cutoff": iso(end)}, windows={"W15M": 900}, anchor=None
+        ),
         start,
         end,
         {"W1H": spot, "W15M": deepcopy(spot)},
@@ -695,7 +697,9 @@ def _fragmentation_of(quotes):
     }
     liquidity = {"per_venue": []}
     enrich_evidence(
-        {"books": books, "flow_bars": [], "cutoff": iso(end)},
+        with_liquidity(
+            {"books": books, "flow_bars": [], "cutoff": iso(end)}, windows={"W15M": 900}, anchor=None
+        ),
         start,
         end,
         {"W1H": spot, "W15M": deepcopy(spot)},
@@ -763,7 +767,9 @@ def test_vacuum_detects_loss_on_sell_side_despite_deep_asks():
         for i in range(15)
     ]
     result = liquidity_truth(
-        {"books": [book(start - timedelta(seconds=1), 100), book(end, 20)], "flow_bars": rows},
+        window_liquidity(
+            {"books": [book(start - timedelta(seconds=1), 100), book(end, 20)], "flow_bars": rows}, start, end
+        ),
         start,
         end,
         {"venues": [{"venue": "A"}]},
@@ -819,7 +825,16 @@ def _e2e8_liquidity(c_notional, covered_c=False):
         [], buckets=buckets(end, ["A", "B", "C"], volume=4500.0, count=1, missing=0 if c_notional else 15)
     )
     return liquidity_truth(
-        {"books": books, "flow_bars": flow, "volume_sql": volumes}, start, end, spot, relative
+        window_liquidity(
+            {"books": books, "flow_bars": flow, "volume_sql": volumes},
+            start,
+            end,
+            venues={"A", "B", "C"},
+        ),
+        start,
+        end,
+        spot,
+        relative,
     )
 
 

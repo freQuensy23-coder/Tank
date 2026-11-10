@@ -49,14 +49,15 @@ def test_kline_fallback_saved_entry_and_hourly_close_remain_exact():
 
 
 def test_resilience_does_not_round_a_real_new_low_into_an_equal_low():
+    """At float resolution (03 §0): a low one part in 1e11 lower is a new low."""
     from tank.util import parse_time
 
     audit = run_path(str(Path(__file__).with_name("test_market_audit_paths.py")))
     START, derive, raw_packet = (audit[name] for name in ("START", "derive", "raw_packet"))
 
     packet = raw_packet()
-    original = "100.00000000000000000000000000000000000001"
-    lower = "100.00000000000000000000000000000000000000"
+    original = "100.000000001"
+    lower = "100.000000000"
     for row in packet["flow_bars"]:
         if ":spot:" not in row["instrument_id"]:
             continue

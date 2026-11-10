@@ -10,7 +10,7 @@ from volume_helpers import buckets, evidence
 
 from tank import clickhouse_market as chm
 from tank.analysis import truth, truth_sql
-from tank.analysis.truth import derivatives_truth, liquidity_truth, support_features, volume_evidence
+from tank.analysis.truth import derivatives_truth, support_features, volume_evidence
 from tank.util import iso, parse_time
 
 END = parse_time("2026-10-16T12:00:00Z")
@@ -546,23 +546,8 @@ def test_one_instrument_without_a_volume_leaves_its_market_and_the_share_incompl
 
 
 def tiers(shown, venues):
-    book = dict(
-        instrument_id=SPOT,
-        exchange_ts=iso(END),
-        integrity_ok=True,
-        mid=100,
-        spread_bps=1,
-        range_covered_pct={"bid": 2, "ask": 2},
-        depth={"bid": {"p1": {"usd": 100}}, "ask": {"p1": {"usd": 100}}},
-    )
-    result = liquidity_truth(
-        dict(snapshot(), books=[book], flow_bars=[], volume_sql=shown),
-        START,
-        END,
-        {"venues": [{"venue": v} for v in venues]},
-        {"windows": {}},
-    )
-    return result["per_venue"][0]["tier_notional"]
+    values = truth.tier_usd(dict(snapshot(), volume_sql=shown), set(venues), lambda name, default: default)
+    return dict(zip(("T1", "T2", "T3"), values, strict=True))
 
 
 def test_tiers_scale_with_the_mean_bucket_volume_of_the_venues_the_window_covers():

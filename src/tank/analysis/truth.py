@@ -12,7 +12,6 @@ import hashlib
 import json
 import threading
 from array import array
-from bisect import bisect_left, bisect_right
 from collections import defaultdict
 from contextvars import ContextVar
 from copy import deepcopy
@@ -865,6 +864,7 @@ def derivatives_truth(snapshot, start, end):
 
 
 AS_OF_ALL = datetime(2299, 12, 31, tzinfo=UTC)
+EPOCH = datetime(1970, 1, 1, tzinfo=UTC)
 DEFI_SECTORS = (
     "DEX_EXECUTION",
     "LENDING_CREDIT",
@@ -1264,6 +1264,88 @@ async def flow_evidence(ch, snapshot, end, config, windows, flips):
     )
 
 
+async def liquidity_evidence(ch, snapshot, end, config, windows, anchor_at, *, state=True):
+    """Run the order-book statements of a snapshot (03 section 5.5) for these windows, a mapping of window name to
+    length in seconds, and return their records: the depth, spread, bursts and ask-side flags of the spot venues
+    by window and, with `state`, the slippage of the impact tiers and the venue pairs of the fragmentation. The
+    pre-event hour ends at `anchor_at`, none without one."""
+    target = snapshot.get("token_id")
+    spot = sorted(
+        (
+            i
+            for i in snapshot.get("instruments", [])
+            if i.get("token_id", target) == target and _market(i) == "SPOT"
+        ),
+        key=lambda i: i["instrument_id"],
+    )
+    if not spot:
+        return truth_sql.NO_LIQUIDITY
+
+    def knob(name, default):
+        return _knob(config, name, default)
+
+    band = float(knob("depth_band_pct", 1))
+    interval = round(float(knob("book_interval_s", 10)) * 1_000_000)
+    common = dict(
+        instrument_ids=[i["instrument_id"] for i in spot],
+        groups=[_venue(i) for i in spot],
+        cutoff=end,
+        assembled=parse_time(snapshot["assembled_at"]) if snapshot.get("assembled_at") else AS_OF_ALL,
+    )
+    starts = [end - timedelta(seconds=seconds) for seconds in windows.values()]
+    since = min([end - timedelta(hours=1), *starts, *([anchor_at - timedelta(hours=1)] if anchor_at else [])])
+    names = list(windows)
+    jobs = [
+        truth_sql.fetch(
+            ch,
+            truth_sql.BookLiquidity,
+            since=since,
+            anchor_us=str((anchor_at - EPOCH) // timedelta(microseconds=1)) if anchor_at else "",
+            names=names,
+            lens_us=[str(round(seconds * 1_000_000)) for seconds in windows.values()],
+            band_key={0.5: "p0_5", 1.0: "p1", 2.0: "p2"}[band],
+            band_pct=band,
+            interval_us=interval,
+            refill_us=round(float(knob("refill_window_s", 60)) * 1_000_000),
+            resilience_us=round(float(knob("resilience_window_min", 15)) * 60_000_000),
+            **common,
+        )
+    ]
+    tiers = ()
+    if state:
+        tiers = tier_notionals(snapshot, windows, end, knob)
+        jobs.append(
+            truth_sql.fetch(
+                ch,
+                truth_sql.BookTier,
+                names=names,
+                tiers=[
+                    "" if value is None else repr(value)
+                    for _, values in tiers
+                    for value in (*values, *([None] * (3 - len(values))))
+                ],
+                **common,
+            )
+        )
+        jobs.append(
+            truth_sql.fetch(
+                ch,
+                truth_sql.BookPair,
+                length_us=900_000_000,
+                interval_us=interval,
+                conversion_bps=float(knob("quote_conversion_uncertainty_bps", 2)),
+                **common,
+            )
+        )
+    found = await asyncio.gather(*jobs)
+    return truth_sql.LiquidityEvidence(
+        books=tuple(found[0]),
+        tiers=tuple(found[1]) if state else (),
+        pairs=tuple(found[2]) if state else (),
+        tier_usd=tiers,
+    )
+
+
 def large_buckets(get):
     """The size buckets whose notional counts as large tickets: those whose upper edge reaches the large-ticket
     threshold, none when the threshold is not an edge."""
@@ -1600,225 +1682,164 @@ def relative_truth(snapshot, start, end, *, include_outcome=True):
     )
 
 
+def liquidity_rows(snapshot, window):
+    """The book records of the venues of a window, by venue."""
+    evidence = snapshot.get("liquidity_sql") or truth_sql.NO_LIQUIDITY
+    return {r.venue: r for r in evidence.books if r.window == window}
+
+
 @precise
-def walk_book(levels, notional, mid, side="ask"):
-    remaining = decimal(notional)
-    mid = decimal(mid)
-    native = Decimal(0)
-    spent = Decimal(0)
-    for level in levels:
-        p, q = (
-            (decimal(level[k]) for k in ("price", "qty"))
-            if isinstance(level, dict)
-            else map(decimal, level[:2])
-        )
-        take = min(remaining, p * q)
-        native += take / p
-        spent += take
-        remaining -= take
-        if remaining <= 1e-8:
-            break
-    return float(((spent / native / mid) - 1) * 10000) if native and remaining <= 1e-8 else None
+def tier_usd(snapshot, venues, get):
+    """The notional of the impact tiers T1, T2 and T3 (03 section 5.5): the sizes of 01 FR-T-08 scaled by k, the
+    average 15-minute volume of `venues` over the largest tier, at most 1; none where no quarter of an hour is
+    covered by all of them."""
+    sizes = [decimal(v) for v in get("impact_tiers_usd", [100000, 1000000, 5000000])]
+    by_bucket = defaultdict(dict)
+    for b in (snapshot.get("volume_sql") or truth_sql.NO_VOLUME).buckets:
+        by_bucket[b.bucket_start][b.venue] = b
+    covered = []
+    for found in by_bucket.values():
+        selected = [found.get(venue) for venue in venues]
+        if venues and all(
+            b is not None and b.minutes == 15 and not b.incomplete and not b.missing for b in selected
+        ):
+            covered.append(sum(b.notional for b in selected))
+    k = min(Decimal(1), decimal(mean(covered)) / sizes[2]) if covered else None
+    return tuple(float(size * k) if k is not None else None for size in sizes[:3])
 
 
-def depth_at_band(book, side, unit="usd"):
-    covered = book.get("range_covered_pct") or {}
-    coverage = number(covered.get(side)) if isinstance(covered, dict) else number(covered)
-    band = float(parameter("depth_band_pct", 1))
-    return (
-        decimal(
-            (
-                ((book.get("depth") or {}).get(side) or {}).get({0.5: "p0_5", 1.0: "p1", 2.0: "p2"}[band])
-                or {}
-            ).get(unit)
+def tier_notionals(snapshot, windows, end, get):
+    """The tier notionals of each window, scaled by the volume of the venues whose flow the window covers."""
+    return tuple(
+        (
+            name,
+            tier_usd(
+                snapshot,
+                {
+                    v["venue"]
+                    for v in flow_venues(
+                        flow_rows(snapshot, "spot", name), end - timedelta(seconds=seconds), end
+                    )[0]
+                },
+                get,
+            ),
         )
-        if coverage is not None and coverage >= band
-        else None
+        for name, seconds in windows.items()
     )
 
 
 @precise
 def liquidity_truth(snapshot, start, end, spot, relative):
-    books = [
-        b
-        for b in snapshot.get("books", [])
-        if _market(b) == "SPOT"
-        and b.get("token_id", snapshot.get("token_id")) == snapshot.get("token_id")
-        and _time(b) <= end
-        and b.get("integrity_ok") is True
-    ]
-    groups = defaultdict(list)
-    for b in books:
-        groups[_venue(b)].append(b)
+    window = snapshot.get("_primary", "W4H")
+    evidence = snapshot.get("liquidity_sql") or truth_sql.NO_LIQUIDITY
+    rows = liquidity_rows(snapshot, window)
+    groups = {venue: r for venue, r in rows.items() if r.books}
     eligible_venues = {v["venue"] for v in spot.get("venues", [])}
-    flow = [
-        r
-        for r in snapshot.get("flow_bars", [])
-        if _market(r) == "SPOT"
-        and _venue(r) in eligible_venues
-        and start <= _time(r)
-        and _time(r) + timedelta(minutes=1) <= end
-        and r.get("complete") is True
-    ]
-    for v in spot.get("venues", []):
-        for segment in v.get("boundary_segments", []):
-            for row in segment.get("aggregates", []):
-                flow.append(dict(row, minute_start=row["start"], segment_end=row["end"], venue=v["venue"]))
-    by_bucket = defaultdict(dict)
-    for b in (snapshot.get("volume_sql") or truth_sql.NO_VOLUME).buckets:
-        by_bucket[b.bucket_start][b.venue] = b
-    expected_venues = {v["venue"] for v in spot["venues"]}
-    covered_volumes = []
-    for venues in by_bucket.values():
-        selected = [venues.get(venue) for venue in expected_venues]
-        if expected_venues and all(
-            b is not None and b.minutes == 15 and not b.incomplete and not b.missing for b in selected
-        ):
-            covered_volumes.append(sum(b.notional for b in selected))
-    impact_tiers = parameter("impact_tiers_usd", [100000, 1000000, 5000000])
-    k = (
-        min(Decimal(1), decimal(mean(covered_volumes)) / decimal(impact_tiers[2]))
-        if covered_volumes
-        else None
-    )
+    flows = [r for r in rows.values() if r.venue in eligible_venues]
     tiers = {
-        name: decimal(size) * k if k is not None else None
-        for name, size in list(zip(("T1", "T2", "T3"), impact_tiers, strict=False))
+        name: decimal(value)
+        for name, value in zip(
+            ("T1", "T2", "T3"), dict(evidence.tier_usd).get(window, (None, None, None)), strict=False
+        )
     }
-    per = []
-    predepth = []
-    nowdepth = []
+    tier_rows = {r.venue: r for r in evidence.tiers if r.window == window}
     side_now = {"bid": [], "ask": []}
     side_pre = {"bid": [], "ask": []}
-
     venue_now = {"bid": {}, "ask": {}}
     venue_pre = {"bid": {}, "ask": {}}
+    nowdepth = []
+    predepth = []
     spreads = []
     prespreads = []
-    burst_results = []
-
-    depth = depth_at_band
-
+    per = []
     pre_anchor = snapshot.get("_event_anchor", start)
-    book_interval = timedelta(seconds=float(parameter("book_interval_s", 10)))
-    refill = timedelta(seconds=float(parameter("refill_window_s", 60)))
-    resilience = timedelta(minutes=float(parameter("resilience_window_min", 15)))
-    venue_flow = defaultdict(list)
-    for f in flow:
-        venue_flow[_venue(f)].append(f)
-    for venue, rs in groups.items():
-        rs.sort(key=_time)
-        times = [_time(x) for x in rs]
-        flows = venue_flow.get(venue, [])
-        by_time = sorted(flows, key=_time)
-        flow_times = [_time(x) for x in by_time]
-        b = rs[-1]
-        bid, ask = depth(b, "bid"), depth(b, "ask")
+    for venue, r in groups.items():
+        bid, ask = decimal(r.latest_bid), decimal(r.latest_ask)
         exact_context(bid, ask)
         d = bid + ask if bid is not None and ask is not None else None
-        for side, value in [("bid", bid), ("ask", ask)]:
+        for side, value, native in (
+            ("bid", bid, r.latest_bid_native),
+            ("ask", ask, r.latest_ask_native),
+        ):
             if value is not None:
                 side_now[side].append(value)
-                venue_now[side][venue] = (value, depth(b, side, "native"))
-        pre = (
-            rs[bisect_left(times, pre_anchor - timedelta(hours=1)) : bisect_left(times, pre_anchor)]
-            if pre_anchor is not None
-            else []
-        )
-        for side in ("bid", "ask"):
-            vals = [depth(x, side) for x in pre if depth(x, side) is not None]
-            if vals:
-                side_pre[side].append(mean(vals))
-                natives = [depth(x, side, "native") for x in pre]
+                venue_now[side][venue] = (value, decimal(native))
+        for side, bit, mean_usd, mean_native in (
+            ("bid", 1, r.pre_bid, r.pre_bid_native),
+            ("ask", 2, r.pre_ask, r.pre_ask_native),
+        ):
+            if mean_usd is not None:
+                side_pre[side].append(decimal(mean_usd))
                 venue_pre[side][venue] = (
-                    mean(vals),
-                    mean(natives) if natives and None not in natives else None,
+                    decimal(mean_usd),
+                    decimal(mean_native) if r.pre_books and not r.pre_native_missing & bit else None,
                 )
-        pd = [
-            depth(x, "bid") + depth(x, "ask")
-            for x in pre
-            if depth(x, "bid") is not None and depth(x, "ask") is not None
-        ]
-        if pd:
-            predepth.append(mean(pd))
+        if r.pre_depth is not None:
+            predepth.append(decimal(r.pre_depth))
         if d is not None:
             nowdepth.append(d)
-        spread = number(b.get("spread_bps"))
-        spreads.append(spread) if spread is not None else None
-        ps = [number(x["spread_bps"]) for x in pre if x.get("spread_bps") is not None]
-        if ps:
-            prespreads.append(mean(ps))
-        fx = Decimal(1) if b.get("quote_asset") == "USD" else decimal(b.get("quote_usd_rate"))
-        mid = decimal(b.get("mid"))
-        levels = b.get("asks", b.get("levels", {}).get("asks", []))
+        if r.latest_spread is not None:
+            spreads.append(r.latest_spread)
+        if r.pre_spread is not None:
+            prespreads.append(r.pre_spread)
+        covered = json.loads(r.latest_covered) if r.latest_covered else None
+        slip = tier_rows.get(venue)
         per.append(
             dict(
                 venue=venue,
-                coverage={
-                    "venue": venue,
-                    "range_covered_pct": b.get("range_covered_pct"),
-                    "integrity_ok": b.get("integrity_ok"),
-                },
-                observed_at=iso(_time(b)),
+                coverage={"venue": venue, "range_covered_pct": covered, "integrity_ok": True},
+                observed_at=iso(r.latest_at),
                 precision=propagate_timestamp(
-                    b, "exchange_ts", precision_aliases=("timestamp_precision",)
+                    {
+                        "exchange_ts": iso(r.latest_at),
+                        "exchange_ts_prec": r.latest_prec,
+                        "exchange_ts_prec_reason": r.latest_prec_reason,
+                    },
+                    "exchange_ts",
+                    precision_aliases=("timestamp_precision",),
                 ).precision,
-                spread_bps=spread,
+                spread_bps=r.latest_spread,
                 depth_p1_usd=d,
                 bid_depth_p1_usd=bid,
                 ask_depth_p1_usd=ask,
-                range_covered_pct=b.get("range_covered_pct"),
+                range_covered_pct=covered,
                 tier_notional=tiers,
                 slippage_bps={
-                    name: walk_book(levels, n / fx, mid) if n and mid and levels and fx else None
-                    for name, n in tiers.items()
+                    name: getattr(slip, "slippage_" + name.lower()) if slip else None for name in tiers
                 },
             )
         )
-        for f in flows:
-            t = _time(f)
-            k = bisect_left(times, t) - 1
-            if k < 0 or times[k] < t - book_interval:
-                continue
-            baseline = rs[k]
-            bd = depth(baseline, "bid")
-            sell, buy = decimal(f.get("sell_notional")), decimal(f.get("buy_notional"))
-            if sell is None or buy is None:
-                continue
-            net = sell - buy
-            if bd is None or net < bd:
-                continue
-            after = [
-                x
-                for x in rs[bisect_right(times, t) : bisect_right(times, min(t + refill, end))]
-                if depth(x, "bid") is not None and depth(x, "bid") >= bd
-            ]
-            recovered = bool(after)
-            future = [
-                decimal(x["low"])
-                for x in by_time[bisect_right(flow_times, t) : bisect_right(flow_times, t + resilience)]
-                if x.get("low") is not None
-            ]
-            low = decimal(f.get("low"))
-            resilient = (min(future) >= low) if future and low is not None and t + resilience <= end else None
-            burst_results.append(
-                dict(
-                    venue=venue,
-                    ts=iso(t),
-                    replenished=recovered if t + refill <= end else None,
-                    recovery_s=(_time(after[0]) - t).total_seconds() if after else None,
-                    resilient=resilient,
-                )
-            )
+    bursts = [
+        dict(
+            venue=r.venue,
+            ts=iso(at),
+            replenished=None if rep is None else bool(rep),
+            recovery_s=rec,
+            resilient=None if res is None else bool(res),
+        )
+        for r in flows
+        if r.books
+        for at, rep, rec, res in zip(
+            r.burst_at, r.burst_replenished, r.burst_recovery_s, r.burst_resilient, strict=True
+        )
+    ]
+    available = bool(groups and any(r.bars for r in flows))
     aggregate = sum(nowdepth) if nowdepth and len(nowdepth) == len(groups) else None
     pre = sum(predepth) if predepth and len(predepth) == len(groups) else None
     drop = float(1 - aggregate / pre) if aggregate is not None and pre else None
-    bn, sn = _sum(flow, "buy_notional"), _sum(flow, "sell_notional")
-    net_usd = bn - sn if bn is not None and sn is not None else None
-
-    bq, sq = _sum(flow, "buy_qty"), _sum(flow, "sell_qty")
-    if bq is not None and sq is not None:
-        net, unit, k = bq - sq, "NATIVE", 1
+    totals = [r for r in flow_rows(snapshot, "spot", window) if r.venue in eligible_venues]
+    net_native = (
+        sum((decimal(r.buy) - decimal(r.sell) for r in totals), Decimal(0))
+        if totals and not any(r.missing & 3 for r in totals)
+        else None
+    )
+    net_usd = (
+        sum((decimal(r.buy_usd) - decimal(r.sell_usd) for r in totals), Decimal(0))
+        if totals and not any(r.missing & 24 for r in totals)
+        else None
+    )
+    if net_native is not None:
+        net, unit, k = net_native, "NATIVE", 1
     else:
         net, unit, k = net_usd, "USD", 0
     raw = relative["windows"].get(snapshot.get("_primary", "W4H"), {}).get("r_raw")
@@ -1839,11 +1860,11 @@ def liquidity_truth(snapshot, start, end, spot, relative):
     def lower_bound(table, side, index):
         """Sum over the venues whose band is covered: a lower bound of the depth (exact when
         every venue is covered); venues without the band are never extrapolated."""
-        rows = {v: t[index] for v, t in table.get(side, {}).items() if t[index] is not None}
+        covered_rows = {v: t[index] for v, t in table.get(side, {}).items() if t[index] is not None}
         return (
-            (sum(rows.values()) if rows else None),
-            sorted(rows),
-            bool(all_venues) and set(rows) == all_venues,
+            (sum(covered_rows.values()) if covered_rows else None),
+            sorted(covered_rows),
+            bool(all_venues) and set(covered_rows) == all_venues,
         )
 
     bound, covered, complete = lower_bound(venue_now, hit_side, k) if hit_side else (None, [], False)
@@ -1852,12 +1873,10 @@ def liquidity_truth(snapshot, start, end, spot, relative):
     )
     average_hit_depth = []
     if hit_side:
-        for rs in groups.values():
-            values = [
-                depth(b, hit_side) for b in rs if start <= _time(b) <= end and depth(b, hit_side) is not None
-            ]
-            if values:
-                average_hit_depth.append(mean(values))
+        for r in groups.values():
+            value = r.window_bid if hit_side == "bid" else r.window_ask
+            if value is not None:
+                average_hit_depth.append(decimal(value))
     avg = sum(average_hit_depth) if average_hit_depth and len(average_hit_depth) == len(groups) else None
     small_price = (
         (raw if net > 0 else -raw) < float(parameter("depth_band_pct", 1)) / 100
@@ -1918,6 +1937,7 @@ def liquidity_truth(snapshot, start, end, spot, relative):
             else None
         )
     thin = True if True in thin_sides else False if thin_sides == [False, False] else None
+    recoveries = [x["recovery_s"] for x in bursts if x["recovery_s"] is not None]
     return dict(
         depth_measurement_band_pct=parameter("depth_band_pct", 1),
         per_venue=per,
@@ -1939,16 +1959,14 @@ def liquidity_truth(snapshot, start, end, spot, relative):
         depth_drop_cohort=cohorts,
         spread_ratio=ratio(mean(spreads), mean(prespreads)) if spreads and prespreads else None,
         replenishment=dict(
-            available=bool(books and flow),
-            bursts=len(burst_results) if books and flow else None,
-            replenished=sum(x["replenished"] is True for x in burst_results) if books and flow else None,
-            resilient_bursts=sum(x["replenished"] is True and x["resilient"] is True for x in burst_results)
-            if books and flow
+            available=available,
+            bursts=len(bursts) if available else None,
+            replenished=sum(x["replenished"] is True for x in bursts) if available else None,
+            resilient_bursts=sum(x["replenished"] is True and x["resilient"] is True for x in bursts)
+            if available
             else None,
-            median_recovery_s=median([x["recovery_s"] for x in burst_results if x["recovery_s"] is not None])
-            if any(x["recovery_s"] is not None for x in burst_results)
-            else None,
-            observations=burst_results,
+            median_recovery_s=median(recoveries) if recoveries else None,
+            observations=bursts,
         ),
         elasticity=dict(
             bps_per_depth_unit=raw * 10000 / float(abs(net_usd) / avg)
@@ -1976,20 +1994,6 @@ def liquidity_truth(snapshot, start, end, spot, relative):
 def _count(n, noun):
     """'1 complete venue', '3 complete venues'."""
     return f"{n} {noun}" + ("" if n == 1 else "s")
-
-
-def _quote(row):
-    return str(row.get("quote_asset") or "").upper()
-
-
-def _usd_mid(row, mid):
-    """A mid in USD: USD quotes as is, others by the row's stored quote_usd_rate (None without)."""
-    if mid is None:
-        return None
-    if _quote(row) == "USD":
-        return mid
-    rate = decimal(row.get("quote_usd_rate"))
-    return mid * rate if rate else None
 
 
 def enrich_evidence(snapshot, start, end, spots, primary, deriv, relative, liquidity):
@@ -2134,28 +2138,18 @@ def enrich_evidence(snapshot, start, end, spots, primary, deriv, relative, liqui
         for tier in ("T1", "T2", "T3")
     }
     split = {}
-    latest = {}
-    for b in snapshot.get("books", []):
-        if _market(b) != "SPOT" or b.get("token_id", snapshot.get("token_id")) != snapshot.get("token_id"):
-            continue
-        if b.get("integrity_ok") is True and (_venue(b) not in latest or _time(b) > _time(latest[_venue(b)])):
-            latest[_venue(b)] = b
-    askdepth = {
-        v: decimal((b.get("depth", {}).get("ask", {}).get("p1") or {}).get("usd")) for v, b in latest.items()
+    parts = {
+        r.venue: r
+        for r in (snapshot.get("liquidity_sql") or truth_sql.NO_LIQUIDITY).tiers
+        if r.window == primary
     }
+    askdepth = {venue: decimal(r.ask_p1) for venue, r in parts.items()}
     total = sum(x for x in askdepth.values() if x is not None)
     for tier in ("T1", "T2", "T3"):
         fills = []
         if tiers.get(tier) and total and all(x is not None for x in askdepth.values()):
-            for venue, b in latest.items():
-                allocation = tiers[tier] * askdepth[venue] / total
-                levels = b.get("asks", b.get("levels", {}).get("asks", []))
-                mid = decimal(b.get("mid"))
-                fx = Decimal(1) if b.get("quote_asset") == "USD" else decimal(b.get("quote_usd_rate"))
-                impact = (
-                    walk_book(levels, allocation / fx, mid) if levels and mid and allocation and fx else None
-                )
-                fills.append((allocation, impact))
+            for venue, r in parts.items():
+                fills.append((tiers[tier] * askdepth[venue] / total, getattr(r, "split_" + tier.lower())))
         split[tier] = (
             sum(float(n / tiers[tier]) * i for n, i in fills)
             if fills and all(i is not None for _, i in fills)
@@ -2171,90 +2165,16 @@ def enrich_evidence(snapshot, start, end, spots, primary, deriv, relative, liqui
         reason="NOT_ESTIMABLE",
     )
 
-    books = [
-        b
-        for b in snapshot.get("books", [])
-        if _market(b) == "SPOT"
-        and b.get("token_id", snapshot.get("token_id")) == snapshot.get("token_id")
-        and b.get("integrity_ok") is True
-        and _time(b) <= end
-    ]
-    grouped = defaultdict(list)
-    for book in books:
-        grouped[_venue(book)].append(book)
-    for rows in grouped.values():
-        rows.sort(key=_time)
-    grouped_times = {venue: [_time(r) for r in rows] for venue, rows in grouped.items()}
-    frag_start = end - timedelta(minutes=15)
-    cadence = float(parameter("book_interval_s", 10))
-    pairs = []
-    persistent = False
-    validated = False
-    closed = False
+    evidence = snapshot.get("liquidity_sql") or truth_sql.NO_LIQUIDITY
+    books = any(r.books for r in evidence.books)
     complete_venues = {v["venue"] for v in spots["W15M"]["venues"]}
-
+    persistent_pairs = [p for p in evidence.pairs if p.persistent]
+    persistent = bool(persistent_pairs)
+    pairs = [[p.a_venue, p.b_venue] for p in persistent_pairs]
+    validated = any(p.confirmed and {p.a_venue, p.b_venue} <= complete_venues for p in persistent_pairs)
+    closed = any(p.closed for p in evidence.pairs)
+    unevaluated = [[p.a_venue, p.b_venue] for p in evidence.pairs if p.problem == 2]
     conversion_bps = decimal(parameter("quote_conversion_uncertainty_bps", 2))
-    unevaluated = []
-    for index, a in enumerate(sorted(grouped)):
-        for b in sorted(grouped)[index + 1 :]:
-            ar, br = grouped[a], grouped[b]
-            at, bt = grouped_times[a], grouped_times[b]
-            times = sorted({frag_start, end} | {t for t in at + bt if frag_start <= t < end})
-            gaps = []
-            second = False
-            for t in times:
-                states = []
-                for rows, stamps in ((ar, at), (br, bt)):
-                    k = bisect_right(stamps, t) - 1
-                    states.append(rows[k] if k >= 0 and (t - stamps[k]).total_seconds() <= cadence else None)
-                if None in states:
-                    gaps = []
-                    break
-                x, y = states
-                xm, ym = decimal(x.get("mid")), decimal(y.get("mid"))
-                xs, ys = decimal(x.get("spread_bps")), decimal(y.get("spread_bps"))
-                if None in (xm, ym, xs, ys) or not ym:
-                    gaps = []
-                    break
-                same_quote = _quote(x) == _quote(y)
-                cost = Decimal(0) if same_quote else conversion_bps
-                xm, ym = (xm, ym) if same_quote else (_usd_mid(x, xm), _usd_mid(y, ym))
-                if xm is None or not ym:
-                    unevaluated.append([a, b])
-                    gaps = []
-                    break
-                gap = abs(xm - ym) * 10000 > (xs + ys + cost) * ym
-                if t < end:
-                    gaps.append(gap)
-                elif gaps and gaps[-1] and not gap:
-                    closed = True
-                rest = []
-                for stream in (x, y):
-                    independent = stream.get("independent_rest") or {}
-                    rt = independent.get("ts")
-                    rm = decimal(independent.get("mid"))
-                    rs = decimal(independent.get("spread_bps"))
-                    good = (
-                        stream.get("second_path_confirmed") is True
-                        and independent.get("source") == "PUBLIC_REST"
-                        and rt is not None
-                        and parse_time(rt) <= end
-                        and _available(independent, snapshot)
-                        and abs((parse_time(rt) - _time(stream)).total_seconds()) <= cadence
-                        and rm is not None
-                        and rm > 0
-                        and rs is not None
-                    )
-                    rest.append((rm if same_quote else _usd_mid(stream, rm), rs) if good else None)
-                second = second or (
-                    None not in rest
-                    and None not in (rest[0][0], rest[1][0])
-                    and abs(rest[0][0] - rest[1][0]) * 10000 > (rest[0][1] + rest[1][1] + cost) * rest[1][0]
-                )
-            if gaps and all(gaps):
-                persistent = True
-                pairs.append([a, b])
-                validated = validated or (second and {a, b} <= complete_venues)
 
     funding_groups = {
         p["instrument_id"] for p in deriv.get("per_venue", []) if p.get("funding_8h_eq") is not None
@@ -3236,52 +3156,12 @@ def support_features(snapshot, start, end, spot, deriv, liquidity, supply):
         if supply.get("flows")
         else None
     )
-    features["ask_depth_building"] = None
-    features["ask_replenishment"] = None
-    books = defaultdict(list)
-    for b in snapshot.get("books", []):
-        if _market(b) == "SPOT" and b.get("integrity_ok") is True:
-            books[_venue(b)].append(b)
-    builds = []
-    recovered = False
-    testable = False
-    book_interval = timedelta(seconds=float(parameter("book_interval_s", 10)))
-    refill = timedelta(seconds=float(parameter("refill_window_s", 60)))
-    window_flows = defaultdict(list)
-    for flow in snapshot.get("flow_bars", []):
-        if _market(flow) == "SPOT" and start <= _time(flow) < end and flow.get("complete") is True:
-            window_flows[_venue(flow)].append(flow)
-
-    def ask(b):
-        return decimal((b.get("depth", {}).get("ask", {}).get("p1") or {}).get("usd"))
-
-    for venue, rows in books.items():
-        rows.sort(key=_time)
-        times = [_time(r) for r in rows]
-        i = bisect_right(times, start) - 1
-        j = bisect_right(times, end) - 1
-        before = rows[i] if i >= 0 and times[i] >= start - book_interval else None
-        after = rows[j] if j >= 0 else None
-        if before is not None and after is not None and ask(before) is not None and ask(after) is not None:
-            builds.append(ask(after) > ask(before))
-        for flow in window_flows.get(venue, []):
-            buy, sell = decimal(flow.get("buy_notional")), decimal(flow.get("sell_notional"))
-            t = _time(flow)
-            k = bisect_left(times, t) - 1
-            pre = rows[k] if k >= 0 and times[k] >= t - book_interval else None
-            if buy is None or sell is None or pre is None or ask(pre) is None or buy - sell < ask(pre):
-                continue
-            if t + refill > end:
-                continue
-            testable = True
-            recovered = recovered or any(
-                ask(r) is not None and ask(r) >= ask(pre)
-                for r in rows[bisect_right(times, t) : bisect_right(times, t + refill)]
-            )
-    if builds:
-        features["ask_depth_building"] = any(builds)
-    if testable:
-        features["ask_replenishment"] = recovered
+    rows = list(liquidity_rows(snapshot, window).values())
+    builds = [bool(r.ask_building) for r in rows if r.ask_building is not None]
+    features["ask_depth_building"] = any(builds) if builds else None
+    features["ask_replenishment"] = (
+        any(r.ask_recovered_bars for r in rows) if any(r.ask_testable_bars for r in rows) else None
+    )
     return features
 
 
@@ -4542,78 +4422,38 @@ def condition_confidence(snapshot, end):
     return value
 
 
+DEPTH_WINDOW = ("W15M", WINDOWS["W15M"])
+
+
 def condition_depth(snapshot, end):
-    grouped = defaultdict(list)
-    for book in snapshot.get("books", []):
-        if (
-            _market(book) == "SPOT"
-            and book.get("token_id", snapshot.get("token_id")) == snapshot.get("token_id")
-            and _time(book) <= end
-            and book.get("integrity_ok") is True
-        ):
-            grouped[_venue(book)].append(book)
-    anchor = snapshot.get("anchor") or {}
-    start = parse_time(anchor["ts"]) if anchor.get("ts") else None
+    groups = {venue: r for venue, r in liquidity_rows(snapshot, DEPTH_WINDOW[0]).items() if r.books}
     current = []
     spreads = []
     previous_spreads = []
     previous = []
     observations = []
-    for venue, rows in grouped.items():
-        latest = max(rows, key=_time)
-        bid, ask = depth_at_band(latest, "bid"), depth_at_band(latest, "ask")
-        if bid is not None and ask is not None:
-            current.append(bid + ask)
-        spread = number(latest.get("spread_bps"))
-        if spread is not None:
-            spreads.append(spread)
-        before = [
-            row for row in rows if start is not None and start - timedelta(hours=1) <= _time(row) < start
-        ]
-        old_spreads = [number(row["spread_bps"]) for row in before if row.get("spread_bps") is not None]
-        if old_spreads:
-            previous_spreads.append(mean(old_spreads))
-        depths = [
-            depth_at_band(row, "bid") + depth_at_band(row, "ask")
-            for row in before
-            if depth_at_band(row, "bid") is not None and depth_at_band(row, "ask") is not None
-        ]
-        if depths:
-            baseline = _BASELINE_CACHE.get()
-            key = (
-                "depth_pre",
-                venue,
-                iso(start),
-                parameter("depth_band_pct", 1),
-                fingerprint(
-                    [
-                        (iso(_time(row)), depth_at_band(row, "bid"), depth_at_band(row, "ask"))
-                        for row in before
-                    ]
-                ),
-            )
-            if baseline is not None and key in baseline:
-                previous.append(baseline[key])
-            else:
-                value = mean(depths)
-                previous.append(value)
-                if baseline is not None:
-                    baseline[key] = value
-                    if len(baseline) > 128:
-                        baseline.pop(next(iter(baseline)))
-        cadence, source = capture_cadence(snapshot, "books", latest)
+    for venue, r in groups.items():
+        if r.latest_bid is not None and r.latest_ask is not None:
+            current.append(decimal(r.latest_bid) + decimal(r.latest_ask))
+        if r.latest_spread is not None:
+            spreads.append(r.latest_spread)
+        if r.pre_spread is not None:
+            previous_spreads.append(r.pre_spread)
+        if r.pre_depth is not None:
+            previous.append(decimal(r.pre_depth))
+        cadence, source = capture_cadence(snapshot, "books", {})
         observations.append(
             dict(
                 venue=venue,
-                observed_at=iso(_time(latest)),
+                observed_at=iso(r.latest_at),
                 cadence_s=cadence,
                 cadence_source=source,
-                fresh=cadence is not None and (end - _time(latest)).total_seconds() <= cadence,
+                fresh=cadence is not None and (end - r.latest_at).total_seconds() <= cadence,
             )
         )
     return {
-        "aggregate_depth_p1_usd": sum(current) if current and len(current) == len(grouped) else None,
-        "pre_event_depth_p1_usd": sum(previous) if previous and len(previous) == len(grouped) else None,
+        "aggregate_depth_p1_usd": sum(current) if current and len(current) == len(groups) else None,
+        "pre_event_depth_p1_usd": sum(previous) if previous and len(previous) == len(groups) else None,
         "observations": observations,
         "spread_ratio": ratio(mean(spreads), mean(previous_spreads))
         if spreads and previous_spreads
@@ -4698,6 +4538,22 @@ def condition_flow_windows(snapshot, requirements):
     return windows, flips
 
 
+def condition_liquidity_windows(snapshot, requirements):
+    """The windows (name to seconds) whose order books a condition evaluation reads, and whether the impact tiers
+    and the venue pairs are needed: the depth window of a depth metric, the primary window of a state."""
+    end = parse_time(snapshot["cutoff"])
+    start, primary = condition_primary_bounds(snapshot, end)
+    windows, state = {}, False
+    for requirement in requirements:
+        metric = requirement["metric"]
+        if metric in ("liq.depth_p1_vs_pre", "liq.spread_ratio"):
+            windows[DEPTH_WINDOW[0]] = DEPTH_WINDOW[1]
+        elif metric in COMPOSITE_CONDITION_METRICS:
+            windows[primary] = (end - start).total_seconds()
+            state = True
+    return windows, state
+
+
 def condition_market_state(snapshot, end, cache):
     """The required primary-window state graph, without MTA/outcome/card persistence work."""
     av = (snapshot.get("anchor") or {}).get("ts")
@@ -4715,7 +4571,7 @@ def condition_market_state(snapshot, end, cache):
             head = fingerprint({field: snapshot.get(field) for field in fields})
         elif not isinstance(head, str):
             head = fingerprint(head)
-        for evidence in ("relative_sql", "volume_sql", "oi_sql", "funding_sql", "flow_sql"):
+        for evidence in ("relative_sql", "volume_sql", "oi_sql", "funding_sql", "flow_sql", "liquidity_sql"):
             if evidence in fields:
                 head = fingerprint([head, snapshot.get(evidence)])
         key = (
@@ -4850,7 +4706,7 @@ def compute_condition_values(snapshot, requirements, *, config=None, cache=None,
                 seconds = (end - condition_primary_bounds(snapshot, end)[0]).total_seconds()
             elif metric in ("liq.depth_p1_vs_pre", "liq.spread_ratio"):
                 domain = "depth"
-                fields = ("books", "instruments", "anchor", "capture_metadata")
+                fields = ("liquidity_sql", "instruments", "anchor", "capture_metadata")
             elif metric in COMPOSITE_CONDITION_METRICS:
                 domain = "state"
                 fields = (
@@ -4875,6 +4731,7 @@ def compute_condition_values(snapshot, requirements, *, config=None, cache=None,
                     "expected_direction",
                     "relative_sql",
                     "volume_sql",
+                    "liquidity_sql",
                     "series_coverage_counts",
                 )
                 seconds = (end - condition_primary_bounds(snapshot, end)[0]).total_seconds()
@@ -4900,7 +4757,14 @@ def compute_condition_values(snapshot, requirements, *, config=None, cache=None,
                 dependency = fingerprint({field: snapshot.get(field) for field in fields})
             elif not isinstance(dependency, str):
                 dependency = fingerprint(dependency)
-            for evidence in ("relative_sql", "volume_sql", "oi_sql", "funding_sql", "flow_sql"):
+            for evidence in (
+                "relative_sql",
+                "volume_sql",
+                "oi_sql",
+                "funding_sql",
+                "flow_sql",
+                "liquidity_sql",
+            ):
                 if evidence in fields:
                     dependency = fingerprint([dependency, snapshot.get(evidence)])
             key = (
@@ -5245,6 +5109,30 @@ async def with_flow(repo, snapshot, config, *, windows=None, flips=None):
     )
 
 
+async def with_liquidity(repo, snapshot, config, *, windows=None, state=True):
+    """The snapshot with the records of the order-book statements (03 §5.5) as `liquidity_sql`.
+
+    The windows are those of the assessment (W15M, W1H, W4H, W24H and EVENT) unless given; `state=False` reads only
+    the depth of the venues, not the impact tiers and the venue pairs. The tiers are scaled from the volume and the
+    venues of the windows, so the volume and the flow records of the snapshot are read first. A snapshot whose
+    anchor does not precede its cutoff is returned as it is."""
+    ch = _market_client(repo)
+    end = parse_time(snapshot["cutoff"])
+    anchor = snapshot.get("anchor")
+    anchor_at = anchor.get("ts") if isinstance(anchor, dict) else anchor
+    start = parse_time(anchor_at) if anchor_at else end - timedelta(hours=4)
+    if start >= end:
+        return snapshot
+    if windows is None:
+        windows = dict(WINDOWS, EVENT=(end - start).total_seconds())
+    return dict(
+        snapshot,
+        liquidity_sql=await liquidity_evidence(
+            ch, snapshot, end, config, windows, parse_time(anchor_at) if anchor_at else None, state=state
+        ),
+    )
+
+
 def _market_client(repo):
     from tank import clickhouse_market
 
@@ -5323,6 +5211,9 @@ class MarketTruthService:
         windows, flips = condition_flow_windows(snapshot, requirements)
         if windows:
             snapshot = await with_flow(self.repo, snapshot, config, windows=windows, flips=flips)
+        windows, state = condition_liquidity_windows(snapshot, requirements)
+        if windows:
+            snapshot = await with_liquidity(self.repo, snapshot, config, windows=windows, state=state)
         return await asyncio.to_thread(
             compute_condition_values,
             snapshot,
@@ -5364,13 +5255,19 @@ class MarketTruthService:
         self._release_idle_assessment_baselines()
         lock = self._assessment_locks.setdefault(token_id, asyncio.Lock())
         async with lock:
-            snapshot = await with_flow(
+            snapshot = await with_liquidity(
                 self.repo,
-                await with_funding(
+                await with_flow(
                     self.repo,
-                    await with_oi(
+                    await with_funding(
                         self.repo,
-                        await with_volumes(self.repo, await with_relative(self.repo, snapshot, knobs), knobs),
+                        await with_oi(
+                            self.repo,
+                            await with_volumes(
+                                self.repo, await with_relative(self.repo, snapshot, knobs), knobs
+                            ),
+                            knobs,
+                        ),
                         knobs,
                     ),
                     knobs,

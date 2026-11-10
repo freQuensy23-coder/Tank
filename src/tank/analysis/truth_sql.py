@@ -46,7 +46,12 @@ class Record:
                     raise ValueError(f"{cls.statement}.{name} is NULL")
                 values[name] = None
             elif typing.get_origin(kind) is tuple:
-                values[name] = tuple(DECODERS[kind.__args__[0]](item) for item in value)
+                item = kind.__args__[0]
+                kept = isinstance(item, types.UnionType)
+                item = next(part for part in item.__args__ if part is not type(None)) if kept else item
+                values[name] = tuple(
+                    None if kept and part is None else DECODERS[item](part) for part in value
+                )
             else:
                 values[name] = DECODERS[kind](value)
         return cls(**values)
@@ -557,3 +562,106 @@ class FlowEvidence:
 
 
 NO_FLOW = FlowEvidence()
+
+
+@dataclass(frozen=True)
+class BookLiquidity(Record):
+    """The order-book liquidity of one spot venue in one window (book_liquidity.sql).
+
+    The `latest_*` columns are the latest book at or before the cutoff (time, precision of the time, spread in
+    bps, the depth of the bid and ask side inside the band in USD and native, `range_covered_pct` as stored), the
+    `pre_*` columns the books of the hour before the anchor (their number, the means of the depth of each side, of
+    the sum of both and of the spread; `pre_native_missing` has bit 1 when a book lacks the native bid depth and bit
+    2 the native ask depth), `window_bid` and `window_ask` the means of the depth of each side over the books of
+    the window and `bars` the complete flow bars of the window. A burst is a bar whose net selling reaches the bid
+    depth of the book before it; the `burst_*` lists give its time, whether it was replenished (None while the
+    cutoff is within the refill time), the seconds to the first book with the depth back (None without one) and
+    whether the price made no new low afterwards (None without a later low or while the cutoff is within the
+    resilience time). `ask_building` compares the ask depth of the last book at the window end with that at its
+    start; `ask_testable_bars` are the bars whose net buying reaches the ask depth of the book before them and
+    `ask_recovered_bars` those of them followed by a book with the ask depth back."""
+
+    statement = "book_liquidity"
+    window: str
+    venue: str
+    books: int
+    latest_at: datetime | None
+    latest_prec: str | None
+    latest_prec_reason: str | None
+    latest_spread: float | None
+    latest_bid: float | None
+    latest_ask: float | None
+    latest_bid_native: float | None
+    latest_ask_native: float | None
+    latest_covered: str | None
+    pre_books: int
+    pre_bid: float | None
+    pre_ask: float | None
+    pre_bid_native: float | None
+    pre_ask_native: float | None
+    pre_native_missing: int
+    pre_depth: float | None
+    pre_spread: float | None
+    window_bid: float | None
+    window_ask: float | None
+    bars: int
+    bursts: int
+    replenished: int
+    resilient_bursts: int
+    burst_at: tuple[datetime, ...]
+    burst_replenished: tuple[int | None, ...]
+    burst_recovery_s: tuple[float | None, ...]
+    burst_resilient: tuple[int | None, ...]
+    ask_building: int | None
+    ask_testable_bars: int
+    ask_recovered_bars: int
+
+
+@dataclass(frozen=True)
+class BookTier(Record):
+    """The slippage in bps of the impact tiers T1, T2 and T3 on the latest book of one spot venue in one window,
+    and of the part of each tier that a depth-proportional split gives that venue; None where the levels do not
+    fill it (book_tiers.sql). `ask_p1` is the USD depth of the ask side within 1% as stored."""
+
+    statement = "book_tiers"
+    window: str
+    venue: str
+    observed_at: datetime
+    ask_p1: float | None
+    levels: int
+    slippage_t1: float | None
+    slippage_t2: float | None
+    slippage_t3: float | None
+    split_t1: float | None
+    split_t2: float | None
+    split_t3: float | None
+
+
+@dataclass(frozen=True)
+class BookPair(Record):
+    """Whether two spot venues have a price gap at every moment of the last 15 minutes (`persistent`), whether it
+    closed at the cutoff, whether an independent REST book confirms it, and `problem` 1 when a venue has no usable
+    book at some moment, 2 when the quotes cannot be converted to USD there (book_fragmentation.sql)."""
+
+    statement = "book_fragmentation"
+    a_venue: str
+    b_venue: str
+    problem: int
+    persistent: int
+    closed: int
+    confirmed: int
+
+
+@dataclass(frozen=True)
+class LiquidityEvidence:
+    """Everything the liquidity rules of a snapshot read from ClickHouse: the books of the spot venues by window
+    and venue, the slippage of the impact tiers, the venue pairs, and the notional of each tier by window (the
+    caller scaled it from the volume of the window)."""
+
+    books: tuple[BookLiquidity, ...] = ()
+    tiers: tuple[BookTier, ...] = ()
+    pairs: tuple[BookPair, ...] = ()
+    tier_usd: tuple[tuple[str, tuple[float | None, ...]], ...] = ()
+
+
+NO_LIQUIDITY = LiquidityEvidence()

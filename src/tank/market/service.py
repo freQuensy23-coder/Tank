@@ -1080,41 +1080,6 @@ class MarketService:
                 state.polls[iid] = list(row["recent_polls"])
         return state
 
-    async def _condition_book_baseline(self, instrument_id, origin, assembled_at):
-        end = origin - timedelta(microseconds=1)
-        start = origin - timedelta(hours=1)
-        head = await self.repo.market_dependency_head(
-            "mkt.book_summaries",
-            "exchange_ts",
-            end,
-            start=start,
-            instrument_ids=[instrument_id],
-            assembled_at=assembled_at,
-        )
-        cache = self.__dict__.setdefault("_condition_book_baselines", {})
-        key = (instrument_id, iso(origin))
-        cached = cache.get(key)
-        if cached is None or head is None or cached["head"] != head:
-            from tank.market_schema import MARKET_COLUMNS
-
-            fields = [f for f in MARKET_COLUMNS["mkt.book_summaries"] if f not in ("bids", "asks")]
-            rows = [
-                r
-                async for r in self.repo.iter_market_projection(
-                    "mkt.book_summaries",
-                    fields,
-                    "exchange_ts",
-                    start=start,
-                    end=origin,
-                    instrument_ids=[instrument_id],
-                    assembled_at=assembled_at,
-                )
-            ]
-            cache[key] = {"head": head, "rows": rows}
-            while len(cache) > 128:
-                cache.pop(next(iter(cache)))
-        return cache[key]["rows"]
-
     async def _condition_heads(self, collection, field, start, cutoff, assembled_at, filters):
         """The three dependency heads of a window in one round trip. A head counts only rows
         recorded by its assembly clock, so for a later clock of the same window it is reused
@@ -1380,7 +1345,7 @@ class MarketService:
         heads["spot"] = sha256([flow_heads, result["tickers"], target])
         if full_state:
             result["oi"], result["funding"], result["books"], result["liquidations"] = [], [], [], []
-            derivative_heads, book_heads = [], []
+            derivative_heads = []
             oi_heads, funding_heads = [], []
             for instrument in perp:
                 iid = instrument["instrument_id"]
@@ -1433,20 +1398,16 @@ class MarketService:
                         assembled_at=assembled,
                     )
                 )
-            book_fields = [f for f in MARKET_COLUMNS["mkt.book_summaries"] if f not in ("bids", "asks")]
             for instrument in target:
                 iid = instrument["instrument_id"]
-                rows, head = await self._condition_projected_history(
+                point = await self.repo.latest_before(
                     "mkt.book_summaries",
                     "exchange_ts",
-                    start,
-                    end,
-                    assembled,
-                    fields=book_fields,
+                    end + timedelta(microseconds=1),
                     filters={"instrument_id": iid},
                 )
-                result["books"].extend(rows)
-                result["books"].extend(await self._condition_book_baseline(iid, anchor, assembled))
+                if point:
+                    result["books"].append(point)
                 result["books"].extend(
                     await self.repo.latest_market_records(
                         "mkt.book_summaries",
@@ -1456,7 +1417,6 @@ class MarketService:
                         assembled_at=assembled,
                     )
                 )
-                book_heads.append(head)
             result["supply"] = await self.repo.latest_market_records(
                 "mkt.supply_obs",
                 group_by=("token_id", "kind", "chain"),
@@ -1501,14 +1461,12 @@ class MarketService:
                 ]
             )
             heads["dc"] = result["dependency_fingerprint"]
-            heads["depth"] = sha256(
-                [book_heads, result["books"], anchor.isoformat(), result["capture_metadata"]]
-            )
+            heads["depth"] = sha256([result["books"], anchor.isoformat(), result["capture_metadata"]])
             heads["close"] = sha256([flow_heads])
             heads["derivatives"] = sha256(
                 [derivative_heads, result["funding"], result["semantics"], result["capture_metadata"]]
             )
-            heads["books"] = sha256([book_heads, result["books"], anchor.isoformat()])
+            heads["books"] = sha256([result["books"], anchor.isoformat()])
             heads["supply"] = sha256([supply_heads, result["supply"]])
             heads["support"] = sha256([flow_heads, heads["relative"], heads["books"]])
         result.setdefault("domain_dependency_fingerprints", {}).update(heads)
@@ -1669,12 +1627,6 @@ class MarketService:
                         assembled_at=result["assembled_at"],
                     )
                 )
-                if "depth" in domains and anchor and anchor.get("ts"):
-                    origin = parse_time(anchor["ts"])
-                    if origin <= end:
-                        result["books"].extend(
-                            await self._condition_book_baseline(iid, origin, result["assembled_at"])
-                        )
         if "dc" in domains:
             result["tokens"] = list(self.tokens.values())
             result["sector_baskets"] = deepcopy(self.sector_baskets)
@@ -2182,10 +2134,11 @@ class MarketService:
         window, anchor to cutoff. Flow bars, klines, OI, funding and liquidations are read
         from the earlier of the anchor and cutoff - 24 h (the reference venue's trailing-24 h
         coverage, 03 §5.7); books and tickers only around the window bounds (the newest
-        integrity-checked book and the marks next to the OI bounds). The default reads flow
+        books for the freshness rules, the marks next to the OI bounds). The default reads flow
         bars, klines, OI, funding and liquidations from 2 x the event window before the cutoff
-        (previous-window comparisons), books over the last 24 h and the hour before the anchor,
-        and tickers only around the window bounds (see the scope branches below)."""
+        (previous-window comparisons), books only the newest ones (the depth, spread, bursts and
+        slippage are ClickHouse statements, 03 §5.5), and tickers only around the window bounds
+        (see the scope branches below)."""
 
         requested = cutoff if isinstance(cutoff, Timestamp) else chosen_boundary(cutoff, precision="EXACT")
         if requested.value is None:
@@ -2213,19 +2166,15 @@ class MarketService:
                     (cutoff_dt - REACTION_NEWEST_MARGIN, snapshot_end),
                 ]
             )
-            bounded = {"books": bounds, "tickers": bounds}
+            bounded = {"books": [(cutoff_dt - REACTION_NEWEST_MARGIN, snapshot_end)], "tickers": bounds}
         elif scope is None:
             from tank.analysis.truth import WINDOWS
 
-            lower = cutoff_dt - timedelta(days=1)
-            if anchor_value:
-                lower = min(lower, parse_time(anchor_value) - timedelta(hours=1))
-            book_interval = timedelta(seconds=float(self.thresholds.get("book_interval_s", 10)))
             edges = {cutoff_dt, *(cutoff_dt - timedelta(seconds=s) for s in WINDOWS.values())}
             if anchor_value:
                 edges.add(parse_time(anchor_value))
             bounded = {
-                "books": [(max(recent_start, lower - book_interval), snapshot_end)],
+                "books": [(max(recent_start, cutoff_dt - REACTION_NEWEST_MARGIN), snapshot_end)],
                 "tickers": _merge_ranges(
                     [
                         (
