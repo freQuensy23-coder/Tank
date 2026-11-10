@@ -5718,9 +5718,25 @@ def _cutoff_value(cutoff):
 ASSESSMENT_BASELINE_IDLE_S = 1800
 
 
+async def reaction_inputs(market, settings, event_id, token_id, end_stamp, anchor):
+    """The snapshot and configuration of a reaction checkpoint's Market Truth."""
+    snapshot = await market.snapshot(token_id, end_stamp, anchor=anchor, scope="REACTION")
+    snapshot = {**snapshot, "event_id": event_id, "token_id": token_id, **end_stamp.fields("cutoff")}
+    knobs = settings.load_config("thresholds") if hasattr(settings, "load_config") else {}
+    return snapshot, {
+        **knobs,
+        "config_version": settings.config_version,
+        "code_version": settings.code_version,
+    }
+
+
 class MarketTruthService:
-    def __init__(self, repo, settings, market):
-        self.repo, self.settings, self.market = repo, settings, market
+    """workers: the service generation's market worker processes (market_workers). With
+    them the market read and the computation of a condition read and of an assessment run
+    there, and this process only stores the assessment. Without them both run here."""
+
+    def __init__(self, repo, settings, market, workers=None):
+        self.repo, self.settings, self.market, self.workers = repo, settings, market, workers
         self._condition_cache = {}
         self._condition_baselines = {}
 
@@ -5735,6 +5751,8 @@ class MarketTruthService:
         compute_workers.release_idle_baselines(compute_workers.ASSESSMENT, ASSESSMENT_BASELINE_IDLE_S)
 
     async def condition_values(self, event_id, token_id, cutoff, requirements):
+        if self.workers is not None:
+            return await self.workers.condition_values(event_id, token_id, cutoff, requirements)
         self._release_idle_assessment_baselines()
         event = await self.repo.get("evt.events", event_id) if event_id else None
         anchor = event_anchor(event, at=_cutoff_value(cutoff)) if event else None
@@ -5773,10 +5791,10 @@ class MarketTruthService:
             baseline_cache=self._condition_baselines,
         )
 
-    async def assess(self, event_id, token_id, cutoff=None):
+    async def assessment_inputs(self, event_id, token_id, cutoff):
+        """The snapshot and configuration of an assessment's Market Truth."""
         event = await self.repo.get("evt.events", event_id) if event_id else None
         event = event or {}
-        cutoff = cutoff or iso(parse_time(iso()).replace(second=0, microsecond=0))
         anchor = None
         if event:
             anchor = event_anchor(event, at=_cutoff_value(cutoff))
@@ -5799,15 +5817,24 @@ class MarketTruthService:
             if callable(getattr(self.settings, "load_config", None))
             else {}
         )
-        knobs = dict(
+        return snapshot, dict(
             knobs, config_version=self.settings.config_version, code_version=self.settings.code_version
         )
-        self._release_idle_assessment_baselines()
-        lock = self._assessment_locks.setdefault(token_id, asyncio.Lock())
-        async with lock:
-            result = await compute_workers.compute_market_truth(
-                compute_workers.ASSESSMENT, snapshot, config=knobs, baseline_key=token_id
+
+    async def assess(self, event_id, token_id, cutoff=None):
+        cutoff = cutoff or iso(parse_time(iso()).replace(second=0, microsecond=0))
+        if self.workers is not None:
+            result = await self.workers.assessment(
+                event_id, token_id, cutoff, await self.market.recorded_capture_waits(token_id)
             )
+        else:
+            snapshot, knobs = await self.assessment_inputs(event_id, token_id, cutoff)
+            self._release_idle_assessment_baselines()
+            lock = self._assessment_locks.setdefault(token_id, asyncio.Lock())
+            async with lock:
+                result = await compute_workers.compute_market_truth(
+                    compute_workers.ASSESSMENT, snapshot, config=knobs, baseline_key=token_id
+                )
         result["mta_id"] = new_id("MTA")
         await self.repo.put("ana.market_truth", result["mta_id"], result, immutable=True)
         return result

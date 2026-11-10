@@ -108,6 +108,7 @@ class Scheduler:
         self._verified_backups = {}
         self._reaction_slots = asyncio.Semaphore(REACTION_MEASUREMENT_SLOTS)
         self._condition_reads = {}
+        self.market_workers = None
 
     def threshold(self, name, fixture_default):
         from tank.settings import threshold
@@ -1254,6 +1255,7 @@ class Scheduler:
         payload = dict(payload)
         captured_stamp = collection_clock()
         from tank.analysis import compute_workers
+        from tank.analysis.truth import reaction_inputs
 
         window = self._reaction_window(payload)
         anchor_stamp = window["anchor_stamp"]
@@ -1266,29 +1268,19 @@ class Scheduler:
 
         captured_stamp = collection_clock()
 
-        snapshot = await self.market.snapshot(
-            payload["token_id"],
-            end_stamp,
-            anchor={**start_stamp.fields("ts"), "type": payload["anchor"]["type"]},
-            scope="REACTION",
-        )
-        snapshot = {
-            **snapshot,
-            "event_id": payload["event_id"],
-            "token_id": payload["token_id"],
-            **end_stamp.fields("cutoff"),
-        }
-        knobs = self.settings.load_config("thresholds") if hasattr(self.settings, "load_config") else {}
-        await self._yield_to_market_truth(payload, end)
-        truth = await compute_workers.compute_market_truth(
-            compute_workers.REACTION,
-            snapshot,
-            config={
-                **knobs,
-                "config_version": self.settings.config_version,
-                "code_version": self.settings.code_version,
-            },
-        )
+        anchor = {**start_stamp.fields("ts"), "type": payload["anchor"]["type"]}
+        if self.market_workers is not None:
+            truth = await self.market_workers.reaction(
+                payload["event_id"], payload["token_id"], end_stamp, anchor
+            )
+        else:
+            snapshot, knobs = await reaction_inputs(
+                self.market, self.settings, payload["event_id"], payload["token_id"], end_stamp, anchor
+            )
+            await self._yield_to_market_truth(payload, end)
+            truth = await compute_workers.compute_market_truth(
+                compute_workers.REACTION, snapshot, config=knobs
+            )
         relative = truth.get("relative", {})
         event_window = relative.get("windows", {}).get("EVENT", {})
         spot = truth.get("spot", {}).get("EVENT", {})

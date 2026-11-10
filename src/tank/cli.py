@@ -66,7 +66,7 @@ def serve():
 
     async def launch(repo, settings):
         from tank import clickhouse_market, openma_sync
-        from tank.runtime import RuntimeSupervisor
+        from tank.runtime import RuntimeSupervisor, service_generation
 
         await repo.migrate()
         if getattr(repo, "clickhouse", None) is not None:
@@ -80,7 +80,7 @@ def serve():
         loop.add_signal_handler(signal.SIGHUP, reload_requested.set)
         openma = asyncio.create_task(openma_sync.keep_in_sync(settings, stop))
         try:
-            await RuntimeSupervisor(repo, settings).run(stop, reload_requested)
+            await RuntimeSupervisor(repo, settings, factory=service_generation).run(stop, reload_requested)
         finally:
             openma.cancel()
         return {"status": "stopped"}

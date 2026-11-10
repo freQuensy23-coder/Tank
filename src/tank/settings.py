@@ -260,6 +260,20 @@ class Settings(BaseSettings):
 
     _parsed_config: dict[str, dict[str, JsonValue]] | None = PrivateAttr(default=None)
 
+    def __getstate__(self) -> dict[str, object]:
+        """A generation's settings reach its worker processes with the configuration they
+        captured: a pickle cannot carry the snapshot's read-only mapping."""
+        state = super().__getstate__()
+        private = dict(state["__pydantic_private__"] or {})
+        if private.get("_config_snapshot") is not None:
+            private["_config_snapshot"] = dict(private["_config_snapshot"])
+        return {**state, "__pydantic_private__": private}
+
+    def __setstate__(self, state: dict[str, object]) -> None:
+        super().__setstate__(state)
+        if self._config_snapshot is not None:
+            self._config_snapshot = MappingProxyType(dict(self._config_snapshot))
+
     def model_post_init(self, context: object) -> None:
         if self.tank_db_password and "database_url" not in self.model_fields_set:
             self.database_url = (

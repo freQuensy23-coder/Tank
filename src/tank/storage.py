@@ -1090,8 +1090,9 @@ async def _stable_transaction(conn):
 
 
 class PostgresRepository(QueueMixin):
-    def __init__(self, database_url):
+    def __init__(self, database_url, *, connections=16):
         self.database_url = database_url
+        self.connections = connections
         self._pool = None
         self._connection = ContextVar(f"pg_connection_{id(self)}", default=None)
 
@@ -1117,7 +1118,7 @@ class PostgresRepository(QueueMixin):
             self.database_url,
             open=False,
             min_size=1,
-            max_size=16,
+            max_size=self.connections,
             max_idle=120,
             max_lifetime=600,
             connection_class=CancellationSafeConnection,
