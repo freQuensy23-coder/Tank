@@ -7,6 +7,7 @@ from math import sin
 
 import pytest
 from relative_helpers import start_evidence
+from volume_helpers import buckets, evidence
 
 from tank.analysis.truth import compute_market_truth
 from tank.util import iso, parse_time
@@ -207,6 +208,12 @@ def synthetic_start_snapshot():
         }
     )
     snap["relative_sql"] = start_evidence(end, anchor)
+    snap["volume_sql"] = evidence(
+        [row["instrument_id"] for row in snap["instruments"]],
+        native={"PERP": None},
+        usd={"SPOT": dict(current_usd=45000.0), "PERP": None},
+        buckets=buckets(end, ["A", "B"], volume=225000.0),
+    )
     anchors = snap.pop("anchor_trades")
     for row in anchors:
         parent = next(

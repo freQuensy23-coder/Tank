@@ -1,4 +1,4 @@
-"""Full snapshots retain the volume series of the target and the registry peers of its sector."""
+"""Full snapshots retain the registry peers of the sector of the target and their coverage counts."""
 
 from datetime import timedelta
 
@@ -94,17 +94,7 @@ async def test_comparator_projection_matches_dense_reader_with_sparse_boundaries
     try:
         current = await service.snapshot(target["token_id"], end, anchor={"type": "T1", "ts": iso(start)})
         assert "stat_price_series" not in current
-        if long_event:
-            independently_read = await service._condition_kline_series(
-                target,
-                end - timedelta(days=90),
-                end,
-                current["assembled_at"],
-                kind="volume",
-                coverage_count=current["series_coverage_counts"][target["instrument_id"]],
-                fixed_window=True,
-            )
-            assert current["stat_volume_series"][target["instrument_id"]] == independently_read
+        assert "stat_volume_series" not in current
         counts = current["series_coverage_counts"]
         assert {"binance:spot:PEER1", "binance:spot:PEER2"} <= set(counts)
         assert {

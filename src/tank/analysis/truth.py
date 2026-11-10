@@ -870,40 +870,6 @@ def _oi_stats(rows, start, end, *, history_identity=None, venue_history=None):
     )
 
 
-@precise
-def window_usd_volume(snapshot, instrument, start, end):
-    """Observed USD volume, with complete-print flow fallback; never candle-price estimates."""
-    index = snapshot.get("_kline_volume_index")
-    if index is not None:
-        times, rows = index.get(instrument, ((), ()))
-        lo, hi = bisect_left(times, start), bisect_left(times, end)
-        points = zip(times[lo:hi], rows[lo:hi], strict=False)
-    else:
-        points = sorted(
-            [
-                (_time(r), r)
-                for r in snapshot.get("klines", [])
-                if r.get("instrument_id") == instrument and start <= _time(r) < end
-            ],
-            key=lambda point: point[0],
-        )
-    cursor = start
-    values = []
-    for at, row in points:
-        z = at + timedelta(seconds=int(row.get("interval_s", 60)))
-        if at != cursor or z > end or row.get("complete") is not True or row.get("quote_volume_usd") is None:
-            break
-        values.append(decimal(row["quote_volume_usd"]))
-        cursor = z
-    if cursor == end and values:
-        return sum(values, Decimal(0))
-    rows = flow_window(snapshot, instrument, start, end)
-    if rows is None:
-        return None
-    buy, sell = _sum(rows, "buy_notional"), _sum(rows, "sell_notional")
-    return buy + sell if buy is not None and sell is not None else None
-
-
 def liquidation_side_evidence(rows, window_complete, coverage):
     """Missing conversion on one observed side cannot erase or zero its native evidence."""
     result = {}
@@ -1226,30 +1192,17 @@ def derivatives_truth(snapshot, start, end):
         }
     volumes = {}
     volume_coverage = {}
-    target = snapshot.get("token_id")
+    evidence = snapshot.get("volume_sql") or truth_sql.NO_VOLUME
+    usd = {(r.window, r.instrument_id): r for r in evidence.windows}
     for market in ("SPOT", "PERP"):
-        instruments = {
-            r["instrument_id"]
-            for r in snapshot.get("instruments", [])
-            if r.get("token_id", target) == target and ((_market(r) == "SPOT") == (market == "SPOT"))
-        }
-        instruments |= {
-            r["instrument_id"]
-            for collection in ("klines", "flow_bars")
-            for r in snapshot.get(collection, [])
-            if r.get("token_id", target) == target and ((_market(r) == "SPOT") == (market == "SPOT"))
-        }
-        current = []
-        previous = []
-        for iid in instruments:
-            current.append(window_usd_volume(snapshot, iid, start, end))
-            previous.append(window_usd_volume(snapshot, iid, start - (end - start), start))
+        instruments = sorted(i for i in evidence.instruments if (":spot:" in i) == (market == "SPOT"))
+        rows = [usd.get((snapshot.get("_primary"), i)) for i in instruments]
+        current = [r.current_usd if r else None for r in rows]
+        previous = [r.previous_usd if r else None for r in rows]
         complete = bool(instruments) and None not in current and None not in previous
-        volumes[market] = (
-            max(Decimal(0), sum(current, Decimal(0)) - sum(previous, Decimal(0))) if complete else None
-        )
+        volumes[market] = max(0.0, sum(current) - sum(previous)) if complete else None
         volume_coverage[market.lower()] = {
-            "instruments": sorted(instruments),
+            "instruments": instruments,
             "complete": complete,
             "unit": "USD",
             "reason": None if complete else "INCOMPLETE",
@@ -1469,6 +1422,48 @@ async def relative_evidence(ch, snapshot, start, end, config, *, include_outcome
         **common,
     )
     return replace(evidence, horizons=tuple(horizons))
+
+
+async def volume_evidence(ch, snapshot, end, config, windows):
+    """Run the volume statements of a snapshot (03 section 5.4 and 5.7) for these windows, a mapping of
+    window name to length in seconds, and return their records."""
+    target = snapshot.get("token_id")
+    instruments = sorted(
+        {i["instrument_id"] for i in snapshot.get("instruments", []) if i.get("token_id", target) == target}
+    )
+    if not instruments:
+        return truth_sql.NO_VOLUME
+    assembled = parse_time(snapshot["assembled_at"]) if snapshot.get("assembled_at") else AS_OF_ALL
+    names = list(windows)
+    lengths = [str(round(seconds * 1_000_000)) for seconds in windows.values()]
+    common = dict(cutoff=end, assembled=assembled)
+    rows, normals, buckets = await asyncio.gather(
+        truth_sql.fetch(
+            ch, truth_sql.WindowVolume, instrument_ids=instruments, names=names, lens_us=lengths, **common
+        ),
+        truth_sql.fetch(
+            ch,
+            truth_sql.VolumeNormal,
+            instrument_ids=instruments,
+            names=names,
+            lens_us=lengths,
+            lookback_s=int(
+                _knob(config, "historical_lookback_days", _knob(config, "base_retention_days", 90))
+            )
+            * 86400,
+            min_days=float(_knob(config, "history_min_days", 7)),
+            **common,
+        ),
+        truth_sql.fetch(
+            ch,
+            truth_sql.VolumeBucket,
+            instrument_ids=[i for i in instruments if ":spot:" in i],
+            **common,
+        ),
+    )
+    return truth_sql.VolumeEvidence(
+        instruments=tuple(instruments), windows=tuple(rows), normals=tuple(normals), buckets=tuple(buckets)
+    )
 
 
 def float_range(low, high):
@@ -1863,24 +1858,23 @@ def liquidity_truth(snapshot, start, end, spot, relative):
         for segment in v.get("boundary_segments", []):
             for row in segment.get("aggregates", []):
                 flow.append(dict(row, minute_start=row["start"], segment_end=row["end"], venue=v["venue"]))
-    volume_buckets = defaultdict(list)
-    for r in snapshot.get("flow_bars", []):
-        if _market(r) == "SPOT" and end - timedelta(days=1) <= _time(r) < end:
-            volume_buckets[int(_time(r).timestamp()) // 900].append(r)
-    covered_volumes = []
+    by_bucket = defaultdict(dict)
+    for b in (snapshot.get("volume_sql") or truth_sql.NO_VOLUME).buckets:
+        by_bucket[b.bucket_start][b.venue] = b
     expected_venues = {v["venue"] for v in spot["venues"]}
-    for _bucket, rs in volume_buckets.items():
-        selected = [r for r in rs if _venue(r) in expected_venues]
-        if (
-            expected_venues
-            and all(r.get("complete") is True for r in selected)
-            and all(len({_time(r) for r in selected if _venue(r) == v}) == 15 for v in expected_venues)
+    covered_volumes = []
+    for venues in by_bucket.values():
+        selected = [venues.get(venue) for venue in expected_venues]
+        if expected_venues and all(
+            b is not None and b.minutes == 15 and not b.incomplete and not b.missing for b in selected
         ):
-            buy, sell = _sum(selected, "buy_notional"), _sum(selected, "sell_notional")
-            if buy is not None and sell is not None:
-                covered_volumes.append(buy + sell)
+            covered_volumes.append(sum(b.notional for b in selected))
     impact_tiers = parameter("impact_tiers_usd", [100000, 1000000, 5000000])
-    k = min(Decimal(1), mean(covered_volumes) / decimal(impact_tiers[2])) if covered_volumes else None
+    k = (
+        min(Decimal(1), decimal(mean(covered_volumes)) / decimal(impact_tiers[2]))
+        if covered_volumes
+        else None
+    )
     tiers = {
         name: decimal(size) * k if k is not None else None
         for name, size in list(zip(("T1", "T2", "T3"), impact_tiers, strict=False))
@@ -3382,136 +3376,17 @@ def data_confidence(snapshot, spot, derivatives, end):
 def support_features(snapshot, start, end, spot, deriv, liquidity, supply):
     """§5.8 support evidence. Unknown inputs remain None and never add support."""
     length = end - start
-    token = snapshot.get("token_id")
+    evidence = snapshot.get("volume_sql") or truth_sql.NO_VOLUME
+    window = snapshot.get("_primary")
+    volume = {(n.market, n.window): n for n in evidence.normals}
+    usd = {(r.window, r.instrument_id): r for r in evidence.windows}
     features = {}
     for market in ("SPOT", "PERP"):
-        grouped = defaultdict(list)
-        for row in snapshot.get("klines", []):
-            if row.get("token_id", token) == token and ((_market(row) == "SPOT") == (market == "SPOT")):
-                grouped[row["instrument_id"]].append(row)
-        market_indexes = {}
-        projected = {
-            iid: row
-            for iid, row in (snapshot.get("stat_volume_series") or {}).items()
-            if row.get("token_id") == token
-            and row.get("market_type") == market
-            and row.get("time_basis") == "OPEN_TIME"
-        }
-        for iid in set(grouped) | set(projected):
-            projection = projected.get(iid)
-
-            def build_index():
-                index_cache = _BASELINE_CACHE.get()
-                previous_head = projection.get("previous_dependency_fingerprint") if projection else None
-                prior = (
-                    index_cache.get(("native-volume-index", iid))
-                    if index_cache is not None and previous_head
-                    else None
-                )
-                if prior is not None and prior["head"] != previous_head:
-                    prior = None
-                append = bool(
-                    projection
-                    and projection.get("append_only") is True
-                    and prior is not None
-                    and projection.get("changed_from_us") is not None
-                    and projection["changed_from_us"] > prior["last_open_us"]
-                )
-                bounds = dict(prior["bounds"]) if append else {}
-                running = prior["running"] if append else Decimal(0)
-                segment = prior["segment"] if append else 0
-                last = prior["last"] if append else None
-                last_open_us = prior["last_open_us"] if append else -(2**63)
-                if projection is not None:
-                    epoch = parse_time("1970-01-01T00:00:00Z")
-                    times = projection.get("times_us", ())
-                    begin = bisect_left(times, projection["changed_from_us"]) if append else 0
-                    source = (
-                        (
-                            epoch + timedelta(microseconds=int(times[j])),
-                            int(projection.get("interval_s", 60)),
-                            projection["values"][j],
-                            bool(projection["complete"][j]),
-                            int(times[j]),
-                        )
-                        for j in range(begin, len(times))
-                    )
-                else:
-                    source = (
-                        (
-                            _time(row),
-                            int(row.get("interval_s", 60)),
-                            row.get("volume_native"),
-                            row.get("complete") is True,
-                            None,
-                        )
-                        for row in sorted(grouped[iid], key=_time)
-                    )
-                for a, interval, raw, complete, micros in source:
-                    z = a + timedelta(seconds=interval)
-                    if projection is None and z > end:
-                        continue
-                    if micros is not None:
-                        last_open_us = micros
-                    value = decimal(raw)
-                    if not complete or value is None:
-                        segment += 1
-                        last = None
-                        continue
-                    if last != a:
-                        segment += 1
-                    bounds[a] = (running, segment)
-                    running += value
-                    bounds[z] = (running, segment)
-                    last = z
-                return dict(
-                    bounds=bounds,
-                    running=running,
-                    segment=segment,
-                    last=last,
-                    last_open_us=last_open_us,
-                    head=projection.get("dependency_fingerprint") if projection is not None else None,
-                )
-
-            head = projection.get("dependency_fingerprint") if projection is not None else None
-            index = (
-                remember_latest(_BASELINE_CACHE.get(), ("native-volume-index", iid), head, build_index)
-                if head is not None and _BASELINE_CACHE.get() is not None
-                else build_index()
-            )
-            market_indexes[iid] = index["bounds"]
-
-        def total(a, z):
-            values = []
-            for bounds in market_indexes.values():
-                if a not in bounds or z not in bounds or bounds[a][1] != bounds[z][1]:
-                    return None
-                values.append(bounds[z][0] - bounds[a][0])
-            return sum(values, Decimal(0)) if values else None
-
-        current, previous = total(start, end), total(start - length, start)
-        history = []
-        history_windows = []
-        endpoints = set.intersection(*(set(v) for v in market_indexes.values())) if market_indexes else set()
-        for t in endpoints:
-            if start - timedelta(days=lookback_days()) <= t - length < t < start:
-                value = total(t - length, t)
-                if value is not None:
-                    history.append(value)
-                    history_windows.append((t - length, t))
-
-        if (
-            not history_windows
-            or (max(z for _, z in history_windows) - min(a for a, _ in history_windows)).total_seconds()
-            < float(parameter("history_min_days", 7)) * 86400
-        ):
-            history = []
-        nr = normal(history)
-        up = (
-            bool(current > previous and current > nr[1])
-            if current is not None and previous is not None and nr
-            else None
-        )
+        row = volume.get((market, window))
+        current = row.value if row else None
+        previous = row.previous if row else None
+        nr = [row.normal_low, row.normal_high] if row and row.normal_low is not None else None
+        up = bool(current > previous and current > nr[1]) if None not in (current, previous) and nr else None
         features[market.lower() + "_volume_up_beyond_normal"] = up
         features[market.lower() + "_volume_within_normal"] = within(current, nr)
         features[market.lower() + "_volume"] = {
@@ -3519,7 +3394,7 @@ def support_features(snapshot, start, end, spot, deriv, liquidity, supply):
             "previous": previous,
             "normal_range": nr,
             "unit": "NATIVE_TOKEN",
-            "window": snapshot.get("_primary"),
+            "window": window,
             "reason": None if current is not None and nr else "NOT_ESTIMABLE",
         }
     perp_buys = perp_sells = perp_q = Decimal(0)
@@ -3548,7 +3423,7 @@ def support_features(snapshot, start, end, spot, deriv, liquidity, supply):
         else:
             p["perp_taker_buy_share"] = None
         perp_flags.append(complete)
-        p["perp_volume_usd"] = window_usd_volume(snapshot, iid, start, end)
+        p["perp_volume_usd"] = usd[(window, iid)].current_usd if (window, iid) in usd else None
         p["perp_volume_reason"] = None if p["perp_volume_usd"] is not None else "INCOMPLETE"
         oi = [r for r in _instrument_rows(snapshot, "oi", iid) if _time(r) <= end]
         historical = []
@@ -4722,16 +4597,6 @@ def _compute_market_truth(snapshot, *, config=None):
 
     snapshot = bounded_market_snapshot(snapshot, end)
 
-    indexed = defaultdict(list)
-    for row in snapshot.get("klines", []):
-        indexed[row.get("instrument_id")].append((_time(row), row))
-    snapshot["_kline_volume_index"] = {}
-    for iid, points in indexed.items():
-        points.sort(key=lambda point: point[0])
-        snapshot["_kline_volume_index"][iid] = (
-            [point[0] for point in points],
-            [point[1] for point in points],
-        )
     spots, windows, primary, instruments = spot_window_graph(snapshot, start, end, av)
     snapshot["_has_event"] = bool(av)
     snapshot["_lead_start"] = start
@@ -5100,8 +4965,9 @@ def condition_market_state(snapshot, end, cache):
             head = fingerprint({field: snapshot.get(field) for field in fields})
         elif not isinstance(head, str):
             head = fingerprint(head)
-        if "relative_sql" in fields:
-            head = fingerprint([head, snapshot.get("relative_sql")])
+        for evidence in ("relative_sql", "volume_sql"):
+            if evidence in fields:
+                head = fingerprint([head, snapshot.get(evidence)])
         key = (
             "condition-state-node",
             name,
@@ -5144,7 +5010,7 @@ def condition_market_state(snapshot, end, cache):
     wstart = end - timedelta(seconds=windows[primary])
     derivatives = node(
         "derivatives",
-        ("oi", "funding", "liquidations", "semantics", "instruments", "klines"),
+        ("oi", "funding", "liquidations", "semantics", "instruments", "klines", "volume_sql"),
         lambda: derivatives_truth(scoped, wstart, end),
     )
     liquidity = liquidity_truth(scoped, wstart, end, spots[primary], relative)
@@ -5245,7 +5111,7 @@ def compute_condition_values(snapshot, requirements, *, config=None, cache=None,
                     "expected_direction",
                     "funding_confirmations",
                     "relative_sql",
-                    "stat_volume_series",
+                    "volume_sql",
                     "series_coverage_counts",
                 )
                 seconds = (end - condition_primary_bounds(snapshot, end)[0]).total_seconds()
@@ -5273,8 +5139,9 @@ def compute_condition_values(snapshot, requirements, *, config=None, cache=None,
                 dependency = fingerprint({field: snapshot.get(field) for field in fields})
             elif not isinstance(dependency, str):
                 dependency = fingerprint(dependency)
-            if "relative_sql" in fields:
-                dependency = fingerprint([dependency, snapshot.get("relative_sql")])
+            for evidence in ("relative_sql", "volume_sql"):
+                if evidence in fields:
+                    dependency = fingerprint([dependency, snapshot.get(evidence)])
             key = (
                 domain,
                 window,
@@ -5511,11 +5378,7 @@ async def with_relative(repo, snapshot, config, *, include_outcome=True, baselin
 
     `baselines=False` reads only the reference prices; a snapshot whose anchor does not precede its
     cutoff is returned as it is."""
-    from tank import clickhouse_market
-
-    ch = clickhouse_market.client(repo, "mkt.klines_1m")
-    if ch is None:
-        raise RuntimeError("mkt.klines_1m is stored in ClickHouse only; TANK_CLICKHOUSE_URL is not set")
+    ch = _market_client(repo)
     end = parse_time(snapshot["cutoff"])
     anchor = snapshot.get("anchor")
     anchor_at = anchor.get("ts") if isinstance(anchor, dict) else anchor
@@ -5526,6 +5389,35 @@ async def with_relative(repo, snapshot, config, *, include_outcome=True, baselin
         ch, snapshot, start, end, config, include_outcome=include_outcome, baselines=baselines
     )
     return dict(snapshot, relative_sql=evidence)
+
+
+async def with_volumes(repo, snapshot, config, *, primary_only=False):
+    """The snapshot with the records of the volume statements (03 §5.4, §5.7) as `volume_sql`.
+
+    The windows are those of the assessment (W15M, W1H, W4H, W24H and EVENT), or with `primary_only` the
+    primary window of a condition; a snapshot whose anchor does not precede its cutoff is returned as it
+    is."""
+    ch = _market_client(repo)
+    end = parse_time(snapshot["cutoff"])
+    anchor = snapshot.get("anchor")
+    anchor_at = anchor.get("ts") if isinstance(anchor, dict) else anchor
+    start = parse_time(anchor_at) if anchor_at else end - timedelta(hours=4)
+    if start >= end:
+        return snapshot
+    windows = dict(WINDOWS, EVENT=(end - start).total_seconds())
+    if primary_only:
+        name = condition_primary_bounds(snapshot, end)[1]
+        windows = {name: windows[name]}
+    return dict(snapshot, volume_sql=await volume_evidence(ch, snapshot, end, config, windows))
+
+
+def _market_client(repo):
+    from tank import clickhouse_market
+
+    ch = clickhouse_market.client(repo, "mkt.klines_1m")
+    if ch is None:
+        raise RuntimeError("mkt.klines_1m is stored in ClickHouse only; TANK_CLICKHOUSE_URL is not set")
+    return ch
 
 
 ASSESSMENT_BASELINE_IDLE_S = 1800
@@ -5586,6 +5478,8 @@ class MarketTruthService:
                 include_outcome=False,
                 baselines=bool(wanted & (COMPOSITE_CONDITION_METRICS | RELATIVE_CONDITION_METRICS)),
             )
+        if wanted & COMPOSITE_CONDITION_METRICS:
+            snapshot = await with_volumes(self.repo, snapshot, config, primary_only=True)
         return await asyncio.to_thread(
             compute_condition_values,
             snapshot,
@@ -5627,7 +5521,7 @@ class MarketTruthService:
         self._release_idle_assessment_baselines()
         lock = self._assessment_locks.setdefault(token_id, asyncio.Lock())
         async with lock:
-            snapshot = await with_relative(self.repo, snapshot, knobs)
+            snapshot = await with_volumes(self.repo, await with_relative(self.repo, snapshot, knobs), knobs)
             result = await compute_workers.compute_market_truth(
                 compute_workers.ASSESSMENT, snapshot, config=knobs, baseline_key=token_id
             )

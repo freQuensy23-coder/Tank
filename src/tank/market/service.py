@@ -164,9 +164,6 @@ HEAD_ORDERS = ("availability", "semantic_latest", "semantic_earliest")
 
 DAY_COUNTS_SAVE_S = 60
 DAY_COUNTS_MARGIN = timedelta(minutes=30)
-SERIES_MARGIN = timedelta(hours=2)
-SERIES_TRIM = timedelta(days=1)
-SERIES_APPLY_ROWS = 20000
 
 WIDE_PAGE_ROWS = 500
 BOOK_LEVEL_ROWS = 30
@@ -184,7 +181,6 @@ WINDOW_KEEP_S = 600
 WINDOW_TTL_S = 300
 WINDOW_ROWS = 300_000
 
-SERIES_TTL_S = 1800
 COLLECTIONS = {
     "flow_bars": ("mkt.flow_bars_1m", "minute_start"),
     "klines": ("mkt.klines_1m", "open_time"),
@@ -1254,318 +1250,6 @@ class MarketService:
                 cache.pop(next(iter(cache)))
         return cache[key]["rows"]
 
-    async def _condition_kline_series(
-        self,
-        instrument,
-        start,
-        cutoff,
-        assembled_at,
-        *,
-        kind,
-        coverage_count,
-        fixed_window=False,
-        captured_rows=None,
-        rolling=None,
-    ):
-        """Compact exact typed projections; histories never retain wide kline records.
-
-        `rolling` names a cursor that later calls with a later cutoff extend instead of
-        reading the whole history again (live snapshots).
-        """
-        from array import array
-        from bisect import bisect_left
-        from datetime import UTC, datetime
-        from math import isfinite
-
-        iid = instrument["instrument_id"]
-        upper_open = cutoff - timedelta(minutes=1)
-        fields = [
-            "open_time",
-            "open_time_prec",
-            "recorded_at",
-            "complete",
-            "interval_s",
-            "c" if kind == "price" else "volume_native",
-        ]
-
-        heads = (
-            []
-            if captured_rows is not None
-            else await self._condition_heads(
-                "mkt.klines_1m", "open_time", start, upper_open, assembled_at, {"instrument_id": iid}
-            )
-        )
-        cache = self.__dict__.setdefault("_condition_series", {})
-        locks = self.__dict__.setdefault("_condition_series_locks", {})
-
-        key = (iid, kind, rolling) if rolling else (iid, kind, start, cutoff) if fixed_window else (iid, kind)
-
-        margin = SERIES_MARGIN if rolling or not fixed_window else timedelta(0)
-        async with locks.setdefault(key, asyncio.Lock()):
-            previous = cache.get(key)
-            reset = (
-                previous is None
-                or start < previous["start"]
-                or previous["unknown_availability"]
-                or not any(heads)
-            )
-            behind = bool(
-                not reset
-                and assembled_at is not None
-                and previous["assembled_at"] is not None
-                and parse_time(assembled_at) < parse_time(previous["assembled_at"])
-            )
-            hidden = set()
-            if behind:
-                reset = upper_open > previous["upper_open"]
-                if not reset:
-                    hidden = await self._klines_recorded_between(
-                        iid, assembled_at, previous["assembled_at"], upper_open
-                    )
-            if not reset and (heads, start, cutoff) == previous["served"]["request"]:
-                previous["used"] = time.monotonic()
-                return dict(previous["series"], coverage_count=coverage_count)
-            state_start = start - margin if reset else previous["start"]
-            state_upper = upper_open if reset else max(upper_open, previous["upper_open"])
-            times = array("q") if reset else previous["opens"][:]
-            values = (array("d") if kind == "price" else []) if reset else previous["values"][:]
-            complete = bytearray() if reset else previous["complete"][:]
-            precise = bytearray() if reset else previous["precise"][:]
-            epoch = datetime(1970, 1, 1, tzinfo=UTC)
-
-            def microseconds(value):
-                delta = parse_time(value) - epoch
-                return (delta.days * 86400 + delta.seconds) * 1000000 + delta.microseconds
-
-            unknown_availability = False
-            changed = []
-
-            def apply(row):
-                nonlocal unknown_availability
-                unknown_availability |= row.get("recorded_at") is None
-                opened = parse_time(row["open_time"])
-                if not state_start <= opened <= state_upper or row.get("interval_s") != 60:
-                    return
-                value = row.get("c" if kind == "price" else "volume_native")
-                if kind == "price":
-                    value = float(value) if value is not None else float("nan")
-                    valid = row.get("complete") is True and isfinite(value) and value > 0
-                else:
-                    value = str(value) if value is not None else None
-                    valid = row.get("complete") is True and value is not None and norm.decimal(value) >= 0
-                stamp = microseconds(opened)
-                index = bisect_left(times, stamp)
-                known = row.get("open_time_prec") == "BUCKET(60s)"
-                if index < len(times) and times[index] == stamp:
-                    same_value = (
-                        values[index] == value
-                        or kind == "price"
-                        and not isfinite(values[index])
-                        and not isfinite(value)
-                    )
-                    if same_value and complete[index] == valid and precise[index] == known:
-                        return
-                    changed.append(
-                        (stamp, value if kind == "volume" or isfinite(value) else None, valid, known)
-                    )
-                    values[index], complete[index], precise[index] = value, valid, known
-                else:
-                    changed.append(
-                        (stamp, value if kind == "volume" or isfinite(value) else None, valid, known)
-                    )
-                    times.insert(index, stamp)
-                    values.insert(index, value)
-                    complete.insert(index, valid)
-                    precise.insert(index, known)
-
-            if captured_rows is not None:
-                availability = parse_time(assembled_at)
-                for row in captured_rows:
-                    if row.get("recorded_at") is None or parse_time(row["recorded_at"]) <= availability:
-                        apply(row)
-            elif reset:
-                page = []
-                async for row in self.repo.iter_market_projection(
-                    "mkt.klines_1m",
-                    fields,
-                    "open_time",
-                    start=state_start,
-                    end=upper_open + timedelta(microseconds=1),
-                    instrument_ids=[iid],
-                    assembled_at=assembled_at,
-                    batch_size=200000,
-                ):
-                    page.append(row)
-                    if len(page) == SERIES_APPLY_ROWS:
-                        rows, page = page, []
-                        await asyncio.to_thread(lambda rows=rows: [apply(row) for row in rows])
-                await asyncio.to_thread(lambda: [apply(row) for row in page])
-            elif not behind:
-                if upper_open > previous["upper_open"]:
-                    rows = [
-                        row
-                        async for row in self.repo.iter_market_projection(
-                            "mkt.klines_1m",
-                            fields,
-                            "open_time",
-                            start=previous["upper_open"] + timedelta(microseconds=1),
-                            end=upper_open + timedelta(microseconds=1),
-                            instrument_ids=[iid],
-                            assembled_at=assembled_at,
-                            batch_size=200000,
-                        )
-                    ]
-                    await asyncio.to_thread(lambda: [apply(row) for row in rows])
-                async for row in self.repo.iter_late_arrivals(
-                    "mkt.klines_1m",
-                    "recorded_at",
-                    "open_time",
-                    since=previous["assembled_at"],
-                    end=assembled_at,
-                    market_end=state_upper,
-                    filters={"instrument_id": iid},
-                ):
-                    apply(row)
-            if margin and start - margin > state_start + SERIES_TRIM:
-                drop = bisect_left(times, microseconds(start - margin))
-                state_start = start - margin
-                times, values = times[drop:], values[drop:]
-                complete, precise = complete[drop:], precise[drop:]
-
-            def state_digest():
-                if reset:
-                    digest = hashlib.sha256(repr((kind, iid, state_start, state_upper)).encode())
-                    digest.update(times.tobytes())
-                    digest.update(values.tobytes() if kind == "price" else json.dumps(values).encode())
-                    digest.update(bytes(complete))
-                    digest.update(bytes(precise))
-                    return digest.hexdigest()
-                if changed:
-                    return sha256([previous["fingerprint"], changed])
-                return previous["fingerprint"]
-
-            state_fingerprint = await asyncio.to_thread(state_digest)
-            served = None if reset else previous["served"]
-
-            def window():
-                """The served window [start, upper_open] of the cursor. It extends the last
-                served one when it has the same start, ends no earlier and nothing that
-                one had served changed since."""
-                low = bisect_left(times, microseconds(start))
-                high = bisect_left(times, microseconds(upper_open) + 1)
-                opens, points = times[low:high], values[low:high]
-                valid, known = complete[low:high], precise[low:high]
-                append_only, changed_from = False, None
-                if hidden:
-                    gone = {microseconds(at) for at in hidden}
-                    keep = [i for i, stamp in enumerate(opens) if stamp not in gone]
-                    opens = array("q", (opens[i] for i in keep))
-                    points = array("d") if kind == "price" else []
-                    points.extend(values[low + i] for i in keep)
-                    valid = bytearray(valid[i] for i in keep)
-                    known = bytearray(known[i] for i in keep)
-                elif served:
-                    served_low, served_high = (
-                        microseconds(served["start"]),
-                        microseconds(served["upper_open"]),
-                    )
-                    after = bisect_left(opens, served_high + 1)
-                    append_only = (
-                        served["start"] == start
-                        and upper_open >= served["upper_open"]
-                        and after < len(opens)
-                        and not any(served_low <= point[0] <= served_high for point in changed)
-                    )
-                    changed_from = opens[after] if append_only else None
-                if not append_only:
-                    changed_from = min(
-                        (point[0] for point in changed if opens and point[0] >= opens[0]), default=None
-                    )
-                if kind == "price":
-                    output_times = array("q", (stamp + 60000000 for i, stamp in enumerate(opens) if valid[i]))
-                    output_values = array("d", (value for i, value in enumerate(points) if valid[i]))
-                    valid = bytearray([1]) * len(output_times)
-                else:
-                    output_times, output_values = opens, points
-                exact = bool(known) and all(known)
-                return output_times, output_values, valid, exact, append_only, changed_from
-
-            (
-                output_times,
-                output_values,
-                output_complete,
-                exact,
-                append_only,
-                changed_from,
-            ) = await asyncio.to_thread(window)
-            fingerprint = sha256([state_fingerprint, iso(start), iso(upper_open), sorted(hidden)])
-            series = {
-                "times_us": output_times,
-                "values": output_values,
-                "complete": output_complete,
-                "instrument_id": iid,
-                "token_id": instrument["token_id"],
-                "venue": instrument["venue"],
-                "market_type": ("SPOT" if instrument["market_type"] == "SPOT" else "PERP")
-                if kind == "volume"
-                else instrument["market_type"],
-                "source_market_type": instrument["market_type"],
-                "interval_s": 60,
-                "time_basis": "CLOSE_TIME" if kind == "price" else "OPEN_TIME",
-                "precision": "BUCKET(60s)" if exact else None,
-                "precision_reason": None if exact else "INCOMPLETE",
-                "coverage_count": coverage_count,
-                "dependency_fingerprint": fingerprint,
-                "previous_dependency_fingerprint": served["fingerprint"] if served else None,
-                "append_only": append_only,
-                "changed_from_us": changed_from,
-            }
-            state = {
-                "start": state_start,
-                "upper_open": state_upper,
-                "assembled_at": previous["assembled_at"] if behind and not reset else assembled_at,
-                "opens": times,
-                "values": values,
-                "complete": complete,
-                "precise": precise,
-                "fingerprint": state_fingerprint,
-                "served": {
-                    "request": (heads, start, cutoff),
-                    "start": start,
-                    "upper_open": upper_open,
-                    "fingerprint": fingerprint,
-                },
-                "series": series,
-                "unknown_availability": unknown_availability,
-            }
-
-            if captured_rows is None and not (behind and not reset):
-                state["used"] = time.monotonic()
-                cache.pop(key, None)
-                cache[key] = state
-                while len(cache) > 256:
-                    cache.pop(next(iter(cache)))
-                for stale in [
-                    k for k, held in cache.items() if state["used"] - held.get("used", 0) > SERIES_TTL_S
-                ]:
-                    cache.pop(stale, None)
-            return series
-
-    async def _klines_recorded_between(self, iid, after, upto, market_end):
-        """Open times of the instrument's klines opened by `market_end` and recorded in (after, upto]."""
-        found = set()
-        async for row in self.repo.iter_late_arrivals(
-            "mkt.klines_1m",
-            "recorded_at",
-            "open_time",
-            since=parse_time(after) + timedelta(microseconds=1),
-            end=parse_time(upto) + timedelta(microseconds=1),
-            market_end=market_end,
-            filters={"instrument_id": iid},
-        ):
-            found.add(row["open_time"])
-        return found
-
     async def _condition_heads(self, collection, field, start, cutoff, assembled_at, filters):
         """The three dependency heads of a window in one round trip. A head counts only rows
         recorded by its assembly clock, so for a later clock of the same window it is reused
@@ -1830,21 +1514,6 @@ class MarketService:
         )
         heads["spot"] = sha256([flow_heads, result["tickers"], target])
         if full_state:
-            result["stat_volume_series"] = {}
-            volume_heads = []
-            for instrument in target:
-                iid = instrument["instrument_id"]
-                series = await self._condition_kline_series(
-                    instrument,
-                    history_start,
-                    end,
-                    assembled,
-                    kind="volume",
-                    coverage_count=counts.get(iid, 0),
-                )
-                if series["times_us"]:
-                    result["stat_volume_series"][iid] = series
-                volume_heads.append(series["dependency_fingerprint"])
             result["oi"], result["funding"], result["books"], result["liquidations"] = [], [], [], []
             derivative_heads, book_heads = [], []
             oi_heads, funding_heads = [], []
@@ -1990,7 +1659,7 @@ class MarketService:
             )
             heads["books"] = sha256([book_heads, result["books"], anchor.isoformat()])
             heads["supply"] = sha256([supply_heads, result["supply"]])
-            heads["support"] = sha256([volume_heads, flow_heads, heads["relative"], heads["books"]])
+            heads["support"] = sha256([flow_heads, heads["relative"], heads["books"]])
         result.setdefault("domain_dependency_fingerprints", {}).update(heads)
         result["domain_dependency_fingerprints"]["state"] = result["dependency_fingerprint"]
         return result
@@ -2888,12 +2557,6 @@ class MarketService:
         shared = _SHARED_READS.get()
         assembled = shared.setdefault("assembled", iso()) if shared is not None else iso()
 
-        rolling = "LIVE_SNAPSHOT" if cutoff_dt >= utcnow() - timedelta(hours=1) else None
-        captured_klines = None
-        if recent_start == history_start:
-            captured_klines = {iid: [] for iid in ids}
-            for row in result["klines"]:
-                captured_klines[row["instrument_id"]].append(row)
         all_spot = [
             inst
             for inst in self.instruments.values()
@@ -2906,7 +2569,6 @@ class MarketService:
             ),
         )
         result["series_coverage_counts"] = counts
-        result["stat_volume_series"] = {}
         latest_closes = (
             {
                 row["instrument_id"]: row
@@ -2941,19 +2603,6 @@ class MarketService:
         for inst in instruments:
             iid = inst["instrument_id"]
             await retain_close(latest_closes.get(iid))
-            volume = await self._condition_kline_series(
-                inst,
-                history_start,
-                cutoff_dt,
-                assembled,
-                kind="volume",
-                coverage_count=counts.get(iid, 0),
-                fixed_window=True,
-                captured_rows=captured_klines.get(iid) if captured_klines is not None else None,
-                rolling=rolling,
-            )
-            if volume["times_us"]:
-                result["stat_volume_series"][iid] = volume
         for inst in self.instruments.values():
             if inst["token_id"] in peers and norm.venue_key(inst).endswith(".spot"):
                 instruments.append(inst)

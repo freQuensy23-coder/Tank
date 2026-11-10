@@ -5,6 +5,7 @@ from decimal import Decimal
 from pathlib import Path
 
 import pytest
+from volume_helpers import buckets, evidence
 
 from tank.analysis.truth import (
     _oi_stats,
@@ -525,7 +526,11 @@ def test_asymmetric_depth_uses_actual_hit_side_and_excludes_perps(side):
         for i in range(15)
     ]
     r = liquidity_truth(
-        {"books": books, "flow_bars": rows},
+        {
+            "books": books,
+            "flow_bars": rows,
+            "volume_sql": evidence([], buckets=buckets(end, ["A"], volume=30300.0, count=1)),
+        },
         start,
         end,
         {"venues": [{"venue": "A"}]},
@@ -874,7 +879,12 @@ def _e2e8_liquidity(c_notional, covered_c=False):
     ]
     spot = {"venues": [{"venue": v} for v in ("A", "B", "C")]}
     relative = {"windows": {"W4H": {"r_raw": 0.0051, "beyond_normal": True}}}
-    return liquidity_truth({"books": books, "flow_bars": flow}, start, end, spot, relative)
+    volumes = evidence(
+        [], buckets=buckets(end, ["A", "B", "C"], volume=4500.0, count=1, missing=0 if c_notional else 15)
+    )
+    return liquidity_truth(
+        {"books": books, "flow_bars": flow, "volume_sql": volumes}, start, end, spot, relative
+    )
 
 
 def test_net_flow_is_native_so_a_missing_quote_rate_does_not_null_elasticity():

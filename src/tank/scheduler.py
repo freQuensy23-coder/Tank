@@ -1285,10 +1285,12 @@ class Scheduler:
             "config_version": self.settings.config_version,
             "code_version": self.settings.code_version,
         }
-        from tank.analysis.truth import with_relative
+        from tank.analysis.truth import with_relative, with_volumes
 
         truth = await compute_workers.compute_market_truth(
-            compute_workers.REACTION, await with_relative(self.repo, snapshot, config), config=config
+            compute_workers.REACTION,
+            await with_volumes(self.repo, await with_relative(self.repo, snapshot, config), config),
+            config=config,
         )
         relative = truth.get("relative", {})
         event_window = relative.get("windows", {}).get("EVENT", {})

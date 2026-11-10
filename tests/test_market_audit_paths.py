@@ -10,6 +10,7 @@ from datetime import timedelta
 from decimal import Decimal
 
 import pytest
+from volume_helpers import buckets, evidence
 
 from tank.analysis.truth import (
     derivatives_truth,
@@ -43,6 +44,7 @@ def raw_packet():
         supply=[],
         semantics=[],
         instruments=[],
+        volume={},
     )
     for venue, market in [("A", "spot"), ("B", "spot"), ("P", "perp"), ("Q", "perp")]:
         iid = f"{venue}:{market}:T"
@@ -74,8 +76,6 @@ def raw_packet():
                     token_id="T",
                     open_time=iso(t),
                     interval_s=900,
-                    volume_native="150",
-                    quote_volume_usd="15000",
                     complete=True,
                     o="100",
                     c="100",
@@ -112,8 +112,6 @@ def raw_packet():
                     token_id="T",
                     open_time=iso(t),
                     interval_s=60,
-                    volume_native="20",
-                    quote_volume_usd="2000",
                     complete=True,
                     o="100",
                     c="102" if market == "spot" or minute >= 1 else "100",
@@ -186,7 +184,25 @@ def raw_packet():
     return packet
 
 
+def attach_volumes(packet):
+    """The volume records the statements return for the raw packet: each market's native volume is 600 in
+    the window against 300 before it and a 90-day range of 300, each instrument's USD volume 30000 against
+    15000; `packet["volume"]` changes them (None: no volume evidence at all)."""
+    changes = packet["volume"]
+    packet["volume_sql"] = (
+        None
+        if changes is None
+        else evidence(
+            [i["instrument_id"] for i in packet["instruments"]],
+            buckets=buckets(END, ["A", "B"], volume=2_250_000.0, count=2),
+            **changes,
+        )
+    )
+    return packet
+
+
 def derive(packet, start=START, end=END):
+    attach_volumes(packet)
     spot = spot_truth(packet["flow_bars"], [], packet["instruments"], start, end)
 
     spot["composite_cohort"] = deepcopy(spot["composite_max"])
@@ -216,13 +232,11 @@ def test_raw_native_volume_and_basis_support_require_complete_own_history():
     assert f["basis_within_normal"] is True
     assert f["perp_taker_flow_buy"] is True
 
-    for row in packet["klines"]:
-        if parse_time(row["open_time"]) >= START:
-            row["volume_native"] = "10"
+    packet["volume"] = dict(native={market: dict(value=300.0) for market in ("SPOT", "PERP")})
     f = derive(packet)[1]["support_features"]
     assert f["spot_volume_up_beyond_normal"] is False and f["spot_volume_within_normal"] is True
     assert f["perp_volume_up_beyond_normal"] is False
-    packet["klines"] = []
+    packet["volume"] = None
     f = derive(packet)[1]["support_features"]
     assert f["spot_volume_up_beyond_normal"] is None and f["perp_volume_up_beyond_normal"] is None
 
@@ -252,9 +266,7 @@ def test_raw_lead_increment_ticket_and_depth_support_values():
 
     assert deriv["incremental_share"]["spot"] == 0.5
     packet = raw_packet()
-    for row in packet["klines"]:
-        if ":spot:" in row["instrument_id"] and parse_time(row["open_time"]) >= START:
-            row["quote_volume_usd"] = "3000"
+    packet["volume"] = dict(usd={"SPOT": dict(current_usd=45000.0)})
     assert derive(packet)[1]["incremental_share"]["spot"] > 0.5
     assert liq["depth_drop"] <= 0
 
@@ -443,16 +455,12 @@ def scoring_qualifiers(spot, deriv, liq, supply, relative, cls, qualifier_native
 def positive_packet(cls):
     packet = raw_packet()
     if cls == "SPOT_LED_ACCUMULATION":
-        for row in packet["klines"]:
-            if ":spot:" in row["instrument_id"] and parse_time(row["open_time"]) >= START:
-                row["quote_volume_usd"] = "3000"
+        packet["volume"] = dict(usd={"SPOT": dict(current_usd=45000.0)})
     if cls == "PERP_LED_CHASE":
         for row in packet["flow_bars"]:
             if ":spot:" in row["instrument_id"]:
                 row.update(buy_qty="10", sell_qty="10")
-        for row in packet["klines"]:
-            if ":perp:" in row["instrument_id"] and parse_time(row["open_time"]) >= START:
-                row["quote_volume_usd"] = "3000"
+        packet["volume"] = dict(usd={"PERP": dict(current_usd=45000.0)})
         for row in packet["funding"]:
             if parse_time(row["settlement_time"]) == END:
                 row["rate"] = ".01"
@@ -477,9 +485,7 @@ def positive_packet(cls):
     if cls == "LIQUIDITY_VACUUM":
         for row in packet["flow_bars"]:
             row["size_buckets"]["B4"] = dict(buy_notional="1000", sell_notional="1000")
-        for row in packet["klines"]:
-            if parse_time(row["open_time"]) >= START:
-                row["volume_native"] = "10"
+        packet["volume"] = dict(native={market: dict(value=300.0) for market in ("SPOT", "PERP")})
     if cls == "REAL_MARKET_FRAGMENTATION":
         for row in packet["flow_bars"]:
             if row["instrument_id"].startswith("B:"):
@@ -579,9 +585,9 @@ def test_each_support_term_loses_exactly_one_point_when_raw_evidence_is_removed(
     scores, native = raw_scores(packet, cls)
     assert scores[cls] == maximum
     if term in ("spot_volume_beyond", "both_volumes_beyond", "spot_volume_within"):
-        for row in packet["klines"]:
-            if ":spot:" in row["instrument_id"] and parse_time(row["open_time"]) >= START:
-                row["volume_native"] = "100" if term == "spot_volume_within" else "10"
+        packet["volume"] = dict(
+            packet["volume"], native=dict(SPOT=dict(value=3000.0 if term == "spot_volume_within" else 300.0))
+        )
     elif term == "spot_leads":
         for row in packet["klines"]:
             if ":spot:" in row["instrument_id"] and START <= parse_time(row["open_time"]) < START + timedelta(
@@ -589,9 +595,9 @@ def test_each_support_term_loses_exactly_one_point_when_raw_evidence_is_removed(
             ):
                 row["c"] = "100"
     elif term == "spot_increment_majority":
-        for row in packet["klines"]:
-            if ":perp:" in row["instrument_id"] and parse_time(row["open_time"]) >= START:
-                row["quote_volume_usd"] = "4000"
+        packet["volume"] = dict(
+            packet["volume"], usd=dict(packet["volume"]["usd"], PERP=dict(current_usd=60000.0))
+        )
     elif term in ("large_ticket_buy_majority", "large_ticket_sell_rising", "large_tickets_minority"):
         for row in packet["flow_bars"]:
             if ":spot:" in row["instrument_id"] and parse_time(row["minute_start"]) >= START:

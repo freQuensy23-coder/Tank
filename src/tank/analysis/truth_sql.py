@@ -198,3 +198,58 @@ class RelativeEvidence:
 
 
 NO_RELATIVE = RelativeEvidence()
+
+
+@dataclass(frozen=True)
+class WindowVolume(Record):
+    """The observed USD volume of one instrument in the current window and in the window before it, None
+    where the window is not covered (window_volumes.sql)."""
+
+    statement = "window_volumes"
+    window: str
+    instrument_id: str
+    current_usd: float | None
+    previous_usd: float | None
+
+
+@dataclass(frozen=True)
+class VolumeNormal(Record):
+    """The native volume of a market (SPOT or PERP) in the current window and the window before it, and
+    the 0.025 and 0.975 quantiles of the totals of its 90-day history of windows of the same length, None
+    where a total is not covered or the history spans less than the minimum (volume_normal.sql)."""
+
+    statement = "volume_normal"
+    market: str
+    window: str
+    value: float | None
+    previous: float | None
+    samples: int
+    normal_low: float | None
+    normal_high: float | None
+
+
+@dataclass(frozen=True)
+class VolumeBucket(Record):
+    """One venue's flow bars of one 15-minute bucket of the last 24 hours (volume_buckets.sql)."""
+
+    statement = "volume_buckets"
+    bucket_start: datetime
+    venue: str
+    minutes: int
+    incomplete: int
+    missing: int
+    notional: float
+
+
+@dataclass(frozen=True)
+class VolumeEvidence:
+    """Everything the volume rules of a snapshot read from ClickHouse: the instruments of the token by
+    market and the statement rows."""
+
+    instruments: tuple[str, ...] = ()
+    windows: tuple[WindowVolume, ...] = ()
+    normals: tuple[VolumeNormal, ...] = ()
+    buckets: tuple[VolumeBucket, ...] = ()
+
+
+NO_VOLUME = VolumeEvidence()

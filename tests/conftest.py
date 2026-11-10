@@ -347,20 +347,25 @@ async def market_clickhouse():
 
 @pytest.fixture
 def relative_statements(monkeypatch):
-    """Stand-in for the ClickHouse statements of the price-relative rules in tests that run a
-    Market Truth service without a ClickHouse server: the snapshot keeps the `relative_sql` it
-    carries, `evidence` replaces it when set, and a snapshot without one has no price-relative
-    evidence. The statements themselves are tested against a real server in
-    tests/test_truth_relative_sql.py."""
+    """Stand-in for the ClickHouse statements of the price-relative and volume rules in tests that run a
+    Market Truth service without a ClickHouse server: the snapshot keeps the `relative_sql` and the
+    `volume_sql` it carries, `evidence` and `volumes` replace them when set, and a snapshot without one has
+    no such evidence. The statements themselves are tested against a real server in
+    tests/test_truth_relative_sql.py and tests/test_truth_volume_sql.py."""
     from types import SimpleNamespace
 
     from tank.analysis import truth, truth_sql
 
-    stand_in = SimpleNamespace(evidence=None)
+    stand_in = SimpleNamespace(evidence=None, volumes=None)
 
     async def attach(repo, snapshot, config, **kwargs):
         evidence = stand_in.evidence or snapshot.get("relative_sql") or truth_sql.NO_RELATIVE
         return dict(snapshot, relative_sql=evidence)
 
+    async def attach_volumes(repo, snapshot, config, **kwargs):
+        evidence = stand_in.volumes or snapshot.get("volume_sql") or truth_sql.NO_VOLUME
+        return dict(snapshot, volume_sql=evidence)
+
     monkeypatch.setattr(truth, "with_relative", attach)
+    monkeypatch.setattr(truth, "with_volumes", attach_volumes)
     return stand_in

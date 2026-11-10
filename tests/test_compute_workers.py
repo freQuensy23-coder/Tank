@@ -45,7 +45,7 @@ def _comparable(result):
 def test_snapshot_parts_restore_every_row_and_value(monkeypatch):
     monkeypatch.setattr(compute_workers, "SLICE_ROWS", 4)
     packet = _spot_packet()
-    packet["stat_volume_series"] = {
+    packet["stat_series"] = {
         "A:spot:T": {"times": [f"t{n}" for n in range(9)], "values": [Decimal(n) for n in range(9)]}
     }
     kind, parts = compute_workers.pack(packet)
@@ -53,7 +53,7 @@ def test_snapshot_parts_restore_every_row_and_value(monkeypatch):
     assert kind == "dict"
     assert parts["flow_bars"][0] == "rows" and len(parts["flow_bars"][1]) == 8
     assert parts["anchor"][0] == "dict"
-    series = dict(dict(parts["stat_volume_series"][1])["A:spot:T"][1])
+    series = dict(dict(parts["stat_series"][1])["A:spot:T"][1])
     assert series["values"][0] == "rows" and len(series["values"][1]) == 3
     assert all(len(part) < 400 for part in series["values"][1])
     assert compute_workers.unpack(compute_workers.pack(packet)) == packet
