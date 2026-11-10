@@ -729,6 +729,52 @@ async def test_live_slow_and_recovered_tool_context_keep_session_provenance():
 
 
 @pytest.mark.asyncio
+async def test_replayed_slow_tool_call_keeps_its_native_call_time():
+    """A restart replays an unanswered get_market_truth call; both attempts carry the native
+    processed_at of the call, so the tool resolves the same default cutoff each time."""
+    import asyncio
+
+    repo = MemoryRepository()
+    opts, _ = settings()
+    await seed_session(repo)
+    contexts = []
+    started = asyncio.Event()
+
+    async def hanging(name, args, context):
+        contexts.append(context)
+        started.set()
+        await asyncio.Event().wait()
+
+    async def answering(name, args, context):
+        contexts.append(context)
+        return {"market_truth": []}
+
+    event = {
+        "id": "mt_replayed",
+        "type": "agent.custom_tool_use",
+        "name": "get_market_truth",
+        "input": {},
+        "processed_at": "2026-10-29T22:41:00.554Z",
+    }
+
+    def transport(req):
+        return httpx.Response(200, json={"data": [{"id": "accepted"}]})
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(transport)) as http:
+        dead = SessionService(repo, opts, hanging, http=http)
+        task = asyncio.create_task(dead.process_event("ses_1", event))
+        async with asyncio.timeout(5):
+            await started.wait()
+        task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
+        assert await repo.get("ops.tool_calls", "ses_1:mt_replayed") is None
+        restarted = SessionService(repo, opts, answering, http=http)
+        await restarted.process_event("ses_1", event)
+    assert [context["call_processed_at"] for context in contexts] == [event["processed_at"]] * 2
+    assert (await repo.get("ops.tool_calls", "ses_1:mt_replayed"))["status"] == "DONE"
+
+
+@pytest.mark.asyncio
 async def test_market_truth_wire_omits_internal_metadata_full_result_survives_recovery():
     from tank.analysis.truth import compute_market_truth
     from tank.util import canonical_json

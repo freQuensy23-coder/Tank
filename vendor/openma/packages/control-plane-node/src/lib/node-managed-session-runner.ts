@@ -141,8 +141,8 @@ export interface DefaultNodeManagedSessionRunnerDependencies {
   sandboxMode?(input: ManagedRunnerContext): SessionSandboxMode | Promise<SessionSandboxMode>;
   buildSandbox(input: ManagedRunnerContext & { signal?: AbortSignal }): Promise<SandboxExecutor>;
   retainedLifecycle?: {
-    runtimeGeneration?(input: ManagedRunnerContext & { proposed: string; executionFence?: SessionExecutionFence; signal?: AbortSignal }): Promise<string>;
-    bind(input: ManagedRunnerContext & { sandbox: SandboxExecutor; executionFence?: SessionExecutionFence; signal?: AbortSignal }): Promise<void>;
+    /** Resolves false when the bound warm sandbox is no longer reusable. */
+    bind(input: ManagedRunnerContext & { sandbox: SandboxExecutor; executionFence?: SessionExecutionFence; signal?: AbortSignal }): Promise<boolean | void>;
     idle(input: ManagedRunnerContext): Promise<void>;
     abandon(input: ManagedRunnerContext): Promise<void>;
     archive(input: StopNodeManagedSessionRuntime): Promise<void>;
@@ -254,8 +254,8 @@ export class DefaultNodeManagedSessionRunner
         }), signal);
       }
       if (reusable) {
-        await this.dependencies.retainedLifecycle?.bind({ ...contextForRetention(input), sandbox: existing!, executionFence: input.executionFence, signal });
-        return;
+        const bound = await this.dependencies.retainedLifecycle?.bind({ ...contextForRetention(input), sandbox: existing!, executionFence: input.executionFence, signal });
+        if (bound !== false) return;
       }
       if (existing !== undefined) {
         const previousWorkspace = this.workspaces.get(input);
@@ -277,14 +277,9 @@ export class DefaultNodeManagedSessionRunner
       }
       this.abortControllers.set(input, startup);
       registered = true;
-      let runtimeGeneration = this.dependencies.runtimeGenerations?.next()
+      const runtimeGeneration = this.dependencies.runtimeGenerations?.next()
         ?? `runtime_${randomUUID()}`;
       const context = { workspaceId: input.workspaceId, session: input.session, environment: input.environment };
-      if (this.dependencies.retainedLifecycle?.runtimeGeneration) {
-        runtimeGeneration = await untilAborted(this.dependencies.retainedLifecycle.runtimeGeneration({
-          ...context, proposed: runtimeGeneration, executionFence: input.executionFence, signal,
-        }), signal);
-      }
       const runtime = new SessionSandboxRuntime({
         mode: () => this.dependencies.sandboxMode?.(context) ?? "sandbox",
         create: () => {

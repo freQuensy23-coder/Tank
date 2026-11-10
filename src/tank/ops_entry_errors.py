@@ -5,8 +5,10 @@ before in one ``ENTRY_ERRORS`` notice for that source poll. Each reported error 
 remembered by an ``ENTRY_ERROR`` marker whose id is derived from the source, the
 feed URL, the reason and the entry identity (the digest of the wire entry when the
 parser had one), never from the poll time. Feeds that keep returning the same broken
-entry therefore produce no further messages. Markers, the notice and its ``DELIVER``
-job are written in one transaction.
+entry therefore produce no further messages. A failed S29 run-sync call is keyed by its
+HTTP status and the feed's count of successful reads before it, so it is reported once
+per failure episode and status. Markers, the notice and its ``DELIVER`` job are written
+in one transaction.
 """
 
 import html
@@ -15,7 +17,6 @@ from datetime import timedelta
 
 from tank.ops_cards import plain
 from tank.ops_progress import enabled
-from tank.sources.x_diagnostics import DOCUMENT_SERIALIZATION_VERSION, documents, evidence_identity, sanitize
 from tank.time_precision import collection_clock, offset_schedule
 from tank.util import parse_time, sha256
 
@@ -26,20 +27,19 @@ REASONS = {
     "PENDING_PROPOSAL_UNAVAILABLE": "Отслеживаемое предложение не вернулось в ответе источника",
     "MISSING_FROM_RUN": "Аккаунт X отсутствует в результате сбора",
     "NO_CURSOR": "Для аккаунта X не получен курсор",
+    "APIFY_RUN_HTTP_ERROR": "Запуск сбора X в Apify завершился HTTP-ошибкой",
 }
 MESSAGE_LIMIT = 3900
+RESPONSE_BODY_UNITS = 2000
 
 
 def identity(error):
-    if error.get("diagnostics"):
-        return {
-            "account": str(error.get("account") or "").lower(),
-            "evidence": evidence_identity(error["diagnostics"]),
-        }
     if error.get("entry_sha256"):
         return {"entry_sha256": error["entry_sha256"]}
     if error.get("proposal_id"):
         return {"proposal_id": error["proposal_id"]}
+    if error.get("reason") == "APIFY_RUN_HTTP_ERROR":
+        return {"status": error["response"]["status"], "reads_ok_before": error.get("reads_ok_before")}
     if "account" in error:
         return {"account": str(error.get("account") or "").lower()}
     return {"error": re.sub(r"\d+", "#", str(error.get("error") or ""))}
@@ -58,6 +58,31 @@ def error_key(source_id, feed_url, error):
 
 def units(text):
     return len(text.encode("utf-16-le")) // 2
+
+
+def escaped_clip(value, limit):
+    """The text with whitespace collapsed, cut so that its HTML-escaped form fits in limit units."""
+    text = " ".join(str(value or "").split())
+    if units(html.escape(text)) <= limit:
+        return text
+    used = 0
+    for index, char in enumerate(text):
+        used += units(html.escape(char))
+        if used > limit - 1:
+            return text[:index] + "…"
+    return text
+
+
+def response_lines(response):
+    lines = [f"Ответ: HTTP {response.get('status')} {response.get('reason_phrase') or ''}".rstrip()]
+    headers = response.get("headers") or {}
+    if headers:
+        lines.append("Заголовки: " + escaped_clip("; ".join(f"{k}: {v}" for k, v in headers.items()), 300))
+    size = f"{response.get('body_bytes')} байт"
+    if response.get("body_truncated"):
+        size += ", сохранены первые 8 КБ"
+    lines.append(f"Тело ответа ({size}): " + escaped_clip(response.get("body"), RESPONSE_BODY_UNITS))
+    return lines
 
 
 def seen_label(value):
@@ -89,19 +114,12 @@ def entry_block(number, error, payload_shown):
         lines.append("Фрагмент: " + plain(entry["excerpt"], 200))
     if error.get("error"):
         lines.append("Ошибка: " + plain(error["error"], 300))
+    if error.get("response"):
+        lines.extend(response_lines(error["response"]))
     if error.get("entry_sha256"):
         lines.append("sha256 записи: " + error["entry_sha256"])
     if error.get("payload_sha256") and not payload_shown:
         lines.append("sha256 ответа: " + error["payload_sha256"])
-    if diagnostics := error.get("diagnostics"):
-        lines.extend(
-            [
-                "HTTP fetch failure: GET " + diagnostics["request"]["url"],
-                "Тело запроса GET: отсутствует (не тело HTTP-ответа)",
-                f"Попыток: {diagnostics['attemptCount']}; исход: {diagnostics['outcome']}",
-                "Тела HTTP-ответов и заголовки: приложенные документы; усечённые ответы обозначены bodyTruncated.",
-            ]
-        )
     return "\n".join(lines)
 
 
@@ -111,9 +129,7 @@ def render(notice):
     payloads = {error.get("payload_sha256") for error in errors}
     shared = len(payloads) == 1 and None not in payloads
     head = [
-        "TANK OPS · Ошибка HTTP-сбора X"
-        if any(error.get("diagnostics") for error in errors)
-        else "TANK OPS · Записи источника не разобраны",
+        "TANK OPS · Записи источника не разобраны",
         "Источник: " + plain(source, 200),
         "Лента: " + notice["feed_url"],
         "Обнаружено: " + seen_label(notice["seen_at"]),
@@ -122,8 +138,6 @@ def render(notice):
     if shared:
         head.append("sha256 ответа: " + payloads.pop())
     text = "\n".join(head)
-    if any(error.get("diagnostics") for error in errors):
-        text += "\nHTTP response bodies / headers: документы к этому сообщению. GET request body: empty."
     for index, error in enumerate(errors):
         block = entry_block(index + 1, error, shared)
         rest = len(errors) - index - 1
@@ -145,11 +159,6 @@ async def report_entry_errors(repo, settings, source, feed, errors, seen_at):
     feed_url = feed["url"]
     pending = {}
     for error in errors:
-        if error.get("diagnostics"):
-            error = {
-                **error,
-                "diagnostics": sanitize(error["diagnostics"], getattr(settings, "apify_api_token", None)),
-            }
         pending.setdefault(error_key(source_id, feed_url, error), error)
     async with repo.lock(f"ops-entry-errors:{source_id}:{sha256(feed_url)}"), repo.transaction():
         fresh = {
@@ -194,12 +203,6 @@ async def report_entry_errors(repo, settings, source, feed, errors, seen_at):
             "created_by": "source-poller",
         }
         notice["text"] = render(notice)
-        if attachments := documents(notice["entry_errors"]):
-            notice["document_serialization_version"] = DOCUMENT_SERIALIZATION_VERSION
-            notice["document_manifest"] = [
-                {"filename": row["filename"], "sha256": row["sha256"], "bytes": len(row["content"])}
-                for row in attachments
-            ]
         await repo.put("out.ops_notices", notice_id, notice, immutable=True)
         await repo.enqueue(
             "DELIVER",

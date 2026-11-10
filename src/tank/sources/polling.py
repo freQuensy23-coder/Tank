@@ -17,6 +17,7 @@ import httpx
 
 from tank.ops_entry_errors import report_entry_errors
 from tank.sources import parsers
+from tank.sources.xsensor import ApifyRunFailed
 from tank.util import new_id, parse_time, sha256
 
 log = logging.getLogger(__name__)
@@ -662,7 +663,11 @@ class SourcePoller:
                         last_failure_at=self.stamp(),
                     )
                     await self.save(key, current)
+                    reads_ok = current["reads"]["ok"]
                 log.warning("Source feed %s read failed: %s", key, exc)
+                if isinstance(exc, ApifyRunFailed):
+                    failure = {**exc.failure, "reads_ok_before": reads_ok}
+                    await self.report_entry_errors(key, source, feed, [failure], attempted)
                 return {"items": 0, "errors": [str(exc)]}
             await self.report_entry_errors(
                 key, source, feed, acquired.get("entry_errors") or [], acquired.get("fetched_at") or attempted

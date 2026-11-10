@@ -5,8 +5,7 @@ from types import SimpleNamespace
 import httpx
 import pytest
 from test_sources import RSS, Repo, settings
-from test_x_diagnostics import diagnostics, failed_run
-from test_xsensor import URL
+from test_xsensor import URL, run
 
 from tank.scheduler import Scheduler
 from tank.sources import SourceService
@@ -147,8 +146,22 @@ async def test_failed_x_actor_run_is_a_failed_read(tmp_path, caplog):
     config.apify_api_token = "apify-secret"
     repo = MemoryRepository()
     caplog.set_level(logging.WARNING, logger="tank.sources.polling")
+    failed_run = run(
+        [],
+        [
+            {
+                "handle": "alice",
+                "status": "failed",
+                "error": "PUBLIC_PROFILE_HTTP_503",
+                "diagnostics": {"attemptCount": 3},
+            }
+        ],
+        {"alice": "999"},
+        health="failed",
+        error="PUBLIC_SOURCE_UNAVAILABLE",
+    )
     async with httpx.AsyncClient(
-        transport=httpx.MockTransport(lambda request: httpx.Response(201, json=failed_run(diagnostics())))
+        transport=httpx.MockTransport(lambda request: httpx.Response(201, json=failed_run))
     ) as http:
         service = SourceService(repo, config, http=http)
         service.accounts = {"alice": {"handle": "alice", "role": "OTHER", "entity_id": "alice"}}

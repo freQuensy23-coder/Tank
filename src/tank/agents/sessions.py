@@ -141,6 +141,7 @@ class SessionService:
         self.owns_stream_http = stream_http is None and http is None
         self.tasks = {}
         self.event_locks = {}
+        self.reconciliation_locks = {}
         self.send_locks = {}
         self.execution_polls = {}
         self.history_polls = {}
@@ -420,8 +421,16 @@ class SessionService:
             return False
         return True
 
-    def reopen_for_question(self, session, payload):
+    def reopen_for_question(self, session, payload, key):
+        """Under the session lock: reopen a FAILED session and retire its unfinished turns, never this one."""
+        retired = set(session.get("retired_message_ids", []))
         if session.get("status") == "FAILED":
+            for row in session.get("message_log", []):
+                if row.get("turn_status") == "DONE" or row["message_id"] == key:
+                    continue
+                retired.add(row["message_id"])
+                if row.get("payload", {}).get("kind") == "USER_QUESTION":
+                    row["turn_status"] = "FAILED"
             session.setdefault("reopened", []).append(
                 {
                     "question_id": payload["question_id"],
@@ -429,7 +438,12 @@ class SessionService:
                     **self.clock_timestamp().fields("at"),
                 }
             )
-            session["status"] = "OPEN"
+            session.update(
+                status="OPEN", runtime_status="IDLE", active_message_id=None, pending_retry_event=None
+            )
+        retired.discard(key)
+        if retired or "retired_message_ids" in session:
+            session["retired_message_ids"] = sorted(retired)
 
     def analyst_tools(self, *, scout=False):
         """The current analyst toolset: built-ins plus the custom tools of config/skills."""
@@ -633,7 +647,7 @@ class SessionService:
                     if closed is not None:
                         await record_answer(self.repo, payload["question_id"], closed[1], status=closed[0])
                         return None
-                    self.reopen_for_question(session, payload)
+                    self.reopen_for_question(session, payload, key)
                 if key in session.get("messages", []):
                     self.start_stream(sid)
                     return session
@@ -683,7 +697,7 @@ class SessionService:
         self.start_stream(sid)
         return session
 
-    async def post_message_intent(self, sid, key, *, recovering=False):
+    async def post_message_intent(self, sid, key):
         session = await self.repo.get("ops.agent_sessions", sid)
         intent = next(row for row in session["message_log"] if row["message_id"] == key)
         initial_status = session.get("status")
@@ -699,7 +713,6 @@ class SessionService:
             or session.get("archived_at")
             or remote.get("status") == "terminated"
             or remote.get("archived_at")
-            or (recovering and not self.recoverable_session(session))
         ):
             return session
         accepted = await self.request(
@@ -789,105 +802,12 @@ class SessionService:
         attempt = payload.get("reanalysis_attempt")
         return field != "item_id" or not attempt or session.get("reanalysis_attempt") == attempt
 
-    @staticmethod
-    def recoverable_session(session):
-        remote = session.get("remote_state") or {}
-        return (
-            session.get("status") == "OPEN"
-            and not session.get("archived_at")
-            and remote.get("status") != "terminated"
-            and not remote.get("archived_at")
-        )
-
-    @staticmethod
-    def recorded_message_input(session, message, calls):
-        attempts = message.get("native_input_attempts")
-        attempt = message.get("retry_count", 0)
-        if (
-            not isinstance(attempts, dict)
-            or type(attempt) is not int
-            or attempt < 0
-            or any(
-                not isinstance(identity, str)
-                or not identity.strip()
-                or identity != identity.strip()
-                or type(ordinal) is not int
-                or ordinal < 0
-                for identity, ordinal in attempts.items()
-            )
-        ):
-            return None
-        candidates = [identity for identity, ordinal in attempts.items() if ordinal == attempt]
-        if len(candidates) != 1:
-            return None
-        identity = candidates[0]
-        if (
-            message.get("remote_event_id") not in (None, identity)
-            or identity in message.get("superseded_native_input_ids", [])
-            or identity in session.get("superseded_native_inputs", {})
-        ):
-            return None
-        for other in session.get("message_log", []):
-            if other is message:
-                continue
-            if other.get("message_id") == message["message_id"]:
-                return None
-            other_attempts = other.get("native_input_attempts", {})
-            if not isinstance(other_attempts, dict):
-                return None
-            if (
-                other.get("remote_event_id") == identity
-                or identity in other_attempts
-                or identity in other.get("superseded_native_input_ids", [])
-            ):
-                return None
-        if any(call.get("remote_event_id") == identity for call in calls):
-            return None
-        return identity
-
-    async def repair_accepted_inputs(self, sid):
-        async with self.repo.lock("session:" + sid):
-            session = await self.repo.get("ops.agent_sessions", sid)
-            if session is None or not self.recoverable_session(session):
-                return
-            calls = [row async for row in self.repo.iter_all("ops.tool_calls", filters={"session_id": sid})]
-            changed = False
-            for message in session.get("message_log", []):
-                if message["message_id"] in session.get("retired_message_ids", []) or message.get(
-                    "turn_status"
-                ) not in {"ACCEPTING", "PENDING", "RUNNING"}:
-                    continue
-                identity = self.recorded_message_input(session, message, calls)
-                if not identity:
-                    continue
-                if not message.get("remote_event_id"):
-                    message["remote_event_id"] = identity
-                    changed = True
-                if message.get("turn_status") == "ACCEPTING":
-                    message["turn_status"] = "PENDING"
-                    changed = True
-                if message["message_id"] not in session.setdefault("messages", []):
-                    session["messages"].append(message["message_id"])
-                    changed = True
-            if changed:
-                await self.repo.put("ops.agent_sessions", sid, session)
-
     async def recover_outbound_inputs(self, sid):
         async with self.send_locks.setdefault(sid, asyncio.Lock()):
-            await self.repair_accepted_inputs(sid)
             session = await self.repo.get("ops.agent_sessions", sid)
-            if session is None or not self.recoverable_session(session):
-                return
             for message in session.get("message_log", []):
-                if (
-                    message.get("turn_status") == "ACCEPTING"
-                    and not message.get("sent_at")
-                    and message.get("native_input_attempts", {}) == {}
-                    and type(message.get("retry_count", 0)) is int
-                    and message.get("retry_count", 0) == 0
-                    and message["message_id"] not in session.get("retired_message_ids", [])
-                ):
-                    await self.post_message_intent(sid, message["message_id"], recovering=True)
+                if message.get("turn_status") == "ACCEPTING" and not message.get("sent_at"):
+                    await self.post_message_intent(sid, message["message_id"])
         session = await self.repo.get("ops.agent_sessions", sid)
         await session_progress(self.repo, self.settings, session)
         if session.get("pending_retry_event"):
@@ -907,144 +827,27 @@ class SessionService:
             return events[0]["id"]
         return None
 
-    async def native_input_owner(self, session, execution_id, calls=None):
+    async def native_input_owner(self, session, execution_id):
         """Resolve exact accepted-input lineage, including tool-result continuations."""
-        if (
-            not isinstance(execution_id, str)
-            or not execution_id.strip()
-            or execution_id != execution_id.strip()
-        ):
+        if not execution_id:
             return None
         messages = {row["message_id"]: row for row in session.get("message_log", [])}
-        calls = (
-            calls
-            if calls is not None
-            else [
-                row
-                async for row in self.repo.iter_all(
-                    "ops.tool_calls", filters={"session_id": session["session_id"]}
-                )
-            ]
-        )
-        claims = []
         for message in messages.values():
-            attempts = message.get("native_input_attempts", {})
-            if not isinstance(attempts, dict):
-                return None
-            if (
-                execution_id == message.get("remote_event_id")
-                or execution_id in message.get("superseded_native_input_ids", [])
-                or execution_id in attempts
+            if execution_id == message.get("remote_event_id") or execution_id in message.get(
+                "superseded_native_input_ids", []
             ):
-                recorded = self.recorded_message_input(session, message, calls)
-                if execution_id in attempts:
-                    attempt = attempts[execution_id]
-                    if type(attempt) is not int or attempt < 0:
-                        return None
-                    if attempt == message.get("retry_count", 0) and recorded != execution_id:
-                        return None
-                elif execution_id == message.get("remote_event_id"):
-                    if attempts:
-                        return None
-                    attempt = message.get("retry_count", 0)
-                elif execution_id in message.get("superseded_native_input_ids", []):
-                    attempt = message["superseded_native_input_ids"].index(execution_id)
-                else:
-                    return None
-                if type(attempt) is not int or attempt < 0:
-                    return None
-                claims.append((message["message_id"], attempt))
-        for call in calls:
+                attempt = message.get("native_input_attempts", {}).get(execution_id)
+                if attempt is None:
+                    attempt = (
+                        message.get("retry_count", 0)
+                        if execution_id == message.get("remote_event_id")
+                        else message.get("superseded_native_input_ids", []).index(execution_id)
+                    )
+                return message["message_id"], attempt
+        async for call in self.repo.iter_all("ops.tool_calls", filters={"session_id": session["session_id"]}):
             if call.get("remote_event_id") == execution_id and call.get("native_turn_message_id") in messages:
-                attempt = call.get("native_turn_retry_count", 0)
-                if type(attempt) is not int or attempt < 0:
-                    return None
-                claims.append((call["native_turn_message_id"], attempt))
-        return claims[0] if len(claims) == 1 else None
-
-    async def handled_terminal_inputs(self, session, calls, states, superseded):
-        if not self.recoverable_session(session) or session.get("pending_retry_event"):
-            return set()
-        handled = set()
-        messages = session.get("message_log", [])
-        retired = set(session.get("retired_message_ids", []))
-        for index, message in enumerate(messages):
-            if message.get("turn_status") != "FAILED" or message["message_id"] in retired:
-                continue
-            failure = message.get("terminal_failure", session.get("terminal_failure"))
-            if not isinstance(failure, dict):
-                continue
-            identity = failure.get("execution_id")
-            attempt = message.get("retry_count", 0)
-            if (
-                not isinstance(identity, str)
-                or not identity
-                or not isinstance(failure.get("event_id"), str)
-                or not failure["event_id"]
-                or failure["event_id"] not in session.get("processed_events", [])
-                or (
-                    failure.get("event_type") == "execution.status_failed"
-                    and failure["event_id"] != "execution-status-failed:" + identity
-                )
-                or failure.get("event_type")
-                not in {"execution.status_failed", "session.error", "agent.refusal"}
-                or states.get(identity, {}).get("state") != "FAILED"
-                or await self.native_input_owner(session, identity, calls) != (message["message_id"], attempt)
-            ):
-                continue
-            continuation = False
-            for later in messages[index + 1 :]:
-                if (
-                    later["message_id"] not in retired
-                    and later.get("turn_status") in {"PENDING", "RUNNING", "DONE"}
-                    and later.get("remote_event_id")
-                    and await self.native_input_owner(session, later["remote_event_id"], calls)
-                    == (later["message_id"], later.get("retry_count", 0))
-                ):
-                    continuation = True
-                    break
-            if not continuation:
-                continue
-            owned = [call for call in calls if call.get("native_turn_message_id") == message["message_id"]]
-            superseded_tools = {
-                input_id
-                for input_id, proof in superseded.items()
-                if isinstance(proof, dict)
-                and proof.get("reason") == "FAILED_PRIOR_TURN_ATTEMPT"
-                and proof.get("message_id") == message["message_id"]
-                and proof.get("replacement_input_id") == message.get("remote_event_id")
-                and states.get(input_id, {}).get("state") == "FAILED"
-                and proof.get("queue_state") == states[input_id]
-                and (owner := await self.native_input_owner(session, input_id, calls)) is not None
-                and owner[0] == message["message_id"]
-                and owner[1] < attempt
-            }
-            if any(
-                not call.get("returned_at")
-                or not call.get("remote_event_id")
-                or (
-                    states.get(call["remote_event_id"], {}).get("state")
-                    != ("FAILED" if call["remote_event_id"] == identity else "COMPLETED")
-                    and call["remote_event_id"] not in superseded_tools
-                )
-                for call in owned
-            ):
-                continue
-            message_input = message.get("remote_event_id")
-            if not message_input or states.get(message_input, {}).get("state") != (
-                "FAILED" if message_input == identity else "COMPLETED"
-            ):
-                continue
-            returned = {call["call_id"] for call in owned}
-            if any(
-                receipt.get("execution_id") == identity
-                and (receipt.get("stop_reason") or {}).get("type") == "requires_action"
-                and any(call_id not in returned for call_id in receipt["stop_reason"].get("event_ids", []))
-                for receipt in session.get("native_execution_receipts", {}).values()
-            ):
-                continue
-            handled.add(identity)
-        return handled
+                return call["native_turn_message_id"], call.get("native_turn_retry_count", 0)
+        return None
 
     async def execution_barrier(self, session, calls=None, *, verify_remote=False):
         """Correlate accepted inputs with native execution receipts, never idle timing."""
@@ -1066,8 +869,7 @@ class SessionService:
             if message["message_id"] in retired:
                 continue
             identity = message.get("remote_event_id")
-            owner = await self.native_input_owner(session, identity, calls) if identity else None
-            if identity and owner == (message["message_id"], message.get("retry_count", 0)):
+            if identity:
                 required.add(identity)
             else:
                 unknown.append("message:" + message["message_id"])
@@ -1093,6 +895,12 @@ class SessionService:
                 for identity in receipt["stop_reason"].get("event_ids", [])
                 if identity not in returned_tools
             }
+        )
+        final_receipt = any(
+            receipt.get("execution_id") in required
+            and receipt.get("type") == "session.status_idle"
+            and receipt.get("stop_reason", {}).get("type") == "end_turn"
+            for identity, receipt in receipts.items()
         )
         states = copy.deepcopy(session.get("native_execution_states", {}))
         signature = tuple(sorted(required))
@@ -1149,18 +957,10 @@ class SessionService:
                             "replacement_input_id": owner.get("remote_event_id"),
                             "message_id": owner["message_id"],
                         }
-                superseded = current.get("superseded_native_inputs", {})
-                required.difference_update(superseded)
+                required.difference_update(current.get("superseded_native_inputs", {}))
                 await self.repo.put("ops.agent_sessions", session["session_id"], current)
             delay = min(poll[1] * 2, 1.0) if poll[2] == signature else 0.05
             self.execution_polls[session["session_id"]] = (time.monotonic() + delay, delay, signature)
-        required.difference_update(await self.handled_terminal_inputs(session, calls, states, superseded))
-        final_receipt = any(
-            receipt.get("execution_id") in required
-            and receipt.get("type") == "session.status_idle"
-            and receipt.get("stop_reason", {}).get("type") == "end_turn"
-            for receipt in receipts.values()
-        )
         failed = sorted(
             identity
             for identity in required
@@ -1354,7 +1154,7 @@ class SessionService:
         session = await self.repo.get("ops.agent_sessions", sid)
         local = await self.execution_barrier(session)
         source_outcomes = await self.source_completion_snapshot(session)
-        if not self.recoverable_session(session):
+        if session.get("status") == "FAILED":
             return dict(local, complete=False)
         if (
             local["complete"]
@@ -1399,11 +1199,7 @@ class SessionService:
         async with self.repo.lock("session:" + sid):
             current = await self.repo.get("ops.agent_sessions", sid)
             after = await self.execution_barrier(current)
-            if (
-                not self.recoverable_session(current)
-                or not after["complete"]
-                or after["accepted_input_ids"] != before["accepted_input_ids"]
-            ):
+            if not after["complete"] or after["accepted_input_ids"] != before["accepted_input_ids"]:
                 return dict(after, complete=False)
             for message in current.get("message_log", []):
                 if message.get("turn_status") != "FAILED":
@@ -1712,6 +1508,7 @@ class SessionService:
         decision_market_refresh_completed=False,
         decision_prepared_condition_ids=None,
         resolved_arguments=None,
+        called_at=None,
     ):
         if tool in {
             "record_event",
@@ -1753,6 +1550,8 @@ class SessionService:
                 raise ValueError("Replay requires one unambiguous stored external tool result")
             return captures[0]
         context = self.tool_context(session, call_id)
+        if called_at:
+            context["call_processed_at"] = called_at
         if decision_market_refresh_only:
             context["_decision_market_refresh_only"] = True
         if decision_market_refresh_completed:
@@ -1845,12 +1644,18 @@ class SessionService:
                         call_id,
                         decision_market_refresh_only=True,
                         resolved_arguments=resolved_arguments,
+                        called_at=event.get("processed_at"),
                     )
                     decision_prepared_condition_ids = prepared.get("prepared_condition_ids")
                     decision_market_refresh_completed = True
                 else:
                     slow_result = await self.invoke_tool(
-                        session, event["name"], event["input"], call_id, resolved_arguments=resolved_arguments
+                        session,
+                        event["name"],
+                        event["input"],
+                        call_id,
+                        resolved_arguments=resolved_arguments,
+                        called_at=event.get("processed_at"),
                     )
             except Exception as error:
                 slow_error, slow_error_status = self.tool_failure(error)
@@ -1941,6 +1746,7 @@ class SessionService:
                                 stored.get("model_arguments", stored["input"]),
                                 call_id,
                                 resolved_arguments=resolved_arguments,
+                                called_at=event.get("processed_at"),
                                 **(
                                     {
                                         "decision_market_refresh_completed": True,
@@ -2689,6 +2495,10 @@ class SessionService:
         return False
 
     async def follow(self, sid):
+        async with self.reconciliation_locks.setdefault(sid, asyncio.Lock()):
+            await self.follow_owned(sid)
+
+    async def follow_owned(self, sid):
         delay = 1
         failures = 0
         logged_at = None
@@ -2702,6 +2512,7 @@ class SessionService:
         while not self.closed:
             stream_task = None
             try:
+                await self.recover_outbound_inputs(sid)
                 stream_task = asyncio.create_task(self.stream(sid))
                 await self.catch_up(sid)
                 session = await self.repo.get("ops.agent_sessions", sid)
@@ -2885,32 +2696,68 @@ class SessionService:
                 continue
             await self.finish_failed(session["session_id"])
 
+    async def reconcile_idle_sessions(self, sessions, tick):
+        """Recheck settled sessions, then sweep FAILED ones and answers, isolating each failure.
+
+        A session with a live follower is left to it; the per-session reconciliation lock keeps this
+        task and a follower started meanwhile from reconciling the same session at once."""
+        for session in sessions:
+            sid = session["session_id"]
+            following = sid in self.tasks and not self.tasks[sid].done()
+            kept = bool(session.get("archive_after")) and parse_time(session["archive_after"]) > utcnow()
+            if following or session.get("followups_only") or kept or tick % IDLE_RECHECK_TICKS:
+                continue
+            try:
+                async with self.reconciliation_locks.setdefault(sid, asyncio.Lock()):
+                    if sid in self.tasks and not self.tasks[sid].done():
+                        continue
+                    current = await self.repo.get("ops.agent_sessions", sid)
+                    if not current or current.get("status") != "OPEN":
+                        continue
+                    if self.running(current) or not await self.finish_if_idle(sid):
+                        self.start_stream(sid)
+            except (httpx.HTTPError, ValueError, KeyError, RuntimeError) as exc:
+                log.warning("Agent session %s idle reconciliation failed: %s", sid, type(exc).__name__)
+        if tick % IDLE_RECHECK_TICKS == 0:
+            for operation in (self.sweep_failed, self.reconcile_answers):
+                try:
+                    await operation()
+                except (httpx.HTTPError, ValueError, KeyError, RuntimeError) as exc:
+                    log.warning("Agent maintenance %s failed: %s", operation.__name__, type(exc).__name__)
+
     async def run(self, stop):
+        """Follow every busy session at once; idle maintenance runs in its own task.
+
+        A busy session's follower reconciles it, so a busy session's slow replay never delays
+        another busy session's recovery or the slot wakeups that run on every tick."""
         tick = 0
-        while not stop.is_set() and not self.closed:
-            async for session in self.repo.iter_metadata(
-                "ops.agent_sessions", SESSION_ADMISSION_FIELDS, filters={"status": "OPEN"}
-            ):
-                sid = session["session_id"]
-                settled = session.get("runtime_status") == "IDLE" and not session.get("active_message_id")
-                following = sid in self.tasks and not self.tasks[sid].done()
-                kept = bool(session.get("archive_after")) and parse_time(session["archive_after"]) > utcnow()
-                if (
-                    settled
-                    and not following
-                    and (session.get("followups_only") or kept or tick % IDLE_RECHECK_TICKS)
+        maintenance = None
+        try:
+            while not stop.is_set() and not self.closed:
+                idle = []
+                async for session in self.repo.iter_metadata(
+                    "ops.agent_sessions", SESSION_ADMISSION_FIELDS, filters={"status": "OPEN"}
                 ):
-                    continue
-                if await self.finish_if_idle(sid):
-                    continue
-                self.start_stream(sid)
-            if tick % IDLE_RECHECK_TICKS == 0:
-                await self.sweep_failed()
-                await self.reconcile_answers()
-            tick += 1
-            await self.wake_waiting()
-            with suppress(TimeoutError):
-                await asyncio.wait_for(stop.wait(), timeout=5)
+                    sid = session["session_id"]
+                    settled = session.get("runtime_status") == "IDLE" and not session.get("active_message_id")
+                    if settled:
+                        idle.append(session)
+                    else:
+                        self.start_stream(sid)
+                if maintenance is None or maintenance.done():
+                    if maintenance is not None:
+                        await maintenance
+                    maintenance = asyncio.create_task(
+                        self.reconcile_idle_sessions(idle, tick), name="openma-idle-maintenance"
+                    )
+                tick += 1
+                await self.wake_waiting()
+                with suppress(TimeoutError):
+                    await asyncio.wait_for(stop.wait(), timeout=5)
+        finally:
+            if maintenance is not None:
+                maintenance.cancel()
+                await asyncio.gather(maintenance, return_exceptions=True)
 
     async def close(self):
         self.closed = True

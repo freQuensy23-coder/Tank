@@ -126,6 +126,7 @@ COPY tank-native-qualification.json /app/tank-native-qualification.json
 RUN mkdir -p /app/data && chown -R node:node /app/data
 
 ENV NODE_ENV=production
+ENV pnpm_config_verify_deps_before_run=false
 ENV PORT=8787
 ENV HOST=0.0.0.0
 ENV DATABASE_PATH=/app/data/oma.db

@@ -15,6 +15,9 @@ export const stableDigest = (value: unknown): string => {
       ? Object.fromEntries(Object.entries(item).sort(([a], [b]) => a.localeCompare(b)).map(([name, child]) => [name, normalize(child)])) : item;
   return 'sha256:' + createHash('sha256').update(JSON.stringify(normalize(value)) ?? 'undefined').digest('hex');
 };
+/** Session resources that pin a retained runtime. Reader files are left out: the input preparer writes them again on every cold start. */
+export const retainedSessionResources = (resources: unknown): unknown => Array.isArray(resources)
+  ? resources.filter(resource => (resource as { type?: unknown } | null)?.type !== 'file') : resources;
 const validDigest = (value: unknown): value is string => typeof value === 'string' && /^sha256:[a-f0-9]{64}$/.test(value);
 export function validateRuntimeIdentity(value: unknown): asserts value is RuntimeIdentity {
   const identity = value as RuntimeIdentity | null;

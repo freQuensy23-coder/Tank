@@ -2449,7 +2449,15 @@ class EventToolService:
         return prepared_ids
 
     async def get_market_truth(self, a, c, *, refresh_key=None):
+        """Market Truth per token, computed by RUN_MARKET_TRUTH jobs keyed by the cutoff minute.
 
+        Without its own cutoff a model call asks for the minute it was made (its native
+        processed_at), not the minute it runs, so a call replayed after a restart awaits the
+        same job, and calls made in the same minute share one job. A condition refresh keeps the
+        current minute. The beneficiary ranking uses the newest stored truth per token (a later
+        cutoff, or a newer record at the same cutoff), so a late replay answered from an older job
+        never ranks on staler data than is stored.
+        """
         named = {"SECOND": "BUCKET(1s)", "MINUTE": "BUCKET(1m)", "HOUR": "BUCKET(1h)"}
         normalized_prec = None
         if a.get("cutoff_prec") in named:
@@ -2470,7 +2478,12 @@ class EventToolService:
         allowed |= await self.managed_tokens(eid)
         if not set(a["token_ids"]) <= allowed:
             raise ValueError("token_ids outside analysis set")
-        cutoff = iso(a["cutoff"]) if a.get("cutoff") else iso(utcnow().replace(second=0, microsecond=0))
+        called = (
+            parse_time(c["call_processed_at"])
+            if c.get("call_processed_at") and refresh_key is None
+            else utcnow()
+        )
+        cutoff = iso(a["cutoff"]) if a.get("cutoff") else iso(called.replace(second=0, microsecond=0))
         cutoff_stamp = chosen_boundary(
             cutoff,
             precision=a.get("cutoff_prec", "EXACT" if a.get("cutoff") else "BUCKET(1m)"),
@@ -2537,9 +2550,18 @@ class EventToolService:
             latest = {truth["token_id"]: truth for truth in truths}
             for edge in edges:
                 token = edge.get("token_id")
-                if edge.get("credible") and token and token not in latest:
+                if edge.get("credible") and token:
                     stored = await self.latest_record("ana.market_truth", eid, token)
-                    if stored:
+                    returned = latest.get(token)
+                    if stored and (
+                        returned is None
+                        or (
+                            stored.get("cutoff")
+                            and returned.get("cutoff")
+                            and stored.get("mta_id") != returned.get("mta_id")
+                            and parse_time(stored["cutoff"]) >= parse_time(returned["cutoff"])
+                        )
+                    ):
                         latest[token] = stored
             for edge in edges:
                 mt = latest.get(edge.get("token_id"))

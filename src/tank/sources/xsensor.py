@@ -16,10 +16,11 @@ import httpx
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from tank.logging import redact_text
-from tank.sources.x_diagnostics import sanitize
 from tank.util import iso
 
 RUN_TIMEOUT_S = 130
+ERROR_BODY_BYTES = 8192
+ERROR_HEADERS = ("content-type", "content-length", "date", "retry-after")
 
 
 class ApifyModel(BaseModel):
@@ -111,7 +112,6 @@ class AccountFailure:
 
     account: str | None
     reason: str
-    diagnostics: dict | None = None
 
 
 @dataclass(frozen=True)
@@ -145,11 +145,7 @@ def scan(run: ApifyRun, accounts: list[str], cursors: Mapping[str, str], raw: by
         for post in run.posts
         if post.author.lower() in cursors and int(post.id) > int(cursors[post.author.lower()])
     ]
-    failures = [
-        AccountFailure(a.handle, a.error or "FAILED", a.diagnostics)
-        for a in run.accounts
-        if a.status == "failed"
-    ]
+    failures = [AccountFailure(a.handle, a.error or "FAILED") for a in run.accounts if a.status == "failed"]
     reported = {account.handle.lower(): account for account in run.accounts}
     for handle in accounts:
         account = reported.get(handle.lower())
@@ -176,15 +172,51 @@ def scan(run: ApifyRun, accounts: list[str], cursors: Mapping[str, str], raw: by
     return Scan(rows=rows, cursors=next_cursors, failures=failures, gaps=gaps, failed=run.health == "failed")
 
 
+class ApifyRunFailed(RuntimeError):
+    """A run-sync call that Apify answered with an HTTP error; ``failure`` is its run-level entry error."""
+
+    def __init__(self, message: str, failure: dict[str, object]) -> None:
+        super().__init__(message)
+        self.failure = failure
+
+
+def run_failure(response: httpx.Response, message: str, secrets: tuple[str, ...]) -> dict[str, object]:
+    """The S29 entry error of a failed run-sync call: status, safe headers and the redacted body.
+
+    The body is cut to ERROR_BODY_BYTES after redaction; ``body_bytes`` is the size Apify sent."""
+    body = redact_text(response.content.decode("utf-8", "replace"), secrets)
+    shown = body.encode()[:ERROR_BODY_BYTES].decode("utf-8", "ignore")
+    return {
+        "account": None,
+        "reason": "APIFY_RUN_HTTP_ERROR",
+        "error": message.splitlines()[0],
+        "response": {
+            "status": response.status_code,
+            "reason_phrase": response.reason_phrase,
+            "headers": {
+                name: redact_text(response.headers[name], secrets)
+                for name in ERROR_HEADERS
+                if name in response.headers
+            },
+            "body": shown,
+            "body_bytes": len(response.content),
+            "body_truncated": len(shown) < len(body),
+        },
+    }
+
+
 class XSensor:
     def __init__(self, http: httpx.AsyncClient, token: str | None) -> None:
         self.http = http
         self.token = token
 
     async def posts(self, url: str, accounts: list[str], cursors: Mapping[str, str]) -> Scan:
-        """Run the actor once over the accounts; see `scan`."""
+        """Run the actor once over the accounts; see `scan`.
+
+        An HTTP error answer raises ApifyRunFailed with the response kept for Tank Ops."""
         if not self.token:
             raise ValueError("APIFY_API_TOKEN is not set")
+        secrets = (self.token, repr(self.token)[1:-1])
         known = {
             account.lower(): cursors[account.lower()] for account in accounts if account.lower() in cursors
         }
@@ -196,16 +228,14 @@ class XSensor:
                 timeout=RUN_TIMEOUT_S,
             )
             response.raise_for_status()
+        except httpx.HTTPStatusError as exc:
+            message = redact_text(str(exc), secrets)
+            raise ApifyRunFailed(
+                f"Apify X run request failed: {message}",
+                run_failure(exc.response, message, secrets),
+            ) from None
         except httpx.HTTPError as exc:
-            message = redact_text(str(exc), (self.token, repr(self.token)[1:-1]))
+            message = redact_text(str(exc), secrets)
             raise RuntimeError(f"Apify X run request failed: {message}") from None
         run = ApifyRun.model_validate_json(response.content)
-        run = run.model_copy(
-            update={
-                "accounts": [
-                    account.model_copy(update={"diagnostics": sanitize(account.diagnostics, self.token)})
-                    for account in run.accounts
-                ]
-            }
-        )
         return scan(run, accounts, cursors, response.content)

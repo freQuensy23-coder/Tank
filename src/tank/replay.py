@@ -1606,6 +1606,8 @@ async def replay_agent_session(
             return clock.timestamp()
 
         async def invoke_tool(self, session, tool, arguments, call_id, **internal):
+            """Run a replayed call on the replay clock; a native processed_at is wall time."""
+            internal.pop("called_at", None)
             if tool not in {"web_search", "fetch_page"}:
                 resolved = internal.setdefault("resolved_arguments", {})
                 actual = await super().invoke_tool(session, tool, arguments, call_id, **internal)
