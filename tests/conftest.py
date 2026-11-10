@@ -322,3 +322,24 @@ async def postgres_template(request):
         yield owner
     finally:
         await owner.close()
+
+
+@pytest_asyncio.fixture
+async def market_clickhouse():
+    """A ClickHouse database of its own with the mkt tables (CLICKHOUSE_TEST_URL), dropped afterwards."""
+    import uuid
+
+    from tank import clickhouse_market
+
+    url = os.environ.get(TEST_CLICKHOUSE)
+    if not url:
+        pytest.fail("CLICKHOUSE_TEST_URL must point to an isolated ClickHouse test server")
+    ch = clickhouse_market.ClickHouse(url, database="mkt_test_" + uuid.uuid4().hex)
+    await clickhouse_market.create_database(ch)
+    try:
+        yield ch
+    finally:
+        try:
+            await clickhouse_market.drop_database(ch)
+        finally:
+            await ch.close()

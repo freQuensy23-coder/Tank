@@ -1,10 +1,12 @@
 """Reaction pack: BTC/ETH benchmark values (lead ruling on 03 §8.1) and coalesced late revisions (03 §8.6)."""
 
 from datetime import timedelta
+from decimal import Decimal
 
 import pytest
 
 import tank.analysis.truth as truth_module
+from tank.clickhouse_market import load_snapshot
 from tank.scheduler import Scheduler
 from tank.settings import Settings
 from tank.storage import MemoryRepository
@@ -56,19 +58,19 @@ async def seed(repo, anchor, analysis_set):
     )
 
 
+@pytest.mark.integration
 @pytest.mark.parametrize("in_analysis_set", [False, True])
 async def test_benchmark_checkpoint_uses_base_klines_only_outside_analysis_set(
-    tmp_path, monkeypatch, in_analysis_set
+    tmp_path, monkeypatch, market_clickhouse, in_analysis_set
 ):
     end = utcnow().replace(second=0, microsecond=0)
     anchor = end - timedelta(hours=2)
     repo = MemoryRepository()
+    repo.clickhouse = market_clickhouse
     await seed(repo, anchor, ["test:T", "bitcoin:BTC"] if in_analysis_set else ["test:T"])
     monkeypatch.setattr(truth_module, "compute_market_truth", lambda snapshot, config=None: {})
     market = KlineMarket(end)
-    for row in klines("bitcoin:BTC", "binance:spot:BTCUSDT", end):
-        row = {k: v for k, v in row.items() if k != "token_id"}
-        await repo.put("mkt.klines_1m", row["instrument_id"] + ":" + row["open_time"], row)
+    await load_snapshot(market_clickhouse, {"klines": klines("bitcoin:BTC", "binance:spot:BTCUSDT", end)})
     scheduler = Scheduler(repo, Settings(_env_file=None, data_dir=tmp_path), market, None)
     payload = {
         "event_id": "e",
@@ -90,6 +92,63 @@ async def test_benchmark_checkpoint_uses_base_klines_only_outside_analysis_set(
         "bitcoin:BTC",
         "ethereum:ETH",
     }
+
+
+class StatementClient:
+    def __init__(self, row):
+        self.row, self.sent = row, []
+
+    async def rows(self, query, params=None):
+        self.sent.append((query, params))
+        return [self.row]
+
+
+async def benchmark_scheduler(tmp_path, repo):
+    end = utcnow().replace(second=0, microsecond=0)
+    anchor = end - timedelta(hours=2)
+    await seed(repo, anchor, ["test:T"])
+    scheduler = Scheduler(repo, Settings(_env_file=None, data_dir=tmp_path), KlineMarket(end), None)
+    payload = {
+        "event_id": "e",
+        "token_id": "bitcoin:BTC",
+        "checkpoint": "POST_1H",
+        "anchor": {"type": "T1", "ts": iso(anchor), "ts_prec": "EXACT"},
+    }
+    return scheduler, payload, anchor
+
+
+async def test_benchmark_checkpoint_sends_the_spot_instruments_and_maps_the_returned_scalars(tmp_path):
+    repo = MemoryRepository()
+    repo.clickhouse = StatementClient(
+        {
+            "venue": "binance:spot:BTCUSDT",
+            "quote_volume_24h": 120000.0,
+            "price_start": "159.50",
+            "price_start_observed_at": "2026-11-09T15:55:00.000000Z",
+            "price_end": "219",
+            "price_end_observed_at": "2026-11-09T16:55:00.000000Z",
+            "r_raw": 0.37,
+            "venues": 1,
+        }
+    )
+    scheduler, payload, anchor = await benchmark_scheduler(tmp_path, repo)
+    measured = await scheduler._measure_reaction(payload)
+    data = measured["checkpoint_data"]
+    ((query, params),) = repo.clickhouse.sent
+    assert "mkt.klines_1m" in query
+    assert params["instrument_ids"] == ("['binance:spot:BTCUSDT']", "Array(String)")
+    assert params["window_start"][0] == anchor.strftime("%Y-%m-%d %H:%M:%S.%f")
+    assert data["r_raw"] == 0.37 and data["spot_method"] == "NOT_APPLICABLE"
+    assert data["benchmark"]["r_raw_venue"] == "binance:spot:BTCUSDT"
+    assert data["benchmark"]["price_start"] == Decimal("159.50")
+    assert data["benchmark"]["price_end_observed_at"] == "2026-11-09T16:55:00Z"
+    assert measured["truth"] == {"benchmark": data["benchmark"]}
+
+
+async def test_benchmark_checkpoint_without_clickhouse_is_an_error(tmp_path):
+    scheduler, payload, _ = await benchmark_scheduler(tmp_path, MemoryRepository())
+    with pytest.raises(RuntimeError, match="stored in ClickHouse only"):
+        await scheduler._measure_reaction(payload)
 
 
 async def test_late_changes_keep_one_queued_revision_per_checkpoint(tmp_path):

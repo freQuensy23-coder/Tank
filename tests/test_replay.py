@@ -2998,3 +2998,43 @@ async def test_captured_tools_decision_refreshes_fired_market_watch_offline(pack
     assert (await repo.get("ana.watch_conditions", watch["cond_id"]))["consumed_by"] == result["dec_id"]
     jobs = [row for row in await repo.list("ops.jobs") if row["type"] == "RUN_MARKET_TRUTH"]
     assert len(jobs) == 1 and jobs[0]["status"] == "DONE"
+
+
+async def test_market_reader_writes_each_packet_snapshot_into_the_replay_clickhouse():
+    from types import SimpleNamespace
+
+    from tank.replay import ReplayMarketReader
+
+    cutoff = "2026-10-16T12:00:00Z"
+    snapshot = {
+        "token_id": "bitcoin:BTC",
+        "cutoff": cutoff,
+        "klines": [
+            {
+                "instrument_id": "binance:spot:BTCUSDT",
+                "token_id": "bitcoin:BTC",
+                "open_time": "2026-10-16T11:59:00Z",
+                "interval_s": 60,
+                "complete": True,
+                "c": "100",
+            }
+        ],
+    }
+    inputs = SimpleNamespace(
+        fixture_reference=None, cutoff=cutoff, records=lambda collection, cutoff=None: [snapshot]
+    )
+
+    class Client:
+        inserted = []
+
+        async def insert(self, table, rows):
+            self.inserted.append((table, rows))
+
+    client = Client()
+    result = await ReplayMarketReader(inputs, None, client).snapshot("bitcoin:BTC", cutoff)
+    assert result["klines"] == snapshot["klines"]
+    assert [(table, [row["c"] for row in rows]) for table, rows in client.inserted] == [
+        ("mkt.klines_1m", ["100"])
+    ]
+    await ReplayMarketReader(inputs).snapshot("bitcoin:BTC", cutoff)
+    assert len(client.inserted) == 1

@@ -3,7 +3,7 @@
 tank-capture writes these tables in production (capture/internal/store). Core reads them
 through the repository methods; every collection of MARKET_TABLES is served here
 (`repo.clickhouse`), rows decoded by market_storage.decode. A repository without a
-ClickHouse client keeps them only in memory (tests and replay).
+ClickHouse client keeps them only in memory (tests and replay without TANK_CLICKHOUSE_URL).
 
 Tables are ReplacingMergeTree on the collection's identity, the newest `_version` wins, and
 every read of row values selects FINAL, so a row reads as its last write. FINAL disables the
@@ -16,6 +16,7 @@ import asyncio
 import json
 import re
 import time
+import uuid
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from urllib.parse import urlsplit, urlunsplit
@@ -701,12 +702,28 @@ async def prune(ch, cutoff, preserved_days, *, book_cutoff=None, trades_cutoff=N
 
 
 def install(repo, settings):
-    """Give a production repository its ClickHouse client (never a replay database)."""
+    """Give a repository its ClickHouse client: the production database, or for a replay a
+    database of its own that the replay creates (create_database) and drops (drop_database),
+    never the production one."""
     url = getattr(settings, "clickhouse_url", None)
-    if not url or getattr(settings, "replay", False):
+    if not url:
         return None
-    repo.clickhouse = ClickHouse(url, password=getattr(settings, "tank_db_password", None))
+    database = "mkt_replay_" + uuid.uuid4().hex if getattr(settings, "replay", False) else "mkt"
+    repo.clickhouse = ClickHouse(url, password=getattr(settings, "tank_db_password", None), database=database)
     return repo.clickhouse
+
+
+async def create_database(ch):
+    """The mkt tables in the client's database."""
+    for statement in ddl():
+        await ch.execute(statement)
+
+
+async def drop_database(ch):
+    """Drop the client's database; the production one is never dropped."""
+    if ch.database == "mkt":
+        raise ValueError("The production database is not dropped")
+    await ch.execute("DROP DATABASE IF EXISTS mkt")
 
 
 def client(repo, collection):
@@ -740,6 +757,38 @@ def _row(collection, record, key, version):
         else:
             row[name] = value
     return row
+
+
+def snapshot_rows(snapshot):
+    """The rows of every series a snapshot dictionary carries, as the table rows tank-capture writes.
+
+    Missing storage keys come from the identity columns and the row position, `_version` from the
+    position (a later duplicate wins), an absent `recorded_at` stays NULL."""
+    from tank.market.service import COLLECTIONS
+    from tank.market_storage import encode
+
+    tables = {}
+    for name, (collection, _) in COLLECTIONS.items():
+        if collection not in MARKET_TABLES:
+            continue
+        identity = MARKET_IDENTITIES[collection]
+        rows = []
+        for position, record in enumerate(snapshot.get(name) or [], 1):
+            value = encode(collection, record)
+            parts = [value.get(column) for column in identity if column != "storage_key"]
+            if "storage_key" in identity:
+                parts = [value.get("instrument_id"), *parts, position]
+            key = ":".join(iso(part) if isinstance(part, datetime) else str(part) for part in parts)
+            rows.append(_row(collection, value, key, position))
+        if rows:
+            tables[collection] = rows
+    return tables
+
+
+async def load_snapshot(ch, snapshot):
+    """Write the series of a snapshot dictionary into the client's database (tests and replay)."""
+    for collection, rows in snapshot_rows(snapshot).items():
+        await ch.insert(collection, rows)
 
 
 NULL_REASONS = frozenset(
