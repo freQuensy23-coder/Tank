@@ -17,6 +17,7 @@ from tank.time_precision import collection_clock
 from tank.util import iso, parse_time, utcnow
 
 
+@pytest.mark.usefixtures("relative_statements")
 @pytest.mark.integration
 @pytest.mark.process
 @pytest.mark.asyncio

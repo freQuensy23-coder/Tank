@@ -738,6 +738,7 @@ async def test_terminal_delivery_reconciliation_covers_expiry_restart_and_valida
             assert job["delivery_failure_recorded_at_prec"] == "COLLECTION_ONLY"
 
 
+@pytest.mark.usefixtures("relative_statements")
 @pytest.mark.integration
 @pytest.mark.asyncio
 @pytest.mark.parametrize("terminal_status", ["PARTIAL", "FAILED"])

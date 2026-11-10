@@ -126,8 +126,8 @@ FROM
             SELECT
                 venue, ts_us, kind, spread, bid, ask, bid_native, ask_native, ask_any, covered, prec, prec_reason, low, net, net_ask,
                 argMaxIf((ts_us, bid, ask_any), ts_us, kind = 1) OVER (PARTITION BY venue ORDER BY ts_us ASC, kind DESC ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING) AS base,
-                groupArrayIf((ts_us, bid, ask_any), kind = 1) OVER (PARTITION BY venue ORDER BY ts_us ASC RANGE BETWEEN 1 FOLLOWING AND {refill_us:UInt64} FOLLOWING) AS fut_books,
-                minIf(low, kind = 2) OVER (PARTITION BY venue ORDER BY ts_us ASC RANGE BETWEEN 1 FOLLOWING AND {resilience_us:UInt64} FOLLOWING) AS fut_low
+                groupArrayIf((ts_us, bid, ask_any), kind = 1) OVER (PARTITION BY venue ORDER BY ts_us ASC RANGE BETWEEN 1 FOLLOWING AND refill_us FOLLOWING) AS fut_books,
+                minIf(low, kind = 2) OVER (PARTITION BY venue ORDER BY ts_us ASC RANGE BETWEEN 1 FOLLOWING AND resilience_us FOLLOWING) AS fut_low
             FROM
             (
                 SELECT venue, ts_us, kind, spread, bid, ask, bid_native, ask_native, ask_any, covered, prec, prec_reason, low, net, net_ask, ok

@@ -249,7 +249,7 @@ async def test_disposable_postgres_selective_condition_inputs_and_sql_footprint(
             values = await truth.condition_values(event, "T", packet["cutoff"], ordinary)
             assert values["spot"]["W1H"]["direction"] == "BUY"
             assert Decimal(values["relative"]["close_1h_price"]) == Decimal("101.1")
-            assert {table for table, _ in reads} == {"mkt.flow_bars_1m", "mkt.klines_1m"}
+            assert not reads
             assert not any(
                 '"mkt"."oi_obs"' in query
                 or '"mkt"."funding_obs"' in query

@@ -21,7 +21,7 @@ SELECT
     instrument_id,
     count() AS bars,
     toUInt8(countIf(NOT ifNull(complete, false)) = 0 AND countIf(gap_us != 60000000) = 0) AS usable,
-    minIf(open_time, ifNull(p0 != 0 AND (c / p0 - 1 < low OR c / p0 - 1 > high), false)) AS first_exit_at
+    nullIf(minIf(open_time, ifNull(p0 != 0 AND (c / p0 - 1 < low OR c / p0 - 1 > high), false)), toDateTime64(0, 6, 'UTC')) AS first_exit_at
 FROM
 (
     SELECT

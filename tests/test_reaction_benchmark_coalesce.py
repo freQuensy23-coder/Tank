@@ -6,6 +6,7 @@ from decimal import Decimal
 import pytest
 
 import tank.analysis.truth as truth_module
+from tank.analysis.truth_sql import NO_SUPPLY
 from tank.clickhouse_market import load_snapshot
 from tank.scheduler import Scheduler
 from tank.settings import Settings
@@ -69,6 +70,11 @@ async def test_benchmark_checkpoint_uses_base_klines_only_outside_analysis_set(
     repo.clickhouse = market_clickhouse
     await seed(repo, anchor, ["test:T", "bitcoin:BTC"] if in_analysis_set else ["test:T"])
     monkeypatch.setattr(truth_module, "compute_market_truth", lambda snapshot, config=None: {})
+
+    async def memory_supply(repo, snapshot, config, **kwargs):
+        return dict(snapshot, supply_sql=NO_SUPPLY)
+
+    monkeypatch.setattr(truth_module, "with_supply", memory_supply)
     market = KlineMarket(end)
     await load_snapshot(market_clickhouse, {"klines": klines("bitcoin:BTC", "binance:spot:BTCUSDT", end)})
     scheduler = Scheduler(repo, Settings(_env_file=None, data_dir=tmp_path), market, None)

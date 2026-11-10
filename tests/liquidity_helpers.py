@@ -50,11 +50,11 @@ def depth(book, side, band, unit="usd"):
     coverage = _number(covered.get(side)) if isinstance(covered, dict) else _number(covered)
     if coverage is None or coverage < band:
         return None
-    return _number(((book.get("depth") or {}).get(side) or {}).get(BANDS[band], {}).get(unit))
+    return _number((((book.get("depth") or {}).get(side) or {}).get(BANDS[band]) or {}).get(unit))
 
 
 def ask_any(book):
-    return _number(((book.get("depth") or {}).get("ask") or {}).get("p1", {}).get("usd"))
+    return _number((((book.get("depth") or {}).get("ask") or {}).get("p1") or {}).get("usd"))
 
 
 def _levels(book):

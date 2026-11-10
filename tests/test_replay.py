@@ -274,6 +274,7 @@ def test_masking_preserves_original_and_private_map_is_not_pipeline_input(packet
         load_inputs(masked, settings())
 
 
+@pytest.mark.usefixtures("relative_statements")
 @pytest.mark.integration
 @pytest.mark.parametrize("captured_http_status", [None, 404, 503])
 @pytest.mark.parametrize("transient_case", [None, "scope_refusal", "lost_decision_ack"])
@@ -2069,6 +2070,7 @@ async def test_native_replay_captured_delivery_creates_fresh_call_and_reruns_exp
     assert await repo.get("ana.calls", "original-call") is None
 
 
+@pytest.mark.usefixtures("relative_statements")
 @pytest.mark.integration
 @pytest.mark.parametrize("state", ["APPROVED", "PROPOSED"])
 async def test_native_condition_replay_uses_tool_cause_and_actual_watch_predicate(packet, state):
@@ -2919,7 +2921,9 @@ async def test_actual_reference_publication_retains_unsent_intent_and_ordinary_r
 
 
 @pytest.mark.integration
-async def test_captured_tools_decision_refreshes_fired_market_watch_offline(packet, tmp_path, monkeypatch):
+async def test_captured_tools_decision_refreshes_fired_market_watch_offline(
+    packet, tmp_path, monkeypatch, relative_statements
+):
     from datetime import timedelta
 
     from test_market_capture_refresh import ReleasedMarket, seed_domain, shifted_snapshot
@@ -2938,7 +2942,7 @@ async def test_captured_tools_decision_refreshes_fired_market_watch_offline(pack
     source = MemoryRepository()
     cfg = Settings(data_dir=tmp_path, _env_file=None)
     await seed_domain(source, cfg, end)
-    market = ReleasedMarket(shifted_snapshot(end))
+    market = ReleasedMarket(shifted_snapshot(parse_time(earlier)))
     truth = MarketTruthService(source, cfg, market)
     first = await truth.assess("e", "T", chosen_boundary(earlier, precision="BUCKET(1m)"))
     tools = EventToolService(source, cfg, truth, DecisionEngine())
@@ -2946,6 +2950,18 @@ async def test_captured_tools_decision_refreshes_fired_market_watch_offline(pack
     watch = next(row for row in initial["conditions"] if row["role"] == "UPGRADE")
     watch.update(status="FIRED", fired_at=data["cutoff"])
     snapshot = shifted_snapshot(end)
+    for key, field in {
+        "relative_sql": "evidence",
+        "volume_sql": "volumes",
+        "oi_sql": "oi",
+        "funding_sql": "funding",
+        "flow_sql": "flow",
+        "liquidity_sql": "liquidity",
+        "supply_sql": "supply",
+        "series_sql": "series",
+    }.items():
+        if key in snapshot:
+            setattr(relative_statements, field, snapshot.pop(key))
     data["registry"] = {"tokens": [{"token_id": "T", "symbol": "T"}], "instruments": []}
     data["config"] = {
         "thresholds": {},

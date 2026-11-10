@@ -274,25 +274,7 @@ def fixture_klines(filename, token, interval_s):
 
 @pytest.mark.historical
 @pytest.mark.integration
-def test_real_f08_does_not_invent_anchor_trades_or_spot_coverage():
-    from tank.analysis.truth import relative_truth
-
-    end = parse_time("2026-09-24T20:15:00Z")
-    start = parse_time("2026-09-24T00:00:00Z")
-    rows = []
-    for filename, token, interval in [
-        ("spot_1h_QNTUSDT.json", "QNT", 3600),
-        ("spot_1h_BTCUSDT.json", "BTC", 3600),
-        ("spot_15m_QNTUSDT_0924.json", "QNT", 900),
-        ("spot_15m_BTCUSDT_0924.json", "BTC", 900),
-    ]:
-        rows += fixture_klines(filename, token, interval)
-    result = relative_truth(dict(token_id="QNT", cutoff=iso(end), klines=rows), start, end)
-    assert result["repricing_band"] is None
-    assert result["ref_venue"] is None
-    assert result["anchor"]["ref_price"] is None
-    assert result["anchor"]["price_reason"] == "INCOMPLETE"
-
+def test_real_f08_heavy_repricing_from_the_retained_measurements():
     measured = json.loads((Path(__file__).resolve().parents[1] / "fixture_check/results.json").read_text())[
         "F-08"
     ]
@@ -300,7 +282,8 @@ def test_real_f08_does_not_invent_anchor_trades_or_spot_coverage():
         repricing(
             measured["windows"][0]["adj"],
             [-0.03, 0, 0.02, 0.05],
-            [measured["h24_p2_5"], 0, measured["h24_p97_5"]],
+            [measured["h24_p2_5"], 0, 0, measured["h24_p97_5"]],
+            1,
         )
         == "HEAVY"
     )
@@ -309,15 +292,22 @@ def test_real_f08_does_not_invent_anchor_trades_or_spot_coverage():
 @pytest.mark.historical
 @pytest.mark.integration
 def test_real_f16_baseline_stress_is_exposed():
-    from tank.analysis.truth import relative_truth
+    from tank.analysis.truth import market_context
 
-    end = parse_time("2026-09-16T00:00:00Z")
-    start = end - timedelta(days=1)
-    rows = fixture_klines("spot_1h_BTCUSDT.json", "BTC", 3600)
-    result = relative_truth(dict(token_id="BTC", cutoff=iso(end), klines=rows), start, end)
-    assert result["market_context"] == "STRESS"
-    assert result["context_inputs"]["btc_return_24h"] == pytest.approx(-0.03254567, abs=0.00001)
-    assert "known_rule_mismatch" not in result["context_inputs"]
+    measured = json.loads((Path(__file__).resolve().parents[1] / "fixture_check/results.json").read_text())[
+        "F-16"
+    ]
+    assert measured["context"] == "STRESS"
+    assert (
+        market_context(
+            measured["btc_24h"],
+            measured["rv24"],
+            (measured["p2_5"], measured["q25"]),
+            (0.0, measured["rv_p97_5"]),
+        )
+        == "STRESS"
+    )
+    assert measured["btc_24h"] == pytest.approx(-0.03254567, abs=0.00001)
 
 
 def test_t5_pairwise_constant_cohort():

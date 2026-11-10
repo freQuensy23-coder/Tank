@@ -2,11 +2,12 @@
 
 import asyncio
 import copy
+import dataclasses
 import json
 import os
 import re
 from contextlib import asynccontextmanager
-from datetime import timedelta
+from datetime import datetime, timedelta
 from functools import lru_cache
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
@@ -31,10 +32,37 @@ from tank.time_precision import chosen_boundary
 from tank.util import iso, parse_time, utcnow
 
 
+def _shifted_evidence(value, delta):
+    if dataclasses.is_dataclass(value):
+        return dataclasses.replace(
+            value,
+            **{f.name: _shifted_evidence(getattr(value, f.name), delta) for f in dataclasses.fields(value)},
+        )
+    if isinstance(value, tuple):
+        return tuple(_shifted_evidence(item, delta) for item in value)
+    if isinstance(value, dict):
+        return {key: _shifted_evidence(item, delta) for key, item in value.items()}
+    if isinstance(value, datetime):
+        return value + delta
+    if isinstance(value, str) and re.match(r"^\d{4}-\d{2}-\d{2}T", value):
+        return iso(parse_time(value) + delta)
+    if isinstance(value, str) and value[:1] == "{":
+        return json.dumps(_shifted_evidence(json.loads(value), delta))
+    if isinstance(value, list):
+        return [_shifted_evidence(item, delta) for item in value]
+    return value
+
+
+@pytest.fixture(autouse=True)
+def _relative_statements(relative_statements):
+    return relative_statements
+
+
 @lru_cache(maxsize=2)
 def _canonical_snapshot(full_flow_history):
     """Private immutable seed; decoded output is owned by one caller only."""
     source = compact_start_snapshot()
+    evidence = {key: source.pop(key) for key in [key for key in source if key.endswith("_sql")]}
 
     end_value = parse_time(source["cutoff"])
 
@@ -58,11 +86,12 @@ def _canonical_snapshot(full_flow_history):
         and parse_time(r["settlement_time"]).minute == 0
         or parse_time(r["settlement_time"]) == end_value
     ]
-    return json.dumps(source).encode()
+    return json.dumps(source).encode(), evidence
 
 
 def shifted_snapshot(end, *, full_flow_history=True):
-    source = json.loads(_canonical_snapshot(full_flow_history))
+    encoded, evidence = _canonical_snapshot(full_flow_history)
+    source = json.loads(encoded)
     delta = end - parse_time(source["cutoff"])
 
     def shift(value):
@@ -76,7 +105,9 @@ def shifted_snapshot(end, *, full_flow_history=True):
             return iso(parse_time(value) + delta)
         return value
 
-    return shift(source)
+    shifted = shift(source)
+    shifted.update({key: _shifted_evidence(value, delta) for key, value in evidence.items()})
+    return shifted
 
 
 class ReleasedMarket:

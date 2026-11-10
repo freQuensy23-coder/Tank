@@ -463,7 +463,7 @@ async def test_an_observation_recorded_after_the_assembly_is_no_part_of_the_hist
     late = [
         observation(
             BINANCE,
-            END - 5 * timedelta(hours=1) + timedelta(seconds=30 * k),
+            END - 5 * timedelta(hours=1) + timedelta(seconds=30 * k + 7),
             "5000",
             recorded_at=iso(END + DAY),
         )
@@ -705,11 +705,10 @@ async def test_retained_f11_binance_and_bybit_endpoints_make_the_composite(marke
             "venue_symbol": "WLDUSDT",
             "quote_asset": "USD",
         }
-        rows.extend(
-            normalize.oi(inst, r, bucket_size_s=300) | {"instrument_id": inst["instrument_id"]}
-            for r in raw
-            if parse_time(r["timestamp"]) <= end
-        )
+        for r in raw:
+            if parse_time(r["timestamp"]) <= end:
+                row = normalize.oi(inst, r, bucket_size_s=300)
+                rows.append(row | {"instrument_id": inst["instrument_id"], "received_ts": row["ts"]})
     await seed(market_clickhouse, oi=rows)
     ids = ["binance:perp_linear:WLDUSDT", "bybit:perp_linear:WLDUSDT"]
     shown = snapshot(*ids)

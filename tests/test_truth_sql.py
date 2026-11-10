@@ -29,7 +29,8 @@ def bar(iid, minute, close, usd, **changes):
     } | changes
 
 
-def klines(**changes):
+def klines(changes=None):
+    changes = changes or {}
     rows = []
     for i in range(120):
         minute = END - timedelta(minutes=120 - i)
@@ -223,7 +224,7 @@ async def test_benchmark_statement_gives_no_price_for_a_close_older_than_its_bar
 
 @pytest.mark.integration
 async def test_benchmark_statement_skips_incomplete_and_zero_close_bars(market_clickhouse):
-    rows = klines(**{119: {"complete": False}, 59: {"c": "0"}})
+    rows = klines({119: {"complete": False}, 59: {"c": "0"}})
     await chm.load_snapshot(market_clickhouse, {"klines": rows})
     result = await truth_sql.benchmark_reaction(market_clickhouse, SPOT, START, END)
     assert result.price_start == 158 and result.price_start_observed_at == START - timedelta(minutes=1)

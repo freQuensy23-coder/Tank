@@ -26,6 +26,7 @@ WITH
     {assembled:DateTime64(6, 'UTC')} AS assembled,
     {iids:Array(String)} AS iids,
     cutoff - toIntervalSecond(greatest({look_s:UInt32}, 86400)) AS low,
+    cutoff - toIntervalSecond({look_s:UInt32}) AS look_low,
     cutoff - toIntervalSecond({near_s:UInt32}) AS near,
     cutoff - toIntervalSecond(86400) AS day,
     (recorded_at IS NULL OR recorded_at <= assembled) AND (received_ts IS NULL OR received_ts <= assembled) AS ok,
@@ -38,7 +39,7 @@ SELECT
     nils AS metric_key,
     nils AS kind,
     countIf(ok AND open_time + toIntervalSecond(ifNull(interval_s, 60)) <= cutoff) AS rows,
-    maxIf(open_time, ok AND complete = true AND open_time + toIntervalSecond(ifNull(interval_s, 60)) <= cutoff) AS last_at,
+    nullIf(maxIf(open_time, ok AND complete = true AND open_time + toIntervalSecond(ifNull(interval_s, 60)) <= cutoff), toDateTime64(0, 6, 'UTC')) AS last_at,
     argMaxIf(ifNull(interval_s, 60), open_time, ok AND complete = true AND open_time + toIntervalSecond(ifNull(interval_s, 60)) <= cutoff) AS last_interval_s,
     argMaxIf(open_time_prec, open_time, ok AND complete = true AND open_time + toIntervalSecond(ifNull(interval_s, 60)) <= cutoff) AS last_prec,
     argMaxIf(open_time_prec_reason, open_time, ok AND complete = true AND open_time + toIntervalSecond(ifNull(interval_s, 60)) <= cutoff) AS last_prec_reason,
@@ -46,7 +47,7 @@ SELECT
     nilf AS last_bucket_size_s,
     nils AS last_bucket_anchor,
     nilf AS last_interval_h,
-    maxIf(open_time + toIntervalSecond(ifNull(interval_s, 60)), ok AND complete = true AND ifNull(toFloat64OrNull(c), 0) != 0 AND open_time + toIntervalSecond(ifNull(interval_s, 60)) <= cutoff) AS valid_at,
+    nullIf(maxIf(open_time + toIntervalSecond(ifNull(interval_s, 60)), ok AND complete = true AND ifNull(toFloat64OrNull(c), 0) != 0 AND open_time + toIntervalSecond(ifNull(interval_s, 60)) <= cutoff), toDateTime64(0, 6, 'UTC')) AS valid_at,
     sumKahanIf(toFloat64OrNull(quote_volume_usd), ok AND quote_volume_usd IS NOT NULL AND open_time >= day AND open_time + toIntervalSecond(ifNull(interval_s, 60)) <= cutoff) AS usd_volume
 FROM mkt.klines_1m FINAL
 WHERE instrument_id IN iids AND open_time >= low AND open_time <= cutoff
@@ -58,7 +59,7 @@ SELECT
     nils,
     nils,
     countIf(ok AND minute_start + toIntervalSecond(60) <= cutoff),
-    maxIf(minute_start, ok AND complete = true AND minute_start + toIntervalSecond(60) <= cutoff),
+    nullIf(maxIf(minute_start, ok AND complete = true AND minute_start + toIntervalSecond(60) <= cutoff), toDateTime64(0, 6, 'UTC')),
     toInt64(60),
     argMaxIf(minute_start_prec, minute_start, ok AND complete = true AND minute_start + toIntervalSecond(60) <= cutoff),
     argMaxIf(minute_start_prec_reason, minute_start, ok AND complete = true AND minute_start + toIntervalSecond(60) <= cutoff),
@@ -66,10 +67,10 @@ SELECT
     nilf,
     nils,
     nilf,
-    maxIf(minute_start + toIntervalSecond(60), ok AND complete = true AND minute_start + toIntervalSecond(60) <= cutoff),
+    nullIf(maxIf(minute_start + toIntervalSecond(60), ok AND complete = true AND minute_start + toIntervalSecond(60) <= cutoff), toDateTime64(0, 6, 'UTC')),
     nilf
 FROM mkt.flow_bars_1m FINAL
-WHERE instrument_id IN iids AND minute_start >= low AND minute_start <= cutoff
+WHERE instrument_id IN iids AND minute_start >= look_low AND minute_start <= cutoff
 GROUP BY instrument_id
 UNION ALL
 SELECT
@@ -78,7 +79,7 @@ SELECT
     metric_key,
     nils,
     countIf(ok),
-    maxIf(exchange_ts, ok),
+    nullIf(maxIf(exchange_ts, ok), toDateTime64(0, 6, 'UTC')),
     toInt64(0),
     argMaxIf(exchange_ts_prec, exchange_ts, ok),
     argMaxIf(exchange_ts_prec_reason, exchange_ts, ok),
@@ -86,14 +87,15 @@ SELECT
     nilf,
     nils,
     nilf,
-    maxIf(exchange_ts, ok AND integrity_ok = true AND ifNull(toFloat64OrNull(mid), 0) != 0
+    nullIf(maxIf(exchange_ts, ok AND integrity_ok = true AND ifNull(toFloat64OrNull(mid), 0) != 0
         AND startsWith(ifNull(range_covered_pct, ''), '{')
         AND toFloat64OrNull(replaceAll(JSONExtractRaw(range_covered_pct, 'bid'), '"', '')) IS NOT NULL
-        AND toFloat64OrNull(replaceAll(JSONExtractRaw(range_covered_pct, 'ask'), '"', '')) IS NOT NULL),
+        AND toFloat64OrNull(replaceAll(JSONExtractRaw(range_covered_pct, 'ask'), '"', '')) IS NOT NULL), toDateTime64(0, 6, 'UTC')),
     nilf
 FROM mkt.book_summaries FINAL
 WHERE instrument_id IN iids AND exchange_ts >= near AND exchange_ts <= cutoff
 GROUP BY instrument_id, metric_key
+HAVING countIf(ok) > 0
 UNION ALL
 SELECT
     'oi',
@@ -101,7 +103,7 @@ SELECT
     metric_key,
     nils,
     countIf(ok),
-    maxIf(ts, ok),
+    nullIf(maxIf(ts, ok), toDateTime64(0, 6, 'UTC')),
     toInt64(0),
     argMaxIf(ts_prec, ts, ok),
     argMaxIf(ts_prec_reason, ts, ok),
@@ -109,11 +111,12 @@ SELECT
     argMaxIf(toFloat64OrNull(ts_bucket_size_s), ts, ok),
     argMaxIf(ts_bucket_anchor, ts, ok),
     nilf,
-    maxIf(ts, ok AND oi_native IS NOT NULL),
+    nullIf(maxIf(ts, ok AND oi_native IS NOT NULL), toDateTime64(0, 6, 'UTC')),
     nilf
 FROM mkt.oi_obs FINAL
-WHERE instrument_id IN iids AND ts >= low AND ts <= cutoff
+WHERE instrument_id IN iids AND ts >= look_low AND ts <= cutoff
 GROUP BY instrument_id, metric_key
+HAVING countIf(ok) > 0
 UNION ALL
 SELECT
     'funding',
@@ -121,7 +124,7 @@ SELECT
     metric_key,
     kind,
     countIf(ok),
-    maxIf(as_of, ok),
+    nullIf(maxIf(as_of, ok), toDateTime64(0, 6, 'UTC')),
     toInt64(0),
     argMaxIf(as_of_prec, as_of, ok),
     argMaxIf(as_of_prec_reason, as_of, ok),
@@ -129,11 +132,12 @@ SELECT
     nilf,
     nils,
     argMaxIf(toFloat64OrNull(interval_h), as_of, ok),
-    maxIf(as_of, ok AND rate IS NOT NULL AND ifNull(toFloat64OrNull(interval_h), 0) != 0),
+    nullIf(maxIf(as_of, ok AND rate IS NOT NULL AND ifNull(toFloat64OrNull(interval_h), 0) != 0), toDateTime64(0, 6, 'UTC')),
     nilf
 FROM mkt.funding_obs FINAL
-WHERE instrument_id IN iids AND as_of >= low AND as_of <= cutoff
+WHERE instrument_id IN iids AND as_of >= look_low AND as_of <= cutoff
 GROUP BY instrument_id, metric_key, kind
+HAVING countIf(ok) > 0
 UNION ALL
 SELECT
     'liquidations',
@@ -141,7 +145,7 @@ SELECT
     metric_key,
     nils,
     countIf(ok),
-    maxIf(ts, ok),
+    nullIf(maxIf(ts, ok), toDateTime64(0, 6, 'UTC')),
     toInt64(0),
     argMaxIf(ts_prec, ts, ok),
     argMaxIf(ts_prec_reason, ts, ok),
@@ -152,8 +156,9 @@ SELECT
     nilt,
     nilf
 FROM mkt.liq_obs FINAL
-WHERE instrument_id IN iids AND ts >= low AND ts <= cutoff
+WHERE instrument_id IN iids AND ts >= look_low AND ts <= cutoff
 GROUP BY instrument_id, metric_key
+HAVING countIf(ok) > 0
 UNION ALL
 SELECT
     'tickers',
@@ -161,7 +166,7 @@ SELECT
     nils,
     kind,
     countIf(ok),
-    maxIf(ts, ok),
+    nullIf(maxIf(ts, ok), toDateTime64(0, 6, 'UTC')),
     toInt64(0),
     argMaxIf(ts_prec, ts, ok),
     argMaxIf(ts_prec_reason, ts, ok),
@@ -174,3 +179,4 @@ SELECT
 FROM mkt.tickers_24h FINAL
 WHERE instrument_id IN iids AND ts >= near AND ts <= cutoff
 GROUP BY instrument_id, kind
+HAVING countIf(ok) > 0
