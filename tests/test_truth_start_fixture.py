@@ -6,6 +6,7 @@ from functools import lru_cache
 from math import sin
 
 import pytest
+from flow_helpers import with_flow
 from funding_helpers import steady as steady_funding
 from oi_helpers import steady
 from relative_helpers import start_evidence
@@ -320,7 +321,7 @@ def test_threshold_configuration_is_consumed_and_isolated_between_calls():
 
 @pytest.fixture(scope="module")
 def legacy_semantic_baseline():
-    snapshot = compact_start_snapshot()
+    snapshot = with_flow(compact_start_snapshot())
     for row in snapshot["semantics"]:
         row.pop("semantic_confidence", None)
     baseline = compute_market_truth(snapshot)

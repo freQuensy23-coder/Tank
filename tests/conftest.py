@@ -345,19 +345,51 @@ async def market_clickhouse():
             await ch.close()
 
 
+@pytest.fixture(autouse=True, scope="session")
+def flow_evidence_from_bars():
+    """A Market Truth calculation of a snapshot that has bars (`flow_bars`) and no `flow_sql` gets the records the
+    trade-flow statements would return for those bars (tests/flow_helpers.py), so that a test can describe the
+    market minute by minute. Session scoped: module-scoped baselines calculate too."""
+    from flow_helpers import with_flow
+
+    from tank.analysis import truth
+
+    compute, condition = truth._compute_market_truth, truth.compute_condition_values
+
+    def assessed(snapshot, **kwargs):
+        return compute(snapshot if "flow_sql" in snapshot else with_flow(snapshot), **kwargs)
+
+    def evaluated(snapshot, requirements, **kwargs):
+        return condition(snapshot if "flow_sql" in snapshot else with_flow(snapshot), requirements, **kwargs)
+
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr(truth, "_compute_market_truth", assessed)
+        patch.setattr(truth, "compute_condition_values", evaluated)
+        yield
+
+
 @pytest.fixture
 def relative_statements(monkeypatch):
-    """Stand-in for the ClickHouse statements of the price-relative, volume, open-interest and funding rules in
-    tests that run a Market Truth service without a ClickHouse server: the snapshot keeps the `relative_sql`,
-    the `volume_sql`, the `oi_sql` and the `funding_sql` it carries, `evidence`, `volumes`, `oi` and `funding`
-    replace them when set, and a snapshot without one has no such evidence. The statements themselves are tested
-    against a real server in tests/test_truth_relative_sql.py, tests/test_truth_volume_sql.py,
-    tests/test_truth_oi_sql.py and tests/test_truth_funding_sql.py."""
+    """Stand-in for the ClickHouse statements of the price-relative, volume, open-interest, funding and trade-flow
+    rules in tests that run a Market Truth service without a ClickHouse server: the snapshot keeps the
+    `relative_sql`, the `volume_sql`, the `oi_sql`, the `funding_sql` and the `flow_sql` it carries, `evidence`,
+    `volumes`, `oi`, `funding` and `flow` replace them when set, and a snapshot without one has no such evidence
+    (the flow evidence of its bars, when it has any). The statements themselves are tested against a real server
+    in tests/test_truth_relative_sql.py, tests/test_truth_volume_sql.py, tests/test_truth_oi_sql.py,
+    tests/test_truth_funding_sql.py and tests/test_truth_flow_sql.py."""
     from types import SimpleNamespace
+
+    from flow_helpers import flow_evidence
 
     from tank.analysis import truth, truth_sql
 
-    stand_in = SimpleNamespace(evidence=None, volumes=None, oi=None, funding=None)
+    stand_in = SimpleNamespace(evidence=None, volumes=None, oi=None, funding=None, flow=None)
+
+    async def attach_flow(repo, snapshot, config, **kwargs):
+        evidence = stand_in.flow or snapshot.get("flow_sql") or flow_evidence(snapshot)
+        return dict(snapshot, flow_sql=evidence)
+
+    monkeypatch.setattr(truth, "with_flow", attach_flow)
 
     async def attach(repo, snapshot, config, **kwargs):
         evidence = stand_in.evidence or snapshot.get("relative_sql") or truth_sql.NO_RELATIVE

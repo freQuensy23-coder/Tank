@@ -10,6 +10,7 @@ from datetime import timedelta
 from decimal import Decimal
 
 import pytest
+from flow_helpers import flow_evidence, spot_truth
 from funding_helpers import confirmation, rate, start
 from funding_helpers import evidence as funding_evidence
 from oi_helpers import evidence as oi_evidence
@@ -20,7 +21,6 @@ from tank.analysis.truth import (
     enrich_evidence,
     liquidity_truth,
     select_move,
-    spot_truth,
     strict_majority,
     supply_truth,
     support_features,
@@ -271,6 +271,8 @@ def derive(packet, start=START, end=END):
     attach_volumes(packet)
     attach_oi(packet)
     attach_funding(packet)
+    seconds = (end - start).total_seconds()
+    packet["flow_sql"] = flow_evidence(packet, windows={"EVENT": seconds, "W15M": 900})
     spot = spot_truth(packet["flow_bars"], [], packet["instruments"], start, end)
 
     spot["composite_cohort"] = deepcopy(spot["composite_max"])
@@ -285,7 +287,7 @@ def derive(packet, start=START, end=END):
     deriv = derivatives_truth(packet, start, end)
     liquidity = liquidity_truth(packet, start, end, spot, relative)
     supply = supply_truth(packet, start, end)
-    enrich_evidence(packet, start, end, {"EVENT": spot}, "EVENT", deriv, relative, liquidity)
+    enrich_evidence(packet, start, end, {"EVENT": spot, "W15M": spot}, "EVENT", deriv, relative, liquidity)
     features = support_features(packet, start, end, spot, deriv, liquidity, supply)
     deriv["support_features"] = features
     return spot, deriv, liquidity, supply, relative

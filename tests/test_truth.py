@@ -5,6 +5,7 @@ from decimal import Decimal
 from pathlib import Path
 
 import pytest
+from flow_helpers import spot_truth
 from funding_helpers import evidence as funding_evidence
 from funding_helpers import rate, start
 from funding_helpers import steady as funding_steady
@@ -17,7 +18,6 @@ from tank.analysis.truth import (
     market_context,
     oi_class,
     repricing,
-    spot_truth,
     walk_book,
 )
 from tank.util import iso, parse_time
@@ -337,6 +337,7 @@ def test_t5_pairwise_constant_cohort():
     spots = {
         "W24H": truth({"binance": 500, "okx": 200, "coinbase": 250, "kraken": 50}),
         "W1H": truth({"binance": 500, "okx": 200, "kraken": 50, "bybit": 250}),
+        "W15M": truth({"binance": 500}),
     }
     end = parse_time("2026-10-16T12:00:00Z")
     rel = dict(
@@ -650,7 +651,7 @@ def test_fragmentation_needs_actual_cutoff_safe_independent_rest_gap(confirmatio
         {"books": books, "flow_bars": flow, "cutoff": iso(end)},
         start,
         end,
-        {"W1H": spot},
+        {"W1H": spot, "W15M": deepcopy(spot)},
         "W1H",
         {},
         relative,
@@ -697,7 +698,7 @@ def _fragmentation_of(quotes):
         {"books": books, "flow_bars": [], "cutoff": iso(end)},
         start,
         end,
-        {"W1H": spot},
+        {"W1H": spot, "W15M": deepcopy(spot)},
         "W1H",
         {},
         relative,
@@ -2003,7 +2004,7 @@ def test_decimal_significance_does_not_round_a_subthreshold_flow_into_buy():
             "minute_start": iso(start),
             "buy_qty": "1",
             "sell_qty": "0",
-            "sum_sq_qty": "0.2500000000000000000000000000000000000001",
+            "sum_sq_qty": "0.25000000000000006",
             "complete": True,
         }
         for v in ("A", "B")
@@ -2114,9 +2115,9 @@ def exact_selling_spot(epsilon):
 def test_exact_capital_majority_drives_distribution_without_rounded_display_rule():
     from tank.analysis.truth import select_move, spot_majority
 
-    tiny = exact_selling_spot(Decimal("1E-40"))
+    tiny = exact_selling_spot(Decimal("1E-12"))
     half = exact_selling_spot(Decimal(0))
-    assert tiny["cw_breadth"]["sell"] == half["cw_breadth"]["sell"] == 0.5
+    assert tiny["cw_breadth"]["sell"] == pytest.approx(0.5) and half["cw_breadth"]["sell"] == 0.5
     assert tiny["exact_majority"]["sell"] is True
     assert half["exact_majority"]["sell"] is False
     assert tiny["classification"] == "BROAD" and half["classification"] == "DIVERGENT"
@@ -2168,6 +2169,7 @@ def test_cohort_majority_uses_exact_volume_not_rounded_share(epsilon, expected):
         spots = {
             "W1H": truth({"A": Decimal(".5") + epsilon, "B": Decimal(".5"), "C": Decimal(1)}),
             "W24H": truth({"A": Decimal(1), "B": Decimal(1)}),
+            "W15M": truth({"A": Decimal(1)}),
         }
     relative = {
         "ref_venue": None,

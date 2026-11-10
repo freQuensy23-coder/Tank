@@ -7,8 +7,9 @@ from datetime import timedelta
 from decimal import ROUND_DOWN, Decimal
 
 import pytest
+from flow_helpers import spot_truth
 
-from tank.analysis.truth import decomposition, enrich_evidence, oi_class, spot_truth
+from tank.analysis.truth import decomposition, enrich_evidence, oi_class
 from tank.util import iso, parse_time
 
 END = parse_time("2026-10-16T12:00:00Z")
@@ -91,6 +92,7 @@ def test_t5_constant_cohort():
     spots = {
         "W24H": truth({"binance": 500, "okx": 200, "coinbase": 250, "kraken": 50}),
         "W1H": truth({"binance": 500, "okx": 200, "kraken": 50, "bybit": 250}),
+        "W15M": truth({"binance": 500}),
     }
     rel = dict(
         ref_venue=None,

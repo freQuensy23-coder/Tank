@@ -10,6 +10,7 @@ NULL; a statement and its record must agree on the column names exactly.
 
 import re
 import types
+import typing
 from dataclasses import dataclass, fields
 from datetime import datetime
 from decimal import Decimal
@@ -44,6 +45,8 @@ class Record:
                 if not nullable:
                     raise ValueError(f"{cls.statement}.{name} is NULL")
                 values[name] = None
+            elif typing.get_origin(kind) is tuple:
+                values[name] = tuple(DECODERS[kind.__args__[0]](item) for item in value)
             else:
                 values[name] = DECODERS[kind](value)
         return cls(**values)
@@ -488,3 +491,69 @@ class FundingEvidence:
 
 
 NO_FUNDING = FundingEvidence()
+
+
+@dataclass(frozen=True)
+class FlowWindow(Record):
+    """The trade flow of one group of instruments in one window (flow_windows.sql): the venue for the spot flow,
+    the instrument for the perp taker flow. `previous` marks the window before the current one of that length.
+
+    `expected` is the full minutes the window has and `minutes` the distinct full minutes found, `incomplete`
+    those found that are not complete, `boundary_ok` whether a chain of complete segments covers each partial
+    minute of the window bounds. The quantities and notionals are those of the full minutes and of the segments
+    (`left_pieces` at the start of the window, `right_pieces` at its end, as stored JSON); `large_*` the notional
+    of the large size buckets; `missing` has the bits of the values absent from a bar or a segment (1 buy, 2 sell,
+    4 sum_sq, 8 buy_usd, 16 sell_usd, 32 size buckets); `reasons` are the gap reasons found."""
+
+    statement = "flow_windows"
+    window: str
+    previous: int
+    venue: str
+    expected: int
+    minutes: int
+    incomplete: int
+    boundary_ok: int
+    buy: float
+    sell: float
+    sum_sq: float
+    buy_usd: float
+    sell_usd: float
+    large_buy: float
+    large_sell: float
+    missing: int
+    reasons: tuple[str, ...]
+    left_pieces: tuple[str, ...]
+    right_pieces: tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class FlowFlip(Record):
+    """The flow of one venue in one 15-minute sub-window `k` of a window (flow_flips.sql), with the coverage
+    fields of `FlowWindow`; only windows with three or more sub-windows have rows."""
+
+    statement = "flow_flips"
+    window: str
+    k: int
+    venue: str
+    expected: int
+    minutes: int
+    incomplete: int
+    boundary_ok: int
+    buy: float
+    sell: float
+    sum_sq: float
+    missing: int
+
+
+@dataclass(frozen=True)
+class FlowEvidence:
+    """Everything the trade-flow rules of a snapshot read from ClickHouse: the spot flow by venue, the perp flow
+    by instrument and the sub-window flow of the spot venues, with the size buckets counted as large."""
+
+    large: tuple[str, ...] = ()
+    spot: tuple[FlowWindow, ...] = ()
+    perp: tuple[FlowWindow, ...] = ()
+    flips: tuple[FlowFlip, ...] = ()
+
+
+NO_FLOW = FlowEvidence()

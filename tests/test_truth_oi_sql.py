@@ -816,7 +816,11 @@ async def test_a_condition_evaluation_reads_the_oi_windows_its_metrics_need(monk
         seen.append(kwargs)
         return shown
 
+    async def passthrough(repo, shown, config, **kwargs):
+        return shown
+
     monkeypatch.setattr(truth, "with_oi", attach)
+    monkeypatch.setattr(truth, "with_flow", passthrough)
     monkeypatch.setattr(truth, "compute_condition_values", lambda *args, **kwargs: {})
 
     class Repo:

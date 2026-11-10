@@ -89,6 +89,7 @@ def test_identical_closed_window_inputs_reused_but_corrected_row_invalidates(mon
 
 
 @pytest.mark.asyncio
+@pytest.mark.usefixtures("relative_statements")
 async def test_service_uses_only_light_loader_and_never_writes_assessments():
     packet = snapshot()
     reads = []
