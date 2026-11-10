@@ -86,9 +86,18 @@ async def test_patched_actual_tool_uses_host_bound_item(tmp_path):
     await repo.put("ops.agent_sessions", "s", session)
     opts = Settings(_env_file=None)
     tools = EventToolService(repo, opts, None, None)
-    async with httpx.AsyncClient(
-        transport=httpx.MockTransport(lambda _: httpx.Response(200, json={}))
-    ) as http:
+
+    def transport(request):
+        assert request.method == "POST" and request.url.path.endswith("/sessions/s/events")
+        events = json.loads(request.content)["events"]
+        assert len(events) == 1
+        assert events[0]["type"] == "user.custom_tool_result"
+        assert events[0]["custom_tool_use_id"] == "call_1"
+        return httpx.Response(
+            200, json={"data": [{"id": "native-input:" + request.headers["Idempotency-Key"]}]}
+        )
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(transport)) as http:
         service = SessionService(repo, opts, tools.dispatch, http=http)
         await service.tool(session, {**result["realTool"], "input": {}})
     ledger = await repo.get("ops.tool_calls", "s:call_1")
