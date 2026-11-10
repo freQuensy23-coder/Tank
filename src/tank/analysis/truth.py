@@ -1347,7 +1347,12 @@ async def series_evidence(ch, snapshot, start, end, config, *, tickers=True, hea
     return truth_sql.SeriesEvidence(
         tickers=tuple(found.get("tickers", ())),
         lead_lag=tuple(found.get("lead_lag", ())),
-        health=tuple(found.get("health", ())),
+        health=tuple(
+            sorted(
+                found.get("health", ()),
+                key=lambda r: (r.series, r.instrument_id, r.metric_key or "", r.kind or ""),
+            )
+        ),
     )
 
 

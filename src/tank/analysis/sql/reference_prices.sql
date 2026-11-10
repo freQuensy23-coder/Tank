@@ -189,3 +189,4 @@ LEFT JOIN
     WHERE ts < b AND JSONExtractString(raw, 'price') != ''
     GROUP BY instrument_id
 ) AS trades ON trades.instrument_id = ids.iid
+ORDER BY ids.iid
