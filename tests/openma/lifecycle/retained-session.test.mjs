@@ -102,11 +102,14 @@ test('failed initial pointer publication cleans only that unpublished owned allo
   assert.equal(s.disks.size,0);assert.deepEqual(s.calls.map(x=>x[0]),['create','remove-owned']);
 });
 
-test('corrupt durable publication is refused without allocation or guest execution',async()=>{
+test('corrupt durable publication is replaced by a fresh runtime without resuming what it names',async()=>{
   const s=setup(),c=s.controller();await c.begin(permitted,signal());await c.idle(permitted);
   [...s.rows.values()][0].publication.workspaceCandidate.metadata.runtimeId='foreign';
-  await assert.rejects(s.controller().begin(permitted,signal()),/retained_manifest_invalid/);
-  assert.equal(s.creates,1);assert.equal(s.disks.size,1);
+  const next=s.controller();await next.begin(permitted,signal());
+  assert.equal(next.takeRuntimeReplaced(),true);await next.idle(permitted);
+  assert.deepEqual(s.calls.filter(call=>call[0]==='remove-owned').map(call=>call[1]),['box_1']);
+  assert.equal(s.calls.some(call=>call[0]==='fresh-get'),false);assert.deepEqual([...s.disks.keys()],['box_2']);
+  assert.equal([...s.rows.values()][0].publication.workspaceCandidate.metadata.runtimeId,'box_2');
 });
 
 test('configuration mismatch still permits authorized cold final cleanup of its exact old resource',async()=>{
@@ -186,17 +189,95 @@ test('schema2 resumes exact disk and preserves identity and owner across idle an
   await s.controller().archive(permitted,signal());assert.equal(s.disks.size,0);assert.equal(s.creates,1);
   await assert.rejects(s.controller().begin(permitted,signal()),/retained_session_archived/);
 });
-for(const kind of ['missing','integrity','scope','allocating','upgrading','archived'])test(`schema2 ${kind} publication with a changed image still fails without reaping or allocation`,async()=>{
+for(const kind of ['missing','archived'])test(`schema2 ${kind} publication with a changed image still fails without reaping or allocation`,async()=>{
   const {s,manifest,save}=await schema2Fixture();
   let identity={...schema2Identity,image:'sha256:'+'f'.repeat(64)};
   if(kind==='missing')identity=undefined;
-  if(kind==='allocating'){manifest.state='allocating';save();}
-  if(kind==='upgrading'){manifest.state='upgrading';manifest.upgrade={source:manifest.handle,target:{provider:'litebox',runtimeId:'target'},owner:'old',identity:schema2Identity};save();}
   if(kind==='archived'){manifest.state='archived';manifest.archived=true;save();}
-  if(kind==='integrity')[...s.rows.values()][0].publication.workspaceCandidate.metadata.manifest+=' ';
-  if(kind==='scope')[...s.rows.values()][0].publication.workspaceCandidate.metadata.scope='{}';
-  await assert.rejects(s.controller({identity}).begin(permitted,signal()),/retained_(configuration_changed|identity_required|manifest_invalid|upgrade_incomplete|session_archived)/);
+  await assert.rejects(s.controller({identity}).begin(permitted,signal()),kind==='missing'?/retained_identity_required/:/retained_session_archived/);
   assert.equal(s.creates,1);assert.equal(s.calls.some(call=>call[0]==='fresh-get'||call[0]==='remove-owned'),false);assert.equal(s.disks.size,1);
+});
+const changedIdentity={...schema2Identity,image:'sha256:'+'f'.repeat(64)};
+const published=s=>[...s.rows.values()][0].publication.workspaceCandidate;
+const removed=s=>s.calls.filter(call=>call[0]==='remove-owned').map(call=>call[1]);
+const leftoverStates={
+  allocating({manifest,save}){manifest.state='allocating';manifest.handle={provider:'litebox',runtimeId:'intent:session_A'};save();},
+  integrity({s}){published(s).metadata.manifest+=' ';},
+  scope({s}){published(s).metadata.scope='{}';},
+  state({manifest,save}){manifest.state='migrating';save();},
+  identity({manifest,save}){manifest.identity={version:1};save();},
+};
+for(const kind of Object.keys(leftoverStates))test(`schema2 ${kind} publication with a changed image reaps the leftover runtime and allocates a fresh one in the same session`,async()=>{
+  const fixture=await schema2Fixture(),{s}=fixture;leftoverStates[kind](fixture);
+  s.disks.get('box_1').files['/workspace/value']='old';
+  const states=[],publish=s.fences.publish.bind(s.fences);
+  s.fences.publish=async input=>{states.push(input.workspaceCandidate.metadata.state);return publish(input);};
+  const updated=s.controller({identity:changedIdentity});await updated.begin(permitted,signal());
+  await updated.use(async runtime=>{const {disk}=await runtime.exec('read');assert.equal(disk.id,'box_2');assert.deepEqual(disk.files,{});});
+  assert.equal(updated.takeRuntimeReplaced(),true);assert.equal(updated.takeRuntimeReplaced(),false);await updated.idle(permitted);
+  assert.deepEqual(removed(s),['box_1']);assert.equal(s.calls.some(call=>call[0]==='fresh-get'),false);assert.deepEqual([...s.disks.keys()],['box_2']);
+  assert.deepEqual(states,[...(kind==='allocating'?['aborted']:[]),'allocating','retained','retained']);
+  const manifest=JSON.parse(published(s).metadata.manifest);
+  assert.deepEqual(manifest.identity,changedIdentity);assert.equal(manifest.handle.runtimeId,'box_2');assert.deepEqual(manifest.retired,[]);
+  const next=s.controller({identity:changedIdentity});await next.begin(permitted,signal());
+  assert.equal(next.takeRuntimeReplaced(),false);await next.idle(permitted);assert.equal(s.creates,2);
+});
+for(const changed of [true,false])test(`schema2 allocating publication whose runtime was never created allocates a fresh one (image changed=${changed})`,async()=>{
+  const fixture=await schema2Fixture(),{s}=fixture;leftoverStates.allocating(fixture);s.disks.clear();
+  const identity=changed?changedIdentity:schema2Identity,next=s.controller({identity});await next.begin(permitted,signal());
+  assert.equal(next.takeRuntimeReplaced(),changed);await next.idle(permitted);
+  assert.deepEqual(removed(s),[]);assert.equal(s.calls.some(call=>call[0]==='fresh-get'),false);assert.deepEqual([...s.disks.keys()],['box_2']);
+  const manifest=JSON.parse(published(s).metadata.manifest);
+  assert.equal(manifest.state,'retained');assert.deepEqual(manifest.identity,identity);assert.equal(manifest.handle.runtimeId,'box_2');
+});
+test('schema2 allocating publication with an unchanged image resumes the runtime that was created',async()=>{
+  const fixture=await schema2Fixture(),{s}=fixture;leftoverStates.allocating(fixture);
+  const next=s.controller({identity:schema2Identity});await next.begin(permitted,signal());
+  assert.equal(next.takeRuntimeReplaced(),false);await next.idle(permitted);
+  assert.equal(s.creates,1);assert.deepEqual(removed(s),[]);assert.deepEqual(s.calls.filter(call=>call[0]==='fresh-get').map(call=>call[1]),['box_1']);
+  assert.equal(JSON.parse(published(s).metadata.manifest).handle.runtimeId,'box_1');
+});
+for(const changed of [true,false])test(`schema2 interrupted upgrade reaps retired, target and source runtimes and allocates a fresh one (image changed=${changed})`,async()=>{
+  const {s,manifest,save}=await schema2Fixture(),scope=s.disks.get('box_1').scope;
+  for(const id of ['retired','target'])s.disks.set(id,{id,scope,files:{},profile:{},running:false});
+  manifest.state='upgrading';manifest.retired=[{provider:'litebox',runtimeId:'retired'}];
+  manifest.upgrade={source:manifest.handle,target:{provider:'litebox',runtimeId:'target'},owner:'old',identity:schema2Identity};save();
+  const states=[],publish=s.fences.publish.bind(s.fences);
+  s.fences.publish=async input=>{states.push([input.workspaceCandidate.metadata.state,'upgrade' in JSON.parse(input.workspaceCandidate.metadata.manifest)]);return publish(input);};
+  const identity=changed?changedIdentity:schema2Identity,next=s.controller({identity});await next.begin(permitted,signal());
+  assert.equal(next.takeRuntimeReplaced(),true);await next.idle(permitted);
+  assert.deepEqual(removed(s),['retired','target','box_1']);assert.equal(s.calls.some(call=>call[0]==='fresh-get'),false);
+  assert.deepEqual(states,[['aborted',false],['allocating',false],['retained',false],['retained',false]]);
+  assert.deepEqual([...s.disks.keys()],['box_2']);assert.deepEqual(JSON.parse(published(s).metadata.manifest).identity,identity);
+  await s.controller().archive(permitted,signal());assert.equal(s.disks.size,0);
+});
+for(const kind of ['allocating','integrity','upgrading'])test(`replacement of an ${kind} publication refuses a lost execution before deleting anything`,async()=>{
+  const fixture=await schema2Fixture(),{s,manifest,save}=fixture;
+  if(kind==='upgrading'){manifest.state='upgrading';manifest.upgrade={source:manifest.handle,target:{provider:'litebox',runtimeId:'target'},owner:'old',identity:schema2Identity};save();}
+  else leftoverStates[kind](fixture);
+  const before=JSON.stringify(published(s));let checks=0;
+  await assert.rejects(s.controller({identity:changedIdentity}).begin(async()=>{if(++checks>1)throw Error('execution_lost');},signal()),/execution_lost/);
+  assert.equal(JSON.stringify(published(s)),before);assert.deepEqual(removed(s),[]);assert.equal(s.creates,1);assert.equal(s.disks.has('box_1'),true);
+});
+for(const kind of ['allocating','integrity'])test(`replacement of an ${kind} publication retries after a lost reap acknowledgement`,async()=>{
+  const fixture=await schema2Fixture(),{s}=fixture,reap=s.provider.reap.bind(s.provider);leftoverStates[kind](fixture);
+  let fail=true;s.provider.reap=async(...args)=>{await reap(...args);if(fail){fail=false;throw Error('cleanup acknowledgement lost');}};
+  await assert.rejects(s.controller({identity:changedIdentity}).begin(permitted,signal()),/cleanup acknowledgement lost/);
+  assert.equal(s.disks.size,0);assert.equal(s.creates,1);
+  const retry=s.controller({identity:changedIdentity});await retry.begin(permitted,signal());
+  assert.equal(retry.takeRuntimeReplaced(),true);await retry.idle(permitted);
+  assert.deepEqual([...s.disks.keys()],['box_2']);assert.equal(s.calls.some(call=>call[0]==='fresh-get'),false);
+});
+test('an allocation in progress keeps the session busy for a controller with a changed image and is not torn down',async()=>{
+  const s=setup(),create=s.provider.create.bind(s.provider);let release;const blocked=new Promise(resolve=>{release=resolve;});
+  s.provider.create=async(...args)=>{await blocked;return create(...args);};
+  const first=s.controller({identity:schema2Identity}),beginning=first.begin(permitted,signal());
+  while(![...s.rows.values()][0]?.publication)await new Promise(resolve=>setImmediate(resolve));
+  assert.equal(published(s).metadata.state,'allocating');
+  await assert.rejects(s.controller({ownerId:'controller_B',identity:changedIdentity}).begin(permitted,signal()),/retained_resource_busy/);
+  assert.equal(published(s).metadata.state,'allocating');assert.deepEqual(removed(s),[]);
+  release();await beginning;await first.use(runtime=>runtime.exec('work'));await first.idle(permitted);
+  assert.equal(s.creates,1);assert.deepEqual([...s.disks.keys()],['box_1']);assert.deepEqual(JSON.parse(published(s).metadata.manifest).identity,schema2Identity);
 });
 for(const change of ['image','compatibility'])test(`schema2 ${change} change reaps the old runtime and publishes a fresh one in the same session`,async()=>{
   const {s}=await schema2Fixture();
@@ -261,14 +342,16 @@ test('new allocations with an identity publish schema2 from the first intent',as
   await resumed.idle(permitted);assert.equal(s.creates,1);assert.equal(s.calls.some(call=>call[0]==='remove-owned'),false);
 });
 const schema1Digest=value=>'sha256:'+createHash('sha256').update(JSON.stringify(value)).digest('hex');
-for(const kind of ['integrity','provider','allocating'])test(`schema1 ${kind} publication with a changed fingerprint still fails without reaping or allocation`,async()=>{
+for(const kind of ['integrity','provider','allocating'])test(`schema1 ${kind} publication with a changed fingerprint reaps the leftover runtime and publishes a fresh schema2 one`,async()=>{
   const s=setup(),c=s.controller();await c.begin(permitted,signal());await c.idle(permitted);
   const candidate=[...s.rows.values()][0].publication.workspaceCandidate,metadata=candidate.metadata;
   if(kind==='integrity')candidate.contentHash='sha256:'+'0'.repeat(64);
   if(kind==='provider')metadata.provider='foreign';
-  if(kind==='allocating'){metadata.state='allocating';candidate.contentHash=schema1Digest({scope:JSON.parse(metadata.scope),provider:metadata.provider,runtimeId:metadata.runtimeId,fingerprint:metadata.fingerprint,state:metadata.state});}
-  await assert.rejects(s.controller({fingerprint:'sha256:'+'b'.repeat(64),identity:schema2Identity}).begin(permitted,signal()),/retained_(configuration_changed|manifest_invalid)/);
-  assert.equal(s.creates,1);assert.equal(s.disks.has('box_1'),true);assert.equal(s.calls.some(call=>call[0]==='remove-owned'),false);
+  if(kind==='allocating'){metadata.state='allocating';metadata.runtimeId='intent:session_A';candidate.contentHash=schema1Digest({scope:JSON.parse(metadata.scope),provider:metadata.provider,runtimeId:metadata.runtimeId,fingerprint:metadata.fingerprint,state:metadata.state});}
+  const updated=s.controller({fingerprint:'sha256:'+'b'.repeat(64),identity:schema2Identity});await updated.begin(permitted,signal());
+  assert.equal(updated.takeRuntimeReplaced(),true);await updated.idle(permitted);
+  assert.deepEqual(removed(s),['box_1']);assert.equal(s.calls.some(call=>call[0]==='fresh-get'),false);assert.deepEqual([...s.disks.keys()],['box_2']);
+  assert.equal(published(s).metadata.schema,2);assert.deepEqual(JSON.parse(published(s).metadata.manifest).identity,schema2Identity);
 });
 test('schema2 archive cleans retired and interrupted target handles without resuming',async()=>{
   const {s,manifest,save}=await schema2Fixture();

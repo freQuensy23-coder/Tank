@@ -22,6 +22,7 @@ export interface RetainedRuntime {
 export interface Provider<R extends RetainedRuntime> {
   allocationIntent(scope: Scope, fence: Fence, signal: AbortSignal): Promise<Handle>;
   resolveIntent(intent: Handle, scope: Scope, fence: Fence, signal: AbortSignal): Promise<Handle | null>;
+  leftover(scope: Scope, fence: Fence, signal: AbortSignal): Promise<Handle | null>;
   create(scope: Scope, fence: Fence, signal: AbortSignal): Promise<R>;
   resume(handle: Handle, scope: Scope, fence: Fence, signal: AbortSignal): Promise<R>;
   reap(handle: Handle, scope: Scope, fence: Fence, signal: AbortSignal): Promise<void>;
@@ -124,14 +125,6 @@ export class RetainedSessionLifecycle<R extends RetainedRuntime> {
         validateRuntimeIdentity(upgrade.identity);
         assertCompatible(manifest.identity!, upgrade.identity);
       } else if (manifest.upgrade) fail('retained_manifest_invalid');
-      if (!archiveOnly && manifest.state !== 'archived') {
-        if (!this.options.identity) fail('retained_identity_required');
-        if (manifest.state !== 'retained' && manifest.state !== 'aborted') {
-          assertCompatible(manifest.identity!, this.options.identity);
-          if (manifest.identity!.image !== this.options.identity.image) fail('retained_configuration_changed:image');
-          if (manifest.state === 'upgrading') fail('retained_upgrade_incomplete');
-        }
-      }
       return manifest;
     }
     if (!metadata || metadata.schema !== 1 || metadata.scope !== JSON.stringify(this.scope)
@@ -140,10 +133,8 @@ export class RetainedSessionLifecycle<R extends RetainedRuntime> {
     const identity = { scope: this.scope, provider: metadata.provider, runtimeId: metadata.runtimeId,
       fingerprint: metadata.fingerprint, state: metadata.state };
     if (candidate.contentHash !== digest(identity)) fail('retained_manifest_invalid');
-    if (!archiveOnly && metadata.state !== 'archived' && metadata.fingerprint !== this.options.fingerprint) {
-      if (metadata.state !== 'retained' && metadata.state !== 'aborted') fail('retained_configuration_changed');
-      if (typeof metadata.fingerprint !== 'string' || !/^sha256:[a-f0-9]{64}$/.test(metadata.fingerprint)) fail('retained_manifest_invalid');
-    }
+    if (!archiveOnly && metadata.state !== 'archived' && metadata.fingerprint !== this.options.fingerprint
+        && (typeof metadata.fingerprint !== 'string' || !/^sha256:[a-f0-9]{64}$/.test(metadata.fingerprint))) fail('retained_manifest_invalid');
     return { handle: { provider: String(metadata.provider), runtimeId: metadata.runtimeId as string }, state: String(metadata.state),
       archived: metadata.state === 'archived', ...(typeof metadata.fingerprint === 'string' ? { fingerprint: metadata.fingerprint } : {}) };
   }
@@ -185,30 +176,39 @@ export class RetainedSessionLifecycle<R extends RetainedRuntime> {
       const acquired = await this.options.fences.acquire({ scope: this.scope, ownerId: this.ownerId, ttlMs: this.options.leaseTtlMs });
       if (acquired.type !== 'acquired') fail('retained_resource_busy');
       this.fence = acquired.fence; this.lost = false; this.startHeartbeat();
-      let manifest = acquired.publication ? this.decode(acquired.publication.workspaceCandidate) : null;
+      let manifest: Manifest | null = null, unreadable = false;
+      if (acquired.publication) {
+        try { manifest = this.decode(acquired.publication.workspaceCandidate); } catch { unreadable = true; }
+      }
       this.manifest = manifest;
       if (manifest?.archived) fail('retained_session_archived');
-      if (manifest && this.configurationChanged(manifest)) {
-        const stale = [...manifest.retired ?? [], ...(manifest.state === 'retained' ? [manifest.handle] : [])];
+      if (manifest?.identity && !this.options.identity) fail('retained_identity_required');
+      if (unreadable || (manifest && (manifest.state === 'upgrading' || this.configurationChanged(manifest)))) {
+        const stale = manifest ? [...manifest.retired ?? [], ...(manifest.upgrade ? [manifest.upgrade.target] : []),
+          ...(manifest.state === 'retained' || manifest.state === 'upgrading' ? [manifest.handle] : [])] : [];
+        if (!manifest || manifest.state === 'allocating') {
+          signal.throwIfAborted(); await assertExecutionCurrent();
+          const leftover = await this.options.provider.leftover(this.scope, await this.current(), signal);
+          if (leftover) stale.push(leftover);
+        }
         for (const handle of stale) {
           signal.throwIfAborted(); await assertExecutionCurrent();
           await this.options.provider.reap(handle, this.scope, await this.current(), signal);
         }
-        if (stale.length) {
+        if (manifest && stale.length) {
           signal.throwIfAborted(); await assertExecutionCurrent();
           this.handle = manifest.handle;
-          this.manifest = { ...manifest, retired: [] };
+          this.manifest = { ...manifest, retired: [], upgrade: undefined };
           await this.publish('aborted');
         }
         manifest = null; replaced = true;
       }
+      if (manifest?.state === 'allocating') {
+        const resolved = await this.options.provider.resolveIntent(manifest.handle, this.scope, await this.current(), signal);
+        manifest = resolved ? { ...manifest, handle: resolved } : null;
+      }
       if (manifest && manifest.state !== 'aborted') {
         this.handle = manifest.handle;
-        if (manifest.state === 'allocating') {
-          const resolved = await this.options.provider.resolveIntent(this.handle, this.scope, await this.current(), signal);
-          if (!resolved) fail('retained_incomplete_allocation_missing');
-          this.handle = resolved;
-        }
         await assertExecutionCurrent();
         this.runtime = await this.options.provider.resume(this.handle, this.scope, await this.current(), signal);
         if (manifest.state === 'allocating') await this.publish('retained');
