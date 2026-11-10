@@ -347,16 +347,17 @@ async def market_clickhouse():
 
 @pytest.fixture
 def relative_statements(monkeypatch):
-    """Stand-in for the ClickHouse statements of the price-relative, volume and open-interest rules in tests
-    that run a Market Truth service without a ClickHouse server: the snapshot keeps the `relative_sql`, the
-    `volume_sql` and the `oi_sql` it carries, `evidence`, `volumes` and `oi` replace them when set, and a
-    snapshot without one has no such evidence. The statements themselves are tested against a real server in
-    tests/test_truth_relative_sql.py, tests/test_truth_volume_sql.py and tests/test_truth_oi_sql.py."""
+    """Stand-in for the ClickHouse statements of the price-relative, volume, open-interest and funding rules in
+    tests that run a Market Truth service without a ClickHouse server: the snapshot keeps the `relative_sql`,
+    the `volume_sql`, the `oi_sql` and the `funding_sql` it carries, `evidence`, `volumes`, `oi` and `funding`
+    replace them when set, and a snapshot without one has no such evidence. The statements themselves are tested
+    against a real server in tests/test_truth_relative_sql.py, tests/test_truth_volume_sql.py,
+    tests/test_truth_oi_sql.py and tests/test_truth_funding_sql.py."""
     from types import SimpleNamespace
 
     from tank.analysis import truth, truth_sql
 
-    stand_in = SimpleNamespace(evidence=None, volumes=None, oi=None)
+    stand_in = SimpleNamespace(evidence=None, volumes=None, oi=None, funding=None)
 
     async def attach(repo, snapshot, config, **kwargs):
         evidence = stand_in.evidence or snapshot.get("relative_sql") or truth_sql.NO_RELATIVE
@@ -372,5 +373,11 @@ def relative_statements(monkeypatch):
 
     monkeypatch.setattr(truth, "with_relative", attach)
     monkeypatch.setattr(truth, "with_volumes", attach_volumes)
+
+    async def attach_funding(repo, snapshot, config, **kwargs):
+        evidence = stand_in.funding or snapshot.get("funding_sql") or truth_sql.NO_FUNDING
+        return dict(snapshot, funding_sql=evidence)
+
     monkeypatch.setattr(truth, "with_oi", attach_oi)
+    monkeypatch.setattr(truth, "with_funding", attach_funding)
     return stand_in

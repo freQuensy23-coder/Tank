@@ -759,20 +759,36 @@ def oi_synchronized(snapshot, window, length, venues):
     return stats
 
 
-def liquidation_side_evidence(rows, window_complete, coverage):
+def funding_records(snapshot, window):
+    """The funding and the liquidation records of one window by instrument."""
+    evidence = snapshot.get("funding_sql") or truth_sql.NO_FUNDING
+    return (
+        {r.instrument_id: r for r in evidence.venues if r.window == window},
+        {r.instrument_id: r for r in evidence.liquidations if r.window == window},
+    )
+
+
+def liquidation_side_evidence(record, window_complete, coverage):
     """Missing conversion on one observed side cannot erase or zero its native evidence."""
+    observed = record.observations > 0 or (window_complete and coverage in ("COMPLETE", "SAMPLED"))
     result = {}
-    for side, classification in (("long", "LONG_LIQ"), ("short", "SHORT_LIQ")):
-        selected = [row for row in rows if row.get("side") == classification]
-        observed = bool(rows) or (window_complete and coverage in ("COMPLETE", "SAMPLED"))
-        amount = _sum(selected, "notional_usd") if selected else Decimal(0) if observed else None
+    for side in ("long", "short"):
+        count = getattr(record, side + "_count")
+
+        def amount(field):
+            if not count:
+                return Decimal(0) if observed else None
+            return (
+                None
+                if getattr(record, f"{side}_{field}_missing")
+                else decimal(getattr(record, f"{side}_{field}"))
+            )
+
         prefix = "liq_" + side
-        result[prefix + "_usd"] = amount
-        result[prefix + "_usd_reason"] = "INCOMPLETE" if amount is None else None
-        result[prefix + "_count"] = len(selected)
-        result[prefix + "_native"] = (
-            _sum(selected, "qty_native") if selected else Decimal(0) if observed else None
-        )
+        result[prefix + "_usd"] = amount("usd")
+        result[prefix + "_usd_reason"] = "INCOMPLETE" if result[prefix + "_usd"] is None else None
+        result[prefix + "_count"] = count
+        result[prefix + "_native"] = amount("native")
     return result
 
 
@@ -790,6 +806,7 @@ def derivatives_truth(snapshot, start, end):
     for iid in groups:
         groups[iid] = _instrument_rows(snapshot, "oi", iid)
     endpoints, history = oi_records(snapshot, snapshot.get("_primary"))
+    funding, liquidations = funding_records(snapshot, snapshot.get("_primary"))
     per = []
     for instrument, rs in groups.items():
         endpoint = endpoints.get(instrument)
@@ -808,64 +825,15 @@ def derivatives_truth(snapshot, start, end):
                 "reason": "INCOMPLETE",
                 "detail": "OI_BUCKET_EDGE_UNSPECIFIED" if unresolved else None,
             }
-        fs = [f for f in _instrument_rows(snapshot, "funding", instrument) if _time(f) and _time(f) <= end]
-        settled = sorted([f for f in fs if f.get("kind") == "SETTLED"], key=_time)
-        est = sorted([f for f in fs if f.get("kind") == "CURRENT_ESTIMATE"], key=_time)
-        last = settled[-1] if settled else {}
-        interval = decimal(last.get("interval_h"))
-        rate = decimal(last.get("rate"))
-        eq = rate * 8 / interval if rate is not None and interval else None
-        funding_history = [
-            f
-            for f in settled
-            if _time(f) < start
-            and decimal(f.get("interval_h")) is not None
-            and decimal(f["interval_h"]) > 0
-            and decimal(f.get("rate")) is not None
-        ]
-        fh = [
-            decimal(f.get("rate_8h_eq"))
-            if f.get("rate_8h_eq") is not None
-            else decimal(f.get("rate")) * 8 / decimal(f["interval_h"])
-            for f in funding_history
-        ]
-        settled_eq = eq
-        estimate = est[-1] if est else {}
-        estimate_interval = decimal(estimate.get("interval_h"))
-        estimate_rate = decimal(estimate.get("rate"))
-        estimate_eq = (
-            estimate_rate * 8 / estimate_interval if estimate_rate is not None and estimate_interval else None
-        )
-        if estimate_eq is not None:
-            eq = estimate_eq
-            interval = estimate_interval
-        history_ready = (
-            bool(funding_history)
-            and (_time(funding_history[-1]) - _time(funding_history[0])).total_seconds()
-            >= float(parameter("history_min_days", 7)) * 86400
-        )
-        baseline_cache = _BASELINE_CACHE.get()
-        funding_key = (
-            (
-                "funding",
-                history_ready,
-                tuple(parameter("normal_range_quantiles", [0.025, 0.975])),
-                (_BASELINE_DEPENDENCY.get(), instrument)
-                if _BASELINE_DEPENDENCY.get() is not None
-                else fingerprint(fh),
-            )
-            if baseline_cache is not None
+        record = funding.get(instrument, truth_sql.NO_FUNDING_VENUE)
+        settled_eq, estimate_eq = decimal(record.settled_eq), decimal(record.estimate_eq)
+        eq = settled_eq if estimate_eq is None else estimate_eq
+        interval = record.settled_interval_h if estimate_eq is None else record.estimate_interval_h
+        normal_range = (
+            [decimal(record.normal_low), decimal(record.normal_high)]
+            if history_usable(record.history_first, record.history_last)
             else None
         )
-        if baseline_cache is not None and funding_key in baseline_cache:
-            fr = baseline_cache[funding_key][0]
-        else:
-            fr = normal(fh) if history_ready else None
-            if baseline_cache is not None:
-                baseline_cache[funding_key] = (fr,)
-                if len(baseline_cache) > 128:
-                    baseline_cache.pop(next(iter(baseline_cache)))
-        liqs = [r for r in _instrument_rows(snapshot, "liquidations", instrument) if start <= _time(r) < end]
         cov = (rs[-1] if rs else instruments[instrument]).get("liq_coverage") or (
             "COMPLETE" if venue == "bybit" else "SAMPLED" if venue in ("binance", "okx") else "NOT_SUPPORTED"
         )
@@ -880,30 +848,33 @@ def derivatives_truth(snapshot, start, end):
         )
         if cov == "COMPLETE" and not liq_window_complete:
             cov = "UNKNOWN"
-        startfund = next((f for f in reversed(settled) if _time(f) <= start), {})
         p = dict(
             venue=venue,
             instrument_id=instrument,
             coverage={"venue": venue},
             **stats,
-            funding_settled_last=rate,
-            funding_settled_interval_h=decimal(last.get("interval_h")),
-            funding_settled_last_observed_at=iso(_time(last)) if last else None,
-            funding_estimate_observed_at=iso(_time(est[-1])) if est else None,
-            funding_estimate=decimal(est[-1].get("rate")) if est else None,
-            funding_estimate_interval_h=estimate_interval,
+            funding_settled_last=record.settled_rate,
+            funding_settled_interval_h=record.settled_interval_h,
+            funding_settled_last_observed_at=iso(record.settled_at) if record.settled_at else None,
+            funding_estimate_observed_at=iso(record.estimate_at) if record.estimate_at else None,
+            funding_estimate=record.estimate_rate,
+            funding_estimate_interval_h=record.estimate_interval_h,
             interval_h=interval,
             funding_8h_eq=eq,
             funding_8h_kind="CURRENT_ESTIMATE" if estimate_eq is not None else "SETTLED",
             funding_settled_8h_eq=settled_eq,
             funding_estimate_8h_eq=estimate_eq,
-            funding_vs_normal=("BELOW" if eq < fr[0] else "ABOVE" if eq > fr[1] else "WITHIN")
-            if eq is not None and fr
+            funding_vs_normal=(
+                "BELOW" if eq < normal_range[0] else "ABOVE" if eq > normal_range[1] else "WITHIN"
+            )
+            if eq is not None and normal_range
             else None,
-            funding_start=decimal(startfund.get("rate")),
-            funding_start_interval_h=decimal(startfund.get("interval_h")),
-            funding_start_observed_at=iso(_time(startfund)) if startfund else None,
-            **liquidation_side_evidence(liqs, liq_window_complete, cov),
+            funding_start=record.start_rate,
+            funding_start_interval_h=record.start_interval_h,
+            funding_start_observed_at=iso(record.start_at) if record.start_at else None,
+            **liquidation_side_evidence(
+                liquidations.get(instrument, truth_sql.NO_LIQUIDATIONS), liq_window_complete, cov
+            ),
             liq_coverage=cov,
             liq_source_coverage=liq_source_coverage,
             liq_capture_window={
@@ -1267,6 +1238,60 @@ async def oi_evidence(ch, snapshot, end, config, windows, recent_start, *, histo
     endpoints, *rest = await asyncio.gather(*jobs)
     return truth_sql.OiEvidence(
         instruments=tuple(ids), history=tuple(rest[0]) if rest else (), endpoints=tuple(endpoints)
+    )
+
+
+async def funding_evidence(ch, snapshot, end, config, windows, since, *, state=True):
+    """Run the funding and liquidation statements of a snapshot (03 section 5.4 and 5.5) for these windows, a
+    mapping of window name to length in seconds, and return their records; `state=False` reads only the funding
+    of the venues. `since` is where the observations that confirm a funding estimate start."""
+    target = snapshot.get("token_id")
+    ids = sorted(
+        i["instrument_id"]
+        for i in snapshot.get("instruments", [])
+        if i.get("token_id", target) == target and _market(i) != "SPOT"
+    )
+    if not ids:
+        return truth_sql.NO_FUNDING
+    common = dict(
+        cutoff=end,
+        assembled=parse_time(snapshot["assembled_at"]) if snapshot.get("assembled_at") else AS_OF_ALL,
+    )
+    windowed = dict(
+        names=list(windows), lens_us=[str(round(seconds * 1_000_000)) for seconds in windows.values()]
+    )
+    lookback_s = (
+        int(_knob(config, "historical_lookback_days", _knob(config, "base_retention_days", 90))) * 86400
+    )
+    jobs = [
+        truth_sql.fetch(ch, truth_sql.FundingVenue, iids=ids, lookback_s=lookback_s, **windowed, **common)
+    ]
+    if state:
+        jobs.append(truth_sql.fetch(ch, truth_sql.LiquidationWindow, iids=ids, **windowed, **common))
+    venues, *rest = await asyncio.gather(*jobs)
+    if not state:
+        return truth_sql.FundingEvidence(instruments=tuple(ids), venues=tuple(venues))
+    priced = sorted(
+        {
+            r.instrument_id
+            for r in venues
+            if (r.settled_eq if r.estimate_eq is None else r.estimate_eq) is not None
+        }
+    )
+    dispersion, confirmations = [], []
+    if len(priced) >= 2:
+        dispersion, confirmations = await asyncio.gather(
+            truth_sql.fetch(
+                ch, truth_sql.FundingDispersion, iids=priced, lookback_s=lookback_s, **windowed, **common
+            ),
+            truth_sql.fetch(ch, truth_sql.FundingConfirmation, iids=priced, since=since, **common),
+        )
+    return truth_sql.FundingEvidence(
+        instruments=tuple(ids),
+        venues=tuple(venues),
+        dispersion=tuple(dispersion),
+        confirmations=tuple(confirmations),
+        liquidations=tuple(rest[0]),
     )
 
 
@@ -2293,57 +2318,23 @@ def enrich_evidence(snapshot, start, end, spots, primary, deriv, relative, liqui
                 validated = validated or (second and {a, b} <= complete_venues)
 
     funding_groups = {
-        p["instrument_id"]: [] for p in deriv.get("per_venue", []) if p.get("funding_8h_eq") is not None
+        p["instrument_id"] for p in deriv.get("per_venue", []) if p.get("funding_8h_eq") is not None
     }
-    historical = []
-    states = {}
-    funding_rows = sorted(
-        [
-            r
-            for r in snapshot.get("funding", [])
-            if r.get("instrument_id") in funding_groups
-            and r.get("kind") == "SETTLED"
-            and _time(r) < start
-            and _time(r) >= start - timedelta(days=lookback_days())
-        ],
-        key=_time,
-    )
-    for row in funding_rows:
-        rate, interval = decimal(row.get("rate")), decimal(row.get("interval_h"))
-        if rate is None or not interval:
-            continue
-        states[row["instrument_id"]] = rate * 8 / interval
-        if len(states) == len(funding_groups) and len(states) >= 2:
-            historical.append((_time(row), max(states.values()) - min(states.values())))
+    funding = snapshot.get("funding_sql") or truth_sql.NO_FUNDING
+    history = next((r for r in funding.dispersion if r.window == primary), None)
     normal_dispersion = (
-        normal([value for _, value in historical])
-        if historical
-        and (historical[-1][0] - historical[0][0]).total_seconds()
-        >= float(parameter("history_min_days", 7)) * 86400
+        [decimal(history.normal_low), decimal(history.normal_high)]
+        if history and history_usable(history.history_first, history.history_last)
         else None
     )
     dispersion = deriv.get("funding_dispersion_8h")
     funding_beyond = beyond(dispersion, normal_dispersion)
-    confirmations = snapshot.get("funding_confirmations", [])
-    secondary = {}
-    for row in confirmations:
-        if (
-            row.get("instrument_id") not in funding_groups
-            or _time(row) is None
-            or _time(row) > end
-            or not _available(row, snapshot)
-            or row.get("independent_path_verified") is not True
-            or not row.get("source_path")
-            or not row.get("primary_source_path")
-            or row["source_path"] == row["primary_source_path"]
-        ):
-            continue
-        rate = decimal(row.get("rate_8h_eq"))
-        if rate is not None:
-            secondary[row["instrument_id"]] = rate
+    secondary = {
+        r.instrument_id: decimal(r.rate_8h_eq) for r in funding.confirmations if r.rate_8h_eq is not None
+    }
     secondary_dispersion = (
         max(secondary.values()) - min(secondary.values())
-        if len(secondary) >= 2 and set(secondary) == set(funding_groups)
+        if len(secondary) >= 2 and set(secondary) == funding_groups
         else None
     )
     perp_ids = set(funding_groups)
@@ -3179,7 +3170,6 @@ def data_confidence(snapshot, spot, derivatives, end):
 @precise
 def support_features(snapshot, start, end, spot, deriv, liquidity, supply):
     """§5.8 support evidence. Unknown inputs remain None and never add support."""
-    length = end - start
     evidence = snapshot.get("volume_sql") or truth_sql.NO_VOLUME
     window = snapshot.get("_primary")
     volume = {(n.market, n.window): n for n in evidence.normals}
@@ -3284,17 +3274,16 @@ def support_features(snapshot, start, end, spot, deriv, liquidity, supply):
         if any(p.get("funding_rising") is not None for p in deriv.get("per_venue", []))
         else None
     )
-    liqs = [
-        r
-        for r in snapshot.get("liquidations", [])
-        if start <= _time(r) < end
-        and r.get("instrument_id")
-        in {p["instrument_id"] for p in deriv.get("per_venue", []) if p.get("liq_coverage") == "COMPLETE"}
-    ]
-    total = _sum(liqs, "notional_usd")
-    first = _sum([r for r in liqs if _time(r) < start + length / 2], "notional_usd")
+    complete = {p["instrument_id"] for p in deriv.get("per_venue", []) if p.get("liq_coverage") == "COMPLETE"}
+    records = [r for iid, r in funding_records(snapshot, window)[1].items() if iid in complete]
+    known = bool(records) and not any(r.total_usd_missing for r in records)
     features["liquidations_first_half_majority"] = (
-        strict_majority(first or Decimal(0), total) if total is not None else None
+        strict_majority(
+            sum((decimal(r.first_half_usd or 0) for r in records), Decimal(0)),
+            sum((decimal(r.total_usd or 0) for r in records), Decimal(0)),
+        )
+        if known
+        else None
     )
     profile = spot.get("size_profile") or {}
     features["large_ticket_buy_majority"] = profile.get("large_ticket_buy_majority")
@@ -4416,7 +4405,15 @@ def _compute_market_truth(snapshot, *, config=None):
         d["support_features"] = support_features(scoped, wstart, end, spots[name], d, window_liquidity, su)
         if name == "EVENT" and not av:
             d = derivatives_truth(
-                dict(scoped, oi=[], oi_sql=truth_sql.NO_OI, funding=[], liquidations=[], klines=[]),
+                dict(
+                    scoped,
+                    oi=[],
+                    oi_sql=truth_sql.NO_OI,
+                    funding=[],
+                    funding_sql=truth_sql.NO_FUNDING,
+                    liquidations=[],
+                    klines=[],
+                ),
                 wstart,
                 end,
             )
@@ -4745,6 +4742,29 @@ def condition_oi_windows(snapshot, requirements):
     return windows, history
 
 
+def condition_funding_windows(snapshot, requirements):
+    """The windows (name to seconds) whose funding records a condition evaluation reads, and whether the
+    liquidations and what a fragmentation reads are needed: the requested window of a funding metric, the
+    primary window of a state."""
+    end = parse_time(snapshot["cutoff"])
+    lengths = dict(WINDOWS)
+    anchor = (snapshot.get("anchor") or {}).get("ts")
+    if anchor:
+        lengths["EVENT"] = (end - parse_time(anchor)).total_seconds()
+    start, primary = condition_primary_bounds(snapshot, end)
+    windows, state = {}, False
+    for requirement in requirements:
+        metric = requirement["metric"]
+        if metric == "deriv.funding_vs_normal":
+            name = requirement.get("window", "W1H")
+            if lengths.get(name, 0) > 0:
+                windows[name] = lengths[name]
+        elif metric in COMPOSITE_CONDITION_METRICS:
+            windows[primary] = (end - start).total_seconds()
+            state = True
+    return windows, state
+
+
 def condition_market_state(snapshot, end, cache):
     """The required primary-window state graph, without MTA/outcome/card persistence work."""
     av = (snapshot.get("anchor") or {}).get("ts")
@@ -4762,7 +4782,7 @@ def condition_market_state(snapshot, end, cache):
             head = fingerprint({field: snapshot.get(field) for field in fields})
         elif not isinstance(head, str):
             head = fingerprint(head)
-        for evidence in ("relative_sql", "volume_sql", "oi_sql"):
+        for evidence in ("relative_sql", "volume_sql", "oi_sql", "funding_sql"):
             if evidence in fields:
                 head = fingerprint([head, snapshot.get(evidence)])
         key = (
@@ -4807,7 +4827,17 @@ def condition_market_state(snapshot, end, cache):
     wstart = end - timedelta(seconds=windows[primary])
     derivatives = node(
         "derivatives",
-        ("oi", "oi_sql", "funding", "liquidations", "semantics", "instruments", "klines", "volume_sql"),
+        (
+            "oi",
+            "oi_sql",
+            "funding",
+            "funding_sql",
+            "liquidations",
+            "semantics",
+            "instruments",
+            "klines",
+            "volume_sql",
+        ),
         lambda: derivatives_truth(scoped, wstart, end),
     )
     liquidity = liquidity_truth(scoped, wstart, end, spots[primary], relative)
@@ -4861,7 +4891,9 @@ def compute_condition_values(snapshot, requirements, *, config=None, cache=None,
                 fields = ("flow_bars", "flow_segments", "tickers", "instruments")
             elif metric in DERIVATIVE_CONDITION_METRICS:
                 domain = "funding" if metric == "deriv.funding_vs_normal" else "oi"
-                fields = (domain, "instruments", "semantics", "capture_metadata", "oi_sql")
+                fields = (domain, "instruments", "semantics", "capture_metadata") + (
+                    ("funding_sql",) if domain == "funding" else ("oi_sql",)
+                )
             elif metric == "price.close_vs_level":
                 domain = "close"
                 fields = ("relative_sql", "instruments")
@@ -4902,13 +4934,13 @@ def compute_condition_values(snapshot, requirements, *, config=None, cache=None,
                     "oi",
                     "oi_sql",
                     "funding",
+                    "funding_sql",
                     "klines",
                     "books",
                     "liquidations",
                     "supply",
                     "anchor",
                     "expected_direction",
-                    "funding_confirmations",
                     "relative_sql",
                     "volume_sql",
                     "series_coverage_counts",
@@ -4926,7 +4958,6 @@ def compute_condition_values(snapshot, requirements, *, config=None, cache=None,
                     "klines",
                     "anchor",
                     "expected_direction",
-                    "funding_confirmations",
                     "relative_sql",
                     "series_coverage_counts",
                 )
@@ -4938,7 +4969,7 @@ def compute_condition_values(snapshot, requirements, *, config=None, cache=None,
                 dependency = fingerprint({field: snapshot.get(field) for field in fields})
             elif not isinstance(dependency, str):
                 dependency = fingerprint(dependency)
-            for evidence in ("relative_sql", "volume_sql", "oi_sql"):
+            for evidence in ("relative_sql", "volume_sql", "oi_sql", "funding_sql"):
                 if evidence in fields:
                     dependency = fingerprint([dependency, snapshot.get(evidence)])
             key = (
@@ -5173,6 +5204,16 @@ def _cutoff_value(cutoff):
     return cutoff.value if isinstance(cutoff, Timestamp) else cutoff
 
 
+def recent_history_start(end, anchor_at, config):
+    """Where a history that is sampled stops being sampled: twice the longer of a day and the event window (and a
+    minute) before the cutoff, but not before the look-back."""
+    lookback = timedelta(
+        days=int(_knob(config, "historical_lookback_days", _knob(config, "base_retention_days", 90)))
+    )
+    duration = max(timedelta(days=1), end - parse_time(anchor_at)) if anchor_at else timedelta(days=1)
+    return max(end - lookback, end - 2 * duration - timedelta(minutes=1))
+
+
 async def with_relative(repo, snapshot, config, *, include_outcome=True, baselines=True):
     """The snapshot with the records of the price-relative statements (03 §5.7) as `relative_sql`.
 
@@ -5227,14 +5268,34 @@ async def with_oi(repo, snapshot, config, *, windows=None, history=True):
         return snapshot
     if windows is None:
         windows = dict(WINDOWS, EVENT=(end - start).total_seconds())
-    lookback = timedelta(
-        days=int(_knob(config, "historical_lookback_days", _knob(config, "base_retention_days", 90)))
-    )
-    duration = max(timedelta(days=1), end - start) if anchor_at else timedelta(days=1)
-    recent_start = max(end - lookback, end - 2 * duration - timedelta(minutes=1))
     return dict(
         snapshot,
-        oi_sql=await oi_evidence(ch, snapshot, end, config, windows, recent_start, history=history),
+        oi_sql=await oi_evidence(
+            ch, snapshot, end, config, windows, recent_history_start(end, anchor_at, config), history=history
+        ),
+    )
+
+
+async def with_funding(repo, snapshot, config, *, windows=None, state=True):
+    """The snapshot with the records of the funding and liquidation statements (03 §5.4, §5.5) as `funding_sql`.
+
+    The windows are those of the assessment (W15M, W1H, W4H, W24H and EVENT) unless given; `state=False` reads
+    only the funding of the venues, not the liquidations and what a fragmentation reads. A snapshot whose anchor
+    does not precede its cutoff is returned as it is."""
+    ch = _market_client(repo)
+    end = parse_time(snapshot["cutoff"])
+    anchor = snapshot.get("anchor")
+    anchor_at = anchor.get("ts") if isinstance(anchor, dict) else anchor
+    start = parse_time(anchor_at) if anchor_at else end - timedelta(hours=4)
+    if start >= end:
+        return snapshot
+    if windows is None:
+        windows = dict(WINDOWS, EVENT=(end - start).total_seconds())
+    return dict(
+        snapshot,
+        funding_sql=await funding_evidence(
+            ch, snapshot, end, config, windows, recent_history_start(end, anchor_at, config), state=state
+        ),
     )
 
 
@@ -5310,6 +5371,9 @@ class MarketTruthService:
         windows, history = condition_oi_windows(snapshot, requirements)
         if windows:
             snapshot = await with_oi(self.repo, snapshot, config, windows=windows, history=history)
+        windows, state = condition_funding_windows(snapshot, requirements)
+        if windows:
+            snapshot = await with_funding(self.repo, snapshot, config, windows=windows, state=state)
         return await asyncio.to_thread(
             compute_condition_values,
             snapshot,
@@ -5351,9 +5415,13 @@ class MarketTruthService:
         self._release_idle_assessment_baselines()
         lock = self._assessment_locks.setdefault(token_id, asyncio.Lock())
         async with lock:
-            snapshot = await with_oi(
+            snapshot = await with_funding(
                 self.repo,
-                await with_volumes(self.repo, await with_relative(self.repo, snapshot, knobs), knobs),
+                await with_oi(
+                    self.repo,
+                    await with_volumes(self.repo, await with_relative(self.repo, snapshot, knobs), knobs),
+                    knobs,
+                ),
                 knobs,
             )
             result = await compute_workers.compute_market_truth(

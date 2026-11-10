@@ -341,3 +341,150 @@ class OiEvidence:
 
 
 NO_OI = OiEvidence()
+
+
+@dataclass(frozen=True)
+class FundingVenue(Record):
+    """The funding of one perp venue and its normal range in one window (funding.sql).
+
+    The rates and intervals are the decimal text of the stored row; `*_eq` is rate x 8 / interval in float,
+    None where the rate is missing or the interval is missing or 0. The settled and the estimate columns are of
+    the latest SETTLED and CURRENT_ESTIMATE row, the `start_*` columns of the latest SETTLED row at or before the
+    window start. The history is the settled 8-hour-equivalent rates before the window start: its sample count,
+    the first and the last time and the 0.025 and 0.975 quantiles; None where there is none."""
+
+    statement = "funding"
+    window: str
+    instrument_id: str
+    settled_rate: Decimal | None
+    settled_interval_h: Decimal | None
+    settled_at: datetime | None
+    settled_eq: float | None
+    estimate_rate: Decimal | None
+    estimate_interval_h: Decimal | None
+    estimate_at: datetime | None
+    estimate_eq: float | None
+    start_rate: Decimal | None
+    start_interval_h: Decimal | None
+    start_at: datetime | None
+    samples: int
+    history_first: datetime | None
+    history_last: datetime | None
+    normal_low: float | None
+    normal_high: float | None
+
+
+NO_FUNDING_VENUE = FundingVenue(
+    window="",
+    instrument_id="",
+    settled_rate=None,
+    settled_interval_h=None,
+    settled_at=None,
+    settled_eq=None,
+    estimate_rate=None,
+    estimate_interval_h=None,
+    estimate_at=None,
+    estimate_eq=None,
+    start_rate=None,
+    start_interval_h=None,
+    start_at=None,
+    samples=0,
+    history_first=None,
+    history_last=None,
+    normal_low=None,
+    normal_high=None,
+)
+
+
+@dataclass(frozen=True)
+class FundingDispersion(Record):
+    """The history behind the normal range of the funding dispersion across venues in one window
+    (funding_dispersion.sql): the sample count, the first and the last time and the 0.025 and 0.975 quantiles;
+    None where there is none."""
+
+    statement = "funding_dispersion"
+    window: str
+    samples: int
+    history_first: datetime | None
+    history_last: datetime | None
+    normal_low: float | None
+    normal_high: float | None
+
+
+@dataclass(frozen=True)
+class FundingConfirmation(Record):
+    """The latest funding estimate of a perp venue confirmed by an independent second path: its time, its
+    8-hour-equivalent rate (None when the latest confirmed observations have none) and how many observations
+    were confirmed (funding_confirmations.sql)."""
+
+    statement = "funding_confirmations"
+    instrument_id: str
+    rate_8h_eq: float | None
+    as_of: datetime | None
+    confirmed: int
+
+
+@dataclass(frozen=True)
+class LiquidationWindow(Record):
+    """The liquidations of a perp venue in one window (liquidations.sql): the rows of each side and of the
+    first half of the window with the sum of their USD value and the number of rows without one, the native
+    quantity of each side likewise, and the USD sum and missing count of all the rows. A sum is None where no
+    row has the value."""
+
+    statement = "liquidations"
+    window: str
+    instrument_id: str
+    observations: int
+    long_count: int
+    long_usd: float | None
+    long_usd_missing: int
+    long_native: float | None
+    long_native_missing: int
+    short_count: int
+    short_usd: float | None
+    short_usd_missing: int
+    short_native: float | None
+    short_native_missing: int
+    total_usd: float | None
+    total_usd_missing: int
+    first_half_count: int
+    first_half_usd: float | None
+    first_half_usd_missing: int
+
+
+NO_LIQUIDATIONS = LiquidationWindow(
+    window="",
+    instrument_id="",
+    observations=0,
+    long_count=0,
+    long_usd=None,
+    long_usd_missing=0,
+    long_native=None,
+    long_native_missing=0,
+    short_count=0,
+    short_usd=None,
+    short_usd_missing=0,
+    short_native=None,
+    short_native_missing=0,
+    total_usd=None,
+    total_usd_missing=0,
+    first_half_count=0,
+    first_half_usd=None,
+    first_half_usd_missing=0,
+)
+
+
+@dataclass(frozen=True)
+class FundingEvidence:
+    """Everything the funding and liquidation rules of a snapshot read from ClickHouse: the perp instruments of
+    the token and the statement rows. `dispersion`, `confirmations` and `liquidations` are empty where only the
+    funding of the venues was read."""
+
+    instruments: tuple[str, ...] = ()
+    venues: tuple[FundingVenue, ...] = ()
+    dispersion: tuple[FundingDispersion, ...] = ()
+    confirmations: tuple[FundingConfirmation, ...] = ()
+    liquidations: tuple[LiquidationWindow, ...] = ()
+
+
+NO_FUNDING = FundingEvidence()

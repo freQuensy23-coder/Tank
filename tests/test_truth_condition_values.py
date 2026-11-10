@@ -6,6 +6,8 @@ from decimal import Decimal
 from types import SimpleNamespace
 
 import pytest
+from funding_helpers import estimate, rate
+from funding_helpers import evidence as funding_evidence
 from relative_helpers import with_references
 from test_truth_start_fixture import compact_start_snapshot
 
@@ -167,32 +169,21 @@ def test_completed_close_uses_the_reference_venue_the_statement_chose():
     assert selected["relative"]["close_1h_price"] == full["relative"]["close_1h_price"]
 
 
-def test_funding_baseline_reused_when_only_current_estimate_changes(monkeypatch):
+def test_funding_metric_reads_the_funding_records_of_its_window():
     packet = snapshot()
-    baseline = {}
-    original = module.normal
-    calls = []
-
-    def counted(values):
-        calls.append(1)
-        return original(values)
-
-    monkeypatch.setattr(module, "normal", counted)
     req = [dict(metric="deriv.funding_vs_normal", window="W1H")]
-    module.compute_condition_values(packet, req, baseline_cache=baseline)
-    count = len(calls)
-    packet["funding"].append(
-        dict(
-            instrument_id="binance:perp:T",
-            kind="CURRENT_ESTIMATE",
-            ts=packet["cutoff"],
-            rate=".001",
-            interval_h=8,
-        )
+    value = module.compute_condition_values(packet, req)
+    assert metric_value(value, {}, "deriv.funding_vs_normal", "W1H") == "WITHIN"
+    end = module.parse_time(packet["cutoff"])
+    packet["funding_sql"] = funding_evidence(
+        end,
+        ["binance:perp:T"],
+        venue={None: rate(0.0001) | estimate(0.001, at=end) | dict(normal_low=0.0, normal_high=0.0002)},
+        state=False,
     )
-    value = module.compute_condition_values(packet, req, baseline_cache=baseline)
-    assert len(calls) == count
-    assert metric_value(value, {}, "deriv.funding_vs_normal", "W1H") == "ABOVE"
+    changed = module.compute_condition_values(packet, req)
+    assert metric_value(changed, {}, "deriv.funding_vs_normal", "W1H") == "ABOVE"
+    assert changed["_condition_evaluation"]["request_key"] != value["_condition_evaluation"]["request_key"]
 
 
 def test_missing_completed_hour_close_is_not_replaced_by_an_older_hour():

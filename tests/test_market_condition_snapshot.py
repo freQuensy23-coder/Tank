@@ -85,6 +85,64 @@ async def test_oi_condition_reads_the_latest_observation_and_not_the_history(set
 
 
 @pytest.mark.asyncio
+async def test_funding_condition_reads_the_latest_rows_and_not_the_history(setup):
+    repo, settings, spot = setup
+    end = utcnow() - timedelta(hours=1)
+    perp = dict(spot, instrument_id="binance:perp:ABCUSD", market_type="PERP_LINEAR")
+
+    async def observe(key, kind, at, rate):
+        await repo.put(
+            "mkt.funding_obs",
+            key,
+            {
+                "instrument_id": perp["instrument_id"],
+                "token_id": spot["token_id"],
+                "kind": kind,
+                "metric_key": "binance.usdm.funding",
+                "as_of": iso(at),
+                "as_of_prec": "EXACT",
+                "rate": rate,
+                "interval_h": "8",
+                "rate_8h_eq": rate,
+                "recorded_at": iso(),
+            },
+        )
+
+    await observe("old", "SETTLED", end - timedelta(days=30), "0.0001")
+    await observe("settled", "SETTLED", end - timedelta(hours=3), "0.0002")
+    await observe("estimate", "CURRENT_ESTIMATE", end - timedelta(minutes=2), "0.0003")
+    calls = []
+    original = repo.iter_range
+
+    async def ranges(collection, field, **kwargs):
+        calls.append((collection, field, kwargs))
+        async for row in original(collection, field, **kwargs):
+            yield row
+
+    repo.iter_range = ranges
+    async with httpx.AsyncClient() as http:
+        service = MarketService(repo, settings, http=http)
+        service.instruments[perp["instrument_id"]] = perp
+        requirements = [{"metric": "deriv.funding_vs_normal", "window": "W1H"}]
+        first = await service.condition_snapshot(spot["token_id"], end, requirements=requirements)
+        second = await service.condition_snapshot(spot["token_id"], end, requirements=requirements)
+        assert first["domain_dependency_fingerprints"] == second["domain_dependency_fingerprints"]
+        await observe("corrected", "CURRENT_ESTIMATE", end - timedelta(minutes=1), "0.0004")
+        third = await service.condition_snapshot(spot["token_id"], end, requirements=requirements)
+    assert not [c for c in calls if c[0] == "mkt.funding_obs"]
+    assert {(r["kind"], r["rate"]) for r in first["funding"]} == {
+        ("SETTLED", "0.0002"),
+        ("CURRENT_ESTIMATE", "0.0003"),
+    }
+    assert {(r["kind"], r["rate"]) for r in third["funding"]} == {
+        ("SETTLED", "0.0002"),
+        ("CURRENT_ESTIMATE", "0.0004"),
+    }
+    assert third["domain_dependency_fingerprints"] != first["domain_dependency_fingerprints"]
+    assert "oi" not in third and "funding_confirmations" not in third
+
+
+@pytest.mark.asyncio
 async def test_composite_reads_only_dependency_metadata_and_invalidates_old_point_change(setup):
     repo, settings, inst = setup
     end = utcnow() - timedelta(hours=1)

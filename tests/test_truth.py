@@ -5,6 +5,9 @@ from decimal import Decimal
 from pathlib import Path
 
 import pytest
+from funding_helpers import evidence as funding_evidence
+from funding_helpers import rate, start
+from funding_helpers import steady as funding_steady
 from oi_helpers import evidence as oi_evidence
 from volume_helpers import buckets, evidence
 
@@ -130,6 +133,7 @@ def _add_fresh_perp_fields(snapshot):
         }
     )
     snapshot["oi_sql"] = oi_evidence(end, [iid], cohort=[iid])
+    snapshot["funding_sql"] = funding_steady(end, [iid])
 
 
 def test_oi_formula_vectors():
@@ -240,18 +244,6 @@ def test_t6_funding_and_t8_funding_freshness():
 
     end = parse_time("2026-10-16T12:00:00Z")
     start = end - timedelta(hours=4)
-    funding = [
-        dict(instrument_id=f"{v}:perp:T", kind="SETTLED", settlement_time=iso(end), rate=r, interval_h=h)
-        for v, r, h in [("X", 0.0001, 8), ("Y", 0.00005, 4), ("Z", 0.00002, 1)]
-    ]
-    oi = [dict(instrument_id=f"{v}:perp:T", ts=iso(end), oi_native=100, oi_usd=100) for v in ("X", "Y", "Z")]
-    d = derivatives_truth(dict(oi=oi, funding=funding), start, end)
-    assert [v["funding_8h_eq"] for v in d["per_venue"]] == [
-        Decimal(".0001"),
-        Decimal(".0001"),
-        Decimal(".00016"),
-    ]
-    assert d["funding_dispersion_8h"] == Decimal(".00006")
     snap = _fresh_spot_snapshot()
     _add_fresh_perp_fields(snap)
     snap["_primary"] = "W4H"
@@ -1309,8 +1301,13 @@ def test_derivative_windows_keep_one_hour_watch_separate_from_four_hour_crowding
         venue_history={None: flat},
         composite_history={None: flat},
     )
-    for row in snapshot["funding"]:
-        row["rate"] = 0.0001 if parse_time(row["settlement_time"]) >= end - timedelta(hours=2) else 0
+    snapshot["funding_sql"] = funding_evidence(
+        end,
+        ["binance:perp:T"],
+        lengths=dict(W15M=900, W1H=3600, W4H=14400, W24H=86400, EVENT=7200),
+        venue={None: rate(0.0001) | start(0) | dict(normal_low=0.0, normal_high=0.0)}
+        | {name: rate(0.0001) | start(0.0001) for name in ("W15M", "W1H", "EVENT")},
+    )
     result = compute_market_truth(snapshot)
     windows = result["derivatives"]["windows"]
     assert set(windows) == {"W15M", "W1H", "W4H", "W24H", "EVENT"}
@@ -1949,19 +1946,18 @@ def test_complete_liquidation_total_requires_whole_window_capture_not_recent_con
     end = parse_time("2026-10-16T12:00:00Z")
     start = end - timedelta(hours=4)
     iid = "bybit:perp:T"
+    short = dict(observations=1, short_count=1, short_usd=100.0, total_usd=100.0, first_half_count=0)
+
+    def liquidations(**changes):
+        return funding_evidence(end, [iid], lengths={"EVENT": 14400}, liquidations={None: {iid: changes}})
+
     snapshot = {
+        "_primary": "EVENT",
         "oi": [
             {"instrument_id": iid, "ts": iso(start), "oi_native": 100, "oi_usd": 100},
             {"instrument_id": iid, "ts": iso(end), "oi_native": 100, "oi_usd": 100},
         ],
-        "liquidations": [
-            {
-                "instrument_id": iid,
-                "ts": iso(end - timedelta(minutes=1)),
-                "side": "SHORT_LIQ",
-                "notional_usd": 100,
-            }
-        ],
+        "funding_sql": liquidations(**short),
         "capture_metadata": {
             "collections": {
                 "liquidations": {
@@ -1979,7 +1975,7 @@ def test_complete_liquidation_total_requires_whole_window_capture_not_recent_con
     complete = derivatives_truth(snapshot, start, end)
     assert complete["per_venue"][0]["liq_coverage"] == "COMPLETE"
     assert complete["liquidations"]["complete_venues_total"]["short"] == 100
-    snapshot["liquidations"] = []
+    snapshot["funding_sql"] = funding_evidence(end, [iid], lengths={"EVENT": 14400})
     empty = derivatives_truth(snapshot, start, end)
     assert empty["liquidations"]["complete_venues_total"] == {"long": 0, "short": 0}
     snapshot["capture_metadata"]["collections"]["liquidations"]["coverage_start"][iid] = iso(
@@ -2021,10 +2017,8 @@ def test_decimal_significance_does_not_round_a_subthreshold_flow_into_buy():
     assert all(v["sign"] == 1 for v in exact["venues"])
 
 
-def test_exact_usd_decomposition_and_funding_interval_conversion():
+def test_exact_usd_decomposition():
     from decimal import localcontext
-
-    from tank.analysis.truth import derivatives_truth
 
     n0 = "10000000000000000000000000000000000000000.000000000000000001"
     n1 = "10000000000000000000000000000000000000000.000000000000000002"
@@ -2037,26 +2031,6 @@ def test_exact_usd_decomposition_and_funding_interval_conversion():
         assert d["position"] + d["markup"] + d["interaction"] == Decimal(n1) * Decimal(
             "1.23456790"
         ) - Decimal(n0) * Decimal("1.23456789")
-    end = parse_time("2026-10-16T12:00:00Z")
-    start = end - timedelta(hours=4)
-    iid = "A:perp:T"
-    result = derivatives_truth(
-        {
-            "oi": [{"instrument_id": iid, "ts": iso(end), "oi_native": "1", "oi_usd": "1"}],
-            "funding": [
-                {
-                    "instrument_id": iid,
-                    "kind": "SETTLED",
-                    "settlement_time": iso(end),
-                    "rate": "0.0000000000000000000000000000000000000001",
-                    "interval_h": 1,
-                }
-            ],
-        },
-        start,
-        end,
-    )
-    assert result["per_venue"][0]["funding_8h_eq"] == Decimal("8E-40")
 
 
 def test_successful_measurements_have_unit_precision_coverage_and_exact_json_values():

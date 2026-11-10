@@ -4,7 +4,6 @@ import json
 import logging
 import time
 from bisect import bisect_left, bisect_right
-from collections import defaultdict
 from contextlib import suppress
 from contextvars import ContextVar
 from copy import deepcopy
@@ -192,47 +191,6 @@ COLLECTIONS = {
 }
 
 
-def funding_confirmations(observations, *, distinct_paths=False):
-    """(REST, WEBSOCKET) pairs: each PUBLIC_REST CURRENT_ESTIMATE funding observation with the
-    nearest WEBSOCKET one of its instrument and kind within 60 s (the first in input order on
-    ties); with distinct_paths, both carry a source_path and the paths differ.
-
-    WEBSOCKET rows are indexed by time once. The pairwise scan parsed both timestamps of every
-    pair, quadratic in a BTC snapshot's funding rows, on the event loop (r111 profile, 21 Oct).
-    """
-    websocket = defaultdict(list)
-    for index, ws in enumerate(observations):
-        if (
-            ws.get("capture_source") == "WEBSOCKET"
-            and ws.get("kind") == "CURRENT_ESTIMATE"
-            and ws.get("as_of")
-            and (ws.get("source_path") or not distinct_paths)
-        ):
-            websocket[ws.get("instrument_id")].append((parse_time(ws["as_of"]), index, ws))
-    for rows in websocket.values():
-        rows.sort(key=lambda item: (item[0], item[1]))
-    pairs = []
-    for rest in observations:
-        if rest.get("capture_source") != "PUBLIC_REST" or rest.get("kind") != "CURRENT_ESTIMATE":
-            continue
-        if distinct_paths and not rest.get("source_path"):
-            continue
-        rows = websocket.get(rest.get("instrument_id"), [])
-        at = parse_time(rest["as_of"])
-        lo = bisect_left(rows, at - timedelta(seconds=60), key=lambda item: item[0])
-        hi = bisect_right(rows, at + timedelta(seconds=60), key=lambda item: item[0])
-        near = [
-            item
-            for item in rows[lo:hi]
-            if not distinct_paths or item[2]["source_path"] != rest["source_path"]
-        ]
-        if near:
-            pairs.append(
-                (rest, min(near, key=lambda item: (abs((item[0] - at).total_seconds()), item[1]))[2])
-            )
-    return pairs
-
-
 class MarketService:
     def __init__(self, repo, settings, *, http=None):
         self.repo = repo
@@ -333,20 +291,6 @@ class MarketService:
             key = str(key) + ":" + new_id("REV")
             row = dict(row, review_id=key)
         return await self.repo.put(collection, str(key), self.provenance(jsonable(row)), immutable=immutable)
-
-    @classmethod
-    def _semantic_content(cls, value):
-        if isinstance(value, dict):
-            ignored = ("received_ts", "recorded_at", "observed_at", "updated_at")
-            return {
-                key: cls._semantic_content(item)
-                for key, item in value.items()
-                if key not in ("config_version", "code_version", "semantic_fingerprint")
-                and not any(key == field or key.startswith(field + "_prec") for field in ignored)
-            }
-        if isinstance(value, list):
-            return [cls._semantic_content(item) for item in value]
-        return value
 
     async def flush_market(self):
         """One multi-row write per typed collection this process queued (supply, tiers)."""
@@ -1136,84 +1080,6 @@ class MarketService:
                 state.polls[iid] = list(row["recent_polls"])
         return state
 
-    async def _condition_history(self, collection, field, instrument_id, cutoff, assembled_at):
-        """Reuse immutable history, incorporating newly eligible and late corrected points."""
-        cache = self.__dict__.setdefault("_condition_histories", {})
-        locks = self.__dict__.setdefault("_condition_history_locks", {})
-        key = (collection, field, instrument_id)
-        async with locks.setdefault(key, asyncio.Lock()):
-            previous = cache.get(key)
-            start = cutoff - timedelta(days=90)
-            filters = {"instrument_id": instrument_id}
-            reload = previous is None or cutoff < previous["cutoff"] or previous.get("unknown_availability")
-            if reload:
-                rows = await self._range(
-                    collection, field, start=start, end=cutoff + timedelta(microseconds=1), filters=filters
-                )
-                points = {}
-            else:
-                points = dict(previous["points"])
-                rows = (
-                    await self._range(
-                        collection,
-                        field,
-                        start=previous["cutoff"] + timedelta(microseconds=1),
-                        end=cutoff + timedelta(microseconds=1),
-                        filters=filters,
-                    )
-                    if cutoff > previous["cutoff"]
-                    else []
-                )
-                rows.extend(
-                    [
-                        r
-                        async for r in self.repo.iter_late_arrivals(
-                            collection,
-                            "recorded_at",
-                            field,
-                            since=previous["assembled_at"],
-                            end=assembled_at,
-                            market_end=cutoff,
-                            filters=filters,
-                        )
-                    ]
-                )
-            changes = []
-            for row in rows:
-                stamp = row.get(field)
-                if stamp is None:
-                    continue
-                availability = row.get("recorded_at") or row.get("received_ts")
-                if availability and parse_time(availability) > assembled_at:
-                    continue
-                identity = (row.get("instrument_id"), row.get("metric_key"), row.get("kind"), stamp)
-                fingerprint = sha256(self._semantic_content(row))
-                if identity not in points or sha256(self._semantic_content(points[identity])) != fingerprint:
-                    changes.append((identity, fingerprint))
-                points[identity] = row
-            removed = [
-                identity for identity, row in points.items() if not start <= parse_time(row[field]) <= cutoff
-            ]
-            for identity in removed:
-                points.pop(identity)
-            initial = reload
-            cache[key] = {
-                "points": points,
-                "cutoff": cutoff,
-                "assembled_at": assembled_at,
-                "unknown_availability": any(row.get("recorded_at") is None for row in points.values()),
-                "fingerprint": sha256([None if initial else previous["fingerprint"], changes, removed])
-                if initial or changes or removed
-                else previous["fingerprint"],
-            }
-            while len(cache) > 128:
-                oldest = next(iter(cache))
-                if oldest == key:
-                    break
-                cache.pop(oldest)
-                locks.pop(oldest, None)
-            return list(points.values())
-
     async def _condition_book_baseline(self, instrument_id, origin, assembled_at):
         end = origin - timedelta(microseconds=1)
         start = origin - timedelta(hours=1)
@@ -1518,15 +1384,15 @@ class MarketService:
             oi_heads, funding_heads = [], []
             for instrument in perp:
                 iid = instrument["instrument_id"]
-                for name, field, filters, since in (
-                    ("oi", "ts", {"instrument_id": iid}, end - timedelta(hours=48)),
-                    ("funding", "funding_time", {"instrument_id": iid, "kind": "SETTLED"}, history_start),
+                for name, field, filters in (
+                    ("oi", "ts", {"instrument_id": iid}),
+                    ("funding", "funding_time", {"instrument_id": iid, "kind": "SETTLED"}),
                 ):
                     collection = COLLECTIONS[name][0]
                     rows, head = await self._condition_projected_history(
                         collection,
                         field,
-                        since,
+                        end - timedelta(hours=48),
                         end,
                         assembled,
                         fields=list(MARKET_COLUMNS[collection]),
@@ -1623,20 +1489,6 @@ class MarketService:
                 result["supply"].extend(rows)
                 supply_heads.append(head)
             result["semantics"] = self._instrument_semantics(target)
-            observations = [
-                o
-                for point in result["funding"]
-                for o in (
-                    (point.get("source_observations") or {}).values()
-                    if point.get("source_observations")
-                    else [point]
-                )
-                if o.get("as_of") and parse_time(o["as_of"]) <= end
-            ]
-            result["funding_confirmations"] = [
-                dict(rest, independent_path_verified=True, primary_source_path=ws["source_path"])
-                for rest, ws in funding_confirmations(observations, distinct_paths=True)
-            ]
             for name in ("funding", "books", "supply", "liquidations"):
                 result[name] = list({sha256(row): row for row in result[name]}.values())
             heads["oi"] = sha256([oi_heads, result["semantics"], result["capture_metadata"]])
@@ -1786,31 +1638,19 @@ class MarketService:
                             assembled_at=result["assembled_at"],
                         )
                     )
-            for domain in domains & {"funding"}:
-                collection, field = COLLECTIONS[domain]
-                result[domain] = []
+            if "funding" in domains:
+                result["funding"] = []
                 for instrument in perp:
-                    result[domain].extend(
-                        await self._condition_history(
-                            collection,
-                            field,
-                            instrument["instrument_id"],
-                            end,
-                            parse_time(result["assembled_at"]),
+                    result["funding"].extend(
+                        await self.repo.latest_market_records(
+                            "mkt.funding_obs",
+                            group_by=("instrument_id", "metric_key", "kind"),
+                            time_field="as_of",
+                            filters={"instrument_id": instrument["instrument_id"]},
+                            cutoff=end,
+                            assembled_at=result["assembled_at"],
                         )
                     )
-                    if domain == "funding":
-                        result[domain].extend(
-                            r
-                            for r in await self._condition_history(
-                                collection,
-                                "funding_time",
-                                instrument["instrument_id"],
-                                end,
-                                parse_time(result["assembled_at"]),
-                            )
-                            if r.get("as_of") is None
-                        )
         if domains & {"depth", "dc"}:
             result["books"] = []
             for instrument in spot:
@@ -1919,19 +1759,7 @@ class MarketService:
             if domain == "oi":
                 dependency = [result["oi"], result["semantics"], result["capture_metadata"]]
             elif domain == "funding":
-                collection, field = COLLECTIONS[domain]
-                heads = [
-                    self._condition_histories[(collection, field, i["instrument_id"])]["fingerprint"]
-                    for i in perp
-                ]
-                if domain == "funding":
-                    heads.extend(
-                        self._condition_histories[(collection, "funding_time", i["instrument_id"])][
-                            "fingerprint"
-                        ]
-                        for i in perp
-                    )
-                dependency = [heads, result["semantics"], result["capture_metadata"]]
+                dependency = [result["funding"], result["semantics"], result["capture_metadata"]]
             elif domain in {"dc", "depth"}:
                 fields = (
                     ["books", "anchor", "capture_metadata"]
@@ -2445,13 +2273,6 @@ class MarketService:
                     token_id, collection, field, ids, recent_start, snapshot_end, books=name == "books"
                 )
             if name == "funding":
-                settled_history = (
-                    await self._ranged(
-                        collection, field, ids, history_start, recent_start, {"kind": "SETTLED"}
-                    )
-                    if recent_start > history_start
-                    else {}
-                )
                 settled_by_time = await self._ranged(
                     collection, "funding_time", ids, history_start, snapshot_end
                 )
@@ -2467,8 +2288,6 @@ class MarketService:
                 else:
                     rows = list(window_rows[iid])
                 if name == "funding":
-                    if recent_start > history_start:
-                        rows = settled_history[iid] + rows
                     rows.extend(row for row in settled_by_time[iid] if row.get("as_of") is None)
                 for row in rows:
                     if name == "flow_bars":
@@ -2615,17 +2434,6 @@ class MarketService:
             result["capture_status"]["bounded_wait_s"] = waited["bounded_wait_s"]
             if latest["status"] in ("PENDING", "RUNNING"):
                 result["capture_status"].update(waited)
-        result["funding_source_observations"] = [
-            observation
-            for point in result["funding"]
-            for observation in (
-                list(point["source_observations"].values()) if point.get("source_observations") else [point]
-            )
-        ]
-        result["funding_confirmations"] = [
-            {**rest, "independent_path_verified": True, "primary_source_path": ws.get("source_path")}
-            for rest, ws in funding_confirmations(result["funding_source_observations"])
-        ]
         result["capture_metadata"] = await self._shared_call(
             ("capture_metadata", token_id, cutoff), lambda: self._capture_metadata(token_id, cutoff)
         )

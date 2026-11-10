@@ -10,6 +10,8 @@ from datetime import timedelta
 from decimal import Decimal
 
 import pytest
+from funding_helpers import confirmation, rate, start
+from funding_helpers import evidence as funding_evidence
 from oi_helpers import evidence as oi_evidence
 from volume_helpers import buckets, evidence
 
@@ -240,9 +242,35 @@ def attach_oi(packet):
     return packet
 
 
+def attach_funding(packet):
+    """The funding and liquidation records the statements return for the raw packet: each perp's settled rate
+    is 0.01% per 8 hours (`packet["funding_state"]["rates"]` gives a rate of an instrument, `current` of every
+    one) at the window start as now (`start`) against a 90-day range of exactly that rate (`normal`), with no
+    liquidation (`liquidations` gives the records of instruments) and no confirmed estimate
+    (`confirmations` gives pairs of an instrument and a rate)."""
+    state = dict(current=".0001", start=".0001", normal=0.0001, rates={}, liquidations={}, confirmations=[])
+    state |= packet.get("funding_state", {})
+    perps = [i["instrument_id"] for i in packet["instruments"] if ":perp:" in i["instrument_id"]]
+    packet["funding_sql"] = funding_evidence(
+        END,
+        perps,
+        lengths={"EVENT": 900},
+        venue={
+            None: rate(state["current"])
+            | start(state["start"])
+            | dict(normal_low=state["normal"], normal_high=state["normal"])
+            | {iid: rate(value) for iid, value in state["rates"].items()}
+        },
+        liquidations={None: state["liquidations"]},
+        confirmations=[confirmation(iid, value, END) for iid, value in state["confirmations"]],
+    )
+    return packet
+
+
 def derive(packet, start=START, end=END):
     attach_volumes(packet)
     attach_oi(packet)
+    attach_funding(packet)
     spot = spot_truth(packet["flow_bars"], [], packet["instruments"], start, end)
 
     spot["composite_cohort"] = deepcopy(spot["composite_max"])
@@ -329,52 +357,48 @@ def test_raw_large_ticket_minority_and_ask_refill_include_missing_and_failed_con
     assert derive(packet)[1]["support_features"]["ask_replenishment"] is None
 
 
+def liquidated(first, second):
+    """The liquidation record of P:perp:T for a short liquidation of `first` USD in the first half of the window
+    and a long one of `second` in the second."""
+    return {
+        "P:perp:T": dict(
+            observations=2,
+            long_count=1,
+            long_usd=second,
+            short_count=1,
+            short_usd=first,
+            total_usd=first + second,
+            first_half_count=1,
+            first_half_usd=first,
+        )
+    }
+
+
 def test_raw_first_half_liquidation_majority_is_not_event_count_majority():
     packet = raw_packet()
-    packet["liquidations"] = [
-        dict(
-            instrument_id="P:perp:T",
-            ts=iso(START + timedelta(minutes=1)),
-            notional_usd="60",
-            side="SHORT_LIQ",
-        ),
-        dict(
-            instrument_id="P:perp:T",
-            ts=iso(START + timedelta(minutes=10)),
-            notional_usd="40",
-            side="LONG_LIQ",
-        ),
-    ]
 
     def feature():
         spot, d, liquidity, s, _ = derive(packet)
         d["per_venue"][0]["liq_coverage"] = "COMPLETE"
         return support_features(packet, START, END, spot, d, liquidity, s)["liquidations_first_half_majority"]
 
+    packet["funding_state"] = dict(liquidations=liquidated(60.0, 40.0))
     assert feature() is True
-    packet["liquidations"][0]["notional_usd"] = "40"
-    packet["liquidations"][1]["notional_usd"] = "60"
+    packet["funding_state"] = dict(liquidations=liquidated(40.0, 60.0))
     assert feature() is False
-    packet["liquidations"] = []
+    packet["funding_state"] = dict(liquidations={})
+    assert feature() is None
+    packet["funding_state"] = dict(
+        liquidations={"P:perp:T": dict(observations=1, short_count=1, total_usd=None, total_usd_missing=1)}
+    )
     assert feature() is None
 
 
 def test_raw_funding_dispersion_fragmentation_needs_independent_complete_path():
     packet = raw_packet()
-    for row in packet["funding"]:
-        if row["instrument_id"] == "Q:perp:T" and parse_time(row["settlement_time"]) == END:
-            row["rate"] = ".01"
-    packet["funding_confirmations"] = [
-        dict(
-            instrument_id=iid,
-            ts=iso(END),
-            rate_8h_eq=rate,
-            independent_path_verified=True,
-            source_path="WEBSOCKET",
-            primary_source_path="REST",
-        )
-        for iid, rate in [("P:perp:T", ".0001"), ("Q:perp:T", ".01")]
-    ]
+    packet["funding_state"] = dict(
+        rates={"Q:perp:T": ".01"}, confirmations=[("P:perp:T", ".0001"), ("Q:perp:T", ".01")]
+    )
     spot, deriv, liq, _, _ = derive(packet)
     assert liq["fragmentation"]["price_path_validated"] is False
     assert deriv["funding_dispersion_normal_range_8h"] == [Decimal(0), Decimal(0)]
@@ -386,11 +410,11 @@ def test_raw_funding_dispersion_fragmentation_needs_independent_complete_path():
         select_move(spot, deriv, liq, supply, relative, "HIGH", "EVENT")["move_class"]
         == "REAL_MARKET_FRAGMENTATION"
     )
-    for row in packet["funding_confirmations"]:
-        row["source_path"] = "REST"
+    packet["funding_state"]["confirmations"] = [("P:perp:T", ".0001")]
     assert derive(packet)[2]["fragmentation"]["funding_path_validated"] is False
-    for row in packet["funding_confirmations"]:
-        row["source_path"] = "WEBSOCKET"
+    packet["funding_state"]["confirmations"] = [("P:perp:T", ".0001"), ("Q:perp:T", ".0001")]
+    assert derive(packet)[2]["fragmentation"]["funding_path_validated"] is False
+    packet["funding_state"]["confirmations"] = [("P:perp:T", ".0001"), ("Q:perp:T", ".01")]
     next(
         r for r in packet["flow_bars"] if r["instrument_id"] == "Q:perp:T" and r["minute_start"] == iso(START)
     )["complete"] = False
@@ -499,22 +523,24 @@ def positive_packet(cls):
             if ":spot:" in row["instrument_id"]:
                 row.update(buy_qty="10", sell_qty="10")
         packet["volume"] = dict(usd={"PERP": dict(current_usd=45000.0)})
-        for row in packet["funding"]:
-            if parse_time(row["settlement_time"]) == END:
-                row["rate"] = ".01"
+        packet["funding_state"] = dict(current=".01")
         packet["oi_state"] = dict(basis=20.0)
     if cls == "SHORT_SQUEEZE":
-        for row in packet["funding"]:
-            row["rate"] = "-.0001"
-        packet["liquidations"] = [
-            dict(
-                instrument_id="P:perp:T",
-                ts=iso(START + timedelta(minutes=i)),
-                notional_usd=n,
-                side="SHORT_LIQ",
-            )
-            for i, n in [(1, "60"), (10, "40")]
-        ]
+        packet["funding_state"] = dict(
+            current="-.0001",
+            start="-.0001",
+            normal=-0.0001,
+            liquidations={
+                "P:perp:T": dict(
+                    observations=2,
+                    short_count=2,
+                    short_usd=100.0,
+                    total_usd=100.0,
+                    first_half_count=1,
+                    first_half_usd=60.0,
+                )
+            },
+        )
     if cls == "SELL_SIDE_ABSORPTION":
         for row in packet["books"]:
             row["depth"]["ask"]["p1"]["usd"] = "100"
@@ -654,9 +680,7 @@ def test_each_support_term_loses_exactly_one_point_when_raw_evidence_is_removed(
     elif term == "basis_widening":
         packet["oi_state"] = dict(basis=10.0)
     elif term == "funding_above":
-        for row in packet["funding"]:
-            if parse_time(row["settlement_time"]) == END:
-                row["rate"] = ".0001"
+        packet["funding_state"] = dict(current=".0001")
     elif term == "spot_sell_or_neutral":
         for row in packet["flow_bars"]:
             if row["instrument_id"].startswith("A:"):
@@ -668,8 +692,7 @@ def test_each_support_term_loses_exactly_one_point_when_raw_evidence_is_removed(
             if ":perp:" in row["instrument_id"]:
                 row.update(buy_qty="10", sell_qty="10")
     elif term == "first_half_liquidation_majority":
-        packet["liquidations"][0]["notional_usd"] = "40"
-        packet["liquidations"][1]["notional_usd"] = "60"
+        packet["funding_state"]["liquidations"]["P:perp:T"]["first_half_usd"] = 40.0
     elif term == "ask_replenishment":
         for row in packet["books"]:
             if parse_time(row["ts"]) > START:

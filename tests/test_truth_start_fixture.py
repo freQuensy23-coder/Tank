@@ -6,6 +6,7 @@ from functools import lru_cache
 from math import sin
 
 import pytest
+from funding_helpers import steady as steady_funding
 from oi_helpers import steady
 from relative_helpers import start_evidence
 from volume_helpers import buckets, evidence
@@ -210,6 +211,7 @@ def synthetic_start_snapshot():
     )
     snap["relative_sql"] = start_evidence(end, anchor)
     snap["oi_sql"] = steady(end, [iid])
+    snap["funding_sql"] = steady_funding(end, [iid])
     snap["volume_sql"] = evidence(
         [row["instrument_id"] for row in snap["instruments"]],
         native={"PERP": None},
