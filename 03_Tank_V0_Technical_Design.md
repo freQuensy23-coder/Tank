@@ -2196,3 +2196,10 @@ PARTITION BY toYYYYMMDD(ts) ORDER BY (instrument_id, ts, trade_id);
 CREATE USER tank_agent HOST IP '<sandbox address>' SETTINGS PROFILE 'readonly';
 GRANT SELECT ON mkt.* TO tank_agent;
 ```
+
+
+## 13. Token context data and update semantics
+
+Migration 011 creates reg.token_context(token_id, revision, updated_at, document) and reg.token_context_proposals(proposal_id, token_id, status, base_revision, created_at, document). JSONB document records Markdown and approval metadata; current revision is SHA-256 of the exact Markdown. Absent records use empty Markdown and its corresponding digest.
+
+On session creation, attach one read-only Markdown snapshot per registered token. Automatic edits must cite accepted, verified claims from the event affecting the token, include removals and additions, and preserve heading structure. Explicit user follow-ups may expand the Markdown. The preview is a GitHub-style PNG diff with a one-sentence reason. Tank Ops callbacks apply a revision only if a pending proposal matches the current SHA; a mismatch or repeated click raises an error and makes no change. The agent's PostgreSQL account remains read-only.

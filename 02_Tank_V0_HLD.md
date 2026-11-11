@@ -479,3 +479,10 @@ Concurrency: one asyncio event loop with 8 job workers; CPU-heavy steps run in a
 - Agent sandboxes: one microVM per session with unrestricted internet. Whatever the agent reads there is data, not instructions (skill `tank-data`, 03 §3.2). It reads Tank's data only as `tank_agent`, has the Etherscan and OpenRouter keys in its environment and is forbidden by the skill to print them or send them anywhere but their own API (a vault replaces this in production), holds neither the Telegram bot token, the Apify token nor the Foundry key, and changes Tank's state only through Tank's tools; cards leave only through `publish_card`.
 - The Apify token (`APIFY_API_TOKEN`) is a secret; the actor only reads public X profile pages.
 - Each source's terms and rate limits are recorded in `sources.yaml`; request budgets stay ≤ 50% of documented limits; sec.gov ≤ 10 requests/s with a declared User-Agent; DuckDuckGo at most one search every 2 s (no published limit; the terms-of-service risk is accepted, 01 D9).
+
+
+## 12. Token research snapshots and approvals
+
+Tables reg.token_context and reg.token_context_proposals are the only durable stores for the research and queued edits. The one-time operator import converts the current 22 Google Drive fact sheets to Markdown in PostgreSQL. New OpenMA analyst sessions get independent, read-only session file resources mounted at /workspace/token-context/<token_id>.md. The global system prompt and the event-analyst skill instruct the agent to read files after identifying affected tokens, with a reminder in relevant tool results.
+
+The custom propose_token_context_edit tool writes a pending complete replacement with SHA-256 base revision, current-event evidence and a one-sentence reason. The Ops channel receives a PNG unified-diff preview and inline buttons. The bot checks administrator status, the original Ops message ID and proposal status. A per-token advisory lock plus PostgreSQL transaction compares the live revision and atomically applies a matching proposal; stale revisions fail. No automatic three-way merge or direct agent database writes are allowed.
