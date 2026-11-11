@@ -253,24 +253,9 @@ class DeliveryService:
             await self.repo.put("out.deliveries", new_id("delivery"), transition, immutable=True)
             code = None
             try:
-                if token_proposal:
-                    preview = diff_png(
-                        token_proposal["token_id"], token_proposal["old_markdown"],
-                        token_proposal["updated_markdown"],
-                    )
-                    response = await self.http.post(
-                        f"https://api.telegram.org/bot{self.settings.telegram_token}/{method}",
-                        data={
-                            "chat_id": str(chat),
-                            "caption": body["caption"],
-                            "reply_markup": json.dumps(body["reply_markup"]),
-                        },
-                        files={"photo": ("token-context-diff.png", preview, "image/png")},
-                    )
-                else:
-                    response = await self.http.post(
-                        f"https://api.telegram.org/bot{self.settings.telegram_token}/{method}", json=body
-                    )
+                response = await self.http.post(
+                    f"https://api.telegram.org/bot{self.settings.telegram_token}/{method}", json=body
+                )
                 response_data = response.json()
                 unchanged = (
                     bool(card.get("message_ref"))
@@ -477,9 +462,25 @@ class DeliveryService:
             await self.repo.put("out.deliveries", new_id("delivery"), transition, immutable=True)
             response_status = None
             try:
-                response = await self.http.post(
-                    f"https://api.telegram.org/bot{self.settings.telegram_token}/{method}", json=body
-                )
+                if token_proposal:
+                    preview = diff_png(
+                        token_proposal["token_id"],
+                        token_proposal["old_markdown"],
+                        token_proposal["updated_markdown"],
+                    )
+                    response = await self.http.post(
+                        f"https://api.telegram.org/bot{self.settings.telegram_token}/{method}",
+                        data={
+                            "chat_id": str(chat),
+                            "caption": body["caption"],
+                            "reply_markup": json.dumps(body["reply_markup"]),
+                        },
+                        files={"photo": ("token-context-diff.png", preview, "image/png")},
+                    )
+                else:
+                    response = await self.http.post(
+                        f"https://api.telegram.org/bot{self.settings.telegram_token}/{method}", json=body
+                    )
                 response_status = response.status_code
                 data = response.json()
                 if response.status_code != 200 or not data.get("ok"):
