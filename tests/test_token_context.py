@@ -1,6 +1,9 @@
 """Regression tests for token research snapshots and human-gated updates."""
 
+from pathlib import Path
 from types import SimpleNamespace
+
+import yaml
 
 import pytest
 
@@ -10,7 +13,6 @@ from tank.token_context import (
     TokenContextService,
     check_markdown,
     diff_svg,
-    document_markdown,
     filename,
     revision,
 )
@@ -194,26 +196,32 @@ async def test_callback_requires_ops_administrator():
     assert any(method == "answerCallbackQuery" and args.get("show_alert") for method, args in replies)
 
 
-def test_markdown_conversion_and_diff_svg():
-    document = {
-        "body": {
-            "content": [
-                {
-                    "paragraph": {
-                        "paragraphStyle": {"namedStyleType": "HEADING_1"},
-                        "elements": [{"textRun": {"content": "Fees\n"}}],
-                    }
-                },
-                {"paragraph": {"elements": [{"textRun": {"content": "Revenue facts\n"}}]}},
-            ]
-        }
-    }
-    assert document_markdown(document).startswith("## Fees\nRevenue facts")
+def test_diff_svg_and_markdown_validation():
     svg = diff_svg("uniswap:UNI", "Old", "Current")
     assert "#ffebe9" in svg
     assert "#dafbe1" in svg
     assert "<svg" in svg
     assert check_markdown("a\r\nb") == "a\nb"
+
+
+def test_initial_migration_embeds_every_fact_sheet_without_google_auth():
+    root = Path(__file__).resolve().parents[1]
+    migration = (root / "src/tank/migrations/011_token_context.sql").read_text()
+    registry = yaml.safe_load((root / "config/registry.yaml").read_text())
+    tokens = [row["token_id"] for row in registry["tokens"]]
+
+    assert len(tokens) == 22
+    assert migration.count("https://docs.google.com/document/d/") == 22
+    assert migration.count("$tank_seed_") == 44
+    assert migration.count("Executive summary") >= 22
+    assert migration.count("Verification notes") >= 22
+    for token_id in tokens:
+        assert f"    ('{token_id}'," in migration
+    assert "ON CONFLICT (storage_key) DO NOTHING" in migration
+    assert "sha256(convert_to(markdown, 'UTF8'))" in migration
+    assert "GOOGLE_DRIVE_ACCESS_TOKEN" not in migration
+    assert "seed-drive" not in (root / "src/tank/cli.py").read_text()
+    assert "import_drive_folder" not in (root / "src/tank/token_context.py").read_text()
 
 
 @pytest.mark.asyncio

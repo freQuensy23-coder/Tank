@@ -6,7 +6,6 @@ import re
 import subprocess
 from datetime import timedelta
 
-import httpx
 
 from tank.time_precision import collection_clock, offset_schedule
 from tank.util import new_id, sha256, utcnow
@@ -294,100 +293,3 @@ class TokenContextService:
                 },
             )
         return {"status": decision, "token_id": token_id}
-
-
-def document_markdown(document):
-    """Convert Google Docs styled paragraphs and tables to readable Markdown."""
-
-    def paragraph(element):
-        p = element.get("paragraph") or {}
-        text = "".join(
-            (part.get("textRun") or {}).get("content", "") for part in p.get("elements") or []
-        ).strip("\n")
-        kind = (p.get("paragraphStyle") or {}).get("namedStyleType", "")
-        level = {"TITLE": 1, "HEADING_1": 2, "HEADING_2": 3, "HEADING_3": 4}.get(kind)
-        return (("#" * level + " ") if level else "") + text
-
-    def body(elements):
-        output = []
-        for element in elements or []:
-            if "paragraph" in element:
-                output.append(paragraph(element))
-            elif "table" in element:
-                for row in element["table"].get("tableRows") or []:
-                    cells = []
-                    for cell in row.get("tableCells") or []:
-                        cells.append(" ".join(body(cell.get("content") or [])).strip())
-                    output.append("| " + " | ".join(cells) + " |")
-        return output
-
-    tabs = document.get("tabs") or []
-    result = []
-    if tabs:
-
-        def visit(tab):
-            result.extend(body((tab.get("documentTab") or {}).get("body", {}).get("content")))
-            for child in tab.get("childTabs") or []:
-                visit(child)
-
-        for tab in tabs:
-            visit(tab)
-    else:
-        result = body((document.get("body") or {}).get("content"))
-    markdown = "\n".join(result).strip() + "\n"
-    return check_markdown(markdown)
-
-
-async def import_drive_folder(service, folder_id, access_token):
-    """One-time authenticated seed; only Postgres retains the imported text."""
-    if not access_token:
-        raise ValueError("An OAuth access token is required for Drive import")
-    folder_id = folder_id.rstrip("/").split("?")[0].rsplit("/", 1)[-1]
-    headers = {"Authorization": "Bearer " + access_token}
-    documents = []
-    page = None
-    async with httpx.AsyncClient(timeout=50, headers=headers) as client:
-        while True:
-            params = {
-                "q": f"'{folder_id}' in parents and trashed = false",
-                "fields": "nextPageToken,files(id,name,mimeType)",
-                "pageSize": 100,
-                "supportsAllDrives": "true",
-                "includeItemsFromAllDrives": "true",
-            }
-            if page:
-                params["pageToken"] = page
-            response = await client.get("https://www.googleapis.com/drive/v3/files", params=params)
-            response.raise_for_status()
-            result = response.json()
-            documents.extend(result.get("files", []))
-            page = result.get("nextPageToken")
-            if not page:
-                break
-        symbols = {
-            row["symbol"].upper(): token_id for token_id, row in registry_tokens(service.settings).items()
-        }
-        imports = {}
-        for file in documents:
-            title = file["name"]
-            if (
-                "token & protocol fact sheet" not in title
-                or file["mimeType"] != "application/vnd.google-apps.document"
-            ):
-                continue
-            symbol = title.split("—", 1)[0].strip().upper()
-            if symbol not in symbols:
-                raise ValueError(f"Unknown fact sheet token {symbol}")
-            token_id = symbols[symbol]
-            response = await client.get(
-                f"https://docs.googleapis.com/v1/documents/{file['id']}",
-                params={"includeTabsContent": "true"},
-            )
-            response.raise_for_status()
-            imports[token_id] = document_markdown(response.json())
-    if not imports:
-        raise ValueError("No matching token fact sheets found in the Drive folder")
-    results = []
-    for token_id, markdown in imports.items():
-        results.append(await service.import_text(token_id, markdown))
-    return {"imported": len(imports), "registered": len(symbols), "results": results}
