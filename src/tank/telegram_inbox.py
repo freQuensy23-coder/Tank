@@ -493,10 +493,13 @@ class TelegramInbox:
                 {"callback_query_id": callback["id"], "text": str(error)[:190], "show_alert": True},
             )
             return
-        await self.call("answerCallbackQuery", {
-            "callback_query_id": callback["id"],
-            "text": "Applied: " + result["token_id"],
-        })
+        await self.call(
+            "answerCallbackQuery",
+            {
+                "callback_query_id": callback["id"],
+                "text": "Applied: " + result["token_id"],
+            },
+        )
         await self.call(
             "editMessageReplyMarkup",
             {"chat_id": chat_id, "message_id": msg_id, "reply_markup": {"inline_keyboard": []}},
