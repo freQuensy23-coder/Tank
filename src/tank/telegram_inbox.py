@@ -28,6 +28,7 @@ from tank.analysis.cards import telegram_card_html
 from tank.ops_progress import STAGES
 from tank.telegram_rich import message_text, rich_message_text
 from tank.time_precision import collection_clock, offset_schedule
+from tank.token_context import TokenContextService
 from tank.util import new_id, parse_time, sha256, utcnow
 
 log = logging.getLogger(__name__)
@@ -415,9 +416,12 @@ class TelegramInbox:
         state = await self.repo.get("ops.source_checkpoints", CURSOR_KEY) or {}
         offset = int(state.get("cursor") or 0)
         updates = await self.call(
-            "getUpdates", {"offset": offset, "timeout": timeout, "allowed_updates": ["message"]}
+            "getUpdates", {"offset": offset, "timeout": timeout, "allowed_updates": ["message", "callback_query"]}
         )
         for update in updates:
+            callback = update.get("callback_query")
+            if callback:
+                await self.token_context_callback(callback)
             message = update.get("message")
             if message and message.get("chat") and message.get("message_id") is not None:
                 await self.store(message, update["update_id"])
@@ -433,6 +437,53 @@ class TelegramInbox:
                 },
             )
         return len(updates)
+
+    async def token_context_callback(self, callback):
+        data = callback.get("data") or ""
+        if not data.startswith("tc:"):
+            return
+        parts = data.split(":", 2)
+        if len(parts) != 3 or parts[1] not in {"approve", "agree"}:
+            await self.call(
+                "answerCallbackQuery",
+                {"callback_query_id": callback["id"], "text": "Invalid token-context action", "show_alert": True},
+            )
+            return
+        message = callback.get("message") or {}
+        chat_id = str((message.get("chat") or {}).get("id") or "")
+        msg_id = message.get("message_id")
+        user = str((callback.get("from") or {}).get("id") or "")
+        if not user or not self.ops_chat(chat_id) or msg_id is None:
+            await self.call(
+                "answerCallbackQuery",
+                {"callback_query_id": callback["id"], "text": "Only Tank Ops may apply token context", "show_alert": True},
+            )
+            return
+        member = await self.call("getChatMember", {"chat_id": chat_id, "user_id": user})
+        if member.get("status") not in {"administrator", "creator"}:
+            await self.call(
+                "answerCallbackQuery",
+                {"callback_query_id": callback["id"], "text": "Tank Ops administrator approval required", "show_alert": True},
+            )
+            return
+        try:
+            result = await TokenContextService(self.repo, self.settings).decide(
+                parts[2], parts[1], chat_id=chat_id, message_id=msg_id, user_id=user,
+            )
+        except ValueError as error:
+            await self.call(
+                "answerCallbackQuery",
+                {"callback_query_id": callback["id"], "text": str(error)[:190], "show_alert": True},
+            )
+            return
+        await self.call("answerCallbackQuery", {
+            "callback_query_id": callback["id"],
+            "text": "Applied: " + result["token_id"],
+        })
+        await self.call(
+            "editMessageReplyMarkup",
+            {"chat_id": chat_id, "message_id": msg_id, "reply_markup": {"inline_keyboard": []}},
+        )
 
     async def store(self, message, update_id):
         key = f"{message['chat']['id']}:{message['message_id']}"
