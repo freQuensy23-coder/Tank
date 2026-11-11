@@ -11,6 +11,7 @@ const lanes = {
     "tests/openma/lifecycle/guest-filesystem.test.mjs",
     "tests/openma/lifecycle/runtime-identity.test.mjs",
     "tests/openma/lifecycle/node-lifecycle.test.mjs",
+    "tests/openma/lifecycle/session-continues.test.mjs",
     "tests/openma/lifecycle/replay-attachment.test.mjs",
     "tests/openma/lifecycle/custom-tool-validation.test.mjs",
     "tests/openma/events/span-finish-reason.test.mjs",

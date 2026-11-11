@@ -134,6 +134,13 @@ export function pinnedBoxLiteProvider(input: {
       if (!info.id || info.name !== intent.runtimeId) throw Error('retained_cleanup_ownership_mismatch');
       return { provider: 'litebox', runtimeId: info.id };
     },
+    async leftover(scope, fence, signal) {
+      signal.throwIfAborted(); await current(fence);
+      const name = expectedName(scope), info = await inspect(name);
+      if (!info) return null;
+      if (!info.id || info.name !== name) throw Error('retained_cleanup_ownership_mismatch');
+      return { provider: 'litebox', runtimeId: info.id };
+    },
     async create(scope, fence, signal) {
       const name = expectedName(scope);
       if (await inspect(name)) throw Error('retained_unpublished_runtime_exists');
