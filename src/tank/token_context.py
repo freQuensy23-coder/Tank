@@ -298,6 +298,7 @@ class TokenContextService:
 
 def document_markdown(document):
     """Convert Google Docs styled paragraphs and tables to readable Markdown."""
+
     def paragraph(element):
         p = element.get("paragraph") or {}
         text = "".join(
@@ -323,10 +324,12 @@ def document_markdown(document):
     tabs = document.get("tabs") or []
     result = []
     if tabs:
+
         def visit(tab):
             result.extend(body((tab.get("documentTab") or {}).get("body", {}).get("content")))
             for child in tab.get("childTabs") or []:
                 visit(child)
+
         for tab in tabs:
             visit(tab)
     else:
