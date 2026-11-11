@@ -292,8 +292,13 @@ def token_context_status():
         result = []
         for token_id in sorted(registry_tokens(settings)):
             current = await service.read(token_id)
-            result.append({"token_id": token_id, "revision": current["revision"],
-                           "populated": bool(current["markdown"])})
+            result.append(
+                {
+                    "token_id": token_id,
+                    "revision": current["revision"],
+                    "populated": bool(current["markdown"]),
+                }
+            )
         return result
 
     run_db(command)

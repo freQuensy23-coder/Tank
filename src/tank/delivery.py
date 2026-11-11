@@ -415,7 +415,7 @@ class DeliveryService:
                 token_proposal = await self.repo.get("reg.token_context_proposals", record["subject_id"])
                 if not token_proposal:
                     raise ValueError("Missing token context proposal")
-            method = ("sendPhoto" if token_proposal else "sendRichMessage" if rich_message else "sendMessage")
+            method = "sendPhoto" if token_proposal else "sendRichMessage" if rich_message else "sendMessage"
             body = {"chat_id": chat}
             if token_proposal:
                 from tank.token_context import MAX_REASON_LENGTH
@@ -423,10 +423,18 @@ class DeliveryService:
                 body.update(
                     caption=token_proposal["reason"][:MAX_REASON_LENGTH],
                     reply_markup={
-                        "inline_keyboard": [[
-                            {"text": "Approve", "callback_data": "tc:approve:" + token_proposal["proposal_id"]},
-                            {"text": "Agree", "callback_data": "tc:agree:" + token_proposal["proposal_id"]},
-                        ]]
+                        "inline_keyboard": [
+                            [
+                                {
+                                    "text": "Approve",
+                                    "callback_data": "tc:approve:" + token_proposal["proposal_id"],
+                                },
+                                {
+                                    "text": "Agree",
+                                    "callback_data": "tc:agree:" + token_proposal["proposal_id"],
+                                },
+                            ]
+                        ]
                     },
                 )
             elif rich_message:
@@ -541,7 +549,8 @@ class DeliveryService:
                         "reg.token_context_proposals", token_proposal["proposal_id"]
                     )
                     await self.repo.put(
-                        "reg.token_context_proposals", proposal["proposal_id"],
+                        "reg.token_context_proposals",
+                        proposal["proposal_id"],
                         {**proposal, "ops_chat_id": str(chat), "ops_message_id": message_ref},
                     )
                 if not notice:

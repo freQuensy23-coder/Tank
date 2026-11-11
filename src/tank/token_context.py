@@ -62,8 +62,12 @@ def diff_svg(token_id, old, new):
     """Render a readable GitHub-style unified diff; long changes are explicitly clipped."""
     raw = list(
         difflib.unified_diff(
-            old.splitlines(), new.splitlines(), fromfile="a/" + token_id + ".md",
-            tofile="b/" + token_id + ".md", n=2, lineterm=""
+            old.splitlines(),
+            new.splitlines(),
+            fromfile="a/" + token_id + ".md",
+            tofile="b/" + token_id + ".md",
+            n=2,
+            lineterm="",
         )
     )
     lines = raw[2:]
@@ -95,12 +99,12 @@ def diff_svg(token_id, old, new):
         line = "".join(c for c in value.replace("\t", "    ") if ord(c) >= 32)
         if len(line) > 110:
             line = line[:109] + "…"
-        out.append(f'<rect y="{y-17}" width="{width}" height="24" fill="{bg}"/>')
+        out.append(f'<rect y="{y - 17}" width="{width}" height="24" fill="{bg}"/>')
         out.append(
             f'<text x="24" y="{y}" font-size="15" font-family="DejaVu Sans Mono, monospace" '
             f'fill="{fg}" xml:space="preserve">{html.escape(line)}</text>'
         )
-    out.append('</svg>')
+    out.append("</svg>")
     return "\n".join(out)
 
 
@@ -147,7 +151,9 @@ class TokenContextService:
                 "reg.token_context",
                 token_id,
                 {
-                    "token_id": token_id, "markdown": markdown, "revision": revision(markdown),
+                    "token_id": token_id,
+                    "markdown": markdown,
+                    "revision": revision(markdown),
                     **collection_clock(utcnow()).fields("updated_at"),
                     "updated_by": "operator-import",
                 },
@@ -180,7 +186,12 @@ class TokenContextService:
                 raise ValueError("An automatic edit needs verified claims from the current event")
             for claim_id in evidence_ids:
                 claim = await self.repo.get("evt.claims", claim_id)
-                if not claim or claim.get("event_id") != event_id or not claim.get("accepted") or not claim.get("verified"):
+                if (
+                    not claim
+                    or claim.get("event_id") != event_id
+                    or not claim.get("accepted")
+                    or not claim.get("verified")
+                ):
                     raise ValueError("Every cited claim must be accepted and verified for this event")
         reason = reason_sentence(arguments["reason"])
         replacement = check_markdown(arguments["updated_markdown"])
@@ -250,9 +261,9 @@ class TokenContextService:
             proposal = await self.repo.get("reg.token_context_proposals", proposal_id)
             if proposal["status"] != "PENDING":
                 raise ValueError("This proposal has already been decided")
-            if str(proposal.get("ops_chat_id")) != str(chat_id) or str(
-                proposal.get("ops_message_id")
-            ) != str(message_id):
+            if str(proposal.get("ops_chat_id")) != str(chat_id) or str(proposal.get("ops_message_id")) != str(
+                message_id
+            ):
                 raise ValueError("Approval must come from the proposal message in Tank Ops")
             if action != "reject":
                 current = await self.read(token_id)
@@ -260,18 +271,25 @@ class TokenContextService:
                     raise ValueError("Stale token-context revision: apply failed; nothing was changed")
                 new_text = proposal["updated_markdown"]
                 await self.repo.put(
-                    "reg.token_context", token_id,
+                    "reg.token_context",
+                    token_id,
                     {
-                        "token_id": token_id, "markdown": new_text, "revision": revision(new_text),
+                        "token_id": token_id,
+                        "markdown": new_text,
+                        "revision": revision(new_text),
                         **collection_clock(utcnow()).fields("updated_at"),
-                        "updated_by": "ops-approval", "proposal_id": proposal_id,
+                        "updated_by": "ops-approval",
+                        "proposal_id": proposal_id,
                     },
                 )
             decision = "REJECTED" if action == "reject" else "APPROVED"
             await self.repo.put(
-                "reg.token_context_proposals", proposal_id,
+                "reg.token_context_proposals",
+                proposal_id,
                 {
-                    **proposal, "status": decision, "decided_by": str(user_id),
+                    **proposal,
+                    "status": decision,
+                    "decided_by": str(user_id),
                     **collection_clock(utcnow()).fields("decided_at"),
                 },
             )
@@ -283,8 +301,7 @@ def document_markdown(document):
     def paragraph(element):
         p = element.get("paragraph") or {}
         text = "".join(
-            (part.get("textRun") or {}).get("content", "")
-            for part in p.get("elements") or []
+            (part.get("textRun") or {}).get("content", "") for part in p.get("elements") or []
         ).strip("\n")
         kind = (p.get("paragraphStyle") or {}).get("namedStyleType", "")
         level = {"TITLE": 1, "HEADING_1": 2, "HEADING_2": 3, "HEADING_3": 4}.get(kind)
@@ -330,8 +347,10 @@ async def import_drive_folder(service, folder_id, access_token):
         while True:
             params = {
                 "q": f"'{folder_id}' in parents and trashed = false",
-                "fields": "nextPageToken,files(id,name,mimeType)", "pageSize": 100,
-                "supportsAllDrives": "true", "includeItemsFromAllDrives": "true",
+                "fields": "nextPageToken,files(id,name,mimeType)",
+                "pageSize": 100,
+                "supportsAllDrives": "true",
+                "includeItemsFromAllDrives": "true",
             }
             if page:
                 params["pageToken"] = page
@@ -342,11 +361,16 @@ async def import_drive_folder(service, folder_id, access_token):
             page = result.get("nextPageToken")
             if not page:
                 break
-        symbols = {row["symbol"].upper(): token_id for token_id, row in registry_tokens(service.settings).items()}
+        symbols = {
+            row["symbol"].upper(): token_id for token_id, row in registry_tokens(service.settings).items()
+        }
         imports = {}
         for file in documents:
             title = file["name"]
-            if "token & protocol fact sheet" not in title or file["mimeType"] != "application/vnd.google-apps.document":
+            if (
+                "token & protocol fact sheet" not in title
+                or file["mimeType"] != "application/vnd.google-apps.document"
+            ):
                 continue
             symbol = title.split("—", 1)[0].strip().upper()
             if symbol not in symbols:

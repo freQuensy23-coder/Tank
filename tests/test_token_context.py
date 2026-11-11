@@ -90,22 +90,21 @@ async def test_stale_proposal_is_rejected_without_partial_write():
     service = TokenContextService(repo, settings())
     await service.import_text("uniswap:UNI", "## Fees\nOld.\n")
     await repo.put("evt.events", "EVT-1", {"event_id": "EVT-1", "tokens_mentioned": ["uniswap:UNI"]})
-    await repo.put("evt.claims", "CLM-1", {
-        "claim_id": "CLM-1", "event_id": "EVT-1", "accepted": True, "verified": True
-    })
+    await repo.put(
+        "evt.claims", "CLM-1", {"claim_id": "CLM-1", "event_id": "EVT-1", "accepted": True, "verified": True}
+    )
     context = {"role": "analyst", "session_id": "session-1", "event_id": "EVT-1"}
-    kwargs = {"token_id": "uniswap:UNI", "reason": "Verified event changed the fees.",
-              "claim_ids": ["CLM-1"]}
+    kwargs = {"token_id": "uniswap:UNI", "reason": "Verified event changed the fees.", "claim_ids": ["CLM-1"]}
     await service.propose({**kwargs, "updated_markdown": "## Fees\nNew A.\n"}, context)
     await service.propose({**kwargs, "updated_markdown": "## Fees\nNew B.\n"}, context)
     proposals = await repo.list("reg.token_context_proposals")
     for index, proposal in enumerate(proposals):
-        await repo.put("reg.token_context_proposals", proposal["proposal_id"], {
-            **proposal, "ops_chat_id": "-200", "ops_message_id": str(index)
-        })
-    await service.decide(
-        proposals[0]["proposal_id"], "approve", chat_id="-200", message_id="0", user_id="5"
-    )
+        await repo.put(
+            "reg.token_context_proposals",
+            proposal["proposal_id"],
+            {**proposal, "ops_chat_id": "-200", "ops_message_id": str(index)},
+        )
+    await service.decide(proposals[0]["proposal_id"], "approve", chat_id="-200", message_id="0", user_id="5")
     with pytest.raises(ValueError, match="Stale"):
         await service.decide(
             proposals[1]["proposal_id"], "approve", chat_id="-200", message_id="1", user_id="5"
@@ -120,17 +119,21 @@ async def test_no_unverified_or_extra_sections_in_automatic_edits():
     service = TokenContextService(repo, settings())
     await service.import_text("uniswap:UNI", "## Fees\nOld.\n")
     await repo.put("evt.events", "EVT-1", {"event_id": "EVT-1", "tokens_mentioned": ["uniswap:UNI"]})
-    await repo.put("evt.claims", "CLM-1", {
-        "claim_id": "CLM-1", "event_id": "EVT-1", "accepted": True, "verified": False
-    })
+    await repo.put(
+        "evt.claims", "CLM-1", {"claim_id": "CLM-1", "event_id": "EVT-1", "accepted": True, "verified": False}
+    )
     context = {"role": "analyst", "session_id": "session-1", "event_id": "EVT-1"}
-    arguments = {"token_id": "uniswap:UNI", "updated_markdown": "## Fees\nUpdated.\n",
-                 "reason": "Verified fees changed.", "claim_ids": ["CLM-1"]}
+    arguments = {
+        "token_id": "uniswap:UNI",
+        "updated_markdown": "## Fees\nUpdated.\n",
+        "reason": "Verified fees changed.",
+        "claim_ids": ["CLM-1"],
+    }
     with pytest.raises(ValueError, match="accepted and verified"):
         await service.propose(arguments, context)
-    await repo.put("evt.claims", "CLM-1", {
-        "claim_id": "CLM-1", "event_id": "EVT-1", "accepted": True, "verified": True
-    })
+    await repo.put(
+        "evt.claims", "CLM-1", {"claim_id": "CLM-1", "event_id": "EVT-1", "accepted": True, "verified": True}
+    )
     with pytest.raises(ValueError, match="sections"):
         await service.propose(
             {**arguments, "updated_markdown": "## Fees\nUpdated.\n\n## New topic\nNew content.\n"},
@@ -142,9 +145,7 @@ async def test_no_unverified_or_extra_sections_in_automatic_edits():
             context,
         )
     with pytest.raises(ValueError, match="follow-up"):
-        await service.propose(
-            {**arguments, "user_requested_expansion": True}, context
-        )
+        await service.propose({**arguments, "user_requested_expansion": True}, context)
 
 
 @pytest.mark.asyncio
@@ -153,17 +154,24 @@ async def test_callback_requires_ops_administrator():
     service = TokenContextService(repo, settings())
     await service.import_text("uniswap:UNI", "## Fees\nOld.\n")
     await repo.put("evt.events", "EVT-1", {"event_id": "EVT-1", "tokens_mentioned": ["uniswap:UNI"]})
-    await repo.put("evt.claims", "CLM-1", {
-        "claim_id": "CLM-1", "event_id": "EVT-1", "accepted": True, "verified": True
-    })
-    await service.propose({
-        "token_id": "uniswap:UNI", "updated_markdown": "## Fees\nNew.\n",
-        "reason": "Fees were changed by the protocol.", "claim_ids": ["CLM-1"],
-    }, {"role": "analyst", "session_id": "session-1", "event_id": "EVT-1"})
+    await repo.put(
+        "evt.claims", "CLM-1", {"claim_id": "CLM-1", "event_id": "EVT-1", "accepted": True, "verified": True}
+    )
+    await service.propose(
+        {
+            "token_id": "uniswap:UNI",
+            "updated_markdown": "## Fees\nNew.\n",
+            "reason": "Fees were changed by the protocol.",
+            "claim_ids": ["CLM-1"],
+        },
+        {"role": "analyst", "session_id": "session-1", "event_id": "EVT-1"},
+    )
     proposal = (await repo.list("reg.token_context_proposals"))[0]
-    await repo.put("reg.token_context_proposals", proposal["proposal_id"], {
-        **proposal, "ops_chat_id": "-200", "ops_message_id": "7"
-    })
+    await repo.put(
+        "reg.token_context_proposals",
+        proposal["proposal_id"],
+        {**proposal, "ops_chat_id": "-200", "ops_message_id": "7"},
+    )
     inbox = TelegramInbox(repo, settings(), http=SimpleNamespace())
     replies = []
 
@@ -174,20 +182,32 @@ async def test_callback_requires_ops_administrator():
         return True
 
     inbox.call = fake_call
-    await inbox.token_context_callback({
-        "id": "cb", "data": "tc:approve:" + proposal["proposal_id"],
-        "from": {"id": 5}, "message": {"chat": {"id": -200}, "message_id": 7},
-    })
+    await inbox.token_context_callback(
+        {
+            "id": "cb",
+            "data": "tc:approve:" + proposal["proposal_id"],
+            "from": {"id": 5},
+            "message": {"chat": {"id": -200}, "message_id": 7},
+        }
+    )
     assert (await service.read("uniswap:UNI"))["markdown"] == "## Fees\nOld.\n"
     assert any(method == "answerCallbackQuery" and args.get("show_alert") for method, args in replies)
 
 
 def test_markdown_conversion_and_diff_svg():
-    document = {"body": {"content": [
-        {"paragraph": {"paragraphStyle": {"namedStyleType": "HEADING_1"},
-                        "elements": [{"textRun": {"content": "Fees\n"}}]}},
-        {"paragraph": {"elements": [{"textRun": {"content": "Revenue facts\n"}}]}},
-    ]}}
+    document = {
+        "body": {
+            "content": [
+                {
+                    "paragraph": {
+                        "paragraphStyle": {"namedStyleType": "HEADING_1"},
+                        "elements": [{"textRun": {"content": "Fees\n"}}],
+                    }
+                },
+                {"paragraph": {"elements": [{"textRun": {"content": "Revenue facts\n"}}]}},
+            ]
+        }
+    }
     assert document_markdown(document).startswith("## Fees\nRevenue facts")
     svg = diff_svg("uniswap:UNI", "Old", "Current")
     assert "#ffebe9" in svg

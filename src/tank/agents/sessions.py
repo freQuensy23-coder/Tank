@@ -206,17 +206,19 @@ class SessionService:
 
     async def mount_token_context(self, session_id):
         """Mount the start-of-session PostgreSQL token snapshot."""
-        if getattr(self.settings, "replay", False):
+        if getattr(self.settings, "replay", False) or not hasattr(self.settings, "read_config_bytes"):
             return
         snapshot = await TokenContextService(self.repo, self.settings).snapshot()
         for path, markdown in snapshot.items():
             uploaded = await self.request(
-                "POST", "files",
+                "POST",
+                "files",
                 files={"file": (path.rsplit("/", 1)[-1], markdown.encode("utf-8"), "text/markdown")},
             )
             uploaded = uploaded.get("data", uploaded)
             await self.request(
-                "POST", f"sessions/{session_id}/resources",
+                "POST",
+                f"sessions/{session_id}/resources",
                 json={"type": "file", "file_id": uploaded["id"], "mount_path": path},
                 idem="token-context:" + sha256({"session": session_id, "path": path, "text": markdown}),
             )

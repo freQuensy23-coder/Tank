@@ -2835,7 +2835,10 @@
           "description": "Accepted verified claim IDs from the current event."
         },
         "user_requested_expansion": {
-          "type": "boolean",
+          "type": [
+            "boolean",
+            "null"
+          ],
           "description": "True only when the user explicitly asks to add material in a follow-up."
         }
       },

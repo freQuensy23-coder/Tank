@@ -637,7 +637,16 @@ class ModelContext:
                 )
                 if k in projected
             }
-        if tool in {"record_event", "add_observation", "set_assessment", "set_beneficiaries", "get_registry", "get_token_facts"} and isinstance(projected, dict):
+        if tool in {
+            "record_event",
+            "add_observation",
+            "set_assessment",
+            "set_beneficiaries",
+            "get_registry",
+            "get_token_facts",
+        } and isinstance(projected, dict) and any(
+            field in projected for field in ("token_ids", "tokens_mentioned", "registry", "token_id")
+        ):
             projected["token_context_reminder"] = (
                 "Could you please read the markdown file for the token in this folder after work? "
                 "/workspace/token-context/ — each affected token has a read-only <token_id>.md file. "

@@ -416,7 +416,8 @@ class TelegramInbox:
         state = await self.repo.get("ops.source_checkpoints", CURSOR_KEY) or {}
         offset = int(state.get("cursor") or 0)
         updates = await self.call(
-            "getUpdates", {"offset": offset, "timeout": timeout, "allowed_updates": ["message", "callback_query"]}
+            "getUpdates",
+            {"offset": offset, "timeout": timeout, "allowed_updates": ["message", "callback_query"]},
         )
         for update in updates:
             callback = update.get("callback_query")
@@ -446,7 +447,11 @@ class TelegramInbox:
         if len(parts) != 3 or parts[1] not in {"approve", "agree"}:
             await self.call(
                 "answerCallbackQuery",
-                {"callback_query_id": callback["id"], "text": "Invalid token-context action", "show_alert": True},
+                {
+                    "callback_query_id": callback["id"],
+                    "text": "Invalid token-context action",
+                    "show_alert": True,
+                },
             )
             return
         message = callback.get("message") or {}
@@ -456,19 +461,31 @@ class TelegramInbox:
         if not user or not self.ops_chat(chat_id) or msg_id is None:
             await self.call(
                 "answerCallbackQuery",
-                {"callback_query_id": callback["id"], "text": "Only Tank Ops may apply token context", "show_alert": True},
+                {
+                    "callback_query_id": callback["id"],
+                    "text": "Only Tank Ops may apply token context",
+                    "show_alert": True,
+                },
             )
             return
         member = await self.call("getChatMember", {"chat_id": chat_id, "user_id": user})
         if member.get("status") not in {"administrator", "creator"}:
             await self.call(
                 "answerCallbackQuery",
-                {"callback_query_id": callback["id"], "text": "Tank Ops administrator approval required", "show_alert": True},
+                {
+                    "callback_query_id": callback["id"],
+                    "text": "Tank Ops administrator approval required",
+                    "show_alert": True,
+                },
             )
             return
         try:
             result = await TokenContextService(self.repo, self.settings).decide(
-                parts[2], parts[1], chat_id=chat_id, message_id=msg_id, user_id=user,
+                parts[2],
+                parts[1],
+                chat_id=chat_id,
+                message_id=msg_id,
+                user_id=user,
             )
         except ValueError as error:
             await self.call(
