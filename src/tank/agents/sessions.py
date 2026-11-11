@@ -1474,6 +1474,8 @@ class SessionService:
         context["config_version"] = self.settings.config_version
         context["code_version"] = self.settings.code_version
         context.update(call_id=call_id, role="scout" if session.get("proposal_id") else "analyst")
+        if session.get("message_log"):
+            context["trigger_kind"] = (session["message_log"][-1].get("payload") or {}).get("kind")
         return context
 
     async def hydrate_prompt_provenance(self, session):
