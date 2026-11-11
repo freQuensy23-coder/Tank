@@ -524,6 +524,19 @@ def freeze(path, value):
     return path
 
 
+async def require_empty_replay_repository(repo):
+    from tank.models import TABLE_COLUMNS
+
+    for collection in TABLE_COLUMNS:
+        if collection == "reg.token_context":
+            seeded = await repo.list(collection, limit=1000)
+            if any(row.get("updated_by") != "initial-migration" for row in seeded):
+                raise ReplayError("replay requires untouched initial token research")
+            continue
+        if await repo.list(collection, limit=1):
+            raise ReplayError(f"replay requires an empty isolated repository: {collection}")
+
+
 async def replay_bundle(bundle_path, repo, settings, *, runner=None, output_dir=None):
     """Run an explicitly supplied offline pipeline and freeze output before evaluation.
 
@@ -533,11 +546,7 @@ async def replay_bundle(bundle_path, repo, settings, *, runner=None, output_dir=
     """
     inputs = load_inputs(bundle_path, settings)
 
-    from tank.models import TABLE_COLUMNS
-
-    for collection in TABLE_COLUMNS:
-        if await repo.list(collection, limit=1):
-            raise ReplayError(f"replay requires an empty isolated repository: {collection}")
+    await require_empty_replay_repository(repo)
     if runner is None:
         runner = run_captured_tools
     output = await runner(inputs, repo)
@@ -1388,7 +1397,6 @@ async def replay_agent_session(
     from tank.analysis.truth import MarketTruthService
     from tank.delivery import DeliveryError, DeliveryService
     from tank.event_tools import EventToolService
-    from tank.models import TABLE_COLUMNS
     from tank.scheduler import Scheduler
 
     inputs = load_inputs(bundle_path, settings)
@@ -1423,9 +1431,7 @@ async def replay_agent_session(
     for name in ("thresholds", "semantics", "dependency_map", "openma"):
         if name in inputs.config and settings.load_config(name) != inputs.config[name]:
             raise ReplayError(f"replay configuration differs from captured snapshot: {name}")
-    for collection in TABLE_COLUMNS:
-        if await repo.list(collection, limit=1):
-            raise ReplayError(f"replay requires an empty isolated repository: {collection}")
+    await require_empty_replay_repository(repo)
     timeline = [
         replay_message_timestamp(inputs, message) for message in [initial_message, *subsequent_messages]
     ]
