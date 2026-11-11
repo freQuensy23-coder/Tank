@@ -55,7 +55,7 @@ The service and gateway use one asyncio process. tank-capture, PostgreSQL, Click
 
 ## Token research context
 
-Migration `src/tank/migrations/011_token_context.sql` contains all 22 Google Drive token and protocol research fact sheets as versioned Markdown. It seeds the PostgreSQL `reg.token_context` table at deployment without accessing Drive or requesting any Google credentials. Registered tokens without an entry receive an empty Markdown file.
+Migration `src/tank/migrations/012_token_context.sql` contains all 22 Google Drive token and protocol research fact sheets as versioned Markdown. It seeds the PostgreSQL `reg.token_context` table at deployment without accessing Drive or requesting any Google credentials. Registered tokens without an entry receive an empty Markdown file.
 
 At analyst session creation, Tank mounts a snapshot of each token file at `/workspace/token-context/<token_id>.md`. Agents must read the relevant files after determining affected tokens. Changes are proposed through `propose_token_context_edit`, displayed as a GitHub-style diff in Tank Ops and written to PostgreSQL only after approval. A stale proposal fails with an error rather than merging changes. Use `tank token-context status` to inspect populated tokens.
 

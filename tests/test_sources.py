@@ -880,9 +880,6 @@ async def test_major_assessment_producer_activates_15s_source_reads(tmp_path, mo
             "event_id": event["event_id"],
             "assessment": {
                 "class": "MAJOR",
-                "criterion": "M1",
-                "criterion_venue_id": "binance",
-                "criterion_claim_id": "major-proof",
                 "dims": dimensions,
             },
         },

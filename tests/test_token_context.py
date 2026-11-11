@@ -206,7 +206,7 @@ def test_diff_svg_and_markdown_validation():
 
 def test_initial_migration_embeds_every_fact_sheet_without_google_auth():
     root = Path(__file__).resolve().parents[1]
-    migration = (root / "src/tank/migrations/011_token_context.sql").read_text()
+    migration = (root / "src/tank/migrations/012_token_context.sql").read_text()
     registry = yaml.safe_load((root / "config/registry.yaml").read_text())
     tokens = [row["token_id"] for row in registry["tokens"]]
 
@@ -268,7 +268,7 @@ async def test_token_context_openma_mounts_read_only_snapshot():
 
 def test_migration_seed_is_byte_identical_to_google_docs_plain_text_exports():
     root = Path(__file__).resolve().parents[1]
-    migration = (root / "src/tank/migrations/011_token_context.sql").read_bytes().decode("utf-8")
+    migration = (root / "src/tank/migrations/012_token_context.sql").read_bytes().decode("utf-8")
     expected = {
         "1INCH": "55f20f18c07b39917992becc06d4b25d538f9f5c297b4f1a654303daff5dd9b0",
         "AAVE": "b26949611baef644b7d38b4929d97d3b46109df3395209fc8fe18b234792ca3d",

@@ -55,8 +55,6 @@ def complete_fixture_record(collection, record):
             version=1,
             cutoff=at,
             dims={},
-            structural_gates=[],
-            criterion="MATERIAL",
             class_reasons=[],
             impact_horizon={},
             **{"class": "LOW"},
@@ -941,6 +939,80 @@ async def test_upgrade_gives_existing_reaction_checkpoints_their_metadata(postgr
         ]
         assert [row["metadata"]["revision"] for row in rows] == [2, 1]
         assert await repo.get("out.reaction_checkpoints", "legacy") == legacy
+
+
+@pytest.mark.integration
+@pytest.mark.postgres
+async def test_upgrade_drops_the_class_criterion_and_keeps_existing_assessments(postgres_template):
+    """Migration 011 drops the criterion column and its checks on a table with existing rows."""
+    from psycopg.types.json import Jsonb
+
+    url = os.getenv("TANK_TEST_DATABASE_URL")
+    if not url:
+        pytest.skip("Real PostgreSQL requires TANK_TEST_DATABASE_URL pointing at an isolated test database")
+    legacy = {
+        "ems_id": "ems-legacy",
+        "event_id": "evt-legacy",
+        "version": 1,
+        "class": "MATERIAL",
+        "criterion": "M1",
+        "criterion_claim_id": "clm-legacy",
+        "structural_gates": [],
+        "class_reasons": ["M1_VENUE"],
+        "dims": {},
+        "impact_horizon": {},
+    }
+    async with postgres_template.repository(url, migrated=False) as repo:
+        await repo.migrate(target="010_reaction_checkpoint_metadata.sql")
+        await repo.put(
+            "evt.events", "evt-legacy", complete_fixture_record("evt.events", {"event_id": "evt-legacy"})
+        )
+        async with repo.transaction():
+            for key, immutable in (("ems-legacy", False), ("ems-frozen", True)):
+                await repo._conn().execute(
+                    "INSERT INTO evt.ems_assessments(storage_key,document,immutable,ems_id,event_id,version,class,"
+                    "criterion,class_reasons,cutoff,config_version,model_id,prompt_version)"
+                    " VALUES (%s,%s,%s,%s,'evt-legacy',%s,'MATERIAL','M1',ARRAY['M1_VENUE'],now(),'c','m','p')",
+                    (key, Jsonb({**legacy, "ems_id": key}), immutable, key, 1 if immutable else 2),
+                )
+        await repo.migrate()
+        fresh = complete_fixture_record(
+            "evt.ems_assessments",
+            {
+                "ems_id": "ems-fresh",
+                "event_id": "evt-legacy",
+                "version": 3,
+                "class": "MAJOR",
+                "class_reasons": ["Agent judgment"],
+            },
+        )
+        await repo.put("evt.ems_assessments", "ems-fresh", fresh)
+        async with repo.transaction():
+            columns = await (
+                await repo._conn().execute(
+                    "SELECT column_name FROM information_schema.columns"
+                    " WHERE table_schema='evt' AND table_name='ems_assessments'"
+                )
+            ).fetchall()
+            checks = await (
+                await repo._conn().execute(
+                    "SELECT conname FROM pg_constraint WHERE conrelid='evt.ems_assessments'::regclass"
+                )
+            ).fetchall()
+            rows = await (
+                await repo._conn().execute(
+                    "SELECT storage_key, class, immutable FROM evt.ems_assessments ORDER BY storage_key"
+                )
+            ).fetchall()
+        assert "criterion" not in {row["column_name"] for row in columns}
+        assert not {"required_criterion", "required_gates"} & {row["conname"] for row in checks}
+        assert [(row["storage_key"], row["class"], row["immutable"]) for row in rows] == [
+            ("ems-fresh", "MAJOR", False),
+            ("ems-frozen", "MATERIAL", True),
+            ("ems-legacy", "MATERIAL", False),
+        ]
+        assert (await repo.get("evt.ems_assessments", "ems-legacy"))["criterion"] == "M1"
+        assert (await repo.get("evt.ems_assessments", "ems-fresh"))["class"] == "MAJOR"
 
 
 async def test_capture_tier_transitions_follow_market_retention(repo):

@@ -93,6 +93,22 @@ test('unpublished existing native disk and missing published disk fail closed wi
   assert.equal(effects,0);
 });
 
+test('leftover names only the runtime under the allocation name of the scope and has no effects',async()=>{
+  const { createHash }=await import('node:crypto');
+  const name='oma-'+createHash('sha256').update('litebox:'+scope.sessionId).digest('hex').slice(0,32),asked=[];
+  let effects=0,info=null,current=true;
+  const module={createBoxLiteProvider(){return {async create(){effects++;},async resume(){effects++;}};},createBoxLiteManagedRuntime(){return {sandbox:{async reap(){effects++;}}};}};
+  const p=pinnedBoxLiteProvider({module,client:{async getInfo(id){asked.push(id);return info;},async remove(){effects++;}},allocation:{image:'current'},leaseTtlMs:30000,isCurrent:async()=>current});
+  assert.equal(await p.leftover(scope,fence,signal()),null);
+  info={id:'native',name,state:{running:false}};
+  assert.deepEqual(await p.leftover(scope,fence,signal()),{provider:'litebox',runtimeId:'native'});
+  info={id:'native',name:'foreign',state:{running:false}};
+  await assert.rejects(p.leftover(scope,fence,signal()),/retained_cleanup_ownership_mismatch/);
+  current=false;await assert.rejects(p.leftover(scope,fence,signal()),/retained_fence_lost/);
+  const aborted=new AbortController();aborted.abort(Error('cancelled'));current=true;
+  await assert.rejects(p.leftover(scope,fence,aborted.signal),/cancelled/);
+  assert.deepEqual(asked,[name,name,name]);assert.equal(effects,0);
+});
 test('unconfirmed timeout poisons all further guest I/O until fresh stopped/resumed runtime',async()=>{
   const directory=await mkdtemp(join(tmpdir(),'tank-retained-poisoned-'));
   let spawned=0,killCalled=false,releaseKill;

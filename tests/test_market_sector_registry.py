@@ -41,19 +41,20 @@ async def test_full_registry_baskets_and_optional_sector_peer_prices_reach_norma
         snap = await service.snapshot("0x:ZRX", cutoff)
         assert snap["sector_baskets"] == registry["sector_baskets"]
         assert len(snap["tokens"]) == 22 and all("sector" not in t for t in snap["tokens"])
-        assert any(r["instrument_id"] == peer["instrument_id"] for r in snap["klines"])
+        assert any(r["instrument_id"] == peer["instrument_id"] for r in snap["instruments"])
+        assert "klines" not in snap
         snap["sector_baskets"][0]["constituents"].clear()
         assert service.sector_baskets == registry["sector_baskets"]
         conditional = await service.condition_snapshot(
-            "world:WLD", cutoff, requirements=[{"metric": "mt.move_class", "window": "W4H"}]
+            "0x:ZRX", cutoff, requirements=[{"metric": "mt.move_class", "window": "W4H"}]
         )
         assert conditional["sector_baskets"] == registry["sector_baskets"]
-        assert peer["instrument_id"] in conditional["stat_price_series"]
+        assert peer["instrument_id"] in {i["instrument_id"] for i in conditional["instruments"]}
+        assert "stat_price_series" not in conditional and "klines" not in conditional
 
-        relative_head = conditional["domain_dependency_fingerprints"]["relative"]
         service.sector_baskets = copy.deepcopy(service.sector_baskets)
         service.sector_baskets[0]["constituents"].clear()
         changed = await service.condition_snapshot(
-            "world:WLD", cutoff, requirements=[{"metric": "mt.move_class", "window": "W4H"}]
+            "0x:ZRX", cutoff, requirements=[{"metric": "mt.move_class", "window": "W4H"}]
         )
-        assert changed["domain_dependency_fingerprints"]["relative"] != relative_head
+        assert changed["sector_baskets"] != conditional["sector_baskets"]

@@ -830,6 +830,7 @@ def test_uniform_minute_reference_convention_preserves_all_original_literals(ref
         assert inputs.record_visible(bar, parse_time(boundary))
 
 
+@pytest.mark.usefixtures("relative_statements")
 @pytest.mark.integration
 @pytest.mark.parametrize("publication", [False, True])
 async def test_actual_f24_phased_producers_keep_session_and_immutable_checkpoints(
@@ -956,6 +957,10 @@ async def test_actual_f24_phased_producers_keep_session_and_immutable_checkpoint
                     ]
                 },
             )
+        if route.endswith("/v1/files"):
+            return httpx.Response(200, json={"id": "file_mt"})
+        if route.endswith("/resources"):
+            return httpx.Response(200, json={"id": "sesrsc_mt"})
         if route.endswith("/sessions"):
             if request.method == "GET":
                 return httpx.Response(200, json={"data": []})
@@ -1124,8 +1129,7 @@ async def test_actual_f24_phased_producers_keep_session_and_immutable_checkpoint
                         {
                             "event_id": eid,
                             "assessment": dict(
-                                unknown_assessment(criterion="M1", klass="MAJOR", claim=claim_id),
-                                criterion_venue_id="robinhood",
+                                unknown_assessment(klass="MAJOR"),
                             )
                             if publication
                             else unknown_assessment(klass="MATERIAL"),
@@ -1142,8 +1146,7 @@ async def test_actual_f24_phased_producers_keep_session_and_immutable_checkpoint
                         {
                             "event_id": eid,
                             "assessment": dict(
-                                unknown_assessment(criterion="M1", klass="MAJOR", claim=claim_id),
-                                criterion_venue_id="robinhood",
+                                unknown_assessment(klass="MAJOR"),
                             ),
                         },
                         identity,
@@ -1366,6 +1369,7 @@ async def test_actual_f24_phased_producers_keep_session_and_immutable_checkpoint
         assert next(a["kind"] for a in await repo.list("out.alerts")) == "FULL"
 
 
+@pytest.mark.usefixtures("relative_statements")
 @pytest.mark.integration
 @pytest.mark.parametrize("tool", ["web_search", "fetch_page"])
 async def test_reference_session_reports_missing_lookup_without_network_or_abort(

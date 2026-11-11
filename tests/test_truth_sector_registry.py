@@ -5,6 +5,7 @@ from pathlib import Path
 
 import pytest
 import yaml
+from relative_helpers import registry_evidence
 from test_truth_start_fixture import compact_start_snapshot
 
 import tank.analysis.truth as truth
@@ -33,28 +34,29 @@ def packet_for(token):
         packet.pop(domain, None)
 
     first_venue = "A:spot:" + token["symbol"]
-    peers = [
+    original = next(
         row
         for row in packet["klines"]
         if row["token_id"] == token["token_id"] and row["instrument_id"] == first_venue
-    ]
-    end = parse_time(packet["cutoff"])
-    boundaries = {end - truth.timedelta(seconds=seconds) for seconds in (0, 900, 3600, 14400, 86400)}
-    boundaries.add(parse_time(packet["anchor"]["ts"]))
-    for index, peer in enumerate(registry["tokens"]):
-        if peer["token_id"] == token["token_id"]:
-            continue
-        for original in peers:
-            close = parse_time(original["open_time"]) + truth.timedelta(seconds=original["interval_s"])
-
-            if peer["symbol"] not in {"BTC", "ETH"} and close not in boundaries:
-                continue
-            row = dict(original, token_id=peer["token_id"], instrument_id="peer:spot:" + peer["symbol"])
-
-            elapsed = (parse_time(row["open_time"]) - parse_time(packet["anchor"]["ts"])).total_seconds()
-            row["c"] = str(float(row["c"]) * (1 + (index + 1) * elapsed / 1e9))
-            packet["klines"].append(row)
+    )
+    for peer in registry["tokens"]:
+        if peer["token_id"] != token["token_id"]:
+            packet["klines"].append(
+                dict(original, token_id=peer["token_id"], instrument_id="peer:spot:" + peer["symbol"])
+            )
+            packet["instruments"].append(
+                dict(
+                    instrument_id="peer:spot:" + peer["symbol"],
+                    token_id=peer["token_id"],
+                    venue="peer",
+                    market_type="SPOT",
+                )
+            )
     return packet
+
+
+def relative_truth(packet, start, end):
+    return truth.relative_truth(dict(packet, relative_sql=registry_evidence(packet)), start, end)
 
 
 @pytest.mark.parametrize("symbol", ["WLD", "UNI", "AVAX", "ENA"])
@@ -67,7 +69,7 @@ def test_identity_mask_preserves_all_relative_values_coverage_and_reasons(symbol
         packet["sector_baskets"] = copy.deepcopy(registry["sector_baskets"])
         for row in packet["tokens"]:
             row.pop("sector", None)
-    original = truth.relative_truth(packet, start, end)
+    original = relative_truth(packet, start, end)
     before, after = token["token_id"], "masked-asset-k"
 
     def mask(v):
@@ -79,20 +81,20 @@ def test_identity_mask_preserves_all_relative_values_coverage_and_reasons(symbol
             return {mask(k): mask(x) for k, x in v.items()}
         return v
 
-    assert truth.relative_truth(mask(packet), start, end) == mask(original)
+    assert relative_truth(mask(packet), start, end) == mask(original)
 
 
 def test_explicit_captured_basket_controls_measured_peer_returns():
     token = next(t for t in registry["tokens"] if t["symbol"] == "UNI")
     packet = packet_for(token)
     start, end = parse_time(packet["anchor"]["ts"]), parse_time(packet["cutoff"])
-    implicit = truth.relative_truth(packet, start, end)
+    implicit = relative_truth(packet, start, end)
     packet["sector_baskets"] = copy.deepcopy(registry["sector_baskets"])
-    assert truth.relative_truth(packet, start, end) == implicit
+    assert relative_truth(packet, start, end) == implicit
 
     basket = next(b for b in packet["sector_baskets"] if b["sector"] == "DEX_EXECUTION")
     basket["constituents"] = [token["token_id"], "aave:AAVE", "morpho:MORPHO"]
-    changed = truth.relative_truth(packet, start, end)
+    changed = relative_truth(packet, start, end)
     assert changed["windows"]["EVENT"]["r_sector_adj"] != implicit["windows"]["EVENT"]["r_sector_adj"]
 
 
@@ -100,7 +102,7 @@ def test_explicit_captured_basket_controls_measured_peer_returns():
 def test_authoritative_full_baskets_work_when_optional_token_sector_is_omitted(token):
     packet = packet_for(token)
     start, end = parse_time(packet["anchor"]["ts"]), parse_time(packet["cutoff"])
-    expected = truth.relative_truth(packet, start, end)
+    expected = relative_truth(packet, start, end)
     assert expected["windows"]["EVENT"]["r_raw"] is not None
     if token["sector"] == "IDENTITY_PAYMENTS":
         assert expected["windows"]["EVENT"]["sector_reason"] == "NOT_APPLICABLE"
@@ -109,7 +111,7 @@ def test_authoritative_full_baskets_work_when_optional_token_sector_is_omitted(t
     packet["sector_baskets"] = copy.deepcopy(registry["sector_baskets"])
     for row in packet["tokens"]:
         row.pop("sector", None)
-    assert truth.relative_truth(packet, start, end) == expected
+    assert relative_truth(packet, start, end) == expected
 
 
 def test_missing_sector_and_basket_metadata_is_not_guessed_from_wld_symbol():
@@ -118,7 +120,7 @@ def test_missing_sector_and_basket_metadata_is_not_guessed_from_wld_symbol():
     for row in packet["tokens"]:
         row.pop("sector", None)
     start, end = parse_time(packet["anchor"]["ts"]), parse_time(packet["cutoff"])
-    result = truth.relative_truth(packet, start, end)
+    result = relative_truth(packet, start, end)
     assert result["windows"]["EVENT"]["r_raw"] is not None
     assert result["windows"]["EVENT"]["r_sector_adj"] is None
     assert result["windows"]["EVENT"]["sector_reason"] == "NOT_ESTIMABLE"

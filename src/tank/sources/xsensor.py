@@ -9,7 +9,7 @@ Signed-out profiles show no reposts and no replies to other accounts.
 """
 
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from typing import Literal
 
 import httpx
@@ -19,8 +19,6 @@ from tank.logging import redact_text
 from tank.util import iso
 
 RUN_TIMEOUT_S = 130
-ERROR_BODY_BYTES = 8192
-ERROR_HEADERS = ("content-type", "content-length", "date", "retry-after")
 
 
 class ApifyModel(BaseModel):
@@ -30,7 +28,9 @@ class ApifyModel(BaseModel):
 
 
 class ApifyReferencedPost(ApifyModel):
-    """A post that a monitored post quotes, replies to or links; text is None when unreadable."""
+    """A post that a monitored post quotes, replies to or links; text is None when unreadable.
+
+    ``diagnostics`` is the worker's record of the requests it made for an unreadable post."""
 
     relation: Literal["quoted", "replied_to", "linked"]
     id: str
@@ -39,6 +39,7 @@ class ApifyReferencedPost(ApifyModel):
     published_at: str | None = Field(default=None, alias="publishedAt")
     text: str | None = None
     error: str | None = None
+    diagnostics: dict | None = None
 
     @field_validator("published_at")
     @classmethod
@@ -119,12 +120,15 @@ class Scan:
     """One pass: new post rows, next cursors, failed accounts and accounts with a history gap.
 
     ``failed`` is a run the actor reported as failed (with per-account diagnostics): no
-    posts were read, so the poll counts as a failed read."""
+    posts were read, so the poll counts as a failed read. ``reports`` is what Tank Ops is
+    told: every failure with the worker's record of its requests to X, and every post
+    referenced by a new post whose page X answered with an HTTP error."""
 
     rows: list[dict[str, object]]
     cursors: dict[str, str]
     failures: list[AccountFailure]
     gaps: list[str]
+    reports: list[dict[str, object]]
     failed: bool = False
 
 
@@ -140,8 +144,8 @@ def scan(run: ApifyRun, accounts: list[str], cursors: Mapping[str, str], raw: by
     """
     if run.health == "failed" and not any(a.status == "failed" and a.diagnostics for a in run.accounts):
         raise RuntimeError(f"Apify X run failed: {run.error}")
-    rows = [
-        post.row(raw)
+    posts = [
+        post
         for post in run.posts
         if post.author.lower() in cursors and int(post.id) > int(cursors[post.author.lower()])
     ]
@@ -166,10 +170,35 @@ def scan(run: ApifyRun, accounts: list[str], cursors: Mapping[str, str], raw: by
         }
     )
     if run.health == "failed":
-        rows = []
+        posts = []
     else:
-        rows = [row for row in rows if str(row["author"]).lower() not in failed_handles]
-    return Scan(rows=rows, cursors=next_cursors, failures=failures, gaps=gaps, failed=run.health == "failed")
+        posts = [post for post in posts if post.author.lower() not in failed_handles]
+    evidence = {a.handle: a.diagnostics for a in run.accounts if a.status == "failed" and a.diagnostics}
+    reports: list[dict[str, object]] = [
+        {**asdict(failure), "diagnostics": evidence[failure.account]}
+        if failure.account in evidence
+        else asdict(failure)
+        for failure in failures
+    ]
+    reports.extend(
+        {
+            "account": post.author,
+            "reason": ref.error or "FAILED",
+            "referenced_post": {"relation": ref.relation, "id": ref.id, "url": ref.url, "in": post.url},
+            "diagnostics": ref.diagnostics,
+        }
+        for post in posts
+        for ref in post.referenced_posts
+        if ref.diagnostics and any((a.get("status") or 0) >= 400 for a in ref.diagnostics.get("attempts", []))
+    )
+    return Scan(
+        rows=[post.row(raw) for post in posts],
+        cursors=next_cursors,
+        failures=failures,
+        gaps=gaps,
+        reports=reports,
+        failed=run.health == "failed",
+    )
 
 
 class ApifyRunFailed(RuntimeError):
@@ -181,11 +210,9 @@ class ApifyRunFailed(RuntimeError):
 
 
 def run_failure(response: httpx.Response, message: str, secrets: tuple[str, ...]) -> dict[str, object]:
-    """The S29 entry error of a failed run-sync call: status, safe headers and the redacted body.
+    """The S29 entry error of a failed run-sync call: status, every header and the whole body.
 
-    The body is cut to ERROR_BODY_BYTES after redaction; ``body_bytes`` is the size Apify sent."""
-    body = redact_text(response.content.decode("utf-8", "replace"), secrets)
-    shown = body.encode()[:ERROR_BODY_BYTES].decode("utf-8", "ignore")
+    The token is redacted in the header values and in the body; ``body_bytes`` is the size Apify sent."""
     return {
         "account": None,
         "reason": "APIFY_RUN_HTTP_ERROR",
@@ -193,14 +220,9 @@ def run_failure(response: httpx.Response, message: str, secrets: tuple[str, ...]
         "response": {
             "status": response.status_code,
             "reason_phrase": response.reason_phrase,
-            "headers": {
-                name: redact_text(response.headers[name], secrets)
-                for name in ERROR_HEADERS
-                if name in response.headers
-            },
-            "body": shown,
+            "headers": {name: redact_text(value, secrets) for name, value in response.headers.items()},
+            "body": redact_text(response.content.decode("utf-8", "replace"), secrets),
             "body_bytes": len(response.content),
-            "body_truncated": len(shown) < len(body),
         },
     }
 

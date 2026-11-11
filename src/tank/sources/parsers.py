@@ -197,7 +197,7 @@ def article_links(payload, feed):
             continue
         target = url if pattern.startswith("http") else urlsplit(url).path
         if re.search(pattern, target):
-            result[url] = text(a.text())
+            result[url] = text(a.text()) or result.get(url, "")
 
     fields = feed.get("embedded_json_fields", [])
     if fields:
@@ -308,6 +308,11 @@ def article(payload, *, source_id=None):
         if len(authored) != 1 or not text(authored[0].html):
             raise ValueError("Uniswap article requires one nonempty authored body")
         body = authored[0]
+    elif source_id == "S22":
+        authored = tree.css('[data-framer-name="Article body"]')
+        if len(authored) != 1 or not text(authored[0].html):
+            raise ValueError("Paxos article requires one nonempty authored body")
+        body = authored[0]
     elif source_id == "S07" and tree.css("article.node--type-mega_menu_panel"):
         authored = tree.css("main article[about]")
         headings = tree.css("main .uswds-page-title")
@@ -368,6 +373,8 @@ def article(payload, *, source_id=None):
             designated = tree.css('time[itemprop="datePublished"][datetime]')
             if source_id == "S07":
                 designated += tree.css(".field--name-field-news-publication-date time[datetime]")
+            if source_id == "S22":
+                designated += tree.css('[data-framer-name="Article header"] time[datetime]')
             declared_values = {node.attributes["datetime"] for node in designated}
             if len(declared_values) == 1:
                 timestamp = next(iter(declared_values))

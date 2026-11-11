@@ -13,6 +13,7 @@ from unittest.mock import AsyncMock
 
 import httpx
 import pytest
+from evidence_shift import shifted_evidence
 from test_agents_session_audit import settings as session_settings
 from test_event_tools import complete_assessment_fixture, complete_event_fixture
 from test_session_binding_concurrency import fixture_repo
@@ -31,10 +32,16 @@ from tank.time_precision import chosen_boundary
 from tank.util import iso, parse_time, utcnow
 
 
+@pytest.fixture(autouse=True)
+def _relative_statements(relative_statements):
+    return relative_statements
+
+
 @lru_cache(maxsize=2)
 def _canonical_snapshot(full_flow_history):
     """Private immutable seed; decoded output is owned by one caller only."""
     source = compact_start_snapshot()
+    evidence = {key: source.pop(key) for key in [key for key in source if key.endswith("_sql")]}
 
     end_value = parse_time(source["cutoff"])
 
@@ -58,11 +65,12 @@ def _canonical_snapshot(full_flow_history):
         and parse_time(r["settlement_time"]).minute == 0
         or parse_time(r["settlement_time"]) == end_value
     ]
-    return json.dumps(source).encode()
+    return json.dumps(source).encode(), evidence
 
 
 def shifted_snapshot(end, *, full_flow_history=True):
-    source = json.loads(_canonical_snapshot(full_flow_history))
+    encoded, evidence = _canonical_snapshot(full_flow_history)
+    source = json.loads(encoded)
     delta = end - parse_time(source["cutoff"])
 
     def shift(value):
@@ -76,7 +84,9 @@ def shifted_snapshot(end, *, full_flow_history=True):
             return iso(parse_time(value) + delta)
         return value
 
-    return shift(source)
+    shifted = shift(source)
+    shifted.update({key: shifted_evidence(value, delta) for key, value in evidence.items()})
+    return shifted
 
 
 class ReleasedMarket:

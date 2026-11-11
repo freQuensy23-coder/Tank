@@ -84,11 +84,9 @@ async def create(service, *, verified=True, state="LIVE", certainty="HIGH"):
     return result, original
 
 
-def assessment(proof, *, klass="MATERIAL", criterion="MATERIAL"):
+def assessment(proof, *, klass="MATERIAL"):
     return {
         "class": klass,
-        "criterion": criterion,
-        "criterion_claim_id": proof,
         "dims": {
             name: {"value": 8, "rationale": "Agent dimensional judgment", "evidence": [proof]}
             for name in [
@@ -154,72 +152,54 @@ async def test_magnitude_is_agent_owned_but_implementation_is_deterministic(owne
     assert out["impact_horizon"]["timing_confidence"] == "HIGH"
 
 
-@pytest.mark.parametrize("klass,criterion", [("MATERIAL", "MATERIAL"), ("MAJOR", "M2"), ("LOW", "LOW")])
-async def test_assessment_without_universe_concern_is_low(owner_service, klass, criterion):
-    result, _ = await create(owner_service)
-    event = await owner_service.repo.get("evt.events", result["event_id"])
-    event.update(tokens_mentioned=[], entities=[{"entity_id": "sec", "role": "REGULATOR"}])
-    await owner_service.repo.put("evt.events", event["event_id"], event)
-    assert not await owner_service.rows("evt.beneficiary_maps", event["event_id"])
-    supplied = assessment(result["accepted_claims"][0]["claim_id"], klass=klass, criterion=criterion)
-    supplied["class_reasons"] = ["Analyst assessed the scope of the sector-level announcement."]
-    out = await owner_service.set_assessment({"event_id": event["event_id"], "assessment": supplied}, {})
-    assert out["class"] == "LOW"
-    assert out["class_reasons"] == supplied["class_reasons"] + (
-        ["NO_UNIVERSE_CONCERN"] if klass != "LOW" else []
-    )
-
-
+@pytest.mark.parametrize("klass", ["LOW", "MATERIAL", "MAJOR", "STRUCTURAL_SHOCK"])
 @pytest.mark.parametrize(
-    "certainty,state,criterion,venue,expected",
+    "certainty,state,verified,universe",
     [
-        ("LOW", "LIVE", "M2", None, "MATERIAL"),
-        ("HIGH", "PROPOSED", "M2", None, "MATERIAL"),
-        ("HIGH", "PROPOSED", "M4", None, "MAJOR"),
-        ("HIGH", "LIVE", "M1", "sec", "MATERIAL"),
-        ("HIGH", "LIVE", "M1", "okx", "MAJOR"),
-        ("HIGH", "LIVE", "M1", "coinbase", "MAJOR"),
-        ("HIGH", "LIVE", "M2", None, "MAJOR"),
+        ("HIGH", "LIVE", True, True),
+        ("LOW", "LIVE", True, True),
+        ("HIGH", "PROPOSED", True, True),
+        ("MEDIUM", "LIVE", False, True),
+        ("HIGH", "LIVE", True, False),
     ],
+    ids=["verified-live", "low-certainty", "proposed", "unverified-medium", "outside-universe"],
 )
-async def test_explicit_class_caps_still_apply(owner_service, certainty, state, criterion, venue, expected):
-    result, _ = await create(owner_service, certainty=certainty, state=state)
-    supplied = assessment(result["accepted_claims"][0]["claim_id"], klass="MAJOR", criterion=criterion)
-    if venue:
-        supplied["criterion_venue_id"] = venue
-    out = await owner_service.set_assessment({"event_id": result["event_id"], "assessment": supplied}, {})
-    assert out["class"] == expected
-    assert out["criterion_quote"] == result["accepted_claims"][0]["quote"]
+async def test_stored_level_is_exactly_the_agent_level(
+    owner_service, klass, certainty, state, verified, universe
+):
+    result, _ = await create(owner_service, certainty=certainty, state=state, verified=verified)
+    eid = result["event_id"]
+    if not universe:
+        event = await owner_service.repo.get("evt.events", eid)
+        event.update(tokens_mentioned=[], entities=[{"entity_id": "sec", "role": "REGULATOR"}])
+        await owner_service.repo.put("evt.events", eid, event)
+    supplied = assessment(result["accepted_claims"][0]["claim_id"], klass=klass)
+    supplied["class_reasons"] = ["Analyst judged the consequence for the affected token."]
+    supplied["impact_horizon"].update(ramp_shape="STEP", dependencies=[], time_to_materiality="Weeks")
+    out = await owner_service.dispatch("set_assessment", {"event_id": eid, "assessment": supplied}, {})
+    stored = await owner_service.repo.get("evt.ems_assessments", out["ems_id"])
+    assert out["class"] == stored["class"] == klass
+    assert stored["class_reasons"] == supplied["class_reasons"]
+    assert not [key for key in stored if key.startswith("criterion") or key == "structural_gates"]
+    event = await owner_service.repo.get("evt.events", eid)
+    assert event["current_ems_id"] == out["ems_id"]
+    assert event["lifecycle"] == ("ANALYZING" if klass in {"MAJOR", "STRUCTURAL_SHOCK"} else "TRACKED")
 
 
-async def test_major_without_a_criterion_claim_is_material(owner_service):
+async def test_assessment_refuses_the_retired_criterion_fields(owner_service):
     result, _ = await create(owner_service)
-    supplied = assessment(None, klass="MAJOR", criterion="M2")
-    for dimension in supplied["dims"].values():
-        dimension["evidence"] = [result["accepted_claims"][0]["claim_id"]]
-    out = await owner_service.set_assessment({"event_id": result["event_id"], "assessment": supplied}, {})
-    assert out["class"] == "MATERIAL" and "MAJOR_EVIDENCE" in out["class_reasons"]
-    supplied["criterion_claim_id"] = "not-a-claim-of-this-event"
-    with pytest.raises(ValueError, match="criterion_claim_id must be an accepted claim of this event"):
-        await owner_service.set_assessment({"event_id": result["event_id"], "assessment": supplied}, {})
-
-
-@pytest.mark.parametrize("venue", [None, "", "   "])
-async def test_m1_requires_explicit_venue_without_guessing_from_prose(owner_service, venue):
-    result, _ = await create(owner_service)
-    supplied = assessment(result["accepted_claims"][0]["claim_id"], klass="MAJOR", criterion="M1")
-    if venue is not None:
-        supplied["criterion_venue_id"] = venue
-    with pytest.raises(ValueError, match="M1 requires criterion_venue_id"):
-        await owner_service.set_assessment({"event_id": result["event_id"], "assessment": supplied}, {})
-
-
-async def test_m1_venue_outside_the_registry_is_refused_not_guessed(owner_service):
-    result, _ = await create(owner_service)
-    supplied = assessment(result["accepted_claims"][0]["claim_id"], klass="MAJOR", criterion="M1")
-    supplied["criterion_venue_id"] = "upbit"
-    with pytest.raises(ValueError, match="M1 counts only Binance"):
-        await owner_service.set_assessment({"event_id": result["event_id"], "assessment": supplied}, {})
+    proof = result["accepted_claims"][0]["claim_id"]
+    for field, value in [
+        ("criterion", "M2"),
+        ("criterion_claim_id", proof),
+        ("criterion_venue_id", "binance"),
+        ("structural_gates", [{"gate": "G1", "satisfied": True, "evidence": [proof]}]),
+    ]:
+        supplied = {**assessment(proof, klass="MAJOR"), field: value}
+        with pytest.raises(ValueError, match=field):
+            await owner_service.dispatch(
+                "set_assessment", {"event_id": result["event_id"], "assessment": supplied}, {}
+            )
 
 
 async def test_observation_link_is_not_reclassified_by_the_host(owner_service):
@@ -273,89 +253,3 @@ async def test_capture_caps_and_source_side_integration_remain_deterministic(own
     )
     edge = (await owner_service.rows("evt.beneficiary_edges", eid))[0]
     assert edge["integration_state"] == "BUILT"
-
-
-@pytest.mark.parametrize(
-    "binding,expected",
-    [
-        ("matching", "STRUCTURAL_SHOCK"),
-        ("implicit", "STRUCTURAL_SHOCK"),
-        ("unrelated_claim", "MAJOR"),
-        ("different_gate", "MAJOR"),
-        ("unsatisfied", "MAJOR"),
-        ("unverified", "MAJOR"),
-        ("no_claim", "MATERIAL"),
-    ],
-)
-async def test_structural_criterion_claim_binds_selected_gate_verified_claim(
-    owner_service, binding, expected
-):
-    import copy
-
-    created, _ = await create(owner_service)
-    eid = created["event_id"]
-    proof = created["accepted_claims"][0]["claim_id"]
-    primary_quote = "The route requires this settlement infrastructure."
-    claim = await owner_service.repo.get("evt.claims", proof)
-    claim["evidence"][0]["quote"] = primary_quote
-    if binding == "unverified":
-        claim["verified"] = False
-    await owner_service.repo.put("evt.claims", proof, claim)
-    unrelated = copy.deepcopy(claim)
-    unrelated.update(
-        claim_id="unrelated",
-        verified=True,
-        evidence=[{"item_id": "owned", "quote": "The company opened an office."}],
-    )
-    await owner_service.repo.put("evt.claims", "unrelated", unrelated)
-    supplied = assessment(proof, klass="STRUCTURAL_SHOCK", criterion="G1")
-    supplied["structural_gates"] = [{"gate": "G1", "satisfied": True, "evidence": [proof]}]
-    if binding == "implicit":
-        supplied.pop("structural_gates")
-    elif binding == "unrelated_claim":
-        supplied["criterion_claim_id"] = "unrelated"
-    elif binding == "different_gate":
-        supplied["structural_gates"][0]["gate"] = "G2"
-    elif binding == "unsatisfied":
-        supplied["structural_gates"][0]["satisfied"] = False
-    elif binding == "no_claim":
-        supplied["criterion_claim_id"] = None
-    supplied["impact_horizon"].update(ramp_shape="STEP", dependencies=[], time_to_materiality="Weeks")
-    original = copy.deepcopy(supplied)
-    result = await owner_service.dispatch("set_assessment", {"event_id": eid, "assessment": supplied}, {})
-    assert supplied == original
-    assert result["class"] == expected
-    assert result["criterion"] == "G1"
-    assert result["criterion_claim_id"] == original["criterion_claim_id"]
-    assert result["criterion_quote"] == (
-        {proof: claim["quote"], "unrelated": unrelated["quote"]}.get(original["criterion_claim_id"]) or ""
-    )
-    assert ("STRUCTURAL_GATE" in result["class_reasons"]) == (expected != "STRUCTURAL_SHOCK")
-
-    assert (await owner_service.repo.get("evt.claims", proof))["evidence"][0]["quote"] == primary_quote
-
-
-async def test_watched_token_beneficiary_preserves_outside_primary_event_class(owner_service):
-    created, _ = await create(owner_service)
-    eid = created["event_id"]
-    event = await owner_service.repo.get("evt.events", eid)
-    await owner_service.repo.put("evt.events", eid, {**event, "tokens_mentioned": []})
-    await owner_service.repo.put(
-        "evt.beneficiary_maps", eid + ":1", {"event_id": eid, "map_version": 1, "analysis_set": ["world:WLD"]}
-    )
-    await owner_service.repo.put(
-        "evt.beneficiary_edges",
-        "covered-beneficiary",
-        {
-            "edge_id": "covered-beneficiary",
-            "event_id": eid,
-            "map_version": 1,
-            "token_id": "world:WLD",
-            "role": "SECONDARY",
-        },
-    )
-    supplied = assessment(created["accepted_claims"][0]["claim_id"], klass="MAJOR", criterion="M2")
-    supplied["impact_horizon"].update(ramp_shape="STEP", dependencies=[], time_to_materiality="Weeks")
-    result = await owner_service.dispatch("set_assessment", {"event_id": eid, "assessment": supplied}, {})
-    assert result["class"] == "MAJOR"
-    assert "NO_UNIVERSE_CONCERN" not in result["class_reasons"]

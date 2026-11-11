@@ -78,13 +78,16 @@ def sequence(reader, monkeypatch, values, clock):
     return attempts
 
 
+@pytest.mark.parametrize("status", [403, 429, 503])
 @pytest.mark.parametrize(
     "success_on,expected_times,expected_waits", [(1, [0], []), (2, [0, 1], [1]), (3, [0, 1, 6], [1, 5])]
 )
-async def test_transient_http_retry_stops_on_first_success(
-    reader, monkeypatch, clock, success_on, expected_times, expected_waits
+async def test_http_error_retry_stops_on_first_success(
+    reader, monkeypatch, clock, success_on, expected_times, expected_waits, status
 ):
-    attempts = sequence(reader, monkeypatch, [http_error() for _ in range(success_on - 1)] + [HTML], clock)
+    attempts = sequence(
+        reader, monkeypatch, [http_error(status) for _ in range(success_on - 1)] + [HTML], clock
+    )
     rows, size = await reader.fetch_profile("alice", 100)
     assert [row["id"] for row in rows] == ["100"]
     assert rows[0]["text"] == "Hello" and size == len(HTML)
@@ -93,8 +96,10 @@ async def test_transient_http_retry_stops_on_first_success(
     assert all(request.method == "GET" and request.content == b"" for _, request, _ in attempts)
 
 
-@pytest.mark.parametrize("status", [408, 429, 500, 503, 599])
-async def test_exhaustion_retains_all_three_response_bodies(reader, monkeypatch, clock, status):
+@pytest.mark.parametrize("status", [400, 401, 403, 404, 408, 410, 429, 500, 503, 599])
+async def test_every_http_error_status_gets_three_attempts_and_keeps_all_three_responses(
+    reader, monkeypatch, clock, status
+):
     attempts = sequence(
         reader, monkeypatch, [http_error(status, f"response-{n}".encode()) for n in range(1, 4)], clock
     )
@@ -110,16 +115,7 @@ async def test_exhaustion_retains_all_three_response_bodies(reader, monkeypatch,
     ]
     assert diagnostics["request"] == {"method": "GET", "url": "https://x.com/alice", "body": None}
     assert all(a["status"] == status and a["retryable"] for a in diagnostics["attempts"])
-
-
-@pytest.mark.parametrize("status", [400, 401, 403, 404, 410])
-async def test_permanent_http_failure_is_not_retried(reader, monkeypatch, clock, status):
-    attempts = sequence(reader, monkeypatch, [http_error(status)], clock)
-    with pytest.raises(reader.ProfileFailure) as failure:
-        await reader.fetch_profile("alice", 100)
-    assert len(attempts) == 1 and clock.waits == []
-    assert failure.value.diagnostics["outcome"] == "permanent_failure"
-    assert failure.value.diagnostics["attempts"][0]["response"]["body"] == "upstream unavailable"
+    assert str(failure.value) == f"PUBLIC_PROFILE_HTTP_{status}"
 
 
 async def test_connection_errors_retry_and_parser_errors_do_not(reader, monkeypatch, clock):
@@ -131,7 +127,7 @@ async def test_connection_errors_retry_and_parser_errors_do_not(reader, monkeypa
     attempts = sequence(reader, monkeypatch, [b"<title>login</title>"], clock)
     with pytest.raises(reader.ProfileFailure) as failure:
         await reader.fetch_profile("alice", 100)
-    assert len(attempts) == 1
+    assert len(attempts) == 1 and failure.value.diagnostics["outcome"] == "permanent_failure"
     assert str(failure.value) == "PUBLIC_PROFILE_NOT_READABLE"
 
 
@@ -149,7 +145,7 @@ async def test_run_deadline_prevents_retry_and_preserves_completed_attempts(
 
 
 @pytest.mark.parametrize("kind", ["gzip", "binary", "oversized", "gzip_oversized", "broken_gzip"])
-def test_response_capture_is_bounded_and_preserves_encoding(reader, kind):
+def test_response_capture_is_whole_and_preserves_encoding(reader, kind):
     content = (
         b"full response body"
         if kind == "gzip"
@@ -173,11 +169,10 @@ def test_response_capture_is_bounded_and_preserves_encoding(reader, kind):
         if evidence["bodyEncoding"] == "base64"
         else evidence["body"].encode()
     )
-    assert captured == (wire if kind == "broken_gzip" else content)[: reader.BODY_LIMIT]
-    assert evidence["bodyBytes"] == len(captured)
-    assert evidence["bodyTruncated"] == (kind in {"oversized", "gzip_oversized"})
-    if kind == "oversized":
-        assert evidence["omittedWireBytes"] == 50
+    assert captured == (wire if kind == "broken_gzip" else content)
+    assert evidence["bodyBytes"] == len(captured) and evidence["wireBytes"] == len(wire)
+    assert not evidence["bodyTruncated"] and evidence["omittedWireBytes"] == 0
+    assert "captureLimitBytes" not in evidence and "serializedBodyLimitBytes" not in evidence
     if kind == "broken_gzip":
         assert evidence["decodeError"] == "GZIP_DECODE_FAILED_WIRE_PREFIX"
 
@@ -188,20 +183,22 @@ async def test_partial_error_stream_preserves_prefix_and_closes_transport(reader
             yield b"prefix"
             raise httpx.RemoteProtocolError("truncated body")
 
-    stream = BrokenBody(b"")
+    streams = [BrokenBody(b"") for _ in range(3)]
     sequence(
         reader,
         monkeypatch,
-        [httpx.Response(403, headers={"Content-Length": "20"}, stream=stream)],
+        [httpx.Response(403, headers={"Content-Length": "20"}, stream=stream) for stream in streams],
         clock,
     )
     with pytest.raises(reader.ProfileFailure) as failure:
         await reader.fetch_profile("alice", 100)
-    evidence = failure.value.diagnostics["attempts"][0]["response"]
-    assert evidence["body"] == "prefix"
-    assert evidence["bodyTruncated"] and evidence["omittedWireBytes"] == 14
-    assert evidence["readError"] == "RESPONSE_BODY_READ_FAILED"
-    assert stream.closed
+    assert failure.value.diagnostics["attemptCount"] == 3
+    for attempt in failure.value.diagnostics["attempts"]:
+        evidence = attempt["response"]
+        assert evidence["body"] == "prefix"
+        assert evidence["bodyTruncated"] and evidence["omittedWireBytes"] == 14
+        assert evidence["readError"] == "RESPONSE_BODY_READ_FAILED"
+    assert all(stream.closed for stream in streams)
 
 
 def test_partial_error_response_reports_known_missing_bytes(reader):
@@ -210,22 +207,35 @@ def test_partial_error_response_reports_known_missing_bytes(reader):
     assert evidence["omittedWireBytes"] == 14
 
 
-def test_diagnostics_exclude_credentials_even_if_echoed_by_upstream(reader, monkeypatch):
+def test_diagnostics_keep_every_header_and_exclude_credentials_even_if_echoed_by_upstream(
+    reader, monkeypatch
+):
     monkeypatch.setenv("APIFY_TOKEN", "secret-apify-value")
     evidence = reader.response_evidence(
         http_error(
-            headers={
-                "Content-Type": "text/plain",
-                "Set-Cookie": "session-secret",
-                "Authorization": "auth-secret",
-                "X-Request-ID": "safe-id",
-            },
+            headers=[
+                ("Content-Type", "text/plain"),
+                ("Set-Cookie", "guest_id=session-secret; Max-Age=63072000; Path=/"),
+                ("Set-Cookie", "ct0=session-secret; Secure"),
+                ("Authorization", "auth-secret"),
+                ("X-Request-ID", "safe-id"),
+                ("X-Echo", "secret-apify-value"),
+                ("X-Custom-Probe-Header", "kept"),
+            ],
         ),
         b"secret-apify-value\nCookie: session-secret\nAuthorization: Bearer auth-secret",
     )
     serialized = json.dumps(evidence)
     assert all(secret not in serialized for secret in ("secret-apify-value", "session-secret", "auth-secret"))
-    assert evidence["headers"] == {"content-type": "text/plain", "x-request-id": "safe-id"}
+    assert evidence["headers"] == [
+        ["content-type", "text/plain"],
+        ["set-cookie", "[REDACTED]; Max-Age=63072000; Path=/"],
+        ["set-cookie", "[REDACTED]; Secure"],
+        ["authorization", "[REDACTED]"],
+        ["x-request-id", "safe-id"],
+        ["x-echo", "[REDACTED]"],
+        ["x-custom-probe-header", "kept"],
+    ]
     assert evidence["redacted"]
 
 
@@ -422,7 +432,9 @@ def test_javascript_string_literals_decode_like_the_browser(reader):
 
 
 @pytest.mark.parametrize("limit", [1, 24])
-async def test_new_posts_read_replied_and_linked_posts_from_their_status_pages(reader, monkeypatch, limit):
+async def test_new_posts_read_replied_and_linked_posts_from_their_status_pages(
+    reader, monkeypatch, clock, limit
+):
     pages = {
         "/alice": PROFILE,
         "/carol/status/3000": status_page("3000", "carol", "Carol's question &amp; context"),
@@ -453,24 +465,28 @@ async def test_new_posts_read_replied_and_linked_posts_from_their_status_pages(r
     expected = "REFERENCE_FETCH_LIMIT" if limit == 1 else "PUBLIC_POST_HTTP_404"
     assert reply["referencedPosts"][1]["text"] is None and reply["referencedPosts"][1]["error"] == expected
     assert sorted(requested) == sorted(
-        ["/alice", "/carol/status/3000"] + (["/dave/status/4000"] if limit > 1 else [])
+        ["/alice", "/carol/status/3000"] + (["/dave/status/4000"] * 3 if limit > 1 else [])
     )
+    if limit > 1:
+        diagnostics = reply["referencedPosts"][1]["diagnostics"]
+        assert diagnostics["request"]["url"] == "https://x.com/dave/status/4000"
+        assert [(a["status"], a["response"]["body"]) for a in diagnostics["attempts"]] == [
+            (404, "missing")
+        ] * 3
+    else:
+        assert "diagnostics" not in reply["referencedPosts"][1]
+    assert "diagnostics" not in reply["referencedPosts"][0]
     assert result["health"] == "healthy" and result["nextCursors"] == {"alice": "106"}
 
 
-@pytest.mark.integration
-@pytest.mark.parametrize("count", [86, 200])
 @pytest.mark.parametrize("kind", ["json_escaped", "binary"])
-async def test_actor_outage_bounds_aggregate_evidence(reader, monkeypatch, clock, count, kind):
-    import tracemalloc
-
-    raw = (b"\x00\xff\x80" if kind == "binary" else b'"\\\t') * (reader.BODY_LIMIT // 3 + 1)
-    raw = raw[: reader.BODY_LIMIT]
-    names = [f"account{index}" for index in range(count)]
+async def test_actor_outage_keeps_every_response_whole(reader, monkeypatch, clock, kind):
+    raw = (b"\x00\xff\x80" if kind == "binary" else b'"\\\t') * (reader.BODY_LIMIT // 3 + 20)
+    names = [f"account{index}" for index in range(3)]
     streams = []
 
     def open_profile(request):
-        response = http_error(body=raw, headers={"Content-Length": str(len(raw))})
+        response = http_error(403, raw, {"Content-Length": str(len(raw))})
         streams.append(response.stream)
         return response
 
@@ -479,30 +495,17 @@ async def test_actor_outage_bounds_aggregate_evidence(reader, monkeypatch, clock
         "AsyncClient",
         lambda **kwargs: HTTP_CLIENT(transport=httpx.MockTransport(open_profile), **kwargs),
     )
-    monkeypatch.setattr(reader, "run_deadline", lambda: 10000)
     fetch_snapshot = importlib.import_module("direct_fetch").fetch_snapshot
-    tracemalloc.start()
-    try:
-        output = await fetch_snapshot({"handles": names, "cursors": dict.fromkeys(names, "90")})
-        serialized = json.dumps(output, ensure_ascii=True).encode()
-        _, peak = tracemalloc.get_traced_memory()
-    finally:
-        tracemalloc.stop()
-    assert peak < 128_000_000
-    assert len(serialized) < 2 * reader.RUN_EVIDENCE_LIMIT + 2_000_000
-    assert len(output["accounts"]) == len(output["failedAccounts"]) == count
+    output = await fetch_snapshot({"handles": names, "cursors": dict.fromkeys(names, "90")})
+    assert len(raw) > reader.BODY_LIMIT
+    assert len(output["accounts"]) == len(output["failedAccounts"]) == 3
     assert output["posts"] == [] and output["nextCursors"] == dict.fromkeys(names, "90")
-    assert len(streams) == 3 * count and all(stream.closed for stream in streams)
-    total = 0
+    assert len(streams) == 9 and all(stream.closed for stream in streams)
     for account in output["accounts"]:
         diagnostics = account["diagnostics"]
-        assert diagnostics["attemptCount"] == 3
+        assert diagnostics["attemptCount"] == 3 and account["error"] == "PUBLIC_PROFILE_HTTP_403"
         for attempt in diagnostics["attempts"]:
             response = attempt["response"]
             body = response["body"]
             captured = base64.b64decode(body) if response["bodyEncoding"] == "base64" else body.encode()
-            assert captured and raw.startswith(captured)
-            assert response["bodyTruncated"] and response["omittedWireBytes"] > 0
-            assert response["serializedBodyLimitBytes"] == reader.RUN_EVIDENCE_LIMIT // (3 * count)
-            total += len(json.dumps(body, ensure_ascii=True))
-    assert total <= reader.RUN_EVIDENCE_LIMIT
+            assert captured == raw and not response["bodyTruncated"] and response["omittedWireBytes"] == 0

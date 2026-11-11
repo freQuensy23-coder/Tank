@@ -451,7 +451,7 @@ async def test_latest_refused_update_is_not_presented_as_a_new_success(settings)
     assert "Предыдущая карточка в Alerts" in card["text"]
 
 
-async def test_final_class_cap_is_explained_before_positive_agent_rationales(settings):
+async def test_below_major_outcome_gives_the_agent_class_reasons(settings):
     repo = MemoryRepository()
     item, event = await analysis(repo, settings, klass="LOW")
     await repo.put(
@@ -461,12 +461,13 @@ async def test_final_class_cap_is_explained_before_positive_agent_rationales(set
             "ems_id": "assessment",
             "event_id": event["event_id"],
             "class": "LOW",
-            "class_reasons": ["Large licensed platform", "New region", "NO_UNIVERSE_CONCERN"],
+            "class_reasons": ["Small regional partner", "No new users", "Already public"],
         },
     )
     card = render(await snapshot(repo, item["item_id"]))
-    assert "Событие не затрагивает токены из реестра Tank" in card["text"]
-    assert "NO_UNIVERSE_CONCERN" not in card["text"]
+    assert card["code"] == "BELOW_MAJOR"
+    assert "Small regional partner; No new users" in card["text"]
+    assert "Already public" not in card["text"]
     assert "Для публикации требуется" not in card["text"]
 
 

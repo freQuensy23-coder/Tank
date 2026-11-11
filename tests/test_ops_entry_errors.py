@@ -8,11 +8,11 @@ import pytest
 from test_session_binding_concurrency import fixture_repo
 from test_sources import RSS
 from test_sources import settings as source_settings
-from test_xsensor import URL, account, failed, run
+from test_xsensor import URL, account, failed, post, run
 
 from tank import ops_entry_errors
 from tank.delivery import DeliveryService
-from tank.ops_entry_errors import MESSAGE_LIMIT, render, report_entry_errors, units
+from tank.ops_entry_errors import CAPTION_LIMIT, MESSAGE_LIMIT, report_entry_errors, units
 from tank.sources import SourceService
 from tank.storage import MemoryRepository
 
@@ -98,7 +98,9 @@ async def test_burst_of_broken_entries_is_one_message_clipped_to_telegram_limit(
     assert len(notice["entry_errors"]) == 60 and len(await entry_jobs(repo)) == 1
     assert units(html.escape(notice["text"])) <= MESSAGE_LIMIT
     assert "Новых записей с ошибкой: 60" in notice["text"]
-    assert "полный список: out.ops_notices " + notice["notice_id"] in notice["text"]
+    assert (
+        "полный список: out.ops_notices " + notice["notice_id"] in notice["text"] and "document" not in notice
+    )
 
 
 @pytest.mark.parametrize("enabled,replay", [(False, False), (True, True)])
@@ -177,7 +179,7 @@ async def test_publisher_json_entry_error_is_reported_and_delivered_to_ops(tmp_p
         await delivery.deliver(job["payload"])
         await delivery.deliver(job["payload"])
     assert len(requests) == 1 and requests[0]["chat_id"] == "ops"
-    assert requests[0]["text"] == html.escape(notice["text"])
+    assert requests[0]["text"] == html.escape(notice["text"]) and "document" not in notice
 
 
 async def test_x_account_failures_are_keyed_by_account():
@@ -238,8 +240,10 @@ async def test_failed_x_run_request_is_reported_once_with_its_response(tmp_path)
         text = notice["text"]
         assert "Запуск сбора X в Apify завершился HTTP-ошибкой (APIFY_RUN_HTTP_ERROR)" in text
         assert "весь запуск сбора X" in text and "Ответ: HTTP 400 Bad Request" in text
-        assert "Заголовки: content-type: application/json; content-length: " in text
-        assert '"type": "run-failed"' in text and "token=[REDACTED]" in text
+        body = error["response"]["body"]
+        assert f"Заголовки:\ncontent-type: application/json\ncontent-length: {len(body)}\n" in text
+        assert text.endswith(f"Тело ответа ({len(body)} байт):\n{body}") and "token=[REDACTED]" in body
+        assert "document" not in notice
         assert "FAKE-token" not in json.dumps(notice, default=str)
         await service.poll_once("S29")
     [account_notice] = [row for row in await entry_notices(repo) if row["notice_id"] != notice["notice_id"]]
@@ -274,28 +278,271 @@ async def test_failed_x_run_is_reported_once_per_failure_episode_and_status(tmp_
     assert len(await entry_jobs(repo)) == len(reported)
 
 
-def test_long_x_run_response_body_is_clipped_inside_the_telegram_limit():
-    body = json.dumps({"error": {"message": '"&<>' * 2048}})[:8192]
+OPS = SimpleNamespace(
+    ops_progress_enabled=True, telegram_token="test", telegram_alerts_chat="alerts", telegram_ops_chat="ops"
+)
+
+
+async def deliver_twice(repo, notice_id):
+    """Deliver the notice's job twice through the real sender; the requests Telegram received."""
+    requests = []
+
+    def respond(request):
+        requests.append(request)
+        return httpx.Response(200, json={"ok": True, "result": {"message_id": 7, "date": 1}})
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(respond)) as http:
+        delivery = DeliveryService(repo, OPS, http=http)
+        [job] = [job for job in await entry_jobs(repo) if job["payload"]["notice_id"] == notice_id]
+        await delivery.deliver(job["payload"])
+        await delivery.deliver(job["payload"])
+    return requests
+
+
+def x_evidence(url, statuses, body, reason="PUBLIC_PROFILE_HTTP_"):
+    """The worker's record of its requests for one page, as the actor returns it."""
+    attempts = [
+        {
+            "attempt": number,
+            "at": f"2026-11-10T10:00:0{number}+00:00",
+            "status": status,
+            "error": f"{reason}{status}",
+            "retryable": True,
+            "response": {
+                "status": status,
+                "headers": [
+                    ["content-type", "text/html"],
+                    ["set-cookie", "[REDACTED]; Path=/"],
+                    ["set-cookie", "[REDACTED]; Secure"],
+                    ["x-response-time", str(100 + number)],
+                ],
+                "body": body,
+                "bodyEncoding": "utf-8",
+                "bodyBytes": len(body.encode()),
+                "bodyTruncated": False,
+                "omittedWireBytes": 0,
+                "readError": None,
+                "decodeError": None,
+                "redacted": True,
+            },
+        }
+        for number, status in enumerate(statuses, 1)
+    ]
+    return {
+        "request": {"method": "GET", "url": url, "body": None},
+        "attempts": attempts,
+        "attemptCount": len(attempts),
+        "outcome": "exhausted",
+    }
+
+
+async def test_long_x_run_response_is_sent_whole_as_a_document_with_a_caption():
+    repo = MemoryRepository()
+    body = json.dumps({"error": {"message": '"&<>' * 5000 + " END-OF-BODY"}})
+    headers = {f"x-apify-header-{number}": f"value {number} <&>" for number in range(40)}
     response = {
         "status": 400,
         "reason_phrase": "Bad Request",
-        "headers": {},
+        "headers": headers,
         "body": body,
-        "body_bytes": 9000,
-        "body_truncated": True,
+        "body_bytes": len(body),
     }
     error = {"account": None, "reason": "APIFY_RUN_HTTP_ERROR", "error": "Client error", "response": response}
-    notice = {
-        "notice_id": "entry_errors_x",
-        "source_id": "S29",
-        "feed_url": URL,
-        "seen_at": "2026-11-08T17:40:00Z",
-        "entry_errors": [error],
+    notice_id = await report_entry_errors(
+        repo, OPS, {"source_id": "S29", "name": "X"}, {"url": URL}, [error], "2026-11-08T17:40:00Z"
+    )
+    notice = await repo.get("out.ops_notices", notice_id)
+    document = notice["document"]
+    assert document["filename"] == notice_id + ".txt"
+    assert document["text"].endswith(f"Тело ответа ({len(body)} байт):\n{body}")
+    assert "Ответ: HTTP 400 Bad Request\nЗаголовки:\nx-apify-header-0: value 0 <&>\n" in document["text"]
+    assert all(f"{name}: {value}\n" in document["text"] for name, value in headers.items())
+    caption = notice["text"]
+    assert units(html.escape(caption)) <= CAPTION_LIMIT
+    assert "Ответ: HTTP 400 Bad Request" in caption and "в приложенном файле" in caption
+    assert "END-OF-BODY" not in caption and "… и ещё" not in caption
+    [request] = await deliver_twice(repo, notice_id)
+    assert request.url.path == "/bottest/sendDocument"
+    assert request.headers["content-type"].startswith("multipart/form-data")
+    assert f'name="document"; filename="{notice_id}.txt"'.encode() in request.content
+    assert document["text"].encode() in request.content
+    assert (
+        html.escape(caption).encode() in request.content and b'name="chat_id"\r\n\r\nops' in request.content
+    )
+    [sent] = await repo.list("out.deliveries", filters={"status": "SENT"})
+    assert sent["message_ref"] == "7"
+
+
+async def test_worker_http_error_is_reported_once_per_account_with_every_attempt_in_full():
+    repo = MemoryRepository()
+    source = {"source_id": "S29", "name": "X"}
+    feed = {"url": URL}
+    body = "<html><body>BODY-START " + "Access denied & blocked. " * 1500 + "BODY-END</body></html>"
+    blocked = {
+        "account": "blocked",
+        "reason": "PUBLIC_PROFILE_HTTP_403",
+        "diagnostics": x_evidence("https://x.com/blocked", [403, 403, 403], body),
     }
-    text = render(notice)
-    assert units(html.escape(text)) <= MESSAGE_LIMIT and "… и ещё" not in text
-    assert 'Тело ответа (9000 байт, сохранены первые 8 КБ): {"error": {"message": "\\"&<>' in text
-    assert text.endswith("…")
+    notice_id = await report_entry_errors(repo, OPS, source, feed, [blocked], "2026-11-10T10:00:10Z")
+    notice = await repo.get("out.ops_notices", notice_id)
+    text = notice["document"]["text"]
+    assert "Запрос к X: GET https://x.com/blocked\nПопыток: 3; итог: exhausted\n" in text
+    for number in (1, 2, 3):
+        assert (
+            f"Попытка {number} · 2026-11-10T10:00:0{number}+00:00 · PUBLIC_PROFILE_HTTP_403\n"
+            "Ответ: HTTP 403\n"
+            "Заголовки:\n"
+            "content-type: text/html\n"
+            "set-cookie: [REDACTED]; Path=/\n"
+            "set-cookie: [REDACTED]; Secure\n"
+            f"x-response-time: {100 + number}\n"
+            f"Тело ответа ({len(body)} байт, учётные данные скрыты):\n{body}"
+        ) in text
+    caption = notice["text"]
+    assert units(html.escape(caption)) <= CAPTION_LIMIT and "BODY-START" not in caption
+    assert "1. PUBLICPROFILEHTTP403\nЗапись: аккаунт @blocked\n" in caption
+    assert caption.endswith(
+        "Запрос к X: GET https://x.com/blocked\nПопыток: 3; итог: exhausted\nОтветы: 403, 403, 403"
+    )
+    [request] = await deliver_twice(repo, notice_id)
+    assert request.url.path == "/bottest/sendDocument" and request.content.count(body.encode()) == 3
+    later = {
+        "account": "Blocked",
+        "reason": "PUBLIC_PROFILE_HTTP_429",
+        "diagnostics": x_evidence("https://x.com/blocked", [429, 429, 429], "Rate limit exceeded"),
+    }
+    assert await report_entry_errors(repo, OPS, source, feed, [later], "2026-11-10T10:05:00Z") is None
+    assert len(await entry_notices(repo)) == 1 and len(await entry_jobs(repo)) == 1
+
+
+async def test_short_worker_http_error_is_one_message_with_the_whole_response():
+    repo = MemoryRepository()
+    gone = {
+        "account": "gone",
+        "reason": "PUBLIC_PROFILE_HTTP_404",
+        "diagnostics": x_evidence(
+            "https://x.com/gone", [404, 404, 404], '{"errors": [{"code": 34}]} <not found>'
+        ),
+    }
+    notice_id = await report_entry_errors(
+        repo, OPS, {"source_id": "S29", "name": "X"}, {"url": URL}, [gone], "2026-11-10T10:00:10Z"
+    )
+    notice = await repo.get("out.ops_notices", notice_id)
+    assert "document" not in notice and units(html.escape(notice["text"])) <= MESSAGE_LIMIT
+    assert notice["text"].count("x-response-time: ") == 3
+    assert (
+        notice["text"].count(
+            'Тело ответа (38 байт, учётные данные скрыты):\n{"errors": [{"code": 34}]} <not found>'
+        )
+        == 3
+    )
+    [request] = await deliver_twice(repo, notice_id)
+    assert request.url.path == "/bottest/sendMessage"
+    assert json.loads(request.content)["text"] == html.escape(notice["text"])
+
+
+async def test_referenced_post_http_error_is_reported_once_per_referenced_post():
+    repo = MemoryRepository()
+    source = {"source_id": "S29", "name": "X"}
+    feed = {"url": URL}
+
+    def unread(post_id, inside, status=404):
+        url = f"https://x.com/i/status/{post_id}"
+        return {
+            "account": "alice",
+            "reason": f"PUBLIC_POST_HTTP_{status}",
+            "referenced_post": {"relation": "replied_to", "id": post_id, "url": url, "in": inside},
+            "diagnostics": x_evidence(url, [status] * 3, "Not Found", "PUBLIC_POST_HTTP_"),
+        }
+
+    account_failure = {"account": "alice", "reason": "MISSING_FROM_RUN"}
+    first = [account_failure, unread("40", "https://x.com/alice/status/105")]
+    notice = await repo.get(
+        "out.ops_notices", await report_entry_errors(repo, OPS, source, feed, first, "2026-11-10T10:00:10Z")
+    )
+    assert len(notice["entry_errors"]) == 2 and "document" not in notice
+    assert (
+        "2. PUBLICPOSTHTTP404\n"
+        "Запись: аккаунт @alice · пост, на который дан ответ https://x.com/i/status/40 "
+        "в посте https://x.com/alice/status/105\n"
+        "Запрос к X: GET https://x.com/i/status/40\n"
+        "Попыток: 3; итог: exhausted\n"
+        "Попытка 1 · 2026-11-10T10:00:01+00:00 · PUBLIC_POST_HTTP_404\n"
+        "Ответ: HTTP 404\n"
+    ) in notice["text"]
+    again = [
+        unread("40", "https://x.com/alice/status/106", 403),
+        unread("41", "https://x.com/alice/status/106"),
+    ]
+    second = await repo.get(
+        "out.ops_notices", await report_entry_errors(repo, OPS, source, feed, again, "2026-11-10T10:05:00Z")
+    )
+    assert [error["referenced_post"]["id"] for error in second["entry_errors"]] == ["41"]
+    assert await report_entry_errors(repo, OPS, source, feed, again, "2026-11-10T10:10:00Z") is None
+
+
+async def test_s29_poll_reports_worker_http_errors_and_keeps_them_out_of_the_checkpoint(tmp_path):
+    repo = MemoryRepository()
+    source = {"source_id": "S29", "name": "X", "feeds": [{"kind": "x", "url": URL}]}
+    settings = source_settings(tmp_path, [source])
+    settings.ops_progress_enabled = True
+    settings.apify_api_token = "FAKE-token"
+    profile = x_evidence("https://x.com/blocked", [403, 403, 403], "PROFILE-BODY " * 400)
+    reply = x_evidence("https://x.com/i/status/40", [404, 404, 404], "POST-BODY", "PUBLIC_POST_HTTP_")
+    reference = {
+        "relation": "replied_to",
+        "id": "40",
+        "author": None,
+        "url": "https://x.com/i/status/40",
+        "publishedAt": None,
+        "text": None,
+        "error": "PUBLIC_POST_HTTP_404",
+        "diagnostics": reply,
+    }
+    accounts = [
+        account("alice"),
+        {**failed("blocked"), "error": "PUBLIC_PROFILE_HTTP_403", "diagnostics": profile},
+    ]
+    degraded = run(
+        [{**post("105", "alice"), "referencedPosts": [reference]}],
+        accounts,
+        {"alice": "105"},
+        health="degraded",
+    )
+    answers = [
+        run([post("100", "alice")], [account("alice"), account("blocked")], {"alice": "100", "blocked": "7"})
+    ]
+    answers += [degraded, degraded]
+
+    def respond(request):
+        return httpx.Response(201, content=json.dumps(answers.pop(0)).encode())
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(respond)) as http:
+        service = SourceService(repo, settings, http=http)
+        service.accounts = {
+            handle: {"handle": handle, "role": "OTHER", "entity_id": handle}
+            for handle in ("alice", "blocked")
+        }
+        for _ in range(3):
+            await service.poll_once("S29")
+    [notice] = await entry_notices(repo)
+    assert [error["reason"] for error in notice["entry_errors"]] == [
+        "PUBLIC_PROFILE_HTTP_403",
+        "PUBLIC_POST_HTTP_404",
+    ]
+    text = notice["document"]["text"]
+    assert text.count("PROFILE-BODY " * 400) == 3 and text.count("\nPOST-BODY") == 3
+    assert (
+        "пост, на который дан ответ https://x.com/i/status/40 в посте https://x.com/alice/status/105" in text
+    )
+    assert len(await entry_jobs(repo)) == 1
+    checkpoint = await repo.get("ops.source_checkpoints", "S29:0")
+    assert checkpoint["entry_errors"] == [{"account": "blocked", "reason": "PUBLIC_PROFILE_HTTP_403"}]
+    assert "ops_entry_errors" not in checkpoint and "PROFILE-BODY" not in json.dumps(checkpoint)
+    [item] = await repo.list("ingest.source_items")
+    assert "[text unavailable: PUBLIC_POST_HTTP_404]" in item["quoted"] and "POST-BODY" not in json.dumps(
+        item
+    )
 
 
 @pytest.mark.parametrize("second", ["broken", "recovered"])

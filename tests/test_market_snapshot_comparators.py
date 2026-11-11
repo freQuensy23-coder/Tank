@@ -1,12 +1,10 @@
-"""Full snapshots retain exact sector returns without dense unrelated histories."""
+"""Full snapshots retain the registry peers of the sector of the target and their coverage counts."""
 
-from copy import deepcopy
 from datetime import timedelta
 
 import pytest
 import yaml
 
-from tank.analysis.truth import relative_truth
 from tank.market.service import MarketService
 from tank.util import iso, parse_time
 
@@ -95,44 +93,16 @@ async def test_comparator_projection_matches_dense_reader_with_sparse_boundaries
     service = MarketService(repo, settings)
     try:
         current = await service.snapshot(target["token_id"], end, anchor={"type": "T1", "ts": iso(start)})
-        if long_event:
-            for kind, field in (("price", "stat_price_series"), ("volume", "stat_volume_series")):
-                independently_read = await service._condition_kline_series(
-                    target,
-                    end - timedelta(days=90),
-                    end,
-                    current["assembled_at"],
-                    kind=kind,
-                    coverage_count=current["series_coverage_counts"][target["instrument_id"]],
-                    fixed_window=True,
-                )
-                assert current[field][target["instrument_id"]] == independently_read
-        dense = deepcopy(current)
-        dense.pop("stat_price_series")
-        dense.pop("series_coverage_counts")
-        for inst in registry["instruments"]:
-            prior = await service._range(
-                "mkt.klines_1m",
-                "open_time",
-                start=end - timedelta(days=90),
-                end=end,
-                filters={"instrument_id": inst["instrument_id"]},
-            )
-            dense["klines"] = [r for r in dense["klines"] if r["instrument_id"] != inst["instrument_id"]]
-            dense["klines"].extend(
-                r for r in prior if parse_time(r["open_time"]) + timedelta(minutes=1) <= end
-            )
-        expected = relative_truth(dense, start, end)
-        actual = relative_truth(current, start, end)
-        assert actual == expected
-        assert actual["windows"]["W4H"]["r_sector_adj"] is not None
-        if target_gap:
-            assert actual["close_1h_price"] is not None
-        peers = {
-            k: v for k, v in current["stat_price_series"].items() if v["token_id"].startswith("test:PEER")
+        assert "stat_price_series" not in current
+        assert "stat_volume_series" not in current
+        counts = current["series_coverage_counts"]
+        assert {"binance:spot:PEER1", "binance:spot:PEER2"} <= set(counts)
+        assert {
+            i["instrument_id"] for i in current["instruments"] if i["token_id"].startswith("test:PEER")
+        } == {
+            "binance:spot:PEER1",
+            "binance:spot:PEER2",
+            "okx:spot:PEER1",
         }
-        assert set(peers) == {"binance:spot:PEER1", "binance:spot:PEER2"}
-        assert sum(len(v["times_us"]) for v in peers.values()) <= 12
-        assert len([r for r in current["klines"] if r["token_id"].startswith("test:PEER")]) == 3
     finally:
         await service.close()

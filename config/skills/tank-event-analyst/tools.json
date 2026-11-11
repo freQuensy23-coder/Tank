@@ -940,7 +940,7 @@
   },
   {
     "name": "set_assessment",
-    "description": "Submit class and criterion, the claim proving the criterion, dimension scores with reasons and claim evidence, economic capture chains and impact horizon. Cite recorded claims of the current event by claim_id and identify the M1 venue with criterion_venue_id. Read the event's claim IDs before calling (tank-data, «Claims of an event»): every numeric dimension score except implementation cites at least one supporting claim in evidence, and a dimension no recorded claim supports is value null with a reason (01 FR-M-01: unknown, never a number, 0 included); Tank refuses an uncited score and names every such dimension. Provide structured measured magnitude bases, timing evidence and mechanism flags rather than expecting quote-keyword inference. Tank applies the deterministic class, capture and horizon rules and mandatory caps; it does not reclassify source certainty, verified flags or stages. A final MAJOR or STRUCTURAL_SHOCK escalates official source polling to 15 seconds for 2 hours and opens reaction tracking. Returns final class and applied caps. Returns LOW with NO_UNIVERSE_CONCERN when neither mentioned tokens nor current beneficiary edges concern a registry token. A structural criterion needs criterion_claim_id to be a verified claim, and supplied structural gate evidence must include it. Reaction tracking computes PRE windows immediately and schedules only the five POST checkpoints; no agent reaction jobs are needed.",
+    "description": "Submit the event's class — LOW, MATERIAL, MAJOR or STRUCTURAL_SHOCK, your judgment of the real significance of the event for the market and the affected tokens — with class_reasons that say why, dimension scores with reasons and claim evidence, economic capture chains and impact horizon. Cite recorded claims of the current event by claim_id. Read the event's claim IDs before calling (tank-data, «Claims of an event»): every numeric dimension score except implementation cites at least one supporting claim in evidence, and a dimension no recorded claim supports is value null with a reason (01 FR-M-01: unknown, never a number, 0 included); Tank refuses an uncited score and names every such dimension. Provide structured measured magnitude bases, timing evidence and mechanism flags rather than expecting quote-keyword inference. Tank stores the class exactly as submitted and never changes it; it applies the deterministic capture and horizon rules and does not reclassify source certainty, verified flags or stages. A MAJOR or STRUCTURAL_SHOCK escalates official source polling to 15 seconds for 2 hours and opens reaction tracking. Returns the stored assessment. Reaction tracking computes PRE windows immediately and schedules only the five POST checkpoints; no agent reaction jobs are needed.",
     "input_schema": {
       "type": "object",
       "additionalProperties": false,
@@ -1321,76 +1321,14 @@
                 "implementation"
               ]
             },
-            "structural_gates": {
-              "type": [
-                "array",
-                "null"
-              ],
-              "items": {
-                "type": "object",
-                "additionalProperties": false,
-                "properties": {
-                  "gate": {
-                    "enum": [
-                      "G1",
-                      "G2",
-                      "G3",
-                      "G4",
-                      "G5",
-                      "G6"
-                    ]
-                  },
-                  "satisfied": {
-                    "type": "boolean"
-                  },
-                  "evidence": {
-                    "type": "array",
-                    "items": {
-                      "type": "string"
-                    },
-                    "description": "Claim IDs (CLM-…) of accepted claims of the current event; find them with read-only SQL (tank-data data guide, «Finding record IDs for tool arguments»), «Claims of an event»."
-                  }
-                },
-                "required": [
-                  "gate",
-                  "satisfied",
-                  "evidence"
-                ]
-              }
-            },
             "class": {
               "enum": [
                 "LOW",
                 "MATERIAL",
                 "MAJOR",
                 "STRUCTURAL_SHOCK"
-              ]
-            },
-            "criterion": {
-              "enum": [
-                "G1",
-                "G2",
-                "G3",
-                "G4",
-                "G5",
-                "G6",
-                "M1",
-                "M2",
-                "M3",
-                "M4",
-                "M5",
-                "M6",
-                "M7",
-                "MATERIAL",
-                "LOW"
-              ]
-            },
-            "criterion_claim_id": {
-              "type": [
-                "string",
-                "null"
               ],
-              "description": "Claim ID (CLM-…) of the recorded claim that establishes the selected criterion, or null when no claim does; a claim about another subject does not establish a structural criterion. Find it with read-only SQL (tank-data data guide, «Finding record IDs for tool arguments»), «Claims of an event»."
+              "description": "Your judgment of how significant the event really is for the market and the affected tokens (skill, «Class»). Tank stores it exactly as submitted."
             },
             "class_reasons": {
               "type": [
@@ -1399,7 +1337,8 @@
               ],
               "items": {
                 "type": "string"
-              }
+              },
+              "description": "Why the event has this class: the concrete consequence for the market and the affected tokens."
             },
             "impact_horizon": {
               "type": "object",
@@ -2070,20 +2009,11 @@
                 "denominator_window"
               ],
               "description": "Optional measured economic numerator/base for the existing magnitude rubric. Each number must match its quoted accepted claim; units and base window must match the rubric. Missing evidence remains NOT_ESTIMABLE, never an inferred number from rationale text."
-            },
-            "criterion_venue_id": {
-              "type": [
-                "string",
-                "null"
-              ],
-              "description": "Required for M1: the registry entity_id of the venue (binance, coinbase, okx, bybit, kraken or robinhood count for M1). Tank never infers the venue from the quotation."
             }
           },
           "required": [
             "dims",
             "class",
-            "criterion",
-            "criterion_claim_id",
             "impact_horizon"
           ]
         }
@@ -2408,7 +2338,7 @@
   },
   {
     "name": "get_market_truth",
-    "description": "Escalate the requested registered tokens for market collection/backfill, then assemble their Market Truth and Data Confidence. A supplied cutoff is a chosen analysis boundary with explicitly declared precision; otherwise the service selects the latest completed minute. Exchange/settlement times and completed-bar ends may not exceed that cutoff; receipt/assembly clocks describe later collection availability. Returns per-token context, observations, provenance, coverage and missing-data reasons.",
+    "description": "Escalate the requested registered tokens for market collection/backfill, then assemble their Market Truth and Data Confidence. A supplied cutoff is a chosen analysis boundary with explicitly declared precision; otherwise the service selects the latest completed minute. Exchange/settlement times and completed-bar ends may not exceed that cutoff; receipt/assembly clocks describe later collection availability. Each token's full Market Truth record — per-token context, observations, provenance, coverage and missing-data reasons — is written to a JSON file in your sandbox before the result returns; the result gives, per token, that file's path with the headline fields token, move_class, class_confidence, primary_window, decisive_facts, divergence and flags, plus the cutoff used and, once beneficiaries are mapped, the least-repriced credible beneficiary. Read the parts you need from the file with your sandbox tools.",
     "input_schema": {
       "type": "object",
       "additionalProperties": false,

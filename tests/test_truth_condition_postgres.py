@@ -12,7 +12,7 @@ from types import SimpleNamespace
 import httpx
 import pytest
 
-from tank.analysis.truth import MarketTruthService, compute_market_truth
+from tank.analysis.truth import MarketTruthService, compute_market_truth, with_statements
 from tank.market.service import MarketService
 from tank.util import iso, parse_time
 
@@ -249,7 +249,7 @@ async def test_disposable_postgres_selective_condition_inputs_and_sql_footprint(
             values = await truth.condition_values(event, "T", packet["cutoff"], ordinary)
             assert values["spot"]["W1H"]["direction"] == "BUY"
             assert Decimal(values["relative"]["close_1h_price"]) == Decimal("101.1")
-            assert {table for table, _ in reads} == {"mkt.flow_bars_1m", "mkt.klines_1m"}
+            assert not reads
             assert not any(
                 '"mkt"."oi_obs"' in query
                 or '"mkt"."funding_obs"' in query
@@ -266,7 +266,7 @@ async def test_disposable_postgres_selective_condition_inputs_and_sql_footprint(
                 anchor={"type": "T1", "ts": packet["anchor"]["ts"], "ts_prec": "EXACT"},
                 requirements=requirements,
             )
-            full = compute_market_truth(deepcopy(loaded))
+            full = compute_market_truth(deepcopy(await with_statements(repo, loaded, {})))
             assert selective["data_confidence"]["class"] == full["data_confidence"]["class"] == "HIGH"
             assert Decimal(selective["liquidity"]["aggregate_depth_p1_usd"]) == Decimal(
                 full["liquidity"]["aggregate_depth_p1_usd"]
@@ -321,7 +321,9 @@ async def test_disposable_postgres_selective_condition_inputs_and_sql_footprint(
 
             repeated = await truth.condition_values(event, "T", packet["cutoff"], composite_requirements)
             assert repeated["move_class"] == composite["move_class"]
-            assert all(p["reused"] for p in repeated["_condition_evaluation"]["proofs"])
+            assert [p["dependency_fingerprint"] for p in repeated["_condition_evaluation"]["proofs"]] == [
+                p["dependency_fingerprint"] for p in composite["_condition_evaluation"]["proofs"]
+            ]
         repo._conn = original_conn
         async with repo.transaction():
             assert (

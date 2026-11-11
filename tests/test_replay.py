@@ -274,6 +274,7 @@ def test_masking_preserves_original_and_private_map_is_not_pipeline_input(packet
         load_inputs(masked, settings())
 
 
+@pytest.mark.usefixtures("relative_statements")
 @pytest.mark.integration
 @pytest.mark.parametrize("captured_http_status", [None, 404, 503])
 @pytest.mark.parametrize("transient_case", [None, "scope_refusal", "lost_decision_ack"])
@@ -520,6 +521,10 @@ async def test_fresh_replay_session_reruns_market_and_decision_code(
                     }
                 },
             )
+        if path.endswith("/v1/files"):
+            return httpx.Response(200, json={"id": "file_mt"})
+        if path.endswith("/resources"):
+            return httpx.Response(200, json={"id": "sesrsc_mt"})
         if path.endswith("/sessions"):
             if request.method == "GET":
                 return httpx.Response(200, json={"data": [{"id": old_sid, "metadata": {}}]})
@@ -2069,6 +2074,7 @@ async def test_native_replay_captured_delivery_creates_fresh_call_and_reruns_exp
     assert await repo.get("ana.calls", "original-call") is None
 
 
+@pytest.mark.usefixtures("relative_statements")
 @pytest.mark.integration
 @pytest.mark.parametrize("state", ["APPROVED", "PROPOSED"])
 async def test_native_condition_replay_uses_tool_cause_and_actual_watch_predicate(packet, state):
@@ -2271,6 +2277,10 @@ async def test_native_condition_replay_uses_tool_cause_and_actual_watch_predicat
                     }
                 },
             )
+        if path.endswith("/v1/files"):
+            return httpx.Response(200, json={"id": "file_mt"})
+        if path.endswith("/resources"):
+            return httpx.Response(200, json={"id": "sesrsc_mt"})
         if path.endswith("/sessions"):
             return (
                 httpx.Response(200, json={"data": []})
@@ -2798,11 +2808,7 @@ async def test_actual_reference_publication_retains_unsent_intent_and_ordinary_r
                         "set_assessment",
                         {
                             "event_id": event_id,
-                            "assessment": unknown_assessment(
-                                criterion="G5",
-                                klass="STRUCTURAL_SHOCK",
-                                claim=result["accepted_claims"][0]["claim_id"],
-                            ),
+                            "assessment": unknown_assessment(klass="STRUCTURAL_SHOCK"),
                         },
                         identity,
                     )
@@ -2919,7 +2925,9 @@ async def test_actual_reference_publication_retains_unsent_intent_and_ordinary_r
 
 
 @pytest.mark.integration
-async def test_captured_tools_decision_refreshes_fired_market_watch_offline(packet, tmp_path, monkeypatch):
+async def test_captured_tools_decision_refreshes_fired_market_watch_offline(
+    packet, tmp_path, monkeypatch, relative_statements
+):
     from datetime import timedelta
 
     from test_market_capture_refresh import ReleasedMarket, seed_domain, shifted_snapshot
@@ -2938,7 +2946,7 @@ async def test_captured_tools_decision_refreshes_fired_market_watch_offline(pack
     source = MemoryRepository()
     cfg = Settings(data_dir=tmp_path, _env_file=None)
     await seed_domain(source, cfg, end)
-    market = ReleasedMarket(shifted_snapshot(end))
+    market = ReleasedMarket(shifted_snapshot(parse_time(earlier)))
     truth = MarketTruthService(source, cfg, market)
     first = await truth.assess("e", "T", chosen_boundary(earlier, precision="BUCKET(1m)"))
     tools = EventToolService(source, cfg, truth, DecisionEngine())
@@ -2946,6 +2954,18 @@ async def test_captured_tools_decision_refreshes_fired_market_watch_offline(pack
     watch = next(row for row in initial["conditions"] if row["role"] == "UPGRADE")
     watch.update(status="FIRED", fired_at=data["cutoff"])
     snapshot = shifted_snapshot(end)
+    for key, field in {
+        "relative_sql": "evidence",
+        "volume_sql": "volumes",
+        "oi_sql": "oi",
+        "funding_sql": "funding",
+        "flow_sql": "flow",
+        "liquidity_sql": "liquidity",
+        "supply_sql": "supply",
+        "series_sql": "series",
+    }.items():
+        if key in snapshot:
+            setattr(relative_statements, field, snapshot.pop(key))
     data["registry"] = {"tokens": [{"token_id": "T", "symbol": "T"}], "instruments": []}
     data["config"] = {
         "thresholds": {},
@@ -2998,3 +3018,84 @@ async def test_captured_tools_decision_refreshes_fired_market_watch_offline(pack
     assert (await repo.get("ana.watch_conditions", watch["cond_id"]))["consumed_by"] == result["dec_id"]
     jobs = [row for row in await repo.list("ops.jobs") if row["type"] == "RUN_MARKET_TRUTH"]
     assert len(jobs) == 1 and jobs[0]["status"] == "DONE"
+
+
+async def test_market_reader_writes_each_packet_snapshot_into_the_replay_clickhouse():
+    from types import SimpleNamespace
+
+    from tank.replay import ReplayMarketReader
+
+    cutoff = "2026-10-16T12:00:00Z"
+    snapshot = {
+        "token_id": "bitcoin:BTC",
+        "cutoff": cutoff,
+        "klines": [
+            {
+                "instrument_id": "binance:spot:BTCUSDT",
+                "token_id": "bitcoin:BTC",
+                "open_time": "2026-10-16T11:59:00Z",
+                "interval_s": 60,
+                "complete": True,
+                "c": "100",
+            }
+        ],
+    }
+    inputs = SimpleNamespace(
+        fixture_reference=None, cutoff=cutoff, records=lambda collection, cutoff=None: [snapshot]
+    )
+
+    class Client:
+        inserted = []
+
+        async def insert(self, table, rows):
+            self.inserted.append((table, rows))
+
+    client = Client()
+    result = await ReplayMarketReader(inputs, None, client).snapshot("bitcoin:BTC", cutoff)
+    assert result["klines"] == snapshot["klines"]
+    assert [(table, [row["c"] for row in rows]) for table, rows in client.inserted] == [
+        ("mkt.klines_1m", ["100"])
+    ]
+    await ReplayMarketReader(inputs).snapshot("bitcoin:BTC", cutoff)
+    assert len(client.inserted) == 1
+
+
+async def test_market_reader_writes_the_supply_rows_of_a_packet_snapshot_into_the_replay_repository():
+    from types import SimpleNamespace
+
+    from tank.replay import ReplayMarketReader
+
+    cutoff = "2026-10-16T12:00:00Z"
+    supply = [
+        {
+            "token_id": "T",
+            "kind": "LENDING",
+            "chain": None,
+            "ts": "2026-10-16T11:30:00Z",
+            "available": True,
+            "pools": [{"pool_id": "P", "utilization": "0.5"}],
+        },
+        {
+            "token_id": "T",
+            "kind": "CHAIN_LIQUIDITY",
+            "chain": "Base",
+            "ts": "2026-10-16T11:00:00Z",
+            "available": True,
+            "series": [{"ts": "2026-10-16T00:00:00Z", "supply_usd": "7"}],
+        },
+    ]
+    snapshot = {"token_id": "T", "cutoff": cutoff, "supply": supply}
+    inputs = SimpleNamespace(
+        fixture_reference=None, cutoff=cutoff, records=lambda collection, cutoff=None: [snapshot]
+    )
+    repo = MemoryRepository()
+    await repo.open()
+    reader = ReplayMarketReader(inputs, None, None, repo)
+    assert (await reader.snapshot("T", cutoff))["supply"] == supply
+    await reader.snapshot("T", cutoff)
+    stored = await repo.list("mkt.supply_obs", filters={"token_id": "T"})
+    assert sorted((row["kind"], row.get("chain")) for row in stored) == [
+        ("CHAIN_LIQUIDITY", "Base"),
+        ("LENDING", None),
+    ]
+    await repo.close()

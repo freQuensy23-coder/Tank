@@ -163,12 +163,8 @@ EMSAssessment
   dims: {
     economic_directness, magnitude, permanence, distribution_expansion,
     mechanical_flows, surprise, implementation : DimScore }
-  structural_gates: [{gate: G1..G6, satisfied: bool, evidence: [claim_id]}]
-  class: EMSClass
-  criterion: G1..G6 | M1..M7 | MATERIAL | LOW; criterion_claim_id: claim_id?   # 01 §6.3
-  criterion_quote: str               # the quote of criterion_claim_id, stored with it
-  criterion_venue_id: entity_id?     # M1 only
-  class_reasons: [str]               # e.g. "M2", "cap: LOW certainty"
+  class: EMSClass                    # the agent's class, stored as set (01 §6.3)
+  class_reasons: [str]               # the agent's reasons for the class
   impact_horizon: ImpactHorizon
 
 DimScore
@@ -702,7 +698,7 @@ HTML page sources: Tank collects every link on the page that matches the source'
 | S19 | `POST https://www.franklintempleton.com/api/articleApi` (form: `articleType=press-release`, filter `pressReleaseCategory.exact=news-room`, `en-US`, newest 24) — the JSON search the press-releases page uses; each hit carries title, URL, reference date and full text (`contentString`) | press release URL | 600 s |
 | S20 | `https://www.circle.com/pressroom` | `^/pressroom/[a-z0-9-]+$` (`/pressroom/circle-to-announce-q3-2026-financial-results-on-november-4-2026`) | 600 s |
 | S21 | `https://tether.io/feed/` — RSS, item key `guid` | — | 300 s |
-| S22 | `https://www.paxos.com/newsroom` | `^/newsroom/[a-z0-9-]+$` (`/newsroom/paxos-joins-solana-developer-platform`) | 600 s |
+| S22 | `https://www.paxos.com/newsroom` (article links moved from `/newsroom/…` to `/blog/…`; checked 10 Nov 2026) | `^/blog/[a-z0-9-]+$` (`/blog/paxos-joins-solana-developer-platform`) | 600 s |
 
 ### 3.4 Governance (CORE)
 
@@ -1036,7 +1032,6 @@ CREATE TABLE evt.ems_assessments (
   version         int  NOT NULL,
   cutoff          timestamptz NOT NULL,
   class           text NOT NULL,
-  criterion       text NOT NULL,
   class_reasons   text[] NOT NULL,
   config_version  text NOT NULL,
   model_id        text NOT NULL,

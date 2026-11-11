@@ -50,7 +50,6 @@ def card_inputs():
     }
     assessment = {
         "class": "MAJOR",
-        "criterion": "M2",
         "certainty": "HIGH",
         "dims": {
             key: {"value": value}
@@ -155,7 +154,7 @@ def test_literal_prd_card_template():
     card = render(values)
     assert (
         card
-        == """MAJOR (M2) — Approval changes access.
+        == """MAJOR — Approval changes access.
 Scores D8 · M7 · P6 · X5 · F4 · S3 · I2
 Stage: APPROVED · Certainty: HIGH · Data HIGH
 Fresh: FRESH · public 12:30Z · known 12:31Z
@@ -290,7 +289,7 @@ def test_missing_fields_are_explained_and_structural_shock_uses_literal_heading(
     d["outlook"]["potential"] = None
     m["relative"]["repricing_band"] = None
     card = render((e, a, b, d, m))
-    assert card.startswith("STRUCTURAL SHOCK (M2) — ")
+    assert card.startswith("STRUCTURAL SHOCK — ")
     assert "Priced: n/a (not available)" in card
     assert "OUTLOOK: BULLISH · n/a (potential unavailable)" in card
     assert "None" not in card
@@ -408,12 +407,10 @@ def test_missing_card_fields_print_reason_not_dash():
     values[4]["decisive_facts"][0].pop("window")
     values[3].pop("thesis_grade")
     values[3]["outlook"].pop("confidence")
-    values[1].pop("criterion")
     card = render(values)
     assert "n/a (window unavailable)" in card
     assert "Thesis n/a (grade unavailable)" in card
     assert "CONFIDENCE: n/a (confidence unavailable)" in card
-    assert "MAJOR (n/a (criterion unavailable))" in card
     for line in card.splitlines():
         assert not line.rstrip().endswith("—") and "—)" not in line and ": —" not in line
 
@@ -440,7 +437,8 @@ def test_absorption_candidate_is_uncertain_and_keeps_recorded_alternatives(confi
 def test_actual_spot_exclusion_cause_reaches_the_card(source_reason):
     from datetime import timedelta
 
-    from tank.analysis.truth import spot_truth
+    from flow_helpers import spot_truth
+
     from tank.util import iso, parse_time
 
     values = card_inputs()
@@ -584,7 +582,7 @@ async def test_current_full_publication_uses_literal_render_and_excludes_undecid
         assert result["published"] is True, result
         alert = await repo.get("out.alerts", result["alert_id"] + ":1")
         text = alert["card_text"]
-        assert text.splitlines()[0] == "MAJOR (M2) — " + verdict
+        assert text.splitlines()[0] == "MAJOR — " + verdict
         assert why[0] in text
         assert why[1].removeprefix("Economic effect: ") in text
         lines = text.splitlines()
@@ -630,7 +628,7 @@ def test_header_preserves_agent_supplied_sentence_and_structured_action():
     event["statement"] = "The institution selected the protocol for its planned network."
     verdict = "The institution chose this protocol as infrastructure for its planned network."
     card = compose_card(event, assessment, [beneficiary], [decision], [truth], verdict=verdict)
-    assert card.splitlines()[0] == "MAJOR (M2) — " + verdict
+    assert card.splitlines()[0] == "MAJOR — " + verdict
     assert "WHAT TO DO: WAIT — Thesis A · Trade B" in card
     assert event["statement"].endswith("planned network.")
 

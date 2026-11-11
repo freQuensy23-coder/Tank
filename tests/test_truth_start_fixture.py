@@ -6,6 +6,11 @@ from functools import lru_cache
 from math import sin
 
 import pytest
+from flow_helpers import with_flow
+from funding_helpers import steady as steady_funding
+from oi_helpers import steady
+from relative_helpers import start_evidence
+from volume_helpers import buckets, evidence
 
 from tank.analysis.truth import compute_market_truth
 from tank.util import iso, parse_time
@@ -121,6 +126,7 @@ def synthetic_start_snapshot():
                 }
             )
     btc = "A:spot:BTC"
+    snap["instruments"].append({"instrument_id": btc, "token_id": "BTC", "venue": "A", "market_type": "SPOT"})
     for h in range(-192, 0):
         snap["klines"].append(
             {
@@ -205,6 +211,15 @@ def synthetic_start_snapshot():
             "complete": True,
         }
     )
+    snap["relative_sql"] = start_evidence(end, anchor)
+    snap["oi_sql"] = steady(end, [iid])
+    snap["funding_sql"] = steady_funding(end, [iid])
+    snap["volume_sql"] = evidence(
+        [row["instrument_id"] for row in snap["instruments"]],
+        native={"PERP": None},
+        usd={"SPOT": dict(current_usd=45000.0), "PERP": None},
+        buckets=buckets(end, ["A", "B"], volume=225000.0),
+    )
     anchors = snap.pop("anchor_trades")
     for row in anchors:
         parent = next(
@@ -263,8 +278,7 @@ def test_confidence_diagnostics_do_not_add_unlisted_grade_conditions():
     snapshot = compact_start_snapshot()
     snapshot["capture_status"] = {"status": "RUNNING", "reason": "BACKFILL_PENDING"}
 
-    for row in snapshot["oi"]:
-        row["oi_usd"] = None
+    snapshot["oi_sql"] = steady(parse_time(snapshot["cutoff"]), ["binance:perp:T"], usd=False)
     result = compute_market_truth(snapshot)
     assert result["data_confidence"]["class"] == "HIGH", result["data_confidence"]
     assert result["data_confidence"]["derivatives_classification_ready"] is False
@@ -308,7 +322,7 @@ def test_threshold_configuration_is_consumed_and_isolated_between_calls():
 
 @pytest.fixture(scope="module")
 def legacy_semantic_baseline():
-    snapshot = compact_start_snapshot()
+    snapshot = with_flow(compact_start_snapshot())
     for row in snapshot["semantics"]:
         row.pop("semantic_confidence", None)
     baseline = compute_market_truth(snapshot)
@@ -338,13 +352,12 @@ def test_legacy_semantic_status_cannot_reduce_confidence_or_mask_real_freshness(
         assert missing["data_confidence"]["limiting"]["condition"] == "freshness"
 
 
-def test_missing_instrument_registry_and_selftest_records_do_not_cap_observed_confidence():
+def test_selftest_records_do_not_cap_observed_confidence():
     snapshot = compact_start_snapshot()
     end = parse_time(snapshot["cutoff"])
     baseline = compute_market_truth(snapshot)
     assert baseline["data_confidence"]["class"] == "HIGH"
 
-    snapshot["instruments"] = []
     for row in snapshot["semantics"]:
         row["semantic_confidence"] = "DOCUMENTED_UNTESTED"
     observed = compute_market_truth(snapshot)
@@ -388,6 +401,7 @@ async def _assess_loser_snapshot():
     ).assess("EVT", "T", "2026-10-16T12:00:00Z")
 
 
+@pytest.mark.usefixtures("relative_statements")
 def test_latest_durable_beneficiary_role_sets_loser_repricing_direction():
     import asyncio
 

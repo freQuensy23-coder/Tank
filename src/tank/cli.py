@@ -38,11 +38,17 @@ def run_db(fn, *, database_url=None, replay=False):
         clickhouse = clickhouse_market.install(repo, settings)
         await repo.open()
         try:
+            if replay and clickhouse is not None:
+                await clickhouse_market.create_database(clickhouse)
             return await fn(repo, settings)
         finally:
             await repo.close()
             if clickhouse is not None:
-                await clickhouse.close()
+                try:
+                    if replay:
+                        await clickhouse_market.drop_database(clickhouse)
+                finally:
+                    await clickhouse.close()
 
     try:
         output(asyncio.run(execute()))

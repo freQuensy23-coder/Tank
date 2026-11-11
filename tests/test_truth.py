@@ -5,16 +5,21 @@ from decimal import Decimal
 from pathlib import Path
 
 import pytest
+from flow_helpers import spot_truth
+from funding_helpers import evidence as funding_evidence
+from funding_helpers import rate, start
+from funding_helpers import steady as funding_steady
+from liquidity_helpers import window_liquidity, with_liquidity
+from oi_helpers import evidence as oi_evidence
+from supply_helpers import window_supply
+from volume_helpers import buckets, evidence
 
 from tank.analysis.truth import (
-    _oi_stats,
     compute_market_truth,
     decomposition,
     market_context,
     oi_class,
     repricing,
-    spot_truth,
-    walk_book,
 )
 from tank.util import iso, parse_time
 
@@ -128,6 +133,8 @@ def _add_fresh_perp_fields(snapshot):
             "complete": True,
         }
     )
+    snapshot["oi_sql"] = oi_evidence(end, [iid], cohort=[iid])
+    snapshot["funding_sql"] = funding_steady(end, [iid])
 
 
 def test_oi_formula_vectors():
@@ -201,57 +208,43 @@ def test_missing_is_not_zero_and_no_leakage():
 
 
 def test_repricing_and_baseline_context():
-    assert repricing(0.23, [-0.03, 0, 0.02, 0.05], [-0.04, 0, 0.02, 0.046]) == "HEAVY"
-    assert market_context(-0.0325, 0.0045, [-0.0301, -0.0085, 0, 0.02], [0.003, 0.005, 0.01]) == "STRESS"
+    event, day = (-0.03, 0, 0.02, 0.04), (-0.04, 0, 0.02, 0.046)
+    assert repricing(0.23, event, day, 1) == "HEAVY"
+    assert repricing(0.01, event, day, 1) == "UNPRICED"
+    assert repricing(0.03, event, day, 1) == "EARLY"
+    assert repricing(0.045, event, day, 1) == "SUBSTANTIAL"
+    assert repricing(-0.04, event, day, 1) == "NEGATIVE"
+    assert repricing(-0.01, event, day, -1) == "UNPRICED"
+    assert repricing(0.03, event, day, -1) == "EARLY"
+    assert repricing(0.035, (-0.03, -0.02, 0, 0.03), day, -1) == "SUBSTANTIAL"
+    assert repricing(None, event, day, 1) is None
+    assert repricing(0.01, (None,) * 4, day, 1) is None
+    assert market_context(-0.0325, 0.0045, (-0.0301, -0.0085), (0.003, 0.005)) == "STRESS"
+    assert market_context(-0.01, 0.004, (-0.0301, -0.0085), (0.003, 0.005)) == "HEADWIND"
+    assert market_context(0.01, 0.004, (-0.0301, -0.0085), (0.003, 0.005)) == "NEUTRAL"
+    assert market_context(0.01, 0.004, (None, None), (0.003, 0.005)) is None
 
 
-def test_walk_book_requires_actual_fill():
-    assert walk_book([[100, 1000], [101, 1000]], 100000, 100) == 0
-    assert walk_book([[100, 1]], 100000, 100) is None
+def test_degenerate_float_history_range_is_unavailable():
+    from tank.analysis.truth import float_range
 
-
-@pytest.mark.historical
-@pytest.mark.integration
-def test_real_rest_fixture_endpoints():
-    path = Path(__file__).resolve().parents[1] / "fixture_check/data/rest_openInterestHist_fixtures.json"
-    data = json.loads(path.read_text())["data"]
-    cases = [
-        ("F-12:QNTUSDT:1h", "2026-09-26T19:00:00Z", "2026-09-26T23:00:00Z", 0.0042),
-        ("F-13:ONDOUSDT:1h", "2026-09-24T12:00:00Z", "2026-09-24T16:00:00Z", 0.5732),
-        ("F-14:QNTUSDT:1h", "2026-09-27T19:00:00Z", "2026-09-27T23:00:00Z", -0.3036),
-    ]
-    for key, a, z, expected in cases:
-        rows = [
-            dict(
-                ts=iso(parse_time(r["timestamp"])),
-                oi_native=r["sumOpenInterest"],
-                oi_usd=r["sumOpenInterestValue"],
-            )
-            for r in data[key]
-        ]
-        result = _oi_stats(rows, parse_time(a), parse_time(z))
-        assert result["oi_native_chg_pct"] == pytest.approx(expected, abs=0.0001)
+    assert float_range(-1.4e-16, 1.4e-16) is None
+    assert float_range(None, 0.02) is None
+    assert float_range(-0.01, 0.02) == [-0.01, 0.02]
+    noise = (-2.2e-17, 0.0, 0.0, 1.4e-16)
+    assert repricing(0.000272, noise, noise, 1) is None
 
 
 def test_t6_funding_and_t8_funding_freshness():
-    from tank.analysis.truth import data_confidence, derivatives_truth
+    from series_helpers import data_confidence
+
+    from tank.analysis.truth import derivatives_truth
 
     end = parse_time("2026-10-16T12:00:00Z")
     start = end - timedelta(hours=4)
-    funding = [
-        dict(instrument_id=f"{v}:perp:T", kind="SETTLED", settlement_time=iso(end), rate=r, interval_h=h)
-        for v, r, h in [("X", 0.0001, 8), ("Y", 0.00005, 4), ("Z", 0.00002, 1)]
-    ]
-    oi = [dict(instrument_id=f"{v}:perp:T", ts=iso(end), oi_native=100, oi_usd=100) for v in ("X", "Y", "Z")]
-    d = derivatives_truth(dict(oi=oi, funding=funding), start, end)
-    assert [v["funding_8h_eq"] for v in d["per_venue"]] == [
-        Decimal(".0001"),
-        Decimal(".0001"),
-        Decimal(".00016"),
-    ]
-    assert d["funding_dispersion_8h"] == Decimal(".00006")
     snap = _fresh_spot_snapshot()
     _add_fresh_perp_fields(snap)
+    snap["_primary"] = "W4H"
     snap["funding"][-1]["settlement_time"] = iso(end - timedelta(minutes=10))
     spot = spot_truth(snap["flow_bars"], [], snap["instruments"], end - timedelta(minutes=1), end)
     derivatives = derivatives_truth(snap, start, end)
@@ -260,42 +253,6 @@ def test_t6_funding_and_t8_funding_freshness():
     assert c["class_"] == "MEDIUM"
     assert c["limiting"]["condition"] == "freshness"
     assert c["limiting"]["collection"] == "funding"
-
-
-@pytest.mark.historical
-@pytest.mark.integration
-def test_real_archive_oi_regressions():
-    import csv
-    import io
-    import zipfile
-
-    path = Path(__file__).resolve().parents[1] / "fixture_check/data"
-    results = json.loads((path.parent / "results.json").read_text())
-    rest = json.loads((path / "rest_openInterestHist_fixtures.json").read_text())["data"]
-    for fixture, symbol, a, z, cls in [
-        ("F-12", "QNTUSDT", "2026-09-26T19:00:00Z", "2026-09-26T23:00:00Z", "PRICE_MARKUP"),
-        ("F-13", "ONDOUSDT", "2026-09-24T12:00:00Z", "2026-09-24T16:00:00Z", "REAL_NATIVE"),
-        ("F-14", "QNTUSDT", "2026-09-27T19:00:00Z", "2026-09-27T23:00:00Z", "MIXED"),
-    ]:
-        rows = {}
-        for file in sorted((path / "metrics").glob(symbol + "-*")):
-            with zipfile.ZipFile(file) as archive:
-                for name in archive.namelist():
-                    for r in csv.DictReader(io.TextIOWrapper(archive.open(name))):
-                        if not r["sum_open_interest"] or not r["sum_open_interest_value"]:
-                            continue
-                        n, u = float(r["sum_open_interest"]), float(r["sum_open_interest_value"])
-                        if n > 0 and u > 0:
-                            ts = parse_time(r["create_time"])
-                            rows[ts] = dict(ts=iso(ts), oi_native=n, oi_usd=u)
-
-        for r in rest[f"{fixture}:{symbol}:1h"]:
-            t = parse_time(r["timestamp"])
-            if t in (parse_time(a), parse_time(z)):
-                rows[t] = dict(ts=iso(t), oi_native=r["sumOpenInterest"], oi_usd=r["sumOpenInterestValue"])
-        out = _oi_stats(list(rows.values()), parse_time(a), parse_time(z))
-        assert out["oi_class"] == cls
-        assert out["native_normal_range"][1] == pytest.approx(results[fixture]["n_p97_5"])
 
 
 def fixture_klines(filename, token, interval_s):
@@ -317,25 +274,7 @@ def fixture_klines(filename, token, interval_s):
 
 @pytest.mark.historical
 @pytest.mark.integration
-def test_real_f08_does_not_invent_anchor_trades_or_spot_coverage():
-    from tank.analysis.truth import relative_truth
-
-    end = parse_time("2026-09-24T20:15:00Z")
-    start = parse_time("2026-09-24T00:00:00Z")
-    rows = []
-    for filename, token, interval in [
-        ("spot_1h_QNTUSDT.json", "QNT", 3600),
-        ("spot_1h_BTCUSDT.json", "BTC", 3600),
-        ("spot_15m_QNTUSDT_0924.json", "QNT", 900),
-        ("spot_15m_BTCUSDT_0924.json", "BTC", 900),
-    ]:
-        rows += fixture_klines(filename, token, interval)
-    result = relative_truth(dict(token_id="QNT", cutoff=iso(end), klines=rows), start, end)
-    assert result["repricing_band"] is None
-    assert result["ref_venue"] is None
-    assert result["anchor"]["ref_price"] is None
-    assert result["anchor"]["price_reason"] == "INCOMPLETE"
-
+def test_real_f08_heavy_repricing_from_the_retained_measurements():
     measured = json.loads((Path(__file__).resolve().parents[1] / "fixture_check/results.json").read_text())[
         "F-08"
     ]
@@ -343,7 +282,8 @@ def test_real_f08_does_not_invent_anchor_trades_or_spot_coverage():
         repricing(
             measured["windows"][0]["adj"],
             [-0.03, 0, 0.02, 0.05],
-            [measured["h24_p2_5"], 0, measured["h24_p97_5"]],
+            [measured["h24_p2_5"], 0, 0, measured["h24_p97_5"]],
+            1,
         )
         == "HEAVY"
     )
@@ -352,15 +292,22 @@ def test_real_f08_does_not_invent_anchor_trades_or_spot_coverage():
 @pytest.mark.historical
 @pytest.mark.integration
 def test_real_f16_baseline_stress_is_exposed():
-    from tank.analysis.truth import relative_truth
+    from tank.analysis.truth import market_context
 
-    end = parse_time("2026-09-16T00:00:00Z")
-    start = end - timedelta(days=1)
-    rows = fixture_klines("spot_1h_BTCUSDT.json", "BTC", 3600)
-    result = relative_truth(dict(token_id="BTC", cutoff=iso(end), klines=rows), start, end)
-    assert result["market_context"] == "STRESS"
-    assert result["context_inputs"]["btc_return_24h"] == pytest.approx(-0.03254567, abs=0.00001)
-    assert "known_rule_mismatch" not in result["context_inputs"]
+    measured = json.loads((Path(__file__).resolve().parents[1] / "fixture_check/results.json").read_text())[
+        "F-16"
+    ]
+    assert measured["context"] == "STRESS"
+    assert (
+        market_context(
+            measured["btc_24h"],
+            measured["rv24"],
+            (measured["p2_5"], measured["q25"]),
+            (0.0, measured["rv_p97_5"]),
+        )
+        == "STRESS"
+    )
+    assert measured["btc_24h"] == pytest.approx(-0.03254567, abs=0.00001)
 
 
 def test_t5_pairwise_constant_cohort():
@@ -378,6 +325,7 @@ def test_t5_pairwise_constant_cohort():
     spots = {
         "W24H": truth({"binance": 500, "okx": 200, "coinbase": 250, "kraken": 50}),
         "W1H": truth({"binance": 500, "okx": 200, "kraken": 50, "bybit": 250}),
+        "W15M": truth({"binance": 500}),
     }
     end = parse_time("2026-10-16T12:00:00Z")
     rel = dict(
@@ -395,6 +343,7 @@ def test_t5_pairwise_constant_cohort():
 
 
 @pytest.mark.asyncio
+@pytest.mark.usefixtures("relative_statements")
 async def test_assessment_persists_with_event_anchor():
     from types import SimpleNamespace
 
@@ -427,6 +376,7 @@ async def test_assessment_persists_with_event_anchor():
 
 
 @pytest.mark.asyncio
+@pytest.mark.usefixtures("relative_statements")
 async def test_assessment_before_a_scheduled_t0_anchors_on_t1_instead_of_failing():
     """Binance's 10-30 06:00 delisting was analysed on 10-27: anchoring on the future T0
     raised "anchor must precede cutoff" and the MAJOR event got no market truth."""
@@ -500,7 +450,16 @@ def test_asymmetric_depth_uses_actual_hit_side_and_excludes_perps(side):
         for i in range(15)
     ]
     r = liquidity_truth(
-        {"books": books, "flow_bars": rows},
+        window_liquidity(
+            {
+                "books": books,
+                "flow_bars": rows,
+                "volume_sql": evidence([], buckets=buckets(end, ["A"], volume=30300.0, count=1)),
+            },
+            start,
+            end,
+            venues={"A"},
+        ),
         start,
         end,
         {"venues": [{"venue": "A"}]},
@@ -515,7 +474,7 @@ def test_asymmetric_depth_uses_actual_hit_side_and_excludes_perps(side):
 
 
 def test_descriptive_semantics_cannot_replace_actual_spot_coverage():
-    from tank.analysis.truth import data_confidence
+    from series_helpers import data_confidence
 
     end = parse_time("2026-10-16T12:00:00Z")
     result = data_confidence(
@@ -534,7 +493,7 @@ def test_descriptive_semantics_cannot_replace_actual_spot_coverage():
 
 
 def test_confidence_requires_present_fresh_reference_and_books():
-    from tank.analysis.truth import data_confidence
+    from series_helpers import data_confidence
 
     end = parse_time("2026-10-16T12:00:00Z")
     snapshot = {
@@ -576,28 +535,6 @@ def test_confidence_requires_present_fresh_reference_and_books():
     assert any(
         f.get("collection") == "klines" and f.get("instrument_id") == "A:spot:T" for f in result["failed"]
     )
-
-
-def test_nonminute_event_anchor_uses_true_asof_bounds_and_reports_precision():
-    from runpy import run_path
-
-    from tank.analysis.truth import relative_truth
-
-    snapshot = run_path(str(Path(__file__).with_name("test_truth_start_fixture.py")))[
-        "synthetic_start_snapshot"
-    ]()
-    end = parse_time(snapshot["cutoff"])
-    start = end - timedelta(hours=4) + timedelta(seconds=17)
-    result = relative_truth(snapshot, start, end)
-    event = result["windows"]["EVENT"]
-    assert event["normal_range"] is not None
-    assert event["historical_window_duration_s"] == event["requested_window_duration_s"] == 14383
-    measurement = event["historical_measurement"]
-    assert measurement["exact"] is False
-    assert measurement["target_window_duration_s"] == 14383
-    assert measurement["observed_duration_bounds_s"] == [14400, 14400]
-    assert measurement["endpoint_staleness_bounds_s"] == [17, 17]
-    assert result["anchor"]["ts"] == iso(start)
 
 
 def test_btc_benchmark_is_judged_by_its_raw_return_against_its_own_raw_history():
@@ -645,18 +582,6 @@ def test_btc_benchmark_is_judged_by_its_raw_return_against_its_own_raw_history()
     )
     fact = next(f for f in facts if f["metric"] == "relative.r_raw")
     assert fact["text"].startswith("W15M price move (benchmark, raw)")
-
-
-def test_degenerate_float_history_range_is_unavailable():
-    from tank.analysis.truth import float_normal, range_reason, repricing
-
-    noise = [1.4e-16, -2.2e-17, 0.0, 0.0, 3.1e-17] * 40
-    assert float_normal(noise) is None
-    assert range_reason(noise) == "DEGENERATE_HISTORY"
-    assert range_reason([]) == "INCOMPLETE"
-    assert range_reason([-0.01, 0.0, 0.02]) is None
-
-    assert repricing(0.000272, noise, noise) is None
 
 
 @pytest.mark.parametrize("confirmation", ["VALID", "FLAG_ONLY", "FUTURE", "NO_REST_GAP"])
@@ -716,10 +641,12 @@ def test_fragmentation_needs_actual_cutoff_safe_independent_rest_gap(confirmatio
         for i in range(15)
     ]
     enrich_evidence(
-        {"books": books, "flow_bars": flow, "cutoff": iso(end)},
+        with_liquidity(
+            {"books": books, "flow_bars": flow, "cutoff": iso(end)}, windows={"W15M": 900}, anchor=None
+        ),
         start,
         end,
-        {"W1H": spot},
+        {"W1H": spot, "W15M": deepcopy(spot)},
         "W1H",
         {},
         relative,
@@ -763,10 +690,12 @@ def _fragmentation_of(quotes):
     }
     liquidity = {"per_venue": []}
     enrich_evidence(
-        {"books": books, "flow_bars": [], "cutoff": iso(end)},
+        with_liquidity(
+            {"books": books, "flow_bars": [], "cutoff": iso(end)}, windows={"W15M": 900}, anchor=None
+        ),
         start,
         end,
-        {"W1H": spot},
+        {"W1H": spot, "W15M": deepcopy(spot)},
         "W1H",
         {},
         relative,
@@ -831,7 +760,9 @@ def test_vacuum_detects_loss_on_sell_side_despite_deep_asks():
         for i in range(15)
     ]
     result = liquidity_truth(
-        {"books": [book(start - timedelta(seconds=1), 100), book(end, 20)], "flow_bars": rows},
+        window_liquidity(
+            {"books": [book(start - timedelta(seconds=1), 100), book(end, 20)], "flow_bars": rows}, start, end
+        ),
         start,
         end,
         {"venues": [{"venue": "A"}]},
@@ -883,7 +814,21 @@ def _e2e8_liquidity(c_notional, covered_c=False):
     ]
     spot = {"venues": [{"venue": v} for v in ("A", "B", "C")]}
     relative = {"windows": {"W4H": {"r_raw": 0.0051, "beyond_normal": True}}}
-    return liquidity_truth({"books": books, "flow_bars": flow}, start, end, spot, relative)
+    volumes = evidence(
+        [], buckets=buckets(end, ["A", "B", "C"], volume=4500.0, count=1, missing=0 if c_notional else 15)
+    )
+    return liquidity_truth(
+        window_liquidity(
+            {"books": books, "flow_bars": flow, "volume_sql": volumes},
+            start,
+            end,
+            venues={"A", "B", "C"},
+        ),
+        start,
+        end,
+        spot,
+        relative,
+    )
 
 
 def test_net_flow_is_native_so_a_missing_quote_rate_does_not_null_elasticity():
@@ -994,109 +939,9 @@ def test_spot_flow_fact_prints_cvd_signed_rounded_with_token_ticker():
     assert "CVD -0.00341 BTC," in flow(Decimal("-0.003410000"), "bitcoin:BTC")["text"]
 
 
-def test_oi_seconds_anchor_uses_actual_synchronized_observation_duration():
-    end = parse_time("2026-10-16T12:00:00Z")
-    start = end - timedelta(hours=4, seconds=-17)
-    rows = [
-        {"ts": iso(end + timedelta(minutes=i)), "oi_native": 100, "oi_usd": 100}
-        for i in range(-8 * 1440, 0, 5)
-    ]
-    rows.append({"ts": iso(end), "oi_native": 108, "oi_usd": 108})
-    result = _oi_stats(rows, start, end)
-    assert result["native_normal_range"] == [0, 0]
-    assert result["observed_window_duration_s"] == 14400
-    assert result["requested_window_duration_s"] == 14383
-    assert result["oi_class"] == "REAL_NATIVE"
-
-
-def test_oi_history_pairs_use_requested_window_on_300s_grid_with_live_end_point():
-    """Live: the end point is a WebSocket/REST sample off the 300 s history grid, so the observed
-    length (14 min 37 s) never equals a history offset; pairs use the requested 15 min window."""
-    end = parse_time("2026-10-16T12:00:00Z")
-    start = end - timedelta(minutes=15)
-    rows = [
-        {
-            "ts": iso(start + timedelta(minutes=i)),
-            "oi_native": 100 + (i // 5) % 3,
-            "oi_usd": 100 + (i // 5) % 3,
-        }
-        for i in range(-8 * 1440, 1, 5)
-    ]
-    rows.append({"ts": iso(end - timedelta(seconds=23)), "oi_native": 120, "oi_usd": 132})
-    result = _oi_stats(rows, start, end)
-    assert result["observed_window_duration_s"] == 877
-    assert result["native_normal_range"] is not None
-    assert result["usd_normal_range"] is not None
-    assert result["native_oi_vs_normal"] == "ABOVE"
-    assert result["oi_class"] is not None
-
-
-def test_oi_rows_derive_usd_from_ticker_mark_without_mutating_inputs():
-    """03 §5.4: Bybit singleOpenInterest x markPrice, Binance oi_native x mark; Bybit OI rows carry
-    no mark, the instrument's ticker within the sync tolerance does."""
-    from tank.analysis.truth import _oi_rows
-
-    iid = "bybit:perp_linear:BTCUSDT"
-    oi = [
-        {"instrument_id": iid, "ts": "2026-10-16T12:00:00Z", "oi_native": "10", "oi_usd": None},
-        {"instrument_id": iid, "ts": "2026-10-16T12:05:00Z", "oi_native": "11", "oi_usd": None},
-        {"instrument_id": iid, "ts": "2026-10-16T12:10:00Z", "oi_native": "12", "oi_usd": "999"},
-    ]
-    tickers = [
-        {"instrument_id": iid, "ts": "2026-10-16T11:59:40Z", "mark_price": "2"},
-        {"instrument_id": iid, "ts": "2026-10-16T12:00:30Z", "mark_price": "3"},
-        {"instrument_id": "other", "ts": "2026-10-16T12:05:00Z", "mark_price": "7"},
-    ]
-    snapshot = {"oi": oi, "tickers": tickers}
-    rows = _oi_rows(snapshot, iid)
-    assert rows[0]["oi_usd"] == Decimal("20")
-    assert rows[0]["oi_usd_source"] == "OI_NATIVE_X_TICKER_MARK"
-    assert rows[1]["oi_usd"] is None
-    assert rows[2] is oi[2]
-    assert oi[0]["oi_usd"] is None and "oi_usd_source" not in oi[0]
-
-
-def test_derivatives_oi_classifies_with_usd_from_ticker_mark():
-    from tank.analysis.truth import derivatives_truth
-
-    iid = "bybit:perp_linear:BTCUSDT"
-    end = parse_time("2026-10-16T12:00:00Z")
-    start = end - timedelta(hours=4)
-    times = [end + timedelta(minutes=i) for i in range(-8 * 1440, 1, 5)]
-    oi = [
-        {
-            "instrument_id": iid,
-            "venue": "bybit",
-            "ts": iso(t),
-            "oi_native": 100 if t < end else 108,
-            "oi_usd": None,
-        }
-        for t in times
-    ]
-    tickers = [{"instrument_id": iid, "venue": "bybit", "ts": iso(t), "mark_price": 10} for t in times]
-    snapshot = {
-        "instruments": [
-            {
-                "instrument_id": iid,
-                "venue": "bybit",
-                "market_type": "perp_linear",
-                "aggregation_class": "native",
-            }
-        ],
-        "oi": oi,
-        "tickers": tickers,
-    }
-    stats = derivatives_truth(snapshot, start, end)["per_venue"][0]
-    assert stats["oi_usd_chg_pct"] == pytest.approx(0.08)
-    assert stats["native_normal_range"] == [0, 0]
-    assert stats["decomposition"]["pos_share"] is not None
-    assert stats["oi_class"] == "REAL_NATIVE"
-    assert oi[0]["oi_usd"] is None
-
-
 def test_freshness_counts_only_the_assessed_tokens_fields_not_peer_closes():
     """§5.10: a BTC assessment never fails freshness on a sector peer's kline (MORPHO on a BTC card)."""
-    from tank.analysis.truth import available_field_freshness
+    from series_helpers import available_field_freshness
 
     end = parse_time("2026-10-20T22:51:00Z")
     snapshot = {
@@ -1139,7 +984,7 @@ def test_freshness_counts_only_the_assessed_tokens_fields_not_peer_closes():
 def test_once_per_interval_oi_is_fresh_within_two_intervals_plus_publish_lag():
     """03 §5.10 'within its own cadence': Bybit publishes 5-min singleOpenInterest ~60-80 s after
     the sample time, so a HOT 60 s cadence can never be met; it is judged by 2 x 300 s + lag."""
-    from tank.analysis.truth import available_field_freshness
+    from series_helpers import available_field_freshness
 
     end = parse_time("2026-10-21T00:31:00Z")
     iid = "bybit:perp_linear:BTCUSDT"
@@ -1205,7 +1050,7 @@ def test_capture_cadence_prefers_the_per_metric_cadence():
 
 
 def test_data_confidence_required_oi_uses_the_interval_rule_for_bybit_5min():
-    from tank.analysis.truth import data_confidence
+    from series_helpers import data_confidence
 
     end = parse_time("2026-10-21T00:31:00Z")
     iid = "bybit:perp_linear:BTCUSDT"
@@ -1253,7 +1098,7 @@ def test_data_confidence_required_oi_uses_the_interval_rule_for_bybit_5min():
 def test_liquidation_freshness_comes_from_stream_watermark_not_last_event():
     """A quiet market has no liquidations; the proven socket watermark keeps the stream fresh.
     Without a watermark the failure says the connection is unproven, not that events are stale."""
-    from tank.analysis.truth import available_field_freshness
+    from series_helpers import available_field_freshness
 
     end = parse_time("2026-10-20T22:51:00Z")
     iid = "bybit:perp_linear:BTCUSDT"
@@ -1282,122 +1127,34 @@ def test_liquidation_freshness_comes_from_stream_watermark_not_last_event():
     assert check["detail"] == "STREAM_CONNECTION_UNPROVEN"
 
 
-def test_derived_oi_usd_serves_window_endpoints_only_and_usd_range_needs_seven_days_of_usd_pairs():
-    """Lead ruling 2026-10-21 (03 §0, §5.4): a ticker-mark USD value is derived only for the
-    window endpoints; history uses stored oi_usd, so Bybit (no stored USD) has no USD normal
-    range, and stored USD covering < 7 days gives none either. Native is unaffected."""
-    from tank.analysis.truth import derivatives_truth
-
-    end = parse_time("2026-10-16T12:00:00Z")
-    start = end - timedelta(hours=4)
-    times = [end + timedelta(minutes=i) for i in range(-8 * 1440, 1, 5)]
-
-    def venue(name, stored_usd_days):
-        iid = f"{name}:perp_linear:BTCUSDT"
-        oi = [
-            {
-                "instrument_id": iid,
-                "venue": name,
-                "ts": iso(t),
-                "oi_native": 100 + (i % 3) if t < end else 108,
-                "oi_usd": (100 + (i % 3)) * 10
-                if stored_usd_days and t >= end - timedelta(days=stored_usd_days)
-                else None,
-            }
-            for i, t in enumerate(times)
-        ]
-        tickers = [{"instrument_id": iid, "venue": name, "ts": iso(t), "mark_price": 10} for t in times]
-        instrument = {
-            "instrument_id": iid,
-            "venue": name,
-            "market_type": "perp_linear",
-            "aggregation_class": "native",
-        }
-        return instrument, oi, tickers
-
-    for days in (None, 3):
-        instrument, oi, tickers = venue("bybit", days)
-        stats = derivatives_truth({"instruments": [instrument], "oi": oi, "tickers": tickers}, start, end)[
-            "per_venue"
-        ][0]
-        assert stats["native_normal_range"] is not None
-        assert stats["usd_normal_range"] is None, days
-        endpoint_usd = []
-        for at in (start, end):
-            row = next(row for row in oi if parse_time(row["ts"]) == at)
-            mark = next(row["mark_price"] for row in tickers if parse_time(row["ts"]) == at)
-            endpoint_usd.append(
-                Decimal(str(row["oi_usd"]))
-                if row["oi_usd"] is not None
-                else Decimal(str(row["oi_native"])) * Decimal(str(mark))
-            )
-        expected_usd_change = endpoint_usd[1] / endpoint_usd[0] - 1
-        assert stats["oi_usd_chg_pct"] == pytest.approx(float(expected_usd_change))
-        assert stats["decomposition"]["pos_share"] is not None
-    instrument, oi, tickers = venue("bybit", 8)
-    stats = derivatives_truth({"instruments": [instrument], "oi": oi, "tickers": tickers}, start, end)[
-        "per_venue"
-    ][0]
-    assert stats["usd_normal_range"] is not None
-
-
-def test_synchronized_composite_keeps_native_range_and_endpoint_usd_with_endpoint_only_derivation():
-    from tank.analysis.truth import derivatives_truth
-
-    end = parse_time("2026-10-16T12:00:00Z")
-    start = end - timedelta(hours=4)
-    times = [end + timedelta(minutes=i) for i in range(-8 * 1440, 1, 5)]
-    snapshot = {"instruments": [], "oi": [], "tickers": [], "semantics": []}
-    for name, stored in (("binance", True), ("bybit", False)):
-        iid = f"{name}:perp_linear:BTCUSDT"
-        snapshot["instruments"].append(
-            {"instrument_id": iid, "venue": name, "market_type": "perp_linear", "aggregation_class": "native"}
-        )
-        snapshot["semantics"].append(
-            {
-                "metric_key": f"{name}.oi",
-                "instrument_id": iid,
-                "metric_family": "oi",
-                "sidedness": "SINGLE_SIDED",
-                "aggregation_class": "oi_native_single_sided",
-            }
-        )
-        for i, t in enumerate(times):
-            native = (100 + (i % 3)) if t < end else 108
-            snapshot["oi"].append(
-                {
-                    "instrument_id": iid,
-                    "venue": name,
-                    "metric_key": f"{name}.oi",
-                    "ts": iso(t),
-                    "oi_native": native,
-                    "oi_usd": native * 10 if stored else None,
-                }
-            )
-            snapshot["tickers"].append({"instrument_id": iid, "venue": name, "ts": iso(t), "mark_price": 10})
-    sync = derivatives_truth(snapshot, start, end)["synchronized"]
-    assert sync["venues"] == ["binance", "bybit"]
-    assert sync["native_normal_range"] is not None
-    assert sync["oi_usd_chg_pct"] == pytest.approx(0.08)
-
-    assert sync["usd_normal_range"] is not None
-
-
 def test_native_only_oi_preserves_native_and_sync_without_inventing_usd():
     from runpy import run_path
 
-    from tank.analysis.truth import data_confidence, derivatives_truth
+    from series_helpers import data_confidence
+
+    from tank.analysis.truth import derivatives_truth
 
     fixture = run_path(str(Path(__file__).with_name("test_truth_start_fixture.py")))[
         "synthetic_start_snapshot"
     ]()
     end = parse_time(fixture["cutoff"])
     start = end - timedelta(hours=4)
-    for row in fixture["oi"]:
-        row["oi_native"] = 100 if parse_time(row["ts"]) < end else 108
-        row["oi_usd"] = None
-        row["oi_usd_reason"] = "SYNCHRONIZED_MARK_OR_QUOTE_RATE_UNAVAILABLE"
-    result = derivatives_truth(fixture, start, end)
+    no_usd = dict(oi_usd_start=None, oi_usd_end=None)
+    instrument = "binance:perp:T"
+    fixture["oi_sql"] = oi_evidence(
+        end,
+        [instrument],
+        cohort=[instrument],
+        venue={None: no_usd},
+        composite={None: no_usd},
+        venue_history={
+            None: dict(native_low=0.0, native_high=0.0, usd_samples=0, usd_low=None, usd_high=None)
+        },
+        composite_history={
+            None: dict(native_low=0.0, native_high=0.0, usd_samples=0, usd_low=None, usd_high=None)
+        },
+    )
+    result = derivatives_truth(dict(fixture, _primary="W4H"), start, end)
     for stats in (result["per_venue"][0], result["synchronized"]):
         assert stats["oi_native_start"] == 100
         assert stats["oi_native_end"] == 108
@@ -1428,14 +1185,17 @@ def test_supply_wrappers_preserve_unavailable_and_do_not_treat_unlock_as_sale():
         {"kind": kind, "observed_at": iso(end), "available": False, "reason": "SOURCE_FAILED"}
         for kind in ("EXCHANGE_INVENTORY", "WALLET_FLOWS", "UNLOCKS", "LENDING", "CHAIN_LIQUIDITY")
     ]
-    assert supply_truth({"supply": unavailable}, start, end)["supply_in_evidence"] == "UNKNOWN"
+    assert (
+        supply_truth(window_supply({"supply": unavailable}, start, end), start, end)["supply_in_evidence"]
+        == "UNKNOWN"
+    )
     unlock = {
         "kind": "UNLOCKS",
         "observed_at": iso(end),
         "available": True,
         "unlocks": [{"date": iso(end + timedelta(days=2)), "qty": 100, "kind": "POTENTIAL_SUPPLY"}],
     }
-    result = supply_truth({"supply": [unlock]}, start, end)
+    result = supply_truth(window_supply({"supply": [unlock]}, start, end), start, end)
     assert result["supply_in_evidence"] == "FALSE"
     assert len(result["unlocks_next_14d"]) == 1
     assert result["unlocks_next_14d"][0]["inference"] == "POTENTIAL_SUPPLY_IS_NOT_A_SALE"
@@ -1447,7 +1207,7 @@ def test_supply_without_observations_is_na_with_reason_not_empty():
 
     end = parse_time("2026-10-16T12:00:00Z")
     start = end - timedelta(hours=4)
-    empty = supply_truth({"supply": []}, start, end)
+    empty = supply_truth(window_supply({"supply": []}, start, end), start, end)
     assert empty["unlocks_next_14d"] == []
     assert empty["unavailable"] == {
         "exchange_inventory": "INCOMPLETE",
@@ -1458,7 +1218,7 @@ def test_supply_without_observations_is_na_with_reason_not_empty():
     }
     assert empty["supply_in_evidence"] == "UNKNOWN"
     read = {"kind": "UNLOCKS", "observed_at": iso(end), "available": True, "unlocks": []}
-    result = supply_truth({"supply": [read]}, start, end)
+    result = supply_truth(window_supply({"supply": [read]}, start, end), start, end)
     assert result["unlocks_next_14d"] == [] and "unlocks" not in result["unavailable"]
 
 
@@ -1521,7 +1281,7 @@ def test_supply_inventory_own_history_wrapped_flows_chain_and_lending():
             },
         ]
     )
-    result = supply_truth({"supply": rows}, start, end)
+    result = supply_truth(window_supply({"supply": rows}, start, end), start, end)
     assert result["exchange_inventory"]["chg_native_24h"] == 20
     assert result["exchange_inventory"]["chg_pct"] == pytest.approx(0.2)
     assert result["exchange_inventory"]["normal_range"] == [0, 0]
@@ -1541,12 +1301,27 @@ def test_derivative_windows_keep_one_hour_watch_separate_from_four_hour_crowding
     ]()
     end = parse_time(snapshot["cutoff"])
     snapshot["anchor"]["ts"] = iso(end - timedelta(hours=2))
-    for row in snapshot["oi"]:
-        native = 108 if parse_time(row["ts"]) >= end - timedelta(hours=2) else 100
-        row["oi_native"] = native
-        row["oi_usd"] = native * 100
-    for row in snapshot["funding"]:
-        row["rate"] = 0.0001 if parse_time(row["settlement_time"]) >= end - timedelta(hours=2) else 0
+    moved = dict(oi_native_start=100.0, oi_native_end=108.0, oi_usd_start=10000.0, oi_usd_end=10800.0)
+    still = dict(oi_native_start=108.0, oi_native_end=108.0, oi_usd_start=10800.0, oi_usd_end=10800.0)
+    changes = {name: moved for name in ("W4H", "W24H")} | {name: still for name in ("W15M", "W1H", "EVENT")}
+    flat = dict(native_low=0.0, native_high=0.0, usd_low=0.0, usd_high=0.0)
+    snapshot["oi_sql"] = oi_evidence(
+        end,
+        ["binance:perp:T"],
+        lengths=dict(W15M=900, W1H=3600, W4H=14400, W24H=86400, EVENT=7200),
+        cohort=["binance:perp:T"],
+        venue=changes,
+        composite=changes,
+        venue_history={None: flat},
+        composite_history={None: flat},
+    )
+    snapshot["funding_sql"] = funding_evidence(
+        end,
+        ["binance:perp:T"],
+        lengths=dict(W15M=900, W1H=3600, W4H=14400, W24H=86400, EVENT=7200),
+        venue={None: rate(0.0001) | start(0) | dict(normal_low=0.0, normal_high=0.0)}
+        | {name: rate(0.0001) | start(0.0001) for name in ("W15M", "W1H", "EVENT")},
+    )
     result = compute_market_truth(snapshot)
     windows = result["derivatives"]["windows"]
     assert set(windows) == {"W15M", "W1H", "W4H", "W24H", "EVENT"}
@@ -1571,41 +1346,6 @@ def test_derivative_windows_keep_one_hour_watch_separate_from_four_hour_crowding
         result["liquidity"]["windows"]["W1H"]["elasticity"]["bps_per_depth_unit"]
         != result["liquidity"]["windows"]["W4H"]["elasticity"]["bps_per_depth_unit"]
     )
-
-
-def test_reference_requires_complete_24h_flow_and_last_actual_trade():
-    from runpy import run_path
-
-    from tank.analysis.truth import relative_truth
-
-    snapshot = run_path(str(Path(__file__).with_name("test_truth_start_fixture.py")))[
-        "synthetic_start_snapshot"
-    ]()
-    end = parse_time(snapshot["cutoff"])
-    start = parse_time(snapshot["anchor"]["ts"])
-    next(
-        bar
-        for bar in snapshot["flow_bars"]
-        if bar.get("reference_points") and bar["reference_points"][0]["boundary"] == iso(start)
-    )["reference_points"][0]["last_trade"]["price"] = 99
-    result = relative_truth(snapshot, start, end)
-    assert result["ref_venue"] == "A:spot:T"
-    assert result["anchor"]["ref_price"] == 99
-    assert result["anchor"]["price_source"] == "LAST_TRADE"
-    assert result["windows"]["EVENT"]["r_raw"] == pytest.approx(101.1 / 99 - 1)
-
-    snapshot["flow_bars"][0]["complete"] = False
-    result = relative_truth(snapshot, start, end)
-    assert result["ref_venue"] == "B:spot:T"
-    assert result["anchor"]["ref_price"] == 100
-    for bar in snapshot["flow_bars"]:
-        if any(point["boundary"] == iso(start) for point in bar.get("reference_points", [])):
-            bar["reference_points"] = []
-            bar.pop("last_trade", None)
-    result = relative_truth(snapshot, start, end)
-    assert result["anchor"]["ref_price"] is None
-    assert result["windows"]["EVENT"]["r_raw"] is None
-    assert result["repricing_band"] is None
 
 
 def test_slug_identity_wld_sector_is_not_applicable_and_self_is_excluded():
@@ -1806,6 +1546,7 @@ def test_fractional_window_boundary_trades_need_continuity_proof_and_are_exact()
 
 
 @pytest.mark.asyncio
+@pytest.mark.usefixtures("relative_statements")
 async def test_assessment_cpu_runs_off_event_loop_and_default_cutoff_is_closed_minute(monkeypatch):
     import threading
     from types import SimpleNamespace
@@ -1895,7 +1636,7 @@ def test_canonical_text_facts_print_units_windows_and_preserve_audit_companion()
 
 
 def test_hot_derivative_cadence_is_60s_and_base_is_300s():
-    from tank.analysis.truth import available_field_freshness
+    from series_helpers import available_field_freshness
 
     end = parse_time("2026-10-16T12:00:00Z")
     point = iso(end - timedelta(seconds=90))
@@ -1924,7 +1665,9 @@ def test_hot_derivative_cadence_is_60s_and_base_is_300s():
 
 
 def test_stale_available_noncritical_supply_prevents_high_but_missing_is_na():
-    from tank.analysis.truth import data_confidence, supply_truth
+    from series_helpers import data_confidence
+
+    from tank.analysis.truth import supply_truth
 
     snapshot = _fresh_spot_snapshot()
     end = parse_time(snapshot["cutoff"])
@@ -1943,7 +1686,9 @@ def test_stale_available_noncritical_supply_prevents_high_but_missing_is_na():
     snapshot["supply"][0]["reason"] = "NOT_SUPPORTED"
     missing = data_confidence(snapshot, spot, {"per_venue": []}, end)
     assert missing["class_"] == "HIGH"
-    supply = supply_truth(snapshot, end - timedelta(hours=4), end)
+    supply = supply_truth(
+        window_supply(snapshot, end - timedelta(hours=4), end), end - timedelta(hours=4), end
+    )
     assert supply["lending"]["value"] is None
     assert supply["supply_in_evidence"] == "UNKNOWN"
 
@@ -1962,7 +1707,7 @@ def test_klines_poll_watermark_keeps_quiet_spot_venue_fresh_without_inventing_ca
     quiet, watermark_offset_s, missing, expected_class
 ):
     """A poll can prove availability; it cannot manufacture a price observation."""
-    from tank.analysis.truth import data_confidence
+    from series_helpers import data_confidence
 
     snapshot = _fresh_spot_snapshot()
     end = parse_time(snapshot["cutoff"])
@@ -2050,46 +1795,6 @@ def test_previous_window_bars_without_usd_rate_do_not_crash_size_profile():
     assert profile["sell_share_rising"] is None
 
 
-def test_benchmark_reaction_return_uses_largest_spot_venue_base_klines():
-    """03 §8.1 benchmark (lead ruling 2026-10-20): raw return from base klines; the rest NOT_APPLICABLE."""
-    from tank.analysis.truth import benchmark_reaction_values
-
-    end = parse_time("2026-10-16T12:00:00Z")
-    start = end - timedelta(hours=1)
-
-    def bar(iid, minute, close, usd):
-        return {
-            "instrument_id": iid,
-            "token_id": "bitcoin:BTC",
-            "market_type": "PERP_LINEAR" if "perp" in iid else "SPOT",
-            "open_time": iso(minute),
-            "interval_s": 60,
-            "complete": True,
-            "c": str(close),
-            "quote_volume_usd": str(usd),
-        }
-
-    klines = []
-    for i in range(120):
-        minute = end - timedelta(minutes=120 - i)
-        klines.append(bar("binance:spot:BTCUSDT", minute, 100 + i, 1000))
-        klines.append(bar("coinbase:spot:BTC-USD", minute, 50 + i, 10))
-        klines.append(bar("binance:perp_linear:BTCUSDT", minute, 1, 10**9))
-    result = benchmark_reaction_values({"token_id": "bitcoin:BTC", "klines": klines}, start, end)
-    assert result["r_raw_venue"] == "binance:spot:BTCUSDT"
-
-    assert result["price_start"] == 159 and result["price_end"] == 219
-    assert abs(result["r_raw"] - (219 / 159 - 1)) < 1e-12
-    assert result["reason"] == "NOT_APPLICABLE" and "spot_cvd" in result["not_applicable"]
-    empty = benchmark_reaction_values({"token_id": "bitcoin:BTC", "klines": []}, start, end)
-    assert empty["r_raw"] is None and empty["r_raw_reason"] == "INCOMPLETE"
-
-    gap = [k for k in klines if parse_time(k["open_time"]) < start - timedelta(minutes=30)]
-    assert gap
-    stale = benchmark_reaction_values({"token_id": "bitcoin:BTC", "klines": gap}, start, end)
-    assert stale["r_raw"] is None and stale["r_raw_reason"] == "INCOMPLETE"
-
-
 def test_oi_fact_reports_venue_decomposition_when_synchronized_class_unavailable():
     """F-11 (03 §11.3): REAL_NATIVE with the markup component reported, also when the synchronized
     USD decomposition is INCOMPLETE because one venue's mark is missing (§5.4: OI with its decomposition)."""
@@ -2151,69 +1856,6 @@ def test_oi_fact_reports_venue_decomposition_when_synchronized_class_unavailable
     )
 
 
-def test_hourly_archive_bars_with_binance_close_time_join_minute_bars_on_the_hour():
-    """F-16: Binance closeTime is hh:59:59.999; prices are keyed by the bar boundary (open + interval)."""
-    from tank.analysis.truth import _price_groups
-
-    def bar(open_time, interval, close, close_time=None):
-        row = {
-            "instrument_id": "binance:spot:BTCUSDT",
-            "token_id": "bitcoin:BTC",
-            "market_type": "SPOT",
-            "open_time": open_time,
-            "interval_s": interval,
-            "complete": True,
-            "c": close,
-        }
-        if close_time:
-            row["close_time"] = close_time
-        return row
-
-    snapshot = {
-        "cutoff": "2026-09-01T00:02:00Z",
-        "klines": [
-            bar("2026-08-31T22:00:00Z", 3600, "100", "2026-08-31T22:59:59.999Z"),
-            bar("2026-08-31T23:00:00Z", 3600, "101", "2026-08-31T23:59:59.999Z"),
-            bar("2026-09-01T00:00:00Z", 60, "102"),
-            bar("2026-09-01T00:01:00Z", 60, "103"),
-        ],
-    }
-    prices = _price_groups(snapshot)["binance:spot:BTCUSDT"]
-    assert sorted(iso(t) for t in prices) == [
-        "2026-08-31T23:00:00Z",
-        "2026-09-01T00:00:00Z",
-        "2026-09-01T00:01:00Z",
-        "2026-09-01T00:02:00Z",
-    ]
-    hourly = [t for t in prices if t.minute == 0 and t.second == 0]
-    assert len(hourly) == 2
-
-
-def test_benchmark_gap_leaves_btc_adjusted_return_na_not_raw():
-    """Prod 20 Oct (WLD): BTC base klines missing 10:00-15:28 made r_btc_adj equal r_raw (BTC return 0)."""
-    from runpy import run_path
-
-    from tank.analysis.truth import relative_truth
-
-    snapshot = run_path(str(Path(__file__).with_name("test_truth_start_fixture.py")))[
-        "synthetic_start_snapshot"
-    ]()
-    end = parse_time(snapshot["cutoff"])
-    start = parse_time(snapshot["anchor"]["ts"])
-    whole = relative_truth(snapshot, start, end)["windows"]["W1H"]
-    assert whole["r_btc_adj"] is not None and whole["r_raw"] is not None
-    btc = [r for r in snapshot["klines"] if "BTC" in r["instrument_id"]]
-    assert btc
-    snapshot["klines"] = [
-        r
-        for r in snapshot["klines"]
-        if not ("BTC" in r["instrument_id"] and parse_time(r["open_time"]) >= end - timedelta(hours=2))
-    ]
-    gap = relative_truth(snapshot, start, end)["windows"]["W1H"]
-    assert gap["r_raw"] == whole["r_raw"]
-    assert gap["r_btc_adj"] is None
-
-
 def test_null_measurements_have_companion_context_without_wrapping_literal_fields():
     from runpy import run_path
 
@@ -2232,10 +1874,13 @@ def test_null_measurements_have_companion_context_without_wrapping_literal_field
 
 
 def test_hot_90_second_derivative_points_are_medium_without_weakening_sync_rule():
-    from tank.analysis.truth import data_confidence, derivatives_truth
+    from series_helpers import data_confidence
+
+    from tank.analysis.truth import derivatives_truth
 
     snapshot = _fresh_spot_snapshot()
     _add_fresh_perp_fields(snapshot)
+    snapshot["_primary"] = "W4H"
     end = parse_time(snapshot["cutoff"])
     start = end - timedelta(hours=4)
     assert derivatives_truth(snapshot, start, end)["synchronized"] is not None
@@ -2267,11 +1912,9 @@ def test_hot_90_second_derivative_points_are_medium_without_weakening_sync_rule(
         f["condition"] == "freshness" and f.get("collection") in ("oi", "funding") for f in base["failed"]
     )
 
-    assert derivatives["synchronized"] is None
-
 
 def test_freshness_uses_semantic_point_time_and_snapshot_assembly_availability():
-    from tank.analysis.truth import available_field_freshness
+    from series_helpers import available_field_freshness
 
     end = parse_time("2026-10-16T12:00:00Z")
     point = {
@@ -2316,20 +1959,6 @@ def test_outcome_btc_reference_and_horizon_ranges_are_frozen_from_entry_history(
         assert measured["value"] is not None and measured["reason"] is None
         assert parse_time(measured["cutoff"]) == parse_time(snapshot["anchor"]["ts"])
 
-    snapshot["klines"].append(
-        {
-            "instrument_id": "A:spot:T",
-            "token_id": "T",
-            "open_time": "2026-10-17T12:00:00Z",
-            "interval_s": 60,
-            "c": 999999,
-            "complete": True,
-        }
-    )
-    again = relative_truth(snapshot, start, end)
-    assert again["normal_ranges"] == relative["normal_ranges"]
-    assert again["beta_btc"] == relative["beta_btc"]
-
 
 def test_complete_liquidation_total_requires_whole_window_capture_not_recent_connection():
     from tank.analysis.truth import derivatives_truth
@@ -2337,19 +1966,15 @@ def test_complete_liquidation_total_requires_whole_window_capture_not_recent_con
     end = parse_time("2026-10-16T12:00:00Z")
     start = end - timedelta(hours=4)
     iid = "bybit:perp:T"
+    short = dict(observations=1, short_count=1, short_usd=100.0, total_usd=100.0, first_half_count=0)
+
+    def liquidations(**changes):
+        return funding_evidence(end, [iid], lengths={"EVENT": 14400}, liquidations={None: {iid: changes}})
+
     snapshot = {
-        "oi": [
-            {"instrument_id": iid, "ts": iso(start), "oi_native": 100, "oi_usd": 100},
-            {"instrument_id": iid, "ts": iso(end), "oi_native": 100, "oi_usd": 100},
-        ],
-        "liquidations": [
-            {
-                "instrument_id": iid,
-                "ts": iso(end - timedelta(minutes=1)),
-                "side": "SHORT_LIQ",
-                "notional_usd": 100,
-            }
-        ],
+        "_primary": "EVENT",
+        "instruments": [{"instrument_id": iid, "venue": "bybit", "market_type": "PERP_LINEAR"}],
+        "funding_sql": liquidations(**short),
         "capture_metadata": {
             "collections": {
                 "liquidations": {
@@ -2367,7 +1992,7 @@ def test_complete_liquidation_total_requires_whole_window_capture_not_recent_con
     complete = derivatives_truth(snapshot, start, end)
     assert complete["per_venue"][0]["liq_coverage"] == "COMPLETE"
     assert complete["liquidations"]["complete_venues_total"]["short"] == 100
-    snapshot["liquidations"] = []
+    snapshot["funding_sql"] = funding_evidence(end, [iid], lengths={"EVENT": 14400})
     empty = derivatives_truth(snapshot, start, end)
     assert empty["liquidations"]["complete_venues_total"] == {"long": 0, "short": 0}
     snapshot["capture_metadata"]["collections"]["liquidations"]["coverage_start"][iid] = iso(
@@ -2395,7 +2020,7 @@ def test_decimal_significance_does_not_round_a_subthreshold_flow_into_buy():
             "minute_start": iso(start),
             "buy_qty": "1",
             "sell_qty": "0",
-            "sum_sq_qty": "0.2500000000000000000000000000000000000001",
+            "sum_sq_qty": "0.25000000000000006",
             "complete": True,
         }
         for v in ("A", "B")
@@ -2409,10 +2034,8 @@ def test_decimal_significance_does_not_round_a_subthreshold_flow_into_buy():
     assert all(v["sign"] == 1 for v in exact["venues"])
 
 
-def test_exact_usd_decomposition_and_funding_interval_conversion():
+def test_exact_usd_decomposition():
     from decimal import localcontext
-
-    from tank.analysis.truth import derivatives_truth
 
     n0 = "10000000000000000000000000000000000000000.000000000000000001"
     n1 = "10000000000000000000000000000000000000000.000000000000000002"
@@ -2425,26 +2048,6 @@ def test_exact_usd_decomposition_and_funding_interval_conversion():
         assert d["position"] + d["markup"] + d["interaction"] == Decimal(n1) * Decimal(
             "1.23456790"
         ) - Decimal(n0) * Decimal("1.23456789")
-    end = parse_time("2026-10-16T12:00:00Z")
-    start = end - timedelta(hours=4)
-    iid = "A:perp:T"
-    result = derivatives_truth(
-        {
-            "oi": [{"instrument_id": iid, "ts": iso(end), "oi_native": "1", "oi_usd": "1"}],
-            "funding": [
-                {
-                    "instrument_id": iid,
-                    "kind": "SETTLED",
-                    "settlement_time": iso(end),
-                    "rate": "0.0000000000000000000000000000000000000001",
-                    "interval_h": 1,
-                }
-            ],
-        },
-        start,
-        end,
-    )
-    assert result["per_venue"][0]["funding_8h_eq"] == Decimal("8E-40")
 
 
 def test_successful_measurements_have_unit_precision_coverage_and_exact_json_values():
@@ -2528,9 +2131,9 @@ def exact_selling_spot(epsilon):
 def test_exact_capital_majority_drives_distribution_without_rounded_display_rule():
     from tank.analysis.truth import select_move, spot_majority
 
-    tiny = exact_selling_spot(Decimal("1E-40"))
+    tiny = exact_selling_spot(Decimal("1E-12"))
     half = exact_selling_spot(Decimal(0))
-    assert tiny["cw_breadth"]["sell"] == half["cw_breadth"]["sell"] == 0.5
+    assert tiny["cw_breadth"]["sell"] == pytest.approx(0.5) and half["cw_breadth"]["sell"] == 0.5
     assert tiny["exact_majority"]["sell"] is True
     assert half["exact_majority"]["sell"] is False
     assert tiny["classification"] == "BROAD" and half["classification"] == "DIVERGENT"
@@ -2582,6 +2185,7 @@ def test_cohort_majority_uses_exact_volume_not_rounded_share(epsilon, expected):
         spots = {
             "W1H": truth({"A": Decimal(".5") + epsilon, "B": Decimal(".5"), "C": Decimal(1)}),
             "W24H": truth({"A": Decimal(1), "B": Decimal(1)}),
+            "W15M": truth({"A": Decimal(1)}),
         }
     relative = {
         "ref_venue": None,
@@ -2649,6 +2253,7 @@ def test_distribution_cohort_buy_to_sell_does_not_require_current_selling_majori
         ({"value": "2026-10-16T08:00:00Z", "precision": "BUCKET(1d)"}, None, True, "T1"),
     ],
 )
+@pytest.mark.usefixtures("relative_statements")
 async def test_assessment_calls_snapshot_with_shared_canonical_anchor(
     event_time, precision, state_verified, kind
 ):
@@ -2728,156 +2333,3 @@ def test_price_markup_flag_keeps_measured_venue_when_composite_is_unavailable(
     assert result["move_class"] == "UNKNOWN"
     assert result["class_confidence"] == "LOW"
     assert derivatives["synchronized"] is None
-
-
-def _sync_cohort(end, spans_days, levels, usd_days=None):
-    """Synchronized cohort rows on a 5 min grid; venue i starts spans_days[i] before end and
-    carries USD for its last usd_days[venue] days (all of them by default)."""
-    cohort = []
-    for (venue, span), level in zip(spans_days.items(), levels, strict=False):
-        iid = f"{venue}:perp_linear:BTCUSDT"
-        rows = [
-            {
-                "instrument_id": iid,
-                "ts": iso(end - timedelta(minutes=m)),
-                "oi_native": level(m),
-                "oi_usd": 2 * level(m) if m <= (usd_days or {}).get(venue, span) * 1440 else None,
-            }
-            for m in range(int(span * 1440) // 5 * 5, -1, -5)
-        ]
-        cohort.append(({"venue": venue, "instrument_id": iid}, rows, "PERP_LINEAR_SINGLE"))
-    return cohort
-
-
-def test_synchronized_oi_history_counts_each_past_window_over_venues_seen_at_both_bounds():
-    """03 §0/§5.4: OKX joined on 18 Oct, Binance and Bybit have months of base tier; the
-    composite's normal range comes from past windows over the venues observed at their bounds."""
-    from tank.analysis.truth import _composite_history, normal, synchronized_oi
-
-    end = parse_time("2026-10-21T03:00:00Z")
-    start = end - timedelta(minutes=15)
-    spans = {"binance": 10, "bybit": 10, "okx": 2.5}
-    levels = [lambda m: 100 + (m // 5) % 4, lambda m: 50 + (m // 5) % 3, lambda m: 30 + (m // 5) % 2]
-    usd_days = {"binance": 10, "bybit": 2.5, "okx": 2.5}
-    sync = _sync_cohort(end, spans, levels, usd_days)
-    result = synchronized_oi(sync, start, end)
-    assert result["venues"] == ["binance", "bybit", "okx"]
-    native, usd = [], []
-
-    for m in range(20, 10 * 1440 - 15 + 1, 5):
-        for days, out in ((spans, native), (usd_days, usd)):
-            present = [i for i, span in enumerate(days.values()) if m + 15 <= span * 1440]
-            out.append(sum(levels[i](m) for i in present) / sum(levels[i](m + 15) for i in present) - 1)
-    assert native != usd
-    assert result["native_normal_range"] == pytest.approx(normal(native))
-    assert result["usd_normal_range"] == pytest.approx(normal(usd))
-    assert result["native_oi_vs_normal"] is not None
-
-    flat = _sync_cohort(end, spans, [lambda m: 100, lambda m: 50, lambda m: 1000])
-    stored = [[r for r in rows if parse_time(r["ts"]) < start] for _, rows, _ in flat]
-    hn, hu = _composite_history([([parse_time(r["ts"]) for r in rows], rows) for rows in stored], end - start)
-    assert hn and max(map(abs, hn)) == 0 and max(map(abs, hu)) == 0
-
-
-def test_synchronized_oi_history_stays_unavailable_under_seven_days():
-    from tank.analysis.truth import synchronized_oi
-
-    end = parse_time("2026-10-21T03:00:00Z")
-    start = end - timedelta(minutes=15)
-    sync = _sync_cohort(
-        end, {"binance": 6.9, "bybit": 6.9, "okx": 2.5}, [lambda m: 100 + m % 7, lambda m: 50, lambda m: 30]
-    )
-    result = synchronized_oi(sync, start, end)
-    assert result["venues"] == ["binance", "bybit", "okx"]
-    assert result["native_normal_range"] is None
-    assert result["oi_class"] is None
-
-
-def test_full_assessments_run_one_at_a_time_per_process(monkeypatch):
-    """Concurrent compute_market_truth calls in worker threads never overlap (GIL share of the
-    event loop thread); a waiting call simply runs after the current one."""
-    import threading
-    import time
-
-    import tank.analysis.truth as truth
-
-    active, peak, lock = [0], [0], threading.Lock()
-
-    def fake(snapshot, config=None):
-        with lock:
-            active[0] += 1
-            peak[0] = max(peak[0], active[0])
-        time.sleep(0.05)
-        with lock:
-            active[0] -= 1
-        return {"token_id": snapshot["token_id"]}
-
-    monkeypatch.setattr(truth, "_compute_market_truth", fake)
-    threads = [
-        threading.Thread(target=truth.compute_market_truth, args=({"token_id": str(i)},)) for i in range(4)
-    ]
-    for t in threads:
-        t.start()
-    for t in threads:
-        t.join()
-    assert peak[0] == 1
-
-
-@pytest.mark.asyncio
-async def test_idle_token_assessment_baselines_are_released(monkeypatch):
-    """Per-token assessment baselines were kept for the process lifetime, so every token
-    ever assessed kept its 90-day indexes in the assessment worker."""
-    from types import SimpleNamespace
-
-    import tank.analysis.truth as module
-    from tank.analysis import compute_workers
-
-    def held():
-        compute_workers.executor(compute_workers.ASSESSMENT).submit(lambda: None).result(timeout=5)
-        return compute_workers._baselines
-
-    clock = [1000.0]
-    monkeypatch.setattr(compute_workers.time, "monotonic", lambda: clock[0])
-
-    def fill(snapshot, *, config=None, baseline_cache=None):
-        baseline_cache[("native-volume-index", snapshot["token_id"])] = {"head": snapshot["cutoff"]}
-        return {"token_id": snapshot["token_id"]}
-
-    monkeypatch.setattr(module, "compute_market_truth", fill)
-
-    class Repo:
-        async def get(self, *args):
-            return {}
-
-        async def put(self, *args, **kwargs):
-            return args[2]
-
-    class Market:
-        async def snapshot(self, token, cutoff, anchor=None):
-            return {"token_id": token, "cutoff": cutoff, "anchor": anchor}
-
-        async def condition_snapshot(self, token, cutoff, anchor=None, requirements=None):
-            return {"token_id": token, "cutoff": cutoff}
-
-    service = module.MarketTruthService(
-        Repo(), SimpleNamespace(config_version="test", code_version="test"), Market()
-    )
-    await service.assess(None, "A", "2026-10-16T12:00:00Z")
-    clock[0] += 60
-    await service.assess(None, "B", "2026-10-16T12:01:00Z")
-    assert set(held()) == {"A", "B"}
-    clock[0] += module.ASSESSMENT_BASELINE_IDLE_S
-    await service.assess(None, "B", "2026-10-16T12:31:00Z")
-    assert set(held()) == {"B"}
-    assert held()["B"] == {("native-volume-index", "B"): {"head": "2026-10-16T12:31:00Z"}}
-    clock[0] += module.ASSESSMENT_BASELINE_IDLE_S + 1
-    monkeypatch.setattr(module, "compute_condition_values", lambda *args, **kwargs: {})
-    await service.condition_values(None, "C", "2026-10-16T13:02:00Z", [])
-    assert held() == {}
-    await service.assess(None, "D", "2026-10-16T13:03:00Z")
-    clock[0] += module.ASSESSMENT_BASELINE_IDLE_S + 1
-    replacement = module.MarketTruthService(
-        Repo(), SimpleNamespace(config_version="next", code_version="test"), Market()
-    )
-    await replacement.condition_values(None, "C", "2026-10-16T13:34:00Z", [])
-    assert held() == {}

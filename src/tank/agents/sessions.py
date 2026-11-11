@@ -35,6 +35,17 @@ from tank.token_context import TokenContextService
 from tank.util import canonical_json, iso, parse_time, sha256, utcnow
 
 REST_TIMEOUT_S = 30
+FILES_BETA = "files-api-2025-04-14"
+MARKET_TRUTH_DIR = "/workspace/market_truth"
+MARKET_TRUTH_HEADLINE = (
+    "token",
+    "move_class",
+    "class_confidence",
+    "primary_window",
+    "decisive_facts",
+    "divergence",
+    "flags",
+)
 
 DEFAULT_MAX_RUNNING_SESSIONS = 2
 DEFAULT_COMPLETION_REMINDERS = 20
@@ -244,8 +255,10 @@ class SessionService:
     def url(self, path):
         return self.settings.openma_url.rstrip("/") + "/v1/" + path
 
-    async def request(self, method, path, **kwargs):
+    async def request(self, method, path, *, beta=None, **kwargs):
         headers = self.headers(kwargs.pop("idem", None))
+        if beta:
+            headers["anthropic-beta"] += "," + beta
 
         kwargs.setdefault("timeout", REST_TIMEOUT_S)
         response = await self.http.request(method, self.url(path), headers=headers, **kwargs)
@@ -723,18 +736,33 @@ class SessionService:
         return session
 
     async def post_message_intent(self, sid, key):
+        """Post a message's durable body under the idempotency key of its current attempt.
+
+        OpenMA derives the accepted input's id from that key: a message it already holds comes
+        back with the id it was accepted under and is not executed again, and a message it never
+        received is delivered. The same POST therefore sends a new intent and restores the
+        acknowledgement of a message whose record has none. A restored message keeps its sent_at
+        and its session's last_item_at, and is restored only in an OPEN session."""
         session = await self.repo.get("ops.agent_sessions", sid)
         intent = next(row for row in session["message_log"] if row["message_id"] == key)
         initial_status = session.get("status")
         remote = session.get("remote_state") or {}
+        retry = intent.get("retry_count", 0)
+        unsent = intent.get("turn_status") == "ACCEPTING" and not intent.get("sent_at")
         if (
             intent.get("remote_event_id")
-            or intent.get("turn_status") in {"DONE", "FAILED"}
+            or intent.get("turn_status") == "FAILED"
             or key in session.get("retired_message_ids", [])
-            or intent.get("native_input_attempts", {}) != {}
-            or type(intent.get("retry_count", 0)) is not int
-            or intent.get("retry_count", 0) != 0
-            or initial_status not in {"OPEN", "FAILED"}
+            or type(retry) is not int
+            or (
+                unsent
+                and (
+                    intent.get("native_input_attempts", {}) != {}
+                    or retry != 0
+                    or initial_status not in {"OPEN", "FAILED"}
+                )
+            )
+            or (not unsent and initial_status != "OPEN")
             or session.get("archived_at")
             or remote.get("status") == "terminated"
             or remote.get("archived_at")
@@ -744,7 +772,7 @@ class SessionService:
             "POST",
             f"sessions/{sid}/events",
             json={"events": [copy.deepcopy(intent["body"])]},
-            idem="message:" + key,
+            idem="turn-retry:" + sid + ":" + key if retry else "message:" + key,
         )
         accepted_at, identity = self.clock_timestamp(), self.accepted_input_id(accepted)
         async with self.repo.lock("session:" + sid):
@@ -755,7 +783,7 @@ class SessionService:
             if identity:
                 intent.setdefault("native_input_attempts", {})[identity] = intent.get("retry_count", 0)
             intent.update(
-                **accepted_at.fields("sent_at"),
+                **(accepted_at.fields("sent_at") if unsent else {}),
                 remote_event_id=identity,
                 turn_status="PENDING"
                 if intent.get("turn_status") == "ACCEPTING"
@@ -773,7 +801,7 @@ class SessionService:
                 and not remote.get("archived_at")
             ):
                 session["status"] = "OPEN"
-            if intent["payload"].get("item_id"):
+            if unsent and intent["payload"].get("item_id"):
                 session.update(accepted_at.fields("last_item_at"))
                 session.update(
                     propagate_timestamp(intent, "item_observed_at").fields("last_item_observed_at")
@@ -828,10 +856,11 @@ class SessionService:
         return field != "item_id" or not attempt or session.get("reanalysis_attempt") == attempt
 
     async def recover_outbound_inputs(self, sid):
+        """Every message without an OpenMA acknowledgement is posted again, whatever its turn state."""
         async with self.send_locks.setdefault(sid, asyncio.Lock()):
             session = await self.repo.get("ops.agent_sessions", sid)
             for message in session.get("message_log", []):
-                if message.get("turn_status") == "ACCEPTING" and not message.get("sent_at"):
+                if not message.get("remote_event_id"):
                     await self.post_message_intent(sid, message["message_id"])
         session = await self.repo.get("ops.agent_sessions", sid)
         await session_progress(self.repo, self.settings, session)
@@ -1829,6 +1858,15 @@ class SessionService:
         projected = await ModelContext(self.repo, self.settings, current).result(
             stored["tool"], stored["result"]
         )
+        if (
+            stored["tool"] == "get_market_truth"
+            and not stored.get("is_error")
+            and isinstance(stored["result"].get("market_truth"), list)
+            and not (
+                stored.get("native_result_body") and stored.get("model_context_version") == CONTEXT_VERSION
+            )
+        ):
+            projected = await self.market_truth_files(sid, stored["result"], projected)
         note = await self.transition_note(sid) if self.legacy_contract(session) else None
         if note:
             projected = (
@@ -1873,6 +1911,59 @@ class SessionService:
                 **self.clock_timestamp().fields("returned_at"),
             )
             await self.repo.put("ops.tool_calls", key, stored)
+
+    async def market_truth_files(self, sid, result, projected):
+        """Each token's Market Truth, as projected for the model, becomes a file in the session sandbox
+        before the tool result resumes the model; the result keeps its path and headline fields.
+
+        The path names the token and the cutoff minute, which is also the key of the job that
+        computed the record, so a path the session already has holds this same record and is reused:
+        OpenMA refuses a second resource at one path."""
+        mounted = await self.mounted_paths(sid)
+        listed = []
+        for record, shown in zip(result["market_truth"], projected["market_truth"], strict=True):
+            stamp = parse_time(record["cutoff"]).strftime("%Y%m%dT%H%MZ")
+            name = f"{record['token_id'].replace(':', '_')}_{stamp}.json"
+            path = f"{MARKET_TRUTH_DIR}/{name}"
+            if path not in mounted:
+                uploaded = await self.request(
+                    "POST",
+                    "files",
+                    beta=FILES_BETA,
+                    files={
+                        "file": (
+                            name,
+                            json.dumps(shown, ensure_ascii=False, indent=2).encode(),
+                            "application/json",
+                        )
+                    },
+                )
+                await self.request(
+                    "POST",
+                    f"sessions/{sid}/resources",
+                    json={
+                        "type": "file",
+                        "file_id": uploaded.get("data", uploaded)["id"],
+                        "mount_path": path,
+                    },
+                )
+                mounted.add(path)
+            listed.append(
+                {"path": path, **{key: shown[key] for key in MARKET_TRUTH_HEADLINE if key in shown}}
+            )
+        return {**projected, "market_truth": listed}
+
+    async def mounted_paths(self, sid):
+        """Mount paths of the session's resources in OpenMA."""
+        paths, page = set(), None
+        while True:
+            body = await self.request(
+                "GET", f"sessions/{sid}/resources", params={"limit": 100, **({"page": page} if page else {})}
+            )
+            paths.update(row.get("mount_path") for row in body.get("data", []))
+            page = body.get("next_page")
+            if not page:
+                return paths
 
     async def usage(self, session, event):
         usage = event.get("model_usage")

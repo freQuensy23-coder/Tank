@@ -211,7 +211,6 @@ async def test_real_truth_decision_publication_bundle_to_completed_review(tmp_pa
         "ems_id": "review-ems",
         "event_id": eid,
         "class": "MAJOR",
-        "criterion": "M2",
         "certainty": "HIGH",
         "impact_horizon": {"impact_start": "NOW"},
     }

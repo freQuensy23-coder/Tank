@@ -5,6 +5,8 @@ from decimal import Decimal
 from pathlib import Path
 from runpy import run_path
 
+from relative_helpers import trade, with_references
+
 from tank.analysis.truth import compute_market_truth
 from tank.util import iso, parse_time
 
@@ -98,6 +100,10 @@ def fractional_packet():
 def test_exact_bar_segments_support_fractional_window_and_current_cutoff_without_raw_trades():
     snapshot = fractional_packet()
     assert not any(key in snapshot for key in ("trades", "boundary_trades", "anchor_trades", "cutoff_trades"))
+    snapshot["relative_sql"] = with_references(
+        snapshot["relative_sql"],
+        anchor_trade=trade("100.00000000000000000001", snapshot["anchor"]["ts"]),
+    )
     result = compute_market_truth(snapshot)
     event = result["spot"]["EVENT"]
     assert event["coverage"]["n_complete"] == 2
