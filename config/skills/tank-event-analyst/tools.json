@@ -2736,5 +2736,48 @@
         "action"
       ]
     }
+  },
+  {
+    "name": "propose_token_context_edit",
+    "description": "Propose a replacement for token research Markdown; creates a pending GitHub-style diff in Tank Ops, with no change before human approval.",
+    "input_schema": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "token_id": {
+          "type": "string",
+          "description": "Exact registry token key, e.g. uniswap:UNI."
+        },
+        "updated_markdown": {
+          "type": "string",
+          "description": "Complete replacement text. In automatic edits substitute facts line by line, keep every section title, add no lines and grow the text by at most 1,000 characters."
+        },
+        "reason": {
+          "type": "string",
+          "maxLength": 240,
+          "description": "One sentence explaining which verified event requires these updates."
+        },
+        "claim_ids": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Accepted verified claim IDs from the current event."
+        },
+        "user_requested_expansion": {
+          "type": [
+            "boolean",
+            "null"
+          ],
+          "description": "True only when the user explicitly asks to add material in a follow-up."
+        }
+      },
+      "required": [
+        "token_id",
+        "updated_markdown",
+        "reason",
+        "claim_ids"
+      ]
+    }
   }
 ]

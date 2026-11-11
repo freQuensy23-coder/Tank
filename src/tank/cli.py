@@ -267,6 +267,32 @@ def review_label(subject, label, miss_reason, notes, reviewer, version):
     run_db(command)
 
 
+@main.group("token-context")
+def token_context_cli():
+    """Inspect the PostgreSQL token research knowledge base."""
+
+
+@token_context_cli.command("status")
+def token_context_status():
+    async def command(repo, settings):
+        from tank.token_context import TokenContextService, registry_tokens
+
+        service = TokenContextService(repo, settings)
+        result = []
+        for token_id in sorted(registry_tokens(settings)):
+            current = await service.read(token_id)
+            result.append(
+                {
+                    "token_id": token_id,
+                    "revision": current["revision"],
+                    "populated": bool(current["markdown"]),
+                }
+            )
+        return result
+
+    run_db(command)
+
+
 @main.command()
 @click.argument("event_id")
 @click.option("--token-id")

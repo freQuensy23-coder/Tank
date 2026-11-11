@@ -377,6 +377,15 @@ TABLE_COLUMNS = {
         "observed_at": "timestamptz",
     },
 }
+TABLE_COLUMNS["reg.token_context"] = {"token_id": "text", "revision": "char(64)", "updated_at": "timestamptz"}
+TABLE_COLUMNS["reg.token_context_proposals"] = {
+    "proposal_id": "text",
+    "token_id": "text",
+    "status": "text",
+    "base_revision": "char(64)",
+    "created_at": "timestamptz",
+}
+
 APPEND_ONLY = frozenset(
     [
         "evt.state_changes",

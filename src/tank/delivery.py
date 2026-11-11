@@ -2,6 +2,7 @@
 
 import asyncio
 import html
+import json
 from contextlib import AsyncExitStack
 from datetime import timedelta
 
@@ -11,6 +12,7 @@ from tank.analysis.cards import telegram_card_html
 from tank.delivery_jobs import NoticeDeliveryJob, ledger_filters, parse_delivery_job
 from tank.ops_progress import event_progress
 from tank.time_precision import collection_clock, offset_schedule, propagate_timestamp
+from tank.token_context import diff_png
 from tank.util import new_id, parse_time, sha256, utcnow
 
 DELIVERY_LOCK_WAIT_S = 6
@@ -408,10 +410,43 @@ class DeliveryService:
             if not self.settings.telegram_token or not chat:
                 raise ValueError("Telegram token and destination must be configured")
             rich_message = record.get("rich_message") if not notice else None
+            token_proposal = None
+            if notice and record.get("kind") == "TOKEN_CONTEXT_PROPOSAL":
+                token_proposal = await self.repo.get("reg.token_context_proposals", record["subject_id"])
+                if not token_proposal:
+                    raise ValueError("Missing token context proposal")
             document = record.get("document") if notice else None
-            method = "sendRichMessage" if rich_message else "sendDocument" if document else "sendMessage"
+            method = (
+                "sendPhoto"
+                if token_proposal
+                else "sendRichMessage"
+                if rich_message
+                else "sendDocument"
+                if document
+                else "sendMessage"
+            )
             body = {"chat_id": chat}
-            if rich_message:
+            if token_proposal:
+                from tank.token_context import MAX_REASON_LENGTH
+
+                body.update(
+                    caption=token_proposal["reason"][:MAX_REASON_LENGTH],
+                    reply_markup={
+                        "inline_keyboard": [
+                            [
+                                {
+                                    "text": "Approve",
+                                    "callback_data": "tc:approve:" + token_proposal["proposal_id"],
+                                },
+                                {
+                                    "text": "Agree",
+                                    "callback_data": "tc:agree:" + token_proposal["proposal_id"],
+                                },
+                            ]
+                        ]
+                    },
+                )
+            elif rich_message:
                 body["rich_message"] = rich_message
             elif document:
                 body.update(caption=html.escape(record["text"]), parse_mode="HTML")
@@ -447,7 +482,22 @@ class DeliveryService:
             response_status = None
             try:
                 url = f"https://api.telegram.org/bot{self.settings.telegram_token}/{method}"
-                if document:
+                if token_proposal:
+                    preview = diff_png(
+                        token_proposal["token_id"],
+                        token_proposal["old_markdown"],
+                        token_proposal["updated_markdown"],
+                    )
+                    response = await self.http.post(
+                        url,
+                        data={
+                            "chat_id": str(chat),
+                            "caption": body["caption"],
+                            "reply_markup": json.dumps(body["reply_markup"]),
+                        },
+                        files={"photo": ("token-context-diff.png", preview, "image/png")},
+                    )
+                elif document:
                     attached = (document["filename"], document["text"].encode(), "text/plain")
                     response = await self.http.post(url, data=body, files={"document": attached})
                 else:
@@ -507,6 +557,15 @@ class DeliveryService:
                     },
                     immutable=True,
                 )
+                if token_proposal:
+                    proposal = await self.repo.get(
+                        "reg.token_context_proposals", token_proposal["proposal_id"]
+                    )
+                    await self.repo.put(
+                        "reg.token_context_proposals",
+                        proposal["proposal_id"],
+                        {**proposal, "ops_chat_id": str(chat), "ops_message_id": message_ref},
+                    )
                 if not notice:
                     await event_progress(
                         self.repo,

@@ -1242,7 +1242,7 @@ class PostgresRepository(QueueMixin):
                         )
                     ).fetchone()
                     if exists is None:
-                        await conn.execute(path.read_text(), prepare=False)
+                        await conn.execute(path.read_bytes().decode("utf-8"), prepare=False)
                         await conn.execute(
                             "INSERT INTO ops.schema_migrations(version) VALUES (%s)", (path.name,)
                         )

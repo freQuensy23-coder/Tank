@@ -512,3 +512,10 @@ Social/narrative scoring (virality, community spread); persistent narrative trac
 | D7 | The analysis model runs on the operator's ChatGPT subscription (Codex sign-in, no API key). Token and spending limits are out of V0 scope. |
 | D8 | One event, one analysis: the first item starts it, and every later item that repeats or develops the event within 3 days, every fired condition and every milestone joins it, even while it is running. |
 | D9 | The agents' web search uses DuckDuckGo, with no key and no cost. DuckDuckGo has no official search API, so Tank reads its results page; the terms-of-service and blocking risk is accepted. |
+
+
+## Addendum: Token research context and approvals (2026-11-11)
+
+Each registered token has a research fact sheet kept exclusively in PostgreSQL and mounted as a read-only Markdown file in every new analyst sandbox; a missing fact sheet is an empty file. Once an agent identifies which tokens a news item materially affects, it must read those files before assessing the news.
+
+Agents may propose editing a token fact sheet only when significant verified news changes previously recorded facts. The replacement must remove stale claims, substitute current verified information, and preserve structure. Agents must never append sections or extra research automatically; explicit user follow-ups may authorize expansions. A proposal does not change data until a Tank Ops administrator approves it from a message showing a one-sentence explanation, a GitHub-style visual diff and Approve/Agree buttons. A stale proposal must fail without merging or applying changes. New sessions receive approved revisions; active sessions keep their original snapshots.
