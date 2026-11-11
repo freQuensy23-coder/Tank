@@ -7,8 +7,15 @@ feed URL, the reason and the entry identity (the digest of the wire entry when t
 parser had one), never from the poll time. Feeds that keep returning the same broken
 entry therefore produce no further messages. A failed S29 run-sync call is keyed by its
 HTTP status and the feed's count of successful reads before it, so it is reported once
-per failure episode and status. Markers, the notice and its ``DELIVER`` job are written
-in one transaction.
+per failure episode and status. A post referenced by a new X post whose page X answered
+with an HTTP error is keyed by that post. Markers, the notice and its ``DELIVER`` job are
+written in one transaction.
+
+An HTTP error is reported in full: the failed S29 run-sync response, and every request the
+worker made to X for a failed account or referenced post, with the status, every header and
+the whole body of each response. When that text does not fit one Telegram message the notice
+keeps it in ``document`` and its ``text`` is a short caption; delivery sends both in one
+``sendDocument`` call.
 """
 
 import html
@@ -30,7 +37,12 @@ REASONS = {
     "APIFY_RUN_HTTP_ERROR": "Запуск сбора X в Apify завершился HTTP-ошибкой",
 }
 MESSAGE_LIMIT = 3900
-RESPONSE_BODY_UNITS = 2000
+CAPTION_LIMIT = 1000
+RELATIONS = {
+    "quoted": "процитированный пост",
+    "replied_to": "пост, на который дан ответ",
+    "linked": "пост по ссылке",
+}
 
 
 def identity(error):
@@ -40,6 +52,8 @@ def identity(error):
         return {"proposal_id": error["proposal_id"]}
     if error.get("reason") == "APIFY_RUN_HTTP_ERROR":
         return {"status": error["response"]["status"], "reads_ok_before": error.get("reads_ok_before")}
+    if error.get("referenced_post"):
+        return {"referenced_post": error["referenced_post"]["id"]}
     if "account" in error:
         return {"account": str(error.get("account") or "").lower()}
     return {"error": re.sub(r"\d+", "#", str(error.get("error") or ""))}
@@ -60,28 +74,59 @@ def units(text):
     return len(text.encode("utf-16-le")) // 2
 
 
-def escaped_clip(value, limit):
-    """The text with whitespace collapsed, cut so that its HTML-escaped form fits in limit units."""
-    text = " ".join(str(value or "").split())
-    if units(html.escape(text)) <= limit:
-        return text
-    used = 0
-    for index, char in enumerate(text):
-        used += units(html.escape(char))
-        if used > limit - 1:
-            return text[:index] + "…"
-    return text
+def response_lines(status, headers, body, size):
+    """An HTTP response in full: the status line, every header on its own line, the body as received."""
+    lines = [f"Ответ: HTTP {status}"]
+    pairs = headers.items() if isinstance(headers, dict) else headers or []
+    if pairs:
+        lines.append("Заголовки:")
+        lines.extend(f"{name}: {value}" for name, value in pairs)
+    if not body:
+        return [*lines, f"Тело ответа ({size}): пусто"]
+    return [*lines, f"Тело ответа ({size}):", str(body)]
 
 
-def response_lines(response):
-    lines = [f"Ответ: HTTP {response.get('status')} {response.get('reason_phrase') or ''}".rstrip()]
-    headers = response.get("headers") or {}
-    if headers:
-        lines.append("Заголовки: " + escaped_clip("; ".join(f"{k}: {v}" for k, v in headers.items()), 300))
-    size = f"{response.get('body_bytes')} байт"
-    if response.get("body_truncated"):
-        size += ", сохранены первые 8 КБ"
-    lines.append(f"Тело ответа ({size}): " + escaped_clip(response.get("body"), RESPONSE_BODY_UNITS))
+def run_response_lines(response, full):
+    """The response of a failed S29 run-sync call."""
+    status = f"{response.get('status')} {response.get('reason_phrase') or ''}".rstrip()
+    if not full:
+        return [f"Ответ: HTTP {status}"]
+    return response_lines(
+        status, response.get("headers"), response.get("body"), f"{response.get('body_bytes')} байт"
+    )
+
+
+def diagnostics_lines(diagnostics, full):
+    """The worker's requests to X for one failure: the request, then each attempt and X's response."""
+    request = diagnostics.get("request") or {}
+    attempts = diagnostics.get("attempts") or []
+    lines = [
+        f"Запрос к X: {request.get('method')} {request.get('url')}",
+        f"Попыток: {len(attempts)}; итог: {diagnostics.get('outcome')}",
+    ]
+    if not full:
+        return [*lines, "Ответы: " + ", ".join(str(a.get("status") or a.get("error")) for a in attempts)]
+    for attempt in attempts:
+        lines.append(f"Попытка {attempt.get('attempt')} · {attempt.get('at')} · {attempt.get('error')}")
+        response = attempt.get("response")
+        if not response:
+            continue
+        size = f"{response.get('bodyBytes')} байт"
+        if response.get("bodyEncoding") == "base64":
+            size += ", base64"
+        if response.get("decodeError"):
+            size += ", gzip не распакован"
+        if response.get("bodyTruncated"):
+            size += ", получено не полностью"
+        if response.get("omittedWireBytes"):
+            size += f", не хватает {response['omittedWireBytes']} байт"
+        if response.get("readError"):
+            size += f", {response['readError']}"
+        if response.get("redacted"):
+            size += ", учётные данные скрыты"
+        lines.extend(
+            response_lines(response.get("status"), response.get("headers"), response.get("body"), size)
+        )
     return lines
 
 
@@ -89,7 +134,7 @@ def seen_label(value):
     return parse_time(value).strftime("%Y-%m-%d %H:%M:%S UTC")
 
 
-def entry_block(number, error, payload_shown):
+def entry_block(number, error, payload_shown, full):
     reason = str(error.get("reason") or "UNKNOWN")
     label = REASONS.get(reason)
     lines = [f"{number}. {label} ({reason})" if label else f"{number}. {plain(reason, 200)}"]
@@ -106,6 +151,9 @@ def entry_block(number, error, payload_shown):
         parts.append("предложение " + plain(error["proposal_id"], 120))
     if error.get("account"):
         parts.append("аккаунт @" + plain(error["account"], 60))
+        if reference := error.get("referenced_post"):
+            relation = RELATIONS.get(reference.get("relation"), "пост")
+            parts.append(f"{relation} {reference.get('url')} в посте {reference.get('in')}")
     elif "account" in error:
         parts.append("весь запуск сбора X")
     if parts:
@@ -115,7 +163,9 @@ def entry_block(number, error, payload_shown):
     if error.get("error"):
         lines.append("Ошибка: " + plain(error["error"], 300))
     if error.get("response"):
-        lines.extend(response_lines(error["response"]))
+        lines.extend(run_response_lines(error["response"], full))
+    if error.get("diagnostics"):
+        lines.extend(diagnostics_lines(error["diagnostics"], full))
     if error.get("entry_sha256"):
         lines.append("sha256 записи: " + error["entry_sha256"])
     if error.get("payload_sha256") and not payload_shown:
@@ -123,7 +173,12 @@ def entry_block(number, error, payload_shown):
     return "\n".join(lines)
 
 
-def render(notice):
+def render(notice, limit=MESSAGE_LIMIT):
+    """The notice text within limit units, or all of it when limit is None.
+
+    A notice with a ``document`` gets the caption: each error in brief, the responses left to the file."""
+    full = not notice.get("document")
+    rest_in = "в приложенном файле" if not full else f"полный список: out.ops_notices {notice['notice_id']}"
     source = notice["source_id"] + (f" · {notice['source_name']}" if notice.get("source_name") else "")
     errors = notice["entry_errors"]
     payloads = {error.get("payload_sha256") for error in errors}
@@ -137,17 +192,16 @@ def render(notice):
     ]
     if shared:
         head.append("sha256 ответа: " + payloads.pop())
+    if not full:
+        head.append("Запросы и ответы HTTP целиком, с заголовками и телами: в приложенном файле")
     text = "\n".join(head)
     for index, error in enumerate(errors):
-        block = entry_block(index + 1, error, shared)
+        block = entry_block(index + 1, error, shared, full)
         rest = len(errors) - index - 1
-        tail = f"\n\n… и ещё {rest}; полный список: out.ops_notices {notice['notice_id']}" if rest else ""
+        tail = f"\n\n… и ещё {rest}; {rest_in}" if rest else ""
         candidate = text + "\n\n" + block
-        if units(html.escape(candidate + tail)) > MESSAGE_LIMIT:
-            return (
-                text
-                + f"\n\n… и ещё {len(errors) - index}; полный список: out.ops_notices {notice['notice_id']}"
-            )
+        if limit is not None and units(html.escape(candidate + tail)) > limit:
+            return text + f"\n\n… и ещё {len(errors) - index}; {rest_in}"
         text = candidate
     return text
 
@@ -202,7 +256,14 @@ async def report_entry_errors(repo, settings, source, feed, errors, seen_at):
             **stamp.fields("created_at"),
             "created_by": "source-poller",
         }
-        notice["text"] = render(notice)
+        text = render(notice, None)
+        if units(html.escape(text)) > MESSAGE_LIMIT:
+            if any(error.get("response") or error.get("diagnostics") for error in fresh.values()):
+                notice["document"] = {"filename": notice_id + ".txt", "text": text}
+                text = render(notice, CAPTION_LIMIT)
+            else:
+                text = render(notice)
+        notice["text"] = text
         await repo.put("out.ops_notices", notice_id, notice, immutable=True)
         await repo.enqueue(
             "DELIVER",

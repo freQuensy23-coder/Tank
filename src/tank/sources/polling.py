@@ -320,6 +320,7 @@ class SourcePoller:
                 fetched_at=self.stamp(),
                 account_cursors=result.cursors,
                 entry_errors=[asdict(failure) for failure in result.failures],
+                ops_entry_errors=result.reports,
                 history_gap=result.gaps,
                 run_failed=result.failed,
             )
@@ -670,7 +671,11 @@ class SourcePoller:
                     await self.report_entry_errors(key, source, feed, [failure], attempted)
                 return {"items": 0, "errors": [str(exc)]}
             await self.report_entry_errors(
-                key, source, feed, acquired.get("entry_errors") or [], acquired.get("fetched_at") or attempted
+                key,
+                source,
+                feed,
+                acquired.get("ops_entry_errors", acquired.get("entry_errors")) or [],
+                acquired.get("fetched_at") or attempted,
             )
             return {"items": 0, "errors": []}
 

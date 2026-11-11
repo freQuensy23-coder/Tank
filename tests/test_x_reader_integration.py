@@ -28,7 +28,8 @@ def wire_server(monkeypatch):
         "profile": [],
         "telegram": [],
         "outputs": [],
-        "body": b"upstream diagnostic full response " * 1000,
+        "body": b"upstream diagnostic full response " * 1000 + b"END-OF-BODY",
+        "status": 503,
     }
 
     class Handler(BaseHTTPRequestHandler):
@@ -47,7 +48,7 @@ def wire_server(monkeypatch):
             state["profile"].append((time.monotonic(), self.path, dict(self.headers)))
             wire = gzip.compress(state["body"])
             self.respond(
-                503,
+                state["status"],
                 wire,
                 {
                     "Content-Type": "text/plain",
@@ -105,8 +106,12 @@ class LoopbackTelegramTransport(httpx.AsyncBaseTransport):
         await self.transport.aclose()
 
 
-async def test_real_worker_http_errors_keep_cursors_and_send_one_plain_ops_notice(tmp_path, wire_server):
+@pytest.mark.parametrize("status", [403, 503])
+async def test_real_worker_http_errors_keep_cursors_and_send_one_ops_notice_with_whole_responses(
+    tmp_path, wire_server, status
+):
     origin, state = wire_server
+    state["status"] = status
     source = {"source_id": "S29", "name": "X", "feeds": [{"kind": "x", "url": origin + "/actor"}]}
     config = source_settings(tmp_path, [source])
     config.apify_api_token = "isolated-apify-token"
@@ -133,8 +138,15 @@ async def test_real_worker_http_errors_keep_cursors_and_send_one_plain_ops_notic
         await delivery.deliver(job["payload"])
         await delivery.deliver(job["payload"])
     assert len(state["telegram"]) == 1
-    assert state["telegram"][0][0].endswith("sendMessage")
-    assert all("diagnostics" not in error for error in checkpoint["entry_errors"])
+    path, _, sent = state["telegram"][0]
+    notice = await repo.get("out.ops_notices", job["payload"]["notice_id"])
+    assert path.endswith("sendDocument") and notice["document"]["text"].encode() in sent
+    assert sent.count(state["body"]) == 3 and sent.count(b"x-request-id: safe-wire-id\n") == 3
+    assert sent.count(b"set-cookie: [REDACTED]\n") == 3 and b"forbidden-cookie" not in sent
+    assert f"Ответы: {status}, {status}, {status}" in notice["text"]
+    assert f"Запрос к X: GET {origin}/alice" in notice["text"]
+    assert checkpoint["entry_errors"] == [{"account": "alice", "reason": f"PUBLIC_PROFILE_HTTP_{status}"}]
+    assert "ops_entry_errors" not in checkpoint and "upstream diagnostic" not in json.dumps(checkpoint)
     receipts = await repo.list("out.deliveries", filters={"status": "SENT"})
     assert len(receipts) == 1
 
