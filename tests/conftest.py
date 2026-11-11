@@ -260,6 +260,7 @@ def offline_credentials(monkeypatch, tmp_path):
     synthetic_home.mkdir()
     monkeypatch.setenv("HOME", str(synthetic_home))
     monkeypatch.setenv("CODEX_HOME", str(synthetic_home / ".codex"))
+    monkeypatch.setenv("TANK_TOKEN_CONTEXT_ENABLED", "false")
     monkeypatch.setattr(sys.modules[__name__], "_OFFLINE_HOME", synthetic_home)
 
     monkeypatch.setattr(DotEnvSettingsSource, "_read_env_files", lambda self: {})

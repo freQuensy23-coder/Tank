@@ -206,7 +206,11 @@ class SessionService:
 
     async def mount_token_context(self, session_id):
         """Mount the start-of-session PostgreSQL token snapshot."""
-        if getattr(self.settings, "replay", False) or not hasattr(self.settings, "read_config_bytes"):
+        if (
+            getattr(self.settings, "replay", False)
+            or not getattr(self.settings, "token_context_enabled", False)
+            or not hasattr(self.settings, "read_config_bytes")
+        ):
             return
         snapshot = await TokenContextService(self.repo, self.settings).snapshot()
         for path, markdown in snapshot.items():

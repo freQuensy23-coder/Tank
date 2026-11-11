@@ -214,3 +214,45 @@ def test_markdown_conversion_and_diff_svg():
     assert "#dafbe1" in svg
     assert "<svg" in svg
     assert check_markdown("a\r\nb") == "a\nb"
+
+
+@pytest.mark.asyncio
+async def test_token_context_openma_mounts_read_only_snapshot():
+    import json
+
+    import httpx
+
+    from tank.agents.sessions import SessionService
+
+    repo = MemoryRepository()
+    context_settings = settings()
+    context_settings.token_context_enabled = True
+    context_settings.openma_url = "http://openma:8787"
+    context_settings.openma_api_key = None
+    context_settings.read_config_bytes = lambda name: b"test"
+    mounted = []
+
+    def handler(request):
+        if request.url.path == "/v1/files":
+            assert request.method == "POST"
+            assert b"uniswap:UNI.md" in request.content
+            mounted.append("upload")
+            return httpx.Response(200, json={"id": "file-uniswap"})
+        if request.url.path == "/v1/sessions/abc/resources":
+            assert request.method == "POST"
+            body = json.loads(request.content)
+            assert body == {
+                "type": "file",
+                "file_id": "file-uniswap",
+                "mount_path": filename("uniswap:UNI"),
+            }
+            mounted.append("mount")
+            return httpx.Response(200, json={"id": "resource-uniswap"})
+        raise AssertionError("Unexpected OpenMA request")
+
+    http = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    try:
+        await SessionService(repo, context_settings, lambda *_: None, http=http).mount_token_context("abc")
+    finally:
+        await http.aclose()
+    assert mounted == ["upload", "mount"]
