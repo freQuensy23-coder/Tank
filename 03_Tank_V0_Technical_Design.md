@@ -2222,7 +2222,7 @@ GRANT SELECT ON mkt.* TO tank_agent;
 ```
 
 
-## 13. Token context data and update semantics
+## 15. Token context data and update semantics
 
 Migration 012 creates reg.token_context(token_id, revision, updated_at, document) and reg.token_context_proposals(proposal_id, token_id, status, base_revision, created_at, document). JSONB document records Markdown and approval metadata; current revision is SHA-256 of the exact Markdown. Absent records use empty Markdown and its corresponding digest.
 
