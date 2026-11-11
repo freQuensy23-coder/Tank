@@ -231,6 +231,7 @@ class SessionService:
             uploaded = await self.request(
                 "POST",
                 "files",
+                beta=FILES_BETA,
                 files={"file": (path.rsplit("/", 1)[-1], markdown.encode("utf-8"), "text/markdown")},
             )
             uploaded = uploaded.get("data", uploaded)

@@ -250,6 +250,11 @@ async def test_token_context_openma_mounts_read_only_snapshot():
 
     def handler(request):
         if request.url.path == "/v1/files":
+            if "files-api-2025-04-14" not in request.headers["anthropic-beta"].split(","):
+                return httpx.Response(
+                    400,
+                    json={"error": {"message": "Missing required anthropic-beta flag: files-api-2025-04-14"}},
+                )
             assert request.method == "POST"
             assert b"uniswap:UNI.md" in request.content
             mounted.append("upload")
@@ -290,6 +295,11 @@ async def test_token_context_mount_retry_skips_paths_that_are_already_mounted():
 
     def handler(request):
         if request.url.path == "/v1/files":
+            if "files-api-2025-04-14" not in request.headers["anthropic-beta"].split(","):
+                return httpx.Response(
+                    400,
+                    json={"error": {"message": "Missing required anthropic-beta flag: files-api-2025-04-14"}},
+                )
             uploads.append(request.content)
             return httpx.Response(200, json={"id": f"file-{len(uploads)}"})
         if request.method == "GET":
