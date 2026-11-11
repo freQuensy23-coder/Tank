@@ -34,7 +34,7 @@ def check_markdown(markdown):
         raise ValueError("Token context must be UTF-8 Markdown under 180 KB")
     if "\x00" in markdown:
         raise ValueError("Token context cannot contain NUL")
-    return markdown.replace("\r\n", "\n")
+    return markdown
 
 
 def headings(markdown):

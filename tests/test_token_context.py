@@ -1,5 +1,6 @@
 """Regression tests for token research snapshots and human-gated updates."""
 
+import hashlib
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -200,7 +201,7 @@ def test_diff_svg_and_markdown_validation():
     assert "#ffebe9" in svg
     assert "#dafbe1" in svg
     assert "<svg" in svg
-    assert check_markdown("a\r\nb") == "a\nb"
+    assert check_markdown("a\r\nb") == "a\r\nb"
 
 
 def test_initial_migration_embeds_every_fact_sheet_without_google_auth():
@@ -263,3 +264,44 @@ async def test_token_context_openma_mounts_read_only_snapshot():
     finally:
         await http.aclose()
     assert mounted == ["upload", "mount"]
+
+
+def test_migration_seed_is_byte_identical_to_google_docs_plain_text_exports():
+    root = Path(__file__).resolve().parents[1]
+    migration = (root / "src/tank/migrations/011_token_context.sql").read_bytes().decode("utf-8")
+    expected = {
+        "1INCH": "55f20f18c07b39917992becc06d4b25d538f9f5c297b4f1a654303daff5dd9b0",
+        "AAVE": "b26949611baef644b7d38b4929d97d3b46109df3395209fc8fe18b234792ca3d",
+        "AERO": "59bda2aed8cd579ccfce570e3d190c3759a9a579b1bbde6ca5184ad2dda8b267",
+        "AVAX": "30ce6d28f999bfa44c16baf76297fc08ac6ef9f3145f02204bc1a06c7b9d6b48",
+        "BTC": "0159b1cc7647c7645e9bb4fc75aa23b7bc66cf642d0454062750c5b6c429e824",
+        "CAKE": "2fb1e94b68c10089fa7283677cf56e2a60ec8ee9221a81a7f467db1b711f08fd",
+        "COW": "c8d967e5c6898e515eca30a4c36d3a10e2a4173990c5b1fd1e6fca2cb801747e",
+        "CRV": "923baf5a4244cf5fbf514cb48d4f8f52f3e93877b2343c004c6274bbbc99f4f2",
+        "ENA": "7b0ed4921edd52e60e779761af2eb825530410cd88238b45318faf8170d4a6f8",
+        "ETH": "1639abf95efc539617f415c0b9b04bb73308bd7bdfb0147a4164081a8a83a1f3",
+        "EUL": "e42f8a34a971d4b95ece394e71b44a3a7570966baf259f040cf7fc4b897fe75c",
+        "HYPE": "788ef10d430e1b450e02bd86e42633898e67223fdfbfcf638eb27e6c3f71759d",
+        "LIT": "800177c68c10c97c480a642ffd801de352551ea5dfbf251afe4cf55b7f7455c9",
+        "MORPHO": "07edd15388aa02988dedb1f51dcc3da4448c338fdc200285603d78d666c71d4b",
+        "NEAR": "4dccc6d76754a42592f211d61f4f6a6f22ce4071503d075336f4b679a6ea6cc5",
+        "ONDO": "f1c54c06b72b3765b989b3a2b8c88a1759bb9f4e1f17480bdc8c5b81e33fc418",
+        "QNT": "dbf8315a33cfb1866ce8114b8d3786eff67b4ffb45baf20aab2961ee4ce40b20",
+        "UNI": "07c42427e48ef1b3965db9a787440b64dfbf6786a4ea8bdb66f6f8d8c5d2f06d",
+        "WLD": "a8796e9c0c631e57dc430bb8c830f44b78f484cc508984c9465c13995f01e9ce",
+        "XPL": "59781dc8b649a76655c814f32591fabf09ef70dbd3e636ca4fd738bda06f21f7",
+        "ZRO": "7d0ba7bb6bf09659962cef4ee3fc0f200a67b7ef86dc4cbe3b9d823a2b83738b",
+        "ZRX": "f0575dfe5726dada61bb503aa3df63b0c6290fc9b0851d5eda98f46a4f69629f",
+    }
+    registry = yaml.safe_load((root / "config/registry.yaml").read_text())
+    assert set(expected) == {row["symbol"] for row in registry["tokens"]}
+    for symbol, source_sha in expected.items():
+        tag = f"$tank_seed_{symbol}_20261110$"
+        assert migration.count(tag) == 2
+        payload = migration.split(tag)[1].encode("utf-8")
+        assert payload.startswith(b"\xef\xbb\xbf")
+        assert b"\r\n" in payload
+        assert hashlib.sha256(payload).hexdigest() == source_sha
+
+    storage = (root / "src/tank/storage.py").read_text()
+    assert 'path.read_bytes().decode("utf-8")' in storage
