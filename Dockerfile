@@ -3,7 +3,7 @@ FROM postgres:16-bookworm AS pgclient
 FROM ghcr.io/astral-sh/uv:0.11.7 AS uv
 FROM python:3.13.13-slim-bookworm AS runtime-base
 COPY --from=uv /uv /usr/local/bin/uv
-RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates curl git libpq5 liblz4-1 libzstd1 libreadline8 libxml2 libssl3 libicu72 zlib1g tini && rm -rf /var/lib/apt/lists/*
+RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates curl git libpq5 liblz4-1 libzstd1 libreadline8 libxml2 libssl3 libicu72 zlib1g tini librsvg2-bin && rm -rf /var/lib/apt/lists/*
 COPY --from=pgclient /usr/lib/postgresql/16/bin/pg_dump /usr/local/bin/pg_dump
 COPY --from=pgclient /usr/lib/postgresql/16/bin/pg_restore /usr/local/bin/pg_restore
 COPY --from=pgclient /usr/lib/postgresql/16/bin/psql /usr/local/bin/psql

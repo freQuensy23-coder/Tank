@@ -31,6 +31,7 @@ from tank.settings import threshold
 from tank.sources.capture_fetch import CaptureRateLimited
 from tank.telegram_inbox import DOCUMENT_LIMIT, closed_reason, question_message, record_answer
 from tank.time_precision import collection_clock, offset_schedule, propagate_timestamp
+from tank.token_context import TokenContextService
 from tank.util import canonical_json, iso, parse_time, sha256, utcnow
 
 REST_TIMEOUT_S = 30
@@ -203,6 +204,23 @@ class SessionService:
             else None,
         }
 
+    async def mount_token_context(self, session_id):
+        """Mount the start-of-session PostgreSQL token snapshot."""
+        if getattr(self.settings, "replay", False):
+            return
+        snapshot = await TokenContextService(self.repo, self.settings).snapshot()
+        for path, markdown in snapshot.items():
+            uploaded = await self.request(
+                "POST", "files",
+                files={"file": (path.rsplit("/", 1)[-1], markdown.encode("utf-8"), "text/markdown")},
+            )
+            uploaded = uploaded.get("data", uploaded)
+            await self.request(
+                "POST", f"sessions/{session_id}/resources",
+                json={"type": "file", "file_id": uploaded["id"], "mount_path": path},
+                idem="token-context:" + sha256({"session": session_id, "path": path, "text": markdown}),
+            )
+
     def config(self):
         config = self.settings.load_config("openma")
         if not config.get("agent_id") or not config.get("environment_id"):
@@ -346,6 +364,7 @@ class SessionService:
         ):
             raise ValueError("Replay session evidence binding does not match requested run")
         sid = remote["id"]
+        await self.mount_token_context(sid)
         opened = self.clock_timestamp()
         tools = self.analyst_tools(scout=scout)
         session = {
@@ -1525,6 +1544,7 @@ class SessionService:
             "publish_update",
             "record_review",
             "set_watch_condition",
+            "propose_token_context_edit",
         }:
             await self.hydrate_prompt_provenance(session)
         if tool == "send_telegram_file" and not session.get("proposal_id"):

@@ -236,6 +236,7 @@ READ_TOOLS = frozenset(
         "get_event",
         "get_registry",
         "get_token_facts",
+        "propose_token_context_edit",
         "web_search",
         "fetch_page",
     }
@@ -666,6 +667,10 @@ class EventToolService:
             validate_schema(arguments, schema)
         ctx = dict(context or {})
         event_id = arguments.get("event_id") or ctx.get("event_id")
+        if tool == "propose_token_context_edit":
+            from tank.token_context import TokenContextService
+
+            return await TokenContextService(self.repo, self.settings).propose(arguments, ctx)
         if tool == "get_decision" and not ctx.get("_decision_market_refresh_completed"):
             ctx["_decision_prepared_condition_ids"] = await self.refresh_fired_condition_truth(arguments, ctx)
             if ctx.get("_decision_market_refresh_only"):

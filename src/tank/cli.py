@@ -2,6 +2,7 @@
 
 import asyncio
 import json
+import os
 import signal
 import sys
 from pathlib import Path
@@ -257,6 +258,43 @@ def review_label(subject, label, miss_reason, notes, reviewer, version):
             },
             immutable=True,
         )
+
+    run_db(command)
+
+
+@main.group("token-context")
+def token_context_cli():
+    """Seed and inspect the PostgreSQL token knowledge base."""
+
+
+@token_context_cli.command("seed-drive")
+@click.option("--folder-id", required=True)
+def token_context_seed(folder_id):
+    token = os.environ.get("GOOGLE_DRIVE_ACCESS_TOKEN")
+    if not token:
+        raise click.ClickException("Set GOOGLE_DRIVE_ACCESS_TOKEN for the one-time import")
+
+    async def command(repo, settings):
+        from tank.token_context import TokenContextService, import_drive_folder
+
+        await repo.migrate()
+        return await import_drive_folder(TokenContextService(repo, settings), folder_id, token)
+
+    run_db(command)
+
+
+@token_context_cli.command("status")
+def token_context_status():
+    async def command(repo, settings):
+        from tank.token_context import TokenContextService, registry_tokens
+
+        service = TokenContextService(repo, settings)
+        result = []
+        for token_id in sorted(registry_tokens(settings)):
+            current = await service.read(token_id)
+            result.append({"token_id": token_id, "revision": current["revision"],
+                           "populated": bool(current["markdown"])})
+        return result
 
     run_db(command)
 
