@@ -2750,7 +2750,7 @@
         },
         "updated_markdown": {
           "type": "string",
-          "description": "Complete replacement Markdown. Preserve current sections in automatic edits and remove obsolete facts."
+          "description": "Complete replacement text. In automatic edits substitute facts line by line, keep every section title, add no lines and grow the text by at most 1,000 characters."
         },
         "reason": {
           "type": "string",

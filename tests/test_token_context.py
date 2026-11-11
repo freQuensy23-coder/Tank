@@ -224,6 +224,18 @@ def test_initial_migration_embeds_every_fact_sheet_without_google_auth():
     assert "import_drive_folder" not in (root / "src/tank/token_context.py").read_text()
 
 
+def openma_settings(tokens):
+    context_settings = settings()
+    context_settings.token_context_enabled = True
+    context_settings.openma_url = "http://openma:8787"
+    context_settings.openma_api_key = None
+    context_settings.read_config_bytes = lambda name: b"test"
+    context_settings.load_config = lambda _: {
+        "tokens": [{"token_id": token_id, "symbol": token_id.split(":")[-1]} for token_id in tokens]
+    }
+    return context_settings
+
+
 @pytest.mark.asyncio
 async def test_token_context_openma_mounts_read_only_snapshot():
     import json
@@ -233,11 +245,7 @@ async def test_token_context_openma_mounts_read_only_snapshot():
     from tank.agents.sessions import SessionService
 
     repo = MemoryRepository()
-    context_settings = settings()
-    context_settings.token_context_enabled = True
-    context_settings.openma_url = "http://openma:8787"
-    context_settings.openma_api_key = None
-    context_settings.read_config_bytes = lambda name: b"test"
+    context_settings = openma_settings(["uniswap:UNI"])
     mounted = []
 
     def handler(request):
@@ -246,6 +254,8 @@ async def test_token_context_openma_mounts_read_only_snapshot():
             assert b"uniswap:UNI.md" in request.content
             mounted.append("upload")
             return httpx.Response(200, json={"id": "file-uniswap"})
+        if request.url.path == "/v1/sessions/abc/resources" and request.method == "GET":
+            return httpx.Response(200, json={"data": [], "next_page": None})
         if request.url.path == "/v1/sessions/abc/resources":
             assert request.method == "POST"
             body = json.loads(request.content)
@@ -264,6 +274,47 @@ async def test_token_context_openma_mounts_read_only_snapshot():
     finally:
         await http.aclose()
     assert mounted == ["upload", "mount"]
+
+
+@pytest.mark.asyncio
+async def test_token_context_mount_retry_skips_paths_that_are_already_mounted():
+    import json
+
+    import httpx
+
+    from tank.agents.sessions import SessionService
+
+    tokens = ["uniswap:UNI", "aave:AAVE", "curve:CRV"]
+    context_settings = openma_settings(tokens)
+    resources, uploads, outage = [], [], {"left": 1}
+
+    def handler(request):
+        if request.url.path == "/v1/files":
+            uploads.append(request.content)
+            return httpx.Response(200, json={"id": f"file-{len(uploads)}"})
+        if request.method == "GET":
+            return httpx.Response(200, json={"data": resources, "next_page": None})
+        body = json.loads(request.content)
+        if len(resources) == 1 and outage["left"]:
+            outage["left"] -= 1
+            return httpx.Response(503, json={"error": {"message": "unavailable"}})
+        if any(row["mount_path"] == body["mount_path"] for row in resources):
+            return httpx.Response(400, json={"error": {"message": "mount path is already in use"}})
+        resources.append(body)
+        return httpx.Response(200, json={"id": f"resource-{len(resources)}"})
+
+    http = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    try:
+        service = SessionService(MemoryRepository(), context_settings, lambda *_: None, http=http)
+        with pytest.raises(httpx.HTTPStatusError):
+            await service.mount_token_context("abc")
+        assert [row["mount_path"] for row in resources] == [filename(tokens[0])]
+        await service.mount_token_context("abc")
+        await service.mount_token_context("abc")
+    finally:
+        await http.aclose()
+    assert [row["mount_path"] for row in resources] == [filename(token) for token in tokens]
+    assert len(uploads) == 4
 
 
 def test_migration_seed_is_byte_identical_to_google_docs_plain_text_exports():
@@ -305,3 +356,197 @@ def test_migration_seed_is_byte_identical_to_google_docs_plain_text_exports():
 
     storage = (root / "src/tank/storage.py").read_text()
     assert 'path.read_bytes().decode("utf-8")' in storage
+
+
+async def pending_proposal(repo, service):
+    await service.import_text("uniswap:UNI", "## Fees\nOld.\n")
+    await repo.put("evt.events", "EVT-1", {"event_id": "EVT-1", "tokens_mentioned": ["uniswap:UNI"]})
+    await repo.put(
+        "evt.claims", "CLM-1", {"claim_id": "CLM-1", "event_id": "EVT-1", "accepted": True, "verified": True}
+    )
+    await service.propose(
+        {
+            "token_id": "uniswap:UNI",
+            "updated_markdown": "## Fees\nNew.\n",
+            "reason": "Fees were changed by the protocol.",
+            "claim_ids": ["CLM-1"],
+        },
+        {"role": "analyst", "session_id": "session-1", "event_id": "EVT-1"},
+    )
+    proposal = (await repo.list("reg.token_context_proposals"))[0]
+    await repo.put(
+        "reg.token_context_proposals",
+        proposal["proposal_id"],
+        {**proposal, "ops_chat_id": "-200", "ops_message_id": "7"},
+    )
+    return proposal
+
+
+def callback_updates(proposal):
+    return [
+        {
+            "update_id": 10,
+            "callback_query": {
+                "id": "cb",
+                "data": "tc:approve:" + proposal["proposal_id"],
+                "from": {"id": 5},
+                "message": {"chat": {"id": -200}, "message_id": 7},
+            },
+        },
+        {"update_id": 11, "message": {"chat": {"id": -200}, "message_id": 8, "date": 1, "text": "hi"}},
+    ]
+
+
+@pytest.mark.asyncio
+async def test_refused_callback_answer_keeps_the_decision_and_the_poll_cursor_moving():
+    repo = MemoryRepository()
+    service = TokenContextService(repo, settings())
+    proposal = await pending_proposal(repo, service)
+    inbox = TelegramInbox(repo, settings(), http=SimpleNamespace())
+    calls = []
+
+    async def fake_call(method, payload):
+        calls.append(method)
+        if method == "getUpdates":
+            return callback_updates(proposal)
+        if method == "getChatMember":
+            return {"status": "administrator"}
+        if method == "answerCallbackQuery":
+            raise RuntimeError("Telegram answerCallbackQuery rejected (HTTP 400)")
+        return True
+
+    inbox.call = fake_call
+    assert await inbox.poll() == 2
+    assert (await service.read("uniswap:UNI"))["markdown"] == "## Fees\nNew.\n"
+    assert "editMessageReplyMarkup" in calls
+    assert (await repo.get("ops.source_checkpoints", "telegram:bot-updates"))["cursor"] == "12"
+    assert await repo.get("ops.telegram_messages", "-200:8")
+
+
+@pytest.mark.asyncio
+async def test_failing_callback_is_skipped_instead_of_blocking_every_later_poll():
+    repo = MemoryRepository()
+    service = TokenContextService(repo, settings())
+    proposal = await pending_proposal(repo, service)
+    inbox = TelegramInbox(repo, settings(), http=SimpleNamespace())
+
+    async def fake_call(method, payload):
+        if method == "getUpdates":
+            return callback_updates(proposal)
+        if method == "getChatMember":
+            raise RuntimeError("Telegram getChatMember rejected (HTTP 502)")
+        return True
+
+    inbox.call = fake_call
+    assert await inbox.poll() == 2
+    assert (await service.read("uniswap:UNI"))["markdown"] == "## Fees\nOld.\n"
+    assert (await repo.get("ops.source_checkpoints", "telegram:bot-updates"))["cursor"] == "12"
+    assert await repo.get("ops.telegram_messages", "-200:8")
+    assert (await repo.get("reg.token_context_proposals", proposal["proposal_id"]))["status"] == "PENDING"
+
+
+def seeded_document(symbol):
+    root = Path(__file__).resolve().parents[1]
+    migration = (root / "src/tank/migrations/012_token_context.sql").read_bytes().decode("utf-8")
+    return migration.split(f"$tank_seed_{symbol}_20261110$")[1]
+
+
+async def proposing_service(markdown):
+    repo = MemoryRepository()
+    service = TokenContextService(repo, settings())
+    await service.import_text("uniswap:UNI", markdown)
+    await repo.put("evt.events", "EVT-1", {"event_id": "EVT-1", "tokens_mentioned": ["uniswap:UNI"]})
+    await repo.put(
+        "evt.claims", "CLM-1", {"claim_id": "CLM-1", "event_id": "EVT-1", "accepted": True, "verified": True}
+    )
+
+    async def propose(updated, **extra):
+        return await service.propose(
+            {
+                "token_id": "uniswap:UNI",
+                "updated_markdown": updated,
+                "reason": "Verified event changed the facts.",
+                "claim_ids": ["CLM-1"],
+                **extra,
+            },
+            {"role": "analyst", "session_id": "session-1", "event_id": "EVT-1", **extra.pop("context", {})},
+        )
+
+    return service, propose
+
+
+def shown_text(rows, marker):
+    text = ""
+    for row_marker, line in rows:
+        if row_marker == marker:
+            text += line[2:] if line.startswith("  ") and text else line[1:]
+    return text
+
+
+def test_diff_image_shows_the_whole_change_of_a_long_real_paragraph():
+    from tank.token_context import DIFF_MAX_ROWS, diff_rows
+
+    old = seeded_document("UNI")
+    paragraph = max(old.splitlines(), key=len)
+    assert len(paragraph) > 1000
+    new_paragraph = paragraph[:500] + "REPLACED" + paragraph[508:]
+    new = old.replace(paragraph, new_paragraph)
+    rows = diff_rows("uniswap:UNI", old, new)
+    assert shown_text(rows, "-") == paragraph
+    assert shown_text(rows, "+") == new_paragraph
+    assert len(rows) < DIFF_MAX_ROWS
+    svg = diff_svg("uniswap:UNI", old, new)
+    assert svg.count("<text") == len(rows) + 2
+    assert "…" not in svg
+
+
+def test_diff_image_does_not_drop_lines_of_a_long_change():
+    from tank.token_context import diff_rows
+
+    old = seeded_document("UNI")
+    block = "".join(f"\r\nAppended fact {index}: " + "detail " * 30 for index in range(82))
+    rows = diff_rows("uniswap:UNI", old, old + block)
+    assert sum(1 for marker, _ in rows if marker == "+") >= 82
+    assert "Appended fact 81:" in shown_text(rows, "+")
+    assert "additional diff lines" not in diff_svg("uniswap:UNI", old, old + block)
+
+
+@pytest.mark.asyncio
+async def test_automatic_edit_guard_holds_on_the_real_plain_text_documents():
+    old = seeded_document("UNI")
+    assert not any(line.startswith("#") for line in old.splitlines())
+    lines = old.splitlines()
+    index = max(range(len(lines)), key=lambda number: len(lines[number]))
+    service, propose = await proposing_service(old)
+
+    def with_line(replacement):
+        return old.replace(lines[index], replacement, 1)
+
+    edited = lines[index][:500] + "REPLACED" + lines[index][508:]
+    with pytest.raises(ValueError, match="sections"):
+        await propose(with_line(edited) + "\r\nBrand new section\r\n" + "Body.\r\n" * 80)
+    with pytest.raises(ValueError, match="replace"):
+        await propose(with_line(edited + "\r\n" + "Appended.\r\n" * 80))
+    with pytest.raises(ValueError, match="at most"):
+        await propose(with_line(lines[index] + " extra" * 400))
+    title = next(line for line in lines if line == "Executive summary")
+    with pytest.raises(ValueError, match="sections"):
+        await propose(old.replace(title, "Brand new section", 1))
+    with pytest.raises(ValueError, match="sections"):
+        await propose(old.replace(lines[index], "Brand new section", 1))
+    assert (await service.read("uniswap:UNI"))["markdown"] == old
+    assert await propose(with_line(edited)) == {
+        "status": "PENDING_HUMAN_APPROVAL",
+        "token_id": "uniswap:UNI",
+        "applied": False,
+    }
+
+
+@pytest.mark.asyncio
+async def test_proposal_too_long_for_the_ops_image_is_refused():
+    old = seeded_document("UNI")
+    service, propose = await proposing_service(old)
+    huge = "".join(f"\r\nSection {index}\r\n" + "x " * 400 for index in range(60))
+    with pytest.raises(ValueError, match="too long"):
+        await propose(old + huge, user_requested_expansion=True, context={"trigger_kind": "USER_QUESTION"})
+    assert not await service.repo.list("reg.token_context_proposals")

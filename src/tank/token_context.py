@@ -12,6 +12,11 @@ from tank.util import new_id, sha256, utcnow
 FOLDER = "/workspace/token-context"
 MAX_MARKDOWN_BYTES = 180_000
 MAX_REASON_LENGTH = 240
+MAX_AUTOMATIC_GROWTH = 1_000
+DIFF_COLUMNS = 110
+DIFF_ROW_HEIGHT = 24
+DIFF_WIDTH = 1200
+DIFF_MAX_ROWS = (10_000 - DIFF_WIDTH - 125) // DIFF_ROW_HEIGHT
 TOKEN_NAME = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9:_-]{0,95}$")
 
 
@@ -38,13 +43,43 @@ def check_markdown(markdown):
 
 
 def headings(markdown):
-    return [line.strip() for line in markdown.splitlines() if re.match(r"^#{1,6} ", line)]
+    """Markdown headings and the plain-text section titles of Google Docs exports: short, unindented,
+    not a bullet and not ending in sentence punctuation."""
+    found = []
+    for line in markdown.splitlines():
+        text = line.strip().removeprefix("\ufeff").strip()
+        if re.match(r"^#{1,6} ", line) or (
+            text
+            and 2 <= len(text) <= 80
+            and line == line.lstrip()
+            and not text.startswith(("*", "-", "\u2022"))
+            and not text.endswith((".", ":", ";", ","))
+        ):
+            found.append(text)
+    return found
 
 
-def change_lines(old, new):
-    removed = [line for line in difflib.ndiff(old.splitlines(), new.splitlines()) if line.startswith("- ")]
-    added = [line for line in difflib.ndiff(old.splitlines(), new.splitlines()) if line.startswith("+ ")]
-    return removed, added
+def line_opcodes(old, new):
+    return difflib.SequenceMatcher(None, old.splitlines(), new.splitlines()).get_opcodes()
+
+
+def check_automatic_edit(old, new):
+    """An automatic edit may only substitute lines in place: it keeps every heading, adds no line to a
+    replaced block and lengthens the document by a bounded amount."""
+    if headings(old) != headings(new):
+        raise ValueError("Automatic edits cannot add, remove or rename Markdown sections")
+    removed = added = 0
+    for tag, i1, i2, j1, j2 in line_opcodes(old, new):
+        if tag == "equal":
+            continue
+        removed += i2 - i1
+        added += j2 - j1
+        if tag == "insert" or j2 - j1 > i2 - i1:
+            raise ValueError("Automatic edits must replace outdated facts, not append new blocks")
+    if not removed or not added:
+        raise ValueError("Automatic edits must replace outdated facts, not append new blocks")
+    if len(new) - len(old) > MAX_AUTOMATIC_GROWTH:
+        raise ValueError(f"Automatic edits can add at most {MAX_AUTOMATIC_GROWTH} characters of text")
 
 
 def reason_sentence(reason):
@@ -56,23 +91,38 @@ def reason_sentence(reason):
     return reason
 
 
-def diff_svg(token_id, old, new):
-    """Render a readable GitHub-style unified diff; long changes are explicitly clipped."""
-    raw = list(
-        difflib.unified_diff(
-            old.splitlines(),
-            new.splitlines(),
-            fromfile="a/" + token_id + ".md",
-            tofile="b/" + token_id + ".md",
-            n=2,
-            lineterm="",
-        )
+def diff_rows(token_id, old, new):
+    """Every line of the unified diff, wrapped to the image width and never clipped."""
+    raw = difflib.unified_diff(
+        old.splitlines(),
+        new.splitlines(),
+        fromfile="a/" + token_id + ".md",
+        tofile="b/" + token_id + ".md",
+        n=2,
+        lineterm="",
     )
-    lines = raw[2:]
-    shown = lines[:54]
-    if len(lines) > len(shown):
-        shown.append(f"… {len(lines) - len(shown)} additional diff lines")
-    width, height = 1200, 100 + 24 * max(1, len(shown)) + 25
+    rows = []
+    for value in list(raw)[2:]:
+        line = "".join(c for c in value.replace("\t", "    ") if ord(c) >= 32)
+        marker = value[:1] if value[:1] in "+-@" else " "
+        rows.append((marker, line[:DIFF_COLUMNS]))
+        rest = line[DIFF_COLUMNS:]
+        width = DIFF_COLUMNS - 2
+        rows.extend((marker, "  " + rest[start : start + width]) for start in range(0, len(rest), width))
+    return rows
+
+
+def check_diff_fits(token_id, old, new):
+    if len(diff_rows(token_id, old, new)) > DIFF_MAX_ROWS:
+        raise ValueError(
+            "The change is too long to be shown in full in the Tank Ops image; propose a smaller change"
+        )
+
+
+def diff_svg(token_id, old, new):
+    """Render a GitHub-style unified diff that shows every changed character."""
+    shown = diff_rows(token_id, old, new)
+    width, height = DIFF_WIDTH, 100 + DIFF_ROW_HEIGHT * max(1, len(shown)) + 25
     out = [
         f'<svg xmlns="http://www.w3.org/2000/svg" width="{width}" height="{height}">',
         '<rect width="100%" height="100%" fill="#ffffff"/>',
@@ -83,21 +133,11 @@ def diff_svg(token_id, old, new):
         f'<text x="24" y="51" font-size="16" font-family="DejaVu Sans Mono, monospace" '
         f'fill="#57606a">{html.escape(token_id)}.md</text>',
     ]
-    for idx, value in enumerate(shown):
-        y = 77 + idx * 24
-        bg, fg = "#ffffff", "#24292f"
-        if value.startswith("+"):
-            bg, fg = "#dafbe1", "#116329"
-        elif value.startswith("-"):
-            bg, fg = "#ffebe9", "#82071e"
-        elif value.startswith("@@"):
-            bg, fg = "#ddf4ff", "#0550ae"
-        elif value.startswith("…"):
-            bg, fg = "#f6f8fa", "#57606a"
-        line = "".join(c for c in value.replace("\t", "    ") if ord(c) >= 32)
-        if len(line) > 110:
-            line = line[:109] + "…"
-        out.append(f'<rect y="{y - 17}" width="{width}" height="24" fill="{bg}"/>')
+    colors = {"+": ("#dafbe1", "#116329"), "-": ("#ffebe9", "#82071e"), "@": ("#ddf4ff", "#0550ae")}
+    for idx, (marker, line) in enumerate(shown):
+        y = 77 + idx * DIFF_ROW_HEIGHT
+        bg, fg = colors.get(marker, ("#ffffff", "#24292f"))
+        out.append(f'<rect y="{y - 17}" width="{width}" height="{DIFF_ROW_HEIGHT}" fill="{bg}"/>')
         out.append(
             f'<text x="24" y="{y}" font-size="15" font-family="DejaVu Sans Mono, monospace" '
             f'fill="{fg}" xml:space="preserve">{html.escape(line)}</text>'
@@ -200,11 +240,8 @@ class TokenContextService:
         if not expansion:
             if not original.strip():
                 raise ValueError("Adding initial research requires an explicit user follow-up")
-            if headings(original) != headings(replacement):
-                raise ValueError("Automatic edits cannot add, remove or rename Markdown sections")
-            removed, added = change_lines(original, replacement)
-            if not removed or not added:
-                raise ValueError("Automatic edits must replace outdated facts, not append new blocks")
+            check_automatic_edit(original, replacement)
+        check_diff_fits(token_id, original, replacement)
         proposal_id = new_id("tcp")
         notice_id = "token-context-" + proposal_id
         stamp = collection_clock(utcnow())

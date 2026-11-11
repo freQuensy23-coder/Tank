@@ -224,7 +224,10 @@ class SessionService:
         ):
             return
         snapshot = await TokenContextService(self.repo, self.settings).snapshot()
+        mounted = await self.mounted_paths(session_id)
         for path, markdown in snapshot.items():
+            if path in mounted:
+                continue
             uploaded = await self.request(
                 "POST",
                 "files",
