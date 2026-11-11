@@ -711,18 +711,33 @@ class SessionService:
         return session
 
     async def post_message_intent(self, sid, key):
+        """Post a message's durable body under the idempotency key of its current attempt.
+
+        OpenMA derives the accepted input's id from that key: a message it already holds comes
+        back with the id it was accepted under and is not executed again, and a message it never
+        received is delivered. The same POST therefore sends a new intent and restores the
+        acknowledgement of a message whose record has none. A restored message keeps its sent_at
+        and its session's last_item_at, and is restored only in an OPEN session."""
         session = await self.repo.get("ops.agent_sessions", sid)
         intent = next(row for row in session["message_log"] if row["message_id"] == key)
         initial_status = session.get("status")
         remote = session.get("remote_state") or {}
+        retry = intent.get("retry_count", 0)
+        unsent = intent.get("turn_status") == "ACCEPTING" and not intent.get("sent_at")
         if (
             intent.get("remote_event_id")
-            or intent.get("turn_status") in {"DONE", "FAILED"}
+            or intent.get("turn_status") == "FAILED"
             or key in session.get("retired_message_ids", [])
-            or intent.get("native_input_attempts", {}) != {}
-            or type(intent.get("retry_count", 0)) is not int
-            or intent.get("retry_count", 0) != 0
-            or initial_status not in {"OPEN", "FAILED"}
+            or type(retry) is not int
+            or (
+                unsent
+                and (
+                    intent.get("native_input_attempts", {}) != {}
+                    or retry != 0
+                    or initial_status not in {"OPEN", "FAILED"}
+                )
+            )
+            or (not unsent and initial_status != "OPEN")
             or session.get("archived_at")
             or remote.get("status") == "terminated"
             or remote.get("archived_at")
@@ -732,7 +747,7 @@ class SessionService:
             "POST",
             f"sessions/{sid}/events",
             json={"events": [copy.deepcopy(intent["body"])]},
-            idem="message:" + key,
+            idem="turn-retry:" + sid + ":" + key if retry else "message:" + key,
         )
         accepted_at, identity = self.clock_timestamp(), self.accepted_input_id(accepted)
         async with self.repo.lock("session:" + sid):
@@ -743,7 +758,7 @@ class SessionService:
             if identity:
                 intent.setdefault("native_input_attempts", {})[identity] = intent.get("retry_count", 0)
             intent.update(
-                **accepted_at.fields("sent_at"),
+                **(accepted_at.fields("sent_at") if unsent else {}),
                 remote_event_id=identity,
                 turn_status="PENDING"
                 if intent.get("turn_status") == "ACCEPTING"
@@ -761,7 +776,7 @@ class SessionService:
                 and not remote.get("archived_at")
             ):
                 session["status"] = "OPEN"
-            if intent["payload"].get("item_id"):
+            if unsent and intent["payload"].get("item_id"):
                 session.update(accepted_at.fields("last_item_at"))
                 session.update(
                     propagate_timestamp(intent, "item_observed_at").fields("last_item_observed_at")
@@ -816,10 +831,11 @@ class SessionService:
         return field != "item_id" or not attempt or session.get("reanalysis_attempt") == attempt
 
     async def recover_outbound_inputs(self, sid):
+        """Every message without an OpenMA acknowledgement is posted again, whatever its turn state."""
         async with self.send_locks.setdefault(sid, asyncio.Lock()):
             session = await self.repo.get("ops.agent_sessions", sid)
             for message in session.get("message_log", []):
-                if message.get("turn_status") == "ACCEPTING" and not message.get("sent_at"):
+                if not message.get("remote_event_id"):
                     await self.post_message_intent(sid, message["message_id"])
         session = await self.repo.get("ops.agent_sessions", sid)
         await session_progress(self.repo, self.settings, session)

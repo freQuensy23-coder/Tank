@@ -948,6 +948,7 @@ async def test_runtime_autonomous_source_to_telegram(tmp_path, monkeypatch, capl
     delivered = asyncio.Event()
     stop = asyncio.Event()
     wire = []
+    accepted = set()
     state = {}
     stage = 0
 
@@ -1012,6 +1013,9 @@ async def test_runtime_autonomous_source_to_telegram(tmp_path, monkeypatch, capl
         if path.endswith("/events"):
             if request.method == "GET":
                 return httpx.Response(200, json={"data": []})
+            if request.headers["Idempotency-Key"] in accepted:
+                return httpx.Response(200, json={})
+            accepted.add(request.headers["Idempotency-Key"])
             event = json.loads(request.content)["events"][0]
             if event["type"] == "user.message":
                 payload = json.loads(event["content"][0]["text"])
