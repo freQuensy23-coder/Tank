@@ -521,6 +521,10 @@ async def test_fresh_replay_session_reruns_market_and_decision_code(
                     }
                 },
             )
+        if path.endswith("/v1/files"):
+            return httpx.Response(200, json={"id": "file_mt"})
+        if path.endswith("/resources"):
+            return httpx.Response(200, json={"id": "sesrsc_mt"})
         if path.endswith("/sessions"):
             if request.method == "GET":
                 return httpx.Response(200, json={"data": [{"id": old_sid, "metadata": {}}]})
@@ -2273,6 +2277,10 @@ async def test_native_condition_replay_uses_tool_cause_and_actual_watch_predicat
                     }
                 },
             )
+        if path.endswith("/v1/files"):
+            return httpx.Response(200, json={"id": "file_mt"})
+        if path.endswith("/resources"):
+            return httpx.Response(200, json={"id": "sesrsc_mt"})
         if path.endswith("/sessions"):
             return (
                 httpx.Response(200, json={"data": []})
@@ -2800,11 +2808,7 @@ async def test_actual_reference_publication_retains_unsent_intent_and_ordinary_r
                         "set_assessment",
                         {
                             "event_id": event_id,
-                            "assessment": unknown_assessment(
-                                criterion="G5",
-                                klass="STRUCTURAL_SHOCK",
-                                claim=result["accepted_claims"][0]["claim_id"],
-                            ),
+                            "assessment": unknown_assessment(klass="STRUCTURAL_SHOCK"),
                         },
                         identity,
                     )

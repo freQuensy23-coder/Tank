@@ -34,6 +34,17 @@ from tank.time_precision import collection_clock, offset_schedule, propagate_tim
 from tank.util import canonical_json, iso, parse_time, sha256, utcnow
 
 REST_TIMEOUT_S = 30
+FILES_BETA = "files-api-2025-04-14"
+MARKET_TRUTH_DIR = "/workspace/market_truth"
+MARKET_TRUTH_HEADLINE = (
+    "token",
+    "move_class",
+    "class_confidence",
+    "primary_window",
+    "decisive_facts",
+    "divergence",
+    "flags",
+)
 
 DEFAULT_MAX_RUNNING_SESSIONS = 2
 DEFAULT_COMPLETION_REMINDERS = 20
@@ -220,8 +231,10 @@ class SessionService:
     def url(self, path):
         return self.settings.openma_url.rstrip("/") + "/v1/" + path
 
-    async def request(self, method, path, **kwargs):
+    async def request(self, method, path, *, beta=None, **kwargs):
         headers = self.headers(kwargs.pop("idem", None))
+        if beta:
+            headers["anthropic-beta"] += "," + beta
 
         kwargs.setdefault("timeout", REST_TIMEOUT_S)
         response = await self.http.request(method, self.url(path), headers=headers, **kwargs)
@@ -1801,6 +1814,15 @@ class SessionService:
         projected = await ModelContext(self.repo, self.settings, current).result(
             stored["tool"], stored["result"]
         )
+        if (
+            stored["tool"] == "get_market_truth"
+            and not stored.get("is_error")
+            and isinstance(stored["result"].get("market_truth"), list)
+            and not (
+                stored.get("native_result_body") and stored.get("model_context_version") == CONTEXT_VERSION
+            )
+        ):
+            projected = await self.market_truth_files(sid, stored["result"], projected)
         note = await self.transition_note(sid) if self.legacy_contract(session) else None
         if note:
             projected = (
@@ -1845,6 +1867,59 @@ class SessionService:
                 **self.clock_timestamp().fields("returned_at"),
             )
             await self.repo.put("ops.tool_calls", key, stored)
+
+    async def market_truth_files(self, sid, result, projected):
+        """Each token's Market Truth, as projected for the model, becomes a file in the session sandbox
+        before the tool result resumes the model; the result keeps its path and headline fields.
+
+        The path names the token and the cutoff minute, which is also the key of the job that
+        computed the record, so a path the session already has holds this same record and is reused:
+        OpenMA refuses a second resource at one path."""
+        mounted = await self.mounted_paths(sid)
+        listed = []
+        for record, shown in zip(result["market_truth"], projected["market_truth"], strict=True):
+            stamp = parse_time(record["cutoff"]).strftime("%Y%m%dT%H%MZ")
+            name = f"{record['token_id'].replace(':', '_')}_{stamp}.json"
+            path = f"{MARKET_TRUTH_DIR}/{name}"
+            if path not in mounted:
+                uploaded = await self.request(
+                    "POST",
+                    "files",
+                    beta=FILES_BETA,
+                    files={
+                        "file": (
+                            name,
+                            json.dumps(shown, ensure_ascii=False, indent=2).encode(),
+                            "application/json",
+                        )
+                    },
+                )
+                await self.request(
+                    "POST",
+                    f"sessions/{sid}/resources",
+                    json={
+                        "type": "file",
+                        "file_id": uploaded.get("data", uploaded)["id"],
+                        "mount_path": path,
+                    },
+                )
+                mounted.add(path)
+            listed.append(
+                {"path": path, **{key: shown[key] for key in MARKET_TRUTH_HEADLINE if key in shown}}
+            )
+        return {**projected, "market_truth": listed}
+
+    async def mounted_paths(self, sid):
+        """Mount paths of the session's resources in OpenMA."""
+        paths, page = set(), None
+        while True:
+            body = await self.request(
+                "GET", f"sessions/{sid}/resources", params={"limit": 100, **({"page": page} if page else {})}
+            )
+            paths.update(row.get("mount_path") for row in body.get("data", []))
+            page = body.get("next_page")
+            if not page:
+                return paths
 
     async def usage(self, session, event):
         usage = event.get("model_usage")

@@ -20,11 +20,6 @@ REASONS = {
     "FIRST_CARD_ALREADY_GENERATED": "Карточка этого события уже подготовлена",
     "ANALYSIS_INCOMPLETE": "Не завершён анализ токенов",
     "AGENT_EXECUTION_FAILED": "Ошибка выполнения агента",
-    "NO_UNIVERSE_CONCERN": "Событие не затрагивает токены из реестра Tank",
-    "PROPOSED": "Событие остаётся на стадии предложения",
-    "MAJOR_EVIDENCE": "Не выполнен критерий высокой значимости",
-    "M1_VENUE": "Площадка не входит в список основных бирж Tank",
-    "STRUCTURAL_GATE": "Не выполнены условия структурного изменения",
     "NATIVE_TURN_COMPLETED_WITHOUT_OBSERVATION": "Агент не записал ни событие, ни решение об отклонении",
     "AGENT_REMINDED": "Агент не вернул результат, отправлено напоминание",
     "AGENT_INCOMPLETE": "Агент так и не записал событие или решение об отклонении, напоминания исчерпаны; "
@@ -486,17 +481,7 @@ def outcome(data):
         }
     if assessment and klass not in {"MAJOR", "STRUCTURAL_SHOCK"}:
         fields.append(("Alerts", "не отправлено — ниже порога MAJOR"))
-        reasons = list(dict.fromkeys(assessment.get("class_reasons", [])))
-        caps = {
-            "NO_UNIVERSE_CONCERN",
-            "PROPOSED",
-            "LOW_CERTAINTY",
-            "MAJOR_EVIDENCE",
-            "M1_VENUE",
-            "STRUCTURAL_GATE",
-        }
-        reasons.sort(key=lambda value: value not in caps)
-        reasons = [reason_text(value) for value in reasons]
+        reasons = [reason_text(value) for value in dict.fromkeys(assessment.get("class_reasons", []))]
         return {
             "code": "BELOW_MAJOR",
             "status": "Ниже порога Alerts",

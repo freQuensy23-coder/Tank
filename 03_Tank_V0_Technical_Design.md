@@ -225,12 +225,8 @@ EMSAssessment
   dims: {
     economic_directness, magnitude, permanence, distribution_expansion,
     mechanical_flows, surprise, implementation : DimScore }
-  structural_gates: [{gate: G1..G6, satisfied: bool, evidence: [claim_id]}]
-  class: EMSClass
-  criterion: G1..G6 | M1..M7 | MATERIAL | LOW; criterion_claim_id: claim_id?   # 01 §6.3
-  criterion_quote: str               # the quote of criterion_claim_id, stored with it
-  criterion_venue_id: entity_id?     # M1 only
-  class_reasons: [str]               # e.g. "M2", "cap: LOW certainty"
+  class: EMSClass                    # the agent's class, stored as set (01 §6.3)
+  class_reasons: [str]               # the agent's reasons for the class
   impact_horizon: ImpactHorizon
 
 DimScore
@@ -821,10 +817,10 @@ Messages into a session:
 
 **Assessment reminders.** A recorded event must reach the class gate. When every source item checked at a settle has its outcome, the session's `event_id` is checked: an event that is not MERGED, CLOSED or INVALIDATED, has no `merged_into` and no `current_ems_id` (no `set_assessment` was accepted, for example after a refused `merge_into` or `set_assessment`) gets one COMPLETION_REMINDER with `missing` ASSESSMENT in the same session, addressed with the item of the checked turn (idempotency key session, event and the per-event attempt in `assessment_reminder_attempts`). It spends the same session budget `completion_reminders_sent`; the item keeps its DONE outcome, records `assessment_reminders` / `assessment_reminder_limit`, and Ops reports the stage AGENT_REMINDED with the card status “Агент не оценил событие, напоминание N/20”. The reminder turn is checked the same way. Once the budget is spent no further reminder is sent: the item is flagged `assessment_incomplete` once and Ops shows a processing error, stage PROCESSING_FAILED with reason ASSESSMENT_INCOMPLETE; a later accepted assessment supersedes it on the card. A replay sends none.
 
-**Skill `tank-event-analyst`.** A `SKILL.md` kept in the config repository under `skills/tank-event-analyst/` and uploaded to OpenMA on deploy; OpenMA inlines it into the system prompt at session start. It carries the class criteria, certainty rules, freshness grades, stage ladder, hard rules and card template verbatim from 01 §1.1, §6.2–6.3, §7.1 and §8, the claim rules V1–V7 (below) and the wording rules L1–L12 (§7.5), and this playbook:
+**Skill `tank-event-analyst`.** A `SKILL.md` kept in the config repository under `skills/tank-event-analyst/` and uploaded to OpenMA on deploy; OpenMA inlines it into the system prompt at session start. It carries the classes, certainty rules, freshness grades, stage ladder, hard rules and card template verbatim from 01 §1.1, §6.2–6.3, §7.1 and §8, the claim rules V1–V7 (below) and the wording rules L1–L12 (§7.5), and this playbook:
 
 1. **NEW_ITEM.** Read the item and check its public history in both Tank (`list_open_events` with the item's token and project — registry keys, or `name` for one outside the registry — and a few statement words in `query`, reading every page up to `next_offset`, with a larger `days` for slower stories; `search_tank_items` with `days: 90`) and the public internet (`web_search`, then `fetch_page` for dated sources). This novelty check applies to every certainty level, including HIGH. For a MEDIUM fact, also check the official sources first (`fetch_page`, `search_tank_items`, `web_search`). Then `record_event`: facts with verbatim quotes, certainty with its reason, when the event really became public, freshness, stage. If the item reports no new fact, `record_event` with `is_event = false`, and stop. If the event is already open in another session, `merge_into` it, and stop.
-2. **Class.** `set_assessment`: the criterion of 01 §6.3 with its supporting claim, the seven scores with reasons, token capture, impact horizon. The agent first reads the current event's claim IDs (`tank-data`, «Claims of an event»): each numeric score except implementation cites the claims that support it, 0 included; a dimension no recorded claim supports is null with a reason (§4.1). The tool applies §4.3 and returns the final class. LOW → stop. MATERIAL stays TRACKED: normally stop, or select a concrete sourced lead with a potentially substantial consequence for PRELIMINARY under §7.4. Preserve class/certainty and supply what, why and unconfirmed. A specific unresolved question may be scheduled through set_watch_condition(review_at, review_question); reuse the existing event.
+2. **Class.** `set_assessment`: the class — the agent's judgment of how much the event really matters for the market and the affected tokens (01 §6.3) — with its reasons, the seven scores with reasons, token capture, impact horizon. The agent first reads the current event's claim IDs (`tank-data`, «Claims of an event»): each numeric score except implementation cites the claims that support it, 0 included; a dimension no recorded claim supports is null with a reason (§4.1). Tank stores the class as set (§4.3). LOW → stop. MATERIAL stays TRACKED: normally stop, or select a concrete sourced lead with a potentially substantial consequence for PRELIMINARY under §7.4. Preserve class/certainty and supply what, why and unconfirmed. A specific unresolved question may be scheduled through set_watch_condition(review_at, review_question); reuse the existing event.
 3. **STRUCTURAL SHOCK** → `publish_card` PARTIAL at once, then step 4: the FULL card completes the PARTIAL in the same thread and is sent at once (§7.4).
 4. **MAJOR+** → `set_beneficiaries` (eight layers, §4.7) → `get_market_truth` for the analysis set → `get_decision` per token → `publish_card` FULL with the verdict sentence and 2–3 WHY bullets.
 5. **ITEM_ADDED.** Decide the link. Repeat coverage → `add_observation` CORROBORATION, and stop. A development → `add_observation` STATE_UPDATE, DENIAL or CONTRADICTION, then steps 2–4 as far as they change. Use UPDATE only after an ordinary original; the first ordinary publication after PRELIMINARY remains FULL or STRUCTURAL_SHOCK PARTIAL. A DENIAL that invalidates an event whose cards are only PRELIMINARY → `publish_card` PRELIMINARY at once, stating the denial in what and why, without unconfirmed. A still-MATERIAL lead may receive another PRELIMINARY when the analyst identifies a meaningful change; current deduplication limits are recorded in §11.6.
@@ -851,9 +847,9 @@ Tools, all executed by the `sessions` module; writes are validated and logged:
 | `record_event(extraction)` | Entity resolution (V3); writes the event, its ORIGIN observation and the claims as the agent gives them | The recorded claims |
 | `add_observation(item_id?, link, claims)` | Entity resolution (V3); state machine §3.6 | New stage, contradictions |
 | `merge_into(event_id)` | Merges this session's event into an earlier open event (§3.3) | The surviving event |
-| `set_assessment(assessment)` | Checks §4.3–4.6; a MAJOR+ final class escalates the official sources of the event's organizations to 15 s for 2 h (§9) and opens the reaction record (§8) | Final class, with any cap applied |
+| `set_assessment(assessment)` | Stores the agent's class as set (§4.3) and checks §4.4–4.6; a MAJOR+ class escalates the official sources of the event's organizations to 15 s for 2 h (§9) and opens the reaction record (§8) | The stored assessment |
 | `set_beneficiaries(edges)` | Rules of §4.7 | Analysis set (universe tokens) and per-layer reasons for none |
-| `get_market_truth(token_ids)` | ESCALATE_TOKENS, backfill, RUN_MARKET_TRUTH (§5) | Market Truth and Data Confidence per token |
+| `get_market_truth(token_ids)` | ESCALATE_TOKENS, backfill, RUN_MARKET_TRUTH (§5); each token's Market Truth with Data Confidence, as the agent's context would show it, is written to `/workspace/market_truth/<token key, `:` as `_`>_<cutoff YYYYMMDDTHHMMZ>.json` in the session's sandbox before the result is returned | Per token: the file's `path` and the headline fields `token`, `move_class`, `class_confidence`, `primary_window`, `decisive_facts`, `divergence`, `flags`; the cutoff used; the least-repriced credible beneficiary once beneficiaries are mapped |
 | `get_decision(token_id)` | Outlook (§6), grades (§4.8–4.9), action (§7.1–7.2), conditions (§6.6) | Action, grades, outlook, conditions, decisive facts |
 | `publish_card(kind, what, verdict, why, unconfirmed?)` | Ordinary or preliminary eligibility (§7.4), shared template, evidence bundle, DELIVER job; unconfirmed is required for PRELIMINARY, except its denial correction | Publication status, or refusal with reasons |
 | `set_watch_condition(action, cond_id?, token_id?, conditions?, text?, review_at?, review_question?, expires_in_hours?)` | ARM a metric condition or one timed review, or DISARM an event condition (§6.6); both use the same storage and limits | Condition and status, existing-condition result, or refusal |
@@ -862,7 +858,7 @@ Tools, all executed by the `sessions` module; writes are validated and logged:
 
 `get_market_truth`, `get_decision` and `publish_card` work from the event's current assessment; before the first `set_assessment` they refuse with "`<tool>` needs set_assessment for this event first".
 
-Tool arguments and the agent's context. Tank's messages and tool results are text: they carry no record IDs (of events, items, claims, observations, conditions, proposals), hashes, versions or storage paths, and a registry object reads `name · key`, e.g. `World (WLD) · world:WLD`, `Uniswap · uniswap`, `Venue instrument lists · S14`. An argument that points at a stored record takes its ID — `event_id`, `item_id`, `claim_id`, `cond_id`, a proposal ID — and a registry object takes its key: `token_id`, `entity_id`, `instrument_id`, `source_id`. The agent reads record IDs with read-only SQL in its sandbox, as the skill `tank-data` shows; registry keys come from the context. The current event, the incoming item and the current proposal are implicit: tools scoped to the event take no `event_id`, `record_event` and `add_observation` bind the incoming item, `record_review` binds its proposal; an explicit ID is taken only where a different record is meant (reading another item or event, the `merge_into` target, the document of a callback without an incoming item, claim evidence from another document). What the agent writes — statements, claims, verdicts, reasons, queries, URLs — stays text. Tank checks every ID: it exists, has the right kind and lies in the tool's scope (claims of the current event, the event's own watch conditions, an open earlier event to merge into), and a refusal names the argument and the lookup to use. Tank never resolves a description to a record.
+Tool arguments and the agent's context. Tank's messages and tool results are text: they carry no record IDs (of events, items, claims, observations, conditions, proposals), hashes, versions or storage paths, and a registry object reads `name · key`, e.g. `World (WLD) · world:WLD`, `Uniswap · uniswap`, `Venue instrument lists · S14`. An argument that points at a stored record takes its ID — `event_id`, `item_id`, `claim_id`, `cond_id`, a proposal ID — and a registry object takes its key: `token_id`, `entity_id`, `instrument_id`, `source_id`. The agent reads record IDs with read-only SQL in its sandbox, as the skill `tank-data` shows; registry keys come from the context. The current event, the incoming item and the current proposal are implicit: tools scoped to the event take no `event_id`, `record_event` and `add_observation` bind the incoming item, `record_review` binds its proposal; an explicit ID is taken only where a different record is meant (reading another item or event, the `merge_into` target, the document of a callback without an incoming item, claim evidence from another document). What the agent writes — statements, claims, verdicts, reasons, queries, URLs — stays text. Tank checks every ID: it exists, has the right kind and lies in the tool's scope (claims of the current event, the event's own watch conditions, an open earlier event to merge into), and a refusal names the argument and the lookup to use. Tank never resolves a description to a record. A full Market Truth record runs to hundreds of kilobytes, so `get_market_truth` does not put it into the agent's context: `sessions` uploads each token's projected record as an OpenMA file and adds it to the session as a file resource at its sandbox path (once per path: a repeat call for the same token and cutoff minute reuses the file already there), and only then answers the tool call with the paths and headline fields. The new resource changes the session's sandbox inputs, so before the model continues OpenMA prepares the sandbox again from the session's resources, writing every file resource at its path; `/workspace` keeps its contents. Tank's own use of Market Truth — storage, `get_decision`, `publish_card`, the evidence bundle — reads the stored records and is unchanged.
 
 Optional arguments. OpenMA calls the custom tools in strict mode, so the model sends every declared field. Every optional field is declared nullable, and Tank reads null and an empty string in an optional field as the field omitted, at every object level, before validation (`absent_optionals`, applied once in the shared argument path). Required fields, unknown fields and every non-empty value are validated as sent; a field that only a branch requires, such as `no_event_reason` with `is_event = false`, is refused as missing.
 
@@ -1095,38 +1091,18 @@ Rules for the base of M: token market cap for token-mechanical flows; current an
 
 ### 4.3 Classification and EMS score
 
-The agent submits the class with `set_assessment`, with the matched criterion of 01 §6.3 (G1–G6, M1–M7, MATERIAL or LOW) and the recorded claim that supports it (`criterion_claim_id`; for M1 also the venue's registry key, `criterion_venue_id`). The tool then checks it:
-
-| Check | Effect |
-|---|---|
-| Certainty LOW | Class ≤ MATERIAL |
-| STRUCTURAL SHOCK without certainty HIGH, a verified stage ≥ APPROVED and an accepted claim for the G-criterion | Class = MAJOR |
-| MAJOR without certainty ≥ MEDIUM, or without a recorded claim for the M-criterion | Class = MATERIAL |
-| M1 venue other than Binance, Coinbase, OKX, Bybit, Kraken or Robinhood | Class = MATERIAL |
-| Stage PROPOSED, except M4 (token economics put to a binding vote) and M5 (an ETF/ETP filing) | Class ≤ MATERIAL |
-| No universe token concerned, directly or as a named beneficiary or loser | Class = LOW |
+The agent sets the class with `set_assessment`: its judgment of how much the event really matters for the market and the affected tokens (01 §6.3), with the reasons in `class_reasons`. The examples of 01 §6.3 illustrate the classes and are not a closed list. Tank stores the class exactly as the agent set it; no rule in Tank changes it, and everything downstream (alert gate, PRELIMINARY, reaction tracking, source escalation, lifecycle) reads that class.
 
 The seven dimension scores are printed on the card next to the class; they explain it and never decide it.
-
-Structural criteria (each needs an accepted claim):
-
-| Gate | Condition |
-|---|---|
-| G1 | Permanent change to the supply equation |
-| G2 | Mechanical demand, buyback or creation flow begins |
-| G3 | Previously inaccessible capital can participate |
-| G4 | Token becomes required infrastructure for a large system |
-| G5 | Legal/regulatory state changes from blocked or unclear to permitted |
-| G6 | Major asset becomes eligible for custody, collateral, clearing or settlement |
 
 Examples:
 
 | Case | Class | Why |
 |---|---|---|
-| @sama: "We will integrate WLD and OpenAI" | MAJOR | M2 — integration with a large company; certainty HIGH (a World co-founder) |
-| @tier10k: "Robinhood to list LIT", not confirmed by S13 | MAJOR | M1 — certainty MEDIUM; the card says what is not verified |
-| Fee burn put to a binding vote | MAJOR | M4 — never STRUCTURAL SHOCK while the stage is PROPOSED |
-| The Clearing House partners with Quant on on-chain money | STRUCTURAL SHOCK | G4 — verified by the TCH release |
+| @sama: "We will integrate WLD and OpenAI" | MAJOR | Integration with a large company; certainty HIGH (a World co-founder) |
+| @tier10k: "Robinhood to list LIT", not confirmed by S13 | MAJOR | Listing on a major venue; certainty MEDIUM; the card says what is not verified |
+| Fee burn put to a binding vote | MAJOR | A change to the token's economics put to a binding vote; not yet decided |
+| The Clearing House partners with Quant on on-chain money | STRUCTURAL SHOCK | The token's network becomes required infrastructure for a large system; verified by the TCH release |
 | Aave proposal to onboard USAT | MATERIAL | A proposal still to be decided |
 | FinCEN special measure against the A7 network's sub-agents | LOW | No universe token concerned |
 
@@ -1687,7 +1663,7 @@ ITEM_PROGRESS and ENTRY_ERRORS are not written in replay or when `ops_progress_e
 
 - **Token tier:** BASE → HOT when the agent calls `get_market_truth` for a MAJOR+ event → BASE once that event's +72h checkpoint is captured or the hot expiry (the event's anchor + 72h) has passed, and no open call or armed condition exists; a failed or expired +72h capture therefore never keeps a token HOT. The hot set is capped at ⚙15 tokens; the lowest-priority token (lowest EMS class, then the oldest event) is demoted.
 - **Hand-off:** ESCALATE_TOKENS (a job of `get_market_truth`) has `market` write the token to `mkt.hot_tokens` and a pre-event backfill obligation to `mkt.backfill_runs` at the Market Truth anchor of the call's cutoff (§5.7), so an obligation never covers future minutes; the hot expiry runs from the event's own anchor, keeping a scheduled event's tokens hot through T0. tank-capture follows `mkt.hot_tokens`: it subscribes the token on every covered market (02 §4.10), fills the pre-event windows (§5.1) and marks the obligation done or failed. The scheduler applies the demotion rule every minute by removing the token from `mkt.hot_tokens`, and tank-capture unsubscribes it. After a restart, tank-capture subscribes every token in `mkt.hot_tokens` again and Tank re-creates any missing obligation.
-- **Source cadence:** NORMAL ↔ ESCALATED (15 s) with an expiry per trigger (01 FR-D-02): set by `set_assessment` when the final class is MAJOR+ (2 h) and by `schedule_milestone` (the milestone window); the scheduler then runs that source's loop every 15 s. Each source has a token-bucket budget derived from its limits; escalation never exceeds it, and a rate-limit response triggers backoff.
+- **Source cadence:** NORMAL ↔ ESCALATED (15 s) with an expiry per trigger (01 FR-D-02): set by `set_assessment` when the class is MAJOR+ (2 h) and by `schedule_milestone` (the milestone window); the scheduler then runs that source's loop every 15 s. Each source has a token-bucket budget derived from its limits; escalation never exceeds it, and a rate-limit response triggers backoff.
 
 ---
 
@@ -1763,9 +1739,9 @@ Cases as recorded in the September 2026 call log and in Addendum 002-B. Cutoff =
 | F-05 | WLD — World Money live in 150+ countries; strong flow; weak direct WLD capture | 26 Sep 2026 03:50 | Event state LIVE; capture ≤ INDIRECT (NARRATIVE_ONLY without a token mechanism); thesis ≤ C; any positive action labeled tactical. |
 | F-06 | AAVE — V4 tokenized-equities collateral; strong relative strength; spot/OI supportive | 26 Sep 2026 16:34 | LENDING_COLLATERAL edge present; announced vs live distinguished by evidence; BTC/ETH/sector-adjusted returns computed. |
 | F-07 | HYPE — Binance spot listing recovery; futures-heavy | 24 Sep 2026 17:05 | Move class ≠ SPOT_LED_ACCUMULATION; action ∈ {WAIT, DONT_CHASE}. |
-| F-08 | QNT — The Clearing House partners with Quant to advance the On-Chain Money Initiative (TCH press release dated 24 Sep 2026, S27, verified 16 Oct 2026); QNT already ≈ +20% at the call | 24 Sep 2026 20:15 | Class STRUCTURAL SHOCK (G4 or G6, with the TCH release as primary evidence); PARTIAL card before Market Truth; QNT repricing HEAVY → DONT_CHASE; beneficiary map lists credible secondaries or a per-layer reason for none. |
+| F-08 | QNT — The Clearing House partners with Quant to advance the On-Chain Money Initiative (TCH press release dated 24 Sep 2026, S27, verified 16 Oct 2026); QNT already ≈ +20% at the call | 24 Sep 2026 20:15 | Class STRUCTURAL SHOCK, with the TCH release as primary evidence; PARTIAL card before Market Truth; QNT repricing HEAVY → DONT_CHASE; beneficiary map lists credible secondaries or a per-layer reason for none. |
 | F-09 | ONDO — SEC tokenized-equity + DTCC context; very large derivatives activity; weak direct token capture | 18 Sep 2026 09:30 | EMS ≥ MAJOR; capture ≤ INDIRECT → thesis ≤ C → positive action only as tactical; OI decomposition shown; no leverage claim from USD OI alone. |
-| F-10 | AVAX — ICE/NYSE testing + Janus validator; spot improving; OI down | 18 Sep 2026 17:12 | "Testing" maps to IN_DEVELOPMENT or BUILT, never LIVE; class MAJOR only through M2 with the ICE/NYSE claim quoted, never STRUCTURAL SHOCK while the stage is below APPROVED. |
+| F-10 | AVAX — ICE/NYSE testing + Janus validator; spot improving; OI down | 18 Sep 2026 17:12 | "Testing" maps to IN_DEVELOPMENT or BUILT, never LIVE; class MAJOR, with the ICE/NYSE claim quoted. |
 | F-11 | WLD — Market Truth validation case (Addendum 002-B) | 16 Oct 2026 12:30 UTC | 1h and 4h spot direction SELL; capital-weighted breadth on the sell side, Kraken shown as a small (~2.5%) buying venue; 4h native OI +8.18% → REAL_NATIVE with the markup component reported; divergence PERP_LED_MARKUP with ABSORPTION_CANDIDATE unresolved; venues with incomplete data in the window (in the Addendum case: Bybit spot current-day history) listed as excluded with reasons; action ∈ {DONT_CHASE, WAIT}. |
 | F-12 | QNT — Binance perp, 26 Sep 2026 19:00–23:00 UTC: native OI +0.42%, USD OI +19.98%, price +23.43% | 26 Sep 2026 23:00 | `oi_class` PRICE_MARKUP on Binance; flag PRICE_MARKUP_OI; the card never speaks of new positions or leverage (L2). |
 | F-13 | ONDO — 24 Sep 2026 12:00–16:00 UTC: Binance native OI +57.32%, USD OI +88.53%, price +13.56%, Binance spot taker-buy share 48.3% | 24 Sep 2026 16:00 | `oi_class` REAL_NATIVE; move class PERP_LED_CHASE (directly or through the divergence discriminator), never SPOT_LED_ACCUMULATION; action ∈ {DONT_CHASE, WAIT}. |
@@ -1779,9 +1755,9 @@ Cases as recorded in the September 2026 call log and in Addendum 002-B. Cutoff =
 | F-21 | Bybit (S11): "New listing: Listing of DNAUSDT on Bybit Perpetual on Oct 16, 2026, 11:45AM UTC" | 16 Oct 2026 11:45 | Token outside the universe; class LOW; no card. |
 | F-22 | Binance (S09, catalog 48): "Binance Will Add 4 bStocks Tokenized Securities as Collateral Asset - 2026-10-14", released 14 Oct 2026 03:30 UTC | 14 Oct 2026 03:30 | State APPROVED (announced, effective later); never LIVE before the effective time stated in the article. |
 | F-23 | Constructed from S27: the TCH release of F-08, then the same fact as a news item 72 h later with no new claim | 27 Sep 2026 | Second item linked to the F-08 event as CORROBORATION; `known_to_us_at` unchanged; no new card. |
-| F-24 | Synthetic: an S29 post by @tier10k, "Robinhood to list LIT"; S13 has no announcement | post + 1 min | Class MAJOR (M1); certainty MEDIUM; one immediate check of S13 finds nothing; the analysis continues without waiting; the card carries NOT VERIFIED: "no Robinhood announcement"; a later S13 announcement raises certainty to HIGH and sends a threaded update. |
+| F-24 | Synthetic: an S29 post by @tier10k, "Robinhood to list LIT"; S13 has no announcement | post + 1 min | Class MAJOR; certainty MEDIUM; one immediate check of S13 finds nothing; the analysis continues without waiting; the card carries NOT VERIFIED: "no Robinhood announcement"; a later S13 announcement raises certainty to HIGH and sends a threaded update. |
 | F-25 | Synthetic: an S29 post by a founder at 16 Oct 2026 12:00 UTC — "Yesterday we shipped X and told all the press, sorry for posting late"; Tank has no earlier item on it | 16 Oct 2026 12:01 | `public_at` on 15 Oct 2026 (precision DAY, quote "Yesterday"); freshness POOR or OLD, never FRESH, NORMAL or MEDIUM; no "new" or "breaking" wording (L10). |
-| F-26 | Synthetic: @sama posts "We will integrate WLD and OpenAI" (S29); nothing else is published | post + 1 min | Certainty HIGH (the CEO of OpenAI and co-founder of World speaking about both); no waiting; stage APPROVED (announced plan), verified by the post, never LIVE; freshness FRESH; class MAJOR (M2); the card's VERIFIED line names the post. |
+| F-26 | Synthetic: @sama posts "We will integrate WLD and OpenAI" (S29); nothing else is published | post + 1 min | Certainty HIGH (the CEO of OpenAI and co-founder of World speaking about both); no waiting; stage APPROVED (announced plan), verified by the post, never LIVE; freshness FRESH; class MAJOR; the card's VERIFIED line names the post. |
 | F-27 | Synthetic: an S29 account quotes an unknown account: "Bybit pivots to making condoms" | quote + 1 min | Certainty LOW and event class LOW; recorded; no card. |
 
 Fixture data capture: Sep 2026 fixtures use Binance archive files (spot and USD-M klines, aggTrades, 5m metrics, funding) plus REST history from OKX, Coinbase and Kraken. F-12–F-16 windows were found on 16 Oct 2026 by scanning Binance futures `openInterestHist` (1 h) and spot/futures klines of the 22 tokens over the preceding 30 days; their replay packets use the same archive and REST sources. F-11 trades for 16 Oct 2026 08:30–12:30 UTC MUST be pulled within days of the case, because Bybit `recent-trade` returns only the last 1,000 trades; Binance, OKX, Coinbase and Kraken trade history can still be paged later.
@@ -1798,7 +1774,7 @@ The open-interest figures of F-11–F-14 come from Binance `openInterestHist` (F
 | T4 Single-venue spike | A: V 300, cvd +60 (passes the flow test) · B: 300, −2 · C: 300, +1 · D: 100, 0 (B–D do not); the composite passes | CVD +59 → BUY; top_contrib_share 0.98 > 0.5; others_cwb_buy 0 → CONCENTRATED |
 | T5 Constant cohort | 24h complete {Binance, OKX, Coinbase, Kraken}; 1h complete {Binance 500, OKX 200, Kraken 50, Bybit 250} | Cohort {Binance, OKX, Kraken}; share_of_max 0.75 > 0.5 (most of the volume) → trend claim allowed on cohort figures only |
 | T6 Funding normalization | X 0.0100%/8h · Y 0.0050%/4h · Z 0.0020%/1h | 8h-eq 0.0100%, 0.0100%, 0.0160%; dispersion 0.0060%; no averaged "market funding" field exists |
-| T7 Classes | §4.3 examples | Fee burn put to a binding vote → MAJOR (M4), never STRUCTURAL SHOCK; verified selection as required infrastructure → STRUCTURAL SHOCK (G4) |
+| T7 Classes | Each class set by the agent on a PROPOSED and on a LIVE event | The stored class is the one the agent set; nothing caps or raises it |
 | T8 Data Confidence | 3 complete spot venues carrying most of the volume · synchronized OI on the main perp venues · funding last observed past its cadence | MEDIUM; main unknown = funding freshness; START blocked |
 | T9 Missing ≠ zero | Venue stream disconnected 12:05–12:09 | Those minutes `complete = false`; venue excluded from 1h composite with reason; no zero-volume bars written |
 
@@ -1837,7 +1813,6 @@ Every number the rules use, with its basis. A number without a basis is not used
 | Filter and routing | Model | Microsoft-Decision-1 version 1 on Azure Foundry, deployment `decision-1` (`TANK_FOUNDRY_DEPLOYMENT`); prompt version `decision-1-v1` | Operator's decision of 25 Oct 2026; the answer must name `microsoft-decision-1`, and cached scores are keyed by deployment and prompt version, so results stay attributable (01 D6) |
 | | Filter cutoff | 0.5 (uncalibrated midpoint) until set at V0-B | Calibrated: the highest value at which ≥ 95% of the items labeled relevant pass (01 V0-B, §3.1) |
 | Freshness | FRESH / NORMAL / MEDIUM / POOR / OLD upper bounds (STALE beyond) | 1 h / 4 h / 8 h / 24 h / 48 h | 01 FR-E-03 |
-| Grading | STRUCTURAL SHOCK minimum stage | APPROVED, verified | 01 §6.3 |
 | Beneficiaries | Credible: capture / exposure / state | ≥ INDIRECT / ≥ likely rail / ≥ BUILT | Rubric levels (§4.5, §4.7) |
 | | Analysis set: secondaries / losers; card token blocks | 4 / 2; 3 | 01 FR-B-03, FR-A-05 |
 | Spot Truth | Minimum complete venues | 2 | One venue is never the market (01 §8 rule 1) |
@@ -1907,7 +1882,7 @@ Analysis objects of §2.6 are stored as `jsonb` inside the rows below; the colum
 Storage rules:
 
 - **Domain tables** (`reg`, `ingest`, `evt`, `ana`, `out`, `ops`, `scout`, `qa`; tens of thousands of rows a day): each row has the typed columns below plus `document jsonb` with the full §2 record. Code reads the document; every write fills the typed columns from it, so indexes, constraints and the agents' read-only SQL work on columns. All writes go through one function that takes a per-record lock and enforces immutability and idempotency.
-- **Typed columns and indexes.** Typed columns are the scalars, timestamps and id arrays that queries filter, join or order on. Nested §2 objects live only in `document`: EMS `dims`, `structural_gates` and `impact_horizon`; Market Truth `divergence`, `data_confidence` and the per-family detail; the decision `outlook`; the alert `card_struct`; the job `payload`; the tool call `input` and `result`; the event `next_milestone`. A check on `document` requires the ones §2 makes mandatory. Indexes cover only the lookups the code makes: unique domain ids, filter and order columns, and retention cutoffs. A GIN index (`jsonb_path_ops`) exists only where code filters by containment on fields without a typed column: claims by event, agent sessions by item, proposal or replay run, tool calls by event, deliveries by progress card, and reader questions by forwarded message.
+- **Typed columns and indexes.** Typed columns are the scalars, timestamps and id arrays that queries filter, join or order on. Nested §2 objects live only in `document`: EMS `dims` and `impact_horizon`; Market Truth `divergence`, `data_confidence` and the per-family detail; the decision `outlook`; the alert `card_struct`; the job `payload`; the tool call `input` and `result`; the event `next_milestone`. A check on `document` requires the ones §2 makes mandatory. Indexes cover only the lookups the code makes: unique domain ids, filter and order columns, and retention cutoffs. A GIN index (`jsonb_path_ops`) exists only where code filters by containment on fields without a typed column: claims by event, agent sessions by item, proposal or replay run, tool calls by event, deliveries by progress card, and reader questions by forwarded message.
 - **Market series** (ClickHouse `mkt.*`; millions of rows a day): typed columns only, no document. tank-capture writes them in batches — one insert per table per flush of the stream or poller — and a late row replaces its bar by a higher `_version`.
 - **Every print** is a row of ClickHouse `mkt.trades`. The 1m flow bars hold everything Market Truth reads (§5.2); replay evidence seals the prints before the cutoff, read from `mkt.trades`, as JSONL files.
 
@@ -2009,7 +1984,6 @@ CREATE TABLE evt.ems_assessments (
   version         int  NOT NULL,
   cutoff          timestamptz NOT NULL,
   class           text NOT NULL,
-  criterion       text NOT NULL,
   class_reasons   text[] NOT NULL,
   config_version  text NOT NULL,
   model_id        text NOT NULL,

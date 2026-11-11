@@ -359,6 +359,7 @@ async def test_full_sse_pipeline_postgres(tmp_path, complete_market, monkeypatch
     active = []
     posted = []
     sends = []
+    mounts = []
 
     def transport(req):
         path = req.url.path
@@ -399,6 +400,13 @@ async def test_full_sse_pipeline_postgres(tmp_path, complete_market, monkeypatch
                     "id: " + str(i + 1) + "\ndata: " + json.dumps(e) + "\n\n" for i, e in enumerate(active)
                 ),
             )
+        if path.endswith("/v1/files"):
+            return httpx.Response(200, json={"id": "file_mt"})
+        if path.endswith("/resources"):
+            if req.method == "GET":
+                return httpx.Response(200, json={"data": mounts, "next_page": None})
+            mounts.append(json.loads(req.content))
+            return httpx.Response(200, json={"id": "sesrsc_mt"})
         if path.endswith("/events"):
             posted.append(json.loads(req.content))
             return httpx.Response(200, json={})
@@ -634,9 +642,6 @@ async def test_full_sse_pipeline_postgres(tmp_path, complete_market, monkeypatch
                     "event_id": eid,
                     "assessment": {
                         "class": "MAJOR",
-                        "criterion": "M1",
-                        "criterion_venue_id": "binance",
-                        "criterion_claim_id": claim,
                         "dims": dims,
                         "impact_horizon": {
                             "impact_start": "UNKNOWN",
@@ -671,6 +676,9 @@ async def test_full_sse_pipeline_postgres(tmp_path, complete_market, monkeypatch
                 },
             )
             mt = await invoke("get_market_truth", {"event_id": eid, "token_ids": ["T"]})
+            shown = json.loads(posted[-1]["events"][0]["content"][0]["text"])["market_truth"]
+            assert [entry["path"] for entry in shown] == [mount["mount_path"] for mount in mounts]
+            assert shown[0]["move_class"] == mt["market_truth"][0]["move_class"] and "spot" not in shown[0]
             assert mt["market_truth"][0]["move_class"] == (
                 "SPOT_LED_ACCUMULATION" if complete_market else "UNKNOWN"
             ), mt
@@ -997,6 +1005,10 @@ async def test_runtime_autonomous_source_to_telegram(tmp_path, monkeypatch, capl
             return httpx.Response(200, json=_native_session("autonomous-session"))
         if path.endswith("/events/stream"):
             return httpx.Response(200, headers={"content-type": "text/event-stream"}, stream=SSE())
+        if path.endswith("/v1/files"):
+            return httpx.Response(200, json={"id": "file_mt"})
+        if path.endswith("/resources"):
+            return httpx.Response(200, json={"id": "sesrsc_mt"})
         if path.endswith("/events"):
             if request.method == "GET":
                 return httpx.Response(200, json={"data": []})
@@ -1068,9 +1080,6 @@ async def test_runtime_autonomous_source_to_telegram(tmp_path, monkeypatch, capl
                         {
                             "assessment": {
                                 "class": "MAJOR",
-                                "criterion": "M1",
-                                "criterion_venue_id": "binance",
-                                "criterion_claim_id": state["claim"],
                                 "dims": dims,
                                 "impact_horizon": {
                                     "impact_start": "UNKNOWN",

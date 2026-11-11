@@ -107,14 +107,12 @@ ID_FIELDS = {
     "claim_id": "claim",
     "claim_ids": "claim",
     "supersedes_claim_ids": "claim",
-    "criterion_claim_id": "claim",
     "cond_id": "condition",
     "proposal_id": "proposal",
     "duplicate_of": "proposal",
     "token_id": "token",
     "token_ids": "token",
     "entity_id": "entity",
-    "criterion_venue_id": "entity",
     "instrument_id": "instrument",
     "source_id": "source",
     "source_ids": "source",
@@ -144,8 +142,6 @@ LEGACY_REFERENCES = {
     "tokens": "token_ids",
     "entity": "entity_id",
     "instrument": "instrument_id",
-    "criterion_quote": "criterion_claim_id",
-    "criterion_venue": "criterion_venue_id",
 }
 PREFIXES = (
     ("ITM-", "item"),
@@ -194,7 +190,7 @@ CONTEXT_TRANSITION = {
         "reg.instruments (instrument_id), reg.sources (source_id, name). "
         "The current event, the incoming source and the current proposal stay implicit. A claim quoted from the "
         "incoming source needs no evidence; a quote from another document cites {item_id, quote}. Assessment and "
-        "beneficiary evidence, criterion_claim_id and supersedes_claim_ids are claim IDs of the current event; "
+        "beneficiary evidence and supersedes_claim_ids are claim IDs of the current event; "
         "merge_into takes the earlier event's event_id; DISARM takes cond_id. Tank refuses an unknown ID, one of "
         "the wrong kind or one outside the tool's scope, and names the argument."
     ),

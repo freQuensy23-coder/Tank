@@ -775,7 +775,8 @@ async def test_replayed_slow_tool_call_keeps_its_native_call_time():
 
 
 @pytest.mark.asyncio
-async def test_market_truth_wire_omits_internal_metadata_full_result_survives_recovery():
+async def test_market_truth_goes_to_a_sandbox_file_and_the_result_keeps_its_path():
+    from tank.agents.sessions import MARKET_TRUTH_HEADLINE
     from tank.analysis.truth import compute_market_truth
     from tank.util import canonical_json
 
@@ -785,52 +786,129 @@ async def test_market_truth_wire_omits_internal_metadata_full_result_survives_re
     truth = compute_market_truth({"token_id": "world:WLD", "cutoff": "2026-10-16T12:00:00Z", "flow_bars": []})
     truth.update(mta_id="MTA-wire", event_id="evt_1")
     truth["evidence"] = {"measurement_metadata": {"canonical_source_key": "must remain"}}
-    full = {"market_truth": [truth]}
+    full = {
+        "market_truth": [truth],
+        "least_repriced_edge": {
+            "edge_id": "EDG-1",
+            "token_id": "world:WLD",
+            "role": "PRIMARY",
+            "layer": "VENUE_DEX",
+        },
+        "requested_cutoff": "2026-10-16T12:00:00Z",
+        "cutoff_minute": "2026-10-16T12:00:00Z",
+    }
     await repo.put("ana.market_truth", "MTA-wire", truth, immutable=True)
     dispatched = 0
-    requests = []
+    order, uploads, mounts, posted = [], [], [], []
 
     async def dispatch(name, args, context):
         nonlocal dispatched
         dispatched += 1
         return full
 
-    def lost(request):
-        requests.append(json.loads(request.content))
-        raise httpx.ReadError("lost response", request=request)
+    def openma(lose_result):
+        def handle(request):
+            if request.url.path.endswith("/v1/files"):
+                assert "files-api-2025-04-14" in request.headers["anthropic-beta"].split(",")
+                order.append("file")
+                uploads.append(request.content.split(b"\r\n\r\n", 1)[1].rsplit(b"\r\n--", 1)[0])
+                return httpx.Response(200, json={"id": f"file_{len(uploads)}"})
+            if request.url.path.endswith("/resources"):
+                if request.method == "GET":
+                    return httpx.Response(200, json={"data": mounts, "next_page": None})
+                order.append("resource")
+                mounts.append(json.loads(request.content))
+                return httpx.Response(200, json={"id": "sesrsc_1"})
+            order.append("result")
+            posted.append(json.loads(request.content))
+            if lose_result:
+                raise httpx.ReadError("lost response", request=request)
+            return httpx.Response(200, json={})
 
-    event = {
-        "id": "mt_call",
-        "type": "agent.custom_tool_use",
-        "name": "get_market_truth",
-        "input": {},
-    }
-    async with httpx.AsyncClient(transport=httpx.MockTransport(lost)) as http:
-        first = SessionService(repo, opts, dispatch, http=http)
+        return httpx.MockTransport(handle)
+
+    event = {"id": "mt_call", "type": "agent.custom_tool_use", "name": "get_market_truth", "input": {}}
+    async with httpx.AsyncClient(transport=openma(lose_result=True)) as http:
         with pytest.raises(httpx.ReadError):
-            await first.process_event("ses_1", event, 7)
-    stored = await repo.get("ops.tool_calls", "ses_1:mt_call")
-    assert stored["result"] == full and "measurement_metadata" in stored["result"]["market_truth"][0]
+            await SessionService(repo, opts, dispatch, http=http).process_event("ses_1", event, 7)
+    async with httpx.AsyncClient(transport=openma(lose_result=False)) as http:
+        await SessionService(repo, opts, dispatch, http=http).process_event("ses_1", event, 7)
 
-    def accepted(request):
-        requests.append(json.loads(request.content))
-        return httpx.Response(200, json={})
-
-    async with httpx.AsyncClient(transport=httpx.MockTransport(accepted)) as http:
-        recovered = SessionService(repo, opts, dispatch, http=http)
-        await recovered.process_event("ses_1", event, 7)
-    assert dispatched == 1 and requests[0] == requests[1]
-    wire = json.loads(requests[1]["events"][0]["content"][0]["text"])
-    assert wire["market_truth"][0]["cutoff"] == truth["cutoff"]
-    assert wire["market_truth"][0]["spot"] == truth["spot"]
-    assert "measurement_metadata_access" not in wire
-    assert "mta_id" not in canonical_json(wire)
-    assert "session_id" not in canonical_json(wire)
-    assert "measurement_metadata" not in wire["market_truth"][0]
-    assert "measurement_metadata" not in wire["market_truth"][0]["evidence"]
-    assert len(canonical_json(wire)) < len(canonical_json(full))
+    assert dispatched == 1
+    assert order == ["file", "resource", "result", "result"] and posted[0] == posted[1]
+    path = "/workspace/market_truth/world_WLD_20261016T1200Z.json"
+    assert mounts == [{"type": "file", "file_id": "file_1", "mount_path": path}]
+    record = json.loads(uploads[0])
+    assert record["spot"] == truth["spot"] and record["cutoff"] == truth["cutoff"]
+    assert "measurement_metadata" not in record and "measurement_metadata" not in record["evidence"]
+    assert "mta_id" not in canonical_json(record) and "MTA-wire" not in canonical_json(record)
+    text = posted[1]["events"][0]["content"][0]["text"]
+    wire = json.loads(text)
+    assert wire["market_truth"] == [
+        {"path": path, **{key: record[key] for key in MARKET_TRUTH_HEADLINE if key in record}}
+    ]
+    assert wire["least_repriced_edge"] == {"token": record["token"], "role": "PRIMARY", "layer": "VENUE_DEX"}
+    assert wire["requested_cutoff"] == wire["cutoff_minute"] == "2026-10-16T12:00:00Z"
+    assert "spot" not in text and "EDG-1" not in text and len(text) < len(uploads[0])
     assert (await repo.get("ana.market_truth", "MTA-wire")) == truth
     assert (await repo.get("ops.tool_calls", "ses_1:mt_call"))["result"] == full
+
+
+@pytest.mark.asyncio
+async def test_market_truth_file_is_attached_once_per_path():
+    """A lost attach acknowledgement and a second call for the same token and cutoff minute reuse
+    the file the session already has; OpenMA refuses a second resource at one path."""
+    from tank.analysis.truth import compute_market_truth
+
+    repo = MemoryRepository()
+    opts, _ = settings()
+    await seed_session(repo)
+    truth = compute_market_truth({"token_id": "world:WLD", "cutoff": "2026-10-16T12:00:00Z", "flow_bars": []})
+    truth.update(mta_id="MTA-once", event_id="evt_1")
+    full = {"market_truth": [truth], "requested_cutoff": "2026-10-16T12:00:00Z"}
+    mounts, uploads, posted = [], [], []
+    lose_attach = True
+
+    async def dispatch(name, args, context):
+        return full
+
+    def handle(request):
+        nonlocal lose_attach
+        if request.url.path.endswith("/v1/files"):
+            uploads.append(request.url.path)
+            return httpx.Response(200, json={"id": f"file_{len(uploads)}"})
+        if request.url.path.endswith("/resources"):
+            if request.method == "GET":
+                return httpx.Response(200, json={"data": mounts, "next_page": None})
+            body = json.loads(request.content)
+            if any(row["mount_path"] == body["mount_path"] for row in mounts):
+                return httpx.Response(400, json={"error": {"message": "mount path is already in use"}})
+            mounts.append(body)
+            if lose_attach:
+                lose_attach = False
+                raise httpx.ReadError("lost attach acknowledgement", request=request)
+            return httpx.Response(200, json={"id": "sesrsc_1"})
+        posted.append(json.loads(request.content))
+        return httpx.Response(200, json={})
+
+    path = "/workspace/market_truth/world_WLD_20261016T1200Z.json"
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handle)) as http:
+        service = SessionService(repo, opts, dispatch, http=http)
+        first = {"id": "mt_first", "type": "agent.custom_tool_use", "name": "get_market_truth", "input": {}}
+        with pytest.raises(httpx.ReadError):
+            await service.process_event("ses_1", first, 7)
+        await service.process_event("ses_1", first, 7)
+        second = {"id": "mt_second", "type": "agent.custom_tool_use", "name": "get_market_truth", "input": {}}
+        await service.process_event("ses_1", second, 8)
+
+    assert [row["mount_path"] for row in mounts] == [path]
+    assert len(uploads) == 1
+    assert [
+        json.loads(body["events"][0]["content"][0]["text"])["market_truth"][0]["path"] for body in posted
+    ] == [
+        path,
+        path,
+    ]
 
 
 @pytest.mark.asyncio

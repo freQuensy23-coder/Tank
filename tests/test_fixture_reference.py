@@ -957,6 +957,10 @@ async def test_actual_f24_phased_producers_keep_session_and_immutable_checkpoint
                     ]
                 },
             )
+        if route.endswith("/v1/files"):
+            return httpx.Response(200, json={"id": "file_mt"})
+        if route.endswith("/resources"):
+            return httpx.Response(200, json={"id": "sesrsc_mt"})
         if route.endswith("/sessions"):
             if request.method == "GET":
                 return httpx.Response(200, json={"data": []})
@@ -1125,8 +1129,7 @@ async def test_actual_f24_phased_producers_keep_session_and_immutable_checkpoint
                         {
                             "event_id": eid,
                             "assessment": dict(
-                                unknown_assessment(criterion="M1", klass="MAJOR", claim=claim_id),
-                                criterion_venue_id="robinhood",
+                                unknown_assessment(klass="MAJOR"),
                             )
                             if publication
                             else unknown_assessment(klass="MATERIAL"),
@@ -1143,8 +1146,7 @@ async def test_actual_f24_phased_producers_keep_session_and_immutable_checkpoint
                         {
                             "event_id": eid,
                             "assessment": dict(
-                                unknown_assessment(criterion="M1", klass="MAJOR", claim=claim_id),
-                                criterion_venue_id="robinhood",
+                                unknown_assessment(klass="MAJOR"),
                             ),
                         },
                         identity,

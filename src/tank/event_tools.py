@@ -48,7 +48,6 @@ LAYERS = [
     "CUSTODY_COMPLIANCE",
 ]
 IMPLEMENTATION = dict(zip(STATES, [0, 4, 6, 6, 7, 8, 10], strict=False))
-M1_VENUES = frozenset({"binance", "coinbase", "okx", "bybit", "kraken", "robinhood"})
 
 
 def _word(term, text):
@@ -1920,106 +1919,9 @@ class EventToolService:
         x = copy.deepcopy(a["assessment"])
         claims = await self.rows("evt.claims", eid)
         accepted = {r["claim_id"]: r for r in claims if r["accepted"]}
-        criterion = x["criterion"]
-        criterion_claim_id = x.get("criterion_claim_id")
-        criterion_claim = accepted.get(criterion_claim_id) if criterion_claim_id else None
-        if criterion_claim_id and criterion_claim is None:
-            raise ValueError("criterion_claim_id must be an accepted claim of this event")
-        quote = (criterion_claim or {}).get("quote") or next(
-            (
-                entry.get("quote")
-                for entry in (criterion_claim or {}).get("evidence", [])
-                if entry.get("quote")
-            ),
-            "",
-        )
-        x["criterion_quote"] = quote
         klass = x["class"]
-        caps = []
         if klass not in {"LOW", "MATERIAL", "MAJOR", "STRUCTURAL_SHOCK"}:
             raise ValueError("Invalid EMS class")
-        if criterion not in {
-            "G1",
-            "G2",
-            "G3",
-            "G4",
-            "G5",
-            "G6",
-            "M1",
-            "M2",
-            "M3",
-            "M4",
-            "M5",
-            "M6",
-            "M7",
-            "MATERIAL",
-            "LOW",
-        }:
-            raise ValueError("Invalid class criterion")
-        criterion_proof = (
-            [criterion_claim_id]
-            if criterion_claim and criterion_claim.get("verified") is True and quote.strip()
-            else []
-        )
-        gates = x.get("structural_gates")
-        if gates is None:
-            gates = (
-                [{"gate": criterion, "satisfied": bool(criterion_proof), "evidence": criterion_proof}]
-                if criterion in {"G1", "G2", "G3", "G4", "G5", "G6"}
-                else []
-            )
-            x["structural_gates"] = gates
-        for gate in gates:
-            if any(ref not in accepted for ref in gate.get("evidence", [])):
-                raise ValueError("Structural gate references unaccepted evidence")
-            if gate.get("satisfied") and not gate.get("evidence"):
-                raise ValueError("Satisfied structural gate requires accepted evidence")
-
-        evidence_ok = any(
-            gate.get("gate") == criterion
-            and gate.get("satisfied") is True
-            and bool(set(gate.get("evidence", [])) & set(criterion_proof))
-            for gate in gates
-        )
-        if klass == "STRUCTURAL_SHOCK" and (
-            event["certainty"] != "HIGH"
-            or not event["state_verified"]
-            or STATES.index(event["event_state"]) < 2
-            or not criterion.startswith("G")
-            or not evidence_ok
-        ):
-            klass = "MAJOR"
-            caps.append("STRUCTURAL_GATE")
-        if klass == "MAJOR" and (
-            event["certainty"] == "LOW"
-            or criterion_claim is None
-            or not quote.strip()
-            or criterion not in {"M1", "M2", "M3", "M4", "M5", "M6", "M7", "G1", "G2", "G3", "G4", "G5", "G6"}
-        ):
-            klass = "MATERIAL"
-            caps.append("MAJOR_EVIDENCE")
-        if criterion == "M1":
-            venue = x.get("criterion_venue_id")
-            if not isinstance(venue, str) or not venue.strip():
-                raise ValueError("M1 requires criterion_venue_id, the registry entity_id of the venue")
-            if not any(
-                row["entity_id"] == venue for row in self.settings.load_config("registry").get("entities", [])
-            ):
-                raise ValueError(
-                    "criterion_venue_id is not a registry entity; M1 counts only Binance, Coinbase, OKX, Bybit, "
-                    "Kraken and Robinhood, so a listing elsewhere is not M1"
-                )
-            if venue not in M1_VENUES:
-                klass = "MATERIAL"
-                caps.append("M1_VENUE")
-        if (
-            event["event_state"] == "PROPOSED"
-            and criterion not in {"M4", "M5"}
-            and klass in {"MAJOR", "STRUCTURAL_SHOCK"}
-        ):
-            klass = "MATERIAL"
-            caps.append("PROPOSED")
-        universe = {r["token_id"] for r in self.settings.load_config("registry")["tokens"]}
         current_maps = await self.rows("evt.beneficiary_maps", eid)
         current_map = max(current_maps, key=lambda row: int(row["map_version"])) if current_maps else None
         current_edges = [
@@ -2031,12 +1933,6 @@ class EventToolService:
         concerned = set(
             resolve_tokens(registry, event.get("tokens_mentioned", []), event.get("statement") or "")
         ) | {edge.get("token_id") for edge in current_edges}
-        if not concerned.intersection(universe) and klass != "LOW":
-            klass = "LOW"
-            caps.append("NO_UNIVERSE_CONCERN")
-        if event["certainty"] == "LOW" and klass in {"MAJOR", "STRUCTURAL_SHOCK"}:
-            klass = "MATERIAL"
-            caps.append("LOW_CERTAINTY")
         dims = x.get("dims", {})
         state_proof = [
             claim["claim_id"]
@@ -2129,7 +2025,7 @@ class EventToolService:
             **collection_clock().fields("cutoff"),
             dims=dims,
             **{"class": klass},
-            class_reasons=x.get("class_reasons", []) + caps,
+            class_reasons=x.get("class_reasons", []),
             **self.provenance(c),
         )
         await self.repo.put("evt.ems_assessments", ems, x)
@@ -2572,6 +2468,7 @@ class EventToolService:
                     if band in ranks and pct is not None:
                         candidates.append((ranks[band], float(pct), -edge["exposure_score"], edge["edge_id"]))
             mapping["least_repriced_edge"] = min(candidates)[-1] if candidates else None
+            least = next((e for e in edges if e["edge_id"] == mapping["least_repriced_edge"]), None)
             mapping["least_repriced_reason"] = (
                 "Lowest repricing band, event percentile, then highest exposure among credible NORMAL-liquidity beneficiaries"
                 if candidates
@@ -2580,6 +2477,14 @@ class EventToolService:
             await self.repo.put("evt.beneficiary_maps", f"{eid}:{mapping['map_version']}", mapping)
         return {
             "market_truth": truths,
+            **(
+                {
+                    "least_repriced_edge": least
+                    and {key: least.get(key) for key in ("edge_id", "token_id", "role", "layer")}
+                }
+                if maps
+                else {}
+            ),
             **({"cutoff_prec_normalized": normalized_prec} if normalized_prec else {}),
             **cutoff_stamp.fields("requested_cutoff"),
             **chosen_boundary(cutoff_minute, precision="BUCKET(1m)").fields("cutoff_minute"),

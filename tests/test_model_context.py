@@ -321,13 +321,7 @@ async def test_old_description_references_are_refused_and_name_the_id_field(
     assert "read-only SQL" in str(refused.value)
 
 
-@pytest.mark.parametrize(
-    "path",
-    [
-        ["dims", "magnitude", "evidence"],
-        ["structural_gates", 0, "evidence"],
-    ],
-)
+@pytest.mark.parametrize("path", [["dims", "magnitude", "evidence"]])
 async def test_claim_descriptions_in_assessment_evidence_are_refused(context, path):
     repo, settings, session, _ = context
     await bound_event(repo, session)
@@ -347,8 +341,6 @@ async def test_claim_descriptions_in_assessment_evidence_are_refused(context, pa
                 for name in dimensions
             },
             "class": "MATERIAL",
-            "criterion": "MATERIAL",
-            "criterion_claim_id": None,
             "impact_horizon": {
                 "impact_start": "WEEKS",
                 "ramp_shape": "GRADUAL",
@@ -356,7 +348,6 @@ async def test_claim_descriptions_in_assessment_evidence_are_refused(context, pa
                 "time_to_materiality": "Unknown",
                 "timing_confidence": "LOW",
             },
-            "structural_gates": [{"gate": "G1", "satisfied": False, "evidence": []}],
         }
     }
     target = args["assessment"]
@@ -380,8 +371,6 @@ def scored_assessment(values, evidence):
                 for name, value in values.items()
             },
             "class": "MATERIAL",
-            "criterion": "MATERIAL",
-            "criterion_claim_id": None,
             "impact_horizon": {
                 "impact_start": "WEEKS",
                 "ramp_shape": "GRADUAL",
