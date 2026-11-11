@@ -3,9 +3,8 @@
 from pathlib import Path
 from types import SimpleNamespace
 
-import yaml
-
 import pytest
+import yaml
 
 from tank.storage import MemoryRepository
 from tank.telegram_inbox import TelegramInbox

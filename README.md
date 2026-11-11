@@ -53,6 +53,12 @@ Pytest disables operator dotenv files, credential paths and external Python netw
 
 The service and gateway use one asyncio process. tank-capture, PostgreSQL, ClickHouse and OpenMA run beside it in separate containers. CPU-heavy analysis runs outside the ingestion event loop. Module interfaces and ownership are recorded in [docs/IMPLEMENTATION_CONTRACT.md](docs/IMPLEMENTATION_CONTRACT.md). Secrets (the host `.env`) and the subscription sign-in stay outside versioned configuration and evidence artifacts.
 
+## Token research context
+
+Migration `src/tank/migrations/011_token_context.sql` contains all 22 Google Drive token and protocol research fact sheets as versioned Markdown. It seeds the PostgreSQL `reg.token_context` table at deployment without accessing Drive or requesting any Google credentials. Registered tokens without an entry receive an empty Markdown file.
+
+At analyst session creation, Tank mounts a snapshot of each token file at `/workspace/token-context/<token_id>.md`. Agents must read the relevant files after determining affected tokens. Changes are proposed through `propose_token_context_edit`, displayed as a GitHub-style diff in Tank Ops and written to PostgreSQL only after approval. A stale proposal fails with an error rather than merging changes. Use `tank token-context status` to inspect populated tokens.
+
 ## Operator commands
 
 Follow [the deployment runbook](docs/OPERATIONS.md). The existing 0.5 midpoint remains explicitly uncalibrated; use `tank calibrate` on labeled data to propose Decision-1 cutoffs. `serve` is the service command. Operator commands include `doctor`, `db migrate`, `sources check`, `coverage`, `archive fetch`, `review list/show/label/metrics`, `reaction`, `scout list/decide`, `replay`, `bundle reproduce`, `backup`, and `calibrate`; each exposes arguments through `--help`.

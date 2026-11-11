@@ -6,7 +6,6 @@ import re
 import subprocess
 from datetime import timedelta
 
-
 from tank.time_precision import collection_clock, offset_schedule
 from tank.util import new_id, sha256, utcnow
 
