@@ -15,6 +15,7 @@ from datetime import UTC, datetime, timedelta
 from itertools import pairwise
 from pathlib import Path
 
+from tank import clickhouse_market
 from tank.market_schema import MARKET_COLUMNS
 from tank.time_precision import Timestamp, interval_bounds, propagate_timestamp
 from tank.util import canonical_json, iso, parse_time
@@ -579,9 +580,11 @@ def evaluate_frozen(output_path, sealed_path):
 class ReplayMarketReader:
     """Exact-cutoff normalized capture reader; no REST/network fallback."""
 
-    def __init__(self, inputs, evidence_capture=None):
+    def __init__(self, inputs, evidence_capture=None, clickhouse=None, repository=None):
         self.inputs = inputs
         self.evidence_capture = evidence_capture
+        self.clickhouse = clickhouse
+        self.repository = repository
         self.active_cutoff = None
 
     async def snapshot(self, token_id, cutoff, anchor=None):
@@ -602,6 +605,15 @@ class ReplayMarketReader:
         if len(matches) != 1:
             raise ReplayError("insufficient_fixture: missing exact market snapshot")
         result = copy.deepcopy(matches[0])
+        if self.clickhouse is not None:
+            await clickhouse_market.load_snapshot(self.clickhouse, result)
+        if self.repository is not None and result.get("supply"):
+            rows = result["supply"]
+            keys = [
+                ":".join(str(row.get(column)) for column in ("token_id", "kind", "chain", "ts")) + f":{n}"
+                for n, row in enumerate(rows, 1)
+            ]
+            await self.repository.put_market_batch("mkt.supply_obs", rows, keys=keys)
         if result.get("artifact_kind") == "REFERENCE_MISSING_MARKET_INPUTS":
             if not self.inputs.fixture_reference:
                 raise ReplayError(
@@ -733,7 +745,11 @@ async def run_captured_tools(inputs, repo):
             service = EventToolService(
                 repo,
                 settings,
-                truth.MarketTruthService(repo, settings, ReplayMarketReader(inputs, evidence)),
+                truth.MarketTruthService(
+                    repo,
+                    settings,
+                    ReplayMarketReader(inputs, evidence, getattr(repo, "clickhouse", None), repo),
+                ),
                 DecisionEngine(settings),
                 http=http,
             )
@@ -1246,7 +1262,9 @@ async def run_operational_replay(bundle_path, repo, settings, *, http=None):
         input_sha256=hashlib.sha256(Path(bundle_path).read_bytes()).hexdigest(),
     )
     evidence = evidence_view.advance(first_timestamp)
-    truth = MarketTruthService(repo, settings, ReplayMarketReader(inputs, evidence))
+    truth = MarketTruthService(
+        repo, settings, ReplayMarketReader(inputs, evidence, getattr(repo, "clickhouse", None), repo)
+    )
     from tank.fixture_reference import TrustedFixtureClock
 
     tools = EventToolService(

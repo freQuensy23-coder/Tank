@@ -1,5 +1,6 @@
 """TDD §0 timestamp siblings distinguish chosen bounds from source provenance."""
 
+from dataclasses import replace
 from types import SimpleNamespace
 
 import pytest
@@ -36,8 +37,13 @@ def packet():
     value["anchor"]["ts_prec"] = "BUCKET(1h)"
     value["assembled_at"] = "2026-10-16T12:00:02Z"
     value["assembled_at_prec"] = "COLLECTION_ONLY"
-    for row in value["funding"]:
-        row["settlement_time_prec"] = "EXACT"
+    oi = value["oi_sql"]
+    value["oi_sql"] = replace(oi, endpoints=tuple(replace(e, start_ts_prec="EXACT") for e in oi.endpoints))
+    funding = value["funding_sql"]
+    value["funding_sql"] = replace(
+        funding,
+        venues=tuple(replace(v, settled_at_prec="EXACT", start_at_prec="EXACT") for v in funding.venues),
+    )
     for row in value["klines"]:
         row["open_time_prec"] = f"BUCKET({row['interval_s']}s)"
     return value
@@ -59,11 +65,15 @@ def test_pure_truth_selected_bounds_exact_and_source_precision_propagated():
     venue = result["derivatives"]["per_venue"][0]
     assert venue["funding_settled_last_observed_at_prec"] == "EXACT"
     assert venue["funding_start_observed_at_prec"] == "EXACT"
-    assert result["relative"]["anchor"]["price_observed_at_prec"] is None
-    assert result["relative"]["anchor"]["price_observed_at_prec_reason"] == "INCOMPLETE"
+    assert result["relative"]["anchor"]["price_observed_at_prec"] == "EXACT"
+    assert result["relative"]["anchor"]["price_observed_at_prec_reason"] is None
+    assert result["relative"]["entry_price_observed_at_prec"] == "EXACT"
+    assert result["relative"]["windows"]["W1H"]["observed_at_prec"] == "BUCKET(60s)"
+    assert venue["start_observed_at_prec"] == "EXACT" and venue["end_observed_at_prec"] == "EXACT"
 
 
 @pytest.mark.asyncio
+@pytest.mark.usefixtures("relative_statements")
 async def test_actual_service_preserves_event_public_and_anchor_precision_without_iso_inference():
     event = {"public_at": "2026-10-16T08:00:00Z", "public_at_prec": "BUCKET(1h)"}
 

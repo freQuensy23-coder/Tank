@@ -25,8 +25,11 @@ async def test_backfill_changes_append_reaction_revision_once_and_preserve_origi
     monkeypatch,
     parity_binary,
     request,
+    market_clickhouse,
 ):
+    import tank.analysis.truth as truth_module
     import tank.scheduler as scheduler_module
+    from tank.analysis.truth_sql import NO_SUPPLY
 
     monkeypatch.setattr(scheduler_module, "LATE_REVISION_DEFER_S", 0)
     anchor = utcnow().replace(second=0, microsecond=0) - timedelta(hours=2)
@@ -94,7 +97,12 @@ async def test_backfill_changes_append_reaction_revision_once_and_preserve_origi
                 keys=[bar["instrument_id"] + ":" + bar["minute_start"] for bar in bars],
             )
 
+    async def memory_supply(repo, snapshot, config, **kwargs):
+        return dict(snapshot, supply_sql=NO_SUPPLY)
+
+    monkeypatch.setattr(truth_module, "with_supply", memory_supply)
     repo = MemoryRepository()
+    repo.clickhouse = market_clickhouse
     await repo.put(
         "evt.events",
         "e",
@@ -184,6 +192,11 @@ async def test_backfill_changes_append_reaction_revision_once_and_preserve_origi
                     "sell_qty": "0",
                     "buy_notional": row["c"],
                     "sell_notional": "0",
+                    "buy_usd": row["c"],
+                    "sell_usd": "0",
+                    "size_buckets": {
+                        bucket: {"buy_notional": "0", "sell_notional": "0"} for bucket in ("B3", "B4", "B5")
+                    },
                     "quote_volume": row["c"],
                     "volume_usd": row["c"],
                     "o": row["c"],

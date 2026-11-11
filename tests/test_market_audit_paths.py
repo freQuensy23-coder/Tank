@@ -10,13 +10,19 @@ from datetime import timedelta
 from decimal import Decimal
 
 import pytest
+from flow_helpers import flow_evidence, spot_truth
+from funding_helpers import confirmation, rate, start
+from funding_helpers import evidence as funding_evidence
+from liquidity_helpers import liquidity_evidence
+from oi_helpers import evidence as oi_evidence
+from series_helpers import series_evidence
+from volume_helpers import buckets, evidence
 
 from tank.analysis.truth import (
     derivatives_truth,
     enrich_evidence,
     liquidity_truth,
     select_move,
-    spot_truth,
     strict_majority,
     supply_truth,
     support_features,
@@ -43,6 +49,7 @@ def raw_packet():
         supply=[],
         semantics=[],
         instruments=[],
+        volume={},
     )
     for venue, market in [("A", "spot"), ("B", "spot"), ("P", "perp"), ("Q", "perp")]:
         iid = f"{venue}:{market}:T"
@@ -74,8 +81,6 @@ def raw_packet():
                     token_id="T",
                     open_time=iso(t),
                     interval_s=900,
-                    volume_native="150",
-                    quote_volume_usd="15000",
                     complete=True,
                     o="100",
                     c="100",
@@ -112,8 +117,6 @@ def raw_packet():
                     token_id="T",
                     open_time=iso(t),
                     interval_s=60,
-                    volume_native="20",
-                    quote_volume_usd="2000",
                     complete=True,
                     o="100",
                     c="102" if market == "spot" or minute >= 1 else "100",
@@ -186,9 +189,102 @@ def raw_packet():
     return packet
 
 
-def derive(packet, start=START, end=END):
-    spot = spot_truth(packet["flow_bars"], [], packet["instruments"], start, end)
+def attach_volumes(packet):
+    """The volume records the statements return for the raw packet: each market's native volume is 600 in
+    the window against 300 before it and a 90-day range of 300, each instrument's USD volume 30000 against
+    15000; `packet["volume"]` changes them (None: no volume evidence at all)."""
+    changes = packet["volume"]
+    packet["volume_sql"] = (
+        None
+        if changes is None
+        else evidence(
+            [i["instrument_id"] for i in packet["instruments"]],
+            buckets=buckets(END, ["A", "B"], volume=2_250_000.0, count=2),
+            **changes,
+        )
+    )
+    return packet
 
+
+def attach_oi(packet):
+    """The open-interest records the statements return for the raw packet: each perp's open interest went
+    from 110 to 111 (or `end_native` and `end_usd` of `packet["oi_state"]`) against a 90-day range of
+    -9.09% .. +20%, its basis is 10 bps (or `basis`) against a range of exactly 10 bps and 10 bps at the
+    window start."""
+    state = dict(basis=10.0, end_native=111.0, end_usd=11111.1) | packet.get("oi_state", {})
+    perps = [i["instrument_id"] for i in packet["instruments"] if ":perp:" in i["instrument_id"]]
+    packet["oi_sql"] = oi_evidence(
+        END,
+        perps,
+        lengths={"EVENT": 900},
+        venue={
+            None: dict(
+                oi_native_start=110.0,
+                oi_native_end=state["end_native"],
+                oi_usd_start=11011.0,
+                oi_usd_end=state["end_usd"],
+                basis_bps=state["basis"],
+                basis_start_bps=10.0,
+            )
+        },
+        venue_history={
+            None: dict(
+                native_low=-0.0909,
+                native_high=0.2,
+                usd_low=-0.0909,
+                usd_high=0.2,
+                basis_samples=864,
+                basis_low=10.0,
+                basis_high=10.0,
+                basis_first=START - timedelta(days=9),
+                basis_last=START - timedelta(minutes=15),
+            )
+        },
+    )
+    return packet
+
+
+def attach_funding(packet):
+    """The funding and liquidation records the statements return for the raw packet: each perp's settled rate
+    is 0.01% per 8 hours (`packet["funding_state"]["rates"]` gives a rate of an instrument, `current` of every
+    one) at the window start as now (`start`) against a 90-day range of exactly that rate (`normal`), with no
+    liquidation (`liquidations` gives the records of instruments) and no confirmed estimate
+    (`confirmations` gives pairs of an instrument and a rate)."""
+    state = dict(current=".0001", start=".0001", normal=0.0001, rates={}, liquidations={}, confirmations=[])
+    state |= packet.get("funding_state", {})
+    perps = [i["instrument_id"] for i in packet["instruments"] if ":perp:" in i["instrument_id"]]
+    packet["funding_sql"] = funding_evidence(
+        END,
+        perps,
+        lengths={"EVENT": 900},
+        venue={
+            None: rate(state["current"])
+            | start(state["start"])
+            | dict(normal_low=state["normal"], normal_high=state["normal"])
+            | {iid: rate(value) for iid, value in state["rates"].items()}
+        },
+        liquidations={None: state["liquidations"]},
+        confirmations=[confirmation(iid, value, END) for iid, value in state["confirmations"]],
+    )
+    return packet
+
+
+def derive(packet, start=START, end=END):
+    attach_volumes(packet)
+    attach_oi(packet)
+    attach_funding(packet)
+    seconds = (end - start).total_seconds()
+    packet["flow_sql"] = flow_evidence(packet, windows={"EVENT": seconds, "W15M": 900})
+    spot = spot_truth(packet["flow_bars"], [], packet["instruments"], start, end)
+    packet["series_sql"] = series_evidence(packet, end=end, start=start, normal=[-0.01, 0.01])
+
+    packet["liquidity_sql"] = liquidity_evidence(
+        packet,
+        windows={"EVENT": seconds, "W15M": 900},
+        end=end,
+        anchor=packet.get("_event_anchor", start),
+        venues={v["venue"] for v in spot["venues"]},
+    )
     spot["composite_cohort"] = deepcopy(spot["composite_max"])
     relative = dict(
         ref_venue="A:spot:T",
@@ -201,7 +297,7 @@ def derive(packet, start=START, end=END):
     deriv = derivatives_truth(packet, start, end)
     liquidity = liquidity_truth(packet, start, end, spot, relative)
     supply = supply_truth(packet, start, end)
-    enrich_evidence(packet, start, end, {"EVENT": spot}, "EVENT", deriv, relative, liquidity)
+    enrich_evidence(packet, start, end, {"EVENT": spot, "W15M": spot}, "EVENT", deriv, relative, liquidity)
     features = support_features(packet, start, end, spot, deriv, liquidity, supply)
     deriv["support_features"] = features
     return spot, deriv, liquidity, supply, relative
@@ -216,22 +312,18 @@ def test_raw_native_volume_and_basis_support_require_complete_own_history():
     assert f["basis_within_normal"] is True
     assert f["perp_taker_flow_buy"] is True
 
-    for row in packet["klines"]:
-        if parse_time(row["open_time"]) >= START:
-            row["volume_native"] = "10"
+    packet["volume"] = dict(native={market: dict(value=300.0) for market in ("SPOT", "PERP")})
     f = derive(packet)[1]["support_features"]
     assert f["spot_volume_up_beyond_normal"] is False and f["spot_volume_within_normal"] is True
     assert f["perp_volume_up_beyond_normal"] is False
-    packet["klines"] = []
+    packet["volume"] = None
     f = derive(packet)[1]["support_features"]
     assert f["spot_volume_up_beyond_normal"] is None and f["perp_volume_up_beyond_normal"] is None
 
 
 def test_raw_perp_taker_significance_and_basis_widening_have_negative_controls():
     packet = raw_packet()
-    for row in packet["oi"]:
-        if parse_time(row["ts"]) == END:
-            row["mark_price"] = "100.2"
+    packet["oi_state"] = dict(basis=20.0)
     f = derive(packet)[1]["support_features"]
     assert f["basis_widening"] is True and f["basis_within_normal"] is False
     for row in packet["flow_bars"]:
@@ -252,9 +344,7 @@ def test_raw_lead_increment_ticket_and_depth_support_values():
 
     assert deriv["incremental_share"]["spot"] == 0.5
     packet = raw_packet()
-    for row in packet["klines"]:
-        if ":spot:" in row["instrument_id"] and parse_time(row["open_time"]) >= START:
-            row["quote_volume_usd"] = "3000"
+    packet["volume"] = dict(usd={"SPOT": dict(current_usd=45000.0)})
     assert derive(packet)[1]["incremental_share"]["spot"] > 0.5
     assert liq["depth_drop"] <= 0
 
@@ -279,52 +369,48 @@ def test_raw_large_ticket_minority_and_ask_refill_include_missing_and_failed_con
     assert derive(packet)[1]["support_features"]["ask_replenishment"] is None
 
 
+def liquidated(first, second):
+    """The liquidation record of P:perp:T for a short liquidation of `first` USD in the first half of the window
+    and a long one of `second` in the second."""
+    return {
+        "P:perp:T": dict(
+            observations=2,
+            long_count=1,
+            long_usd=second,
+            short_count=1,
+            short_usd=first,
+            total_usd=first + second,
+            first_half_count=1,
+            first_half_usd=first,
+        )
+    }
+
+
 def test_raw_first_half_liquidation_majority_is_not_event_count_majority():
     packet = raw_packet()
-    packet["liquidations"] = [
-        dict(
-            instrument_id="P:perp:T",
-            ts=iso(START + timedelta(minutes=1)),
-            notional_usd="60",
-            side="SHORT_LIQ",
-        ),
-        dict(
-            instrument_id="P:perp:T",
-            ts=iso(START + timedelta(minutes=10)),
-            notional_usd="40",
-            side="LONG_LIQ",
-        ),
-    ]
 
     def feature():
         spot, d, liquidity, s, _ = derive(packet)
         d["per_venue"][0]["liq_coverage"] = "COMPLETE"
         return support_features(packet, START, END, spot, d, liquidity, s)["liquidations_first_half_majority"]
 
+    packet["funding_state"] = dict(liquidations=liquidated(60.0, 40.0))
     assert feature() is True
-    packet["liquidations"][0]["notional_usd"] = "40"
-    packet["liquidations"][1]["notional_usd"] = "60"
+    packet["funding_state"] = dict(liquidations=liquidated(40.0, 60.0))
     assert feature() is False
-    packet["liquidations"] = []
+    packet["funding_state"] = dict(liquidations={})
+    assert feature() is None
+    packet["funding_state"] = dict(
+        liquidations={"P:perp:T": dict(observations=1, short_count=1, total_usd=None, total_usd_missing=1)}
+    )
     assert feature() is None
 
 
 def test_raw_funding_dispersion_fragmentation_needs_independent_complete_path():
     packet = raw_packet()
-    for row in packet["funding"]:
-        if row["instrument_id"] == "Q:perp:T" and parse_time(row["settlement_time"]) == END:
-            row["rate"] = ".01"
-    packet["funding_confirmations"] = [
-        dict(
-            instrument_id=iid,
-            ts=iso(END),
-            rate_8h_eq=rate,
-            independent_path_verified=True,
-            source_path="WEBSOCKET",
-            primary_source_path="REST",
-        )
-        for iid, rate in [("P:perp:T", ".0001"), ("Q:perp:T", ".01")]
-    ]
+    packet["funding_state"] = dict(
+        rates={"Q:perp:T": ".01"}, confirmations=[("P:perp:T", ".0001"), ("Q:perp:T", ".01")]
+    )
     spot, deriv, liq, _, _ = derive(packet)
     assert liq["fragmentation"]["price_path_validated"] is False
     assert deriv["funding_dispersion_normal_range_8h"] == [Decimal(0), Decimal(0)]
@@ -336,11 +422,11 @@ def test_raw_funding_dispersion_fragmentation_needs_independent_complete_path():
         select_move(spot, deriv, liq, supply, relative, "HIGH", "EVENT")["move_class"]
         == "REAL_MARKET_FRAGMENTATION"
     )
-    for row in packet["funding_confirmations"]:
-        row["source_path"] = "REST"
+    packet["funding_state"]["confirmations"] = [("P:perp:T", ".0001")]
     assert derive(packet)[2]["fragmentation"]["funding_path_validated"] is False
-    for row in packet["funding_confirmations"]:
-        row["source_path"] = "WEBSOCKET"
+    packet["funding_state"]["confirmations"] = [("P:perp:T", ".0001"), ("Q:perp:T", ".0001")]
+    assert derive(packet)[2]["fragmentation"]["funding_path_validated"] is False
+    packet["funding_state"]["confirmations"] = [("P:perp:T", ".0001"), ("Q:perp:T", ".01")]
     next(
         r for r in packet["flow_bars"] if r["instrument_id"] == "Q:perp:T" and r["minute_start"] == iso(START)
     )["complete"] = False
@@ -443,43 +529,37 @@ def scoring_qualifiers(spot, deriv, liq, supply, relative, cls, qualifier_native
 def positive_packet(cls):
     packet = raw_packet()
     if cls == "SPOT_LED_ACCUMULATION":
-        for row in packet["klines"]:
-            if ":spot:" in row["instrument_id"] and parse_time(row["open_time"]) >= START:
-                row["quote_volume_usd"] = "3000"
+        packet["volume"] = dict(usd={"SPOT": dict(current_usd=45000.0)})
     if cls == "PERP_LED_CHASE":
         for row in packet["flow_bars"]:
             if ":spot:" in row["instrument_id"]:
                 row.update(buy_qty="10", sell_qty="10")
-        for row in packet["klines"]:
-            if ":perp:" in row["instrument_id"] and parse_time(row["open_time"]) >= START:
-                row["quote_volume_usd"] = "3000"
-        for row in packet["funding"]:
-            if parse_time(row["settlement_time"]) == END:
-                row["rate"] = ".01"
-        for row in packet["oi"]:
-            if parse_time(row["ts"]) == END:
-                row["mark_price"] = "100.2"
+        packet["volume"] = dict(usd={"PERP": dict(current_usd=45000.0)})
+        packet["funding_state"] = dict(current=".01")
+        packet["oi_state"] = dict(basis=20.0)
     if cls == "SHORT_SQUEEZE":
-        for row in packet["funding"]:
-            row["rate"] = "-.0001"
-        packet["liquidations"] = [
-            dict(
-                instrument_id="P:perp:T",
-                ts=iso(START + timedelta(minutes=i)),
-                notional_usd=n,
-                side="SHORT_LIQ",
-            )
-            for i, n in [(1, "60"), (10, "40")]
-        ]
+        packet["funding_state"] = dict(
+            current="-.0001",
+            start="-.0001",
+            normal=-0.0001,
+            liquidations={
+                "P:perp:T": dict(
+                    observations=2,
+                    short_count=2,
+                    short_usd=100.0,
+                    total_usd=100.0,
+                    first_half_count=1,
+                    first_half_usd=60.0,
+                )
+            },
+        )
     if cls == "SELL_SIDE_ABSORPTION":
         for row in packet["books"]:
             row["depth"]["ask"]["p1"]["usd"] = "100"
     if cls == "LIQUIDITY_VACUUM":
         for row in packet["flow_bars"]:
             row["size_buckets"]["B4"] = dict(buy_notional="1000", sell_notional="1000")
-        for row in packet["klines"]:
-            if parse_time(row["open_time"]) >= START:
-                row["volume_native"] = "10"
+        packet["volume"] = dict(native={market: dict(value=300.0) for market in ("SPOT", "PERP")})
     if cls == "REAL_MARKET_FRAGMENTATION":
         for row in packet["flow_bars"]:
             if row["instrument_id"].startswith("B:"):
@@ -579,9 +659,9 @@ def test_each_support_term_loses_exactly_one_point_when_raw_evidence_is_removed(
     scores, native = raw_scores(packet, cls)
     assert scores[cls] == maximum
     if term in ("spot_volume_beyond", "both_volumes_beyond", "spot_volume_within"):
-        for row in packet["klines"]:
-            if ":spot:" in row["instrument_id"] and parse_time(row["open_time"]) >= START:
-                row["volume_native"] = "100" if term == "spot_volume_within" else "10"
+        packet["volume"] = dict(
+            packet["volume"], native=dict(SPOT=dict(value=3000.0 if term == "spot_volume_within" else 300.0))
+        )
     elif term == "spot_leads":
         for row in packet["klines"]:
             if ":spot:" in row["instrument_id"] and START <= parse_time(row["open_time"]) < START + timedelta(
@@ -589,9 +669,9 @@ def test_each_support_term_loses_exactly_one_point_when_raw_evidence_is_removed(
             ):
                 row["c"] = "100"
     elif term == "spot_increment_majority":
-        for row in packet["klines"]:
-            if ":perp:" in row["instrument_id"] and parse_time(row["open_time"]) >= START:
-                row["quote_volume_usd"] = "4000"
+        packet["volume"] = dict(
+            packet["volume"], usd=dict(packet["volume"]["usd"], PERP=dict(current_usd=60000.0))
+        )
     elif term in ("large_ticket_buy_majority", "large_ticket_sell_rising", "large_tickets_minority"):
         for row in packet["flow_bars"]:
             if ":spot:" in row["instrument_id"] and parse_time(row["minute_start"]) >= START:
@@ -608,17 +688,11 @@ def test_each_support_term_loses_exactly_one_point_when_raw_evidence_is_removed(
             if parse_time(row["ts"]) > START:
                 row["depth"]["ask"]["p1"]["usd"] = "900000000" if term == "depth_not_down" else "1000000000"
     elif term == "basis_within":
-        for row in packet["oi"]:
-            if parse_time(row["ts"]) == END:
-                row["mark_price"] = "100.2"
+        packet["oi_state"] = dict(basis=20.0)
     elif term == "basis_widening":
-        for row in packet["oi"]:
-            if parse_time(row["ts"]) == END:
-                row["mark_price"] = "100.1"
+        packet["oi_state"] = dict(basis=10.0)
     elif term == "funding_above":
-        for row in packet["funding"]:
-            if parse_time(row["settlement_time"]) == END:
-                row["rate"] = ".0001"
+        packet["funding_state"] = dict(current=".0001")
     elif term == "spot_sell_or_neutral":
         for row in packet["flow_bars"]:
             if row["instrument_id"].startswith("A:"):
@@ -630,8 +704,7 @@ def test_each_support_term_loses_exactly_one_point_when_raw_evidence_is_removed(
             if ":perp:" in row["instrument_id"]:
                 row.update(buy_qty="10", sell_qty="10")
     elif term == "first_half_liquidation_majority":
-        packet["liquidations"][0]["notional_usd"] = "40"
-        packet["liquidations"][1]["notional_usd"] = "60"
+        packet["funding_state"]["liquidations"]["P:perp:T"]["first_half_usd"] = 40.0
     elif term == "ask_replenishment":
         for row in packet["books"]:
             if parse_time(row["ts"]) > START:
@@ -642,9 +715,7 @@ def test_each_support_term_loses_exactly_one_point_when_raw_evidence_is_removed(
     elif term in ("supply_evidence", "exchange_inflows"):
         packet["supply"] = []
     elif term == "native_not_up":
-        for row in packet["oi"]:
-            if parse_time(row["ts"]) == END:
-                row.update(oi_native="1000", oi_usd="100100")
+        packet["oi_state"] = dict(end_native=1000.0, end_usd=100100.0)
     elif term == "venue_signs_disagree":
         for row in packet["flow_bars"]:
             if ":spot:" in row["instrument_id"]:

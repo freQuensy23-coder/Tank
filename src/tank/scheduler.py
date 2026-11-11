@@ -1253,7 +1253,6 @@ class Scheduler:
     async def _measure_reaction(self, payload):
         payload = dict(payload)
         captured_stamp = collection_clock()
-        from tank.analysis import compute_workers
 
         window = self._reaction_window(payload)
         anchor_stamp = window["anchor_stamp"]
@@ -1270,7 +1269,6 @@ class Scheduler:
             payload["token_id"],
             end_stamp,
             anchor={**start_stamp.fields("ts"), "type": payload["anchor"]["type"]},
-            scope="REACTION",
         )
         snapshot = {
             **snapshot,
@@ -1280,14 +1278,15 @@ class Scheduler:
         }
         knobs = self.settings.load_config("thresholds") if hasattr(self.settings, "load_config") else {}
         await self._yield_to_market_truth(payload, end)
-        truth = await compute_workers.compute_market_truth(
-            compute_workers.REACTION,
-            snapshot,
-            config={
-                **knobs,
-                "config_version": self.settings.config_version,
-                "code_version": self.settings.code_version,
-            },
+        config = {
+            **knobs,
+            "config_version": self.settings.config_version,
+            "code_version": self.settings.code_version,
+        }
+        from tank.analysis.truth import compute_market_truth, with_statements
+
+        truth = await asyncio.to_thread(
+            compute_market_truth, await with_statements(self.repo, snapshot, config), config=config
         )
         relative = truth.get("relative", {})
         event_window = relative.get("windows", {}).get("EVENT", {})
@@ -1321,26 +1320,24 @@ class Scheduler:
     async def _measure_benchmark(self, payload, captured_stamp, start, end, start_stamp, end_stamp):
         """Lead ruling 2026-10-20 (03 §8.1): a benchmark outside the analysis set
         records the raw return from base-tier 1m kline closes of its largest spot
-        venue; trade and derivative values are NOT_APPLICABLE. Only those klines
-        are read (the window plus the trailing 24 h), never a full snapshot:
-        BTC/ETH snapshots over 90 days of every collection cost gigabytes."""
-        from tank.analysis.truth import benchmark_reaction_values
+        venue; trade and derivative values are NOT_APPLICABLE. One ClickHouse statement
+        reads those klines (the window plus the trailing 24 h) and returns the venue,
+        both prices and the return, never a full snapshot: BTC/ETH snapshots over 90
+        days of every collection cost gigabytes."""
+        from tank import clickhouse_market
+        from tank.analysis import truth_sql
+        from tank.analysis.truth import benchmark_reaction
 
         token = payload["token_id"]
-        lower = min(start, end - timedelta(hours=24)) - timedelta(hours=1)
-        rows = []
-        for iid, instrument in (getattr(self.market, "instruments", None) or {}).items():
-            if instrument.get("token_id") != token or ":spot:" not in iid:
-                continue
-            async for row in self.repo.iter_range(
-                "mkt.klines_1m",
-                "open_time",
-                start=iso(lower),
-                end=iso(end + timedelta(microseconds=1)),
-                filters={"instrument_id": iid},
-            ):
-                rows.append(dict(row, token_id=token))
-        bench = benchmark_reaction_values({"token_id": token, "klines": rows}, start, end)
+        ch = clickhouse_market.client(self.repo, "mkt.klines_1m")
+        if ch is None:
+            raise RuntimeError("mkt.klines_1m is stored in ClickHouse only; TANK_CLICKHOUSE_URL is not set")
+        spot = [
+            iid
+            for iid, instrument in (getattr(self.market, "instruments", None) or {}).items()
+            if instrument.get("token_id") == token and ":spot:" in iid
+        ]
+        bench = benchmark_reaction(await truth_sql.benchmark_reaction(ch, spot, start, end))
         checkpoint_data = {
             "r_raw": bench["r_raw"],
             "r_btc_adj": None,

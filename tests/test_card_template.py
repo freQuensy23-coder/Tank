@@ -440,7 +440,8 @@ def test_absorption_candidate_is_uncertain_and_keeps_recorded_alternatives(confi
 def test_actual_spot_exclusion_cause_reaches_the_card(source_reason):
     from datetime import timedelta
 
-    from tank.analysis.truth import spot_truth
+    from flow_helpers import spot_truth
+
     from tank.util import iso, parse_time
 
     values = card_inputs()

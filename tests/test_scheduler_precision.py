@@ -11,6 +11,12 @@ from tank.scheduler import Scheduler
 from tank.storage import MemoryRepository
 from tank.util import parse_time
 
+
+@pytest.fixture(autouse=True)
+def _relative_statements(relative_statements):
+    return relative_statements
+
+
 STAMP = "2026-10-17T12:00:00Z"
 
 

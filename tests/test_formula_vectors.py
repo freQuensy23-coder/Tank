@@ -7,8 +7,9 @@ from datetime import timedelta
 from decimal import ROUND_DOWN, Decimal
 
 import pytest
+from flow_helpers import spot_truth
 
-from tank.analysis.truth import decomposition, enrich_evidence, oi_class, spot_truth
+from tank.analysis.truth import decomposition, enrich_evidence, oi_class
 from tank.util import iso, parse_time
 
 END = parse_time("2026-10-16T12:00:00Z")
@@ -91,6 +92,7 @@ def test_t5_constant_cohort():
     spots = {
         "W24H": truth({"binance": 500, "okx": 200, "coinbase": 250, "kraken": 50}),
         "W1H": truth({"binance": 500, "okx": 200, "kraken": 50, "bybit": 250}),
+        "W15M": truth({"binance": 500}),
     }
     rel = dict(
         ref_venue=None,
@@ -107,14 +109,23 @@ def test_t5_constant_cohort():
 
 
 def test_t6_funding_normalization_no_market_average():
+    from funding_helpers import evidence, rate
+
     from tank.analysis.truth import derivatives_truth
 
-    funding = [
-        dict(instrument_id=f"{v}:perp:T", kind="SETTLED", settlement_time=iso(END), rate=r, interval_h=h)
-        for v, r, h in [("X", 0.0001, 8), ("Y", 0.00005, 4), ("Z", 0.00002, 1)]
-    ]
-    oi = [dict(instrument_id=f"{v}:perp:T", ts=iso(END), oi_native=100, oi_usd=100) for v in ("X", "Y", "Z")]
-    d = derivatives_truth(dict(oi=oi, funding=funding), END - timedelta(hours=4), END)
+    ids = [f"{v}:perp:T" for v in ("X", "Y", "Z")]
+    instruments = [dict(instrument_id=iid) for iid in ids]
+    funding = evidence(
+        END,
+        ids,
+        lengths={"EVENT": 14400},
+        venue={
+            None: {"X:perp:T": rate(0.0001, 8), "Y:perp:T": rate(0.00005, 4), "Z:perp:T": rate(0.00002, 1)}
+        },
+    )
+    d = derivatives_truth(
+        dict(instruments=instruments, funding_sql=funding, _primary="EVENT"), END - timedelta(hours=4), END
+    )
     assert [v["funding_8h_eq"] for v in d["per_venue"]] == [
         Decimal(".0001"),
         Decimal(".0001"),

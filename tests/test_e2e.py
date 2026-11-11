@@ -270,6 +270,7 @@ async def isolated_e2e_database(postgres_template):
 )
 @pytest.mark.parametrize("complete_market", [False, True])
 @pytest.mark.postgres
+@pytest.mark.usefixtures("relative_statements")
 async def test_full_sse_pipeline_postgres(tmp_path, complete_market, monkeypatch, isolated_e2e_database):
     """Whole synthetic call graph on PostgreSQL, including validated publication."""
     import importlib
@@ -415,6 +416,8 @@ async def test_full_sse_pipeline_postgres(tmp_path, complete_market, monkeypatch
     class CapturedMarket:
         async def snapshot(self, token_id, cutoff, anchor=None):
             if complete_market:
+                from evidence_shift import shifted_evidence
+
                 from tank.util import parse_time
 
                 synthetic = canonical_snapshot()
@@ -429,8 +432,13 @@ async def test_full_sse_pipeline_postgres(tmp_path, complete_market, monkeypatch
                         return iso(parse_time(value) + delta)
                     return value
 
-                synthetic = shift(synthetic)
-                synthetic.update(cutoff=cutoff, anchor=anchor)
+                evidence = {key: value for key, value in synthetic.items() if key.endswith("_sql")}
+                synthetic = shift({key: value for key, value in synthetic.items() if key not in evidence})
+                synthetic.update(
+                    {key: shifted_evidence(value, delta) for key, value in evidence.items()},
+                    cutoff=cutoff,
+                    anchor=anchor,
+                )
                 return synthetic
 
             return {
