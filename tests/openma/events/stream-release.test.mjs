@@ -81,6 +81,77 @@ test('an idle SSE connection adds no continuation to the pending event per heart
   await relay;
 });
 
+function countReactions() {
+  const original = Promise.prototype.then;
+  const counts = new WeakMap();
+  const receivers = new Set();
+  Promise.prototype.then = function (...args) {
+    counts.set(this, (counts.get(this) ?? 0) + 1);
+    receivers.add(new WeakRef(this));
+    return original.apply(this, args);
+  };
+  return {
+    max: () => Math.max(0, ...[...receivers].map(ref => counts.get(ref.deref()) ?? 0)),
+    stop: () => { Promise.prototype.then = original; },
+  };
+}
+
+function queuedSource() {
+  const queue = [], waiting = [];
+  const source = {
+    [Symbol.asyncIterator]: () => ({
+      next: () => queue.length ? Promise.resolve(queue.shift()) : new Promise(resolve => waiting.push(resolve)),
+      return: async () => ({ done: true, value: undefined }),
+    }),
+  };
+  const push = value => { const item = { done: false, value }; if (waiting.length) waiting.shift()(item); else queue.push(item); };
+  return { source, push };
+}
+
+test('a connected idle SSE stream adds no reaction to any promise per heartbeat', async () => {
+  const { source } = neverEndingSource();
+  const registered = [];
+  let beats = 0;
+  const counter = countReactions();
+  let relay;
+  try {
+    relay = relayWithHeartbeat({ onAbort: listener => { registered.push(listener); } }, source, 2, {
+      heartbeat: async () => { beats++; },
+      deliver: async () => true,
+    });
+    await until(() => beats >= 40);
+  } finally { counter.stop(); }
+  assert.equal(registered.length, 1);
+  assert.ok(counter.max() <= 2, `a promise collected ${counter.max()} reactions over ${beats} heartbeats`);
+  registered[0]();
+  await relay;
+});
+
+test('a connected SSE stream keeps its abort and event reactions constant while delivering events', async () => {
+  const { source, push } = queuedSource();
+  const registered = [], delivered = [];
+  let beats = 0;
+  const counter = countReactions();
+  let relay;
+  try {
+    relay = relayWithHeartbeat({ onAbort: listener => { registered.push(listener); } }, source, 3, {
+      heartbeat: async () => { beats++; },
+      deliver: async event => { delivered.push(event); return true; },
+    });
+    const events = 60;
+    for (let i = 0; i < events; i++) {
+      push(i);
+      await until(() => delivered.length === i + 1);
+      if (i % 20 === 0) { const seen = beats; await until(() => beats > seen); }
+    }
+  } finally { counter.stop(); }
+  assert.deepEqual(delivered, Array.from({ length: 60 }, (_, i) => i));
+  assert.equal(registered.length, 1);
+  assert.ok(counter.max() <= 2, `a promise collected ${counter.max()} reactions over ${delivered.length} events`);
+  registered[0]();
+  await relay;
+});
+
 test('a dropped SSE connection ends the relay, returns the source and leaves no timer behind', async () => {
   const before = timeouts();
   const { source, probe } = neverEndingSource();

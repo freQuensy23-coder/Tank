@@ -9,11 +9,13 @@ export interface SseRelayHandlers<T> {
 
 /**
  * Relays an event source to one SSE connection until the source ends, the
- * connection drops or a delivery asks to stop. The pending next() gets one
- * continuation per event, never one per heartbeat: a Session that stays idle
- * would otherwise add a reaction to the same pending promise every interval,
- * for as long as the connection lives. The source is always returned so its
- * subscription is released when the client disconnects.
+ * connection drops or a delivery asks to stop. Nothing accumulates while the
+ * connection stays open: the abort listener is registered once, every pending
+ * next() gets exactly one continuation, and the heartbeat timer is re-armed
+ * for each wait. The loop sleeps on one resolver that is replaced per wait,
+ * so no promise ever collects a reaction per heartbeat or per event. The
+ * source is returned exactly once so its subscription is released when the
+ * client disconnects.
  */
 export async function relayWithHeartbeat<T>(
   stream: SseRelayStream,
@@ -22,36 +24,57 @@ export async function relayWithHeartbeat<T>(
   handlers: SseRelayHandlers<T>,
 ): Promise<void> {
   const iterator = events[Symbol.asyncIterator]();
-  const aborted = new Promise<{ type: "aborted" }>((resolve) => {
-    stream.onAbort(() => resolve({ type: "aborted" }));
+  let wake: (() => void) | undefined;
+  let aborted = false;
+  let arrived: IteratorResult<T> | undefined;
+  let failure: { error: unknown } | undefined;
+  let heartbeatTimer: ReturnType<typeof setTimeout> | undefined;
+  const notify = () => {
+    const resolve = wake;
+    wake = undefined;
+    resolve?.();
+  };
+  const pull = () => {
+    iterator.next().then(
+      (result) => {
+        arrived = result;
+        notify();
+      },
+      (error) => {
+        failure = { error };
+        notify();
+      },
+    );
+  };
+  stream.onAbort(() => {
+    aborted = true;
+    notify();
   });
-  const pull = () =>
-    iterator.next().then((event) => ({ type: "event" as const, event }));
-  let pendingEvent = pull();
   try {
+    pull();
     for (;;) {
-      let heartbeatTimer: ReturnType<typeof setTimeout> | undefined;
-      const next = await Promise.race([
-        pendingEvent,
-        aborted,
-        new Promise<{ type: "heartbeat" }>((resolve) => {
-          heartbeatTimer = setTimeout(
-            () => resolve({ type: "heartbeat" }),
-            heartbeatIntervalMs,
-          );
-        }),
-      ]);
-      if (heartbeatTimer !== undefined) clearTimeout(heartbeatTimer);
-      if (next.type === "aborted") return;
-      if (next.type === "heartbeat") {
-        await handlers.heartbeat();
+      if (!aborted && !arrived && !failure) {
+        heartbeatTimer = setTimeout(notify, heartbeatIntervalMs);
+        await new Promise<void>((resolve) => {
+          wake = resolve;
+        });
+        clearTimeout(heartbeatTimer);
+        heartbeatTimer = undefined;
+      }
+      if (aborted) return;
+      if (failure) throw failure.error;
+      if (arrived) {
+        const result = arrived;
+        arrived = undefined;
+        if (result.done) return;
+        if (!(await handlers.deliver(result.value))) return;
+        pull();
         continue;
       }
-      if (next.event.done) return;
-      if (!(await handlers.deliver(next.event.value))) return;
-      pendingEvent = pull();
+      await handlers.heartbeat();
     }
   } finally {
+    if (heartbeatTimer !== undefined) clearTimeout(heartbeatTimer);
     void Promise.resolve(iterator.return?.()).catch(() => undefined);
   }
 }
