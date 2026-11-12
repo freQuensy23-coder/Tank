@@ -128,6 +128,13 @@ async def test_settled_turn_reminds_an_item_left_without_an_outcome_and_keeps_th
                 ],
             },
         )
+        mapped = await repo.get("ops.agent_sessions", "s")
+        assert mapped is not None
+        await repo.enqueue(
+            "AGENT_MESSAGE",
+            mapped["message_log"][0]["payload"],
+            "item:" + ("ITEM_ADDED" if bound else "NEW_ITEM"),
+        )
         posts, accepted = [], []
 
         def handler(request):

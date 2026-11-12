@@ -415,6 +415,8 @@ WHAT TO DO: DON'T CHASE
 | HEARTBEAT | Daily at 08:00 UTC | The figures of FR-P-02. |
 | AGENT STALL | The analyst stopped working while work waits for it (FR-P-05) | How many messages wait for the agent and since when, how many sessions are at work, how many agent model calls were made in the window, and which condition fired. Sent once per stall. |
 
+A completed native turn and a DONE source outcome do not prove that the event has an accepted assessment. For an eligible source turn in an OPEN, unarchived session, Tank reconciles that business obligation independently, including previously cached completion: at most one assessment reminder per committed source/native attempt/event, using the existing shared reminder budget. Only a new committed source or reminder turn can advance the obligation. Expired or superseded work is not replayed, merged/closed/invalidated events are not revived, and the host never forces an assessment, class, tool sequence or publication.
+
 A reply in "Tank Ops" to the card of a material reaches the agent that handled it (FR-P-03); a reply to a notice that concerns no material, such as the heartbeat, gets a short explanation.
 
 ### 7.3 Evidence
