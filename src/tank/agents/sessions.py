@@ -1970,11 +1970,14 @@ class SessionService:
                 return paths
 
     async def usage(self, session, event):
+        """Record a model call's usage once: an event handled again keeps its first record."""
         usage = event.get("model_usage")
         if not usage:
             return
         model = event.get("model") or session["model_id"]
         key = session["session_id"] + ":" + event["id"]
+        if await self.repo.get("ops.llm_usage", key):
+            return
         optional = {
             "input_tokens": usage.get("input_tokens"),
             "output_tokens": usage.get("output_tokens"),
