@@ -9,6 +9,7 @@ from datetime import timedelta
 from tank.agents.pipeline import RoutingDeferred
 from tank.agents.sessions import ADMITTED_JOB_TYPES, AdmissionDeferred
 from tank.delivery import DeliveryDeferred, DeliveryService
+from tank.job_diagnostics import failure_receipt
 from tank.ops_progress import job_failure_progress
 from tank.scheduler import Scheduler
 from tank.storage import retry_delay
@@ -208,6 +209,9 @@ class Runtime:
                 await self.pause(stop, 0.25)
                 continue
             self.active_jobs.add(job["job_id"])
+            started_at = utcnow()
+            deadline_at = None
+            phase = "dependencies"
             try:
                 if job.get("expires_at") and parse_time(job["expires_at"]) <= utcnow():
                     await self.repo.put(
@@ -240,6 +244,7 @@ class Runtime:
                 if kind not in self.handlers:
                     raise ValueError(f"Unregistered durable job kind: {kind}")
                 if kind in ADMITTED_JOB_TYPES and hasattr(getattr(self, "sessions", None), "admit"):
+                    phase = "admission"
                     try:
                         async with asyncio.timeout(ADMISSION_TIMEOUT_S):
                             await self.sessions.admit(job)
@@ -247,8 +252,11 @@ class Runtime:
                         raise AdmissionDeferred(
                             offset_schedule(collection_clock(utcnow()), timedelta(seconds=5))
                         ) from slow
+                phase = "handler"
+                deadline_at = utcnow() + timedelta(seconds=TIMEOUTS[kind])
                 async with asyncio.timeout(TIMEOUTS[kind]):
                     result = await self.handlers[kind](job["payload"])
+                phase = "result_persistence"
                 async with self.repo.transaction():
                     await self.repo.put("ops.jobs", job["job_id"], {**job, "result": result})
                     await self.repo.finish_job(job["job_id"])
@@ -300,6 +308,15 @@ class Runtime:
                         type(exc).__name__,
                         retry_after=getattr(
                             exc, "retry_after", retry_delay(job["type"], job.get("attempts", 1))
+                        ),
+                        diagnostic=failure_receipt(
+                            job,
+                            exc,
+                            settings=getattr(self, "settings", None),
+                            phase=phase,
+                            started_at=started_at,
+                            finished_at=utcnow(),
+                            deadline_at=deadline_at,
                         ),
                     )
                     current = await self.repo.get("ops.jobs", job["job_id"])

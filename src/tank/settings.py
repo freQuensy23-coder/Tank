@@ -282,10 +282,12 @@ class Settings(BaseSettings):
                 self.etherscan_api_key,
                 self.codex_gateway_key,
                 self.apify_api_token,
+                self.tank_db_password,
+                self.oma_db_password,
             )
             if value
         ]
-        for url in (self.database_url, self.openma_database_url):
+        for url in (self.database_url, self.openma_database_url, self.clickhouse_url):
             password = urlsplit(url).password if url else None
             if password:
                 values.extend((password, unquote(password)))

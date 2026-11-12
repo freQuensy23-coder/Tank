@@ -148,7 +148,9 @@ class ClickHouse:
             headers={"X-ClickHouse-User": self.user, "X-ClickHouse-Key": self.password},
         )
         if response.status_code != 200:
-            raise RuntimeError(f"ClickHouse {response.status_code}: {response.text[:500]}")
+            error = RuntimeError(f"ClickHouse {response.status_code}: {response.text[:500]}")
+            vars(error)["_tank_http_response"] = response
+            raise error
         return response.content
 
     async def rows(self, query, params=None):

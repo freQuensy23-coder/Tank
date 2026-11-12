@@ -226,10 +226,23 @@ def test_configured_secrets_cover_api_keys_and_database_passwords():
         _env_file=None,
         apify_api_token="FAKE-apify",
         database_url="postgresql://tank:FAKE%20p%40ss@postgres:5432/tank",
-        openma_database_url="postgresql:///oma",
+        openma_database_url="postgresql://oma:FAKE%20oma%40url@postgres/oma",
+        clickhouse_url="http://default:FAKE%20ch%40url@clickhouse:8123",
+        tank_db_password="FAKE-tank-independent",
+        oma_db_password="FAKE-oma-independent",
     )
     secrets = settings.configured_secrets()
-    assert {"FAKE-apify", "FAKE%20p%40ss", "FAKE p@ss"} <= set(secrets)
+    assert {
+        "FAKE-apify",
+        "FAKE%20p%40ss",
+        "FAKE p@ss",
+        "FAKE%20oma%40url",
+        "FAKE oma@url",
+        "FAKE%20ch%40url",
+        "FAKE ch@url",
+        "FAKE-tank-independent",
+        "FAKE-oma-independent",
+    } <= set(secrets)
     assert "" not in secrets and None not in secrets
 
 

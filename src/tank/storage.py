@@ -16,6 +16,7 @@ from decimal import Decimal
 from pathlib import Path
 from typing import Protocol, Self, overload
 
+from tank.job_diagnostics import MAX_HISTORY_BYTES, MAX_RECEIPT_BYTES
 from tank.market_schema import MARKET_COLUMNS
 from tank.market_storage import decode as decode_market
 from tank.market_storage import (
@@ -137,7 +138,9 @@ class Repository(Protocol):
     ) -> Record: ...
     async def claim_job(self) -> Record | None: ...
     async def finish_job(self, job_id: str) -> None: ...
-    async def fail_job(self, job_id: str, error: object, *, retry_after: float = 1) -> None: ...
+    async def fail_job(
+        self, job_id: str, error: object, *, retry_after: float = 1, diagnostic: Record | None = None
+    ) -> None: ...
     async def recover_jobs(self) -> int: ...
     async def prune_market(
         self,
@@ -657,13 +660,25 @@ class QueueMixin(RepositoryQueries):
     async def finish_job(self, job_id):
         await self._transition_job(job_id, "DONE")
 
-    async def fail_job(self, job_id, error, *, retry_after=1):
+    async def fail_job(self, job_id, error, *, retry_after=1, diagnostic=None):
         async with self.lock(f"job:{job_id}"):
             job = await self.get("ops.jobs", job_id)
             if job is None:
                 raise KeyError(job_id)
             if job["status"] != "RUNNING":
                 return
+            if diagnostic is not None:
+                history = job.get("attempt_diagnostics", [])
+                size = len(json.dumps(diagnostic, ensure_ascii=True).encode())
+                if (
+                    len(history) < job["max_attempts"]
+                    and size <= MAX_RECEIPT_BYTES
+                    and len(json.dumps([*history, diagnostic], ensure_ascii=True).encode())
+                    <= MAX_HISTORY_BYTES
+                ):
+                    job["attempt_diagnostics"] = [*history, diagnostic]
+                else:
+                    job["attempt_diagnostics_truncated"] = True
             job["last_error"] = str(error)
             expired = job.get("expires_at") and parse_time(job["expires_at"]) <= utcnow()
             job["status"] = (

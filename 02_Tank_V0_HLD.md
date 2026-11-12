@@ -279,6 +279,8 @@ Next to the service run four containers: `tank-capture` (§5.1), `clickhouse` (C
 
 On start, the service returns jobs left RUNNING to the queue, re-reads the hot set in `mkt.hot_tokens` and re-creates its missing backfill obligations, replays each open session's stream from its last stored event and keeps following the sessions still at work. A tool call left without a result runs again; a write tool that already ran returns its stored result (03 §3.2), so a restart loses nothing and writes nothing twice.
 
+Worker failures retain structured per-attempt receipts in the existing `ops.jobs.document`, atomically with failure settlement (03 §3.8). No new table, service or configuration is introduced. Receipts exclude exception text, request/response bodies, URLs, credentials and tracebacks; retries and successful completion preserve earlier receipts.
+
 ### 5.1 tank-capture (Go)
 
 `tank-capture` is the only process that talks to the exchanges. It is a static Go binary (`capture/`, `cmd/tank-capture`) in its own container, with the versioned configuration baked into its image; from the host `.env` it receives only the database password. It holds the venue WebSocket streams, repairs trade-ID gaps over REST, polls klines, 24h tickers, open interest and funding, builds the 1-minute flow bars and 10-second book summaries with their completeness proofs, and writes them and every print into ClickHouse `mkt`. It also sends every other request to an exchange host on Tank's behalf (§3). Tank reads market data from ClickHouse only and starts no stream, poller, backfill or exchange request itself.
