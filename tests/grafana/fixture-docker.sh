@@ -9,7 +9,6 @@ case $1 in
         if [[ $TANK_VERSION == "$legacy" ]]; then export TANK_VERSION=$project-legacy; else export TANK_VERSION=$project; fi
         case " $* " in
             *' config -q '*) exec "$engine" compose -p "$project" "$@" ;;
-            *' config --format json openma '*) exec "$engine" compose -p "$project" "$@" ;;
             *' pull -q '*) exit 0 ;;
             *' up '*)
                 case $last in
@@ -51,7 +50,6 @@ case $1 in
             capture-fixture|tank-clickhouse-1|tank-openma-1|tank-tank-1|ghcr.io/*)
                 case $3 in
                     *org.tank.content*) printf 'fixture\n' ;;
-                    *OMA_SESSION_EXECUTION_CONCURRENCY*) printf '8\n' ;;
                     *StartedAt*) date -u +%FT%TZ ;;
                     *Health*) printf 'healthy\n' ;;
                     *State.Status*) printf 'running\n' ;;
