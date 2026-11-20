@@ -9,6 +9,12 @@ FROM reg.sources s
 CROSS JOIN LATERAL jsonb_array_elements(s.document -> 'feeds') WITH ORDINALITY AS feed(value, n)
 LEFT JOIN ops.source_checkpoints c ON c.storage_key = s.source_id || ':' || (feed.n - 1);
 
+CREATE OR REPLACE VIEW tank_metrics.source_poll_history AS
+SELECT bucket_start, source_mode, feed_kind, successful, failed
+FROM ops.source_poll_counts;
+
+GRANT SELECT ON tank_metrics.source_poll_history TO tank_grafana_reader;
+
 CREATE OR REPLACE VIEW tank_metrics.agent_runs AS
 SELECT opened_at, status,
        CASE WHEN status <> 'FAILED' THEN NULL
@@ -25,20 +31,83 @@ SELECT opened_at, status,
             ELSE 'Unclassified' END AS error_class
 FROM ops.agent_sessions;
 
+CREATE OR REPLACE VIEW tank_metrics.agent_run_outcomes AS
+SELECT s.opened_at,
+       CASE WHEN s.status = 'FAILED' OR turns.has_failed THEN 'Execution error'
+            WHEN s.document @> '{"agent_incomplete":true}' THEN 'Incomplete workflow'
+            WHEN s.status = 'OPEN' AND turns.has_pending THEN 'Pending / running'
+            WHEN turns.all_verified AND s.document @> '{"verified_native_completion":{"complete":true}}'
+              THEN 'Execution success'
+            ELSE 'Unknown' END AS outcome
+FROM ops.agent_sessions s
+CROSS JOIN LATERAL (
+    SELECT bool_or(m ->> 'turn_status' = 'FAILED') AS has_failed,
+           bool_or(m ->> 'turn_status' IN ('ACCEPTING','PENDING','RUNNING')) AS has_pending,
+           bool_and(coalesce(m ->> 'turn_status' = 'DONE' AND
+               (s.document #> '{verified_native_completion,accepted_input_ids}') ? (m ->> 'remote_event_id'), false)) AS all_verified
+    FROM jsonb_array_elements(CASE WHEN jsonb_typeof(s.document -> 'message_log') = 'array'
+                                   THEN s.document -> 'message_log' END) AS t(m)
+    WHERE NOT coalesce((s.document -> 'retired_message_ids') ? (m ->> 'message_id'), false)
+) turns;
+
+CREATE OR REPLACE VIEW tank_metrics.agent_scheduled_jobs AS
+SELECT created_at, status,
+       CASE WHEN type = 'EVAL_CONDITIONS' THEN 'Tank minute condition check'
+            WHEN document #> '{payload,condition,expr}' ? 'review_at' THEN 'Agent timed review notification'
+            WHEN document #> '{payload,condition,expr}' ?| ARRAY['metric','all'] THEN 'Agent metric watch notification'
+            ELSE 'Agent watch notification (unknown type)' END AS job_kind,
+       CASE WHEN status IN ('DONE','FAILED','EXPIRED') AND finished_at >= created_at
+            THEN extract(epoch FROM finished_at - created_at) END AS seconds_in_queue_lifecycle,
+       CASE WHEN type = 'EVAL_CONDITIONS' AND status = 'DONE' AND jsonb_typeof(document #> '{result,deferred}') = 'array'
+            THEN jsonb_array_length(document #> '{result,deferred}') END AS deferred_conditions
+FROM ops.jobs
+WHERE (type = 'EVAL_CONDITIONS' AND idem_key = document #>> '{payload,cutoff}'
+       AND document #>> '{payload,cutoff_prec}' = 'BUCKET(1m)')
+   OR (type = 'AGENT_MESSAGE' AND document @> '{"payload":{"kind":"CONDITION_FIRED","condition":{"agent_defined":true,"status":"FIRED"}}}'
+       AND idem_key = (document #>> '{payload,event_id}') || ':CONDITION_FIRED:' || (document #>> '{payload,condition,cond_id}')
+       AND document #>> '{payload,event_id}' = document #>> '{payload,condition,event_id}');
+
+GRANT SELECT ON tank_metrics.agent_run_outcomes, tank_metrics.agent_scheduled_jobs TO tank_grafana_reader;
+
 CREATE OR REPLACE VIEW tank_metrics.agent_model_turns AS
 SELECT at FROM ops.llm_usage WHERE call = 'AGENT';
 
 CREATE OR REPLACE VIEW tank_metrics.agent_first_verdict AS
 SELECT s.opened_at, v.action,
-       extract(epoch FROM v.answered_at - s.opened_at) AS seconds_to_verdict
+       extract(epoch FROM v.answered_at - s.opened_at) AS seconds_to_verdict,
+       CASE WHEN v.action IS NOT NULL THEN v.action
+            WHEN s.status = 'OPEN' AND EXISTS (
+                SELECT FROM ops.tool_calls tc WHERE tc.session_id = s.session_id AND tc.tool = 'get_decision'
+                  AND tc.status = 'PENDING' AND tc.requested_at >= s.opened_at AND tc.answered_at IS NULL
+            ) THEN 'Decision requested (pending)'
+            ELSE 'No recorded decision' END AS decision_state
 FROM ops.agent_sessions s
 LEFT JOIN LATERAL (
     SELECT tc.answered_at, tc.document #>> '{result,action}' AS action
     FROM ops.tool_calls tc
     WHERE tc.session_id = s.session_id AND tc.tool = 'get_decision' AND tc.status = 'DONE'
-      AND tc.answered_at >= s.opened_at AND nullif(tc.document #>> '{result,action}', '') IS NOT NULL
+      AND tc.answered_at >= s.opened_at AND tc.answered_at >= tc.requested_at
+      AND NOT (tc.document @> '{"result":{"tracking_ended":true}}')
+      AND tc.document #>> '{result,action}' IN ('START','WAIT','DONT_CHASE','WATCH_TO_START','ADD','HOLD','REDUCE','EXIT')
     ORDER BY tc.answered_at, tc.call_id LIMIT 1
 ) v ON true;
+
+CREATE OR REPLACE VIEW tank_metrics.agent_first_classification AS
+SELECT s.opened_at, v.classification,
+       extract(epoch FROM v.answered_at - s.opened_at) AS seconds_to_classification
+FROM ops.agent_sessions s
+LEFT JOIN LATERAL (
+    SELECT tc.answered_at, CASE WHEN tc.tool = 'record_event' THEN 'NO_EVENT'
+                                ELSE tc.document #>> '{result,class}' END AS classification
+    FROM ops.tool_calls tc
+    WHERE tc.session_id = s.session_id AND tc.status = 'DONE'
+      AND tc.answered_at >= s.opened_at AND tc.answered_at >= tc.requested_at
+      AND ((tc.tool = 'record_event' AND tc.document @> '{"result":{"is_event":false}}')
+        OR (tc.tool = 'set_assessment' AND tc.document #>> '{result,class}' IN ('LOW','MATERIAL','MAJOR','STRUCTURAL_SHOCK')))
+    ORDER BY tc.answered_at, tc.call_id LIMIT 1
+) v ON true;
+
+GRANT SELECT ON tank_metrics.agent_first_classification TO tank_grafana_reader;
 
 CREATE OR REPLACE VIEW tank_metrics.agent_watches AS
 SELECT CASE WHEN w.document -> 'expr' ? 'review_at' THEN 'Timed review'

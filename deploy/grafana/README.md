@@ -2,7 +2,7 @@
 
 Run `deploy/grafana/verify.sh` from the checkout to test the integration without a running Tank stack. It requires Bash, Docker Engine with Compose, `curl`, `jq` and OpenSSL. Use a local Docker daemon with `172.30.60.0/24` available. If the subnet is in use, use a different local daemon; do not remove the existing network.
 
-The harness uses a uniquely named project, synthetic passwords, an unpublished PostgreSQL 16 on tmpfs, Tank's init script and migrations, and the same Grafana overlay as below. It verifies authenticated HTTP, both dashboards' provisioned queries on empty operational tables, reader access and denials, and PostgreSQL persistence across Grafana container replacement. It removes its containers, volumes and networks on exit. It does not check metric accuracy on production data.
+The harness uses a uniquely named project, synthetic passwords, an unpublished PostgreSQL 16 on tmpfs, Tank's init script and migrations, and the same Grafana overlay as below. It verifies authenticated HTTP, both dashboards' provisioned queries on empty operational tables, source history panels against known five-minute counts and gaps, reader access and denials, and PostgreSQL persistence across Grafana container replacement. It removes its containers, volumes and networks on exit. It does not check metric accuracy on production data.
 
 ## Use with an existing local Tank stack
 

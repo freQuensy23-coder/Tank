@@ -115,6 +115,7 @@ async def test_detail_pass_keeps_early_failures_out_of_a_later_successful_window
     state = await repo.get("ops.source_checkpoints", "S20:0")
     assert len(result["errors"]) == 5 and state["detail_reads"] == {"ok": RECENT_READS + 5, "failed": 5}
     assert oks(state) == [True] * RECENT_READS
+    assert [poll[1:] for poll in repo.polls] == [("Unknown", "html", True)]
 
 
 @pytest.mark.asyncio
@@ -169,6 +170,7 @@ async def test_failed_x_actor_run_is_a_failed_read(tmp_path, caplog):
         await service.poll_once("S29")
         await service.close()
     state = await repo.get("ops.source_checkpoints", "S29:0")
+    assert list(repo._data["ops.source_poll_counts"].values()) == [(0, 1)]
     assert state["reads"] == {"ok": 0, "failed": 1} and oks(state) == [False]
     assert state["status"] == "DEGRADED" and state["last_failure_at"]
     assert any("S29:0 read failed: the actor run failed" in r.getMessage() for r in caplog.records)

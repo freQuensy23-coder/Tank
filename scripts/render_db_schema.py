@@ -704,6 +704,8 @@ PG_COLUMNS = [
         "reg.entity_aliases",
         "reg.exchange_addresses",
         "reg.sector_baskets",
+        "reg.token_context",
+        "reg.token_context_proposals",
     ],
     ["ingest.source_items", "qa.reviews", "scout.expansion_proposals"],
     [
@@ -745,6 +747,7 @@ PG_COLUMNS = [
         "ops.capture_tier_transitions",
         "ops.scheduler_checkpoints",
         "ops.source_checkpoints",
+        "ops.source_poll_counts",
         "ops.source_escalations",
         "ops.request_budget_blocks",
         "ops.request_budget_ledger",

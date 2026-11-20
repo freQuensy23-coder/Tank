@@ -32,6 +32,11 @@ pg=("${compose[@]}" exec -T -u postgres postgres psql -XqAt -v ON_ERROR_STOP=1 -
 "${compose[@]}" exec -T -u postgres -e GRAFANA_STORE_PASSWORD -e GRAFANA_READER_PASSWORD postgres psql -Xq -d tank -f /etc/tank-grafana/bootstrap.sql
 "${pg[@]}" -f /etc/tank-grafana/install-views.sql
 "${pg[@]}" -f /etc/tank-grafana/install-views.sql
+"${pg[@]}" -d postgres -c 'CREATE DATABASE tank_test_grafana TEMPLATE tank'
+for fixture in tests/grafana/*.sql; do
+    "${pg[@]}" -d tank_test_grafana -f - < "$fixture"
+    printf 'PostgreSQL fixture passed: %s\n' "$fixture"
+done
 "${compose[@]}" up -d --wait --wait-timeout 120 grafana
 resolve_url() {
     local address
@@ -53,11 +58,11 @@ query() {
         curl --noproxy '*' -sS --max-time 20 --netrc-file "$tmp/netrc" -H 'Content-Type: application/json' --data-binary @- "$base/api/ds/query"
 }
 query "SELECT current_user, current_schema, current_setting('transaction_read_only')" | jq -ec '.results.A.frames[0].data.values | select(. == [["tank_grafana_reader"],["tank_metrics"],["on"]])'
-for view in queue_now queue_terminal source_pulls agent_runs agent_model_turns agent_first_verdict agent_watches agent_milestones; do
+for view in queue_now queue_terminal source_pulls source_poll_history agent_runs agent_model_turns agent_first_verdict agent_watches agent_milestones; do
     query "SELECT count(*) FROM tank_metrics.$view" | jq -e '.results.A | (.error == null) and (.frames[0].data.values == [[0]])' >/dev/null
     printf 'Reader SELECT tank_metrics.%s: OK\n' "$view"
 done
-for sql in 'SELECT * FROM ops.jobs LIMIT 0' 'SELECT * FROM grafana."user" LIMIT 0'; do
+for sql in 'SELECT * FROM ops.jobs LIMIT 0' 'SELECT * FROM ops.source_poll_counts LIMIT 0' 'SELECT * FROM grafana."user" LIMIT 0'; do
     query "$sql" | jq -e '.results.A.error | contains("permission denied")' >/dev/null
     printf 'Reader denied: %s\n' "$sql"
 done
@@ -72,6 +77,23 @@ for file in deploy/grafana/dashboards/*.json; do
         "${http[@]}" -H 'Content-Type: application/json' --data-binary "$request" "$base/api/ds/query" | jq -e '.results | length > 0 and all(.[]; .error == null and (.frames | type == "array"))' >/dev/null
     done < "$tmp/requests"
     printf 'Panel queries OK: %s (%s)\n' "$uid" "$(wc -l < "$tmp/requests")"
+done
+"${pg[@]}" -c "INSERT INTO ops.source_poll_counts (bucket_start,source_mode,feed_kind,successful,failed) VALUES
+    ('2026-01-01 00:00Z','REST','rss',3,0), ('2026-01-01 00:00Z','PAGE','html',1,2),
+    ('2026-01-01 00:10Z','REST','rss',0,4), ('2026-01-01 00:15Z','REST','rss',91,99)"
+"${http[@]}" "$base/api/dashboards/uid/tank-pipeline" > "$tmp/pipeline"
+for panel in 101 102; do
+    jq -ce --argjson id "$panel" '.dashboard.panels[] | select(.id == $id) | {from:"1767225600000",to:"1767226620000",queries:.targets}' "$tmp/pipeline" |
+        "${http[@]}" -H 'Content-Type: application/json' --data-binary @- "$base/api/ds/query" > "$tmp/result"
+    jq -ec '.results.A.frames[0] | . as $frame | [.schema.fields | to_entries[] |
+        {name:.value.name,type:(.value.labels.source_type // ""),values:$frame.data.values[.key]}] | sort_by(.name,.type)' "$tmp/result" > "$tmp/fields"
+    jq -e 'map(select(.name == "Time" or .name == "time") | .values) == [[1767225600000,1767226200000]]' "$tmp/fields" >/dev/null
+    if [[ $panel == 101 ]]; then
+        jq -e 'map(select(.name == "Failed" or .name == "Successful") | .values) == [[2,4],[4,0]]' "$tmp/fields" >/dev/null
+    else
+        jq -e 'map(select(.name == "Failed" or .name == "Successful") | [.type,.values]) == [["PAGE / html",[2,null]],["REST / rss",[0,4]],["PAGE / html",[1,null]],["REST / rss",[3,0]]]' "$tmp/fields" >/dev/null
+    fi
+    printf 'Seeded source panel %s: observed counts, gaps and range boundaries OK\n' "$panel"
 done
 store_check="SELECT count(*) FROM grafana.data_source WHERE uid='tank-postgres'"
 [[ $("${pg[@]}" -c "$store_check") == 1 ]]

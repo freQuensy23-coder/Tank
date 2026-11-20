@@ -144,8 +144,8 @@
     },
     {
       "id": 5,
-      "title": "Session start to first recorded verdict · by action",
-      "description": "Sessions opened in range; elapsed seconds to the first DONE get_decision answer with an action from that same session. Uses answered_at, not the market-data cutoff. No recorded verdict includes sessions without a usable answer; their latency is blank. Later token decisions do not multiply sessions.",
+      "title": "Session start to first token decision",
+      "description": "Seconds from session open to the first DONE get_decision answer with a recognized token action, excluding frozen results after tracking ended. This is not event classification, publication, model runtime or delivery latency. Only an explicit unanswered PENDING request in an open session is pending; absent decisions have no duration.",
       "type": "table",
       "datasource": {
         "type": "grafana-postgresql-datasource",
@@ -167,7 +167,7 @@
           "rawQuery": true,
           "editorMode": "code",
           "format": "table",
-          "rawSql": "SELECT coalesce(action, 'No recorded verdict') AS \"First action\", count(*) AS \"Sessions\",\n       round(percentile_cont(0.5) WITHIN GROUP (ORDER BY seconds_to_verdict)::numeric, 1) AS \"Median (s)\",\n       round(percentile_cont(0.95) WITHIN GROUP (ORDER BY seconds_to_verdict)::numeric, 1) AS \"P95 (s)\"\nFROM tank_metrics.agent_first_verdict WHERE $__timeFilter(opened_at) GROUP BY 1 ORDER BY 1"
+          "rawSql": "SELECT decision_state AS \"First action\", count(*) AS \"Sessions\",\n       round(percentile_cont(0.5) WITHIN GROUP (ORDER BY seconds_to_verdict)::numeric, 1) AS \"Median (s)\",\n       round(percentile_cont(0.95) WITHIN GROUP (ORDER BY seconds_to_verdict)::numeric, 1) AS \"P95 (s)\"\nFROM tank_metrics.agent_first_verdict WHERE $__timeFilter(opened_at) GROUP BY 1 ORDER BY 1"
         }
       ]
     },
@@ -259,6 +259,93 @@
       ]
     },
     {
+      "id": 31,
+      "title": "Agent runs · current execution outcome",
+      "description": "One session opened in range. Success requires all non-retired messages DONE and covered by the verified native completion receipt. A failed session or non-retired failed message is an execution error; Tank-flagged incomplete workflows are separate. Pending requires an open session with unfinished work. ENDED or idle alone proves nothing. Execution success does not imply an event, trade or publication.",
+      "type": "table",
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "tank-postgres"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 43,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "tank-postgres"
+          },
+          "rawQuery": true,
+          "editorMode": "code",
+          "format": "table",
+          "rawSql": "SELECT outcome AS \"Current outcome\", count(*) AS \"Sessions\"\nFROM tank_metrics.agent_run_outcomes WHERE $__timeFilter(opened_at) GROUP BY 1 ORDER BY 1"
+        }
+      ]
+    },
+    {
+      "id": 32,
+      "title": "Scheduled jobs · Tank checks and agent notifications",
+      "description": "Jobs created in range; each job counts once, not once per attempt. The recurring minute check can finish with deferred conditions. Notification jobs are for fired agent watches and one-shot timed reviews: DONE means the handler finished, not that a subsequent analysis succeeded. Elapsed time includes queueing and retries. No job row is not an observed failure. These are not native recurring OpenMA schedules.",
+      "type": "table",
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "tank-postgres"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 43,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "tank-postgres"
+          },
+          "rawQuery": true,
+          "editorMode": "code",
+          "format": "table",
+          "rawSql": "SELECT job_kind AS \"Job\", status AS \"Current state\", count(*) AS \"Jobs\",\n       count(seconds_in_queue_lifecycle) AS \"Timed jobs\", round(percentile_cont(0.5) WITHIN GROUP (ORDER BY seconds_in_queue_lifecycle)::numeric, 1) AS \"Median elapsed (s)\",\n       count(deferred_conditions) FILTER (WHERE deferred_conditions > 0) AS \"Checks with recorded deferrals\", count(deferred_conditions) AS \"Checks reporting deferrals\"\nFROM tank_metrics.agent_scheduled_jobs WHERE $__timeFilter(created_at) GROUP BY 1, 2 ORDER BY 1, 2"
+        }
+      ]
+    },
+    {
+      "id": 33,
+      "title": "Session start to first event classification",
+      "description": "First explicit NO_EVENT rejection or LOW, MATERIAL, MAJOR or STRUCTURAL_SHOCK assessment returned by a successful tool call in this session. Recording an event ID alone is not yet a classification. Sessions opened in range count once, including those with neither receipt. This elapsed time is not token-decision latency or the lifetime of a retained session.",
+      "type": "table",
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "tank-postgres"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 51,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "tank-postgres"
+          },
+          "rawQuery": true,
+          "editorMode": "code",
+          "format": "table",
+          "rawSql": "SELECT coalesce(classification, 'No recorded classification') AS \"First classification\", count(*) AS \"Sessions\",\n       round(percentile_cont(0.5) WITHIN GROUP (ORDER BY seconds_to_classification)::numeric, 1) AS \"Median (s)\",\n       round(percentile_cont(0.95) WITHIN GROUP (ORDER BY seconds_to_classification)::numeric, 1) AS \"P95 (s)\"\nFROM tank_metrics.agent_first_classification WHERE $__timeFilter(opened_at) GROUP BY 1 ORDER BY 1"
+        }
+      ]
+    },
+    {
       "id": 9,
       "type": "text",
       "title": "Coverage limits",
@@ -270,7 +357,89 @@
       },
       "options": {
         "mode": "markdown",
-        "content": "**Pull history:** Checkpoints retain cumulative feed-pull counters. Their recent read history mixes pulls with detail reads; it cannot give pull-only totals for the selected window.\n\n**Scheduled work:** Timed reviews and linked milestone checks are observable in Tank. Native OpenMA recurring schedules and their executions have no verified ledger in this datasource. Missing receipts are unknown, not failed or successful crons."
+        "content": "**Pull history:** Pull history starts with the instrumented poller. Earlier periods are unknown. Checkpoint totals and the recent mixed feed/detail window are not used for backfill.\n\n**Scheduled work:** Timed reviews and linked milestone checks are observable in Tank. Native OpenMA recurring schedules and their executions have no verified ledger in this datasource. Missing receipts are unknown, not failed or successful crons."
+      }
+    },
+    {
+      "id": 101,
+      "title": "Completed feed pulls · overall",
+      "description": "Recorded successful and failed feed acquisitions per UTC 5 minutes. Only whole buckets inside the time range are shown. No point means no recorded pulls, not measured zero. Retries, pagination and article/detail reads are not separate pulls.",
+      "type": "timeseries",
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "tank-postgres"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 35,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "tank-postgres"
+          },
+          "rawQuery": true,
+          "editorMode": "code",
+          "format": "time_series",
+          "rawSql": "SELECT bucket_start AS time, sum(successful)::bigint AS \"Successful\", sum(failed)::bigint AS \"Failed\"\nFROM tank_metrics.source_poll_history\nWHERE bucket_start >= $__timeFrom() AND bucket_start <= $__timeTo()::timestamptz - interval '5 minutes'\nGROUP BY bucket_start ORDER BY bucket_start"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "min": 0,
+          "decimals": 0,
+          "custom": {
+            "drawStyle": "points",
+            "pointSize": 4
+          }
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 102,
+      "title": "Completed feed pulls · by source type",
+      "description": "Recorded successful and failed feed acquisitions per UTC 5 minutes. Only whole buckets inside the time range are shown. No point means no recorded pulls, not measured zero. Retries, pagination and article/detail reads are not separate pulls. Historical type is mode / adapter kind at poll time.",
+      "type": "timeseries",
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "tank-postgres"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 35,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "tank-postgres"
+          },
+          "rawQuery": true,
+          "editorMode": "code",
+          "format": "time_series",
+          "rawSql": "SELECT bucket_start AS time, source_mode || ' / ' || feed_kind AS source_type,\n       successful AS \"Successful\", failed AS \"Failed\"\nFROM tank_metrics.source_poll_history\nWHERE bucket_start >= $__timeFrom() AND bucket_start <= $__timeTo()::timestamptz - interval '5 minutes'\nORDER BY bucket_start, source_type"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "min": 0,
+          "decimals": 0,
+          "custom": {
+            "drawStyle": "points",
+            "pointSize": 4
+          }
+        },
+        "overrides": []
       }
     }
   ]
