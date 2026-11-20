@@ -1,8 +1,10 @@
 import { createHash } from 'node:crypto';
+import { setTimeout as delay } from 'node:timers/promises';
 import type { SessionExecutionFence } from '@open-managed-agents/session-runtime-contract/coordination';
 import type { RuntimeIdentity } from './runtime-identity.js';
 import { RetainedSessionLifecycle, type Fences, type Options, type Scope } from './retained-session.js';
 import { RetainedBoxOperations, pinnedBoxLiteProvider, type Allocation, type BoxLiteRuntime, type PinnedBoxLiteModule } from './boxlite-provider.js';
+import { RetainedExecutionFenceLost, RetainedIdleUnconfirmed } from './idle-errors.js';
 
 type Box = RetainedBoxOperations & { stop(): Promise<void> };
 export interface AttachableSandbox {
@@ -36,6 +38,7 @@ async function serialize<T>(scopeKey: string, operation: () => Promise<T>): Prom
 interface Entry {
   lifetime: Lifetime; context: Context; controller?: RetainedSessionLifecycle<BoxLiteRuntime>;
   allocation?: Allocation; started: boolean; open: boolean;
+  idleFailure?: RetainedIdleUnconfirmed;
 }
 export interface NodeRetainedOptions {
   fences: Fences;
@@ -49,6 +52,7 @@ export interface NodeRetainedOptions {
   ownerId: string;
   leaseTtlMs: number;
   nativeHome?: string;
+  idleTimeoutMs?: number;
   identity?(context: Context, allocation: Allocation): Promise<RuntimeIdentity>;
   fingerprint(context: Context, allocation: Allocation): Promise<string>;
   assertExecutionCurrent(fence: unknown): Promise<void>;
@@ -219,10 +223,49 @@ export class NodeRetainedLifecycle {
       if (!entry.started && !entry.controller!.needsQuiescence()) residents.delete(scopeKey);
     }
   }
-  private async idleEntry(entry: Entry, authorized?: () => Promise<void>): Promise<void> {
+  private async idleEntry(entry: Entry, authorized?: () => Promise<void>, signal?: AbortSignal): Promise<void> {
     entry.open = false;
+    if (entry.idleFailure) throw entry.idleFailure;
     if (!entry.started) return;
-    await entry.controller!.idle(authorized ?? (() => this.options.assertExecutionCurrent(entry.context.executionFence)));
+    const timeoutMs = this.options.idleTimeoutMs ?? 35_000;
+    const deadline = performance.now() + timeoutMs;
+    const timeout = new RetainedIdleUnconfirmed('retained_idle_timeout');
+    const elapsed = new AbortController();
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const bounded = new Promise<never>((_, reject) => {
+      timer = setTimeout(() => { elapsed.abort(timeout); reject(timeout); }, timeoutMs);
+    });
+    const check = () => {
+      if (performance.now() >= deadline) throw timeout;
+      if ((signal ?? entry.context.signal)?.reason === 'lease_lost') throw new RetainedExecutionFenceLost();
+    };
+    const assertCurrent = async () => {
+      check();
+      await (authorized ?? (() => this.options.assertExecutionCurrent(entry.context.executionFence)))();
+      check();
+    };
+    const retryIdle = async () => {
+      for (let attempt = 1; ; attempt++) {
+        try {
+          await assertCurrent();
+          await entry.controller!.idle(assertCurrent);
+          return;
+        } catch (error) {
+          check();
+          if (error instanceof RetainedExecutionFenceLost) throw error;
+          if (attempt >= 3) throw new RetainedIdleUnconfirmed('retained_idle_unconfirmed', error);
+          await delay(attempt * 100, undefined, { signal: elapsed.signal });
+        }
+      }
+    };
+    try {
+      await Promise.race([retryIdle(), bounded]);
+    } catch (error) {
+      if (error instanceof RetainedIdleUnconfirmed) entry.idleFailure = error;
+      throw error;
+    } finally {
+      clearTimeout(timer);
+    }
     entry.started = false;
     residents.delete(key(scopeOf(entry.context)));
   }
@@ -230,13 +273,13 @@ export class NodeRetainedLifecycle {
     const entry = this.entries.get(key({ workspaceId: context.workspaceId, environmentId: context.environment.id, sessionId: context.sessionId }));
     return entry?.controller?.takeRuntimeReplaced() ? runtimeReplacedReminder : null;
   }
-  async idle(context: RetainedScopeContext & { executionFence?: unknown }): Promise<void> {
+  async idle(context: RetainedScopeContext & { executionFence?: unknown; signal?: AbortSignal }): Promise<void> {
     const scopeKey = key(scopeOf(context));
     const entry = this.entries.get(scopeKey);
     const bound = entry?.context;
     if (context.executionFence && bound?.executionFence !== context.executionFence) return;
     await serialize(scopeKey, async () => {
-      if (entry && this.entries.get(scopeKey) === entry && entry.context === bound) await this.idleEntry(entry);
+      if (entry && this.entries.get(scopeKey) === entry && entry.context === bound) await this.idleEntry(entry, undefined, context.signal);
     });
   }
   async abandon(context: RetainedScopeContext & { executionFence?: unknown }): Promise<void> {
@@ -251,6 +294,7 @@ export class NodeRetainedLifecycle {
   }
   private async abandonEntry(scopeKey: string, entry: Entry): Promise<void> {
     entry.open = false;
+    if (entry.idleFailure) throw entry.idleFailure;
     try { await entry.controller?.abandon(); }
     finally {
       entry.started = false;

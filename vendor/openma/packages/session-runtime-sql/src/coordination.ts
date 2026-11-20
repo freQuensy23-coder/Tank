@@ -1,6 +1,6 @@
 import { encodeSessionEventDocument, type ExecutionProgressReceipt } from '@open-managed-agents/session-runtime-contract/history';
 import type { YieldSessionExecutionProgress, YieldSessionExecutionProgressResult } from '@open-managed-agents/session-runtime-contract/coordination';
-import { executionRecoveryRefusalCode, planSessionContinuation, resultCallId, verifiedProgress, type ContinuationSnapshot } from '@open-managed-agents/session-runtime-contract/continuation';
+import { executionRecoveryRefusalCode, planSessionContinuation, readyToolCalls, resultCallId, verifiedProgress, type ContinuationSnapshot } from '@open-managed-agents/session-runtime-contract/continuation';
 import { loadSessionContinuationSnapshot, SessionContinuationMissingError } from './continuation';
 import type {
   AdmitSessionExecution,
@@ -797,11 +797,12 @@ export class SqlSessionExecutionStore
                  ELSE ?
                END,
                settled_at_ms = ?,
-               failure = ${this.terminalFailure(`CASE
+               failure = CASE
+                 WHEN ? = 1 THEN '${executionRecoveryRefusalCode}'
                  WHEN interrupt_requested_at_ms IS NOT NULL
                    THEN COALESCE(failure, 'interrupted during execution')
                  ELSE ?
-               END`, "interrupt_requested_at_ms IS NOT NULL OR ? = 'cancelled'")},
+               END,
                revision = revision + 1
          WHERE workspace_id = ? AND id = ? AND session_id = ?
            AND state = 'running' AND attempt_id = ? AND owner_id = ?
@@ -810,7 +811,7 @@ export class SqlSessionExecutionStore
       `).bind(
           input.outcome,
           settledAt,
-          ...(this.options.callbackContinuations ? [input.outcome] : []),
+          input.failure === executionRecoveryRefusalCode ? 1 : 0,
           input.failure?.slice(0, 4_096) ?? null,
           input.fence.workspaceId,
           input.fence.executionId,
@@ -956,7 +957,7 @@ export class SqlSessionExecutionStore
       UPDATE managed_session_executions
          SET state = 'cancelled', settled_at_ms = ?,
              interrupt_requested_at_ms = COALESCE(interrupt_requested_at_ms, ?),
-             failure = ${this.terminalFailure("'interrupted before execution'")}, revision = revision + 1
+             failure = 'interrupted before execution', revision = revision + 1
        WHERE workspace_id = ? AND session_id = ? AND state = 'queued'
          AND (CAST(? AS VARCHAR(191)) IS NULL OR lane_id = ?)
     `).bind(
@@ -1015,7 +1016,7 @@ export class SqlSessionExecutionStore
     const cancelledAt = timestamp(input.cancelledAt, "session cancellation");
     const queued = this.sql.prepare(`
       UPDATE managed_session_executions
-         SET state = 'cancelled', settled_at_ms = ?, failure = ${this.terminalFailure('?')},
+         SET state = 'cancelled', settled_at_ms = ?, failure = ?,
              revision = revision + 1
        WHERE workspace_id = ? AND session_id = ? AND state = 'queued'
     `).bind(
@@ -1028,7 +1029,7 @@ export class SqlSessionExecutionStore
       UPDATE managed_session_executions
          SET state = 'cancelled', settled_at_ms = ?,
              interrupt_requested_at_ms = COALESCE(interrupt_requested_at_ms, ?),
-             failure = ${this.terminalFailure('?')},
+             failure = ?,
              revision = revision + 1
        WHERE workspace_id = ? AND session_id = ? AND state = 'running'
     `).bind(
@@ -1059,15 +1060,13 @@ export class SqlSessionExecutionStore
         FROM managed_session_executions
        WHERE workspace_id = ? AND id = ?
     `).bind(input.workspaceId, input.executionId).first<ExecutionRow>();
-    if (row === null)
-      return null;
-    const execution = toExecution(row);
-    if (this.options.callbackContinuations &&
-      (execution.state === "failed" || execution.state === "cancelled") &&
-      Number(row.generation) === 0 && execution.events.some(event => resultCallId(event) !== undefined)) {
-      execution.failure = executionRecoveryRefusalCode;
-    }
-    return execution;
+    return row === null ? null : toExecution(row);
+  }
+
+  async findReadyToolCalls(input: { workspaceId: string; sessionId: string; executionIds: string[] }): Promise<Map<string, string[]>> {
+    if (!this.options.callbackContinuations || !input.executionIds.length)
+      return new Map();
+    return readyToolCalls(await loadSessionContinuationSnapshot(this.sql, input), input.executionIds);
   }
 
   private async sweepExpired(now: number): Promise<void> {
@@ -1129,7 +1128,7 @@ export class SqlSessionExecutionStore
       for (const row of rows) {
         await this.sql.prepare(`
           UPDATE managed_session_executions
-             SET state = ?, settled_at_ms = ?, failure = ${this.terminalFailure('?')},
+             SET state = ?, settled_at_ms = ?, failure = ${this.terminalFailure('?', "state = 'running' AND generation > 0")},
                  revision = revision + 1
            WHERE workspace_id = ? AND id = ? AND revision = ?
              AND ${where}

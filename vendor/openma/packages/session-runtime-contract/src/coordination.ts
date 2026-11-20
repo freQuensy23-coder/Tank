@@ -122,6 +122,11 @@ export interface SessionExecutionPhaseResult {
 }
 
 export interface SessionExecutionStorePort {
+  findReadyToolCalls?(input: {
+    workspaceId: string;
+    sessionId: string;
+    executionIds: string[];
+  }): Promise<Map<string, string[]>>;
   yieldProgress?(input: YieldSessionExecutionProgress): Promise<YieldSessionExecutionProgressResult>;
   admit(input: AdmitSessionExecution): Promise<AdmitSessionExecutionResult>;
   claim(input: ClaimSessionExecution): Promise<ClaimSessionExecutionResult>;

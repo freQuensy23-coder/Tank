@@ -77,6 +77,7 @@ import * as retainedBoxLiteProvider from "@open-managed-agents/managed-runtime-b
 import { verifyReplayEvidence } from "@open-managed-agents/sandbox-adapter-litebox";
 import { validateReplayAttachment } from "../lib/tank-retained/replay-attachment.js";
 import { NodeRetainedLifecycle, type AttachableSandbox } from "../lib/tank-retained/node-lifecycle.js";
+import { RetainedExecutionFenceLost } from "../lib/tank-retained/idle-errors.js";
 import { join } from "node:path";
 import { nanoid } from "nanoid";
 
@@ -361,7 +362,7 @@ export async function createManagedNodeRuntime(foundation: NodeFoundation, compo
     client: retainedSdk.JsBoxlite.withDefaultConfig(), ownerId: executionOwnerId, leaseTtlMs: 30000,
     assertExecutionCurrent: async (candidate) => {
       if (!candidate || !await isManagedSessionExecutionFenceActive(candidate as Parameters<typeof isManagedSessionExecutionFenceActive>[0]))
-        throw new Error("Retained Session execution fence lost");
+        throw new RetainedExecutionFenceLost();
     },
     fingerprint: async (context, allocation) => {
       const domain = context as typeof context & {

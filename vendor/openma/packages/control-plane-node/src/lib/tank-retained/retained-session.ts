@@ -27,6 +27,7 @@ export interface Provider<R extends RetainedRuntime> {
   create(scope: Scope, fence: Fence, signal: AbortSignal, assertExecutionCurrent?: () => Promise<void>): Promise<R>;
   resume(handle: Handle, scope: Scope, fence: Fence, signal: AbortSignal, assertExecutionCurrent?: () => Promise<void>): Promise<R>;
   quiesceExact?(handle: Handle, scope: Scope, assertCurrent: () => Promise<void>, intent?: Handle): Promise<void>;
+  quiesceOwned?(handle: Handle, scope: Scope, assertCurrent: () => Promise<void>): Promise<void>;
   reap(handle: Handle, scope: Scope, fence: Fence, signal: AbortSignal, assertAuthorized?: () => Promise<void>): Promise<void>;
 }
 export interface Options<R extends RetainedRuntime> {
@@ -370,8 +371,10 @@ export class RetainedSessionLifecycle<R extends RetainedRuntime> {
     try { return await task; } finally { this.operations.delete(task); }
   }
   private async suspend(assertExecutionCurrent: () => Promise<void>): Promise<void> {
-    const assertCurrent = async () => { await assertExecutionCurrent(); await this.current(); };
-    if (this.handle && this.options.provider.quiesceExact) {
+    const assertCurrent = async () => { await assertExecutionCurrent(); await this.current(); await assertExecutionCurrent(); };
+    if (this.handle && this.options.provider.quiesceOwned) {
+      await this.options.provider.quiesceOwned(this.handle, this.scope, assertCurrent);
+    } else if (this.handle && this.options.provider.quiesceExact) {
       await this.options.provider.quiesceExact(this.handle, this.scope, assertCurrent);
     } else {
       await assertCurrent();

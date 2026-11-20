@@ -158,8 +158,10 @@ export function pinnedBoxLiteProvider(input: {
     await assertCurrent();
     const state = verify(await observe(sdk.getInfo(handle.runtimeId)));
     if (state.running) {
+      await assertCurrent();
       const box = await observe(sdk.get(handle.runtimeId));
       if (!box || box.id !== handle.runtimeId || box.name !== name) throw Error('retained_recovery_resident_changed');
+      await assertCurrent();
       if (!verify(await observe(box.info())).running) throw Error('retained_recovery_stop_unconfirmed');
       await assertCurrent();
       const sync = await box.exec('/bin/sync', [], [], false, null, 30, '/');
@@ -207,6 +209,8 @@ export function pinnedBoxLiteProvider(input: {
   };
   return {
     quiesceExact,
+    quiesceOwned: (handle, scope, assertCurrent) =>
+      lock(scope, 'exclusive', () => stopUnderLock(handle, scope, assertCurrent)),
     async allocationIntent(scope, fence, signal) {
       signal.throwIfAborted(); await current(fence);
       const name = retainedBoxName(scope);

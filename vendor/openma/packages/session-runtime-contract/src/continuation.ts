@@ -233,6 +233,22 @@ function earlierNewWork(snapshot: ContinuationSnapshot, row: ContinuationExecuti
   return prior.some(other => other.laneId === row.laneId && ['queued', 'running'].includes(other.state) &&
     remainingInputs(snapshot, other).some(e => resultCallId(e) === undefined));
 }
+export function readyToolCalls(snapshot: ContinuationSnapshot, executionIds: string[]): Map<string, string[]> {
+  if (snapshot.invalidReason)
+    throw new ContinuationProtocolError(snapshot.invalidReason);
+  assertTrustedJournalOrder(snapshot);
+  const owners = snapshot.executions.filter(row => executionIds.includes(row.id) &&
+    row.state !== 'failed' && row.state !== 'cancelled' && row.interruptRequestedAt === null);
+  const supplied = new Set(committedResults(snapshot).map(resultCallId));
+  const ready = new Map<string, string[]>();
+  for (const owner of owners) {
+    const ids = groups(snapshot, owner.laneId).filter(group => group.declaration.executionId === owner.id &&
+      !group.cancelled && !group.closed).flatMap(group => group.ids.filter(id => !supplied.has(id)));
+    ready.set(owner.id, ids);
+  }
+  return ready;
+}
+
 export function planSessionContinuation(snapshot: ContinuationSnapshot, currentId: string, beforeClaim = false): ContinuationPlan {
   try {
     if (snapshot.invalidReason)

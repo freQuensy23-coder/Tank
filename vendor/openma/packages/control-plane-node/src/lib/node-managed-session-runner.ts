@@ -33,6 +33,7 @@ import { ManagedNodeHarnessRuntime } from "./node-managed-harness-runtime.js";
 import type { WorkspaceBinding, WorkspacePersistencePort, RuntimeResourceScope } from "@open-managed-agents/runtime-resource-contract";
 import type { NodeManagedWorkspaceCheckpoints } from "./node-managed-workspace-checkpoints.js";
 import { ScopedSessionMap } from "./scoped-session-map.js";
+import { RetainedExecutionFenceLost, RetainedIdleUnconfirmed } from "./tank-retained/idle-errors.js";
 import {
   ManagedNodeSubagents,
   managedEventThread,
@@ -144,7 +145,7 @@ export interface DefaultNodeManagedSessionRunnerDependencies {
   retainedLifecycle?: {
     /** Resolves false when the bound warm sandbox is no longer reusable. */
     bind(input: ManagedRunnerContext & { sandbox: SandboxExecutor; executionFence?: SessionExecutionFence; signal?: AbortSignal }): Promise<boolean | void>;
-    idle(input: ManagedRunnerContext): Promise<void>;
+    idle(input: ManagedRunnerContext & { executionFence?: SessionExecutionFence; signal?: AbortSignal }): Promise<void>;
     abandon(input: ManagedRunnerContext): Promise<void>;
     archive(input: StopNodeManagedSessionRuntime): Promise<void>;
   };
@@ -335,6 +336,7 @@ export class DefaultNodeManagedSessionRunner
             binding: workspace.binding,
           }).catch(() => undefined);
         }
+        await this.finishRetainedTurn(input, signal);
         await sandbox.destroy?.().catch(() => undefined);
         throw error;
       }
@@ -348,6 +350,18 @@ export class DefaultNodeManagedSessionRunner
       if (registered && this.abortControllers.get(input) === startup) {
         this.abortControllers.delete(input);
       }
+    }
+  }
+
+  private async finishRetainedTurn(input: ManagedRunnerContext & { executionFence?: SessionExecutionFence }, signal: AbortSignal): Promise<void> {
+    try {
+      if (signal.reason === "lease_lost")
+        await this.dependencies.retainedLifecycle?.abandon(input);
+      else
+        await this.dependencies.retainedLifecycle?.idle({ ...input, signal });
+    } catch (error) {
+      if (error instanceof RetainedExecutionFenceLost || error instanceof RetainedIdleUnconfirmed) throw error;
+      throw new RetainedIdleUnconfirmed('retained_idle_unconfirmed', error);
     }
   }
 
@@ -475,6 +489,7 @@ export class DefaultNodeManagedSessionRunner
     }
     let turnTools: HarnessContext["tools"] | undefined;
     let runFailed = false;
+    let emitRunFailure: (() => void) | undefined;
     let recoveryRefused = false;
     const finalizing = input.continuationPlan?.mode === 'finalize';
     try {
@@ -704,7 +719,7 @@ export class DefaultNodeManagedSessionRunner
       runFailed = true;
       if (abortController.signal.reason === "lease_lost" || recoveryRefused)
         throw error;
-      runtime.broadcastProducedEvent({
+      emitRunFailure = () => runtime.broadcastProducedEvent({
         type: "session.error",
         error: {
           type: "unknown_error",
@@ -714,6 +729,7 @@ export class DefaultNodeManagedSessionRunner
           retryStatus: "exhausted",
         },
       });
+      if (this.dependencies.retainedLifecycle === undefined) emitRunFailure();
       throw error;
     }
     finally {
@@ -787,8 +803,8 @@ export class DefaultNodeManagedSessionRunner
           finalizationError = error instanceof Error ? error : new Error(String(error));
         }
       }
-      const leaseLost = abortController.signal.reason === "lease_lost";
-      if (finalizationError !== undefined && !runFailed && !leaseLost) {
+      const emitFinalizationFailure = () => {
+        if (finalizationError === undefined || runFailed || abortController.signal.reason === "lease_lost") return;
         runtime.broadcastProducedEvent({
           type: "session.error",
           error: {
@@ -799,7 +815,7 @@ export class DefaultNodeManagedSessionRunner
             retryStatus: "exhausted",
           },
         });
-      }
+      };
       const emitTerminal = () => {
         if (abortController.signal.reason === "lease_lost" || input.continuationPlan?.mode === 'noop' || recoveryRefused)
           return;
@@ -815,9 +831,12 @@ export class DefaultNodeManagedSessionRunner
         if (phaseResult.yield !== undefined)
           phaseResult.yield.terminalEventId = terminalId;
       };
+      const retained = this.dependencies.retainedLifecycle !== undefined;
       const terminalAfterCleanup = input.continuationPlan !== undefined && !runFailed && finalizationError === undefined;
-      if (!terminalAfterCleanup)
-        emitTerminal();
+      if (!retained) {
+        emitFinalizationFailure();
+        if (!terminalAfterCleanup) emitTerminal();
+      }
       try {
         await runtime.drain();
         if (input.executionFence !== undefined && !recoveryRefused && !finalizing && !abortController.signal.aborted) {
@@ -833,10 +852,7 @@ export class DefaultNodeManagedSessionRunner
       }
       finally {
         try {
-          if (abortController.signal.reason === "lease_lost")
-            await this.dependencies.retainedLifecycle?.abandon(input);
-          else
-            await this.dependencies.retainedLifecycle?.idle(input);
+          await this.finishRetainedTurn(input, abortController.signal);
         }
         finally {
           if (this.abortControllers.get(input) === abortController) {
@@ -844,10 +860,16 @@ export class DefaultNodeManagedSessionRunner
           }
         }
       }
+      if (retained && abortController.signal.reason !== "lease_lost") {
+        emitRunFailure?.();
+        emitFinalizationFailure();
+        if (!terminalAfterCleanup || !abortController.signal.aborted) emitTerminal();
+        await runtime.drain();
+      }
       if (finalizationError !== undefined && !runFailed) {
         throw finalizationError;
       }
-      if (terminalAfterCleanup && !abortController.signal.aborted) {
+      if (!retained && terminalAfterCleanup && !abortController.signal.aborted) {
         emitTerminal();
         await runtime.drain();
       }

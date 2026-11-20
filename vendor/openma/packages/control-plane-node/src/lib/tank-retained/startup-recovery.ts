@@ -4,10 +4,19 @@ import {
   pinnedBoxLiteProvider, retainedBoxName, retainedOwnershipName, type NativeBoxInfo,
 } from './boxlite-provider.js';
 import type { NodeRetainedOptions } from './node-lifecycle.js';
-import { decodeRetainedPublication, type Candidate, type Publication, type Scope } from './retained-session.js';
-import { stableDigest } from './runtime-identity.js';
+import { decodeRetainedPublication, type Candidate, type Scope } from './retained-session.js';
 
 const workId = 'tank-retained-session-v1';
+
+function matchResident(candidate: Candidate, scope: Scope, boxes: readonly Pick<NativeBoxInfo, 'id' | 'name'>[]) {
+  const manifest = decodeRetainedPublication(candidate, scope, 'litebox');
+  const intent = manifest.state === 'allocating' ? manifest.handle : undefined;
+  if (!intent && manifest.state !== 'retained') return;
+  const name = retainedOwnershipName(manifest.handle, scope);
+  if (intent && (intent.runtimeId !== name || intent.ownershipName)) return;
+  const box = boxes.find(box => box.name === name && (intent || box.id === manifest.handle.runtimeId));
+  if (box) return { box, handle: { ...manifest.handle, runtimeId: box.id }, intent };
+}
 
 export async function listClaimScopes(sql: SqlClient, now: Date): Promise<SessionClaimScope[]> {
   const { results } = await sql.prepare(`
@@ -28,16 +37,17 @@ export async function discoverStartupResidents(
   const client = options.client as { listInfo(): Promise<NativeBoxInfo[]> };
   const boxes = (await client.listInfo()).filter(box =>
     /^oma-[a-f0-9]{32}(?:-upgrade-[a-f0-9]{32})?$/.test(box.name ?? '')
-    && (box.state.running || !/^(stopped|exited)$/i.test(box.state.status)));
+    && (box.state.running || !/^(stopped|exited)$/i.test(box.state.status)))
+    .map(({ id, name }) => ({ id, name }));
   if (!boxes.length) return [];
 
   const { results } = await sql.prepare(`
-    SELECT workspace_id, environment_id, session_id, publication_json, publication_generation, revision
+    SELECT workspace_id, environment_id, session_id, publication_json
     FROM runtime_resource_fences
     WHERE work_id = ? AND publication_json IS NOT NULL
   `).bind(workId).all<{
     workspace_id: string; environment_id: string; session_id: string;
-    publication_json: string; publication_generation: number | string; revision: number | string;
+    publication_json: string;
   }>();
   const matches = new Map<string, StartupResident[]>();
   const provider = pinnedBoxLiteProvider({
@@ -49,20 +59,12 @@ export async function discoverStartupResidents(
     const scope: Scope = {
       workspaceId: row.workspace_id, environmentId: row.environment_id, sessionId: row.session_id, workId,
     };
-    const publication: Publication = {
-      workspaceCandidate: (JSON.parse(row.publication_json) as { workspaceCandidate: Candidate }).workspaceCandidate,
-      generation: Number(row.publication_generation), revision: Number(row.revision),
-    };
+    const { workspaceCandidate } = JSON.parse(row.publication_json) as { workspaceCandidate: Candidate };
     if (!boxes.some(box => box.name === retainedBoxName(scope)
-      || box.id === publication.workspaceCandidate?.metadata?.runtimeId)) continue;
-    const manifest = decodeRetainedPublication(publication.workspaceCandidate, scope, 'litebox');
-    const intent = manifest.state === 'allocating' ? manifest.handle : undefined;
-    if (!intent && manifest.state !== 'retained') continue;
-    const name = retainedOwnershipName(manifest.handle, scope);
-    if (intent && (intent.runtimeId !== name || intent.ownershipName)) continue;
-    const box = boxes.find(box => box.name === name && (intent || box.id === manifest.handle.runtimeId));
-    if (!box) continue;
-    const handle = { ...manifest.handle, runtimeId: box.id };
+      || box.id === workspaceCandidate?.metadata?.runtimeId)) continue;
+    const discovered = matchResident(workspaceCandidate, scope, boxes);
+    if (!discovered) continue;
+    const { box } = discovered;
     const resident: StartupResident = {
       workspaceId: scope.workspaceId, sessionId: scope.sessionId,
       async quiesce() {
@@ -73,15 +75,13 @@ export async function discoverStartupResidents(
         const { fence, publication: current } = acquired;
         let verified = false;
         try {
-          if (!current || fence.generation <= publication.generation
-            || current.generation !== publication.generation || current.revision !== publication.revision
-            || stableDigest(current.workspaceCandidate) !== stableDigest(publication.workspaceCandidate)) {
-            throw Error('retained_recovery_publication_changed');
-          }
+          const matched = current && fence.generation > current.generation
+            && matchResident(current.workspaceCandidate, scope, [box]);
+          if (!matched) throw Error('retained_recovery_publication_changed');
           const assertCurrent = async () => {
             if (!await options.fences.isCurrent(fence)) throw Error('retained_fence_lost');
           };
-          await provider.quiesceExact!(handle, scope, assertCurrent, intent);
+          await provider.quiesceExact!(matched.handle, scope, assertCurrent, matched.intent);
           verified = true;
         } finally {
           await options.fences.release({ fence, reason: verified ? 'completed' : 'failed' });

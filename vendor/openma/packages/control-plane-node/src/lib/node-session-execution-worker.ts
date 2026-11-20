@@ -19,6 +19,7 @@ import {
 import { executionFailure } from "./execution-recovery-refusal.js";
 import { Effect, Fiber } from "effect";
 import { interruptFiber, runSupervised } from "./supervised-fiber.js";
+import { RetainedExecutionFenceLost, RetainedIdleUnconfirmed } from "./tank-retained/idle-errors.js";
 
 export interface RunNodeSessionExecution extends AcceptedSessionEvents {
   executionId: string;
@@ -74,6 +75,7 @@ interface ActiveExecution {
   cancellation: Promise<void> | null;
   drained: boolean;
   leaseLost: boolean;
+  quarantined: boolean;
   promise: Promise<void>;
 }
 
@@ -226,7 +228,7 @@ export class NodeSessionExecutionWorker implements SessionEventDispatchPort {
   async waitForIdle(): Promise<void> {
     while (true) {
       await this.poll();
-      const active = [...this.#active.values()].map((entry) => entry.promise);
+      const active = [...this.#active.values()].filter((entry) => !entry.quarantined).map((entry) => entry.promise);
       if (active.length === 0) {
         if (this.#stopped) await Promise.allSettled(this.#quiescing.values());
         return;
@@ -413,6 +415,7 @@ export class NodeSessionExecutionWorker implements SessionEventDispatchPort {
       cancellation: null,
       drained: false,
       leaseLost: false,
+      quarantined: false,
       promise: Promise.resolve(),
     };
     this.#active.set(key, active);
@@ -422,7 +425,7 @@ export class NodeSessionExecutionWorker implements SessionEventDispatchPort {
         catch: (error: unknown) => error,
       }).pipe(
         Effect.ensuring(Effect.sync(() => {
-          if (this.#active.get(key) === active) {
+          if (this.#active.get(key) === active && !active.quarantined) {
             if (active.leaseLost && this.#tracksRecovery()) {
               this.#pendingRecovery.add({
                 priorFence: { ...active.fence },
@@ -517,6 +520,16 @@ export class NodeSessionExecutionWorker implements SessionEventDispatchPort {
       }
     }
     catch (error) {
+      if (error instanceof RetainedIdleUnconfirmed) {
+        active.quarantined = true;
+        this.#reportError(error);
+        return;
+      }
+      if (error instanceof RetainedExecutionFenceLost) {
+        active.leaseLost = true;
+        this.#logLeaseLost(active);
+        return;
+      }
       outcome = active.cancellation !== null ? "cancelled" : "failed";
       failure = executionFailure(error);
     }
