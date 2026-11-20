@@ -5,3 +5,4 @@ publication are not host-enforced conditions for a successful native turn.
 """
 
 SOURCE_COMPLETION_VERSION = 4
+ASSESSMENT_OBLIGATION_VERSION = 1
