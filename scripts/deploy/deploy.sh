@@ -102,6 +102,23 @@ healthy() {
   done
   return 1
 }
+openma_concurrency() {
+  compose "$1" config --format json openma | python3 -c 'import json,sys; print(json.load(sys.stdin)["services"]["openma"]["environment"].get("OMA_SESSION_EXECUTION_CONCURRENCY", "8"))'
+}
+
+start_backend() {
+  local v=$1 svc=$2 desired actual options=()
+  if [ "$(content "tank-$svc-1")" = "$(content "ghcr.io/frequensy23-coder/tank/tank-$svc:$v")" ]; then
+    options=(--no-recreate)
+    if [ "$svc" = openma ]; then
+      desired=$(openma_concurrency "$v") || return 1
+      if ! actual=$(docker inspect -f '{{range .Config.Env}}{{if eq (index (split . "=") 0) "OMA_SESSION_EXECUTION_CONCURRENCY"}}{{index (split . "=") 1}}{{end}}{{end}}' tank-openma-1 2>/dev/null) || [ "${actual:-8}" != "$desired" ]; then
+        options=()
+      fi
+    fi
+  fi
+  compose "$v" up -d --no-deps "${options[@]}" "$svc"
+}
 
 roll() {
   local v=$1 svc old_cap new_cap pid ready handoff wait
@@ -114,13 +131,7 @@ roll() {
   echo "pull $v $(date -u +%T)"
   compose "$v" pull -q || return 1
   for svc in postgres clickhouse openma; do
-    if [ "$(content "tank-$svc-1")" = "$(content "ghcr.io/frequensy23-coder/tank/tank-$svc:$v")" ]; then
-      echo "$svc unchanged"
-      compose "$v" up -d --no-deps --no-recreate "$svc" || return 1
-    else
-      echo "$svc recreate $(date -u +%T)"
-      compose "$v" up -d --no-deps "$svc" || return 1
-    fi
+    start_backend "$v" "$svc" || return 1
     healthy "tank-$svc-1" || { echo "$svc not healthy"; return 1; }
   done
   old_cap=$(docker ps -q --filter label=com.docker.compose.project=tank --filter label=com.docker.compose.service=tank-capture)

@@ -250,6 +250,7 @@ class Settings(BaseSettings):
     build_sha: str | None = None
     code_version: str = "0.1.0"
     workers: int = 8
+    analysis_concurrency: int | None = Field(default=None, ge=1)
     replay: bool = False
     capture_only: bool = False
     backup_dir: Path | None = None
