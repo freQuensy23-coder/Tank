@@ -127,11 +127,11 @@ def test_rerun_uses_its_attempt_creation_before_queue_and_setup(action):
         sleep=lambda _: pytest.fail("the current attempt is complete"),
     )
 
-    assert outcome == {"budget_seconds": 300, "elapsed_seconds": 101}
+    assert outcome == {"budget_seconds": 900, "elapsed_seconds": 101}
     assert calls == [
         ("", "GET", None),
         ("/attempts/2", "GET", None),
-        ("/attempts/2/jobs?per_page=100&page=1", "GET", BUDGET["timestamp"]("2026-10-23T12:15:00Z")),
+        ("/attempts/2/jobs?per_page=100&page=1", "GET", BUDGET["timestamp"]("2026-10-23T12:25:00Z")),
     ]
 
 
@@ -155,7 +155,7 @@ def test_rerun_queued_past_its_own_budget_is_cancelled():
         BUDGET["watch"](
             {},
             api,
-            now=lambda: BUDGET["timestamp"]("2026-10-23T12:15:01Z"),
+            now=lambda: BUDGET["timestamp"]("2026-10-23T12:25:01Z"),
             sleep=lambda _: pytest.fail("queue and setup must count"),
         )
 
@@ -204,7 +204,7 @@ def test_queued_past_deadline_is_cancelled_without_accepting_results():
         return {"created_at": "2026-10-23T12:00:00Z"} if not suffix else {}
 
     def now():
-        return BUDGET["timestamp"]("2026-10-23T12:05:01Z")
+        return BUDGET["timestamp"]("2026-10-23T12:15:01Z")
 
     with pytest.raises(TimeoutError):
         BUDGET["watch"]({}, api, now=now, sleep=lambda _: pytest.fail("must not wait"))
@@ -217,12 +217,12 @@ def test_watcher_accepts_only_complete_results_within_budget():
             return {"created_at": "2026-10-23T12:00:00Z"}
         assert method == "GET"
         return {
-            "jobs": passed_jobs("2026-10-23T12:04:30Z"),
+            "jobs": passed_jobs("2026-10-23T12:11:30Z"),
             "total_count": len(passed_jobs()),
         }
 
     def now():
-        return BUDGET["timestamp"]("2026-10-23T12:04:31Z")
+        return BUDGET["timestamp"]("2026-10-23T12:11:31Z")
 
     outcome = BUDGET["watch"]({}, api, now=now, sleep=lambda _: pytest.fail("already complete"))
-    assert outcome["elapsed_seconds"] == 271
+    assert outcome["elapsed_seconds"] == 691
