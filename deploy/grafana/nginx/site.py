@@ -239,8 +239,8 @@ def site(host, port, tls):
     return template.replace("@HOST@", host).replace("@PORT@", str(port)).encode()
 
 
-def cron():
-    return (Path(__file__).parent / "renew.cron").read_bytes()
+def cron(host):
+    return (Path(__file__).parent / "renew.cron").read_text().replace("@HOST@", host).encode()
 
 
 def install_file(path, data, state, key):
@@ -261,13 +261,13 @@ def reload_nginx():
     run(["systemctl", "reload", "nginx"])
 
 
-def begin(state, old_site, old_cron, candidates):
+def begin(state, old_site, old_cron, candidates, candidate_cron=None):
     journal = {
         "state": state.copy(),
         "site": base64.b64encode(old_site).decode() if old_site is not None else None,
         "cron": base64.b64encode(old_cron).decode() if old_cron is not None else None,
         "site_allowed": [digest(value) for value in candidates],
-        "cron_allowed": [digest(cron())],
+        "cron_allowed": [digest(candidate_cron)] if candidate_cron else [],
     }
     if old_site is not None:
         journal["site_allowed"].append(digest(old_site))
@@ -359,7 +359,7 @@ def apply(host, port):
         save(state)
     old_site = target.read_bytes() if state["site"] else None
     old_cron = CRON.read_bytes() if state["cron"] else None
-    begin(state, old_site, old_cron, [site(host, port, False), site(host, port, True)])
+    begin(state, old_site, old_cron, [site(host, port, False), site(host, port, True)], cron(host))
     try:
         WEBROOT.mkdir(mode=0o755, exist_ok=True)
         CERTBOT.mkdir(mode=0o700, exist_ok=True)
@@ -406,7 +406,7 @@ def apply(host, port):
         install_file(target, site(host, port, True), state, "site")
         inspect(host, target)
         reload_nginx()
-        install_file(CRON, cron(), state, "cron")
+        install_file(CRON, cron(host), state, "cron")
         state["host"] = host
         state["port"] = port
         save(state)
