@@ -1,9 +1,4 @@
 services:
-  postgres:
-    volumes:
-      - ./deploy/grafana/pg_hba.conf:/etc/postgresql/tank-pg_hba.conf:ro
-      - ./deploy/postgres/pg_hba.conf:/etc/postgresql/tank-base-hba.conf:ro
-      - ./deploy/grafana:/etc/tank-grafana:ro
   grafana:
     image: grafana/grafana:13.3.1@sha256:0615ec4fbd4072004b7d86b46ded63013a74b7d6eb1119273dd89e8fa25c13cf
     restart: unless-stopped
@@ -13,7 +8,7 @@ services:
       tank-net:
         ipv4_address: 172.30.60.11
     ports:
-      - "${GRAFANA_BIND_ADDRESS:-127.0.0.1}:${GRAFANA_PORT:-3000}:3000"
+      - "127.0.0.1:${GRAFANA_PORT:-3000}:3000"
     environment:
       GF_SERVER_PROTOCOL: http
       GF_AUTH_ANONYMOUS_ENABLED: "false"

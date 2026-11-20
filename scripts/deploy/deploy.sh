@@ -12,7 +12,46 @@ LIMIT=${LIMIT:-480}
 exec 9>.deploy.lock
 flock -n 9 || { echo "another deploy is running"; exit 1; }
 
-compose() { TANK_VERSION=$1 docker compose -f compose.yaml "${@:2}"; }
+compose() {
+  local v=$1 stack="releases/$1/stack" files=()
+  shift
+  if [ -d "$stack" ]; then
+    files=(-f "$stack/compose.yaml")
+    if [ -f "$stack/compose.grafana.yaml" ]; then files+=(-f "$stack/compose.grafana.yaml"); fi
+  elif [ "$v" = "$previous" ]; then
+    files=(-f compose.yaml)
+  else
+    echo "missing staged release $v" >&2; return 1
+  fi
+  TANK_VERSION=$v docker compose --env-file "$PWD/.env" "${files[@]}" "$@"
+}
+
+remove_grafana() {
+  local id
+  id=$(docker ps -aq --filter label=com.docker.compose.project=tank --filter label=com.docker.compose.service=grafana) || return 1
+  if [ -n "$id" ]; then docker rm -f "$id" >/dev/null || return 1; fi
+}
+
+grafana_ready() {
+  local address
+  address=$(compose "$1" port grafana 3000) || return 1
+  python3 grafana.py ready "$address"
+}
+
+start_grafana() {
+  local v=$1 migrated=no
+  for _ in $(seq 1 60); do
+    if [ "$(docker exec -u postgres tank-postgres-1 psql -XAt -d tank -c \
+      "SELECT 1 FROM ops.schema_migrations WHERE version='013_source_poll_counts.sql'" 2>/dev/null)" = 1 ]; then
+      migrated=yes; break
+    fi
+    sleep 2
+  done
+  [ "$migrated" = yes ] || { echo 'Tank metrics migration did not finish'; return 1; }
+  python3 grafana.py install "releases/$v/stack/deploy/grafana" tank-postgres-1 || return 1
+  compose "$v" up -d --no-deps --wait --wait-timeout 120 grafana || return 1
+  grafana_ready "$v"
+}
 content() { docker inspect -f '{{index .Config.Labels "org.tank.content"}}' "$1" 2>/dev/null || true; }
 healthy() {
   for _ in $(seq 1 60); do
@@ -25,6 +64,11 @@ healthy() {
 
 roll() {
   local v=$1 svc old_cap new_cap pid ready handoff wait
+  if [ -f "releases/$v/stack/compose.grafana.yaml" ]; then
+    python3 grafana.py prepare || return 1
+  else
+    remove_grafana || return 1
+  fi
   echo "pull $v $(date -u +%T)"
   compose "$v" pull -q || return 1
   for svc in postgres clickhouse openma; do
@@ -61,6 +105,7 @@ roll() {
   echo "tank recreate $(date -u +%T)"
   compose "$v" up -d --no-deps tank || return 1
   healthy tank-tank-1 || { echo "tank not running"; return 1; }
+  if [ -f "releases/$v/stack/compose.grafana.yaml" ]; then start_grafana "$v" || return 1; fi
 }
 
 verify() {
@@ -81,6 +126,7 @@ verify() {
   [ -z "$stale" ] || bad "exchange sources not polled since core start: $stale"
   stale=$(echo "SELECT arrayStringConcat(arrayFilter(i -> NOT has((SELECT groupArray(instrument_id) FROM mkt.oi_obs FINAL WHERE ts > now() - INTERVAL 10 MINUTE), i) OR NOT has((SELECT groupArray(instrument_id) FROM mkt.funding_obs FINAL WHERE as_of > now() - INTERVAL 10 MINUTE), i), ['binance:perp_linear:BTCUSDT','okx:perp_linear:BTC-USDT-SWAP','bybit:perp_linear:BTCUSDT','hyperliquid:perp_linear:BTC']), ' ')" | chq)
   [ -z "$stale" ] || bad "OI or funding older than 10 min: $stale"
+  if [ -f "releases/$SHA/stack/compose.grafana.yaml" ]; then grafana_ready "$SHA" || bad "Grafana not ready"; fi
   return $fail
 }
 
@@ -104,14 +150,18 @@ recover() {
       echo "Tank rollback failed"
       status=1
     fi
+  elif [ "$status" -ne 0 ] && [ "$tank_started" = yes ] && [ -f "releases/$SHA/stack/compose.grafana.yaml" ]; then
+    remove_grafana || status=1
   fi
   exit "$status"
 }
 trap recover EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM
-if [ -d "releases/$SHA/x-reader" ]; then
-  worker=$(python3 apify_worker.py publish "releases/$SHA/x-reader" "$SHA") || { echo "X worker publication failed; Tank unchanged"; exit 1; }
+worker_source="releases/$SHA/x-reader"
+if [ -d "releases/$SHA/stack" ]; then worker_source="releases/$SHA/stack/apify/x-reader"; fi
+if [ -d "$worker_source" ]; then
+  worker=$(python3 apify_worker.py publish "$worker_source" "$SHA") || { echo "X worker publication failed; Tank unchanged"; exit 1; }
   read -r worker_previous worker_current <<< "$worker"
 fi
 start=$(date +%s)

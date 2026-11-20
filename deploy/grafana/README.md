@@ -1,43 +1,29 @@
-# Local Grafana for Tank
+# Tank Grafana
 
-Run `deploy/grafana/verify.sh` from the checkout to test the integration without a running Tank stack. It requires Bash, Docker Engine with Compose, `curl`, `jq` and OpenSSL. Use a local Docker daemon with `172.30.60.0/24` available. If the subnet is in use, use a different local daemon; do not remove the existing network.
+## Production
 
-The harness uses a uniquely named project, synthetic passwords, an unpublished PostgreSQL 16 on tmpfs, Tank's init script and migrations, and the same Grafana overlay as below. It verifies authenticated HTTP, both dashboards' provisioned queries on empty operational tables, source history panels against known five-minute counts and gaps, reader access and denials, and PostgreSQL persistence across Grafana container replacement. It removes its containers, volumes and networks on exit. It does not check metric accuracy on production data.
+Run **Deploy** on `main`. No Grafana password, separate database, manual SQL or post-deploy command is required. The action ships the selected commit's Compose files, SQL, provisioning and dashboards. The PostgreSQL image admits the two Grafana logins only from `172.30.60.11` on `tank-net` using SCRAM. The first rollout replaces the Postgres container to load that rule; it preserves `pg-data`.
 
-## Use with an existing local Tank stack
+Tank applies its migrations first. Deploy waits for `013_source_poll_counts.sql`, bootstraps the roles and schemas, refreshes the metric views in a transaction, then starts the pinned Grafana image. Before marking a release deployed it verifies the configured PostgreSQL reader's datasource health and both provisioned dashboards in the **Tank** folder through authenticated HTTP. Those API endpoints must deny anonymous access.
 
-`compose.grafana.yaml` is an explicit overlay, not part of the default deployment. It adds Grafana; it does **not** add a second PostgreSQL instance or publish a database port. These commands are for a **disposable local development stack**, not a production rollout. Use the same local project name, Compose environment and `pg-data` as that stack. Tank must already have migrated the `tank` database. Applying the overlay recreates the local `postgres` container to mount the HBA rules; schedule that interruption. Address `172.30.60.11` on `tank-net` must be free.
+### Browser access
 
-From the repository root, generate four independent secrets once. Keep them outside `deploy/grafana` (that directory is mounted read-only into PostgreSQL), out of git, logs and shell tracing. Back up the secret key with your local database; changing it can prevent Grafana from decrypting stored credentials.
+The host-local upstream is `http://127.0.0.1:3000`, **not** an Internet URL. The dashboard paths are `/d/tank-queue/` and `/d/tank-pipeline/`. Port 3000 is published on loopback only. There is no public dashboard, anonymous login or published database port.
 
-```bash
-(umask 077; set -C; for key in GRAFANA_ADMIN_PASSWORD GRAFANA_SECRET_KEY GRAFANA_STORE_PASSWORD GRAFANA_READER_PASSWORD; do
-  printf '%s=%s\n' "$key" "$(openssl rand -hex 32)"
-done > .env.grafana)
-```
+The documented host deployment provides SSH for Deploy, not a browser ingress. For an operator without server access, the infrastructure owner must authorize a browser-facing HTTPS origin with DNS and a trusted certificate, proxy it to that loopback upstream on the host and grant the operator access. The operator then opens `https://<authorized-host>/d/tank-queue/` or `/d/tank-pipeline/` with a named Grafana Viewer account; no SSH tunnel is part of normal use. Until an origin and viewer access are provisioned, there is no verified remote operator URL. A green Deploy check verifies the upstream, not that external route.
 
-For subsequent starts, load that same file, **do not regenerate it**. With the existing local Tank configuration available to Compose:
+### Credentials and state
 
-```bash
-set -a; source .env.grafana; set +a
-local_tank=(docker compose -p "${LOCAL_TANK_PROJECT:?Set to your existing local Tank project name}" -f compose.yaml -f compose.grafana.yaml)
-"${local_tank[@]}" up -d --no-deps --wait postgres
-"${local_tank[@]}" exec -T -u postgres -e GRAFANA_STORE_PASSWORD -e GRAFANA_READER_PASSWORD postgres \
-  psql -X -d tank -f /etc/tank-grafana/bootstrap.sql
-"${local_tank[@]}" exec -T -u postgres postgres psql -X -d tank -f /etc/tank-grafana/install-views.sql
-"${local_tank[@]}" up -d --no-deps --wait grafana
-```
+Under the deployment lock, Deploy keeps existing Grafana settings in `/srv/tank-deploy/.env` and generates only absent `GRAFANA_ADMIN_PASSWORD`, `GRAFANA_SECRET_KEY`, `GRAFANA_STORE_PASSWORD` and `GRAFANA_READER_PASSWORD` (32 independent random bytes per generated value). The deploy user must own the regular, owner-only file. Changes preserve its prior contents and are installed atomically with mode 0600. Subsequent deploys do not rewrite a complete file. No secret is sent back to Actions. Host administrators and Docker administrators remain trusted.
 
-`bootstrap.sql` is one-time and transactional. It deliberately fails on role/schema collisions instead of taking over an existing principal. Review its database ACL change: PostgreSQL grants `TEMPORARY` to `PUBLIC` by default. The bootstrap removes that implicit grant for `tank`, preserving temp-table access explicitly for Tank, its existing agent and the Grafana storage login. Check custom local roles before applying. Re-run **only** `install-views.sql` after a metrics SQL update. Keep the underlying table schemas inaccessible to the reader: grant `SELECT` only on each reviewed view, never on all current/future tables.
+The infrastructure owner can recover the initial `admin` credential from `GRAFANA_ADMIN_PASSWORD` in the protected file and issue named Viewer accounts privately. Keep an access-controlled backup of this file **with** `pg-data`; do not regenerate the encryption key on recovery. The initial admin credential is also used by the local readiness check: if deliberately rotating it in Grafana, update the protected setting in the same maintenance window. Never send the `.env` file, put credentials in URLs or share the admin login with dashboard readers.
 
-Open `http://127.0.0.1:3000/` and log in as `admin` using `GRAFANA_ADMIN_PASSWORD`. This sets the initial password only. For dashboard consumers, use named Viewer accounts rather than sharing the admin login. `GRAFANA_BIND_ADDRESS` and `GRAFANA_PORT` override the default host binding. HTTP is unencrypted; keep the listener on loopback and use a tunnel or TLS-terminating reverse proxy for remote access. `/api/health` is public; dashboards and the datasource API require authentication.
+`tank.grafana` is owned by `tank_grafana_store` and persists dashboards, users, preferences and encrypted datasource settings. `tank_grafana_reader` gets only the named `tank_metrics` views, a read-only transaction default, four connections and a 15-second statement timeout. Bootstrap removes `PUBLIC` temporary-table creation in `tank`, preserving it for Tank, its existing agent and the Grafana store. Unmarked existing roles or schemas with the same names are not adopted.
 
-| Interface | Contract |
-|---|---|
-| Grafana state | `tank.grafana`, owned by `tank_grafana_store`. Users, preferences, dashboards and datasource configuration persist in `pg-data`. |
-| Datasource | UID `tank-postgres`, type `grafana-postgresql-datasource`, database `tank`, user `tank_grafana_reader`. Read-only transaction default, four connections, 15-second statement timeout. Object grants enforce the data boundary. |
-| Metrics | `tank_metrics`, owned by `tank`. `install-views.sql` installs `queue-views.sql` and `pipeline-views.sql` with named view grants. Neither Grafana login receives Tank's application/agent role. |
-| Dashboard files | `deploy/grafana/dashboards/*.json`, provisioned in the **Tank** folder. Edit JSON in git; UI edits are not the source of truth. |
-| Database authentication | Two dedicated logins, SCRAM only from Grafana's fixed IP into `tank`; other connections use the existing Tank HBA rules. |
+### Rollback
 
-Stop only Grafana with `"${local_tank[@]}" stop grafana`. Keep the PostgreSQL volume and `.env.grafana` for subsequent use. Never use `down -v` against a stack with data you intend to keep.
+A failed rollout returns to the previous recorded Tank release. For a Grafana-enabled release it uses that release's files, reinstalls its views and checks Grafana. A historical release without Grafana removes the Grafana container and reinstates its original Postgres HBA via the previous image. Neither path drops database objects, deletes `pg-data`, or changes passwords. To deliberately select a prior release, use the same Deploy action with its `main` commit SHA. Future Grafana major upgrades or incompatible metric view changes need an explicit database backup and compatibility plan; selecting an older image is not a database downgrade.
+
+## Local verification
+
+Run `deploy/grafana/verify.sh` on a local Docker daemon with the Tank subnet free. It requires Bash, Docker Compose, `curl`, `jq` and OpenSSL. It uses disposable credentials and PostgreSQL, tests dashboard targets and reader permissions, replaces Grafana to check persistence, and removes only its test project. Do not point it at a production stack.
