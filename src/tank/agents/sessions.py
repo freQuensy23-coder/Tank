@@ -87,6 +87,17 @@ def recovery_refused(identity, projection):
     )
 
 
+def terminal_native_turn_reason(identity, projection):
+    if recovery_refused(identity, projection):
+        return "RECOVERY_REFUSED"
+    if (
+        projection.get("execution_id") == identity
+        and projection.get("state") == projection.get("settled_outcome") == "CANCELLED"
+    ):
+        return "EXECUTION_CANCELLED"
+    return None
+
+
 def material_event(event):
     """Whether a stream event can change Tank state (a refusal can arrive in any message)."""
     if event.get("type") in MATERIAL_EVENT_TYPES or event.get("finish_reason") == "content-filter":
@@ -930,6 +941,8 @@ class SessionService:
             raise ValueError("Invalid native execution status correlation")
         for row in rows:
             state = row.get("state")
+            if not isinstance(state, str):
+                raise ValueError("Invalid native execution settlement projection")
             expected = state if state in {"COMPLETED", "FAILED", "CANCELLED"} else None
             if (
                 state not in {"QUEUED", "RUNNING", "COMPLETED", "FAILED", "CANCELLED", "UNKNOWN"}
@@ -938,7 +951,9 @@ class SessionService:
                 raise ValueError("Invalid native execution settlement projection")
             if tool_readiness:
                 ready = row.get("ready_tool_call_ids")
-                if not isinstance(ready, list) or any(not isinstance(call_id, str) or not call_id for call_id in ready):
+                if not isinstance(ready, list) or any(
+                    not isinstance(call_id, str) or not call_id for call_id in ready
+                ):
                     raise ValueError("Invalid native tool readiness projection")
                 if ready and state in {"UNKNOWN", "FAILED", "CANCELLED"}:
                     raise ValueError("Invalid native tool readiness state")
@@ -1021,14 +1036,15 @@ class SessionService:
                 for call in calls:
                     identity = call.get("remote_event_id")
                     owner = owners.get(call.get("native_turn_message_id"))
+                    state = states.get(identity, {}).get("state")
                     if (
                         identity
-                        and states.get(identity, {}).get("state") == "FAILED"
+                        and state in {"FAILED", "CANCELLED"}
                         and owner
                         and call.get("native_turn_retry_count", 0) < owner.get("retry_count", 0)
                     ):
                         current.setdefault("superseded_native_inputs", {})[identity] = {
-                            "reason": "FAILED_PRIOR_TURN_ATTEMPT",
+                            "reason": f"{state}_PRIOR_TURN_ATTEMPT",
                             "queue_state": copy.deepcopy(states[identity]),
                             "replacement_input_id": owner.get("remote_event_id"),
                             "message_id": owner["message_id"],
@@ -1254,10 +1270,17 @@ class SessionService:
             states = before["execution_states"]
             for identity in sorted(
                 before["failed_input_ids"],
-                key=lambda identity: not recovery_refused(identity, states[identity]),
+                key=lambda identity: (
+                    not recovery_refused(identity, states[identity]),
+                    states[identity]["state"] != "CANCELLED",
+                ),
             ):
                 projection = states[identity]
-                if recovery_refused(identity, projection) or (
+                reason = terminal_native_turn_reason(identity, projection)
+                if reason == "EXECUTION_CANCELLED":
+                    async with self.event_locks.setdefault(sid, asyncio.Lock()):
+                        await self.fail_terminal_native_turn(sid, identity, reason)
+                elif reason == "RECOVERY_REFUSED" or (
                     projection["state"] == "FAILED" and not before["unidentified_inputs"]
                 ):
                     await self.process_event(
@@ -1273,11 +1296,15 @@ class SessionService:
                     )
             return before
 
-        await self.catch_up(sid)
+        history_drained = await self.catch_up(sid)
 
         current = await self.repo.get("ops.agent_sessions", sid)
         drained = await self.execution_barrier(current)
-        if not drained["complete"] or drained["accepted_input_ids"] != before["accepted_input_ids"]:
+        if (
+            history_drained is False
+            or not drained["complete"]
+            or drained["accepted_input_ids"] != before["accepted_input_ids"]
+        ):
             return dict(drained, complete=False)
         async with self.repo.lock("session:" + sid):
             current = await self.repo.get("ops.agent_sessions", sid)
@@ -2080,11 +2107,14 @@ class SessionService:
                 current[key] = copy.deepcopy(value)
 
     async def fail_recovery_refused_turn(self, sid, identity, projection=None):
+        await self.fail_terminal_native_turn(sid, identity, "RECOVERY_REFUSED", projection)
+
+    async def fail_terminal_native_turn(self, sid, identity, reason, projection=None):
         async with self.repo.lock("session:" + sid):
             session = await self.repo.get("ops.agent_sessions", sid)
             if projection is None:
                 projection = session.get("native_execution_states", {}).get(identity, {})
-            if not recovery_refused(identity, projection) or session.get("status") != "OPEN":
+            if terminal_native_turn_reason(identity, projection) != reason or session.get("status") != "OPEN":
                 return
             owner = await self.native_input_owner(session, identity)
             if not owner or identity in session.get("superseded_native_inputs", {}):
@@ -2098,13 +2128,15 @@ class SessionService:
                 or message.get("turn_status") in {"DONE", "FAILED"}
             ):
                 return
+            status = {key: value for key, value in projection.items() if key != "ready_tool_call_ids"}
+            session.setdefault("native_execution_states", {})[identity] = copy.deepcopy(status)
             failure = {
                 "event_id": "execution-status-failed:" + identity,
                 "event_type": "execution.status_failed",
                 "execution_id": identity,
                 "source": "MANAGED_EXECUTION_STATUS",
-                "reason": "RECOVERY_REFUSED",
-                "queue_status": copy.deepcopy(projection),
+                "reason": reason,
+                "queue_status": copy.deepcopy(status),
                 **self.clock_timestamp().fields("recorded_at"),
             }
             message.update(turn_status="FAILED", terminal_failure=failure)
@@ -2231,6 +2263,8 @@ class SessionService:
                             )
                         await self.repo.put("ops.agent_sessions", sid, current)
                 self.seen_events.setdefault(sid, set()).add(seen_key(event))
+                if seq is not None:
+                    self.pending_seq[sid] = max(int(seq), self.pending_seq.get(sid, 0))
                 return
             if kind in {
                 "session.status_running",
@@ -2240,8 +2274,9 @@ class SessionService:
             }:
                 self.execution_polls.pop(sid, None)
             identity = event.get("execution_id")
-            if replayed and kind == "agent.custom_tool_use" and not identity:
-                raise ValueError("Replayed native tool call has no execution correlation")
+            native_tool = (from_native or replayed) and kind == "agent.custom_tool_use"
+            if native_tool and (not isinstance(identity, str) or not identity):
+                raise ValueError("Native tool call has no execution correlation")
             inactive_owner = identity in session.get("superseded_native_inputs", {})
             refused = identity and recovery_refused(
                 identity, session.get("native_execution_states", {}).get(identity, {})
@@ -2289,19 +2324,18 @@ class SessionService:
                     inactive_owner = (
                         inactive_owner or retired_owner or owner[1] != active_owner.get("retry_count", 0)
                     )
-                    if replayed and not retired_owner and kind == "agent.custom_tool_use":
+                    if native_tool:
                         if inactive_owner:
                             return
-                        [projection] = await self.native_execution_status(sid, [identity], tool_readiness=True)
+                        [projection] = await self.native_execution_status(
+                            sid, [identity], tool_readiness=True
+                        )
                         if recovery_refused(identity, projection):
                             await self.fail_recovery_refused_turn(sid, identity, projection)
                             return
                         if event["id"] not in projection["ready_tool_call_ids"]:
-                            return
-                    elif not retired_owner and kind == "agent.custom_tool_use" and from_native:
-                        barrier = await self.execution_barrier(session, verify_remote=True, refresh=True)
-                        if recovery_refused(identity, barrier["execution_states"].get(identity, {})):
-                            await self.fail_recovery_refused_turn(sid, identity)
+                            if projection["settled_outcome"] is None:
+                                return False
                             return
                     if not inactive_owner and not defer_to_queue and turn_failure:
                         barrier = await self.execution_barrier(session, verify_remote=True)
@@ -2317,6 +2351,8 @@ class SessionService:
                     if not inactive_owner and not defer_to_queue:
                         session["active_message_id"] = owner[0]
                     event = dict(event, _host_turn_message_id=owner[0], _host_turn_retry_count=owner[1])
+                elif native_tool:
+                    return False
                 elif not defer_to_queue and (
                     refusal_event
                     or kind in {"agent.custom_tool_use", "session.error", "execution.status_failed"}
@@ -2500,16 +2536,18 @@ class SessionService:
 
     async def catch_up(self, sid):
         page = None
+        drained = True
         while True:
             params = {"limit": 100, "order": "asc"}
             if page:
                 params["page"] = page
             data = await self.request("GET", f"sessions/{sid}/events", params=params)
             for event in data.get("data", []):
-                await self.process_event(sid, event, replayed=True)
+                if await self.process_event(sid, event, replayed=True) is False:
+                    drained = False
             page = data.get("next_page")
             if not page:
-                break
+                return drained
 
     async def stream(self, sid):
         session = await self.repo.get("ops.agent_sessions", sid)
@@ -2530,7 +2568,15 @@ class SessionService:
                 seq = data.get("seq")
                 if seq is None and message.id and message.id.isdigit():
                     seq = int(message.id)
-                await self.process_event(sid, event, seq, from_native=True)
+                if await self.process_event(sid, event, seq, from_native=True) is False:
+                    break
+        if self.pending_seq.get(sid):
+            async with self.repo.lock("session:" + sid):
+                cursor = self.pending_seq.pop(sid, 0)
+                current = await self.repo.get("ops.agent_sessions", sid)
+                if cursor > int(current.get("last_event_seq", 0)):
+                    current["last_event_seq"] = cursor
+                    await self.repo.put("ops.agent_sessions", sid, current)
 
     async def can_archive(self, session, event):
         """Terminal domain state cannot preempt a pending denial/EXIT turn."""

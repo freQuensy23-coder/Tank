@@ -30,7 +30,7 @@ import type {
 import { randomUUID } from "node:crypto";
 import { createStrictlyIncreasingEventStamp } from "./node-managed-harness-runtime.js";
 import { ScopedSessionMap } from "./scoped-session-map.js";
-import { RetainedExecutionFenceLost, RetainedIdleUnconfirmed } from "./tank-retained/idle-errors.js";
+import { RetainedExecutionFenceLost, RetainedIdleUnconfirmed, RetainedResumeFailed } from "./tank-retained/idle-errors.js";
 
 export type StartNodeManagedSessionRuntime = StartSessionExecution & {
   executionFence?: SessionExecutionFence;
@@ -348,7 +348,7 @@ export class DefaultNodeManagedSessionRuntimeDriver
             await this.finishCancelledStart(input, signal, announcedRetry);
             throw signal.aborted ? abortedError(signal) : error;
           }
-          if (attempt >= Math.max(1, retry.attempts)) {
+          if (error instanceof RetainedResumeFailed || attempt >= Math.max(1, retry.attempts)) {
             await this.projectStartFailure(input, error, "exhausted");
             throw error;
           }

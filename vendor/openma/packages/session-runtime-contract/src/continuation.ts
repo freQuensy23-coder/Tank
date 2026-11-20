@@ -239,12 +239,18 @@ export function readyToolCalls(snapshot: ContinuationSnapshot, executionIds: str
   assertTrustedJournalOrder(snapshot);
   const owners = snapshot.executions.filter(row => executionIds.includes(row.id) &&
     row.state !== 'failed' && row.state !== 'cancelled' && row.interruptRequestedAt === null);
-  const supplied = new Set(committedResults(snapshot).map(resultCallId));
   const ready = new Map<string, string[]>();
   for (const owner of owners) {
-    const ids = groups(snapshot, owner.laneId).filter(group => group.declaration.executionId === owner.id &&
-      !group.cancelled && !group.closed).flatMap(group => group.ids.filter(id => !supplied.has(id)));
-    ready.set(owner.id, ids);
+    const open = groups(snapshot, owner.laneId).filter(group => !group.cancelled && !group.closed);
+    if (open.length > 1)
+      throw new ContinuationProtocolError('Overlapping open custom-tool groups');
+    const group = open[0];
+    if (group?.declaration.executionId !== owner.id) {
+      ready.set(owner.id, []);
+      continue;
+    }
+    const supplied = new Set(snapshot.executions.filter(row => row.laneId === owner.laneId).flatMap(actionableInputs).map(resultCallId));
+    ready.set(owner.id, group.ids.filter(id => !supplied.has(id)));
   }
   return ready;
 }

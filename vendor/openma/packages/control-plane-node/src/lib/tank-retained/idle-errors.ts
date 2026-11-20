@@ -11,3 +11,10 @@ export class RetainedExecutionFenceLost extends Error {
     this.name = 'RetainedExecutionFenceLost';
   }
 }
+
+export class RetainedResumeFailed extends Error {
+  constructor(cause: unknown) {
+    super(cause instanceof Error ? cause.message : String(cause), { cause });
+    this.name = 'RetainedResumeFailed';
+  }
+}

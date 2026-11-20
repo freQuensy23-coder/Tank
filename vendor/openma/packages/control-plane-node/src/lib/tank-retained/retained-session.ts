@@ -1,4 +1,5 @@
 import { createHash, randomUUID } from 'node:crypto';
+import { RetainedResumeFailed } from './idle-errors.js';
 import { assertCompatible, stableDigest, validateRuntimeIdentity, type RuntimeIdentity } from './runtime-identity.js';
 type Manifest = { handle: Handle; state: string; archived: boolean; fingerprint?: string; identity?: RuntimeIdentity; retired?: Handle[]; upgrade?: { source: Handle; target: Handle; owner: string; identity: RuntimeIdentity } };
 
@@ -37,6 +38,7 @@ export interface Options<R extends RetainedRuntime> {
   providerId: string;
   ownerId: string;
   leaseTtlMs: number;
+  supervisedIdle?: boolean;
   fences: Fences;
   provider: Provider<R>;
   orphans?: { enqueue(input: { scope: Scope; generation: number; ownerId: string;
@@ -99,6 +101,7 @@ export class RetainedSessionLifecycle<R extends RetainedRuntime> {
   private runtimeReplaced = false;
   private publication: Publication | null = null;
   private possibleResident = false;
+  private resumeFailed = false;
   private unconfirmedPublication: Publication | null = null;
   private lostTurn: { fence: Fence; handle: Handle; publication: Publication | null; unconfirmed: Publication | null } | null = null;
 
@@ -235,6 +238,8 @@ export class RetainedSessionLifecycle<R extends RetainedRuntime> {
     if (this.phase !== 'idle') fail('retained_already_active');
     if (this.lostTurn) fail('retained_previous_turn_not_quiescent');
     this.phase = 'starting';
+    this.resumeFailed = false;
+    let resuming = false;
     let created = false, newIntent = false, replaced = false;
     try {
       signal.throwIfAborted();
@@ -280,6 +285,7 @@ export class RetainedSessionLifecycle<R extends RetainedRuntime> {
         await assertExecutionCurrent();
         const fence = await this.current();
         this.possibleResident = true;
+        resuming = true;
         this.runtime = await this.options.provider.resume(this.handle, this.scope, fence, signal, assertExecutionCurrent);
         if (manifest.state === 'allocating') await this.publish('retained');
       } else {
@@ -303,6 +309,11 @@ export class RetainedSessionLifecycle<R extends RetainedRuntime> {
       this.phase = 'active';
       if (replaced) this.runtimeReplaced = true;
     } catch (error) {
+      if (resuming && this.options.supervisedIdle && this.options.provider.quiesceOwned) {
+        this.resumeFailed = true;
+        this.phase = 'active';
+        throw new RetainedResumeFailed(error);
+      }
       let cleanupFailed = false;
       if (newIntent && !this.runtime && this.handle && this.fence && !this.lost) {
         try {
@@ -358,21 +369,22 @@ export class RetainedSessionLifecycle<R extends RetainedRuntime> {
     }
   }
   isStopped(): boolean { return this.phase === 'stopped'; }
+  needsIdleAfterResumeFailure(): boolean { return this.resumeFailed && (this.phase === 'active' || this.phase === 'stopped'); }
   takeRuntimeReplaced(): boolean {
     const replaced = this.runtimeReplaced;
     this.runtimeReplaced = false;
     return replaced;
   }
   async use<T>(operation: (runtime: R) => Promise<T>): Promise<T> {
-    if (this.phase !== 'active' || !this.runtime) fail('retained_not_active');
+    if (this.phase !== 'active' || !this.runtime || this.resumeFailed) fail('retained_not_active');
     const runtime = this.runtime;
     const task = (async () => { await this.current(); return operation(runtime); })();
     this.operations.add(task);
     try { return await task; } finally { this.operations.delete(task); }
   }
-  private async suspend(assertExecutionCurrent: () => Promise<void>): Promise<void> {
+  private async suspend(assertExecutionCurrent: () => Promise<void>, supervised = false): Promise<void> {
     const assertCurrent = async () => { await assertExecutionCurrent(); await this.current(); await assertExecutionCurrent(); };
-    if (this.handle && this.options.provider.quiesceOwned) {
+    if (supervised && this.handle && this.options.provider.quiesceOwned) {
       await this.options.provider.quiesceOwned(this.handle, this.scope, assertCurrent);
     } else if (this.handle && this.options.provider.quiesceExact) {
       await this.options.provider.quiesceExact(this.handle, this.scope, assertCurrent);
@@ -384,11 +396,11 @@ export class RetainedSessionLifecycle<R extends RetainedRuntime> {
   async idle(assertExecutionCurrent: () => Promise<void>): Promise<void> {
     if (this.phase === 'idle') return;
     if (this.phase !== 'stopped') {
-      if (this.phase !== 'active' || !this.runtime) fail('retained_not_active');
+      if (this.phase !== 'active' || (!this.runtime && !this.resumeFailed)) fail('retained_not_active');
       this.phase = 'quiescing';
       try {
         await Promise.allSettled([...this.operations]);
-        await this.suspend(assertExecutionCurrent);
+        await this.suspend(assertExecutionCurrent, this.options.supervisedIdle);
         this.runtime = null; this.possibleResident = false; this.phase = 'stopped';
       } catch (error) {
         this.phase = 'active';
@@ -396,10 +408,10 @@ export class RetainedSessionLifecycle<R extends RetainedRuntime> {
       }
     }
     await assertExecutionCurrent();
-    if (this.fence && await this.options.fences.isCurrent(this.fence)) {
+    if (!this.resumeFailed && this.fence && await this.options.fences.isCurrent(this.fence)) {
       await this.publish('retained');
     }
-    await this.release('completed');
+    await this.release(this.resumeFailed ? 'failed' : 'completed');
     this.handle = null; this.possibleResident = false; this.phase = 'idle';
   }
 

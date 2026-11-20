@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { planSessionContinuation } from '../../../vendor/openma/packages/session-runtime-contract/src/continuation.ts';
+import { planSessionContinuation, readyToolCalls } from '../../../vendor/openma/packages/session-runtime-contract/src/continuation.ts';
 
 const text = value => [{ type: 'text', text: value }];
 const message = id => ({ id, type: 'user.message', content: text('Record the event') });
@@ -59,6 +59,38 @@ function assertFailure(snapshot, executionId, reason) {
   assert.equal(plan.mode, 'failure');
   assert.match(plan.failure, reason);
 }
+
+test('only open calls declared by settled or durably yielded phases can replay', () => {
+  const ready = snapshot => readyToolCalls(snapshot, ['original']).get('original');
+  const uncommitted = waiting();
+  uncommitted.executions[0].state = 'running';
+  assert.deepEqual(ready(uncommitted), []);
+
+  const committed = waiting();
+  assert.deepEqual(ready(committed), ['corrected']);
+  const interrupted = structuredClone(committed);
+  append(interrupted, undefined, { id: 'interrupt', type: 'user.interrupt' });
+  assert.deepEqual(ready(interrupted), []);
+  const invalid = structuredClone(committed);
+  invalid.orderedEvents.at(-1).event.stopReason.eventIds = ['invalid', 'corrected'];
+  assert.throws(() => ready(invalid), /Invalid custom-tool group declaration/);
+
+  const yielded = waiting();
+  const owner = yielded.executions[0];
+  owner.state = 'queued';
+  owner.events.push(append(yielded, undefined, message('remaining')));
+  append(yielded, 'original', idle('progress', requires(['corrected'])));
+  yielded.orderedEvents.at(-1).executionMetadata.progress = {
+    version: 1, laneId: owner.laneId, attemptId: 'original-attempt-1', generation: 1,
+    previousReceiptId: null, phaseInputIds: ['prompt'], consumedInputIds: ['prompt'],
+    remainingInputIds: ['remaining'], phaseStartEventId: 'running', terminalEventId: 'declaration',
+  };
+  assert.deepEqual(ready(yielded), ['corrected']);
+  const reclaimed = structuredClone(yielded);
+  Object.assign(reclaimed.executions[0], { state: 'running', generation: 2 });
+  append(reclaimed, 'original', custom('new-unsettled-call'));
+  assert.deepEqual(ready(reclaimed), ['corrected']);
+});
 
 test('a locally rejected custom call does not poison the corrected callback or its retained history', () => {
   const snapshot = waiting();

@@ -108,12 +108,12 @@ test('durable orphan reconciliation removes only unpublished owned allocation, p
   assert.deepEqual(resolved,['orphan_A','old-record-now-published']);
 });
 
-for(const failure of ['publish','release'])test(`new native turn finalizes stopped ${failure} failure before fresh resume`,async()=>{
+for(const failure of ['publish','release'])test(`same-owner idle retries ${failure} after stop proof without stopping again`,async()=>{
   const s=fixture(),manager=s.lifecycle(),sandbox=s.sandbox(),ctx=s.context(sandbox);
   await manager.bind(ctx);await sandbox.exec('write','FAKE_FIRST');
   const original=s.fences[failure].bind(s.fences);let fail=true;
   s.fences[failure]=async input=>{if(fail){fail=false;throw Error('transient finalization failure');}return original(input);};
-  await assert.rejects(manager.idle(ctx),/transient finalization failure/);
+  await manager.idle(ctx);
   ctx.executionFence.current=false;
   await assert.rejects(manager.bind(ctx));
   const next={...ctx,executionFence:{current:true}};

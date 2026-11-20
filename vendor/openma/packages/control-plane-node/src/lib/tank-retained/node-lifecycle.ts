@@ -106,7 +106,7 @@ export class NodeRetainedLifecycle {
   }
   private controller(scope: Omit<Scope, 'workId'>, fingerprint: string, allocation: Allocation, identity?: RuntimeIdentity): RetainedSessionLifecycle<BoxLiteRuntime> {
     return new RetainedSessionLifecycle({ scope, fingerprint, identity, providerId: 'litebox', ownerId: this.options.ownerId,
-      leaseTtlMs: this.options.leaseTtlMs, fences: this.options.fences,
+      leaseTtlMs: this.options.leaseTtlMs, fences: this.options.fences, supervisedIdle: true,
       orphans: this.options.orphans,
       provider: pinnedBoxLiteProvider({ module: this.options.providerModule, client: this.options.client, nativeHome: this.options.nativeHome,
         allocation, leaseTtlMs: this.options.leaseTtlMs, isCurrent: fence => this.options.fences.isCurrent(fence),
@@ -143,7 +143,7 @@ export class NodeRetainedLifecycle {
       this.assertOpen(entry.lifetime);
       if (key(scopeOf(entry.context)) !== key(scope)) throw Error('retained_sandbox_scope_changed');
       if (this.entries.get(key(scope)) !== entry) throw Error('retained_sandbox_replaced');
-      if (entry.controller?.needsQuiescence()) throw Error('retained_previous_turn_not_quiescent');
+      if (entry.controller?.needsQuiescence() || entry.controller?.needsIdleAfterResumeFailure()) throw Error('retained_previous_turn_not_quiescent');
       if (entry.started && entry.controller?.isStopped()) {
         await this.idleEntry(entry, () => this.options.assertExecutionCurrent(context.executionFence));
         this.assertOpen(lifetime);
@@ -206,7 +206,9 @@ export class NodeRetainedLifecycle {
     if (!entry.open) throw Error('retained_turn_closed');
     const scopeKey = key(scopeOf(entry.context));
     const resident = residents.get(scopeKey);
-    if ((resident && resident !== entry) || entry.controller?.needsQuiescence()) throw Error('retained_previous_turn_not_quiescent');
+    if ((resident && resident !== entry) || entry.controller?.needsQuiescence() || entry.controller?.needsIdleAfterResumeFailure()) {
+      throw Error('retained_previous_turn_not_quiescent');
+    }
     const { executionFence } = entry.context;
     const assertExecution = () => this.options.assertExecutionCurrent(executionFence);
     const signal = entry.context.signal ?? new AbortController().signal;
@@ -220,13 +222,13 @@ export class NodeRetainedLifecycle {
       await entry.controller!.begin(assertExecution, signal);
       entry.started = true;
     } finally {
-      if (!entry.started && !entry.controller!.needsQuiescence()) residents.delete(scopeKey);
+      if (!entry.started && !entry.controller!.needsQuiescence() && !entry.controller!.needsIdleAfterResumeFailure()) residents.delete(scopeKey);
     }
   }
   private async idleEntry(entry: Entry, authorized?: () => Promise<void>, signal?: AbortSignal): Promise<void> {
     entry.open = false;
     if (entry.idleFailure) throw entry.idleFailure;
-    if (!entry.started) return;
+    if (!entry.started && !entry.controller?.needsQuiescence() && !entry.controller?.needsIdleAfterResumeFailure()) return;
     const timeoutMs = this.options.idleTimeoutMs ?? 35_000;
     const deadline = performance.now() + timeoutMs;
     const timeout = new RetainedIdleUnconfirmed('retained_idle_timeout');
@@ -248,11 +250,12 @@ export class NodeRetainedLifecycle {
       for (let attempt = 1; ; attempt++) {
         try {
           await assertCurrent();
+          if (entry.controller!.needsQuiescence()) throw new RetainedIdleUnconfirmed('retained_idle_unconfirmed', Error('retained_previous_turn_not_quiescent'));
           await entry.controller!.idle(assertCurrent);
           return;
         } catch (error) {
           check();
-          if (error instanceof RetainedExecutionFenceLost) throw error;
+          if (error instanceof RetainedExecutionFenceLost || error instanceof RetainedIdleUnconfirmed) throw error;
           if (attempt >= 3) throw new RetainedIdleUnconfirmed('retained_idle_unconfirmed', error);
           await delay(attempt * 100, undefined, { signal: elapsed.signal });
         }

@@ -157,12 +157,12 @@ export function pinnedBoxLiteProvider(input: {
     };
     await assertCurrent();
     const state = verify(await observe(sdk.getInfo(handle.runtimeId)));
-    if (state.running) {
+    if (state.running === true) {
       await assertCurrent();
       const box = await observe(sdk.get(handle.runtimeId));
       if (!box || box.id !== handle.runtimeId || box.name !== name) throw Error('retained_recovery_resident_changed');
       await assertCurrent();
-      if (!verify(await observe(box.info())).running) throw Error('retained_recovery_stop_unconfirmed');
+      if (verify(await observe(box.info())).running !== true) throw Error('retained_recovery_stop_unconfirmed');
       await assertCurrent();
       const sync = await box.exec('/bin/sync', [], [], false, null, 30, '/');
       const result = await observe(sync.wait());
@@ -172,7 +172,7 @@ export function pinnedBoxLiteProvider(input: {
     }
     await assertCurrent();
     const stopped = verify(await observe(sdk.getInfo(handle.runtimeId)));
-    if (stopped.running || !/^(stopped|exited)$/i.test(stopped.status)) throw Error('retained_recovery_stop_unconfirmed');
+    if (stopped.running !== false || !/^(stopped|exited)$/i.test(stopped.status)) throw Error('retained_recovery_stop_unconfirmed');
     await assertCurrent();
   };
   const quiesceExact = async (handle: Handle, scope: Scope, assertCurrent: () => Promise<void>, intent?: Handle) => {

@@ -171,6 +171,10 @@ async def test_actual_replay_abort_finalizes_owned_turn_after_stopping_follower(
             ids = request.url.params.get_list("ids[]")
             assert set(ids) <= set(accepted)
             state = "FAILED" if failure_kind == "native_terminal" else "RUNNING"
+            ready = {
+                "missing_capture": {"accepted-0": ["missing-page"]},
+                "missing_snapshot": {"accepted-0": ["missing-market"]},
+            }.get(failure_kind, {})
             return httpx.Response(
                 200,
                 json={
@@ -179,6 +183,11 @@ async def test_actual_replay_abort_finalizes_owned_turn_after_stopping_follower(
                             "execution_id": identity,
                             "state": state,
                             "settled_outcome": state if state == "FAILED" else None,
+                            **(
+                                {"ready_tool_call_ids": ready.get(identity, [])}
+                                if request.url.params.get("include") == "tool_readiness"
+                                else {}
+                            ),
                         }
                         for identity in ids
                     ]

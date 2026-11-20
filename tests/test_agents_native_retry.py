@@ -34,7 +34,7 @@ def error(identity, execution, status):
     )
 
 
-async def setup(recovery_flags=None):
+async def setup(recovery_flags=None, ready_calls=None):
     repo = MemoryRepository()
     session = {
         "session_id": "s",
@@ -90,6 +90,11 @@ async def setup(recovery_flags=None):
                             if states[identity] in {"COMPLETED", "FAILED", "CANCELLED"}
                             else None,
                             **(recovery_flags or {}).get(identity, {}),
+                            **(
+                                {"ready_tool_call_ids": (ready_calls or {}).get(identity, [])}
+                                if request.url.params.get("include") == "tool_readiness"
+                                else {}
+                            ),
                         }
                         for identity in request.url.params.get_list("ids[]")
                     ]
@@ -359,7 +364,6 @@ async def test_refusal_retires_only_its_owner_and_blocks_catch_up_tools(terminal
         states["queued-input"] = "QUEUED"
         session = await repo.get("ops.agent_sessions", "s")
         await service.execution_barrier(session, verify_remote=True)
-        states[CALLBACK] = terminal_state
 
         async def unexpected_tool(*args):
             pytest.fail("Catch-up dispatched a tool from a refused execution")
@@ -369,14 +373,20 @@ async def test_refusal_retires_only_its_owner_and_blocks_catch_up_tools(terminal
             history.append(
                 event("unseen-tool", "agent.custom_tool_use", CALLBACK, name="send_telegram_file", input={})
             )
+            await service.catch_up("s")
+            current = await repo.get("ops.agent_sessions", "s")
+            assert "unseen-tool" not in current.get("processed_events", [])
+            assert await repo.get("ops.tool_calls", "s:unseen-tool") is None
         else:
             service.execution_polls.pop("s", None)
+        states[CALLBACK] = terminal_state
 
         assert not (await service.completed_turn("s"))["complete"]
         current = await repo.get("ops.agent_sessions", "s")
         assert current["status"] == "OPEN"
         assert current["message_log"][0]["turn_status"] == "FAILED"
         assert current["message_log"][0]["terminal_failure"]["execution_id"] == CALLBACK
+        assert current["native_execution_states"][CALLBACK]["recovery_refused"] is True
         assert current["message_log"][1] == queued
         assert (await repo.get("ingest.source_items", "item"))["extraction_reason"] == "SESSION_FAILED"
 
@@ -420,6 +430,90 @@ async def test_refusal_of_superseded_attempt_cannot_fail_replacement():
         await service.process_event("s", ended)
         assert (await service.completed_turn("s"))["complete"]
         assert [post["key"] for post in posts] == ["turn-retry:s:message"]
+    finally:
+        await service.close()
+        await http.aclose()
+
+
+@pytest.mark.parametrize("phase_state", ["QUEUED", "RUNNING", "COMPLETED"])
+async def test_history_tool_waits_for_its_exact_committed_callback(phase_state):
+    ready = {CALLBACK: ["other-call"]}
+    repo, service, http, states, posts, history = await setup(ready_calls=ready)
+    call = event("replayed-call", "agent.custom_tool_use", CALLBACK, name="get_item", input={})
+    history.extend(
+        [
+            call,
+            event(
+                "unsettled-idle",
+                "session.status_idle",
+                CALLBACK,
+                stop_reason={"type": "requires_action", "event_ids": [call["id"]]},
+            ),
+        ]
+    )
+    states[CALLBACK] = "RUNNING"
+    dispatched = []
+
+    async def dispatch(name, arguments, context):
+        dispatched.append(name)
+        return {"item_id": "item"}
+
+    service.tool_dispatch = dispatch
+    try:
+        await service.catch_up("s")
+        current = await repo.get("ops.agent_sessions", "s")
+        assert current["processed_events"] == ["unsettled-idle"]
+        assert not dispatched and not posts
+        assert await repo.get("ops.tool_calls", "s:replayed-call") is None
+
+        ready[CALLBACK].append(call["id"])
+        states[CALLBACK] = phase_state
+        await service.catch_up("s")
+        await service.catch_up("s")
+        assert dispatched == ["get_item"]
+        assert len(posts) == 1
+        assert (await repo.get("ops.tool_calls", "s:replayed-call"))["remote_event_id"] == RETRY
+    finally:
+        await service.close()
+        await http.aclose()
+
+
+async def test_history_tool_reports_invalid_readiness_without_dispatch_or_dedup():
+    repo, service, http, states, posts, history = await setup(ready_calls={CALLBACK: None})
+    states[CALLBACK] = "RUNNING"
+    history.append(event("invalid-readiness", "agent.custom_tool_use", CALLBACK, name="get_item", input={}))
+    try:
+        with pytest.raises(ValueError, match="tool readiness projection"):
+            await service.catch_up("s")
+        current = await repo.get("ops.agent_sessions", "s")
+        assert "invalid-readiness" not in current.get("processed_events", [])
+        assert await repo.get("ops.tool_calls", "s:invalid-readiness") is None
+        assert not posts
+    finally:
+        await service.close()
+        await http.aclose()
+
+
+async def test_live_tool_waits_for_committed_phase():
+    ready = {CALLBACK: []}
+    repo, service, http, states, posts, _ = await setup(ready_calls=ready)
+    states[CALLBACK] = "RUNNING"
+    dispatched = []
+
+    async def dispatch(name, arguments, context):
+        dispatched.append(name)
+        return {"item_id": "item"}
+
+    service.tool_dispatch = dispatch
+    try:
+        call = event("live-call", "agent.custom_tool_use", CALLBACK, name="get_item", input={})
+        assert await service.process_event("s", call, from_native=True) is False
+        assert not dispatched and not posts
+        assert await repo.get("ops.tool_calls", "s:live-call") is None
+        ready[CALLBACK].append(call["id"])
+        await service.process_event("s", call, from_native=True)
+        await service.process_event("s", call, from_native=True)
+        assert dispatched == ["get_item"] and len(posts) == 1
     finally:
         await service.close()
         await http.aclose()

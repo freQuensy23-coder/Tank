@@ -22,11 +22,15 @@ const stubs = {
   '@earendil-works/pi-ai': 'export const getSupportedThinkingLevels = () => [];',
   '@earendil-works/pi-ai/providers/all': 'export const builtinProviders = {};',
   '@openma/common/protocol/managed': "export const sessionInputIdentityPrefix = 'session-input:';",
+  '@open-managed-agents/managed-runtime-sandbox': `const unexpected = () => { throw Error('unexpected managed runtime operation'); };
+    export { unexpected as createPreinstalledRuntimeEnvironment, unexpected as createProviderManagedRuntime, unexpected as requireRuntimeEnvironmentArtifact };`,
   croner: 'export class Cron {}',
   standardwebhooks: 'export class Webhook {}',
   fflate: 'export const zipSync = () => new Uint8Array();',
+  '@open-managed-agents/sql-client': 'export const withDbBoundary = (_, work) => work(); export const emitDbBoundaryLog = () => {};',
 };
 registerHooks({resolve(specifier, context, nextResolve) {
+  if (specifier === 'effect') return {url: new URL('./worker-effects.mjs', import.meta.url).href, shortCircuit: true};
   if (Object.hasOwn(stubs, specifier)) return {url: 'data:text/javascript,' + encodeURIComponent(stubs[specifier]), shortCircuit: true};
   if (specifier.startsWith('@open-managed-agents/')) {
     const name = specifier.split('/').slice(0, 2).join('/'), found = workspacePackages.get(name);
@@ -40,6 +44,9 @@ const load = path => import(new URL(path, openmaSource));
 const { NodeRetainedLifecycle } = await load('packages/control-plane-node/src/lib/tank-retained/node-lifecycle.ts');
 const { executableImageIdentity, stableDigest } = await load('packages/control-plane-node/src/lib/tank-retained/runtime-identity.ts');
 const { DefaultNodeManagedSessionRunner } = await load('packages/control-plane-node/src/lib/node-managed-session-runner.ts');
+const { NodeSessionExecutionWorker } = await load('packages/control-plane-node/src/lib/node-session-execution-worker.ts');
+const { createBoxLiteProvider } = await load('packages/managed-runtime-boxlite/src/boxlite.ts');
+const { RetainedExecutionFenceLost } = await load('packages/control-plane-node/src/lib/tank-retained/idle-errors.ts');
 const { ApplicationBackedNodeManagedSessionRuntimeEngine, DefaultNodeManagedSessionRuntimeDriver } = await load('packages/control-plane-node/src/lib/node-managed-session-runtime.ts');
 const { LiteBoxSandbox } = await load('packages/sandbox-adapter-litebox/src/litebox.ts');
 const { SqlRuntimeOrphanPort, SqlRuntimeResourceFencePort, ensureRuntimeResourceFenceSchema } = await load('packages/runtime-resource-fence-sql/src/index.ts');
@@ -157,7 +164,7 @@ function boxHost() {
   return host;
 }
 
-async function world(t) {
+async function world(t, workspace = workspaceId) {
   const root = await mkdtemp(join(tmpdir(), 'tank-session-continues-'));
   const db = new DatabaseSync(':memory:'), sql = sqlite(db), migrations = join(openmaRoot, 'apps/main-node/migrations-sqlite');
   for (const name of readdirSync(migrations).filter(name => name.endsWith('.sql')).sort())
@@ -175,8 +182,8 @@ async function world(t) {
     skills: [], system: 'You are the trading agent.', tools: [], version: 1}, archivedAt: null, budget: null, createdAt: iso, environmentId,
     metadata: {}, outcomeEvaluations: [], resources: [], stats: {}, status: 'idle', title: null, updatedAt: iso, usage: {}, vaultIds: []};
   db.prepare(`INSERT INTO managed_sessions (id, workspace_id, document, revision, agent_id, agent_version, environment_id, status, created_at, updated_at)
-    VALUES (?, ?, ?, 1, ?, 1, ?, 'idle', ?, ?)`).run(sessionId, workspaceId, JSON.stringify(session), session.agent.id, environmentId, created, created);
-  const state = {db, sql, root, requests, host: boxHost(), elapsedMs: 0, turn: 0, model,
+    VALUES (?, ?, ?, 1, ?, 1, ?, 'idle', ?, ?)`).run(sessionId, workspace, JSON.stringify(session), session.agent.id, environmentId, created, created);
+  const state = {db, sql, root, requests, host: boxHost(), elapsedMs: 0, turn: 0, model, workspaceId: workspace,
     environment: {id: environmentId, archivedAt: null, config: {type: 'self_hosted'}, createdAt: iso, description: null, metadata: {}, name: 'tank', updatedAt: iso}};
   state.now = () => new Date(Date.now() + state.elapsedMs);
   state.tick = () => new Date(created + (++state.turn) * 1000);
@@ -194,20 +201,20 @@ async function world(t) {
   return state;
 }
 
-function node(state, rootfsPath) {
-  const {sql, host} = state, ownerId = 'node_' + randomUUID();
+function node(state, rootfsPath, {idleTimeoutMs, phase = false, startAttempts = 1, prepareFailure = false} = {}) {
+  const {sql, host, workspaceId} = state, ownerId = 'node_' + randomUUID();
   const executionCurrent = async fence => {
     const row = await sql.prepare(`SELECT 1 AS present FROM managed_session_executions WHERE workspace_id = ? AND id = ? AND session_id = ? AND state = 'running'
       AND attempt_id = ? AND owner_id = ? AND generation = ? AND lease_expires_at_ms > ?`)
       .bind(fence.workspaceId, fence.executionId, fence.sessionId, fence.attemptId, fence.ownerId, fence.generation, state.now().getTime()).first();
-    if (!row) throw new Error('Retained Session execution fence lost');
+    if (!row) throw new RetainedExecutionFenceLost();
   };
   const components = (context, allocation) => ({scope: [context.workspaceId, context.environment.id, context.sessionId],
     resources: context.session.resources, skills: context.session.agent.skills, environment: context.environment.config,
     runtimeResources: {cpus: allocation.cpus ?? null, memoryMib: allocation.memoryMib ?? null}});
   const lifecycle = new NodeRetainedLifecycle({
     fences: new SqlRuntimeResourceFencePort(sql, {now: state.now}), orphans: new SqlRuntimeOrphanPort(sql), providerModule: host.module, client: host.client,
-    ownerId, leaseTtlMs: 30000, assertExecutionCurrent: executionCurrent,
+    ownerId, leaseTtlMs: 30000, nativeHome: state.root, idleTimeoutMs, assertExecutionCurrent: executionCurrent,
     fingerprint: async (context, allocation) => stableDigest({...components(context, allocation), allocation, rootfsIndex: stableDigest(readFileSync(join(allocation.rootfsPath, 'index.json'), 'utf8'))}),
     identity: async (context, allocation) => ({version: 2, image: await executableImageIdentity(allocation.rootfsPath),
       compatibility: Object.fromEntries(Object.entries(components(context, allocation)).map(([name, value]) => [name, stableDigest(value)]))}),
@@ -223,7 +230,10 @@ function node(state, rootfsPath) {
       abandon: input => lifecycle.abandon({...input, sessionId: input.session.id}),
       archive: input => lifecycle.archive(input),
     },
-    prepareSandbox: async ({sandbox}) => { await sandbox.prepareRetainedRuntime(); },
+    prepareSandbox: async ({sandbox}) => {
+      await sandbox.prepareRetainedRuntime();
+      if (prepareFailure) throw Error('sandbox preparation failed');
+    },
     buildModel: async () => ({}),
     buildTools: async () => ({}),
     buildHarness: () => ({run: async ctx => {
@@ -243,23 +253,29 @@ function node(state, rootfsPath) {
   });
   const history = new SqlSessionRuntimeHistorySource(sql), projection = new SqlSessionRuntimeProjectionPersistence(sql), events = new SqlSessionEventStore(sql, {executionOutbox: true});
   const driver = new DefaultNodeManagedSessionRuntimeDriver({
-    engine: new ApplicationBackedNodeManagedSessionRuntimeEngine({runner,
+    engine: new ApplicationBackedNodeManagedSessionRuntimeEngine({runner: phase ? {
+      start: input => runner.start(input),
+      accept: input => runner.accept({...input, continuationPlan: {mode: 'model', generation: input.executionFence.generation,
+        phaseInputIds: [input.events[0].id], consumedInputIds: [input.events[0].id], remainingInputIds: ['later_input'], previousReceiptId: null}}),
+    } : runner,
       historyFor: workspace => new SessionRuntimeHistoryApplicationService({workspaceId: workspace, source: history})}),
     realtime: new MemorySessionRealtimeHub(),
     projectionFor: workspace => new SessionRuntimeProjectionApplicationService({workspaceId: workspace, persistence: projection}),
     clock: {now: state.tick},
-    startRetry: {attempts: 1, delayMs: () => 0},
+    startRetry: {attempts: startAttempts, delayMs: () => 0},
   });
-  const execute = async event => {
-    const now = state.now().getTime(), attemptId = 'attempt_' + randomUUID();
+  const claim = async (event, attemptId = 'attempt_' + randomUUID()) => {
+    const now = state.now().getTime();
     const claimed = await sql.prepare(`UPDATE managed_session_executions SET state = 'running', attempt_id = ?, owner_id = ?, generation = generation + 1,
       attempt_count = attempt_count + 1, claimed_at_ms = ?, lease_expires_at_ms = ?, revision = revision + 1
       WHERE workspace_id = ? AND id = ? AND (state = 'queued' OR lease_expires_at_ms <= ?) RETURNING generation`)
       .bind(attemptId, ownerId, now, now + 30000, workspaceId, event.id, now).first();
     assert.ok(claimed, 'execution is claimable');
-    const current = await projection.findCurrent({workspaceId, sessionId});
-    await driver.accept({workspaceId, sessionId, session: current.session, environment: state.environment, events: [event],
-      executionFence: {executionId: event.id, workspaceId, sessionId, attemptId, ownerId, generation: Number(claimed.generation), expiresAt: new Date(now + 30000).toISOString()}});
+    return {executionId: event.id, workspaceId, sessionId, attemptId, ownerId, generation: Number(claimed.generation), expiresAt: new Date(now + 30000).toISOString()};
+  };
+  const context = async () => ({session: (await projection.findCurrent({workspaceId, sessionId})).session, environment: state.environment});
+  const execute = async event => {
+    await driver.accept({workspaceId, sessionId, ...await context(), events: [event], executionFence: await claim(event)});
     await sql.prepare(`UPDATE managed_session_executions SET state = 'succeeded', settled_at_ms = ?, revision = revision + 1 WHERE workspace_id = ? AND id = ?`)
       .bind(state.now().getTime(), workspaceId, event.id).run();
     return state.requests.at(-1);
@@ -272,8 +288,238 @@ function node(state, rootfsPath) {
     assert.equal(appended.type, 'appended');
     return event;
   };
-  return {send, execute, turn: async text => execute(await send(text))};
+  return {send, execute, claim, context, driver, lifecycle, ownerId, turn: async text => execute(await send(text))};
 }
+
+async function supervisedTurn(t, scenario, {phase = false, modelFailure = false, prepareFailure = false, resumeFailure = false} = {}) {
+  const workspaceId = 'workspace_' + randomUUID();
+  const state = await world(t, workspaceId);
+  const image = await state.image('idle');
+  let resumeStarts = 0, workspaceChecks = 0;
+  let resident, resumeFence;
+  const stopFences = [];
+  const resourceFence = () => state.db.prepare(`SELECT owner_id, generation FROM runtime_resource_fences WHERE workspace_id = ?`).get(workspaceId);
+  if (resumeFailure) {
+    await node(state, image).turn('seed retained guest');
+    state.requests.length = 0;
+    [resident] = state.host.boxes.values();
+    assert.equal(resident.running, false);
+    const provider = state.host.module.createBoxLiteProvider;
+    state.host.module.createBoxLiteProvider = options => ({
+      ...provider(options),
+      resume: createBoxLiteProvider(options).resume,
+    });
+  }
+  const local = node(state, image, {phase, prepareFailure, idleTimeoutMs: scenario.startsWith('hung') ? 250 : 1500, startAttempts: 3});
+  const event = await local.send('run once');
+  const next = [{id: 'same_session', sessionId}, {id: 'other_session', sessionId: 'session_B'}];
+  const queued = [{id: event.id, sessionId}, ...next];
+  const runs = [], settled = [], yielded = [], errors = [];
+  let stops = 0, flushes = 0, observations = 0, observationsAtStop, release;
+  const pending = new Promise(resolve => { release = resolve; });
+  const originalGet = state.host.client.get, originalInfo = state.host.client.getInfo;
+  state.host.client.getInfo = async key => {
+    observations++;
+    if (stops === 1 && scenario === 'verify throws' && observationsAtStop + 1 === observations) throw Error('inspection interrupted');
+    if (stops === 1 && scenario === 'hung verification') await pending;
+    const info = await originalInfo(key);
+    if (stops === 1 && scenario === 'incomplete proof' && observationsAtStop + 1 === observations) {
+      return {...info, state: {status: 'Stopped'}};
+    }
+    return info;
+  };
+  state.host.client.get = async id => {
+    const handle = await originalGet(id);
+    return {...handle,
+      async start() {
+        assert.equal(id, resident?.id);
+        resumeStarts++;
+        resumeFence = resourceFence();
+        await handle.start();
+      },
+      async exec(command, args) {
+        if (command === '/bin/test') {
+          assert.deepEqual(args, ['-d', '/workspace', '-a', '!', '-L', '/workspace']);
+          assert.equal(id, resident?.id);
+          assert.equal(resident.running, true);
+          workspaceChecks++;
+          if (scenario === 'lease lost') state.db.prepare(`UPDATE managed_session_executions SET lease_expires_at_ms = 0 WHERE id = ?`).run(event.id);
+          const empty = async () => ({next: async () => null});
+          return {stdout: empty, stderr: empty, wait: async () => ({exitCode: 1})};
+        }
+        flushes++;
+        if (scenario === 'flush throws' && flushes === 1) throw Error('flush interrupted');
+        return handle.exec(command);
+      },
+      async stop() {
+        stops++;
+        if (resumeFailure) stopFences.push(resourceFence());
+        observationsAtStop = observations;
+        if (scenario === 'stop throws' && stops === 1) throw Error('stop interrupted');
+        if (scenario === 'permanent throw') throw Error('stop unavailable');
+        if (scenario === 'permanent nonack' || (scenario === 'ambiguous ack' && stops === 1)) return;
+        if (scenario === 'hung stop') await pending;
+        await handle.stop();
+        if (scenario === 'stop throws after stopping' && stops === 1) throw Error('stop acknowledgement lost');
+      },
+    };
+  };
+  if (modelFailure) {
+    const model = state.model;
+    state.model = body => { model(body); throw Error('genuine model failure'); };
+  }
+  const worker = new NodeSessionExecutionWorker({
+    coordinator: {
+      async claim({attemptId, recoverFrom, ownerId}) {
+        if (recoverFrom) {
+          assert.equal(scenario, 'lease lost');
+          assert.equal(recoverFrom.executionId, event.id);
+          if (ownerId === local.ownerId) assert.equal(resident.running, false);
+          return {type: 'empty'};
+        }
+        const job = queued.shift();
+        if (!job) return {type: 'empty'};
+        const primary = job.id === event.id;
+        const fence = primary ? await local.claim(event, attemptId) : {executionId: job.id, workspaceId, sessionId: job.sessionId,
+          attemptId, ownerId: local.ownerId, generation: 1, expiresAt: new Date(state.now().getTime() + 30000).toISOString()};
+        return {type: 'claimed', fence, execution: {...job, workspaceId, events: [event], interruptRequestedAt: null}};
+      },
+      async settle(result) { settled.push(result); return {type: 'settled'}; },
+      async yieldProgress(result) { yielded.push(result); return {type: 'yielded'}; },
+      async find() { return null; },
+    },
+    context: {find: local.context},
+    runtime: {
+      async run({executionId, fence, ...input}) {
+        runs.push(executionId);
+        if (executionId === event.id) return local.driver.accept({...input, executionFence: fence});
+        assert.equal([...state.host.boxes.values()][0].running, false);
+      },
+      async cancel() {},
+    },
+    quiesceLostExecution: input => local.lifecycle.quiesceLostTurn(input),
+    ownerId: local.ownerId, clock: {now: state.now}, ids: {nextAttemptId: randomUUID}, maxConcurrent: 1, onError: error => errors.push(error),
+  });
+  t.after(() => { release(); worker.stop(); });
+  await worker.poll();
+  await worker.waitForIdle();
+  const terminal = () => state.db.prepare(`SELECT id, type, document FROM managed_session_events
+    WHERE rowid > (SELECT rowid FROM managed_session_events WHERE id = ?)
+    AND type IN ('session.error', 'session.status_idle', 'session.status_rescheduled') ORDER BY rowid`).all(event.id);
+  return {state, worker, event, next, runs, queued, settled, yielded, errors, terminal, release, resident, resumeFence, stopFences,
+    counts: () => ({stops, flushes, observations, observationsAtStop, resumeStarts, workspaceChecks})};
+}
+
+for (const [scenario, stops, flushes] of [
+  ['flush throws', 1, 2], ['stop throws', 2, 2], ['stop throws after stopping', 1, 1],
+  ['ambiguous ack', 2, 2], ['verify throws', 1, 1], ['incomplete proof', 1, 1],
+]) test(`same-owner ${scenario} preserves the completed phase and releases the slot after proof`, async t => {
+  const run = await supervisedTurn(t, scenario, {phase: true});
+  assert.deepEqual(run.runs, [run.event.id, ...run.next.map(job => job.id)]);
+  assert.equal(run.state.requests.length, 1);
+  assert.equal(run.counts().stops, stops);
+  assert.equal(run.counts().flushes, flushes);
+  assert.deepEqual(run.errors, []);
+  if (scenario === 'incomplete proof') assert.equal(run.counts().observations - run.counts().observationsAtStop, 3);
+  const [terminal] = run.terminal();
+  assert.deepEqual(run.terminal().map(row => row.type), ['session.status_idle']);
+  assert.equal(run.yielded.length, 1);
+  assert.equal(run.yielded[0].terminalEventId, terminal.id);
+  assert.deepEqual(run.yielded[0].remainingInputIds, ['later_input']);
+});
+
+test('transient stop recovery preserves the original model failure through worker settlement', async t => {
+  const run = await supervisedTurn(t, 'stop throws', {modelFailure: true});
+  assert.equal(run.state.requests.length, 1);
+  assert.equal(run.counts().stops, 2);
+  assert.deepEqual(run.errors, []);
+  assert.equal(run.settled[0].outcome, 'failed');
+  assert.equal(run.settled[0].failure, 'genuine model failure');
+  assert.deepEqual(run.terminal().map(row => row.type), ['session.error', 'session.status_idle']);
+});
+
+for (const [scenario, stops, message] of [
+  ['permanent nonack', 3, 'retained_idle_unconfirmed'], ['permanent throw', 3, 'retained_idle_unconfirmed'], ['hung stop', 1, 'retained_idle_timeout'],
+  ['hung verification', 1, 'retained_idle_timeout'],
+]) test(`${scenario} logs once and leaves both same-session and unrelated work queued`, async t => {
+  const run = await supervisedTurn(t, scenario, {modelFailure: scenario === 'permanent nonack'});
+  assert.equal(run.state.requests.length, 1);
+  assert.equal(run.counts().stops, stops);
+  assert.deepEqual(run.errors.map(error => error.message), [message]);
+  const before = run.counts();
+  await run.worker.poll();
+  run.release();
+  await new Promise(resolve => setTimeout(resolve, 20));
+  await run.worker.poll();
+  assert.deepEqual(run.counts(), before);
+  assert.deepEqual(run.runs, [run.event.id]);
+  assert.deepEqual(run.queued, run.next);
+  assert.deepEqual(run.settled, []);
+  assert.deepEqual(run.yielded, []);
+  assert.deepEqual(run.terminal(), []);
+});
+
+test('an unconfirmed stop during preparation failure bypasses startup retries and failure projection', async t => {
+  const run = await supervisedTurn(t, 'permanent throw', {prepareFailure: true});
+  assert.equal(run.state.requests.length, 0);
+  assert.equal(run.counts().stops, 3);
+  assert.deepEqual(run.errors.map(error => error.message), ['retained_idle_unconfirmed']);
+  assert.deepEqual(run.runs, [run.event.id]);
+  assert.deepEqual(run.queued, run.next);
+  assert.deepEqual(run.settled, []);
+  assert.deepEqual(run.terminal(), []);
+});
+
+for (const [scenario, stops, error] of [
+  ['permanent throw', 3, 'retained_idle_unconfirmed'], ['hung stop', 1, 'retained_idle_timeout'],
+]) test(`a failed BoxLite resume with ${scenario} quarantines the running guest`, async t => {
+  const run = await supervisedTurn(t, scenario, {resumeFailure: true});
+  assert.equal(run.resident.running, true);
+  const counts = run.counts();
+  assert.equal(counts.resumeStarts, 1);
+  assert.equal(counts.workspaceChecks, 1);
+  assert.equal(counts.stops, stops);
+  assert.deepEqual(run.stopFences, Array(stops).fill(run.resumeFence));
+  assert.deepEqual(run.errors.map(error => error.message), [error]);
+  await run.worker.poll();
+  assert.deepEqual(run.counts(), counts);
+  assert.equal(run.state.requests.length, 0);
+  assert.deepEqual(run.runs, [run.event.id]);
+  assert.deepEqual(run.queued, run.next);
+  assert.deepEqual(run.settled, []);
+  assert.deepEqual(run.yielded, []);
+  assert.deepEqual(run.terminal(), []);
+  assert.deepEqual([...run.state.host.boxes.values()], [run.resident]);
+});
+
+test('a failed BoxLite resume retries only cleanup and fails the original input after stop proof', async t => {
+  const run = await supervisedTurn(t, 'stop throws', {resumeFailure: true});
+  assert.equal(run.resident.running, false);
+  assert.equal(run.counts().resumeStarts, 1);
+  assert.equal(run.counts().workspaceChecks, 1);
+  assert.equal(run.counts().stops, 2);
+  assert.deepEqual(run.stopFences, [run.resumeFence, run.resumeFence]);
+  assert.equal(run.state.requests.length, 0);
+  assert.deepEqual(run.errors, []);
+  assert.deepEqual(run.runs, [run.event.id, ...run.next.map(job => job.id)]);
+  assert.equal(run.settled[0].outcome, 'failed');
+  assert.equal(run.settled[0].failure, 'retained_workspace_missing');
+  assert.equal(run.terminal().filter(row => row.type === 'session.error').length, 1);
+});
+
+test('execution lease loss during a failed BoxLite resume leaves exact cleanup to fenced recovery', async t => {
+  const run = await supervisedTurn(t, 'lease lost', {resumeFailure: true});
+  assert.equal(run.resident.running, false);
+  assert.equal(run.counts().resumeStarts, 1);
+  assert.equal(run.counts().workspaceChecks, 1);
+  assert.equal(run.counts().stops, 1);
+  assert.equal(run.stopFences[0].owner_id, `${run.resumeFence.owner_id}:quiesce`);
+  assert.equal(run.stopFences[0].generation, run.resumeFence.generation + 1);
+  assert.deepEqual(run.errors, []);
+  assert.deepEqual(run.runs, [run.event.id, ...run.next.map(job => job.id)]);
+  assert.equal(run.settled.some(result => result.fence.executionId === run.event.id), false);
+  assert.deepEqual(run.terminal(), []);
+});
 
 const restart = (state, rootfsPath) => { state.elapsedMs += 31000; return node(state, rootfsPath); };
 async function seedInterruptedAllocation(state, image, hasResident) {

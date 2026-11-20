@@ -385,8 +385,21 @@ async def test_legacy_prompt_label_requires_exact_native_snapshot():
 async def test_native_queued_tool_result_executions_continue_after_transient_idle():
     """Native r8 rev30 idle preceded queued executions rev31..52, not session completion."""
     repo = MemoryRepository()
-    await seed(repo)
+    await seed(
+        repo,
+        active_message_id="message",
+        message_log=[
+            {
+                "message_id": "message",
+                "remote_event_id": "input",
+                "turn_status": "RUNNING",
+                "retry_count": 0,
+                "payload": {"kind": "NEW_ITEM", "item_id": "one"},
+            }
+        ],
+    )
     queue = asyncio.Queue()
+    history_started = asyncio.Event()
     first_idle = asyncio.Event()
     all_results = asyncio.Event()
     calls, responses, history = [], [], []
@@ -418,7 +431,34 @@ async def test_native_queued_tool_result_executions_continue_after_transient_idl
     async def transport(request):
         if request.url.path.endswith("/events/stream"):
             return httpx.Response(200, stream=Stream(), headers={"content-type": "text/event-stream"})
+        if request.url.path.endswith("/executions"):
+            return httpx.Response(
+                200,
+                json={
+                    "data": [
+                        {
+                            "execution_id": identity,
+                            "state": "RUNNING",
+                            "settled_outcome": None,
+                            **(
+                                {
+                                    "ready_tool_call_ids": [
+                                        event["id"]
+                                        for event in history
+                                        if event["type"] == "agent.custom_tool_use"
+                                        and event["execution_id"] == identity
+                                    ]
+                                }
+                                if request.url.params.get("include") == "tool_readiness"
+                                else {}
+                            ),
+                        }
+                        for identity in request.url.params.get_list("ids[]")
+                    ]
+                },
+            )
         if request.url.path.endswith("/events") and request.method == "GET":
+            history_started.set()
             return httpx.Response(200, json={"data": list(history)})
         if request.url.path.endswith("/events"):
             result = json.loads(request.content)["events"][0]
@@ -429,27 +469,45 @@ async def test_native_queued_tool_result_executions_continue_after_transient_idl
                 )
             if len(responses) == 7:
                 all_results.set()
-            return httpx.Response(200, json={})
+            return httpx.Response(200, json={"data": [{"id": "result-" + result["custom_tool_use_id"]}]})
         raise AssertionError("Unexpected native request")
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(transport)) as http:
         service = SessionService(repo, settings(), dispatch, http=http)
         original_process = service.process_event
 
-        async def process(sid, event, seq=None, *, from_native=False):
-            await original_process(sid, event, seq, from_native=from_native)
+        async def process(sid, event, seq=None, **kwargs):
+            outcome = await original_process(sid, event, seq, **kwargs)
             if event["id"] == "native-rev30":
                 first_idle.set()
+            return outcome
 
         service.process_event = process
         service.start_stream("s")
+        await asyncio.wait_for(history_started.wait(), timeout=2)
         for number, name in enumerate(names[:3]):
-            await emit({"id": f"call-{number}", "type": "agent.custom_tool_use", "name": name, "input": {}})
+            await emit(
+                {
+                    "id": f"call-{number}",
+                    "type": "agent.custom_tool_use",
+                    "execution_id": "input",
+                    "name": name,
+                    "input": {},
+                }
+            )
         await asyncio.wait_for(first_idle.wait(), timeout=2)
 
         for number, name in enumerate(names[3:], start=3):
             await emit({"id": f"run-{number}", "type": "session.status_running"})
-            await emit({"id": f"call-{number}", "type": "agent.custom_tool_use", "name": name, "input": {}})
+            await emit(
+                {
+                    "id": f"call-{number}",
+                    "type": "agent.custom_tool_use",
+                    "execution_id": f"result-call-{number - 1}",
+                    "name": name,
+                    "input": {},
+                }
+            )
             await emit(
                 {"id": f"idle-{number}", "type": "session.status_idle", "stop_reason": {"type": "end_turn"}}
             )

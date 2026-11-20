@@ -33,7 +33,7 @@ import { ManagedNodeHarnessRuntime } from "./node-managed-harness-runtime.js";
 import type { WorkspaceBinding, WorkspacePersistencePort, RuntimeResourceScope } from "@open-managed-agents/runtime-resource-contract";
 import type { NodeManagedWorkspaceCheckpoints } from "./node-managed-workspace-checkpoints.js";
 import { ScopedSessionMap } from "./scoped-session-map.js";
-import { RetainedExecutionFenceLost, RetainedIdleUnconfirmed } from "./tank-retained/idle-errors.js";
+import { RetainedExecutionFenceLost, RetainedIdleUnconfirmed, RetainedResumeFailed } from "./tank-retained/idle-errors.js";
 import {
   ManagedNodeSubagents,
   managedEventThread,
@@ -354,11 +354,12 @@ export class DefaultNodeManagedSessionRunner
   }
 
   private async finishRetainedTurn(input: ManagedRunnerContext & { executionFence?: SessionExecutionFence }, signal: AbortSignal): Promise<void> {
+    if (signal.reason === "lease_lost") {
+      await this.dependencies.retainedLifecycle?.abandon(input);
+      return;
+    }
     try {
-      if (signal.reason === "lease_lost")
-        await this.dependencies.retainedLifecycle?.abandon(input);
-      else
-        await this.dependencies.retainedLifecycle?.idle({ ...input, signal });
+      await this.dependencies.retainedLifecycle?.idle({ ...input, signal });
     } catch (error) {
       if (error instanceof RetainedExecutionFenceLost || error instanceof RetainedIdleUnconfirmed) throw error;
       throw new RetainedIdleUnconfirmed('retained_idle_unconfirmed', error);
@@ -489,6 +490,7 @@ export class DefaultNodeManagedSessionRunner
     }
     let turnTools: HarnessContext["tools"] | undefined;
     let runFailed = false;
+    let retainedSafetyFailure = false;
     let emitRunFailure: (() => void) | undefined;
     let recoveryRefused = false;
     const finalizing = input.continuationPlan?.mode === 'finalize';
@@ -622,6 +624,7 @@ export class DefaultNodeManagedSessionRunner
               throw error;
             const sideEffectFree = runtime.agentEventCount === agentEventsBefore;
             if (input.continuationPlan !== undefined || !sideEffectFree
+              || error instanceof RetainedIdleUnconfirmed || error instanceof RetainedExecutionFenceLost || error instanceof RetainedResumeFailed
               || attempt >= retry.attempts
               || abortController.signal.aborted
               || isNonRetryableHarnessError(error)) {
@@ -717,7 +720,8 @@ export class DefaultNodeManagedSessionRunner
     }
     catch (error) {
       runFailed = true;
-      if (abortController.signal.reason === "lease_lost" || recoveryRefused)
+      retainedSafetyFailure = error instanceof RetainedIdleUnconfirmed || error instanceof RetainedExecutionFenceLost;
+      if (abortController.signal.reason === "lease_lost" || recoveryRefused || retainedSafetyFailure)
         throw error;
       emitRunFailure = () => runtime.broadcastProducedEvent({
         type: "session.error",
@@ -817,7 +821,7 @@ export class DefaultNodeManagedSessionRunner
         });
       };
       const emitTerminal = () => {
-        if (abortController.signal.reason === "lease_lost" || input.continuationPlan?.mode === 'noop' || recoveryRefused)
+        if (abortController.signal.reason === "lease_lost" || input.continuationPlan?.mode === 'noop' || recoveryRefused || retainedSafetyFailure)
           return;
         const remaining = input.continuationPlan?.mode === 'intake'
           ? input.continuationPlan.remaining : runtime.pendingConfirmations ?? [];

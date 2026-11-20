@@ -15,8 +15,12 @@ export function sessionExecutionStatusStore(coordinator: Pick<SessionExecutionCo
       }));
       if (!includeToolReadiness) return rows;
       const candidates = rows.filter(row => row.state === "QUEUED" || row.state === "RUNNING" || row.state === "COMPLETED").map(row => row.execution_id);
-      const ready = candidates.length ? await coordinator.findReadyToolCalls?.({ workspaceId, sessionId, executionIds: candidates }) : undefined;
-      return rows.map(row => ({ ...row, ready_tool_call_ids: ready?.get(row.execution_id) ?? [] }));
+      let ready = new Map<string, string[]>();
+      if (candidates.length) {
+        if (!coordinator.findReadyToolCalls) throw new Error("Execution tool readiness is unavailable");
+        ready = await coordinator.findReadyToolCalls({ workspaceId, sessionId, executionIds: candidates });
+      }
+      return rows.map(row => ({ ...row, ready_tool_call_ids: ready.get(row.execution_id) ?? [] }));
     },
   };
 }

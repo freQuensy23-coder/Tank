@@ -235,10 +235,13 @@ async def test_settled_snapshot_drains_all_pages_and_rechecks_new_tool_ack():
     late = {
         "id": "same-time-late-tool",
         "type": "agent.custom_tool_use",
+        "execution_id": "accepted-message",
         "name": "get_item",
         "input": {},
         "processed_at": start["processed_at"],
     }
+    waiting = idle("late-requires-action", "accepted-message")
+    waiting["stop_reason"] = {"type": "requires_action", "event_ids": [late["id"]]}
 
     def handler(request):
         if request.url.path.endswith("/executions"):
@@ -250,6 +253,11 @@ async def test_settled_snapshot_drains_all_pages_and_rechecks_new_tool_ack():
                             "execution_id": key,
                             "state": states[key],
                             "settled_outcome": "COMPLETED" if states[key] == "COMPLETED" else None,
+                            **(
+                                {"ready_tool_call_ids": [late["id"]]}
+                                if request.url.params.get("include") == "tool_readiness"
+                                else {}
+                            ),
                         }
                         for key in request.url.params.get_list("ids[]")
                     ]
@@ -260,7 +268,8 @@ async def test_settled_snapshot_drains_all_pages_and_rechecks_new_tool_ack():
         page = request.url.params.get("page")
         pages.append(page)
         return httpx.Response(
-            200, json={"data": [late] if page else [start], "next_page": None if page else "late-page"}
+            200,
+            json={"data": [late, waiting] if page else [start], "next_page": None if page else "late-page"},
         )
 
     async def dispatch(*args):
@@ -274,6 +283,112 @@ async def test_settled_snapshot_drains_all_pages_and_rechecks_new_tool_ack():
         assert pages == [None, "late-page"] and dispatched == [True]
         assert (await repo.get("ops.agent_sessions", "s"))["active_message_id"] == "message"
         await service.close()
+
+
+@pytest.mark.parametrize("decision", ["RUNNING", "COMPLETED", "FAILED"])
+async def test_live_deferred_tool_keeps_cursor_and_reconciles_after_phase_decision(decision):
+    repo = MemoryRepository()
+    session = await seeded(repo)
+    session["message_log"].append(
+        {
+            "message_id": "next-message",
+            "remote_event_id": "next-input",
+            "retry_count": 0,
+            "turn_status": "RUNNING",
+        }
+    )
+    await repo.put("ops.agent_sessions", "s", session)
+    execution = "accepted-message"
+    call = {
+        "id": "callback",
+        "type": "agent.custom_tool_use",
+        "execution_id": execution,
+        "name": "get_item",
+        "input": {},
+    }
+    waiting = idle("waiting", execution)
+    waiting["stop_reason"] = {"type": "requires_action", "event_ids": [call["id"]]}
+    frames = [
+        {"id": "started", "type": "session.status_running", "execution_id": execution},
+        call,
+        waiting,
+        {"id": "later", "type": "session.status_running", "execution_id": "next-input"},
+    ]
+    state = "RUNNING"
+    ready = []
+    posts, resumes, effects = [], [], []
+
+    def handler(request):
+        if request.url.path.endswith("/stream"):
+            cursor = int(request.headers["Last-Event-ID"])
+            resumes.append(cursor)
+            return httpx.Response(
+                200,
+                headers={"content-type": "text/event-stream"},
+                text="".join(
+                    f"id: {seq}\ndata: {json.dumps(frame)}\n\n"
+                    for seq, frame in enumerate(frames, 1)
+                    if seq > cursor
+                ),
+            )
+        if request.url.path.endswith("/executions"):
+            assert request.url.params.get_list("ids[]") == [execution]
+            assert request.url.params.get("include") == "tool_readiness"
+            return httpx.Response(
+                200,
+                json={
+                    "data": [
+                        {
+                            "execution_id": execution,
+                            "state": state,
+                            "settled_outcome": state if state != "RUNNING" else None,
+                            "ready_tool_call_ids": ready,
+                            "recovery_refused": state == "FAILED",
+                        }
+                    ]
+                },
+            )
+        if request.method == "POST":
+            posts.extend(json.loads(request.content)["events"])
+            return httpx.Response(200, json={"data": [{"id": "accepted-result"}]})
+        return httpx.Response(200, json={"data": frames[:-1]})
+
+    async def dispatch(name, arguments, context):
+        effects.append((name, context["session_id"]))
+        return {"item_id": "item"}
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http:
+        service = SessionService(repo, config(), dispatch, http=http)
+        assert await service.catch_up("s") is False
+        await service.stream("s")
+        deferred = await repo.get("ops.agent_sessions", "s")
+        assert deferred["last_event_seq"] == 1
+        assert deferred["processed_events"] == ["started", "waiting"]
+        assert not effects and not posts
+        assert await repo.get("ops.tool_calls", "s:callback") is None
+        await service.close()
+
+        state = decision
+        if state != "FAILED":
+            ready.append(call["id"])
+        restarted = SessionService(repo, config(), dispatch, http=http)
+        assert await restarted.catch_up("s")
+        await restarted.stream("s")
+        await restarted.catch_up("s")
+        current = await repo.get("ops.agent_sessions", "s")
+        assert resumes == [0, 1]
+        assert current["last_event_seq"] == 4
+        assert "later" in current["processed_events"]
+        if state == "FAILED":
+            assert not effects and not posts
+            assert await repo.get("ops.tool_calls", "s:callback") is None
+            assert current["retired_message_ids"] == ["message"]
+            assert current["active_message_id"] == "next-message"
+        else:
+            assert effects == [("get_item", "s")]
+            assert [event["custom_tool_use_id"] for event in posts] == [call["id"]]
+            assert (await repo.get("ops.tool_calls", "s:callback"))["remote_event_id"] == "accepted-result"
+        await restarted.close()
 
 
 async def test_message_lost_ack_reuses_durable_exact_body_after_source_changes():

@@ -155,7 +155,7 @@ describe("SqlSessionExecutionCoordinator", () => {
         .toEqual({ failure });
     });
 
-    it.each(["budget", "deadline", "interrupt", "interrupt-expiry", "settle", "cancel"] as const)(
+    it.each(["budget", "deadline", "interrupt", "interrupt-expiry", "settle"] as const)(
       "projects no replay after %s and keeps unrelated queued work claimable",
       async (path) => {
         await sql.exec("INSERT INTO managed_sessions VALUES ('workspace_01', 'other_session', 1, NULL)");
@@ -170,16 +170,49 @@ describe("SqlSessionExecutionCoordinator", () => {
           await store.requestInterrupt({ ...scope, requestedAt: at(path === "interrupt" ? 3 : 2) });
         if (path === "settle")
           await store.settle({ fence: initial.fence, settledAt: at(2), outcome: "failed", failure: executionRecoveryRefusalCode });
-        if (path === "cancel")
-          await store.cancelSession({ ...scope, cancelledAt: at(2), reason: "cancelled" });
         expect(await claim(store, "next_owner", 3)).toMatchObject({ type: "claimed", execution: { id: "next" } });
-        const state = path === "interrupt" || path === "interrupt-expiry" || path === "cancel" ? "cancelled" : "failed";
+        const state = path === "interrupt" || path === "interrupt-expiry" ? "cancelled" : "failed";
         expect(await store.find({ workspaceId: scope.workspaceId, executionId: "original" }))
           .toMatchObject({ state, failure: executionRecoveryRefusalCode });
         expect(await sql.prepare("SELECT failure FROM managed_session_executions WHERE id = 'original'").first())
           .toEqual({ failure: executionRecoveryRefusalCode });
       },
     );
+
+    it.each(["interrupt", "settle", "cancel"] as const)("preserves ordinary cancellation through %s", async path => {
+      await store.admit(admitted("original", scope.sessionId, at(1)));
+      const initial = await claim(store, "first", 2);
+      if (initial.type !== "claimed") throw new Error("Missing original claim");
+      const callback = admitted("callback", scope.sessionId, at(2));
+      callback.execution.events = [{ type: "user.custom_tool_result", id: "callback", customToolUseId: "tool", content: [], processedAt: at(2) }];
+      await store.admit(callback);
+      if (path === "interrupt") {
+        await store.requestInterrupt({ ...scope, requestedAt: at(2) });
+        await store.settle({ fence: initial.fence, settledAt: at(2), outcome: "completed" });
+      } else if (path === "settle") {
+        await store.settle({ fence: initial.fence, settledAt: at(2), outcome: "cancelled", failure: "cancelled by runtime" });
+      } else {
+        await store.cancelSession({ ...scope, cancelledAt: at(2), reason: "session cancelled" });
+      }
+      expect(await store.find({ workspaceId: scope.workspaceId, executionId: "original" })).toMatchObject({
+        state: "cancelled",
+        failure: { interrupt: "interrupted during execution", settle: "cancelled by runtime", cancel: "session cancelled" }[path],
+      });
+      expect(await store.find({ workspaceId: scope.workspaceId, executionId: "callback" })).toMatchObject(
+        path === "settle" ? { state: "queued", failure: null } : {
+          state: "cancelled", failure: path === "interrupt" ? "interrupted before execution" : "session cancelled",
+        },
+      );
+    });
+
+    it("preserves the ordinary deadline failure of a callback that was never claimed", async () => {
+      const callback = admitted("callback", scope.sessionId, at(1));
+      callback.execution.events = [{ type: "user.custom_tool_result", id: "callback", customToolUseId: "tool", content: [], processedAt: at(1) }];
+      await store.admit({ ...callback, policy: { maxAttempts: 1, timeoutMs: 1_000 } });
+      await claim(store, "first", 2);
+      expect(await store.find({ workspaceId: scope.workspaceId, executionId: "callback" }))
+        .toMatchObject({ state: "failed", failure: "execution deadline exceeded" });
+    });
 
     it("resumes remaining inputs after a committed callback yield and reconciles a lost acknowledgement", async () => {
       const source = admitted("source", scope.sessionId, at(1));
@@ -195,10 +228,14 @@ describe("SqlSessionExecutionCoordinator", () => {
       await append(first.fence, { type: "agent.custom_tool_use", id: "tool", name: "lookup", input: {}, processedAt: at(2) }, 0);
       await append(first.fence, { type: "session.status_idle", id: "source_idle", processedAt: at(2),
         stopReason: { type: "requires_action", eventIds: ["tool"] } }, 1);
+      const readiness = { ...scope, executionIds: ["source"] };
+      expect((await store.findReadyToolCalls(readiness)).get("source")).toEqual([]);
       await store.settle({ fence: first.fence, settledAt: at(2), outcome: "completed" });
+      expect((await store.findReadyToolCalls(readiness)).get("source")).toEqual(["tool"]);
       const mixed = admitted("mixed", scope.sessionId, at(2));
       mixed.execution.events.push({ type: "user.custom_tool_result", id: "callback", customToolUseId: "tool", content: [], processedAt: at(2) });
       await store.admit(mixed);
+      expect((await store.findReadyToolCalls(readiness)).get("source")).toEqual([]);
       const running = await claim(store, "callback_owner", 3);
       if (running.type !== "claimed") throw new Error("Missing callback claim");
       await append(running.fence, { type: "session.status_running", id: "callback_start", processedAt: at(3) }, 2);
