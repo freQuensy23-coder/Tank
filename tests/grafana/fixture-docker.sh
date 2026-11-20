@@ -29,7 +29,13 @@ case $1 in
                         exec "$engine" compose -p "$project" "${args[@]}" ;;
                     postgres) exec "$engine" compose -p "$project" "$@" ;;
                     clickhouse|openma) exit 0 ;;
-                    tank-capture) touch "$scratch/capture"; exit 0 ;;
+                    tank-capture)
+                        if [[ -n ${PREVIOUS_TLS_PORT:-} ]]; then
+                            status=$(/usr/bin/curl -q --noproxy '*' --max-time 4 --cacert "$scratch/pebble.minica.pem" -sS -o /dev/null -w '%{http_code}' "https://localhost:$PREVIOUS_TLS_PORT/api/dashboards/uid/tank-queue")
+                            [[ $status == 401 ]]
+                            touch "$scratch/edge-available"
+                        fi
+                        touch "$scratch/capture"; exit 0 ;;
                     tank) bash "$tests/migrate.sh"; exit 0 ;;
                 esac ;;
             *' port grafana 3000 '*)

@@ -238,7 +238,10 @@ for fixture in tests/grafana/*.sql; do
 done
 sha=$b
 [[ $(stage) == "$sha" ]]
-rollout
+edge_binding=$("$engine" port "$project-grafana-edge-1" 443/tcp)
+[[ $edge_binding =~ ^127\.0\.0\.1:([0-9]+)$ ]]
+PREVIOUS_TLS_PORT=${BASH_REMATCH[1]} rollout
+[[ -f $tmp/edge-available ]]
 [[ $("${compose[@]}" ps -q grafana) != "$old_id" ]]
 cmp -s "$tmp/env.first" "$host/.env"
 role_hashes 'true' | cmp "$tmp/all-roles" -

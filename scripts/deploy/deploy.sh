@@ -105,7 +105,9 @@ healthy() {
 
 roll() {
   local v=$1 svc old_cap new_cap pid ready handoff wait
-  remove_service grafana-edge || return 1
+  if ! https_enabled "$v"; then
+    remove_service grafana-edge || return 1
+  fi
   if ! grafana_enabled "$v"; then
     remove_service grafana || return 1
   fi
