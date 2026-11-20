@@ -78,6 +78,12 @@ verify() { return 1; }
 
 
 @pytest.mark.integration
+@pytest.mark.process
+def test_shared_nginx_certificate_viewer_and_rollback():
+    subprocess.run([sys.executable, ROOT / "tests/grafana/shared-nginx/edge-run.py"], check=True, timeout=280)
+
+
+@pytest.mark.integration
 @pytest.mark.parametrize("host", [None, HOST, "", "grafana.256-0-0-1.sslip.io", "example.invalid/path"])
 def test_external_host_projection_uses_only_the_protected_deployment_setting(tmp_path, host):
     envfile = tmp_path / ".env"

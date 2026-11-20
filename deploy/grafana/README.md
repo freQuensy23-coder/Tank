@@ -22,6 +22,8 @@ Deploy stages the named nginx site from the release. Grafana still publishes onl
 
 Before exposing an existing Grafana store, rotate any compromised credentials, revoke affected sessions, and synchronize the protected settings. Changing only the initial-password setting does not change an existing account. Verify browser access at `https://<GRAFANA_EXTERNAL_HOST>/d/tank-queue/` and `/d/tank-pipeline/` as a named Viewer. Deploy’s HTTPS checks validate the certificate and anonymous API denial without credentials. A loopback check does not prove public reachability.
 
+Certbot keeps its account and certificate under `/var/lib/tank-grafana-nginx/certbot` (root only). The owned cron entry renews only the active hostname, tests the config and reloads nginx. The [isolated regression](../../tests/grafana/shared-nginx/edge-README.md) exercises this command, including a served certificate change. An active cron service, systemd-managed nginx and a loaded `sites-enabled` or `conf.d` include are prerequisites. Deploy refuses ambiguous ownership, colliding names and changes that would replace an existing default.
+
 On a shared host the selected release must include the nginx assets for public access. Selecting an older release without them removes the managed route before replacing its upstream; even a historical dedicated-edge release stays loopback-only. Rollback does not stop the shared nginx or edit other sites. Restore public access by selecting a shared-ingress-capable release through Deploy.
 
 ### Credentials and state
