@@ -1,0 +1,10 @@
+{
+  "pebble": {
+    "listenAddress": "0.0.0.0:14000",
+    "managementListenAddress": "127.0.0.1:15000",
+    "certificate": "/stage/transport.pem",
+    "privateKey": "/stage/transport.key",
+    "tlsPort": 443,
+    "profiles": {"default": {"description": "DNS-name renewal fixture", "validityPeriod": 90}}
+  }
+}

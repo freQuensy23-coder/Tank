@@ -12,7 +12,16 @@ case $1 in
             *' pull -q '*) exit 0 ;;
             *' up '*)
                 case $last in
-                    postgres|grafana) exec "$engine" compose -p "$project" "$@" ;;
+                    grafana)
+                        if [[ -n ${STAGE_PORT:-} ]]; then
+                            args=(); for arg in "$@"; do
+                                if [[ $arg == up ]]; then args+=(-f "$scratch/staging/grafana.yaml"); fi
+                                args+=("$arg")
+                            done
+                            exec "$engine" compose -p "$project" "${args[@]}"
+                        fi
+                        exec "$engine" compose -p "$project" "$@" ;;
+                    postgres) exec "$engine" compose -p "$project" "$@" ;;
                     clickhouse|openma) exit 0 ;;
                     tank-capture) touch "$scratch/capture"; exit 0 ;;
                     tank) bash "$tests/migrate.sh"; exit 0 ;;

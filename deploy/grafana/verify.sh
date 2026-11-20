@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
 cd "$(dirname "$0")/../.."
+if [[ ${1:-} == staging ]]; then
+    exec env -i HOME="$HOME" PATH="$PATH" TMPDIR="${TMPDIR:-/tmp}" DOCKER_CONTEXT="$(docker context show)" DOCKER_HOST="${DOCKER_HOST:-}" bash "$PWD/deploy/grafana/verify.sh" existing-https
+fi
 if [[ $# == 0 ]]; then
     for scenario in fresh existing; do
         env -i HOME="$HOME" PATH="$PATH" TMPDIR="${TMPDIR:-/tmp}" DOCKER_CONTEXT="$(docker context show)" DOCKER_HOST="${DOCKER_HOST:-}" bash "$PWD/deploy/grafana/verify.sh" "$scenario"
@@ -8,6 +11,9 @@ if [[ $# == 0 ]]; then
     exit
 fi
 scenario=$1
+unset STAGE_PORT
+stage_https=no
+if [[ $scenario == existing-https ]]; then scenario=existing; stage_https=yes; fi
 [[ $scenario == fresh || $scenario == existing ]]
 [[ $(docker context inspect --format '{{.Endpoints.docker.Host}}') == unix://* && ${DOCKER_HOST:-unix://} == unix://* ]]
 export root=$PWD tests=$PWD/tests/grafana
@@ -60,6 +66,10 @@ for key in POSTGRES_PASSWORD TANK_DB_PASSWORD OMA_DB_PASSWORD TANK_AGENT_DB_PASS
 done
 printf 'GRAFANA_PORT=0\nTANK_BACKUP_PATH=%s\nKVM_GID=1\nTANK_SANDBOX_CPUS=1\nTANK_SANDBOX_MEMORY_MIB=128\n' "$tmp/backup" >> "$host/.env"
 
+if [[ $stage_https == yes ]]; then
+    source "$tests/https/check.sh"
+    start_stage_https
+fi
 base_compose=("$engine" compose -p "$project" --env-file "$host/.env" -f "$stack/compose.yaml")
 compose=("${base_compose[@]}" -f "$stack/compose.grafana.yaml")
 pg=("$engine" exec -i -u postgres "$project-postgres-1" psql -XqAt -v ON_ERROR_STOP=1 -d tank)
@@ -128,6 +138,7 @@ resolve_url
 printf 'machine 127.0.0.1 login admin password %s\n' "$GRAFANA_ADMIN_PASSWORD" > "$tmp/netrc"
 http=(curl --noproxy '*' -fsS --max-time 20 --netrc-file "$tmp/netrc")
 "${http[@]}" "$base/api/health" | jq -ec 'select(.database == "ok") | {database,version}'
+if [[ $stage_https == yes ]]; then stage_viewer; stage_browser; fi
 status=$(curl --noproxy '*' -sS -o /dev/null -w '%{http_code}' "$base/api/datasources/uid/tank-postgres")
 [[ $status == 401 ]]
 printf 'Anonymous datasource access: HTTP %s\n' "$status"
@@ -217,6 +228,7 @@ assert_b() {
     [[ $("${pg[@]}" -c "$store_check") == 1 ]]
 }
 assert_b
+if [[ $stage_https == yes ]]; then stage_browser; fi
 "${pg[@]}" -f - < "$tests/seeds/latency.sql"
 check_card_panel() {
     local id=$1 start=$2 end=$3 expected=$4
@@ -244,6 +256,7 @@ done
 if [[ $scenario == existing ]]; then
     fail_rollout "$a" "$b"
     assert_b
+    if [[ $stage_https == yes ]]; then stage_browser; fi
     sha=$legacy
     [[ $(stage) == "$legacy" && ! -e $host/releases/$legacy/stack/compose.grafana.yaml ]]
     cmp "$host/compose.yaml" "$host/releases/$legacy/stack/compose.yaml"
@@ -251,8 +264,10 @@ if [[ $scenario == existing ]]; then
     [[ -z $("$engine" ps -aq --filter "label=com.docker.compose.project=$project" --filter label=com.docker.compose.service=grafana) ]]
     [[ $("$engine" inspect -f '{{index .Config.Labels "org.tank.content"}}' "$project-postgres-1") == "$project-legacy" ]]
     [[ $("${pg[@]}" -c 'SELECT value FROM ops.rollout_sentinel') == "$sentinel" ]]
+    if [[ $stage_https == yes ]]; then stage_unavailable; fi
     sha=$b
     rollout
     assert_b
+    if [[ $stage_https == yes ]]; then stage_browser; stage_renewal; fi
 fi
-printf 'PASS %s A=%s B=%s legacy=%s\n' "$scenario" "$a" "$b" "$legacy"
+printf 'PASS %s A=%s B=%s legacy=%s\n' "$1" "$a" "$b" "$legacy"

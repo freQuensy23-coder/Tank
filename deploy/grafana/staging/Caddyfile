@@ -1,0 +1,21 @@
+{
+	admin off
+	auto_https disable_redirects
+	renew_interval 2s
+	servers {
+		protocols h1 h2
+	}
+}
+
+grafana.127-0-0-1.sslip.io {
+	tls {
+		protocols tls1.2 tls1.3
+		issuer acme {
+			dir https://pebble:14000/dir
+			test_dir https://pebble:14000/dir
+			trusted_roots /etc/caddy/transport.pem
+			disable_http_challenge
+		}
+	}
+	reverse_proxy grafana:3000
+}
