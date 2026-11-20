@@ -1,43 +1,97 @@
 #!/usr/bin/env bash
 set -euo pipefail
 cd "$(dirname "$0")/../.."
-root=$PWD
+if [[ $# == 0 ]]; then
+    for scenario in fresh existing; do
+        env -i HOME="$HOME" PATH="$PATH" TMPDIR="${TMPDIR:-/tmp}" DOCKER_CONTEXT="$(docker context show)" DOCKER_HOST="${DOCKER_HOST:-}" bash "$PWD/deploy/grafana/verify.sh" "$scenario"
+    done
+    exit
+fi
+scenario=$1
+[[ $scenario == fresh || $scenario == existing ]]
+[[ $(docker context inspect --format '{{.Endpoints.docker.Host}}') == unix://* && ${DOCKER_HOST:-unix://} == unix://* ]]
+export root=$PWD tests=$PWD/tests/grafana
 project="tank-grafana-check-$(openssl rand -hex 8)"
-case $(docker context inspect --format '{{.Endpoints.docker.Host}}') in
-    unix://*) ;;
-    *) printf 'Use a local Docker socket.\n' >&2; exit 1 ;;
-esac
-[[ ${DOCKER_HOST:-unix://} == unix://* ]]
-compose=(docker compose --env-file /dev/null --project-directory "$root" -p "$project" -f deploy/grafana/verify.compose.yaml -f compose.grafana.yaml)
-for key in POSTGRES_PASSWORD TANK_DB_PASSWORD OMA_DB_PASSWORD TANK_AGENT_DB_PASSWORD TANK_REPLAY_AGENT_DB_PASSWORD GRAFANA_ADMIN_PASSWORD GRAFANA_SECRET_KEY GRAFANA_STORE_PASSWORD GRAFANA_READER_PASSWORD; do
-    printf -v "$key" '%s' "$(openssl rand -hex 32)"
-    export "$key"
-done
-export GRAFANA_PORT=0 GRAFANA_BIND_ADDRESS=127.0.0.1
+engine=$(command -v docker)
+image="ghcr.io/frequensy23-coder/tank/tank-postgres:$project"
 umask 077
 tmp=$(mktemp -d)
+export project engine image scratch=$tmp TANK_VERSION=$project
+host=$tmp/host
+mkdir "$host" "$tmp/bin" "$tmp/backup"
 cleanup() {
-    if (( $? != 0 )); then
-        "${compose[@]}" logs --no-color | grep -Ei 'permission denied|no such file|fatal:|pg_hba.conf|level=error' | perl -pe 's/[0-9a-f]{64}/[redacted]/gi' | cut -c1-350 >&2 || true
-    fi
-    rm -rf "$tmp"
-    "${compose[@]}" down -v
+    local status=$? label="label=com.docker.compose.project=$project"
+    "$engine" ps -aq --filter "$label" | xargs -r "$engine" rm -f >/dev/null || status=1
+    "$engine" volume ls -q --filter "$label" | xargs -r "$engine" volume rm >/dev/null || status=1
+    "$engine" network ls -q --filter "$label" | xargs -r "$engine" network rm >/dev/null || status=1
+    for tag in "$image" "$image-legacy"; do
+        if "$engine" image inspect "$tag" >/dev/null 2>&1; then "$engine" image rm "$tag" >/dev/null || status=1; fi
+    done
+    rm -rf -- "$tmp"
+    exit "$status"
 }
 trap cleanup EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM
-"${compose[@]}" up -d --wait postgres
-pg=("${compose[@]}" exec -T -u postgres postgres psql -XqAt -v ON_ERROR_STOP=1 -d tank)
-{ printf 'SET ROLE tank;\n'; for f in src/tank/migrations/*.sql; do printf '\\i /test-migrations/%s\n' "${f##*/}"; done; } | "${pg[@]}" -1 -f -
-"${compose[@]}" exec -T -u postgres -e GRAFANA_STORE_PASSWORD -e GRAFANA_READER_PASSWORD postgres psql -Xq -d tank -f /etc/tank-grafana/bootstrap.sql
-"${pg[@]}" -f /etc/tank-grafana/install-views.sql
-"${pg[@]}" -f /etc/tank-grafana/install-views.sql
-"${pg[@]}" -d postgres -c 'CREATE DATABASE tank_test_grafana TEMPLATE tank'
-for fixture in tests/grafana/*.sql; do
-    "${pg[@]}" -d tank_test_grafana -f - < "$fixture"
-    printf 'PostgreSQL fixture passed: %s\n' "$fixture"
+python=python3
+if [[ -x .venv/bin/python ]]; then python=.venv/bin/python; fi
+"$engine" build -q --label org.tank.content="$project" -t "$image" deploy/postgres >/dev/null
+sha=$(git rev-parse HEAD)
+stage() {
+    local runner
+    runner=$(mktemp -d "$tmp/runner.XXXXXXXX")
+    RELEASE_SHA="$sha" ENGINE="$engine" IMAGE="$image" PROJECT="$project" "$python" tests/grafana/stage_release.py "$host" "$runner"
+}
+[[ $(stage) == "$sha" ]]
+stack=$host/releases/$sha/stack
+for key in POSTGRES_PASSWORD TANK_DB_PASSWORD OMA_DB_PASSWORD TANK_AGENT_DB_PASSWORD TANK_REPLAY_AGENT_DB_PASSWORD OMA_API_KEY OMA_ROOT_SECRET OMA_AUTH_SECRET OPENROUTER_API_KEY TANK_FOUNDRY_API_KEY TELEGRAM_BOT_TOKEN ETHERSCAN_API_KEY CODEX_GATEWAY_KEY APIFY_API_TOKEN; do
+    printf '%s=%s\n' "$key" "$(openssl rand -hex 20)" >> "$host/.env"
 done
-"${compose[@]}" up -d --wait --wait-timeout 120 grafana
+printf 'GRAFANA_PORT=0\nTANK_BACKUP_PATH=%s\nKVM_GID=1\nTANK_SANDBOX_CPUS=1\nTANK_SANDBOX_MEMORY_MIB=128\n' "$tmp/backup" >> "$host/.env"
+
+base_compose=("$engine" compose -p "$project" --env-file "$host/.env" -f "$stack/compose.yaml")
+compose=("${base_compose[@]}" -f "$stack/compose.grafana.yaml")
+pg=("$engine" exec -i -u postgres "$project-postgres-1" psql -XqAt -v ON_ERROR_STOP=1 -d tank)
+role_hashes() {
+    "${pg[@]}" -c "SELECT rolname,md5(rolpassword) FROM pg_authid WHERE rolcanlogin AND ($1) ORDER BY rolname"
+}
+base_roles="rolname IN ('postgres','tank','oma','tank_agent','tank_replay_agent')"
+if [[ $scenario == existing ]]; then
+    mkdir "$tmp/legacy"
+    cp deploy/postgres/{Dockerfile,init.sh} "$tmp/legacy/"
+    grep -v 'tank_grafana_' deploy/postgres/pg_hba.conf > "$tmp/legacy/pg_hba.conf"
+    "$engine" build -q --label org.tank.content="$project-legacy" -t "$image-legacy" "$tmp/legacy" >/dev/null
+    TANK_VERSION="$project-legacy" "${base_compose[@]}" up -d --no-deps --wait postgres
+    legacy_id=$("${base_compose[@]}" ps -q postgres)
+    printf "GRAFANA_READER_PASSWORD='%s\$fixture'\n" "$(openssl rand -hex 20)" >> "$host/.env"
+    bash "$tests/migrate.sh"
+    "${pg[@]}" -c 'CREATE TABLE ops.rollout_sentinel (value text); INSERT INTO ops.rollout_sentinel VALUES (gen_random_uuid()::text)'
+    sentinel=$("${pg[@]}" -c 'SELECT value FROM ops.rollout_sentinel')
+    role_hashes "$base_roles" > "$tmp/base-roles"
+    [[ $(wc -l < "$tmp/base-roles") == 5 ]]
+fi
+cp "$host/.env" "$tmp/env.before"
+install -m 755 "$tests/fixture-docker.sh" "$tmp/bin/docker"
+ln -s /bin/true "$tmp/bin/nsenter"
+printf '#!/bin/sh\nif [ "$1" = apify_worker.py ]; then printf "fixture fixture\\n"; else exec "%s" "$@"; fi\n' "$(command -v python3)" > "$tmp/bin/python3"
+chmod 755 "$tmp/bin/python3"
+rollout() {
+    rm -f "$tmp/capture"
+    timeout 240 env PATH="$tmp/bin:$PATH" "$host/deploy.sh" "$sha"
+    [[ $(<"$host/deployed") == "$sha" ]]
+}
+rollout
+cmp -n "$(wc -c < "$tmp/env.before")" "$tmp/env.before" "$host/.env"
+[[ $(stat -c %a "$host/.env") == 600 ]]
+cp "$host/.env" "$tmp/env.first"
+role_hashes 'true' > "$tmp/all-roles"
+[[ $(grep -c '^tank_grafana_' "$tmp/all-roles") == 2 ]]
+if [[ $scenario == existing ]]; then
+    [[ $("${compose[@]}" ps -q postgres) != "$legacy_id" ]]
+    role_hashes "$base_roles" | cmp "$tmp/base-roles" -
+    [[ $("${pg[@]}" -c 'SELECT value FROM ops.rollout_sentinel') == "$sentinel" ]]
+fi
+GRAFANA_ADMIN_PASSWORD=$(cut -d= -f2- < <(grep '^GRAFANA_ADMIN_PASSWORD=' "$host/.env"))
 resolve_url() {
     local address
     address=$("${compose[@]}" port grafana 3000)
@@ -71,6 +125,8 @@ for file in deploy/grafana/dashboards/*.json; do
     uid=$(jq -er '.uid' "$file")
     "${http[@]}" "$base/api/dashboards/uid/$uid" > "$tmp/dashboard"
     jq -ec 'select(.meta.provisioned and .meta.folderUid == "tank") | .dashboard.uid' "$tmp/dashboard"
+    jq -e --slurpfile source "$file" '([.dashboard.panels[].id] | length == (unique | length)) and
+        ([.dashboard.panels[] | {id,targets}] == [$source[0].panels[] | {id,targets}])' "$tmp/dashboard" >/dev/null
     jq -c '.dashboard.panels[] | .targets[]? | {from:"now-1h",to:"now",queries:[. + {intervalMs:60000,maxDataPoints:60}]}' "$tmp/dashboard" > "$tmp/requests"
     [[ -s $tmp/requests ]]
     while IFS= read -r request; do
@@ -98,8 +154,21 @@ done
 store_check="SELECT count(*) FROM grafana.data_source WHERE uid='tank-postgres'"
 [[ $("${pg[@]}" -c "$store_check") == 1 ]]
 "${http[@]}" -X PUT -H 'Content-Type: application/json' --data '{"name":"Persistence check","email":"admin@localhost","login":"admin"}' "$base/api/user" >/dev/null
-"${compose[@]}" up -d --wait --force-recreate --no-deps grafana
+old_id=$("${compose[@]}" ps -q grafana)
+"${compose[@]}" rm -fs grafana
+"${pg[@]}" -d postgres -c 'CREATE DATABASE tank_test_grafana TEMPLATE tank'
+for fixture in tests/grafana/*.sql; do
+    "${pg[@]}" -d tank_test_grafana -f - < "$fixture"
+    printf 'PostgreSQL fixture passed: %s\n' "$fixture"
+done
+[[ $(stage) == "$sha" ]]
+rollout
+[[ $("${compose[@]}" ps -q grafana) != "$old_id" ]]
+cmp -s "$tmp/env.first" "$host/.env"
+role_hashes 'true' | cmp "$tmp/all-roles" -
+if [[ $scenario == existing ]]; then [[ $("${pg[@]}" -c 'SELECT value FROM ops.rollout_sentinel') == "$sentinel" ]]; fi
 resolve_url
 [[ $("${pg[@]}" -c "$store_check") == 1 ]]
 "${http[@]}" "$base/api/user" | jq -ec 'select(.login == "admin" and .name == "Persistence check") | {login,name}'
 printf 'Grafana container replaced; admin and provisioned datasource retained in PostgreSQL.\n'
+printf 'PASS %s %s: two rollouts; unchanged credentials, role verifiers and database state.\n' "$scenario" "$sha"
