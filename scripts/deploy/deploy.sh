@@ -237,7 +237,8 @@ if [ -n "$previous" ]; then preflight_release "$previous"; fi
 if [[ -e /var/lib/tank-grafana-nginx ]] || grafana_enabled "$SHA" || grafana_enabled "$previous"; then
   external_host=$(python3 grafana.py external-host)
 fi
-if [[ -z $external_host && -e /var/lib/tank-grafana-nginx ]]; then
+if [[ -z $external_host && ( -e /etc/cron.d/tank-grafana-certbot || -e /var/lib/tank-grafana-nginx/transaction.json ||
+      -e /etc/nginx/sites-enabled/zzzz-tank-grafana.conf || -e /etc/nginx/conf.d/zzzz-tank-grafana.conf ) ]]; then
   echo 'Restore GRAFANA_EXTERNAL_HOST for this shared-nginx deployment'; exit 1
 fi
 if [ -n "$previous" ] && grafana_enabled "$previous"; then

@@ -328,7 +328,7 @@ def apply(host, port):
         raise Refusal("an active cron service is required for certificate renewal")
     if present(STATE):
         state = load()
-        if state["host"] != host:
+        if state["host"] != host and (state["site"] or state["cron"]):
             raise Refusal("owned certificate belongs to another hostname")
         target = Path(state["site_path"])
         inspect(host, target if state["site"] else None)
@@ -407,6 +407,7 @@ def apply(host, port):
         inspect(host, target)
         reload_nginx()
         install_file(CRON, cron(), state, "cron")
+        state["host"] = host
         state["port"] = port
         save(state)
         JOURNAL.unlink()
