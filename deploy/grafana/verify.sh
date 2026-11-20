@@ -93,6 +93,19 @@ rollout() {
     timeout 240 env PATH="$tmp/bin:$PATH" "$host/deploy.sh" "$sha"
     [[ $(<"$host/deployed") == "$sha" ]]
 }
+fail_rollout() {
+    local target=$1 recovery=$2
+    touch "$tmp/fail-ready"
+    rm -f "$tmp/capture"
+    if timeout 240 env PATH="$tmp/bin:$PATH" "$host/deploy.sh" "$target" > "$tmp/failure.log"; then exit 1; else [[ $? == 1 ]]; fi
+    grep -Fx "rolled back to $recovery" "$tmp/failure.log"
+    [[ ! -e $tmp/fail-ready && $(<"$host/deployed") == "$recovery" ]]
+}
+if [[ $scenario == existing ]]; then
+    fail_rollout "$a" "$legacy"
+    [[ -z $("$engine" ps -aq --filter "label=com.docker.compose.project=$project" --filter label=com.docker.compose.service=grafana) ]]
+    [[ $("$engine" inspect -f '{{index .Config.Labels "org.tank.content"}}' "$project-postgres-1") == "$project-legacy" ]]
+fi
 rollout
 cmp -n "$(wc -c < "$tmp/env.before")" "$tmp/env.before" "$host/.env"
 [[ $(stat -c %a "$host/.env") == 600 ]]
@@ -186,9 +199,10 @@ resolve_url
 "${http[@]}" "$base/api/user" | jq -ec 'select(.login == "admin" and .name == "Persistence check") | {login,name}'
 "${pg[@]}" -f - < "$tests/seeds/minute-checks.sql"
 "${http[@]}" "$base/api/dashboards/uid/tank-pipeline" |
-    jq -ce '.dashboard.panels[] | select(.id == 34 and .type == "timeseries") |
-        {from:"1767225600000",to:"1767226320000",queries:.targets}' |
-    "${http[@]}" -H 'Content-Type: application/json' --data-binary @- "$base/api/ds/query" |
+    jq -ce '[.dashboard.panels[] | select(.id == 34 and .type == "timeseries")] |
+        if length == 1 and (.[0].targets | length > 0) then
+        {from:"1767225600000",to:"1767226320000",queries:.[0].targets} else error("missing minute-check target") end' > "$tmp/minute-request"
+"${http[@]}" -H 'Content-Type: application/json' --data-binary "@$tmp/minute-request" "$base/api/ds/query" |
     jq -ec '.results.A | select(.error == null and (.frames | length == 1)) | .frames[0] |
         .data.values as $values | [.schema.fields | to_entries[] | {key:.value.name,value:$values[.key]}] | from_entries |
         select((.Time // .time) == [1767225600000,1767226200000]) | del(.Time,.time) |
@@ -204,11 +218,7 @@ assert_b() {
 }
 assert_b
 if [[ $scenario == existing ]]; then
-    touch "$tmp/fail-ready"
-    rm -f "$tmp/capture"
-    if timeout 240 env PATH="$tmp/bin:$PATH" "$host/deploy.sh" "$a" > "$tmp/failure.log"; then exit 1; else [[ $? == 1 ]]; fi
-    grep -Fx "rolled back to $b" "$tmp/failure.log"
-    [[ ! -e $tmp/fail-ready && $(<"$host/deployed") == "$b" ]]
+    fail_rollout "$a" "$b"
     assert_b
     sha=$legacy
     [[ $(stage) == "$legacy" && ! -e $host/releases/$legacy/stack/compose.grafana.yaml ]]

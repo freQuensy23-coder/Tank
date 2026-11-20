@@ -172,7 +172,9 @@ trap 'exit 130' INT
 trap 'exit 143' TERM
 preflight_release "$SHA"
 if [ -n "$previous" ]; then preflight_release "$previous"; fi
-if grafana_enabled "$SHA" || { [ -n "$previous" ] && grafana_enabled "$previous"; }; then
+if [ -n "$previous" ] && grafana_enabled "$previous"; then
+  python3 grafana.py require-credentials
+elif grafana_enabled "$SHA"; then
   python3 grafana.py prepare
 else
   python3 grafana.py check-env

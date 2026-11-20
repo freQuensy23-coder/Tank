@@ -69,6 +69,7 @@ jobs:
           release="/srv/tank-deploy/releases/$SHA"
           files=(compose.yaml)
           if git cat-file -e "$SHA:deploy/grafana/production-version" 2>/dev/null; then
+            git show "$SHA:deploy/grafana/production-version" | cmp -s - <(printf '1\n') || { echo 'Unsupported Grafana production version'; exit 1; }
             files+=(deploy/grafana/production-version compose.grafana.yaml deploy/grafana/bootstrap.sql deploy/grafana/install-views.sql
               deploy/grafana/queue-views.sql deploy/grafana/pipeline-views.sql deploy/grafana/dashboards deploy/grafana/provisioning)
           fi

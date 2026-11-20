@@ -172,7 +172,10 @@ if __name__ == "__main__":
         check_env()
         sys.exit(0)
     values = settings()
-    if action == "prepare":
+    if action == "require-credentials":
+        if set(values) != set(KEYS):
+            raise SystemExit("Restore the existing Grafana credentials before deployment")
+    elif action == "prepare":
         prepare(values)
     elif action == "install":
         install(values, sys.argv[2], sys.argv[3])
