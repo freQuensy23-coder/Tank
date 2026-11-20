@@ -41,7 +41,7 @@ def test_rollout_selects_one_ingress_and_recovers_historical_release(tmp_path, o
   esac
 }
 python3() {
-  if [[ $1 != grafana.py ]]; then command python3 "$@"; return; fi
+  if [[ $1 != grafana.py ]]; then command python3 "$@"; return $?; fi
   if [[ $2 == external-host ]]; then printf '%s\\n' "$FIXTURE_HOST"; fi
 }
 curl() {

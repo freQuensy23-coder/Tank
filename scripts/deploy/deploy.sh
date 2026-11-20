@@ -126,7 +126,7 @@ remove_shared_site() {
   for release in "$SHA" "$previous"; do
     if shared_nginx "$release"; then
       python3 "releases/$release/stack/deploy/grafana/nginx/site.py" remove
-      return
+      return $?
     fi
   done
 }
