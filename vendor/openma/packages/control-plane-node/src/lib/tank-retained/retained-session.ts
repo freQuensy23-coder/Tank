@@ -6,9 +6,10 @@ export type Scope = { workspaceId: string; environmentId: string; sessionId: str
 export type Handle = { provider: string; runtimeId: string; ownershipName?: string };
 export type Fence = Scope & { ownerId: string; generation: number; token: string; expiresAt: string };
 export type Candidate = { id: string; contentHash: string; metadata?: Record<string, string | number | boolean | null> };
+type Publication = { workspaceCandidate: Candidate; revision: number; generation: number };
 export interface Fences {
   acquire(input: { scope: Scope; ownerId: string; ttlMs: number }): Promise<
-    { type: 'acquired'; fence: Fence; publication: { workspaceCandidate: Candidate } | null }
+    { type: 'acquired'; fence: Fence; publication: Publication | null }
     | { type: 'conflict'; expiresAt: string | null }>;
   isCurrent(fence: Fence): Promise<boolean>;
   renew(input: { fence: Fence; ttlMs: number }): Promise<{ type: 'renewed'; fence: Fence } | { type: 'lost' }>;
@@ -23,8 +24,9 @@ export interface Provider<R extends RetainedRuntime> {
   allocationIntent(scope: Scope, fence: Fence, signal: AbortSignal): Promise<Handle>;
   resolveIntent(intent: Handle, scope: Scope, fence: Fence, signal: AbortSignal): Promise<Handle | null>;
   leftover(scope: Scope, fence: Fence, signal: AbortSignal): Promise<Handle | null>;
-  create(scope: Scope, fence: Fence, signal: AbortSignal): Promise<R>;
-  resume(handle: Handle, scope: Scope, fence: Fence, signal: AbortSignal): Promise<R>;
+  create(scope: Scope, fence: Fence, signal: AbortSignal, assertExecutionCurrent?: () => Promise<void>): Promise<R>;
+  resume(handle: Handle, scope: Scope, fence: Fence, signal: AbortSignal, assertExecutionCurrent?: () => Promise<void>): Promise<R>;
+  quiesceExact?(handle: Handle, scope: Scope, assertCurrent: () => Promise<void>): Promise<void>;
   reap(handle: Handle, scope: Scope, fence: Fence, signal: AbortSignal): Promise<void>;
 }
 export interface Options<R extends RetainedRuntime> {
@@ -59,6 +61,9 @@ export class RetainedSessionLifecycle<R extends RetainedRuntime> {
   private manifest: Manifest | null = null;
   private operations = new Set<Promise<unknown>>();
   private runtimeReplaced = false;
+  private publication: Publication | null = null;
+  private possibleResident = false;
+  private lostTurn: { fence: Fence; handle: Handle; publication: Publication | null } | null = null;
 
   constructor(options: Options<R>) {
     if (!/^sha256:[a-f0-9]{64}$/.test(options.fingerprint)) fail('retained_fingerprint_invalid');
@@ -73,7 +78,7 @@ export class RetainedSessionLifecycle<R extends RetainedRuntime> {
   private async current(): Promise<Fence> {
     const fence = this.fence;
     if (this.lost || !fence) fail('retained_fence_lost');
-    if (!await this.options.fences.isCurrent(fence)) { this.lost = true; fail('retained_fence_lost'); }
+    if (!await this.options.fences.isCurrent(fence) || this.lost) { this.lost = true; fail('retained_fence_lost'); }
     return fence;
   }
   private startHeartbeat(): void {
@@ -143,31 +148,84 @@ export class RetainedSessionLifecycle<R extends RetainedRuntime> {
       : manifest.fingerprint !== this.options.fingerprint;
   }
   private async publish(state: 'allocating' | 'aborted' | 'retained' | 'archived'): Promise<void> {
+    const handle = this.handle!;
+    let workspaceCandidate: Candidate;
+    let manifest: Manifest | undefined;
     if (this.manifest?.identity) {
-      const manifest = { ...this.manifest, handle: this.handle!, state, archived: state === 'archived',
+      manifest = { ...this.manifest, handle, state, archived: state === 'archived',
         ...(state === 'archived' ? { retired: [], upgrade: undefined } : {}) };
       const encoded = JSON.stringify(manifest);
-      const result = await this.options.fences.publish({ fence: await this.current(), workspaceCandidate: {
-        id: `retained-${manifest.handle.runtimeId}`, contentHash: stableDigest({ scope: this.scope, manifest: encoded }),
+      workspaceCandidate = {
+        id: `retained-${handle.runtimeId}`, contentHash: stableDigest({ scope: this.scope, manifest: encoded }),
         metadata: { schema: 2, scope: JSON.stringify(this.scope), manifest: encoded,
-          provider: manifest.handle.provider, runtimeId: manifest.handle.runtimeId, state }
-      }, outputCandidate: null });
-      if (result.type === 'lost') { this.lost = true; fail('retained_fence_lost'); }
-      this.manifest = manifest;
-      return;
+          provider: handle.provider, runtimeId: handle.runtimeId, state }
+      };
+    } else {
+      const identity = { scope: this.scope, provider: handle.provider, runtimeId: handle.runtimeId,
+        fingerprint: this.options.fingerprint, state };
+      workspaceCandidate = { id: `retained-${handle.runtimeId}`, contentHash: digest(identity),
+        metadata: { schema: 1, scope: JSON.stringify(this.scope), provider: handle.provider,
+          runtimeId: handle.runtimeId, fingerprint: this.options.fingerprint, state } };
     }
     const fence = await this.current();
-    const handle = this.handle!;
-    const identity = { scope: this.scope, provider: handle.provider, runtimeId: handle.runtimeId,
-      fingerprint: this.options.fingerprint, state };
-    const result = await this.options.fences.publish({ fence,
-      workspaceCandidate: { id: `retained-${handle.runtimeId}`, contentHash: digest(identity),
-        metadata: { schema: 1, scope: JSON.stringify(this.scope), provider: handle.provider,
-          runtimeId: handle.runtimeId, fingerprint: this.options.fingerprint, state } }, outputCandidate: null });
+    const result = await this.options.fences.publish({ fence, workspaceCandidate, outputCandidate: null });
     if (result.type === 'lost') { this.lost = true; fail('retained_fence_lost'); }
+    this.publication = { workspaceCandidate, revision: result.revision, generation: fence.generation };
+    if (manifest) this.manifest = manifest;
+  }
+  private rememberLostTurn(): void {
+    if (!this.lostTurn && this.possibleResident && this.fence && this.handle) {
+      this.lostTurn = { fence: { ...this.fence }, handle: { ...this.handle }, publication: this.publication };
+    }
+  }
+  needsQuiescence(): boolean { return this.lostTurn !== null; }
+  async quiesceLostTurn(assertExecutionCurrent: () => Promise<void>): Promise<void> {
+    const target = this.lostTurn;
+    if (!target) return;
+    if (this.phase !== 'idle' || this.fence) fail('retained_recovery_not_drained');
+    await assertExecutionCurrent();
+    const ownerId = `${this.ownerId}:quiesce:${randomUUID()}`;
+    const acquired = await this.options.fences.acquire({ scope: this.scope, ownerId,
+      ttlMs: this.options.leaseTtlMs });
+    if (acquired.type !== 'acquired') fail('retained_resource_busy');
+    const { fence, publication } = acquired;
+    if (fence.ownerId !== ownerId || fence.generation <= target.fence.generation || fence.token === target.fence.token
+        || !Object.entries(this.scope).every(([key, value]) => fence[key as keyof Scope] === value)) {
+      fail('retained_recovery_resource_fence_invalid');
+    }
+    let verified = false;
+    try {
+      const assertCurrent = async () => {
+        await assertExecutionCurrent();
+        if (!await this.options.fences.isCurrent(fence)) fail('retained_fence_lost');
+        await assertExecutionCurrent();
+      };
+      const expected = target.publication;
+      if (!expected || !publication
+          || expected.revision !== publication.revision
+          || expected.generation !== publication.generation
+          || stableDigest(expected.workspaceCandidate) !== stableDigest(publication.workspaceCandidate)) {
+        fail('retained_recovery_publication_changed');
+      }
+      const manifest = this.decode(publication.workspaceCandidate);
+      const { handle } = target;
+      if (manifest.state !== 'retained' || manifest.handle.provider !== handle.provider
+          || manifest.handle.runtimeId !== handle.runtimeId || manifest.handle.ownershipName !== handle.ownershipName) {
+        fail('retained_recovery_handle_changed');
+      }
+      if (!this.options.provider.quiesceExact) fail('retained_sdk_inspection_required');
+      await this.options.provider.quiesceExact(handle, this.scope, assertCurrent);
+      await assertCurrent();
+      verified = true;
+    } finally {
+      await this.options.fences.release({ fence, reason: verified ? 'completed' : 'failed' });
+    }
+    await assertExecutionCurrent();
+    this.lostTurn = null;
   }
   async begin(assertExecutionCurrent: () => Promise<void>, signal: AbortSignal): Promise<void> {
     if (this.phase !== 'idle') fail('retained_already_active');
+    if (this.lostTurn) fail('retained_previous_turn_not_quiescent');
     this.phase = 'starting';
     let created = false, newIntent = false, replaced = false;
     try {
@@ -176,6 +234,7 @@ export class RetainedSessionLifecycle<R extends RetainedRuntime> {
       const acquired = await this.options.fences.acquire({ scope: this.scope, ownerId: this.ownerId, ttlMs: this.options.leaseTtlMs });
       if (acquired.type !== 'acquired') fail('retained_resource_busy');
       this.fence = acquired.fence; this.lost = false; this.startHeartbeat();
+      this.publication = acquired.publication;
       let manifest: Manifest | null = null, unreadable = false;
       if (acquired.publication) {
         try { manifest = this.decode(acquired.publication.workspaceCandidate); } catch { unreadable = true; }
@@ -210,7 +269,9 @@ export class RetainedSessionLifecycle<R extends RetainedRuntime> {
       if (manifest && manifest.state !== 'aborted') {
         this.handle = manifest.handle;
         await assertExecutionCurrent();
-        this.runtime = await this.options.provider.resume(this.handle, this.scope, await this.current(), signal);
+        const fence = await this.current();
+        this.possibleResident = true;
+        this.runtime = await this.options.provider.resume(this.handle, this.scope, fence, signal, assertExecutionCurrent);
         if (manifest.state === 'allocating') await this.publish('retained');
       } else {
         this.manifest = null;
@@ -219,7 +280,10 @@ export class RetainedSessionLifecycle<R extends RetainedRuntime> {
           this.manifest = { handle: this.handle, state: 'allocating', archived: false, identity: this.options.identity, retired: [] };
         }
         await this.publish('allocating'); newIntent = true;
-        this.runtime = await this.options.provider.create(this.scope, await this.current(), signal);
+        await assertExecutionCurrent();
+        const fence = await this.current();
+        this.possibleResident = true;
+        this.runtime = await this.options.provider.create(this.scope, fence, signal, assertExecutionCurrent);
         this.handle = this.runtime.runtimeHandle(); created = true;
         if (this.handle.provider !== this.options.providerId || !this.handle.runtimeId) fail('retained_provider_identity_invalid');
         await this.publish('retained');
@@ -234,7 +298,10 @@ export class RetainedSessionLifecycle<R extends RetainedRuntime> {
       if (newIntent && !this.runtime && this.handle && this.fence && !this.lost) {
         try {
           const remaining = await this.options.provider.resolveIntent(this.handle, this.scope, await this.current(), new AbortController().signal);
-          if (!remaining) await this.publish('aborted');
+          if (!remaining) {
+            this.possibleResident = false;
+            await this.publish('aborted');
+          }
         } catch {   }
       }
       let publicationUnknown = created && this.lost;
@@ -245,6 +312,7 @@ export class RetainedSessionLifecycle<R extends RetainedRuntime> {
           else {
             this.fence = observed.fence;
             if (observed.publication) {
+              this.publication = observed.publication;
               const manifest = this.decode(observed.publication.workspaceCandidate);
               if (manifest.state === 'retained') {
                 if (manifest.handle.provider !== this.handle.provider || manifest.handle.runtimeId !== this.handle.runtimeId) fail('retained_manifest_conflict');
@@ -256,10 +324,14 @@ export class RetainedSessionLifecycle<R extends RetainedRuntime> {
       }
       try {
         if (created && !publicationUnknown && this.handle && this.fence && !this.lost) {
+          await assertExecutionCurrent();
           await this.options.provider.reap(this.handle, this.scope, this.fence, new AbortController().signal);
+          this.possibleResident = false;
           await this.publish('aborted');
-        } else if (this.runtime && this.fence && await this.options.fences.isCurrent(this.fence)) {
-          await this.runtime.suspend({ kind: 'filesystem' });
+        } else if ((this.runtime || (this.possibleResident && this.manifest?.state === 'retained' && this.options.provider.quiesceExact))
+            && this.fence && await this.options.fences.isCurrent(this.fence)) {
+          await this.suspend(assertExecutionCurrent);
+          this.possibleResident = false;
         }
       } catch { cleanupFailed = true; }
       if ((cleanupFailed || publicationUnknown) && created && this.handle && this.fence) {
@@ -268,8 +340,10 @@ export class RetainedSessionLifecycle<R extends RetainedRuntime> {
           generation: this.fence.generation, ownerId: this.fence.ownerId, sandbox: this.handle,
           reason: 'failed', error: new RetainedLifecycleError('retained_initial_cleanup_failed') }).catch(() => undefined);
       }
+      this.rememberLostTurn();
+      this.possibleResident = false;
       this.runtime = null; this.handle = null; this.phase = 'idle';
-      await this.release(this.lost ? 'lease_lost' : 'failed');
+      await this.release(this.lost ? 'lease_lost' : 'failed', !this.lostTurn);
       if (cleanupFailed) fail('retained_initial_cleanup_failed');
       throw error;
     }
@@ -287,6 +361,15 @@ export class RetainedSessionLifecycle<R extends RetainedRuntime> {
     this.operations.add(task);
     try { return await task; } finally { this.operations.delete(task); }
   }
+  private async suspend(assertExecutionCurrent: () => Promise<void>): Promise<void> {
+    const assertCurrent = async () => { await assertExecutionCurrent(); await this.current(); };
+    if (this.handle && this.options.provider.quiesceExact) {
+      await this.options.provider.quiesceExact(this.handle, this.scope, assertCurrent);
+    } else {
+      await assertCurrent();
+      await this.runtime!.suspend({ kind: 'filesystem' });
+    }
+  }
   async idle(assertExecutionCurrent: () => Promise<void>): Promise<void> {
     if (this.phase === 'idle') return;
     if (this.phase !== 'stopped') {
@@ -294,8 +377,7 @@ export class RetainedSessionLifecycle<R extends RetainedRuntime> {
       this.phase = 'quiescing';
       try {
         await Promise.allSettled([...this.operations]);
-        await assertExecutionCurrent(); await this.current();
-        await this.runtime.suspend({ kind: 'filesystem' });
+        await this.suspend(assertExecutionCurrent);
         this.runtime = null; this.phase = 'stopped';
       } catch (error) {
         this.phase = 'active';
@@ -307,21 +389,16 @@ export class RetainedSessionLifecycle<R extends RetainedRuntime> {
       await this.publish('retained');
     }
     await this.release('completed');
-    this.handle = null; this.phase = 'idle';
+    this.handle = null; this.possibleResident = false; this.phase = 'idle';
   }
 
   async abandon(): Promise<void> {
     if ((this.phase === 'idle' || this.phase === 'archived') && !this.fence) return;
     this.phase = 'quiescing';
-    try {
-      await Promise.allSettled([...this.operations]);
-      if (this.runtime && this.fence && await this.options.fences.isCurrent(this.fence)) {
-        await this.runtime.suspend({ kind: 'filesystem' });
-      }
-    } finally {
-      this.runtime = null; this.handle = null; this.phase = 'idle';
-      await this.release('lease_lost', false);
-    }
+    await Promise.allSettled([...this.operations]);
+    this.rememberLostTurn();
+    this.runtime = null; this.handle = null; this.possibleResident = false; this.phase = 'idle';
+    await this.release('lease_lost', false);
   }
   async archive(assertArchiveAuthorized: () => Promise<void>, signal: AbortSignal): Promise<void> {
     if (this.phase !== 'idle') fail('retained_archive_while_active');

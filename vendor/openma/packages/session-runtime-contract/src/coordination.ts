@@ -76,6 +76,7 @@ export interface ClaimSessionExecution {
   attemptId: string;
   claimedAt: string;
   leaseTtlMs: number;
+  recoverFrom?: Pick<SessionExecutionFence, "workspaceId" | "sessionId" | "executionId" | "attemptId" | "generation">;
 }
 
 export type ClaimSessionExecutionResult =

@@ -34,7 +34,7 @@ def error(identity, execution, status):
     )
 
 
-async def setup():
+async def setup(recovery_flags=None):
     repo = MemoryRepository()
     session = {
         "session_id": "s",
@@ -89,6 +89,7 @@ async def setup():
                             "settled_outcome": states[identity]
                             if states[identity] in {"COMPLETED", "FAILED", "CANCELLED"}
                             else None,
+                            **(recovery_flags or {}).get(identity, {}),
                         }
                         for identity in request.url.params.get_list("ids[]")
                     ]
@@ -221,6 +222,151 @@ async def test_unknown_execution_retry_notification_cannot_adopt_the_active_turn
             await service.process_event("s", error("unknown-retrying", "unknown-input", "retrying"))
         assert await repo.get("ops.agent_sessions", "s") == before
         assert not posts
+    finally:
+        await service.close()
+        await http.aclose()
+
+
+async def test_uncorrelated_terminal_error_leaves_healthy_turn_eligible_to_settle():
+    repo, service, http, states, posts, history = await setup()
+    try:
+        states[CALLBACK] = "COMPLETED"
+        terminal = error("unknown-terminal", "unknown-input", "terminal")
+        history.append(terminal)
+        await service.process_event("s", terminal)
+        ended = event("ended", "session.status_idle", CALLBACK, stop_reason={"type": "end_turn"})
+        history.append(ended)
+        await service.process_event("s", ended)
+        assert (await service.completed_turn("s"))["complete"]
+        session = await repo.get("ops.agent_sessions", "s")
+        assert session["message_log"][0]["turn_status"] == "DONE"
+        assert not posts
+    finally:
+        await service.close()
+        await http.aclose()
+
+
+@pytest.mark.parametrize(
+    ("projection_fields", "refused"),
+    [({}, False), ({"recovery_refused": "true"}, False), ({"recovery_refused": True}, True)],
+)
+async def test_terminal_error_waits_for_correlated_queue_failure(projection_fields, refused):
+    repo, service, http, states, posts, history = await setup({INITIAL: projection_fields})
+    try:
+        states[INITIAL] = "RUNNING"
+        states[CALLBACK] = "COMPLETED"
+        terminal = error("terminal", INITIAL, "terminal")
+        terminal["error"]["message"] = "Recovery refused ambiguous committed output"
+        history.append(terminal)
+        await service.process_event("s", terminal)
+        await service.process_event("s", terminal)
+        assert not (await service.completed_turn("s"))["complete"]
+        running = await repo.get("ops.agent_sessions", "s")
+        assert running["status"] == "OPEN"
+        assert running["message_log"][0]["retry_count"] == 0
+        assert not running.get("pending_retry_event")
+        assert not posts
+
+        settings = service.settings
+        await service.close()
+        service = SessionService(repo, settings, None, http=http)
+        states[INITIAL] = "FAILED"
+        assert not (await service.completed_turn("s"))["complete"]
+        await service.process_event("s", terminal)
+        await service.completed_turn("s")
+        current = await repo.get("ops.agent_sessions", "s")
+        message = current["message_log"][0]
+        if refused:
+            assert not posts
+            assert current["status"] == "FAILED"
+            assert current["retired_message_ids"] == ["message"]
+            assert message["turn_status"] == "FAILED"
+            assert message["remote_event_id"] == INITIAL and message["retry_count"] == 0
+            assert message["terminal_failure"] == current["terminal_failure"]
+            assert current["terminal_failure"]["reason"] == "RECOVERY_REFUSED"
+            assert current["terminal_failure"]["queue_status"]["recovery_refused"] is True
+        else:
+            assert current["status"] == "OPEN"
+            assert message["remote_event_id"] == RETRY and message["retry_count"] == 1
+            assert [post["key"] for post in posts] == ["turn-retry:s:message"]
+    finally:
+        await service.close()
+        await http.aclose()
+
+
+async def test_polled_refusal_retires_only_its_owner_and_preserves_later_turn():
+    repo, service, http, states, posts, history = await setup({CALLBACK: {"recovery_refused": True}})
+    try:
+        session = await repo.get("ops.agent_sessions", "s")
+        original = session["message_log"][0]
+        original["payload"]["kind"] = "NEW_ITEM"
+        queued = {
+            **copy.deepcopy(original),
+            "message_id": "queued",
+            "remote_event_id": "queued-input",
+            "payload": {"kind": "SCOUT_REVIEW"},
+            "turn_status": "PENDING",
+        }
+        session["message_log"].append(queued)
+        await repo.put("ops.agent_sessions", "s", session)
+        await repo.put("ingest.source_items", "item", {"item_id": "item", "extraction_status": "PENDING"})
+        await repo.put(
+            "ops.tool_calls",
+            "s:unreturned-tool",
+            {
+                "call_id": "unreturned-tool",
+                "session_id": "s",
+                "native_turn_message_id": "message",
+                "status": "PENDING",
+            },
+        )
+        states["queued-input"] = "QUEUED"
+
+        assert not (await service.completed_turn("s"))["complete"]
+        current = await repo.get("ops.agent_sessions", "s")
+        assert current["status"] == "OPEN"
+        assert current["message_log"][0]["turn_status"] == "FAILED"
+        assert current["message_log"][0]["terminal_failure"]["execution_id"] == CALLBACK
+        assert current["message_log"][1] == queued
+        assert (await repo.get("ingest.source_items", "item"))["extraction_reason"] == "SESSION_FAILED"
+
+        await service.process_event("s", event("queued-running", "session.status_running", "queued-input"))
+        await service.process_event("s", error("late-terminal", CALLBACK, "terminal"))
+        assert (await repo.get("ops.agent_sessions", "s"))["active_message_id"] == "queued"
+        states["queued-input"] = "COMPLETED"
+        ended = event("queued-ended", "session.status_idle", "queued-input", stop_reason={"type": "end_turn"})
+        history.append(ended)
+        await service.process_event("s", ended)
+        assert (await service.completed_turn("s"))["complete"]
+        current = await repo.get("ops.agent_sessions", "s")
+        assert [row["turn_status"] for row in current["message_log"]] == ["FAILED", "DONE"]
+        assert "completion_checked" not in current["message_log"][0]
+        assert not posts
+    finally:
+        await service.close()
+        await http.aclose()
+
+
+async def test_refusal_of_superseded_attempt_cannot_fail_replacement():
+    repo, service, http, states, posts, history = await setup({CALLBACK: {"recovery_refused": True}})
+    try:
+        await service.process_event("s", error("old-exhausted", INITIAL, "exhausted"))
+        await service.process_event("s", event("replacement-running", "session.status_running", RETRY))
+        await service.process_event("s", error("old-terminal", CALLBACK, "terminal"))
+        assert not (await service.completed_turn("s"))["complete"]
+        session = await repo.get("ops.agent_sessions", "s")
+        assert session["status"] == "OPEN"
+        assert session["message_log"][0]["remote_event_id"] == RETRY
+        assert session["message_log"][0]["turn_status"] == "RUNNING"
+        assert not session.get("retired_message_ids")
+        assert not session.get("terminal_failure")
+
+        states[RETRY] = "COMPLETED"
+        ended = event("replacement-ended", "session.status_idle", RETRY, stop_reason={"type": "end_turn"})
+        history.append(ended)
+        await service.process_event("s", ended)
+        assert (await service.completed_turn("s"))["complete"]
+        assert [post["key"] for post in posts] == ["turn-retry:s:message"]
     finally:
         await service.close()
         await http.aclose()

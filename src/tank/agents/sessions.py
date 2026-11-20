@@ -78,6 +78,14 @@ def seen_key(event):
     return event["id"] + "|" + str(event.get("execution_id") or "")
 
 
+def recovery_refused(identity, projection):
+    return (
+        projection.get("execution_id") == identity
+        and projection.get("state") == projection.get("settled_outcome") == "FAILED"
+        and projection.get("recovery_refused") is True
+    )
+
+
 def material_event(event):
     """Whether a stream event can change Tank state (a refusal can arrive in any message)."""
     if event.get("type") in MATERIAL_EVENT_TYPES or event.get("finish_reason") == "content-filter":
@@ -964,7 +972,7 @@ class SessionService:
         signature = tuple(sorted(required))
         poll = self.execution_polls.get(session["session_id"], (0, 0.05, None))
         should_read = poll[2] != signature or time.monotonic() >= poll[0]
-        if verify_remote and required and not unknown and should_read:
+        if verify_remote and required and should_read:
             pending_read = sorted(
                 identity for identity in required if states.get(identity, {}).get("state") != "COMPLETED"
             )
@@ -1233,8 +1241,15 @@ class SessionService:
             session = await self.repo.get("ops.agent_sessions", sid)
         before = await self.execution_barrier(session, verify_remote=True)
         if not before["complete"]:
-            for identity in before.get("failed_input_ids", []):
-                if before["execution_states"][identity]["state"] == "FAILED":
+            states = before["execution_states"]
+            for identity in sorted(
+                before["failed_input_ids"],
+                key=lambda identity: not recovery_refused(identity, states[identity]),
+            ):
+                projection = states[identity]
+                if projection["state"] == "FAILED" and (
+                    not before["unidentified_inputs"] or recovery_refused(identity, projection)
+                ):
                     await self.process_event(
                         sid,
                         {
@@ -1242,7 +1257,7 @@ class SessionService:
                             "type": "execution.status_failed",
                             "execution_id": identity,
                             "source": "MANAGED_EXECUTION_STATUS",
-                            "queue_status": before["execution_states"][identity],
+                            "queue_status": projection,
                             **self.clock_timestamp().fields("processed_at"),
                         },
                     )
@@ -1308,6 +1323,7 @@ class SessionService:
             if (
                 payload.get("kind") in SOURCE_MESSAGE_KINDS
                 and payload.get("item_id")
+                and message["message_id"] not in session.get("retired_message_ids", [])
                 and not message.get("completion_checked")
             ):
                 message["completion_checked"] = True
@@ -2053,6 +2069,53 @@ class SessionService:
             elif live == old:
                 current[key] = copy.deepcopy(value)
 
+    async def fail_recovery_refused_turn(self, sid, identity):
+        async with self.repo.lock("session:" + sid):
+            session = await self.repo.get("ops.agent_sessions", sid)
+            projection = session.get("native_execution_states", {}).get(identity, {})
+            if not recovery_refused(identity, projection) or session.get("status") != "OPEN":
+                return
+            owner = await self.native_input_owner(session, identity)
+            if not owner or identity in session.get("superseded_native_inputs", {}):
+                return
+            message_id, attempt = owner
+            message = next(row for row in session["message_log"] if row["message_id"] == message_id)
+            retired = set(session.get("retired_message_ids", []))
+            if (
+                message_id in retired
+                or attempt != message.get("retry_count", 0)
+                or message.get("turn_status") in {"DONE", "FAILED"}
+            ):
+                return
+            failure = {
+                "event_id": "execution-status-failed:" + identity,
+                "event_type": "execution.status_failed",
+                "execution_id": identity,
+                "source": "MANAGED_EXECUTION_STATUS",
+                "reason": "RECOVERY_REFUSED",
+                "queue_status": copy.deepcopy(projection),
+                **self.clock_timestamp().fields("recorded_at"),
+            }
+            message.update(turn_status="FAILED", terminal_failure=failure)
+            retired.add(message_id)
+            session["retired_message_ids"] = sorted(retired)
+            if (session.get("pending_retry_event") or {}).get("_host_turn_message_id") == message_id:
+                session["pending_retry_event"] = None
+            if session.get("active_message_id") == message_id:
+                session.update(active_message_id=None, runtime_status="PENDING")
+            if not any(
+                row["message_id"] not in retired and row.get("turn_status") not in {"DONE", "FAILED"}
+                for row in session["message_log"]
+            ):
+                session.update(
+                    status="FAILED", runtime_status="IDLE", active_message_id=None, terminal_failure=failure
+                )
+            if item_id := (message.get("payload") or {}).get("item_id"):
+                await fail_with_session(self.repo, session, item_id, failure)
+            await self.repo.put("ops.agent_sessions", sid, session)
+            await session_progress(self.repo, self.settings, session)
+        await self.deliver_answers(sid)
+
     async def process_event(self, sid, event, seq=None):
         if event.get("type") in ("event_start", "event_delta") or not event.get("id"):
             return
@@ -2165,6 +2228,19 @@ class SessionService:
                 "session.status_terminated",
             }:
                 self.execution_polls.pop(sid, None)
+            identity = event.get("execution_id")
+            inactive_owner = identity in session.get("superseded_native_inputs", {})
+            refused = identity and recovery_refused(
+                identity, session.get("native_execution_states", {}).get(identity, {})
+            )
+            if kind == "execution.status_failed" and refused:
+                await self.fail_recovery_refused_turn(sid, identity)
+                return
+            native_error = event.get("error")
+            native_retry_status = native_error.get("retry_status") if isinstance(native_error, dict) else None
+            retry_type = native_retry_status.get("type") if isinstance(native_retry_status, dict) else None
+            native_retrying = kind == "session.error" and retry_type == "retrying"
+            defer_to_queue = kind == "session.error" and (retry_type == "terminal" or refused)
             if event.get("execution_id") and kind in {
                 "agent.custom_tool_use",
                 "session.status_running",
@@ -2174,9 +2250,18 @@ class SessionService:
             }:
                 owner = await self.native_input_owner(session, event["execution_id"])
                 if owner:
-                    session["active_message_id"] = owner[0]
+                    active_owner = next(
+                        row for row in session["message_log"] if row["message_id"] == owner[0]
+                    )
+                    inactive_owner = (
+                        inactive_owner
+                        or owner[0] in session.get("retired_message_ids", [])
+                        or owner[1] != active_owner.get("retry_count", 0)
+                    )
+                    if not inactive_owner and not defer_to_queue:
+                        session["active_message_id"] = owner[0]
                     event = dict(event, _host_turn_message_id=owner[0], _host_turn_retry_count=owner[1])
-                elif kind in {
+                elif not defer_to_queue and kind in {
                     "agent.custom_tool_use",
                     "session.error",
                     "execution.status_failed",
@@ -2193,7 +2278,7 @@ class SessionService:
                     and call.get("result", {}).get("is_event") is False
                 ):
                     session["no_event"] = True
-            elif kind == "session.status_running":
+            elif kind == "session.status_running" and not inactive_owner:
                 session["runtime_status"] = "RUNNING"
                 active = next(
                     (
@@ -2218,36 +2303,20 @@ class SessionService:
                 )
             elif kind == "span.model_request_end":
                 await self.usage(session, event)
-            superseded_failure = bool(
-                event.get("_host_turn_retry_count", 0)
-                < next(
-                    (
-                        row.get("retry_count", 0)
-                        for row in session.get("message_log", [])
-                        if row["message_id"] == event.get("_host_turn_message_id")
-                    ),
-                    0,
-                )
-                or event.get("execution_id")
-                and event["execution_id"] in session.get("superseded_native_inputs", {})
-            )
-            native_error = event.get("error")
-            native_retry_status = native_error.get("retry_status") if isinstance(native_error, dict) else None
-            native_retrying = (
-                kind == "session.error"
-                and isinstance(native_retry_status, dict)
-                and native_retry_status.get("type") == "retrying"
-            )
-            if not superseded_failure and (native_retrying or kind == "session.status_rescheduled"):
+            if not inactive_owner and (native_retrying or kind == "session.status_rescheduled"):
                 session["runtime_status"] = "PENDING"
-            if not superseded_failure and (
-                (kind == "session.error" and not native_retrying)
-                or kind in ("agent.refusal", "execution.status_failed")
-                or event.get("finish_reason") == "content-filter"
-                or any(
-                    block.get("type") == "refusal"
-                    for block in event.get("content", [])
-                    if isinstance(block, dict)
+            if (
+                not inactive_owner
+                and not defer_to_queue
+                and (
+                    (kind == "session.error" and not native_retrying)
+                    or kind in ("agent.refusal", "execution.status_failed")
+                    or event.get("finish_reason") == "content-filter"
+                    or any(
+                        block.get("type") == "refusal"
+                        for block in event.get("content", [])
+                        if isinstance(block, dict)
+                    )
                 )
             ):
                 active = next(

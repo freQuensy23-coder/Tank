@@ -336,6 +336,24 @@ function validateTtl(ttlMs: number): void {
   }
 }
 
+function claimEligibility(input: ClaimSessionExecution, claimedAt: number, alias = "") {
+  const prior = input.recoverFrom;
+  if (prior === undefined) {
+    return {
+      sql: `(${alias}state = 'queued' OR (${alias}state = 'running'
+        AND ${alias}lease_expires_at_ms <= ? AND ${alias}owner_id <> ?))`,
+      values: [claimedAt, input.ownerId],
+    };
+  }
+  return {
+    sql: `${alias}workspace_id = ? AND ${alias}session_id = ? AND ${alias}id = ?
+      AND ${alias}state = 'running' AND ${alias}lease_expires_at_ms <= ?
+      AND ${alias}owner_id = ? AND ${alias}attempt_id = ? AND ${alias}generation = ?`,
+    values: [prior.workspaceId, prior.sessionId, prior.executionId, claimedAt,
+      input.ownerId, prior.attemptId, prior.generation],
+  };
+}
+
 export interface SqlSessionExecutionStoreOptions {
   callbackContinuations?: boolean;
   /** Only checkpoint_restore enables this: all lanes of a Session share /workspace. */
@@ -439,7 +457,7 @@ export class SqlSessionExecutionStore
         if (!isCasConflict(error)) throw error;
       }
     }
-    const already = await this.findOwnedAttempt(input.ownerId, input.attemptId);
+    const already = await this.findOwnedAttempt(input);
     return already ?? { type: "empty" };
   }
 
@@ -447,6 +465,10 @@ export class SqlSessionExecutionStore
     validateTtl(input.leaseTtlMs);
     const claimedAt = timestamp(input.claimedAt, "claim");
     await this.sweepExpired(claimedAt);
+    if (input.recoverFrom !== undefined) {
+      const already = await this.findOwnedAttempt(input);
+      if (already !== null) return already;
+    }
     const serial = this.options.serializeSessionClaims === true;
     const candidate = this.options.callbackContinuations
       ? await this.selectContinuationCandidate(input, claimedAt, serial)
@@ -459,7 +481,7 @@ export class SqlSessionExecutionStore
       : await this.claimByRevision(input, claimedAt, candidate);
     if (claimed !== null)
       return claimed;
-    const already = await this.findOwnedAttempt(input.ownerId, input.attemptId);
+    const already = await this.findOwnedAttempt(input);
     if (already !== null)
       return already;
     throw new CasConflict({
@@ -470,13 +492,14 @@ export class SqlSessionExecutionStore
   }
 
   private async selectContinuationCandidate(input: ClaimSessionExecution, claimedAt: number, serial: boolean) {
+    const eligible = claimEligibility(input, claimedAt);
     const candidates = await this.sql.prepare(`SELECT ${columns()} FROM managed_session_executions
       WHERE (CAST(? AS VARCHAR(191)) IS NULL OR workspace_id = ?)
         AND (CAST(? AS VARCHAR(191)) IS NULL OR session_id = ?)
         AND (CAST(? AS VARCHAR(191)) IS NULL OR lane_id = ?)
-        AND (state = 'queued' OR (state = 'running' AND lease_expires_at_ms <= ? AND owner_id <> ?))
+        AND ${eligible.sql}
         AND attempt_count < max_attempts AND deadline_at_ms > ?
-      ORDER BY admitted_at_ms, id`).bind(input.workspaceId ?? null, input.workspaceId ?? null, input.sessionId ?? null, input.sessionId ?? null, input.laneId ?? null, input.laneId ?? null, claimedAt, input.ownerId, claimedAt).all<ExecutionRow>();
+      ORDER BY admitted_at_ms, id`).bind(input.workspaceId ?? null, input.workspaceId ?? null, input.sessionId ?? null, input.sessionId ?? null, input.laneId ?? null, input.laneId ?? null, ...eligible.values, claimedAt).all<ExecutionRow>();
     const ordered = (candidates.results ?? []).map(row => ({
       row,
       callback: (JSON.parse(row.events_json) as SessionExecution['events']).some(event => resultCallId(event) !== undefined)
@@ -500,9 +523,9 @@ export class SqlSessionExecutionStore
         await this.sql.prepare(`UPDATE managed_session_executions SET state = 'failed', settled_at_ms = ?,
           failure = 'Session was deleted before execution could continue', revision = revision + 1
           WHERE workspace_id = ? AND id = ? AND revision = ?
-            AND (state = 'queued' OR (state = 'running' AND lease_expires_at_ms <= ? AND owner_id <> ?))
+            AND ${eligible.sql}
             AND NOT EXISTS (SELECT 1 FROM managed_sessions WHERE workspace_id = ? AND id = ?)`)
-          .bind(claimedAt, row.workspace_id, row.id, row.revision, claimedAt, input.ownerId, row.workspace_id, row.session_id).run();
+          .bind(claimedAt, row.workspace_id, row.id, row.revision, ...eligible.values, row.workspace_id, row.session_id).run();
         continue;
       }
       const plan = planSessionContinuation(snapshot, row.id);
@@ -526,14 +549,14 @@ export class SqlSessionExecutionStore
     id: string;
     revision: number | string;
   } | null> {
+    const eligible = claimEligibility(input, claimedAt, "candidate.");
     return this.sql.prepare(`
       SELECT candidate.workspace_id, candidate.session_id, candidate.id, candidate.revision
         FROM managed_session_executions AS candidate
        WHERE (CAST(? AS VARCHAR(191)) IS NULL OR candidate.workspace_id = ?)
          AND (CAST(? AS VARCHAR(191)) IS NULL OR candidate.session_id = ?)
          AND (CAST(? AS VARCHAR(191)) IS NULL OR candidate.lane_id = ?)
-         AND (candidate.state = 'queued' OR (candidate.state = 'running'
-           AND candidate.lease_expires_at_ms <= ? AND candidate.owner_id <> ?))
+         AND ${eligible.sql}
          AND candidate.attempt_count < candidate.max_attempts
          AND candidate.deadline_at_ms > ?
          AND NOT EXISTS (
@@ -558,7 +581,7 @@ export class SqlSessionExecutionStore
       input.workspaceId ?? null, input.workspaceId ?? null,
       input.sessionId ?? null, input.sessionId ?? null,
       input.laneId ?? null, input.laneId ?? null,
-      claimedAt, input.ownerId, claimedAt,
+      ...eligible.values, claimedAt,
       ...(serial ? [claimedAt] : []),
     ).first<{
       workspace_id: string;
@@ -646,6 +669,7 @@ export class SqlSessionExecutionStore
     version: number;
     holderId: string;
   }) {
+    const eligible = claimEligibility(input, claimedAt);
     const leaseEnd = claimedAt + input.leaseTtlMs;
     return this.sql.prepare(`
       UPDATE managed_session_executions
@@ -656,8 +680,7 @@ export class SqlSessionExecutionStore
                WHEN ? < deadline_at_ms THEN ? ELSE deadline_at_ms END,
              settled_at_ms = NULL, failure = NULL, revision = revision + 1
        WHERE workspace_id = ? AND id = ? AND revision = ?
-         AND (state = 'queued' OR (state = 'running'
-           AND lease_expires_at_ms <= ? AND owner_id <> ?))
+         AND ${eligible.sql}
          AND attempt_count < max_attempts
          AND deadline_at_ms > ?
          ${candidate.continuation ? `AND EXISTS (
@@ -678,7 +701,7 @@ export class SqlSessionExecutionStore
               AND session_lock.holder_execution_id = ?
          )` : ""}
       RETURNING ${columns()}
-    `).bind(input.attemptId, input.ownerId, claimedAt, leaseEnd, leaseEnd, candidate.workspace_id, candidate.id, revision, claimedAt, input.ownerId, claimedAt, ...(candidate.continuation ? [candidate.workspace_id, candidate.session_id, candidate.continuation.revision,
+    `).bind(input.attemptId, input.ownerId, claimedAt, leaseEnd, leaseEnd, candidate.workspace_id, candidate.id, revision, ...eligible.values, claimedAt, ...(candidate.continuation ? [candidate.workspace_id, candidate.session_id, candidate.continuation.revision,
     candidate.workspace_id, candidate.session_id, candidate.id, claimedAt,
     ...(candidate.serial ? [] : [candidate.lane_id]),
     ...candidate.continuation.executions.flatMap(row => [candidate.workspace_id, row.id, row.revision])] : []), ...(lock ? [lock.workspaceId, lock.sessionId, lock.version, lock.holderId] : []));
@@ -688,14 +711,17 @@ export class SqlSessionExecutionStore
     return { type: "claimed", execution: toExecution(row), fence: toFence(row) };
   }
 
-  private async findOwnedAttempt(
-    ownerId: string,
-    attemptId: string,
-  ): Promise<ClaimSessionExecutionResult | null> {
+  private async findOwnedAttempt(input: ClaimSessionExecution): Promise<ClaimSessionExecutionResult | null> {
+    const prior = input.recoverFrom;
     const row = await this.sql.prepare(`
       SELECT ${columns()} FROM managed_session_executions
        WHERE owner_id = ? AND attempt_id = ? AND state = 'running'
-    `).bind(ownerId, attemptId).first<ExecutionRow>();
+       ${prior === undefined ? "" : `AND workspace_id = ? AND session_id = ? AND id = ?
+         AND generation = ? AND lease_expires_at_ms > ?`}
+    `).bind(input.ownerId, input.attemptId, ...(prior === undefined ? [] : [
+      prior.workspaceId, prior.sessionId, prior.executionId, prior.generation + 1,
+      timestamp(input.claimedAt, "claim"),
+    ])).first<ExecutionRow>();
     return row === null ? null : this.claimedResult(row);
   }
 

@@ -4,7 +4,6 @@ import { registerHooks } from 'node:module';
 import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { createHash, randomUUID } from 'node:crypto';
-import { createServer } from 'node:http';
 import { DatabaseSync } from 'node:sqlite';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -101,7 +100,7 @@ async function sandboxImage(root, marker) {
 }
 
 function boxHost() {
-  const boxes = new Map(), host = {boxes, removed: [], dieInCreate: null};
+  const boxes = new Map(), host = {boxes, removed: []};
   let next = 0;
   const named = name => [...boxes.values()].find(box => box.name === name) ?? null;
   const info = box => ({id: box.id, name: box.name, state: {status: box.running ? 'Running' : 'Stopped', running: box.running}});
@@ -127,9 +126,7 @@ function boxHost() {
     createBoxLiteProvider: options => ({
       async create(context) {
         const name = nameOf(options, context);
-        if (host.dieInCreate === 'before') await new Promise(() => {});
         const box = named(name) ?? host.put(name, options.allocationOptions().rootfsPath);
-        if (host.dieInCreate === 'after') await new Promise(() => {});
         box.running = true;
         return runtime(box);
       },
@@ -148,7 +145,10 @@ function boxHost() {
       boxes.delete(box.id); host.removed.push(box.id);
     }}}),
   };
-  const handle = box => ({id: box.id, name: box.name, info: () => info(box), async start() { box.running = true; }, async stop() { box.running = false; }});
+  const handle = box => ({id: box.id, name: box.name, info: () => info(box),
+    async start() { box.running = true; }, async stop() { box.running = false; },
+    async exec(command) { assert.equal(command, '/bin/sync'); return {async wait() { return {exitCode: 0}; }}; },
+  });
   host.client = {
     async getInfo(key) { const box = boxes.get(key) ?? named(key); return box ? info(box) : null; },
     async get(id) { const box = boxes.get(id); return box ? handle(box) : null; },
@@ -164,23 +164,19 @@ async function world(t) {
     for (const statement of readFileSync(join(migrations, name), 'utf8').split('--> statement-breakpoint')) if (statement.trim()) db.exec(statement);
   await ensureRuntimeResourceFenceSchema(sql);
   const requests = [];
-  const model = createServer((request, response) => {
-    let body = '';
-    request.on('data', chunk => { body += chunk; }).on('end', () => {
-      const received = JSON.parse(body), last = received.messages.at(-1).content.map(part => part.text).join('');
-      requests.push(received);
-      response.end(JSON.stringify(last.startsWith('sh: ') ? {run: last.slice(4)} : {text: 'answer to ' + last}));
-    });
-  });
-  await new Promise(resolve => model.listen(0, '127.0.0.1', resolve));
-  t.after(async () => { model.close(); db.close(); await rm(root, {recursive: true, force: true}); });
+  const model = body => {
+    const received = JSON.parse(body), last = received.messages.at(-1).content.map(part => part.text).join('');
+    requests.push(received);
+    return last.startsWith('sh: ') ? {run: last.slice(4)} : {text: 'answer to ' + last};
+  };
+  t.after(async () => { db.close(); await rm(root, {recursive: true, force: true}); });
   const created = Date.parse('2026-11-01T00:00:00.000Z'), iso = new Date(created).toISOString();
   const session = {id: sessionId, agent: {id: 'agent_A', description: null, mcpServers: [], model: {id: 'model_A'}, multiagent: null, name: 'Agent',
     skills: [], system: 'You are the trading agent.', tools: [], version: 1}, archivedAt: null, budget: null, createdAt: iso, environmentId,
     metadata: {}, outcomeEvaluations: [], resources: [], stats: {}, status: 'idle', title: null, updatedAt: iso, usage: {}, vaultIds: []};
   db.prepare(`INSERT INTO managed_sessions (id, workspace_id, document, revision, agent_id, agent_version, environment_id, status, created_at, updated_at)
     VALUES (?, ?, ?, 1, ?, 1, ?, 'idle', ?, ?)`).run(sessionId, workspaceId, JSON.stringify(session), session.agent.id, environmentId, created, created);
-  const state = {db, sql, root, requests, host: boxHost(), elapsedMs: 0, turn: 0, modelUrl: 'http://127.0.0.1:' + model.address().port,
+  const state = {db, sql, root, requests, host: boxHost(), elapsedMs: 0, turn: 0, model,
     environment: {id: environmentId, archivedAt: null, config: {type: 'self_hosted'}, createdAt: iso, description: null, metadata: {}, name: 'tank', updatedAt: iso}};
   state.now = () => new Date(Date.now() + state.elapsedMs);
   state.tick = () => new Date(created + (++state.turn) * 1000);
@@ -232,8 +228,7 @@ function node(state, rootfsPath) {
     buildTools: async () => ({}),
     buildHarness: () => ({run: async ctx => {
       const messages = await eventsToMessagesAsync(ctx.runtime.history.getEvents(), ctx.fileFetcher);
-      const response = await fetch(state.modelUrl, {method: 'POST', body: JSON.stringify({system: ctx.systemPrompt, messages})});
-      const reply = await response.json();
+      const reply = state.model(JSON.stringify({system: ctx.systemPrompt, messages}));
       ctx.runtime.broadcast({type: 'agent.message', content: [{type: 'text', text: reply.run ? await ctx.runtime.sandbox.exec(reply.run) : reply.text}]});
     }}),
     buildHarnessContext: async input => {
@@ -280,7 +275,15 @@ function node(state, rootfsPath) {
   return {send, execute, turn: async text => execute(await send(text))};
 }
 
-const restart = (state, rootfsPath) => { state.elapsedMs += 31000; state.host.dieInCreate = null; return node(state, rootfsPath); };
+const restart = (state, rootfsPath) => { state.elapsedMs += 31000; return node(state, rootfsPath); };
+async function seedInterruptedAllocation(state, image, hasResident) {
+  const previous = state.manifest();
+  await state.host.client.remove(previous.handle.runtimeId);
+  const resident = hasResident ? state.host.put(boxName, image) : null;
+  state.publishManifest({...previous, state: 'allocating', retired: [], handle: {provider: 'litebox', runtimeId: boxName},
+    identity: {...previous.identity, image: await executableImageIdentity(image)}});
+  return resident ? [resident.id] : [];
+}
 const said = request => request.messages.map(message => [message.role, message.content.map(part => part.text).join('')]);
 const earlier = [['user', 'remember the alpha plan'], ['assistant', 'answer to remember the alpha plan'],
   ['user', 'sh: printf %s alpha > /workspace/plan'], ['assistant', ''], ['user', 'sh: cat /workspace/plan'], ['assistant', 'alpha']];
@@ -296,8 +299,8 @@ async function conversation(t) {
   return state;
 }
 
-async function continues(state, current, {pending, reminded = true, gone = []} = {}) {
-  const request = pending ? await current.execute(pending) : await current.turn('what was the plan?');
+async function continues(state, current, {reminded = true, gone = []} = {}) {
+  const request = await current.turn('what was the plan?');
   assert.deepEqual(said(request), [...earlier, ['user', 'what was the plan?']]);
   assert.equal(request.system.startsWith('You are the trading agent.'), true);
   assert.equal(request.system.includes(reminder), reminded);
@@ -315,27 +318,18 @@ test('a retained runtime of an older image is replaced and the model still recei
   await continues(state, restart(state, await state.image('v2')), {gone: old});
 });
 
-for (const [name, dieInCreate, leftover] of [['after its runtime was created', 'after', 1], ['before its runtime was created', 'before', 0]]) {
+for (const [name, hasResident] of [['after its runtime was created', true], ['before its runtime was created', false]]) {
   test(`an allocation of an older image interrupted ${name} is replaced and the model still receives the earlier conversation`, async t => {
-    const state = await conversation(t), interrupted = restart(state, await state.image('v2'));
-    state.host.dieInCreate = dieInCreate;
-    const pending = await interrupted.send('what was the plan?');
-    void interrupted.execute(pending);
-    await t.waitFor(() => assert.equal(state.manifest().state, 'allocating'));
-    await t.waitFor(() => assert.equal(state.host.boxes.size, leftover));
-    const old = [...state.host.boxes.keys()];
-    await continues(state, restart(state, await state.image('v3')), {pending, gone: old});
+    const state = await conversation(t), image = await state.image('v2');
+    const old = await seedInterruptedAllocation(state, image, hasResident);
+    await continues(state, restart(state, await state.image('v3')), {gone: old});
   });
 }
 
 test('a replacement interrupted before its runtime was created continues after a restart with the same image', async t => {
-  const state = await conversation(t), image = await state.image('v2'), interrupted = restart(state, image);
-  state.host.dieInCreate = 'before';
-  const pending = await interrupted.send('what was the plan?');
-  void interrupted.execute(pending);
-  await t.waitFor(() => assert.equal(state.manifest().state, 'allocating'));
-  assert.equal(state.host.boxes.size, 0);
-  await continues(state, restart(state, image), {pending, reminded: false});
+  const state = await conversation(t), image = await state.image('v2');
+  await seedInterruptedAllocation(state, image, false);
+  await continues(state, restart(state, image), {reminded: false});
 });
 
 test('an interrupted upgrade of an older image is replaced and the model still receives the earlier conversation', async t => {

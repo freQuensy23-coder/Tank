@@ -8,6 +8,7 @@ import type { SessionsApplicationPort } from "../ports/sessions";
 export interface PublicSessionExecution {
   execution_id: string;
   state: "QUEUED" | "RUNNING" | "COMPLETED" | "FAILED" | "CANCELLED" | "UNKNOWN";
+  recovery_refused?: true;
   settled_outcome: "COMPLETED" | "FAILED" | "CANCELLED" | null;
 }
 export interface ManagedSessionExecutionsExtension {
@@ -18,6 +19,7 @@ const idsSchema = z.array(z.string().min(1).max(191)).min(1).max(64).refine(ids 
 const rowSchema = z.object({
   execution_id: z.string().min(1).max(191),
   state: z.enum(["QUEUED", "RUNNING", "COMPLETED", "FAILED", "CANCELLED", "UNKNOWN"]),
+  recovery_refused: z.literal(true).optional(),
   settled_outcome: z.enum(["COMPLETED", "FAILED", "CANCELLED"]).nullable(),
 }).strict();
 export function buildManagedSessionExecutionRoutes(sessions: ApplicationPortSource<SessionsApplicationPort>, extension: ManagedSessionExecutionsExtension): Hono {

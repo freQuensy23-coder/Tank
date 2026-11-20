@@ -12,6 +12,13 @@ const result=await store.list('tenant-a','session-a',['queued','running','comple
 assert.deepEqual(result.map(r=>r.state),['QUEUED','RUNNING','COMPLETED','FAILED','CANCELLED','UNKNOWN']);
 assert.deepEqual(result.map(r=>r.settled_outcome),[null,null,'COMPLETED','FAILED','CANCELLED',null]);
 assert(!JSON.stringify(result).includes('never-public'));
+const {ExecutionRecoveryRefusal,executionFailure}=await import(pathToFileURL(root+'/packages/control-plane-node/src/lib/execution-recovery-refusal.ts'));
+for(const [id,error,refused] of [['ambiguous',new ExecutionRecoveryRefusal('ambiguous output'),true],['ordinary',new Error(ExecutionRecoveryRefusal.code),false]]){
+  put(id,'failed','2026-10-18T23:00:00Z');
+  rows.get(id).failure=executionFailure(error);
+  const [row]=await store.list('tenant-a','session-a',[id]);
+  assert.deepEqual(row,{execution_id:id,state:'FAILED',settled_outcome:'FAILED',...(refused&&{recovery_refused:true})});
+}
 put('half-settled','completed',null);
 assert.equal((await store.list('tenant-a','session-a',['half-settled']))[0].state,'UNKNOWN');
 assert.equal((await store.list('tenant-b','session-a',['completed']))[0].state,'UNKNOWN');

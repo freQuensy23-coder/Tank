@@ -718,6 +718,7 @@ export async function createManagedNodeRuntime(foundation: NodeFoundation, compo
         managedRuntimeRunner.cancel({ workspaceId: input.workspaceId, sessionId: input.sessionId, reason: input.reason });
       },
     },
+    quiesceLostExecution: input => retainedLifecycle.quiesceLostTurn(input),
     ownerId: config.execution.ownerId,
     clock: { now: () => new Date() },
     ids: { nextAttemptId: () => `attempt_${nanoid()}` },

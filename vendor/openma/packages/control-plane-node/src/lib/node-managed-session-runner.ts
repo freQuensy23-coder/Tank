@@ -4,6 +4,7 @@ import {
   withSandboxExecutionGuard,
   type SandboxExecutor,
 } from "@open-managed-agents/sandbox";
+import { ExecutionRecoveryRefusal } from "./execution-recovery-refusal.js";
 import { randomUUID } from "node:crypto";
 import type {
   HarnessContext,
@@ -476,7 +477,7 @@ export class DefaultNodeManagedSessionRunner
         recoveryRefused = true;
         const cause = input.continuationPlan.failure ?? 'Original execution recovery refused ambiguous committed output';
         runtime.broadcastProducedEvent({ type: 'session.error', error: { type: 'unknown_error', message: cause, retryStatus: 'terminal' } });
-        throw new Error(cause);
+        throw new ExecutionRecoveryRefusal(cause);
       }
       if (["intake", "noop", "finalize"].includes(input.continuationPlan?.mode ?? ""))
         return phaseResult;

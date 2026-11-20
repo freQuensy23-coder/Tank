@@ -1,5 +1,6 @@
 const openmaSource = process.env.TANK_AUDIT_OPENMA_ROOT ? pathToFileURL(process.env.TANK_AUDIT_OPENMA_ROOT.replace(/\/?$/, '/')) : new URL('../../../vendor/openma/', import.meta.url);
 import { pathToFileURL } from 'node:url';
+import { createHash } from 'node:crypto';
 import { spawn } from 'node:child_process';
 import { Readable, Writable } from 'node:stream';
 import { test } from 'node:test';
@@ -11,6 +12,7 @@ const { pinnedBoxLiteProvider, RetainedBoxOperations } = await import(new URL('p
 const scope={workspaceId:'w',environmentId:'production',sessionId:'session',workId:'tank-retained-session-v1'};
 const fence={...scope,ownerId:'owner',generation:1,token:'FAKE_FENCE',expiresAt:'2099-01-01T00:00:00Z'};
 const signal=()=>new AbortController().signal;
+const name='oma-'+createHash('sha256').update('litebox:'+scope.sessionId).digest('hex').slice(0,32);
 test('public provider bridge resumes a fresh handle and reaps without resume or allocating secret env',async()=>{
   const calls=[];
   const module={
@@ -23,7 +25,7 @@ test('public provider bridge resumes a fresh handle and reaps without resume or 
   const allocation={image:'pinned:sha256',rootfsPath:'/readonly-oci',cpus:1,memoryMib:512,
     security:{jailerEnabled:false,seccompEnabled:false},
     network:{mode:'enabled',allowNet:['postgres','172.16.0.5']},volumes:[{hostPath:'/owned/session',guestPath:'/mnt/session/outputs'}]};
-  const p=pinnedBoxLiteProvider({module,client:{async getInfo(id){return id==='box'?{state:{running:false}}:null;}},allocation,leaseTtlMs:30000});
+  const p=pinnedBoxLiteProvider({module,client:{async getInfo(id){return id==='box'?{id,name,state:{running:false,status:'Stopped'}}:null;}},allocation,leaseTtlMs:30000});
   const first=await p.create(scope,fence,signal());await p.resume(first.runtimeHandle(),scope,fence,signal());
   await p.reap(first.runtimeHandle(),scope,fence,signal());
   assert.deepEqual(calls.map(x=>x[0]),['options','create','resume','reap']);
@@ -63,24 +65,31 @@ test('SimpleBox-compatible command/file bridge preserves current per-exec env an
     await assert.rejects(box.exec('id',[],{}, {user:'nobody'}),/retained_exec_user_not_supported/);
   } finally {for(const child of children){if(child.exitCode===null&&child.signalCode===null)child.kill('SIGKILL');}await Promise.all(children.map(child=>child.exitCode!==null||child.signalCode!==null?undefined:new Promise(resolve=>child.once('exit',resolve))));await rm(directory,{recursive:true,force:true});}
 });
-test('command timeout kills the native process rather than leaving background work',async()=>{
-  let killed=false;
+test('command timeout kills and drains the exact native process',async()=>{
+  let killed=false,exit;
+  const exited=new Promise(resolve=>{exit=resolve;});
   const box=new RetainedBoxOperations(async fn=>fn({async spawnDuplexProcess(){return {
-    stdin:new WritableStream(),stdout:new ReadableStream(),stderr:new ReadableStream(),exited:new Promise(()=>{}),
-    async kill(signal){assert.equal(signal,'SIGKILL');killed=true;},
+    stdin:new WritableStream(),stdout:new Response('').body,stderr:new Response('').body,exited,
+    async kill(signal){assert.equal(signal,'SIGKILL');killed=true;exit({code:137,signal});},
   };}}));
-  await assert.rejects(box.exec('blocked',[],{}, {timeoutSecs:0.005}),/retained_exec_timeout/);assert.equal(killed,true);
+  await assert.rejects(box.exec('blocked',[],{}, {timeoutSecs:0.005}),/retained_exec_timeout/);
+  assert.equal(killed,true);
 });
 
-test('crash recovery quiesces orphan processes then resumes using a second fresh native handle',async()=>{
+test('crash recovery stops the exact box before a single fresh resume',async()=>{
   const calls=[];
+  let running=true;
+  const info=()=>({id:'owned',name,state:{running,status:running?'Running':'Stopped'}});
+  const client={async getInfo(){return info();},async get(){return {id:'owned',name,info,
+    async exec(command){assert.equal(command,'/bin/sync');return {async wait(){return {exitCode:0};}};},
+    async stop(){calls.push('owned-stop');running=false;}};}};
   const module={
-    createBoxLiteProvider(){return {async create(){throw Error('never allocate');},async resume(){calls.push('fresh-resume');return {async suspend(){calls.push('owned-stop');}};}};},
+    createBoxLiteProvider(){return {async create(){throw Error('never allocate');},async resume(){calls.push('fresh-resume');}};},
     createBoxLiteManagedRuntime(){return {sandbox:{async reap(){throw Error('never remove retained disk');}}};},
   };
-  const p=pinnedBoxLiteProvider({module,client:{async getInfo(){return {state:{running:true}};}},allocation:{image:'pinned'},leaseTtlMs:30000,isCurrent:async()=>true});
+  const p=pinnedBoxLiteProvider({module,client,allocation:{image:'pinned'},leaseTtlMs:30000,isCurrent:async()=>true});
   await p.resume({provider:'litebox',runtimeId:'owned'},scope,fence,signal());
-  assert.deepEqual(calls,['fresh-resume','owned-stop','fresh-resume']);
+  assert.deepEqual(calls,['owned-stop','fresh-resume']);
 });
 
 test('unpublished existing native disk and missing published disk fail closed without provider allocation',async()=>{
@@ -109,62 +118,49 @@ test('leftover names only the runtime under the allocation name of the scope and
   await assert.rejects(p.leftover(scope,fence,aborted.signal),/cancelled/);
   assert.deepEqual(asked,[name,name,name]);assert.equal(effects,0);
 });
-test('unconfirmed timeout poisons all further guest I/O until fresh stopped/resumed runtime',async()=>{
-  const directory=await mkdtemp(join(tmpdir(),'tank-retained-poisoned-'));
-  let spawned=0,killCalled=false,releaseKill;
-  try {
-  const killPending=new Promise(resolve=>{releaseKill=resolve;});
-  const blocked={async spawnDuplexProcess(){spawned++;return {stdin:new WritableStream(),stdout:new ReadableStream(),stderr:new ReadableStream(),exited:new Promise(()=>{}),async kill(){killCalled=true;await killPending;}};},async readFileBytes(){assert.fail('poisoned read');}};
-  let runtime=blocked;
-  const box=new RetainedBoxOperations(async fn=>fn(runtime));
-  await assert.rejects(box.exec('blocked',[],{}, {timeoutSecs:0.005}),/retained_exec_timeout/);
-  assert.equal(killCalled,true);
-  await assert.rejects(box.exec('overlap',[]),/retained_runtime_requires_stop/);
-  await assert.rejects(box.copyOut('/workspace/raw',join(directory,'unused')),/retained_runtime_requires_stop/);
-  assert.equal(spawned,1);
-  releaseKill();runtime={async spawnDuplexProcess(){spawned++;return {stdin:new WritableStream(),stdout:new Response('fresh').body,stderr:new Response('').body,exited:Promise.resolve({code:0,signal:null}),async kill(){}};}};
-  assert.equal((await box.exec('fresh',[])).stdout,'fresh');assert.equal(spawned,2);
-  } finally {releaseKill?.();await rm(directory,{recursive:true,force:true});}
-});
-
-test('one original deadline bounds deferred spawn and kills its late exact process without stdin or overlap',{timeout:1500},async()=>{
-  let resolveSpawn,releaseKill,rejectExit,spawned=0,killed=0,closed=0,cancelled=0;
+test('timeout poisons the runtime while deferred spawn and native kill drain',async()=>{
+  let resolveSpawn,releaseKill,rejectExit,spawned=0,closed=0,killStarted;
   const pendingSpawn=new Promise(resolve=>{resolveSpawn=resolve;});
   const killPending=new Promise(resolve=>{releaseKill=resolve;});
-  const exit=new Promise((_,reject)=>{rejectExit=reject;});
+  const killing=new Promise(resolve=>{killStarted=resolve;});
+  const exited=new Promise((_,reject)=>{rejectExit=reject;});
   const runtime={async spawnDuplexProcess(){spawned++;return pendingSpawn;}};
   const box=new RetainedBoxOperations(async fn=>fn(runtime));
-  const started=performance.now();
-  await assert.rejects(box.exec('late-spawn',[],{}, {timeoutSecs:0.01}),/retained_exec_timeout/);
-  assert.ok(performance.now()-started<500,'spawn acknowledgement must not escape the original deadline');
+  let settled=false;
+  const failed=assert.rejects(box.exec('late-spawn',[],{}, {timeoutSecs:0.01}),/retained_exec_timeout/).then(()=>{settled=true;});
+  await new Promise(resolve=>setTimeout(resolve,30));
+  assert.equal(settled,false);
   await assert.rejects(box.exec('overlap-before-spawn',[]),/retained_runtime_requires_stop/);
-  resolveSpawn({stdin:new WritableStream({close(){closed++;}}),
-    stdout:new ReadableStream({cancel(){cancelled++;}}),stderr:new ReadableStream({cancel(){cancelled++;}}),
-    exited:exit,async kill(signal){assert.equal(signal,'SIGKILL');killed++;await killPending;}});
-  await new Promise(resolve=>setImmediate(resolve));
-  assert.equal(killed,1);assert.equal(closed,0);assert.equal(cancelled,2);
+  resolveSpawn({stdin:new WritableStream({close(){closed++;}}),stdout:new Response('').body,stderr:new Response('').body,
+    exited,async kill(signal){assert.equal(signal,'SIGKILL');killStarted();await killPending;}});
+  await killing;
   await assert.rejects(box.exec('overlap-after-late-spawn',[]),/retained_runtime_requires_stop/);
-  assert.equal(spawned,1);releaseKill();rejectExit(Error('late native exit rejection consumed'));
-  await new Promise(resolve=>setImmediate(resolve));
+  assert.equal(closed,0);assert.equal(spawned,1);assert.equal(settled,false);
+  releaseKill();rejectExit(Error('late native exit rejection consumed'));
+  await failed;
 });
 
-test('one original deadline bounds deferred stdin close and refuses new I/O while kill and exit remain unconfirmed',{timeout:1500},async()=>{
-  let releaseClose,releaseKill,resolveExit,spawned=0,killed=0,closeStarted=false;
+test('timed-out stdin close, kill and exit must all drain before returning',async()=>{
+  let releaseClose,releaseKill,resolveExit,killStarted;
   const closePending=new Promise(resolve=>{releaseClose=resolve;});
   const killPending=new Promise(resolve=>{releaseKill=resolve;});
+  const killing=new Promise(resolve=>{killStarted=resolve;});
   const exited=new Promise(resolve=>{resolveExit=resolve;});
-  const runtime={async spawnDuplexProcess(){spawned++;return {
-    stdin:new WritableStream({async close(){closeStarted=true;await closePending;}}),
-    stdout:new Response('already produced output').body,stderr:new Response('').body,exited,
-    async kill(){killed++;await killPending;},
+  const runtime={async spawnDuplexProcess(){return {
+    stdin:new WritableStream({close(){return closePending;}}),
+    stdout:new Response('').body,stderr:new Response('').body,exited,
+    async kill(){killStarted();await killPending;},
   };}};
   const box=new RetainedBoxOperations(async fn=>fn(runtime));
-  const started=performance.now();
-  await assert.rejects(box.exec('stdin-stalled',[],{}, {timeoutSecs:0.01}),/retained_exec_timeout/);
-  assert.ok(closeStarted);assert.ok(performance.now()-started<500,'stdin close must not extend the requested deadline');
-  assert.equal(killed,1);await assert.rejects(box.exec('overlap',[]),/retained_runtime_requires_stop/);assert.equal(spawned,1);
-  releaseClose();releaseKill();resolveExit({code:137,signal:'SIGKILL'});
+  let settled=false;
+  const failed=assert.rejects(box.exec('stdin-stalled',[],{}, {timeoutSecs:0.01}),/retained_exec_timeout/).then(()=>{settled=true;});
+  await killing;
+  await assert.rejects(box.exec('overlap',[]),/retained_runtime_requires_stop/);
+  releaseKill();resolveExit({code:137,signal:'SIGKILL'});
   await new Promise(resolve=>setImmediate(resolve));
+  assert.equal(settled,false);
+  releaseClose();
+  await failed;
   await assert.rejects(box.exec('still-poisoned-after-ack',[]),/retained_runtime_requires_stop/);
 });
 

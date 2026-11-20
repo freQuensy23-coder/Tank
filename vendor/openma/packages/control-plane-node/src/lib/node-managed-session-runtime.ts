@@ -376,6 +376,7 @@ export class DefaultNodeManagedSessionRuntimeDriver
       return phase;
     }
     finally {
+      if (fence !== undefined) await this.outputChains.get(input)?.catch(() => undefined);
       if (this.startAborts.get(input) === abortController) {
         this.startAborts.delete(input);
       }

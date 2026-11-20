@@ -1,5 +1,6 @@
 const openmaSource = process.env.TANK_AUDIT_OPENMA_ROOT ? pathToFileURL(process.env.TANK_AUDIT_OPENMA_ROOT.replace(/\/?$/, '/')) : new URL('../../../vendor/openma/', import.meta.url);
 import { pathToFileURL } from 'node:url';
+import { createHash } from 'node:crypto';
 import { registerHooks } from 'node:module';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -29,7 +30,20 @@ function fixture() {
     };},
     createBoxLiteManagedRuntime(){return {sandbox:{async reap({lease,scope}){await s.provider.reap(lease,scope);}}};},
   };
-  const lifecycle=(changes={})=>new NodeRetainedLifecycle({fences:s.fences,providerModule:module,client:{async getInfo(id){const disk=s.disks.get(id);return disk?{state:{running:disk.running}}:null;}},ownerId:'controller',leaseTtlMs:30000,
+  const name='oma-'+createHash('sha256').update('litebox:session_A').digest('hex').slice(0,32);
+  const client={
+    async getInfo(id){
+      const disk=s.disks.get(id)??(id===name?[...s.disks.values()][0]:undefined);
+      return disk?{id:disk.id,name,state:{running:disk.running,status:disk.running?'Running':'Stopped'}}:null;
+    },
+    async get(id){
+      const disk=s.disks.get(id);
+      return disk?{id,name,info:()=>client.getInfo(id),
+        async exec(command){assert.equal(command,'/bin/sync');return {async wait(){return {exitCode:0};}};},
+        async stop(){s.calls.push(['stop',id]);disk.running=false;}}:null;
+    },
+  };
+  const lifecycle=(changes={})=>new NodeRetainedLifecycle({fences:s.fences,providerModule:module,client,ownerId:'controller',leaseTtlMs:30000,
     fingerprint:async()=>s.options.fingerprint,assertExecutionCurrent:async fence=>{assert.equal(fence.current,true);},...changes});
   const allocation={image:'image-pinned',cpus:1,memoryMib:512,network:{mode:'enabled'},volumes:[]};
   const sandbox=()=>new class {
@@ -38,8 +52,9 @@ function fixture() {
     async exec(command,key){this.box??=await this.factory(allocation);return this.box.exec(command,[],{OPENROUTER_API_KEY:key});}
   }();
   const context=sb=>({workspaceId:'workspace_A',sessionId:'session_A',session:{id:'session_A',environmentId:'production_A'},
-    environment:{id:'production_A'},sandbox:sb,executionFence:{current:true}});
-  return {...s,allocations,allocation,lifecycle,sandbox,context};
+    environment:{id:'production_A'},sandbox:sb,executionFence:{current:true,workspaceId:'workspace_A',sessionId:'session_A',
+      executionId:'exec_A',attemptId:'attempt_A',ownerId:'worker',generation:1}});
+  return {...s,allocations,allocation,lifecycle,sandbox,context,client};
 }
 
 test('runner bind is lazy, preserves per-exec hooks and same disk across two turns and controller replacement',async()=>{
@@ -47,9 +62,10 @@ test('runner bind is lazy, preserves per-exec hooks and same disk across two tur
   await manager.bind(ctx);assert.equal(s.disks.size,0);
   assert.equal((await sandbox.exec('write','FAKE_FIRST')).stdout,'FAKE_FIRST');
   await manager.idle(ctx);assert.equal([...s.disks.values()][0].running,false);
-  await manager.bind({...ctx,executionFence:{current:true}});
+  const next={...ctx,executionFence:{current:true}};
+  await manager.bind(next);
   assert.deepEqual(JSON.parse((await sandbox.exec('read','FAKE_SECOND')).stdout),{workspace:'persisted',profile:'saved',key:'FAKE_SECOND'});
-  await manager.idle(ctx);
+  await manager.idle(next);
   const replacement=s.lifecycle(),newSandbox=s.sandbox(),newContext=s.context(newSandbox);
   await replacement.bind(newContext);
   assert.equal(JSON.parse((await newSandbox.exec('read','FAKE_ROTATED')).stdout).profile,'saved');
@@ -105,28 +121,142 @@ for(const failure of ['publish','release'])test(`new native turn finalizes stopp
   assert.equal(s.nativeHandles.length,2);await manager.idle(next);
 });
 
-test('lost native execution finalization abandons only current resource and allows next native turn',async()=>{
+function recovery(ctx) {
+  return {fence:{...ctx.executionFence},context:ctx,
+    currentFence:{...ctx.executionFence,attemptId:'attempt_B',generation:2,current:true}};
+}
+
+test('lost native execution waits for successor authority and stops only the published resident',async()=>{
   const s=fixture(),manager=s.lifecycle(),sandbox=s.sandbox(),ctx=s.context(sandbox);
   await manager.bind(ctx);await sandbox.exec('write','FAKE_FIRST');
-  const publication=JSON.stringify([...s.rows.values()][0].publication);
+  const row=[...s.rows.values()][0],publication=JSON.stringify(row.publication);
+  ctx.executionFence.current=false;
+  row.active=false;
+  await manager.abandon(ctx);
+  assert.equal([...s.disks.values()][0].running,true);
+  assert.equal([...s.rows.values()][0].active,false);
+  const input=recovery(ctx);
+  await assert.rejects(manager.quiesceLostTurn({...input,currentFence:undefined}),/retained_recovery_execution_fence_required/);
+  await assert.rejects(s.lifecycle().bind(s.context(s.sandbox())),/retained_previous_turn_not_quiescent/);
+  await manager.quiesceLostTurn(input);
+  assert.equal([...s.disks.values()][0].running,false);
+  assert.equal(JSON.stringify([...s.rows.values()][0].publication),publication);
+  assert.equal(s.nativeHandles.length,1);
+  const next={...ctx,executionFence:input.currentFence};
+  await manager.bind(next);
+  assert.equal(JSON.parse((await sandbox.exec('read','FAKE_SECOND')).stdout).workspace,'persisted');
+  await manager.idle(next);
+  assert.equal(s.nativeHandles.length,2);
+});
+
+test('lost recovery refuses changed publication and rechecks both fences after native awaits',async()=>{
+  const s=fixture(),manager=s.lifecycle(),sandbox=s.sandbox(),ctx=s.context(sandbox);
+  await manager.bind(ctx);await sandbox.exec('write','FAKE_FIRST');
   ctx.executionFence.current=false;
   await manager.abandon(ctx);
-  assert.equal([...s.disks.values()][0].running,false);
-  assert.equal([...s.rows.values()][0].active,false);
-  assert.equal(JSON.stringify([...s.rows.values()][0].publication),publication);
-  const next={...ctx,executionFence:{current:true}};
-  await manager.bind(next);await sandbox.exec('read','FAKE_SECOND');await manager.idle(next);
-  assert.equal(s.nativeHandles.length,2);
+  const input=recovery(ctx),row=[...s.rows.values()][0],original=structuredClone(row.publication);
+  row.publication.workspaceCandidate.id='replacement';
+  await assert.rejects(manager.quiesceLostTurn(input),/retained_recovery_publication_changed/);
+  const currentRow=()=>[...s.rows.values()][0];
+  currentRow().publication=original;
+  const get=s.client.get.bind(s.client);
+  let loseResource=true;
+  s.client.get=async id=>{
+    const box=await get(id);
+    if(loseResource)currentRow().active=false;
+    else input.currentFence.current=false;
+    return box;
+  };
+  await assert.rejects(manager.quiesceLostTurn(input),/retained_fence_lost/);
+  loseResource=false;
+  await assert.rejects(manager.quiesceLostTurn(input));
+  assert.equal(s.calls.filter(call=>call[0]==='stop').length,0);
+  assert.equal(s.disks.get('box_1').running,true);
+  s.client.get=get;
+  input.currentFence.current=true;
+  await manager.quiesceLostTurn(input);
+  assert.equal(s.disks.get('box_1').running,false);
+});
+
+test('lost recovery independently verifies the stopped resident and retries without stopping a replacement',async()=>{
+  const s=fixture(),manager=s.lifecycle(),sandbox=s.sandbox(),ctx=s.context(sandbox);
+  await manager.bind(ctx);await sandbox.exec('write','FAKE_FIRST');
+  ctx.executionFence.current=false;
+  await manager.abandon(ctx);
+  const input=recovery(ctx),getInfo=s.client.getInfo.bind(s.client);
+  s.client.getInfo=async id=>{
+    const info=await getInfo(id);
+    return info?.state.running===false?{...info,id:'different-incarnation'}:info;
+  };
+  await assert.rejects(manager.quiesceLostTurn(input),/retained_recovery_resident_changed/);
+  assert.deepEqual(s.calls.filter(call=>call[0]==='stop'),[['stop','box_1']]);
+  assert.equal(s.disks.size,1);
+  await assert.rejects(manager.quiesceLostTurn(input),/retained_recovery_resident_changed/);
+  assert.deepEqual(s.calls.filter(call=>call[0]==='stop'),[['stop','box_1']]);
+  s.client.getInfo=getInfo;
+  await manager.quiesceLostTurn(input);
+  assert.deepEqual(s.calls.filter(call=>call[0]==='stop'),[['stop','box_1']]);
+});
+
+test('archive across controllers waits for lazy start and refuses a live owner',async()=>{
+  const s=fixture(),manager=s.lifecycle(),other=s.lifecycle(),sandbox=s.sandbox(),ctx=s.context(sandbox);
+  let release,start,archived=false;
+  const ready=new Promise(resolve=>{start=resolve;});
+  const pending=new Promise(resolve=>{release=resolve;});
+  const create=s.provider.create.bind(s.provider);
+  s.provider.create=async scope=>{start();await pending;return create(scope);};
+  await manager.bind(ctx);
+  const startup=sandbox.factory(s.allocation);
+  await ready;
+  const final=assert.rejects(other.archive({...ctx,reason:'archived'}),/retained_previous_turn_not_quiescent/)
+    .then(()=>{archived=true;});
+  await new Promise(resolve=>setImmediate(resolve));
+  assert.equal(archived,false);
+  release();await startup;await final;
+  await manager.idle(ctx);
+  await other.archive({...ctx,reason:'archived'});
+  assert.equal(s.disks.size,0);
 });
 
 test('lost execution stops heartbeat even when release acknowledgement fails',async()=>{
   const s=fixture(),manager=s.lifecycle({leaseTtlMs:300}),sandbox=s.sandbox(),ctx=s.context(sandbox);
   await manager.bind(ctx);await sandbox.exec('write','FAKE_FIRST');
-  let renewals=0;const renew=s.fences.renew.bind(s.fences);s.fences.renew=async input=>{renewals++;return renew(input);};
+  let renewals=0;const renew=s.fences.renew.bind(s.fences),release=s.fences.release.bind(s.fences);
+  s.fences.renew=async input=>{renewals++;return renew(input);};
   s.fences.release=async()=>{throw Error('release unavailable');};ctx.executionFence.current=false;
   await assert.rejects(manager.abandon(ctx),/release unavailable/);
   const afterAbandon=renewals;await new Promise(resolve=>setTimeout(resolve,130));
-  assert.equal(renewals,afterAbandon);assert.equal([...s.disks.values()][0].running,false);
+  assert.equal(renewals,afterAbandon);assert.equal([...s.disks.values()][0].running,true);
+  s.fences.release=release;
+  await manager.quiesceLostTurn(recovery(ctx));
+});
+
+test('archive stays behind guest timeout drain and exact idle stop',async()=>{
+  const s=fixture(),manager=s.lifecycle(),sandbox=s.sandbox(),ctx=s.context(sandbox);
+  let spawn,spawnStarted,kill,killStarted,exit,archived=false;
+  const spawned=new Promise(resolve=>{spawn=resolve;});
+  const starting=new Promise(resolve=>{spawnStarted=resolve;});
+  const killed=new Promise(resolve=>{kill=resolve;});
+  const killing=new Promise(resolve=>{killStarted=resolve;});
+  const exited=new Promise(resolve=>{exit=resolve;});
+  await manager.bind(ctx);
+  const box=await sandbox.factory(s.allocation);
+  s.nativeHandles[0].spawnDuplexProcess=async()=>{spawnStarted();return spawned;};
+  const failed=assert.rejects(box.exec('late',[],{}, {timeoutSecs:0.005}),/retained_exec_timeout/);
+  await starting;
+  await new Promise(resolve=>setTimeout(resolve,20));
+  const final=manager.archive({...ctx,reason:'archived'}).then(()=>{archived=true;});
+  await new Promise(resolve=>setImmediate(resolve));
+  assert.equal(archived,false);
+  spawn({stdin:new WritableStream(),stdout:new Response('').body,stderr:new Response('').body,
+    exited,async kill(){killStarted();await killed;}});
+  await killing;
+  await new Promise(resolve=>setImmediate(resolve));
+  assert.equal(archived,false);
+  assert.equal(s.calls.some(call=>call[0]==='stop'),false);
+  kill();exit({code:137,signal:'SIGKILL'});
+  await failed;await final;
+  assert.deepEqual(s.calls.filter(call=>['stop','remove-owned'].includes(call[0])),[['stop','box_1'],['remove-owned','box_1']]);
 });
 
 test('warm current-prefix metadata advances preserve allocation/workspace and stale or swapped bindings fail',async()=>{

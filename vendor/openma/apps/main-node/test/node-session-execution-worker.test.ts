@@ -10,6 +10,9 @@ import {
   ensureSessionExecutionCoordinatorSchema,
   SqlSessionExecutionCoordinator,
 } from "@open-managed-agents/session-runtime-sql/coordination";
+import { planSessionContinuation } from "@open-managed-agents/session-runtime-contract/continuation";
+import { encodeSessionEventDocument } from "@open-managed-agents/session-runtime-contract/history";
+import { loadSessionContinuationSnapshot } from "@open-managed-agents/session-runtime-sql/continuation";
 import { createBetterSqlite3SqlClient } from "@open-managed-agents/sql-client";
 import { ConnectionLost, Deadlock } from "@open-managed-agents/sql-client/db-errors";
 import {
@@ -89,6 +92,7 @@ function accepted(id: string, type: "user.message" | "user.interrupt" = "user.me
 
 describe("NodeSessionExecutionWorker", () => {
   let now: Date;
+  let sql: Awaited<ReturnType<typeof createBetterSqlite3SqlClient>>;
   let coordinator: SqlSessionExecutionCoordinator;
   let context: SessionExecutionContextSourcePort;
   let runs: RunNodeSessionExecution[];
@@ -97,7 +101,7 @@ describe("NodeSessionExecutionWorker", () => {
 
   beforeEach(async () => {
     now = new Date("2026-09-04T00:00:02.000Z");
-    const sql = await createBetterSqlite3SqlClient(":memory:");
+    sql = await createBetterSqlite3SqlClient(":memory:");
     await ensureSessionExecutionCoordinatorSchema(sql);
     coordinator = new SqlSessionExecutionCoordinator(sql);
     context = {
@@ -210,6 +214,183 @@ describe("NodeSessionExecutionWorker", () => {
       ownerId: "replacement",
       generation: 2,
     });
+  });
+
+  it("recovers the exact local attempt only after runtime, cancellation and retained VM drain", async () => {
+    await sql.exec(`
+      CREATE TABLE managed_sessions (workspace_id TEXT, id TEXT, revision INTEGER, archived_at INTEGER);
+      CREATE TABLE managed_session_initial_events (workspace_id TEXT, session_id TEXT, document TEXT, sequence INTEGER);
+      CREATE TABLE managed_session_events (workspace_id TEXT, session_id TEXT, document TEXT, processed_at INTEGER, id TEXT);
+      INSERT INTO managed_sessions VALUES ('workspace_01', 'session_01', 1, NULL);
+      INSERT INTO managed_sessions VALUES ('workspace_01', 'another_session', 1, NULL);
+    `);
+    coordinator = new SqlSessionExecutionCoordinator(sql, {
+      callbackContinuations: true,
+      serializeSessionClaims: true,
+    });
+    const running = Promise.withResolvers<void>();
+    const runtimeDrained = Promise.withResolvers<void>();
+    const cancelling = Promise.withResolvers<void>();
+    const cancellationDrained = Promise.withResolvers<void>();
+    const quiescing = Promise.withResolvers<void>();
+    const quiesced = Promise.withResolvers<void>();
+    const plans: string[] = [];
+    runtime.run = async (input) => {
+      const snapshot = await loadSessionContinuationSnapshot(sql, input);
+      plans.push(planSessionContinuation(snapshot, input.executionId).mode);
+      runs.push(structuredClone(input));
+      if (runs.length === 1) {
+        running.resolve();
+        await runtimeDrained.promise;
+      }
+    };
+    runtime.cancel = async ({ reason }) => {
+      cancellations.push(reason);
+      cancelling.resolve();
+      await cancellationDrained.promise;
+    };
+    const executor = worker("owner:arbitrary", {
+      maxConcurrent: 1,
+      heartbeatIntervalMs: 10,
+      leaseTtlMs: 100,
+      quiesceLostExecution: async ({ fence, currentFence }) => {
+        expect(fence).toMatchObject({ executionId: "original", generation: 1 });
+        expect(currentFence).toMatchObject({ executionId: "original", generation: 2 });
+        quiescing.resolve();
+        await quiesced.promise;
+      },
+    });
+
+    await executor.sessionEventsAccepted(accepted("original"));
+    await running.promise;
+    const completedOutput = {
+      id: "committed_idle",
+      type: "session.status_idle",
+      stopReason: { type: "end_turn" },
+      processedAt: now.toISOString(),
+    } as const;
+    await sql.prepare(`INSERT INTO managed_session_events VALUES (?, ?, ?, ?, ?)`)
+      .bind("workspace_01", session.id,
+        encodeSessionEventDocument(completedOutput, { revision: 1, index: 0 }, "original"),
+        now.getTime(), completedOutput.id)
+      .run();
+    await executor.sessionEventsAccepted({ ...accepted("a_other"), sessionId: "another_session" });
+    now = new Date(now.getTime() + 100);
+    await cancelling.promise;
+    await executor.poll();
+    expect(runs.map(({ executionId }) => executionId)).toEqual(["original"]);
+
+    runtimeDrained.resolve();
+    await executor.poll();
+    expect(runs.map(({ executionId }) => executionId)).toEqual(["original"]);
+    cancellationDrained.resolve();
+    await quiescing.promise;
+    expect(runs.map(({ executionId }) => executionId)).toEqual(["original"]);
+    quiesced.resolve();
+    await executor.waitForIdle();
+
+    expect(cancellations).toEqual(["lease_lost"]);
+    expect(plans).toEqual(["model", "finalize", "model"]);
+    expect(runs.map(({ executionId, fence }) => [executionId, fence.ownerId, fence.generation])).toEqual([
+      ["original", "owner:arbitrary", 1],
+      ["original", "owner:arbitrary", 2],
+      ["a_other", "owner:arbitrary", 1],
+    ]);
+    expect(runs[1]?.fence.attemptId).not.toBe(runs[0]?.fence.attemptId);
+  });
+
+  it("reserves the slot while a competing owner is executing the lost attempt", async () => {
+    const running = Promise.withResolvers<void>();
+    const runtimeDrained = Promise.withResolvers<void>();
+    const cancelling = Promise.withResolvers<void>();
+    runtime.run = async (input) => {
+      runs.push(structuredClone(input));
+      if (runs.length === 1) {
+        running.resolve();
+        await runtimeDrained.promise;
+      }
+    };
+    runtime.cancel = async () => { cancelling.resolve(); };
+    const executor = worker("node_a", {
+      maxConcurrent: 1,
+      heartbeatIntervalMs: 10,
+      leaseTtlMs: 100,
+      quiesceLostExecution: async () => {},
+    });
+    await executor.sessionEventsAccepted(accepted("original"));
+    await running.promise;
+    now = new Date(now.getTime() + 100);
+    const competing = await coordinator.claim({
+      ownerId: "node_b",
+      attemptId: "competing",
+      claimedAt: now.toISOString(),
+      leaseTtlMs: 100,
+    });
+    expect(competing.type).toBe("claimed");
+    if (competing.type !== "claimed") throw new Error("Competing claim failed");
+    await executor.sessionEventsAccepted({ ...accepted("a_other"), sessionId: "another_session" });
+    await cancelling.promise;
+    runtimeDrained.resolve();
+    await executor.waitForIdle();
+    expect(runs.map(({ executionId }) => executionId)).toEqual(["original"]);
+
+    await coordinator.settle({
+      fence: competing.fence,
+      settledAt: now.toISOString(),
+      outcome: "completed",
+    });
+    await executor.waitForIdle();
+    expect(runs.map(({ executionId }) => executionId)).toEqual(["original", "a_other"]);
+  });
+
+  it("holds the slot on unknown quiescence failure", async () => {
+    const running = Promise.withResolvers<void>();
+    const runtimeDrained = Promise.withResolvers<void>();
+    runtime.run = async (input) => {
+      runs.push(structuredClone(input));
+      running.resolve();
+      await runtimeDrained.promise;
+    };
+    const errors: string[] = [];
+    const handoffs: number[] = [];
+    const executor = worker("node_a", {
+      maxConcurrent: 1,
+      onError: (error) => errors.push(error.message),
+      quiesceLostExecution: async ({ fence, currentFence }) => {
+        expect(fence.generation).toBe(1);
+        if (currentFence !== undefined) handoffs.push(currentFence.generation);
+        throw new Error("quiescence unknown");
+      },
+    });
+    const original = accepted("original");
+    await coordinator.admit({
+      execution: {
+        id: "original",
+        workspaceId: original.workspaceId,
+        sessionId: original.sessionId,
+        admittedAt: now.toISOString(),
+        events: [...original.events],
+      },
+      policy: { maxAttempts: 3, timeoutMs: 120_000 },
+    });
+    await executor.poll();
+    await running.promise;
+    await executor.sessionEventsAccepted({ ...accepted("a_other"), sessionId: "another_session" });
+    now = new Date(now.getTime() + 30_000);
+    runtimeDrained.resolve();
+    await executor.waitForIdle();
+    expect(errors).toContain("quiescence unknown");
+    expect(handoffs).toEqual([2]);
+    now = new Date(now.getTime() + 30_000);
+    await executor.waitForIdle();
+    expect(handoffs).toEqual([2, 3]);
+    now = new Date(now.getTime() + 30_000);
+    await expect(executor.poll()).rejects.toThrow("quiescence unknown");
+    await expect(coordinator.find({
+      workspaceId: original.workspaceId,
+      executionId: "original",
+    })).resolves.toMatchObject({ state: "failed", attemptCount: 3 });
+    expect(runs.map(({ executionId }) => executionId)).toEqual(["original"]);
   });
 
   it("turns a cross-replica interrupt into a durable signal and local cancellation", async () => {
