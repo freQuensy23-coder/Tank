@@ -29,6 +29,9 @@ const stubs = {
   standardwebhooks: 'export class Webhook {}',
   fflate: 'export const zipSync = () => new Uint8Array();',
   '@open-managed-agents/sql-client': 'export const withDbBoundary = (_, work) => work(); export const emitDbBoundaryLog = () => {};',
+  '@open-managed-agents/sql-client/db-errors': `export const withDbBoundary = (_, work) => work();
+    export const annotateDbBoundary = () => {}; export class CasConflict extends Error {}
+    export const isCasConflict = error => error instanceof CasConflict;`,
 };
 registerHooks({resolve(specifier, context, nextResolve) {
   if (specifier === 'effect') return {url: new URL('./worker-effects.mjs', import.meta.url).href, shortCircuit: true};
@@ -46,6 +49,7 @@ const { NodeRetainedLifecycle } = await load('packages/control-plane-node/src/li
 const { executableImageIdentity, stableDigest } = await load('packages/control-plane-node/src/lib/tank-retained/runtime-identity.ts');
 const { DefaultNodeManagedSessionRunner } = await load('packages/control-plane-node/src/lib/node-managed-session-runner.ts');
 const { NodeSessionExecutionWorker } = await load('packages/control-plane-node/src/lib/node-session-execution-worker.ts');
+const { sessionExecutionStatusStore } = await load('packages/control-plane-node/src/lib/node-session-execution-status.ts');
 const { createBoxLiteProvider } = await load('packages/managed-runtime-boxlite/src/boxlite.ts');
 const { RetainedExecutionFenceLost } = await load('packages/control-plane-node/src/lib/tank-retained/idle-errors.ts');
 const { ApplicationBackedNodeManagedSessionRuntimeEngine, DefaultNodeManagedSessionRuntimeDriver } = await load('packages/control-plane-node/src/lib/node-managed-session-runtime.ts');
@@ -53,6 +57,9 @@ const { LiteBoxSandbox } = await load('packages/sandbox-adapter-litebox/src/lite
 const { SqlRuntimeOrphanPort, SqlRuntimeResourceFencePort, ensureRuntimeResourceFenceSchema } = await load('packages/runtime-resource-fence-sql/src/index.ts');
 const { SqlSessionEventStore } = await load('packages/session-event-store-sql/src/index.ts');
 const { SqlSessionRuntimeHistorySource } = await load('packages/session-runtime-sql/src/history.ts');
+const { SqlSessionExecutionStore, ensureSessionExecutionClaimLockSchema } = await load('packages/session-runtime-sql/src/coordination.ts');
+const { loadSessionContinuationSnapshot } = await load('packages/session-runtime-sql/src/continuation.ts');
+const { planSessionContinuation } = await load('packages/session-runtime-contract/src/continuation.ts');
 const { SqlSessionRuntimeProjectionPersistence } = await load('packages/managed-agents-adapters-sql/src/session-runtime-projection-sql-persistence.ts');
 const { SessionRuntimeHistoryApplicationService } = await load('packages/managed-agents-application/src/session-execution/history-application.ts');
 const { SessionRuntimeProjectionApplicationService } = await load('packages/managed-agents-application/src/session-execution/application.ts');
@@ -165,7 +172,7 @@ function boxHost() {
   return host;
 }
 
-async function world(t, workspace = workspaceId) {
+async function world(t, workspace = workspaceId, created = Date.parse('2026-11-01T00:00:00.000Z')) {
   const root = await mkdtemp(join(tmpdir(), 'tank-session-continues-'));
   const db = new DatabaseSync(':memory:'), sql = sqlite(db), migrations = join(openmaRoot, 'apps/main-node/migrations-sqlite');
   for (const name of readdirSync(migrations).filter(name => name.endsWith('.sql')).sort())
@@ -178,7 +185,7 @@ async function world(t, workspace = workspaceId) {
     return last.startsWith('sh: ') ? {run: last.slice(4)} : {text: 'answer to ' + last};
   };
   t.after(async () => { db.close(); await rm(root, {recursive: true, force: true}); });
-  const created = Date.parse('2026-11-01T00:00:00.000Z'), iso = new Date(created).toISOString();
+  const iso = new Date(created).toISOString();
   const session = {id: sessionId, agent: {id: 'agent_A', description: null, mcpServers: [], model: {id: 'model_A'}, multiagent: null, name: 'Agent',
     skills: [], system: 'You are the trading agent.', tools: [], version: 1}, archivedAt: null, budget: null, createdAt: iso, environmentId,
     metadata: {}, outcomeEvaluations: [], resources: [], stats: {}, status: 'idle', title: null, updatedAt: iso, usage: {}, vaultIds: []};
@@ -202,7 +209,7 @@ async function world(t, workspace = workspaceId) {
   return state;
 }
 
-function node(state, rootfsPath, {idleTimeoutMs, phase = false, startAttempts = 1, prepareFailure = false} = {}) {
+function node(state, rootfsPath, {idleTimeoutMs, phase = false, startAttempts = 1, prepareFailure = false, buildSandboxError, continuation = false} = {}) {
   const {sql, host, workspaceId} = state, ownerId = 'node_' + randomUUID();
   const executionCurrent = async fence => {
     const row = await sql.prepare(`SELECT 1 AS present FROM managed_session_executions WHERE workspace_id = ? AND id = ? AND session_id = ? AND state = 'running'
@@ -224,7 +231,10 @@ function node(state, rootfsPath, {idleTimeoutMs, phase = false, startAttempts = 
     harnessRetry: {attempts: 1, delayMs: () => 0},
     confirmedTools: {execute: async () => { throw new Error('unexpected confirmed tool execution'); }},
     outcomes: {evaluate: async () => { throw new Error('unexpected outcome evaluation'); }},
-    buildSandbox: async () => new LiteBoxSandbox({image: 'tank-sandbox', rootfsPath, name: 'oma-' + sessionId, scratchRoot: state.root}),
+    buildSandbox: async () => {
+      if (buildSandboxError) throw buildSandboxError();
+      return new LiteBoxSandbox({image: 'tank-sandbox', rootfsPath, name: 'oma-' + sessionId, scratchRoot: state.root});
+    },
     retainedLifecycle: {
       bind: input => lifecycle.bind({...input, sessionId: input.session.id}),
       idle: input => lifecycle.idle({...input, sessionId: input.session.id}),
@@ -254,7 +264,9 @@ function node(state, rootfsPath, {idleTimeoutMs, phase = false, startAttempts = 
   });
   const history = new SqlSessionRuntimeHistorySource(sql), projection = new SqlSessionRuntimeProjectionPersistence(sql), events = new SqlSessionEventStore(sql, {executionOutbox: true});
   const driver = new DefaultNodeManagedSessionRuntimeDriver({
-    engine: new ApplicationBackedNodeManagedSessionRuntimeEngine({runner: phase ? {
+    engine: new ApplicationBackedNodeManagedSessionRuntimeEngine({
+      ...(continuation && {continuationSnapshot: input => loadSessionContinuationSnapshot(sql, input)}),
+      runner: phase ? {
       start: input => runner.start(input),
       accept: input => runner.accept({...input, continuationPlan: {mode: 'model', generation: input.executionFence.generation,
         phaseInputIds: [input.events[0].id], consumedInputIds: [input.events[0].id], remainingInputIds: ['later_input'], previousReceiptId: null}}),
@@ -551,6 +563,77 @@ test('an unconfirmed stop during preparation failure bypasses startup retries an
   assert.deepEqual(run.queued, run.next);
   assert.deepEqual(run.settled, []);
   assert.deepEqual(run.terminal(), []);
+});
+
+for (const reclaimed of [false, true]) test(`startup exhaustion ${reclaimed ? 'refuses a reclaimed input without replay' : 'still fails normally on the first attempt'}`, async t => {
+  const workspaceId = 'workspace_' + randomUUID();
+  const state = await world(t, workspaceId, Date.now()), image = await state.image('startup');
+  await ensureSessionExecutionClaimLockSchema(state.sql);
+  const coordinator = new SqlSessionExecutionStore(state.sql, {callbackContinuations: true});
+  const scope = {workspaceId, sessionId};
+  const status = sessionExecutionStatusStore(coordinator);
+  let startupAttempts = 0;
+  const workerNode = node(state, image, {continuation: true, startAttempts: 3, buildSandboxError: () => {
+    startupAttempts++;
+    return Error('sandbox acquisition failed');
+  }});
+  const original = reclaimed ? node(state, image, {continuation: true}) : workerNode;
+  const event = await original.send('sh: printf %s applied > /workspace/effect');
+  let writes = 0;
+  const put = state.host.put;
+  state.host.put = (...args) => {
+    const box = put(...args), set = box.files.set.bind(box.files);
+    box.files.set = (path, value) => {
+      if (path === '/workspace/effect') writes++;
+      return set(path, value);
+    };
+    return box;
+  };
+  if (reclaimed) {
+    const claimed = await coordinator.claim({...scope, ownerId: original.ownerId, claimedAt: state.now().toISOString(),
+      attemptId: randomUUID(), leaseTtlMs: 30000});
+    assert.equal(claimed.type, 'claimed');
+    const context = await original.context(), get = state.host.client.get;
+    state.host.client.get = async id => {
+      const box = await get(id);
+      return {...box, async stop() {
+        await box.stop();
+        state.db.prepare('UPDATE managed_session_executions SET lease_expires_at_ms = 0 WHERE id = ?').run(event.id);
+      }};
+    };
+    await assert.rejects(original.driver.accept({...scope, ...context, events: [event], executionFence: claimed.fence}), RetainedExecutionFenceLost);
+    state.host.client.get = get;
+    await original.lifecycle.quiesceLostTurn({fence: claimed.fence, context});
+    const [resident] = state.host.boxes.values();
+    assert.equal((await state.host.client.getInfo(resident.id)).state.running, false);
+    assert.equal(resident.files.get('/workspace/effect'), 'applied');
+    assert.equal(writes, 1);
+    const snapshot = await loadSessionContinuationSnapshot(state.sql, scope);
+    assert.equal(planSessionContinuation(snapshot, event.id, true).mode, 'failure');
+  }
+  const errors = [];
+  const worker = new NodeSessionExecutionWorker({coordinator, context: {find: workerNode.context}, runtime: {
+    run: ({executionId: _executionId, fence, ...input}) => workerNode.driver.accept({...input, executionFence: fence}),
+    cancel: async input => workerNode.cancel(input),
+  }, ownerId: workerNode.ownerId, clock: {now: state.now}, ids: {nextAttemptId: randomUUID}, maxConcurrent: 1,
+  onError: error => errors.push(error)});
+  t.after(() => worker.stop());
+  await worker.poll();
+  await worker.waitForIdle();
+  assert.deepEqual(errors, []);
+  const settled = await coordinator.find({...scope, executionId: event.id});
+  assert.equal(settled.failure, reclaimed ? 'tank:execution-recovery-refused:v1' : 'sandbox acquisition failed');
+  assert.equal(startupAttempts, 3);
+  assert.equal(settled.attempt.generation, reclaimed ? 2 : 1);
+  assert.deepEqual(await status.list(workspaceId, sessionId, [event.id]), [{execution_id: event.id,
+    state: 'FAILED', settled_outcome: 'FAILED', ...(reclaimed && {recovery_refused: true})}]);
+  const snapshot = await loadSessionContinuationSnapshot(state.sql, scope);
+  const startupEvents = snapshot.orderedEvents.map(entry => entry.event)
+    .filter(event => ['session.error', 'session.status_rescheduled', 'session.status_idle'].includes(event.type));
+  assert.deepEqual(startupEvents.map(event => event.type === 'session.error' ? event.error.retryStatus : event.type),
+    reclaimed ? [] : ['retrying', 'session.status_rescheduled', 'retrying', 'session.status_rescheduled', 'exhausted', 'session.status_idle']);
+  assert.equal(state.requests.length, reclaimed ? 1 : 0);
+  assert.equal(writes, reclaimed ? 1 : 0);
 });
 
 for (const [scenario, stops, error] of [

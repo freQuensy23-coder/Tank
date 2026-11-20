@@ -6,6 +6,7 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { after, test } from 'node:test';
+import { setTimeout as delay } from 'node:timers/promises';
 const nativeHome=await mkdtemp(join(tmpdir(),'tank-retained-native-'));
 after(()=>rm(nativeHome,{recursive:true,force:true}));
 import assert from 'node:assert/strict';
@@ -15,6 +16,7 @@ registerHooks({resolve(specifier,context,nextResolve){
   return nextResolve(specifier,context);
 }});
 const { NodeRetainedLifecycle } = await import(new URL('packages/control-plane-node/src/lib/tank-retained/node-lifecycle.ts', openmaSource));
+const { RetainedExecutionFenceLost, RetainedIdlePendingTimeout } = await import(new URL('packages/control-plane-node/src/lib/tank-retained/idle-errors.ts', openmaSource));
 import { setup } from './fakes.mjs';
 function fixture() {
   const s=setup(),allocations=[];
@@ -126,6 +128,161 @@ for(const failure of ['publish','release'])test(`same-owner idle retries ${failu
 function recovery(ctx) {
   return {fence:{...ctx.executionFence},context:ctx};
 }
+
+async function recoverAfterIdleDrains(manager, ctx) {
+  const signal = AbortSignal.timeout(2000);
+  for (;;) {
+    try { return await manager.quiesceLostTurn(recovery(ctx)); }
+    catch (error) {
+      if (error.message !== 'retained_idle_pending') throw error;
+      await delay(5, undefined, { signal });
+    }
+  }
+}
+
+for (const timing of ['before', 'after']) test(`lost idle stop rejection ${timing} timeout only permits exact stopped proof`, async t => {
+  const s = fixture(), sandbox = s.sandbox(), ctx = s.context(sandbox);
+  const manager = s.lifecycle({ idleTimeoutMs: timing === 'before' ? 2000 : 250, async assertExecutionCurrent(fence) {
+    if (!fence.current) throw new RetainedExecutionFenceLost();
+  } });
+  await manager.bind(ctx);
+  await sandbox.exec('write', 'FAKE_FIRST');
+  const disk = s.disks.get('box_1'), original = s.client.get.bind(s.client);
+  const entered = Promise.withResolvers(), finish = Promise.withResolvers();
+  t.after(finish.resolve);
+  let nativeGets = 0, flushes = 0, stops = 0;
+  s.client.get = async id => {
+    nativeGets++;
+    const box = await original(id);
+    return { ...box, async exec(...args) { flushes++; return box.exec(...args); }, async stop() {
+      stops++;
+      entered.resolve();
+      await finish.promise;
+      throw Error('stop acknowledgement lost');
+    } };
+  };
+  const idle = assert.rejects(manager.idle(ctx), timing === 'before' ? RetainedExecutionFenceLost : RetainedIdlePendingTimeout);
+  await entered.promise;
+  ctx.executionFence.current = false;
+  if (timing === 'after') {
+    await idle;
+    await assert.rejects(manager.quiesceLostTurn(recovery(ctx)), /retained_idle_pending/);
+  }
+  finish.resolve();
+  await idle;
+  await assert.rejects(recoverAfterIdleDrains(manager, ctx), /retained_recovery_stop_unconfirmed/);
+  await assert.rejects(s.lifecycle().bind(s.context(s.sandbox())), /retained_previous_turn_not_quiescent/);
+  disk.running = false;
+  const getInfo = s.client.getInfo.bind(s.client);
+  for (const replace of [() => null, info => ({ ...info, id: 'other-runtime' }), info => ({ ...info, name: 'other-owner' })]) {
+    s.client.getInfo = async id => replace(await getInfo(id));
+    await assert.rejects(manager.quiesceLostTurn(recovery(ctx)), /retained_recovery_resident_changed/);
+  }
+  s.client.getInfo = async id => ({ ...await getInfo(id), state: { running: false, status: 'Unknown' } });
+  await assert.rejects(manager.quiesceLostTurn(recovery(ctx)), /retained_recovery_stop_unconfirmed/);
+  const proofFences = [];
+  s.client.getInfo = async id => {
+    const row = [...s.rows.values()][0];
+    assert.equal(row.active, true);
+    proofFences.push(row.fence);
+    return getInfo(id);
+  };
+  await manager.quiesceLostTurn(recovery(ctx));
+  assert.equal(proofFences.length, 2);
+  assert.ok(proofFences.every(fence => fence.generation > 1 && fence.ownerId.endsWith(':quiesce')));
+  assert.deepEqual([nativeGets, flushes, stops], [1, 1, 1]);
+  assert.equal(disk.files['/workspace/value'], 'persisted');
+});
+
+test('a timeout during flush before native stop leaves the first stop to the recovery fence', async t => {
+  const s = fixture(), sandbox = s.sandbox(), ctx = s.context(sandbox);
+  const manager = s.lifecycle({ idleTimeoutMs: 250 });
+  await manager.bind(ctx);
+  await sandbox.exec('write', 'FAKE_FIRST');
+  const original = s.client.get.bind(s.client), flushing = Promise.withResolvers(), finish = Promise.withResolvers();
+  t.after(finish.resolve);
+  s.client.get = async id => ({ ...await original(id), async exec() {
+    return { async wait() { flushing.resolve(); await finish.promise; return { exitCode: 0 }; } };
+  } });
+  const idle = assert.rejects(manager.idle(ctx), RetainedIdlePendingTimeout);
+  await flushing.promise;
+  ctx.executionFence.current = false;
+  await idle;
+  await assert.rejects(manager.quiesceLostTurn(recovery(ctx)), /retained_idle_pending/);
+  assert.equal(s.calls.some(([op]) => op === 'stop'), false);
+  s.client.get = async id => {
+    const box = await original(id);
+    return { ...box, async stop() {
+      const row = [...s.rows.values()][0];
+      assert.equal(row.active, true);
+      assert.ok(row.fence.ownerId.endsWith(':quiesce'));
+      await box.stop();
+    } };
+  };
+  finish.resolve();
+  await recoverAfterIdleDrains(manager, ctx);
+  assert.deepEqual(s.calls.filter(([op]) => op === 'stop'), [['stop', 'box_1']]);
+});
+
+test('same-owner idle retries a transient native stop rejection under the original fence', async () => {
+  const s = fixture(), sandbox = s.sandbox(), ctx = s.context(sandbox), manager = s.lifecycle();
+  await manager.bind(ctx);
+  await sandbox.exec('write', 'FAKE_FIRST');
+  const original = s.client.get.bind(s.client), originalFence = [...s.rows.values()][0].fence;
+  const stopFences = [];
+  s.client.get = async id => {
+    const box = await original(id);
+    return { ...box, async stop() {
+      stopFences.push([...s.rows.values()][0].fence);
+      if (stopFences.length === 1) throw Error('transient stop failure');
+      await box.stop();
+    } };
+  };
+  await manager.idle(ctx);
+  assert.deepEqual(stopFences, [originalFence, originalFence]);
+  assert.equal(s.disks.get('box_1').running, false);
+});
+
+test('a rejected first stop issued by recovery is not reissued', async () => {
+  const s = fixture(), sandbox = s.sandbox(), ctx = s.context(sandbox), manager = s.lifecycle();
+  await manager.bind(ctx);
+  await sandbox.exec('write', 'FAKE_FIRST');
+  ctx.executionFence.current = false;
+  const original = s.client.get.bind(s.client);
+  let stopped = 0;
+  s.client.get = async id => ({ ...await original(id), async stop() { stopped++; throw Error('ambiguous native stop'); } });
+  await assert.rejects(manager.quiesceLostTurn(recovery(ctx)), /ambiguous native stop/);
+  await assert.rejects(manager.quiesceLostTurn(recovery(ctx)), /retained_recovery_stop_unconfirmed/);
+  s.disks.get('box_1').running = false;
+  await manager.quiesceLostTurn(recovery(ctx));
+  assert.equal(stopped, 1);
+});
+
+test('recovery pins the exact runtime resolved from an allocation intent when requesting stop', async () => {
+  const s = fixture(), sandbox = s.sandbox(), ctx = s.context(sandbox), manager = s.lifecycle();
+  const module = manager.options.providerModule;
+  const provider = module.createBoxLiteProvider.bind(module);
+  module.createBoxLiteProvider = options => {
+    const original = provider(options);
+    return { ...original, async create(...args) {
+      await original.create(...args);
+      ctx.executionFence.current = false;
+      throw Error('allocation acknowledgement lost');
+    } };
+  };
+  await manager.bind(ctx);
+  await assert.rejects(sandbox.exec('write', 'FAKE_FIRST'), /retained_initial_cleanup_failed/);
+  const get = s.client.get.bind(s.client), getInfo = s.client.getInfo.bind(s.client);
+  let stops = 0;
+  s.client.get = async id => ({ ...await get(id), async stop() { stops++; throw Error('ambiguous native stop'); } });
+  await assert.rejects(manager.quiesceLostTurn(recovery(ctx)), /ambiguous native stop/);
+  s.client.getInfo = async id => ({ ...await getInfo(id), id: 'replacement', state: { running: false, status: 'Stopped' } });
+  await assert.rejects(manager.quiesceLostTurn(recovery(ctx)), /retained_recovery_resident_changed/);
+  s.client.getInfo = getInfo;
+  s.disks.get('box_1').running = false;
+  await manager.quiesceLostTurn(recovery(ctx));
+  assert.equal(stops, 1);
+});
 
 test('a warm bind losing its fence before acquisition leaves a stopped prior entry untouched',async()=>{
   const s=fixture(),manager=s.lifecycle(),sandbox=s.sandbox(),ctx=s.context(sandbox);

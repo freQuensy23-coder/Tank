@@ -2,7 +2,7 @@ import { AsyncLocalStorage } from 'node:async_hooks';
 import { boxLiteHome, withNativeLock } from './native-lock.js';
 import { copyGuestFileIn, copyGuestFileOut, type TrackGuestWork } from './guest-file-io.js';
 import { createHash } from 'node:crypto';
-import type { Fence, Handle, Provider, RetainedRuntime, Scope } from './retained-session.js';
+import type { Fence, Handle, Provider, RetainedRuntime, Scope, StopControl } from './retained-session.js';
 
 type Process = {
   stdin: WritableStream<Uint8Array>; stdout: ReadableStream<Uint8Array>; stderr: ReadableStream<Uint8Array>;
@@ -148,7 +148,7 @@ export function pinnedBoxLiteProvider(input: {
   const stopUnderLock = async (
     handle: Handle, scope: Scope, assertCurrent: () => Promise<void>,
     observe: <T>(observation: T | Promise<T>) => Promise<T> = async observation => observation,
-    inspectOnly = false,
+    stop?: StopControl,
   ) => {
     const sdk = input.client as NativeBoxLiteClient;
     const name = retainedOwnershipName(handle, scope);
@@ -159,7 +159,7 @@ export function pinnedBoxLiteProvider(input: {
     await assertCurrent();
     const state = verify(await observe(sdk.getInfo(handle.runtimeId)));
     if (state.running === true) {
-      if (inspectOnly) throw Error('retained_recovery_stop_unconfirmed');
+      if (stop?.inspectOnly) throw Error('retained_recovery_stop_unconfirmed');
       await assertCurrent();
       const box = await observe(sdk.get(handle.runtimeId));
       if (!box || box.id !== handle.runtimeId || box.name !== name) throw Error('retained_recovery_resident_changed');
@@ -170,6 +170,7 @@ export function pinnedBoxLiteProvider(input: {
       const result = await observe(sync.wait());
       if (result.exitCode !== 0 || result.errorMessage) throw Error('retained_filesystem_flush_failed');
       await assertCurrent();
+      stop?.onStopRequested?.(handle);
       await box.stop();
     }
     await assertCurrent();
@@ -177,7 +178,7 @@ export function pinnedBoxLiteProvider(input: {
     if (stopped.running !== false || !/^(stopped|exited)$/i.test(stopped.status)) throw Error('retained_recovery_stop_unconfirmed');
     await assertCurrent();
   };
-  const quiesceExact = async (handle: Handle, scope: Scope, assertCurrent: () => Promise<void>, intent?: Handle, inspectOnly = false) => {
+  const quiesceExact = async (handle: Handle, scope: Scope, assertCurrent: () => Promise<void>, intent?: Handle, stop?: StopControl) => {
     const timeout = Error('retained_recovery_stop_timeout');
     const timeoutMs = input.stopTimeoutMs ?? 35_000;
     const deadline = performance.now() + timeoutMs;
@@ -191,18 +192,18 @@ export function pinnedBoxLiteProvider(input: {
     };
     try {
       const attempt = lock(scope, 'exclusive', async () => {
-        if (!intent) return stopUnderLock(handle, scope, check, observe, inspectOnly);
+        if (!intent) return stopUnderLock(handle, scope, check, observe, stop);
         const name = retainedBoxName(scope);
         if (intent.provider !== 'litebox' || intent.runtimeId !== name || intent.ownershipName || handle.ownershipName) {
           throw Error('retained_allocation_intent_invalid');
         }
         await check();
         const info = await observe(inspect(name));
-        if (!info && handle.runtimeId === name && !inspectOnly) return check();
+        if (!info && handle.runtimeId === name && !stop?.inspectOnly) return check();
         if (!info?.id || info.name !== name || (handle.runtimeId !== name && handle.runtimeId !== info.id)) {
           throw Error('retained_recovery_resident_changed');
         }
-        await stopUnderLock({ provider: 'litebox', runtimeId: info.id }, scope, check, observe, inspectOnly);
+        await stopUnderLock({ provider: 'litebox', runtimeId: info.id }, scope, check, observe, stop);
       });
       await Promise.race([attempt, bounded]);
     } finally {
@@ -211,8 +212,8 @@ export function pinnedBoxLiteProvider(input: {
   };
   return {
     quiesceExact,
-    quiesceOwned: (handle, scope, assertCurrent) =>
-      lock(scope, 'exclusive', () => stopUnderLock(handle, scope, assertCurrent)),
+    quiesceOwned: (handle, scope, assertCurrent, stop) =>
+      lock(scope, 'exclusive', () => stopUnderLock(handle, scope, assertCurrent, undefined, stop)),
     async allocationIntent(scope, fence, signal) {
       signal.throwIfAborted(); await current(fence);
       const name = retainedBoxName(scope);

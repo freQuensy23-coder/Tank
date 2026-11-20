@@ -33,7 +33,15 @@ export const Effect = {
     return {controller, promise};
   },
   runPromise: work => work(),
+  runPromiseExit: async work => {
+    try { return {success: true, value: await work()}; }
+    catch (cause) { return {success: false, cause}; }
+  },
 };
+
+export const Exit = {isSuccess: exit => exit.success};
+export const Cause = {failureOption: value => ({value}), squash: cause => cause};
+export const Option = {isSome: option => Object.hasOwn(option, 'value')};
 
 export const Fiber = {
   join: fiber => () => fiber.promise,

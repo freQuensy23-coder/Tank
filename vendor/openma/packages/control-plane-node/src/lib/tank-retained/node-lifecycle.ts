@@ -259,8 +259,8 @@ export class NodeRetainedLifecycle {
           return;
         } catch (error) {
           if (error instanceof RetainedExecutionFenceLost || error instanceof RetainedIdleUnconfirmed) throw error;
-          if (attempt >= 3) throw new RetainedIdleAttemptsExhausted(error);
           check();
+          if (attempt >= 3) throw new RetainedIdleAttemptsExhausted(error);
           await delay(attempt * 100, undefined, { signal: elapsed.signal });
         }
       }
@@ -330,8 +330,7 @@ export class NodeRetainedLifecycle {
         throw Error('retained_lost_turn_changed');
       }
       await this.abandonEntry(scopeKey, entry);
-      await entry.controller?.quiesceLostTurn(entry.idleFailure instanceof RetainedIdlePendingTimeout
-        || entry.idleFailure instanceof RetainedIdleAttemptsExhausted);
+      await entry.controller?.quiesceLostTurn();
       delete entry.idleFailure;
       if (residents.get(scopeKey) === entry) residents.delete(scopeKey);
     });

@@ -28,6 +28,7 @@ import type {
   SessionRealtimeWriter,
 } from "@open-managed-agents/session-realtime";
 import { randomUUID } from "node:crypto";
+import { ExecutionRecoveryRefusal } from "./execution-recovery-refusal.js";
 import { createStrictlyIncreasingEventStamp } from "./node-managed-harness-runtime.js";
 import { ScopedSessionMap } from "./scoped-session-map.js";
 import { RetainedExecutionFenceLost, RetainedIdleUnconfirmed, RetainedResumeFailed } from "./tank-retained/idle-errors.js";
@@ -309,6 +310,7 @@ export class DefaultNodeManagedSessionRuntimeDriver
 
   async accept(input: ExecuteNodeManagedSessionEvents): Promise<void | SessionExecutionPhaseResult> {
     const fence = input.executionFence;
+    const reclaimed = fence !== undefined && fence.generation > 1;
     if (fence !== undefined &&
       (fence.workspaceId !== input.workspaceId ||
         fence.sessionId !== input.sessionId)) {
@@ -344,16 +346,21 @@ export class DefaultNodeManagedSessionRuntimeDriver
         }
         catch (error) {
           if (error instanceof RetainedIdleUnconfirmed || error instanceof RetainedExecutionFenceLost) throw error;
-          if (signal.aborted || isAbortError(error)) {
+          if (signal.aborted || (!reclaimed && isAbortError(error))) {
             await this.finishCancelledStart(input, signal, announcedRetry);
             throw signal.aborted ? abortedError(signal) : error;
           }
-          if (error instanceof RetainedResumeFailed || attempt >= Math.max(1, retry.attempts)) {
+          if (error instanceof RetainedResumeFailed || isAbortError(error) || attempt >= Math.max(1, retry.attempts)) {
+            if (reclaimed) {
+              throw new ExecutionRecoveryRefusal("Reclaimed execution could not start its runtime safely", { cause: error });
+            }
             await this.projectStartFailure(input, error, "exhausted");
             throw error;
           }
-          await this.projectStartFailure(input, error, "retrying");
-          announcedRetry = true;
+          if (!reclaimed) {
+            await this.projectStartFailure(input, error, "retrying");
+            announcedRetry = true;
+          }
           if (signal.aborted) {
             await this.finishCancelledStart(input, signal, announcedRetry);
             throw abortedError(signal);

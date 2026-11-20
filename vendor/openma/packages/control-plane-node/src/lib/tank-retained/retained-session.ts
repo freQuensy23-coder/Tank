@@ -27,10 +27,11 @@ export interface Provider<R extends RetainedRuntime> {
   leftover(scope: Scope, fence: Fence, signal: AbortSignal): Promise<Handle | null>;
   create(scope: Scope, fence: Fence, signal: AbortSignal, assertExecutionCurrent?: () => Promise<void>): Promise<R>;
   resume(handle: Handle, scope: Scope, fence: Fence, signal: AbortSignal, assertExecutionCurrent?: () => Promise<void>): Promise<R>;
-  quiesceExact?(handle: Handle, scope: Scope, assertCurrent: () => Promise<void>, intent?: Handle, inspectOnly?: boolean): Promise<void>;
-  quiesceOwned?(handle: Handle, scope: Scope, assertCurrent: () => Promise<void>): Promise<void>;
+  quiesceExact?(handle: Handle, scope: Scope, assertCurrent: () => Promise<void>, intent?: Handle, stop?: StopControl): Promise<void>;
+  quiesceOwned?(handle: Handle, scope: Scope, assertCurrent: () => Promise<void>, stop?: StopControl): Promise<void>;
   reap(handle: Handle, scope: Scope, fence: Fence, signal: AbortSignal, assertAuthorized?: () => Promise<void>): Promise<void>;
 }
+export interface StopControl { inspectOnly?: boolean; onStopRequested?(handle: Handle): void }
 export interface Options<R extends RetainedRuntime> {
   scope: Omit<Scope, 'workId'>;
   fingerprint: string;
@@ -101,6 +102,8 @@ export class RetainedSessionLifecycle<R extends RetainedRuntime> {
   private runtimeReplaced = false;
   private publication: Publication | null = null;
   private possibleResident = false;
+  private stopRequested: Handle | null = null;
+  private readonly recordStopRequest = (handle: Handle) => { this.stopRequested = { ...handle }; };
   private resumeFailed = false;
   private unconfirmedPublication: Publication | null = null;
   private lostTurn: { fence: Fence; handle: Handle; publication: Publication | null; unconfirmed: Publication | null } | null = null;
@@ -188,13 +191,13 @@ export class RetainedSessionLifecycle<R extends RetainedRuntime> {
     if (manifest) this.manifest = manifest;
   }
   private rememberLostTurn(): void {
-    if (!this.lostTurn && this.possibleResident && this.fence && this.handle) {
+    if (!this.lostTurn && (this.possibleResident || this.stopRequested) && this.fence && this.handle) {
       this.lostTurn = { fence: { ...this.fence }, handle: { ...this.handle },
         publication: this.publication, unconfirmed: this.unconfirmedPublication };
     }
   }
   needsQuiescence(): boolean { return this.lostTurn !== null; }
-  async quiesceLostTurn(inspectOnly = false): Promise<void> {
+  async quiesceLostTurn(): Promise<void> {
     const target = this.lostTurn;
     if (!target) return;
     if (this.phase !== 'idle' || this.fence) fail('retained_recovery_not_drained');
@@ -219,14 +222,17 @@ export class RetainedSessionLifecycle<R extends RetainedRuntime> {
         fail('retained_recovery_publication_changed');
       }
       const manifest = this.decode(publication.workspaceCandidate);
-      const { handle } = target;
+      const handle = this.stopRequested ?? target.handle;
       const intent = manifest.state === 'allocating' && manifest.handle.provider === handle.provider ? manifest.handle : undefined;
       if (!intent && (manifest.state !== 'retained' || manifest.handle.provider !== handle.provider
           || manifest.handle.runtimeId !== handle.runtimeId || manifest.handle.ownershipName !== handle.ownershipName)) {
         fail('retained_recovery_handle_changed');
       }
       if (!this.options.provider.quiesceExact) fail('retained_sdk_inspection_required');
-      await this.options.provider.quiesceExact(handle, this.scope, assertCurrent, intent, inspectOnly);
+      await this.options.provider.quiesceExact(handle, this.scope, assertCurrent, intent, {
+        inspectOnly: this.stopRequested !== null,
+        onStopRequested: this.recordStopRequest,
+      });
       await assertCurrent();
       verified = true;
     } finally {
@@ -239,6 +245,7 @@ export class RetainedSessionLifecycle<R extends RetainedRuntime> {
     if (this.lostTurn) fail('retained_previous_turn_not_quiescent');
     this.phase = 'starting';
     this.resumeFailed = false;
+    this.stopRequested = null;
     let resuming = false;
     let created = false, newIntent = false, replaced = false;
     try {
@@ -384,10 +391,11 @@ export class RetainedSessionLifecycle<R extends RetainedRuntime> {
   }
   private async suspend(assertExecutionCurrent: () => Promise<void>, supervised = false): Promise<void> {
     const assertCurrent = async () => { await assertExecutionCurrent(); await this.current(); await assertExecutionCurrent(); };
+    const stop = { onStopRequested: this.recordStopRequest };
     if (supervised && this.handle && this.options.provider.quiesceOwned) {
-      await this.options.provider.quiesceOwned(this.handle, this.scope, assertCurrent);
+      await this.options.provider.quiesceOwned(this.handle, this.scope, assertCurrent, stop);
     } else if (this.handle && this.options.provider.quiesceExact) {
-      await this.options.provider.quiesceExact(this.handle, this.scope, assertCurrent);
+      await this.options.provider.quiesceExact(this.handle, this.scope, assertCurrent, undefined, stop);
     } else {
       await assertCurrent();
       await this.runtime!.suspend({ kind: 'filesystem' });
