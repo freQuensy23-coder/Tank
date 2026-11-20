@@ -5,6 +5,18 @@ export class RetainedIdleUnconfirmed extends Error {
   }
 }
 
+export class RetainedIdlePendingTimeout extends RetainedIdleUnconfirmed {
+  constructor() {
+    super('retained_idle_timeout');
+  }
+}
+
+export class RetainedIdleAttemptsExhausted extends RetainedIdleUnconfirmed {
+  constructor(cause: unknown) {
+    super('retained_idle_unconfirmed', cause);
+  }
+}
+
 export class RetainedExecutionFenceLost extends Error {
   constructor() {
     super('Retained Session execution fence lost');

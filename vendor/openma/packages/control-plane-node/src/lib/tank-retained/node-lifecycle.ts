@@ -4,7 +4,7 @@ import type { SessionExecutionFence } from '@open-managed-agents/session-runtime
 import type { RuntimeIdentity } from './runtime-identity.js';
 import { RetainedSessionLifecycle, type Fences, type Options, type Scope } from './retained-session.js';
 import { RetainedBoxOperations, pinnedBoxLiteProvider, type Allocation, type BoxLiteRuntime, type PinnedBoxLiteModule } from './boxlite-provider.js';
-import { RetainedExecutionFenceLost, RetainedIdleUnconfirmed } from './idle-errors.js';
+import { RetainedExecutionFenceLost, RetainedIdleAttemptsExhausted, RetainedIdlePendingTimeout, RetainedIdleUnconfirmed } from './idle-errors.js';
 
 type Box = RetainedBoxOperations & { stop(): Promise<void> };
 export interface AttachableSandbox {
@@ -232,14 +232,15 @@ export class NodeRetainedLifecycle {
     if (!entry.started && !entry.controller?.needsQuiescence() && !entry.controller?.needsIdleAfterResumeFailure()) return;
     const timeoutMs = this.options.idleTimeoutMs ?? 35_000;
     const deadline = performance.now() + timeoutMs;
-    const timeout = new RetainedIdleUnconfirmed('retained_idle_timeout');
+    let idleAttemptPending = false;
+    const timeout = () => idleAttemptPending ? new RetainedIdlePendingTimeout() : new RetainedIdleUnconfirmed('retained_idle_timeout');
     const elapsed = new AbortController();
     let timer: ReturnType<typeof setTimeout> | undefined;
     const bounded = new Promise<never>((_, reject) => {
-      timer = setTimeout(() => { elapsed.abort(timeout); reject(timeout); }, timeoutMs);
+      timer = setTimeout(() => { const error = timeout(); elapsed.abort(error); reject(error); }, timeoutMs);
     });
     const check = () => {
-      if (performance.now() >= deadline) throw timeout;
+      if (performance.now() >= deadline) throw timeout();
       if ((signal ?? entry.context.signal)?.reason === 'lease_lost') throw new RetainedExecutionFenceLost();
     };
     const assertCurrent = async () => {
@@ -252,12 +253,14 @@ export class NodeRetainedLifecycle {
         try {
           await assertCurrent();
           if (entry.controller!.needsQuiescence()) throw new RetainedIdleUnconfirmed('retained_idle_unconfirmed', Error('retained_previous_turn_not_quiescent'));
-          await entry.controller!.idle(assertCurrent);
+          idleAttemptPending = true;
+          try { await entry.controller!.idle(assertCurrent); }
+          finally { idleAttemptPending = false; }
           return;
         } catch (error) {
-          check();
           if (error instanceof RetainedExecutionFenceLost || error instanceof RetainedIdleUnconfirmed) throw error;
-          if (attempt >= 3) throw new RetainedIdleUnconfirmed('retained_idle_unconfirmed', error);
+          if (attempt >= 3) throw new RetainedIdleAttemptsExhausted(error);
+          check();
           await delay(attempt * 100, undefined, { signal: elapsed.signal });
         }
       }
@@ -321,9 +324,14 @@ export class NodeRetainedLifecycle {
       const resident = residents.get(scopeKey);
       if (resident && resident !== entry) throw Error('retained_lost_turn_changed');
       if (!entry) return;
-      if (!sameExecutionFence(entry.context.executionFence, fence)) throw Error('retained_lost_turn_changed');
+      if (!sameExecutionFence(entry.context.executionFence, fence)) {
+        if (!resident && !entry.open && !entry.started && !entry.idleInFlight && !entry.idleFailure
+          && !entry.controller?.needsQuiescence() && !entry.controller?.needsIdleAfterResumeFailure()) return;
+        throw Error('retained_lost_turn_changed');
+      }
       await this.abandonEntry(scopeKey, entry);
-      await entry.controller?.quiesceLostTurn();
+      await entry.controller?.quiesceLostTurn(entry.idleFailure instanceof RetainedIdlePendingTimeout
+        || entry.idleFailure instanceof RetainedIdleAttemptsExhausted);
       delete entry.idleFailure;
       if (residents.get(scopeKey) === entry) residents.delete(scopeKey);
     });

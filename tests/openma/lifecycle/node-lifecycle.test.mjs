@@ -127,6 +127,24 @@ function recovery(ctx) {
   return {fence:{...ctx.executionFence},context:ctx};
 }
 
+test('a warm bind losing its fence before acquisition leaves a stopped prior entry untouched',async()=>{
+  const s=fixture(),manager=s.lifecycle(),sandbox=s.sandbox(),ctx=s.context(sandbox);
+  await manager.bind(ctx);await sandbox.exec('write','FAKE_FIRST');
+  const lost={...ctx,executionFence:{...ctx.executionFence,executionId:'exec_B',attemptId:'attempt_B',current:false}};
+  await assert.rejects(manager.bind(lost));
+  await assert.rejects(manager.quiesceLostTurn(recovery(lost)),/retained_lost_turn_changed/);
+  await manager.idle(ctx);
+  await assert.rejects(manager.bind(lost));
+  const stopped=structuredClone([...s.rows.values()]);
+  await manager.quiesceLostTurn(recovery(lost));
+  assert.deepEqual([...s.rows.values()],stopped);
+  assert.equal(s.calls.filter(call=>call[0]==='stop').length,1);
+  const next={...lost,executionFence:{...lost.executionFence,attemptId:'attempt_C',generation:2,current:true}};
+  await manager.bind(next);
+  assert.equal(JSON.parse((await sandbox.exec('read','FAKE_SECOND')).stdout).workspace,'persisted');
+  await manager.idle(next);
+});
+
 test('pre-claim quiescence uses the retained resource fence and stops only the published resident',async()=>{
   const s=fixture(),manager=s.lifecycle(),sandbox=s.sandbox(),ctx=s.context(sandbox);
   await manager.bind(ctx);await sandbox.exec('write','FAKE_FIRST');

@@ -19,7 +19,7 @@ import {
 import { executionFailure } from "./execution-recovery-refusal.js";
 import { Effect, Fiber } from "effect";
 import { interruptFiber, runSupervised } from "./supervised-fiber.js";
-import { RetainedExecutionFenceLost, RetainedIdleUnconfirmed } from "./tank-retained/idle-errors.js";
+import { RetainedExecutionFenceLost, RetainedIdlePendingTimeout, RetainedIdleUnconfirmed } from "./tank-retained/idle-errors.js";
 
 export interface RunNodeSessionExecution extends AcceptedSessionEvents {
   executionId: string;
@@ -75,7 +75,7 @@ interface ActiveExecution {
   cancellation: Promise<void> | null;
   drained: boolean;
   leaseLost: boolean;
-  quarantined: boolean;
+  quarantined: "until_expiry" | "indefinite" | null;
   promise: Promise<void>;
 }
 
@@ -242,6 +242,12 @@ export class NodeSessionExecutionWorker implements SessionEventDispatchPort {
       (await this.dependencies.discoverStartupResidents?.() ?? []).map((resident) => [resident, 0]),
     );
     if (this.#stopped) return;
+    for (const [key, active] of this.#active) {
+      if (active.quarantined !== "until_expiry" || !this.#leaseDeadlinePassed(active)) continue;
+      this.#logLeaseLost(active);
+      this.#enqueueRecovery(active);
+      this.#active.delete(key);
+    }
     const startup = this.#startupResidents;
     const now = performance.now();
     for (const [resident, retryAt] of startup) {
@@ -403,6 +409,16 @@ export class NodeSessionExecutionWorker implements SessionEventDispatchPort {
     return claimed;
   }
 
+  #enqueueRecovery(active: ActiveExecution): void {
+    this.#pendingRecovery.add({
+      priorFence: { ...active.fence },
+      context: active.context,
+      quiesced: active.context === null,
+      retryAt: 0,
+      attemptId: this.dependencies.ids.nextAttemptId(),
+    });
+  }
+
   #launch(claimed: { execution: SessionExecution; fence: SessionExecutionFence }): void {
     const key = JSON.stringify([
       claimed.execution.workspaceId,
@@ -415,7 +431,7 @@ export class NodeSessionExecutionWorker implements SessionEventDispatchPort {
       cancellation: null,
       drained: false,
       leaseLost: false,
-      quarantined: false,
+      quarantined: null,
       promise: Promise.resolve(),
     };
     this.#active.set(key, active);
@@ -427,13 +443,7 @@ export class NodeSessionExecutionWorker implements SessionEventDispatchPort {
         Effect.ensuring(Effect.sync(() => {
           if (this.#active.get(key) === active && !active.quarantined) {
             if (active.leaseLost && this.#tracksRecovery()) {
-              this.#pendingRecovery.add({
-                priorFence: { ...active.fence },
-                context: active.context,
-                quiesced: active.context === null,
-                retryAt: 0,
-                attemptId: this.dependencies.ids.nextAttemptId(),
-              });
+              this.#enqueueRecovery(active);
             }
             this.#active.delete(key);
           }
@@ -503,6 +513,7 @@ export class NodeSessionExecutionWorker implements SessionEventDispatchPort {
     let outcome: "completed" | "failed" | "cancelled" = "completed";
     let failure: string | undefined;
     let phase: void | SessionExecutionPhaseResult = undefined;
+    let idleFailure: RetainedIdleUnconfirmed | undefined;
     try {
       if (this.#leaseDeadlinePassed(active)) {
         active.leaseLost = true;
@@ -521,22 +532,16 @@ export class NodeSessionExecutionWorker implements SessionEventDispatchPort {
     }
     catch (error) {
       if (error instanceof RetainedIdleUnconfirmed) {
-        if (this.#tracksRecovery() && (active.leaseLost || this.#leaseDeadlinePassed(active))) {
-          if (!active.leaseLost) this.#logLeaseLost(active);
-          active.leaseLost = true;
-        } else {
-          active.quarantined = true;
-        }
+        idleFailure = error;
         this.#reportError(error);
-        return;
-      }
-      if (error instanceof RetainedExecutionFenceLost) {
+      } else if (error instanceof RetainedExecutionFenceLost) {
         active.leaseLost = true;
         this.#logLeaseLost(active);
         return;
+      } else {
+        outcome = active.cancellation !== null ? "cancelled" : "failed";
+        failure = executionFailure(error);
       }
-      outcome = active.cancellation !== null ? "cancelled" : "failed";
-      failure = executionFailure(error);
     }
     finally {
       active.drained = true;
@@ -548,6 +553,16 @@ export class NodeSessionExecutionWorker implements SessionEventDispatchPort {
           this.#reportError(error);
         }
       }
+    }
+    if (idleFailure !== undefined) {
+      if (this.#tracksRecovery() && (active.leaseLost || this.#leaseDeadlinePassed(active))) {
+        if (!active.leaseLost) this.#logLeaseLost(active);
+        active.leaseLost = true;
+      } else {
+        active.quarantined = this.#tracksRecovery() && idleFailure instanceof RetainedIdlePendingTimeout
+          ? "until_expiry" : "indefinite";
+      }
+      return;
     }
     if (active.leaseLost)
       return;

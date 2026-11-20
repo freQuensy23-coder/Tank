@@ -293,7 +293,8 @@ function node(state, rootfsPath, {idleTimeoutMs, phase = false, startAttempts = 
   return {send, execute, claim, context, driver, lifecycle, ownerId, cancel, turn: async text => execute(await send(text))};
 }
 
-async function supervisedTurn(t, scenario, {phase = false, modelFailure = false, prepareFailure = false, resumeFailure = false, loseOwnership = false} = {}) {
+async function supervisedTurn(t, scenario, {phase = false, modelFailure = false, prepareFailure = false, resumeFailure = false,
+  loseOwnership = false, expireAfterTimeout = false, lateStopFails = false} = {}) {
   const workspaceId = 'workspace_' + randomUUID();
   const state = await world(t, workspaceId);
   const image = await state.image('idle');
@@ -367,8 +368,9 @@ async function supervisedTurn(t, scenario, {phase = false, modelFailure = false,
         if (scenario === 'permanent throw') throw Error('stop unavailable');
         if (scenario === 'permanent nonack' || (scenario === 'ambiguous ack' && stops === 1)) return;
         if (scenario === 'hung stop') {
-          if (loseOwnership) state.db.prepare(`UPDATE managed_session_executions SET lease_expires_at_ms = 0 WHERE id = ?`).run(event.id);
+          if (loseOwnership && !expireAfterTimeout) state.db.prepare(`UPDATE managed_session_executions SET lease_expires_at_ms = 0 WHERE id = ?`).run(event.id);
           await pending;
+          if (lateStopFails) throw Error('late stop rejected');
         }
         await handle.stop();
         if (scenario === 'stop throws after stopping' && stops === 1) throw Error('stop acknowledgement lost');
@@ -430,7 +432,7 @@ async function supervisedTurn(t, scenario, {phase = false, modelFailure = false,
     WHERE rowid > (SELECT rowid FROM managed_session_events WHERE id = ?)
     AND type IN ('session.error', 'session.status_idle', 'session.status_rescheduled') ORDER BY rowid`).all(event.id);
   return {state, worker, event, next, runs, queued, settled, yielded, errors, terminal, release, resident, resumeFence, stopFences,
-    cancellations, recovered, proofs, allowProof: () => { allowProof = true; },
+    cancellations, recovered, proofs, allowProof: () => { allowProof = true; }, expire: () => { state.elapsedMs += 30_000; },
     counts: () => ({stops, flushes, observations, observationsAtStop, resumeStarts, workspaceChecks})};
 }
 
@@ -474,6 +476,7 @@ for (const [scenario, stops, message] of [
   await run.worker.poll();
   run.release();
   await new Promise(resolve => setTimeout(resolve, 20));
+  if (message === 'retained_idle_unconfirmed') run.expire();
   await run.worker.poll();
   assert.deepEqual(run.counts(), before);
   assert.deepEqual(run.runs, [run.event.id]);
@@ -491,11 +494,20 @@ async function pollUntil(worker, predicate) {
   }
 }
 
-for (const returns of [true, false]) test(`lease loss during idle timeout ${returns ? 'recovers after late stop and fenced proof' : 'keeps a hung native stop blocked'}`, async t => {
-  const run = await supervisedTurn(t, 'hung stop', {loseOwnership: true});
-  assert.deepEqual(run.cancellations, ['lease_lost']);
+for (const [when, result] of [
+  ['during', 'stopped'], ['during', 'pending'], ['after', 'stopped'], ['after', 'rejected'],
+]) test(`lease loss ${when} idle timeout with native stop ${result} requires fenced stopped proof`, async t => {
+  const expireAfterTimeout = when === 'after';
+  const run = await supervisedTurn(t, 'hung stop', {loseOwnership: true, expireAfterTimeout, lateStopFails: result === 'rejected'});
+  assert.deepEqual(run.cancellations, expireAfterTimeout ? [] : ['lease_lost']);
   assert.equal(run.errors[0]?.message, 'retained_idle_timeout');
   const before = run.counts();
+  if (expireAfterTimeout) {
+    await run.worker.poll();
+    assert.deepEqual(run.errors.map(error => error.message), ['retained_idle_timeout']);
+    assert.deepEqual(run.queued, run.next);
+    run.expire();
+  }
   await pollUntil(run.worker, () => run.errors.filter(error => error.message === 'retained_idle_pending').length >= 2);
   assert.deepEqual(run.counts(), before);
   assert.equal(before.stops, 1);
@@ -505,14 +517,21 @@ for (const returns of [true, false]) test(`lease loss during idle timeout ${retu
   assert.deepEqual(run.recovered, []);
   assert.deepEqual(run.settled, []);
   assert.deepEqual(run.terminal(), []);
-  if (!returns) return;
+  if (result === 'pending') return;
 
   run.release();
   await pollUntil(run.worker, () => run.errors.some(error => error.message === 'retained_recovery_resident_changed'));
-  assert.equal([...run.state.host.boxes.values()][0].running, false);
+  assert.equal([...run.state.host.boxes.values()][0].running, result === 'rejected');
   assert.deepEqual(run.recovered, []);
   assert.deepEqual(run.queued, run.next);
   run.allowProof();
+  if (result === 'rejected') {
+    await pollUntil(run.worker, () => run.errors.filter(error => error.message === 'retained_recovery_stop_unconfirmed').length >= 2);
+    assert.equal(run.counts().stops, 1);
+    assert.deepEqual(run.queued, run.next);
+    assert.deepEqual(run.recovered, []);
+    return;
+  }
   await pollUntil(run.worker, () => run.settled.length === 1 + run.next.length);
   assert.deepEqual(run.runs, [run.event.id, run.event.id, ...run.next.map(job => job.id)]);
   assert.equal(run.recovered.length, 1);

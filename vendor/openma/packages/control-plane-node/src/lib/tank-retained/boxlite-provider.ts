@@ -148,6 +148,7 @@ export function pinnedBoxLiteProvider(input: {
   const stopUnderLock = async (
     handle: Handle, scope: Scope, assertCurrent: () => Promise<void>,
     observe: <T>(observation: T | Promise<T>) => Promise<T> = async observation => observation,
+    inspectOnly = false,
   ) => {
     const sdk = input.client as NativeBoxLiteClient;
     const name = retainedOwnershipName(handle, scope);
@@ -158,6 +159,7 @@ export function pinnedBoxLiteProvider(input: {
     await assertCurrent();
     const state = verify(await observe(sdk.getInfo(handle.runtimeId)));
     if (state.running === true) {
+      if (inspectOnly) throw Error('retained_recovery_stop_unconfirmed');
       await assertCurrent();
       const box = await observe(sdk.get(handle.runtimeId));
       if (!box || box.id !== handle.runtimeId || box.name !== name) throw Error('retained_recovery_resident_changed');
@@ -175,7 +177,7 @@ export function pinnedBoxLiteProvider(input: {
     if (stopped.running !== false || !/^(stopped|exited)$/i.test(stopped.status)) throw Error('retained_recovery_stop_unconfirmed');
     await assertCurrent();
   };
-  const quiesceExact = async (handle: Handle, scope: Scope, assertCurrent: () => Promise<void>, intent?: Handle) => {
+  const quiesceExact = async (handle: Handle, scope: Scope, assertCurrent: () => Promise<void>, intent?: Handle, inspectOnly = false) => {
     const timeout = Error('retained_recovery_stop_timeout');
     const timeoutMs = input.stopTimeoutMs ?? 35_000;
     const deadline = performance.now() + timeoutMs;
@@ -189,18 +191,18 @@ export function pinnedBoxLiteProvider(input: {
     };
     try {
       const attempt = lock(scope, 'exclusive', async () => {
-        if (!intent) return stopUnderLock(handle, scope, check, observe);
+        if (!intent) return stopUnderLock(handle, scope, check, observe, inspectOnly);
         const name = retainedBoxName(scope);
         if (intent.provider !== 'litebox' || intent.runtimeId !== name || intent.ownershipName || handle.ownershipName) {
           throw Error('retained_allocation_intent_invalid');
         }
         await check();
         const info = await observe(inspect(name));
-        if (!info && handle.runtimeId === name) return check();
+        if (!info && handle.runtimeId === name && !inspectOnly) return check();
         if (!info?.id || info.name !== name || (handle.runtimeId !== name && handle.runtimeId !== info.id)) {
           throw Error('retained_recovery_resident_changed');
         }
-        await stopUnderLock({ provider: 'litebox', runtimeId: info.id }, scope, check, observe);
+        await stopUnderLock({ provider: 'litebox', runtimeId: info.id }, scope, check, observe, inspectOnly);
       });
       await Promise.race([attempt, bounded]);
     } finally {

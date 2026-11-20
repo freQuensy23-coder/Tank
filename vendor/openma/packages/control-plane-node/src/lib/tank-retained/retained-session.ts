@@ -27,7 +27,7 @@ export interface Provider<R extends RetainedRuntime> {
   leftover(scope: Scope, fence: Fence, signal: AbortSignal): Promise<Handle | null>;
   create(scope: Scope, fence: Fence, signal: AbortSignal, assertExecutionCurrent?: () => Promise<void>): Promise<R>;
   resume(handle: Handle, scope: Scope, fence: Fence, signal: AbortSignal, assertExecutionCurrent?: () => Promise<void>): Promise<R>;
-  quiesceExact?(handle: Handle, scope: Scope, assertCurrent: () => Promise<void>, intent?: Handle): Promise<void>;
+  quiesceExact?(handle: Handle, scope: Scope, assertCurrent: () => Promise<void>, intent?: Handle, inspectOnly?: boolean): Promise<void>;
   quiesceOwned?(handle: Handle, scope: Scope, assertCurrent: () => Promise<void>): Promise<void>;
   reap(handle: Handle, scope: Scope, fence: Fence, signal: AbortSignal, assertAuthorized?: () => Promise<void>): Promise<void>;
 }
@@ -194,7 +194,7 @@ export class RetainedSessionLifecycle<R extends RetainedRuntime> {
     }
   }
   needsQuiescence(): boolean { return this.lostTurn !== null; }
-  async quiesceLostTurn(): Promise<void> {
+  async quiesceLostTurn(inspectOnly = false): Promise<void> {
     const target = this.lostTurn;
     if (!target) return;
     if (this.phase !== 'idle' || this.fence) fail('retained_recovery_not_drained');
@@ -226,7 +226,7 @@ export class RetainedSessionLifecycle<R extends RetainedRuntime> {
         fail('retained_recovery_handle_changed');
       }
       if (!this.options.provider.quiesceExact) fail('retained_sdk_inspection_required');
-      await this.options.provider.quiesceExact(handle, this.scope, assertCurrent, intent);
+      await this.options.provider.quiesceExact(handle, this.scope, assertCurrent, intent, inspectOnly);
       await assertCurrent();
       verified = true;
     } finally {
