@@ -1,0 +1,20 @@
+apiVersion: 1
+datasources:
+  - name: Tank PostgreSQL
+    uid: tank-postgres
+    type: grafana-postgresql-datasource
+    access: proxy
+    url: postgres:5432
+    user: tank_grafana_reader
+    editable: false
+    isDefault: true
+    jsonData:
+      database: tank
+      postgresVersion: 1600
+      sslmode: disable
+      timescaledb: false
+      maxOpenConns: 4
+      maxIdleConns: 2
+      connMaxLifetime: 600
+    secureJsonData:
+      password: $GRAFANA_READER_PASSWORD

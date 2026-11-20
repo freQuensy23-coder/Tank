@@ -1,0 +1,277 @@
+{
+  "uid": "tank-pipeline",
+  "title": "Tank / Pipeline",
+  "schemaVersion": 39,
+  "version": 1,
+  "timezone": "utc",
+  "editable": false,
+  "refresh": "1m",
+  "time": {
+    "from": "now-24h",
+    "to": "now"
+  },
+  "tags": [
+    "tank"
+  ],
+  "panels": [
+    {
+      "id": 1,
+      "title": "Feed pulls by source type · cumulative",
+      "description": "Current registered feeds, classified by current mode and adapter kind. One pull is one completed feed acquisition after retries, not an article, item, HTTP attempt or detail read. Counters have no historical baseline. A total is blank if any feed in the group lacks that counter; the time picker does not apply.",
+      "type": "table",
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "tank-postgres"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 0,
+        "w": 24,
+        "h": 7
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "tank-postgres"
+          },
+          "rawQuery": true,
+          "editorMode": "code",
+          "format": "table",
+          "rawSql": "SELECT source_mode AS \"Mode\", feed_kind AS \"Feed type\", count(*) AS \"Configured feeds\",\n       count(*) FILTER (WHERE successful IS NULL OR failed IS NULL) AS \"Feeds missing counters\",\n       CASE WHEN count(successful) = count(*) THEN sum(successful) END AS \"Successful pulls\",\n       CASE WHEN count(failed) = count(*) THEN sum(failed) END AS \"Failed pulls\"\nFROM tank_metrics.source_pulls GROUP BY 1, 2 ORDER BY 1, 2"
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "title": "Agent runs started · by current session status",
+      "description": "One persisted Tank agent session per start, bucketed by opened_at. Current OPEN, ENDED or FAILED status, not historical status at bucket end. Reused sessions and input retries do not add starts; pre-session admission failures are not observed.",
+      "type": "timeseries",
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "tank-postgres"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 7,
+        "w": 12,
+        "h": 7
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "tank-postgres"
+          },
+          "rawQuery": true,
+          "editorMode": "code",
+          "format": "time_series",
+          "rawSql": "SELECT $__timeGroupAlias(opened_at, '$__interval'), status AS metric, count(*) AS value\nFROM tank_metrics.agent_runs WHERE $__timeFilter(opened_at) GROUP BY 1, 2 ORDER BY 1, 2"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 3,
+      "title": "Terminal errors · by class",
+      "description": "Currently FAILED sessions opened in the selected range. Uses the terminal receipt’s provider error type, content filter, event type or host replay abort. Unclassified means no recognized class; transient retries and raw error messages are not counted.",
+      "type": "table",
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "tank-postgres"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 7,
+        "w": 12,
+        "h": 7
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "tank-postgres"
+          },
+          "rawQuery": true,
+          "editorMode": "code",
+          "format": "table",
+          "rawSql": "SELECT error_class AS \"Error class\", count(*) AS \"Failed sessions\"\nFROM tank_metrics.agent_runs WHERE $__timeFilter(opened_at) AND status = 'FAILED'\nGROUP BY 1 ORDER BY 2 DESC, 1"
+        }
+      ]
+    },
+    {
+      "id": 4,
+      "title": "Observed agent LLM turns",
+      "description": "One AGENT usage record per distinct session/model-request-end span with provider usage, bucketed by usage timestamp. FILTER, ROUTE and WEB_SEARCH are not agent turns. A gap means no recorded span, not evidence of zero model activity.",
+      "type": "timeseries",
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "tank-postgres"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 14,
+        "w": 12,
+        "h": 7
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "tank-postgres"
+          },
+          "rawQuery": true,
+          "editorMode": "code",
+          "format": "time_series",
+          "rawSql": "SELECT $__timeGroupAlias(at, '$__interval'), count(*) AS \"Recorded model calls\"\nFROM tank_metrics.agent_model_turns WHERE $__timeFilter(at) GROUP BY 1 ORDER BY 1"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 5,
+      "title": "Session start to first recorded verdict · by action",
+      "description": "Sessions opened in range; elapsed seconds to the first DONE get_decision answer with an action from that same session. Uses answered_at, not the market-data cutoff. No recorded verdict includes sessions without a usable answer; their latency is blank. Later token decisions do not multiply sessions.",
+      "type": "table",
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "tank-postgres"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 14,
+        "w": 12,
+        "h": 7
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "tank-postgres"
+          },
+          "rawQuery": true,
+          "editorMode": "code",
+          "format": "table",
+          "rawSql": "SELECT coalesce(action, 'No recorded verdict') AS \"First action\", count(*) AS \"Sessions\",\n       round(percentile_cont(0.5) WITHIN GROUP (ORDER BY seconds_to_verdict)::numeric, 1) AS \"Median (s)\",\n       round(percentile_cont(0.95) WITHIN GROUP (ORDER BY seconds_to_verdict)::numeric, 1) AS \"P95 (s)\"\nFROM tank_metrics.agent_first_verdict WHERE $__timeFilter(opened_at) GROUP BY 1 ORDER BY 1"
+        }
+      ]
+    },
+    {
+      "id": 6,
+      "title": "Agent-created watch outcomes · current state",
+      "description": "One condition explicitly marked agent_defined, split into metric watches and one-shot timed reviews. Decision-engine conditions are excluded even if they have a session ID. Current state of all retained rules, unaffected by the time picker; ARMED is not a successful execution.",
+      "type": "table",
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "tank-postgres"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 21,
+        "w": 12,
+        "h": 7
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "tank-postgres"
+          },
+          "rawQuery": true,
+          "editorMode": "code",
+          "format": "table",
+          "rawSql": "SELECT watch_kind AS \"Watch type\", coalesce(status, 'Unknown') AS \"Current state\", count(*) AS \"Rules\"\nFROM tank_metrics.agent_watches GROUP BY 1, 2 ORDER BY 1, 2"
+        }
+      ]
+    },
+    {
+      "id": 7,
+      "title": "Fired watches · consuming decision",
+      "description": "Fired in the selected range. Only an explicit consumed_by decision ID supplies an action; a later decision on the same event is not enough. Consumption does not prove a watch caused a trade or alert.",
+      "type": "table",
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "tank-postgres"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 21,
+        "w": 12,
+        "h": 7
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "tank-postgres"
+          },
+          "rawQuery": true,
+          "editorMode": "code",
+          "format": "table",
+          "rawSql": "SELECT watch_kind AS \"Watch type\", consuming_action AS \"Consuming action\", count(*) AS \"Fired rules\"\nFROM tank_metrics.agent_watches WHERE $__timeFilter(fired_at) GROUP BY 1, 2 ORDER BY 1, 2"
+        }
+      ]
+    },
+    {
+      "id": 8,
+      "title": "Agent-scheduled milestone checks · job outcomes",
+      "description": "MILESTONE_CHECK jobs created in range and linked by job_id to a successful schedule_milestone tool result. Each distinct job counts once, even on repeated scheduling. DONE means the check job finished, not that the real-world milestone occurred.",
+      "type": "table",
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "tank-postgres"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 28,
+        "w": 12,
+        "h": 7
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "tank-postgres"
+          },
+          "rawQuery": true,
+          "editorMode": "code",
+          "format": "table",
+          "rawSql": "SELECT status AS \"Current job state\", count(*) AS \"Linked milestone checks\"\nFROM tank_metrics.agent_milestones WHERE $__timeFilter(created_at) GROUP BY 1 ORDER BY 1"
+        }
+      ]
+    },
+    {
+      "id": 9,
+      "type": "text",
+      "title": "Coverage limits",
+      "gridPos": {
+        "x": 12,
+        "y": 28,
+        "w": 12,
+        "h": 7
+      },
+      "options": {
+        "mode": "markdown",
+        "content": "**Pull history:** Checkpoints retain cumulative feed-pull counters. Their recent read history mixes pulls with detail reads; it cannot give pull-only totals for the selected window.\n\n**Scheduled work:** Timed reviews and linked milestone checks are observable in Tank. Native OpenMA recurring schedules and their executions have no verified ledger in this datasource. Missing receipts are unknown, not failed or successful crons."
+      }
+    }
+  ]
+}
