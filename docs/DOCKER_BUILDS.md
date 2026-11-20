@@ -10,7 +10,7 @@ CI (`.github/workflows/ci.yml`, job `image`) builds every production image on ea
 | `tank-postgres` | `deploy/postgres` | `deploy/postgres/Dockerfile` |
 | `tank-clickhouse` | `deploy/clickhouse` | `deploy/clickhouse/Dockerfile` |
 
-Each image gets the label `org.tank.content`: a hash of the git blob IDs of the paths listed for it in the matrix. The deploy recreates PostgreSQL, ClickHouse and OpenMA only when this label changes. Add a path to the list when an image starts using it. `GIT_SHA` is the full commit SHA; Tank and capture record it as `config_version`.
+Each image gets the label `org.tank.content`: a hash of the git blob IDs of the paths listed for it in the matrix. For PostgreSQL, ClickHouse and OpenMA a matching label allows Deploy to reuse the running image while Compose reconciles the selected configuration. Add a path to the list when an image starts using it. `GIT_SHA` is the full commit SHA; Tank and capture record it as `config_version`.
 
 A local build needs only Docker with buildx, for example:
 
