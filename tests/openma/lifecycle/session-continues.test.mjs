@@ -8,6 +8,7 @@ import { DatabaseSync } from 'node:sqlite';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
+import { setTimeout as delay } from 'node:timers/promises';
 import assert from 'node:assert/strict';
 
 const openmaRoot = fileURLToPath(openmaSource);
@@ -288,10 +289,11 @@ function node(state, rootfsPath, {idleTimeoutMs, phase = false, startAttempts = 
     assert.equal(appended.type, 'appended');
     return event;
   };
-  return {send, execute, claim, context, driver, lifecycle, ownerId, turn: async text => execute(await send(text))};
+  const cancel = input => { driver.cancel(input); runner.cancel(input); };
+  return {send, execute, claim, context, driver, lifecycle, ownerId, cancel, turn: async text => execute(await send(text))};
 }
 
-async function supervisedTurn(t, scenario, {phase = false, modelFailure = false, prepareFailure = false, resumeFailure = false} = {}) {
+async function supervisedTurn(t, scenario, {phase = false, modelFailure = false, prepareFailure = false, resumeFailure = false, loseOwnership = false} = {}) {
   const workspaceId = 'workspace_' + randomUUID();
   const state = await world(t, workspaceId);
   const image = await state.image('idle');
@@ -315,6 +317,8 @@ async function supervisedTurn(t, scenario, {phase = false, modelFailure = false,
   const next = [{id: 'same_session', sessionId}, {id: 'other_session', sessionId: 'session_B'}];
   const queued = [{id: event.id, sessionId}, ...next];
   const runs = [], settled = [], yielded = [], errors = [];
+  const cancellations = [], recovered = [], proofs = [];
+  let allowProof = false;
   let stops = 0, flushes = 0, observations = 0, observationsAtStop, release;
   const pending = new Promise(resolve => { release = resolve; });
   const originalGet = state.host.client.get, originalInfo = state.host.client.getInfo;
@@ -323,6 +327,10 @@ async function supervisedTurn(t, scenario, {phase = false, modelFailure = false,
     if (stops === 1 && scenario === 'verify throws' && observationsAtStop + 1 === observations) throw Error('inspection interrupted');
     if (stops === 1 && scenario === 'hung verification') await pending;
     const info = await originalInfo(key);
+    if (loseOwnership && resourceFence()?.owner_id === `${stopFences[0]?.owner_id}:quiesce`) {
+      if (!allowProof) return {...info, name: 'unrelated-resident'};
+      proofs.push({fence: resourceFence(), info});
+    }
     if (stops === 1 && scenario === 'incomplete proof' && observationsAtStop + 1 === observations) {
       return {...info, state: {status: 'Stopped'}};
     }
@@ -353,12 +361,15 @@ async function supervisedTurn(t, scenario, {phase = false, modelFailure = false,
       },
       async stop() {
         stops++;
-        if (resumeFailure) stopFences.push(resourceFence());
+        if (resumeFailure || loseOwnership) stopFences.push(resourceFence());
         observationsAtStop = observations;
         if (scenario === 'stop throws' && stops === 1) throw Error('stop interrupted');
         if (scenario === 'permanent throw') throw Error('stop unavailable');
         if (scenario === 'permanent nonack' || (scenario === 'ambiguous ack' && stops === 1)) return;
-        if (scenario === 'hung stop') await pending;
+        if (scenario === 'hung stop') {
+          if (loseOwnership) state.db.prepare(`UPDATE managed_session_executions SET lease_expires_at_ms = 0 WHERE id = ?`).run(event.id);
+          await pending;
+        }
         await handle.stop();
         if (scenario === 'stop throws after stopping' && stops === 1) throw Error('stop acknowledgement lost');
       },
@@ -372,8 +383,15 @@ async function supervisedTurn(t, scenario, {phase = false, modelFailure = false,
     coordinator: {
       async claim({attemptId, recoverFrom, ownerId}) {
         if (recoverFrom) {
-          assert.equal(scenario, 'lease lost');
           assert.equal(recoverFrom.executionId, event.id);
+          if (loseOwnership) {
+            if (ownerId !== local.ownerId) return {type: 'empty'};
+            assert.equal(proofs.at(-1)?.info.state.running, false);
+            const fence = await local.claim(event, attemptId);
+            recovered.push(fence);
+            return {type: 'claimed', fence, execution: {id: event.id, workspaceId, sessionId, events: [event], interruptRequestedAt: null}};
+          }
+          assert.equal(scenario, 'lease lost');
           if (ownerId === local.ownerId) assert.equal(resident.running, false);
           return {type: 'empty'};
         }
@@ -387,18 +405,23 @@ async function supervisedTurn(t, scenario, {phase = false, modelFailure = false,
       async settle(result) { settled.push(result); return {type: 'settled'}; },
       async yieldProgress(result) { yielded.push(result); return {type: 'yielded'}; },
       async find() { return null; },
+      async renew({fence}) {
+        const row = state.db.prepare(`SELECT lease_expires_at_ms FROM managed_session_executions WHERE id = ?`).get(fence.executionId);
+        return row?.lease_expires_at_ms === 0 ? {type: 'lost'} : {type: 'renewed', fence, interruptRequestedAt: null};
+      },
     },
     context: {find: local.context},
     runtime: {
       async run({executionId, fence, ...input}) {
         runs.push(executionId);
-        if (executionId === event.id) return local.driver.accept({...input, executionFence: fence});
+        if (executionId === event.id && fence.generation === 1) return local.driver.accept({...input, executionFence: fence});
         assert.equal([...state.host.boxes.values()][0].running, false);
       },
-      async cancel() {},
+      async cancel(input) { cancellations.push(input.reason); local.cancel(input); },
     },
     quiesceLostExecution: input => local.lifecycle.quiesceLostTurn(input),
     ownerId: local.ownerId, clock: {now: state.now}, ids: {nextAttemptId: randomUUID}, maxConcurrent: 1, onError: error => errors.push(error),
+    ...(loseOwnership && {heartbeatIntervalMs: 5, pollIntervalMs: 10}),
   });
   t.after(() => { release(); worker.stop(); });
   await worker.poll();
@@ -407,6 +430,7 @@ async function supervisedTurn(t, scenario, {phase = false, modelFailure = false,
     WHERE rowid > (SELECT rowid FROM managed_session_events WHERE id = ?)
     AND type IN ('session.error', 'session.status_idle', 'session.status_rescheduled') ORDER BY rowid`).all(event.id);
   return {state, worker, event, next, runs, queued, settled, yielded, errors, terminal, release, resident, resumeFence, stopFences,
+    cancellations, recovered, proofs, allowProof: () => { allowProof = true; },
     counts: () => ({stops, flushes, observations, observationsAtStop, resumeStarts, workspaceChecks})};
 }
 
@@ -457,6 +481,46 @@ for (const [scenario, stops, message] of [
   assert.deepEqual(run.settled, []);
   assert.deepEqual(run.yielded, []);
   assert.deepEqual(run.terminal(), []);
+});
+
+async function pollUntil(worker, predicate) {
+  const signal = AbortSignal.timeout(2000);
+  while (!predicate()) {
+    await worker.poll();
+    await delay(5, undefined, {signal});
+  }
+}
+
+for (const returns of [true, false]) test(`lease loss during idle timeout ${returns ? 'recovers after late stop and fenced proof' : 'keeps a hung native stop blocked'}`, async t => {
+  const run = await supervisedTurn(t, 'hung stop', {loseOwnership: true});
+  assert.deepEqual(run.cancellations, ['lease_lost']);
+  assert.equal(run.errors[0]?.message, 'retained_idle_timeout');
+  const before = run.counts();
+  await pollUntil(run.worker, () => run.errors.filter(error => error.message === 'retained_idle_pending').length >= 2);
+  assert.deepEqual(run.counts(), before);
+  assert.equal(before.stops, 1);
+  assert.equal([...run.state.host.boxes.values()][0].running, true);
+  assert.deepEqual(run.runs, [run.event.id]);
+  assert.deepEqual(run.queued, run.next);
+  assert.deepEqual(run.recovered, []);
+  assert.deepEqual(run.settled, []);
+  assert.deepEqual(run.terminal(), []);
+  if (!returns) return;
+
+  run.release();
+  await pollUntil(run.worker, () => run.errors.some(error => error.message === 'retained_recovery_resident_changed'));
+  assert.equal([...run.state.host.boxes.values()][0].running, false);
+  assert.deepEqual(run.recovered, []);
+  assert.deepEqual(run.queued, run.next);
+  run.allowProof();
+  await pollUntil(run.worker, () => run.settled.length === 1 + run.next.length);
+  assert.deepEqual(run.runs, [run.event.id, run.event.id, ...run.next.map(job => job.id)]);
+  assert.equal(run.recovered.length, 1);
+  assert.equal(run.recovered[0].generation, 2);
+  assert.deepEqual(run.settled.filter(result => result.fence.executionId === run.event.id).map(result => result.fence), run.recovered);
+  assert.ok(run.proofs.at(-1).fence.generation > run.stopFences[0].generation);
+  assert.equal(run.proofs.at(-1).fence.owner_id, `${run.stopFences[0].owner_id}:quiesce`);
+  assert.equal(run.counts().stops, 1);
 });
 
 test('an unconfirmed stop during preparation failure bypasses startup retries and failure projection', async t => {

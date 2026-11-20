@@ -39,6 +39,7 @@ interface Entry {
   lifetime: Lifetime; context: Context; controller?: RetainedSessionLifecycle<BoxLiteRuntime>;
   allocation?: Allocation; started: boolean; open: boolean;
   idleFailure?: RetainedIdleUnconfirmed;
+  idleInFlight?: boolean;
 }
 export interface NodeRetainedOptions {
   fences: Fences;
@@ -261,8 +262,10 @@ export class NodeRetainedLifecycle {
         }
       }
     };
+    entry.idleInFlight = true;
+    const idle = retryIdle().finally(() => { entry.idleInFlight = false; });
     try {
-      await Promise.race([retryIdle(), bounded]);
+      await Promise.race([idle, bounded]);
     } catch (error) {
       if (error instanceof RetainedIdleUnconfirmed) entry.idleFailure = error;
       throw error;
@@ -292,12 +295,13 @@ export class NodeRetainedLifecycle {
     if (context.executionFence && bound?.executionFence !== context.executionFence) return;
     await serialize(scopeKey, async () => {
       if (!entry || this.entries.get(scopeKey) !== entry || entry.context !== bound) return;
+      if (entry.idleFailure) throw entry.idleFailure;
       await this.abandonEntry(scopeKey, entry);
     });
   }
   private async abandonEntry(scopeKey: string, entry: Entry): Promise<void> {
     entry.open = false;
-    if (entry.idleFailure) throw entry.idleFailure;
+    if (entry.idleInFlight) throw Error('retained_idle_pending');
     try { await entry.controller?.abandon(); }
     finally {
       entry.started = false;
@@ -320,6 +324,7 @@ export class NodeRetainedLifecycle {
       if (!sameExecutionFence(entry.context.executionFence, fence)) throw Error('retained_lost_turn_changed');
       await this.abandonEntry(scopeKey, entry);
       await entry.controller?.quiesceLostTurn();
+      delete entry.idleFailure;
       if (residents.get(scopeKey) === entry) residents.delete(scopeKey);
     });
   }

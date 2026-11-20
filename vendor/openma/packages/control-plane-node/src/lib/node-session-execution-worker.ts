@@ -521,7 +521,12 @@ export class NodeSessionExecutionWorker implements SessionEventDispatchPort {
     }
     catch (error) {
       if (error instanceof RetainedIdleUnconfirmed) {
-        active.quarantined = true;
+        if (this.#tracksRecovery() && (active.leaseLost || this.#leaseDeadlinePassed(active))) {
+          if (!active.leaseLost) this.#logLeaseLost(active);
+          active.leaseLost = true;
+        } else {
+          active.quarantined = true;
+        }
         this.#reportError(error);
         return;
       }
