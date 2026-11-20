@@ -95,7 +95,11 @@ services:
       postgres: {condition: service_healthy}
       clickhouse: {condition: service_healthy}
       openma: {condition: service_healthy}
-    logging: *logging
+    logging:
+      driver: json-file
+      options:
+        max-size: 20m
+        max-file: '8'
     networks: [tank-net]
 volumes:
   tank-data: {}

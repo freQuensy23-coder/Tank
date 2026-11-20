@@ -1,0 +1,29 @@
+# Where did the eight workers spend five minutes?
+
+Use application INFO logs from **one Tank instance**. Export promptly: Docker rotates by size, not by age. A wider export can only recover records still retained; a removed previous container takes its local logs with it. Include previous containers or saved exports if available. For example, for 12:00–12:05 UTC, export a wider interval (stderr included):
+
+```sh
+docker logs --since 2026-01-01T11:59:00Z --until 2026-01-01T12:06:00Z "$container" > worker.log 2>&1
+uv run --frozen python -m tank.worker_time_report 2026-01-01T12:00:00Z 2026-01-01T12:05:00Z < worker.log > window.json
+jq '{pool_us, by_worker: (.workers | map_values(.total_us))}' window.json
+jq '.attempts[] | select(.worker == 2)' window.json
+```
+
+The end is exclusive; omit it for five minutes. Concatenate non-duplicated application lines, not Docker's raw JSON envelopes. Include records on both sides: samples normally flush every 30 seconds, and a later claim end can supply the exact outcome for a job crossing the window. Widen the export if an end is missing. Do not mix replicas or duplicate exports; overlapping worker evidence is rejected.
+
+- `pool_us` divides eight workers' wall time among phases. Each worker's `total_us` sums to the window length, including `unknown`. These are not CPU or database server times.
+- `queue_select` is time in `claim_job`, not idle. `empty_wait` is the configured pause after no job was returned, `reconcile` checks outstanding failures, and `claim_backoff` follows a selection error. `loop` is other between-claim overhead. Empty cycles batch their exact phase boundaries instead of emitting a line per poll.
+- A claim moves through `prepare` (includes dependencies and expiry checks), optional `admission`, `handler`, and `settle` (result, deferral or failure handling). A span's `(worker, run, claim)` identifies its attempt, including the successful selection. A selection with no known winner has no claim number. A worker run is a fresh loop incarnation, not a durable host ID.
+- `attempts` includes acquisitions or successful selections overlapping the window. Join `job_id` to `ops.jobs.job_id`; do not join by kind, nearest timestamp or database attempt count. Deferral can leave the next acquisition at the same attempt count. A null job ID means the returned ID was not a canonical Tank job ID. `select_ns` measures the successful poll; `elapsed_ns` measures acquisition through settlement. `eligible_wait_us` is lateness relative to this acquisition's `run_after`, **not** time spent selecting. Do not add it to worker totals.
+- For a late job, inspect its selection duration, eligibility delay and all eight worker timelines. Long eligibility delays with short selections warrant checking competing work or queue eligibility; long selections warrant investigating the claim path. Long `handler` or `admission` spans point elsewhere. An expired job never returned by the queue has no claim to attribute.
+- After abrupt death there is no invented end or outcome. `last_seen` is the last observed boundary; time not covered by retained records is `unknown`, never idle. A known end does not fill lost phase records. Use wider logs or report the missing coverage. UTC phase boundaries require an ordered wall clock; the exact completed claim duration uses the monotonic clock.
+
+## How far back can I look?
+
+The diagnostic target is the **last two hours** on a continuously running Tank container at 2,796 acquisitions per five minutes. Allow 4.5 MB per five minutes for worker accounting and 1 MB for **all other lines in the same container** (decimal MB, including Docker envelopes). These are sizing assumptions, not rate limits. Starts and ends are written immediately so a process death cannot erase a buffered acquisition; empty-poll phases are batched.
+
+Only `tank` gets eight 20 MB files instead of five. In steady rotation there are seven closed files plus a partly filled current file: roughly 140–160 MB retained, or 127–145 minutes at 5.5 MB per five minutes. Previously the same combined rate would retain about 73–91 minutes. Even with the larger ring, other diagnostics lose history: at 1 MB per five minutes **without** accounting, the old ring held about 400–500 minutes. Higher claim rates, error floods or noisier handlers shorten the window further. This is not a historical archive or a guarantee at arbitrary load. The four other Compose services stay at five files each (nominal stack total 500 → 560 MB for one container per service; a file can overshoot its threshold by a record).
+
+Measured over one five-minute run: 3,727,124 formatted bytes became **4,597,671 bytes on disk** (5,680 accounting records: 4,343,396 bytes; 1,398 other records: 254,275 bytes). Worker accounting was 4.14 MiB, close to the earlier 4.09 MiB five-minute projection from a 30-second burst. All 2,796 exact start/end pairs survived the full export. With forced rotation only 457 acquisitions remained, and the fully retained suffix gave the same report as the complete export.
+
+Reproduce on Linux with local Docker: `uv run --frozen python scripts/measure_worker_logs.py`. It takes five minutes plus setup and removes its disposable containers and volumes. Eight actual worker loops share a migrated PostgreSQL queue. Every five seconds a wave of late `DELIVER` and `SCOUT_REVIEW` jobs arrives. Admission and handlers use timed local stand-ins; selection, settlement, reconciliation, 250 ms empty waits, sample timers, application formatting and Docker `json-file` are real. Late-delivery diagnostics exercise the non-accounting log path; they are not a measurement of all production traffic. The check reads the stopped sink's raw JSON file for byte counts and uses `docker logs` for the report. It forces rotation in a second small ring, checks exact results inside the retained interval and `unknown` for lost history.
