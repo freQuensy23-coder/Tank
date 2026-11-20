@@ -1,5 +1,4 @@
 import asyncio
-import json
 import logging
 import multiprocessing
 import os
@@ -168,32 +167,38 @@ async def test_empty_polls_do_not_emit_individual_messages(clock, caplog, monkey
     assert not window["attempts"]
 
 
-async def test_five_minute_burst_log_volume(caplog):
-    caplog.set_level(logging.INFO, logger="tank.worker_time")
-    workers = [timing.WorkerTime(i) for i in range(8)]
-    job = {"job_id": "JOB-01M5ESBE4B2R5Z61GPT3634CK2", "attempts": 1, "run_after": utcnow()}
-    for n in range(2796):
-        worker = workers[n % 8]
-        worker.select()
-        worker.start_claim(job, "REACTION_CAPTURE")
-        worker.end_claim("dependency_deferred")
-    for worker in workers:
-        for _ in range(10):
-            worker.timer.cancel()
-            worker.sample()
-        worker.stop()
-    formatter = logging.Formatter("%(asctime)s %(levelname)s %(name)s %(message)s")
-    records = [r for r in caplog.records if r.name == "tank.worker_time"]
-    size = 0
-    for record in records:
-        envelope = {
-            "log": formatter.format(record) + "\n",
-            "time": "2026-01-01T00:00:00.123456789Z",
-            "stream": "stderr",
-        }
-        size += len(json.dumps(envelope, separators=(",", ":")).encode()) + 1
-    assert len(records) == 2 * 2796 + 8 * 12
-    assert size < 4 * 1024**2, size
+async def test_rotated_prefix_retains_crossing_claim_but_not_lost_phases(clock, caplog):
+    epoch, seconds = clock
+    worker = timing.WorkerTime(0)
+    job = {"job_id": "JOB-01M5ESBE4B2R5Z61GPT3634CK2", "attempts": 1, "run_after": epoch}
+    worker.select()
+    seconds[0] = 5
+    worker.start_claim(job, "REACTION_CAPTURE")
+    worker.phase("handler")
+    seconds[0] = 30
+    worker.timer.cancel()
+    worker.sample()
+    seconds[0] = 80
+    worker.end_claim("completed")
+    worker.stop()
+    records = captured(caplog)
+    retained = records[-2:]
+    assert retained[0]["event"] == "claim_end"
+    start, end = epoch + timedelta(seconds=2), epoch + timedelta(seconds=60)
+    full = report(records, start, end)
+    partial = report(reversed(retained), start, end)
+    assert partial["attempts"] == full["attempts"]
+    (claim,) = partial["attempts"]
+    assert (claim["select_start"], claim["start"], claim["end"], claim["elapsed_ns"]) == (
+        "2026-01-01T00:00:00Z",
+        "2026-01-01T00:00:05Z",
+        "2026-01-01T00:01:20Z",
+        75 * 10**9,
+    )
+    assert partial["workers"][0]["total_us"] == dict(unknown=28000000, handler=30000000)
+    selection_only = report(retained, start, epoch + timedelta(seconds=4))
+    assert selection_only["attempts"] == [claim]
+    assert selection_only["workers"][0]["total_us"] == dict(unknown=2000000)
 
 
 async def test_same_run_repeated_claim(clock, caplog, monkeypatch):

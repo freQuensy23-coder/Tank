@@ -52,7 +52,7 @@ def report(records, start, end):
         if left != at:
             raise ValueError("inconsistent phase durations")
         claim = active or record.get("acquired")
-        if claim is None:
+        if claim is None or at < start or instant(claim["select_start"]) >= end:
             continue
         key = worker, run, claim["claim"]
         winners[worker, run, claim["poll"]] = claim["claim"]
