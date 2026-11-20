@@ -14,6 +14,7 @@ from tank.scheduler import Scheduler
 from tank.storage import retry_delay
 from tank.time_precision import collection_clock, offset_schedule, propagate_timestamp
 from tank.util import parse_time, utcnow
+from tank.worker_time import WorkerTime
 
 log = logging.getLogger(__name__)
 
@@ -194,6 +195,13 @@ class Runtime:
         return await self.sessions.scout_review(payload)
 
     async def worker(self, stop, number=0):
+        timing = WorkerTime(number)
+        try:
+            await self._work(stop, number, timing)
+        finally:
+            timing.stop()
+
+    async def _work(self, stop, number, timing):
         if not hasattr(self, "active_jobs"):
             self.active_jobs = set()
         while not stop.is_set():
@@ -208,6 +216,8 @@ class Runtime:
                 await self.pause(stop, 0.25)
                 continue
             self.active_jobs.add(job["job_id"])
+            timing.start_claim(job, job["type"] if job["type"] in SPEC_TIMEOUTS else "UNKNOWN")
+            outcome = "interrupted"
             try:
                 if job.get("expires_at") and parse_time(job["expires_at"]) <= utcnow():
                     await self.repo.put(
@@ -216,6 +226,7 @@ class Runtime:
                         {**job, "status": "EXPIRED", **collection_clock(utcnow()).fields("finished_at")},
                     )
                     await self.terminal_delivery_failure(job, "EXPIRED")
+                    outcome = "expired"
                     continue
                 dependencies = [
                     await self.repo.get("ops.jobs", dep) for dep in job["payload"].get("_depends_on", [])
@@ -235,6 +246,7 @@ class Runtime:
                             ),
                         },
                     )
+                    outcome = "dependency_deferred"
                     continue
                 kind = job["type"]
                 if kind not in self.handlers:
@@ -252,6 +264,7 @@ class Runtime:
                 async with self.repo.transaction():
                     await self.repo.put("ops.jobs", job["job_id"], {**job, "result": result})
                     await self.repo.finish_job(job["job_id"])
+                outcome = "completed"
             except (DeliveryDeferred, RoutingDeferred) as deferred:
                 async with self.repo.transaction():
                     current = await self.repo.get("ops.jobs", job["job_id"])
@@ -266,6 +279,7 @@ class Runtime:
                                 **deferred.not_before.fields("run_after"),
                             },
                         )
+                outcome = "delivery_deferred" if isinstance(deferred, DeliveryDeferred) else "routing_deferred"
             except AdmissionDeferred as deferred:
                 async with self.repo.transaction():
                     current = await self.repo.get("ops.jobs", job["job_id"])
@@ -282,9 +296,12 @@ class Runtime:
                                 **deferred.not_before.fields("run_after"),
                             },
                         )
+                outcome = "admission_deferred"
             except asyncio.CancelledError:
+                outcome = "cancelled"
                 raise
             except Exception as exc:
+                outcome = "timeout" if isinstance(exc, TimeoutError) else "error"
                 failure = exc.__cause__ if isinstance(exc, TimeoutError) and exc.__cause__ else exc
                 frames = " > ".join(
                     f"{frame.filename.rsplit('/', 1)[-1]}:{frame.lineno}:{frame.name}"
@@ -306,10 +323,12 @@ class Runtime:
                     if current and current["status"] in {"FAILED", "EXPIRED"}:
                         await self.terminal_delivery_failure(current, type(exc).__name__)
                 except Exception:
+                    outcome = "failure_record_error"
                     log.exception("Could not persist job failure: %s", job["job_id"])
                     await self.pause(stop, 1)
             finally:
                 self.active_jobs.discard(job["job_id"])
+                timing.end_claim(outcome)
 
     async def terminal_delivery_failure(self, job, reason):
         await job_failure_progress(self.repo, getattr(self, "settings", None), job, reason)
