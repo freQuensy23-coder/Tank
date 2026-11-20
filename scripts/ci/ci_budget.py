@@ -7,7 +7,7 @@ import urllib.request
 from datetime import datetime
 from pathlib import Path
 
-BUDGET_SECONDS = 300
+BUDGET_SECONDS = 900
 FINISH_RESERVE_SECONDS = 5
 REQUIRED_JOBS = {
     "lint-python",
