@@ -64,7 +64,8 @@ DO $$ BEGIN
     ASSERT EXISTS (SELECT FROM tank_metrics.agent_watches WHERE watch_kind = 'Timed review' AND status = 'FIRED'
                    AND fired_at IS NOT NULL AND consuming_action = 'No linked decision');
     ASSERT EXISTS (SELECT FROM tank_metrics.agent_watches WHERE consuming_action = 'Linked decision unavailable');
-    ASSERT (SELECT array_agg(status) = ARRAY['DONE'] FROM tank_metrics.agent_milestones);
+    ASSERT (SELECT array_agg(status) = ARRAY['DONE'] FROM tank_metrics.agent_milestones WHERE tool_linked);
+    ASSERT (SELECT count(*) = 2 FROM tank_metrics.agent_milestones WHERE NOT tool_linked);
     ASSERT NOT has_schema_privilege(current_user, 'ops', 'USAGE');
     ASSERT NOT has_table_privilege(current_user, 'tank_metrics.agent_model_turns', 'INSERT,UPDATE,DELETE');
 END $$;

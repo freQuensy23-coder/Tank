@@ -67,6 +67,22 @@ FROM (VALUES
     ('only-update','update-only',1,'SENT',1,10,'telegram:alerts','801','{}')
 ) AS attempts(id,eid,version,state,attempt,delay,channel,ref,extra);
 
+INSERT INTO out.alerts (storage_key,alert_id,version,kind,event_id,generated_at,card_text,decisions,evidence_bundle_id,
+                        code_version,config_version,document)
+SELECT id,id,1,'FULL','unsent','2026-01-02Z','fixture','{}',repeat('a',64),'fixture','fixture','{"card_struct":{}}'
+FROM (VALUES ('pending-card'),('rejected-card')) cards(id);
+INSERT INTO ops.jobs (storage_key,job_id,type,priority,idem_key,status,attempts,max_attempts,created_at,run_after,expires_at,document)
+VALUES ('pending-job','pending-job','DELIVER',0,'pending-card:1:telegram:alerts','QUEUED',0,5,'2026-01-02Z','2026-01-02Z','2026-01-03Z','{"payload":{"alert_id":"pending-card","version":1,"channel":"telegram:alerts"}}');
+INSERT INTO out.deliveries (storage_key,alert_id,version,status,attempt,at,channel,document)
+VALUES ('api-reject','rejected-card',1,'FAILED',1,'2026-01-02Z','telegram:alerts','{"error":"DeliveryError","http_status":429}');
+UPDATE ops.agent_sessions SET document = document || '{"message_log":[{"message_id":"m","remote_event_id":"accepted"}]}' WHERE session_id='a';
+INSERT INTO ops.tool_calls (storage_key,call_id,session_id,tool,status,requested_at,answered_at,document)
+SELECT 'pub-' || id,id,'a','publish_card','DONE','2026-01-01Z','2026-01-01Z',
+       jsonb_build_object('input','{}'::jsonb,'native_turn_message_id','m','result',result)
+FROM (VALUES ('a-generated','{"published":true,"reason":"GENERATED","alert_id":"alpha","version":1,"publication_receipt":{"disposition":"PUBLISHED","reason":"GENERATED"}}'::jsonb),
+             ('a-suppressed','{"published":false,"publication_receipt":{"disposition":"SUPPRESSED","reason":"BELOW_MAJOR"}}'),
+             ('a-unknown','{}')) outcomes(id,result);
+
 SET LOCAL ROLE tank_grafana_reader;
 SET LOCAL plpgsql.check_asserts = on;
 DO $$ BEGIN

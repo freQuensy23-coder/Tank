@@ -218,6 +218,14 @@ assert_b() {
 }
 assert_b
 "${pg[@]}" -f - < "$tests/seeds/latency.sql"
+check_card_panel() {
+    local id=$1 start=$2 end=$3 expected=$4
+    jq -ce --argjson id "$id" --arg start "$start" --arg end "$end" '.dashboard.panels[] | select(.id == $id) | {from:$start,to:$end,queries:.targets}' "$tmp/pipeline" > "$tmp/request"
+    "${http[@]}" -H 'Content-Type: application/json' --data-binary "@$tmp/request" "$base/api/ds/query" |
+        jq -e --argjson expected "$expected" '.results.A | .error == null and .frames[0].data.values == $expected' >/dev/null
+}
+check_card_panel 35 1767225600000 1767226320000 '[["Sends observed · incomplete attribution","Generated in range","Generated · pending delivery job","Generated · failed receipt, no confirmation","Generated · unresolved outcome","Confirmed sends in range","Sent · no attributable session","Sent · session, no attributable input","First-card latency samples · sessions opened in range"],[null,12,0,0,1,11,2,8,3]]'
+check_card_panel 36 1767225600000 1767226320000 '[["All publication calls","PUBLISHED","SUPPRESSED","Unknown"],[null,"GENERATED","BELOW_MAJOR","Unknown / unclassified"],[3,1,1,1]]'
 for panel in 33 5; do
     if [[ $panel == 33 ]]; then
         expected='{"Median":[60,25],"P95":[550.5,25],"Sessions":[3,1]}'

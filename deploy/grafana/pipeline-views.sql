@@ -172,13 +172,66 @@ LEFT JOIN ana.decisions d ON d.dec_id = w.document ->> 'consumed_by'
 WHERE w.document @> '{"agent_defined":true}';
 
 CREATE OR REPLACE VIEW tank_metrics.agent_milestones AS
-SELECT j.created_at, j.status
-FROM ops.jobs j
-WHERE j.type = 'MILESTONE_CHECK' AND EXISTS (
-    SELECT 1 FROM ops.tool_calls tc
-    WHERE tc.tool = 'schedule_milestone' AND tc.status = 'DONE'
+SELECT j.created_at, j.status, EXISTS (
+    SELECT FROM ops.tool_calls tc
+    WHERE tc.tool = 'schedule_milestone' AND tc.status = 'DONE' AND NOT tc.document @> '{"is_error":true}'
       AND tc.document #>> '{result,job_id}' = j.job_id
-);
+) AS tool_linked
+FROM ops.jobs j WHERE j.type = 'MILESTONE_CHECK';
+
+CREATE OR REPLACE VIEW tank_metrics.event_card_activity AS
+SELECT a.generated_at, receipts.sent_at, a.kind,
+       CASE WHEN receipts.sent_at IS NOT NULL THEN 'Confirmed'
+            WHEN receipts.uncertain THEN 'Unconfirmed outcome'
+            WHEN receipts.failed THEN 'Failed receipt'
+            WHEN j.status IN ('QUEUED','RUNNING') THEN 'Pending job'
+            ELSE 'No conclusive receipt' END AS delivery_state,
+       s.session_id IS NOT NULL AS session_linked,
+       EXISTS (
+           SELECT FROM ops.tool_calls tc
+           JOIN LATERAL jsonb_array_elements(CASE WHEN jsonb_typeof(s.document -> 'message_log') = 'array'
+                                                  THEN s.document -> 'message_log' END) m ON true
+           WHERE tc.session_id = s.session_id AND tc.tool = 'publish_card' AND tc.status = 'DONE'
+             AND tc.document @> '{"result":{"published":true}}' AND NOT tc.document @> '{"is_error":true}'
+             AND tc.document #>> '{result,reason}' IN ('GENERATED','QUEUED_RATE_LIMIT')
+             AND tc.document #>> '{result,alert_id}' = a.alert_id AND tc.document #>> '{result,version}' = a.version::text
+             AND m ->> 'message_id' = tc.document ->> 'native_turn_message_id' AND nullif(m ->> 'remote_event_id','') IS NOT NULL
+       ) AS input_linked
+FROM out.alerts a
+LEFT JOIN ops.agent_sessions s ON s.session_id = a.document ->> 'session_id' AND s.event_id = a.event_id
+  AND s.document ->> 'replay_run_id' IS NULL AND s.opened_at <= a.generated_at
+LEFT JOIN ops.jobs j ON j.type = 'DELIVER' AND j.idem_key = a.alert_id || ':' || a.version || ':telegram:alerts'
+CROSS JOIN LATERAL (
+    SELECT min(d.at) FILTER (WHERE d.status = 'SENT' AND d.attempt > 0 AND d.message_ref ~ '^[1-9][0-9]*$'
+                               AND nullif(d.document ->> 'chat_id','') IS NOT NULL
+                               AND coalesce(d.document ->> 'method','sendMessage') IN ('sendMessage','sendRichMessage')) AS sent_at,
+           bool_or(d.status = 'FAILED') AS failed,
+           bool_or((d.status = 'GENERATED' AND d.attempt > 0 AND NOT EXISTS (
+                      SELECT FROM out.deliveries settled WHERE settled.alert_id = d.alert_id AND settled.version = d.version
+                        AND settled.channel = d.channel AND settled.attempt = d.attempt AND settled.status IN ('FAILED','SENT')
+                   )) OR d.status = 'SENT' OR (d.status = 'FAILED' AND NOT d.document @> '{"terminal":true}'
+                       AND (d.document ->> 'http_status' IS NULL OR d.document ->> 'http_status' = '200'))) AS uncertain
+    FROM out.deliveries d WHERE d.alert_id = a.alert_id AND d.version = a.version AND d.channel = 'telegram:alerts'
+) receipts;
+
+CREATE OR REPLACE VIEW tank_metrics.card_publication_calls AS
+SELECT tc.requested_at,
+       CASE WHEN receipt.disposition IN ('SUPPRESSED','REFUSED','PUBLISHED') THEN receipt.disposition
+            WHEN tc.status IN ('ERROR','REFUSED','PENDING') THEN tc.status
+            WHEN tc.document @> '{"result":{"accepted":false}}' THEN 'REFUSED'
+            ELSE 'Unknown' END AS disposition,
+       CASE WHEN receipt.reason IN ('TERMINAL_EVENT','FIRST_CARD_ALREADY_GENERATED','BELOW_MAJOR','LOW_CERTAINTY',
+                 'STALE','INVALIDATED','NO_MATERIAL_CHANGE','STALE_STATE_CHANGE','ORDINARY_CARD_EXISTS',
+                 'PRELIMINARY_REQUIRES_MATERIAL','PRELIMINARY_REQUIRES_EVIDENCE','ANALYSIS_INCOMPLETE','EVENT_SCOPE',
+                 'GENERATED','IDENTICAL_PENDING','QUEUED_RATE_LIMIT','VALIDATION','PROVENANCE') THEN receipt.reason
+            ELSE 'Unknown / unclassified' END AS reason
+FROM ops.tool_calls tc
+CROSS JOIN LATERAL (SELECT tc.document #>> '{result,publication_receipt,disposition}' AS disposition,
+    coalesce(tc.document #>> '{result,publication_receipt,reason}', tc.document #>> '{result,reason}',
+             tc.document #>> '{result,error,category}') AS reason) receipt
+WHERE tc.tool = 'publish_card';
+
+GRANT SELECT ON tank_metrics.event_card_activity, tank_metrics.card_publication_calls TO tank_grafana_reader;
 
 GRANT SELECT ON tank_metrics.source_pulls, tank_metrics.agent_runs, tank_metrics.agent_model_turns,
                 tank_metrics.agent_first_verdict, tank_metrics.agent_watches, tank_metrics.agent_milestones
