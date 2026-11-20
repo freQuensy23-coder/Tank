@@ -40,4 +40,6 @@ The check stages the selected Deploy release in a disposable project, runs real 
 
 ## Local verification
 
+Use `deploy/grafana/verify.sh fresh-browser` with the local browser prerequisites above to verify a Viewer through the release edge without issuing a certificate. The fixture substitutes localhost, a loopback port and the pinned Pebble image’s existing test certificate; production ACME is not exercised.
+
 Run `deploy/grafana/verify.sh` on a local Docker daemon with the Tank subnet free. It requires Bash, Docker Compose, `curl`, `jq` and OpenSSL. It uses disposable credentials and PostgreSQL, tests dashboard targets and reader permissions, replaces Grafana to check persistence, and removes only its test project. Do not point it at a production stack.

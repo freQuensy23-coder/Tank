@@ -5,7 +5,7 @@ from pathlib import Path
 from playwright.sync_api import sync_playwright
 
 scratch = Path(sys.argv[1])
-name = "grafana.127-0-0-1.sslip.io"
+name = sys.argv[3] if len(sys.argv) == 4 else "grafana.127-0-0-1.sslip.io"
 origin = f"https://{name}:{int(sys.argv[2])}"
 state = scratch / "session.json"
 with sync_playwright() as driver:
