@@ -42,6 +42,19 @@ export interface NativeBoxLiteClient {
   getOrCreate(options: object, name?: string | null): Promise<{ created: boolean; box: NativeBox }>;
   remove(id: string, force?: boolean | null): Promise<void>;
 }
+export const retainedBoxName = (scope: Scope): string =>
+  'oma-' + createHash('sha256').update(`litebox:${scope.sessionId}`).digest('hex').slice(0, 32);
+const upgradePrefix = (scope: Scope) =>
+  'oma-' + createHash('sha256').update(JSON.stringify(scope)).digest('hex').slice(0, 32) + '-upgrade-';
+export const retainedOwnershipName = (handle: Handle, scope: Scope): string => {
+  if (!handle.ownershipName) return retainedBoxName(scope);
+  const prefix = upgradePrefix(scope);
+  if (!handle.ownershipName.startsWith(prefix) || !/^[a-f0-9]{32}$/.test(handle.ownershipName.slice(prefix.length))) {
+    throw Error('retained_cleanup_ownership_mismatch');
+  }
+  return handle.ownershipName;
+};
+
 export type NativeBoxInfo = { id: string; name?: string; state: { status: string; running: boolean } };
 export interface NativeBox {
   id: string; name: string | null; info(): NativeBoxInfo | Promise<NativeBoxInfo>;
@@ -110,9 +123,8 @@ export function pinnedBoxLiteProvider(input: {
     environment: { type: 'base', identity: input.allocation.image,
       artifact: { type: 'image', reference: input.allocation.image } },
   });
-  const expectedName = (scope: Scope) => 'oma-' + createHash('sha256').update(`litebox:${scope.sessionId}`).digest('hex').slice(0, 32);
   const lock = <T>(scope: Scope, mode: 'shared' | 'exclusive', work: () => Promise<T>) =>
-    withNativeLock(home, expectedName(scope), mode, work);
+    withNativeLock(home, retainedBoxName(scope), mode, work);
   const guarded = (fence: Fence, signal: AbortSignal, authorized?: () => Promise<void>) => async () => {
     signal.throwIfAborted();
     await authorized?.();
@@ -131,20 +143,14 @@ export function pinnedBoxLiteProvider(input: {
     }));
     return runtime;
   };
-  const upgradePrefix = (scope: Scope) => 'oma-' + createHash('sha256').update(JSON.stringify(scope)).digest('hex').slice(0, 32) + '-upgrade-';
-  const ownershipName = (handle: Handle, scope: Scope): string => {
-    if (!handle.ownershipName) return expectedName(scope);
-    if (!handle.ownershipName.startsWith(upgradePrefix(scope)) || !/^[a-f0-9]{32}$/.test(handle.ownershipName.slice(upgradePrefix(scope).length))) throw Error('retained_cleanup_ownership_mismatch');
-    return handle.ownershipName;
-  };
   const publicProvider = (handle: Handle, scope: Scope) => handle.ownershipName
-    ? input.module.createBoxLiteProvider({ ...options, runtimeName: () => ownershipName(handle, scope) }) : provider;
+    ? input.module.createBoxLiteProvider({ ...options, runtimeName: () => retainedOwnershipName(handle, scope) }) : provider;
   const stopUnderLock = async (
     handle: Handle, scope: Scope, assertCurrent: () => Promise<void>,
     observe: <T>(observation: T | Promise<T>) => Promise<T> = async observation => observation,
   ) => {
     const sdk = input.client as NativeBoxLiteClient;
-    const name = ownershipName(handle, scope);
+    const name = retainedOwnershipName(handle, scope);
     const verify = (info: NativeBoxInfo | null) => {
       if (!info || info.id !== handle.runtimeId || info.name !== name) throw Error('retained_recovery_resident_changed');
       return info.state;
@@ -182,7 +188,7 @@ export function pinnedBoxLiteProvider(input: {
     try {
       const attempt = lock(scope, 'exclusive', async () => {
         if (!intent) return stopUnderLock(handle, scope, check, observe);
-        const name = expectedName(scope);
+        const name = retainedBoxName(scope);
         if (intent.provider !== 'litebox' || intent.runtimeId !== name || intent.ownershipName || handle.ownershipName) {
           throw Error('retained_allocation_intent_invalid');
         }
@@ -203,14 +209,14 @@ export function pinnedBoxLiteProvider(input: {
     quiesceExact,
     async allocationIntent(scope, fence, signal) {
       signal.throwIfAborted(); await current(fence);
-      const name = expectedName(scope);
+      const name = retainedBoxName(scope);
       if (await inspect(name)) throw Error('retained_unpublished_runtime_exists');
       await current(fence);
       return { provider: 'litebox', runtimeId: name };
     },
     async resolveIntent(intent, scope, fence, signal) {
       signal.throwIfAborted(); await current(fence);
-      if (intent.provider !== 'litebox' || intent.runtimeId !== expectedName(scope)) throw Error('retained_allocation_intent_invalid');
+      if (intent.provider !== 'litebox' || intent.runtimeId !== retainedBoxName(scope)) throw Error('retained_allocation_intent_invalid');
       const info = await inspect(intent.runtimeId);
       if (!info) return null;
       if (!info.id || info.name !== intent.runtimeId) throw Error('retained_cleanup_ownership_mismatch');
@@ -218,7 +224,7 @@ export function pinnedBoxLiteProvider(input: {
     },
     async leftover(scope, fence, signal) {
       signal.throwIfAborted(); await current(fence);
-      const name = expectedName(scope), info = await inspect(name);
+      const name = retainedBoxName(scope), info = await inspect(name);
       if (!info) return null;
       if (!info.id || info.name !== name) throw Error('retained_cleanup_ownership_mismatch');
       return { provider: 'litebox', runtimeId: info.id };
@@ -226,7 +232,7 @@ export function pinnedBoxLiteProvider(input: {
     async create(scope, fence, signal, assertExecutionCurrent) {
       const assertCurrent = guarded(fence, signal, assertExecutionCurrent);
       return lock(scope, 'exclusive', () => mutation.run(assertCurrent, async () => {
-        const name = expectedName(scope);
+        const name = retainedBoxName(scope);
         if (await inspect(name)) throw Error('retained_unpublished_runtime_exists');
         await assertCurrent();
         try {
@@ -254,7 +260,7 @@ export function pinnedBoxLiteProvider(input: {
       return lock(scope, 'exclusive', () => mutation.run(assertCurrent, async () => {
         const info = await inspect(handle.runtimeId);
         if (!info) throw Error('retained_runtime_missing');
-        if (info.id !== handle.runtimeId || info.name !== ownershipName(handle, scope)) throw Error('retained_cleanup_ownership_mismatch');
+        if (info.id !== handle.runtimeId || info.name !== retainedOwnershipName(handle, scope)) throw Error('retained_cleanup_ownership_mismatch');
         const selectedProvider = publicProvider(handle, scope);
         const context = { sessionId: scope.sessionId, workdir: '/workspace' };
         await assertCurrent();
@@ -270,7 +276,7 @@ export function pinnedBoxLiteProvider(input: {
       await lock(scope, 'exclusive', () => mutation.run(assertCurrent, async () => {
         await assertCurrent();
         if (handle.ownershipName) {
-          const name = ownershipName(handle, scope);
+          const name = retainedOwnershipName(handle, scope);
           const info = await inspect(handle.runtimeId);
           if (!info) return;
           if (info.name !== name || (handle.runtimeId !== name && info.id !== handle.runtimeId)) throw Error('retained_cleanup_ownership_mismatch');

@@ -436,8 +436,8 @@ async def test_native_queued_tool_result_executions_continue_after_transient_idl
         service = SessionService(repo, settings(), dispatch, http=http)
         original_process = service.process_event
 
-        async def process(sid, event, seq=None):
-            await original_process(sid, event, seq)
+        async def process(sid, event, seq=None, *, from_native=False):
+            await original_process(sid, event, seq, from_native=from_native)
             if event["id"] == "native-rev30":
                 first_idle.set()
 

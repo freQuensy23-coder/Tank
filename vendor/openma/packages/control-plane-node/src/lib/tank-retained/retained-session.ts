@@ -6,7 +6,7 @@ export type Scope = { workspaceId: string; environmentId: string; sessionId: str
 export type Handle = { provider: string; runtimeId: string; ownershipName?: string };
 export type Fence = Scope & { ownerId: string; generation: number; token: string; expiresAt: string };
 export type Candidate = { id: string; contentHash: string; metadata?: Record<string, string | number | boolean | null> };
-type Publication = { workspaceCandidate: Candidate; revision: number; generation: number };
+export type Publication = { workspaceCandidate: Candidate; revision: number; generation: number };
 export interface Fences {
   acquire(input: { scope: Scope; ownerId: string; ttlMs: number }): Promise<
     { type: 'acquired'; fence: Fence; publication: Publication | null }
@@ -46,6 +46,41 @@ export class RetainedLifecycleError extends Error {
 }
 function fail(code: string): never { throw new RetainedLifecycleError(code); }
 const digest = (value: unknown) => 'sha256:' + createHash('sha256').update(JSON.stringify(value)).digest('hex');
+
+export function decodeRetainedPublication(candidate: Candidate, scope: Scope, providerId: string): Manifest {
+  const metadata = candidate.metadata;
+  if (metadata?.schema === 2) {
+    if (metadata.scope !== JSON.stringify(scope) || typeof metadata.manifest !== 'string'
+        || candidate.contentHash !== stableDigest({ scope: scope, manifest: metadata.manifest })) fail('retained_manifest_invalid');
+    let manifest: Manifest;
+    try { manifest = JSON.parse(metadata.manifest); } catch { fail('retained_manifest_invalid'); }
+    if (!manifest || typeof manifest !== 'object') fail('retained_manifest_invalid');
+    const validHandle = (handle: Handle) => handle && handle.provider === providerId
+      && typeof handle.runtimeId === 'string' && handle.runtimeId.length > 0
+      && (handle.ownershipName === undefined || (typeof handle.ownershipName === 'string' && handle.ownershipName.length > 0));
+    if (!validHandle(manifest.handle) || !['allocating', 'aborted', 'retained', 'upgrading', 'archived'].includes(manifest.state)
+        || manifest.archived !== (manifest.state === 'archived') || !Array.isArray(manifest.retired)
+        || manifest.retired!.some(handle => !validHandle(handle))) fail('retained_manifest_invalid');
+    validateRuntimeIdentity(manifest.identity);
+    if (manifest.state === 'upgrading') {
+      const upgrade = manifest.upgrade;
+      if (!upgrade || !validHandle(upgrade.source) || !validHandle(upgrade.target) || typeof upgrade.owner !== 'string'
+          || !upgrade.owner || JSON.stringify(upgrade.source) !== JSON.stringify(manifest.handle)
+          || upgrade.target.runtimeId === upgrade.source.runtimeId) fail('retained_manifest_invalid');
+      validateRuntimeIdentity(upgrade.identity);
+      assertCompatible(manifest.identity!, upgrade.identity);
+    } else if (manifest.upgrade) fail('retained_manifest_invalid');
+    return manifest;
+  }
+  if (!metadata || metadata.schema !== 1 || metadata.scope !== JSON.stringify(scope)
+      || metadata.provider !== providerId || typeof metadata.runtimeId !== 'string'
+      || !metadata.runtimeId || !['allocating', 'aborted', 'retained', 'archived'].includes(String(metadata.state))) fail('retained_manifest_invalid');
+  const identity = { scope: scope, provider: metadata.provider, runtimeId: metadata.runtimeId,
+    fingerprint: metadata.fingerprint, state: metadata.state };
+  if (candidate.contentHash !== digest(identity)) fail('retained_manifest_invalid');
+  return { handle: { provider: String(metadata.provider), runtimeId: metadata.runtimeId as string }, state: String(metadata.state),
+    archived: metadata.state === 'archived', ...(typeof metadata.fingerprint === 'string' ? { fingerprint: metadata.fingerprint } : {}) };
+}
 
 export class RetainedSessionLifecycle<R extends RetainedRuntime> {
   readonly scope: Scope;
@@ -109,40 +144,12 @@ export class RetainedSessionLifecycle<R extends RetainedRuntime> {
     }
   }
   private decode(candidate: Candidate, archiveOnly = false): Manifest {
-    const metadata = candidate.metadata;
-    if (metadata?.schema === 2) {
-      if (metadata.scope !== JSON.stringify(this.scope) || typeof metadata.manifest !== 'string'
-          || candidate.contentHash !== stableDigest({ scope: this.scope, manifest: metadata.manifest })) fail('retained_manifest_invalid');
-      let manifest: Manifest;
-      try { manifest = JSON.parse(metadata.manifest); } catch { fail('retained_manifest_invalid'); }
-      if (!manifest || typeof manifest !== 'object') fail('retained_manifest_invalid');
-      const validHandle = (handle: Handle) => handle && handle.provider === this.options.providerId
-        && typeof handle.runtimeId === 'string' && handle.runtimeId.length > 0
-        && (handle.ownershipName === undefined || (typeof handle.ownershipName === 'string' && handle.ownershipName.length > 0));
-      if (!validHandle(manifest.handle) || !['allocating', 'aborted', 'retained', 'upgrading', 'archived'].includes(manifest.state)
-          || manifest.archived !== (manifest.state === 'archived') || !Array.isArray(manifest.retired)
-          || manifest.retired!.some(handle => !validHandle(handle))) fail('retained_manifest_invalid');
-      validateRuntimeIdentity(manifest.identity);
-      if (manifest.state === 'upgrading') {
-        const upgrade = manifest.upgrade;
-        if (!upgrade || !validHandle(upgrade.source) || !validHandle(upgrade.target) || typeof upgrade.owner !== 'string'
-            || !upgrade.owner || JSON.stringify(upgrade.source) !== JSON.stringify(manifest.handle)
-            || upgrade.target.runtimeId === upgrade.source.runtimeId) fail('retained_manifest_invalid');
-        validateRuntimeIdentity(upgrade.identity);
-        assertCompatible(manifest.identity!, upgrade.identity);
-      } else if (manifest.upgrade) fail('retained_manifest_invalid');
-      return manifest;
+    const manifest = decodeRetainedPublication(candidate, this.scope, this.options.providerId);
+    if (!manifest.identity && !archiveOnly && !manifest.archived && manifest.fingerprint !== this.options.fingerprint
+        && (typeof manifest.fingerprint !== 'string' || !/^sha256:[a-f0-9]{64}$/.test(manifest.fingerprint))) {
+      fail('retained_manifest_invalid');
     }
-    if (!metadata || metadata.schema !== 1 || metadata.scope !== JSON.stringify(this.scope)
-        || metadata.provider !== this.options.providerId || typeof metadata.runtimeId !== 'string'
-        || !metadata.runtimeId || !['allocating', 'aborted', 'retained', 'archived'].includes(String(metadata.state))) fail('retained_manifest_invalid');
-    const identity = { scope: this.scope, provider: metadata.provider, runtimeId: metadata.runtimeId,
-      fingerprint: metadata.fingerprint, state: metadata.state };
-    if (candidate.contentHash !== digest(identity)) fail('retained_manifest_invalid');
-    if (!archiveOnly && metadata.state !== 'archived' && metadata.fingerprint !== this.options.fingerprint
-        && (typeof metadata.fingerprint !== 'string' || !/^sha256:[a-f0-9]{64}$/.test(metadata.fingerprint))) fail('retained_manifest_invalid');
-    return { handle: { provider: String(metadata.provider), runtimeId: metadata.runtimeId as string }, state: String(metadata.state),
-      archived: metadata.state === 'archived', ...(typeof metadata.fingerprint === 'string' ? { fingerprint: metadata.fingerprint } : {}) };
+    return manifest;
   }
   private configurationChanged(manifest: Manifest): boolean {
     return manifest.identity ? stableDigest(manifest.identity) !== stableDigest(this.options.identity)

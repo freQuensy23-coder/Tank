@@ -326,14 +326,13 @@ async def test_restored_retry_intent_rechecks_durable_no_replay_status():
 
 
 @pytest.mark.parametrize("terminal_state", ["FAILED", "CANCELLED"])
-async def test_polled_refusal_retires_only_its_owner_and_preserves_later_turn(terminal_state):
+@pytest.mark.parametrize("unseen_tool", [False, True])
+async def test_refusal_retires_only_its_owner_and_blocks_catch_up_tools(terminal_state, unseen_tool):
     repo, service, http, states, posts, history = await setup({CALLBACK: {"recovery_refused": True}})
     try:
         states[CALLBACK] = "RUNNING"
         await service.process_event("s", error("before-settlement", CALLBACK, "exhausted"))
         assert not posts
-        states[CALLBACK] = terminal_state
-        service.execution_polls.pop("s", None)
         session = await repo.get("ops.agent_sessions", "s")
         original = session["message_log"][0]
         original["payload"]["kind"] = "NEW_ITEM"
@@ -358,6 +357,20 @@ async def test_polled_refusal_retires_only_its_owner_and_preserves_later_turn(te
             },
         )
         states["queued-input"] = "QUEUED"
+        session = await repo.get("ops.agent_sessions", "s")
+        await service.execution_barrier(session, verify_remote=True)
+        states[CALLBACK] = terminal_state
+
+        async def unexpected_tool(*args):
+            pytest.fail("Catch-up dispatched a tool from a refused execution")
+
+        service.tool = unexpected_tool
+        if unseen_tool:
+            history.append(
+                event("unseen-tool", "agent.custom_tool_use", CALLBACK, name="send_telegram_file", input={})
+            )
+        else:
+            service.execution_polls.pop("s", None)
 
         assert not (await service.completed_turn("s"))["complete"]
         current = await repo.get("ops.agent_sessions", "s")

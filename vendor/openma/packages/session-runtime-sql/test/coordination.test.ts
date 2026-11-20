@@ -142,6 +142,19 @@ describe("SqlSessionExecutionCoordinator", () => {
       expect(planSessionContinuation(snapshot, "original").mode).toBe("failure");
     });
 
+    it("preserves an ordinary failure settled with a valid first-attempt lease", async () => {
+      await store.admit(admitted("original", scope.sessionId, at(1)));
+      const initial = await claim(store, "first", 2);
+      if (initial.type !== "claimed") throw new Error("Missing original claim");
+      const failure = "Harness failed";
+      expect(await store.settle({ fence: initial.fence, settledAt: at(2), outcome: "failed", failure }))
+        .toMatchObject({ type: "settled", execution: { state: "failed", failure } });
+      expect(await store.find({ workspaceId: scope.workspaceId, executionId: "original" }))
+        .toMatchObject({ state: "failed", failure });
+      expect(await sql.prepare("SELECT failure FROM managed_session_executions WHERE id = 'original'").first())
+        .toEqual({ failure });
+    });
+
     it.each(["budget", "deadline", "interrupt", "interrupt-expiry", "settle", "cancel"] as const)(
       "projects no replay after %s and keeps unrelated queued work claimable",
       async (path) => {
@@ -156,7 +169,7 @@ describe("SqlSessionExecutionCoordinator", () => {
         if (path === "interrupt" || path === "interrupt-expiry")
           await store.requestInterrupt({ ...scope, requestedAt: at(path === "interrupt" ? 3 : 2) });
         if (path === "settle")
-          await store.settle({ fence: initial.fence, settledAt: at(2), outcome: "failed", failure: "cleanup failed" });
+          await store.settle({ fence: initial.fence, settledAt: at(2), outcome: "failed", failure: executionRecoveryRefusalCode });
         if (path === "cancel")
           await store.cancelSession({ ...scope, cancelledAt: at(2), reason: "cancelled" });
         expect(await claim(store, "next_owner", 3)).toMatchObject({ type: "claimed", execution: { id: "next" } });

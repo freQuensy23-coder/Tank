@@ -916,7 +916,7 @@ class SessionService:
                 return call["native_turn_message_id"], call.get("native_turn_retry_count", 0)
         return None
 
-    async def execution_barrier(self, session, calls=None, *, verify_remote=False):
+    async def execution_barrier(self, session, calls=None, *, verify_remote=False, refresh=False):
         """Correlate accepted inputs with native execution receipts, never idle timing."""
         calls = (
             calls
@@ -972,7 +972,7 @@ class SessionService:
         states = copy.deepcopy(session.get("native_execution_states", {}))
         signature = tuple(sorted(required))
         poll = self.execution_polls.get(session["session_id"], (0, 0.05, None))
-        should_read = poll[2] != signature or time.monotonic() >= poll[0]
+        should_read = refresh or poll[2] != signature or time.monotonic() >= poll[0]
         if verify_remote and required and should_read:
             pending_read = sorted(
                 identity for identity in required if states.get(identity, {}).get("state") != "COMPLETED"
@@ -2117,7 +2117,7 @@ class SessionService:
             await session_progress(self.repo, self.settings, session)
         await self.deliver_answers(sid)
 
-    async def process_event(self, sid, event, seq=None):
+    async def process_event(self, sid, event, seq=None, *, from_native=False):
         if event.get("type") in ("event_start", "event_delta") or not event.get("id"):
             return
         if not material_event(event) or seen_key(event) in self.seen_events.get(sid, ()):
@@ -2277,6 +2277,11 @@ class SessionService:
                     inactive_owner = (
                         inactive_owner or retired_owner or owner[1] != active_owner.get("retry_count", 0)
                     )
+                    if not retired_owner and kind == "agent.custom_tool_use" and from_native:
+                        barrier = await self.execution_barrier(session, verify_remote=True, refresh=True)
+                        if recovery_refused(identity, barrier["execution_states"].get(identity, {})):
+                            await self.fail_recovery_refused_turn(sid, identity)
+                            return
                     if not inactive_owner and not defer_to_queue and turn_failure:
                         barrier = await self.execution_barrier(session, verify_remote=True)
                         projection = barrier["execution_states"].get(identity, {})
@@ -2473,7 +2478,6 @@ class SessionService:
                 await self.deliver_answers(sid)
 
     async def catch_up(self, sid):
-
         page = None
         while True:
             params = {"limit": 100, "order": "asc"}
@@ -2481,7 +2485,7 @@ class SessionService:
                 params["page"] = page
             data = await self.request("GET", f"sessions/{sid}/events", params=params)
             for event in data.get("data", []):
-                await self.process_event(sid, event)
+                await self.process_event(sid, event, from_native=True)
             page = data.get("next_page")
             if not page:
                 break
@@ -2505,7 +2509,7 @@ class SessionService:
                 seq = data.get("seq")
                 if seq is None and message.id and message.id.isdigit():
                     seq = int(message.id)
-                await self.process_event(sid, event, seq)
+                await self.process_event(sid, event, seq, from_native=True)
 
     async def can_archive(self, session, event):
         """Terminal domain state cannot preempt a pending denial/EXIT turn."""

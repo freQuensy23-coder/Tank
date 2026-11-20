@@ -261,6 +261,7 @@ async def test_native_idle_accepts_agent_chosen_order_without_semantic_retry(too
     await repo.put("ops.agent_sessions", "s", session)
     posts = []
     reads = []
+    failed_inputs = set()
 
     def handler(request):
         if request.method == "POST":
@@ -272,7 +273,11 @@ async def test_native_idle_accepts_agent_chosen_order_without_semantic_retry(too
                 200,
                 json={
                     "data": [
-                        {"execution_id": identity, "state": "COMPLETED", "settled_outcome": "COMPLETED"}
+                        {
+                            "execution_id": identity,
+                            "state": "FAILED" if identity in failed_inputs else "COMPLETED",
+                            "settled_outcome": "FAILED" if identity in failed_inputs else "COMPLETED",
+                        }
                         for identity in request.url.params.get_list("ids[]")
                     ]
                 },
@@ -319,17 +324,28 @@ async def test_native_idle_accepts_agent_chosen_order_without_semantic_retry(too
             assert (await service.completed_turn("s"))["complete"]
         assert not reads and len(posts) == len(tools)
 
+        current["message_log"].append(
+            {
+                **session["message_log"][0],
+                "message_id": "next-message",
+                "remote_event_id": "next-input",
+                "turn_status": "RUNNING",
+            }
+        )
+        await repo.put("ops.agent_sessions", "s", current)
+        failed_inputs.add("next-input")
         await service.process_event(
             "s",
             {
                 "id": "error-one",
                 "type": "session.error",
-                "execution_id": "accepted-message",
+                "execution_id": "next-input",
                 "message": "Worker failed",
             },
         )
-        retry = (await repo.get("ops.agent_sessions", "s"))["message_log"][0]
+        retry = (await repo.get("ops.agent_sessions", "s"))["message_log"][1]
         assert retry["retry_count"] == 1 and retry["turn_status"] == "RUNNING"
+        failed_inputs.add(retry["remote_event_id"])
         await service.process_event(
             "s",
             {
@@ -340,4 +356,5 @@ async def test_native_idle_accepts_agent_chosen_order_without_semantic_retry(too
             },
         )
         final = await repo.get("ops.agent_sessions", "s")
-        assert final["status"] == "FAILED" and final["message_log"][0]["turn_status"] == "FAILED"
+        assert final["status"] == "FAILED" and final["message_log"][1]["turn_status"] == "FAILED"
+        assert final["message_log"][0]["turn_status"] == "DONE"

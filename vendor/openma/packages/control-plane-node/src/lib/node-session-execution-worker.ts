@@ -38,6 +38,15 @@ export interface NodeSessionExecutionRuntime {
   cancel(input: CancelNodeSessionExecution): Promise<void>;
 }
 
+export interface SessionClaimScope {
+  workspaceId: string;
+  sessionId: string;
+}
+
+export interface StartupResident extends SessionClaimScope {
+  quiesce(): Promise<void>;
+}
+
 export interface NodeSessionExecutionWorkerDependencies {
   coordinator: SessionExecutionCoordinatorPort;
   context: SessionExecutionContextSourcePort;
@@ -46,6 +55,8 @@ export interface NodeSessionExecutionWorkerDependencies {
     fence: Readonly<SessionExecutionFence>;
     context: SessionExecutionContext | null;
   }): Promise<void>;
+  discoverStartupResidents?(): Promise<readonly StartupResident[]>;
+  listClaimScopes?(now: Date): Promise<readonly SessionClaimScope[]>;
   ownerId: string;
   clock: { now(): Date };
   ids: { nextAttemptId(): string };
@@ -81,6 +92,8 @@ export class NodeSessionExecutionWorker implements SessionEventDispatchPort {
   readonly #maxConcurrent: number;
   readonly #active = new Map<string, ActiveExecution>();
   readonly #pendingRecovery = new Set<PendingRecovery>();
+  #startupResidents: Map<StartupResident, number> | null = null;
+  readonly #quiescing = new Map<StartupResident | PendingRecovery, Promise<void>>();
   #polling: Promise<void> | null = null;
   #pollFiber: Fiber.RuntimeFiber<void, never> | null = null;
   #stopped = false;
@@ -214,35 +227,52 @@ export class NodeSessionExecutionWorker implements SessionEventDispatchPort {
     while (true) {
       await this.poll();
       const active = [...this.#active.values()].map((entry) => entry.promise);
-      if (active.length === 0) return;
+      if (active.length === 0) {
+        if (this.#stopped) await Promise.allSettled(this.#quiescing.values());
+        return;
+      }
       await Promise.allSettled(active);
     }
   }
 
   async #fillCapacity(): Promise<void> {
-    const ready = [...this.#pendingRecovery].filter(
-      (pending) => pending.retryAt <= performance.now(),
+    this.#startupResidents ??= new Map(
+      (await this.dependencies.discoverStartupResidents?.() ?? []).map((resident) => [resident, 0]),
     );
-    await Promise.all(ready.map(async (pending) => {
-      if (pending.quiesced) return;
-      try {
-        if (this.dependencies.quiesceLostExecution === undefined) {
-          throw new Error("Recovery requires retained runtime quiescence");
+    if (this.#stopped) return;
+    const startup = this.#startupResidents;
+    const now = performance.now();
+    for (const [resident, retryAt] of startup) {
+      if (retryAt > now) continue;
+      this.#checkQuiescence(resident, async () => {
+        try {
+          await resident.quiesce();
+          startup.delete(resident);
+        } catch (error) {
+          startup.set(resident, performance.now() + this.#pollIntervalMs);
+          throw error;
         }
-        await this.dependencies.quiesceLostExecution({
-          fence: pending.priorFence,
-          context: pending.context,
-        });
-        pending.quiesced = true;
-      } catch (error) {
-        pending.retryAt = performance.now() + this.#pollIntervalMs;
-        this.#reportError(error);
-      }
-    }));
+      });
+    }
+    for (const pending of this.#pendingRecovery) {
+      if (pending.quiesced || pending.retryAt > now) continue;
+      this.#checkQuiescence(pending, async () => {
+        await Promise.all([
+          this.#sweepWithoutClaim(pending.priorFence).catch((error: unknown) => this.#reportError(error)),
+          this.#quiescePending(pending),
+        ]);
+      });
+    }
+    if (this.#maxConcurrent === 1) await Promise.all(this.#quiescing.values());
 
+    const ready = [...this.#pendingRecovery].filter(
+      (pending) => pending.quiesced && !this.#quiescing.has(pending) && pending.retryAt <= performance.now(),
+    );
     for (const pending of ready) {
-      if (this.#stopped || this.#active.size >= this.#maxConcurrent) return;
-      if (!pending.quiesced) continue;
+      if (this.#stopped) return;
+      if (this.#occupiedSlots() >= this.#maxConcurrent
+        || [...startup.keys()].some((resident) => resident.workspaceId === pending.priorFence.workspaceId
+          && resident.sessionId === pending.priorFence.sessionId)) continue;
       try {
         const claimed = await this.#claim(pending).catch((error: unknown) => {
           this.#reportError(error);
@@ -260,18 +290,89 @@ export class NodeSessionExecutionWorker implements SessionEventDispatchPort {
       pending.retryAt = performance.now() + this.#pollIntervalMs;
     }
 
-    while (!this.#stopped && this.#active.size < this.#maxConcurrent) {
-      if ([...this.#pendingRecovery].some(
-        (pending) => !pending.quiesced || this.#maxConcurrent === 1,
-      )) return;
+    await this.#claimAvailableWork();
+  }
+
+  #checkQuiescence(key: StartupResident | PendingRecovery, check: () => Promise<void>): void {
+    if (this.#quiescing.has(key)) return;
+    const task = check().catch((error: unknown) => this.#reportError(error)).finally(() => {
+      this.#quiescing.delete(key);
+    });
+    this.#quiescing.set(key, task);
+  }
+
+  async #quiescePending(pending: PendingRecovery): Promise<void> {
+    try {
+      if (this.dependencies.quiesceLostExecution === undefined) {
+        throw new Error("Recovery requires retained runtime quiescence");
+      }
+      await this.dependencies.quiesceLostExecution({
+        fence: pending.priorFence,
+        context: pending.context,
+      });
+      pending.quiesced = true;
+    } catch (error) {
+      pending.retryAt = performance.now() + this.#pollIntervalMs;
+      this.#reportError(error);
+    }
+  }
+
+  #blockedScopes(): SessionClaimScope[] {
+    return [
+      ...(this.#startupResidents?.keys() ?? []),
+      ...[...this.#pendingRecovery].map((pending) => pending.priorFence),
+    ];
+  }
+
+  async #claimAvailableWork(): Promise<void> {
+    if (this.#stopped || this.#occupiedSlots() >= this.#maxConcurrent) return;
+    const blocked = this.#blockedScopes();
+    if (this.#maxConcurrent === 1 && blocked.length > 0) return;
+
+    if (blocked.length === 0 && this.#active.size === 0) {
       const claimed = await this.#claim();
       if (claimed.type === "empty") return;
       this.#launch(claimed);
     }
+    if (this.#stopped || this.#occupiedSlots() >= this.#maxConcurrent) return;
+
+    if (this.dependencies.listClaimScopes === undefined) {
+      while (!this.#stopped && this.#occupiedSlots() < this.#maxConcurrent && this.#blockedScopes().length === 0) {
+        const claimed = await this.#claim();
+        if (claimed.type === "empty") return;
+        this.#launch(claimed);
+      }
+      return;
+    }
+
+    for (const scope of await this.dependencies.listClaimScopes(this.dependencies.clock.now())) {
+      if (this.#stopped || this.#occupiedSlots() >= this.#maxConcurrent) return;
+      const occupied = [...this.#blockedScopes(), ...[...this.#active.values()].map((active) => active.fence)];
+      if (occupied.some((entry) => entry.workspaceId === scope.workspaceId && entry.sessionId === scope.sessionId)) continue;
+      const claimed = await this.#claim(undefined, scope);
+      if (claimed.type === "claimed") this.#launch(claimed);
+    }
   }
 
-  async #claim(pending?: PendingRecovery) {
+  #occupiedSlots(): number {
+    return this.#active.size + (this.#startupResidents?.size ?? 0)
+      + [...this.#pendingRecovery].filter((pending) => !pending.quiesced).length;
+  }
+
+  async #sweepWithoutClaim(fence: SessionExecutionFence): Promise<void> {
+    const result = await this.dependencies.coordinator.claim({
+      ownerId: `${fence.ownerId}:sweep`,
+      attemptId: this.dependencies.ids.nextAttemptId(),
+      claimedAt: this.dependencies.clock.now().toISOString(),
+      leaseTtlMs: this.#leaseTtlMs,
+      recoverFrom: fence,
+    });
+    if (result.type !== "empty") throw new Error("Coordinator claimed an execution during an expiry sweep");
+  }
+
+  async #claim(pending?: PendingRecovery, scope?: SessionClaimScope) {
     const claim = () => this.dependencies.coordinator.claim({
+      ...scope,
       ownerId: this.dependencies.ownerId,
       attemptId: pending?.attemptId ?? this.dependencies.ids.nextAttemptId(),
       claimedAt: this.dependencies.clock.now().toISOString(),

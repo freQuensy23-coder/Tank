@@ -170,8 +170,19 @@ async def test_actual_replay_abort_finalizes_owned_turn_after_stopping_follower(
         if path.endswith("/executions"):
             ids = request.url.params.get_list("ids[]")
             assert set(ids) <= set(accepted)
+            state = "FAILED" if failure_kind == "native_terminal" else "RUNNING"
             return httpx.Response(
-                200, json={"data": [{"execution_id": identity, "state": "RUNNING"} for identity in ids]}
+                200,
+                json={
+                    "data": [
+                        {
+                            "execution_id": identity,
+                            "state": state,
+                            "settled_outcome": state if state == "FAILED" else None,
+                        }
+                        for identity in ids
+                    ]
+                },
             )
         if path.endswith("/events/stream"):
             return httpx.Response(200, headers={"content-type": "text/event-stream"}, stream=Stream())
@@ -353,9 +364,19 @@ async def test_native_terminal_failure_clears_runtime_but_preserves_done_message
     source = {"item_id": "source-done", "extraction_status": "DONE", "accepted_fact": "preserved"}
     await repo.put("ops.agent_sessions", "native", copy.deepcopy(session))
     await repo.put("ingest.source_items", "source-done", copy.deepcopy(source))
-    async with httpx.AsyncClient(
-        transport=httpx.MockTransport(lambda req: pytest.fail("Terminal failure does not retry"))
-    ) as http:
+
+    def transport(request):
+        assert request.method == "GET"
+        assert request.url.path == "/v1/sessions/native/executions"
+        assert request.url.params.get_list("ids[]") == ["accepted-retry"]
+        return httpx.Response(
+            200,
+            json={
+                "data": [{"execution_id": "accepted-retry", "state": "FAILED", "settled_outcome": "FAILED"}]
+            },
+        )
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(transport)) as http:
         service = SessionService(repo, Settings(_env_file=None), None, http=http)
         failure = {
             "id": "failure-final",

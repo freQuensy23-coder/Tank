@@ -351,3 +351,72 @@ test('cold LiteBox sandbox starts its replaced runtime while it is prepared and 
     await manager.idle(warm);await sandbox.destroy();
   }finally{await rm(scratch,{recursive:true,force:true});}
 });
+
+const { discoverStartupResidents } = await import(new URL(
+  'packages/control-plane-node/src/lib/tank-retained/startup-recovery.ts', openmaSource,
+));
+
+test('startup discovers and stops a detached guest under a replacement resource fence', async () => {
+  const s = fixture();
+  const prior = s.controller();
+  await prior.begin(async () => {}, new AbortController().signal);
+  const disk = [...s.disks.values()][0];
+  const row = [...s.rows.values()][0];
+  const scope = prior.scope;
+  const sql = {
+    prepare() {
+      return { bind: () => ({ all: async () => ({ results: [{
+        workspace_id: scope.workspaceId,
+        environment_id: scope.environmentId,
+        session_id: scope.sessionId,
+        publication_json: JSON.stringify(row.publication),
+        publication_generation: row.publication.generation,
+        revision: row.publication.revision,
+      }] }) }) };
+    },
+  };
+  const replacement = s.lifecycle({
+    ownerId: 'configured:new',
+    client: { ...s.client, listInfo: async () => [await s.client.getInfo(disk.id)] },
+  });
+  const [resident] = await discoverStartupResidents(sql, replacement.options);
+  assert.equal(resident.sessionId, scope.sessionId);
+  await assert.rejects(resident.quiesce(), /retained_resource_busy/);
+  assert.equal(disk.running, true);
+  await s.fences.release({ fence: row.fence });
+  const originalGet = replacement.options.client.get;
+  replacement.options.client.get = async id => ({ ...await originalGet(id), stop: async () => {} });
+  await assert.rejects(resident.quiesce(), /retained_recovery_stop_unconfirmed/);
+  assert.equal(disk.running, true);
+  replacement.options.client.get = originalGet;
+  await resident.quiesce();
+  assert.equal(disk.running, false);
+  assert.deepEqual(s.calls.filter(([op]) => op === 'stop'), [['stop', disk.id]]);
+  assert.deepEqual(await discoverStartupResidents(sql, replacement.options), []);
+});
+
+test('startup refuses to stop a same-name guest with a different published runtime ID', async () => {
+  const s = fixture();
+  const prior = s.controller();
+  await prior.begin(async () => {}, new AbortController().signal);
+  const { publication } = [...s.rows.values()][0];
+  const scope = prior.scope;
+  const original = await s.client.getInfo([...s.disks.keys()][0]);
+  const replacement = s.lifecycle({
+    client: { ...s.client, listInfo: async () => [{ ...original, id: 'another_box' }] },
+  });
+  const sql = {
+    prepare() {
+      return { bind: () => ({ all: async () => ({ results: [{
+        workspace_id: scope.workspaceId,
+        environment_id: scope.environmentId,
+        session_id: scope.sessionId,
+        publication_json: JSON.stringify(publication),
+        publication_generation: publication.generation,
+        revision: publication.revision,
+      }] }) }) };
+    },
+  };
+  await assert.rejects(discoverStartupResidents(sql, replacement.options), /retained_startup_resident_ownership_unconfirmed/);
+  assert.equal(s.calls.some(([op]) => op === 'stop'), false);
+});

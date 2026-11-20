@@ -21,6 +21,8 @@ import {
   type RunNodeSessionExecution,
 } from "../../../packages/control-plane-node/src/lib/node-session-execution-worker";
 
+import { listClaimScopes } from "../../../packages/control-plane-node/src/lib/tank-retained/startup-recovery";
+
 const session: Session = {
   id: "session_01",
   agent: {
@@ -357,6 +359,7 @@ describe("NodeSessionExecutionWorker", () => {
     const errors: string[] = [];
     const executor = worker("node_a", {
       maxConcurrent,
+      listClaimScopes: (claimedAt) => listClaimScopes(sql, claimedAt),
       pollIntervalMs: 50,
       onError: (error) => errors.push(error.message),
       quiesceLostExecution: async (input) => {
@@ -383,6 +386,7 @@ describe("NodeSessionExecutionWorker", () => {
     await executor.waitForIdle();
     await executor.sessionEventsAccepted({ ...accepted("a_other"), sessionId: "another_session" });
     expect(checks).toBe(1);
+    const beforeRecovery = maxConcurrent === 1 ? ["original"] : ["original", "a_other"];
     const findOriginal = () => coordinator.find({ workspaceId: original.workspaceId, executionId: "original" });
     for (const count of [2, 3]) {
       await vi.waitFor(async () => {
@@ -390,7 +394,7 @@ describe("NodeSessionExecutionWorker", () => {
         expect(checks).toBe(count);
       }, { interval: 5 });
       await expect(findOriginal()).resolves.toMatchObject({ state: "running", attemptCount: 1 });
-      expect(runs.map(({ executionId }) => executionId)).toEqual(["original"]);
+      expect(runs.map(({ executionId }) => executionId)).toEqual(beforeRecovery);
     }
     if (interrupted) {
       const interrupt = accepted("interrupt", "user.interrupt");
@@ -410,7 +414,105 @@ describe("NodeSessionExecutionWorker", () => {
       ? { state: "cancelled", attemptCount: 1 }
       : { state: "completed", attemptCount: 2 });
     expect(runs.slice(1).map(({ executionId, fence }) => [executionId, fence.generation]))
-      .toEqual(interrupted ? [["a_other", 1]] : [["original", 2], ["a_other", 1]]);
+      .toEqual(interrupted ? [["a_other", 1]] : maxConcurrent === 1
+        ? [["original", 2], ["a_other", 1]]
+        : [["a_other", 1], ["original", 2]]);
+  });
+
+  it("records attempt exhaustion while retaining the slot of an unconfirmed guest", async () => {
+    const running = Promise.withResolvers<void>();
+    const drained = Promise.withResolvers<void>();
+    const stop = Promise.withResolvers<void>();
+    runtime.run = async (input) => {
+      runs.push(structuredClone(input));
+      if (input.executionId === "original") {
+        running.resolve();
+        await drained.promise;
+      }
+    };
+    const executor = worker("node_a", {
+      maxConcurrent: 2,
+      listClaimScopes: (claimedAt) => listClaimScopes(sql, claimedAt),
+      quiesceLostExecution: () => stop.promise,
+    });
+    const original = accepted("original");
+    await coordinator.admit({
+      execution: {
+        id: "original",
+        workspaceId: original.workspaceId,
+        sessionId: original.sessionId,
+        admittedAt: now.toISOString(),
+        events: [...original.events],
+      },
+      policy: { maxAttempts: 1, timeoutMs: 120_000 },
+    });
+    await executor.poll();
+    await running.promise;
+    now = new Date(now.getTime() + 30_000);
+    drained.resolve();
+    try {
+      await vi.waitFor(async () => {
+        await executor.poll();
+        await expect(coordinator.find({ workspaceId: original.workspaceId, executionId: "original" }))
+          .resolves.toMatchObject({ state: "failed", failure: "execution attempt limit exhausted" });
+      });
+      await executor.sessionEventsAccepted(accepted("same_guest"));
+      await executor.sessionEventsAccepted({ ...accepted("free_slot"), sessionId: "another_session" });
+      await executor.waitForIdle();
+      expect(runs.map(({ executionId }) => executionId)).toEqual(["original", "free_slot"]);
+      await expect(coordinator.find({ workspaceId: original.workspaceId, executionId: "same_guest" }))
+        .resolves.toMatchObject({ state: "queued", attemptCount: 0 });
+    } finally {
+      executor.stop();
+      stop.reject(new Error("retained_recovery_stop_unconfirmed"));
+      await executor.waitForIdle();
+    }
+  });
+
+  it.each([1, 2])("reserves a surviving startup guest with %i slots and a fresh owner incarnation", async (maxConcurrent) => {
+    const original = accepted("original");
+    await coordinator.admit({
+      execution: {
+        id: "original",
+        workspaceId: original.workspaceId,
+        sessionId: original.sessionId,
+        admittedAt: now.toISOString(),
+        events: [...original.events],
+      },
+      policy: { maxAttempts: 2, timeoutMs: 120_000 },
+    });
+    await coordinator.claim({
+      ownerId: "configured_owner:old",
+      attemptId: "old_attempt",
+      claimedAt: now.toISOString(),
+      leaseTtlMs: 1_000,
+    });
+    now = new Date(now.getTime() + 1_000);
+    const quiesce = vi.fn(async () => {
+      throw new Error("retained_recovery_stop_unconfirmed");
+    });
+    const unrelated = { ...accepted("a_other"), sessionId: "another_session" };
+    const executor = worker("configured_owner:new", {
+      maxConcurrent,
+      pollIntervalMs: 25,
+      listClaimScopes: (claimedAt) => listClaimScopes(sql, claimedAt),
+      discoverStartupResidents: async () => [{
+        workspaceId: original.workspaceId, sessionId: original.sessionId, quiesce,
+      }],
+    });
+    await executor.sessionEventsAccepted(unrelated);
+    await executor.waitForIdle();
+    expect(runs.map(({ executionId }) => executionId)).toEqual(maxConcurrent === 1 ? [] : ["a_other"]);
+    await expect(coordinator.find({ workspaceId: original.workspaceId, executionId: "original" }))
+      .resolves.toMatchObject({ state: "running", attemptCount: 1 });
+
+    quiesce.mockResolvedValue(undefined);
+    await vi.waitFor(async () => {
+      await executor.waitForIdle();
+      expect(runs).toHaveLength(2);
+    }, { interval: 5 });
+    expect(runs.find(({ executionId }) => executionId === "original")?.fence)
+      .toMatchObject({ ownerId: "configured_owner:new", generation: 2 });
   });
 
   it("reuses the exact recovery claim after its acknowledgement is lost", async () => {

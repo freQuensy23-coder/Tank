@@ -801,7 +801,7 @@ export class SqlSessionExecutionStore
                  WHEN interrupt_requested_at_ms IS NOT NULL
                    THEN COALESCE(failure, 'interrupted during execution')
                  ELSE ?
-               END`, "interrupt_requested_at_ms IS NOT NULL OR ? <> 'completed'")},
+               END`, "interrupt_requested_at_ms IS NOT NULL OR ? = 'cancelled'")},
                revision = revision + 1
          WHERE workspace_id = ? AND id = ? AND session_id = ?
            AND state = 'running' AND attempt_id = ? AND owner_id = ?
@@ -1064,7 +1064,7 @@ export class SqlSessionExecutionStore
     const execution = toExecution(row);
     if (this.options.callbackContinuations &&
       (execution.state === "failed" || execution.state === "cancelled") &&
-      (Number(row.generation) > 0 || execution.events.some(event => resultCallId(event) !== undefined))) {
+      Number(row.generation) === 0 && execution.events.some(event => resultCallId(event) !== undefined)) {
       execution.failure = executionRecoveryRefusalCode;
     }
     return execution;
