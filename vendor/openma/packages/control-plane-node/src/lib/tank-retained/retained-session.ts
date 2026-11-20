@@ -26,8 +26,8 @@ export interface Provider<R extends RetainedRuntime> {
   leftover(scope: Scope, fence: Fence, signal: AbortSignal): Promise<Handle | null>;
   create(scope: Scope, fence: Fence, signal: AbortSignal, assertExecutionCurrent?: () => Promise<void>): Promise<R>;
   resume(handle: Handle, scope: Scope, fence: Fence, signal: AbortSignal, assertExecutionCurrent?: () => Promise<void>): Promise<R>;
-  quiesceExact?(handle: Handle, scope: Scope, assertCurrent: () => Promise<void>): Promise<void>;
-  reap(handle: Handle, scope: Scope, fence: Fence, signal: AbortSignal): Promise<void>;
+  quiesceExact?(handle: Handle, scope: Scope, assertCurrent: () => Promise<void>, intent?: Handle): Promise<void>;
+  reap(handle: Handle, scope: Scope, fence: Fence, signal: AbortSignal, assertAuthorized?: () => Promise<void>): Promise<void>;
 }
 export interface Options<R extends RetainedRuntime> {
   scope: Omit<Scope, 'workId'>;
@@ -63,7 +63,8 @@ export class RetainedSessionLifecycle<R extends RetainedRuntime> {
   private runtimeReplaced = false;
   private publication: Publication | null = null;
   private possibleResident = false;
-  private lostTurn: { fence: Fence; handle: Handle; publication: Publication | null } | null = null;
+  private unconfirmedPublication: Publication | null = null;
+  private lostTurn: { fence: Fence; handle: Handle; publication: Publication | null; unconfirmed: Publication | null } | null = null;
 
   constructor(options: Options<R>) {
     if (!/^sha256:[a-f0-9]{64}$/.test(options.fingerprint)) fail('retained_fingerprint_invalid');
@@ -168,23 +169,25 @@ export class RetainedSessionLifecycle<R extends RetainedRuntime> {
           runtimeId: handle.runtimeId, fingerprint: this.options.fingerprint, state } };
     }
     const fence = await this.current();
+    this.unconfirmedPublication = { workspaceCandidate, revision: (this.publication?.revision ?? 0) + 1, generation: fence.generation };
     const result = await this.options.fences.publish({ fence, workspaceCandidate, outputCandidate: null });
+    this.unconfirmedPublication = null;
     if (result.type === 'lost') { this.lost = true; fail('retained_fence_lost'); }
     this.publication = { workspaceCandidate, revision: result.revision, generation: fence.generation };
     if (manifest) this.manifest = manifest;
   }
   private rememberLostTurn(): void {
     if (!this.lostTurn && this.possibleResident && this.fence && this.handle) {
-      this.lostTurn = { fence: { ...this.fence }, handle: { ...this.handle }, publication: this.publication };
+      this.lostTurn = { fence: { ...this.fence }, handle: { ...this.handle },
+        publication: this.publication, unconfirmed: this.unconfirmedPublication };
     }
   }
   needsQuiescence(): boolean { return this.lostTurn !== null; }
-  async quiesceLostTurn(assertExecutionCurrent: () => Promise<void>): Promise<void> {
+  async quiesceLostTurn(): Promise<void> {
     const target = this.lostTurn;
     if (!target) return;
     if (this.phase !== 'idle' || this.fence) fail('retained_recovery_not_drained');
-    await assertExecutionCurrent();
-    const ownerId = `${this.ownerId}:quiesce:${randomUUID()}`;
+    const ownerId = `${this.ownerId}:quiesce`;
     const acquired = await this.options.fences.acquire({ scope: this.scope, ownerId,
       ttlMs: this.options.leaseTtlMs });
     if (acquired.type !== 'acquired') fail('retained_resource_busy');
@@ -196,31 +199,28 @@ export class RetainedSessionLifecycle<R extends RetainedRuntime> {
     let verified = false;
     try {
       const assertCurrent = async () => {
-        await assertExecutionCurrent();
         if (!await this.options.fences.isCurrent(fence)) fail('retained_fence_lost');
-        await assertExecutionCurrent();
       };
-      const expected = target.publication;
-      if (!expected || !publication
-          || expected.revision !== publication.revision
-          || expected.generation !== publication.generation
-          || stableDigest(expected.workspaceCandidate) !== stableDigest(publication.workspaceCandidate)) {
+      const matches = (expected: Publication | null, observed: Publication) => expected
+        && expected.revision === observed.revision && expected.generation === observed.generation
+        && stableDigest(expected.workspaceCandidate) === stableDigest(observed.workspaceCandidate);
+      if (!publication || (!matches(target.publication, publication) && !matches(target.unconfirmed, publication))) {
         fail('retained_recovery_publication_changed');
       }
       const manifest = this.decode(publication.workspaceCandidate);
       const { handle } = target;
-      if (manifest.state !== 'retained' || manifest.handle.provider !== handle.provider
-          || manifest.handle.runtimeId !== handle.runtimeId || manifest.handle.ownershipName !== handle.ownershipName) {
+      const intent = manifest.state === 'allocating' && manifest.handle.provider === handle.provider ? manifest.handle : undefined;
+      if (!intent && (manifest.state !== 'retained' || manifest.handle.provider !== handle.provider
+          || manifest.handle.runtimeId !== handle.runtimeId || manifest.handle.ownershipName !== handle.ownershipName)) {
         fail('retained_recovery_handle_changed');
       }
       if (!this.options.provider.quiesceExact) fail('retained_sdk_inspection_required');
-      await this.options.provider.quiesceExact(handle, this.scope, assertCurrent);
+      await this.options.provider.quiesceExact(handle, this.scope, assertCurrent, intent);
       await assertCurrent();
       verified = true;
     } finally {
       await this.options.fences.release({ fence, reason: verified ? 'completed' : 'failed' });
     }
-    await assertExecutionCurrent();
     this.lostTurn = null;
   }
   async begin(assertExecutionCurrent: () => Promise<void>, signal: AbortSignal): Promise<void> {
@@ -235,6 +235,7 @@ export class RetainedSessionLifecycle<R extends RetainedRuntime> {
       if (acquired.type !== 'acquired') fail('retained_resource_busy');
       this.fence = acquired.fence; this.lost = false; this.startHeartbeat();
       this.publication = acquired.publication;
+      this.unconfirmedPublication = null;
       let manifest: Manifest | null = null, unreadable = false;
       if (acquired.publication) {
         try { manifest = this.decode(acquired.publication.workspaceCandidate); } catch { unreadable = true; }
@@ -252,7 +253,7 @@ export class RetainedSessionLifecycle<R extends RetainedRuntime> {
         }
         for (const handle of stale) {
           signal.throwIfAborted(); await assertExecutionCurrent();
-          await this.options.provider.reap(handle, this.scope, await this.current(), signal);
+          await this.options.provider.reap(handle, this.scope, await this.current(), signal, assertExecutionCurrent);
         }
         if (manifest && stale.length) {
           signal.throwIfAborted(); await assertExecutionCurrent();
@@ -325,7 +326,7 @@ export class RetainedSessionLifecycle<R extends RetainedRuntime> {
       try {
         if (created && !publicationUnknown && this.handle && this.fence && !this.lost) {
           await assertExecutionCurrent();
-          await this.options.provider.reap(this.handle, this.scope, this.fence, new AbortController().signal);
+          await this.options.provider.reap(this.handle, this.scope, this.fence, new AbortController().signal, assertExecutionCurrent);
           this.possibleResident = false;
           await this.publish('aborted');
         } else if ((this.runtime || (this.possibleResident && this.manifest?.state === 'retained' && this.options.provider.quiesceExact))
@@ -378,7 +379,7 @@ export class RetainedSessionLifecycle<R extends RetainedRuntime> {
       try {
         await Promise.allSettled([...this.operations]);
         await this.suspend(assertExecutionCurrent);
-        this.runtime = null; this.phase = 'stopped';
+        this.runtime = null; this.possibleResident = false; this.phase = 'stopped';
       } catch (error) {
         this.phase = 'active';
         throw error;
@@ -419,7 +420,7 @@ export class RetainedSessionLifecycle<R extends RetainedRuntime> {
             ...(this.handle && manifest.state !== 'aborted' ? [this.handle] : [])];
           for (const handle of handles) {
             await assertArchiveAuthorized();
-            await this.options.provider.reap(handle, this.scope, await this.current(), signal);
+            await this.options.provider.reap(handle, this.scope, await this.current(), signal, assertArchiveAuthorized);
           }
           this.handle ??= manifest.handle;
           await this.publish('archived');

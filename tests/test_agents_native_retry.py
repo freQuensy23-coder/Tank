@@ -206,7 +206,12 @@ async def test_native_startup_retry_does_not_consume_first_host_retry():
         current = await repo.get("ops.agent_sessions", "s")
         assert current["status"] == "OPEN" and current["message_log"][0]["retry_count"] == 0
         assert not posts
+        states[CALLBACK] = "COMPLETED"
         await service.process_event("s", error("startup-exhausted", INITIAL, "exhausted"))
+        assert not posts
+        states[INITIAL] = "FAILED"
+        service.execution_polls.pop("s", None)
+        await service.completed_turn("s")
         assert len(posts) == 1
         assert (await repo.get("ops.agent_sessions", "s"))["message_log"][0]["retry_count"] == 1
     finally:
@@ -294,9 +299,41 @@ async def test_terminal_error_waits_for_correlated_queue_failure(projection_fiel
         await http.aclose()
 
 
-async def test_polled_refusal_retires_only_its_owner_and_preserves_later_turn():
+async def test_restored_retry_intent_rechecks_durable_no_replay_status():
+    repo, service, http, states, posts, _history = await setup({INITIAL: {"recovery_refused": True}})
+    try:
+        states[INITIAL] = "FAILED"
+        session = await repo.get("ops.agent_sessions", "s")
+        stale = {"execution_id": INITIAL, "state": "FAILED", "settled_outcome": "FAILED"}
+        session["native_execution_states"] = {INITIAL: stale}
+        session["pending_retry_event"] = event(
+            "execution-status-failed:" + INITIAL,
+            "execution.status_failed",
+            INITIAL,
+            queue_status=stale,
+            _host_turn_message_id="message",
+        )
+        await repo.put("ops.agent_sessions", "s", session)
+        await service.recover_outbound_inputs("s")
+        current = await repo.get("ops.agent_sessions", "s")
+        assert current["message_log"][0]["turn_status"] == "FAILED"
+        assert current["message_log"][0]["remote_event_id"] == INITIAL
+        assert not current["pending_retry_event"]
+        assert not posts
+    finally:
+        await service.close()
+        await http.aclose()
+
+
+@pytest.mark.parametrize("terminal_state", ["FAILED", "CANCELLED"])
+async def test_polled_refusal_retires_only_its_owner_and_preserves_later_turn(terminal_state):
     repo, service, http, states, posts, history = await setup({CALLBACK: {"recovery_refused": True}})
     try:
+        states[CALLBACK] = "RUNNING"
+        await service.process_event("s", error("before-settlement", CALLBACK, "exhausted"))
+        assert not posts
+        states[CALLBACK] = terminal_state
+        service.execution_polls.pop("s", None)
         session = await repo.get("ops.agent_sessions", "s")
         original = session["message_log"][0]
         original["payload"]["kind"] = "NEW_ITEM"
@@ -350,7 +387,10 @@ async def test_polled_refusal_retires_only_its_owner_and_preserves_later_turn():
 async def test_refusal_of_superseded_attempt_cannot_fail_replacement():
     repo, service, http, states, posts, history = await setup({CALLBACK: {"recovery_refused": True}})
     try:
+        states[INITIAL] = "FAILED"
+        states[CALLBACK] = "RUNNING"
         await service.process_event("s", error("old-exhausted", INITIAL, "exhausted"))
+        states[CALLBACK] = "FAILED"
         await service.process_event("s", event("replacement-running", "session.status_running", RETRY))
         await service.process_event("s", error("old-terminal", CALLBACK, "terminal"))
         assert not (await service.completed_turn("s"))["complete"]

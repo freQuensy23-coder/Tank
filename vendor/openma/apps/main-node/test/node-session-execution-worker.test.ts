@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import type {
   Environment,
   Session,
@@ -253,9 +253,9 @@ describe("NodeSessionExecutionWorker", () => {
       maxConcurrent: 1,
       heartbeatIntervalMs: 10,
       leaseTtlMs: 100,
-      quiesceLostExecution: async ({ fence, currentFence }) => {
-        expect(fence).toMatchObject({ executionId: "original", generation: 1 });
-        expect(currentFence).toMatchObject({ executionId: "original", generation: 2 });
+      quiesceLostExecution: async (input) => {
+        expect(input.fence).toMatchObject({ executionId: "original", generation: 1 });
+        expect(input).not.toHaveProperty("currentFence");
         quiescing.resolve();
         await quiesced.promise;
       },
@@ -285,6 +285,10 @@ describe("NodeSessionExecutionWorker", () => {
     expect(runs.map(({ executionId }) => executionId)).toEqual(["original"]);
     cancellationDrained.resolve();
     await quiescing.promise;
+    await expect(coordinator.find({ workspaceId: "workspace_01", executionId: "original" }))
+      .resolves.toMatchObject({ state: "running", attemptCount: 1, attempt: { generation: 1 } });
+    await expect(coordinator.find({ workspaceId: "workspace_01", executionId: "a_other" }))
+      .resolves.toMatchObject({ state: "queued", attemptCount: 0 });
     expect(runs.map(({ executionId }) => executionId)).toEqual(["original"]);
     quiesced.resolve();
     await executor.waitForIdle();
@@ -299,7 +303,7 @@ describe("NodeSessionExecutionWorker", () => {
     expect(runs[1]?.fence.attemptId).not.toBe(runs[0]?.fence.attemptId);
   });
 
-  it("reserves the slot while a competing owner is executing the lost attempt", async () => {
+  it("releases the slot after proof when a competing owner replaced the attempt", async () => {
     const running = Promise.withResolvers<void>();
     const runtimeDrained = Promise.withResolvers<void>();
     const cancelling = Promise.withResolvers<void>();
@@ -332,34 +336,33 @@ describe("NodeSessionExecutionWorker", () => {
     await cancelling.promise;
     runtimeDrained.resolve();
     await executor.waitForIdle();
-    expect(runs.map(({ executionId }) => executionId)).toEqual(["original"]);
-
-    await coordinator.settle({
-      fence: competing.fence,
-      settledAt: now.toISOString(),
-      outcome: "completed",
-    });
-    await executor.waitForIdle();
     expect(runs.map(({ executionId }) => executionId)).toEqual(["original", "a_other"]);
   });
 
-  it("holds the slot on unknown quiescence failure", async () => {
+  it.each([
+    [1, false],
+    [2, false],
+    [1, true],
+  ])("retries physical proof with %i slots (interrupted: %s)", async (maxConcurrent, interrupted) => {
     const running = Promise.withResolvers<void>();
     const runtimeDrained = Promise.withResolvers<void>();
     runtime.run = async (input) => {
       runs.push(structuredClone(input));
-      running.resolve();
-      await runtimeDrained.promise;
+      if (input.executionId === "original" && input.fence.generation === 1) {
+        running.resolve();
+        await runtimeDrained.promise;
+      }
     };
+    let checks = 0;
     const errors: string[] = [];
-    const handoffs: number[] = [];
     const executor = worker("node_a", {
-      maxConcurrent: 1,
+      maxConcurrent,
+      pollIntervalMs: 50,
       onError: (error) => errors.push(error.message),
-      quiesceLostExecution: async ({ fence, currentFence }) => {
-        expect(fence.generation).toBe(1);
-        if (currentFence !== undefined) handoffs.push(currentFence.generation);
-        throw new Error("quiescence unknown");
+      quiesceLostExecution: async (input) => {
+        expect(input.fence.generation).toBe(1);
+        expect(input).not.toHaveProperty("currentFence");
+        if (++checks <= 3) throw new Error("quiescence unknown");
       },
     });
     const original = accepted("original");
@@ -371,26 +374,115 @@ describe("NodeSessionExecutionWorker", () => {
         admittedAt: now.toISOString(),
         events: [...original.events],
       },
-      policy: { maxAttempts: 3, timeoutMs: 120_000 },
+      policy: { maxAttempts: 2, timeoutMs: 120_000 },
     });
     await executor.poll();
     await running.promise;
-    await executor.sessionEventsAccepted({ ...accepted("a_other"), sessionId: "another_session" });
     now = new Date(now.getTime() + 30_000);
     runtimeDrained.resolve();
     await executor.waitForIdle();
-    expect(errors).toContain("quiescence unknown");
-    expect(handoffs).toEqual([2]);
+    await executor.sessionEventsAccepted({ ...accepted("a_other"), sessionId: "another_session" });
+    expect(checks).toBe(1);
+    const findOriginal = () => coordinator.find({ workspaceId: original.workspaceId, executionId: "original" });
+    for (const count of [2, 3]) {
+      await vi.waitFor(async () => {
+        await executor.poll();
+        expect(checks).toBe(count);
+      }, { interval: 5 });
+      await expect(findOriginal()).resolves.toMatchObject({ state: "running", attemptCount: 1 });
+      expect(runs.map(({ executionId }) => executionId)).toEqual(["original"]);
+    }
+    if (interrupted) {
+      const interrupt = accepted("interrupt", "user.interrupt");
+      await executor.sessionEventsAccepted({
+        ...interrupt,
+        events: [{ ...interrupt.events[0], processedAt: now.toISOString() }],
+      });
+      await expect(findOriginal()).resolves.toMatchObject({ state: "cancelled", attemptCount: 1 });
+      expect(runs).toHaveLength(1);
+    }
+    await vi.waitFor(async () => {
+      await executor.waitForIdle();
+      expect(runs).toHaveLength(interrupted ? 2 : 3);
+    }, { interval: 5 });
+    expect(errors).toEqual(Array(3).fill("quiescence unknown"));
+    await expect(findOriginal()).resolves.toMatchObject(interrupted
+      ? { state: "cancelled", attemptCount: 1 }
+      : { state: "completed", attemptCount: 2 });
+    expect(runs.slice(1).map(({ executionId, fence }) => [executionId, fence.generation]))
+      .toEqual(interrupted ? [["a_other", 1]] : [["original", 2], ["a_other", 1]]);
+  });
+
+  it("reuses the exact recovery claim after its acknowledgement is lost", async () => {
+    const drained = Promise.withResolvers<void>();
+    runtime.run = async (input) => {
+      runs.push(structuredClone(input));
+      if (input.fence.generation === 1) await drained.promise;
+    };
+    const quiesce = vi.fn(async () => {});
+    const claim = coordinator.claim.bind(coordinator);
+    const recoveryIds: string[] = [];
+    vi.spyOn(coordinator, "claim").mockImplementation(async (input) => {
+      const result = await claim(input);
+      if (input.recoverFrom !== undefined) {
+        recoveryIds.push(input.attemptId);
+        if (recoveryIds.length === 1) {
+          expect(result.type).toBe("claimed");
+          throw new Error("claim acknowledgement lost");
+        }
+      }
+      return result;
+    });
+    const executor = worker("node_a", { maxConcurrent: 1, pollIntervalMs: 20, quiesceLostExecution: quiesce });
+    await executor.sessionEventsAccepted(accepted("original"));
+    await vi.waitFor(() => expect(runs).toHaveLength(1), { interval: 5 });
     now = new Date(now.getTime() + 30_000);
-    await executor.waitForIdle();
-    expect(handoffs).toEqual([2, 3]);
-    now = new Date(now.getTime() + 30_000);
-    await expect(executor.poll()).rejects.toThrow("quiescence unknown");
-    await expect(coordinator.find({
-      workspaceId: original.workspaceId,
-      executionId: "original",
-    })).resolves.toMatchObject({ state: "failed", attemptCount: 3 });
-    expect(runs.map(({ executionId }) => executionId)).toEqual(["original"]);
+    drained.resolve();
+    await vi.waitFor(async () => {
+      await executor.waitForIdle();
+      expect(runs.map(({ fence }) => fence.generation)).toEqual([1, 2]);
+    }, { interval: 5 });
+    expect(recoveryIds).toHaveLength(2);
+    expect(recoveryIds[1]).toBe(recoveryIds[0]);
+    expect(quiesce).toHaveBeenCalledTimes(1);
+  });
+
+  it("reconciles a committed settlement with a missing acknowledgement", async () => {
+    const withheld = Promise.withResolvers<void>();
+    const committed = Promise.withResolvers<void>();
+    const executor = worker("node_a", {
+      maxConcurrent: 1,
+      heartbeatIntervalMs: 10,
+      leaseTtlMs: 100,
+      quiesceLostExecution: async () => {},
+      coordinator: {
+        admit: coordinator.admit.bind(coordinator),
+        claim: coordinator.claim.bind(coordinator),
+        renew: coordinator.renew.bind(coordinator),
+        find: coordinator.find.bind(coordinator),
+        requestInterrupt: coordinator.requestInterrupt.bind(coordinator),
+        cancelSession: coordinator.cancelSession.bind(coordinator),
+        settle: async (input) => {
+          const result = await coordinator.settle(input);
+          if (input.fence.executionId === "original") {
+            committed.resolve();
+            await withheld.promise;
+          }
+          return result;
+        },
+      },
+    });
+    await executor.sessionEventsAccepted(accepted("original"));
+    await committed.promise;
+    await executor.sessionEventsAccepted({ ...accepted("a_other"), sessionId: "another_session" });
+    try {
+      await executor.waitForIdle();
+      expect(runs.map(({ executionId }) => executionId)).toEqual(["original", "a_other"]);
+      await expect(coordinator.find({ workspaceId: "workspace_01", executionId: "original" }))
+        .resolves.toMatchObject({ state: "completed", attemptCount: 1 });
+    } finally {
+      withheld.resolve();
+    }
   });
 
   it("turns a cross-replica interrupt into a durable signal and local cancellation", async () => {

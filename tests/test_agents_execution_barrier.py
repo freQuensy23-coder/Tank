@@ -552,6 +552,15 @@ async def test_retry_lost_ack_recovers_durable_failure_intent_without_second_ret
             if len(posted) == 1:
                 raise httpx.ReadError("lost acknowledgement", request=request)
             return httpx.Response(200, json={"data": [{"id": "retry-accepted"}]})
+        if request.url.path.endswith("/executions"):
+            return httpx.Response(
+                200,
+                json={
+                    "data": [
+                        {"execution_id": "accepted-message", "state": "FAILED", "settled_outcome": "FAILED"}
+                    ]
+                },
+            )
         raise AssertionError(request.url)
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:

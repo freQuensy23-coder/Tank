@@ -1,3 +1,5 @@
+import { AsyncLocalStorage } from 'node:async_hooks';
+import { boxLiteHome, withNativeLock } from './native-lock.js';
 import { copyGuestFileIn, copyGuestFileOut, type TrackGuestWork } from './guest-file-io.js';
 import { createHash } from 'node:crypto';
 import type { Fence, Handle, Provider, RetainedRuntime, Scope } from './retained-session.js';
@@ -53,31 +55,42 @@ export interface NativeBox {
   copyIn(host: string, guest: string, options?: unknown): Promise<void>;
   copyOut(guest: string, host: string, options?: unknown): Promise<void>;
 }
-export function publicBoxLiteClient(raw: unknown) {
+export function publicBoxLiteClient(raw: unknown, assertMutation?: () => Promise<void>) {
   const sdk = raw as NativeBoxLiteClient;
   const adapt = async (box: NativeBox) => {
     let info = await box.info();
     return {
       id: box.id, name: box.name, info: () => info,
-      async start() { await box.start(); info = await box.info(); },
-      async stop() { await box.stop(); info = { ...info, state: { ...info.state, running: false, status: 'Stopped' } }; },
-      exec: (...args: Parameters<NativeBox['exec']>) => box.exec(...args),
+      async start() { await assertMutation?.(); await box.start(); info = await box.info(); },
+      async stop() { await assertMutation?.(); await box.stop(); info = { ...info, state: { ...info.state, running: false, status: 'Stopped' } }; },
+      async exec(...args: Parameters<NativeBox['exec']>) { await assertMutation?.(); return box.exec(...args); },
       copyIn: (...args: Parameters<NativeBox['copyIn']>) => box.copyIn(...args), copyOut: (...args: Parameters<NativeBox['copyOut']>) => box.copyOut(...args),
     };
   };
   return {
     getInfo: (id: string) => sdk.getInfo(id),
     async get(id: string) { const box = await sdk.get(id); return box ? adapt(box) : null; },
-    async getOrCreate(options: object, name?: string | null) { const result = await sdk.getOrCreate(options, name); return { ...result, box: await adapt(result.box) }; },
-    remove: (id: string, force?: boolean) => sdk.remove(id, force),
+    async getOrCreate(options: object, name?: string | null) { await assertMutation?.(); const result = await sdk.getOrCreate(options, name); return { ...result, box: await adapt(result.box) }; },
+    async remove(id: string, force?: boolean) { await assertMutation?.(); await sdk.remove(id, force); },
   };
 }
+type GuestWork = <T>(operation: () => Promise<T>, assertBeforeLaunch: () => void) => Promise<T>;
+const guestWork = new WeakMap<BoxLiteRuntime, GuestWork>();
+const unsafeRuntimes = new WeakSet<BoxLiteRuntime>();
+
 export function pinnedBoxLiteProvider(input: {
   module: PinnedBoxLiteModule; client: unknown; allocation: Allocation; leaseTtlMs: number;
+  nativeHome?: string; stopTimeoutMs?: number;
   isCurrent?(fence: Fence): Promise<boolean>;
   unpublishedCleanupFailed?(handle: Handle, scope: Scope, fence: Fence): Promise<void>;
 }): Provider<BoxLiteRuntime> {
-  const client = publicBoxLiteClient(input.client);
+  const home = input.nativeHome ?? boxLiteHome();
+  const mutation = new AsyncLocalStorage<() => Promise<void>>();
+  const client = publicBoxLiteClient(input.client, () => {
+    const assertCurrent = mutation.getStore();
+    if (!assertCurrent) throw Error('retained_native_mutation_not_guarded');
+    return assertCurrent();
+  });
   const options = { providerId: 'litebox' as const, client, image: input.allocation.image,
     allocationOptions: () => ({ ...input.allocation }), leaseTtlMs: input.leaseTtlMs, outputStore: null };
   const provider = input.module.createBoxLiteProvider(options);
@@ -98,6 +111,26 @@ export function pinnedBoxLiteProvider(input: {
       artifact: { type: 'image', reference: input.allocation.image } },
   });
   const expectedName = (scope: Scope) => 'oma-' + createHash('sha256').update(`litebox:${scope.sessionId}`).digest('hex').slice(0, 32);
+  const lock = <T>(scope: Scope, mode: 'shared' | 'exclusive', work: () => Promise<T>) =>
+    withNativeLock(home, expectedName(scope), mode, work);
+  const guarded = (fence: Fence, signal: AbortSignal, authorized?: () => Promise<void>) => async () => {
+    signal.throwIfAborted();
+    await authorized?.();
+    await current(fence);
+    await authorized?.();
+    signal.throwIfAborted();
+  };
+  const attach = (runtime: BoxLiteRuntime, scope: Scope, assertCurrent: () => Promise<void>) => {
+    guestWork.set(runtime, (work, assertBeforeLaunch) => lock(scope, 'shared', async () => {
+      const assertLaunch = async () => {
+        await assertCurrent();
+        assertBeforeLaunch();
+      };
+      await assertLaunch();
+      return mutation.run(assertLaunch, work);
+    }));
+    return runtime;
+  };
   const upgradePrefix = (scope: Scope) => 'oma-' + createHash('sha256').update(JSON.stringify(scope)).digest('hex').slice(0, 32) + '-upgrade-';
   const ownershipName = (handle: Handle, scope: Scope): string => {
     if (!handle.ownershipName) return expectedName(scope);
@@ -106,7 +139,10 @@ export function pinnedBoxLiteProvider(input: {
   };
   const publicProvider = (handle: Handle, scope: Scope) => handle.ownershipName
     ? input.module.createBoxLiteProvider({ ...options, runtimeName: () => ownershipName(handle, scope) }) : provider;
-  const quiesceExact = async (handle: Handle, scope: Scope, assertCurrent: () => Promise<void>) => {
+  const stopUnderLock = async (
+    handle: Handle, scope: Scope, assertCurrent: () => Promise<void>,
+    observe: <T>(observation: T | Promise<T>) => Promise<T> = async observation => observation,
+  ) => {
     const sdk = input.client as NativeBoxLiteClient;
     const name = ownershipName(handle, scope);
     const verify = (info: NativeBoxInfo | null) => {
@@ -114,22 +150,54 @@ export function pinnedBoxLiteProvider(input: {
       return info.state;
     };
     await assertCurrent();
-    const state = verify(await sdk.getInfo(handle.runtimeId));
+    const state = verify(await observe(sdk.getInfo(handle.runtimeId)));
     if (state.running) {
-      const box = await sdk.get(handle.runtimeId);
+      const box = await observe(sdk.get(handle.runtimeId));
       if (!box || box.id !== handle.runtimeId || box.name !== name) throw Error('retained_recovery_resident_changed');
-      if (!verify(await box.info()).running) throw Error('retained_recovery_stop_unconfirmed');
+      if (!verify(await observe(box.info())).running) throw Error('retained_recovery_stop_unconfirmed');
       await assertCurrent();
       const sync = await box.exec('/bin/sync', [], [], false, null, 30, '/');
-      const result = await sync.wait();
+      const result = await observe(sync.wait());
       if (result.exitCode !== 0 || result.errorMessage) throw Error('retained_filesystem_flush_failed');
       await assertCurrent();
       await box.stop();
     }
     await assertCurrent();
-    const stopped = verify(await sdk.getInfo(handle.runtimeId));
+    const stopped = verify(await observe(sdk.getInfo(handle.runtimeId)));
     if (stopped.running || !/^(stopped|exited)$/i.test(stopped.status)) throw Error('retained_recovery_stop_unconfirmed');
     await assertCurrent();
+  };
+  const quiesceExact = async (handle: Handle, scope: Scope, assertCurrent: () => Promise<void>, intent?: Handle) => {
+    const timeout = Error('retained_recovery_stop_timeout');
+    const timeoutMs = input.stopTimeoutMs ?? 35_000;
+    const deadline = performance.now() + timeoutMs;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const bounded = new Promise<never>((_, reject) => { timer = setTimeout(() => reject(timeout), timeoutMs); });
+    const observe = <T>(observation: T | Promise<T>) => Promise.race([observation, bounded]);
+    const check = async () => {
+      if (performance.now() >= deadline) throw timeout;
+      await observe(assertCurrent());
+      if (performance.now() >= deadline) throw timeout;
+    };
+    try {
+      const attempt = lock(scope, 'exclusive', async () => {
+        if (!intent) return stopUnderLock(handle, scope, check, observe);
+        const name = expectedName(scope);
+        if (intent.provider !== 'litebox' || intent.runtimeId !== name || intent.ownershipName || handle.ownershipName) {
+          throw Error('retained_allocation_intent_invalid');
+        }
+        await check();
+        const info = await observe(inspect(name));
+        if (!info && handle.runtimeId === name) return check();
+        if (!info?.id || info.name !== name || (handle.runtimeId !== name && handle.runtimeId !== info.id)) {
+          throw Error('retained_recovery_resident_changed');
+        }
+        await stopUnderLock({ provider: 'litebox', runtimeId: info.id }, scope, check, observe);
+      });
+      await Promise.race([attempt, bounded]);
+    } finally {
+      clearTimeout(timer);
+    }
   };
   return {
     quiesceExact,
@@ -156,52 +224,60 @@ export function pinnedBoxLiteProvider(input: {
       return { provider: 'litebox', runtimeId: info.id };
     },
     async create(scope, fence, signal, assertExecutionCurrent) {
-      const name = expectedName(scope);
-      if (await inspect(name)) throw Error('retained_unpublished_runtime_exists');
-      await assertExecutionCurrent?.();
-      await current(fence);
-      try {
-        return await provider.create({ sessionId: scope.sessionId, workdir: '/workspace' }, {}, acquisition(scope, fence, signal));
-      } catch (error) {
-        const remaining = await inspect(name);
-        if (remaining) {
-          if (!remaining.id || remaining.name !== name) throw Error('retained_cleanup_ownership_mismatch');
-          const handle = { provider: 'litebox', runtimeId: remaining.id };
-          try {
-            await assertExecutionCurrent?.();
-            await current(fence);
-            await resource.sandbox.reap({ scope, lease: handle, reason: 'completed' });
-          } catch {
-            await input.unpublishedCleanupFailed?.(handle, scope, fence).catch(() => undefined);
-            throw Error('retained_initial_cleanup_failed');
+      const assertCurrent = guarded(fence, signal, assertExecutionCurrent);
+      return lock(scope, 'exclusive', () => mutation.run(assertCurrent, async () => {
+        const name = expectedName(scope);
+        if (await inspect(name)) throw Error('retained_unpublished_runtime_exists');
+        await assertCurrent();
+        try {
+          const runtime = await provider.create({ sessionId: scope.sessionId, workdir: '/workspace' }, {}, acquisition(scope, fence, signal));
+          return attach(runtime, scope, assertCurrent);
+        } catch (error) {
+          const remaining = await inspect(name);
+          if (remaining) {
+            if (!remaining.id || remaining.name !== name) throw Error('retained_cleanup_ownership_mismatch');
+            const handle = { provider: 'litebox', runtimeId: remaining.id };
+            try {
+              await assertCurrent();
+              await resource.sandbox.reap({ scope, lease: handle, reason: 'completed' });
+            } catch {
+              await input.unpublishedCleanupFailed?.(handle, scope, fence).catch(() => undefined);
+              throw Error('retained_initial_cleanup_failed');
+            }
           }
+          throw error;
         }
-        throw error;
-      }
+      }));
     },
     async resume(handle, scope, fence, signal, assertExecutionCurrent) {
-      const assertCurrent = async () => { await assertExecutionCurrent?.(); await current(fence); };
-      const info = await inspect(handle.runtimeId);
-      if (!info) throw Error('retained_runtime_missing');
-      if (info.id !== handle.runtimeId || info.name !== ownershipName(handle, scope)) throw Error('retained_cleanup_ownership_mismatch');
-      const selectedProvider = publicProvider(handle, scope);
-      const context = { sessionId: scope.sessionId, workdir: '/workspace' };
-      await assertCurrent();
-      if (info.state.running) {
-        await quiesceExact(handle, scope, async () => { signal.throwIfAborted(); await assertCurrent(); });
-      }
-      return await selectedProvider.resume(handle, context, {}, acquisition(scope, fence, signal));
-    },
-    async reap(handle, scope, fence, signal) {
-      signal.throwIfAborted(); await current(fence);
-      if (handle.ownershipName) {
-        const name = ownershipName(handle, scope);
+      const assertCurrent = guarded(fence, signal, assertExecutionCurrent);
+      return lock(scope, 'exclusive', () => mutation.run(assertCurrent, async () => {
         const info = await inspect(handle.runtimeId);
-        if (!info) return;
-        if (info.name !== name || (handle.runtimeId !== name && info.id !== handle.runtimeId)) throw Error('retained_cleanup_ownership_mismatch');
-        await current(fence);
-        await client.remove(info.id, true);
-      } else await resource.sandbox.reap({ scope, lease: handle, reason: 'completed' });
+        if (!info) throw Error('retained_runtime_missing');
+        if (info.id !== handle.runtimeId || info.name !== ownershipName(handle, scope)) throw Error('retained_cleanup_ownership_mismatch');
+        const selectedProvider = publicProvider(handle, scope);
+        const context = { sessionId: scope.sessionId, workdir: '/workspace' };
+        await assertCurrent();
+        if (info.state.running) {
+          await stopUnderLock(handle, scope, assertCurrent);
+        }
+        const runtime = await selectedProvider.resume(handle, context, {}, acquisition(scope, fence, signal));
+        return attach(runtime, scope, assertCurrent);
+      }));
+    },
+    async reap(handle, scope, fence, signal, assertAuthorized) {
+      const assertCurrent = guarded(fence, signal, assertAuthorized);
+      await lock(scope, 'exclusive', () => mutation.run(assertCurrent, async () => {
+        await assertCurrent();
+        if (handle.ownershipName) {
+          const name = ownershipName(handle, scope);
+          const info = await inspect(handle.runtimeId);
+          if (!info) return;
+          if (info.name !== name || (handle.runtimeId !== name && info.id !== handle.runtimeId)) throw Error('retained_cleanup_ownership_mismatch');
+          await current(fence);
+          await client.remove(info.id, true);
+        } else await resource.sandbox.reap({ scope, lease: handle, reason: 'completed' });
+      }));
     },
   };
 }
@@ -209,11 +285,10 @@ async function text(stream: ReadableStream<Uint8Array>): Promise<string> {
   return await new Response(stream).text();
 }
 export class RetainedBoxOperations {
-  readonly use: <T>(operation: (runtime: BoxLiteRuntime) => Promise<T>) => Promise<T>;
-  private unsafe = new WeakSet<BoxLiteRuntime>();
+  private readonly use: <T>(operation: (runtime: BoxLiteRuntime) => Promise<T>) => Promise<T>;
   constructor(use: <T>(operation: (runtime: BoxLiteRuntime) => Promise<T>) => Promise<T>) {
     this.use = operation => use(runtime => {
-      if (this.unsafe.has(runtime)) throw Error('retained_runtime_requires_stop');
+      if (unsafeRuntimes.has(runtime)) throw Error('retained_runtime_requires_stop');
       return operation(runtime);
     });
   }
@@ -231,13 +306,14 @@ export class RetainedBoxOperations {
     options: { cwd?: string; user?: string; timeoutSecs?: number } | undefined,
     exchange: (process: Process, track: TrackGuestWork) => Promise<T>): Promise<T> {
     if (options?.user) throw new Error('retained_exec_user_not_supported');
-    if (this.unsafe.has(runtime)) throw Error('retained_runtime_requires_stop');
+    if (unsafeRuntimes.has(runtime)) throw Error('retained_runtime_requires_stop');
     const timeoutMs = (options?.timeoutSecs ?? 120) * 1000;
     if (!Number.isFinite(timeoutMs) || timeoutMs < 0) throw Error('retained_exec_timeout_invalid');
     const deadline = performance.now() + timeoutMs;
+    const timeout = Error('retained_exec_timeout');
     let process: Process | undefined;
-    let timedOut = false;
     let draining: Promise<unknown> | undefined;
+    let timedOut = false;
     const pending: Promise<unknown>[] = [];
     const track: TrackGuestWork = task => {
       pending.push(task);
@@ -254,33 +330,43 @@ export class RetainedBoxOperations {
     };
     const expire = () => {
       timedOut = true;
-      this.unsafe.add(runtime);
+      unsafeRuntimes.add(runtime);
       killExactProcess();
     };
-    const timer = setTimeout(expire, timeoutMs);
+    const checkDeadline = () => {
+      if (timedOut || performance.now() >= deadline) {
+        expire();
+        throw timeout;
+      }
+      if (unsafeRuntimes.has(runtime)) throw Error('retained_runtime_requires_stop');
+    };
+    const work = async () => {
+      checkDeadline();
+      try {
+        process = await runtime.spawnDuplexProcess({ command, args, env, cwd: options?.cwd ?? '/workspace' });
+        void process.exited.catch(() => undefined);
+        checkDeadline();
+        const result = await exchange(process, track);
+        checkDeadline();
+        return result;
+      } catch (error) {
+        unsafeRuntimes.add(runtime);
+        killExactProcess();
+        if (process) {
+          if (!process.stdout.locked) track(text(process.stdout));
+          if (!process.stderr.locked) track(text(process.stderr));
+        }
+        await Promise.allSettled([...pending, draining]);
+        throw error;
+      }
+    };
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const bounded = new Promise<never>((_, reject) => {
+      timer = setTimeout(() => { expire(); reject(timeout); }, timeoutMs);
+    });
+    const locked = guestWork.get(runtime);
     try {
-      process = await runtime.spawnDuplexProcess({ command, args, env, cwd: options?.cwd ?? '/workspace' });
-      void process.exited.catch(() => undefined);
-      if (timedOut || performance.now() >= deadline) {
-        expire();
-        throw Error('retained_exec_timeout');
-      }
-      const result = await exchange(process, track);
-      if (timedOut || performance.now() >= deadline) {
-        expire();
-        throw Error('retained_exec_timeout');
-      }
-      return result;
-    } catch (error) {
-      this.unsafe.add(runtime);
-      killExactProcess();
-      if (process) {
-        if (!process.stdout.locked) track(text(process.stdout));
-        if (!process.stderr.locked) track(text(process.stderr));
-      }
-      await Promise.allSettled([...pending, draining]);
-      if (timedOut) throw Error('retained_exec_timeout');
-      throw error;
+      return await Promise.race([locked ? locked(work, checkDeadline) : work(), bounded]);
     } finally {
       clearTimeout(timer);
     }

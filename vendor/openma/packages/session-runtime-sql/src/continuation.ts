@@ -8,7 +8,7 @@ export async function loadSessionContinuationSnapshot(sql: SqlClient, scope: {
   workspaceId: string;
   sessionId: string;
 }): Promise<ContinuationSnapshot> {
-  const result = await sql.prepare(`SELECT id, lane_id, state, revision, events_json, attempt_count,
+  const result = await sql.prepare(`SELECT id, lane_id, state, revision, events_json, generation,
     interrupt_requested_at_ms FROM managed_session_executions WHERE workspace_id = ? AND session_id = ?
     ORDER BY admitted_at_ms, id`).bind(scope.workspaceId, scope.sessionId).all<{
     id: string;
@@ -16,7 +16,7 @@ export async function loadSessionContinuationSnapshot(sql: SqlClient, scope: {
     state: ContinuationSnapshot['executions'][number]['state'];
     revision: number | string;
     events_json: string;
-    attempt_count: number | string;
+    generation: number | string;
     interrupt_requested_at_ms: number | string | null;
   }>();
   const history = await new SqlSessionRuntimeHistorySource(sql).load(scope);
@@ -28,7 +28,7 @@ export async function loadSessionContinuationSnapshot(sql: SqlClient, scope: {
     executions: (result.results ?? []).map(row => ({
       id: row.id, laneId: row.lane_id,
       state: row.state, revision: Number(row.revision), events: JSON.parse(row.events_json),
-      attemptCount: Number(row.attempt_count), interruptRequestedAt: row.interrupt_requested_at_ms === null
+      generation: Number(row.generation), interruptRequestedAt: row.interrupt_requested_at_ms === null
         ? null : new Date(Number(row.interrupt_requested_at_ms)).toISOString()
     }))
   };

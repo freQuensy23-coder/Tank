@@ -81,7 +81,8 @@ def seen_key(event):
 def recovery_refused(identity, projection):
     return (
         projection.get("execution_id") == identity
-        and projection.get("state") == projection.get("settled_outcome") == "FAILED"
+        and projection.get("state") in {"FAILED", "CANCELLED"}
+        and projection.get("state") == projection.get("settled_outcome")
         and projection.get("recovery_refused") is True
     )
 
@@ -1247,8 +1248,8 @@ class SessionService:
                 key=lambda identity: not recovery_refused(identity, states[identity]),
             ):
                 projection = states[identity]
-                if projection["state"] == "FAILED" and (
-                    not before["unidentified_inputs"] or recovery_refused(identity, projection)
+                if recovery_refused(identity, projection) or (
+                    projection["state"] == "FAILED" and not before["unidentified_inputs"]
                 ):
                     await self.process_event(
                         sid,
@@ -2240,34 +2241,62 @@ class SessionService:
             native_retry_status = native_error.get("retry_status") if isinstance(native_error, dict) else None
             retry_type = native_retry_status.get("type") if isinstance(native_retry_status, dict) else None
             native_retrying = kind == "session.error" and retry_type == "retrying"
+            refusal_event = (
+                kind == "agent.refusal"
+                or event.get("finish_reason") == "content-filter"
+                or any(
+                    block.get("type") == "refusal"
+                    for block in event.get("content", [])
+                    if isinstance(block, dict)
+                )
+            )
+            turn_failure = (
+                (kind == "session.error" and not native_retrying)
+                or kind == "execution.status_failed"
+                or refusal_event
+            )
             defer_to_queue = kind == "session.error" and (retry_type == "terminal" or refused)
-            if event.get("execution_id") and kind in {
-                "agent.custom_tool_use",
-                "session.status_running",
-                "session.status_rescheduled",
-                "session.error",
-                "execution.status_failed",
-            }:
+            retired_owner = False
+            if identity and (
+                refusal_event
+                or kind
+                in {
+                    "agent.custom_tool_use",
+                    "session.status_running",
+                    "session.status_rescheduled",
+                    "session.error",
+                    "execution.status_failed",
+                }
+            ):
                 owner = await self.native_input_owner(session, event["execution_id"])
                 if owner:
                     active_owner = next(
                         row for row in session["message_log"] if row["message_id"] == owner[0]
                     )
+                    retired_owner = owner[0] in session.get("retired_message_ids", [])
                     inactive_owner = (
-                        inactive_owner
-                        or owner[0] in session.get("retired_message_ids", [])
-                        or owner[1] != active_owner.get("retry_count", 0)
+                        inactive_owner or retired_owner or owner[1] != active_owner.get("retry_count", 0)
                     )
+                    if not inactive_owner and not defer_to_queue and turn_failure:
+                        barrier = await self.execution_barrier(session, verify_remote=True)
+                        projection = barrier["execution_states"].get(identity, {})
+                        if recovery_refused(identity, projection):
+                            await self.fail_recovery_refused_turn(sid, identity)
+                            return
+                        defer_to_queue = (
+                            projection.get("execution_id") != identity
+                            or projection.get("state") != "FAILED"
+                            or projection.get("settled_outcome") != "FAILED"
+                        )
                     if not inactive_owner and not defer_to_queue:
                         session["active_message_id"] = owner[0]
                     event = dict(event, _host_turn_message_id=owner[0], _host_turn_retry_count=owner[1])
-                elif not defer_to_queue and kind in {
-                    "agent.custom_tool_use",
-                    "session.error",
-                    "execution.status_failed",
-                }:
+                elif not defer_to_queue and (
+                    refusal_event
+                    or kind in {"agent.custom_tool_use", "session.error", "execution.status_failed"}
+                ):
                     raise ValueError("Native execution has no acknowledged accepted-input owner")
-            if kind == "agent.custom_tool_use":
+            if kind == "agent.custom_tool_use" and not retired_owner:
                 await self.tool(session, event)
                 session = await self.repo.get("ops.agent_sessions", sid)
                 before = copy.deepcopy(session)
@@ -2305,20 +2334,7 @@ class SessionService:
                 await self.usage(session, event)
             if not inactive_owner and (native_retrying or kind == "session.status_rescheduled"):
                 session["runtime_status"] = "PENDING"
-            if (
-                not inactive_owner
-                and not defer_to_queue
-                and (
-                    (kind == "session.error" and not native_retrying)
-                    or kind in ("agent.refusal", "execution.status_failed")
-                    or event.get("finish_reason") == "content-filter"
-                    or any(
-                        block.get("type") == "refusal"
-                        for block in event.get("content", [])
-                        if isinstance(block, dict)
-                    )
-                )
-            ):
+            if not inactive_owner and not defer_to_queue and turn_failure:
                 active = next(
                     (
                         row

@@ -48,6 +48,7 @@ export interface NodeRetainedOptions {
   client: unknown;
   ownerId: string;
   leaseTtlMs: number;
+  nativeHome?: string;
   identity?(context: Context, allocation: Allocation): Promise<RuntimeIdentity>;
   fingerprint(context: Context, allocation: Allocation): Promise<string>;
   assertExecutionCurrent(fence: unknown): Promise<void>;
@@ -82,7 +83,7 @@ export class NodeRetainedLifecycle {
           const published = acquired.publication?.workspaceCandidate.metadata;
           if (published?.schema === 2) throw Error('retained_schema2_orphan_cleanup_requires_archive');
           if (!await this.options.fences.isCurrent(acquired.fence)) throw Error('retained_fence_lost');
-          const provider = pinnedBoxLiteProvider({ module: this.options.providerModule, client: this.options.client,
+          const provider = pinnedBoxLiteProvider({ module: this.options.providerModule, client: this.options.client, nativeHome: this.options.nativeHome,
             allocation: { image: 'cleanup-only-no-allocation' }, leaseTtlMs: this.options.leaseTtlMs,
             isCurrent: fence => this.options.fences.isCurrent(fence) });
           const intent = published?.state === 'allocating' && typeof published.runtimeId === 'string'
@@ -103,7 +104,7 @@ export class NodeRetainedLifecycle {
     return new RetainedSessionLifecycle({ scope, fingerprint, identity, providerId: 'litebox', ownerId: this.options.ownerId,
       leaseTtlMs: this.options.leaseTtlMs, fences: this.options.fences,
       orphans: this.options.orphans,
-      provider: pinnedBoxLiteProvider({ module: this.options.providerModule, client: this.options.client,
+      provider: pinnedBoxLiteProvider({ module: this.options.providerModule, client: this.options.client, nativeHome: this.options.nativeHome,
         allocation, leaseTtlMs: this.options.leaseTtlMs, isCurrent: fence => this.options.fences.isCurrent(fence),
         unpublishedCleanupFailed: async (sandbox, scope, fence) => {
           await this.options.orphans?.enqueue({ scope, generation: fence.generation, ownerId: fence.ownerId,
@@ -202,7 +203,8 @@ export class NodeRetainedLifecycle {
     const scopeKey = key(scopeOf(entry.context));
     const resident = residents.get(scopeKey);
     if ((resident && resident !== entry) || entry.controller?.needsQuiescence()) throw Error('retained_previous_turn_not_quiescent');
-    const assertExecution = () => this.options.assertExecutionCurrent(entry.context.executionFence);
+    const { executionFence } = entry.context;
+    const assertExecution = () => this.options.assertExecutionCurrent(executionFence);
     const signal = entry.context.signal ?? new AbortController().signal;
     signal.throwIfAborted();
     await assertExecution();
@@ -258,28 +260,19 @@ export class NodeRetainedLifecycle {
   async quiesceLostTurn(input: {
     fence: Readonly<SessionExecutionFence>;
     context: Pick<Context, 'session' | 'environment'> | null;
-    currentFence?: Readonly<SessionExecutionFence>;
   }): Promise<void> {
-    const { fence, context, currentFence } = input;
+    const { fence, context } = input;
     if (context === null) return;
-    const scopeKey = key(scopeOf({ ...fence, ...context }));
+    const scopeKey = key(scopeOf({ workspaceId: fence.workspaceId, sessionId: fence.sessionId,
+      session: context.session, environment: context.environment }));
     await serialize(scopeKey, async () => {
       const entry = this.entries.get(scopeKey);
       const resident = residents.get(scopeKey);
       if (resident && resident !== entry) throw Error('retained_lost_turn_changed');
-      if (!entry?.controller) return;
+      if (!entry) return;
       if (!sameExecutionFence(entry.context.executionFence, fence)) throw Error('retained_lost_turn_changed');
-      if (!entry.started && !entry.controller.needsQuiescence()) {
-        await this.abandonEntry(scopeKey, entry);
-        return;
-      }
-      if (!currentFence || currentFence.workspaceId !== fence.workspaceId || currentFence.sessionId !== fence.sessionId
-          || currentFence.executionId !== fence.executionId || currentFence.attemptId === fence.attemptId
-          || currentFence.generation <= fence.generation) throw Error('retained_recovery_execution_fence_required');
-      const authorized = () => this.options.assertExecutionCurrent(currentFence);
-      await authorized();
       await this.abandonEntry(scopeKey, entry);
-      await entry.controller.quiesceLostTurn(authorized);
+      await entry.controller?.quiesceLostTurn();
       if (residents.get(scopeKey) === entry) residents.delete(scopeKey);
     });
   }

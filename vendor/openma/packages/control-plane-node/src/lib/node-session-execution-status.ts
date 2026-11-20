@@ -11,7 +11,7 @@ export function sessionExecutionStatusStore(coordinator: Pick<SessionExecutionCo
         const state = row.state.toUpperCase() as "QUEUED" | "RUNNING" | "COMPLETED" | "FAILED" | "CANCELLED";
         const terminal = state === "COMPLETED" || state === "FAILED" || state === "CANCELLED";
         if (terminal && row.settledAt === null) return { execution_id: executionId, state: "UNKNOWN" as const, settled_outcome: null };
-        return { execution_id: executionId, state, ...(state === "FAILED" && row.failure === ExecutionRecoveryRefusal.code && { recovery_refused: true as const }), settled_outcome: terminal ? state as "COMPLETED" | "FAILED" | "CANCELLED" : null };
+        return { execution_id: executionId, state, ...((state === "FAILED" || state === "CANCELLED") && row.failure === ExecutionRecoveryRefusal.code && { recovery_refused: true as const }), settled_outcome: terminal ? state as "COMPLETED" | "FAILED" | "CANCELLED" : null };
       }));
     },
   };

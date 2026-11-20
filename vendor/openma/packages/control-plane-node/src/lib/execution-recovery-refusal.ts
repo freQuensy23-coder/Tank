@@ -1,5 +1,7 @@
+import { executionRecoveryRefusalCode } from "@open-managed-agents/session-runtime-contract/continuation";
+
 export class ExecutionRecoveryRefusal extends Error {
-  static readonly code = "tank:execution-recovery-refused:v1";
+  static readonly code = executionRecoveryRefusalCode;
 }
 
 export function executionFailure(error: unknown): string {

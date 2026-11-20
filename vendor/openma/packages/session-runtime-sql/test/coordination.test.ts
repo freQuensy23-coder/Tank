@@ -20,6 +20,10 @@ import {
   sessionExecutionEventBatches,
   sessionExecutionId,
 } from "@open-managed-agents/session-runtime-contract/coordination";
+import { executionRecoveryRefusalCode, planSessionContinuation } from
+  "@open-managed-agents/session-runtime-contract/continuation";
+import { encodeSessionEventDocument } from "@open-managed-agents/session-runtime-contract/history";
+import { loadSessionContinuationSnapshot } from "../src/continuation";
 import { sessionExecutionStoreConformance } from
   "../../session-runtime-contract/test/execution-store-conformance";
 
@@ -110,6 +114,103 @@ describe("SqlSessionExecutionCoordinator", () => {
     sql = await createBetterSqlite3SqlClient(":memory:");
     await ensureSessionExecutionCoordinatorSchema(sql);
     coordinator = new SqlSessionExecutionCoordinator(sql);
+  });
+
+  describe("native continuation recovery", () => {
+    const scope = { workspaceId: "workspace_01", sessionId: "session_01" };
+    let store: SqlSessionExecutionCoordinator;
+
+    beforeEach(async () => {
+      await sql.exec(`
+        CREATE TABLE managed_sessions (workspace_id TEXT, id TEXT, revision INTEGER, archived_at INTEGER);
+        CREATE TABLE managed_session_initial_events (workspace_id TEXT, session_id TEXT, document TEXT, sequence INTEGER);
+        CREATE TABLE managed_session_events (workspace_id TEXT, session_id TEXT, thread_id TEXT,
+          id TEXT, type TEXT, document TEXT, processed_at INTEGER, PRIMARY KEY (workspace_id, session_id, id));
+        INSERT INTO managed_sessions VALUES ('workspace_01', 'session_01', 1, NULL);
+      `);
+      store = new SqlSessionExecutionCoordinator(sql, { callbackContinuations: true, serializeSessionClaims: true });
+    });
+
+    const claim = (store: SqlSessionExecutionCoordinator, owner: string, second: number) =>
+      store.claim({ ownerId: owner, attemptId: owner, claimedAt: at(second), leaseTtlMs: 1_000 });
+
+    it("refuses to rerun an expired claim with no committed output", async () => {
+      await store.admit(admitted("original", scope.sessionId, at(1)));
+      expect(await claim(store, "first", 2)).toMatchObject({ type: "claimed" });
+      expect(await claim(store, "successor", 3)).toMatchObject({ type: "claimed", fence: { generation: 2 } });
+      const snapshot = await loadSessionContinuationSnapshot(sql, scope);
+      expect(planSessionContinuation(snapshot, "original").mode).toBe("failure");
+    });
+
+    it.each(["budget", "deadline", "interrupt", "interrupt-expiry", "settle", "cancel"] as const)(
+      "projects no replay after %s and keeps unrelated queued work claimable",
+      async (path) => {
+        await sql.exec("INSERT INTO managed_sessions VALUES ('workspace_01', 'other_session', 1, NULL)");
+        await store.admit({
+          ...admitted("original", scope.sessionId, at(1)),
+          policy: { maxAttempts: path === "budget" ? 1 : 3, timeoutMs: path === "deadline" ? 2_000 : 60_000 },
+        });
+        const initial = await claim(store, "first", 2);
+        if (initial.type !== "claimed") throw new Error("Missing original claim");
+        await store.admit(admitted("next", "other_session", at(2)));
+        if (path === "interrupt" || path === "interrupt-expiry")
+          await store.requestInterrupt({ ...scope, requestedAt: at(path === "interrupt" ? 3 : 2) });
+        if (path === "settle")
+          await store.settle({ fence: initial.fence, settledAt: at(2), outcome: "failed", failure: "cleanup failed" });
+        if (path === "cancel")
+          await store.cancelSession({ ...scope, cancelledAt: at(2), reason: "cancelled" });
+        expect(await claim(store, "next_owner", 3)).toMatchObject({ type: "claimed", execution: { id: "next" } });
+        const state = path === "interrupt" || path === "interrupt-expiry" || path === "cancel" ? "cancelled" : "failed";
+        expect(await store.find({ workspaceId: scope.workspaceId, executionId: "original" }))
+          .toMatchObject({ state, failure: executionRecoveryRefusalCode });
+        expect(await sql.prepare("SELECT failure FROM managed_session_executions WHERE id = 'original'").first())
+          .toEqual({ failure: executionRecoveryRefusalCode });
+      },
+    );
+
+    it("resumes remaining inputs after a committed callback yield and reconciles a lost acknowledgement", async () => {
+      const source = admitted("source", scope.sessionId, at(1));
+      await store.admit(source);
+      const first = await claim(store, "first", 2);
+      if (first.type !== "claimed") throw new Error("Missing source claim");
+      type SessionEvent = Parameters<typeof encodeSessionEventDocument>[0];
+      const append = (fence: SessionExecutionFence, event: SessionEvent, index: number) =>
+        sql.prepare("INSERT INTO managed_session_events VALUES (?, ?, ?, ?, ?, ?, ?)")
+          .bind(scope.workspaceId, scope.sessionId, "sthr_primary", event.id, event.type,
+            encodeSessionEventDocument(event, { revision: 1, index }, fence.executionId,
+              { attemptId: fence.attemptId, generation: fence.generation }), Date.parse(event.processedAt)).run();
+      await append(first.fence, { type: "agent.custom_tool_use", id: "tool", name: "lookup", input: {}, processedAt: at(2) }, 0);
+      await append(first.fence, { type: "session.status_idle", id: "source_idle", processedAt: at(2),
+        stopReason: { type: "requires_action", eventIds: ["tool"] } }, 1);
+      await store.settle({ fence: first.fence, settledAt: at(2), outcome: "completed" });
+      const mixed = admitted("mixed", scope.sessionId, at(2));
+      mixed.execution.events.push({ type: "user.custom_tool_result", id: "callback", customToolUseId: "tool", content: [], processedAt: at(2) });
+      await store.admit(mixed);
+      const running = await claim(store, "callback_owner", 3);
+      if (running.type !== "claimed") throw new Error("Missing callback claim");
+      await append(running.fence, { type: "session.status_running", id: "callback_start", processedAt: at(3) }, 2);
+      const stopReason = { type: "end_turn" } as const;
+      await append(running.fence, { type: "session.status_idle", id: "callback_idle", processedAt: at(3), stopReason }, 3);
+      const recovered = await claim(store, "recovery_owner", 4);
+      if (recovered.type !== "claimed") throw new Error("Missing recovery claim");
+      expect(planSessionContinuation(await loadSessionContinuationSnapshot(sql, scope), "mixed")).toMatchObject({
+        mode: "finalize", remainingInputIds: ["mixed"],
+      });
+      await append(recovered.fence, { type: "session.status_idle", id: "recovery_idle", processedAt: at(4), stopReason }, 4);
+      const progress = {
+        fence: recovered.fence, yieldedAt: at(4), previousReceiptId: null,
+        phaseStartEventId: "callback_start", terminalEventId: "recovery_idle",
+        phaseInputIds: ["callback"], consumedInputIds: ["callback"], remainingInputIds: ["mixed"],
+      };
+      expect(await store.yieldProgress(progress)).toMatchObject({ type: "yielded", replayed: false });
+      expect(await store.yieldProgress(progress)).toMatchObject({ type: "yielded", replayed: true });
+      expect(await store.find({ workspaceId: scope.workspaceId, executionId: "mixed" }))
+        .toMatchObject({ state: "queued", attemptCount: 1 });
+      expect(await claim(store, "remaining_owner", 5)).toMatchObject({ type: "claimed", execution: { id: "mixed" } });
+      expect(planSessionContinuation(await loadSessionContinuationSnapshot(sql, scope), "mixed")).toMatchObject({
+        mode: "model", phaseInputIds: ["mixed"],
+      });
+    });
   });
 
   it("claims a default-mode Session without preparing the optional checkpoint-only lock table", async () => {

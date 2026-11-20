@@ -409,6 +409,10 @@ export class DefaultNodeManagedSessionRunner
       event.type !== "user.define_outcome") {
       throw new Error(`Managed Node runner does not yet support ${event.type}`);
     }
+    if (input.executionFence !== undefined && input.continuationPlan !== undefined &&
+      input.continuationPlan.generation !== input.executionFence.generation) {
+      throw new ExecutionRecoveryRefusal("Session continuation belongs to a different execution generation");
+    }
     const rawSandbox = this.sandboxes.get(input);
     if (rawSandbox === undefined) {
       throw new Error(`Session ${input.sessionId} sandbox was not started`);
@@ -464,7 +468,7 @@ export class DefaultNodeManagedSessionRunner
         remainingInputIds: input.continuationPlan.remainingInputIds
       };
     }
-    if (!["noop", "finalize"].includes(input.continuationPlan?.mode ?? "")) {
+    if (!["noop", "finalize", "failure"].includes(input.continuationPlan?.mode ?? "")) {
       const started = runtime.broadcastProducedEvent({ type: "session.status_running" });
       if (phaseResult.yield !== undefined && phaseResult.yield.phaseStartEventId === '')
         phaseResult.yield.phaseStartEventId = started;
@@ -472,6 +476,7 @@ export class DefaultNodeManagedSessionRunner
     let turnTools: HarnessContext["tools"] | undefined;
     let runFailed = false;
     let recoveryRefused = false;
+    const finalizing = input.continuationPlan?.mode === 'finalize';
     try {
       if (input.continuationPlan?.mode === 'failure') {
         recoveryRefused = true;
@@ -601,7 +606,7 @@ export class DefaultNodeManagedSessionRunner
             if (!(error instanceof Error))
               throw error;
             const sideEffectFree = runtime.agentEventCount === agentEventsBefore;
-            if (!sideEffectFree
+            if (input.continuationPlan !== undefined || !sideEffectFree
               || attempt >= retry.attempts
               || abortController.signal.aborted
               || isNonRetryableHarnessError(error)) {
@@ -735,8 +740,8 @@ export class DefaultNodeManagedSessionRunner
         finalizationError = error instanceof Error ? error : new Error(String(error));
       }
       try {
-        if (input.executionFence !== undefined &&
-          this.dependencies.synchronizeSandbox !== undefined) {
+        if (!finalizing && !recoveryRefused && abortController.signal.reason !== "lease_lost" &&
+          input.executionFence !== undefined && this.dependencies.synchronizeSandbox !== undefined) {
           const executionFence = input.executionFence;
           await this.sandboxRuntimes.get(input)?.withSandbox(async () => {
             await this.dependencies.synchronizeSandbox!({
@@ -756,7 +761,7 @@ export class DefaultNodeManagedSessionRunner
       // Turn completion is a safe point: all harness/subagent activity has
       // drained. The interval is a target between such points, not a timer
       // that snapshots files while tools are still writing.
-      if (!runFailed && finalizationError === undefined && checkpointService !== undefined && workspace !== undefined && input.executionFence !== undefined) {
+      if (!finalizing && !runFailed && finalizationError === undefined && checkpointService !== undefined && workspace !== undefined && input.executionFence !== undefined) {
         try {
           const active = await checkpointService.active(workspace.scope);
           if (active?.candidate.id !== (workspace.activeId ?? undefined)) {
@@ -795,7 +800,9 @@ export class DefaultNodeManagedSessionRunner
           },
         });
       }
-      if (!leaseLost && input.continuationPlan?.mode !== 'noop' && !recoveryRefused) {
+      const emitTerminal = () => {
+        if (abortController.signal.reason === "lease_lost" || input.continuationPlan?.mode === 'noop' || recoveryRefused)
+          return;
         const remaining = input.continuationPlan?.mode === 'intake'
           ? input.continuationPlan.remaining : runtime.pendingConfirmations ?? [];
         const terminalId = runtime.broadcastProducedEvent({
@@ -807,10 +814,13 @@ export class DefaultNodeManagedSessionRunner
         });
         if (phaseResult.yield !== undefined)
           phaseResult.yield.terminalEventId = terminalId;
-      }
+      };
+      const terminalAfterCleanup = input.continuationPlan !== undefined && !runFailed && finalizationError === undefined;
+      if (!terminalAfterCleanup)
+        emitTerminal();
       try {
         await runtime.drain();
-        if (input.executionFence !== undefined && !recoveryRefused) {
+        if (input.executionFence !== undefined && !recoveryRefused && !finalizing && !abortController.signal.aborted) {
           await this.dependencies.afterExecution?.({
             workspaceId: input.workspaceId,
             session: input.session,
@@ -836,6 +846,10 @@ export class DefaultNodeManagedSessionRunner
       }
       if (finalizationError !== undefined && !runFailed) {
         throw finalizationError;
+      }
+      if (terminalAfterCleanup && !abortController.signal.aborted) {
+        emitTerminal();
+        await runtime.drain();
       }
       if (workspace !== undefined && !runFailed && !abortController.signal.aborted) {
         workspace.trusted = true;
