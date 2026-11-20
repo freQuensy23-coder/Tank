@@ -24,6 +24,7 @@ def settings():
         )
     missing = secrets.token_hex(32)
     projection = {key: "${" + key + "-" + missing + "}" for key in KEYS}
+    projection["dollar"] = "${TANK_DEPLOY_DOLLAR}"
     model = {"services": {"settings": {"image": "scratch", "environment": projection}}}
     result = subprocess.run(
         [
@@ -39,6 +40,7 @@ def settings():
             "--format",
             "json",
         ],
+        env={**os.environ, "TANK_DEPLOY_DOLLAR": "$"},
         input=json.dumps(model),
         text=True,
         capture_output=True,
@@ -46,6 +48,8 @@ def settings():
     if result.returncode:
         raise SystemExit("Could not resolve the protected Compose environment")
     env = json.loads(result.stdout)["services"]["settings"]["environment"]
+    if env.pop("dollar") == "$$":
+        env = {key: value.replace("$$", "$") for key, value in env.items()}
     if any(not env[key] for key in KEYS):
         raise SystemExit("Refusing an explicitly empty Grafana credential")
     return {k: v for k, v in env.items() if v != missing}

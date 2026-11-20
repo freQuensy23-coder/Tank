@@ -78,7 +78,7 @@ jobs:
             install -d -m 700 $release
             stage=\$(mktemp -d $release/.stage.XXXXXXXX)
             trap 'rm -rf \$stage' EXIT
-            tar -xp --no-same-owner -C \$stage
+            tar -x -C \$stage -p --no-same-owner
             if [ -d $release/stack ]; then diff -qr \$stage $release/stack; else mv -T \$stage $release/stack; fi"
           scp "${ssh_opts[@]}" "$RUNNER_TEMP/tank-orchestrator/"* "$SSH_USER@$SSH_HOST:/srv/tank-deploy/"
           ssh "${ssh_opts[@]}" "$SSH_USER@$SSH_HOST" "/srv/tank-deploy/deploy.sh $SHA"
