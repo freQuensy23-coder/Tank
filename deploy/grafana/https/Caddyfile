@@ -1,0 +1,17 @@
+{
+	admin off
+	auto_https disable_redirects
+	servers {
+		protocols h1 h2
+	}
+}
+
+grafana.84-235-183-96.sslip.io {
+	tls {
+		issuer acme {
+			dir https://acme-v02.api.letsencrypt.org/directory
+			disable_http_challenge
+		}
+	}
+	reverse_proxy grafana:3000
+}

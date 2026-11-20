@@ -73,6 +73,9 @@ jobs:
             files+=(deploy/grafana/production-version compose.grafana.yaml deploy/grafana/bootstrap.sql deploy/grafana/install-views.sql
               deploy/grafana/queue-views.sql deploy/grafana/pipeline-views.sql deploy/grafana/dashboards deploy/grafana/provisioning)
           fi
+          if git cat-file -e "$SHA:deploy/grafana/https/compose.yaml" 2>/dev/null; then
+            files+=(deploy/grafana/https/compose.yaml deploy/grafana/https/Caddyfile)
+          fi
           if git cat-file -e "$SHA:apify/x-reader" 2>/dev/null; then files+=(apify/x-reader); fi
           git archive "$SHA" "${files[@]}" | ssh "${ssh_opts[@]}" "$SSH_USER@$SSH_HOST" "sudo -n bash -eu -c '
             install -d -m 700 $release

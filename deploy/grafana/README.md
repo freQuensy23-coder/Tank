@@ -10,7 +10,9 @@ Tank applies its migrations first. Deploy waits for `013_source_poll_counts.sql`
 
 The host-local upstream is `http://127.0.0.1:3000`, **not** an Internet URL. The dashboard paths are `/d/tank-queue/` and `/d/tank-pipeline/`. Port 3000 is published on loopback only. There is no public dashboard, anonymous login or published database port.
 
-The documented host deployment provides SSH for Deploy, not a browser ingress. For an operator without server access, the infrastructure owner must authorize a browser-facing HTTPS origin with DNS and a trusted certificate, proxy it to that loopback upstream on the host and grant the operator access. The operator then opens `https://<authorized-host>/d/tank-queue/` or `/d/tank-pipeline/` with a named Grafana Viewer account; no SSH tunnel is part of normal use. Until an origin and viewer access are provisioned, there is no verified remote operator URL. A green Deploy check verifies the upstream, not that external route.
+After the reviewed release is deployed, open `https://grafana.84-235-183-96.sslip.io/d/tank-queue/` or `/d/tank-pipeline/` on the same origin and sign in with a production Grafana account. Give dashboard readers a named Viewer; staging accounts and URLs are not production access.
+
+The selected HTTPS overlay runs staging’s pinned Caddy image on a separate network shared only with Grafana. It publishes TCP 443 only. The hostname must resolve to the production VM, inbound TCP 443 must reach Docker through the Oracle network and host firewall, and Caddy needs outbound DNS and HTTPS to Let's Encrypt. It obtains and renews the certificate by TLS-ALPN-01; keep the `tank_grafana-tls` volume private and persistent. Deploy checks the trusted hostname, login page and anonymous API denial locally through Caddy, without sending credentials. Check the same origin from outside after Deploy; a local check cannot verify the cloud firewall.
 
 ### Credentials and state
 
@@ -22,7 +24,7 @@ The infrastructure owner can recover the initial `admin` credential from `GRAFAN
 
 ### Rollback
 
-A failed rollout returns to the previous recorded Tank release. For a Grafana-enabled release it uses that release's files, reinstalls its views and checks Grafana. Only `deploy/grafana/production-version` with version `1` enables the production overlay. A release without the marker (even one with a local `compose.grafana.yaml`) removes the Grafana container and reinstates its original Postgres HBA via the previous image. Neither path drops database objects, deletes `pg-data`, or changes passwords. To deliberately select a prior release, use the same Deploy action with its `main` commit SHA. Future Grafana major upgrades or incompatible metric view changes need an explicit database backup and compatibility plan; selecting an older image is not a database downgrade.
+A failed rollout returns to the previous recorded Tank release. For a Grafana-enabled release it uses that release's files, reinstalls its views and checks Grafana. Only `deploy/grafana/production-version` with version `1` enables the production overlay. A release without the marker (even one with a local `compose.grafana.yaml`) removes the Grafana container and reinstates its original Postgres HBA via the previous image. A release without the HTTPS overlay first removes the public proxy, including on rollback to loopback-only Grafana. Neither path drops database objects, deletes `pg-data`, or changes passwords. To deliberately select a prior release, use the same Deploy action with its `main` commit SHA. Future Grafana major upgrades or incompatible metric view changes need an explicit database backup and compatibility plan; selecting an older image is not a database downgrade.
 
 ## HEL HTTPS staging
 
@@ -37,5 +39,7 @@ The staging target is `grafana.127-0-0-1.sslip.io` on a Docker-assigned **loopba
 The check stages the selected Deploy release in a disposable project, runs real PostgreSQL and Grafana with synthetic data, and opens Queue and Pipeline in a fresh Chrome profile as a named Viewer. It checks denied anonymous and admin requests, secure cookies, replacement, failed-release rollback, removal of Grafana on a legacy release, restoration and a changed, trusted leaf certificate. Unrelated Tank services and SSH are simulated. Exiting removes the stand; a passing run is not a public deployment or a publicly trusted certificate.
 
 ## Local verification
+
+Use `deploy/grafana/verify.sh fresh-browser` with the local browser prerequisites above to verify a Viewer through the release edge without issuing a certificate. The fixture substitutes localhost, a loopback port and the pinned Pebble image’s existing test certificate; production ACME is not exercised.
 
 Run `deploy/grafana/verify.sh` on a local Docker daemon with the Tank subnet free. It requires Bash, Docker Compose, `curl`, `jq` and OpenSSL. It uses disposable credentials and PostgreSQL, tests dashboard targets and reader permissions, replaces Grafana to check persistence, and removes only its test project. Do not point it at a production stack.

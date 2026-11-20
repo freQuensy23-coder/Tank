@@ -12,6 +12,8 @@ if [[ $# == 0 ]]; then
 fi
 scenario=$1
 unset STAGE_PORT
+fixture_browser=no
+if [[ $scenario == fresh-browser ]]; then scenario=fresh; fixture_browser=yes; fi
 stage_https=no
 if [[ $scenario == existing-https ]]; then scenario=existing; stage_https=yes; fi
 [[ $scenario == fresh || $scenario == existing ]]
@@ -70,6 +72,25 @@ if [[ $stage_https == yes ]]; then
     source "$tests/https/check.sh"
     start_stage_https
 fi
+pebble_image=$(git show "$a:deploy/grafana/staging/compose.yaml" | "$python" -c 'import yaml,sys; print(yaml.safe_load(sys.stdin)["services"]["pebble"]["image"])')
+fixture=$("$engine" create --label "com.docker.compose.project=$project" --network none "$pebble_image")
+for file in localhost/cert.pem localhost/key.pem pebble.minica.pem; do
+    "$engine" cp "$fixture:/test/certs/$file" "$tmp/${file##*/}"
+done
+"$engine" rm "$fixture" >/dev/null
+"$engine" run --rm --network none --entrypoint caddy -v "$stack/deploy/grafana/https/Caddyfile:/etc/caddy/Caddyfile:ro"     caddy:2.11.9-alpine@sha256:003a97808e781aa9f7e75cc2f43d34d461099031faf5e20faefb9f61126836f0 validate --config /etc/caddy/Caddyfile
+"$python" - "$stack/deploy/grafana/https/Caddyfile" "$tmp/Caddyfile" <<'PY'
+import sys
+from pathlib import Path
+
+source = Path(sys.argv[1]).read_text().replace("grafana.84-235-183-96.sslip.io {", "localhost {")
+start = source.index("\ttls {"); end = source.index("\n\t}", start) + 3
+config = source[:start] + "\ttls /fixture/cert.pem /fixture/key.pem" + source[end:]
+assert "localhost {" in config and "acme" not in config
+Path(sys.argv[2]).write_text(config)
+PY
+printf 'services:\n  grafana-edge:\n    ports: !override ["127.0.0.1::443"]\n    volumes:\n      - %s/Caddyfile:/etc/caddy/Caddyfile:ro\n      - %s/cert.pem:/fixture/cert.pem:ro\n      - %s/key.pem:/fixture/key.pem:ro\n' "$tmp" "$tmp" "$tmp" > "$tmp/test-edge.yaml"
+install -m 755 "$tests/https/fixture-curl.sh" "$tmp/bin/curl"
 base_compose=("$engine" compose -p "$project" --env-file "$host/.env" -f "$stack/compose.yaml")
 compose=("${base_compose[@]}" -f "$stack/compose.grafana.yaml")
 pg=("$engine" exec -i -u postgres "$project-postgres-1" psql -XqAt -v ON_ERROR_STOP=1 -d tank)
@@ -144,6 +165,18 @@ mv "$tmp/mismatch.json" "$tmp/stale/tank-queue.json"
 if (cd "$host" && python3 grafana.py ready "${base#http://}" "$tmp/stale") > "$tmp/mismatch.log" 2>&1; then exit 1; fi
 grep -Fx 'Grafana tank-queue does not match the selected release in the Tank folder' "$tmp/mismatch.log"
 if [[ $stage_https == yes ]]; then stage_viewer; stage_browser; fi
+if [[ $fixture_browser == yes ]]; then
+    source "$tests/https/check.sh"
+    stage_viewer
+    db="$tmp/browser-home/.pki/nssdb"
+    mkdir -p "$db" "$tmp/browser-home/.local/share/pki"
+    ln -s "$db" "$tmp/browser-home/.local/share/pki/nssdb"
+    certutil -N -d "sql:$db" --empty-password
+    certutil -A -d "sql:$db" -n fixture-only -t 'C,,' -i "$tmp/pebble.minica.pem"
+    binding=$("$engine" port "$project-grafana-edge-1" 443/tcp)
+    [[ $binding =~ ^127\.0\.0\.1:([0-9]+)$ ]]
+    HOME="$tmp/browser-home" python3 "$tests/https/browser.py" "$tmp" "${BASH_REMATCH[1]}" localhost
+fi
 status=$(curl --noproxy '*' -sS -o /dev/null -w '%{http_code}' "$base/api/datasources/uid/tank-postgres")
 [[ $status == 401 ]]
 printf 'Anonymous datasource access: HTTP %s\n' "$status"
@@ -205,7 +238,10 @@ for fixture in tests/grafana/*.sql; do
 done
 sha=$b
 [[ $(stage) == "$sha" ]]
-rollout
+edge_binding=$("$engine" port "$project-grafana-edge-1" 443/tcp)
+[[ $edge_binding =~ ^127\.0\.0\.1:([0-9]+)$ ]]
+PREVIOUS_TLS_PORT=${BASH_REMATCH[1]} rollout
+[[ -f $tmp/edge-available ]]
 [[ $("${compose[@]}" ps -q grafana) != "$old_id" ]]
 cmp -s "$tmp/env.first" "$host/.env"
 role_hashes 'true' | cmp "$tmp/all-roles" -
@@ -262,6 +298,12 @@ if [[ $scenario == existing ]]; then
     fail_rollout "$a" "$b"
     assert_b
     if [[ $stage_https == yes ]]; then stage_browser; fi
+    sha=cb194ca0f3500a16034703722591ee2e8ce90fc2
+    [[ $(stage) == "$sha" && ! -e $host/releases/$sha/stack/deploy/grafana/https/compose.yaml ]]
+    rollout
+    [[ -z $("$engine" ps -aq --filter "label=com.docker.compose.project=$project" --filter label=com.docker.compose.service=grafana-edge) ]]
+    resolve_url
+    "${http[@]}" "$base/api/dashboards/uid/tank-queue" > /dev/null
     sha=$legacy
     [[ $(stage) == "$legacy" && ! -e $host/releases/$legacy/stack/compose.grafana.yaml ]]
     cmp "$host/compose.yaml" "$host/releases/$legacy/stack/compose.yaml"
