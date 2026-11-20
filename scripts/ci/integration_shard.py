@@ -16,8 +16,6 @@ def parse_shard(value: str) -> tuple[int, int]:
 
 
 def shard_for(path: str, count: int) -> int:
-    if count == 6 and path == "tests/test_fetch_page_deadline.py":
-        return 4
     return int.from_bytes(hashlib.sha256(path.encode()).digest()[:8]) % count
 
 

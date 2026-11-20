@@ -28,13 +28,6 @@ def test_shards_preserve_every_file_and_are_stable(integration_checks):
     ]
 
 
-def test_deadline_file_uses_the_light_shard_only_in_the_six_way_matrix(integration_checks):
-    shard, _ = integration_checks
-    path = "tests/test_fetch_page_deadline.py"
-    assert shard.shard_for(path, 6) == 4
-    assert shard.shard_for(path, 1) == 0
-
-
 @pytest.mark.parametrize("value", ["-1/3", "3/3", "0/0", "0", "a/3", "0/1/2"])
 def test_invalid_shard_is_rejected(integration_checks, value):
     shard, _ = integration_checks
