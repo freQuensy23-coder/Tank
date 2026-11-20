@@ -209,7 +209,7 @@ async function world(t, workspace = workspaceId, created = Date.parse('2026-11-0
   return state;
 }
 
-function node(state, rootfsPath, {idleTimeoutMs, phase = false, startAttempts = 1, prepareFailure = false, buildSandboxError, continuation = false} = {}) {
+function node(state, rootfsPath, {idleTimeoutMs, phase = false, startAttempts = 1, prepareFailure = false, buildSandboxError, continuation = false, onHistory, onSnapshot, onOutput} = {}) {
   const {sql, host, workspaceId} = state, ownerId = 'node_' + randomUUID();
   const executionCurrent = async fence => {
     const row = await sql.prepare(`SELECT 1 AS present FROM managed_session_executions WHERE workspace_id = ? AND id = ? AND session_id = ? AND state = 'running'
@@ -265,15 +265,25 @@ function node(state, rootfsPath, {idleTimeoutMs, phase = false, startAttempts = 
   const history = new SqlSessionRuntimeHistorySource(sql), projection = new SqlSessionRuntimeProjectionPersistence(sql), events = new SqlSessionEventStore(sql, {executionOutbox: true});
   const driver = new DefaultNodeManagedSessionRuntimeDriver({
     engine: new ApplicationBackedNodeManagedSessionRuntimeEngine({
-      ...(continuation && {continuationSnapshot: input => loadSessionContinuationSnapshot(sql, input)}),
+      ...(continuation && {continuationSnapshot: async input => {
+        const snapshot = await loadSessionContinuationSnapshot(sql, input);
+        return onSnapshot ? onSnapshot(snapshot) : snapshot;
+      }}),
       runner: phase ? {
       start: input => runner.start(input),
+      finishTurn: (input, signal) => runner.finishTurn(input, signal),
       accept: input => runner.accept({...input, continuationPlan: {mode: 'model', generation: input.executionFence.generation,
         phaseInputIds: [input.events[0].id], consumedInputIds: [input.events[0].id], remainingInputIds: ['later_input'], previousReceiptId: null}}),
     } : runner,
-      historyFor: workspace => new SessionRuntimeHistoryApplicationService({workspaceId: workspace, source: history})}),
+      historyFor: workspace => ({loadSessionRuntimeHistory: input => {
+        onHistory?.();
+        return new SessionRuntimeHistoryApplicationService({workspaceId: workspace, source: history}).loadSessionRuntimeHistory(input);
+      }})}),
     realtime: new MemorySessionRealtimeHub(),
-    projectionFor: workspace => new SessionRuntimeProjectionApplicationService({workspaceId: workspace, persistence: projection}),
+    projectionFor: workspace => ({recordSessionRuntimeEvents: input => {
+      onOutput?.();
+      return new SessionRuntimeProjectionApplicationService({workspaceId: workspace, persistence: projection}).recordSessionRuntimeEvents(input);
+    }}),
     clock: {now: state.tick},
     startRetry: {attempts: startAttempts, delayMs: () => 0},
   });
@@ -565,18 +575,37 @@ test('an unconfirmed stop during preparation failure bypasses startup retries an
   assert.deepEqual(run.terminal(), []);
 });
 
-for (const reclaimed of [false, true]) test(`startup exhaustion ${reclaimed ? 'refuses a reclaimed input without replay' : 'still fails normally on the first attempt'}`, async t => {
+for (const [reclaimed, stage] of [
+  [false, 'startup'], [true, 'startup'], [false, 'history'], [true, 'history'], [true, 'snapshot'],
+  [true, 'planning'], [true, 'output'],
+]) test(`${stage} failure ${reclaimed ? 'refuses a reclaimed input without replay' : 'still fails normally on the first attempt'}`, async t => {
   const workspaceId = 'workspace_' + randomUUID();
   const state = await world(t, workspaceId, Date.now()), image = await state.image('startup');
   await ensureSessionExecutionClaimLockSchema(state.sql);
   const coordinator = new SqlSessionExecutionStore(state.sql, {callbackContinuations: true});
   const scope = {workspaceId, sessionId};
   const status = sessionExecutionStatusStore(coordinator);
-  let startupAttempts = 0;
-  const workerNode = node(state, image, {continuation: true, startAttempts: 3, buildSandboxError: () => {
-    startupAttempts++;
-    return Error('sandbox acquisition failed');
-  }});
+  let failures = 0, failedWithRunningGuest = false;
+  const guestRunning = () => [...state.host.boxes.values()].some(box => box.running);
+  const failOnce = () => {
+    if (++failures === 1) {
+      failedWithRunningGuest = guestRunning();
+      throw Error(`${stage} unavailable`);
+    }
+  };
+  const workerNode = node(state, image, {continuation: true, startAttempts: 3,
+    buildSandboxError: stage === 'startup' ? () => { failures++; return Error('startup unavailable'); } : undefined,
+    onHistory: stage === 'history' ? failOnce : undefined,
+    onSnapshot: stage === 'snapshot' || stage === 'planning' ? snapshot => {
+      if (stage === 'planning' && ++failures === 1) {
+        failedWithRunningGuest = guestRunning();
+        return {...snapshot, executions: []};
+      }
+      if (stage === 'snapshot') failOnce();
+      return snapshot;
+    } : undefined,
+    onOutput: stage === 'output' ? failOnce : undefined,
+  });
   const original = reclaimed ? node(state, image, {continuation: true}) : workerNode;
   const event = await original.send('sh: printf %s applied > /workspace/effect');
   let writes = 0;
@@ -611,6 +640,11 @@ for (const reclaimed of [false, true]) test(`startup exhaustion ${reclaimed ? 'r
     const snapshot = await loadSessionContinuationSnapshot(state.sql, scope);
     assert.equal(planSessionContinuation(snapshot, event.id, true).mode, 'failure');
   }
+  const settle = coordinator.settle.bind(coordinator);
+  coordinator.settle = input => {
+    assert.equal(guestRunning(), false, 'the worker retires the prepared guest before settlement');
+    return settle(input);
+  };
   const errors = [];
   const worker = new NodeSessionExecutionWorker({coordinator, context: {find: workerNode.context}, runtime: {
     run: ({executionId: _executionId, fence, ...input}) => workerNode.driver.accept({...input, executionFence: fence}),
@@ -622,8 +656,9 @@ for (const reclaimed of [false, true]) test(`startup exhaustion ${reclaimed ? 'r
   await worker.waitForIdle();
   assert.deepEqual(errors, []);
   const settled = await coordinator.find({...scope, executionId: event.id});
-  assert.equal(settled.failure, reclaimed ? 'tank:execution-recovery-refused:v1' : 'sandbox acquisition failed');
-  assert.equal(startupAttempts, 3);
+  assert.equal(settled.failure, reclaimed ? 'tank:execution-recovery-refused:v1' : `${stage} unavailable`);
+  assert.equal(failures, stage === 'startup' ? 3 : 1);
+  if (stage !== 'startup') assert.ok(failedWithRunningGuest, 'startup prepared a running guest');
   assert.equal(settled.attempt.generation, reclaimed ? 2 : 1);
   assert.deepEqual(await status.list(workspaceId, sessionId, [event.id]), [{execution_id: event.id,
     state: 'FAILED', settled_outcome: 'FAILED', ...(reclaimed && {recovery_refused: true})}]);
@@ -631,7 +666,7 @@ for (const reclaimed of [false, true]) test(`startup exhaustion ${reclaimed ? 'r
   const startupEvents = snapshot.orderedEvents.map(entry => entry.event)
     .filter(event => ['session.error', 'session.status_rescheduled', 'session.status_idle'].includes(event.type));
   assert.deepEqual(startupEvents.map(event => event.type === 'session.error' ? event.error.retryStatus : event.type),
-    reclaimed ? [] : ['retrying', 'session.status_rescheduled', 'retrying', 'session.status_rescheduled', 'exhausted', 'session.status_idle']);
+    !reclaimed && stage === 'startup' ? ['retrying', 'session.status_rescheduled', 'retrying', 'session.status_rescheduled', 'exhausted', 'session.status_idle'] : []);
   assert.equal(state.requests.length, reclaimed ? 1 : 0);
   assert.equal(writes, reclaimed ? 1 : 0);
 });

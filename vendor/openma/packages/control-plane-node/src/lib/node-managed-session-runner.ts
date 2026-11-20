@@ -336,7 +336,7 @@ export class DefaultNodeManagedSessionRunner
             binding: workspace.binding,
           }).catch(() => undefined);
         }
-        await this.finishRetainedTurn(input, signal);
+        await this.finishTurn(input, signal);
         await sandbox.destroy?.().catch(() => undefined);
         throw error;
       }
@@ -353,8 +353,8 @@ export class DefaultNodeManagedSessionRunner
     }
   }
 
-  private async finishRetainedTurn(input: ManagedRunnerContext & { executionFence?: SessionExecutionFence }, signal: AbortSignal): Promise<void> {
-    if (signal.reason === "lease_lost") {
+  async finishTurn(input: ManagedRunnerContext & { executionFence?: SessionExecutionFence }, signal: AbortSignal): Promise<void> {
+    if (signal.aborted && abortedError(signal).message === "lease_lost") {
       await this.dependencies.retainedLifecycle?.abandon(input);
       return;
     }
@@ -493,6 +493,7 @@ export class DefaultNodeManagedSessionRunner
     let retainedSafetyFailure = false;
     let emitRunFailure: (() => void) | undefined;
     let recoveryRefused = false;
+    const reclaimed = (input.executionFence?.generation ?? 0) > 1;
     const finalizing = input.continuationPlan?.mode === 'finalize';
     try {
       if (input.continuationPlan?.mode === 'failure') {
@@ -623,7 +624,7 @@ export class DefaultNodeManagedSessionRunner
             if (!(error instanceof Error))
               throw error;
             const sideEffectFree = runtime.agentEventCount === agentEventsBefore;
-            if (input.continuationPlan !== undefined || !sideEffectFree
+            if (reclaimed || input.continuationPlan !== undefined || !sideEffectFree
               || error instanceof RetainedIdleUnconfirmed || error instanceof RetainedExecutionFenceLost || error instanceof RetainedResumeFailed
               || attempt >= retry.attempts
               || abortController.signal.aborted
@@ -721,7 +722,7 @@ export class DefaultNodeManagedSessionRunner
     catch (error) {
       runFailed = true;
       retainedSafetyFailure = error instanceof RetainedIdleUnconfirmed || error instanceof RetainedExecutionFenceLost;
-      if (abortController.signal.reason === "lease_lost" || recoveryRefused || retainedSafetyFailure)
+      if (abortController.signal.reason === "lease_lost" || reclaimed || recoveryRefused || retainedSafetyFailure)
         throw error;
       emitRunFailure = () => runtime.broadcastProducedEvent({
         type: "session.error",
@@ -808,7 +809,7 @@ export class DefaultNodeManagedSessionRunner
         }
       }
       const emitFinalizationFailure = () => {
-        if (finalizationError === undefined || runFailed || abortController.signal.reason === "lease_lost") return;
+        if (reclaimed || finalizationError === undefined || runFailed || abortController.signal.reason === "lease_lost") return;
         runtime.broadcastProducedEvent({
           type: "session.error",
           error: {
@@ -821,7 +822,7 @@ export class DefaultNodeManagedSessionRunner
         });
       };
       const emitTerminal = () => {
-        if (abortController.signal.reason === "lease_lost" || input.continuationPlan?.mode === 'noop' || recoveryRefused || retainedSafetyFailure)
+        if (abortController.signal.reason === "lease_lost" || input.continuationPlan?.mode === 'noop' || recoveryRefused || retainedSafetyFailure || (reclaimed && (runFailed || finalizationError !== undefined)))
           return;
         const remaining = input.continuationPlan?.mode === 'intake'
           ? input.continuationPlan.remaining : runtime.pendingConfirmations ?? [];
@@ -856,7 +857,7 @@ export class DefaultNodeManagedSessionRunner
       }
       finally {
         try {
-          await this.finishRetainedTurn(input, abortController.signal);
+          await this.finishTurn(input, abortController.signal);
         }
         finally {
           if (this.abortControllers.get(input) === abortController) {

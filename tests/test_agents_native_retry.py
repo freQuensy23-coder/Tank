@@ -304,6 +304,25 @@ async def test_terminal_error_waits_for_correlated_queue_failure(projection_fiel
         await http.aclose()
 
 
+async def test_settled_recovery_refusal_retires_input_without_a_terminal_event():
+    repo, service, http, states, posts, _history = await setup({INITIAL: {"recovery_refused": True}})
+    try:
+        states[INITIAL] = "FAILED"
+        assert not (await service.completed_turn("s"))["complete"]
+        await service.recover_outbound_inputs("s")
+        session = await repo.get("ops.agent_sessions", "s")
+        message = session["message_log"][0]
+        assert session["retired_message_ids"] == ["message"]
+        assert message["turn_status"] == "FAILED"
+        assert message["remote_event_id"] == INITIAL and message["retry_count"] == 0
+        assert message["terminal_failure"]["reason"] == "RECOVERY_REFUSED"
+        assert not session.get("pending_retry_event")
+        assert not posts
+    finally:
+        await service.close()
+        await http.aclose()
+
+
 async def test_restored_retry_intent_rechecks_durable_no_replay_status():
     repo, service, http, states, posts, _history = await setup({INITIAL: {"recovery_refused": True}})
     try:

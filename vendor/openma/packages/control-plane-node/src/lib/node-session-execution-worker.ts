@@ -16,7 +16,7 @@ import {
   emitDbBoundaryLog,
   withDbBoundary,
 } from "@open-managed-agents/sql-client";
-import { executionFailure } from "./execution-recovery-refusal.js";
+import { ExecutionRecoveryRefusal, executionFailure } from "./execution-recovery-refusal.js";
 import { Effect, Fiber } from "effect";
 import { interruptFiber, runSupervised } from "./supervised-fiber.js";
 import { RetainedExecutionFenceLost, RetainedIdlePendingTimeout, RetainedIdleUnconfirmed } from "./tank-retained/idle-errors.js";
@@ -540,7 +540,8 @@ export class NodeSessionExecutionWorker implements SessionEventDispatchPort {
         return;
       } else {
         outcome = active.cancellation !== null ? "cancelled" : "failed";
-        failure = executionFailure(error);
+        const cancelled = outcome === "cancelled" && error instanceof Error && error.name === "AbortError";
+        failure = active.fence.generation > 1 && !cancelled ? ExecutionRecoveryRefusal.code : executionFailure(error);
       }
     }
     finally {

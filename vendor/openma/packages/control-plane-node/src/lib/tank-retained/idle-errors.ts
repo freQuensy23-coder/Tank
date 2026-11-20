@@ -18,8 +18,8 @@ export class RetainedIdleAttemptsExhausted extends RetainedIdleUnconfirmed {
 }
 
 export class RetainedExecutionFenceLost extends Error {
-  constructor() {
-    super('Retained Session execution fence lost');
+  constructor(message = 'Retained Session execution fence lost') {
+    super(message);
     this.name = 'RetainedExecutionFenceLost';
   }
 }
