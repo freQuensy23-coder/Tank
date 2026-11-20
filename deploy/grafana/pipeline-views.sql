@@ -50,6 +50,16 @@ CROSS JOIN LATERAL (
     WHERE NOT coalesce((s.document -> 'retired_message_ids') ? (m ->> 'message_id'), false)
 ) turns;
 
+CREATE OR REPLACE VIEW tank_metrics.minute_condition_checks AS
+SELECT CASE WHEN pg_input_is_valid(idem_key, 'timestamptz') THEN idem_key::timestamptz END AS scheduled_at,
+       status
+FROM ops.jobs
+WHERE type = 'EVAL_CONDITIONS' AND idem_key = document #>> '{payload,cutoff}'
+  AND document #>> '{payload,cutoff_prec}' = 'BUCKET(1m)'
+  AND idem_key ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:00Z$';
+
+GRANT SELECT ON tank_metrics.minute_condition_checks TO tank_grafana_reader;
+
 CREATE OR REPLACE VIEW tank_metrics.agent_scheduled_jobs AS
 SELECT created_at, status,
        CASE WHEN type = 'EVAL_CONDITIONS' THEN 'Tank minute condition check'

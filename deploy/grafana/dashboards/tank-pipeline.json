@@ -290,7 +290,7 @@
     {
       "id": 32,
       "title": "Scheduled jobs · Tank checks and agent notifications",
-      "description": "Jobs created in range; each job counts once, not once per attempt. The recurring minute check can finish with deferred conditions. Notification jobs are for fired agent watches and one-shot timed reviews: DONE means the handler finished, not that a subsequent analysis succeeded. Elapsed time includes queueing and retries. No job row is not an observed failure. These are not native recurring OpenMA schedules.",
+      "description": "Jobs created in range; each job counts once, not once per attempt. The recurring minute check can finish with deferred conditions. Notification jobs are for fired agent watches and one-shot timed reviews: DONE means the handler finished, not that a subsequent analysis succeeded. Elapsed time includes queueing and retries. No job row is not an observed failure.",
       "type": "table",
       "datasource": {
         "type": "grafana-postgresql-datasource",
@@ -344,6 +344,50 @@
           "rawSql": "SELECT coalesce(classification, 'No recorded classification') AS \"First classification\", count(*) AS \"Sessions\",\n       round(percentile_cont(0.5) WITHIN GROUP (ORDER BY seconds_to_classification)::numeric, 1) AS \"Median (s)\",\n       round(percentile_cont(0.95) WITHIN GROUP (ORDER BY seconds_to_classification)::numeric, 1) AS \"P95 (s)\"\nFROM tank_metrics.agent_first_classification WHERE $__timeFilter(opened_at) GROUP BY 1 ORDER BY 1"
         }
       ]
+    },
+    {
+      "id": 34,
+      "title": "Minute EVAL_CONDITIONS checks by job state",
+      "description": "One scheduled job per minute across all rules. Each recorded job counts once, by its scheduled cutoff in UTC five-minute buckets and its current queue state. DONE means the job finished; rules can be deferred. A gap means no recorded check, not an expiration.",
+      "type": "timeseries",
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "tank-postgres"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 51,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "tank-postgres"
+          },
+          "rawQuery": true,
+          "editorMode": "code",
+          "format": "time_series",
+          "rawSql": "SELECT $__timeGroupAlias(scheduled_at, '5m'),\n       count(*) FILTER (WHERE status = 'DONE') AS \"DONE\",\n       count(*) FILTER (WHERE status = 'FAILED') AS \"FAILED\",\n       count(*) FILTER (WHERE status = 'EXPIRED') AS \"EXPIRED\",\n       count(*) FILTER (WHERE status = 'QUEUED') AS \"QUEUED\",\n       count(*) FILTER (WHERE status = 'RUNNING') AS \"RUNNING\"\nFROM tank_metrics.minute_condition_checks\nWHERE scheduled_at >= $__timeFrom() AND scheduled_at < $__timeTo()\nGROUP BY 1 ORDER BY 1"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "min": 0,
+          "decimals": 0,
+          "custom": {
+            "drawStyle": "bars",
+            "stacking": {
+              "mode": "normal",
+              "group": "A"
+            }
+          }
+        },
+        "overrides": []
+      }
     },
     {
       "id": 9,
