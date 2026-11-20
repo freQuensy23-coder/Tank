@@ -21,6 +21,12 @@ case $1 in
                             exec "$engine" compose -p "$project" "${args[@]}"
                         fi
                         exec "$engine" compose -p "$project" "$@" ;;
+                    grafana-edge)
+                        args=(); for arg in "$@"; do
+                            if [[ $arg == up ]]; then args+=(-f "$scratch/test-edge.yaml"); fi
+                            args+=("$arg")
+                        done
+                        exec "$engine" compose -p "$project" "${args[@]}" ;;
                     postgres) exec "$engine" compose -p "$project" "$@" ;;
                     clickhouse|openma) exit 0 ;;
                     tank-capture) touch "$scratch/capture"; exit 0 ;;
@@ -49,6 +55,7 @@ case $1 in
     ps)
         case $last in
             *service=tank-capture) if [[ -e $scratch/capture ]]; then printf 'capture-fixture\n'; fi; exit 0 ;;
+            *service=grafana-edge) exec "$engine" ps -aq --filter "label=com.docker.compose.project=$project" --filter label=com.docker.compose.service=grafana-edge ;;
             *service=grafana) exec "$engine" ps -aq --filter "label=com.docker.compose.project=$project" --filter label=com.docker.compose.service=grafana ;;
         esac ;;
     exec)

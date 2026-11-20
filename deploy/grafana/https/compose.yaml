@@ -1,0 +1,24 @@
+services:
+  grafana:
+    environment:
+      GF_SERVER_ROOT_URL: https://grafana.84-235-183-96.sslip.io/
+      GF_SECURITY_COOKIE_SECURE: "true"
+      GF_METRICS_ENABLED: "false"
+      GF_SNAPSHOTS_ENABLED: "false"
+    networks:
+      grafana-edge: {}
+  grafana-edge:
+    image: caddy:2.11.9-alpine@sha256:003a97808e781aa9f7e75cc2f43d34d461099031faf5e20faefb9f61126836f0
+    restart: unless-stopped
+    networks: [grafana-edge]
+    ports: ["0.0.0.0:443:443/tcp"]
+    volumes:
+      - ./deploy/grafana/https/Caddyfile:/etc/caddy/Caddyfile:ro
+      - grafana-tls:/data
+    logging:
+      driver: json-file
+      options: {max-size: 20m, max-file: '5'}
+networks:
+  grafana-edge: {}
+volumes:
+  grafana-tls:

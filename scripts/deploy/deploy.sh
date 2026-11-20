@@ -16,8 +16,17 @@ grafana_enabled() {
   [ -f "releases/$1/stack/deploy/grafana/production-version" ]
 }
 
+https_enabled() {
+  [ -f "releases/$1/stack/deploy/grafana/https/compose.yaml" ]
+}
+
 preflight_release() {
   local v=$1 stack="releases/$1/stack" marker="releases/$1/stack/deploy/grafana/production-version"
+  if https_enabled "$v"; then
+    grafana_enabled "$v" && [ -f "$stack/deploy/grafana/https/Caddyfile" ] || {
+      echo 'Incomplete Grafana HTTPS release'; return 1;
+    }
+  fi
   if [ -e "$marker" ] || [ -L "$marker" ]; then
     [ ! -L "$marker" ] && grafana_enabled "$v" && cmp -s "$marker" <(printf '1\n') || {
       echo 'Unsupported Grafana production version'; return 1;
@@ -32,6 +41,7 @@ compose() {
   if [ -d "$stack" ]; then
     files=(-f "$stack/compose.yaml")
     if grafana_enabled "$v"; then files+=(-f "$stack/compose.grafana.yaml"); fi
+    if https_enabled "$v"; then files+=(-f "$stack/deploy/grafana/https/compose.yaml"); fi
   elif [ "$v" = "$previous" ]; then
     files=(-f compose.yaml)
   else
@@ -40,9 +50,9 @@ compose() {
   TANK_VERSION=$v docker compose --env-file "$PWD/.env" "${files[@]}" "$@"
 }
 
-remove_grafana() {
+remove_service() {
   local id
-  id=$(docker ps -aq --filter label=com.docker.compose.project=tank --filter label=com.docker.compose.service=grafana) || return 1
+  id=$(docker ps -aq --filter label=com.docker.compose.project=tank --filter "label=com.docker.compose.service=$1") || return 1
   if [ -n "$id" ]; then docker rm -f "$id" >/dev/null || return 1; fi
 }
 
@@ -50,6 +60,15 @@ grafana_ready() {
   local address
   address=$(compose "$1" port grafana 3000) || return 1
   python3 grafana.py ready "$address" "releases/$1/stack/deploy/grafana/dashboards"
+}
+
+https_ready() {
+  local host=grafana.84-235-183-96.sslip.io path expected status
+  for path in /login /api/dashboards/uid/tank-queue /api/dashboards/uid/tank-pipeline; do
+    expected=401; [ "$path" != /login ] || expected=200
+    status=$(curl -q --noproxy '*' --resolve "$host:443:127.0.0.1" --max-time 4 -s -o /dev/null -w '%{http_code}' "https://$host$path") || return 1
+    [ "$status" = "$expected" ] || return 1
+  done
 }
 
 start_grafana() {
@@ -64,7 +83,15 @@ start_grafana() {
   [ "$migrated" = yes ] || { echo 'Tank metrics migration did not finish'; return 1; }
   python3 grafana.py install "releases/$v/stack/deploy/grafana" tank-postgres-1 || return 1
   compose "$v" up -d --no-deps --wait --wait-timeout 120 grafana || return 1
-  grafana_ready "$v"
+  grafana_ready "$v" || return 1
+  if https_enabled "$v"; then
+    compose "$v" up -d --no-deps grafana-edge || return 1
+    for _ in $(seq 1 30); do
+      https_ready && return 0
+      sleep 2
+    done
+    echo 'Grafana TLS login or anonymous denial failed'; return 1
+  fi
 }
 content() { docker inspect -f '{{index .Config.Labels "org.tank.content"}}' "$1" 2>/dev/null || true; }
 healthy() {
@@ -78,8 +105,9 @@ healthy() {
 
 roll() {
   local v=$1 svc old_cap new_cap pid ready handoff wait
+  if ! https_enabled "$v"; then remove_service grafana-edge || return 1; fi
   if ! grafana_enabled "$v"; then
-    remove_grafana || return 1
+    remove_service grafana || return 1
   fi
   echo "pull $v $(date -u +%T)"
   compose "$v" pull -q || return 1
@@ -139,6 +167,7 @@ verify() {
   stale=$(echo "SELECT arrayStringConcat(arrayFilter(i -> NOT has((SELECT groupArray(instrument_id) FROM mkt.oi_obs FINAL WHERE ts > now() - INTERVAL 10 MINUTE), i) OR NOT has((SELECT groupArray(instrument_id) FROM mkt.funding_obs FINAL WHERE as_of > now() - INTERVAL 10 MINUTE), i), ['binance:perp_linear:BTCUSDT','okx:perp_linear:BTC-USDT-SWAP','bybit:perp_linear:BTCUSDT','hyperliquid:perp_linear:BTC']), ' ')" | chq)
   [ -z "$stale" ] || bad "OI or funding older than 10 min: $stale"
   if grafana_enabled "$SHA"; then grafana_ready "$SHA" || bad "Grafana not ready"; fi
+  if https_enabled "$SHA"; then https_ready || bad "Grafana HTTPS not ready"; fi
   return $fail
 }
 
@@ -163,7 +192,8 @@ recover() {
       status=1
     fi
   elif [ "$status" -ne 0 ] && [ "$tank_started" = yes ] && grafana_enabled "$SHA"; then
-    remove_grafana || status=1
+    remove_service grafana-edge || status=1
+    remove_service grafana || status=1
   fi
   exit "$status"
 }

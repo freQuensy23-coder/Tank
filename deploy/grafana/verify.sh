@@ -70,6 +70,15 @@ if [[ $stage_https == yes ]]; then
     source "$tests/https/check.sh"
     start_stage_https
 fi
+pebble_image=$(git show "$a:deploy/grafana/staging/compose.yaml" | "$python" -c 'import yaml,sys; print(yaml.safe_load(sys.stdin)["services"]["pebble"]["image"])')
+fixture=$("$engine" create --label "com.docker.compose.project=$project" --network none "$pebble_image")
+for file in localhost/cert.pem localhost/key.pem pebble.minica.pem; do
+    "$engine" cp "$fixture:/test/certs/$file" "$tmp/${file##*/}"
+done
+"$engine" rm "$fixture" >/dev/null
+printf 'localhost {\n tls /fixture/cert.pem /fixture/key.pem\n reverse_proxy grafana:3000\n}\n' > "$tmp/Caddyfile"
+printf 'services:\n  grafana-edge:\n    ports: !override ["127.0.0.1::443"]\n    volumes:\n      - %s/Caddyfile:/etc/caddy/Caddyfile:ro\n      - %s/cert.pem:/fixture/cert.pem:ro\n      - %s/key.pem:/fixture/key.pem:ro\n' "$tmp" "$tmp" "$tmp" > "$tmp/test-edge.yaml"
+install -m 755 "$tests/https/fixture-curl.sh" "$tmp/bin/curl"
 base_compose=("$engine" compose -p "$project" --env-file "$host/.env" -f "$stack/compose.yaml")
 compose=("${base_compose[@]}" -f "$stack/compose.grafana.yaml")
 pg=("$engine" exec -i -u postgres "$project-postgres-1" psql -XqAt -v ON_ERROR_STOP=1 -d tank)
