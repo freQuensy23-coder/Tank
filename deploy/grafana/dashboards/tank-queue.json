@@ -1,0 +1,302 @@
+{
+  "uid": "tank-queue",
+  "title": "Tank / Job queue",
+  "schemaVersion": 39,
+  "version": 1,
+  "timezone": "utc",
+  "editable": false,
+  "refresh": "1m",
+  "time": {
+    "from": "now-24h",
+    "to": "now"
+  },
+  "tags": [
+    "tank"
+  ],
+  "panels": [
+    {
+      "id": 1,
+      "title": "Waiting now",
+      "type": "stat",
+      "description": "Queued work waiting now, including eligible recovery reclaims and jobs waiting for an agent slot.",
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "tank-postgres"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 0,
+        "w": 6,
+        "h": 4
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "options": {
+        "graphMode": "none",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "values": false
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "tank-postgres"
+          },
+          "rawSql": "SELECT coalesce(sum(due),0)::bigint AS jobs FROM tank_metrics.queue_now",
+          "rawQuery": true,
+          "editorMode": "code",
+          "format": "table"
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "title": "Running now",
+      "type": "stat",
+      "description": "Database status RUNNING; not a measure of worker CPU use.",
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "tank-postgres"
+      },
+      "gridPos": {
+        "x": 6,
+        "y": 0,
+        "w": 6,
+        "h": 4
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "options": {
+        "graphMode": "none",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "values": false
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "tank-postgres"
+          },
+          "rawSql": "SELECT coalesce(sum(running),0)::bigint AS jobs FROM tank_metrics.queue_now",
+          "rawQuery": true,
+          "editorMode": "code",
+          "format": "table"
+        }
+      ]
+    },
+    {
+      "id": 3,
+      "title": "Scheduled for later",
+      "type": "stat",
+      "description": "Future work is excluded from waiting now.",
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "tank-postgres"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 0,
+        "w": 6,
+        "h": 4
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "options": {
+        "graphMode": "none",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "values": false
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "tank-postgres"
+          },
+          "rawSql": "SELECT coalesce(sum(scheduled),0)::bigint AS jobs FROM tank_metrics.queue_now",
+          "rawQuery": true,
+          "editorMode": "code",
+          "format": "table"
+        }
+      ]
+    },
+    {
+      "id": 4,
+      "title": "Awaiting cleanup",
+      "type": "stat",
+      "description": "Queued with an expired deadline or an exhausted attempt limit and no recovery reclaim.",
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "tank-postgres"
+      },
+      "gridPos": {
+        "x": 18,
+        "y": 0,
+        "w": 6,
+        "h": 4
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "options": {
+        "graphMode": "none",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "values": false
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "tank-postgres"
+          },
+          "rawSql": "SELECT coalesce(sum(awaiting_cleanup),0)::bigint AS jobs FROM tank_metrics.queue_now",
+          "rawQuery": true,
+          "editorMode": "code",
+          "format": "table"
+        }
+      ]
+    },
+    {
+      "id": 5,
+      "title": "Queue by job type",
+      "type": "table",
+      "description": "Live snapshot. Waiting age starts at the recorded admission wait for a cap-deferred job, or its due time for ordinary queued work. Null means none waiting.",
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "tank-postgres"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 4,
+        "w": 24,
+        "h": 7
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "options": {},
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "tank-postgres"
+          },
+          "rawSql": "SELECT job_type, due, running, scheduled, awaiting_cleanup, round(oldest_due_seconds, 1) AS oldest_due_seconds FROM tank_metrics.queue_now ORDER BY due DESC, job_type",
+          "rawQuery": true,
+          "editorMode": "code",
+          "format": "table"
+        }
+      ]
+    },
+    {
+      "id": 6,
+      "title": "Terminal failures and expirations",
+      "type": "timeseries",
+      "description": "By recorded finish time. The attempt counter can be refunded after interruption or deferral. A zero counter does not prove the job never started.",
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "tank-postgres"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 11,
+        "w": 14,
+        "h": 8
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "options": {},
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "tank-postgres"
+          },
+          "rawSql": "SELECT $__timeGroupAlias(finished_at,$__interval), outcome AS metric, count(*)::bigint AS value FROM tank_metrics.queue_terminal WHERE $__timeFilter(finished_at) GROUP BY 1,2 ORDER BY 1,2",
+          "rawQuery": true,
+          "editorMode": "code",
+          "format": "time_series"
+        }
+      ]
+    },
+    {
+      "id": 7,
+      "title": "Failed or expired jobs by type",
+      "type": "table",
+      "description": "Counts within the selected time range. Excludes records without a finish timestamp.",
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "tank-postgres"
+      },
+      "gridPos": {
+        "x": 14,
+        "y": 11,
+        "w": 10,
+        "h": 8
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "options": {},
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "tank-postgres"
+          },
+          "rawSql": "SELECT job_type, outcome, count(*) AS jobs FROM tank_metrics.queue_terminal WHERE $__timeFilter(finished_at) GROUP BY 1,2 ORDER BY jobs DESC, job_type, outcome",
+          "rawQuery": true,
+          "editorMode": "code",
+          "format": "table"
+        }
+      ]
+    }
+  ]
+}

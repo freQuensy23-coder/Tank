@@ -1,0 +1,11 @@
+apiVersion: 1
+providers:
+  - name: Tank
+    orgId: 1
+    folder: HEL staging — SYNTHETIC Nov 16 UTC
+    folderUid: tank
+    type: file
+    allowUiUpdates: false
+    updateIntervalSeconds: 30
+    options:
+      path: /var/lib/tank-dashboards

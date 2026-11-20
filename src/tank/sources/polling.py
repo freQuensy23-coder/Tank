@@ -240,6 +240,24 @@ class SourcePoller:
                 state[field + "_precision"] = "COLLECTION_ONLY"
         await self.service.repo.put("ops.source_checkpoints", key, state)
 
+    async def save_poll(self, key, state, source, feed, ok):
+        finished_at = self.stamp()
+        count_read(state, "reads", ok=ok)
+        remember_reads(state, [(finished_at, ok)])
+        repo = self.service.repo
+        async with repo.transaction():
+            await self.save(key, state)
+            try:
+                await repo.count_source_poll(
+                    finished_at, source.get("mode") or "Unknown", self.kind(source, feed), ok
+                )
+            except Exception:
+                log.exception("Feed poll history not recorded for %s", key)
+
+    @staticmethod
+    def kind(source, feed):
+        return str(feed.get("kind", feed.get("format", source.get("mode", "rss")))).lower()
+
     @staticmethod
     def needs_detail(sid, kind):
         """The item's raw payload is its article/detail page, fetched in the backlog."""
@@ -312,7 +330,7 @@ class SourcePoller:
     async def _fetch_rows(self, source, feed, key, state):
         svc = self.service
         sid = source["source_id"]
-        kind = str(feed.get("kind", feed.get("format", source.get("mode", "rss")))).lower()
+        kind = self.kind(source, feed)
         if sid == "S29":
             accounts = [account["handle"].lstrip("@") for account in svc.accounts.values()]
             result = await svc.xsensor.posts(feed["url"], accounts, state.get("account_cursors", {}))
@@ -630,8 +648,6 @@ class SourcePoller:
                     if not any(batch["rows"] for batch in current.get("pending_batches", [])):
                         current["article_errors"] = {}
                     read_ok = not acquired.get("run_failed")
-                    count_read(current, "reads", ok=read_ok)
-                    remember_reads(current, [(self.stamp(), read_ok)])
                     if not read_ok:
                         current["last_failure_at"] = self.stamp()
                     current.update(
@@ -647,7 +663,7 @@ class SourcePoller:
                         current["last_success_at"] = self.stamp()
                     elif not current.get("last_success_at") and current["status"] == "HEALTHY":
                         current["status"] = "PENDING"
-                    await self.save(key, current)
+                    await self.save_poll(key, current, source, feed, read_ok)
                 if not read_ok:
                     log.warning("Source feed %s read failed: the actor run failed", key)
             except Exception as exc:
@@ -655,15 +671,13 @@ class SourcePoller:
                     current = await self.state(key)
                     current.pop("etag", None)
                     current.pop("last_modified", None)
-                    count_read(current, "reads", ok=False)
-                    remember_reads(current, [(self.stamp(), False)])
                     current.update(
                         status="DEGRADED",
                         acquisition_error=str(exc),
                         error=str(exc),
                         last_failure_at=self.stamp(),
                     )
-                    await self.save(key, current)
+                    await self.save_poll(key, current, source, feed, False)
                     reads_ok = current["reads"]["ok"]
                 log.warning("Source feed %s read failed: %s", key, exc)
                 if isinstance(exc, ApifyRunFailed):

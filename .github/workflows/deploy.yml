@@ -36,7 +36,7 @@ jobs:
           sha=$(git rev-parse --verify "${INPUT_SHA:-HEAD}^{commit}")
           git merge-base --is-ancestor "$sha" origin/main || { echo "$sha is not a commit of main"; exit 1; }
           mkdir -p "$RUNNER_TEMP/tank-orchestrator"
-          cp scripts/deploy/deploy.sh scripts/deploy/apify_worker.py "$RUNNER_TEMP/tank-orchestrator/"
+          cp scripts/deploy/deploy.sh scripts/deploy/*.py "$RUNNER_TEMP/tank-orchestrator/"
           git checkout -q "$sha"
           echo "sha=$sha" >> "$GITHUB_OUTPUT"
       - name: Wait for the CI images of the commit
@@ -67,10 +67,19 @@ jobs:
           printf '%s\n' "$SSH_KNOWN_HOSTS" > ~/.ssh/known_hosts
           ssh_opts=(-i ~/.ssh/id_deploy -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes)
           release="/srv/tank-deploy/releases/$SHA"
-          ssh "${ssh_opts[@]}" "$SSH_USER@$SSH_HOST" "rm -rf $release && install -d -m 700 $release"
-          if git cat-file -e "$SHA:apify/x-reader" 2>/dev/null; then
-            git archive "$SHA" apify/x-reader | ssh "${ssh_opts[@]}" "$SSH_USER@$SSH_HOST" "tar -x -C $release --strip-components=1"
+          files=(compose.yaml)
+          if git cat-file -e "$SHA:deploy/grafana/production-version" 2>/dev/null; then
+            git show "$SHA:deploy/grafana/production-version" | cmp -s - <(printf '1\n') || { echo 'Unsupported Grafana production version'; exit 1; }
+            files+=(deploy/grafana/production-version compose.grafana.yaml deploy/grafana/bootstrap.sql deploy/grafana/install-views.sql
+              deploy/grafana/queue-views.sql deploy/grafana/pipeline-views.sql deploy/grafana/dashboards deploy/grafana/provisioning)
           fi
-          scp "${ssh_opts[@]}" compose.yaml "$RUNNER_TEMP/tank-orchestrator/deploy.sh" \
-            "$RUNNER_TEMP/tank-orchestrator/apify_worker.py" "$SSH_USER@$SSH_HOST:/srv/tank-deploy/"
-          ssh "${ssh_opts[@]}" "$SSH_USER@$SSH_HOST" "/srv/tank-deploy/deploy.sh $SHA"
+          if git cat-file -e "$SHA:apify/x-reader" 2>/dev/null; then files+=(apify/x-reader); fi
+          git archive "$SHA" "${files[@]}" | ssh "${ssh_opts[@]}" "$SSH_USER@$SSH_HOST" "sudo -n bash -eu -c '
+            install -d -m 700 $release
+            stage=\$(mktemp -d $release/.stage.XXXXXXXX)
+            trap \"rm -rf \$stage\" EXIT
+            tar -x -C \$stage -p --no-same-owner
+            if [ -d $release/stack ]; then diff -qr \$stage $release/stack; else mv -T \$stage $release/stack; fi'"
+          tar -C "$RUNNER_TEMP/tank-orchestrator" -cf - deploy.sh apify_worker.py grafana.py |
+            ssh "${ssh_opts[@]}" "$SSH_USER@$SSH_HOST" "sudo -n tar -C /srv/tank-deploy --no-same-owner -xf -"
+          ssh "${ssh_opts[@]}" "$SSH_USER@$SSH_HOST" "sudo -n /srv/tank-deploy/deploy.sh $SHA"

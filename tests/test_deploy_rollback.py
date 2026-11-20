@@ -1,4 +1,5 @@
 import os
+import shutil
 import subprocess
 from pathlib import Path
 
@@ -9,12 +10,20 @@ CANDIDATE = "a" * 40
 PREVIOUS = "b" * 40
 
 
+def stage_base(tmp_path):
+    helper = Path(__file__).parents[1] / "scripts/deploy/grafana.py"
+    shutil.copyfile(helper, tmp_path / "grafana.py")
+    (tmp_path / ".env").touch(mode=0o600)
+    (tmp_path / "releases" / CANDIDATE / "stack").mkdir(parents=True)
+
+
 @pytest.mark.parametrize(
     "mode,expected_status",
     [("success", 0), ("roll_failed", 1), ("term", 143), ("int", 130)],
 )
 def test_actual_deploy_orchestration_rolls_back_failures_and_signals(tmp_path, mode, expected_status):
     source = (Path(__file__).parents[1] / "scripts/deploy/deploy.sh").read_text()
+    stage_base(tmp_path)
     hook = """roll() {
   printf '%s\\n' "$1" >> roll-calls
   if [ "$1" = "$CANDIDATE" ]; then
@@ -48,6 +57,45 @@ docker() { return 0; }
     expected_marker = CANDIDATE if mode == "success" else PREVIOUS
     assert (tmp_path / "deployed").read_text() == expected_marker + "\n"
     assert not (tmp_path / "deployed.next").exists()
+
+
+@pytest.mark.parametrize("invalid", ["mode", "symlink", "version", "overlay", "config"])
+def test_grafana_preflight_refuses_before_provider_or_rollout(tmp_path, invalid):
+    stage_base(tmp_path)
+    stack = tmp_path / "releases" / CANDIDATE / "stack"
+    (stack / "apify/x-reader").mkdir(parents=True)
+    marker = stack / "deploy/grafana/production-version"
+    marker.parent.mkdir(parents=True)
+    if invalid in {"overlay", "version"}:
+        marker.write_text("1\n" if invalid == "overlay" else "2\n")
+    env = tmp_path / ".env"
+    if invalid == "mode":
+        env.chmod(0o644)
+    if invalid == "symlink":
+        env.rename(tmp_path / "protected")
+        env.symlink_to(tmp_path / "protected")
+    (tmp_path / "apify_worker.py").write_text("open('published', 'w').close()")
+    docker = tmp_path / "docker"
+    docker.write_text('#!/bin/sh\nprintf "%s\\n" "$*" >> docker-calls\nexit 1\n')
+    docker.chmod(0o755)
+    script = tmp_path / "deploy.sh"
+    shutil.copyfile(Path(__file__).parents[1] / "scripts/deploy/deploy.sh", script)
+    result = subprocess.run(
+        ["bash", script, CANDIDATE],
+        env={**os.environ, "PATH": f"{tmp_path}:{os.environ['PATH']}"},
+        capture_output=True,
+        timeout=4,
+    )
+    assert result.returncode != 0
+    assert not (tmp_path / "published").exists()
+    assert not (tmp_path / "deployed").exists()
+    calls = tmp_path / "docker-calls"
+    if invalid == "config":
+        assert calls.read_text().splitlines() == [
+            f"compose --env-file {env} -f releases/{CANDIDATE}/stack/compose.yaml config -q"
+        ]
+    else:
+        assert not calls.exists()
 
 
 def test_historical_target_uses_current_main_deployment_helper(tmp_path):
@@ -168,10 +216,12 @@ def test_deploy_publishes_a_changed_x_worker_first_and_restores_it_on_rollback(
     """A changed X worker is built and activated before Tank rolls; a failed build leaves Tank and
     the worker untouched, and a Tank rollback points the worker's direct tag back first."""
     source = (Path(__file__).parents[1] / "scripts/deploy/deploy.sh").read_text()
+    stage_base(tmp_path)
     hook = """roll() { printf '%s\\n' "$1" >> roll-calls; printf 'roll %s\\n' "$1" >> order; return 0; }
 verify() { [[ "$MODE" != *not_verified ]]; }
 docker() { return 0; }
 python3() {
+  if [[ $1 == grafana.py ]]; then command python3 "$@"; return; fi
   printf '%s\\n' "$*" >> worker-calls
   printf '%s %s\\n' "$2" "$3" >> order
   case "$2" in
@@ -191,7 +241,7 @@ python3() {
     script.write_text(source.replace(marker, hook + marker))
     (tmp_path / "deployed").write_text(PREVIOUS + "\n")
     if mode != "no_worker":
-        (tmp_path / "releases" / CANDIDATE / "x-reader").mkdir(parents=True)
+        (tmp_path / "releases" / CANDIDATE / "stack/apify/x-reader").mkdir(parents=True)
     result = subprocess.run(
         ["bash", str(script), CANDIDATE],
         capture_output=True,
@@ -205,7 +255,7 @@ python3() {
     assert rolls == expected_rolls
     worker_calls = tmp_path / "worker-calls"
     calls = worker_calls.read_text().splitlines() if worker_calls.exists() else []
-    publish = f"apify_worker.py publish releases/{CANDIDATE}/x-reader {CANDIDATE}"
+    publish = f"apify_worker.py publish releases/{CANDIDATE}/stack/apify/x-reader {CANDIDATE}"
     publishes = [call for call in calls if " publish " in f" {call} "]
     assert publishes == ([] if mode == "no_worker" else [publish])
     restores = [call for call in calls if call.startswith("apify_worker.py restore")]
@@ -216,4 +266,6 @@ python3() {
     if expected_restore:
         assert order.index(f"restore {expected_restore}") < order.index(f"roll {PREVIOUS}")
     if mode != "no_worker" and expected_rolls:
-        assert order.index(f"publish releases/{CANDIDATE}/x-reader") < order.index(f"roll {CANDIDATE}")
+        assert order.index(f"publish releases/{CANDIDATE}/stack/apify/x-reader") < order.index(
+            f"roll {CANDIDATE}"
+        )

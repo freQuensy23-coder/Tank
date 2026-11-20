@@ -52,6 +52,7 @@ type MarketPruneCounts = dict[str, int | dict[str, int]]
 
 
 class Repository(Protocol):
+    async def count_source_poll(self, finished_at: str, mode: str, kind: str, ok: bool) -> None: ...
     async def open(self) -> Self: ...
     async def close(self) -> None: ...
     async def migrate(self) -> None: ...
@@ -707,6 +708,14 @@ class MemoryRepository(QueueMixin):
         self._owner = None
         self._locks = {}
 
+    async def count_source_poll(self, finished_at, mode, kind, ok):
+        stamp = parse_time(finished_at)
+        key = stamp.replace(minute=stamp.minute // 5 * 5, second=0, microsecond=0), mode, kind
+        async with self.transaction():
+            counts = self._data.setdefault("ops.source_poll_counts", {})
+            good, failed = counts.get(key, (0, 0))
+            counts[key] = good + int(ok), failed + int(not ok)
+
     async def open(self):
         return self
 
@@ -1094,6 +1103,12 @@ class PostgresRepository(QueueMixin):
         self.database_url = database_url
         self._pool = None
         self._connection = ContextVar(f"pg_connection_{id(self)}", default=None)
+
+    async def count_source_poll(self, finished_at, mode, kind, ok):
+        async with self.transaction():
+            await self._conn().execute(
+                "SELECT ops.count_source_poll(%s, %s, %s, %s)", (finished_at, mode, kind, ok)
+            )
 
     async def open(self):
         from psycopg import AsyncConnection

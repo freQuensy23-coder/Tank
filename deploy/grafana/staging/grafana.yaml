@@ -1,0 +1,10 @@
+services:
+  grafana:
+    environment:
+      GF_SERVER_ROOT_URL: https://grafana.127-0-0-1.sslip.io:${STAGE_PORT:?}/
+      GF_SECURITY_COOKIE_SECURE: "true"
+    networks:
+      stage: {}
+networks:
+  stage:
+    internal: true

@@ -48,6 +48,10 @@ class Repo:
     def __init__(self):
         self.rows = {}
         self.jobs = []
+        self.polls = []
+
+    async def count_source_poll(self, finished_at, mode, kind, ok):
+        self.polls.append((finished_at, mode, kind, ok))
 
     async def get(self, c, k):
         from copy import deepcopy

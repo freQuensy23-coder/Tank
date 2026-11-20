@@ -21,6 +21,8 @@ Run development commands in a local checkout; servers are not development enviro
 
 For runs outside Compose, set `TANK_FOUNDRY_API_KEY` (or `FOUNDRY_API_KEY`), `TANK_FOUNDRY_ENDPOINT` and `TANK_FOUNDRY_DEPLOYMENT`; `.env.example` gives the defaults. Codex authorization defaults to `$CODEX_HOME/auth.json` when set, otherwise `~/.codex/auth.json`; `TANK_CODEX_AUTH_PATH` overrides it. Compose uses its private `/codex-auth/auth.json` volume for the analyst.
 
+The production **Deploy** action provisions [Tank Grafana](deploy/grafana/README.md) on the existing PostgreSQL. The same guide covers access, rollback and isolated local verification.
+
 For database tests, use isolated PostgreSQL 16 databases. Test databases must never contain production data:
 
 ```sh

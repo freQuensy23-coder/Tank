@@ -1,0 +1,30 @@
+\set ON_ERROR_STOP on
+\getenv reader_password GRAFANA_READER_PASSWORD
+BEGIN;
+CREATE ROLE tank_grafana_reader LOGIN PASSWORD :'reader_password' CONNECTION LIMIT 6;
+ALTER ROLE tank_grafana_reader SET default_transaction_read_only = on;
+ALTER ROLE tank_grafana_reader SET statement_timeout = '8s';
+REVOKE CREATE,TEMP ON DATABASE tank FROM PUBLIC;
+REVOKE CREATE ON SCHEMA public FROM PUBLIC;
+CREATE SCHEMA tank_metrics;
+SET search_path=tank_metrics,pg_catalog;
+CREATE TEMP TABLE mins AS SELECT i, timestamptz '2026-11-16 00:00Z' + i * interval '1 min' AS t FROM generate_series(0,1439) i;
+CREATE TABLE source_poll_history AS SELECT t AS bucket_start,'REST'::text AS source_mode, kind AS feed_kind, (18+round(7*sin(i/75.0))::int+ i%7 + factor)::bigint AS successful, (CASE WHEN i BETWEEN 600 AND 680 THEN 3 ELSE 0 END + (i+factor)%3)::bigint AS failed FROM mins CROSS JOIN (VALUES ('rss',2),('json',5)) AS f(kind,factor) WHERE i%5=0;
+CREATE TABLE source_pulls AS SELECT source_mode,feed_kind,sum(successful) AS successful,sum(failed) AS failed FROM source_poll_history GROUP BY 1,2;
+CREATE TABLE agent_runs AS SELECT t+j*interval '2 seconds' AS opened_at,CASE WHEN (i+j)%11=0 THEN 'FAILED' WHEN i>1425 THEN 'OPEN' ELSE 'ENDED' END AS status, CASE WHEN (i+j)%11=0 THEN CASE WHEN i%2=0 THEN 'model_rate_limited_error' ELSE 'model_overloaded_error' END END AS error_class FROM mins CROSS JOIN LATERAL generate_series(1,1+(i/60)%5) j WHERE i%3=0;
+CREATE TABLE agent_run_outcomes AS SELECT opened_at, CASE status WHEN 'FAILED' THEN 'Execution error' WHEN 'OPEN' THEN 'Pending / running' ELSE 'Execution success' END AS outcome FROM agent_runs;
+CREATE TABLE agent_model_turns AS SELECT opened_at + j*interval '12 seconds' AS at FROM agent_runs CROSS JOIN LATERAL generate_series(1,2+extract(hour FROM opened_at)::int%3) j;
+CREATE TABLE session_first_importance AS SELECT opened_at, 12+extract(minute FROM opened_at)%19+extract(hour FROM opened_at)%4 AS seconds FROM agent_runs WHERE status='ENDED';
+CREATE TABLE session_first_sent_card AS SELECT opened_at, seconds+27+extract(hour FROM opened_at)%10 AS seconds FROM session_first_importance WHERE extract(minute FROM opened_at)::int%2=0;
+CREATE TABLE event_card_activity AS SELECT opened_at+(seconds-8)*interval '1 second' AS generated_at, opened_at+seconds*interval '1 second' AS sent_at, 'Confirmed'::text AS delivery_state,true AS session_linked,true AS input_linked FROM session_first_sent_card UNION ALL SELECT t,NULL,'Pending job',true,true FROM mins WHERE i%143=0;
+CREATE TABLE card_publication_calls AS SELECT generated_at - interval '2 seconds' AS requested_at,'Published'::text AS disposition,'Publication confirmed'::text AS reason FROM event_card_activity UNION ALL SELECT t,'Suppressed','Duplicate' FROM mins WHERE i%7=0;
+CREATE TABLE agent_watches AS SELECT CASE WHEN i%3=0 THEN 'Timed review' ELSE 'Metric watch' END AS watch_kind, CASE WHEN i%4=0 THEN 'ARMED' ELSE 'FIRED' END AS status, CASE WHEN i%4<>0 THEN t END AS fired_at, CASE WHEN i%7=0 THEN 'No linked decision' ELSE 'Linked decision' END AS consuming_action FROM mins WHERE i%23=0;
+CREATE TABLE agent_milestones AS SELECT t AS created_at,CASE WHEN i%7=0 THEN 'FAILED' ELSE 'DONE' END AS status,i%4<>0 AS tool_linked FROM mins WHERE i%11=0;
+CREATE TABLE minute_condition_checks AS SELECT t AS scheduled_at,CASE WHEN i=1439 THEN 'RUNNING' WHEN i=1438 THEN 'QUEUED' WHEN i%41=0 THEN 'EXPIRED' WHEN i%23=0 THEN 'FAILED' ELSE 'DONE' END AS status FROM mins;
+CREATE TABLE agent_scheduled_jobs AS SELECT scheduled_at AS created_at,status,'Tank minute condition check'::text AS job_kind, CASE WHEN status IN ('DONE','FAILED','EXPIRED') THEN 3+extract(minute FROM scheduled_at)%9 END AS seconds_in_queue_lifecycle,CASE WHEN status='DONE' THEN (extract(minute FROM scheduled_at)::int%13=0)::int END AS deferred_conditions FROM minute_condition_checks;
+CREATE TABLE queue_terminal AS SELECT created_at+seconds_in_queue_lifecycle*interval '1 second' AS finished_at,'EVAL_CONDITIONS'::text AS job_type,CASE WHEN status='FAILED' THEN 'Failed' ELSE 'Expired · zero recorded attempts' END AS outcome FROM agent_scheduled_jobs WHERE status IN ('FAILED','EXPIRED') UNION ALL SELECT created_at+interval '20 seconds','MILESTONE_CHECK','Failed' FROM agent_milestones WHERE status='FAILED';
+INSERT INTO queue_terminal SELECT t + j*interval '3 seconds','AGENT_MESSAGE','Failed' FROM mins CROSS JOIN LATERAL generate_series(1,1+i/180%5) j WHERE i%17=0;
+CREATE TABLE queue_now AS SELECT * FROM (VALUES ('EVAL_CONDITIONS',1,1,4,0,8.5),('AGENT_MESSAGE',3,2,1,0,15.3),('MILESTONE_CHECK',1,0,3,1,4.2)) AS q(job_type,due,running,scheduled,awaiting_cleanup,oldest_due_seconds);
+GRANT USAGE ON SCHEMA tank_metrics TO tank_grafana_reader;
+GRANT SELECT ON ALL TABLES IN SCHEMA tank_metrics TO tank_grafana_reader;
+COMMIT;

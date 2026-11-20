@@ -1,0 +1,30 @@
+services:
+  edge:
+    image: caddy:2.11.9-alpine@sha256:003a97808e781aa9f7e75cc2f43d34d461099031faf5e20faefb9f61126836f0
+    ports: ["127.0.0.1::443"]
+    networks:
+      loopback: {}
+      stage:
+        aliases: [grafana.127-0-0-1.sslip.io]
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - ${scratch:?}/transport.pem:/etc/caddy/transport.pem:ro
+      - stage-certs:/data
+  pebble:
+    image: ghcr.io/letsencrypt/pebble@sha256:0c81f05db371f436c97fb894bd6d2ab8fc9c8e2ce40f8bef8a8e15941bcd75ef
+    command: ["-config", "/stage/config.json"]
+    environment:
+      PEBBLE_VA_NOSLEEP: "1"
+      PEBBLE_WFE_NONCEREJECT: "0"
+      PEBBLE_AUTHZREUSE: "0"
+    networks: [stage]
+    volumes:
+      - ./pebble.json:/stage/config.json:ro
+      - ${scratch:?}/transport.pem:/stage/transport.pem:ro
+      - ${scratch:?}/transport.key:/stage/transport.key:ro
+networks:
+  loopback: {}
+  stage:
+    internal: true
+volumes:
+  stage-certs:
