@@ -1,5 +1,6 @@
 import base64
 import http.client
+import ipaddress
 import json
 import os
 import re
@@ -20,14 +21,14 @@ def check_env():
         raise SystemExit("Deploy requires an owner-only .env owned by the deploy user")
 
 
-def settings():
+def settings(keys=KEYS):
     check_env()
-    if any(key in os.environ for key in KEYS):
+    if any(key in os.environ for key in keys):
         raise SystemExit(
             "Configure persistent Grafana credentials in .env, not the deploy process environment"
         )
     missing = secrets.token_hex(32)
-    projection = {key: "${" + key + "-" + missing + "}" for key in KEYS}
+    projection = {key: "${" + key + "-" + missing + "}" for key in keys}
     projection["dollar"] = "${TANK_DEPLOY_DOLLAR}"
     model = {"services": {"settings": {"image": "scratch", "environment": projection}}}
     result = subprocess.run(
@@ -54,9 +55,24 @@ def settings():
     env = json.loads(result.stdout)["services"]["settings"]["environment"]
     if env.pop("dollar") == "$$":
         env = {key: value.replace("$$", "$") for key, value in env.items()}
-    if any(not env[key] for key in KEYS):
+    if any(not env[key] for key in keys):
         raise SystemExit("Refusing an explicitly empty Grafana credential")
     return {k: v for k, v in env.items() if v != missing}
+
+
+def external_host():
+    key = "GRAFANA_EXTERNAL_HOST"
+    host = settings((key,)).get(key)
+    if host is None:
+        return ""
+    match = re.fullmatch(r"grafana\.([0-9]+-[0-9]+-[0-9]+-[0-9]+)\.sslip\.io", host)
+    if match:
+        try:
+            ipaddress.IPv4Address(match[1].replace("-", "."))
+            return host
+        except ipaddress.AddressValueError:
+            pass
+    raise SystemExit("GRAFANA_EXTERNAL_HOST must be the exact grafana.<dashed-IPv4>.sslip.io name")
 
 
 def prepare(env):
@@ -172,6 +188,9 @@ if __name__ == "__main__":
     action = sys.argv[1]
     if action == "check-env":
         check_env()
+        sys.exit(0)
+    if action == "external-host":
+        print(external_host())
         sys.exit(0)
     values = settings()
     if action == "require-credentials":

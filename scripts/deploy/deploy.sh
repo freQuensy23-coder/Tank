@@ -16,13 +16,24 @@ grafana_enabled() {
   [ -f "releases/$1/stack/deploy/grafana/production-version" ]
 }
 
-https_enabled() {
-  [ -f "releases/$1/stack/deploy/grafana/https/compose.yaml" ]
+external_host=''
+
+shared_nginx() {
+  [ -n "$external_host" ] && [ -f "releases/$1/stack/deploy/grafana/nginx/compose.yaml" ]
+}
+
+dedicated_https() {
+  [ -z "$external_host" ] && [ -f "releases/$1/stack/deploy/grafana/https/compose.yaml" ]
 }
 
 preflight_release() {
   local v=$1 stack="releases/$1/stack" marker="releases/$1/stack/deploy/grafana/production-version"
-  if https_enabled "$v"; then
+  if [ -d "$stack/deploy/grafana/nginx" ]; then
+    [ -f "$stack/deploy/grafana/nginx/compose.yaml" ] && grafana_enabled "$v" && [ -f "$stack/deploy/grafana/nginx/site.py" ] || {
+      echo 'Incomplete shared nginx release'; return 1;
+    }
+  fi
+  if [ -f "$stack/deploy/grafana/https/compose.yaml" ]; then
     grafana_enabled "$v" && [ -f "$stack/deploy/grafana/https/Caddyfile" ] || {
       echo 'Incomplete Grafana HTTPS release'; return 1;
     }
@@ -41,7 +52,8 @@ compose() {
   if [ -d "$stack" ]; then
     files=(-f "$stack/compose.yaml")
     if grafana_enabled "$v"; then files+=(-f "$stack/compose.grafana.yaml"); fi
-    if https_enabled "$v"; then files+=(-f "$stack/deploy/grafana/https/compose.yaml"); fi
+    if shared_nginx "$v"; then files+=(-f "$stack/deploy/grafana/nginx/compose.yaml"); fi
+    if dedicated_https "$v"; then files+=(-f "$stack/deploy/grafana/https/compose.yaml"); fi
   elif [ "$v" = "$previous" ]; then
     files=(-f compose.yaml)
   else
@@ -63,7 +75,7 @@ grafana_ready() {
 }
 
 https_ready() {
-  local host=grafana.84-235-183-96.sslip.io path expected status
+  local host=${external_host:-grafana.84-235-183-96.sslip.io} path expected status
   for path in /login /api/dashboards/uid/tank-queue /api/dashboards/uid/tank-pipeline; do
     expected=401; [ "$path" != /login ] || expected=200
     status=$(curl -q --noproxy '*' --resolve "$host:443:127.0.0.1" --max-time 4 -s -o /dev/null -w '%{http_code}' "https://$host$path") || return 1
@@ -72,7 +84,7 @@ https_ready() {
 }
 
 start_grafana() {
-  local v=$1 migrated=no
+  local v=$1 migrated=no address
   for _ in $(seq 1 60); do
     if [ "$(docker exec -u postgres tank-postgres-1 psql -XAt -d tank -c \
       "SELECT 1 FROM ops.schema_migrations WHERE version='013_source_poll_counts.sql'" 2>/dev/null)" = 1 ]; then
@@ -84,14 +96,20 @@ start_grafana() {
   python3 grafana.py install "releases/$v/stack/deploy/grafana" tank-postgres-1 || return 1
   compose "$v" up -d --no-deps --wait --wait-timeout 120 grafana || return 1
   grafana_ready "$v" || return 1
-  if https_enabled "$v"; then
+  if shared_nginx "$v"; then
+    address=$(compose "$v" port grafana 3000) || return 1
+    [[ $address =~ ^127\.0\.0\.1:([0-9]+)$ ]] || return 1
+    python3 "releases/$v/stack/deploy/grafana/nginx/site.py" apply "$external_host" "${BASH_REMATCH[1]}" || return 1
+  elif dedicated_https "$v"; then
     compose "$v" up -d --no-deps grafana-edge || return 1
-    for _ in $(seq 1 30); do
-      https_ready && return 0
-      sleep 2
-    done
-    echo 'Grafana TLS login or anonymous denial failed'; return 1
+  else
+    return 0
   fi
+  for _ in $(seq 1 30); do
+    https_ready && return 0
+    sleep 2
+  done
+  echo 'Grafana TLS login or anonymous denial failed'; return 1
 }
 content() { docker inspect -f '{{index .Config.Labels "org.tank.content"}}' "$1" 2>/dev/null || true; }
 healthy() {
@@ -103,9 +121,20 @@ healthy() {
   return 1
 }
 
+remove_shared_site() {
+  local release
+  for release in "$SHA" "$previous"; do
+    if shared_nginx "$release"; then
+      python3 "releases/$release/stack/deploy/grafana/nginx/site.py" remove
+      return
+    fi
+  done
+}
+
 roll() {
   local v=$1 svc old_cap new_cap pid ready handoff wait
-  if ! https_enabled "$v"; then
+  if ! shared_nginx "$v"; then remove_shared_site || return 1; fi
+  if ! dedicated_https "$v"; then
     remove_service grafana-edge || return 1
   fi
   if ! grafana_enabled "$v"; then
@@ -169,7 +198,7 @@ verify() {
   stale=$(echo "SELECT arrayStringConcat(arrayFilter(i -> NOT has((SELECT groupArray(instrument_id) FROM mkt.oi_obs FINAL WHERE ts > now() - INTERVAL 10 MINUTE), i) OR NOT has((SELECT groupArray(instrument_id) FROM mkt.funding_obs FINAL WHERE as_of > now() - INTERVAL 10 MINUTE), i), ['binance:perp_linear:BTCUSDT','okx:perp_linear:BTC-USDT-SWAP','bybit:perp_linear:BTCUSDT','hyperliquid:perp_linear:BTC']), ' ')" | chq)
   [ -z "$stale" ] || bad "OI or funding older than 10 min: $stale"
   if grafana_enabled "$SHA"; then grafana_ready "$SHA" || bad "Grafana not ready"; fi
-  if https_enabled "$SHA"; then https_ready || bad "Grafana HTTPS not ready"; fi
+  if shared_nginx "$SHA" || dedicated_https "$SHA"; then https_ready || bad "Grafana HTTPS not ready"; fi
   return $fail
 }
 
@@ -194,6 +223,7 @@ recover() {
       status=1
     fi
   elif [ "$status" -ne 0 ] && [ "$tank_started" = yes ] && grafana_enabled "$SHA"; then
+    remove_shared_site || { echo "Shared nginx rollback failed"; exit 1; }
     remove_service grafana-edge || status=1
     remove_service grafana || status=1
   fi
@@ -204,6 +234,12 @@ trap 'exit 130' INT
 trap 'exit 143' TERM
 preflight_release "$SHA"
 if [ -n "$previous" ]; then preflight_release "$previous"; fi
+if [[ -e /var/lib/tank-grafana-nginx ]] || grafana_enabled "$SHA" || grafana_enabled "$previous"; then
+  external_host=$(python3 grafana.py external-host)
+fi
+if [[ -z $external_host && -e /var/lib/tank-grafana-nginx ]]; then
+  echo 'Restore GRAFANA_EXTERNAL_HOST for this shared-nginx deployment'; exit 1
+fi
 if [ -n "$previous" ] && grafana_enabled "$previous"; then
   python3 grafana.py require-credentials
 elif grafana_enabled "$SHA"; then

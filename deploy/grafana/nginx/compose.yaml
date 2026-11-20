@@ -1,0 +1,9 @@
+services:
+  grafana:
+    environment:
+      GF_SERVER_DOMAIN: ${GRAFANA_EXTERNAL_HOST:?}
+      GF_SERVER_ROOT_URL: https://${GRAFANA_EXTERNAL_HOST:?}/
+      GF_SECURITY_COOKIE_SECURE: "true"
+      GF_SECURITY_COOKIE_SAMESITE: lax
+      GF_METRICS_ENABLED: "false"
+      GF_SNAPSHOTS_ENABLED: "false"

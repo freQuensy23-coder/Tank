@@ -2,6 +2,8 @@
 
 The Grafana-enabled release runs seven Compose services on `oracle-vps`, an Oracle Cloud VM.Standard.E5.Flex in eu-amsterdam-1 at `84.235.183.96` (SSH user `ubuntu`, deployment directory `/srv/tank-deploy`; the Deploy workflow reaches it through the `production` environment secrets `PROD_SSH_HOST` and `PROD_SSH_KNOWN_HOSTS`): `tank`, `tank-capture` (exchange capture, [capture/README.md](../capture/README.md)), `openma`, PostgreSQL16 `postgres`, `clickhouse` and `grafana` plus its `grafana-edge` TLS proxy. Tank includes its Codex OAuth gateway in the same process on internal port8790; Grafana publishes its upstream on loopback and only its proxy publishes public TCP 443. Analyst model requests use the operator's ChatGPT subscription. Filtering and routing use the separately billed Foundry Decision-1 deployment. Token and spending caps and budget notices are outside V0; usage remains recorded. No actual sign-in or private browser state is needed for offline builds and synthetic tests.
 
+On a separately configured shared-nginx target, `GRAFANA_EXTERNAL_HOST` selects the [named host site](../deploy/grafana/README.md#hosts-with-an-existing-nginx); Compose does not publish a second public listener.
+
 ## Deployment
 
 There is one way to deploy: the **Deploy** workflow (`.github/workflows/deploy.yml`), started by hand on `main` with an optional commit SHA of `main` (default: its head). It fails for any other branch or for a commit that is not on `main`.
