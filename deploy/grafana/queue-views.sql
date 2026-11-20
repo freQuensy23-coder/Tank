@@ -1,7 +1,7 @@
 CREATE OR REPLACE VIEW tank_metrics.queue_now AS
 WITH active AS (
     SELECT type, status, run_after,
-           (expires_at IS NULL OR expires_at > now()) AND attempts < max_attempts AS live,
+           (expires_at IS NULL OR expires_at > now()) AND (attempts < max_attempts OR coalesce(document->>'recovery_reclaim' = 'true', false)) AS live,
            CASE WHEN document->>'slot_admitted' IS DISTINCT FROM 'true'
                 THEN nullif(document->>'slot_waiting_since', '')::timestamptz END AS slot_wait
     FROM ops.jobs WHERE status IN ('QUEUED', 'RUNNING')
@@ -23,6 +23,6 @@ FROM classified GROUP BY type;
 CREATE OR REPLACE VIEW tank_metrics.queue_terminal AS
 SELECT finished_at, type AS job_type,
        CASE WHEN status = 'FAILED' THEN 'Failed'
-            WHEN attempts = 0 THEN 'Expired before first attempt'
-            ELSE 'Expired after attempt' END AS outcome
+            WHEN attempts = 0 THEN 'Expired · zero recorded attempts'
+            ELSE 'Expired · positive recorded attempts' END AS outcome
 FROM ops.jobs WHERE status IN ('FAILED', 'EXPIRED');

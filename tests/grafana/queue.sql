@@ -19,4 +19,18 @@ DO $$ DECLARE q record; BEGIN
     SELECT * INTO STRICT q FROM tank_metrics.queue_now WHERE job_type='AGENT_MESSAGE';
     ASSERT (q.due,q.scheduled,q.awaiting_cleanup,q.running,q.oldest_due_seconds)=(2,1,1,0,60);
 END $$;
+INSERT INTO ops.jobs (storage_key,job_id,type,priority,idem_key,status,attempts,max_attempts,created_at,run_after,expires_at,document)
+SELECT id,id,'DELIVER',1,id,'QUEUED',1,1,now()-interval '2 minutes',now()-interval '1 minute',now()+ttl,
+       jsonb_build_object('payload','{}'::jsonb,'recovery_reclaim',reclaim)
+FROM (VALUES ('reclaim',true,interval '1 minute'),('exhausted',false,interval '1 minute'),
+             ('late_reclaim',true,interval '-1 second')) AS x(id,reclaim,ttl);
+DO $$ BEGIN
+    ASSERT (SELECT (due,awaiting_cleanup)=(1,2) FROM tank_metrics.queue_now WHERE job_type='DELIVER');
+END $$;
+UPDATE ops.jobs SET status='EXPIRED', attempts=0, finished_at=now() WHERE job_id='late_reclaim';
+DO $$ DECLARE q record; BEGIN
+    SELECT * INTO STRICT q FROM tank_metrics.queue_now WHERE job_type='DELIVER';
+    ASSERT (q.due,q.awaiting_cleanup)=(1,1);
+    ASSERT (SELECT outcome='Expired · zero recorded attempts' FROM tank_metrics.queue_terminal WHERE job_type='DELIVER');
+END $$;
 ROLLBACK;

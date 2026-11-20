@@ -18,7 +18,7 @@
       "id": 1,
       "title": "Waiting now",
       "type": "stat",
-      "description": "Queued, due, unexpired and below the attempt limit. Includes work waiting on a concurrency cap.",
+      "description": "Queued work waiting now, including eligible recovery reclaims and jobs waiting for an agent slot.",
       "datasource": {
         "type": "grafana-postgresql-datasource",
         "uid": "tank-postgres"
@@ -150,7 +150,7 @@
       "id": 4,
       "title": "Awaiting cleanup",
       "type": "stat",
-      "description": "Queued with an expired deadline or exhausted attempt limit.",
+      "description": "Queued with an expired deadline or an exhausted attempt limit and no recovery reclaim.",
       "datasource": {
         "type": "grafana-postgresql-datasource",
         "uid": "tank-postgres"
@@ -230,7 +230,7 @@
       "id": 6,
       "title": "Terminal failures and expirations",
       "type": "timeseries",
-      "description": "By recorded finish time. These are terminal jobs, not failed attempts later retried successfully.",
+      "description": "By recorded finish time. The attempt counter can be refunded after interruption or deferral. A zero counter does not prove the job never started.",
       "datasource": {
         "type": "grafana-postgresql-datasource",
         "uid": "tank-postgres"
