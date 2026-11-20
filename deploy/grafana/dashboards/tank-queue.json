@@ -194,7 +194,7 @@
       "id": 5,
       "title": "Queue by job type",
       "type": "table",
-      "description": "Live snapshot. Oldest due is measured from run_after, not creation; null means none due.",
+      "description": "Live snapshot. Waiting age starts at the recorded admission wait for a cap-deferred job, or its due time for ordinary queued work. Null means none waiting.",
       "datasource": {
         "type": "grafana-postgresql-datasource",
         "uid": "tank-postgres"
