@@ -138,6 +138,11 @@ resolve_url
 printf 'machine 127.0.0.1 login admin password %s\n' "$GRAFANA_ADMIN_PASSWORD" > "$tmp/netrc"
 http=(curl --noproxy '*' -fsS --max-time 20 --netrc-file "$tmp/netrc")
 "${http[@]}" "$base/api/health" | jq -ec 'select(.database == "ok") | {database,version}'
+cp -r "$stack/deploy/grafana/dashboards" "$tmp/stale"
+jq '.panels[0].title += " (wrong release)"' "$tmp/stale/tank-queue.json" > "$tmp/mismatch.json"
+mv "$tmp/mismatch.json" "$tmp/stale/tank-queue.json"
+if (cd "$host" && python3 grafana.py ready "${base#http://}" "$tmp/stale") > "$tmp/mismatch.log" 2>&1; then exit 1; fi
+grep -Fx 'Grafana tank-queue does not match the selected release in the Tank folder' "$tmp/mismatch.log"
 if [[ $stage_https == yes ]]; then stage_viewer; stage_browser; fi
 status=$(curl --noproxy '*' -sS -o /dev/null -w '%{http_code}' "$base/api/datasources/uid/tank-postgres")
 [[ $status == 401 ]]

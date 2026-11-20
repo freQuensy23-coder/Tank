@@ -24,7 +24,11 @@ The infrastructure owner can recover the initial `admin` credential from `GRAFAN
 
 A failed rollout returns to the previous recorded Tank release. For a Grafana-enabled release it uses that release's files, reinstalls its views and checks Grafana. Only `deploy/grafana/production-version` with version `1` enables the production overlay. A release without the marker (even one with a local `compose.grafana.yaml`) removes the Grafana container and reinstates its original Postgres HBA via the previous image. Neither path drops database objects, deletes `pg-data`, or changes passwords. To deliberately select a prior release, use the same Deploy action with its `main` commit SHA. Future Grafana major upgrades or incompatible metric view changes need an explicit database backup and compatibility plan; selecting an older image is not a database downgrade.
 
-## HTTPS staging (local only)
+## HEL HTTPS staging
+
+The [HEL recipe](staging/hel/README.md) serves both dashboards to named Viewers over publicly trusted HTTPS without SSH. It is a temporary, isolated **synthetic** preview. The production Deploy workflow never installs its nginx site, fixture or staging credentials.
+
+## Disposable HTTPS verification (local only)
 
 Run `bash deploy/grafana/verify.sh staging` from a committed checkout on a local Linux Docker daemon with the Tank test subnet free. In addition to the tools below, put `google-chrome`, NSS `certutil` and a Python 3 with Playwright and PyYAML on `PATH`. No staging secret or remote host is required.
 

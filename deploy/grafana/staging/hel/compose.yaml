@@ -1,0 +1,61 @@
+name: tank-grafana-hel
+services:
+  postgres:
+    image: postgres:16-bookworm@sha256:ce3efec6bc404f6b15ebf5d9bed6b45a9d4655aea238d7dacc3467ccb05a1175
+    restart: unless-stopped
+    environment:
+      POSTGRES_PASSWORD: ${DB_PASSWORD:?}
+      POSTGRES_DB: tank
+      GRAFANA_READER_PASSWORD: ${GRAFANA_READER_PASSWORD:?}
+    volumes:
+      - fixture:/var/lib/postgresql/data
+      - ./fixture.sql:/docker-entrypoint-initdb.d/10-fixture.sql:ro
+    healthcheck:
+      test: [CMD, pg_isready, -U, postgres, -d, tank, -h, 127.0.0.1]
+      interval: 3s
+      timeout: 2s
+      retries: 20
+    networks: [stage]
+    mem_limit: 384m
+    cpus: 1
+  grafana:
+    image: grafana/grafana:13.3.1@sha256:0615ec4fbd4072004b7d86b46ded63013a74b7d6eb1119273dd89e8fa25c13cf
+    restart: unless-stopped
+    depends_on:
+      postgres: {condition: service_healthy}
+    networks:
+      stage: {ipv4_address: 172.29.137.3}
+    mem_limit: 768m
+    cpus: 2
+    volumes:
+      - settings:/var/lib/grafana
+      - ./source/deploy/grafana/dashboards:/var/lib/tank-dashboards:ro
+      - ./provisioning/dashboards:/etc/grafana/provisioning/dashboards:ro
+      - ./source/deploy/grafana/provisioning/datasources:/etc/grafana/provisioning/datasources:ro
+    environment:
+      GF_SERVER_ROOT_URL: https://grafana-hel.31-77-97-14.sslip.io/
+      GF_SECURITY_ADMIN_PASSWORD: ${ADMIN_PASSWORD:?}
+      GF_SECURITY_SECRET_KEY: ${SECRET_KEY:?}
+      GF_SECURITY_COOKIE_SECURE: 'true'
+      GF_SECURITY_COOKIE_SAMESITE: lax
+      GF_AUTH_ANONYMOUS_ENABLED: 'false'
+      GF_USERS_ALLOW_SIGN_UP: 'false'
+      GF_USERS_ALLOW_ORG_CREATE: 'false'
+      GF_USERS_AUTO_ASSIGN_ORG_ROLE: Viewer
+      GF_PUBLIC_DASHBOARDS_ENABLED: 'false'
+      GF_SNAPSHOTS_ENABLED: 'false'
+      GF_EXPLORE_ENABLED: 'false'
+      GF_NEWS_NEWS_FEED_ENABLED: 'false'
+      GF_ANALYTICS_REPORTING_ENABLED: 'false'
+      GF_ANALYTICS_CHECK_FOR_UPDATES: 'false'
+      GF_ANALYTICS_CHECK_FOR_PLUGIN_UPDATES: 'false'
+      GF_PLUGINS_PREINSTALL_DISABLED: 'true'
+      GRAFANA_READER_PASSWORD: ${GRAFANA_READER_PASSWORD:?}
+networks:
+  stage:
+    internal: true
+    ipam:
+      config: [{subnet: 172.29.137.0/28}]
+volumes:
+  fixture: {}
+  settings: {}

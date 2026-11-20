@@ -49,7 +49,7 @@ remove_grafana() {
 grafana_ready() {
   local address
   address=$(compose "$1" port grafana 3000) || return 1
-  python3 grafana.py ready "$address"
+  python3 grafana.py ready "$address" "releases/$1/stack/deploy/grafana/dashboards"
 }
 
 start_grafana() {

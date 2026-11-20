@@ -126,7 +126,7 @@ def install(env, directory, container):
         raise SystemExit("Grafana PostgreSQL provisioning failed")
 
 
-def ready(env, address):
+def ready(env, address, dashboards):
     if not re.fullmatch(r"127\.0\.0\.1:[0-9]+", address):
         raise SystemExit("Refusing to send Grafana credentials to a non-loopback listener")
     auth = base64.b64encode(("admin:" + env[KEYS[0]]).encode()).decode()
@@ -155,12 +155,14 @@ def ready(env, address):
         path = "/api/dashboards/uid/" + uid
         get(path, anonymous=True)
         doc = get(path)
+        expected = json.loads((Path(dashboards) / f"{uid}.json").read_bytes())
         if (
             doc["dashboard"]["uid"] != uid
+            or doc["dashboard"]["panels"] != expected["panels"]
             or not doc["meta"]["provisioned"]
             or doc["meta"]["folderUid"] != "tank"
         ):
-            raise SystemExit(f"Grafana {uid} is not provisioned in the Tank folder")
+            raise SystemExit(f"Grafana {uid} does not match the selected release in the Tank folder")
     print(
         "Grafana verified: tank-queue, tank-pipeline and healthy tank-postgres datasource (authenticated loopback HTTP)"
     )
@@ -180,6 +182,6 @@ if __name__ == "__main__":
     elif action == "install":
         install(values, sys.argv[2], sys.argv[3])
     elif action == "ready":
-        ready(values, sys.argv[2])
+        ready(values, sys.argv[2], sys.argv[3])
     else:
         raise SystemExit("Unknown Grafana deploy operation")
