@@ -217,6 +217,22 @@ assert_b() {
     [[ $("${pg[@]}" -c "$store_check") == 1 ]]
 }
 assert_b
+"${pg[@]}" -f - < "$tests/seeds/latency.sql"
+for panel in 33 5; do
+    if [[ $panel == 33 ]]; then
+        expected='{"Median":[60,25],"P95":[550.5,25],"Sessions":[3,1]}'
+    else
+        expected='{"Median":[200,45],"P95":[290,45],"Sessions":[2,1]}'
+    fi
+    jq -ce --argjson id "$panel" '.dashboard.panels[] | select(.id == $id and .type == "timeseries") |
+        {from:"1767225600000",to:"1767226320000",queries:[.targets[] + {intervalMs:300000}]}' "$tmp/pipeline" > "$tmp/request"
+    "${http[@]}" -H 'Content-Type: application/json' --data-binary "@$tmp/request" "$base/api/ds/query" |
+        jq -ec --argjson expected "$expected" '.results.A | select(.error == null and (.frames | length == 1)) | .frames[0] |
+            .data.values as $values | [.schema.fields | to_entries[] | {key:.value.name,value:$values[.key]}] | from_entries |
+            select((.Time // .time) == [1767225600000,1767226200000]) | del(.Time,.time) |
+            select(.Sessions == $expected.Sessions and .Median == $expected.Median and
+                   ([.P95, $expected.P95] | transpose | all(.[]; (.[0] - .[1] | fabs) < 0.000001)))'
+done
 if [[ $scenario == existing ]]; then
     fail_rollout "$a" "$b"
     assert_b

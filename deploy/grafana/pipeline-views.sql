@@ -119,6 +119,47 @@ LEFT JOIN LATERAL (
 
 GRANT SELECT ON tank_metrics.agent_first_classification TO tank_grafana_reader;
 
+CREATE OR REPLACE VIEW tank_metrics.session_first_importance AS
+SELECT s.opened_at, extract(epoch FROM grade.answered_at - s.opened_at) AS seconds
+FROM ops.agent_sessions s
+CROSS JOIN LATERAL (
+    SELECT tc.answered_at FROM ops.tool_calls tc
+    WHERE tc.session_id = s.session_id AND tc.tool = 'set_assessment' AND tc.status = 'DONE'
+      AND tc.requested_at >= s.opened_at AND tc.answered_at >= tc.requested_at
+      AND NOT tc.document @> '{"is_error":true}'
+      AND tc.document #>> '{result,class}' IN ('LOW','MATERIAL','MAJOR','STRUCTURAL_SHOCK')
+    ORDER BY tc.answered_at LIMIT 1
+) grade
+WHERE s.document ->> 'replay_run_id' IS NULL;
+
+CREATE OR REPLACE VIEW tank_metrics.session_first_sent_card AS
+SELECT s.opened_at, extract(epoch FROM first_card.at - s.opened_at) AS seconds
+FROM ops.agent_sessions s
+CROSS JOIN LATERAL (
+    SELECT d.at, a.document ->> 'session_id' AS producer, a.kind, a.generated_at,
+           a.alert_id, a.version, d.message_ref, d.document ->> 'chat_id' AS chat_id,
+           d.document ->> 'request_reply_to_message_ref' AS reply_to
+    FROM out.alerts a JOIN out.deliveries d USING (alert_id, version)
+    WHERE a.event_id = s.event_id AND d.channel = 'telegram:alerts' AND d.status = 'SENT'
+      AND d.attempt > 0 AND d.message_ref ~ '^[1-9][0-9]*$' AND nullif(d.document ->> 'chat_id', '') IS NOT NULL
+      AND coalesce(d.document ->> 'method', 'sendMessage') IN ('sendMessage','sendRichMessage')
+    ORDER BY d.at FETCH FIRST 1 ROW WITH TIES
+) first_card
+WHERE s.document ->> 'replay_run_id' IS NULL
+GROUP BY s.session_id, s.opened_at, first_card.at
+HAVING count(DISTINCT (first_card.alert_id, first_card.version)) = 1
+   AND bool_and(first_card.producer IS NOT DISTINCT FROM s.session_id
+                AND first_card.kind IN ('PRELIMINARY','PARTIAL','FULL') AND first_card.reply_to IS NULL
+                AND first_card.generated_at BETWEEN s.opened_at AND first_card.at
+                AND NOT EXISTS (
+                    SELECT FROM out.deliveries other
+                    WHERE other.channel = 'telegram:alerts' AND other.status = 'SENT'
+                      AND other.message_ref = first_card.message_ref AND other.document ->> 'chat_id' = first_card.chat_id
+                      AND (other.alert_id, other.version) IS DISTINCT FROM (first_card.alert_id, first_card.version)
+                ));
+
+GRANT SELECT ON tank_metrics.session_first_importance, tank_metrics.session_first_sent_card TO tank_grafana_reader;
+
 CREATE OR REPLACE VIEW tank_metrics.agent_watches AS
 SELECT CASE WHEN w.document -> 'expr' ? 'review_at' THEN 'Timed review'
             WHEN w.document -> 'expr' ?| ARRAY['metric','all'] THEN 'Metric watch'

@@ -144,9 +144,9 @@
     },
     {
       "id": 5,
-      "title": "Session start to first token decision",
-      "description": "Seconds from session open to the first DONE get_decision answer with a recognized token action, excluding frozen results after tracking ended. This is not event classification, publication, model runtime or delivery latency. Only an explicit unanswered PENDING request in an open session is pending; absent decisions have no duration.",
-      "type": "table",
+      "title": "Session start to first confirmed Telegram event card",
+      "description": "First card only: from the producing session’s open time to Tank’s SENT receipt after Telegram confirms the send. Matches the exact alert version and event. Later cards, updates, edits, ops messages and queue entries are not sends in this cohort. Median and p95 are in seconds. The count includes only qualifying non-replay sessions, bucketed by opening time; missing or unattributable outcomes are not zero.",
+      "type": "timeseries",
       "datasource": {
         "type": "grafana-postgresql-datasource",
         "uid": "tank-postgres"
@@ -166,10 +166,42 @@
           },
           "rawQuery": true,
           "editorMode": "code",
-          "format": "table",
-          "rawSql": "SELECT decision_state AS \"First action\", count(*) AS \"Sessions\",\n       round(percentile_cont(0.5) WITHIN GROUP (ORDER BY seconds_to_verdict)::numeric, 1) AS \"Median (s)\",\n       round(percentile_cont(0.95) WITHIN GROUP (ORDER BY seconds_to_verdict)::numeric, 1) AS \"P95 (s)\"\nFROM tank_metrics.agent_first_verdict WHERE $__timeFilter(opened_at) GROUP BY 1 ORDER BY 1"
+          "format": "time_series",
+          "rawSql": "SELECT $__timeGroupAlias(opened_at, '$__interval'),\n       percentile_cont(0.5) WITHIN GROUP (ORDER BY seconds) AS \"Median\",\n       percentile_cont(0.95) WITHIN GROUP (ORDER BY seconds) AS \"P95\",\n       count(*) AS \"Sessions\"\nFROM tank_metrics.session_first_sent_card WHERE $__timeFilter(opened_at) GROUP BY 1 ORDER BY 1"
         }
-      ]
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "min": 0
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Sessions"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "short"
+              },
+              {
+                "id": "custom.axisPlacement",
+                "value": "right"
+              },
+              {
+                "id": "custom.drawStyle",
+                "value": "bars"
+              },
+              {
+                "id": "custom.fillOpacity",
+                "value": 20
+              }
+            ]
+          }
+        ]
+      }
     },
     {
       "id": 6,
@@ -318,9 +350,9 @@
     },
     {
       "id": 33,
-      "title": "Session start to first event classification",
-      "description": "First explicit NO_EVENT rejection or LOW, MATERIAL, MAJOR or STRUCTURAL_SHOCK assessment returned by a successful tool call in this session. Recording an event ID alone is not yet a classification. Sessions opened in range count once, including those with neither receipt. This elapsed time is not token-decision latency or the lifetime of a retained session.",
-      "type": "table",
+      "title": "Session start to first recorded importance grade",
+      "description": "First successful set_assessment answer (LOW, MATERIAL, MAJOR or STRUCTURAL_SHOCK). NO_EVENT is the earlier event check, not a grade. Median and p95 are in seconds. The count includes only qualifying non-replay sessions, bucketed by opening time; missing or unattributable outcomes are not zero.",
+      "type": "timeseries",
       "datasource": {
         "type": "grafana-postgresql-datasource",
         "uid": "tank-postgres"
@@ -340,10 +372,42 @@
           },
           "rawQuery": true,
           "editorMode": "code",
-          "format": "table",
-          "rawSql": "SELECT coalesce(classification, 'No recorded classification') AS \"First classification\", count(*) AS \"Sessions\",\n       round(percentile_cont(0.5) WITHIN GROUP (ORDER BY seconds_to_classification)::numeric, 1) AS \"Median (s)\",\n       round(percentile_cont(0.95) WITHIN GROUP (ORDER BY seconds_to_classification)::numeric, 1) AS \"P95 (s)\"\nFROM tank_metrics.agent_first_classification WHERE $__timeFilter(opened_at) GROUP BY 1 ORDER BY 1"
+          "format": "time_series",
+          "rawSql": "SELECT $__timeGroupAlias(opened_at, '$__interval'),\n       percentile_cont(0.5) WITHIN GROUP (ORDER BY seconds) AS \"Median\",\n       percentile_cont(0.95) WITHIN GROUP (ORDER BY seconds) AS \"P95\",\n       count(*) AS \"Sessions\"\nFROM tank_metrics.session_first_importance WHERE $__timeFilter(opened_at) GROUP BY 1 ORDER BY 1"
         }
-      ]
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "min": 0
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Sessions"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "short"
+              },
+              {
+                "id": "custom.axisPlacement",
+                "value": "right"
+              },
+              {
+                "id": "custom.drawStyle",
+                "value": "bars"
+              },
+              {
+                "id": "custom.fillOpacity",
+                "value": 20
+              }
+            ]
+          }
+        ]
+      }
     },
     {
       "id": 34,
