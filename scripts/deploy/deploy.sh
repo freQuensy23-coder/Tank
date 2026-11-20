@@ -12,12 +12,26 @@ LIMIT=${LIMIT:-480}
 exec 9>.deploy.lock
 flock -n 9 || { echo "another deploy is running"; exit 1; }
 
+grafana_enabled() {
+  [ -f "releases/$1/stack/deploy/grafana/production-version" ]
+}
+
+preflight_release() {
+  local v=$1 stack="releases/$1/stack" marker="releases/$1/stack/deploy/grafana/production-version"
+  if [ -e "$marker" ] || [ -L "$marker" ]; then
+    [ ! -L "$marker" ] && grafana_enabled "$v" && cmp -s "$marker" <(printf '1\n') || {
+      echo 'Unsupported Grafana production version'; return 1;
+    }
+    [ -f "$stack/compose.grafana.yaml" ] || { echo 'Missing Grafana Compose overlay'; return 1; }
+  fi
+}
+
 compose() {
   local v=$1 stack="releases/$1/stack" files=()
   shift
   if [ -d "$stack" ]; then
     files=(-f "$stack/compose.yaml")
-    if [ -f "$stack/compose.grafana.yaml" ]; then files+=(-f "$stack/compose.grafana.yaml"); fi
+    if grafana_enabled "$v"; then files+=(-f "$stack/compose.grafana.yaml"); fi
   elif [ "$v" = "$previous" ]; then
     files=(-f compose.yaml)
   else
@@ -64,9 +78,7 @@ healthy() {
 
 roll() {
   local v=$1 svc old_cap new_cap pid ready handoff wait
-  if [ -f "releases/$v/stack/compose.grafana.yaml" ]; then
-    python3 grafana.py prepare || return 1
-  else
+  if ! grafana_enabled "$v"; then
     remove_grafana || return 1
   fi
   echo "pull $v $(date -u +%T)"
@@ -105,7 +117,7 @@ roll() {
   echo "tank recreate $(date -u +%T)"
   compose "$v" up -d --no-deps tank || return 1
   healthy tank-tank-1 || { echo "tank not running"; return 1; }
-  if [ -f "releases/$v/stack/compose.grafana.yaml" ]; then start_grafana "$v" || return 1; fi
+  if grafana_enabled "$v"; then start_grafana "$v" || return 1; fi
 }
 
 verify() {
@@ -126,7 +138,7 @@ verify() {
   [ -z "$stale" ] || bad "exchange sources not polled since core start: $stale"
   stale=$(echo "SELECT arrayStringConcat(arrayFilter(i -> NOT has((SELECT groupArray(instrument_id) FROM mkt.oi_obs FINAL WHERE ts > now() - INTERVAL 10 MINUTE), i) OR NOT has((SELECT groupArray(instrument_id) FROM mkt.funding_obs FINAL WHERE as_of > now() - INTERVAL 10 MINUTE), i), ['binance:perp_linear:BTCUSDT','okx:perp_linear:BTC-USDT-SWAP','bybit:perp_linear:BTCUSDT','hyperliquid:perp_linear:BTC']), ' ')" | chq)
   [ -z "$stale" ] || bad "OI or funding older than 10 min: $stale"
-  if [ -f "releases/$SHA/stack/compose.grafana.yaml" ]; then grafana_ready "$SHA" || bad "Grafana not ready"; fi
+  if grafana_enabled "$SHA"; then grafana_ready "$SHA" || bad "Grafana not ready"; fi
   return $fail
 }
 
@@ -150,7 +162,7 @@ recover() {
       echo "Tank rollback failed"
       status=1
     fi
-  elif [ "$status" -ne 0 ] && [ "$tank_started" = yes ] && [ -f "releases/$SHA/stack/compose.grafana.yaml" ]; then
+  elif [ "$status" -ne 0 ] && [ "$tank_started" = yes ] && grafana_enabled "$SHA"; then
     remove_grafana || status=1
   fi
   exit "$status"
@@ -158,6 +170,17 @@ recover() {
 trap recover EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM
+preflight_release "$SHA"
+if [ -n "$previous" ]; then preflight_release "$previous"; fi
+if grafana_enabled "$SHA" || { [ -n "$previous" ] && grafana_enabled "$previous"; }; then
+  python3 grafana.py prepare
+else
+  python3 grafana.py check-env
+fi
+compose "$SHA" config -q >/dev/null 2>&1 || { echo 'Invalid candidate Compose configuration'; exit 1; }
+if [ -n "$previous" ]; then
+  compose "$previous" config -q >/dev/null 2>&1 || { echo 'Invalid recovery Compose configuration'; exit 1; }
+fi
 worker_source="releases/$SHA/x-reader"
 if [ -d "releases/$SHA/stack" ]; then worker_source="releases/$SHA/stack/apify/x-reader"; fi
 if [ -d "$worker_source" ]; then

@@ -10,18 +10,13 @@ ssh() {
     local command=${!#}
     [[ ${*: -2:1} == fixture@fixture.invalid ]] || return 1
     case "$command" in
-        "/srv/tank-deploy/deploy.sh $SHA") printf '%s\n' "$SHA" > "$HOST/dispatch" ;;
-        *) "$ENGINE" run --rm -i --pull=never --network none --read-only --cap-drop=ALL \
+        "sudo -n /srv/tank-deploy/deploy.sh $SHA") printf '%s\n' "$SHA" > "$HOST/dispatch" ;;
+        "sudo -n "*) "$ENGINE" run --rm -i --pull=never --network none --read-only --cap-drop=ALL \
             --security-opt no-new-privileges --user "$(id -u):$(id -g)" \
             --label "com.docker.compose.project=$PROJECT" --mount "type=bind,source=$HOST,target=/srv/tank-deploy" \
-            --entrypoint /bin/bash "$IMAGE" -eu -o pipefail -c "$command" ;;
+            --entrypoint /bin/bash "$IMAGE" -eu -o pipefail -c "${command#sudo -n }" ;;
+        *) return 1 ;;
     esac
-}
-scp() {
-    local dest=${!#}
-    [[ $dest == fixture@fixture.invalid:/srv/tank-deploy/ ]] || return 1
-    while [[ $1 == -o || $1 == -i ]]; do shift 2; done
-    cp -- "${@:1:$#-1}" "$HOST/"
 }
 """
 
@@ -29,7 +24,7 @@ scp() {
 def stage(root, host, scratch):
     sha = os.environ["RELEASE_SHA"]
     workflow = yaml.safe_load(
-        subprocess.check_output(["git", "show", f"{sha}:.github/workflows/deploy.yml"], cwd=root)
+        subprocess.check_output(["git", "show", "HEAD:.github/workflows/deploy.yml"], cwd=root)
     )
     steps = workflow["jobs"]["deploy"]["steps"]
     select = next(step["run"] for step in steps if step.get("id") == "target")
@@ -49,8 +44,8 @@ def stage(root, host, scratch):
         "deploy/postgres",
         "scripts/deploy",
     )
-    git("checkout", "-q", "--detach", sha)
-    git("update-ref", "refs/remotes/origin/main", sha)
+    git("checkout", "-q", "--detach", "origin/HEAD")
+    git("update-ref", "refs/remotes/origin/main", "HEAD")
     env = {
         "PATH": os.environ["PATH"],
         "HOME": str(scratch / "home"),
@@ -79,4 +74,4 @@ def stage(root, host, scratch):
 
 
 if __name__ == "__main__":
-    print(stage(Path(__file__).resolve().parents[2], Path(sys.argv[1]), Path(sys.argv[2])))
+    print(stage(Path(os.environ["FIXTURE_REPO"]), Path(sys.argv[1]), Path(sys.argv[2])))

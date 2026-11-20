@@ -14,10 +14,14 @@ KEYS = ("GRAFANA_ADMIN_PASSWORD", "GRAFANA_SECRET_KEY", "GRAFANA_STORE_PASSWORD"
 ENV = Path(".env")
 
 
-def settings():
+def check_env():
     info = ENV.lstat()
-    if not stat.S_ISREG(info.st_mode) or info.st_mode & 0o077 or info.st_uid != os.geteuid():
+    if not stat.S_ISREG(info.st_mode) or stat.S_IMODE(info.st_mode) != 0o600 or info.st_uid != os.geteuid():
         raise SystemExit("Deploy requires an owner-only .env owned by the deploy user")
+
+
+def settings():
+    check_env()
     if any(key in os.environ for key in KEYS):
         raise SystemExit(
             "Configure persistent Grafana credentials in .env, not the deploy process environment"
@@ -164,6 +168,9 @@ def ready(env, address):
 
 if __name__ == "__main__":
     action = sys.argv[1]
+    if action == "check-env":
+        check_env()
+        sys.exit(0)
     values = settings()
     if action == "prepare":
         prepare(values)

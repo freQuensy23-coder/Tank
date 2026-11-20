@@ -68,17 +68,17 @@ jobs:
           ssh_opts=(-i ~/.ssh/id_deploy -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes)
           release="/srv/tank-deploy/releases/$SHA"
           files=(compose.yaml)
-          if git cat-file -e "$SHA:compose.grafana.yaml" 2>/dev/null; then
-            files+=(compose.grafana.yaml deploy/grafana/bootstrap.sql deploy/grafana/install-views.sql
+          if git cat-file -e "$SHA:deploy/grafana/production-version" 2>/dev/null; then
+            files+=(deploy/grafana/production-version compose.grafana.yaml deploy/grafana/bootstrap.sql deploy/grafana/install-views.sql
               deploy/grafana/queue-views.sql deploy/grafana/pipeline-views.sql deploy/grafana/dashboards deploy/grafana/provisioning)
           fi
           if git cat-file -e "$SHA:apify/x-reader" 2>/dev/null; then files+=(apify/x-reader); fi
-          git archive "$SHA" "${files[@]}" | ssh "${ssh_opts[@]}" "$SSH_USER@$SSH_HOST" "
-            set -eu
+          git archive "$SHA" "${files[@]}" | ssh "${ssh_opts[@]}" "$SSH_USER@$SSH_HOST" "sudo -n bash -eu -c '
             install -d -m 700 $release
             stage=\$(mktemp -d $release/.stage.XXXXXXXX)
-            trap 'rm -rf \$stage' EXIT
+            trap \"rm -rf \$stage\" EXIT
             tar -x -C \$stage -p --no-same-owner
-            if [ -d $release/stack ]; then diff -qr \$stage $release/stack; else mv -T \$stage $release/stack; fi"
-          scp "${ssh_opts[@]}" "$RUNNER_TEMP/tank-orchestrator/"* "$SSH_USER@$SSH_HOST:/srv/tank-deploy/"
-          ssh "${ssh_opts[@]}" "$SSH_USER@$SSH_HOST" "/srv/tank-deploy/deploy.sh $SHA"
+            if [ -d $release/stack ]; then diff -qr \$stage $release/stack; else mv -T \$stage $release/stack; fi'"
+          tar -C "$RUNNER_TEMP/tank-orchestrator" -cf - deploy.sh apify_worker.py grafana.py |
+            ssh "${ssh_opts[@]}" "$SSH_USER@$SSH_HOST" "sudo -n tar -C /srv/tank-deploy --no-same-owner -xf -"
+          ssh "${ssh_opts[@]}" "$SSH_USER@$SSH_HOST" "sudo -n /srv/tank-deploy/deploy.sh $SHA"

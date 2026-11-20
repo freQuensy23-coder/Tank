@@ -36,7 +36,18 @@ trap 'exit 143' TERM
 python=python3
 if [[ -x .venv/bin/python ]]; then python=.venv/bin/python; fi
 "$engine" build -q --label org.tank.content="$project" -t "$image" deploy/postgres >/dev/null
-sha=$(git rev-parse HEAD)
+a=$(git rev-parse HEAD)
+export legacy=92c24e88a86dbe583ae3cee2f56aaf88e875ce29 FIXTURE_REPO=$tmp/source
+sha=$a
+git clone -q --shared --no-checkout . "$FIXTURE_REPO"
+git -C "$FIXTURE_REPO" sparse-checkout set deploy/grafana
+git -C "$FIXTURE_REPO" checkout -q -b fixture-main "$a"
+dashboard=deploy/grafana/dashboards/tank-queue.json
+jq '.tags += ["fixture-release-b"]' "$FIXTURE_REPO/$dashboard" > "$tmp/b.json"
+mv "$tmp/b.json" "$FIXTURE_REPO/$dashboard"
+git -C "$FIXTURE_REPO" -c user.name=Fixture -c user.email=fixture@example.invalid commit -qm 'Distinct enabled release B' -- "$dashboard"
+b=$(git -C "$FIXTURE_REPO" rev-parse HEAD)
+[[ $a != "$b" ]]
 stage() {
     local runner
     runner=$(mktemp -d "$tmp/runner.XXXXXXXX")
@@ -58,10 +69,12 @@ role_hashes() {
 base_roles="rolname IN ('postgres','tank','oma','tank_agent','tank_replay_agent')"
 if [[ $scenario == existing ]]; then
     mkdir "$tmp/legacy"
-    cp deploy/postgres/{Dockerfile,init.sh} "$tmp/legacy/"
-    grep -v 'tank_grafana_' deploy/postgres/pg_hba.conf > "$tmp/legacy/pg_hba.conf"
+    git archive "$legacy:deploy/postgres" | tar -x -C "$tmp/legacy"
+    git show "$legacy:compose.yaml" > "$host/compose.yaml"
+    git cat-file -e "$legacy:compose.grafana.yaml"
+    printf '%s\n' "$legacy" > "$host/deployed"
     "$engine" build -q --label org.tank.content="$project-legacy" -t "$image-legacy" "$tmp/legacy" >/dev/null
-    TANK_VERSION="$project-legacy" "${base_compose[@]}" up -d --no-deps --wait postgres
+    TANK_VERSION="$project-legacy" "$engine" compose -p "$project" --env-file "$host/.env" -f "$host/compose.yaml" up -d --no-deps --wait postgres
     legacy_id=$("${base_compose[@]}" ps -q postgres)
     printf "GRAFANA_READER_PASSWORD='%s\$fixture'\n" "$(openssl rand -hex 20)" >> "$host/.env"
     bash "$tests/migrate.sh"
@@ -121,7 +134,7 @@ for sql in 'SELECT * FROM ops.jobs LIMIT 0' 'SELECT * FROM ops.source_poll_count
     printf 'Reader denied: %s\n' "$sql"
 done
 [[ $("${pg[@]}" -c "SELECT has_table_privilege('tank_grafana_reader','tank_metrics.queue_now','INSERT, UPDATE, DELETE') OR has_schema_privilege('tank_grafana_reader','tank_metrics','CREATE') OR has_database_privilege('tank_grafana_reader','tank','TEMP')") == f ]]
-for file in deploy/grafana/dashboards/*.json; do
+for file in "$stack"/deploy/grafana/dashboards/*.json; do
     uid=$(jq -er '.uid' "$file")
     "${http[@]}" "$base/api/dashboards/uid/$uid" > "$tmp/dashboard"
     jq -ec 'select(.meta.provisioned and .meta.folderUid == "tank") | .dashboard.uid' "$tmp/dashboard"
@@ -155,12 +168,13 @@ store_check="SELECT count(*) FROM grafana.data_source WHERE uid='tank-postgres'"
 [[ $("${pg[@]}" -c "$store_check") == 1 ]]
 "${http[@]}" -X PUT -H 'Content-Type: application/json' --data '{"name":"Persistence check","email":"admin@localhost","login":"admin"}' "$base/api/user" >/dev/null
 old_id=$("${compose[@]}" ps -q grafana)
-"${compose[@]}" rm -fs grafana
-"${pg[@]}" -d postgres -c 'CREATE DATABASE tank_test_grafana TEMPLATE tank'
+"${pg[@]}" -d postgres -c 'CREATE DATABASE tank_test_grafana'
+"$engine" exec -u postgres "$project-postgres-1" pg_dump -d tank | "${pg[@]}" -d tank_test_grafana >/dev/null
 for fixture in tests/grafana/*.sql; do
     "${pg[@]}" -d tank_test_grafana -f - < "$fixture"
     printf 'PostgreSQL fixture passed: %s\n' "$fixture"
 done
+sha=$b
 [[ $(stage) == "$sha" ]]
 rollout
 [[ $("${compose[@]}" ps -q grafana) != "$old_id" ]]
@@ -170,5 +184,41 @@ if [[ $scenario == existing ]]; then [[ $("${pg[@]}" -c 'SELECT value FROM ops.r
 resolve_url
 [[ $("${pg[@]}" -c "$store_check") == 1 ]]
 "${http[@]}" "$base/api/user" | jq -ec 'select(.login == "admin" and .name == "Persistence check") | {login,name}'
+"${pg[@]}" -f - < "$tests/seeds/minute-checks.sql"
+"${http[@]}" "$base/api/dashboards/uid/tank-pipeline" |
+    jq -ce '.dashboard.panels[] | select(.id == 34 and .type == "timeseries") |
+        {from:"1767225600000",to:"1767226320000",queries:.targets}' |
+    "${http[@]}" -H 'Content-Type: application/json' --data-binary @- "$base/api/ds/query" |
+    jq -ec '.results.A | select(.error == null and (.frames | length == 1)) | .frames[0] |
+        .data.values as $values | [.schema.fields | to_entries[] | {key:.value.name,value:$values[.key]}] | from_entries |
+        select((.Time // .time) == [1767225600000,1767226200000]) | del(.Time,.time) |
+        select(. == {DONE:[2,0],FAILED:[1,0],EXPIRED:[1,1],QUEUED:[1,0],RUNNING:[0,1]})'
 printf 'Grafana container replaced; admin and provisioned datasource retained in PostgreSQL.\n'
-printf 'PASS %s %s: two rollouts; unchanged credentials, role verifiers and database state.\n' "$scenario" "$sha"
+assert_b() {
+    resolve_url
+    "${http[@]}" "$base/api/dashboards/uid/tank-queue" | jq -e '.dashboard.tags | index("fixture-release-b") != null' >/dev/null
+    "${http[@]}" "$base/api/user" | jq -e '.login == "admin" and .name == "Persistence check"' >/dev/null
+    cmp -s "$tmp/env.first" "$host/.env"
+    role_hashes 'true' | cmp "$tmp/all-roles" -
+    [[ $("${pg[@]}" -c "$store_check") == 1 ]]
+}
+assert_b
+if [[ $scenario == existing ]]; then
+    touch "$tmp/fail-ready"
+    rm -f "$tmp/capture"
+    if timeout 240 env PATH="$tmp/bin:$PATH" "$host/deploy.sh" "$a" > "$tmp/failure.log"; then exit 1; else [[ $? == 1 ]]; fi
+    grep -Fx "rolled back to $b" "$tmp/failure.log"
+    [[ ! -e $tmp/fail-ready && $(<"$host/deployed") == "$b" ]]
+    assert_b
+    sha=$legacy
+    [[ $(stage) == "$legacy" && ! -e $host/releases/$legacy/stack/compose.grafana.yaml ]]
+    cmp "$host/compose.yaml" "$host/releases/$legacy/stack/compose.yaml"
+    rollout
+    [[ -z $("$engine" ps -aq --filter "label=com.docker.compose.project=$project" --filter label=com.docker.compose.service=grafana) ]]
+    [[ $("$engine" inspect -f '{{index .Config.Labels "org.tank.content"}}' "$project-postgres-1") == "$project-legacy" ]]
+    [[ $("${pg[@]}" -c 'SELECT value FROM ops.rollout_sentinel') == "$sentinel" ]]
+    sha=$b
+    rollout
+    assert_b
+fi
+printf 'PASS %s A=%s B=%s legacy=%s\n' "$scenario" "$a" "$b" "$legacy"

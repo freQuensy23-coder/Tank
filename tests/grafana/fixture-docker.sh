@@ -6,8 +6,9 @@ case $1 in
     compose)
         shift
         if [[ " $* " == *' -p tank-settings -f - config --format json '* ]]; then exec "$engine" compose "$@"; fi
-        export TANK_VERSION=$project
+        if [[ $TANK_VERSION == "$legacy" ]]; then export TANK_VERSION=$project-legacy; else export TANK_VERSION=$project; fi
         case " $* " in
+            *' config -q '*) exec "$engine" compose -p "$project" "$@" ;;
             *' pull -q '*) exit 0 ;;
             *' up '*)
                 case $last in
@@ -16,11 +17,14 @@ case $1 in
                     tank-capture) touch "$scratch/capture"; exit 0 ;;
                     tank) bash "$tests/migrate.sh"; exit 0 ;;
                 esac ;;
-            *' port grafana 3000 '*) exec "$engine" compose -p "$project" "$@" ;;
+            *' port grafana 3000 '*)
+                if [[ -e $scratch/fail-ready ]]; then rm "$scratch/fail-ready" "$scratch/capture"; exit 1; fi
+                exec "$engine" compose -p "$project" "$@" ;;
         esac ;;
     inspect)
         case $last in
             tank-postgres-1) exec "$engine" inspect "${@:2:$#-2}" "$project-postgres-1" ;;
+            ghcr.io/frequensy23-coder/tank/tank-postgres:"$legacy") exec "$engine" inspect "${@:2:$#-2}" "$image-legacy" ;;
             ghcr.io/frequensy23-coder/tank/tank-postgres:*) exec "$engine" inspect "${@:2:$#-2}" "$image" ;;
             capture-fixture|tank-clickhouse-1|tank-openma-1|tank-tank-1|ghcr.io/*)
                 case $3 in
