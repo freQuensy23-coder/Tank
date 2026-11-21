@@ -17,6 +17,7 @@ services:
       TANK_REPLAY_AGENT_DB_PASSWORD: ${TANK_REPLAY_AGENT_DB_PASSWORD:?}
     volumes:
     - pg-data:/var/lib/postgresql/data
+    - backup-socket:/var/run/postgresql
     logging: *logging
     networks: [tank-net]
   clickhouse:
@@ -87,11 +88,11 @@ services:
       ETHERSCAN_API_KEY: ${ETHERSCAN_API_KEY:?}
       CODEX_GATEWAY_KEY: ${CODEX_GATEWAY_KEY:?}
       APIFY_API_TOKEN: ${APIFY_API_TOKEN:?}
+      TANK_BACKUP_DELEGATED: 'true'
     volumes:
     - tank-data:/data
     - sealed-replay-evidence:/data/replay/evidence
     - codex-auth:/codex-auth
-    - backup:/backup
     depends_on:
       postgres: {condition: service_healthy}
       clickhouse: {condition: service_healthy}
@@ -102,6 +103,29 @@ services:
         max-size: 20m
         max-file: '8'
     networks: [tank-net]
+  tank-backup:
+    image: ghcr.io/frequensy23-coder/tank/tank:${TANK_VERSION:?}
+    restart: unless-stopped
+    command: [tank, backup, --nightly]
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    environment:
+      TANK_DB_PASSWORD: ${TANK_DB_PASSWORD:?}
+      TANK_BACKUP_POSTGRES_SOCKET: /run/tank-backup-postgres
+    volumes:
+    - tank-data:/data:ro
+    - backup-socket:/run/tank-backup-postgres:ro
+    - backup:/backup
+    depends_on:
+      postgres: {condition: service_healthy}
+      tank: {condition: service_started}
+    healthcheck:
+      test: [CMD-SHELL, 'test -w /backup && for db in tank oma; do psql -Xw -h "$$TANK_BACKUP_POSTGRES_SOCKET" -U tank_backup -d "$$db" -Atqc "SELECT 1" >/dev/null || exit 1; done']
+      interval: 5s
+      timeout: 3s
+      retries: 3
+    logging: *logging
+    networks: [tank-net]
 volumes:
   tank-data: {}
   codex-auth: {}
@@ -109,6 +133,7 @@ volumes:
   clickhouse-data: {}
   openma-data: {}
   sealed-replay-evidence: {}
+  backup-socket: {}
   backup:
     driver: local
     driver_opts:

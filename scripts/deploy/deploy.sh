@@ -145,7 +145,13 @@ healthy() {
 }
 
 roll() {
-  local v=$1 svc old_cap new_cap pid ready handoff wait
+  local v=$1 svc old_cap new_cap pid ready handoff wait services backup=no
+  services=$(compose "$v" config --services) || return 1
+  if grep -qxF tank-backup <<< "$services"; then
+    backup=yes
+  else
+    remove_service tank-backup || return 1
+  fi
   if ! dedicated_https "$v"; then
     remove_service grafana-edge || return 1
   fi
@@ -158,6 +164,9 @@ roll() {
     start_backend "$v" "$svc" || return 1
     healthy "tank-$svc-1" || { echo "$svc not healthy"; return 1; }
   done
+  if [ "$backup" = yes ]; then
+    compose "$v" exec -T -u postgres postgres provision-tank-backup || return 1
+  fi
   old_cap=$(docker ps -q --filter label=com.docker.compose.project=tank --filter label=com.docker.compose.service=tank-capture)
   echo "tank-capture standby next to ${old_cap:-none} $(date -u +%T)"
   compose "$v" up -d --no-deps --no-recreate --scale tank-capture=$(( $(echo "$old_cap" | grep -c .) + 1 )) tank-capture || return 1
@@ -183,6 +192,9 @@ roll() {
   compose "$v" up -d --no-deps tank || return 1
   healthy tank-tank-1 || { echo "tank not running"; return 1; }
   if grafana_enabled "$v"; then start_grafana "$v" || return 1; fi
+  if [ "$backup" = yes ]; then
+    compose "$v" up -d --no-deps --wait --wait-timeout 30 tank-backup || return 1
+  fi
 }
 
 verify() {
@@ -229,9 +241,12 @@ recover() {
       echo "Tank rollback failed"
       status=1
     fi
-  elif [ "$status" -ne 0 ] && [ "$tank_started" = yes ] && grafana_enabled "$SHA"; then
-    remove_service grafana-edge || status=1
-    remove_service grafana || status=1
+  elif [ "$status" -ne 0 ] && [ "$tank_started" = yes ]; then
+    remove_service tank-backup || status=1
+    if grafana_enabled "$SHA"; then
+      remove_service grafana-edge || status=1
+      remove_service grafana || status=1
+    fi
   fi
   exit "$status"
 }

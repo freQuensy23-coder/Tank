@@ -1,0 +1,20 @@
+#!/bin/sh
+set -eu
+exec psql -X -w -U postgres -d postgres --set ON_ERROR_STOP=1 <<'SQL'
+BEGIN;
+DO $$
+BEGIN
+    IF to_regrole('tank_backup') IS NULL THEN
+        CREATE ROLE tank_backup LOGIN CONNECTION LIMIT 2;
+        COMMENT ON ROLE tank_backup IS 'Tank backup deployment v1';
+    ELSIF shobj_description(to_regrole('tank_backup'), 'pg_authid') IS DISTINCT FROM 'Tank backup deployment v1' THEN
+        RAISE EXCEPTION 'Refusing to adopt existing tank_backup role';
+    END IF;
+END
+$$;
+ALTER ROLE tank_backup LOGIN NOSUPERUSER INHERIT NOCREATEROLE NOCREATEDB NOREPLICATION NOBYPASSRLS CONNECTION LIMIT 2 PASSWORD NULL;
+ALTER ROLE tank_backup SET default_transaction_read_only = on;
+GRANT CONNECT ON DATABASE tank, oma TO tank_backup;
+GRANT pg_read_all_data TO tank_backup;
+COMMIT;
+SQL

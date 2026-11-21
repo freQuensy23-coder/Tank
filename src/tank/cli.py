@@ -1,6 +1,7 @@
 """Operator CLI. Commands never send Telegram messages except `serve`."""
 
 import asyncio
+import contextlib
 import json
 import signal
 import sys
@@ -624,15 +625,35 @@ def calibrate(input_path, output_dir):
 @click.option(
     "--prune", is_flag=True, help="Apply retention only after the complete backup passes verification."
 )
-def backup(force, prune):
+@click.option("--nightly", is_flag=True, help="Run the nightly backup and retention loop.")
+def backup(force, prune, nightly):
     """Create and verify the canonical Tank/OpenMA/evidence recovery snapshot."""
 
     async def command(repo, settings):
         from tank.scheduler import Scheduler
         from tank.util import utcnow
 
-        return await Scheduler(repo, settings, None, None).maintenance(utcnow(), force=force, prune=prune)
+        if settings.backup_delegated:
+            raise ValueError("Run backups in the tank-backup service")
+        scheduler = Scheduler(repo, settings, None, None)
+        if not nightly:
+            return await scheduler.maintenance(utcnow(), force=force, prune=prune)
+        stop = asyncio.Event()
+        loop = asyncio.get_running_loop()
+        for sig in (signal.SIGINT, signal.SIGTERM):
+            loop.add_signal_handler(sig, stop.set)
+        try:
+            while not stop.is_set():
+                now = utcnow()
+                scheduler.launch("backup", lambda now=now: scheduler.maintenance(now))
+                with contextlib.suppress(TimeoutError):
+                    await asyncio.wait_for(stop.wait(), timeout=30)
+        finally:
+            await scheduler.close()
+        return {"status": "stopped"}
 
+    if nightly and (force or prune):
+        raise click.UsageError("--nightly cannot be combined with --force or --prune")
     run_db(command)
 
 

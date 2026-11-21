@@ -98,6 +98,58 @@ def test_grafana_preflight_refuses_before_provider_or_rollout(tmp_path, invalid)
         assert not calls.exists()
 
 
+@pytest.mark.parametrize("variant", ["base", "grafana", "historical", "provision-fails"])
+def test_roll_provisions_backup_before_start_and_health_gate(tmp_path, variant):
+    source = (Path(__file__).parents[1] / "scripts/deploy/deploy.sh").read_text()
+    roll = source[source.index("roll() {") : source.index("\nverify() {")]
+    harness = """
+compose() {
+  shift
+  printf '%s\\n' "$*" >> calls
+  case "$*" in
+    'config --services')
+      if [[ $VARIANT != historical ]]; then echo tank-backup; fi
+      if [[ $VARIANT == grafana ]]; then echo grafana; fi
+      ;;
+    'exec -T -u postgres postgres provision-tank-backup') [[ $VARIANT != provision-fails ]]; return ;;
+  esac
+  return 0
+}
+remove_service() { printf 'remove %s\\n' "$1" >> calls; }
+start_backend() { printf 'start %s\\n' "$2" >> calls; }
+healthy() { printf 'healthy %s\\n' "$1" >> calls; }
+grafana_enabled() { [[ $VARIANT == grafana ]]; }
+start_grafana() { printf 'start grafana\\n' >> calls; }
+dedicated_https() { return 1; }
+docker() { :; }
+nsenter() { return 1; }
+sleep() { :; }
+"""
+    result = subprocess.run(
+        ["bash", "-c", harness + roll + '\nroll "$1"', "bash", CANDIDATE],
+        cwd=tmp_path,
+        env={**os.environ, "VARIANT": variant},
+        capture_output=True,
+        text=True,
+        timeout=4,
+    )
+    calls = (tmp_path / "calls").read_text().splitlines()
+    provision = "exec -T -u postgres postgres provision-tank-backup"
+    start_backup = "up -d --no-deps --wait --wait-timeout 30 tank-backup"
+    if variant == "historical":
+        assert result.returncode == 0 and "remove tank-backup" in calls
+        assert provision not in calls and start_backup not in calls
+    elif variant == "provision-fails":
+        assert result.returncode != 0 and calls[-1] == provision
+    else:
+        assert result.returncode == 0, result.stdout + result.stderr
+        assert calls.index("healthy tank-postgres-1") < calls.index(provision) < calls.index(start_backup)
+        if variant == "grafana":
+            assert calls.index("start grafana") < calls.index(start_backup)
+        else:
+            assert "start grafana" not in calls
+
+
 def test_historical_target_uses_current_main_deployment_helper(tmp_path):
     root = Path(__file__).parents[1]
     workflow = yaml.safe_load((root / ".github/workflows/deploy.yml").read_text())
