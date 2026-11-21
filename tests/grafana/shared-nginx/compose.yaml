@@ -1,0 +1,53 @@
+services:
+  edge:
+    image: ${EDGE_IMAGE:?}
+    entrypoint: [sleep, infinity]
+    environment:
+      TEST_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:?}
+      TEST_VIEWER_PASSWORD: ${TEST_VIEWER_PASSWORD:?}
+    networks:
+      tank-net:
+        aliases: [grafana.127-0-0-1.sslip.io]
+  pebble:
+    image: ghcr.io/letsencrypt/pebble@sha256:0c81f05db371f436c97fb894bd6d2ab8fc9c8e2ce40f8bef8a8e15941bcd75ef
+    command: [-config, /edge-pebble.json]
+    environment:
+      PEBBLE_VA_NOSLEEP: '1'
+      PEBBLE_VA_ALWAYS_VALID: '0'
+      PEBBLE_WFE_NONCEREJECT: '0'
+      PEBBLE_AUTHZREUSE: '0'
+    volumes:
+      - ./tests/grafana/shared-nginx/edge-pebble.json:/edge-pebble.json:ro
+    networks: [tank-net]
+  postgres:
+    image: postgres:16-bookworm@sha256:ce3efec6bc404f6b15ebf5d9bed6b45a9d4655aea238d7dacc3467ccb05a1175
+    environment:
+      POSTGRES_DB: tank
+      POSTGRES_PASSWORD: ${TEST_POSTGRES_PASSWORD:?}
+      GRAFANA_READER_PASSWORD: ${GRAFANA_READER_PASSWORD:?}
+      GRAFANA_STORE_PASSWORD: ${GRAFANA_STORE_PASSWORD:?}
+    volumes:
+      - ./deploy/grafana/staging/hel/fixture.sql:/docker-entrypoint-initdb.d/10-fixture.sql:ro
+      - ./tests/grafana/shared-nginx/store.sql:/docker-entrypoint-initdb.d/20-store.sql:ro
+    healthcheck:
+      test: [CMD, pg_isready, -h, 127.0.0.1, -U, postgres, -d, tank]
+      interval: 2s
+      timeout: 3s
+      retries: 60
+    networks: [tank-net]
+  grafana:
+    environment:
+      GF_SERVER_HTTP_ADDR: ${FIXTURE_BIND_ADDR:?}
+      GF_SERVER_HTTP_PORT: ${FIXTURE_BIND_PORT:?}
+    healthcheck:
+      test: [CMD, wget, -qO, /dev/null, "http://${FIXTURE_BIND_ADDR:?}:${FIXTURE_BIND_PORT:?}/api/health"]
+    network_mode: service:edge
+    networks: !reset null
+    ports: !reset []
+    depends_on:
+      edge: {condition: service_started}
+      postgres: {condition: service_healthy}
+networks:
+  tank-net:
+    internal: true
+    enable_ipv6: true

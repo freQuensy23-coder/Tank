@@ -115,6 +115,8 @@ if [[ $scenario == existing ]]; then
     [[ $(wc -l < "$tmp/base-roles") == 5 ]]
 fi
 cp "$host/.env" "$tmp/env.before"
+printf '#!/bin/sh\nprintf "oracle-vps\\n"\n' > "$tmp/bin/hostname"
+chmod 755 "$tmp/bin/hostname"
 install -m 755 "$tests/fixture-docker.sh" "$tmp/bin/docker"
 ln -s /bin/true "$tmp/bin/nsenter"
 printf '#!/bin/sh\nif [ "$1" = apify_worker.py ]; then printf "fixture fixture\\n"; else exec "%s" "$@"; fi\n' "$(command -v python3)" > "$tmp/bin/python3"

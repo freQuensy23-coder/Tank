@@ -127,7 +127,7 @@ def install(env, directory, container):
 
 
 def ready(env, address, dashboards):
-    if not re.fullmatch(r"127\.0\.0\.1:[0-9]+", address):
+    if address != "127.0.0.2:983" and not re.fullmatch(r"127\.0\.0\.1:[0-9]+", address):
         raise SystemExit("Refusing to send Grafana credentials to a non-loopback listener")
     auth = base64.b64encode(("admin:" + env[KEYS[0]]).encode()).decode()
 
