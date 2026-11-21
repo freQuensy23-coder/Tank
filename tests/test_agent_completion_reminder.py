@@ -71,6 +71,8 @@ async def seed(repo, items=("i",), kind="NEW_ITEM"):
         ],
     }
     await repo.put("ops.agent_sessions", "s", session)
+    for row in session["message_log"]:
+        await repo.enqueue("AGENT_MESSAGE", row["payload"], row["payload"]["item_id"] + ":" + kind)
     return session
 
 
