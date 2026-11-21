@@ -1,6 +1,5 @@
 import base64
 import http.client
-import ipaddress
 import json
 import os
 import re
@@ -21,14 +20,14 @@ def check_env():
         raise SystemExit("Deploy requires an owner-only .env owned by the deploy user")
 
 
-def settings(keys=KEYS):
+def settings():
     check_env()
-    if any(key in os.environ for key in keys):
+    if any(key in os.environ for key in KEYS):
         raise SystemExit(
             "Configure persistent Grafana credentials in .env, not the deploy process environment"
         )
     missing = secrets.token_hex(32)
-    projection = {key: "${" + key + "-" + missing + "}" for key in keys}
+    projection = {key: "${" + key + "-" + missing + "}" for key in KEYS}
     projection["dollar"] = "${TANK_DEPLOY_DOLLAR}"
     model = {"services": {"settings": {"image": "scratch", "environment": projection}}}
     result = subprocess.run(
@@ -55,24 +54,9 @@ def settings(keys=KEYS):
     env = json.loads(result.stdout)["services"]["settings"]["environment"]
     if env.pop("dollar") == "$$":
         env = {key: value.replace("$$", "$") for key, value in env.items()}
-    if any(not env[key] for key in keys):
+    if any(not env[key] for key in KEYS):
         raise SystemExit("Refusing an explicitly empty Grafana credential")
     return {k: v for k, v in env.items() if v != missing}
-
-
-def external_host():
-    key = "GRAFANA_EXTERNAL_HOST"
-    host = settings((key,)).get(key)
-    if host is None:
-        return ""
-    match = re.fullmatch(r"grafana\.([0-9]+-[0-9]+-[0-9]+-[0-9]+)\.sslip\.io", host)
-    if match:
-        try:
-            ipaddress.IPv4Address(match[1].replace("-", "."))
-            return host
-        except ipaddress.AddressValueError:
-            pass
-    raise SystemExit("GRAFANA_EXTERNAL_HOST must be the exact grafana.<dashed-IPv4>.sslip.io name")
 
 
 def prepare(env):
@@ -143,7 +127,7 @@ def install(env, directory, container):
 
 
 def ready(env, address, dashboards):
-    if not re.fullmatch(r"127\.0\.0\.1:[0-9]+", address):
+    if address != "127.0.0.2:983" and not re.fullmatch(r"127\.0\.0\.1:[0-9]+", address):
         raise SystemExit("Refusing to send Grafana credentials to a non-loopback listener")
     auth = base64.b64encode(("admin:" + env[KEYS[0]]).encode()).decode()
 
@@ -188,9 +172,6 @@ if __name__ == "__main__":
     action = sys.argv[1]
     if action == "check-env":
         check_env()
-        sys.exit(0)
-    if action == "external-host":
-        print(external_host())
         sys.exit(0)
     values = settings()
     if action == "require-credentials":

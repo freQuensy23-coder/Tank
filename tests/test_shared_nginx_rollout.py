@@ -11,8 +11,8 @@ NEW = "a" * 40
 OLD = "b" * 40
 
 
-@pytest.mark.parametrize("override", [True, False])
-def test_rollout_selects_one_ingress_and_recovers_historical_release(tmp_path, override):
+@pytest.mark.parametrize(("override", "nginx"), [(True, True), (False, False), (False, True)])
+def test_rollout_selects_one_ingress_and_recovers_historical_release(tmp_path, override, nginx):
     stack = tmp_path / "releases" / NEW / "stack"
     old = tmp_path / "releases" / OLD / "stack"
     for release in (stack, old):
@@ -27,7 +27,6 @@ def test_rollout_selects_one_ingress_and_recovers_historical_release(tmp_path, o
     shared = stack / "deploy/grafana/nginx"
     shared.mkdir()
     (shared / "compose.yaml").touch()
-    (shared / "site.py").write_text("import sys\nwith open('site', 'a') as f: print(*sys.argv[1:], file=f)\n")
     (tmp_path / "deployed").write_text(OLD + "\n")
     script = (ROOT / "scripts/deploy/deploy.sh").read_text()
     hooks = """docker() {
@@ -40,10 +39,7 @@ def test_rollout_selects_one_ingress_and_recovers_historical_release(tmp_path, o
     *) return 1 ;;
   esac
 }
-python3() {
-  if [[ $1 != grafana.py ]]; then command python3 "$@"; return $?; fi
-  if [[ $2 == external-host ]]; then printf '%s\\n' "$FIXTURE_HOST"; fi
-}
+python3() { [[ $1 == grafana.py ]]; }
 curl() {
   case "${!#}" in */login) printf '200' ;; */api/dashboards/uid/*) printf '401' ;; *) return 1 ;; esac
 }
@@ -53,16 +49,26 @@ nsenter() { return 0; }
 verify() { return 1; }
 """
     marker = "previous=$(cat deployed 2>/dev/null || true)"
-    script = script.replace(marker, hooks + marker)
+    enabled = tmp_path / "sites-enabled"
+    if nginx:
+        enabled.mkdir()
+    site = enabled / "zzzz-tank-grafana"
+    if override:
+        site.write_text(f"server_name {HOST};\n")
+    script = script.replace(marker, hooks + marker).replace("/etc/nginx/sites-enabled", str(enabled))
     (tmp_path / "deploy.sh").write_text(script)
     result = subprocess.run(
         ["bash", "deploy.sh", NEW],
         cwd=tmp_path,
-        env={**os.environ, "LIMIT": "0", "FIXTURE_HOST": HOST if override else ""},
+        env={**os.environ, "LIMIT": "0"},
         capture_output=True,
         text=True,
         timeout=4,
     )
+    if nginx and not override:
+        assert result.returncode == 1 and "Provision the Nexus" in result.stdout
+        assert not (tmp_path / "calls").exists()
+        return
     assert result.returncode == 1 and f"rolled back to {OLD}" in result.stdout, result.stdout + result.stderr
     calls = (tmp_path / "calls").read_text().splitlines()
     for sha in (NEW, OLD):
@@ -71,32 +77,9 @@ verify() { return 1; }
         assert all(("/https/compose.yaml" in row) == (not override) for row in rows)
         assert all(("/nginx/compose.yaml" in row) == (override and sha == NEW) for row in rows)
         assert any(row.endswith(" grafana-edge") for row in rows) != override
-    if override:
-        assert (tmp_path / "site").read_text().splitlines() == [f"apply {HOST} 13000", "remove"]
-    else:
-        assert not (tmp_path / "site").exists()
 
 
 @pytest.mark.integration
 @pytest.mark.process
 def test_shared_nginx_certificate_viewer_and_rollback():
     subprocess.run([sys.executable, ROOT / "tests/grafana/shared-nginx/edge-run.py"], check=True, timeout=280)
-
-
-@pytest.mark.integration
-@pytest.mark.parametrize("host", [None, HOST, "", "grafana.256-0-0-1.sslip.io", "example.invalid/path"])
-def test_external_host_projection_uses_only_the_protected_deployment_setting(tmp_path, host):
-    envfile = tmp_path / ".env"
-    envfile.write_text("" if host is None else f"GRAFANA_EXTERNAL_HOST='{host}'\n")
-    envfile.chmod(0o600)
-    env = {"PATH": os.environ["PATH"], "HOME": str(tmp_path)}
-    result = subprocess.run(
-        [sys.executable, ROOT / "scripts/deploy/grafana.py", "external-host"],
-        cwd=tmp_path,
-        env=env,
-        capture_output=True,
-        text=True,
-        timeout=8,
-    )
-    assert (result.returncode == 0) == (host in (HOST, None)), result.stderr
-    assert result.stdout.strip() == (host if host == HOST else "")

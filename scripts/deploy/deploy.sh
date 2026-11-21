@@ -29,7 +29,7 @@ dedicated_https() {
 preflight_release() {
   local v=$1 stack="releases/$1/stack" marker="releases/$1/stack/deploy/grafana/production-version"
   if [ -d "$stack/deploy/grafana/nginx" ]; then
-    [ -f "$stack/deploy/grafana/nginx/compose.yaml" ] && grafana_enabled "$v" && [ -f "$stack/deploy/grafana/nginx/site.py" ] || {
+    [ -f "$stack/deploy/grafana/nginx/compose.yaml" ] && grafana_enabled "$v" || {
       echo 'Incomplete shared nginx release'; return 1;
     }
   fi
@@ -84,7 +84,7 @@ https_ready() {
 }
 
 start_grafana() {
-  local v=$1 migrated=no address
+  local v=$1 migrated=no
   for _ in $(seq 1 60); do
     if [ "$(docker exec -u postgres tank-postgres-1 psql -XAt -d tank -c \
       "SELECT 1 FROM ops.schema_migrations WHERE version='013_source_poll_counts.sql'" 2>/dev/null)" = 1 ]; then
@@ -96,13 +96,9 @@ start_grafana() {
   python3 grafana.py install "releases/$v/stack/deploy/grafana" tank-postgres-1 || return 1
   compose "$v" up -d --no-deps --wait --wait-timeout 120 grafana || return 1
   grafana_ready "$v" || return 1
-  if shared_nginx "$v"; then
-    address=$(compose "$v" port grafana 3000) || return 1
-    [[ $address =~ ^127\.0\.0\.1:([0-9]+)$ ]] || return 1
-    python3 "releases/$v/stack/deploy/grafana/nginx/site.py" apply "$external_host" "${BASH_REMATCH[1]}" || return 1
-  elif dedicated_https "$v"; then
+  if dedicated_https "$v"; then
     compose "$v" up -d --no-deps grafana-edge || return 1
-  else
+  elif ! shared_nginx "$v"; then
     return 0
   fi
   for _ in $(seq 1 30); do
@@ -121,19 +117,8 @@ healthy() {
   return 1
 }
 
-remove_shared_site() {
-  local release
-  for release in "$SHA" "$previous"; do
-    if shared_nginx "$release"; then
-      python3 "releases/$release/stack/deploy/grafana/nginx/site.py" remove
-      return $?
-    fi
-  done
-}
-
 roll() {
   local v=$1 svc old_cap new_cap pid ready handoff wait
-  if ! shared_nginx "$v"; then remove_shared_site || return 1; fi
   if ! dedicated_https "$v"; then
     remove_service grafana-edge || return 1
   fi
@@ -223,7 +208,6 @@ recover() {
       status=1
     fi
   elif [ "$status" -ne 0 ] && [ "$tank_started" = yes ] && grafana_enabled "$SHA"; then
-    remove_shared_site || { echo "Shared nginx rollback failed"; exit 1; }
     remove_service grafana-edge || status=1
     remove_service grafana || status=1
   fi
@@ -234,12 +218,13 @@ trap 'exit 130' INT
 trap 'exit 143' TERM
 preflight_release "$SHA"
 if [ -n "$previous" ]; then preflight_release "$previous"; fi
-if [[ -e /var/lib/tank-grafana-nginx ]] || grafana_enabled "$SHA" || grafana_enabled "$previous"; then
-  external_host=$(python3 grafana.py external-host)
-fi
-if [[ -z $external_host && ( -e /etc/cron.d/tank-grafana-certbot || -e /var/lib/tank-grafana-nginx/transaction.json ||
-      -e /etc/nginx/sites-enabled/zzzz-tank-grafana.conf || -e /etc/nginx/conf.d/zzzz-tank-grafana.conf ) ]]; then
-  echo 'Restore GRAFANA_EXTERNAL_HOST for this shared-nginx deployment'; exit 1
+site=/etc/nginx/sites-enabled/zzzz-tank-grafana
+if [[ -f $site ]]; then
+  external_host=$(awk '$1 == "server_name" { sub(/;$/, "", $2); print $2; exit }' "$site")
+  [[ $external_host =~ ^grafana\.([0-9]{1,3}-){3}[0-9]{1,3}\.sslip\.io$ ]] || { echo 'Invalid Nexus Grafana site'; exit 1; }
+  export GRAFANA_EXTERNAL_HOST=$external_host
+elif { dedicated_https "$SHA" || dedicated_https "$previous"; } && [[ -d /etc/nginx/sites-enabled ]]; then
+  echo 'Provision the Nexus Grafana site before deploying alongside nginx'; exit 1
 fi
 if [ -n "$previous" ] && grafana_enabled "$previous"; then
   python3 grafana.py require-credentials
