@@ -1,6 +1,8 @@
 #!/bin/sh
 set -eu
-exec psql -X -w -U postgres -d postgres --set ON_ERROR_STOP=1 <<'SQL'
+psql() { command psql -X -w -U postgres --set ON_ERROR_STOP=1 "$@"; }
+
+psql -d postgres <<'SQL'
 BEGIN;
 DO $$
 BEGIN
@@ -15,6 +17,26 @@ $$;
 ALTER ROLE tank_backup LOGIN NOSUPERUSER INHERIT NOCREATEROLE NOCREATEDB NOREPLICATION NOBYPASSRLS CONNECTION LIMIT 2 PASSWORD NULL;
 ALTER ROLE tank_backup SET default_transaction_read_only = on;
 GRANT CONNECT ON DATABASE tank, oma TO tank_backup;
-GRANT pg_read_all_data TO tank_backup;
 COMMIT;
 SQL
+
+for db in tank oma; do
+    psql -d "$db" --set application_owner="$db" <<'SQL'
+BEGIN;
+SET LOCAL search_path = pg_catalog;
+SELECT format('GRANT USAGE ON SCHEMA %I TO tank_backup', nspname),
+       format('GRANT SELECT ON ALL TABLES IN SCHEMA %I TO tank_backup', nspname),
+       format('GRANT SELECT ON ALL SEQUENCES IN SCHEMA %I TO tank_backup', nspname)
+FROM pg_namespace
+WHERE nspname !~ '^pg_' AND nspname <> 'information_schema'
+\gexec
+
+SELECT format('ALTER DEFAULT PRIVILEGES FOR ROLE %I GRANT %s TO tank_backup', rolname, privilege)
+FROM pg_roles
+CROSS JOIN (VALUES ('USAGE ON SCHEMAS'), ('SELECT ON TABLES'), ('SELECT ON SEQUENCES')) AS grants(privilege)
+WHERE rolname = :'application_owner'
+   OR (current_database() = 'tank' AND rolname = 'tank_grafana_store')
+\gexec
+COMMIT;
+SQL
+done

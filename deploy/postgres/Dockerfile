@@ -9,7 +9,7 @@ RUN useradd --uid 1000 --no-create-home --shell /usr/sbin/nologin tank \
     && ln -s /usr/local/bin/provision-tank-backup /docker-entrypoint-initdb.d/20-tank-backup.sh
 ENV POSTGRES_USER=postgres \
     POSTGRES_INITDB_ARGS=--auth-host=scram-sha-256
-HEALTHCHECK --interval=5s --timeout=3s --retries=10 CMD gosu postgres pg_isready -U postgres -d postgres
+HEALTHCHECK --interval=5s --timeout=3s --retries=10 CMD [ "$(cat /proc/1/comm)" = postgres ] && gosu postgres pg_isready -U postgres -d postgres
 CMD ["postgres", \
      "-c", "password_encryption=scram-sha-256", \
      "-c", "hba_file=/etc/postgresql/tank-pg_hba.conf", \

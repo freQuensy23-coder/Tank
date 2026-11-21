@@ -1,6 +1,7 @@
 import os
 import shutil
 import subprocess
+import time
 import uuid
 from datetime import UTC, datetime
 from pathlib import Path
@@ -44,6 +45,8 @@ async def test_peer_backup_restores_grafana_and_both_application_databases(tmp_p
         "1g",
         "--tmpfs",
         "/var/lib/postgresql/data:rw,nosuid,nodev",
+        "--volume",
+        "/var/run/postgresql",
         *(arg for name, value in CREDENTIALS.items() for arg in ("-e", f"{name}={value}")),
         image,
         text=True,
@@ -76,18 +79,18 @@ async def test_peer_backup_restores_grafana_and_both_application_databases(tmp_p
     try:
         started = run("start", container)
         assert started.returncode == 0, started.stderr.decode()
-        ready = exec_pg(
-            "sh",
-            "-ec",
-            "for i in $(seq 1 100); do "
-            'if [ "$(cat /proc/1/comm)" = postgres ] && pg_isready -q -U postgres; '
-            "then exit 0; fi; sleep .1; done; exit 1",
-            check=False,
-        )
-        assert ready.returncode == 0, run("logs", container).stderr.decode()[-4000:]
+        for _ in range(60):
+            status = run("inspect", "--format", "{{.State.Health.Status}}", container, check=True, text=True)
+            if status.stdout.strip() == "healthy":
+                break
+            time.sleep(0.25)
+        else:
+            pytest.fail(run("logs", container).stderr.decode()[-4000:])
         assert sql("tank", "SELECT current_user", role="tank_backup", user="tank").stdout == b"tank_backup\n"
         for db in ("tank", "oma"):
             exec_pg("pg_dump", "-w", "-Fc", "-U", "tank_backup", "-d", db, user="tank")
+        for db in ("tank", "oma"):
+            sql(db, "DROP OWNED BY tank_backup")
         sql("postgres", "REVOKE CONNECT ON DATABASE tank, oma FROM tank_backup; DROP ROLE tank_backup")
         bootstrap = (ROOT / "deploy/grafana/bootstrap.sql").read_bytes()
         exec_pg(
@@ -136,6 +139,27 @@ async def test_peer_backup_restores_grafana_and_both_application_databases(tmp_p
         sql("postgres", "DROP ROLE tank_backup")
         exec_pg("provision-tank-backup")
         exec_pg("provision-tank-backup")
+
+        sql(
+            "tank",
+            "SET ROLE tank_grafana_store; CREATE TABLE grafana.after_provision (id bigserial); "
+            "INSERT INTO grafana.after_provision DEFAULT VALUES",
+        )
+        sql(
+            "oma",
+            "SET ROLE oma; CREATE SCHEMA after_provision; CREATE TABLE after_provision.events (id int); "
+            "INSERT INTO after_provision.events VALUES (53)",
+        )
+
+        for db in ("tank", "oma"):
+            catalog = sql(
+                db,
+                "SELECT rolname FROM pg_catalog.pg_authid LIMIT 1",
+                role="tank_backup",
+                user="tank",
+                check=False,
+            )
+            assert catalog.returncode != 0 and b"permission denied for table pg_authid" in catalog.stderr
 
         assert (
             sql("tank", "SELECT title FROM grafana.dashboard", role="tank_backup", user="tank").stdout
@@ -189,11 +213,23 @@ async def test_peer_backup_restores_grafana_and_both_application_databases(tmp_p
             == b"f|f|f\n"
         )
 
+        socket_volume = run(
+            "inspect",
+            "--format",
+            '{{range .Mounts}}{{if eq .Destination "/var/run/postgresql"}}{{.Name}}{{end}}{{end}}',
+            container,
+            check=True,
+            text=True,
+        ).stdout.strip()
+        assert socket_volume
         wrapper = tmp_path / "pg_dump"
         wrapper.write_text(
             '#!/bin/sh\nset -eu\n[ "$1 $2 $3" = "--no-password --format=custom --file" ]\n'
-            f'exec "{docker}" exec -u tank -e PGHOST -e PGUSER -e PGDATABASE "{container}" '
-            'pg_dump --no-password --format=custom > "$4"\n'
+            '[ -z "${PGPASSWORD+x}${PGHOSTADDR+x}" ]\n'
+            f'exec "{docker}" run --rm --network none --cap-drop ALL --security-opt no-new-privileges '
+            f'--user 1000 -v "{socket_volume}:/run/tank-backup-postgres:ro" '
+            f'-e PGHOST -e PGUSER -e PGDATABASE --entrypoint pg_dump "{image}" '
+            '--no-password --format=custom > "$4"\n'
         )
         wrapper.chmod(0o755)
         monkeypatch.setenv("PATH", f"{tmp_path}:{os.environ['PATH']}")
@@ -206,7 +242,7 @@ async def test_peer_backup_restores_grafana_and_both_application_databases(tmp_p
         settings = Settings(
             data_dir=data,
             backup_dir=backup,
-            backup_postgres_socket=Path("/var/run/postgresql"),
+            backup_postgres_socket=Path("/run/tank-backup-postgres"),
             database_url="postgresql://tank:unused@wrong/tank",
             openma_database_url="postgresql://oma:unused@wrong/oma",
         )
@@ -224,6 +260,8 @@ async def test_peer_backup_restores_grafana_and_both_application_databases(tmp_p
             )
             assert sql(target, "SELECT id FROM public.backup_marker").stdout == f"{db}-input\n".encode()
         restored = "tank_test_restore_tank"
+        assert sql(restored, "SELECT last_value FROM grafana.after_provision_id_seq").stdout == b"1\n"
+        assert sql("tank_test_restore_oma", "SELECT id FROM after_provision.events").stdout == b"53\n"
         assert sql(
             restored,
             "SELECT d.uid, d.title, d.data #>> '{panels,0,title}', p.user_id "

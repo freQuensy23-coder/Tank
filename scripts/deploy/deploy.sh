@@ -164,9 +164,7 @@ roll() {
     start_backend "$v" "$svc" || return 1
     healthy "tank-$svc-1" || { echo "$svc not healthy"; return 1; }
   done
-  if [ "$backup" = yes ]; then
-    compose "$v" exec -T -u postgres postgres provision-tank-backup || return 1
-  fi
+
   old_cap=$(docker ps -q --filter label=com.docker.compose.project=tank --filter label=com.docker.compose.service=tank-capture)
   echo "tank-capture standby next to ${old_cap:-none} $(date -u +%T)"
   compose "$v" up -d --no-deps --no-recreate --scale tank-capture=$(( $(echo "$old_cap" | grep -c .) + 1 )) tank-capture || return 1
@@ -193,6 +191,7 @@ roll() {
   healthy tank-tank-1 || { echo "tank not running"; return 1; }
   if grafana_enabled "$v"; then start_grafana "$v" || return 1; fi
   if [ "$backup" = yes ]; then
+    compose "$v" exec -T -u postgres postgres provision-tank-backup || return 1
     compose "$v" up -d --no-deps --wait --wait-timeout 30 tank-backup || return 1
   fi
 }

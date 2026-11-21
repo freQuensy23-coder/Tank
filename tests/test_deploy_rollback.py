@@ -145,7 +145,7 @@ sleep() { :; }
         assert result.returncode == 0, result.stdout + result.stderr
         assert calls.index("healthy tank-postgres-1") < calls.index(provision) < calls.index(start_backup)
         if variant == "grafana":
-            assert calls.index("start grafana") < calls.index(start_backup)
+            assert calls.index("start grafana") < calls.index(provision)
         else:
             assert "start grafana" not in calls
 
