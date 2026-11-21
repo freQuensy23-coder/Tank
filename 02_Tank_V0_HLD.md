@@ -441,7 +441,7 @@ Sizing estimate (ClickHouse): prints ≈ 0.5 GB/day compressed at 15 hot tokens;
 | Time | The host's NTP client (e.g. `chrony`); containers use the host clock |
 | Backups | Nightly `pg_dump` + `bundles/` copy to the volume `backup` (an external disk on the host) |
 
-Concurrency: one asyncio event loop with 8 job workers; CPU-heavy steps run in a thread pool; a Market Truth is computed by ClickHouse statements sent together, and only the rules over their scalars run in the service (03 §3.8, §5); sessions run in parallel inside OpenMA, one per event; `publish_card` takes one lock per event.
+Concurrency: one asyncio event loop with 8 job workers; CPU-heavy steps run in a thread pool; a Market Truth is computed by ClickHouse statements sent together, and only the rules over their scalars run in the service (03 §3.8, §5); each event has its own session, but the shipped configuration runs only one OpenMA session turn at a time across all events; `publish_card` takes one lock per event.
 
 ---
 
