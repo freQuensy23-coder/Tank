@@ -4,6 +4,7 @@ import json
 import os
 import ssl
 import subprocess
+import sys
 import time
 import urllib.error
 import urllib.request
@@ -41,7 +42,7 @@ def setup_viewer():
             "password": os.environ["TEST_VIEWER_PASSWORD"],
         },
         {"Authorization": f"Basic {token}"},
-        "http://127.0.0.1:983",
+        "http://127.0.0.2:983",
     )
     assert status == 200, (status, body)
 
@@ -234,20 +235,24 @@ server {
         assert "default-sentinel" in request(family, "unknown.invalid", True)
         assert "named-sentinel" in request(family, "other.invalid", True)
     assert DEFAULT.read_text() == baseline and sockets() == before
-    SITE.unlink()
-    run("nginx", "-t")
-    run("nginx", "-s", "reload")
-    for _ in range(50):
-        if all("default-sentinel" in request(family, HOST, True) for family in (4, 6)):
-            break
-        time.sleep(0.1)
-    else:
-        raise AssertionError("named site still active")
-    assert DEFAULT.read_text() == baseline and sockets() == before
+    print("PASS repeat setup, native renewal and served leaf replacement", flush=True)
+
+
+def check_transition(legacy):
+    assert SITE.is_file()
+    opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+    origin = "http://127.0.0.1:3000" if legacy else "http://127.0.0.2:983"
+    assert api(opener, "/api/health", origin=origin)[0] == 200
     for family in (4, 6):
+        assert ("502 Bad Gateway" if legacy else "401 Unauthorized") in request(
+            family, HOST, True, "/api/user"
+        )
+        assert "default-sentinel" in request(family, "unknown.invalid", True)
         assert "named-sentinel" in request(family, "other.invalid", True)
-    print("PASS repeat setup, native renewal, served leaf replacement and site removal", flush=True)
 
 
 if __name__ == "__main__":
-    main()
+    if len(sys.argv) == 1:
+        main()
+    else:
+        check_transition(sys.argv[1] == "legacy")

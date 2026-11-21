@@ -40,6 +40,7 @@ def test_rollout_selects_one_ingress_and_recovers_historical_release(tmp_path, o
   esac
 }
 python3() { [[ $1 == grafana.py ]]; }
+hostname() { printf '%s\\n' "$FIXTURE_MACHINE"; }
 curl() {
   case "${!#}" in */login) printf '200' ;; */api/dashboards/uid/*) printf '401' ;; *) return 1 ;; esac
 }
@@ -50,17 +51,16 @@ verify() { return 1; }
 """
     marker = "previous=$(cat deployed 2>/dev/null || true)"
     enabled = tmp_path / "sites-enabled"
-    if nginx:
-        enabled.mkdir()
     site = enabled / "zzzz-tank-grafana"
     if override:
+        enabled.mkdir()
         site.write_text(f"server_name {HOST};\n")
     script = script.replace(marker, hooks + marker).replace("/etc/nginx/sites-enabled", str(enabled))
     (tmp_path / "deploy.sh").write_text(script)
     result = subprocess.run(
         ["bash", "deploy.sh", NEW],
         cwd=tmp_path,
-        env={**os.environ, "LIMIT": "0"},
+        env={**os.environ, "LIMIT": "0", "FIXTURE_MACHINE": "nexus" if nginx else "oracle-vps"},
         capture_output=True,
         text=True,
         timeout=4,

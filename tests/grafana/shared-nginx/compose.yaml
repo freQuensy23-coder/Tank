@@ -37,9 +37,10 @@ services:
     networks: [tank-net]
   grafana:
     environment:
-      GF_SERVER_HTTP_PORT: 983
+      GF_SERVER_HTTP_ADDR: ${FIXTURE_BIND_ADDR:?}
+      GF_SERVER_HTTP_PORT: ${FIXTURE_BIND_PORT:?}
     healthcheck:
-      test: [CMD, wget, -qO, /dev/null, http://127.0.0.1:983/api/health]
+      test: [CMD, wget, -qO, /dev/null, "http://${FIXTURE_BIND_ADDR:?}:${FIXTURE_BIND_PORT:?}/api/health"]
     network_mode: service:edge
     networks: !reset null
     ports: !reset []

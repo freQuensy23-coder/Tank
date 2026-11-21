@@ -1,3 +1,4 @@
+import json
 import os
 import secrets
 import subprocess
@@ -34,7 +35,7 @@ def main():
         "TEST_POSTGRES_PASSWORD",
     ):
         env[key] = secrets.token_urlsafe(32)
-    env.update(EDGE_IMAGE=image, GRAFANA_EXTERNAL_HOST=HOST)
+    env.update(EDGE_IMAGE=image, GRAFANA_EXTERNAL_HOST=HOST, GRAFANA_PORT="3000")
     compose = [
         "docker",
         "compose",
@@ -46,20 +47,35 @@ def main():
         name,
         "-f",
         str(ROOT / "compose.grafana.yaml"),
-        "-f",
-        str(ROOT / "deploy/grafana/nginx/compose.yaml"),
-        "-f",
-        str(HERE / "compose.yaml"),
     ]
+    shared = ["-f", str(ROOT / "deploy/grafana/nginx/compose.yaml")]
+    fixture = ["-f", str(HERE / "compose.yaml")]
+
+    def select(overlay):
+        command = [*compose, *overlay]
+        model = json.loads(
+            subprocess.check_output([*command, "config", "--no-consistency", "--format", "json"], env=env)
+        )
+        (binding,) = model["services"]["grafana"]["ports"]
+        assert binding["target"] == 3000 and "grafana-edge" not in model["services"]
+        env.update(FIXTURE_BIND_ADDR=binding["host_ip"], FIXTURE_BIND_PORT=str(binding["published"]))
+        return [*command, *fixture]
+
+    env.update(FIXTURE_BIND_ADDR="127.0.0.1", FIXTURE_BIND_PORT="3000")
     try:
         run("docker", "build", "-t", image, "-f", str(HERE / "Dockerfile"), str(HERE))
-        subprocess.run([*compose, "up", "-d", "--wait"], check=True, env=env)
-        edge = subprocess.check_output([*compose, "ps", "-q", "edge"], text=True, env=env).strip()
+        selected = select(shared)
+        subprocess.run([*selected, "up", "-d", "--wait"], check=True, env=env)
+        edge = subprocess.check_output([*selected, "ps", "-q", "edge"], text=True, env=env).strip()
         run("docker", "cp", str(HERE / "edge-inner.py"), edge + ":/edge-inner.py")
         run("docker", "cp", str(ROOT / "deploy/grafana/nginx"), edge + ":/fixture-helper")
         run("docker", "exec", edge, "python3", "/edge-inner.py")
+        for overlay, stage in (([], "legacy"), (shared, "restored")):
+            selected = select(overlay)
+            subprocess.run([*selected, "up", "-d", "--no-deps", "--wait", "grafana"], check=True, env=env)
+            run("docker", "exec", edge, "python3", "/edge-inner.py", stage)
     finally:
-        subprocess.run([*compose, "down", "-v", "--remove-orphans"], check=False, env=env)
+        subprocess.run([*compose, *fixture, "down", "-v", "--remove-orphans"], check=False, env=env)
         run("docker", "image", "rm", image, check=False)
 
 
