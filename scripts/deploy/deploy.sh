@@ -227,7 +227,8 @@ if [[ -f $site ]]; then
   external_host=$(awk '$1 == "server_name" { sub(/;$/, "", $2); print $2; exit }' "$site")
   [[ $external_host =~ ^grafana\.([0-9]{1,3}-){3}[0-9]{1,3}\.sslip\.io$ ]] || { echo 'Invalid Nexus Grafana site'; exit 1; }
   export GRAFANA_EXTERNAL_HOST=$external_host
-elif [[ $machine != oracle-vps && -f releases/$SHA/stack/deploy/grafana/nginx/compose.yaml ]]; then
+elif [[ $machine != oracle-vps && ( -f releases/$SHA/stack/deploy/grafana/nginx/compose.yaml ||
+    -f releases/$previous/stack/deploy/grafana/nginx/compose.yaml ) ]]; then
   echo 'Provision the Nexus Grafana site before deploying alongside nginx'; exit 1
 fi
 if [ -n "$previous" ] && grafana_enabled "$previous"; then

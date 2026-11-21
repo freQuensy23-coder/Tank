@@ -241,7 +241,9 @@ server {
     setup_viewer()
     viewer = viewer_session()
     run("bash", HELPER, HOST)
-    assert serial() == first
+    SITE.unlink()
+    run("bash", HELPER, HOST)
+    assert SITE.is_symlink() and serial() == first
     run("certbot", "renew", "--force-renewal", "--no-random-sleep-on-renew")
     second = serial()
     assert first != second

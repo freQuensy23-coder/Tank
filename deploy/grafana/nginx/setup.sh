@@ -24,9 +24,11 @@ fi
 nginx -T 2>/dev/null | awk -v host="$host" 'index(tolower($0), host) || /server_name[[:space:]]+[^;]*[~*$]/ || /server_name[^;]*[[:space:]]\./ || /server_name[[:space:]][^;]*$/ { found=1 } END { exit found }' || {
   echo 'Invalid nginx configuration or hostname already in use'; exit 1;
 }
-if [[ ! -e $site ]]; then ln "$candidate" "$site"; fi
-certbot certonly --non-interactive --agree-tos --keep-until-expiring --webroot -w /var/www/html \
-  --cert-name "$host" -d "$host" >/dev/null 2>&1 || { echo 'Certbot issuance failed' >&2; exit 1; }
+if [[ ! -e $site ]]; then
+  certbot certonly --non-interactive --agree-tos --webroot -w /var/www/html \
+    --cert-name "$host" -d "$host" >/dev/null 2>&1 || { echo 'Certbot issuance failed' >&2; exit 1; }
+  ln "$candidate" "$site"
+fi
 ln -s "$site" "$enabled"
 if nginx -t >/dev/null 2>&1 && systemctl reload nginx; then exit 0; fi
 rm "$enabled"

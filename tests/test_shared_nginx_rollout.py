@@ -12,10 +12,19 @@ OLD = "b" * 40
 
 
 @pytest.mark.parametrize(
-    ("override", "nginx", "old_shared"),
-    [(True, True, False), (False, False, False), (False, True, False), (True, True, True)],
+    ("override", "nginx", "old_shared", "new_shared"),
+    [
+        (True, True, False, True),
+        (False, False, False, True),
+        (False, True, False, True),
+        (True, True, True, True),
+        (False, True, True, False),
+        (False, True, False, False),
+    ],
 )
-def test_rollout_selects_one_ingress_and_recovers_historical_release(tmp_path, override, nginx, old_shared):
+def test_rollout_selects_one_ingress_and_recovers_historical_release(
+    tmp_path, override, nginx, old_shared, new_shared
+):
     stack = tmp_path / "releases" / NEW / "stack"
     old = tmp_path / "releases" / OLD / "stack"
     for release in (stack, old):
@@ -28,8 +37,9 @@ def test_rollout_selects_one_ingress_and_recovers_historical_release(tmp_path, o
             (release / path).touch()
         (release / "deploy/grafana/production-version").write_text("1\n")
     shared = stack / "deploy/grafana/nginx"
-    shared.mkdir()
-    (shared / "compose.yaml").touch()
+    if new_shared:
+        shared.mkdir()
+        (shared / "compose.yaml").touch()
     if old_shared:
         (old / "deploy/grafana/nginx").mkdir()
         (old / "deploy/grafana/nginx/compose.yaml").touch()
@@ -77,7 +87,7 @@ verify() { return 1; }
         text=True,
         timeout=4,
     )
-    if nginx and not override:
+    if nginx and not override and (new_shared or old_shared):
         assert result.returncode == 1 and "Provision the Nexus" in result.stdout
         assert not (tmp_path / "calls").exists()
         return
@@ -87,11 +97,11 @@ verify() { return 1; }
     for sha in (NEW, OLD):
         rows = [line for line in calls if line.startswith(sha)]
         assert any(" up " in row and row.endswith(" grafana") for row in rows)
-        assert all(("/https/compose.yaml" in row) == (not override) for row in rows)
+        assert all(("/https/compose.yaml" in row) == (not nginx) for row in rows)
         assert all(
             ("/nginx/compose.yaml" in row) == (override and (sha == NEW or old_shared)) for row in rows
         )
-        assert any(row.endswith(" grafana-edge") for row in rows) != override
+        assert any(row.endswith(" grafana-edge") for row in rows) != nginx
 
 
 @pytest.mark.integration
