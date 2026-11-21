@@ -152,28 +152,53 @@ class Scheduler:
 
     async def run(self, stop):
         try:
-            while not stop.is_set():
-                try:
-                    await self.tick()
-                except Exception:
-                    log.exception("Scheduler tick failed")
-                with contextlib.suppress(TimeoutError):
-                    await asyncio.wait_for(stop.wait(), timeout=30)
+            async with asyncio.TaskGroup() as tasks:
+                tasks.create_task(self.run_minute_checks(stop), name="scheduler-minute-checks")
+                await self.run_maintenance(stop)
         finally:
             await self.close()
 
-    async def tick(self, now=None):
-        now = now or utcnow()
-        bucket_stamp = chosen_boundary(now.replace(second=0, microsecond=0), precision="BUCKET(1m)")
-        bucket = bucket_stamp.value
+    @staticmethod
+    async def wait_for_tick(stop, seconds):
+        with contextlib.suppress(TimeoutError):
+            await asyncio.wait_for(stop.wait(), timeout=seconds)
+
+    async def run_maintenance(self, stop):
+        while not stop.is_set():
+            try:
+                await self.tick()
+            except Exception:
+                log.exception("Scheduler tick failed")
+            await self.wait_for_tick(stop, 30)
+
+    async def run_minute_checks(self, stop):
+        while not stop.is_set():
+            now = utcnow()
+            minute = now.replace(second=0, microsecond=0)
+            next_minute = minute + timedelta(minutes=1)
+            max_wait = 60
+            try:
+                async with asyncio.timeout((next_minute - now).total_seconds()):
+                    await self.enqueue_minute_check(minute, now)
+            except Exception:
+                log.exception("Could not enqueue minute check for %s", minute)
+                max_wait = 5
+            remaining = (next_minute - utcnow()).total_seconds()
+            await self.wait_for_tick(stop, max(0, min(remaining, max_wait)))
+
+    async def enqueue_minute_check(self, minute, now):
+        bucket_stamp = chosen_boundary(minute, precision="BUCKET(1m)")
         await self.repo.enqueue(
             "EVAL_CONDITIONS",
-            {**bucket_stamp.fields("cutoff")},
-            bucket,
+            bucket_stamp.fields("cutoff"),
+            bucket_stamp.value,
             priority=2,
             expires_at=offset_schedule(collection_clock(now), timedelta(minutes=5)),
             max_attempts=2,
         )
+
+    async def tick(self, now=None):
+        now = now or utcnow()
         async for event in self.active_events(now):
             milestone = event.get("next_milestone")
             if (
