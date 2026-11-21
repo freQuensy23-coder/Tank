@@ -12,10 +12,20 @@ if [[ -L $site || -e $site ]] && ! { [[ -f $site && ! -L $site ]] && cmp -s "$ca
 fi
 systemctl is-active --quiet certbot.timer
 systemctl is-enabled --quiet certbot.timer
-certbot certonly --non-interactive --agree-tos --keep-until-expiring --webroot -w /var/www/html \
+if [[ -e $site ]]; then
+  nginx -t >/dev/null 2>&1 && systemctl reload nginx
+  exit $?
+fi
+if [[ -e /etc/letsencrypt/renewal/$host.conf || -e /etc/letsencrypt/live/$host ]]; then
+  echo 'Refusing to adopt an existing certificate'; exit 1
+fi
+nginx -T 2>/dev/null | awk -v host="$host" 'index(tolower($0), host) { found=1 } END { exit found }' || {
+  echo 'Invalid nginx configuration or hostname already in use'; exit 1;
+}
+certbot certonly --non-interactive --agree-tos --webroot -w /var/www/html \
   --cert-name "$host" -d "$host" >/dev/null 2>&1 || { echo 'Certbot issuance failed' >&2; exit 1; }
-created=no
-if [[ ! -e $site ]]; then ln "$candidate" "$site"; created=yes; fi
+ln "$candidate" "$site"
 if nginx -t >/dev/null 2>&1 && systemctl reload nginx; then exit 0; fi
-if [[ $created = yes ]]; then rm "$site"; nginx -t >/dev/null 2>&1 && systemctl reload nginx; fi
-echo 'Grafana site activation failed' >&2; exit 1
+rm "$site"
+nginx -t >/dev/null 2>&1 && systemctl reload nginx
+echo 'Grafana site activation failed; the system certificate was retained' >&2; exit 1

@@ -98,14 +98,12 @@ start_grafana() {
   grafana_ready "$v" || return 1
   if dedicated_https "$v"; then
     compose "$v" up -d --no-deps grafana-edge || return 1
-  elif ! shared_nginx "$v"; then
-    return 0
+    for _ in $(seq 1 30); do
+      https_ready && return 0
+      sleep 2
+    done
+    echo 'Grafana TLS login or anonymous denial failed'; return 1
   fi
-  for _ in $(seq 1 30); do
-    https_ready && return 0
-    sleep 2
-  done
-  echo 'Grafana TLS login or anonymous denial failed'; return 1
 }
 content() { docker inspect -f '{{index .Config.Labels "org.tank.content"}}' "$1" 2>/dev/null || true; }
 healthy() {
@@ -203,6 +201,7 @@ recover() {
     if roll "$previous"; then
       printf '%s\n' "$previous" > deployed.next && mv deployed.next deployed
       echo "rolled back to $previous"
+      if shared_nginx "$previous" && ! https_ready; then echo 'Grafana restored locally; shared HTTPS is unavailable'; fi
     else
       echo "Tank rollback failed"
       status=1

@@ -11,8 +11,11 @@ NEW = "a" * 40
 OLD = "b" * 40
 
 
-@pytest.mark.parametrize(("override", "nginx"), [(True, True), (False, False), (False, True)])
-def test_rollout_selects_one_ingress_and_recovers_historical_release(tmp_path, override, nginx):
+@pytest.mark.parametrize(
+    ("override", "nginx", "old_shared"),
+    [(True, True, False), (False, False, False), (False, True, False), (True, True, True)],
+)
+def test_rollout_selects_one_ingress_and_recovers_historical_release(tmp_path, override, nginx, old_shared):
     stack = tmp_path / "releases" / NEW / "stack"
     old = tmp_path / "releases" / OLD / "stack"
     for release in (stack, old):
@@ -27,6 +30,9 @@ def test_rollout_selects_one_ingress_and_recovers_historical_release(tmp_path, o
     shared = stack / "deploy/grafana/nginx"
     shared.mkdir()
     (shared / "compose.yaml").touch()
+    if old_shared:
+        (old / "deploy/grafana/nginx").mkdir()
+        (old / "deploy/grafana/nginx/compose.yaml").touch()
     (tmp_path / "deployed").write_text(OLD + "\n")
     script = (ROOT / "scripts/deploy/deploy.sh").read_text()
     hooks = """docker() {
@@ -42,6 +48,7 @@ def test_rollout_selects_one_ingress_and_recovers_historical_release(tmp_path, o
 python3() { [[ $1 == grafana.py ]]; }
 hostname() { printf '%s\\n' "$FIXTURE_MACHINE"; }
 curl() {
+  [[ $FIXTURE_TLS == up ]] || return 1
   case "${!#}" in */login) printf '200' ;; */api/dashboards/uid/*) printf '401' ;; *) return 1 ;; esac
 }
 content() { return 0; }
@@ -60,7 +67,12 @@ verify() { return 1; }
     result = subprocess.run(
         ["bash", "deploy.sh", NEW],
         cwd=tmp_path,
-        env={**os.environ, "LIMIT": "0", "FIXTURE_MACHINE": "nexus" if nginx else "oracle-vps"},
+        env={
+            **os.environ,
+            "LIMIT": "0",
+            "FIXTURE_TLS": "down" if old_shared else "up",
+            "FIXTURE_MACHINE": "nexus" if nginx else "oracle-vps",
+        },
         capture_output=True,
         text=True,
         timeout=4,
@@ -70,12 +82,15 @@ verify() { return 1; }
         assert not (tmp_path / "calls").exists()
         return
     assert result.returncode == 1 and f"rolled back to {OLD}" in result.stdout, result.stdout + result.stderr
+    assert ("Grafana restored locally; shared HTTPS is unavailable" in result.stdout) == old_shared
     calls = (tmp_path / "calls").read_text().splitlines()
     for sha in (NEW, OLD):
         rows = [line for line in calls if line.startswith(sha)]
         assert any(" up " in row and row.endswith(" grafana") for row in rows)
         assert all(("/https/compose.yaml" in row) == (not override) for row in rows)
-        assert all(("/nginx/compose.yaml" in row) == (override and sha == NEW) for row in rows)
+        assert all(
+            ("/nginx/compose.yaml" in row) == (override and (sha == NEW or old_shared)) for row in rows
+        )
         assert any(row.endswith(" grafana-edge") for row in rows) != override
 
 

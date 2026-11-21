@@ -217,6 +217,17 @@ server {
     for family in (4, 6):
         assert "default-sentinel" in request(family, "unknown.invalid")
         assert "named-sentinel" in request(family, "other.invalid", True)
+    collision = Path("/etc/nginx/conf.d/duplicate.conf")
+    collision.write_text(f"server {{ listen 80; server_name {HOST}; }}\n")
+    lineage = Path(f"/etc/letsencrypt/renewal/{HOST}.conf")
+    assert run("bash", HELPER, HOST, check=False).returncode != 0
+    assert not SITE.exists() and not lineage.exists()
+    collision.unlink()
+    lineage.parent.mkdir(exist_ok=True)
+    lineage.write_text("unowned")
+    assert run("bash", HELPER, HOST, check=False).returncode != 0
+    assert not SITE.exists() and lineage.read_text() == "unowned"
+    lineage.unlink()
     run("bash", HELPER, HOST)
     first = serial()
     wait_for_serial(first)
