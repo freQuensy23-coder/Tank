@@ -18,7 +18,7 @@ def session_of(request):
     return request.url.path.split("/")[3]
 
 
-def executions(request, states):
+def executions(request, states, ready_calls=None):
     sid = session_of(request)
     return httpx.Response(
         200,
@@ -28,6 +28,11 @@ def executions(request, states):
                     "execution_id": key,
                     "state": states.get((sid, key), "RUNNING"),
                     "settled_outcome": states.get((sid, key)),
+                    **(
+                        {"ready_tool_call_ids": (ready_calls or {}).get((sid, key), [])}
+                        if request.url.params.get("include") == "tool_readiness"
+                        else {}
+                    ),
                 }
                 for key in request.url.params.get_list("ids[]")
             ]
@@ -85,7 +90,7 @@ async def test_slow_tool_in_one_busy_session_does_not_hold_back_another_session_
         if request.url.path.endswith("/events"):
             return httpx.Response(200, json={"data": history[sid]})
         if request.url.path.endswith("/executions"):
-            return executions(request, states)
+            return executions(request, states, {("a-slow", "input"): ["market-truth-call"]})
         raise AssertionError(request.url.path)
 
     async def dispatch(tool, arguments, context):
@@ -146,6 +151,8 @@ async def test_restarted_follower_recovers_lost_acceptance_before_replaying_tool
     )
     await repo.put("ops.agent_sessions", "s", dict(template, event_id="event", message_log=[message]))
     posts = []
+    checked = asyncio.Event()
+    ready_calls = {("s", "input"): []}
 
     def handler(request):
         if request.method == "POST":
@@ -172,7 +179,9 @@ async def test_restarted_follower_recovers_lost_acceptance_before_replaying_tool
                 },
             )
         if request.url.path.endswith("/executions"):
-            return executions(request, {})
+            if request.url.params.get("include") == "tool_readiness":
+                checked.set()
+            return executions(request, {}, ready_calls)
         raise AssertionError(request.url.path)
 
     async def dispatch(tool, arguments, context):
@@ -190,7 +199,11 @@ async def test_restarted_follower_recovers_lost_acceptance_before_replaying_tool
         stop = asyncio.Event()
         task = asyncio.create_task(service.run(stop))
         try:
-            call = await asyncio.wait_for(returned_call(), 2)
+            await asyncio.wait_for(checked.wait(), 2)
+            assert posts == [("user.message", "message:m")]
+            assert await repo.get("ops.tool_calls", "s:market-truth-call") is None
+            ready_calls[("s", "input")].append("market-truth-call")
+            call = await asyncio.wait_for(returned_call(), 3)
             assert call["native_turn_message_id"] == "m" and call["remote_event_id"] == "returned"
             assert posts[0] == ("user.message", "message:m")
             assert [kind for kind, _ in posts] == ["user.message", "user.custom_tool_result"]

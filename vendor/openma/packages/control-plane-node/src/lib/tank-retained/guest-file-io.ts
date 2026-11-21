@@ -9,7 +9,8 @@ export type FileProcess = {
   stdin: WritableStream<Uint8Array>; stdout: ReadableStream<Uint8Array>; stderr: ReadableStream<Uint8Array>;
   exited: Promise<{code:number|null;signal:string|null}>; kill(signal?:string):Promise<void>;
 };
-export type FileRunner = <T>(args:string[], exchange:(process:FileProcess)=>Promise<T>)=>Promise<T>;
+export type TrackGuestWork = <T>(task: Promise<T>) => Promise<T>;
+export type FileRunner = <T>(args:string[], exchange:(process:FileProcess, track:TrackGuestWork)=>Promise<T>)=>Promise<T>;
 const failure = () => new Error('guest_file_protocol_invalid');
 function pathArgument(path:string) { if(!path || path.includes('\0') || Buffer.byteLength(path)>16384)throw Error('guest_file_path_invalid'); }
 async function lines(stream:ReadableStream<Uint8Array>, consume:(line:string)=>Promise<void>) {
@@ -40,7 +41,7 @@ export async function copyGuestFileOut(run:FileRunner, guest:string, host:string
   const temporary=await mkdtemp(join(dirname(host),'.tank-file-read-'));const target=join(temporary,'content');
   const output=await open(target,'wx',0o600);let count=0;const digest=createHash('sha256');
   try {
-    const result=await run(['-c',GUEST_FILE_WORKER,'read',guest],async process=>{
+    const result=await run(['-c',GUEST_FILE_WORKER,'read',guest],async (process,track)=>{
       const progress:{state:'header'|'data'|'done'}={state:'header'};let size=0, error:Error|undefined;
       const writer=process.stdin.getWriter();
       const consume=async(line:string)=>{
@@ -57,7 +58,7 @@ export async function copyGuestFileOut(run:FileRunner, guest:string, host:string
         if(row.done===false){exact(row,['done','errno']);error=guestError(row);return;}
         exact(row,['done','bytes','sha256']);if(row.done!==true||row.bytes!==count||count!==size||!sha(row.sha256)||row.sha256!==digest.digest('hex'))throw failure();
       };
-      const complete=Promise.all([lines(process.stdout,consume),stderrBound(process.stderr),process.exited]);void complete.catch(()=>undefined);
+      const complete=Promise.all([track(lines(process.stdout,consume)),track(stderrBound(process.stderr)),process.exited]);void complete.catch(()=>undefined);
       let completed:Awaited<typeof complete>;
       try{completed=await complete;await writer.close().catch(()=>undefined);}finally{writer.releaseLock();}
       const [,stderr,exit]=completed;if(progress.state!=='done'||stderr!==0)throw failure();
@@ -72,7 +73,7 @@ export async function copyGuestFileIn(run:FileRunner, host:string, guest:string)
   try {
     const info=await input.stat();if(!info.isFile()||info.size>FILE_LIMIT)throw Error('guest_file_source_size_or_type_invalid');
     let count=0;const digest=createHash('sha256');
-    const result=await run(['-c',GUEST_FILE_WORKER,'write',guest,String(info.size)],async process=>{
+    const result=await run(['-c',GUEST_FILE_WORKER,'write',guest,String(info.size)],async (process,track)=>{
       const progress:{state:'header'|'data'|'footer'|'done'}={state:'header'};
       let error:Error|undefined,expectedDigest:string|undefined;
       let readyResolve:()=>void=()=>{};
@@ -90,7 +91,7 @@ export async function copyGuestFileIn(run:FileRunner, host:string, guest:string)
         }
         exact(row,['done','bytes','sha256']);if(row.done!==true||row.bytes!==count||!sha(row.sha256)||row.sha256!==expectedDigest)throw failure();progress.state='done';
       };
-      const complete=Promise.all([lines(process.stdout,consume),stderrBound(process.stderr),process.exited]);void complete.catch(()=>undefined);
+      const complete=Promise.all([track(lines(process.stdout,consume)),track(stderrBound(process.stderr)),process.exited]);void complete.catch(()=>undefined);
       const writer=process.stdin.getWriter();
       try {
         await Promise.race([ready,complete.then(()=>{if(!error)throw failure();})]);
@@ -101,7 +102,7 @@ export async function copyGuestFileIn(run:FileRunner, host:string, guest:string)
           const chunk=buffer.subarray(0,bytesRead);digest.update(chunk);count+=bytesRead;
           let resolveAck:()=>void=()=>{};const acknowledged=new Promise<void>(resolve=>{resolveAck=resolve;});
           ack={count,resolve:resolveAck};
-          await Promise.race([Promise.all([writer.write(chunk),acknowledged]),complete.then(()=>{if(!error)throw failure();})]);
+          await Promise.race([Promise.all([track(writer.write(chunk)),acknowledged]),complete.then(()=>{if(!error)throw failure();})]);
         }
         if(!error){if(count!==info.size)throw Error('guest_file_source_changed');expectedDigest=digest.digest('hex');progress.state='footer';}
         await writer.close().catch(cause=>{if(!error)throw cause;});

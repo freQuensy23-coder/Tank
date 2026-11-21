@@ -5,7 +5,10 @@ import type { SessionsApplicationPort } from '../../../packages/managed-agents-a
 
 function fixture(found = true) {
   const retrieveSession = vi.fn(async () => ({ type: found ? 'found' : 'not_found' }));
-  const list = vi.fn(async (_workspace: string, _session: string, ids: string[]) => ids.map(execution_id => ({ execution_id, state: 'UNKNOWN' as const, settled_outcome: null })));
+  const list = vi.fn(async (_workspace: string, _session: string, ids: string[], includeToolReadiness?: boolean) => ids.map(execution_id => ({
+    execution_id, state: 'UNKNOWN' as const, settled_outcome: null,
+    ...(includeToolReadiness && { ready_tool_call_ids: [] }),
+  })));
   const app = new Hono();
   app.use('*', async (c, next) => {
     if (c.req.header('authorization') !== 'Bearer test-only') return c.json({ error: 'unauthorized' }, 401);
@@ -30,7 +33,7 @@ describe('managed session executions HTTP boundary', () => {
     const response = await f.app.request('/s/executions?ids[]=e&ids[]=foreign', { headers: f.headers });
     expect(response.status).toBe(200);
     expect(f.retrieveSession).toHaveBeenCalledWith({ sessionId: 's' });
-    expect(f.list).toHaveBeenCalledWith('workspace-request', 's', ['e', 'foreign']);
+    expect(f.list).toHaveBeenCalledWith('workspace-request', 's', ['e', 'foreign'], false);
     expect(await response.json()).toEqual({ data: [
       { execution_id: 'e', state: 'UNKNOWN', settled_outcome: null },
       { execution_id: 'foreign', state: 'UNKNOWN', settled_outcome: null },
@@ -39,9 +42,18 @@ describe('managed session executions HTTP boundary', () => {
     expect((await denied.app.request('/s/executions?ids[]=e', { headers: denied.headers })).status).toBe(404);
     expect(denied.list).not.toHaveBeenCalled();
   });
+  it('includes callback readiness only when explicitly requested', async () => {
+    const f = fixture();
+    const response = await f.app.request('/s/executions?ids[]=e&include=tool_readiness', { headers: f.headers });
+    expect(response.status).toBe(200);
+    expect(f.list).toHaveBeenCalledWith('workspace-request', 's', ['e'], true);
+    expect(await response.json()).toEqual({ data: [
+      { execution_id: 'e', state: 'UNKNOWN', settled_outcome: null, ready_tool_call_ids: [] },
+    ] });
+  });
   it('rejects malformed, duplicate, oversized and unknown query fields', async () => {
     const f = fixture();
-    for (const query of ['', '?ids=e', '?ids[]=', '?ids[]=e&ids[]=e', '?ids[]=e&owner=x', '?ids[]=' + 'x'.repeat(192), '?' + Array.from({ length: 65 }, (_, i) => 'ids[]=e' + i).join('&')]) {
+    for (const query of ['', '?ids=e', '?ids[]=', '?ids[]=e&ids[]=e', '?ids[]=e&owner=x', '?ids[]=e&include=unknown', '?ids[]=e&include=tool_readiness&include=tool_readiness', '?ids[]=' + 'x'.repeat(192), '?' + Array.from({ length: 65 }, (_, i) => 'ids[]=e' + i).join('&')]) {
       expect((await f.app.request('/s/executions' + query, { headers: f.headers })).status).toBe(400);
     }
     expect(f.retrieveSession).not.toHaveBeenCalled();

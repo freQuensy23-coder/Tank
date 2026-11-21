@@ -1,7 +1,7 @@
 """Synthetic offline service integration; no historical acceptance claim."""
 
 import json
-from datetime import UTC
+from datetime import UTC, datetime
 
 import httpx
 import pytest
@@ -34,6 +34,91 @@ def _native_session(session_id, agent_id="synthetic"):
             "model": {"id": "gpt-6.1-sol"},
         },
     }
+
+
+class _NativePhases:
+    def __init__(self, session_id, *, notify=None):
+        self.session_path = f"/v1/sessions/{session_id}"
+        self.notify = notify
+        self.posts = []
+        self.history = []
+        self.accepted = {}
+        self.settled = set()
+        self.pending_calls = {}
+        self.execution_id = None
+
+    def publish(self, event):
+        self.history.append(event)
+        if self.notify is not None:
+            self.notify()
+
+    @staticmethod
+    def frame(sequence, event):
+        return f"id: {sequence}\ndata: {json.dumps(event)}\n\n".encode()
+
+    def stream(self):
+        return httpx.Response(
+            200,
+            headers={"content-type": "text/event-stream"},
+            content=b"".join(self.frame(sequence, event) for sequence, event in enumerate(self.history, 1)),
+        )
+
+    def accept(self, request):
+        assert request.url.path == self.session_path + "/events"
+        assert request.method == "POST"
+        key = request.headers["Idempotency-Key"]
+        body = json.loads(request.content)
+        self.posts.append(body)
+        [event] = body["events"]
+        if key in self.accepted:
+            return httpx.Response(200, json={"data": [self.accepted[key]]}), None
+        assert self.execution_id is None or self.execution_id in self.settled
+        if event["type"] == "user.custom_tool_result":
+            assert self.pending_calls.pop(event["custom_tool_use_id"]) == self.execution_id
+        else:
+            assert event["type"] == "user.message" and not self.pending_calls
+        self.execution_id = f"synthetic-input-{len(self.accepted) + 1}"
+        accepted = dict(event, id=self.execution_id, processed_at=datetime.now(UTC).isoformat())
+        self.accepted[key] = accepted
+        self.publish(accepted)
+        return httpx.Response(200, json={"data": [accepted]}), accepted
+
+    def read(self, request):
+        assert request.method == "GET"
+        if request.url.path == self.session_path + "/events":
+            return httpx.Response(200, json={"data": self.history, "next_page": None})
+        assert request.url.path == self.session_path + "/executions"
+        assert request.url.params.get("include") in (None, "tool_readiness")
+        rows = []
+        for identity in request.url.params.get_list("ids[]"):
+            settled = identity in self.settled
+            state = "COMPLETED" if settled else "RUNNING" if identity == self.execution_id else "UNKNOWN"
+            row = {
+                "execution_id": identity,
+                "state": state,
+                "settled_outcome": "COMPLETED" if settled else None,
+            }
+            if request.url.params.get("include") == "tool_readiness":
+                row["ready_tool_call_ids"] = [
+                    call_id for call_id, owner in self.pending_calls.items() if owner == identity and settled
+                ]
+            rows.append(row)
+        return httpx.Response(200, json={"data": rows})
+
+    def finish(self, tool=None):
+        identity = self.execution_id
+        assert identity is not None and identity not in self.settled and not self.pending_calls
+        fields = {"execution_id": identity, "processed_at": datetime.now(UTC).isoformat()}
+        if tool is not None:
+            self.publish(dict(tool, **fields))
+            self.pending_calls[tool["id"]] = identity
+            stop_reason = {"type": "requires_action", "event_ids": [tool["id"]]}
+        else:
+            stop_reason = {"type": "end_turn"}
+        self.publish(
+            {"id": f"{identity}-idle", "type": "session.status_idle", "stop_reason": stop_reason, **fields}
+        )
+        self.settled.add(identity)
 
 
 def _fixture_api_limits():
@@ -133,7 +218,7 @@ async def test_source_jev_sse_validated_read_restart_and_delivery(tmp_path):
     )
     repo = MemoryRepository()
     sent = []
-    event_posts = []
+    native = _NativePhases("s1")
     failures = [True]
     tool_event = {"id": "tool1", "type": "agent.custom_tool_use", "name": "get_item", "input": {}}
 
@@ -158,14 +243,11 @@ async def test_source_jev_sse_validated_read_restart_and_delivery(tmp_path):
         if request.method == "GET" and path.endswith("/sessions/s1"):
             return httpx.Response(200, json=_native_session("s1", "synthetic-agent"))
         if path.endswith("/events/stream"):
-            return httpx.Response(
-                200,
-                headers={"content-type": "text/event-stream"},
-                text="id: 1\nevent: message\ndata: " + json.dumps(tool_event) + "\n\n",
-            )
-        if path.endswith("/events"):
-            event_posts.append(json.loads(request.content))
-            return httpx.Response(200, json={})
+            return native.stream()
+        if request.method == "POST" and path.endswith("/events"):
+            return native.accept(request)[0]
+        if path.endswith(("/events", "/executions")):
+            return native.read(request)
         if request.url.host == "api.telegram.org":
             sent.append(json.loads(request.content))
             if failures.pop() if failures else False:
@@ -192,7 +274,6 @@ async def test_source_jev_sse_validated_read_restart_and_delivery(tmp_path):
                 "published_at": "2026-10-17T00:00:00Z",
             },
         )
-        tool_event["input"] = {}
         pipeline = Pipeline(repo, settings, http=http)
         await pipeline.filter_item({"item_id": item["item_id"]})
         routed_origin = await pipeline.route_item({"item_id": item["item_id"]})
@@ -201,13 +282,16 @@ async def test_source_jev_sse_validated_read_restart_and_delivery(tmp_path):
 
         session.start_stream = lambda sid: None
         await session.send_message(routed_origin["routing_message"])
+        native.finish(tool_event)
         await session.stream("s1")
         stored_read = await repo.get("ops.tool_calls", "s1:tool1")
         assert stored_read["result"].get("item_id") == item["item_id"], stored_read
+        native.finish()
+        await session.stream("s1")
         resumed = SessionService(repo, settings, toolservice.dispatch, http=http)
-        before = len(event_posts)
+        before = len(native.posts)
         await resumed.stream("s1")
-        assert len(event_posts) == before
+        assert len(native.posts) == before
 
         event = {"event_id": "e", "event_state": "APPROVED", "state_verified": True, "freshness": "FRESH"}
         assessment = {
@@ -274,7 +358,6 @@ async def isolated_e2e_database(postgres_template):
 async def test_full_sse_pipeline_postgres(tmp_path, complete_market, monkeypatch, isolated_e2e_database):
     """Whole synthetic call graph on PostgreSQL, including validated publication."""
     import importlib
-    from datetime import datetime
     from functools import cache
 
     from tank.analysis.truth import MarketTruthService
@@ -356,8 +439,8 @@ async def test_full_sse_pipeline_postgres(tmp_path, complete_market, monkeypatch
     sid = new_id("synthetic-session")
     feed_guid = sid
     denying = False
-    active = []
-    posted = []
+    native = _NativePhases(sid)
+    posted = native.posts
     sends = []
     mounts = []
 
@@ -393,13 +476,7 @@ async def test_full_sse_pipeline_postgres(tmp_path, complete_market, monkeypatch
         if req.method == "GET" and path.endswith("/sessions/" + sid):
             return httpx.Response(200, json=_native_session(sid))
         if path.endswith("/events/stream"):
-            return httpx.Response(
-                200,
-                headers={"content-type": "text/event-stream"},
-                text="".join(
-                    "id: " + str(i + 1) + "\ndata: " + json.dumps(e) + "\n\n" for i, e in enumerate(active)
-                ),
-            )
+            return native.stream()
         if path.endswith("/v1/files"):
             return httpx.Response(200, json={"id": "file_mt"})
         if path.endswith("/resources"):
@@ -407,9 +484,10 @@ async def test_full_sse_pipeline_postgres(tmp_path, complete_market, monkeypatch
                 return httpx.Response(200, json={"data": mounts, "next_page": None})
             mounts.append(json.loads(req.content))
             return httpx.Response(200, json={"id": "sesrsc_mt"})
-        if path.endswith("/events"):
-            posted.append(json.loads(req.content))
-            return httpx.Response(200, json={})
+        if req.method == "POST" and path.endswith("/events"):
+            return native.accept(req)[0]
+        if path.endswith(("/events", "/executions")):
+            return native.read(req)
         if req.url.host == "api.telegram.org":
             sends.append(json.loads(req.content))
             return httpx.Response(200, json={"ok": True, "result": {"message_id": 900 + len(sends)}})
@@ -538,9 +616,9 @@ async def test_full_sse_pipeline_postgres(tmp_path, complete_market, monkeypatch
                 model_args = model_arguments(name, args)
                 count += 1
                 call_id = f"{sid}-full-{count}"
-                active[:] = [
+                native.finish(
                     {"id": call_id, "type": "agent.custom_tool_use", "name": name, "input": model_args}
-                ]
+                )
                 if name == "get_market_truth":
                     import asyncio
 
@@ -713,6 +791,8 @@ async def test_full_sse_pipeline_postgres(tmp_path, complete_market, monkeypatch
             bundle = await repo.get("out.evidence_bundles", published["evidence_bundle_id"])
             assert bundle["payload"]["source_items"][0]["raw_sha256"] == sha
             assert bundle["payload"]["what"] == what
+            native.finish()
+            await session.stream(sid)
             await session.close()
             await repo.close()
 
@@ -822,6 +902,7 @@ async def test_full_sse_pipeline_postgres(tmp_path, complete_market, monkeypatch
                 calls = await repo.list("ana.calls", filters={"event_id": eid})
                 assert len(calls) == 1 and calls[0]["status"] == "CLOSED"
 
+                native.finish()
                 before = len(posted)
                 await session.stream(sid)
                 await delivery.deliver({"alert_id": correction["alert_id"], "version": correction["version"]})
@@ -944,30 +1025,32 @@ async def test_runtime_autonomous_source_to_telegram(tmp_path, monkeypatch, capl
 
     text = "Binance approved the synthetic autonomous $T listing."
     timestamp = iso(clock - __import__("datetime").timedelta(minutes=1))
-    queue = asyncio.Queue()
+    updated = asyncio.Event()
     delivered = asyncio.Event()
     stop = asyncio.Event()
     wire = []
-    accepted = set()
+    native = _NativePhases("autonomous-session", notify=updated.set)
     state = {}
     stage = 0
 
     class SSE(httpx.AsyncByteStream):
+        def __init__(self, cursor):
+            self.cursor = cursor
+
         async def __aiter__(self):
             while True:
-                event = await queue.get()
-                yield (
-                    "id: "
-                    + str(event["seq"])
-                    + "\ndata: "
-                    + json.dumps({"seq": event["seq"], "event": event["body"]})
-                    + "\n\n"
-                ).encode()
+                if self.cursor == len(native.history):
+                    updated.clear()
+                    await updated.wait()
+                    continue
+                event = native.history[self.cursor]
+                self.cursor += 1
+                yield native.frame(self.cursor, event)
 
         async def aclose(self):
             pass
 
-    async def emit(name, arguments):
+    def emit(name, arguments):
         nonlocal stage
         stage += 1
         arguments = {k: v for k, v in arguments.items() if k not in {"event_id", "item_id"}}
@@ -978,10 +1061,9 @@ async def test_runtime_autonomous_source_to_telegram(tmp_path, monkeypatch, capl
             "input": arguments,
         }
         wire.append(body)
-        await queue.put({"seq": stage, "body": body})
+        native.finish(body)
 
     async def transport(request):
-        nonlocal stage
         path = request.url.path
         if request.url.host == "synthetic.invalid":
             rss = f'<rss version="2.0"><channel><title>Synthetic</title><item><guid>autonomous-input</guid><title>Autonomous synthetic listing</title><description>{text}</description><pubDate>{timestamp}</pubDate><link>https://synthetic.invalid/autonomous-input</link></item></channel></rss>'
@@ -1005,23 +1087,24 @@ async def test_runtime_autonomous_source_to_telegram(tmp_path, monkeypatch, capl
         if request.method == "GET" and path.endswith("/sessions/autonomous-session"):
             return httpx.Response(200, json=_native_session("autonomous-session"))
         if path.endswith("/events/stream"):
-            return httpx.Response(200, headers={"content-type": "text/event-stream"}, stream=SSE())
+            return httpx.Response(
+                200,
+                headers={"content-type": "text/event-stream"},
+                stream=SSE(int(request.headers["Last-Event-ID"])),
+            )
         if path.endswith("/v1/files"):
             return httpx.Response(200, json={"id": "file_mt"})
         if path.endswith("/resources"):
             return httpx.Response(200, json={"id": "sesrsc_mt"})
-        if path.endswith("/events"):
-            if request.method == "GET":
-                return httpx.Response(200, json={"data": []})
-            if request.headers["Idempotency-Key"] in accepted:
-                return httpx.Response(200, json={})
-            accepted.add(request.headers["Idempotency-Key"])
-            event = json.loads(request.content)["events"][0]
+        if request.method == "POST" and path.endswith("/events"):
+            response, event = native.accept(request)
+            if event is None:
+                return response
             if event["type"] == "user.message":
                 payload = json.loads(event["content"][0]["text"])
                 assert payload["item"]["text"]
                 assert "item_id" not in payload["item"]
-                await emit(
+                emit(
                     "record_event",
                     {
                         "is_event": True,
@@ -1079,7 +1162,7 @@ async def test_runtime_autonomous_source_to_telegram(tmp_path, monkeypatch, capl
                             "implementation",
                         ]
                     }
-                    await emit(
+                    emit(
                         "set_assessment",
                         {
                             "assessment": {
@@ -1097,7 +1180,7 @@ async def test_runtime_autonomous_source_to_telegram(tmp_path, monkeypatch, capl
                     )
                 elif stage == 2:
                     assert result["class"] == "MAJOR"
-                    await emit(
+                    emit(
                         "set_beneficiaries",
                         {
                             "edges": [
@@ -1118,13 +1201,13 @@ async def test_runtime_autonomous_source_to_telegram(tmp_path, monkeypatch, capl
                         },
                     )
                 elif stage == 3:
-                    await emit("get_market_truth", {"token_ids": ["T"]})
+                    emit("get_market_truth", {"token_ids": ["T"]})
                 elif stage == 4:
                     assert result["market_truth"][0]["move_class"] == "UNKNOWN"
-                    await emit("get_decision", {"token_id": "T"})
+                    emit("get_decision", {"token_id": "T"})
                 elif stage == 5:
                     assert result["action"] == "WAIT"
-                    await emit(
+                    emit(
                         "publish_card",
                         {
                             "kind": "FULL",
@@ -1138,17 +1221,10 @@ async def test_runtime_autonomous_source_to_telegram(tmp_path, monkeypatch, capl
                     )
                 elif stage == 6:
                     assert result["published"], result
-                    await queue.put(
-                        {
-                            "seq": 7,
-                            "body": {
-                                "id": "autonomous-end-turn",
-                                "type": "session.status_idle",
-                                "stop_reason": {"type": "end_turn"},
-                            },
-                        }
-                    )
-            return httpx.Response(200, json={})
+                    native.finish()
+            return response
+        if path.endswith(("/events", "/executions")):
+            return native.read(request)
         if request.url.host == "api.telegram.org":
             if request.url.path.endswith("/getUpdates"):
                 return httpx.Response(200, json={"ok": True, "result": []})
@@ -1316,7 +1392,11 @@ async def test_runtime_autonomous_source_to_telegram(tmp_path, monkeypatch, capl
             assert settings.codex_auth_path.name == "FAKE-codex-auth.json"
 
             async with asyncio.timeout(3):
-                while not await repo.list("out.deliveries", filters={"status": "SENT"}):
+                while (
+                    not await repo.list("out.deliveries", filters={"status": "SENT"})
+                    or (await repo.get("ops.agent_sessions", "autonomous-session"))["runtime_status"]
+                    != "IDLE"
+                ):
                     await asyncio.sleep(0.01)
             stop.set()
             await asyncio.wait_for(runtime_task, 12)

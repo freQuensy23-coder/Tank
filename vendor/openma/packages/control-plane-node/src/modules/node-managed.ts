@@ -70,12 +70,14 @@ import { nodeSessionLifecycle } from "../lib/node-session-lifecycle.js";
 import { SqlSessionResourceSecretSource } from "@open-managed-agents/session-resource-store-sql";
 
 import { rm, readFile } from "node:fs/promises";
+import { discoverStartupResidents, listClaimScopes } from "../lib/tank-retained/startup-recovery.js";
 import { createHash } from "node:crypto";
 import { ensureRuntimeResourceFenceSchema, SqlRuntimeResourceFencePort, SqlRuntimeOrphanPort } from "@open-managed-agents/runtime-resource-fence-sql";
 import * as retainedBoxLiteProvider from "@open-managed-agents/managed-runtime-boxlite";
 import { verifyReplayEvidence } from "@open-managed-agents/sandbox-adapter-litebox";
 import { validateReplayAttachment } from "../lib/tank-retained/replay-attachment.js";
 import { NodeRetainedLifecycle, type AttachableSandbox } from "../lib/tank-retained/node-lifecycle.js";
+import { RetainedExecutionFenceLost } from "../lib/tank-retained/idle-errors.js";
 import { join } from "node:path";
 import { nanoid } from "nanoid";
 
@@ -354,12 +356,13 @@ export async function createManagedNodeRuntime(foundation: NodeFoundation, compo
     return "sha256:" + createHash("sha256").update(JSON.stringify(normalize(value))).digest("hex");
   };
   const retainedImageIdentities = new Map<string, Promise<string>>();
+  const executionOwnerId = `${config.execution.ownerId}:${nanoid()}`;
   const retainedLifecycle = new NodeRetainedLifecycle({
     fences: new SqlRuntimeResourceFencePort(sql), orphans: new SqlRuntimeOrphanPort(sql), providerModule: retainedBoxLiteProvider,
-    client: retainedSdk.JsBoxlite.withDefaultConfig(), ownerId: config.execution.ownerId, leaseTtlMs: 30000,
+    client: retainedSdk.JsBoxlite.withDefaultConfig(), ownerId: executionOwnerId, leaseTtlMs: 30000,
     assertExecutionCurrent: async (candidate) => {
       if (!candidate || !await isManagedSessionExecutionFenceActive(candidate as Parameters<typeof isManagedSessionExecutionFenceActive>[0]))
-        throw new Error("Retained Session execution fence lost");
+        throw new RetainedExecutionFenceLost();
     },
     fingerprint: async (context, allocation) => {
       const domain = context as typeof context & {
@@ -718,7 +721,10 @@ export async function createManagedNodeRuntime(foundation: NodeFoundation, compo
         managedRuntimeRunner.cancel({ workspaceId: input.workspaceId, sessionId: input.sessionId, reason: input.reason });
       },
     },
-    ownerId: config.execution.ownerId,
+    quiesceLostExecution: input => retainedLifecycle.quiesceLostTurn(input),
+    discoverStartupResidents: () => discoverStartupResidents(sql, retainedLifecycle.options),
+    listClaimScopes: now => listClaimScopes(sql, now),
+    ownerId: executionOwnerId,
     clock: { now: () => new Date() },
     ids: { nextAttemptId: () => `attempt_${nanoid()}` },
     leaseTtlMs: 30000,

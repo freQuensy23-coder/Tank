@@ -1,13 +1,15 @@
 import type { SentSessionEvent, SessionEventView, SessionStopReason } from '@open-managed-agents/domain/sessions';
 import type { OrderedSessionEvent, ExecutionProgressReceipt } from './history';
 import type { SessionExecutionState } from './coordination';
+export const executionRecoveryRefusalCode = "tank:execution-recovery-refused:v1";
+
 export interface ContinuationExecution {
   id: string;
   laneId: string;
   state: SessionExecutionState;
   revision: number;
   events: SentSessionEvent[];
-  attemptCount: number;
+  generation: number;
   interruptRequestedAt: string | null;
 }
 export interface ContinuationSnapshot {
@@ -19,6 +21,7 @@ export interface ContinuationSnapshot {
 export interface ContinuationReadyPlan {
   mode: 'model' | 'intake' | 'noop' | 'finalize' | 'failure';
   historyEvents: SessionEventView[];
+  generation: number;
   remaining: string[];
   phaseInputIds: string[];
   consumedInputIds: string[];
@@ -200,7 +203,10 @@ function groups(snapshot: ContinuationSnapshot, laneId: string): Group[] {
     const closed = phases.some(next => next.start > position && next.inputIds.some(id => {
       const input = snapshot.executions.flatMap(actionableInputs).find(e => e.id === id);
       return input && ids.includes(resultCallId(input) ?? '');
-    }) && snapshot.orderedEvents.slice(next.start, next.end + 1).some(x => x.executionId === next.owner && x.event.type.startsWith('agent.')));
+    }) && (
+      (next.terminal.event.type === 'session.status_idle' && next.terminal.event.stopReason.type === 'end_turn') ||
+      snapshot.orderedEvents.slice(next.start, next.end + 1).some(x => x.executionId === next.owner && x.event.type.startsWith('agent.'))
+    ));
     const globallySupplied = new Set(phases.flatMap(committed => committed.inputIds).map(id => resultCallId(snapshot.executions.flatMap(actionableInputs).find(input => input.id === id)!)).filter((id): id is string => id !== undefined));
     const failedDependency = !closed && snapshot.executions.some(owner => owner.laneId === laneId && ['failed', 'cancelled'].includes(owner.state) &&
       actionableInputs(owner).some(input => ids.includes(resultCallId(input) ?? '') && !globallySupplied.has(resultCallId(input)!)));
@@ -227,11 +233,33 @@ function earlierNewWork(snapshot: ContinuationSnapshot, row: ContinuationExecuti
   return prior.some(other => other.laneId === row.laneId && ['queued', 'running'].includes(other.state) &&
     remainingInputs(snapshot, other).some(e => resultCallId(e) === undefined));
 }
-export function planSessionContinuation(snapshot: ContinuationSnapshot, currentId: string): ContinuationPlan {
+export function readyToolCalls(snapshot: ContinuationSnapshot, executionIds: string[]): Map<string, string[]> {
+  if (snapshot.invalidReason)
+    throw new ContinuationProtocolError(snapshot.invalidReason);
+  assertTrustedJournalOrder(snapshot);
+  const owners = snapshot.executions.filter(row => executionIds.includes(row.id) &&
+    row.state !== 'failed' && row.state !== 'cancelled' && row.interruptRequestedAt === null);
+  const ready = new Map<string, string[]>();
+  for (const owner of owners) {
+    const open = groups(snapshot, owner.laneId).filter(group => !group.cancelled && !group.closed);
+    if (open.length > 1)
+      throw new ContinuationProtocolError('Overlapping open custom-tool groups');
+    const group = open[0];
+    if (group?.declaration.executionId !== owner.id) {
+      ready.set(owner.id, []);
+      continue;
+    }
+    const supplied = new Set(snapshot.executions.filter(row => row.laneId === owner.laneId).flatMap(actionableInputs).map(resultCallId));
+    ready.set(owner.id, group.ids.filter(id => !supplied.has(id)));
+  }
+  return ready;
+}
+
+export function planSessionContinuation(snapshot: ContinuationSnapshot, currentId: string, beforeClaim = false): ContinuationPlan {
   try {
     if (snapshot.invalidReason)
       throw new ContinuationProtocolError(snapshot.invalidReason);
-    return planContinuation(snapshot, currentId);
+    return planContinuation(snapshot, currentId, beforeClaim);
   }
   catch (error) {
     if (!(error instanceof ContinuationProtocolError))
@@ -240,13 +268,13 @@ export function planSessionContinuation(snapshot: ContinuationSnapshot, currentI
     if (!owner)
       return { mode: 'blocked', reason: 'missing_execution' };
     return {
-      mode: 'failure', failure: 'Original execution ' + currentId + ' cannot safely continue: ' + error.message,
+      mode: 'failure', generation: owner.generation, failure: 'Original execution ' + currentId + ' cannot safely continue: ' + error.message,
       historyEvents: [], remaining: [], phaseInputIds: actionableInputs(owner).map(e => e.id),
       consumedInputIds: [], remainingInputIds: [], previousReceiptId: null
     };
   }
 }
-function planContinuation(snapshot: ContinuationSnapshot, currentId: string): ContinuationPlan {
+function planContinuation(snapshot: ContinuationSnapshot, currentId: string, beforeClaim: boolean): ContinuationPlan {
   assertTrustedJournalOrder(snapshot);
   const row = snapshot.executions.find(e => e.id === currentId);
   if (!row)
@@ -259,6 +287,14 @@ function planContinuation(snapshot: ContinuationSnapshot, currentId: string): Co
   const after = progress ? snapshot.orderedEvents.indexOf(progress.entry) : -1;
   const output = snapshot.orderedEvents.filter((e, i) => i > after && e.executionId === row.id && !e.executionMetadata?.progress);
   const first = output[0];
+  const terminal = output.at(-1);
+  const successfulTerminal = terminal?.event.type === 'session.status_idle' && eventLaneId(terminal.event) === row.laneId &&
+    ['end_turn', 'requires_action'].includes(terminal.event.stopReason.type)
+    ? terminal.event : undefined;
+  const activeClaim = row.state === 'running' && !beforeClaim ? 1 : 0;
+  const previousClaim = row.generation - activeClaim > (progress?.receipt.generation ?? 0);
+  if (previousClaim && !successfulTerminal)
+    throw new ContinuationProtocolError('Recovery refused a phase without a committed successful terminal event');
   const phaseSnapshot = first ? { ...snapshot, orderedEvents: snapshot.orderedEvents.slice(0, snapshot.orderedEvents.indexOf(first)) } : snapshot;
   const known = groups(phaseSnapshot, row.laneId), open = known.filter(g => !g.closed && !g.cancelled);
   if (open.length > 1)
@@ -308,47 +344,13 @@ function planContinuation(snapshot: ContinuationSnapshot, currentId: string): Co
   }
   const phaseInputIds = phase.map(e => e.id), consumedInputIds = actionableInputs(row).filter(e => already.includes(e.id) || phaseInputIds.includes(e.id)).map(e => e.id);
   const plan: ContinuationReadyPlan = {
-    mode, remaining: pending, phaseInputIds, consumedInputIds,
+    mode, generation: row.generation, remaining: pending, phaseInputIds, consumedInputIds,
     remainingInputIds: actionableInputs(row).filter(e => !consumedInputIds.includes(e.id)).map(e => e.id),
     previousReceiptId: progress?.entry.event.id ?? null, historyEvents: [], ...(first ? { phaseStartEventId: first.event.id } : {})
   };
-  if (output.length) {
-    const terminal = output.findLast(e => e.event.type === 'session.status_idle');
-    const error = output.findLast(e => e.event.type === 'session.error' && e.event.error.retryStatus === 'terminal');
-    if (error) {
-      plan.mode = 'failure';
-      plan.failure = 'Original execution already has terminal failure: ' + (error.event.type === 'session.error' ? error.event.error.message : '');
-    }
-    else if (terminal?.event.type === 'session.status_idle') {
-      if (['end_turn', 'requires_action'].includes(terminal.event.stopReason.type)) {
-        plan.mode = 'finalize';
-        plan.recoveredStopReason = terminal.event.stopReason;
-      }
-      else {
-        plan.mode = 'failure';
-        plan.failure = 'Original execution has an unsuccessful committed terminal receipt';
-      }
-    }
-    else if (output.some(e => e.event.type.startsWith('agent.'))) {
-      const start = output.findLast(e => e.event.type === 'span.model_request_start');
-      const end = start && output.findLast(e => e.event.type === 'span.model_request_end' && e.event.modelRequestStartId === start.event.id);
-      const latestSpan = start ? output.slice(output.indexOf(start)) : output;
-      const localUses = output.filter(e => e.event.type === 'agent.tool_use' || e.event.type === 'agent.mcp_tool_use');
-      const latestLocalUses = latestSpan.filter(e => e.event.type === 'agent.tool_use' || e.event.type === 'agent.mcp_tool_use');
-      const localComplete = localUses.every(use => output.some(e => (e.event.type === 'agent.tool_result' && e.event.toolUseId === use.event.id) || (e.event.type === 'agent.mcp_tool_result' && e.event.mcpToolUseId === use.event.id)));
-      if (end?.event.type === 'span.model_request_end' && end.event.isError === false && localComplete) {
-        const custom = pendingCustomUses(latestSpan).map(e => e.event.id);
-        const latestHasTools = latestLocalUses.length > 0 || latestSpan.some(e => e.event.type === 'agent.custom_tool_use');
-        if (custom.length || !latestHasTools) {
-          plan.mode = 'finalize';
-          plan.recoveredStopReason = custom.length ? { type: 'requires_action', eventIds: custom } : { type: 'end_turn' };
-        }
-      }
-      else {
-        plan.mode = 'failure';
-        plan.failure = 'Recovery refused ambiguous committed output for original execution ' + row.id + '; no complete model/tool terminal boundary';
-      }
-    }
+  if (successfulTerminal) {
+    plan.mode = 'finalize';
+    plan.recoveredStopReason = successfulTerminal.stopReason;
   }
   plan.historyEvents = projectConsumedHistory(snapshot, row.id, phaseInputIds);
   return plan;

@@ -16,8 +16,10 @@ import {
   emitDbBoundaryLog,
   withDbBoundary,
 } from "@open-managed-agents/sql-client";
+import { ExecutionRecoveryRefusal, executionFailure } from "./execution-recovery-refusal.js";
 import { Effect, Fiber } from "effect";
 import { interruptFiber, runSupervised } from "./supervised-fiber.js";
+import { RetainedExecutionFenceLost, RetainedIdlePendingTimeout, RetainedIdleUnconfirmed } from "./tank-retained/idle-errors.js";
 
 export interface RunNodeSessionExecution extends AcceptedSessionEvents {
   executionId: string;
@@ -37,10 +39,25 @@ export interface NodeSessionExecutionRuntime {
   cancel(input: CancelNodeSessionExecution): Promise<void>;
 }
 
+export interface SessionClaimScope {
+  workspaceId: string;
+  sessionId: string;
+}
+
+export interface StartupResident extends SessionClaimScope {
+  quiesce(): Promise<void>;
+}
+
 export interface NodeSessionExecutionWorkerDependencies {
   coordinator: SessionExecutionCoordinatorPort;
   context: SessionExecutionContextSourcePort;
   runtime: NodeSessionExecutionRuntime;
+  quiesceLostExecution?(input: {
+    fence: Readonly<SessionExecutionFence>;
+    context: SessionExecutionContext | null;
+  }): Promise<void>;
+  discoverStartupResidents?(): Promise<readonly StartupResident[]>;
+  listClaimScopes?(now: Date): Promise<readonly SessionClaimScope[]>;
   ownerId: string;
   clock: { now(): Date };
   ids: { nextAttemptId(): string };
@@ -55,26 +72,30 @@ interface ActiveExecution {
   execution: SessionExecution;
   fence: SessionExecutionFence;
   context: SessionExecutionContext | null;
-  cancelled: boolean;
+  cancellation: Promise<void> | null;
+  drained: boolean;
   leaseLost: boolean;
+  quarantined: "until_expiry" | "indefinite" | null;
   promise: Promise<void>;
 }
 
-function errorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
+interface PendingRecovery {
+  priorFence: SessionExecutionFence;
+  context: SessionExecutionContext | null;
+  quiesced: boolean;
+  retryAt: number;
+  attemptId: string;
 }
 
-/**
- * Durable Node execution scheduler. Only in-flight cancellation handles live
- * in this process; admission, ordering, ownership and recovery live behind the
- * coordinator Port.
- */
 export class NodeSessionExecutionWorker implements SessionEventDispatchPort {
   readonly #leaseTtlMs: number;
   readonly #heartbeatIntervalMs: number;
   readonly #pollIntervalMs: number;
   readonly #maxConcurrent: number;
   readonly #active = new Map<string, ActiveExecution>();
+  readonly #pendingRecovery = new Set<PendingRecovery>();
+  #startupResidents: Map<StartupResident, number> | null = null;
+  readonly #quiescing = new Map<StartupResident | PendingRecovery, Promise<void>>();
   #polling: Promise<void> | null = null;
   #pollFiber: Fiber.RuntimeFiber<void, never> | null = null;
   #stopped = false;
@@ -207,57 +228,269 @@ export class NodeSessionExecutionWorker implements SessionEventDispatchPort {
   async waitForIdle(): Promise<void> {
     while (true) {
       await this.poll();
-      const active = [...this.#active.values()].map((entry) => entry.promise);
-      if (active.length === 0) return;
+      const active = [...this.#active.values()].filter((entry) => !entry.quarantined).map((entry) => entry.promise);
+      if (active.length === 0) {
+        if (this.#stopped) await Promise.allSettled(this.#quiescing.values());
+        return;
+      }
       await Promise.allSettled(active);
     }
   }
 
   async #fillCapacity(): Promise<void> {
-    while (!this.#stopped && this.#active.size < this.#maxConcurrent) {
-      const claimedAt = this.dependencies.clock.now().toISOString();
-      const claimed = await this.dependencies.coordinator.claim({
-        ownerId: this.dependencies.ownerId,
-        attemptId: this.dependencies.ids.nextAttemptId(),
-        claimedAt,
-        leaseTtlMs: this.#leaseTtlMs,
-      });
-      if (claimed.type === "empty") return;
-      const key = JSON.stringify([
-        claimed.execution.workspaceId,
-        claimed.execution.id,
-      ]);
-      const active: ActiveExecution = {
-        execution: claimed.execution,
-        fence: claimed.fence,
-        context: null,
-        cancelled: false,
-        leaseLost: false,
-        promise: Promise.resolve(),
-      };
-      this.#active.set(key, active);
-      const fiber = runSupervised(
-        Effect.tryPromise({
-          try: () => this.#run(active),
-          catch: (error: unknown) => error,
-        }).pipe(
-          Effect.ensuring(Effect.sync(() => {
-            if (this.#active.get(key) === active) this.#active.delete(key);
-            this.#pollInBackground();
-          })),
-          Effect.catchAll((error) => Effect.sync(() => {
-            this.#reportError(error);
-          })),
-        ),
-        (error) => this.#reportError(error),
-      );
-      active.promise = Effect.runPromise(Fiber.join(fiber)).then(
-        () => undefined,
-        (error: unknown) => {
-          this.#reportError(error);
-        },
-      );
+    this.#startupResidents ??= new Map(
+      (await this.dependencies.discoverStartupResidents?.() ?? []).map((resident) => [resident, 0]),
+    );
+    if (this.#stopped) return;
+    for (const [key, active] of this.#active) {
+      if (active.quarantined !== "until_expiry" || !this.#leaseDeadlinePassed(active)) continue;
+      this.#logLeaseLost(active);
+      this.#enqueueRecovery(active);
+      this.#active.delete(key);
     }
+    const startup = this.#startupResidents;
+    const now = performance.now();
+    for (const [resident, retryAt] of startup) {
+      if (retryAt > now) continue;
+      this.#checkQuiescence(resident, async () => {
+        try {
+          await resident.quiesce();
+          startup.delete(resident);
+        } catch (error) {
+          startup.set(resident, performance.now() + this.#pollIntervalMs);
+          throw error;
+        }
+      });
+    }
+    for (const pending of this.#pendingRecovery) {
+      if (pending.quiesced || pending.retryAt > now) continue;
+      this.#checkQuiescence(pending, async () => {
+        await Promise.all([
+          this.#sweepWithoutClaim(pending.priorFence).catch((error: unknown) => this.#reportError(error)),
+          this.#quiescePending(pending),
+        ]);
+      });
+    }
+    if (this.#maxConcurrent === 1) await Promise.all(this.#quiescing.values());
+
+    const ready = [...this.#pendingRecovery].filter(
+      (pending) => pending.quiesced && !this.#quiescing.has(pending) && pending.retryAt <= performance.now(),
+    );
+    for (const pending of ready) {
+      if (this.#stopped) return;
+      if (this.#occupiedSlots() >= this.#maxConcurrent
+        || [...startup.keys()].some((resident) => resident.workspaceId === pending.priorFence.workspaceId
+          && resident.sessionId === pending.priorFence.sessionId)) continue;
+      try {
+        const claimed = await this.#claim(pending).catch((error: unknown) => {
+          this.#reportError(error);
+          return null;
+        });
+        if (claimed?.type === "claimed") {
+          this.#pendingRecovery.delete(pending);
+          this.#launch(claimed);
+        } else {
+          await this.#reconcileEmptyRecovery(pending);
+        }
+      } catch (error) {
+        this.#reportError(error);
+      }
+      pending.retryAt = performance.now() + this.#pollIntervalMs;
+    }
+
+    await this.#claimAvailableWork();
+  }
+
+  #checkQuiescence(key: StartupResident | PendingRecovery, check: () => Promise<void>): void {
+    if (this.#quiescing.has(key)) return;
+    const task = check().catch((error: unknown) => this.#reportError(error)).finally(() => {
+      this.#quiescing.delete(key);
+    });
+    this.#quiescing.set(key, task);
+  }
+
+  async #quiescePending(pending: PendingRecovery): Promise<void> {
+    try {
+      if (this.dependencies.quiesceLostExecution === undefined) {
+        throw new Error("Recovery requires retained runtime quiescence");
+      }
+      await this.dependencies.quiesceLostExecution({
+        fence: pending.priorFence,
+        context: pending.context,
+      });
+      pending.quiesced = true;
+    } catch (error) {
+      pending.retryAt = performance.now() + this.#pollIntervalMs;
+      this.#reportError(error);
+    }
+  }
+
+  #blockedScopes(): SessionClaimScope[] {
+    return [
+      ...(this.#startupResidents?.keys() ?? []),
+      ...[...this.#pendingRecovery].map((pending) => pending.priorFence),
+    ];
+  }
+
+  async #claimAvailableWork(): Promise<void> {
+    if (this.#stopped || this.#occupiedSlots() >= this.#maxConcurrent) return;
+    const blocked = this.#blockedScopes();
+    if (this.#maxConcurrent === 1 && blocked.length > 0) return;
+
+    if (blocked.length === 0 && this.#active.size === 0) {
+      const claimed = await this.#claim();
+      if (claimed.type === "empty") return;
+      this.#launch(claimed);
+    }
+    if (this.#stopped || this.#occupiedSlots() >= this.#maxConcurrent) return;
+
+    if (this.dependencies.listClaimScopes === undefined) {
+      while (!this.#stopped && this.#occupiedSlots() < this.#maxConcurrent && this.#blockedScopes().length === 0) {
+        const claimed = await this.#claim();
+        if (claimed.type === "empty") return;
+        this.#launch(claimed);
+      }
+      return;
+    }
+
+    for (const scope of await this.dependencies.listClaimScopes(this.dependencies.clock.now())) {
+      if (this.#stopped || this.#occupiedSlots() >= this.#maxConcurrent) return;
+      const occupied = [...this.#blockedScopes(), ...[...this.#active.values()].map((active) => active.fence)];
+      if (occupied.some((entry) => entry.workspaceId === scope.workspaceId && entry.sessionId === scope.sessionId)) continue;
+      const claimed = await this.#claim(undefined, scope);
+      if (claimed.type === "claimed") this.#launch(claimed);
+    }
+  }
+
+  #occupiedSlots(): number {
+    return this.#active.size + (this.#startupResidents?.size ?? 0)
+      + [...this.#pendingRecovery].filter((pending) => !pending.quiesced).length;
+  }
+
+  async #sweepWithoutClaim(fence: SessionExecutionFence): Promise<void> {
+    const result = await this.dependencies.coordinator.claim({
+      ownerId: `${fence.ownerId}:sweep`,
+      attemptId: this.dependencies.ids.nextAttemptId(),
+      claimedAt: this.dependencies.clock.now().toISOString(),
+      leaseTtlMs: this.#leaseTtlMs,
+      recoverFrom: fence,
+    });
+    if (result.type !== "empty") throw new Error("Coordinator claimed an execution during an expiry sweep");
+  }
+
+  async #claim(pending?: PendingRecovery, scope?: SessionClaimScope) {
+    const claim = () => this.dependencies.coordinator.claim({
+      ...scope,
+      ownerId: this.dependencies.ownerId,
+      attemptId: pending?.attemptId ?? this.dependencies.ids.nextAttemptId(),
+      claimedAt: this.dependencies.clock.now().toISOString(),
+      leaseTtlMs: this.#leaseTtlMs,
+      ...(pending !== undefined && { recoverFrom: pending.priorFence }),
+    });
+    const claimed = pending === undefined ? await claim() : await withDbBoundary({
+      op: "session_execution.recovery_claim",
+      sessionId: pending.priorFence.sessionId,
+      timeoutMs: this.#leaseTtlMs,
+    }, claim);
+    if (pending !== undefined && claimed.type === "claimed") {
+      const { fence, execution } = claimed;
+      if (fence.workspaceId !== pending.priorFence.workspaceId ||
+        fence.sessionId !== pending.priorFence.sessionId ||
+        fence.executionId !== pending.priorFence.executionId ||
+        fence.ownerId !== this.dependencies.ownerId ||
+        fence.attemptId !== pending.attemptId ||
+        fence.generation !== pending.priorFence.generation + 1 ||
+        execution.workspaceId !== fence.workspaceId ||
+        execution.sessionId !== fence.sessionId ||
+        execution.id !== fence.executionId) {
+        throw new Error("Coordinator returned an unrelated execution during recovery");
+      }
+    }
+    return claimed;
+  }
+
+  #enqueueRecovery(active: ActiveExecution): void {
+    this.#pendingRecovery.add({
+      priorFence: { ...active.fence },
+      context: active.context,
+      quiesced: active.context === null,
+      retryAt: 0,
+      attemptId: this.dependencies.ids.nextAttemptId(),
+    });
+  }
+
+  #launch(claimed: { execution: SessionExecution; fence: SessionExecutionFence }): void {
+    const key = JSON.stringify([
+      claimed.execution.workspaceId,
+      claimed.execution.id,
+    ]);
+    const active: ActiveExecution = {
+      execution: claimed.execution,
+      fence: claimed.fence,
+      context: null,
+      cancellation: null,
+      drained: false,
+      leaseLost: false,
+      quarantined: null,
+      promise: Promise.resolve(),
+    };
+    this.#active.set(key, active);
+    const fiber = runSupervised(
+      Effect.tryPromise({
+        try: () => this.#run(active),
+        catch: (error: unknown) => error,
+      }).pipe(
+        Effect.ensuring(Effect.sync(() => {
+          if (this.#active.get(key) === active && !active.quarantined) {
+            if (active.leaseLost && this.#tracksRecovery()) {
+              this.#enqueueRecovery(active);
+            }
+            this.#active.delete(key);
+          }
+          this.#pollInBackground();
+        })),
+        Effect.catchAll((error) => Effect.sync(() => {
+          this.#reportError(error);
+        })),
+      ),
+      (error) => this.#reportError(error),
+    );
+    active.promise = Effect.runPromise(Fiber.join(fiber)).then(
+      () => undefined,
+      (error: unknown) => {
+        this.#reportError(error);
+      },
+    );
+  }
+
+  async #reconcileEmptyRecovery(pending: PendingRecovery): Promise<void> {
+    const current = await withDbBoundary({
+      op: "session_execution.recovery_find",
+      sessionId: pending.priorFence.sessionId,
+      timeoutMs: this.#leaseTtlMs,
+    }, () => this.dependencies.coordinator.find(pending.priorFence));
+    const attempt = current?.state === "running" ? current.attempt : null;
+    if (!attempt) {
+      this.#pendingRecovery.delete(pending);
+      return;
+    }
+    if (attempt.ownerId === this.dependencies.ownerId &&
+      attempt.id === pending.priorFence.attemptId &&
+      attempt.generation === pending.priorFence.generation) return;
+    if (attempt.ownerId === this.dependencies.ownerId &&
+      attempt.id === pending.attemptId &&
+      attempt.generation === pending.priorFence.generation + 1) {
+      if (Date.parse(attempt.leaseExpiresAt) > this.dependencies.clock.now().getTime()) return;
+      pending.priorFence = {
+        ...pending.priorFence,
+        attemptId: attempt.id,
+        generation: attempt.generation,
+        expiresAt: attempt.leaseExpiresAt,
+      };
+      pending.attemptId = this.dependencies.ids.nextAttemptId();
+      return;
+    }
+    this.#pendingRecovery.delete(pending);
   }
 
   async #run(active: ActiveExecution): Promise<void> {
@@ -280,43 +513,75 @@ export class NodeSessionExecutionWorker implements SessionEventDispatchPort {
     let outcome: "completed" | "failed" | "cancelled" = "completed";
     let failure: string | undefined;
     let phase: void | SessionExecutionPhaseResult = undefined;
+    let idleFailure: RetainedIdleUnconfirmed | undefined;
     try {
-      const context = await this.dependencies.context.find({
-        workspaceId: active.execution.workspaceId,
-        sessionId: active.execution.sessionId,
-      });
-      active.context = context;
-      if (context === null) {
-        throw new Error(`Session ${active.execution.sessionId} execution context was not found`);
+      if (this.#leaseDeadlinePassed(active)) {
+        active.leaseLost = true;
+        return;
       }
-      phase = await this.dependencies.runtime.run({
-        executionId: active.execution.id,
-        workspaceId: active.execution.workspaceId,
-        sessionId: active.execution.sessionId,
-        session: context.session,
-        environment: context.environment,
-        events: active.execution.events,
-        fence: active.fence,
-      });
-      if (active.cancelled)
+      if (active.execution.interruptRequestedAt !== null &&
+        this.dependencies.quiesceLostExecution !== undefined) {
+        active.cancellation ??= Promise.resolve();
+      }
+      if (active.cancellation !== null) {
         outcome = "cancelled";
+      } else {
+        phase = await this.#runRuntime(active);
+        if (active.cancellation !== null) outcome = "cancelled";
+      }
     }
     catch (error) {
-      outcome = active.cancelled ? "cancelled" : "failed";
-      failure = errorMessage(error);
+      if (error instanceof RetainedIdleUnconfirmed) {
+        idleFailure = error;
+        this.#reportError(error);
+      } else if (error instanceof RetainedExecutionFenceLost) {
+        active.leaseLost = true;
+        this.#logLeaseLost(active);
+        return;
+      } else {
+        outcome = active.cancellation !== null ? "cancelled" : "failed";
+        const cancelled = outcome === "cancelled" && error instanceof Error && error.name === "AbortError";
+        failure = active.fence.generation > 1 && !cancelled ? ExecutionRecoveryRefusal.code : executionFailure(error);
+      }
     }
     finally {
+      active.drained = true;
       await interruptFiber(heartbeat);
+      if (this.#tracksRecovery()) {
+        try {
+          await active.cancellation;
+        } catch (error) {
+          this.#reportError(error);
+        }
+      }
+    }
+    if (idleFailure !== undefined) {
+      if (this.#tracksRecovery() && (active.leaseLost || this.#leaseDeadlinePassed(active))) {
+        if (!active.leaseLost) this.#logLeaseLost(active);
+        active.leaseLost = true;
+      } else {
+        active.quarantined = this.#tracksRecovery() && idleFailure instanceof RetainedIdlePendingTimeout
+          ? "until_expiry" : "indefinite";
+      }
+      return;
     }
     if (active.leaseLost)
       return;
-    if (!active.cancelled && outcome === 'completed' && phase?.yield !== undefined) {
+    if (active.cancellation === null && outcome === 'completed' && phase?.yield !== undefined) {
       try {
-        if (this.dependencies.coordinator.yieldProgress === undefined)
-          throw new Error('Execution coordinator cannot confirm callback phase progress');
-        const yielded = await this.dependencies.coordinator.yieldProgress({
-          ...phase.yield, fence: active.fence,
-          yieldedAt: this.dependencies.clock.now().toISOString()
+        const progress = phase.yield;
+        const coordinator = this.dependencies.coordinator;
+        const yielded = await withDbBoundary({
+          op: "session_execution.yield_ack",
+          sessionId: active.fence.sessionId,
+          timeoutMs: this.#leaseTtlMs,
+        }, () => {
+          if (coordinator.yieldProgress === undefined)
+            throw new Error("Execution coordinator cannot confirm callback phase progress");
+          return coordinator.yieldProgress({
+            ...progress, fence: active.fence,
+            yieldedAt: this.dependencies.clock.now().toISOString(),
+          });
         });
         if (yielded.type === 'lost') {
           active.leaseLost = true;
@@ -324,17 +589,22 @@ export class NodeSessionExecutionWorker implements SessionEventDispatchPort {
         }
       }
       catch (error) {
+        if (this.#tracksRecovery()) active.leaseLost = true;
         this.#reportError(error);
       }
       return;
     }
     try {
-      const settled = await this.dependencies.coordinator.settle({
+      const settled = await withDbBoundary({
+        op: "session_execution.settle_ack",
+        sessionId: active.fence.sessionId,
+        timeoutMs: this.#leaseTtlMs,
+      }, () => this.dependencies.coordinator.settle({
         fence: active.fence,
         settledAt: this.dependencies.clock.now().toISOString(),
         outcome,
         ...(failure !== undefined && { failure }),
-      });
+      }));
       if (settled.type === "lost") {
         active.leaseLost = true;
         this.#logLeaseLost(active);
@@ -342,10 +612,35 @@ export class NodeSessionExecutionWorker implements SessionEventDispatchPort {
       }
     }
     catch (error) {
-      // The settle transaction rolled back. Leave the row running so the
-      // lease can expire and another replica can recover it. Do not crash.
+      if (this.#tracksRecovery()) active.leaseLost = true;
       this.#reportError(error);
     }
+  }
+
+  async #runRuntime(active: ActiveExecution): Promise<void | SessionExecutionPhaseResult> {
+    const context = await this.dependencies.context.find({
+      workspaceId: active.execution.workspaceId,
+      sessionId: active.execution.sessionId,
+    });
+    if (context === null) {
+      throw new Error(`Session ${active.execution.sessionId} execution context was not found`);
+    }
+    if (active.leaseLost) return;
+    if (this.#leaseDeadlinePassed(active)) {
+      active.leaseLost = true;
+      return;
+    }
+    if (active.cancellation !== null) return;
+    active.context = context;
+    return this.dependencies.runtime.run({
+      executionId: active.execution.id,
+      workspaceId: active.execution.workspaceId,
+      sessionId: active.execution.sessionId,
+      session: context.session,
+      environment: context.environment,
+      events: active.execution.events,
+      fence: active.fence,
+    });
   }
 
   async #heartbeat(active: ActiveExecution): Promise<void> {
@@ -362,6 +657,7 @@ export class NodeSessionExecutionWorker implements SessionEventDispatchPort {
         leaseTtlMs: this.#leaseTtlMs,
       }));
     } catch (error) {
+      if (active.drained) return;
       if (this.#leaseDeadlinePassed(active)) {
         await this.#loseLease(active, error);
       } else {
@@ -369,6 +665,7 @@ export class NodeSessionExecutionWorker implements SessionEventDispatchPort {
       }
       return;
     }
+    if (active.drained) return;
     if (renewed.type === "lost") {
       active.leaseLost = true;
       this.#logLeaseLost(active);
@@ -382,6 +679,10 @@ export class NodeSessionExecutionWorker implements SessionEventDispatchPort {
     if (renewed.interruptRequestedAt !== null) {
       await this.#cancel(active, "interrupt_requested");
     }
+  }
+
+  #tracksRecovery(): boolean {
+    return this.#maxConcurrent === 1 || this.dependencies.quiesceLostExecution !== undefined;
   }
 
   #leaseDeadlinePassed(active: ActiveExecution): boolean {
@@ -403,7 +704,7 @@ export class NodeSessionExecutionWorker implements SessionEventDispatchPort {
     this.#reportError(error);
     // A thrown renew/heartbeat error is not a confirmed CAS miss. Keep the
     // turn until the lease deadline actually passes.
-    if (!this.#leaseDeadlinePassed(active)) return;
+    if (active.drained || !this.#leaseDeadlinePassed(active)) return;
     active.leaseLost = true;
     try {
       await this.#cancel(active, "lease_lost");
@@ -439,14 +740,16 @@ export class NodeSessionExecutionWorker implements SessionEventDispatchPort {
     active: ActiveExecution,
     reason: CancelNodeSessionExecution["reason"],
   ): Promise<void> {
-    if (active.cancelled) return;
-    active.cancelled = true;
-    await this.dependencies.runtime.cancel({
+    if (active.cancellation !== null) return active.cancellation;
+    if (active.drained && reason !== "lease_lost" && this.#tracksRecovery()) return;
+    const cancellation = Promise.resolve().then(() => this.dependencies.runtime.cancel({
       workspaceId: active.execution.workspaceId,
       sessionId: active.execution.sessionId,
       executionId: active.execution.id,
       fence: active.fence,
       reason,
-    });
+    }));
+    active.cancellation = cancellation;
+    return cancellation;
   }
 }

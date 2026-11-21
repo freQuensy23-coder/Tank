@@ -2,7 +2,8 @@ import json
 from pathlib import Path
 
 import pytest
-from model_fixture import audited_result, model_arguments
+from model_fixture import audited_result
+from replay_openma_fixture import CommittedPhaseProvider
 
 from tank.replay import ReplayClock, ReplayError, evaluate_frozen, load_inputs, replay_bundle
 from tank.settings import Settings
@@ -281,7 +282,6 @@ def test_masking_preserves_original_and_private_map_is_not_pipeline_input(packet
 async def test_fresh_replay_session_reruns_market_and_decision_code(
     packet, tmp_path, captured_http_status, transient_case
 ):
-    import asyncio
     import copy
 
     import httpx
@@ -476,36 +476,15 @@ async def test_fresh_replay_session_reruns_market_and_decision_code(
         for collection, key, row in records
     ]
     packet.write_text(json.dumps(data))
-    queue = asyncio.Queue()
+    provider = CommittedPhaseProvider()
     requests = []
     results = []
 
-    class Stream(httpx.AsyncByteStream):
-        async def __aiter__(self):
-            while True:
-                seq, event = await queue.get()
-                yield ("id: " + str(seq) + "\ndata: " + json.dumps(event) + "\n\n").encode()
-
-        async def aclose(self):
-            pass
-
-    accepted_inputs = []
     decision_ack_bodies = []
 
     async def transport(request):
         if request.url.path.endswith("/executions"):
-            assert request.method == "GET"
-            ids = request.url.params.get_list("ids[]")
-            assert ids and len(ids) <= 64 and set(ids) <= set(accepted_inputs)
-            return httpx.Response(
-                200,
-                json={
-                    "data": [
-                        {"execution_id": identity, "state": "COMPLETED", "settled_outcome": "COMPLETED"}
-                        for identity in ids
-                    ]
-                },
-            )
+            return provider.status(request)
         path = request.url.path
         if request.method == "GET" and path.rsplit("/", 1)[-1] in {"fresh-session", "fresh-replay-session"}:
             return httpx.Response(
@@ -531,121 +510,101 @@ async def test_fresh_replay_session_reruns_market_and_decision_code(
             requests.append(json.loads(request.content))
             return httpx.Response(201, json={"id": "fresh-replay-session"})
         if path.endswith("/events/stream"):
-            return httpx.Response(200, headers={"content-type": "text/event-stream"}, stream=Stream())
+            return provider.stream(request)
         if path.endswith("/events"):
             if request.method == "GET":
-                return httpx.Response(200, json={"data": []})
+                return provider.history(request)
             event = json.loads(request.content)["events"][0]
             if event.get("custom_tool_use_id") == "replay-decision":
                 decision_ack_bodies.append(copy.deepcopy(event))
                 if transient_case == "lost_decision_ack" and len(decision_ack_bodies) == 1:
-                    await queue.put(
-                        (
-                            4,
-                            {
-                                "id": "replay-decision",
-                                "type": "agent.custom_tool_use",
-                                "name": "get_decision",
-                                "input": {"token_id": "T"},
-                            },
-                        )
-                    )
                     raise httpx.ReadError("Synthetic lost replay ACK", request=request)
-            accepted_id = "accepted-" + str(len(accepted_inputs) + 1)
-            accepted_inputs.append(accepted_id)
+            accepted_id = provider.accept(event)
             if event["type"] == "user.message" and transient_case == "scope_refusal":
-                await queue.put(
-                    (
-                        0,
-                        {
-                            "id": "replay-scope",
-                            "type": "agent.custom_tool_use",
-                            "name": "get_decision",
-                            "input": {"event_id": new_id("EVT"), "token_id": "T"},
-                        },
-                    )
+                await provider.emit(
+                    {
+                        "id": "replay-scope",
+                        "type": "agent.custom_tool_use",
+                        "execution_id": accepted_id,
+                        "name": "get_decision",
+                        "input": {"event_id": new_id("EVT"), "token_id": "T"},
+                    },
+                    project_arguments=False,
                 )
             elif event["type"] == "user.message" or event.get("custom_tool_use_id") == "replay-scope":
                 if event["type"] != "user.message":
                     refusal = json.loads(event["content"][0]["text"])
                     assert refusal["ok"] is False
                     assert refusal["error"]["category"] == "VALIDATION"
-                await queue.put(
-                    (
-                        1,
-                        {
-                            "id": "replay-observation",
-                            "type": "agent.custom_tool_use",
-                            "name": "add_observation",
-                            "input": {
-                                "link": "CORROBORATION",
-                                "claims": [],
-                                "public_at": {
-                                    "value": earlier,
-                                    "precision": "EXACT",
-                                    "basis": "ITEM_METADATA",
-                                    "quote": None,
-                                },
-                                "freshness": "FRESH",
+                await provider.emit(
+                    {
+                        "id": "replay-observation",
+                        "type": "agent.custom_tool_use",
+                        "execution_id": accepted_id,
+                        "name": "add_observation",
+                        "input": {
+                            "link": "CORROBORATION",
+                            "claims": [],
+                            "public_at": {
+                                "value": earlier,
+                                "precision": "EXACT",
+                                "basis": "ITEM_METADATA",
+                                "quote": None,
                             },
+                            "freshness": "FRESH",
                         },
-                    )
+                    },
+                    project_arguments=False,
                 )
             else:
                 result = await audited_result(repo, event)
                 if event["custom_tool_use_id"] == "replay-observation":
                     assert not event.get("is_error"), result
-                    await queue.put(
-                        (
-                            2,
-                            {
-                                "id": "replay-truth",
-                                "type": "agent.custom_tool_use",
-                                "name": "get_market_truth",
-                                "input": {"token_ids": ["T"]},
-                                "processed_at": iso(utcnow()),
-                            },
-                        )
+                    await provider.emit(
+                        {
+                            "id": "replay-truth",
+                            "type": "agent.custom_tool_use",
+                            "execution_id": accepted_id,
+                            "name": "get_market_truth",
+                            "input": {"token_ids": ["T"]},
+                            "processed_at": iso(utcnow()),
+                        },
+                        project_arguments=False,
                     )
                 elif event["custom_tool_use_id"] == "replay-truth":
                     results.append(result)
-                    await queue.put(
-                        (
-                            3,
-                            {
-                                "id": "replay-web",
-                                "type": "agent.custom_tool_use",
-                                "name": "fetch_page",
-                                "input": {"url": "https://synthetic.invalid/captured-page"},
-                            },
-                        )
+                    await provider.emit(
+                        {
+                            "id": "replay-web",
+                            "type": "agent.custom_tool_use",
+                            "execution_id": accepted_id,
+                            "name": "fetch_page",
+                            "input": {"url": "https://synthetic.invalid/captured-page"},
+                        },
+                        project_arguments=False,
                     )
                 elif event["custom_tool_use_id"] == "replay-web":
                     results.append(result)
                     assert bool(event.get("is_error")) == bool(captured_http_status)
-                    await queue.put(
-                        (
-                            4,
-                            {
-                                "id": "replay-decision",
-                                "type": "agent.custom_tool_use",
-                                "name": "get_decision",
-                                "input": {"token_id": "T"},
-                            },
-                        )
+                    await provider.emit(
+                        {
+                            "id": "replay-decision",
+                            "type": "agent.custom_tool_use",
+                            "execution_id": accepted_id,
+                            "name": "get_decision",
+                            "input": {"token_id": "T"},
+                        },
+                        project_arguments=False,
                     )
                 else:
                     results.append(result)
-                    await queue.put(
-                        (
-                            5,
-                            {
-                                "id": "replay-done",
-                                "type": "session.status_idle",
-                                "execution_id": accepted_id,
-                                "stop_reason": {"type": "end_turn"},
-                            },
-                        )
+                    await provider.emit(
+                        {
+                            "id": "replay-done",
+                            "type": "session.status_idle",
+                            "execution_id": accepted_id,
+                            "stop_reason": {"type": "end_turn"},
+                        },
                     )
             return httpx.Response(200, json={"data": [{"id": accepted_id}]})
         raise AssertionError("Unexpected control-plane request")
@@ -1073,7 +1032,6 @@ def test_operator_cli_defaults_to_fresh_session_and_diagnostic_is_explicit(monke
 async def test_fresh_multi_message_replay_advances_prefix_without_future_domain_seeding(
     packet, timer_divergence
 ):
-    import asyncio
     import copy
 
     import httpx
@@ -1202,23 +1160,11 @@ async def test_fresh_multi_message_replay_advances_prefix_without_future_domain_
         ]
     )
     packet.write_text(json.dumps(data))
-    repo, queue, sent, results = MemoryRepository(), asyncio.Queue(), [], []
-    seq = 0
+    repo, sent, results = MemoryRepository(), [], []
 
-    class Stream(httpx.AsyncByteStream):
-        async def __aiter__(self):
-            while True:
-                event = await queue.get()
-                yield event
+    provider = CommittedPhaseProvider()
+    emit = provider.emit
 
-    async def emit(event):
-        if event.get("type") == "agent.custom_tool_use":
-            event = dict(event, input=model_arguments(event["name"], event["input"]))
-        nonlocal seq
-        seq += 1
-        await queue.put(f"id: {seq}\ndata: {json.dumps(event)}\n\n".encode())
-
-    accepted_inputs = []
     actor_stage = None
     actor_item = None
     fresh_event_id = None
@@ -1226,18 +1172,7 @@ async def test_fresh_multi_message_replay_advances_prefix_without_future_domain_
     async def transport(request):
         nonlocal actor_stage, actor_item, fresh_event_id
         if request.url.path.endswith("/executions"):
-            assert request.method == "GET"
-            ids = request.url.params.get_list("ids[]")
-            assert ids and len(ids) <= 64 and set(ids) <= set(accepted_inputs)
-            return httpx.Response(
-                200,
-                json={
-                    "data": [
-                        {"execution_id": identity, "state": "COMPLETED", "settled_outcome": "COMPLETED"}
-                        for identity in ids
-                    ]
-                },
-            )
+            return provider.status(request)
         if request.method == "GET" and request.url.path.endswith("/sessions/new-session"):
             return httpx.Response(
                 200,
@@ -1258,15 +1193,14 @@ async def test_fresh_multi_message_replay_advances_prefix_without_future_domain_
             assert json.loads(request.content)["environment_id"] == "replay"
             return httpx.Response(201, json={"id": "new-session"})
         if request.url.path.endswith("/events/stream"):
-            return httpx.Response(200, stream=Stream(), headers={"content-type": "text/event-stream"})
+            return provider.stream(request)
         if request.url.path.endswith("/archive"):
             return httpx.Response(200, json={})
         if request.url.path.endswith("/events"):
             if request.method == "GET":
-                return httpx.Response(200, json={"data": []})
+                return provider.history(request)
             event = json.loads(request.content)["events"][0]
-            accepted_id = "accepted-" + str(len(accepted_inputs) + 1)
-            accepted_inputs.append(accepted_id)
+            accepted_id = provider.accept(event)
             if event["type"] == "user.message":
                 content = json.loads(event["content"][0]["text"])
                 item = content["item"]["text"]
@@ -1289,6 +1223,7 @@ async def test_fresh_multi_message_replay_advances_prefix_without_future_domain_
                     {
                         "id": "get-" + item,
                         "type": "agent.custom_tool_use",
+                        "execution_id": accepted_id,
                         "name": "get_item",
                         "input": {"item_id": "first" if item == "second" else item},
                     }
@@ -1702,7 +1637,6 @@ async def test_native_replay_captured_delivery_creates_fresh_call_and_reruns_exp
     packet, premature_trigger
 ):
     """Synthetic transport: actual delivery/call/expiry code, no Telegram or model HTTP."""
-    import asyncio
     import copy
 
     import httpx
@@ -1894,38 +1828,17 @@ async def test_native_replay_captured_delivery_creates_fresh_call_and_reruns_exp
         ],
     )
     packet.write_text(json.dumps(data))
-    queue, messages, seq = asyncio.Queue(), [], 0
+    messages = []
 
-    class Stream(httpx.AsyncByteStream):
-        async def __aiter__(self):
-            while True:
-                yield await queue.get()
+    provider = CommittedPhaseProvider()
+    emit = provider.emit
 
-    async def emit(event):
-        if event.get("type") == "agent.custom_tool_use":
-            event = dict(event, input=model_arguments(event["name"], event["input"]))
-        nonlocal seq
-        seq += 1
-        await queue.put(f"id: {seq}\ndata: {json.dumps(event)}\n\n".encode())
-
-    accepted_inputs = []
     actor_stage = None
 
     async def control(request):
         nonlocal actor_stage
         if request.url.path.endswith("/executions"):
-            assert request.method == "GET"
-            ids = request.url.params.get_list("ids[]")
-            assert ids and len(ids) <= 64 and set(ids) <= set(accepted_inputs)
-            return httpx.Response(
-                200,
-                json={
-                    "data": [
-                        {"execution_id": identity, "state": "COMPLETED", "settled_outcome": "COMPLETED"}
-                        for identity in ids
-                    ]
-                },
-            )
+            return provider.status(request)
         assert request.url.host != "api.telegram.org", (
             "Delivery must use its separate captured-only transport"
         )
@@ -1951,15 +1864,14 @@ async def test_native_replay_captured_delivery_creates_fresh_call_and_reruns_exp
                 else httpx.Response(201, json={"id": "fresh-session"})
             )
         if path.endswith("/events/stream"):
-            return httpx.Response(200, stream=Stream(), headers={"content-type": "text/event-stream"})
+            return provider.stream(request)
         if path.endswith("/archive"):
             return httpx.Response(200, json={})
         if path.endswith("/events"):
             if request.method == "GET":
-                return httpx.Response(200, json={"data": []})
+                return provider.history(request)
             event = json.loads(request.content)["events"][0]
-            accepted_id = "accepted-" + str(len(accepted_inputs) + 1)
-            accepted_inputs.append(accepted_id)
+            accepted_id = provider.accept(event)
             if event["type"] == "user.message":
                 message = json.loads(event["content"][0]["text"])["message"]
                 messages.append(message)
@@ -2079,7 +1991,6 @@ async def test_native_replay_captured_delivery_creates_fresh_call_and_reruns_exp
 @pytest.mark.parametrize("state", ["APPROVED", "PROPOSED"])
 async def test_native_condition_replay_uses_tool_cause_and_actual_watch_predicate(packet, state):
     """Fixture grade, real callback ledger/reconcile/watch execution; no live requests."""
-    import asyncio
     import copy
 
     import httpx
@@ -2223,45 +2134,17 @@ async def test_native_condition_replay_uses_tool_cause_and_actual_watch_predicat
         ],
     )
     packet.write_text(json.dumps(data))
-    repo, queue, messages, seq = MemoryRepository(), asyncio.Queue(), [], 0
+    repo, messages = MemoryRepository(), []
 
-    class Stream(httpx.AsyncByteStream):
-        async def __aiter__(self):
-            while True:
-                yield await queue.get()
+    provider = CommittedPhaseProvider()
+    emit = provider.emit
 
-    async def emit(event):
-        if event.get("type") == "agent.custom_tool_use":
-            event = dict(event, input=model_arguments(event["name"], event["input"]))
-        nonlocal seq
-        seq += 1
-        if event["type"] == "session.status_idle":
-            settled_inputs.update(accepted_inputs)
-        await queue.put(f"id: {seq}\ndata: {json.dumps(event)}\n\n".encode())
-
-    accepted_inputs = []
-    settled_inputs = set()
     actor_stage = None
 
     async def control(request):
         nonlocal actor_stage
         if request.url.path.endswith("/executions"):
-            assert request.method == "GET"
-            ids = request.url.params.get_list("ids[]")
-            assert ids and len(ids) <= 64 and set(ids) <= set(accepted_inputs)
-            return httpx.Response(
-                200,
-                json={
-                    "data": [
-                        {
-                            "execution_id": identity,
-                            "state": "COMPLETED" if identity in settled_inputs else "RUNNING",
-                            "settled_outcome": "COMPLETED" if identity in settled_inputs else None,
-                        }
-                        for identity in ids
-                    ]
-                },
-            )
+            return provider.status(request)
         path = request.url.path
         if request.method == "GET" and path.rsplit("/", 1)[-1] in {"fresh-session", "fresh-replay-session"}:
             return httpx.Response(
@@ -2288,15 +2171,14 @@ async def test_native_condition_replay_uses_tool_cause_and_actual_watch_predicat
                 else httpx.Response(201, json={"id": "fresh-session"})
             )
         if path.endswith("/events/stream"):
-            return httpx.Response(200, stream=Stream(), headers={"content-type": "text/event-stream"})
+            return provider.stream(request)
         if path.endswith("/archive"):
             return httpx.Response(200, json={})
         if path.endswith("/events"):
             if request.method == "GET":
-                return httpx.Response(200, json={"data": []})
+                return provider.history(request)
             event = json.loads(request.content)["events"][0]
-            accepted_id = "accepted-" + str(len(accepted_inputs) + 1)
-            accepted_inputs.append(accepted_id)
+            accepted_id = provider.accept(event)
             if event["type"] == "user.message":
                 message = json.loads(event["content"][0]["text"])["message"]
                 messages.append(message)
@@ -2593,7 +2475,6 @@ async def test_actual_reference_publication_retains_unsent_intent_and_ordinary_r
     tmp_path, monkeypatch, profile
 ):
     """Actual origin/class/map/publisher receipts; only native wire is synthetic."""
-    import asyncio
     import copy
 
     import httpx
@@ -2672,9 +2553,8 @@ async def test_actual_reference_publication_retains_unsent_intent_and_ordinary_r
     config = Config(
         replay=True, config_version="test", code_version="test", data_dir=tmp_path, _env_file=None
     )
-    repo, queue = MemoryRepository(), asyncio.Queue()
-    accepted, settled = [], set()
-    sequence, stage = 0, 0
+    repo = MemoryRepository()
+    stage = 0
     event_id = None
     publication = None
     partial_card = partial_intent = None
@@ -2686,19 +2566,8 @@ async def test_actual_reference_publication_retains_unsent_intent_and_ordinary_r
 
     monkeypatch.setattr(DeliveryService, "deliver", forbid_delivery)
 
-    class Stream(httpx.AsyncByteStream):
-        async def __aiter__(self):
-            while True:
-                yield await queue.get()
-
-    async def emit(event):
-        if event.get("type") == "agent.custom_tool_use":
-            event = dict(event, input=model_arguments(event["name"], event["input"]))
-        nonlocal sequence
-        sequence += 1
-        if event["type"] == "session.status_idle":
-            settled.update(accepted)
-        await queue.put(f"id: {sequence}\ndata: {json.dumps(event)}\n\n".encode())
+    provider = CommittedPhaseProvider()
+    emit = provider.emit
 
     async def tool(name, arguments, execution_id):
         await emit(
@@ -2715,21 +2584,7 @@ async def test_actual_reference_publication_retains_unsent_intent_and_ordinary_r
         nonlocal stage, event_id, publication, partial_card, partial_intent
         endpoint = request.url.path
         if endpoint.endswith("/executions"):
-            ids = request.url.params.get_list("ids[]")
-            assert set(ids) <= set(accepted)
-            return httpx.Response(
-                200,
-                json={
-                    "data": [
-                        {
-                            "execution_id": identity,
-                            "state": "COMPLETED" if identity in settled else "RUNNING",
-                            "settled_outcome": "COMPLETED" if identity in settled else None,
-                        }
-                        for identity in ids
-                    ]
-                },
-            )
+            return provider.status(request)
         if endpoint.endswith("/sessions"):
             return (
                 httpx.Response(200, json={"data": []})
@@ -2751,15 +2606,14 @@ async def test_actual_reference_publication_retains_unsent_intent_and_ordinary_r
                 },
             )
         if endpoint.endswith("/events/stream"):
-            return httpx.Response(200, stream=Stream(), headers={"content-type": "text/event-stream"})
+            return provider.stream(request)
         if endpoint.endswith("/archive"):
             return httpx.Response(200, json={})
         if endpoint.endswith("/events"):
             if request.method == "GET":
-                return httpx.Response(200, json={"data": []})
+                return provider.history(request)
             event = json.loads(request.content)["events"][0]
-            identity = "accepted-" + str(len(accepted) + 1)
-            accepted.append(identity)
+            identity = provider.accept(event)
             if event["type"] == "user.message":
                 assert stage == 0, "The producer must complete without corrective retries"
                 await tool(
